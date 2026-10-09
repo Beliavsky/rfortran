@@ -321,6 +321,69 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " Number of observations: 1000\n Mean:               2.86412816926697e-002\n Standard deviation: 0.972235006368056\n Kurtosis:           2.93515278974772\n Excess kurtosis:    -6.48472102522817e-002\n"
+    },
+    "47_normal_mixture": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stdout": "Observations: 1000\nEM iterations: 25\nConverged: T\nLog likelihood:        -2209.095\nComp    True wt   Est wt     True mean  Est mean   True sd    Est sd\n  1     0.3500     0.3492    -2.0000    -2.0613     0.8000     0.8086\n  2     0.6500     0.6508     3.0000     2.8829     1.5000     1.5038\n",
+      "program_stderr": ""
+    },
+    "48_array_calls_expressions": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stdout": "  0.333333  0.333333  0.333333\n  2.333333  2.333333  2.333333\n    7.00    8.00    9.00\n    2.00F\n4\n5\n4\n2\n******  abc T\n",
+      "program_stderr": ""
+    },
+    "49_error_stop": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 1,
+      "program_stdout": "",
+      "program_stderr": "ERROR STOP negative weight\n"
+    },
+    "50_derived_date": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stdout": " Initial date:\n2026-10\n Valid: .TRUE.\n After adding 5 months:\n2027-03\n After subtracting 15 months:\n2025-12\n Month 13 valid: .FALSE.\n",
+      "program_stderr": ""
+    },
+    "51_derived_edges": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stdout": "2000-01\n2000-01\n1999-01\n-1-12\n-2-12\n1-01\n2000-01\n2001-02\n2002-03\n9\n 11\n   11  -11    0    0\n   10.50  -10.50    0.00   -0.00\nCase,Upper: -03%04\n    END\n",
+      "program_stderr": ""
+    },
+    "52_derived_components": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stdout": " 1\n 1 9\n 9 12\n 12 1\n 5\n",
+      "program_stderr": ""
+    },
+    "55_derived_scalar_kinds": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stdout": "7   1.50   2.25 T F\n   3.00   2.25\n",
+      "program_stderr": ""
+    },
+    "53_derived_uninitialized": {
+      "compiler_exit_code": 1,
+      "compiler_stderr": "Error: read of uninitialized variable `p%second` before assignment\n",
+      "program_exit_code": 0,
+      "program_stdout": "",
+      "program_stderr": ""
+    },
+    "54_derived_runtime_uninitialized": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 1,
+      "program_stdout": " 1\n",
+      "program_stderr": "Runtime error: read of uninitialized variable `p%second` at 54_derived_runtime_uninitialized.f90:12\n"
     }
   }
 }

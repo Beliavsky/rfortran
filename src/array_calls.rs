@@ -1,0 +1,529 @@
+//! Specialize local assumed-shape subroutine calls with statically known arrays.
+//! No descriptor ABI is claimed: unsupported dynamic shapes are diagnosed here.
+use crate::ast::{Expr, Program, Stmt, TypeSpec};
+use anyhow::{bail, Context, Result};
+use std::collections::{HashMap, HashSet};
+type Shapes = HashMap<String, (TypeSpec, Vec<Expr>)>;
+#[derive(Clone)]
+struct Routine {
+    params: Vec<String>,
+    body: Vec<Stmt>,
+}
+
+fn rewrite(
+    e: &mut Expr,
+    shapes: &Shapes,
+    constants: &HashMap<String, Expr>,
+    absent: &HashSet<String>,
+) -> Result<()> {
+    match e {
+        Expr::Ident(n) => {
+            if let Some(v) = constants.get(n) {
+                *e = v.clone();
+            }
+        }
+        Expr::Call(n, args) if n == "present" => {
+            let [Expr::Ident(param)] = args.as_slice() else {
+                bail!("PRESENT requires an optional dummy argument");
+            };
+            *e = Expr::Logical(!absent.contains(param));
+        }
+        Expr::Call(n, args) if n == "size" => {
+            let [Expr::Ident(array)] = args.as_slice() else {
+                bail!("SIZE currently requires a whole array");
+            };
+            let (_, dims) = shapes
+                .get(array)
+                .context("SIZE argument must be an array")?;
+            if dims.len() != 1 {
+                bail!("SIZE currently requires a rank-one array");
+            }
+            *e = dims[0].clone();
+        }
+        Expr::Call(_, args) | Expr::Index(_, args) => {
+            for a in args {
+                rewrite(a, shapes, constants, absent)?;
+            }
+        }
+        Expr::Bin(_, a, b) => {
+            rewrite(a, shapes, constants, absent)?;
+            rewrite(b, shapes, constants, absent)?;
+        }
+        Expr::Un(_, a) => rewrite(a, shapes, constants, absent)?,
+        _ => {}
+    }
+    if let Ok(n) = crate::parameters::integer_constant(e) {
+        *e = Expr::IntLit(n.to_string());
+    }
+    Ok(())
+}
+
+fn specialize(
+    body: &mut Vec<Stmt>,
+    shapes: &mut Shapes,
+    absent: &HashSet<String>,
+    constants: &mut HashMap<String, Expr>,
+    stable: &HashSet<String>,
+) -> Result<()> {
+    let allocatable: HashSet<_> = body
+        .iter()
+        .filter_map(|s| match s {
+            Stmt::DummyIntent { name, intent } if intent == "allocatable" => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
+    let mut allocated = HashSet::new();
+    let deferred: HashMap<_,_> = body.iter().filter_map(|s| match s {
+        Stmt::ArrayDecl { name, kind, dims } if matches!(dims.as_slice(), [Expr::Ident(n)] if n == "@deferred_extent") => Some((name.clone(),kind.clone())), _ => None,
+    }).collect();
+    body.retain(|s| !matches!(s, Stmt::ArrayDecl { name, .. } if deferred.contains_key(name)));
+    let mut output = Vec::new();
+    for mut s in std::mem::take(body) {
+        match &mut s {
+            Stmt::ArrayDecl { name, kind, dims } => {
+                for d in dims.iter_mut() {
+                    rewrite(d, shapes, constants, absent)?;
+                }
+                shapes.insert(name.clone(), (kind.clone(), dims.clone()));
+            }
+            Stmt::VarDecl { names, kind } => {
+                for n in names {
+                    shapes.insert(n.clone(), (kind.clone(), vec![]));
+                }
+            }
+            Stmt::CallSub { name, args } if name == "@allocate" => {
+                for a in args {
+                    let Expr::Call(n, dims) = a else {
+                        bail!("ALLOCATE expects array bounds");
+                    };
+                    if !allocatable.contains(n) {
+                        bail!("ALLOCATE requires ALLOCATABLE array `{n}`");
+                    }
+                    if !allocated.insert(n.clone()) {
+                        bail!("repeated ALLOCATE of `{n}` without DEALLOCATE is not supported");
+                    }
+                    let kind = deferred
+                        .get(n)
+                        .context(
+                            "ALLOCATE requires a local deferred-shape array declared in this scope",
+                        )?
+                        .clone();
+                    for d in dims.iter_mut() {
+                        rewrite(d, shapes, constants, absent)?;
+                    }
+                    if dims.len() != 1 || crate::parameters::integer_constant(&dims[0]).is_err() {
+                        bail!(
+                            "ALLOCATE currently requires a rank-one shape known at the call site"
+                        );
+                    }
+                    if crate::parameters::integer_constant(&dims[0])? < 1 {
+                        bail!("ALLOCATE currently requires a positive extent");
+                    }
+                    shapes.insert(n.clone(), (kind.clone(), dims.clone()));
+                    output.push(Stmt::ArrayDecl {
+                        name: n.clone(),
+                        kind,
+                        dims: dims.clone(),
+                    });
+                }
+                continue;
+            }
+            Stmt::Assign { name, value } => {
+                rewrite(value, shapes, constants, absent)?;
+                if stable.contains(name) && crate::parameters::integer_constant(value).is_ok() {
+                    constants.insert(name.clone(), value.clone());
+                }
+            }
+            Stmt::AssignIndex { value, indices, .. } => {
+                rewrite(value, shapes, constants, absent)?;
+                for e in indices {
+                    rewrite(e, shapes, constants, absent)?;
+                }
+            }
+            Stmt::CallSub { args, .. } | Stmt::Print { items: args } => {
+                for e in args {
+                    rewrite(e, shapes, constants, absent)?;
+                }
+            }
+            Stmt::If {
+                cond,
+                then_body,
+                else_body,
+            } => {
+                rewrite(cond, shapes, constants, absent)?;
+                if let Expr::Logical(value) = cond {
+                    let mut chosen = if *value {
+                        std::mem::take(then_body)
+                    } else {
+                        else_body.take().unwrap_or_default()
+                    };
+                    specialize(&mut chosen, shapes, absent, constants, stable)?;
+                    output.extend(chosen);
+                    continue;
+                }
+                specialize(
+                    then_body,
+                    &mut shapes.clone(),
+                    absent,
+                    &mut constants.clone(),
+                    stable,
+                )?;
+                if let Some(b) = else_body {
+                    specialize(
+                        b,
+                        &mut shapes.clone(),
+                        absent,
+                        &mut constants.clone(),
+                        stable,
+                    )?;
+                }
+            }
+            Stmt::Do {
+                start, end, body, ..
+            } => {
+                rewrite(start, shapes, constants, absent)?;
+                rewrite(end, shapes, constants, absent)?;
+                specialize(
+                    body,
+                    &mut shapes.clone(),
+                    absent,
+                    &mut constants.clone(),
+                    stable,
+                )?;
+            }
+            Stmt::Block { body } => specialize(
+                body,
+                &mut shapes.clone(),
+                absent,
+                &mut constants.clone(),
+                stable,
+            )?,
+            _ => {}
+        }
+        output.push(s);
+    }
+    *body = output;
+    Ok(())
+}
+fn stable(body: &[Stmt]) -> HashSet<String> {
+    fn scan(body: &[Stmt], counts: &mut HashMap<String, usize>, nested: bool) {
+        for s in body {
+            match s {
+                Stmt::Assign { name, .. } => {
+                    *counts.entry(name.clone()).or_default() += if nested { 2 } else { 1 }
+                }
+                Stmt::Do { var, body, .. } => {
+                    counts.insert(var.clone(), 2);
+                    scan(body, counts, true);
+                }
+                Stmt::If {
+                    then_body,
+                    else_body,
+                    ..
+                } => {
+                    scan(then_body, counts, true);
+                    if let Some(b) = else_body {
+                        scan(b, counts, true);
+                    }
+                }
+                Stmt::DoWhile { body, .. } | Stmt::Block { body } => scan(body, counts, true),
+                Stmt::CallSub { args, .. } | Stmt::Read { args } => {
+                    for a in args {
+                        if let Expr::Ident(n) = a {
+                            counts.insert(n.clone(), 2);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut counts = HashMap::new();
+    scan(body, &mut counts, false);
+    counts
+        .into_iter()
+        .filter_map(|(n, c)| (c == 1).then_some(n))
+        .collect()
+}
+fn validate_input_writes(body: &[Stmt], inputs: &HashSet<String>) -> Result<()> {
+    for s in body {
+        match s {
+            Stmt::Assign { name, .. }
+            | Stmt::AssignIndex { name, .. }
+            | Stmt::Do { var: name, .. }
+                if inputs.contains(name) =>
+            {
+                bail!("cannot modify INTENT(IN) dummy `{name}`")
+            }
+            Stmt::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                validate_input_writes(then_body, inputs)?;
+                if let Some(b) = else_body {
+                    validate_input_writes(b, inputs)?;
+                }
+            }
+            Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } | Stmt::Block { body } => {
+                validate_input_writes(body, inputs)?
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+fn expand(
+    body: &mut Vec<Stmt>,
+    inherited: &Shapes,
+    routines: &HashMap<String, Routine>,
+    active: &mut Vec<String>,
+    serial: &mut usize,
+) -> Result<()> {
+    let readonly: HashSet<_> = body
+        .iter()
+        .filter_map(|s| match s {
+            Stmt::DummyIntent { name, intent } if intent == "parameter" => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
+    let mut shapes = inherited.clone();
+    for s in body.iter() {
+        match s {
+            Stmt::ArrayDecl { name, kind, dims } => {
+                shapes.insert(name.clone(), (kind.clone(), dims.clone()));
+            }
+            Stmt::VarDecl { names, kind } => {
+                for n in names {
+                    shapes.insert(n.clone(), (kind.clone(), vec![]));
+                }
+            }
+            _ => {}
+        }
+    }
+    for s in body.iter_mut() {
+        if let Stmt::CallSub { name, args } = s {
+            if let Some(r) = routines.get(name) {
+                if active.contains(name) {
+                    bail!("recursive assumed-shape calls are not yet supported");
+                }
+                if args.len() > r.params.len() {
+                    bail!("too many arguments to `{name}`");
+                }
+                let optional: HashSet<_> = r
+                    .body
+                    .iter()
+                    .filter_map(|s| match s {
+                        Stmt::DummyIntent { name, intent } if intent == "optional" => {
+                            Some(name.clone())
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                let intents: HashMap<_, _> = r
+                    .body
+                    .iter()
+                    .filter_map(|s| match s {
+                        Stmt::DummyIntent { name, intent } if intent.starts_with("intent(") => {
+                            Some((name.clone(), intent.clone()))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                validate_input_writes(
+                    &r.body,
+                    &intents
+                        .iter()
+                        .filter_map(|(n, i)| (i == "intent(in)").then_some(n.clone()))
+                        .collect(),
+                )?;
+                let mut local = Shapes::new();
+                for d in &r.body {
+                    match d {
+                        Stmt::VarDecl { kind, names } => {
+                            for n in names {
+                                local.insert(n.clone(), (kind.clone(), vec![]));
+                            }
+                        }
+                        Stmt::ArrayDecl { kind, name, dims } => {
+                            local.insert(name.clone(), (kind.clone(), dims.clone()));
+                        }
+                        _ => {}
+                    }
+                }
+                let mut names = HashMap::new();
+                let mut absent = HashSet::new();
+                let mut prefix = vec![];
+                for (i, p) in r.params.iter().enumerate() {
+                    let Some(actual) = args.get(i) else {
+                        if !optional.contains(p) {
+                            bail!("missing required argument `{p}` of `{name}`");
+                        }
+                        absent.insert(p.clone());
+                        continue;
+                    };
+                    let (kind, dims) = local
+                        .get(p)
+                        .context("dummy argument must be declared")?
+                        .clone();
+                    let intent = intents.get(p).map(String::as_str).unwrap_or("");
+                    if intent != "intent(in)"
+                        && matches!(actual,Expr::Ident(n) if readonly.contains(n))
+                    {
+                        bail!("cannot pass PARAMETER as writable argument `{p}`");
+                    }
+                    if !dims.is_empty() {
+                        let Expr::Ident(a) = actual else {
+                            bail!("array dummy `{p}` currently requires a whole-array actual argument");
+                        };
+                        let (actual_kind, actual_dims) =
+                            shapes.get(a).context("undeclared array argument")?;
+                        if actual_kind != &kind || actual_dims.len() != 1 {
+                            bail!("type or rank mismatch for `{p}`");
+                        }
+                        if !matches!(dims.as_slice(),[Expr::Ident(n)] if n=="@deferred_extent") {
+                            if dims.len() != 1
+                                || crate::parameters::integer_constant(&dims[0])?
+                                    != crate::parameters::integer_constant(&actual_dims[0])?
+                            {
+                                bail!("explicit-shape dummy `{p}` currently requires an exactly matching extent");
+                            }
+                        }
+                        local.insert(p.clone(), (kind, actual_dims.clone()));
+                        names.insert(p.clone(), a.clone());
+                        if intent == "intent(out)" {
+                            prefix.push(Stmt::CallSub {
+                                name: "@undefine".into(),
+                                args: vec![actual.clone()],
+                            });
+                        }
+                    } else if intent == "intent(in)" {
+                        *serial += 1;
+                        let temp = format!("@array_call_input_{serial}");
+                        prefix.push(Stmt::VarDecl {
+                            kind,
+                            names: vec![temp.clone()],
+                        });
+                        prefix.push(Stmt::Assign {
+                            name: temp.clone(),
+                            value: actual.clone(),
+                        });
+                        names.insert(p.clone(), temp);
+                    } else {
+                        let Expr::Ident(a) = actual else {
+                            bail!("writable dummy `{p}` requires a variable");
+                        };
+                        names.insert(p.clone(), a.clone());
+                        if intent == "intent(out)" {
+                            prefix.push(Stmt::CallSub {
+                                name: "@undefine".into(),
+                                args: vec![actual.clone()],
+                            });
+                        }
+                    }
+                }
+                let mut cloned = r.body.clone();
+                cloned.retain(|s| !matches!(s,Stmt::ArrayDecl{name,..} if r.params.contains(name)));
+                let stable = stable(&cloned);
+                specialize(
+                    &mut cloned,
+                    &mut local,
+                    &absent,
+                    &mut HashMap::new(),
+                    &stable,
+                )?;
+                crate::subroutines::rename(&mut cloned, &names, &r.params, serial)?;
+                active.push(name.clone());
+                expand(&mut cloned, &shapes, routines, active, serial)?;
+                active.pop();
+                prefix.extend(cloned);
+                *s = Stmt::Block { body: prefix };
+                continue;
+            }
+        }
+        match s {
+            Stmt::Module { body, .. }
+            | Stmt::Function { body, .. }
+            | Stmt::Subroutine { body, .. }
+            | Stmt::Block { body }
+            | Stmt::Do { body, .. }
+            | Stmt::DoWhile { body, .. } => expand(body, &shapes, routines, active, serial)?,
+            Stmt::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                expand(then_body, &shapes, routines, active, serial)?;
+                if let Some(b) = else_body {
+                    expand(b, &shapes, routines, active, serial)?;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+pub fn resolve(mut p: Program) -> Result<Program> {
+    fn collect(body: &mut Vec<Stmt>, routines: &mut HashMap<String, Routine>) {
+        body.retain_mut(|s| match s {
+            Stmt::Subroutine {
+                name, params, body, ..
+            } if body
+                .iter()
+                .any(|s| matches!(s,Stmt::ArrayDecl{name,..} if params.contains(name))) =>
+            {
+                routines.insert(
+                    name.clone(),
+                    Routine {
+                        params: params.clone(),
+                        body: body.clone(),
+                    },
+                );
+                false
+            }
+            Stmt::Module { body, .. } => {
+                collect(body, routines);
+                true
+            }
+            _ => true,
+        });
+    }
+    let mut routines = HashMap::new();
+    collect(&mut p.body, &mut routines);
+    expand(&mut p.body, &Shapes::new(), &routines, &mut vec![], &mut 0)?;
+    Ok(p)
+}
+
+#[cfg(test)]
+mod tests {
+    fn lower(source: &str) -> anyhow::Result<crate::ast::Program> {
+        let tokens = crate::lexer::lex(source);
+        let p = crate::parser::parse_with_src(source, &tokens, "array_calls.f90").unwrap();
+        crate::reductions::resolve(super::resolve(crate::parameters::resolve(p)?)?)
+    }
+    #[test]
+    fn rejects_unsupported_or_invalid_array_calls() {
+        for (actual,decl,dummy,body,error) in [
+            ("a","real(8) :: a(2)","real(8),intent(out)::b(:),c(:)","b=0.0d0","missing required"),
+            ("a","integer :: a(2)","real(8),intent(out)::b(:)","b=0.0d0","type or rank"),
+            ("a","real(8) :: a(2)","real(8),intent(in)::b(:)","b=0.0d0","INTENT(IN)"),
+            ("a","real(8),parameter::a(2)=[1.0d0,2.0d0]","real(8),intent(out)::b(:)","b=0.0d0","PARAMETER"),
+            ("a","real(8) :: a(2)","real(8),intent(out)::b(:)","real(8)::scratch(:)\nallocate(scratch(2))\nb=0.0d0","ALLOCATABLE"),
+            ("a","real(8) :: a(2)","real(8),intent(out)::b(:)","real(8),allocatable::scratch(:)\nallocate(scratch(2))\nallocate(scratch(2))\nb=0.0d0","repeated ALLOCATE"),
+        ] {
+            let params=if dummy.contains(",c(:)") {"b,c"} else {"b"};
+            let source=format!("program main\n{decl}\ncall f({actual})\ncontains\nsubroutine f({params})\n{dummy}\n{body}\nend subroutine f\nend program main");
+            let err=lower(&source).unwrap_err();assert!(format!("{err:#}").contains(error),"{err:#}");
+        }
+    }
+    #[test]
+    fn mixture_and_array_features_lower_and_check_initialization() {
+        for source in [
+            include_str!("../tests/47_normal_mixture.f90"),
+            include_str!("../tests/48_array_calls_expressions.f90"),
+        ] {
+            let p = lower(source).unwrap();
+            crate::initialized::instrument(p).unwrap();
+        }
+    }
+}

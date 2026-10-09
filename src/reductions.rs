@@ -6,7 +6,7 @@ use std::collections::HashMap;
 type Symbols = HashMap<String, (TypeSpec, Vec<Expr>)>;
 fn int(n: i64) -> Expr { Expr::IntLit(n.to_string()) }
 fn bin(op: BinOp, a: Expr, b: Expr) -> Expr { Expr::Bin(op, Box::new(a), Box::new(b)) }
-fn reduction(name: &str) -> bool { matches!(name.to_ascii_lowercase().as_str(), "sum" | "product" | "minval" | "maxval") }
+fn reduction(name: &str) -> bool { matches!(name.to_ascii_lowercase().as_str(), "sum" | "product" | "minval" | "maxval" | "any" | "all") }
 fn numeric(kind: &TypeSpec) -> bool { matches!(kind, TypeSpec::Integer(_) | TypeSpec::Real | TypeSpec::DoublePrecision) }
 fn merge_kind(a: TypeSpec, b: TypeSpec) -> TypeSpec {
     if matches!(a, TypeSpec::DoublePrecision) || matches!(b, TypeSpec::DoublePrecision) { TypeSpec::DoublePrecision }
@@ -44,17 +44,18 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
             let subscript = bin(BinOp::Add, int(first), bin(BinOp::Mul, bin(BinOp::Sub, index.clone(), int(1)), int(step)));
             Ok((Expr::Index(name.clone(), vec![subscript]), Some(count), kind.clone()))
         }
+        Expr::Logical(_) => Ok((e.clone(), None, TypeSpec::Logical)),
         Expr::IntLit(_) => Ok((e.clone(), None, TypeSpec::Integer(None))),
         Expr::RealLit(_) => Ok((e.clone(), None, TypeSpec::Real)),
         Expr::Un(UnOp::Neg, a) => {
             let (a, len, kind) = element(a, index, symbols)?;
             Ok((Expr::Un(UnOp::Neg, Box::new(a)), len, kind))
         }
-        Expr::Bin(op, a, b) if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow) => {
+        Expr::Bin(op, a, b) => {
             let (a, alen, akind) = element(a, index, symbols)?;
             let (b, blen, bkind) = element(b, index, symbols)?;
             if let (Some(a), Some(b)) = (alen, blen) { if a != b { bail!("array shapes in reduction expression do not conform"); } }
-            Ok((bin(op.clone(), a, b), alen.or(blen), merge_kind(akind, bkind)))
+            Ok((bin(op.clone(), a, b), alen.or(blen), if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow) { merge_kind(akind, bkind) } else { TypeSpec::Logical }))
         }
         Expr::Index(name, args) | Expr::Call(name, args) if symbols.get(name).is_some_and(|(_, d)| d.len() == 1) => {
             if args.len() != 1 { bail!("array element requires one subscript"); }
@@ -64,6 +65,12 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
             if !numeric(&kind) { bail!("reductions require numeric arrays"); }
             Ok((Expr::Index(name.clone(), vec![arg]), None, kind))
         }
+        Expr::Call(name, args) if crate::intrinsics::math_arity(name).is_some() || matches!(name.as_str(), "dble" | "real" | "abs") => {
+            let mut shape=None; let mut kind=TypeSpec::Real; let mut values=vec![];
+            for arg in args { let (value,n,k)=element(arg,index,symbols)?; if let (Some(a),Some(b))=(shape,n) { if a!=b {bail!("array shapes do not conform");} } shape=shape.or(n);kind=merge_kind(kind,k); values.push(value); }
+            if name=="dble" {kind=TypeSpec::DoublePrecision;} else if name=="real" {kind=TypeSpec::Real;}
+            Ok((Expr::Call(name.clone(),values),shape,kind))
+        }
         _ => bail!("unsupported expression in numeric array reduction"),
     }
 }
@@ -72,6 +79,7 @@ fn lower_expr(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, seria
     match e {
         Expr::Call(name, args) if reduction(name) => {
             if args.len() != 1 { bail!("{name} currently expects one array argument; DIM and MASK are not supported"); }
+            lower_expr(&mut args[0], symbols, prefix, serial)?;
             *serial += 1;
             // These names cannot occur in source identifiers.
             let index_name = format!("@reduction_index_{serial}");
@@ -81,9 +89,12 @@ fn lower_expr(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, seria
             let (value, count, kind) = element(&args[0], &index, symbols)?;
             let count = count.context("reduction argument must be an array")?;
             let name = name.to_ascii_lowercase();
+            if matches!(name.as_str(), "any" | "all") != matches!(kind, TypeSpec::Logical) { bail!("reduction argument has incorrect numeric/logical type"); }
             let integer = matches!(kind, TypeSpec::Integer(_));
             let huge = if matches!(kind, TypeSpec::DoublePrecision) { f64::MAX } else { f32::MAX as f64 };
             let identity = match name.as_str() {
+                "any" => Expr::Logical(false),
+                "all" => Expr::Logical(true),
                 "sum" => if integer { int(0) } else { Expr::RealLit("0.0".into()) },
                 "product" => if integer { int(1) } else { Expr::RealLit("1.0".into()) },
                 "minval" => if integer { int(i64::MAX) } else { Expr::RealLit(huge.to_string()) },
@@ -96,6 +107,7 @@ fn lower_expr(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, seria
             let acc = Expr::Ident(acc_name.clone());
             let item = Expr::Ident(item_name.clone());
             let update = match name.as_str() {
+                "any" | "all" => Stmt::Assign { name: acc_name.clone(), value: bin(if name == "any" { BinOp::Or } else { BinOp::And }, acc.clone(), item.clone()) },
                 "sum" | "product" => Stmt::Assign { name: acc_name.clone(), value: bin(if name == "sum" { BinOp::Add } else { BinOp::Mul }, acc.clone(), item.clone()) },
                 _ => Stmt::If {
                     cond: bin(if name == "minval" { BinOp::Lt } else { BinOp::Gt }, item.clone(), acc.clone()),
@@ -104,6 +116,16 @@ fn lower_expr(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, seria
             };
             prefix.push(Stmt::Do { var: index_name, start: int(1), end: int(count), body: vec![Stmt::Assign { name: item_name, value }, update] });
             *e = acc;
+        }
+        Expr::Call(name, args) if matches!(name.as_str(), "tiny" | "huge" | "kind" | "size") => {
+            let [Expr::Ident(n)] = args.as_slice() else { bail!("{name} requires a typed variable"); };
+            let (kind,dims)=symbols.get(n).context("undefined inquiry argument")?;
+            let double=matches!(kind,TypeSpec::DoublePrecision);
+            *e=match name.as_str() {
+                "size" => { if dims.len()!=1 {bail!("SIZE requires a rank-one array");} dims[0].clone() },
+                "kind"=>int(if double {8} else {4}),
+                _=> { if !matches!(kind,TypeSpec::Real|TypeSpec::DoublePrecision) {bail!("{name} requires a REAL argument");} let v=if name=="tiny" {if double {f64::MIN_POSITIVE} else {f32::MIN_POSITIVE as f64}} else {if double {f64::MAX} else {f32::MAX as f64}}; let lit=Expr::RealLit(v.to_string()); if double {Expr::Call("dble".into(),vec![lit])} else {lit} }
+            };
         }
         Expr::Call(_, args) | Expr::Index(_, args) => for arg in args { lower_expr(arg, symbols, prefix, serial)?; },
         Expr::Bin(_, a, b) => { lower_expr(a, symbols, prefix, serial)?; lower_expr(b, symbols, prefix, serial)?; }
@@ -136,6 +158,11 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
     let mut output = Vec::new();
     for mut stmt in std::mem::take(body) {
         let mut prefix = Vec::new();
+        if let Stmt::CallSub {name,args}=&stmt {
+            if name=="@allocate" {bail!("ALLOCATE is currently supported only in specialized local array subroutines");}
+            if name=="@formatted_print" { let Some(Expr::Str(fmt))=args.first() else {bail!("PRINT format must be constant");};crate::formatting::parse(fmt,args.len()-1)?; }
+            if name=="@error_stop" && !matches!(args.as_slice(),[Expr::Str(_)]) {bail!("ERROR STOP currently requires a character constant");}
+        }
         match &mut stmt {
             Stmt::Print { items } | Stmt::Read { args: items } | Stmt::CallSub { args: items, .. } => for e in items { lower_expr(e, &mut symbols, &mut prefix, serial)?; },
             Stmt::Assign { value, .. } | Stmt::Return(Some(value)) => lower_expr(value, &mut symbols, &mut prefix, serial)?,
@@ -195,8 +222,25 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                 if dims.len() != 1 || !numeric(kind) {
                     bail!("whole-array assignment currently requires a one-dimensional numeric array");
                 }
+                if let Expr::Call(tag,values) = value { if tag == "@array_constructor" {
+                    if constant(&dims[0])? != values.len() as i64 {bail!("array constructor shape does not conform");}
+                    let mut writes=vec![];
+                    for (i,v) in values.iter().enumerate() {
+                        *serial+=1;let temp=format!("@constructor_{serial}");
+                        prefix.push(Stmt::VarDecl{kind:kind.clone(),names:vec![temp.clone()]});prefix.push(Stmt::Assign{name:temp.clone(),value:v.clone()});
+                        writes.push(Stmt::AssignIndex{name:name.clone(),indices:vec![int(i as i64+1)],value:Expr::Ident(temp)});
+                    }
+                    prefix.extend(writes);output.push(Stmt::Block{body:prefix});continue;
+                } }
                 if array_valued(value, &symbols) {
-                    bail!("whole-array assignment currently requires a scalar right-hand side");
+                    *serial+=1;let index=format!("@array_index_{serial}");let temp=format!("@array_temp_{serial}");let index_expr=Expr::Ident(index.clone());
+                    let (scalar,count,_)=element(value,&index_expr,&symbols)?;let extent=constant(&dims[0])?;
+                    if count!=Some(extent) {bail!("array assignment shapes do not conform");}
+                    prefix.push(Stmt::VarDecl{kind:TypeSpec::Integer(None),names:vec![index.clone()]});
+                    prefix.push(Stmt::ArrayDecl{kind:kind.clone(),name:temp.clone(),dims:vec![int(extent)]});
+                    prefix.push(Stmt::Do{var:index.clone(),start:int(1),end:int(extent),body:vec![Stmt::AssignIndex{name:temp.clone(),indices:vec![index_expr.clone()],value:scalar}]});
+                    prefix.push(Stmt::Do{var:index,start:int(1),end:int(extent),body:vec![Stmt::AssignIndex{name:name.clone(),indices:vec![index_expr.clone()],value:Expr::Index(temp,vec![index_expr])}]});
+                    output.push(Stmt::Block{body:prefix});continue;
                 }
                 let extent = constant(&dims[0])?;
                 if extent < 0 { bail!("negative array extent is not supported"); }
@@ -258,13 +302,12 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unsupported_array_assignment_shapes() {
+    fn lowers_supported_array_assignments() {
         for assignment in ["a = b", "a = b + 1", "a = b(:)", "a = sqrt(b)"] {
             let source = format!("implicit none\nreal :: a(3), b(3)\n{assignment}\nend");
             let tokens = crate::lexer::lex(&source);
             let p = crate::parser::parse_with_src(&source, &tokens, "assignment.f90").unwrap();
-            let error = super::resolve(crate::parameters::resolve(p).unwrap()).unwrap_err();
-            assert!(error.to_string().contains("scalar right-hand side"), "{error:#}");
+            super::resolve(crate::parameters::resolve(p).unwrap()).unwrap();
         }
     }
 

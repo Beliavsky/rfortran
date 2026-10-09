@@ -75,6 +75,7 @@ fn array_storage(b: &mut FunctionBuilder, module: &mut ObjectModule, len: usize,
 #[derive(Clone, Copy)]
 enum RetKind {
     Void,
+    Bool,
     I64,
     F64,
 }
@@ -685,23 +686,30 @@ fn eval_expr(
                     let fv = to_f64(b, v);
                     CgVal::F64(fv)
                 }
-                "mod" => {
+                "mod" | "modulo" => {
                     let a = eval_expr(b, ex, ptr_ty, &args[0], ints, reals, bools, func_meta);
                     let bval = eval_expr(b, ex, ptr_ty, &args[1], ints, reals, bools, func_meta);
                     match (a, bval) {
                         (CgVal::I64(ai), CgVal::I64(bi)) => {
                             let r = b.ins().srem(ai, bi);
-                            CgVal::I64(r)
+                            if lname=="modulo" {
+                                let nonzero=b.ins().icmp_imm(ir::condcodes::IntCC::NotEqual,r,0);
+                                let signs=b.ins().bxor(r,bi);
+                                let opposite=b.ins().icmp_imm(ir::condcodes::IntCC::SignedLessThan,signs,0);
+                                let adjust=b.ins().band(nonzero,opposite);
+                                let sum=b.ins().iadd(r,bi);
+                                CgVal::I64(b.ins().select(adjust,sum,r))
+                            } else {CgVal::I64(r)}
                         }
                         (aa, bb) => {
                             let af = to_f64(b, aa);
                             let bf = to_f64(b, bb);
 
                             let div = b.ins().fdiv(af, bf);
-                            let trunc = b.ins().fcvt_to_sint(ir::types::I64, div);
-                            let back = b.ins().fcvt_from_sint(ir::types::F64, trunc);
+                            let back = if lname=="modulo" { b.ins().floor(div) } else { b.ins().trunc(div) };
                             let prod = b.ins().fmul(bf, back);
                             let res = b.ins().fsub(af, prod);
+                            let res=if lname=="modulo" {let zero=b.ins().f64const(0.0);let is_zero=b.ins().fcmp(ir::condcodes::FloatCC::Equal,res,zero);let signed=b.ins().fcopysign(zero,bf);b.ins().select(is_zero,signed,res)} else {res};
                             CgVal::F64(res)
                         }
                     }
@@ -769,6 +777,7 @@ fn eval_expr(
                         let inst = b.ins().call(meta.fref, &argv);
                         let res = b.inst_results(inst);
                         match meta.ret {
+                            RetKind::Bool => {let value=res[0];CgVal::Bool(b.ins().icmp_imm(ir::condcodes::IntCC::NotEqual,value,0))},
                             RetKind::Void => CgVal::I64(b.ins().iconst(ir::types::I64, 0)),
                             RetKind::I64 => {
                                 if !res.is_empty() {
@@ -1148,7 +1157,7 @@ fn print_expr(
         IExpr::Call(name, args) => {
             let lname = name.to_ascii_lowercase();
             if crate::intrinsics::math_arity(name).is_some()
-                || matches!(lname.as_str(), "abs" | "int" | "real" | "dble" | "max" | "min")
+                || matches!(lname.as_str(), "abs" | "int" | "real" | "dble" | "max" | "min" | "mod" | "modulo")
             {
                 let value = eval_expr(b, ex, ptr_ty, e, ints, reals, bools, func_meta);
                 print_numeric_value(b, ex, ptr_ty, value, double_expression(e, real_kind));
@@ -1526,6 +1535,7 @@ fn print_expr(
                 let inst = b.ins().call(meta.fref, &argv);
                 let res = b.inst_results(inst);
                 match meta.ret {
+                    RetKind::Bool => {let value=res[0];let yes=b.ins().icmp_imm(ir::condcodes::IntCC::NotEqual,value,0);let text=b.ins().select(yes,ex.p_true,ex.p_false);ex.call_printf(b,&[ex.fmt_s,text]);}
                     RetKind::Void => {}
                     RetKind::I64 => {
                         if !res.is_empty() {
@@ -2016,7 +2026,7 @@ fn gen_stmts(
                         .ins()
                         .icmp(ir::condcodes::IntCC::SignedGreaterThan, cur, ei);
                     b.ins().brif(cmp, after_blk, &[], body_blk, &[]);
-                    b.seal_block(after_blk);
+
 
                     b.switch_to_block(body_blk);
                     b.seal_block(body_blk);
@@ -2041,11 +2051,7 @@ fn gen_stmts(
                         arrays,
                         tokens,
                     )?;
-                    if tr {
-                        return Ok(true);
-                    }
-
-                    b.ins().jump(continue_blk, &[]);
+                    if !tr { b.ins().jump(continue_blk, &[]); }
 
                     b.switch_to_block(continue_blk);
                     let cur2 = b.ins().load(types::I64, MemFlags::new(), a, 0);
@@ -2056,6 +2062,7 @@ fn gen_stmts(
                     b.seal_block(continue_blk);
                     b.seal_block(loop_blk);
 
+                    b.seal_block(after_blk);
                     b.switch_to_block(after_blk);
                 } else {
                     let mut msg = format!("Undefined loop variable `{}` in DO", var);
@@ -2081,7 +2088,7 @@ fn gen_stmts(
                 let c = eval_expr(b, ex, ptr_ty, cond, ints, reals, bools, func_meta);
                 let cb = to_bool(b, c);
                 b.ins().brif(cb, body_blk, &[], after_blk, &[]);
-                b.seal_block(after_blk);
+
                 b.switch_to_block(body_blk);
                 b.seal_block(body_blk);
                 let er = gen_stmts(
@@ -2105,14 +2112,44 @@ fn gen_stmts(
                     arrays,
                     tokens,
                 )?;
-                if er {
-                    return Ok(true);
-                }
-                b.ins().jump(loop_blk, &[]);
+                if !er { b.ins().jump(loop_blk, &[]); }
                 b.seal_block(loop_blk);
-                b.switch_to_block(after_blk);
+                b.seal_block(after_blk);
+                    b.switch_to_block(after_blk);
             }
             IStmt::Call(name, args) => {
+                if name == "@formatted_print" {
+                    let Some(IExpr::Str(format))=args.first() else {anyhow::bail!("PRINT requires a constant format");};
+                    let fields=crate::formatting::parse(format,args.len()-1)?;
+                    let mut items=args[1..].iter();
+                    for field in &fields {
+                        if let Some(text)=&field.literal {let pointer=make_data(module,b,ptr_ty,dc,format!("{text}\0").as_bytes())?;ex.call_printf(b,&[ex.fmt_s,pointer]);continue;}
+                        let e=items.next().unwrap();
+                        let buffer=b.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,1024,0));
+                        let pointer=b.ins().stack_addr(ptr_ty,buffer,0);
+                        let (format,value)=match field.code {
+                            'a'=>{let pointer=match e {IExpr::Str(text)=>make_data(module,b,ptr_ty,dc,format!("{text}\0").as_bytes())?, IExpr::Ident(n) if chars.contains_key(n)=>b.ins().stack_addr(ptr_ty,chars[n].0,0), _=>anyhow::bail!("A output descriptor requires CHARACTER")}; (if field.width==0 {"%s".into()} else {format!("%{}.{}s",field.width,field.width)},pointer)},
+                            'l'=>{let v=eval_expr(b,ex,ptr_ty,e,ints,reals,bools,func_meta);let v=to_bool(b,v);let t=make_data(module,b,ptr_ty,dc,b"T\0")?;let f=make_data(module,b,ptr_ty,dc,b"F\0")?;(format!("%{}s",field.width),b.ins().select(v,t,f))},
+                            'i'=>{let v=eval_expr(b,ex,ptr_ty,e,ints,reals,bools,func_meta);(format!("%{}.{}lld",if field.width==0 && field.precision==0 {1} else {field.width},field.precision),to_i64(b,v))},
+                            _=>{let v=eval_expr(b,ex,ptr_ty,e,ints,reals,bools,func_meta);(format!("%{}.{}f",field.width,field.precision),to_f64(b,v))}
+                        };
+                        if field.code=='a' && field.width==0 { ex.call_printf(b,&[ex.fmt_s,value]); continue; }
+                        let format=make_data(module,b,ptr_ty,dc,format!("{format}\0").as_bytes())?;
+                        // Windows x64 variadic floating arguments are read from integer registers.
+                        let value=if b.func.dfg.value_type(value)==types::F64 {b.ins().bitcast(types::I64,MemFlags::new(),value)} else {value};
+                        let call=ex.call_sprintf(b,&[pointer,format,value]);let length=b.inst_results(call)[0];
+                        let pointer=if field.width>0 && field.code!='a' {let overflow=b.ins().icmp_imm(ir::condcodes::IntCC::SignedGreaterThan,length,field.width as i64);let stars=make_data(module,b,ptr_ty,dc,format!("{}\0","*".repeat(field.width)).as_bytes())?;b.ins().select(overflow,stars,pointer)} else {pointer};
+                        ex.call_printf(b,&[ex.fmt_s,pointer]);
+                    }
+                    ex.call_printf(b,&[ex.fmt_s,ex.p_nl]);continue;
+                }
+                if name == "@error_stop" {
+                    let [IExpr::Str(message)]=args.as_slice() else {anyhow::bail!("ERROR STOP currently requires a character constant");};
+                    let message=format!("ERROR STOP {message}\n");let pointer=make_data(module,b,ptr_ty,dc,message.as_bytes())?;
+                    let mut sig=module.make_signature();sig.params.extend([ir::AbiParam::new(types::I32),ir::AbiParam::new(ptr_ty),ir::AbiParam::new(types::I32)]);sig.returns.push(ir::AbiParam::new(types::I32));
+                    let id=module.declare_function("_write",Linkage::Import,&sig)?;let function=module.declare_func_in_func(id,b.func);let fd=b.ins().iconst(types::I32,2);let len=b.ins().iconst(types::I32,message.len() as i64);b.ins().call(function,&[fd,pointer,len]);
+                    let mut sig=module.make_signature();sig.params.push(ir::AbiParam::new(types::I32));let id=module.declare_function("exit",Linkage::Import,&sig)?;let function=module.declare_func_in_func(id,b.func);let code=b.ins().iconst(types::I32,1);b.ins().call(function,&[code]);b.ins().trap(ir::TrapCode::unwrap_user(1));return Ok(true);
+                }
                 if name.eq_ignore_ascii_case("random_seed") && !func_meta.contains_key(name) {
                     let id = module.declare_data(".f90c.random_state", Linkage::Local, true, false)?;
                     let global = module.declare_data_in_func(id, b.func);
@@ -2802,7 +2839,7 @@ impl Backend for CraneliftBackend {
             func_ids.insert(f.name.clone(), fid);
         }
         for (name, arity) in &import_arity {
-            if name == "@check_initialized" || name.eq_ignore_ascii_case("random_seed") { continue; }
+            if name.starts_with('@') || name.eq_ignore_ascii_case("random_seed") { continue; }
             if name.eq_ignore_ascii_case("random_number") { continue; }
             if let Some(arity) = crate::intrinsics::math_arity(name) {
                 if !func_ids.contains_key(name) {
@@ -2866,7 +2903,8 @@ impl Backend for CraneliftBackend {
                 name.clone(),
                 match rt {
                     crate::ast::TypeSpec::RealKind(_) => unreachable!("unresolved real kind"),
-                    crate::ast::TypeSpec::Integer(_) | crate::ast::TypeSpec::Logical => {
+                    crate::ast::TypeSpec::Logical => RetKind::Bool,
+                    crate::ast::TypeSpec::Integer(_) => {
                         RetKind::I64
                     }
                     crate::ast::TypeSpec::Real | crate::ast::TypeSpec::DoublePrecision => {

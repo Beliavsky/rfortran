@@ -19,6 +19,9 @@ mod reductions;
 mod initialized;
 mod purity;
 mod subroutines;
+mod array_calls;
+mod formatting;
+mod derived;
 mod runtime;
 mod sema;
 mod utils;
@@ -131,7 +134,7 @@ fn main() -> Result<()> {
                     }
                 }
             };
-            let program = sections::resolve(reductions::resolve(parameters::resolve(program)?)?)?;
+            let program = sections::resolve(reductions::resolve(array_calls::resolve(parameters::resolve(derived::resolve(program)?)?)?)?)?;
             let empty_obj_exports = std::collections::HashSet::new();
             let sema_errs = sema::analyze_with_src(
                 &program,
@@ -240,7 +243,7 @@ fn main() -> Result<()> {
                     }
                 }
             };
-            let program = sections::resolve(reductions::resolve(parameters::resolve(program)?)?)?;
+            let program = sections::resolve(reductions::resolve(array_calls::resolve(parameters::resolve(derived::resolve(program)?)?)?)?)?;
             let empty_obj_exports = std::collections::HashSet::new();
             let sema_errs = sema::analyze_with_src(
                 &program,
@@ -361,7 +364,7 @@ fn compile_to_object(
             return Err(anyhow::anyhow!("parse failed"));
         }
     };
-    let program = sections::resolve(reductions::resolve(parameters::resolve(program)?)?)?;
+    let program = sections::resolve(reductions::resolve(array_calls::resolve(parameters::resolve(derived::resolve(program)?)?)?)?)?;
     let empty_obj_exports = std::collections::HashSet::new();
     let sema_errs = sema::analyze_with_src(
         &program,
@@ -394,6 +397,9 @@ fn compile_to_object(
     let has_program = lowered.has_program;
     let module = lowered.module;
     let mut flag_builder = settings::builder();
+    // Touch each guard page before using a large generated stack frame.
+    flag_builder.set("enable_probestack", "true")?;
+    flag_builder.set("probestack_strategy", "inline")?;
     match args.opt_level.as_str() {
         "0" => {
             flag_builder.set("opt_level", "none").ok();

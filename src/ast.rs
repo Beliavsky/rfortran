@@ -9,6 +9,8 @@ pub struct Program {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Stmt {
+    DerivedType { name: String, components: Vec<Stmt>, bindings: Vec<(String, String)> },
+    DerivedDecl { type_name: String, names: Vec<String>, attributes: Vec<String>, polymorphic: bool },
     Accessibility { public: bool, names: Vec<String> },
     DummyIntent { name: String, intent: String },
     /// Byte offset of the following source statement; retained through AST lowering.
@@ -99,7 +101,7 @@ pub enum Stmt {
     Cycle,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub enum TypeSpec {
     Integer(Option<u8>),
     Real,

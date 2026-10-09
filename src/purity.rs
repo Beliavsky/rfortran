@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 struct Procedure { pure: bool, intents: Option<Vec<String>> }
 fn intents(params: &[String], body: &[Stmt]) -> Vec<String> {
     params.iter().map(|p| body.iter().find_map(|s| match s {
-        Stmt::DummyIntent { name, intent } if name == p => Some(intent.clone()), _ => None,
+        Stmt::DummyIntent { name, intent } if name == p && intent.starts_with("intent(") => Some(intent.clone()), _ => None,
     }).unwrap_or_default()).collect()
 }
 
@@ -25,7 +25,7 @@ pub fn validate(program: &Program) -> Result<()> {
         match e {
             Expr::Call(name, args) => {
                 let intrinsic = crate::intrinsics::math_arity(name).is_some()
-                    || matches!(name.to_ascii_lowercase().as_str(), "abs" | "int" | "real" | "dble" | "sum" | "product" | "minval" | "maxval" | "max" | "min" | "kind" | "tiny");
+                    || matches!(name.to_ascii_lowercase().as_str(), "mod" | "modulo" | "abs" | "int" | "real" | "dble" | "sum" | "product" | "minval" | "maxval" | "max" | "min" | "kind" | "tiny" | "huge" | "size" | "present" | "any" | "all" | "@array_constructor");
                 if !locals.contains(name) && !known.get(name).map(|p| p.pure).unwrap_or(intrinsic) {
                     bail!("PURE procedure cannot call impure or unknown procedure `{name}`");
                 }

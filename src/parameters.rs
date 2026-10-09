@@ -140,6 +140,8 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
             if let Some(imports) = modules.get(&module.to_ascii_lowercase()) { constants.extend(imports.clone()); }
         }
     }
+    let arrays: HashSet<String> = body.iter().filter_map(|s| if let Stmt::ArrayDecl { name, .. } = s { Some(name.clone()) } else { None }).collect();
+    let mut array_values = HashMap::new();
     let mut locals: HashSet<String> = arguments.iter().map(|s| s.to_ascii_lowercase()).collect();
     for stmt in body.iter() {
         match stmt {
@@ -188,7 +190,7 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
             }
             for (name, initializer) in entities {
                 let key = name.to_ascii_lowercase();
-                if !locals.insert(key.clone()) {
+                if !locals.insert(key.clone()) && !arrays.contains(&key) {
                     bail!("duplicate declaration of PARAMETER `{name}`");
                 }
                 let initializer = initializer
@@ -196,6 +198,14 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
                     .with_context(|| format!("PARAMETER `{name}` requires an initializer"))?;
                 let mut initializer = initializer.clone();
                 rewrite_expr(&mut initializer, &constants)?;
+                if arrays.contains(&key) {
+                    let Expr::Call(tag, items) = initializer else { bail!("array PARAMETER requires an array constructor"); };
+                    if tag != "@array_constructor" { bail!("array PARAMETER requires an array constructor"); }
+                    let values: Vec<Expr> = items.iter().map(|e| -> Result<Expr> { Ok(if matches!(kind, TypeSpec::Integer(_)) { Expr::IntLit(evaluate(e, &constants)?.to_string()) } else { real_literal(if matches!(kind, TypeSpec::Real) { real_constant(e)? as f32 as f64 } else { real_constant(e)? }, matches!(kind, TypeSpec::DoublePrecision)) }) }).collect::<Result<_>>()?;
+                    constants.insert(key.clone(), Expr::Call("@array_constant".into(), values.clone()));
+                    array_values.insert(key, values);
+                    continue;
+                }
                 let value = if matches!(kind, TypeSpec::Integer(None)) {
                     Expr::IntLit(evaluate(&initializer, &constants).with_context(|| format!("invalid initializer for PARAMETER `{name}`"))?.to_string())
                 } else {
@@ -208,6 +218,17 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
     }
     body.retain(|s| !matches!(s, Stmt::InitializedDecl { .. }));
     rewrite_body(body, &constants, modules)?;
+    let mut output = Vec::new();
+    for stmt in std::mem::take(body) {
+        let init = if let Stmt::ArrayDecl { name, dims, .. } = &stmt {
+            if let Some(values) = array_values.get(name) {
+                if dims.len() != 1 || integer_constant(&dims[0])? != values.len() as i64 { bail!("array PARAMETER `{name}` initializer shape mismatch"); }
+                values.iter().enumerate().map(|(i,v)| Stmt::AssignIndex { name: name.clone(), indices: vec![Expr::IntLit((i+1).to_string())], value: v.clone() }).collect()
+            } else { vec![] }
+        } else { vec![] };
+        output.push(stmt); output.extend(init);
+    }
+    *body = output;
     Ok(constants)
 }
 
@@ -237,7 +258,7 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
         }
         Expr::Ident(name) => {
             if let Some(value) = constants.get(&name.to_ascii_lowercase()) {
-                *expr = value.clone();
+                if !matches!(value, Expr::Call(n, _) if n == "@array_constant") { *expr = value.clone(); }
             }
         }
         Expr::Bin(_, left, right) => {
@@ -246,7 +267,7 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
         }
         Expr::Un(_, inner) => rewrite_expr(inner, constants)?,
         Expr::Call(name, args) | Expr::Index(name, args) => {
-            if constants.contains_key(&name.to_ascii_lowercase()) {
+            if constants.get(&name.to_ascii_lowercase()).is_some_and(|v| !matches!(v, Expr::Call(n, _) if n == "@array_constant")) {
                 bail!("scalar PARAMETER `{name}` cannot be called or indexed");
             }
             for arg in args {
@@ -257,13 +278,14 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
     }
     if let Expr::Call(name, args) = expr {
         match name.to_ascii_lowercase().as_str() {
-            "kind" | "tiny" if args.len() == 1 => {
+            "kind" | "tiny" | "huge" if args.len() == 1 => {
                 let double = matches!(&args[0], Expr::Call(n, _) if n.eq_ignore_ascii_case("dble"));
                 if !double && !matches!(&args[0], Expr::RealLit(_) | Expr::IntLit(_)) {
-                    bail!("{name} currently requires a literal argument");
+                    return Ok(()); // Resolve inquiry on typed variables during array lowering.
                 }
-                if name.eq_ignore_ascii_case("tiny") && matches!(&args[0], Expr::IntLit(_)) { bail!("TINY requires a REAL argument"); }
+                if !name.eq_ignore_ascii_case("kind") && matches!(&args[0], Expr::IntLit(_)) { bail!("{name} currently requires a REAL argument"); }
                 *expr = if name.eq_ignore_ascii_case("kind") { Expr::IntLit(if double { "8" } else { "4" }.into()) }
+                    else if name.eq_ignore_ascii_case("huge") { real_literal(if double { f64::MAX } else { f32::MAX as f64 }, double) }
                     else { real_literal(if double { f64::MIN_POSITIVE } else { f32::MIN_POSITIVE as f64 }, double) };
             }
             "real" if args.len() == 2 => {

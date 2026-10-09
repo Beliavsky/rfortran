@@ -20,7 +20,7 @@ fn expr(e: &mut Expr, names: &Names) {
         _ => {}
     }
 }
-fn rename(body: &mut Vec<Stmt>, inherited: &Names, params: &[String], serial: &mut usize) -> Result<()> {
+pub(crate) fn rename(body: &mut Vec<Stmt>, inherited: &Names, params: &[String], serial: &mut usize) -> Result<()> {
     let mut names = inherited.clone();
     for s in body.iter() {
         let declared = match s {
@@ -38,7 +38,7 @@ fn rename(body: &mut Vec<Stmt>, inherited: &Names, params: &[String], serial: &m
                 declared.retain(|n| !params.contains(n));
                 for n in declared { name(n, &names); }
             }
-            Stmt::ArrayDecl { name: n, dims, .. } => { name(n, &names); for e in dims { expr(e, &names); } }
+            Stmt::ArrayDecl { name: n, dims, .. } => { if !params.contains(n) { name(n, &names); for e in dims { expr(e, &names); } } }
             Stmt::Assign { name: n, value } => { name(n, &names); expr(value, &names); }
             Stmt::AssignIndex { name: n, indices, value } => {
                 name(n, &names); for e in indices { expr(e, &names); } expr(value, &names);
@@ -62,7 +62,7 @@ fn rename(body: &mut Vec<Stmt>, inherited: &Names, params: &[String], serial: &m
             _ => {}
         }
     }
-    body.retain(|s| !matches!(s, Stmt::DummyIntent { .. }) && !matches!(s, Stmt::VarDecl { names, .. } if names.is_empty()));
+    body.retain(|s| !matches!(s, Stmt::ArrayDecl { name, .. } if params.contains(name)) && !matches!(s, Stmt::DummyIntent { .. }) && !matches!(s, Stmt::VarDecl { names, .. } if names.is_empty()));
     Ok(())
 }
 fn expand(body: &mut Vec<Stmt>, routines: &HashMap<String, Routine>, active: &mut Vec<String>, serial: &mut usize) -> Result<()> {

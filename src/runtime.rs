@@ -424,12 +424,13 @@ pub fn interpret(program: &Program) {
                 }
             }
             "modulo" => {
-                let a = to_real(args.get(0)?)?;
-                let b = to_real(args.get(1)?)?;
-                if b == 0.0 {
-                    Some(ValueTuple::from_real(0.0))
+                if let (Some(a),Some(p))=(args.get(0)?.0,args.get(1)?.0) {
+                    let r=a.checked_rem(p).expect("invalid MODULO divisor or integer overflow");
+                    Some(ValueTuple::from_int(if r!=0 && (r<0)!=(p<0) {r+p}else{r}))
                 } else {
-                    Some(ValueTuple::from_real(a - (a / b).floor() * b))
+                    let a=to_real(args.get(0)?)?;let p=to_real(args.get(1)?)?;
+                    let value=a-(a/p).floor()*p;
+                    Some(ValueTuple::from_real(if value==0.0 {0.0f64.copysign(p)} else {value}))
                 }
             }
             "int" => Some(ValueTuple::from_int(to_int(args.get(0)?)?)),
@@ -946,6 +947,8 @@ pub fn interpret(program: &Program) {
                     let ev = eval_expr(end, &strs, &ints, &r32, &r64, &logs, funcs, call_stack);
                     let s = sv.0.or(sv.1.map(|f| f as i64)).unwrap_or(0);
                     let e = ev.0.or(ev.1.map(|f| f as i64)).unwrap_or(0);
+                    let mut exited=false;
+                    call_stack.last_mut().unwrap().env_int.insert(var.clone(),s);
                     'outer: for i in s..=e {
                         {
                             let frame = call_stack.last_mut().unwrap();
@@ -955,7 +958,7 @@ pub fn interpret(program: &Program) {
                             // Interpret special control returns: 1 = EXIT, 2 = CYCLE
                             if let Some(v) = ret.0 {
                                 if v == 1 {
-                                    break 'outer;
+                                    exited=true; break 'outer;
                                 } else if v == 2 {
                                     continue 'outer; // CYCLE
                                 }
@@ -963,6 +966,7 @@ pub fn interpret(program: &Program) {
                             return Some(ret);
                         }
                     }
+                    if !exited { call_stack.last_mut().unwrap().env_int.insert(var.clone(), if s>e {s} else {e.checked_add(1).expect("DO index overflow")}); }
                 }
                 Stmt::Return(expr_opt) => {
                     let (strs, ints, r32, r64, logs) = {
@@ -989,6 +993,19 @@ pub fn interpret(program: &Program) {
                     }
                 }
                 Stmt::CallSub { name, args } => {
+                    if name == "@error_stop" { let Expr::Str(message)=&args[0] else {unreachable!()}; eprintln!("ERROR STOP {message}");std::process::exit(1); }
+                    if name == "@formatted_print" {
+                        let Expr::Str(format)=&args[0] else {unreachable!()};let fields=crate::formatting::parse(format,args.len()-1).expect("validated output format");
+                        let mut items=args[1..].iter();
+                        for field in &fields {
+                            if let Some(text)=&field.literal {print!("{text}");continue;}
+                            let e=items.next().unwrap();
+                            let fr=call_stack.last().unwrap().clone();let v=eval_expr(e,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack);
+                            let text=match field.code {'a'=>v.3.unwrap(),  'i'=>{let i=v.0.unwrap();if i==0 && field.precision==0 {String::new()}else{format!("{}{:0width$}",if i<0 {"-"} else {""},i.unsigned_abs(),width=field.precision)}}, 'l'=>if v.2.unwrap_or(v.0==Some(1)) {"T".into()}else{"F".into()},_=>format!("{:.*}",field.precision,v.1.unwrap_or(v.0.unwrap_or(0) as f64))};
+                            if field.width==0 {if field.code=='i' && text.is_empty() {print!(" ");}else{print!("{text}");}} else if text.len()>field.width {if field.code=='a' {print!("{}",text.chars().take(field.width).collect::<String>());}else{print!("{}","*".repeat(field.width));}}else{print!("{:>width$}",text,width=field.width);}
+                        }
+                        println!();idx+=1;continue;
+                    }
                     if name.eq_ignore_ascii_case("random_seed") && !funcs.contains_key(name) { RANDOM_STATE.with(|s| s.set(1)); idx += 1; continue; }
                     if name == "@check_initialized" {
                         let fr = call_stack.last().unwrap();
@@ -1110,6 +1127,7 @@ pub fn interpret(program: &Program) {
                     // Implicit statements are handled during semantic analysis
                 }
                 Stmt::SourceLocation(_) => {}
+                Stmt::DerivedType { .. } | Stmt::DerivedDecl { .. } => unreachable!("derived declarations must be lowered before execution"),
                 Stmt::DummyIntent { .. } | Stmt::Accessibility { .. } => {}
                 Stmt::Block { body } => {
                     if let Some(ret) = exec_stmts(body, funcs, call_stack) {

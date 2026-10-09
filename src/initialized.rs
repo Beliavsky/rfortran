@@ -150,9 +150,12 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
             Stmt::CallSub { name, args } if name == "@undefine" => {
                 let Expr::Ident(name) = &args[0] else { unreachable!() };
                 let v = env.get_mut(name).ok_or_else(|| anyhow::anyhow!("undefined output argument `{name}`"))?;
-                if v.extent.is_some() { bail!("output arguments currently require scalar variables"); }
+
                 v.state = State::No; v.elements.clear();
-                stmt = Stmt::Assign { name: v.flag.clone(), value: int(0) };
+                stmt = if let Some(extent)=v.extent {
+                    *serial+=1;let index=format!("@undefine_index_{serial}");
+                    Stmt::Block{body:vec![Stmt::VarDecl{kind:TypeSpec::Integer(None),names:vec![index.clone()]},Stmt::Do{var:index.clone(),start:int(1),end:int(extent),body:vec![Stmt::AssignIndex{name:v.flag.clone(),indices:vec![Expr::Ident(index)],value:int(0)}]}]}
+                } else { Stmt::Assign { name: v.flag.clone(), value: int(0) } };
             }
             Stmt::CallSub { args, .. } => for arg in args { read(arg, env, &mut before, serial)?; },
             Stmt::If { cond, then_body, else_body } => {

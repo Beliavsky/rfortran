@@ -137,6 +137,16 @@ fn human_expected(name: &str) -> String {
 
 fn human_token(tok: &TokenKind) -> String {
     match tok {
+        TokenKind::KwType => "keyword type".into(),
+        TokenKind::KwClass => "keyword class".into(),
+        TokenKind::KwProcedure => "keyword procedure".into(),
+        TokenKind::Percent => "'%'".into(),
+        TokenKind::Arrow => "'=>'".into(),
+        TokenKind::_Continuation => "continuation".into(),
+        TokenKind::LBracket => "'['".into(),
+        TokenKind::RBracket => "']'".into(),
+        TokenKind::KwError => "keyword error".into(),
+        TokenKind::KwAllocate => "keyword allocate".into(),
         TokenKind::KwProgram => "keyword program".into(),
         TokenKind::KwEnd => "keyword end".into(),
         TokenKind::KwImplicit => "keyword implicit".into(),

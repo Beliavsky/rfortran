@@ -7,6 +7,15 @@ use crate::lexer::TokenKind;
 extern {
     type Location = usize;
     enum TokenKind {
+        KW_TYPE => TokenKind::KwType,
+        KW_CLASS => TokenKind::KwClass,
+        KW_PROCEDURE => TokenKind::KwProcedure,
+        PERCENT => TokenKind::Percent,
+        ARROW => TokenKind::Arrow,
+        LBRACKET => TokenKind::LBracket,
+        RBRACKET => TokenKind::RBracket,
+        KW_ERROR => TokenKind::KwError,
+        KW_ALLOCATE => TokenKind::KwAllocate,
         KW_PROGRAM => TokenKind::KwProgram,
         KW_END => TokenKind::KwEnd,
         KW_FUNCTION => TokenKind::KwFunction,
@@ -139,6 +148,10 @@ FuncDef: Stmt = {
 };
 
 FunctionDef: Stmt = {
+    <kind: TypeSpec> KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN <mut body: Stmts> KW_END KW_FUNCTION <_endname: Ident> => {
+        body.insert(0,Stmt::VarDecl {kind:kind.clone(),names:vec![name.clone()]});
+        Stmt::Function { name, params, return_type:Some(kind),body,pure:false }
+    },
     KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN KW_RESULT LPAREN <result: Ident> RPAREN <body: Stmts> KW_END KW_FUNCTION <_endname: Ident> => crate::ast::function_with_result(name, params, result, body),
     KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN <body: Stmts> KW_END KW_FUNCTION <_endname: Ident> => Stmt::Function { name, params, return_type: None, body, pure: false },
 };
@@ -154,6 +167,28 @@ EndTail: () = {
 };
 
 Ident: String = { <s:ID> => s };
+
+ComponentName: String = { <n:Ident> => n, KW_PRINT => "print".into() };
+Designator: String = {
+    <n:Ident> => n,
+    <n:Designator> PERCENT <c:ComponentName> => format!("{n}%{c}"),
+};
+Bindings: Vec<(String,String)> = {
+    => vec![],
+    <mut bindings:Bindings> KW_PROCEDURE DCOLON <items:BindingList> => {bindings.extend(items);bindings},
+};
+BindingList: Vec<(String,String)> = {
+    <item:Binding> => vec![item],
+    <mut items:BindingList> COMMA <item:Binding> => {items.push(item);items},
+};
+Binding: (String,String) = {
+    <n:ComponentName> => (n.clone(),n),
+    <n:ComponentName> ARROW <target:Ident> => (n,target),
+};
+Components: Vec<Stmt> = {
+    => vec![],
+    <mut body:Components> <decl:PreFuncDecl> => {body.extend(decl);body},
+};
 
 IdentList: Vec<String> = {
     <id: Ident> => vec![id],
@@ -178,6 +213,7 @@ DeclEntity: (String, Vec<Expr>, Option<Expr>) = {
     <name: Ident> => (name, vec![], None),
     <name: Ident> EQ <value: RhsExpr> => (name, vec![], Some(value)),
     <name: Ident> LPAREN <dims: DimList> RPAREN => (name, dims, None),
+    <name: Ident> LPAREN <dims: DimList> RPAREN EQ <value: RhsExpr> => (name, dims, Some(value)),
 };
 
 Stmts: Vec<Stmt> = {
@@ -187,6 +223,9 @@ Stmts: Vec<Stmt> = {
 };
 
 Stmt: Stmt = {
+    KW_ERROR KW_STOP <arg: RhsExpr> => Stmt::CallSub { name: "@error_stop".into(), args: vec![arg] },
+    KW_ALLOCATE LPAREN <args: CallArgList> RPAREN => Stmt::CallSub { name: "@allocate".into(), args },
+    KW_PRINT <fmt: STR> COMMA <items: ExprList> => { let mut args = vec![Expr::Str(fmt)]; args.extend(items); Stmt::CallSub { name: "@formatted_print".into(), args } },
     KW_PUBLIC => Stmt::Accessibility { public: true, names: vec![] },
     KW_PRIVATE => Stmt::Accessibility { public: false, names: vec![] },
     KW_PUBLIC DCOLON <names: IdentList> => Stmt::Accessibility { public: true, names },
@@ -204,7 +243,7 @@ Stmt: Stmt = {
         for e in &es { cloned.push(e.clone()); }
         Stmt::Read { args: cloned }
     },
-    KW_CALL <name: Ident> LPAREN <args: CallArgList> RPAREN => Stmt::CallSub { name, args },
+    KW_CALL <name: Designator> LPAREN <args: CallArgList> RPAREN => Stmt::CallSub { name, args },
     // Single-line IF: executes a single statement when condition true, e.g. `if (cond) cycle`
     KW_IF LPAREN <cnd: CondExpr> RPAREN <s: Stmt> => {
         let mut v = Vec::new(); v.push(s); Stmt::If { cond: cnd, then_body: v, else_body: None }
@@ -214,11 +253,11 @@ Stmt: Stmt = {
     KW_DO <var: Ident> EQ <s: RhsExpr> COMMA <e: RhsExpr> <body: Stmts> KW_END KW_DO => Stmt::Do { var, start: s, end: e, body },
     KW_DO KW_WHILE LPAREN <cond: CondExpr> RPAREN <body: Stmts> KW_END KW_DO => Stmt::DoWhile { cond, body },
     KW_RETURN => Stmt::Return(None),
-    <name: Ident> EQ <rhs: RhsExpr> => Stmt::Assign { name, value: rhs },
-    <id: Ident> LPAREN <args: CallArgList> RPAREN EQ <rhs: RhsExpr> => Stmt::AssignIndex { name: id, indices: args, value: rhs },
-    <name: Ident> LPAREN <lower: RhsExpr?> COLON <upper: RhsExpr?> RPAREN EQ <value: RhsExpr> => Stmt::AssignIndex { name: name.clone(), indices: vec![Expr::Section { name, lower: lower.map(Box::new), upper: upper.map(Box::new), stride: None }], value },
-    <name: Ident> LPAREN <lower: RhsExpr?> COLON <upper: RhsExpr?> COLON <stride: RhsExpr> RPAREN EQ <value: RhsExpr> => Stmt::AssignIndex { name: name.clone(), indices: vec![Expr::Section { name, lower: lower.map(Box::new), upper: upper.map(Box::new), stride: Some(Box::new(stride)) }], value },
-    <name: Ident> LPAREN <lower: RhsExpr?> DCOLON <stride: RhsExpr> RPAREN EQ <value: RhsExpr> => Stmt::AssignIndex { name: name.clone(), indices: vec![Expr::Section { name, lower: lower.map(Box::new), upper: None, stride: Some(Box::new(stride)) }], value },
+    <name: Designator> EQ <rhs: RhsExpr> => Stmt::Assign { name, value: rhs },
+    <id: Designator> LPAREN <args: CallArgList> RPAREN EQ <rhs: RhsExpr> => Stmt::AssignIndex { name: id, indices: args, value: rhs },
+    <name: Designator> LPAREN <lower: RhsExpr?> COLON <upper: RhsExpr?> RPAREN EQ <value: RhsExpr> => Stmt::AssignIndex { name: name.clone(), indices: vec![Expr::Section { name, lower: lower.map(Box::new), upper: upper.map(Box::new), stride: None }], value },
+    <name: Designator> LPAREN <lower: RhsExpr?> COLON <upper: RhsExpr?> COLON <stride: RhsExpr> RPAREN EQ <value: RhsExpr> => Stmt::AssignIndex { name: name.clone(), indices: vec![Expr::Section { name, lower: lower.map(Box::new), upper: upper.map(Box::new), stride: Some(Box::new(stride)) }], value },
+    <name: Designator> LPAREN <lower: RhsExpr?> DCOLON <stride: RhsExpr> RPAREN EQ <value: RhsExpr> => Stmt::AssignIndex { name: name.clone(), indices: vec![Expr::Section { name, lower: lower.map(Box::new), upper: None, stride: Some(Box::new(stride)) }], value },
     KW_USE <m: Ident> => Stmt::Use { module: m },
     KW_IMPLICIT KW_NONE => Stmt::Implicit(Implicit::None),
     KW_IMPLICIT <rules: ImplicitRuleList> => {
@@ -347,9 +386,10 @@ UnaryExpr: Expr = {
 };
 
 Primary: Expr = {
-    <name: Ident> LPAREN <lower: RhsExpr?> COLON <upper: RhsExpr?> RPAREN => Expr::Section { name, lower: lower.map(Box::new), upper: upper.map(Box::new), stride: None },
-    <name: Ident> LPAREN <lower: RhsExpr?> COLON <upper: RhsExpr?> COLON <stride: RhsExpr> RPAREN => Expr::Section { name, lower: lower.map(Box::new), upper: upper.map(Box::new), stride: Some(Box::new(stride)) },
-    <name: Ident> LPAREN <lower: RhsExpr?> DCOLON <stride: RhsExpr> RPAREN => Expr::Section { name, lower: lower.map(Box::new), upper: None, stride: Some(Box::new(stride)) },
+    LBRACKET <items: ExprList> RBRACKET => Expr::Call("@array_constructor".into(), items),
+    <name: Designator> LPAREN <lower: RhsExpr?> COLON <upper: RhsExpr?> RPAREN => Expr::Section { name, lower: lower.map(Box::new), upper: upper.map(Box::new), stride: None },
+    <name: Designator> LPAREN <lower: RhsExpr?> COLON <upper: RhsExpr?> COLON <stride: RhsExpr> RPAREN => Expr::Section { name, lower: lower.map(Box::new), upper: upper.map(Box::new), stride: Some(Box::new(stride)) },
+    <name: Designator> LPAREN <lower: RhsExpr?> DCOLON <stride: RhsExpr> RPAREN => Expr::Section { name, lower: lower.map(Box::new), upper: None, stride: Some(Box::new(stride)) },
     <n: INT> => Expr::IntLit(n),
     <f: FLOAT> => Expr::RealLit(f),
     <s: STR> => Expr::Str(s),
@@ -358,9 +398,9 @@ Primary: Expr = {
     // Ident(args) can be either a function call or an array indexing expression;
     // treat it as a function call here (Expr::Call). Array element assignment is
     // handled at the statement level by the AssignIndex rule above.
-    <id: Ident> LPAREN <args: CallArgList> RPAREN => Expr::Call(id, args),
+    <id: Designator> LPAREN <args: CallArgList> RPAREN => Expr::Call(id, args),
     KW_REAL LPAREN <args: CallArgList> RPAREN => Expr::Call("real".to_string(), args),
-    <id: Ident> => Expr::Ident(id),
+    <id: Designator> => Expr::Ident(id),
     LPAREN <e: OrExpr> RPAREN => e,
 };
 
@@ -384,6 +424,7 @@ ArrayDecl: Stmt = {
 };
 
 DimList: Vec<Expr> = {
+    COLON => vec![Expr::Ident("@deferred_extent".into())],
     <e: RhsExpr> => vec![e],
     <mut v: DimList> COMMA <e: RhsExpr> => { v.push(e); v },
 };
@@ -409,19 +450,25 @@ CaseItem: CaseItem = {
 };
 
 PreFuncDecl: Vec<Stmt> = {
+    KW_TYPE DCOLON <name:Ident> <components:Components> KW_END KW_TYPE <_end:Ident> => vec![Stmt::DerivedType{name,components,bindings:vec![]}],
+    KW_TYPE DCOLON <name:Ident> <components:Components> KW_CONTAINS <bindings:Bindings> KW_END KW_TYPE <_end:Ident> => vec![Stmt::DerivedType{name,components,bindings}],
+    KW_TYPE LPAREN <type_name:Ident> RPAREN <attributes:AttrList> DCOLON <names:IdentList> => vec![Stmt::DerivedDecl{type_name,names,attributes,polymorphic:false}],
+    KW_CLASS LPAREN <type_name:Ident> RPAREN <attributes:AttrList> DCOLON <names:IdentList> => vec![Stmt::DerivedDecl{type_name,names,attributes,polymorphic:true}],
     <t: TypeSpec> <attrs: AttrList> DCOLON <entities: DeclEntities> => {
         entities.into_iter().flat_map(|(name, dims, value)| {
             let mut declarations = Vec::new();
             for attr in &attrs {
-                if attr.to_ascii_lowercase().starts_with("intent(") {
+                if attr.to_ascii_lowercase().starts_with("intent(") || matches!(attr.to_ascii_lowercase().as_str(), "optional" | "allocatable" | "parameter") {
                     declarations.push(Stmt::DummyIntent { name: name.clone(), intent: attr.to_ascii_lowercase() });
                 }
             }
-            declarations.push(if dims.is_empty() {
+            let declaration = if dims.is_empty() {
                 crate::ast::scalar_decl(t.clone(), attrs.clone(), vec![(name, value)])
             } else {
+                if value.is_some() { declarations.push(crate::ast::scalar_decl(t.clone(), attrs.clone(), vec![(name.clone(), value)])); }
                 Stmt::ArrayDecl { kind: t.clone(), name, dims }
-            });
+            };
+            declarations.push(declaration);
             declarations
         }).collect()
     }

@@ -1194,6 +1194,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
 
     fn collect_variable_uses_in_stmt(stmt: &IStmt, uses: &mut std::collections::HashSet<String>) {
         match stmt {
+            IStmt::AssignIdent(_, source) => { uses.insert(source.clone()); }
             IStmt::Print(args) => {
                 for arg in args {
                     collect_variable_uses(arg, uses);
@@ -1329,7 +1330,8 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                     }
                 }
             }
-            IStmt::Do { body, .. } => {
+            IStmt::Do { var, body, .. } => {
+                assigned.insert(var.clone());
                 for s in body {
                     collect_assigned_vars_in_stmt(s, assigned);
                 }
@@ -1498,7 +1500,11 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                                     ));
                                 }
                             }
-                            return unrolled;
+                            // A normally completed DO leaves its variable one step past the bound.
+                            if let Some(final_value) = end_val.checked_add(1) {
+                                unrolled.push(IStmt::AssignIntLit(var.clone(), final_value.to_string()));
+                                return unrolled;
+                            }
                         }
                     }
                 }
@@ -1818,7 +1824,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                             let lowered = lower_expr(a, types);
                             // Keep the kind of a double argument when later constant
                             // propagation replaces its variable with a real literal.
-                            if (crate::intrinsics::math_arity(name).is_some() || name.eq_ignore_ascii_case("abs")) && double_kind(a, types) {
+                            if (crate::intrinsics::math_arity(name).is_some() || matches!(name.to_ascii_lowercase().as_str(), "abs" | "mod" | "modulo")) && double_kind(a, types) {
                                 IExpr::Call("dble".into(), vec![lowered])
                             } else { lowered }
                         }).collect(),
@@ -2170,6 +2176,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                 }
                 Stmt::InitializedDecl { .. } => unreachable!("initialized declarations must be resolved before lowering"),
                 Stmt::SourceLocation(_) => {}
+                Stmt::DerivedType { .. } | Stmt::DerivedDecl { .. } => unreachable!("derived declarations must be lowered before execution"),
                 Stmt::DummyIntent { .. } | Stmt::Accessibility { .. } => {}
             }
 

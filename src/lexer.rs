@@ -6,6 +6,21 @@ pub enum TokenKind {
     _WS,
     #[regex(r"![^\n]*", logos::skip)]
     _COMMENT,
+    #[regex(r"&[ \t]*(?:![^\n]*)?\r?\n[ \t]*&?", logos::skip)]
+    _Continuation,
+    #[token("[")]
+    LBracket,
+    #[token("]")]
+    RBracket,
+    KwError,
+    KwAllocate,
+    KwType,
+    KwClass,
+    KwProcedure,
+    #[token("%")]
+    Percent,
+    #[token("=>")]
+    Arrow,
     #[regex(r"[A-Za-z_][A-Za-z0-9_]*", |lex| lex.slice().to_string())]
     Ident(String),
     #[regex(r#"\"([^"\\]|\\.)*\""#, |lex| {
@@ -224,8 +239,21 @@ pub fn lex(input: &str) -> Vec<Token> {
         }
     }
     for start in 0..tokens.len() {
+        if let TokenKind::Ident(n) = &tokens[start].kind {
+            let next=tokens.get(start+1).map(|t| &t.kind);
+            let previous=start.checked_sub(1).and_then(|i| tokens.get(i)).map(|t| &t.kind);
+            let replacement=match n.to_ascii_lowercase().as_str() {
+                "type" if matches!(next,Some(TokenKind::DColon|TokenKind::LParen)) || matches!(previous,Some(TokenKind::KwEnd)) => Some(TokenKind::KwType),
+                "class" if matches!(next,Some(TokenKind::LParen)) => Some(TokenKind::KwClass),
+                "procedure" if matches!(next,Some(TokenKind::DColon)) => Some(TokenKind::KwProcedure),
+                _=>None,
+            };
+            if let Some(kind)=replacement {tokens[start].kind=kind;}
+        }
+        if matches!(&tokens[start].kind, TokenKind::Ident(n) if n.eq_ignore_ascii_case("error")) && matches!(tokens.get(start+1).map(|t| &t.kind), Some(TokenKind::KwStop)) { tokens[start].kind = TokenKind::KwError; }
+        if matches!(&tokens[start].kind, TokenKind::Ident(n) if n.eq_ignore_ascii_case("allocate")) && matches!(tokens.get(start+1).map(|t| &t.kind), Some(TokenKind::LParen)) { tokens[start].kind = TokenKind::KwAllocate; }
         if matches!(&tokens[start].kind, TokenKind::Ident(name) if name.eq_ignore_ascii_case("pure"))
-            && matches!(tokens.get(start + 1).map(|t| &t.kind), Some(TokenKind::KwFunction | TokenKind::KwSubroutine)) {
+            && matches!(tokens.get(start + 1).map(|t| &t.kind), Some(TokenKind::KwFunction | TokenKind::KwSubroutine | TokenKind::KwLogical | TokenKind::KwInteger | TokenKind::KwReal | TokenKind::KwDouble | TokenKind::KwCharacter)) {
             tokens[start].kind = TokenKind::KwPure;
         }
         if !matches!(tokens[start].kind, TokenKind::KwFunction)

@@ -1246,7 +1246,7 @@ pub fn analyze_with_src(
                 let lname = name.to_ascii_lowercase();
                 if !fn_map.contains_key(&lname) {
                     if let Some(kind) = sym.get(&lname) { return Some(kind.clone()); }
-                    if crate::intrinsics::math_arity(&lname).is_some() || matches!(lname.as_str(), "abs" | "max" | "min") {
+                    if crate::intrinsics::math_arity(&lname).is_some() || matches!(lname.as_str(), "abs" | "max" | "min" | "mod" | "modulo") {
                         return args.first().and_then(|arg| infer_expr_type(arg, sym, fn_map, external_fn_ret));
                     }
                 }
@@ -1688,7 +1688,7 @@ pub fn analyze_with_src(
         for p in params.iter() {
             let lname = p.to_ascii_lowercase();
             if local_param_intent.get(&lname) == Some(&ParamIntent::Out) && assigned.contains(&lname) { continue; }
-            if lname == "dummy" {
+            if lname == "dummy" || lname.contains('%') {
                 continue;
             }
             if !read_vars.contains(&lname) {
@@ -1707,7 +1707,7 @@ pub fn analyze_with_src(
         for name in local_declared_names.iter() {
             let lname = name.to_ascii_lowercase();
             if params.iter().any(|p| p.eq_ignore_ascii_case(name)) { continue; }
-            if lname == "dummy" {
+            if lname == "dummy" || lname.contains('%') {
                 continue;
             }
             if !read_vars.contains(&lname) {
@@ -2022,7 +2022,7 @@ pub fn analyze_with_src(
         if let Stmt::VarDecl { names, .. } = stmt {
             for n in names {
                 let lname = n.to_ascii_lowercase();
-                if lname == "dummy" {
+                if lname == "dummy" || lname.contains('%') {
                     continue;
                 }
                 if fn_map.contains_key(&lname) || external_fn_ret.contains_key(&lname) {
@@ -2332,7 +2332,7 @@ pub fn analyze_with_src(
                 if !sym.contains_key(&lname)
                     && !fn_map.contains_key(&lname)
                     && !external_fn_ret.contains_key(&lname)
-                    && lname != "random_number" && lname != "random_seed"
+                    && lname != "random_number" && lname != "random_seed" && !lname.starts_with('@')
                 {
                     if let Some(implicit_type) = implicit_typing.get_implicit_type(name) {
                         sym.insert(lname, implicit_type);
@@ -2428,7 +2428,7 @@ pub fn analyze_with_src(
                 if !sym.contains_key(&lname)
                     && !fn_map.contains_key(&lname)
                     && !external_fn_ret.contains_key(&lname)
-                    && lname != "random_number" && lname != "random_seed"
+                    && lname != "random_number" && lname != "random_seed" && !lname.starts_with('@')
                 {
                     undef.push(name);
                 }
@@ -2622,7 +2622,7 @@ pub fn analyze_with_src(
                         problems.push((name.clone(), "RANDOM_NUMBER is a subroutine; use CALL RANDOM_NUMBER(harvest)".into()));
                     }
                     let math = crate::intrinsics::math_arity(&key);
-                    let arity = (if matches!(key.as_str(), "max" | "min") { Some(args.len().max(2)) } else { math }).or_else(|| matches!(key.as_str(), "abs" | "int" | "real" | "dble").then_some(1));
+                    let arity = (if matches!(key.as_str(), "max" | "min") { Some(args.len().max(2)) } else if matches!(key.as_str(), "mod" | "modulo") {Some(2)} else { math }).or_else(|| matches!(key.as_str(), "abs" | "int" | "real" | "dble").then_some(1));
                     if let Some(arity) = arity {
                         if args.len() != arity {
                             problems.push((name.clone(), format!("intrinsic `{name}` expects {arity} argument(s), got {}", args.len())));
@@ -2643,7 +2643,7 @@ pub fn analyze_with_src(
                                     }
                                 }
                             }
-                            if matches!(key.as_str(), "atan2" | "max" | "min") {
+                            if matches!(key.as_str(), "atan2" | "max" | "min" | "mod" | "modulo") {
                                 for pair in types.windows(2) {
                                 if let (Some(a), Some(b)) = (&pair[0], &pair[1]) {
                                     if std::mem::discriminant(a) != std::mem::discriminant(b) {
