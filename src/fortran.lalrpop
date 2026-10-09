@@ -74,11 +74,11 @@ extern {
 LeadingFuncs: Vec<Stmt> = {
     <f: FuncDef> => vec![f],
     <s: SubrDef> => vec![s],
-    <d: PreFuncDecl> => vec![d],
+    <d: PreFuncDecl> => d,
     <m: ModuleDef> => vec![m],
     <mut v: LeadingFuncs> <f: FuncDef> => { v.push(f); v },
     <mut v: LeadingFuncs> <s: SubrDef> => { v.push(s); v },
-    <mut v: LeadingFuncs> <d: PreFuncDecl> => { v.push(d); v },
+    <mut v: LeadingFuncs> <d: PreFuncDecl> => { v.extend(d); v },
     <mut v: LeadingFuncs> <m: ModuleDef> => { v.push(m); v },
 };
 
@@ -105,7 +105,7 @@ FuncList: Vec<Stmt> = {
     /* empty */ => vec![],
     <v: FuncList> <f: FuncDef> => { let mut v = v; v.push(f); v },
     <v: FuncList> <s: SubrDef> => { let mut v = v; v.push(s); v },
-    <v: FuncList> <d: PreFuncDecl> => { let mut v = v; v.push(d); v },
+    <v: FuncList> <d: PreFuncDecl> => { let mut v = v; v.extend(d); v },
 };
 
 FuncDef: Stmt = {
@@ -136,19 +136,21 @@ AttrList: Vec<String> = {
     <mut v: AttrList> COMMA <id: Ident> => { v.push(id); v },
 };
 
-DeclEntities: Vec<(String, Option<Expr>)> = {
+DeclEntities: Vec<(String, Vec<Expr>, Option<Expr>)> = {
     <e: DeclEntity> => vec![e],
     <mut v: DeclEntities> COMMA <e: DeclEntity> => { v.push(e); v },
 };
 
-DeclEntity: (String, Option<Expr>) = {
-    <name: Ident> => (name, None),
-    <name: Ident> EQ <value: RhsExpr> => (name, Some(value)),
+DeclEntity: (String, Vec<Expr>, Option<Expr>) = {
+    <name: Ident> => (name, vec![], None),
+    <name: Ident> EQ <value: RhsExpr> => (name, vec![], Some(value)),
+    <name: Ident> LPAREN <dims: DimList> RPAREN => (name, dims, None),
 };
 
 Stmts: Vec<Stmt> = {
     /* empty */ => vec![],
     <v: Stmts> <s: Stmt> => { let mut v = v; v.push(s); v },
+    <mut v: Stmts> <d: PreFuncDecl> => { v.extend(d); v },
 };
 
 Stmt: Stmt = {
@@ -175,12 +177,6 @@ Stmt: Stmt = {
     KW_DO <var: Ident> EQ <s: RhsExpr> COMMA <e: RhsExpr> <body: Stmts> KW_END KW_DO => Stmt::Do { var, start: s, end: e, body },
     KW_DO KW_WHILE LPAREN <cond: CondExpr> RPAREN <body: Stmts> KW_END KW_DO => Stmt::DoWhile { cond, body },
     KW_RETURN => Stmt::Return(None),
-    <t: TypeSpec> <attrs: AttrList> DCOLON <vars: DeclEntities> => crate::ast::scalar_decl(t, attrs, vars),
-    // array declaration with dimensions, e.g. `integer :: a(5)`
-    <t: TypeSpec> <_attrs: AttrList> DCOLON <id: Ident> LPAREN <dims: DimList> RPAREN => {
-        // produce an explicit ArrayDecl so downstream lowering can see dims
-        Stmt::ArrayDecl { kind: t, name: id, dims }
-    },
     <name: Ident> EQ <rhs: RhsExpr> => Stmt::Assign { name, value: rhs },
     <id: Ident> LPAREN <args: CallArgList> RPAREN EQ <rhs: RhsExpr> => Stmt::AssignIndex { name: id, indices: args, value: rhs },
     KW_USE <m: Ident> => Stmt::Use { module: m },
@@ -367,7 +363,17 @@ CaseItem: CaseItem = {
     <e: RhsExpr> => CaseItem::Single(e),
 };
 
-PreFuncDecl: Stmt = { <t: TypeSpec> <attrs: AttrList> DCOLON <names: DeclEntities> => crate::ast::scalar_decl(t, attrs, names) };
+PreFuncDecl: Vec<Stmt> = {
+    <t: TypeSpec> <attrs: AttrList> DCOLON <entities: DeclEntities> => {
+        entities.into_iter().map(|(name, dims, value)| {
+            if dims.is_empty() {
+                crate::ast::scalar_decl(t.clone(), attrs.clone(), vec![(name, value)])
+            } else {
+                Stmt::ArrayDecl { kind: t.clone(), name, dims }
+            }
+        }).collect()
+    }
+};
 
 ImplicitRuleList: Vec<ImplicitRule> = {
     <rule: ImplicitRuleItem> => vec![rule],

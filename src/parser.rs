@@ -12,6 +12,36 @@ pub mod fortran {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn mixed_scalar_and_array_declarations_preserve_order_and_scope() {
+        use crate::ast::{Stmt, TypeSpec};
+        for source in [
+            "program main\nreal :: x, y(2), z, a(3)\nend program main",
+            "subroutine example()\nreal :: x, y(2), z, a(3)\nend subroutine example",
+            "module example\nreal :: x, y(2), z, a(3)\nend module example",
+            "real :: x, y(2), z, a(3)\nprogram main\nend program main",
+        ] {
+            let tokens = crate::lexer::lex(source);
+            let program = super::parse_with_src(source, &tokens, "mixed.f90").unwrap();
+            let body = match &program.body[0] {
+                Stmt::Subroutine { body, .. } | Stmt::Module { body, .. } => body,
+                _ => &program.body,
+            };
+            assert_eq!(body.len(), 4);
+            let expected = [("x", None), ("y", Some("2")), ("z", None), ("a", Some("3"))];
+            for (stmt, (expected_name, expected_dim)) in body.iter().zip(expected) {
+                match (stmt, expected_dim) {
+                    (Stmt::VarDecl { kind: TypeSpec::Real, names }, None) => assert_eq!(names, &[expected_name]),
+                    (Stmt::ArrayDecl { kind: TypeSpec::Real, name, dims }, Some(size)) => {
+                        assert_eq!(name, expected_name);
+                        assert!(matches!(dims.as_slice(), [crate::ast::Expr::IntLit(value)] if value == size));
+                    }
+                    _ => panic!("unexpected declaration: {stmt:?}"),
+                }
+            }
+        }
+    }
+
+    #[test]
     fn bare_end_is_an_empty_main_program() {
         for src in ["end\n", "! Empty main program\nEND ! done\n"] {
             let tokens = crate::lexer::lex(src);
