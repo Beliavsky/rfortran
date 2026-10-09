@@ -18,6 +18,7 @@ mod sections;
 mod reductions;
 mod initialized;
 mod purity;
+mod subroutines;
 mod runtime;
 mod sema;
 mod utils;

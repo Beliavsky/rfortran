@@ -279,6 +279,20 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 6 12 1.5 8\n"
+    },
+    "41_subroutine_outputs": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 10 20 30\n 9 12\n 3.0\n 15 99\n"
+    },
+    "42_conditional_output": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 1,
+      "program_stderr": "Runtime error: read of uninitialized variable `x` at 42_conditional_output.f90:19\n",
+      "program_stdout": ""
     }
   }
 }

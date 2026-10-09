@@ -9,6 +9,7 @@ pub struct Program {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Stmt {
+    DummyIntent { name: String, intent: String },
     /// Byte offset of the following source statement; retained through AST lowering.
     SourceLocation(usize),
     Print {

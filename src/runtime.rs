@@ -1101,6 +1101,7 @@ pub fn interpret(program: &Program) {
                     // Implicit statements are handled during semantic analysis
                 }
                 Stmt::SourceLocation(_) => {}
+                Stmt::DummyIntent { .. } => {}
                 Stmt::Block { body } => {
                     if let Some(ret) = exec_stmts(body, funcs, call_stack) {
                         return Some(ret);

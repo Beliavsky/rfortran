@@ -1311,6 +1311,18 @@ pub fn analyze_with_src(
             );
         }
         let mut assigned: HashSet<String> = HashSet::new();
+        for s in body {
+            if let Stmt::DummyIntent { name, intent } = s {
+                if params.contains(name) {
+                    local_param_intent.insert(name.to_ascii_lowercase(), match intent.as_str() {
+                        "intent(in)" => ParamIntent::In,
+                        "intent(out)" => ParamIntent::Out,
+                        "intent(inout)" => ParamIntent::InOut,
+                        _ => ParamIntent::None,
+                    });
+                }
+            }
+        }
         for (p, intent) in &local_param_intent {
             if *intent == ParamIntent::In || *intent == ParamIntent::InOut {
                 assigned.insert(p.clone());
@@ -1674,6 +1686,7 @@ pub fn analyze_with_src(
         }
         for p in params.iter() {
             let lname = p.to_ascii_lowercase();
+            if local_param_intent.get(&lname) == Some(&ParamIntent::Out) && assigned.contains(&lname) { continue; }
             if lname == "dummy" {
                 continue;
             }
@@ -1692,6 +1705,7 @@ pub fn analyze_with_src(
         }
         for name in local_declared_names.iter() {
             let lname = name.to_ascii_lowercase();
+            if params.iter().any(|p| p.eq_ignore_ascii_case(name)) { continue; }
             if lname == "dummy" {
                 continue;
             }

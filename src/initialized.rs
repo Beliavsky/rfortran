@@ -147,6 +147,13 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
             Stmt::CallSub { name, args } if name.eq_ignore_ascii_case("random_number") => {
                 if let Some((name, index)) = args.first().and_then(key) { if let Some(i) = index { read(i, env, &mut before, serial)?; } write(name, index, env, &mut after, serial); }
             }
+            Stmt::CallSub { name, args } if name == "@undefine" => {
+                let Expr::Ident(name) = &args[0] else { unreachable!() };
+                let v = env.get_mut(name).ok_or_else(|| anyhow::anyhow!("undefined output argument `{name}`"))?;
+                if v.extent.is_some() { bail!("output arguments currently require scalar variables"); }
+                v.state = State::No; v.elements.clear();
+                stmt = Stmt::Assign { name: v.flag.clone(), value: int(0) };
+            }
             Stmt::CallSub { args, .. } => for arg in args { read(arg, env, &mut before, serial)?; },
             Stmt::If { cond, then_body, else_body } => {
                 read(cond, env, &mut before, serial)?;
@@ -257,7 +264,7 @@ fn scope(body: &mut Vec<Stmt>, inherited: &mut Env, params: &[String], result: O
         if env.contains_key(&name) && !declared.contains(&name) { continue; }
         *serial += 1;
         let flag = format!("@initialized_{serial}");
-        let assigned = params.contains(&name);
+        let assigned = params.contains(&name) && !body.iter().any(|s| matches!(s, Stmt::DummyIntent { name: n, intent } if n == &name && intent == "intent(out)"));
         let v = Variable { flag: flag.clone(), extent, state: if assigned { State::Yes } else { State::No }, elements: BTreeMap::new() };
         if let Some(n) = extent {
             prefix.push(Stmt::ArrayDecl { kind: TypeSpec::Integer(None), name: flag.clone(), dims: vec![int(n)] });
@@ -277,6 +284,7 @@ fn scope(body: &mut Vec<Stmt>, inherited: &mut Env, params: &[String], result: O
     Ok(())
 }
 pub fn instrument(mut program: Program) -> Result<Program> {
+    program = crate::subroutines::resolve(program)?;
     scope(&mut program.body, &mut Env::new(), &[], None, &mut 0)?;
     Ok(program)
 }

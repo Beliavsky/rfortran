@@ -400,12 +400,19 @@ CaseItem: CaseItem = {
 
 PreFuncDecl: Vec<Stmt> = {
     <t: TypeSpec> <attrs: AttrList> DCOLON <entities: DeclEntities> => {
-        entities.into_iter().map(|(name, dims, value)| {
-            if dims.is_empty() {
+        entities.into_iter().flat_map(|(name, dims, value)| {
+            let mut declarations = Vec::new();
+            for attr in &attrs {
+                if attr.to_ascii_lowercase().starts_with("intent(") {
+                    declarations.push(Stmt::DummyIntent { name: name.clone(), intent: attr.to_ascii_lowercase() });
+                }
+            }
+            declarations.push(if dims.is_empty() {
                 crate::ast::scalar_decl(t.clone(), attrs.clone(), vec![(name, value)])
             } else {
                 Stmt::ArrayDecl { kind: t.clone(), name, dims }
-            }
+            });
+            declarations
         }).collect()
     }
 };

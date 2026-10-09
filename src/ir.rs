@@ -2170,6 +2170,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                 }
                 Stmt::InitializedDecl { .. } => unreachable!("initialized declarations must be resolved before lowering"),
                 Stmt::SourceLocation(_) => {}
+                Stmt::DummyIntent { .. } => {}
             }
 
             out.extend(new_stmts);
