@@ -87,6 +87,15 @@ class BatchSources(unittest.TestCase):
         xkind.write_text(main, encoding="utf-8")
         self.check_build([kind, xkind], "8 4 8 4 8 -999\n -999.0")
 
+    def test_use_only_module_chain(self):
+        source = (ROOT / "tests" / "60_use_only.f90").read_text(encoding="utf-8")
+        base, rest = source.split("end module selected_base", 1)
+        middle, main = rest.split("end module selected_middle", 1)
+        paths = [self.directory / name for name in ("base.f90", "middle.f90", "main.f90")]
+        for path, text in zip(paths, [base + "end module selected_base\n", middle + "end module selected_middle\n", main]):
+            path.write_text(text, encoding="utf-8")
+        self.check_build(paths, "7 22 100 1.5")
+
     def test_missing_source_preserves_existing_outputs(self):
         sources = self.sources()
         exe = sources[-1].with_suffix(".exe")

@@ -70,7 +70,7 @@ pub fn resolve(mut program: Program) -> Result<Program> {
                 if let Stmt::Accessibility { public, names } = s { for n in names { exports.insert(n.to_ascii_lowercase(), *public); } }
             }
             let constants = resolve_scope(body, &Constants::new(), &[], &modules)?;
-            modules.insert(name.to_ascii_lowercase(), constants.into_iter().filter(|(n, _)| exports.get(n) == Some(&true)).collect());
+            modules.insert(name.to_ascii_lowercase(), constants.into_iter().filter(|(n, _)| exports.get(n).copied().unwrap_or(default_public)).collect());
         }
     }
     resolve_scope(&mut program.body, &Constants::new(), &[], &modules)?;
@@ -136,8 +136,11 @@ pub(crate) fn integer_constant(expr: &Expr) -> Result<i64> {
 fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[String], modules: &Modules) -> Result<Constants> {
     let mut constants = inherited.clone();
     for stmt in body.iter() {
-        if let Stmt::Use { module } = stmt {
-            if let Some(imports) = modules.get(&module.to_ascii_lowercase()) { constants.extend(imports.clone()); }
+        if let Stmt::Use { module, only } = stmt {
+            if let Some(imports) = modules.get(&module.to_ascii_lowercase()) {
+                constants.extend(imports.iter().filter(|(name, _)| only.as_ref().is_none_or(|names| names.contains(name)))
+                    .map(|(n, value)| (n.clone(), value.clone())));
+            }
         }
     }
     let arrays: HashSet<String> = body.iter().filter_map(|s| if let Stmt::ArrayDecl { name, .. } = s { Some(name.clone()) } else { None }).collect();

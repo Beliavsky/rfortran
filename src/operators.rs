@@ -220,9 +220,11 @@ impl Resolver {
         let mut visible = inherited.clone();
         merge(&mut visible, &self.local_bindings(body)?);
         for s in body {
-            if let Stmt::Use { module } = s {
+            if let Stmt::Use { module, only } = s {
                 if let Some(exported) = self.exports.get(module) {
-                    merge(&mut visible, exported);
+                    let selected = exported.iter().filter(|(op, _)| only.as_ref().is_none_or(|names| names.contains(&format!("operator({op})"))))
+                        .map(|(op, names)| (op.clone(), names.clone())).collect();
+                    merge(&mut visible, &selected);
                 }
             }
         }

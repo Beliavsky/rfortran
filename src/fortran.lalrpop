@@ -13,6 +13,7 @@ extern {
         KW_INTERFACE => TokenKind::KwInterface,
         KW_OPERATOR => TokenKind::KwOperator,
         KW_KIND => TokenKind::KwKind,
+        KW_ONLY => TokenKind::KwOnly,
         DEFINED_OP => TokenKind::DefinedOperator(<String>),
         PERCENT => TokenKind::Percent,
         ARROW => TokenKind::Arrow,
@@ -288,7 +289,8 @@ Stmt: Stmt = {
     <name: Designator> LPAREN <lower: RhsExpr?> COLON <upper: RhsExpr?> RPAREN EQ <value: RhsExpr> => Stmt::AssignIndex { name: name.clone(), indices: vec![Expr::Section { name, lower: lower.map(Box::new), upper: upper.map(Box::new), stride: None }], value },
     <name: Designator> LPAREN <lower: RhsExpr?> COLON <upper: RhsExpr?> COLON <stride: RhsExpr> RPAREN EQ <value: RhsExpr> => Stmt::AssignIndex { name: name.clone(), indices: vec![Expr::Section { name, lower: lower.map(Box::new), upper: upper.map(Box::new), stride: Some(Box::new(stride)) }], value },
     <name: Designator> LPAREN <lower: RhsExpr?> DCOLON <stride: RhsExpr> RPAREN EQ <value: RhsExpr> => Stmt::AssignIndex { name: name.clone(), indices: vec![Expr::Section { name, lower: lower.map(Box::new), upper: None, stride: Some(Box::new(stride)) }], value },
-    KW_USE <m: Ident> => Stmt::Use { module: m },
+    KW_USE <m: Ident> => Stmt::Use { module: m, only: None },
+    KW_USE <m: Ident> COMMA KW_ONLY COLON <names:GenericNames> => Stmt::Use { module:m, only:Some(names) },
     KW_IMPLICIT KW_NONE => Stmt::Implicit(Implicit::None),
     KW_IMPLICIT <rules: ImplicitRuleList> => {
         if rules.len() == 1 {

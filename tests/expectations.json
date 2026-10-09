@@ -412,6 +412,20 @@
       "program_exit_code": 0,
       "program_stdout": " 2\n\\\n\\\nC:\\new\\temp\\\nliteral \\n \\t \\r \\\\\nHe said \"hello\".\nIt's Fortran.\n'; ! & stay in string\n\ndone\n two\n 3\n",
       "program_stderr": ""
+    },
+    "60_use_only": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stdout": " 7 22 100 1.5\n",
+      "program_stderr": ""
+    },
+    "61_use_only_operator": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stdout": " 15\n",
+      "program_stderr": ""
     }
   }
 }

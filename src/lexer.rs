@@ -67,6 +67,7 @@ pub enum TokenKind {
     KwInterface,
     KwOperator,
     KwKind,
+    KwOnly,
     #[token("%")]
     Percent,
     #[token("=>")]
@@ -253,6 +254,7 @@ pub fn lex(input: &str) -> Vec<Token> {
             let next=tokens.get(start+1).map(|t| &t.kind);
             let previous=start.checked_sub(1).and_then(|i| tokens.get(i)).map(|t| &t.kind);
             let replacement=match n.to_ascii_lowercase().as_str() {
+                "only" if matches!(next,Some(TokenKind::Colon)) && start >= 3 && matches!(tokens[start-3].kind,TokenKind::KwUse) => Some(TokenKind::KwOnly),
                 "kind" if matches!(previous,Some(TokenKind::LParen)) && matches!(next,Some(TokenKind::Eq)) => Some(TokenKind::KwKind),
                 "type" if matches!(next,Some(TokenKind::DColon|TokenKind::LParen)) || matches!(previous,Some(TokenKind::KwEnd)) => Some(TokenKind::KwType),
                 "class" if matches!(next,Some(TokenKind::LParen)) => Some(TokenKind::KwClass),

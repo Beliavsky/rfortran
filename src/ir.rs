@@ -439,7 +439,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
     for s in &program.body {
         match s {
             Stmt::Module { name, .. } => defines_modules.push(name.to_ascii_lowercase()),
-            Stmt::Use { module } => uses_modules.push(module.to_ascii_lowercase()),
+            Stmt::Use { module, .. } => uses_modules.push(module.to_ascii_lowercase()),
             _ => {}
         }
     }

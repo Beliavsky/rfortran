@@ -25,7 +25,22 @@ PRINT statements to retain its intended output under Fortran string rules.
 Code that relied on C escapes in source strings must similarly be updated;
 there is currently no switch to enable backslash escapes.
 
-The full utility program still does not compile. The next front-end blockers
-include `USE ..., ONLY:`, named generic interfaces, and user-defined dotted
+The second checkpoint adds nonempty `USE module, ONLY: name, ...` lists,
+including `OPERATOR(...)` imports. Selected constants and kind parameters
+propagate through module dependency chains; procedures, derived types, and
+operators are checked for accessibility before lowering. Missing/private
+imports, excluded module entities, conflicting local declarations, and
+ambiguous imports produce errors. Public constants can be re-exported.
+Tests 60 and 61 cover module chains, private helpers, local names, selected
+types, and selected operators. The batch tests split test 60 into three files.
+
+This remains whole-source-group module support: put dependencies before their
+users. Renaming with `=>` and empty ONLY lists are not supported yet. Backends
+still require unique module procedure/type names within a compilation;
+this change does not implement module symbol mangling or `.mod` loading.
+
+The full utility program still does not compile. Its next error is `default`
+in a PUBLIC list, because the lexer reserves that spelling as a keyword.
+Further front-end blockers include named generic interfaces and user-defined dotted
 operators such as `.in.` and `.exclude.`. The utility library also exercises
 features beyond the currently implemented array, character, and I/O subsets.
