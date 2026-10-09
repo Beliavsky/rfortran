@@ -2176,7 +2176,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                 }
                 Stmt::InitializedDecl { .. } => unreachable!("initialized declarations must be resolved before lowering"),
                 Stmt::SourceLocation(_) => {}
-                Stmt::DerivedType { .. } | Stmt::DerivedDecl { .. } | Stmt::OperatorInterface { .. } => unreachable!("derived declarations must be lowered before execution"),
+                Stmt::DerivedType { .. } | Stmt::DerivedDecl { .. } | Stmt::OperatorInterface { .. } | Stmt::GenericInterface { .. } => unreachable!("derived declarations must be lowered before execution"),
                 Stmt::DummyIntent { .. } | Stmt::Accessibility { .. } => {}
             }
 

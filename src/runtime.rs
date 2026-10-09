@@ -1127,7 +1127,7 @@ pub fn interpret(program: &Program) {
                     // Implicit statements are handled during semantic analysis
                 }
                 Stmt::SourceLocation(_) => {}
-                Stmt::DerivedType { .. } | Stmt::DerivedDecl { .. } | Stmt::OperatorInterface { .. } => unreachable!("derived declarations must be lowered before execution"),
+                Stmt::DerivedType { .. } | Stmt::DerivedDecl { .. } | Stmt::OperatorInterface { .. } | Stmt::GenericInterface { .. } => unreachable!("derived declarations must be lowered before execution"),
                 Stmt::DummyIntent { .. } | Stmt::Accessibility { .. } => {}
                 Stmt::Block { body } => {
                     if let Some(ret) = exec_stmts(body, funcs, call_stack) {

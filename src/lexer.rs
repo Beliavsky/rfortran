@@ -75,6 +75,7 @@ pub enum TokenKind {
     KwClass,
     KwProcedure,
     KwInterface,
+    EndInterfaceName(String),
     KwOperator,
     KwKind,
     KwOnly,
@@ -237,6 +238,18 @@ pub struct Token {
     pub span: std::ops::Range<usize>,
 }
 
+// END INTERFACE's optional name must be in the same logical statement.
+fn same_statement(gap: &str) -> bool {
+    let mut continued = false;
+    for line in gap.split_inclusive('\n') {
+        let code = line.split('!').next().unwrap_or("").trim();
+        if code.contains(';') { return false; }
+        if !code.is_empty() { continued = code.ends_with('&'); }
+        if line.ends_with('\n') && !continued { return false; }
+    }
+    true
+}
+
 pub fn lex(input: &str) -> Vec<Token> {
     let mut lexer = TokenKind::lexer(input);
     let mut tokens = Vec::new();
@@ -270,10 +283,15 @@ pub fn lex(input: &str) -> Vec<Token> {
                 "type" if matches!(next,Some(TokenKind::DColon|TokenKind::LParen)) || matches!(previous,Some(TokenKind::KwEnd)) => Some(TokenKind::KwType),
                 "class" if matches!(next,Some(TokenKind::LParen)) => Some(TokenKind::KwClass),
                 "procedure" if matches!(next,Some(TokenKind::DColon)) || matches!(previous,Some(TokenKind::KwModule)) => Some(TokenKind::KwProcedure),
-                "interface" if matches!(previous,Some(TokenKind::KwEnd)) || matches!(next,Some(TokenKind::Ident(s)) if s.eq_ignore_ascii_case("operator")) => Some(TokenKind::KwInterface),
+                "interface" if matches!(previous,Some(TokenKind::KwEnd)) || matches!(next,Some(TokenKind::Ident(_))) => Some(TokenKind::KwInterface),
                 "operator" if matches!(next,Some(TokenKind::LParen)) => Some(TokenKind::KwOperator),
                 _=>None,
             };
+            let replacement = if !matches!(replacement, Some(TokenKind::KwOperator)) && start >= 2 && matches!(tokens[start-1].kind, TokenKind::KwInterface)
+                && matches!(tokens[start-2].kind, TokenKind::KwEnd)
+                && same_statement(&input[tokens[start-1].span.end..tokens[start].span.start]) {
+                Some(TokenKind::EndInterfaceName(n.clone()))
+            } else { replacement };
             if let Some(kind)=replacement {tokens[start].kind=kind;}
         }
         if matches!(&tokens[start].kind, TokenKind::Ident(n) if n.eq_ignore_ascii_case("error")) && matches!(tokens.get(start+1).map(|t| &t.kind), Some(TokenKind::KwStop)) { tokens[start].kind = TokenKind::KwError; }

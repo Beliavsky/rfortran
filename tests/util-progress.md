@@ -45,8 +45,25 @@ appear in PUBLIC and USE ONLY lists. Test 62 covers those uses alongside
 ordinary and continued CASE DEFAULT selectors, with output checked against
 gfortran, native code at O0/O2, and the interpreter.
 
-The full utility program still does not compile. Its next error is the named
-generic interface `interface slice_rows`. Further front-end blockers include
-user-defined dotted
+The fourth checkpoint adds named generic interfaces listing MODULE PROCEDUREs.
+Calls select a specific function or subroutine using positional argument count,
+type, kind, and rank, without inserting numeric conversions to find a match.
+Generic names can be public while their implementations remain private;
+USE ONLY, re-exporting, and extension/merging through USE are supported.
+Unmatched calls, ambiguous overloads, mixed function/subroutine interfaces,
+missing procedures, and mismatched END INTERFACE names are diagnosed.
+END INTERFACE can repeat a generic name or OPERATOR specification.
+
+Tests 63 and 64 exercise nested calls, numeric kinds, scalar/array subroutines,
+derived/character/logical arguments, and module association. Their output is
+checked against gfortran, native code at O0/O2, and the interpreter. The batch
+suite also compiles test 63 as a three-file dependency chain.
+This is not full generic-interface support: explicit interface bodies,
+keyword actual arguments, optional-argument overload selection, extension of
+intrinsic generics, and generic constructors are not implemented. Existing array/backend limits still apply,
+and specific procedure names must remain unique within a compilation.
+
+The full utility program still does not compile. Its next error is
+`integer(kind=long_int) :: mm(100,100)`. Further blockers include user-defined dotted
 operators such as `.in.` and `.exclude.`. The utility library also exercises
 features beyond the currently implemented array, character, and I/O subsets.

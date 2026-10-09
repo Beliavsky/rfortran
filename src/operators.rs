@@ -1,4 +1,4 @@
-//! Resolve module-defined intrinsic operators before derived values are flattened.
+//! Resolve module-defined operators and named generics before derived values are flattened.
 //! Selection uses the original operand types, without numeric argument conversion.
 use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec, UnOp};
 use anyhow::{bail, Result};
@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 enum Ty {
     Derived(String),
     Scalar(TypeSpec),
-    Array(Box<Ty>),
+    Array(Box<Ty>, usize),
     Unknown,
 }
 type Vars = HashMap<String, Ty>;
@@ -22,6 +22,55 @@ fn scalar(kind: &TypeSpec) -> Ty {
         TypeSpec::Character(_) => TypeSpec::Character(None),
         _ => kind.clone(),
     })
+}
+fn binary_type(op: &BinOp, left: Ty, right: Ty) -> Ty {
+    let (left, lr) = match left {
+        Ty::Array(t, r) => (*t, r),
+        t => (t, 0),
+    };
+    let (right, rr) = match right {
+        Ty::Array(t, r) => (*t, r),
+        t => (t, 0),
+    };
+    if lr != 0 && rr != 0 && lr != rr {
+        return Ty::Unknown;
+    }
+    let result = if left == Ty::Unknown || right == Ty::Unknown {
+        Ty::Unknown
+    } else if matches!(
+        op,
+        BinOp::Eq
+            | BinOp::Ne
+            | BinOp::Lt
+            | BinOp::Le
+            | BinOp::Gt
+            | BinOp::Ge
+            | BinOp::And
+            | BinOp::Or
+            | BinOp::Eqv
+            | BinOp::Neqv
+    ) {
+        scalar(&TypeSpec::Logical)
+    } else if left == scalar(&TypeSpec::DoublePrecision)
+        || right == scalar(&TypeSpec::DoublePrecision)
+    {
+        scalar(&TypeSpec::DoublePrecision)
+    } else if left == scalar(&TypeSpec::Real) || right == scalar(&TypeSpec::Real) {
+        scalar(&TypeSpec::Real)
+    } else if let (Ty::Scalar(TypeSpec::Integer(Some(a))), Ty::Scalar(TypeSpec::Integer(Some(b)))) =
+        (&left, &right)
+    {
+        scalar(&TypeSpec::Integer(Some((*a).max(*b))))
+    } else if left == right {
+        left
+    } else {
+        Ty::Unknown
+    };
+    if lr.max(rr) == 0 {
+        result
+    } else {
+        Ty::Array(Box::new(result), lr.max(rr))
+    }
 }
 fn declarations(body: &[Stmt], inherited: &Vars) -> Vars {
     let mut vars = inherited.clone();
@@ -37,8 +86,8 @@ fn declarations(body: &[Stmt], inherited: &Vars) -> Vars {
                     vars.insert(n.clone(), scalar(kind));
                 }
             }
-            Stmt::ArrayDecl { kind, name, .. } => {
-                vars.insert(name.clone(), Ty::Array(Box::new(scalar(kind))));
+            Stmt::ArrayDecl { kind, name, dims } => {
+                vars.insert(name.clone(), Ty::Array(Box::new(scalar(kind)), dims.len()));
             }
             Stmt::DerivedDecl {
                 type_name, names, ..
@@ -58,11 +107,13 @@ struct Procedure {
     args: Vec<Ty>,
     result: Ty,
     inputs: bool,
+    subroutine: bool,
 }
 #[derive(Default)]
 struct Resolver {
     procedures: HashMap<String, Procedure>,
     duplicate_procedures: HashSet<String>,
+    module_procedures: HashSet<String>,
     components: HashMap<String, Vars>,
     methods: HashMap<String, HashMap<String, String>>,
     exports: HashMap<String, Bindings>,
@@ -77,6 +128,11 @@ fn merge(target: &mut Bindings, source: &Bindings) {
             }
         }
     }
+}
+fn export_name(key: &str) -> String {
+    key.strip_prefix("generic:")
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("operator({key})"))
 }
 fn bin_name(op: &BinOp) -> &'static str {
     match op {
@@ -121,13 +177,16 @@ impl Resolver {
                     ..
                 } => {
                     let vars = declarations(body, &Vars::new());
-                    let result = return_type.as_ref().map(scalar).unwrap_or_else(|| {
+                    let result = {
                         let result_name = match body.last() {
                             Some(Stmt::Return(Some(Expr::Ident(n)))) => n,
                             _ => name,
                         };
-                        vars.get(result_name).cloned().unwrap_or(Ty::Unknown)
-                    });
+                        vars.get(result_name)
+                            .cloned()
+                            .or_else(|| return_type.as_ref().map(scalar))
+                            .unwrap_or(Ty::Unknown)
+                    };
                     let mut inputs = HashSet::new();
                     for s in body {
                         match s {
@@ -155,6 +214,7 @@ impl Resolver {
                                     .collect(),
                                 result,
                                 inputs: params.iter().all(|p| inputs.contains(p)),
+                                subroutine: false,
                             },
                         )
                         .is_some()
@@ -163,9 +223,39 @@ impl Resolver {
                     }
                     self.collect(body)?;
                 }
-                Stmt::Module { body, .. }
-                | Stmt::Subroutine { body, .. }
-                | Stmt::Block { body } => self.collect(body)?,
+                Stmt::Subroutine {
+                    name, params, body, ..
+                } => {
+                    let vars = declarations(body, &Vars::new());
+                    if self
+                        .procedures
+                        .insert(
+                            name.clone(),
+                            Procedure {
+                                args: params
+                                    .iter()
+                                    .map(|n| vars.get(n).cloned().unwrap_or(Ty::Unknown))
+                                    .collect(),
+                                result: Ty::Unknown,
+                                inputs: false,
+                                subroutine: true,
+                            },
+                        )
+                        .is_some()
+                    {
+                        self.duplicate_procedures.insert(name.clone());
+                    }
+                    self.collect(body)?;
+                }
+                Stmt::Module { body, .. } => {
+                    for s in body {
+                        if let Stmt::Function { name, .. } | Stmt::Subroutine { name, .. } = s {
+                            self.module_procedures.insert(name.clone());
+                        }
+                    }
+                    self.collect(body)?;
+                }
+                Stmt::Block { body } => self.collect(body)?,
                 _ => {}
             }
         }
@@ -174,11 +264,54 @@ impl Resolver {
     fn local_bindings(&self, body: &[Stmt]) -> Result<Bindings> {
         let mut bindings = Bindings::new();
         for s in body {
+            if let Stmt::GenericInterface {
+                name: generic,
+                procedures,
+                end_name,
+            } = s
+            {
+                if end_name.as_ref().is_some_and(|n| n != generic) {
+                    bail!("END INTERFACE name does not match `{generic}`");
+                }
+                for name in procedures {
+                    if !self.module_procedures.contains(name) {
+                        bail!("generic `{generic}` requires a defined module procedure `{name}`");
+                    }
+                    if self.duplicate_procedures.contains(name) {
+                        bail!("generic procedure `{name}` must have a unique name within this compilation");
+                    }
+                    let Some(p) = self.procedures.get(name) else {
+                        bail!("generic `{generic}` requires a defined module procedure `{name}`");
+                    };
+                    if p.args.iter().any(|a| matches!(a, Ty::Unknown))
+                        || (!p.subroutine && p.result == Ty::Unknown)
+                    {
+                        bail!("generic `{generic}` requires explicitly typed arguments and function results");
+                    }
+                    let names = bindings
+                        .entry(format!("generic:{generic}"))
+                        .or_insert_with(Vec::new);
+                    for n in names.iter() {
+                        let other = &self.procedures[n];
+                        if other.subroutine != p.subroutine {
+                            bail!("generic `{generic}` cannot mix functions and subroutines");
+                        }
+                        if other.args == p.args {
+                            bail!("ambiguous generic `{generic}`: duplicate argument types for `{name}`");
+                        }
+                    }
+                    names.push(name.clone());
+                }
+            }
             if let Stmt::OperatorInterface {
                 operator,
                 procedures,
+                end_operator,
             } = s
             {
+                if end_operator.as_ref().is_some_and(|n| n != operator) {
+                    bail!("END INTERFACE operator does not match operator({operator})");
+                }
                 for name in procedures {
                     if self.duplicate_procedures.contains(name) {
                         bail!("operator procedure `{name}` must have a unique name within this compilation");
@@ -186,18 +319,21 @@ impl Resolver {
                     let Some(p) = self.procedures.get(name) else {
                         bail!("operator({operator}) requires a defined function `{name}`");
                     };
+                    if p.subroutine {
+                        bail!("operator({operator}) requires a defined function `{name}`");
+                    }
                     let arity_ok = match operator.as_str() {
                         "+" | "-" => matches!(p.args.len(), 1 | 2),
                         ".not." => p.args.len() == 1,
                         _ => p.args.len() == 2,
                     };
-                    if !arity_ok || !p.inputs {
+                    if !arity_ok || !p.inputs || p.subroutine {
                         bail!("operator({operator}) function `{name}` must have the appropriate number of INTENT(IN) operands");
                     }
-                    if matches!(p.result, Ty::Unknown | Ty::Array(_))
+                    if matches!(p.result, Ty::Unknown | Ty::Array(..))
                         || p.args
                             .iter()
-                            .any(|a| matches!(a, Ty::Unknown | Ty::Array(_)))
+                            .any(|a| matches!(a, Ty::Unknown | Ty::Array(..)))
                     {
                         bail!("operator({operator}) function `{name}` requires explicitly typed scalar arguments and result");
                     }
@@ -222,9 +358,31 @@ impl Resolver {
         for s in body {
             if let Stmt::Use { module, only } = s {
                 if let Some(exported) = self.exports.get(module) {
-                    let selected = exported.iter().filter(|(op, _)| only.as_ref().is_none_or(|names| names.contains(&format!("operator({op})"))))
-                        .map(|(op, names)| (op.clone(), names.clone())).collect();
+                    let selected = exported
+                        .iter()
+                        .filter(|(op, _)| {
+                            only.as_ref()
+                                .is_none_or(|names| names.contains(&export_name(op)))
+                        })
+                        .map(|(op, names)| (op.clone(), names.clone()))
+                        .collect();
                     merge(&mut visible, &selected);
+                }
+            }
+        }
+        for (key, names) in &visible {
+            if let Some(generic) = key.strip_prefix("generic:") {
+                for (i, a) in names.iter().enumerate() {
+                    for b in &names[i + 1..] {
+                        let a = &self.procedures[a];
+                        let b = &self.procedures[b];
+                        if a.subroutine != b.subroutine {
+                            bail!("generic `{generic}` cannot mix functions and subroutines");
+                        }
+                        if a.args == b.args {
+                            bail!("ambiguous generic `{generic}`: duplicate argument types in associated procedures");
+                        }
+                    }
                 }
             }
         }
@@ -244,6 +402,31 @@ impl Resolver {
             [name] => Ok(Some((*name).clone())),
             [] => bail!("no matching operator({op}) for operand types {args:?}"),
             _ => bail!("ambiguous operator({op}) for operand types {args:?}"),
+        }
+    }
+    fn select_generic(
+        &self,
+        name: &str,
+        args: &[Ty],
+        subroutine: bool,
+        visible: &Bindings,
+    ) -> Result<Option<String>> {
+        let Some(candidates) = visible.get(&format!("generic:{name}")) else {
+            return Ok(None);
+        };
+        let matches: Vec<_> = candidates
+            .iter()
+            .filter(|n| {
+                let p = &self.procedures[*n];
+                p.args == args && p.subroutine == subroutine
+            })
+            .collect();
+        match matches.as_slice() {
+            [name] => Ok(Some((*name).clone())),
+            [] => bail!(
+                "no matching specific procedure for generic `{name}` with argument types {args:?}"
+            ),
+            _ => bail!("ambiguous generic `{name}` with argument types {args:?}"),
         }
     }
     fn name_type(&self, name: &str, vars: &Vars) -> Ty {
@@ -283,8 +466,16 @@ impl Resolver {
             Expr::Str(s) => scalar(&TypeSpec::Character(Some(s.len()))),
             Expr::Call(n, args) | Expr::Index(n, args) => {
                 let mut arg_types = vec![];
-                for a in args {
+                for a in args.iter_mut() {
                     arg_types.push(self.expression(a, vars, visible)?);
+                }
+                // A local array can hide a host-associated generic of the same name.
+                if let Ty::Array(element, _) = self.name_type(n, vars) {
+                    return Ok(*element);
+                }
+                if let Some(target) = self.select_generic(n, &arg_types, false, visible)? {
+                    *n = target;
+                    return Ok(self.procedures[n].result.clone());
                 }
                 if self.components.contains_key(n) {
                     Ty::Derived(n.clone())
@@ -303,16 +494,41 @@ impl Resolver {
                     }
                 } else {
                     match self.name_type(n, vars) {
-                        Ty::Array(t) => *t,
+                        Ty::Array(t, _) => *t,
                         _ => match n.as_str() {
-                            "int" | "nint" | "floor" | "ceiling" | "size" | "len" => {
-                                scalar(&TypeSpec::Integer(None))
+                            "size" | "len" => scalar(&TypeSpec::Integer(None)),
+                            "int" | "nint" | "floor" | "ceiling" | "real" | "dble" => {
+                                let kind = match args.get(1) {
+                                    None => Some(4),
+                                    Some(Expr::IntLit(k)) => k.parse::<u8>().ok(),
+                                    _ => None,
+                                };
+                                let t = match (n.as_str(), kind) {
+                                    ("dble", _) | ("real", Some(8)) => {
+                                        scalar(&TypeSpec::DoublePrecision)
+                                    }
+                                    ("real", Some(4)) => scalar(&TypeSpec::Real),
+                                    ("real", _) | (_, None) => Ty::Unknown,
+                                    (_, Some(k)) => scalar(&TypeSpec::Integer(Some(k))),
+                                };
+                                match arg_types.first() {
+                                    Some(Ty::Array(_, r)) => Ty::Array(Box::new(t), *r),
+                                    _ => t,
+                                }
                             }
-                            "real" => scalar(&TypeSpec::Real),
-                            "dble" => scalar(&TypeSpec::DoublePrecision),
                             "abs" | "mod" | "modulo" | "min" | "max" => {
                                 arg_types.first().cloned().unwrap_or(Ty::Unknown)
                             }
+                            "sum" | "product" | "minval" | "maxval" if args.len() == 1 => {
+                                match arg_types.first() {
+                                    Some(Ty::Array(t, _)) => (**t).clone(),
+                                    _ => Ty::Unknown,
+                                }
+                            }
+                            "dot_product" if args.len() == 2 => match arg_types.first() {
+                                Some(Ty::Array(t, _)) => (**t).clone(),
+                                _ => Ty::Unknown,
+                            },
                             _ if crate::intrinsics::math_arity(n).is_some() => {
                                 arg_types.first().cloned().unwrap_or(Ty::Unknown)
                             }
@@ -330,28 +546,8 @@ impl Resolver {
                     let ty = self.procedures[&name].result.clone();
                     *e = Expr::Call(name, vec![(**a).clone(), (**b).clone()]);
                     ty
-                } else if matches!(
-                    op,
-                    BinOp::Eq
-                        | BinOp::Ne
-                        | BinOp::Lt
-                        | BinOp::Le
-                        | BinOp::Gt
-                        | BinOp::Ge
-                        | BinOp::And
-                        | BinOp::Or
-                        | BinOp::Eqv
-                        | BinOp::Neqv
-                ) {
-                    scalar(&TypeSpec::Logical)
-                } else if left == scalar(&TypeSpec::DoublePrecision)
-                    || right == scalar(&TypeSpec::DoublePrecision)
-                {
-                    scalar(&TypeSpec::DoublePrecision)
-                } else if left == scalar(&TypeSpec::Real) || right == scalar(&TypeSpec::Real) {
-                    scalar(&TypeSpec::Real)
                 } else {
-                    left
+                    binary_type(op, left, right)
                 }
             }
             Expr::Un(op, a) => {
@@ -369,6 +565,7 @@ impl Resolver {
                 }
             }
             Expr::Section {
+                name,
                 lower,
                 upper,
                 stride,
@@ -377,7 +574,7 @@ impl Resolver {
                 for a in [lower, upper, stride].into_iter().flatten() {
                     self.expression(a, vars, visible)?;
                 }
-                Ty::Unknown
+                self.name_type(name, vars)
             }
         })
     }
@@ -395,9 +592,16 @@ impl Resolver {
                     }
                     self.expression(value, &vars, &visible)?;
                 }
-                Stmt::Print { items }
-                | Stmt::CallSub { args: items, .. }
-                | Stmt::Read { args: items } => {
+                Stmt::CallSub { name, args } => {
+                    let types = args
+                        .iter_mut()
+                        .map(|e| self.expression(e, &vars, &visible))
+                        .collect::<Result<Vec<_>>>()?;
+                    if let Some(target) = self.select_generic(name, &types, true, &visible)? {
+                        *name = target;
+                    }
+                }
+                Stmt::Print { items } | Stmt::Read { args: items } => {
                     for e in items {
                         self.expression(e, &vars, &visible)?;
                     }
@@ -456,12 +660,31 @@ impl Resolver {
                 _ => {}
             }
         }
-        body.retain(|s| !matches!(s, Stmt::OperatorInterface { .. }));
+        body.retain(|s| {
+            !matches!(
+                s,
+                Stmt::OperatorInterface { .. } | Stmt::GenericInterface { .. }
+            )
+        });
         Ok(())
     }
 }
 
 pub fn resolve(mut program: Program) -> Result<Program> {
+    fn has_generic(body: &[Stmt]) -> bool {
+        body.iter().any(|s| match s {
+            Stmt::GenericInterface { .. } => true,
+            Stmt::Module { body, .. }
+            | Stmt::Function { body, .. }
+            | Stmt::Subroutine { body, .. }
+            | Stmt::Block { body } => has_generic(body),
+            _ => false,
+        })
+    }
+    // Overload selection must see resolved kind parameters and literal suffixes.
+    if has_generic(&program.body) {
+        program = crate::parameters::resolve(program)?;
+    }
     let mut resolver = Resolver::default();
     resolver.collect(&program.body)?;
     // Source-order modules can re-export operators brought in by USE.
@@ -480,11 +703,7 @@ pub fn resolve(mut program: Program) -> Result<Program> {
                     }
                 }
             }
-            exports.retain(|op, _| {
-                *access
-                    .get(&format!("operator({op})"))
-                    .unwrap_or(&default_public)
-            });
+            exports.retain(|op, _| *access.get(&export_name(op)).unwrap_or(&default_public));
             resolver.exports.insert(name.clone(), exports);
         }
     }
@@ -494,6 +713,113 @@ pub fn resolve(mut program: Program) -> Result<Program> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn generic_dispatch_preserves_rank_and_local_array_shadowing() {
+        let source = "module m\ninterface g\nmodule procedure one, two\nend interface\ncontains\nsubroutine one(x)\nreal :: x(:)\nend subroutine one\nsubroutine two(x)\nreal :: x(2,2)\nend subroutine two\ninteger function local()\ninteger :: g(2)\ng=3\nlocal=g(1)\nend function local\nend module m\nuse m, only: g\nreal :: a(2),b(2,2)\ncall g(a+1.0)\ncall g(b)\nend";
+        let p = lower(source).unwrap();
+        let calls: Vec<_> = p
+            .body
+            .iter()
+            .filter_map(|s| {
+                if let crate::ast::Stmt::CallSub { name, .. } = s {
+                    Some(name.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(calls, ["one", "two"]);
+    }
+
+    #[test]
+    fn resolves_named_generic_interfaces() {
+        for source in [
+            include_str!("../tests/63_generic_interfaces.f90"),
+            include_str!("../tests/64_generic_derived.f90"),
+        ] {
+            lower(source).unwrap();
+        }
+        let source = include_str!("../tests/61_use_only_operator.f90")
+            .replace("end interface", "end interface operator(+)");
+        lower(&source).unwrap();
+        let invalid = source.replace("end interface operator(+)", "end interface operator(-)");
+        assert!(lower(&invalid)
+            .unwrap_err()
+            .to_string()
+            .contains("does not match"));
+    }
+
+    #[test]
+    fn rejects_invalid_generic_interfaces_and_calls() {
+        const BASE: &str = "module m\nprivate\npublic :: choose\ninterface choose\nmodule procedure f\nend interface choose\ncontains\ninteger function f(x)\ninteger :: x\nf=x\nend function f\nend module m\n";
+        for (source, expected) in [
+            (
+                format!("{BASE}use m, only: choose\nprint *, choose(1.0)\nend"),
+                "no matching specific",
+            ),
+            (
+                format!("{BASE}use m, only: choose\nprint *, choose(1,2)\nend"),
+                "no matching specific",
+            ),
+            (
+                format!("{BASE}use m, only: choose\ncall choose(1)\nend"),
+                "no matching specific",
+            ),
+            (
+                format!("{BASE}use m, only: choose\nprint *, f(1)\nend"),
+                "not accessible",
+            ),
+            (
+                BASE.replace("end interface choose", "end interface wrong"),
+                "does not match",
+            ),
+            (
+                BASE.replace("module procedure f", "module procedure missing"),
+                "requires a defined module procedure",
+            ),
+            (
+                BASE.replace("module procedure f", "module procedure f,f"),
+                "ambiguous generic",
+            ),
+            (
+                BASE.replace("module procedure f", "module procedure f,s")
+                    .replace(
+                        "end module m",
+                        "subroutine s(x)\ninteger :: x\nend subroutine s\nend module m",
+                    ),
+                "cannot mix functions and subroutines",
+            ),
+        ] {
+            let err = lower(&source).unwrap_err().to_string();
+            assert!(err.contains(expected), "{expected}: {err}");
+        }
+    }
+
+    #[test]
+    fn generic_imports_merge_and_report_ambiguity() {
+        let modules = "module a\ninterface g\nmodule procedure f\nend interface\ncontains\ninteger function f(x)\ninteger :: x\nf=x\nend function f\nend module a\nmodule b\ninterface g\nmodule procedure h\nend interface\ncontains\ninteger function h(x)\nreal :: x\nh=int(x)\nend function h\nend module b\n";
+        let source = format!("{modules}use a, only: g\nuse b, only: g\nprint *, g(1),g(2.0)\nend");
+        lower(&source).unwrap();
+        let ambiguous = source.replace("real :: x\nh=int(x)", "integer :: x\nh=x");
+        assert!(lower(&ambiguous)
+            .unwrap_err()
+            .to_string()
+            .contains("ambiguous generic"));
+        let unused = ambiguous.replace("print *, g(1),g(2.0)\n", "");
+        assert!(lower(&unused)
+            .unwrap_err()
+            .to_string()
+            .contains("ambiguous generic"));
+        let mixed = source.replace(
+            "integer function h(x)\nreal :: x\nh=int(x)\nend function h",
+            "subroutine h(x)\nreal :: x\nend subroutine h",
+        );
+        assert!(lower(&mixed)
+            .unwrap_err()
+            .to_string()
+            .contains("cannot mix functions and subroutines"));
+    }
+
     fn lower(src: &str) -> anyhow::Result<crate::ast::Program> {
         let p =
             crate::parser::parse_with_src(src, &crate::lexer::lex(src), "operators.f90").unwrap();

@@ -23,6 +23,9 @@ fn declared(body: &[Stmt]) -> HashSet<String> {
             | Stmt::Subroutine { name, .. } => {
                 names.insert(name.clone());
             }
+            Stmt::GenericInterface { name, .. } => {
+                names.insert(name.clone());
+            }
             Stmt::OperatorInterface { operator, .. } => {
                 names.insert(format!("operator({operator})"));
             }
@@ -54,7 +57,10 @@ fn imported(body: &[Stmt], modules: &Modules) -> Result<Symbols> {
                     continue;
                 }
                 if let Some(previous) = selected.insert(name.clone(), origin.clone()) {
-                    if previous != *origin && !name.starts_with("operator(") {
+                    if previous != *origin
+                        && !name.starts_with("operator(")
+                        && !(previous.starts_with("generic:") && origin.starts_with("generic:"))
+                    {
                         bail!("ambiguous imported name `{name}` from `{previous}` and `{origin}`");
                     }
                 }
@@ -120,7 +126,12 @@ impl Validator {
         let locals = declared(body);
         let imports = imported(body, &self.modules)?;
         for n in imports.keys() {
-            if locals.contains(n) {
+            if locals.contains(n)
+                && !(imports[n].starts_with("generic:")
+                    && body
+                        .iter()
+                        .any(|s| matches!(s, Stmt::GenericInterface { name, .. } if name == n)))
+            {
                 bail!("local declaration `{n}` conflicts with a USE-associated entity");
             }
         }
@@ -166,7 +177,8 @@ impl Validator {
                         self.name(procedure, &visible)?;
                     }
                 }
-                Stmt::OperatorInterface { procedures, .. } => {
+                Stmt::OperatorInterface { procedures, .. }
+                | Stmt::GenericInterface { procedures, .. } => {
                     for n in procedures {
                         self.name(n, &visible)?;
                     }
@@ -256,7 +268,7 @@ impl Validator {
 pub fn validate(program: &Program) -> Result<()> {
     fn has_only(body: &[Stmt]) -> bool {
         body.iter().any(|s| match s {
-            Stmt::Use { only: Some(_), .. } => true,
+            Stmt::Use { only: Some(_), .. } | Stmt::GenericInterface { .. } => true,
             Stmt::Module { body, .. }
             | Stmt::Function { body, .. }
             | Stmt::Subroutine { body, .. }
@@ -288,7 +300,13 @@ pub fn validate(program: &Program) -> Result<()> {
             validator.module_names.extend(local.iter().cloned());
             let mut symbols = imported(body, &validator.modules)?;
             for n in local {
-                symbols.insert(n.clone(), format!("{name}::{n}"));
+                let generic = body
+                    .iter()
+                    .any(|s| matches!(s, Stmt::GenericInterface { name, .. } if name == &n));
+                symbols.insert(
+                    n.clone(),
+                    format!("{}{name}::{n}", if generic { "generic:" } else { "" }),
+                );
             }
             let mut default_public = true;
             let mut access = HashMap::new();

@@ -14,6 +14,7 @@ extern {
         KW_OPERATOR => TokenKind::KwOperator,
         KW_KIND => TokenKind::KwKind,
         KW_ONLY => TokenKind::KwOnly,
+        END_INTERFACE_NAME => TokenKind::EndInterfaceName(<String>),
         DEFINED_OP => TokenKind::DefinedOperator(<String>),
         PERCENT => TokenKind::Percent,
         ARROW => TokenKind::Arrow,
@@ -224,6 +225,7 @@ OperatorProcedures: Vec<String> = {
     KW_MODULE KW_PROCEDURE <names:IdentList> => names,
     <mut names:OperatorProcedures> KW_MODULE KW_PROCEDURE <more:IdentList> => {names.extend(more);names},
 };
+EndOperator: String = { KW_OPERATOR LPAREN <op:Operator> RPAREN => op };
 
 // attribute list used in declarations, e.g. `integer, intent(in) :: a`.
 AttrList: Vec<String> = {
@@ -253,7 +255,8 @@ Stmts: Vec<Stmt> = {
 };
 
 Stmt: Stmt = {
-    KW_INTERFACE KW_OPERATOR LPAREN <operator:Operator> RPAREN <procedures:OperatorProcedures> KW_END KW_INTERFACE => Stmt::OperatorInterface { operator, procedures },
+    KW_INTERFACE <name:Ident> <procedures:OperatorProcedures> KW_END KW_INTERFACE <end_name:END_INTERFACE_NAME?> => Stmt::GenericInterface { name, procedures, end_name },
+    KW_INTERFACE KW_OPERATOR LPAREN <operator:Operator> RPAREN <procedures:OperatorProcedures> KW_END KW_INTERFACE <end_operator:EndOperator?> => Stmt::OperatorInterface { operator, procedures, end_operator },
     KW_ERROR KW_STOP <arg: RhsExpr> => Stmt::CallSub { name: "@error_stop".into(), args: vec![arg] },
     KW_ALLOCATE LPAREN <args: CallArgList> RPAREN => Stmt::CallSub { name: "@allocate".into(), args },
     KW_PRINT <fmt: STR> COMMA <items: ExprList> => { let mut args = vec![Expr::Str(fmt)]; args.extend(items); Stmt::CallSub { name: "@formatted_print".into(), args } },

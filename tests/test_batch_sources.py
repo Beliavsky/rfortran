@@ -96,6 +96,15 @@ class BatchSources(unittest.TestCase):
             path.write_text(text, encoding="utf-8")
         self.check_build(paths, "7 22 100 1.5")
 
+    def test_generic_module_chain(self):
+        source = (ROOT / "tests" / "63_generic_interfaces.f90").read_text(encoding="utf-8")
+        base, rest = source.split("end module generic_values", 1)
+        bridge, main = rest.split("end module generic_bridge", 1)
+        paths = [self.directory / name for name in ("values.f90", "bridge.f90", "main.f90")]
+        for path, text in zip(paths, [base + "end module generic_values\n", bridge + "end module generic_bridge\n", main]):
+            path.write_text(text, encoding="utf-8")
+        self.check_build(paths, "11 21.0 31.0\n 22 7\n 42 43\n 4.0 5.0 5.0\n 25.0")
+
     def test_missing_source_preserves_existing_outputs(self):
         sources = self.sources()
         exe = sources[-1].with_suffix(".exe")

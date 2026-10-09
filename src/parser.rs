@@ -144,6 +144,7 @@ fn human_token(tok: &TokenKind) -> String {
         TokenKind::KwOperator => "keyword operator".into(),
         TokenKind::KwKind => "keyword kind".into(),
         TokenKind::KwOnly => "keyword only".into(),
+        TokenKind::EndInterfaceName(n) => format!("interface name {n}"),
         TokenKind::DefinedOperator(name) => format!("defined operator {name}"),
         TokenKind::Percent => "'%'".into(),
         TokenKind::Arrow => "'=>'".into(),
