@@ -114,6 +114,15 @@ class BatchSources(unittest.TestCase):
         program.write_text(main, encoding="utf-8")
         self.check_build([kind, program], "100 30000 1000000000\n 9000000000 9000000000 18000000000 123\n 4 8 8 17\n 11 11\n 9000000001")
 
+    def test_allocatable_matrices(self):
+        source = (ROOT / "tests" / "66_allocatable_matrices.f90").read_text(encoding="utf-8")
+        module, main = source.split("end module matrix_operations", 1)
+        library = self.directory / "matrix library.f90"
+        program = self.directory / "matrix main.f90"
+        library.write_text(module + "end module matrix_operations\n", encoding="utf-8")
+        program.write_text(main, encoding="utf-8")
+        self.check_build([library, program], "6 2 3\n 11 12 21 22 31 32\n 12 13 22 23 32 33\n 32\n 31\n 8 7 56\n 1.5 2.5 1.5 1.5 7.0\n 2")
+
     def test_missing_source_preserves_existing_outputs(self):
         sources = self.sources()
         exe = sources[-1].with_suffix(".exe")

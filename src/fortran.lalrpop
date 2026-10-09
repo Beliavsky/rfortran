@@ -467,6 +467,7 @@ DimList: Vec<Expr> = {
     COLON => vec![Expr::Ident("@deferred_extent".into())],
     <e: RhsExpr> => vec![e],
     <mut v: DimList> COMMA <e: RhsExpr> => { v.push(e); v },
+    <mut v: DimList> COMMA COLON => { v.push(Expr::Ident("@deferred_extent".into())); v },
 };
 
 CaseBlocks: Vec<CaseOrDefault> = {

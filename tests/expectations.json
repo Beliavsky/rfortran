@@ -454,6 +454,20 @@
       "program_exit_code": 0,
       "program_stdout": " 100 30000 1000000000\n 9000000000 9000000000 18000000000 123\n 4 8 8 17\n 11 11\n 9000000001\n",
       "program_stderr": ""
+    },
+    "66_allocatable_matrices": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stdout": " 6 2 3\n 11 12 21 22 31 32\n 12 13 22 23 32 33\n 32\n 31\n 8 7 56\n 1.5 2.5 1.5 1.5 7.0\n 2\n",
+      "program_stderr": ""
+    },
+    "67_matrix_bounds": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 1,
+      "program_stdout": "",
+      "program_stderr": "ERROR STOP array `a` dimension 1: subscript outside 1:2\n"
     }
   }
 }

@@ -77,7 +77,27 @@ Kind-selector expressions, kind-suffixed integer literals, and nondefault-kind
 INTEGER PARAMETER values remain unsupported. Default-kind PARAMETER declarations
 can now explicitly specify kind 4.
 
-The full utility program still does not compile. Its next error is the second
-deferred dimension in `integer, allocatable :: comb_mat(:,:)`. Further blockers include user-defined dotted
+The sixth checkpoint accepts multiple deferred dimensions and lowers numeric
+multidimensional arrays with known positive extents to column-major storage.
+Local straight-line ALLOCATE, scalar fills, conforming array assignments,
+whole-array output, SIZE(array[,dim]), and whole-array assumed-shape subroutine
+arguments now work for these arrays. Dynamic scalar subscripts are checked
+per dimension; invalid constant subscripts are rejected during compilation.
+Shape mismatches and allocation rank mismatches are diagnosed before flattening.
+Test 66 exercises allocated matrices and a tensor; test 67 checks a runtime
+bounds failure that would otherwise alias another column. Native O0/O2 and
+interpreter checks cover out-of-range indices in both dimensions.
+
+This uses static storage specialization, not a runtime array descriptor ABI.
+Dynamic/zero extents, DEALLOCATE/reallocation, multidimensional sections,
+array lower bounds other than one, USE-associated multidimensional arrays,
+and procedure calls in multidimensional
+subscripts remain unsupported. Subscripts must have explicitly declared
+scalar integer types of at most 64 bits. Existing initialization diagnostics
+refer to the flattened element number. Numeric matrix elements are INTEGER
+kinds 1/2/4/8, REAL, or DOUBLE PRECISION.
+
+The full utility program still does not compile. Its next error is
+`character(len=*), parameter :: newl = achar(10), ...`. Further blockers include user-defined dotted
 operators such as `.in.` and `.exclude.`. The utility library also exercises
 features beyond the currently implemented array, character, and I/O subsets.

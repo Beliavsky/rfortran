@@ -2549,6 +2549,20 @@ pub fn analyze_with_src(
     fn walk_stmt_calls<'a>(s: &'a Stmt, called: &mut HashSet<String>) {
         match s {
             Stmt::Assign { value, .. } => walk_calls(value, called),
+            Stmt::AssignIndex { value, indices, .. } => {
+                walk_calls(value, called);
+                for e in indices { walk_calls(e, called); }
+            }
+            Stmt::Block { body } => for s in body { walk_stmt_calls(s, called); },
+            Stmt::DoWhile { cond, body } => {
+                walk_calls(cond, called);
+                for s in body { walk_stmt_calls(s, called); }
+            }
+            Stmt::SelectCase { expr, cases, default } => {
+                walk_calls(expr, called);
+                for c in cases { for s in &c.body { walk_stmt_calls(s, called); } }
+                if let Some(b)=default { for s in b { walk_stmt_calls(s, called); } }
+            }
             Stmt::Return(Some(e)) => walk_calls(e, called),
             Stmt::If {
                 cond,

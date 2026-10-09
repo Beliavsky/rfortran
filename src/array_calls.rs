@@ -29,16 +29,32 @@ fn rewrite(
             *e = Expr::Logical(!absent.contains(param));
         }
         Expr::Call(n, args) if n == "size" => {
-            let [Expr::Ident(array)] = args.as_slice() else {
+            let Some(Expr::Ident(array)) = args.first() else {
                 bail!("SIZE currently requires a whole array");
             };
             let (_, dims) = shapes
                 .get(array)
                 .context("SIZE argument must be an array")?;
-            if dims.len() != 1 {
-                bail!("SIZE currently requires a rank-one array");
+            if dims.is_empty() {
+                bail!("SIZE argument must be an array");
             }
-            *e = dims[0].clone();
+            *e = match args.as_slice() {
+                [_] => dims
+                    .iter()
+                    .cloned()
+                    .reduce(|a, b| Expr::Bin(crate::ast::BinOp::Mul, Box::new(a), Box::new(b)))
+                    .unwrap(),
+                [_, dim] => {
+                    let mut dim = dim.clone();
+                    rewrite(&mut dim, shapes, constants, absent)?;
+                    let i = crate::parameters::integer_constant(&dim)?;
+                    if i < 1 || i as usize > dims.len() {
+                        bail!("SIZE dimension must be between 1 and {}", dims.len());
+                    }
+                    dims[i as usize - 1].clone()
+                }
+                _ => bail!("SIZE expects an array and optional dimension"),
+            };
         }
         Expr::Call(_, args) | Expr::Index(_, args) => {
             for a in args {
@@ -73,12 +89,28 @@ fn specialize(
         })
         .collect();
     let mut allocated = HashSet::new();
-    let deferred: HashMap<_,_> = body.iter().filter_map(|s| match s {
-        Stmt::ArrayDecl { name, kind, dims } if matches!(dims.as_slice(), [Expr::Ident(n)] if n == "@deferred_extent") => Some((name.clone(),kind.clone())), _ => None,
-    }).collect();
+    let deferred: HashMap<_, _> = body
+        .iter()
+        .filter_map(|s| match s {
+            Stmt::ArrayDecl { name, kind, dims }
+                if dims
+                    .iter()
+                    .any(|d| matches!(d, Expr::Ident(n) if n == "@deferred_extent")) =>
+            {
+                Some((name.clone(), (kind.clone(), dims.clone())))
+            }
+            _ => None,
+        })
+        .collect();
     body.retain(|s| !matches!(s, Stmt::ArrayDecl { name, .. } if deferred.contains_key(name)));
     let mut output = Vec::new();
     for mut s in std::mem::take(body) {
+        let pending: HashSet<_> = deferred
+            .keys()
+            .filter(|n| !allocated.contains(*n))
+            .cloned()
+            .collect();
+        check_allocated(&s, &pending)?;
         match &mut s {
             Stmt::ArrayDecl { name, kind, dims } => {
                 for d in dims.iter_mut() {
@@ -102,7 +134,7 @@ fn specialize(
                     if !allocated.insert(n.clone()) {
                         bail!("repeated ALLOCATE of `{n}` without DEALLOCATE is not supported");
                     }
-                    let kind = deferred
+                    let (kind, declared_dims) = deferred
                         .get(n)
                         .context(
                             "ALLOCATE requires a local deferred-shape array declared in this scope",
@@ -111,12 +143,25 @@ fn specialize(
                     for d in dims.iter_mut() {
                         rewrite(d, shapes, constants, absent)?;
                     }
-                    if dims.len() != 1 || crate::parameters::integer_constant(&dims[0]).is_err() {
-                        bail!(
-                            "ALLOCATE currently requires a rank-one shape known at the call site"
-                        );
+                    if dims.len() != declared_dims.len() {
+                        bail!("ALLOCATE rank mismatch for `{n}`");
                     }
-                    if crate::parameters::integer_constant(&dims[0])? < 1 {
+                    if !declared_dims
+                        .iter()
+                        .all(|d| matches!(d, Expr::Ident(n) if n == "@deferred_extent"))
+                    {
+                        bail!("ALLOCATABLE array `{n}` requires all dimensions to be deferred");
+                    }
+                    if dims
+                        .iter()
+                        .any(|d| crate::parameters::integer_constant(d).is_err())
+                    {
+                        bail!("ALLOCATE currently requires a shape known at the call site");
+                    }
+                    if dims
+                        .iter()
+                        .any(|d| crate::parameters::integer_constant(d).is_ok_and(|n| n < 1))
+                    {
                         bail!("ALLOCATE currently requires a positive extent");
                     }
                     shapes.insert(n.clone(), (kind.clone(), dims.clone()));
@@ -129,20 +174,25 @@ fn specialize(
                 continue;
             }
             Stmt::Assign { name, value } => {
-                rewrite(value, shapes, constants, absent)?;
-                if stable.contains(name) && crate::parameters::integer_constant(value).is_ok() {
-                    constants.insert(name.clone(), value.clone());
+                let mut folded = value.clone();
+                rewrite(&mut folded, shapes, constants, absent)?;
+                if stable.contains(name)
+                    && shapes.get(name).is_some_and(|(_, dims)| dims.is_empty())
+                    && crate::parameters::integer_constant(&folded).is_ok()
+                {
+                    constants.insert(name.clone(), folded);
                 }
+                rewrite(value, shapes, &HashMap::new(), absent)?;
             }
             Stmt::AssignIndex { value, indices, .. } => {
-                rewrite(value, shapes, constants, absent)?;
+                rewrite(value, shapes, &HashMap::new(), absent)?;
                 for e in indices {
-                    rewrite(e, shapes, constants, absent)?;
+                    rewrite(e, shapes, &HashMap::new(), absent)?;
                 }
             }
             Stmt::CallSub { args, .. } | Stmt::Print { items: args } => {
                 for e in args {
-                    rewrite(e, shapes, constants, absent)?;
+                    rewrite(e, shapes, &HashMap::new(), absent)?;
                 }
             }
             Stmt::If {
@@ -203,6 +253,126 @@ fn specialize(
         output.push(s);
     }
     *body = output;
+    Ok(())
+}
+fn check_allocated(s: &Stmt, pending: &HashSet<String>) -> Result<()> {
+    fn name(n: &str, pending: &HashSet<String>) -> Result<()> {
+        if pending.contains(n) {
+            bail!("array `{n}` is used before ALLOCATE");
+        }
+        Ok(())
+    }
+    fn expr(e: &Expr, pending: &HashSet<String>) -> Result<()> {
+        match e {
+            Expr::Ident(n) => name(n, pending)?,
+            Expr::Call(n, args) | Expr::Index(n, args) => {
+                name(n, pending)?;
+                for a in args {
+                    expr(a, pending)?;
+                }
+            }
+            Expr::Bin(_, a, b) => {
+                expr(a, pending)?;
+                expr(b, pending)?;
+            }
+            Expr::Un(_, a) => expr(a, pending)?,
+            Expr::Section {
+                name: n,
+                lower,
+                upper,
+                stride,
+            } => {
+                name(n, pending)?;
+                for a in [lower, upper, stride].into_iter().flatten() {
+                    expr(a, pending)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+    match s {
+        Stmt::Assign { name: n, value } => {
+            name(n, pending)?;
+            expr(value, pending)?;
+        }
+        Stmt::AssignIndex {
+            name: n,
+            indices,
+            value,
+        } => {
+            name(n, pending)?;
+            for e in indices {
+                expr(e, pending)?;
+            }
+            expr(value, pending)?;
+        }
+        Stmt::CallSub { name: n, .. } if n == "@allocate" => {}
+        Stmt::CallSub { args, .. } | Stmt::Read { args } | Stmt::Print { items: args } => {
+            for e in args {
+                expr(e, pending)?;
+            }
+        }
+        Stmt::Return(Some(e)) => expr(e, pending)?,
+        Stmt::ArrayDecl { dims, .. } => {
+            for e in dims {
+                expr(e, pending)?;
+            }
+        }
+        Stmt::SelectCase {
+            expr: e,
+            cases,
+            default,
+        } => {
+            expr(e, pending)?;
+            for c in cases {
+                for s in &c.body {
+                    check_allocated(s, pending)?;
+                }
+            }
+            if let Some(b) = default {
+                for s in b {
+                    check_allocated(s, pending)?;
+                }
+            }
+        }
+        Stmt::If {
+            cond,
+            then_body,
+            else_body,
+        } => {
+            expr(cond, pending)?;
+            for s in then_body {
+                check_allocated(s, pending)?;
+            }
+            if let Some(b) = else_body {
+                for s in b {
+                    check_allocated(s, pending)?;
+                }
+            }
+        }
+        Stmt::Do {
+            start, end, body, ..
+        } => {
+            expr(start, pending)?;
+            expr(end, pending)?;
+            for s in body {
+                check_allocated(s, pending)?;
+            }
+        }
+        Stmt::DoWhile { cond, body } => {
+            expr(cond, pending)?;
+            for s in body {
+                check_allocated(s, pending)?;
+            }
+        }
+        Stmt::Block { body } => {
+            for s in body {
+                check_allocated(s, pending)?;
+            }
+        }
+        _ => {}
+    }
     Ok(())
 }
 fn stable(body: &[Stmt]) -> HashSet<String> {
@@ -280,6 +450,19 @@ fn expand(
     active: &mut Vec<String>,
     serial: &mut usize,
 ) -> Result<()> {
+    if body
+        .iter()
+        .any(|s| matches!(s, Stmt::DummyIntent { intent, .. } if intent == "allocatable"))
+    {
+        let stable = stable(body);
+        specialize(
+            body,
+            &mut inherited.clone(),
+            &HashSet::new(),
+            &mut HashMap::new(),
+            &stable,
+        )?;
+    }
     let readonly: HashSet<_> = body
         .iter()
         .filter_map(|s| match s {
@@ -378,14 +561,19 @@ fn expand(
                         };
                         let (actual_kind, actual_dims) =
                             shapes.get(a).context("undeclared array argument")?;
-                        if actual_kind != &kind || actual_dims.len() != 1 {
+                        if actual_kind != &kind || actual_dims.len() != dims.len() {
                             bail!("type or rank mismatch for `{p}`");
                         }
-                        if !matches!(dims.as_slice(),[Expr::Ident(n)] if n=="@deferred_extent") {
-                            if dims.len() != 1
-                                || crate::parameters::integer_constant(&dims[0])?
-                                    != crate::parameters::integer_constant(&actual_dims[0])?
-                            {
+                        if !dims
+                            .iter()
+                            .all(|d| matches!(d, Expr::Ident(n) if n == "@deferred_extent"))
+                        {
+                            if dims.iter().zip(actual_dims).any(|(a, b)| {
+                                crate::parameters::integer_constant(a)
+                                    .ok()
+                                    .zip(crate::parameters::integer_constant(b).ok())
+                                    .is_none_or(|(a, b)| a != b)
+                            }) {
                                 bail!("explicit-shape dummy `{p}` currently requires an exactly matching extent");
                             }
                         }
@@ -491,7 +679,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
     let mut routines = HashMap::new();
     collect(&mut p.body, &mut routines);
     expand(&mut p.body, &Shapes::new(), &routines, &mut vec![], &mut 0)?;
-    Ok(p)
+    crate::multidim::resolve(p)
 }
 
 #[cfg(test)]

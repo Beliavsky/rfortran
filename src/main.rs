@@ -20,6 +20,7 @@ mod initialized;
 mod purity;
 mod subroutines;
 mod array_calls;
+mod multidim;
 mod formatting;
 mod derived;
 mod operators;
