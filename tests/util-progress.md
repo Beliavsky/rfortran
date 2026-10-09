@@ -63,7 +63,21 @@ keyword actual arguments, optional-argument overload selection, extension of
 intrinsic generics, and generic constructors are not implemented. Existing array/backend limits still apply,
 and specific procedure names must remain unique within a compilation.
 
-The full utility program still does not compile. Its next error is
-`integer(kind=long_int) :: mm(100,100)`. Further blockers include user-defined dotted
+The fifth checkpoint adds named INTEGER kind selectors: `integer(kind=k)`
+and `integer(k)`, where `k` is an accessible integer PARAMETER. Numeric
+`integer(kind=8)` is also accepted. Selectors resolve before overload selection
+and derived-type lowering, including private selectors used by public types.
+Values outside the existing supported kinds (1, 2, 4, 8, and 16) are rejected;
+oversized numeric selectors no longer silently become default INTEGER.
+Test 65 covers imported selectors, local block selectors, function arguments
+and results, arrays, derived components, and generic dispatch. Its native
+O0/O2 and interpreter results agree with gfortran, including 64-bit values.
+The batch suite also compiles it as separate module and program files.
+Kind-selector expressions, kind-suffixed integer literals, and nondefault-kind
+INTEGER PARAMETER values remain unsupported. Default-kind PARAMETER declarations
+can now explicitly specify kind 4.
+
+The full utility program still does not compile. Its next error is the second
+deferred dimension in `integer, allocatable :: comb_mat(:,:)`. Further blockers include user-defined dotted
 operators such as `.in.` and `.exclude.`. The utility library also exercises
 features beyond the currently implemented array, character, and I/O subsets.

@@ -8,6 +8,7 @@ use crate::lexer::{Token, TokenKind};
 fn show_type(type_spec: &TypeSpec) -> String {
     match type_spec {
         TypeSpec::RealKind(kind) => format!("REAL({kind})"),
+        TypeSpec::IntegerKind(kind) => format!("INTEGER({kind})"),
         TypeSpec::Integer(None) => "INTEGER(4)".to_string(),
         TypeSpec::Integer(Some(kind)) => format!("INTEGER({})", kind),
         TypeSpec::Real => "REAL(4)".to_string(),

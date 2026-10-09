@@ -83,7 +83,7 @@ impl Validator {
         Ok(())
     }
     fn kind(&self, kind: &TypeSpec, visible: &HashSet<String>) -> Result<()> {
-        if let TypeSpec::RealKind(n) = kind {
+        if let TypeSpec::RealKind(n) | TypeSpec::IntegerKind(n) = kind {
             self.name(n, visible)?;
         }
         Ok(())

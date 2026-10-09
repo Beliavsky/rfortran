@@ -105,6 +105,15 @@ class BatchSources(unittest.TestCase):
             path.write_text(text, encoding="utf-8")
         self.check_build(paths, "11 21.0 31.0\n 22 7\n 42 43\n 4.0 5.0 5.0\n 25.0")
 
+    def test_named_integer_kinds(self):
+        source = (ROOT / "tests" / "65_named_integer_kinds.f90").read_text(encoding="utf-8")
+        module, main = source.split("end module integer_kind_values", 1)
+        kind = self.directory / "integer kinds.f90"
+        program = self.directory / "integer main.f90"
+        kind.write_text(module + "end module integer_kind_values\n", encoding="utf-8")
+        program.write_text(main, encoding="utf-8")
+        self.check_build([kind, program], "100 30000 1000000000\n 9000000000 9000000000 18000000000 123\n 4 8 8 17\n 11 11\n 9000000001")
+
     def test_missing_source_preserves_existing_outputs(self):
         sources = self.sources()
         exe = sources[-1].with_suffix(".exe")

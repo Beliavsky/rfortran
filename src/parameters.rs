@@ -10,6 +10,15 @@ fn kind_number(name: &str, constants: &Constants) -> Result<i64> {
     name.parse().or_else(|_| evaluate(&Expr::Ident(name.into()), constants))
 }
 fn resolve_kind(kind: &mut TypeSpec, constants: &Constants) -> Result<()> {
+    if let TypeSpec::IntegerKind(name) = kind {
+        let value = kind_number(name, constants)?;
+        if !matches!(value, 1 | 2 | 4 | 8 | 16) { bail!("unsupported INTEGER kind {value}; supported kinds are 1, 2, 4, 8 and 16"); }
+        *kind = TypeSpec::Integer(Some(value as u8));
+    }
+    if let TypeSpec::Integer(Some(value)) = kind {
+        if !matches!(value, 1 | 2 | 4 | 8 | 16) { bail!("unsupported INTEGER kind {value}; supported kinds are 1, 2, 4, 8 and 16"); }
+        if *value == 4 { *kind = TypeSpec::Integer(None); }
+    }
     if let TypeSpec::RealKind(name) = kind {
         *kind = match kind_number(name, constants)? {
             4 => TypeSpec::Real, 8 => TypeSpec::DoublePrecision,
@@ -182,7 +191,10 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
                 bail!("declaration initialization without PARAMETER is not yet supported");
             }
             resolve_kind(kind, &constants)?;
-            if !matches!(kind, TypeSpec::Integer(None) | TypeSpec::Real | TypeSpec::DoublePrecision) {
+            if matches!(kind, TypeSpec::Integer(Some(k)) if *k != 4) {
+                bail!("nondefault-kind INTEGER PARAMETER declarations are not yet supported");
+            }
+            if !matches!(kind, TypeSpec::Integer(None | Some(4)) | TypeSpec::Real | TypeSpec::DoublePrecision) {
                 bail!("only numeric PARAMETER declarations are currently supported");
             }
             if attributes
@@ -209,7 +221,7 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
                     array_values.insert(key, values);
                     continue;
                 }
-                let value = if matches!(kind, TypeSpec::Integer(None)) {
+                let value = if matches!(kind, TypeSpec::Integer(_)) {
                     Expr::IntLit(evaluate(&initializer, &constants).with_context(|| format!("invalid initializer for PARAMETER `{name}`"))?.to_string())
                 } else {
                     let value = real_constant(&initializer)?;
@@ -352,6 +364,24 @@ fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules) -> 
                 rewrite_expr(value, constants)?;
             }
             Stmt::VarDecl { kind, .. } => resolve_kind(kind, constants)?,
+            Stmt::DerivedType { components, .. } => {
+                // Component initializers are defaults, not PARAMETER declarations.
+                // Resolve them in their defining scope before those constants disappear.
+                for component in components {
+                    match component {
+                        Stmt::VarDecl { kind, .. } => resolve_kind(kind, constants)?,
+                        Stmt::InitializedDecl { kind, entities, .. } => {
+                            resolve_kind(kind, constants)?;
+                            for (_, value) in entities { if let Some(e) = value { rewrite_expr(e, constants)?; } }
+                        }
+                        Stmt::ArrayDecl { kind, dims, .. } => {
+                            resolve_kind(kind, constants)?;
+                            for e in dims { rewrite_expr(e, constants)?; }
+                        }
+                        _ => {}
+                    }
+                }
+            }
             Stmt::ArrayDecl { kind, dims, .. } => {
                 resolve_kind(kind, constants)?;
                 for e in dims {
@@ -445,6 +475,44 @@ fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolves_named_integer_kind_declarations() {
+        let source = include_str!("../tests/65_named_integer_kinds.f90");
+        let p = crate::parser::parse_with_src(source, &crate::lexer::lex(source), "integer-kinds.f90").unwrap();
+        let p = crate::derived::resolve(p).unwrap();
+        let p = resolve(p).unwrap();
+        assert!(!format!("{p:?}").contains("IntegerKind"));
+        for kind in [1,2,4,8,16] {
+            let p = resolve_source(&format!("integer, parameter :: k={kind}\ninteger(kind=k) :: x\ninteger(k) :: a(2)"), "x=1\na=2").unwrap();
+            let expected = TypeSpec::Integer(if kind == 4 { None } else { Some(kind) });
+            assert!(p.body.iter().any(|s| matches!(s, Stmt::VarDecl { kind, names } if *kind == expected && names == &["x"])));
+            assert!(p.body.iter().any(|s| matches!(s, Stmt::ArrayDecl { kind, .. } if *kind == expected)));
+        }
+        // A private selector belongs to the type's defining scope, not its user's.
+        // This path has no named generic to trigger early constant resolution.
+        let source = "module m\nprivate\npublic :: box\ninteger, parameter :: k=8\ntype :: box\ninteger(k) :: value=17\nend type box\nend module m\nuse m, only: box\ntype(box) :: x\nprint *, x%value\nend";
+        let p = crate::parser::parse_with_src(source, &crate::lexer::lex(source), "component-kind.f90").unwrap();
+        let p = resolve(crate::derived::resolve(p).unwrap()).unwrap();
+        assert!(!format!("{p:?}").contains("IntegerKind"));
+        assert!(p.body.iter().any(|s| matches!(s, Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), .. })));
+    }
+
+    #[test]
+    fn rejects_invalid_integer_kind_selectors() {
+        for (declarations, expected) in [
+            ("integer(kind=3) :: x", "unsupported INTEGER kind 3"),
+            ("integer(256) :: x", "unsupported INTEGER kind 256"),
+            ("integer(kind=0) :: x", "unsupported INTEGER kind 0"),
+            ("integer, parameter :: k=-1\ninteger(k) :: x", "unsupported INTEGER kind -1"),
+            ("integer(k) :: x", "not a previously defined integer PARAMETER"),
+            ("integer :: k\ninteger(kind=k) :: x", "not a previously defined integer PARAMETER"),
+            ("integer(kind=8), parameter :: x=1", "nondefault-kind INTEGER PARAMETER"),
+        ] {
+            let err = resolve_source(declarations, "").unwrap_err().to_string();
+            assert!(err.contains(expected), "{declarations}: {err}");
+        }
+    }
 
     #[test]
     fn resolves_selected_kinds_and_keyword_real_kind() {

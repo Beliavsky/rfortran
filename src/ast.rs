@@ -108,6 +108,7 @@ pub enum Stmt {
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub enum TypeSpec {
     Integer(Option<u8>),
+    IntegerKind(String),
     Real,
     RealKind(String),
     DoublePrecision,

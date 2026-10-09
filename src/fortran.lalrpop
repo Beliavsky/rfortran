@@ -337,9 +337,11 @@ TypeSpec: TypeSpec = {
     KW_REAL LPAREN <kind: Ident> RPAREN => TypeSpec::RealKind(kind),
     KW_REAL LPAREN <kind: INT> RPAREN => TypeSpec::RealKind(kind),
     KW_INTEGER => TypeSpec::Integer(None),
+    KW_INTEGER LPAREN KW_KIND EQ <kind: Ident> RPAREN => TypeSpec::IntegerKind(kind),
+    KW_INTEGER LPAREN KW_KIND EQ <kind: INT> RPAREN => TypeSpec::IntegerKind(kind),
+    KW_INTEGER LPAREN <kind: Ident> RPAREN => TypeSpec::IntegerKind(kind),
     KW_INTEGER LPAREN <k: INT> RPAREN => {
-        let kk: Option<u8> = k.parse::<u32>().ok().and_then(|v| u8::try_from(v).ok());
-        TypeSpec::Integer(kk)
+        match k.parse::<u8>() { Ok(k) => TypeSpec::Integer(Some(k)), Err(_) => TypeSpec::IntegerKind(k) }
     },
     KW_REAL => TypeSpec::Real,
     KW_DOUBLE KW_PRECISION => TypeSpec::DoublePrecision,

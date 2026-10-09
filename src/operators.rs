@@ -671,18 +671,44 @@ impl Resolver {
 }
 
 pub fn resolve(mut program: Program) -> Result<Program> {
-    fn has_generic(body: &[Stmt]) -> bool {
+    fn needs_constants(body: &[Stmt]) -> bool {
         body.iter().any(|s| match s {
             Stmt::GenericInterface { .. } => true,
+            Stmt::VarDecl {
+                kind: TypeSpec::IntegerKind(_),
+                ..
+            }
+            | Stmt::ArrayDecl {
+                kind: TypeSpec::IntegerKind(_),
+                ..
+            }
+            | Stmt::InitializedDecl {
+                kind: TypeSpec::IntegerKind(_),
+                ..
+            } => true,
+            Stmt::DerivedType { components, .. } => needs_constants(components),
             Stmt::Module { body, .. }
             | Stmt::Function { body, .. }
             | Stmt::Subroutine { body, .. }
-            | Stmt::Block { body } => has_generic(body),
+            | Stmt::Block { body }
+            | Stmt::Do { body, .. }
+            | Stmt::DoWhile { body, .. } => needs_constants(body),
+            Stmt::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                needs_constants(then_body) || else_body.as_ref().is_some_and(|b| needs_constants(b))
+            }
+            Stmt::SelectCase { cases, default, .. } => {
+                cases.iter().any(|c| needs_constants(&c.body))
+                    || default.as_ref().is_some_and(|b| needs_constants(b))
+            }
             _ => false,
         })
     }
     // Overload selection must see resolved kind parameters and literal suffixes.
-    if has_generic(&program.body) {
+    if needs_constants(&program.body) {
         program = crate::parameters::resolve(program)?;
     }
     let mut resolver = Resolver::default();

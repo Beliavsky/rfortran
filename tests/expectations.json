@@ -447,6 +447,13 @@
       "program_exit_code": 0,
       "program_stdout": " 7 8 3 1 9\n",
       "program_stderr": ""
+    },
+    "65_named_integer_kinds": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stdout": " 100 30000 1000000000\n 9000000000 9000000000 18000000000 123\n 4 8 8 17\n 11 11\n 9000000001\n",
+      "program_stderr": ""
     }
   }
 }
