@@ -39,8 +39,14 @@ users. Renaming with `=>` and empty ONLY lists are not supported yet. Backends
 still require unique module procedure/type names within a compilation;
 this change does not implement module symbol mangling or `.mod` loading.
 
-The full utility program still does not compile. Its next error is `default`
-in a PUBLIC list, because the lexer reserves that spelling as a keyword.
-Further front-end blockers include named generic interfaces and user-defined dotted
+The third checkpoint makes `default` a contextual keyword in `CASE DEFAULT`.
+It can otherwise name a variable, procedure, or derived-type component, and
+appear in PUBLIC and USE ONLY lists. Test 62 covers those uses alongside
+ordinary and continued CASE DEFAULT selectors, with output checked against
+gfortran, native code at O0/O2, and the interpreter.
+
+The full utility program still does not compile. Its next error is the named
+generic interface `interface slice_rows`. Further front-end blockers include
+user-defined dotted
 operators such as `.in.` and `.exclude.`. The utility library also exercises
 features beyond the currently implemented array, character, and I/O subsets.

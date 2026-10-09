@@ -426,6 +426,13 @@
       "program_exit_code": 0,
       "program_stdout": " 15\n",
       "program_stderr": ""
+    },
+    "62_default_identifier": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stdout": " 13 6 9\n 12\n",
+      "program_stderr": ""
     }
   }
 }

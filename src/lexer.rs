@@ -5,6 +5,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn default_is_a_keyword_only_after_case() {
+        let source = "integer :: default\ndefault=2\nselect case(default)\ncase(1); default=3\nCaSe &\n & DeFaUlT; default=4\nend select\nuse m, only: default\n";
+        let tokens = lex(source);
+        let defaults: Vec<_> = tokens.iter().filter(|t| source[t.span.clone()].eq_ignore_ascii_case("default")).collect();
+        assert_eq!(defaults.len(), 7);
+        assert_eq!(defaults.iter().filter(|t| matches!(t.kind, TokenKind::KwDefault)).count(), 1);
+        assert!(defaults.iter().filter(|t| !matches!(t.kind, TokenKind::KwDefault)).all(|t| matches!(&t.kind, TokenKind::Ident(n) if n == "default")));
+    }
+
+    #[test]
     fn fortran_character_literals_preserve_backslashes_and_double_quotes() {
         let source = r##"print *, "\", '\', "C:\new\temp\", "a""b", 'c''d', '', "", ";!&"
 print *, 7"##;
@@ -156,7 +166,7 @@ pub enum TokenKind {
     KwSelect,
     #[token("case", ignore(ascii_case))]
     KwCase,
-    #[token("default", ignore(ascii_case))]
+    // Contextual keyword in CASE DEFAULT; otherwise a valid identifier.
     KwDefault,
     #[token("block", ignore(ascii_case))]
     KwBlock,
@@ -254,6 +264,7 @@ pub fn lex(input: &str) -> Vec<Token> {
             let next=tokens.get(start+1).map(|t| &t.kind);
             let previous=start.checked_sub(1).and_then(|i| tokens.get(i)).map(|t| &t.kind);
             let replacement=match n.to_ascii_lowercase().as_str() {
+                "default" if matches!(previous,Some(TokenKind::KwCase)) => Some(TokenKind::KwDefault),
                 "only" if matches!(next,Some(TokenKind::Colon)) && start >= 3 && matches!(tokens[start-3].kind,TokenKind::KwUse) => Some(TokenKind::KwOnly),
                 "kind" if matches!(previous,Some(TokenKind::LParen)) && matches!(next,Some(TokenKind::Eq)) => Some(TokenKind::KwKind),
                 "type" if matches!(next,Some(TokenKind::DColon|TokenKind::LParen)) || matches!(previous,Some(TokenKind::KwEnd)) => Some(TokenKind::KwType),
