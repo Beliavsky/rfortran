@@ -1,8 +1,55 @@
 ﻿use logos::Logos;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fortran_character_literals_preserve_backslashes_and_double_quotes() {
+        let source = r##"print *, "\", '\', "C:\new\temp\", "a""b", 'c''d', '', "", ";!&"
+print *, 7"##;
+        let tokens = lex(source);
+        assert!(!tokens.iter().any(|t| matches!(t.kind, TokenKind::Error(_))));
+        let strings: Vec<_> = tokens.iter().filter_map(|t| if let TokenKind::Str(s) = &t.kind { Some(s.as_str()) } else { None }).collect();
+        assert_eq!(strings, ["\\", "\\", "C:\\new\\temp\\", "a\"b", "c'd", "", "", ";!&"]);
+        assert!(matches!(&tokens.last().unwrap().kind, TokenKind::Integer(n) if n=="7"));
+        for t in tokens.iter().filter(|t| matches!(t.kind, TokenKind::Str(_))) {
+            let original = &source[t.span.clone()];
+            assert_eq!(original.as_bytes().first(), original.as_bytes().last());
+        }
+    }
+
+    #[test]
+    fn separators_and_comments_preserve_following_statement_spans() {
+        let source = "i=1; i=2; ! ; not a statement\nprint *, i";
+        let tokens = lex(source);
+        assert!(!tokens.iter().any(|t| matches!(t.kind, TokenKind::Error(_))));
+        let print = tokens.iter().find(|t| matches!(t.kind, TokenKind::KwPrint)).unwrap();
+        assert_eq!(print.span.start, source.find("print").unwrap());
+        assert_eq!(tokens.iter().filter(|t| matches!(&t.kind,TokenKind::Ident(n) if n=="i")).count(),3);
+    }
+
+    #[test]
+    fn unterminated_literal_does_not_swallow_following_lines() {
+        let tokens = lex("print *, 'unterminated\nprint *, 'next'\n");
+        assert!(tokens.iter().any(|t| matches!(t.kind, TokenKind::Error(_))));
+        assert!(tokens.iter().any(|t| matches!(&t.kind, TokenKind::Str(s) if s=="next")));
+    }
+
+    #[test]
+    fn defined_operators_are_tokens_without_hiding_intrinsic_operators() {
+        let tokens = lex(".in. .NOTIN. .exclude. .true. .false. .and. .or. .not. .eq. .eqv.");
+        let kinds: Vec<_> = tokens.into_iter().map(|t| t.kind).collect();
+        assert_eq!(kinds, vec![TokenKind::DefinedOperator(".in.".into()),
+            TokenKind::DefinedOperator(".notin.".into()), TokenKind::DefinedOperator(".exclude.".into()),
+            TokenKind::True, TokenKind::False, TokenKind::And, TokenKind::Or,
+            TokenKind::Not, TokenKind::EqEq, TokenKind::Eqv]);
+    }
+}
+
 #[derive(Logos, Debug, Clone, PartialEq)]
 pub enum TokenKind {
-    #[regex(r"[ \t\r\n]+", logos::skip)]
+    #[regex(r"[ \t\r\n;]+", logos::skip)]
     _WS,
     #[regex(r"![^\n]*", logos::skip)]
     _COMMENT,
@@ -26,63 +73,17 @@ pub enum TokenKind {
     Arrow,
     #[regex(r"[A-Za-z_][A-Za-z0-9_]*", |lex| lex.slice().to_string())]
     Ident(String),
-    #[regex(r#"\"([^"\\]|\\.)*\""#, |lex| {
+    #[regex(r"\.[A-Za-z]+\.", |lex| lex.slice().to_ascii_lowercase())]
+    DefinedOperator(String),
+    // Fortran doubles the delimiter inside a character literal. Backslashes
+    // are ordinary characters, including immediately before the closing quote.
+    #[regex(r#""([^"\r\n]|"")*""#, |lex| {
         let s = lex.slice();
-        let inner = &s[1..s.len()-1];
-
-        let mut out = String::new();
-        let mut chars = inner.chars();
-        while let Some(ch) = chars.next() {
-            if ch == '\\' {
-                if let Some(next) = chars.next() {
-                    match next {
-                        'n' => out.push('\n'),
-                        't' => out.push('\t'),
-                        '\\' => out.push('\\'),
-                        '"' => out.push('"'),
-                        'r' => out.push('\r'),
-                        other => {
-                            out.push('\\');
-                            out.push(other);
-                        }
-                    }
-                } else {
-                    out.push('\\');
-                }
-            } else {
-                out.push(ch);
-            }
-        }
-        out
+        s[1..s.len()-1].replace("\"\"", "\"")
     })]
-    #[regex(r"'([^'\\]|\\.)*'", |lex| {
+    #[regex(r"'([^'\r\n]|'')*'", |lex| {
         let s = lex.slice();
-        let inner = &s[1..s.len()-1];
-
-        let mut out = String::new();
-        let mut chars = inner.chars();
-        while let Some(ch) = chars.next() {
-            if ch == '\\' {
-                if let Some(next) = chars.next() {
-                    match next {
-                        'n' => out.push('\n'),
-                        't' => out.push('\t'),
-                        '\\' => out.push('\\'),
-                        '\'' => out.push('\''),
-                        'r' => out.push('\r'),
-                        other => {
-                            out.push('\\');
-                            out.push(other);
-                        }
-                    }
-                } else {
-                    out.push('\\');
-                }
-            } else {
-                out.push(ch);
-            }
-        }
-        out
+        s[1..s.len()-1].replace("''", "'")
     })]
     Str(String),
     #[regex(r"(([0-9]+\.[0-9]*|\.[0-9]+)([eEdD][+-]?[0-9]+)?|[0-9]+[eEdD][+-]?[0-9]+)(_[A-Za-z0-9_]+)?", |lex| lex.slice().to_string())]

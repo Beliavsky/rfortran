@@ -6,5 +6,6 @@ program main
             print *, "Inside block: ", i
         end do
     end block
-    print *, "Exited block\ni: ", i
+    print *, "Exited block"
+    print *, "i: ", i
 end program main

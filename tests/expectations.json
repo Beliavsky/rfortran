@@ -117,7 +117,7 @@
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " Inside block:  1\n Inside block:  2\n Inside block:  3\n Inside block:  4\n Inside block:  5\n Inside block:  6\n Inside block:  7\n Inside block:  8\n Inside block:  9\n Inside block:  10\n Exited block\ni:  11\n"
+      "program_stdout": " Inside block:  1\n Inside block:  2\n Inside block:  3\n Inside block:  4\n Inside block:  5\n Inside block:  6\n Inside block:  7\n Inside block:  8\n Inside block:  9\n Inside block:  10\n Exited block\n i:  11\n"
     },
     "18_cycle_exit_and_stop": {
       "compiler_exit_code": 0,
@@ -404,6 +404,13 @@
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stdout": " 8 4 8 4 8 -999\n -999.0\n",
+      "program_stderr": ""
+    },
+    "59_character_literals": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stdout": " 2\n\\\n\\\nC:\\new\\temp\\\nliteral \\n \\t \\r \\\\\nHe said \"hello\".\nIt's Fortran.\n'; ! & stay in string\n\ndone\n two\n 3\n",
       "program_stderr": ""
     }
   }

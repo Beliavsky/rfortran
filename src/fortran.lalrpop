@@ -13,6 +13,7 @@ extern {
         KW_INTERFACE => TokenKind::KwInterface,
         KW_OPERATOR => TokenKind::KwOperator,
         KW_KIND => TokenKind::KwKind,
+        DEFINED_OP => TokenKind::DefinedOperator(<String>),
         PERCENT => TokenKind::Percent,
         ARROW => TokenKind::Arrow,
         LBRACKET => TokenKind::LBracket,
@@ -203,6 +204,7 @@ IdentList: Vec<String> = {
 };
 
 Operator: String = {
+    <name:DEFINED_OP> => name,
     PLUS => "+".into(), MINUS => "-".into(), STAR => "*".into(),
     SLASH => "/".into(), POW => "**".into(), CONCAT => "//".into(),
     EQEQ => "==".into(), NE => "/=".into(), LT => "<".into(), LE => "<=".into(),
