@@ -384,6 +384,20 @@
       "program_exit_code": 1,
       "program_stdout": " 1\n",
       "program_stderr": "Runtime error: read of uninitialized variable `p%second` at 54_derived_runtime_uninitialized.f90:12\n"
+    },
+    "56_derived_operators": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stdout": " Date a:\n2026-10\n Date b:\n2027-03\n a + 5:\n2027-03\n 5 + a:\n2027-03\n b - 5:\n2026-10\n b - a = 5\n a - b = -5\n a <  b: .TRUE.\n a <= b: .TRUE.\n a == b: .FALSE.\n a >= b: .FALSE.\n a >  b: .FALSE.\n 2026-01 minus 2 months:\n2025-11\n All tests passed.\n",
+      "program_stderr": ""
+    },
+    "57_derived_operator_edges": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stdout": " Operator edge tests passed.\n",
+      "program_stderr": ""
     }
   }
 }

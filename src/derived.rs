@@ -721,6 +721,7 @@ impl Lowerer {
     }
 }
 pub fn resolve(mut program: Program) -> Result<Program> {
+    program = crate::operators::resolve(program)?;
     let mut lower = Lowerer {
         types: HashMap::new(),
         procedures: HashMap::new(),

@@ -17,6 +17,8 @@ pub enum TokenKind {
     KwType,
     KwClass,
     KwProcedure,
+    KwInterface,
+    KwOperator,
     #[token("%")]
     Percent,
     #[token("=>")]
@@ -166,16 +168,22 @@ pub enum TokenKind {
     #[token("//")]
     Concat,
     #[token("==")]
+    #[token(".eq.", ignore(ascii_case))]
     EqEq,
     #[token("/=")]
+    #[token(".ne.", ignore(ascii_case))]
     Ne,
     #[token("<=")]
+    #[token(".le.", ignore(ascii_case))]
     Le,
     #[token(">=")]
+    #[token(".ge.", ignore(ascii_case))]
     Ge,
     #[token("<")]
+    #[token(".lt.", ignore(ascii_case))]
     Lt,
     #[token(">")]
+    #[token(".gt.", ignore(ascii_case))]
     Gt,
     #[token("+")]
     Plus,
@@ -245,7 +253,9 @@ pub fn lex(input: &str) -> Vec<Token> {
             let replacement=match n.to_ascii_lowercase().as_str() {
                 "type" if matches!(next,Some(TokenKind::DColon|TokenKind::LParen)) || matches!(previous,Some(TokenKind::KwEnd)) => Some(TokenKind::KwType),
                 "class" if matches!(next,Some(TokenKind::LParen)) => Some(TokenKind::KwClass),
-                "procedure" if matches!(next,Some(TokenKind::DColon)) => Some(TokenKind::KwProcedure),
+                "procedure" if matches!(next,Some(TokenKind::DColon)) || matches!(previous,Some(TokenKind::KwModule)) => Some(TokenKind::KwProcedure),
+                "interface" if matches!(previous,Some(TokenKind::KwEnd)) || matches!(next,Some(TokenKind::Ident(s)) if s.eq_ignore_ascii_case("operator")) => Some(TokenKind::KwInterface),
+                "operator" if matches!(next,Some(TokenKind::LParen)) => Some(TokenKind::KwOperator),
                 _=>None,
             };
             if let Some(kind)=replacement {tokens[start].kind=kind;}

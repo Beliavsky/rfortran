@@ -10,6 +10,8 @@ extern {
         KW_TYPE => TokenKind::KwType,
         KW_CLASS => TokenKind::KwClass,
         KW_PROCEDURE => TokenKind::KwProcedure,
+        KW_INTERFACE => TokenKind::KwInterface,
+        KW_OPERATOR => TokenKind::KwOperator,
         PERCENT => TokenKind::Percent,
         ARROW => TokenKind::Arrow,
         LBRACKET => TokenKind::LBracket,
@@ -148,6 +150,10 @@ FuncDef: Stmt = {
 };
 
 FunctionDef: Stmt = {
+    <kind: TypeSpec> KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN KW_RESULT LPAREN <result: Ident> RPAREN <mut body: Stmts> KW_END KW_FUNCTION <_endname: Ident> => {
+        body.insert(0, Stmt::VarDecl { kind, names: vec![result.clone()] });
+        crate::ast::function_with_result(name, params, result, body)
+    },
     <kind: TypeSpec> KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN <mut body: Stmts> KW_END KW_FUNCTION <_endname: Ident> => {
         body.insert(0,Stmt::VarDecl {kind:kind.clone(),names:vec![name.clone()]});
         Stmt::Function { name, params, return_type:Some(kind),body,pure:false }
@@ -195,6 +201,26 @@ IdentList: Vec<String> = {
     <mut v: IdentList> COMMA <id: Ident> => { v.push(id); v },
 };
 
+Operator: String = {
+    PLUS => "+".into(), MINUS => "-".into(), STAR => "*".into(),
+    SLASH => "/".into(), POW => "**".into(), CONCAT => "//".into(),
+    EQEQ => "==".into(), NE => "/=".into(), LT => "<".into(), LE => "<=".into(),
+    GT => ">".into(), GE => ">=".into(), AND => ".and.".into(), OR => ".or.".into(),
+    NOT => ".not.".into(), EQV => ".eqv.".into(), NEQV => ".neqv.".into(),
+};
+GenericName: String = {
+    <n:Ident> => n,
+    KW_OPERATOR LPAREN <op:Operator> RPAREN => format!("operator({op})"),
+};
+GenericNames: Vec<String> = {
+    <n:GenericName> => vec![n],
+    <mut names:GenericNames> COMMA <n:GenericName> => {names.push(n);names},
+};
+OperatorProcedures: Vec<String> = {
+    KW_MODULE KW_PROCEDURE <names:IdentList> => names,
+    <mut names:OperatorProcedures> KW_MODULE KW_PROCEDURE <more:IdentList> => {names.extend(more);names},
+};
+
 // attribute list used in declarations, e.g. `integer, intent(in) :: a`.
 AttrList: Vec<String> = {
     <mut v: AttrList> COMMA KW_PUBLIC => { v.push("public".into()); v },
@@ -223,13 +249,14 @@ Stmts: Vec<Stmt> = {
 };
 
 Stmt: Stmt = {
+    KW_INTERFACE KW_OPERATOR LPAREN <operator:Operator> RPAREN <procedures:OperatorProcedures> KW_END KW_INTERFACE => Stmt::OperatorInterface { operator, procedures },
     KW_ERROR KW_STOP <arg: RhsExpr> => Stmt::CallSub { name: "@error_stop".into(), args: vec![arg] },
     KW_ALLOCATE LPAREN <args: CallArgList> RPAREN => Stmt::CallSub { name: "@allocate".into(), args },
     KW_PRINT <fmt: STR> COMMA <items: ExprList> => { let mut args = vec![Expr::Str(fmt)]; args.extend(items); Stmt::CallSub { name: "@formatted_print".into(), args } },
     KW_PUBLIC => Stmt::Accessibility { public: true, names: vec![] },
     KW_PRIVATE => Stmt::Accessibility { public: false, names: vec![] },
-    KW_PUBLIC DCOLON <names: IdentList> => Stmt::Accessibility { public: true, names },
-    KW_PRIVATE DCOLON <names: IdentList> => Stmt::Accessibility { public: false, names },
+    KW_PUBLIC DCOLON <names: GenericNames> => Stmt::Accessibility { public: true, names },
+    KW_PRIVATE DCOLON <names: GenericNames> => Stmt::Accessibility { public: false, names },
     KW_PRINT STAR COMMA <es: ExprList> => Stmt::Print { items: es },
     KW_PRINT COMMA STAR COMMA <es: ExprList> => Stmt::Print { items: es },
     KW_PRINT LPAREN STAR COMMA <es: ExprList> RPAREN => Stmt::Print { items: es },
@@ -381,6 +408,7 @@ PowExpr: Expr = {
 
 UnaryExpr: Expr = {
     <p: Primary> => p,
+    PLUS <p: UnaryExpr> => Expr::Call("@unary_plus".into(), vec![p]),
     MINUS <p: UnaryExpr> => Expr::neg(p),
     NOT <p: UnaryExpr> => Expr::not(p),
 };

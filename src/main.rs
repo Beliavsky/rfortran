@@ -22,6 +22,7 @@ mod subroutines;
 mod array_calls;
 mod formatting;
 mod derived;
+mod operators;
 mod runtime;
 mod sema;
 mod utils;

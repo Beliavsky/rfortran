@@ -1171,6 +1171,7 @@ pub fn analyze_with_src(
                             name, params, body, ..
                         } => {
                             let lname = name.to_ascii_lowercase();
+                            module_fn_names.insert(lname.clone());
                             if fn_map.contains_key(&lname) {
                                 let span = type_span_map
                                     .get(&lname)
@@ -1593,6 +1594,21 @@ pub fn analyze_with_src(
                         );
                     }
                     Stmt::Function { .. } | Stmt::Subroutine { .. } => {}
+                    Stmt::CallSub { name, args } => {
+                        let callee = fn_map.get(&name.to_ascii_lowercase());
+                        for (index, arg) in args.iter().enumerate() {
+                            let output = callee.is_some_and(|f| {
+                                f.params.get(index).is_some_and(|p| f.body.iter().any(|s|
+                                    matches!(s, Stmt::DummyIntent { name, intent }
+                                        if name == p && intent == "intent(out)")))
+                            });
+                            if output {
+                                if let Expr::Ident(n) = arg { assigned.insert(n.to_ascii_lowercase()); }
+                            } else {
+                                walk_reads_in_expr(arg, read_vars);
+                            }
+                        }
+                    }
                     Stmt::Print { items } => {
                         for it in items {
                             walk_reads_in_expr(it, read_vars);

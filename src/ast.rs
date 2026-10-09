@@ -9,6 +9,7 @@ pub struct Program {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Stmt {
+    OperatorInterface { operator: String, procedures: Vec<String> },
     DerivedType { name: String, components: Vec<Stmt>, bindings: Vec<(String, String)> },
     DerivedDecl { type_name: String, names: Vec<String>, attributes: Vec<String>, polymorphic: bool },
     Accessibility { public: bool, names: Vec<String> },

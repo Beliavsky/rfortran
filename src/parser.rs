@@ -140,6 +140,8 @@ fn human_token(tok: &TokenKind) -> String {
         TokenKind::KwType => "keyword type".into(),
         TokenKind::KwClass => "keyword class".into(),
         TokenKind::KwProcedure => "keyword procedure".into(),
+        TokenKind::KwInterface => "keyword interface".into(),
+        TokenKind::KwOperator => "keyword operator".into(),
         TokenKind::Percent => "'%'".into(),
         TokenKind::Arrow => "'=>'".into(),
         TokenKind::_Continuation => "continuation".into(),
