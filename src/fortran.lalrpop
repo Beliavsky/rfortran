@@ -88,7 +88,13 @@ ModuleDef: Stmt = {
 };
 
 pub Program: Program = {
-    KW_END => Program { name: "main".to_string(), body: vec![] },
+    KW_END <_tail: UnnamedEndTail> <post: FuncList> => Program { name: "main".to_string(), body: post },
+    <mut body: UnnamedMainBody> KW_END <_tail: UnnamedEndTail> <post: FuncList> => {
+        body.extend(post); Program { name: "main".to_string(), body }
+    },
+    <mut body: UnnamedMainBody> KW_CONTAINS <contained: FuncList> KW_END <_tail: UnnamedEndTail> => {
+        body.extend(contained); Program { name: "main".to_string(), body }
+    },
     <pre: LeadingFuncs> KW_PROGRAM <name: Ident> <body: Stmts> KW_END <_tail: EndTail> <post: FuncList> => {
         let mut all = pre; all.extend(body); all.extend(post); Program { name, body: all }
     },
@@ -99,6 +105,19 @@ pub Program: Program = {
         let mut all = body; all.extend(funcs); Program { name, body: all }
     },
     <only: LeadingFuncs> => Program { name: "<anon>".to_string(), body: only },
+};
+
+// Share the declaration prefix with explicitly named programs and library units.
+// The following executable/specification statement or END identifies an unnamed main.
+UnnamedMainBody: Vec<Stmt> = {
+    <pre: LeadingFuncs> => pre,
+    <first: Stmt> <rest: Stmts> => { let mut body = vec![first]; body.extend(rest); body },
+    <mut pre: LeadingFuncs> <first: Stmt> <rest: Stmts> => { pre.push(first); pre.extend(rest); pre },
+};
+
+UnnamedEndTail: () = {
+    /* empty */ => (),
+    KW_PROGRAM => (),
 };
 
 FuncList: Vec<Stmt> = {

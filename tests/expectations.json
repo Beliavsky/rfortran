@@ -202,6 +202,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 20000 40000.0 60000.0\n 1 2.0 3.0\n"
+    },
+    "30_unnamed_main": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 3\n"
     }
   }
 }

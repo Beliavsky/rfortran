@@ -12,6 +12,31 @@ pub mod fortran {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn unnamed_main_programs_parse_without_changing_library_units() {
+        for source in [
+            "integer :: i\ni=3\nprint *, i\nend",
+            "implicit none\ninteger :: i\ni=3\nprint *, i\nend program",
+            "print *, 3\nend",
+            "integer :: i\nend",
+            "end program",
+            "call hello()\ncontains\nsubroutine hello()\nprint *, 3\nend subroutine hello\nend",
+            "call hello()\nend\nsubroutine hello()\nprint *, 3\nend subroutine hello",
+        ] {
+            let tokens = crate::lexer::lex(source);
+            let p = super::parse_with_src(source, &tokens, "unnamed.f90").unwrap();
+            assert_eq!(p.name, "main", "{source}");
+        }
+        for source in [
+            "subroutine hello()\nprint *, 3\nend subroutine hello",
+            "module example\ninteger :: i\nend module example",
+        ] {
+            let tokens = crate::lexer::lex(source);
+            let p = super::parse_with_src(source, &tokens, "library.f90").unwrap();
+            assert_eq!(p.name, "<anon>", "{source}");
+        }
+    }
+
+    #[test]
     fn mixed_scalar_and_array_declarations_preserve_order_and_scope() {
         use crate::ast::{Stmt, TypeSpec};
         for source in [
