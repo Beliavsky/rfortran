@@ -9,6 +9,8 @@ pub struct Program {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Stmt {
+    /// Byte offset of the following source statement; retained through AST lowering.
+    SourceLocation(usize),
     Print {
         items: Vec<Expr>,
     },
@@ -53,6 +55,8 @@ pub enum Stmt {
         body: Vec<Stmt>,
     },
     Function {
+        #[serde(default)]
+        pure: bool,
         name: String,
         params: Vec<String>,
         return_type: Option<TypeSpec>,
@@ -100,8 +104,37 @@ pub enum TypeSpec {
     Logical,
 }
 
+/// Normalize a named scalar result into explicit returns for the existing backends.
+pub fn function_with_result(name: String, params: Vec<String>, result: String, mut body: Vec<Stmt>) -> Stmt {
+    fn returns(body: &mut [Stmt], result: &str) {
+        for stmt in body {
+            match stmt {
+                Stmt::Return(value @ None) => *value = Some(Expr::Ident(result.into())),
+                Stmt::If { then_body, else_body, .. } => {
+                    returns(then_body, result);
+                    if let Some(body) = else_body { returns(body, result); }
+                }
+                Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } | Stmt::Block { body } => returns(body, result),
+                Stmt::SelectCase { cases, default, .. } => {
+                    for case in cases { returns(&mut case.body, result); }
+                    if let Some(body) = default { returns(body, result); }
+                }
+                _ => {}
+            }
+        }
+    }
+    let return_type = body.iter().find_map(|stmt| match stmt {
+        Stmt::VarDecl { kind, names } if names.contains(&result) => Some(kind.clone()),
+        Stmt::InitializedDecl { kind, entities, .. } if entities.iter().any(|(n, _)| n == &result) => Some(kind.clone()),
+        _ => None,
+    });
+    returns(&mut body, &result);
+    body.push(Stmt::Return(Some(Expr::Ident(result))));
+    Stmt::Function { name, params, return_type, body, pure: false }
+}
+
 pub fn scalar_decl(kind: TypeSpec, attributes: Vec<String>, entities: Vec<(String, Option<Expr>)>) -> Stmt {
-    if attributes.iter().any(|a| a.eq_ignore_ascii_case("parameter"))
+    if attributes.iter().any(|a| a.eq_ignore_ascii_case("parameter") || a.eq_ignore_ascii_case("save"))
         || entities.iter().any(|(_, value)| value.is_some())
     {
         Stmt::InitializedDecl { kind, attributes, entities }

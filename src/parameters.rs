@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 type Constants = HashMap<String, i64>;
 
 pub fn resolve(mut program: Program) -> Result<Program> {
+    crate::purity::validate(&program)?;
     resolve_scope(&mut program.body, &Constants::new(), &[])?;
     Ok(program)
 }

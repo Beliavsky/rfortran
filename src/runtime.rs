@@ -29,7 +29,8 @@ pub fn interpret(program: &Program) {
     let env_real64: HashMap<String, f64> = HashMap::new();
     let env_log: HashMap<String, bool> = HashMap::new();
     let mut funcs: HashMap<String, FuncDef> = HashMap::new();
-    for stmt in &program.body {
+    fn collect_functions(body: &[Stmt], funcs: &mut HashMap<String, FuncDef>) {
+    for stmt in body {
         match stmt {
             Stmt::Function {
                 name, params, body, ..
@@ -53,9 +54,12 @@ pub fn interpret(program: &Program) {
                     },
                 );
             }
+            Stmt::Module { body, .. } => collect_functions(body, funcs),
             _ => {}
         }
     }
+    }
+    collect_functions(&program.body, &mut funcs);
 
     fn parse_i64_lossy(s: &str) -> i64 {
         i128::from_str_radix(s, 10)
@@ -297,7 +301,7 @@ pub fn interpret(program: &Program) {
                             frame.env_int.insert(pn.clone(), 0);
                         }
                     }
-                    if fd.is_function {
+                    if fd.is_function && !fd.body.iter().any(|s| matches!(s, Stmt::VarDecl { names, .. } if names.contains(name))) {
                         frame.env_int.insert(name.clone(), 0);
                     }
                     call_stack.push(frame);
@@ -307,9 +311,7 @@ pub fn interpret(program: &Program) {
                         return rv;
                     }
                     if fd.is_function {
-                        if let Some(v) = frame.env_int.get(name) {
-                            return ValueTuple::from_int(*v);
-                        }
+                        return frame.result_value(name);
                     }
                     ValueTuple::from_int(0)
                 } else {
@@ -643,6 +645,14 @@ pub fn interpret(program: &Program) {
         is_function: bool,
     }
     impl CallFrame {
+        fn result_value(&self, name: &str) -> ValueTuple {
+            if let Some(v) = self.env_int.get(name) { ValueTuple::from_int(*v) }
+            else if let Some(v) = self.env_real32.get(name) { ValueTuple::from_real(*v as f64) }
+            else if let Some(v) = self.env_real64.get(name) { ValueTuple::from_real(*v) }
+            else if let Some(v) = self.env_log.get(name) { ValueTuple::from_bool(*v) }
+            else if let Some(v) = self.env_str.get(name) { ValueTuple::from_str(v.clone()) }
+            else { ValueTuple::from_int(0) }
+        }
         fn new(fd: &FuncDef, func_name: Option<String>) -> Self {
             Self {
                 env_str: HashMap::new(),
@@ -964,9 +974,7 @@ pub fn interpret(program: &Program) {
                         let fr = call_stack.last().unwrap();
                         if fr.is_function {
                             if let Some(fname) = &fr.func_name {
-                                if let Some(v) = fr.env_int.get(fname) {
-                                    return Some(ValueTuple::from_int(*v));
-                                }
+                                return Some(fr.result_value(fname));
                             }
                         }
                         return Some(ValueTuple::from_int(0));
@@ -979,7 +987,13 @@ pub fn interpret(program: &Program) {
                         let value = eval_expr(&args[0], &strings, &ints, &real32, &real64, &logs, funcs, call_stack);
                         if value.0 != Some(1) {
                             let Expr::Str(variable) = &args[1] else { unreachable!() };
-                            eprintln!("Runtime error: read of uninitialized variable `{variable}`");
+                            let location = match args.get(3) { Some(Expr::Str(location)) => format!(" at {location}"), _ => String::new() };
+                            if let Some(index) = args.get(2).filter(|e| !matches!(e, Expr::Str(_))) {
+                                let index = eval_expr(index, &strings, &ints, &real32, &real64, &logs, funcs, call_stack);
+                                eprintln!("Runtime error: read of uninitialized variable `{variable}`: element {}{location}", index.0.unwrap());
+                            } else {
+                                eprintln!("Runtime error: read of uninitialized variable `{variable}`{location}");
+                            }
                             std::process::exit(1);
                         }
                         idx += 1;
@@ -1086,6 +1100,7 @@ pub fn interpret(program: &Program) {
                 Stmt::Implicit(_) => {
                     // Implicit statements are handled during semantic analysis
                 }
+                Stmt::SourceLocation(_) => {}
                 Stmt::Block { body } => {
                     if let Some(ret) = exec_stmts(body, funcs, call_stack) {
                         return Some(ret);

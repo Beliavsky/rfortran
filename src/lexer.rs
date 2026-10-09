@@ -81,6 +81,9 @@ pub enum TokenKind {
     KwEnd,
     #[token("function", ignore(ascii_case))]
     KwFunction,
+    // Contextual keyword, assigned only after a function's parameter list.
+    KwResult,
+    KwPure,
     #[token("return", ignore(ascii_case))]
     KwReturn,
     #[token("implicit", ignore(ascii_case))]
@@ -213,6 +216,33 @@ pub fn lex(input: &str) -> Vec<Token> {
                     kind: TokenKind::Error(text),
                     span,
                 });
+            }
+        }
+    }
+    for start in 0..tokens.len() {
+        if matches!(&tokens[start].kind, TokenKind::Ident(name) if name.eq_ignore_ascii_case("pure"))
+            && matches!(tokens.get(start + 1).map(|t| &t.kind), Some(TokenKind::KwFunction)) {
+            tokens[start].kind = TokenKind::KwPure;
+        }
+        if !matches!(tokens[start].kind, TokenKind::KwFunction)
+            || !matches!(tokens.get(start + 2).map(|t| &t.kind), Some(TokenKind::LParen)) { continue; }
+        let mut depth = 0;
+        for end in start + 2..tokens.len() {
+            match tokens[end].kind {
+                TokenKind::LParen => depth += 1,
+                TokenKind::RParen => {
+                    depth -= 1;
+                    if depth == 0 {
+                        if !matches!(tokens.get(end + 2).map(|t| &t.kind), Some(TokenKind::LParen)) { break; }
+                        if let Some(token) = tokens.get_mut(end + 1) {
+                            if matches!(&token.kind, TokenKind::Ident(name) if name.eq_ignore_ascii_case("result")) {
+                                token.kind = TokenKind::KwResult;
+                            }
+                        }
+                        break;
+                    }
+                }
+                _ => {}
             }
         }
     }

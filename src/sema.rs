@@ -661,6 +661,13 @@ pub fn analyze_with_src(
             Stmt::Function { name, .. } | Stmt::Subroutine { name, .. } => {
                 fn_name_set.insert(name.to_ascii_lowercase());
             }
+            Stmt::Module { body, .. } => {
+                for member in body {
+                    if let Stmt::Function { name, .. } | Stmt::Subroutine { name, .. } = member {
+                        fn_name_set.insert(name.to_ascii_lowercase());
+                    }
+                }
+            }
             _ => {}
         }
     }

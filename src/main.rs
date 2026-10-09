@@ -17,6 +17,7 @@ mod parameters;
 mod sections;
 mod reductions;
 mod initialized;
+mod purity;
 mod runtime;
 mod sema;
 mod utils;
@@ -152,7 +153,7 @@ fn main() -> Result<()> {
                     std::process::exit(1);
                 }
             }
-            if !any_err { initialized::instrument(program)?; }
+            if !any_err { initialized::instrument_with_source(program, &src, input.file_name().and_then(|name| name.to_str()).unwrap_or("<unknown>"))?; }
             if sema_errs.is_empty() && !any_err {
                 println!("No problems found.");
             }
@@ -257,7 +258,7 @@ fn main() -> Result<()> {
             if sema_errs.iter().any(|e| matches!(e.kind, crate::errors::CompileErrorKind::Semantic)) {
                 anyhow::bail!("semantic checks failed");
             }
-            let program = initialized::instrument(program)?;
+            let program = initialized::instrument_with_source(program, &src, input.file_name().and_then(|name| name.to_str()).unwrap_or("<unknown>"))?;
             runtime::interpret(&program);
         }
         cli::Command::Link { inputs, out } => {
@@ -385,7 +386,7 @@ fn compile_to_object(
             return Err(anyhow::anyhow!("compile failed"));
         }
     }
-    let program = initialized::instrument(program)?;
+    let program = initialized::instrument_with_source(program, &src, input.file_name().and_then(|name| name.to_str()).unwrap_or("<unknown>"))?;
     let lowered = ir::lower_to_ir_with_debug(&program, args.debug_ir)?;
     let defines_modules = lowered.defines_modules.clone();
     let uses_modules = lowered.uses_modules.clone();

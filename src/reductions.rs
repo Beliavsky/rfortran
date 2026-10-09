@@ -113,6 +113,17 @@ fn lower_expr(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, seria
     Ok(())
 }
 
+fn array_valued(e: &Expr, symbols: &Symbols) -> bool {
+    match e {
+        Expr::Ident(name) => symbols.get(name).is_some_and(|(_, dims)| !dims.is_empty()),
+        Expr::Section { .. } => true,
+        Expr::Bin(_, a, b) => array_valued(a, symbols) || array_valued(b, symbols),
+        Expr::Un(_, a) => array_valued(a, symbols),
+        Expr::Call(_, args) | Expr::Index(_, args) => args.iter().any(|arg| array_valued(arg, symbols)),
+        _ => false,
+    }
+}
+
 fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> Result<()> {
     let mut symbols = inherited.clone();
     for stmt in body.iter() {
@@ -160,20 +171,29 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
             }
             _ => {}
         }
+        if let Stmt::AssignIndex { name, indices, value } = &stmt {
+            if let [section @ Expr::Section { .. }] = indices.as_slice() {
+                let (_, count, kind) = element(section, &int(1), &symbols)?;
+                if array_valued(value, &symbols) {
+                    bail!("array section assignment currently requires a scalar right-hand side");
+                }
+                *serial += 1;
+                let scalar = format!("@section_assign_value_{serial}");
+                prefix.push(Stmt::VarDecl { kind, names: vec![scalar.clone()] });
+                prefix.push(Stmt::Assign { name: scalar.clone(), value: value.clone() });
+                // Constant indices preserve definite initialization information for each element.
+                for i in 1..=count.unwrap() {
+                    let (target, _, _) = element(section, &int(i), &symbols)?;
+                    let Expr::Index(_, indices) = target else { unreachable!() };
+                    prefix.push(Stmt::AssignIndex { name: name.clone(), indices, value: Expr::Ident(scalar.clone()) });
+                }
+                stmt = Stmt::Block { body: std::mem::take(&mut prefix) };
+            }
+        }
         if let Stmt::Assign { name, value } = &stmt {
             if let Some((kind, dims)) = symbols.get(name).filter(|(_, dims)| !dims.is_empty()) {
                 if dims.len() != 1 || !numeric(kind) {
                     bail!("whole-array assignment currently requires a one-dimensional numeric array");
-                }
-                fn array_valued(e: &Expr, symbols: &Symbols) -> bool {
-                    match e {
-                        Expr::Ident(name) => symbols.get(name).is_some_and(|(_, dims)| !dims.is_empty()),
-                        Expr::Section { .. } => true,
-                        Expr::Bin(_, a, b) => array_valued(a, symbols) || array_valued(b, symbols),
-                        Expr::Un(_, a) => array_valued(a, symbols),
-                        Expr::Call(_, args) | Expr::Index(_, args) => args.iter().any(|arg| array_valued(arg, symbols)),
-                        _ => false,
-                    }
                 }
                 if array_valued(value, &symbols) {
                     bail!("whole-array assignment currently requires a scalar right-hand side");
@@ -212,6 +232,31 @@ pub fn resolve(mut program: Program) -> Result<Program> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn section_assignment_tracks_initialized_elements() {
+        for (assignment, output, valid) in [
+            ("v(1:2)=10", "v", false),
+            ("v(1:2)=10", "v(3)", false),
+            ("v(1:2)=10", "v(1:2)", true),
+            ("v(:)=10", "v", true),
+            ("v(3:1:-1)=10", "v", true),
+            ("v(::2)=10", "v(2)", false),
+            ("v(2:1)=10", "v(1)", false),
+        ] {
+            let source = format!("implicit none\ninteger :: v(3)\n{assignment}\nprint *, {output}\nend");
+            let tokens = crate::lexer::lex(&source);
+            let p = crate::parser::parse_with_src(&source, &tokens, "assignment.f90").unwrap();
+            let p = crate::sections::resolve(super::resolve(crate::parameters::resolve(p).unwrap()).unwrap()).unwrap();
+            assert_eq!(crate::initialized::instrument(p).is_ok(), valid, "{source}");
+        }
+        for assignment in ["v(::0)=10", "v(0:2)=10", "v(2:4)=10", "v(:)=v"] {
+            let source = format!("integer :: v(3)\n{assignment}\nend");
+            let tokens = crate::lexer::lex(&source);
+            let p = crate::parser::parse_with_src(&source, &tokens, "assignment.f90").unwrap();
+            assert!(super::resolve(crate::parameters::resolve(p).unwrap()).is_err(), "{source}");
+        }
+    }
+
     #[test]
     fn rejects_unsupported_array_assignment_shapes() {
         for assignment in ["a = b", "a = b + 1", "a = b(:)", "a = sqrt(b)"] {

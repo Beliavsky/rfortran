@@ -1,0 +1,132 @@
+//! Validate the side-effect restrictions of the supported PURE function subset.
+use crate::ast::{Expr, Program, Stmt};
+use anyhow::{bail, Result};
+use std::collections::{HashMap, HashSet};
+
+pub fn validate(program: &Program) -> Result<()> {
+    fn procedures(body: &[Stmt], known: &mut HashMap<String, bool>) {
+        for s in body {
+            match s {
+                Stmt::Function { name, pure, .. } => { known.insert(name.clone(), *pure); }
+                Stmt::Subroutine { name, .. } => { known.insert(name.clone(), false); }
+                Stmt::Module { body, .. } => procedures(body, known),
+                _ => {}
+            }
+        }
+    }
+    fn expression(e: &Expr, locals: &HashSet<String>, known: &HashMap<String, bool>) -> Result<()> {
+        match e {
+            Expr::Call(name, args) => {
+                let intrinsic = crate::intrinsics::math_arity(name).is_some()
+                    || matches!(name.to_ascii_lowercase().as_str(), "abs" | "int" | "real" | "dble" | "sum" | "product" | "minval" | "maxval");
+                if !locals.contains(name) && !known.get(name).copied().unwrap_or(intrinsic) {
+                    bail!("PURE function cannot call impure or unknown procedure `{name}`");
+                }
+                for arg in args { expression(arg, locals, known)?; }
+            }
+            Expr::Index(_, args) => for arg in args { expression(arg, locals, known)?; },
+            Expr::Bin(_, a, b) => { expression(a, locals, known)?; expression(b, locals, known)?; }
+            Expr::Un(_, a) => expression(a, locals, known)?,
+            Expr::Section { lower, upper, stride, .. } => {
+                for e in [lower, upper, stride].into_iter().flatten() { expression(e, locals, known)?; }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+    fn check(body: &[Stmt], inherited: &HashSet<String>, readonly: &HashSet<String>, known: &HashMap<String, bool>) -> Result<()> {
+        let mut locals = inherited.clone();
+        for stmt in body {
+            match stmt {
+                Stmt::VarDecl { names, .. } => locals.extend(names.iter().cloned()),
+                Stmt::ArrayDecl { name, .. } => { locals.insert(name.clone()); }
+                Stmt::InitializedDecl { attributes, entities, .. } => {
+                    if !attributes.iter().any(|a| a.eq_ignore_ascii_case("parameter")) {
+                        bail!("PURE function cannot have saved or declaration-initialized local variables");
+                    }
+                    locals.extend(entities.iter().map(|(name, _)| name.clone()));
+                }
+                _ => {}
+            }
+        }
+        let writable = |name: &str| -> Result<()> {
+            if readonly.contains(name) { bail!("PURE function cannot modify dummy argument `{name}`"); }
+            if !locals.contains(name) { bail!("PURE function cannot modify nonlocal variable `{name}`; declare local variables explicitly"); }
+            Ok(())
+        };
+        for stmt in body {
+            match stmt {
+                Stmt::Print { .. } | Stmt::Read { .. } => bail!("PURE function cannot perform external I/O"),
+                Stmt::CallSub { name, .. } => bail!("PURE function cannot call impure or unsupported subroutine `{name}`"),
+                Stmt::Assign { name, value } => { writable(name)?; expression(value, &locals, known)?; }
+                Stmt::AssignIndex { name, indices, value } => {
+                    writable(name)?; expression(value, &locals, known)?;
+                    for e in indices { expression(e, &locals, known)?; }
+                }
+                Stmt::Return(Some(e)) => expression(e, &locals, known)?,
+                Stmt::If { cond, then_body, else_body } => {
+                    expression(cond, &locals, known)?; check(then_body, &locals, readonly, known)?;
+                    if let Some(body) = else_body { check(body, &locals, readonly, known)?; }
+                }
+                Stmt::Do { var, start, end, body } => {
+                    writable(var)?; expression(start, &locals, known)?; expression(end, &locals, known)?;
+                    check(body, &locals, readonly, known)?;
+                }
+                Stmt::DoWhile { cond, body } => { expression(cond, &locals, known)?; check(body, &locals, readonly, known)?; }
+                Stmt::Block { body } => check(body, &locals, readonly, known)?,
+                Stmt::SelectCase { expr, cases, default } => {
+                    expression(expr, &locals, known)?;
+                    for case in cases { check(&case.body, &locals, readonly, known)?; }
+                    if let Some(body) = default { check(body, &locals, readonly, known)?; }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+    fn walk(body: &[Stmt], known: &HashMap<String, bool>) -> Result<()> {
+        for stmt in body {
+            match stmt {
+                Stmt::Function { name, pure: true, params, body, .. } => {
+                    let mut locals: HashSet<String> = params.iter().cloned().collect();
+                    locals.insert(name.clone());
+                    check(body, &locals, &params.iter().cloned().collect(), known)?;
+                }
+                Stmt::Module { body, .. } => walk(body, known)?,
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+    let mut known = HashMap::new();
+    procedures(&program.body, &mut known);
+    walk(&program.body, &known)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn validates_pure_function_side_effects() {
+        for (decl, statement, error) in [
+            ("", "print *, i\nj=i", "external I/O"),
+            ("", "read(*,*) j", "external I/O"),
+            ("", "i=3\nj=i", "dummy argument"),
+            ("", "outside=3\nj=i", "nonlocal variable"),
+            ("real :: x", "call random_number(x)\nj=i", "subroutine"),
+            ("", "j=unknown(i)", "unknown procedure"),
+            ("integer :: x=1", "j=x+i", "initialized local"),
+            ("integer, save :: x", "x=i\nj=x", "saved"),
+            ("", "j=impure(i)", "impure"),
+        ] {
+            let source = format!("pure function f(i) result(j)\ninteger, intent(in) :: i\ninteger :: j\n{decl}\n{statement}\nend function f\nfunction impure(i)\ninteger :: i,impure\nimpure=i\nend function impure");
+            let tokens = crate::lexer::lex(&source);
+            let p = crate::parser::parse_with_src(&source, &tokens, "pure.f90").unwrap();
+            let result = super::validate(&p).unwrap_err().to_string();
+            assert!(result.contains(error), "{result}");
+        }
+        let source = include_str!("../tests/40_pure_function.f90");
+        let tokens = crate::lexer::lex(source);
+        let p = crate::parser::parse_with_src(source, &tokens, "pure.f90").unwrap();
+        super::validate(&p).unwrap();
+    }
+}

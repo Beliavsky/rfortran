@@ -221,7 +221,7 @@
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 1,
-      "program_stderr": "Runtime error: read of uninitialized variable `x`\n",
+      "program_stderr": "Runtime error: read of uninitialized variable `x` at 32_runtime_uninitialized.f90:7\n",
       "program_stdout": ""
     },
     "33_uninitialized_error": {
@@ -244,6 +244,41 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 10 10 10\n 11 11 11\n 33\n 1.5 1.5 2.5 2.5\n 2 2 2\n 6 6 6\n"
+    },
+    "37_uninitialized_section": {
+      "compiler_exit_code": 1,
+      "compiler_stderr": "Error: read of uninitialized variable `v`: element 3 before assignment\n",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": ""
+    },
+    "36_section_assignment": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 10 10\n 10 10 20\n 11 10 11\n 7 7 7\n 2 7 2\n 1.5 1.5 2.5\n"
+    },
+    "38_runtime_uninitialized_element": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 1,
+      "program_stderr": "Runtime error: read of uninitialized variable `x`: element 3 at 38_runtime_uninitialized_element.f90:11\n",
+      "program_stdout": ""
+    },
+    "39_function_result": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 6 0 5 1.5 8\n"
+    },
+    "40_pure_function": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 6 12 1.5 8\n"
     }
   }
 }

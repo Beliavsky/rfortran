@@ -1892,13 +1892,11 @@ fn gen_stmts(
                     arrays,
                     tokens,
                 )?;
-                if tr {
-                    return Ok(true);
-                }
-                b.ins().jump(cont_blk, &[]);
+                if !tr { b.ins().jump(cont_blk, &[]); }
                 b.switch_to_block(else_blk);
+                let mut er = false;
                 if let Some(eb) = else_body {
-                    let er = gen_stmts(
+                    er = gen_stmts(
                         b,
                         ex,
                         ptr_ty,
@@ -1919,11 +1917,9 @@ fn gen_stmts(
                         arrays,
                         tokens,
                     )?;
-                    if er {
-                        return Ok(true);
-                    }
                 }
-                b.ins().jump(cont_blk, &[]);
+                if !er { b.ins().jump(cont_blk, &[]); }
+                if tr && er { return Ok(true); }
                 b.seal_block(cont_blk);
                 b.switch_to_block(cont_blk);
             }
@@ -2106,15 +2102,28 @@ fn gen_stmts(
                     b.ins().brif(initialized, success, &[], failure, &[]);
                     b.switch_to_block(failure); b.seal_block(failure);
                     let IExpr::Str(variable) = &args[1] else { anyhow::bail!("invalid initialization guard"); };
-                    let message = format!("Runtime error: read of uninitialized variable `{variable}`\n");
-                    let pointer = make_data(module, b, ptr_ty, dc, message.as_bytes())?;
+                    let location = match args.get(3) { Some(IExpr::Str(location)) => format!(" at {location}"), _ => String::new() };
+                    let (pointer, length) = if let Some(index) = args.get(2).filter(|e| !matches!(e, IExpr::Str(_))) {
+                        let index = eval_expr(b, ex, ptr_ty, index, ints, reals, bools, func_meta);
+                        let index = to_i64(b, index);
+                        let message = format!("Runtime error: read of uninitialized variable `{variable}`: element %lld{}\n\0", location.replace('%', "%%"));
+                        let format = make_data(module, b, ptr_ty, dc, message.as_bytes())?;
+                        // The variable name is fixed; 32 extra bytes cover any signed 64-bit index.
+                        let buffer = b.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot, (message.len() + 32) as u32, 0));
+                        let pointer = b.ins().stack_addr(ptr_ty, buffer, 0);
+                        let call = ex.call_sprintf(b, &[pointer, format, index]);
+                        (pointer, b.inst_results(call)[0])
+                    } else {
+                        let message = format!("Runtime error: read of uninitialized variable `{variable}`{location}\n");
+                        let pointer = make_data(module, b, ptr_ty, dc, message.as_bytes())?;
+                        (pointer, b.ins().iconst(types::I32, message.len() as i64))
+                    };
                     let mut sig = module.make_signature();
                     sig.params.extend([ir::AbiParam::new(types::I32), ir::AbiParam::new(ptr_ty), ir::AbiParam::new(types::I32)]);
                     sig.returns.push(ir::AbiParam::new(types::I32));
                     let id = module.declare_function("_write", Linkage::Import, &sig)?;
                     let function = module.declare_func_in_func(id, b.func);
                     let stderr = b.ins().iconst(types::I32, 2);
-                    let length = b.ins().iconst(types::I32, message.len() as i64);
                     b.ins().call(function, &[stderr, pointer, length]);
                     let mut sig = module.make_signature();
                     sig.params.push(ir::AbiParam::new(types::I32));

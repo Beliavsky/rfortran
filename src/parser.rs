@@ -12,6 +12,29 @@ pub mod fortran {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn named_results_and_result_identifiers() {
+        let source = include_str!("../tests/39_function_result.f90");
+        let tokens = crate::lexer::lex(source);
+        let program = super::parse_with_src(source, &tokens, "result.f90").unwrap();
+        let errors = crate::sema::analyze_with_src(&program, source, &tokens, "result.f90",
+            &crate::sema::SemaSettings::default(), &std::collections::HashSet::new(), false);
+        assert!(!errors.iter().any(|e| matches!(e.kind, crate::errors::CompileErrorKind::Semantic)), "{errors:?}");
+        let p = crate::parameters::resolve(program).unwrap();
+        crate::initialized::instrument(p).unwrap();
+        for source in [
+            "function result(i)\ninteger :: result,i\nresult=i\nend function result",
+            "function f(i) RESULT(j)\ninteger :: i,j\nj=i\nend function f",
+        ] {
+            let tokens = crate::lexer::lex(source);
+            super::parse_with_src(source, &tokens, "result.f90").unwrap();
+        }
+        let source = "module m\ncontains\nfunction f(i) result(j)\ninteger :: i,j\nend function f\nend module m";
+        let tokens = crate::lexer::lex(source);
+        let p = super::parse_with_src(source, &tokens, "result.f90").unwrap();
+        assert!(crate::initialized::instrument(p).unwrap_err().to_string().contains("uninitialized variable `j`"));
+    }
+
+    #[test]
     fn unnamed_main_programs_parse_without_changing_library_units() {
         for source in [
             "integer :: i\ni=3\nprint *, i\nend",
@@ -81,6 +104,8 @@ mod tests {
 fn human_expected(name: &str) -> String {
     match name {
         "KW_PROGRAM" => "keyword program".into(),
+        "KW_RESULT" => "keyword result".into(),
+        "KW_PURE" => "keyword pure".into(),
         "KW_END" => "keyword end".into(),
         "KW_IMPLICIT" => "keyword implicit".into(),
         "KW_NONE" => "keyword none".into(),
@@ -168,6 +193,8 @@ fn human_token(tok: &TokenKind) -> String {
         TokenKind::Eqv => "'.eqv.'".into(),
         TokenKind::Neqv => "'.neqv.'".into(),
         TokenKind::KwFunction => "keyword function".into(),
+        TokenKind::KwResult => "keyword result".into(),
+        TokenKind::KwPure => "keyword pure".into(),
         TokenKind::KwReturn => "keyword return".into(),
         TokenKind::KwBlock => "keyword block".into(),
         TokenKind::KwExit => "keyword exit".into(),

@@ -25,13 +25,20 @@ fn key(e: &Expr) -> Option<(&str, Option<&Expr>)> {
 fn flag(v: &Variable, index: Option<Expr>) -> Expr {
     match index { Some(i) => Expr::Index(v.flag.clone(), vec![i]), None => Expr::Ident(v.flag.clone()) }
 }
-fn guard(value: Expr, name: &str) -> Stmt {
-    Stmt::CallSub { name: "@check_initialized".into(), args: vec![value, Expr::Str(name.into())] }
+fn guard(value: Expr, name: &str, index: Option<Expr>) -> Stmt {
+    let mut args = vec![value, Expr::Str(name.into())];
+    args.extend(index);
+    Stmt::CallSub { name: "@check_initialized".into(), args }
 }
 fn constant(e: &Expr) -> Option<i64> { crate::parameters::integer_constant(e).ok() }
 
 fn check(name: &str, index: Option<&Expr>, env: &Env, out: &mut Vec<Stmt>, serial: &mut usize) -> Result<()> {
     let Some(v) = env.get(name) else { return Ok(()) };
+    if let (Some(n), None) = (v.extent, index) {
+        if let Some(i) = (1..=n).find(|i| *v.elements.get(i).unwrap_or(&v.state) == State::No) {
+            bail!("read of uninitialized variable `{name}`: element {i} before assignment");
+        }
+    }
     let state = if v.extent.is_some() {
         if v.extent == Some(0) { return Ok(()); }
         if let Some(i) = index.and_then(constant) { *v.elements.get(&i).unwrap_or(&v.state) }
@@ -45,8 +52,9 @@ fn check(name: &str, index: Option<&Expr>, env: &Env, out: &mut Vec<Stmt>, seria
                 *serial += 1;
                 let idx = format!("@init_scan_{serial}");
                 out.push(Stmt::VarDecl { kind: TypeSpec::Integer(None), names: vec![idx.clone()] });
-                out.push(Stmt::Do { var: idx.clone(), start: int(1), end: int(n), body: vec![guard(flag(v, Some(Expr::Ident(idx))), name)] });
-            } else { out.push(guard(flag(v, index.cloned()), name)); }
+                let index = Expr::Ident(idx.clone());
+                out.push(Stmt::Do { var: idx, start: int(1), end: int(n), body: vec![guard(flag(v, Some(index.clone())), name, Some(index))] });
+            } else { out.push(guard(flag(v, index.cloned()), name, index.cloned())); }
         }
     }
     Ok(())
@@ -186,7 +194,15 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
             Stmt::Block { body } => { scope(body, env, &[], None, serial)?; }
             Stmt::Function { name, params, body, .. } => { scope(body, &mut Env::new(), params, Some(name), serial)?; }
             Stmt::Subroutine { params, body, .. } => { scope(body, &mut Env::new(), params, None, serial)?; }
-            Stmt::Module { .. } => {}
+            Stmt::Module { body, .. } => {
+                for member in body {
+                    match member {
+                        Stmt::Function { name, params, body, .. } => { scope(body, &mut Env::new(), params, Some(name), serial)?; }
+                        Stmt::Subroutine { params, body, .. } => { scope(body, &mut Env::new(), params, None, serial)?; }
+                        _ => {}
+                    }
+                }
+            }
             Stmt::Return(value) => {
                 if let Some(e) = value { read(e, env, &mut before, serial)?; }
                 else if let Some(name) = result { check(name, None, env, &mut before, serial)?; }
@@ -265,8 +281,53 @@ pub fn instrument(mut program: Program) -> Result<Program> {
     Ok(program)
 }
 
+pub fn instrument_with_source(program: Program, source: &str, filename: &str) -> Result<Program> {
+    fn locate(body: &mut Vec<Stmt>, inherited: Option<usize>, source: &str, filename: &str) {
+        let mut position = inherited;
+        for stmt in body.iter_mut() {
+            match stmt {
+                Stmt::SourceLocation(offset) => position = Some(*offset),
+                Stmt::CallSub { name, args } if name == "@check_initialized" => {
+                    if let Some(offset) = position {
+                        let line = source.as_bytes()[..offset.min(source.len())].iter().filter(|&&b| b == b'\n').count() + 1;
+                        if args.len() == 2 { args.push(Expr::Str(String::new())); }
+                        args.push(Expr::Str(format!("{filename}:{line}")));
+                    }
+                }
+                Stmt::If { then_body, else_body, .. } => {
+                    locate(then_body, position, source, filename);
+                    if let Some(body) = else_body { locate(body, position, source, filename); }
+                }
+                Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } | Stmt::Block { body }
+                | Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } | Stmt::Module { body, .. } => locate(body, position, source, filename),
+                Stmt::SelectCase { cases, default, .. } => {
+                    for case in cases { locate(&mut case.body, position, source, filename); }
+                    if let Some(body) = default { locate(body, position, source, filename); }
+                }
+                _ => {}
+            }
+        }
+        body.retain(|stmt| !matches!(stmt, Stmt::SourceLocation(_)));
+    }
+    let mut program = instrument(program)?;
+    locate(&mut program.body, None, source, filename);
+    Ok(program)
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn runtime_guards_keep_original_statement_lines() {
+        let source = "! comment\nimplicit none\ninteger :: n,i,a(3),x\nread(*,*) n\ndo i=1,n\na(i)=7\nend do\nif(n>0) then\nx=7\nend if\nprint *, sum(a)\nprint *, a\nprint *, x\nblock\nprint *, sum(a)\nend block\nend";
+        let p = crate::sections::resolve(crate::reductions::resolve(crate::parameters::resolve(parse(source)).unwrap()).unwrap()).unwrap();
+        let p = super::instrument_with_source(p, source, "locations.f90").unwrap();
+        let dump = format!("{p:?}");
+        for line in [11, 12, 13, 15] {
+            assert!(dump.contains(&format!("locations.f90:{line}")), "{dump}");
+        }
+        assert!(!dump.contains("SourceLocation"), "{dump}");
+    }
+
     fn parse(source: &str) -> crate::ast::Program {
         let tokens = crate::lexer::lex(source);
         crate::parser::parse_with_src(source, &tokens, "initialization.f90").unwrap()

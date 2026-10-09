@@ -10,6 +10,8 @@ extern {
         KW_PROGRAM => TokenKind::KwProgram,
         KW_END => TokenKind::KwEnd,
         KW_FUNCTION => TokenKind::KwFunction,
+        KW_RESULT => TokenKind::KwResult,
+        KW_PURE => TokenKind::KwPure,
         KW_RETURN => TokenKind::KwReturn,
         KW_IMPLICIT => TokenKind::KwImplicit,
         KW_NONE => TokenKind::KwNone,
@@ -111,8 +113,8 @@ pub Program: Program = {
 // The following executable/specification statement or END identifies an unnamed main.
 UnnamedMainBody: Vec<Stmt> = {
     <pre: LeadingFuncs> => pre,
-    <first: Stmt> <rest: Stmts> => { let mut body = vec![first]; body.extend(rest); body },
-    <mut pre: LeadingFuncs> <first: Stmt> <rest: Stmts> => { pre.push(first); pre.extend(rest); pre },
+    <pos:@L> <first: Stmt> <rest: Stmts> => { let mut body = vec![Stmt::SourceLocation(pos), first]; body.extend(rest); body },
+    <mut pre: LeadingFuncs> <pos:@L> <first: Stmt> <rest: Stmts> => { pre.push(Stmt::SourceLocation(pos)); pre.push(first); pre.extend(rest); pre },
 };
 
 UnnamedEndTail: () = {
@@ -128,7 +130,15 @@ FuncList: Vec<Stmt> = {
 };
 
 FuncDef: Stmt = {
-    KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN <body: Stmts> KW_END KW_FUNCTION <_endname: Ident> => Stmt::Function { name, params, return_type: None, body },
+    <pure: KW_PURE?> <mut function: FunctionDef> => {
+        if let Stmt::Function { pure: flag, .. } = &mut function { *flag = pure.is_some(); }
+        function
+    },
+};
+
+FunctionDef: Stmt = {
+    KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN KW_RESULT LPAREN <result: Ident> RPAREN <body: Stmts> KW_END KW_FUNCTION <_endname: Ident> => crate::ast::function_with_result(name, params, result, body),
+    KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN <body: Stmts> KW_END KW_FUNCTION <_endname: Ident> => Stmt::Function { name, params, return_type: None, body, pure: false },
 };
 
 SubrDef: Stmt = {
@@ -168,7 +178,7 @@ DeclEntity: (String, Vec<Expr>, Option<Expr>) = {
 
 Stmts: Vec<Stmt> = {
     /* empty */ => vec![],
-    <v: Stmts> <s: Stmt> => { let mut v = v; v.push(s); v },
+    <v: Stmts> <pos:@L> <s: Stmt> => { let mut v = v; v.push(Stmt::SourceLocation(pos)); v.push(s); v },
     <mut v: Stmts> <d: PreFuncDecl> => { v.extend(d); v },
 };
 
@@ -198,6 +208,9 @@ Stmt: Stmt = {
     KW_RETURN => Stmt::Return(None),
     <name: Ident> EQ <rhs: RhsExpr> => Stmt::Assign { name, value: rhs },
     <id: Ident> LPAREN <args: CallArgList> RPAREN EQ <rhs: RhsExpr> => Stmt::AssignIndex { name: id, indices: args, value: rhs },
+    <name: Ident> LPAREN <lower: RhsExpr?> COLON <upper: RhsExpr?> RPAREN EQ <value: RhsExpr> => Stmt::AssignIndex { name: name.clone(), indices: vec![Expr::Section { name, lower: lower.map(Box::new), upper: upper.map(Box::new), stride: None }], value },
+    <name: Ident> LPAREN <lower: RhsExpr?> COLON <upper: RhsExpr?> COLON <stride: RhsExpr> RPAREN EQ <value: RhsExpr> => Stmt::AssignIndex { name: name.clone(), indices: vec![Expr::Section { name, lower: lower.map(Box::new), upper: upper.map(Box::new), stride: Some(Box::new(stride)) }], value },
+    <name: Ident> LPAREN <lower: RhsExpr?> DCOLON <stride: RhsExpr> RPAREN EQ <value: RhsExpr> => Stmt::AssignIndex { name: name.clone(), indices: vec![Expr::Section { name, lower: lower.map(Box::new), upper: None, stride: Some(Box::new(stride)) }], value },
     KW_USE <m: Ident> => Stmt::Use { module: m },
     KW_IMPLICIT KW_NONE => Stmt::Implicit(Implicit::None),
     KW_IMPLICIT <rules: ImplicitRuleList> => {

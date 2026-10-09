@@ -1953,7 +1953,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                     name,
                     params,
                     return_type: rt,
-                    body,
+                    body, ..
                 } => {
                     let mut f_body: Vec<IStmt> = Vec::new();
 
@@ -2081,7 +2081,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                                 name,
                                 params,
                                 return_type: rt,
-                                body,
+                                body, ..
                             } => {
                                 let mut f_body: Vec<IStmt> = Vec::new();
                                 let mut fn_types: std::collections::HashMap<
@@ -2095,16 +2095,6 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                                     external_ret,
                                     &mut fn_types,
                                 );
-                                if !params.is_empty() {
-                                    let param_set: std::collections::HashSet<_> =
-                                        params.iter().cloned().collect();
-                                    f_body.retain(|st| match st {
-                                        IStmt::DeclVar(_, var, _) if param_set.contains(var) => {
-                                            false
-                                        }
-                                        _ => true,
-                                    });
-                                }
                                 let eff_rt = if rt.is_none() {
                                     external_ret.get(name).cloned()
                                 } else {
@@ -2179,6 +2169,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                     new_stmts.push(IStmt::Cycle);
                 }
                 Stmt::InitializedDecl { .. } => unreachable!("initialized declarations must be resolved before lowering"),
+                Stmt::SourceLocation(_) => {}
             }
 
             out.extend(new_stmts);
@@ -2192,7 +2183,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
             name,
             params,
             return_type: rt,
-            body,
+            body, ..
         } = s
         {
             let mut f_body: Vec<IStmt> = Vec::new();
