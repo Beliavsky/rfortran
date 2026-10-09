@@ -181,6 +181,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 10.0 20.0 30.0 40.0 50.0 60.0 70.0\n 1 2 3 4\n"
+    },
+    "27_array_sections": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 10.0 20.0 30.0\n 20.0 30.0\n 10.0 20.0\n 10.0 20.0 30.0\n 20.0\n 10.0 30.0\n\n 30.0 20.0 10.0\n 30.0 10.0\n emptyend\n\n mixed 10.0 99 2 3\n"
     }
   }
 }

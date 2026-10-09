@@ -63,6 +63,10 @@ fn evaluate(expr: &Expr, constants: &Constants) -> Result<i64> {
     value.context("integer overflow in PARAMETER initializer")
 }
 
+pub(crate) fn integer_constant(expr: &Expr) -> Result<i64> {
+    evaluate(expr, &Constants::new())
+}
+
 fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[String]) -> Result<()> {
     let mut constants = inherited.clone();
     let mut locals: HashSet<String> = arguments.iter().map(|s| s.to_ascii_lowercase()).collect();
@@ -137,6 +141,10 @@ fn variable(name: &str, constants: &Constants) -> Result<()> {
 
 fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
     match expr {
+        Expr::Section { name, lower, upper, stride } => {
+            if constants.contains_key(&name.to_ascii_lowercase()) { bail!("PARAMETER `{name}` is not an array"); }
+            for bound in [lower, upper, stride].into_iter().flatten() { rewrite_expr(bound, constants)?; }
+        }
         Expr::Ident(name) => {
             if let Some(value) = constants.get(&name.to_ascii_lowercase()) {
                 *expr = Expr::IntLit(value.to_string());

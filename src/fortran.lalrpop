@@ -305,6 +305,9 @@ UnaryExpr: Expr = {
 };
 
 Primary: Expr = {
+    <name: Ident> LPAREN <lower: RhsExpr?> COLON <upper: RhsExpr?> RPAREN => Expr::Section { name, lower: lower.map(Box::new), upper: upper.map(Box::new), stride: None },
+    <name: Ident> LPAREN <lower: RhsExpr?> COLON <upper: RhsExpr?> COLON <stride: RhsExpr> RPAREN => Expr::Section { name, lower: lower.map(Box::new), upper: upper.map(Box::new), stride: Some(Box::new(stride)) },
+    <name: Ident> LPAREN <lower: RhsExpr?> DCOLON <stride: RhsExpr> RPAREN => Expr::Section { name, lower: lower.map(Box::new), upper: None, stride: Some(Box::new(stride)) },
     <n: INT> => Expr::IntLit(n),
     <f: FLOAT> => Expr::RealLit(f),
     <s: STR> => Expr::Str(s),

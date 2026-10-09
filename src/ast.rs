@@ -180,6 +180,12 @@ pub enum UnOp {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Expr {
+    Section {
+        name: String,
+        lower: Option<Box<Expr>>,
+        upper: Option<Box<Expr>>,
+        stride: Option<Box<Expr>>,
+    },
     Str(String),
     IntLit(String),
     RealLit(String),

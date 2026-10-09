@@ -101,6 +101,7 @@ pub fn interpret(program: &Program) {
         call_stack: &mut Vec<CallFrame>,
     ) -> ValueTuple {
         match e {
+            Expr::Section { .. } => unreachable!("array sections must be resolved before interpretation"),
             Expr::IntLit(s) => ValueTuple::from_int(parse_i64_lossy(s)),
             Expr::RealLit(s) => ValueTuple::from_real(parse_f64_lossy(s)),
             Expr::Logical(b) => ValueTuple::from_bool(*b),

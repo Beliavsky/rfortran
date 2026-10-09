@@ -698,7 +698,7 @@ pub fn analyze_with_src(
             Expr::Ident(id) => {
                 out.insert(id.to_ascii_lowercase());
             }
-            Expr::Call(name, args) => {
+            Expr::Call(name, args) | Expr::Index(name, args) => {
                 out.insert(name.to_ascii_lowercase());
                 for a in args {
                     walk_reads_for_program(a, out);
@@ -1208,7 +1208,7 @@ pub fn analyze_with_src(
             Expr::Logical(_) => Some(TypeSpec::Logical),
             Expr::Str(_) => Some(TypeSpec::Character(None)),
             Expr::Ident(id) => sym.get(&id.to_ascii_lowercase()).cloned(),
-            Expr::Index(name, _inds) => sym.get(&name.to_ascii_lowercase()).cloned(),
+            Expr::Index(name, _) | Expr::Section { name, .. } => sym.get(&name.to_ascii_lowercase()).cloned(),
             Expr::Un(_, inner) => infer_expr_type(inner, sym, fn_map, external_fn_ret),
             Expr::Bin(op, l, r) => {
                 use crate::ast::BinOp::*;

@@ -1785,6 +1785,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
         types: &std::collections::HashMap<String, crate::ast::TypeSpec>,
     ) -> IExpr {
         match e {
+            Expr::Section { .. } => unreachable!("array sections must be resolved before lowering"),
             Expr::Str(s) => IExpr::Str(s.clone()),
             Expr::IntLit(s) => IExpr::IntLit(s.clone()),
             Expr::RealLit(s) => IExpr::RealLit(s.clone()),
