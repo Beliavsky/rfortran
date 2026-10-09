@@ -2098,6 +2098,34 @@ fn gen_stmts(
                 b.switch_to_block(after_blk);
             }
             IStmt::Call(name, args) => {
+                if name == "@check_initialized" {
+                    let value = eval_expr(b, ex, ptr_ty, &args[0], ints, reals, bools, func_meta);
+                    let initialized = to_bool(b, value);
+                    let success = b.create_block();
+                    let failure = b.create_block();
+                    b.ins().brif(initialized, success, &[], failure, &[]);
+                    b.switch_to_block(failure); b.seal_block(failure);
+                    let IExpr::Str(variable) = &args[1] else { anyhow::bail!("invalid initialization guard"); };
+                    let message = format!("Runtime error: read of uninitialized variable `{variable}`\n");
+                    let pointer = make_data(module, b, ptr_ty, dc, message.as_bytes())?;
+                    let mut sig = module.make_signature();
+                    sig.params.extend([ir::AbiParam::new(types::I32), ir::AbiParam::new(ptr_ty), ir::AbiParam::new(types::I32)]);
+                    sig.returns.push(ir::AbiParam::new(types::I32));
+                    let id = module.declare_function("_write", Linkage::Import, &sig)?;
+                    let function = module.declare_func_in_func(id, b.func);
+                    let stderr = b.ins().iconst(types::I32, 2);
+                    let length = b.ins().iconst(types::I32, message.len() as i64);
+                    b.ins().call(function, &[stderr, pointer, length]);
+                    let mut sig = module.make_signature();
+                    sig.params.push(ir::AbiParam::new(types::I32));
+                    let id = module.declare_function("exit", Linkage::Import, &sig)?;
+                    let function = module.declare_func_in_func(id, b.func);
+                    let code = b.ins().iconst(types::I32, 1);
+                    b.ins().call(function, &[code]);
+                    b.ins().trap(ir::TrapCode::unwrap_user(1));
+                    b.switch_to_block(success); b.seal_block(success);
+                    continue;
+                }
                 if name.eq_ignore_ascii_case("random_number") && !func_meta.contains_key(name) {
                     let (id, indices) = match &args[0] {
                         IExpr::Ident(id) => (id, None),
@@ -2737,6 +2765,7 @@ impl Backend for CraneliftBackend {
             func_ids.insert(f.name.clone(), fid);
         }
         for (name, arity) in &import_arity {
+            if name == "@check_initialized" { continue; }
             if name.eq_ignore_ascii_case("random_number") { continue; }
             if let Some(arity) = crate::intrinsics::math_arity(name) {
                 if !func_ids.contains_key(name) {

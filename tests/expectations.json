@@ -209,6 +209,41 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 3\n"
+    },
+    "31_initialization_checks": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 42\n 9\n 10 20\n 7\n"
+    },
+    "32_runtime_uninitialized": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 1,
+      "program_stderr": "Runtime error: read of uninitialized variable `x`\n",
+      "program_stdout": ""
+    },
+    "33_uninitialized_error": {
+      "compiler_exit_code": 1,
+      "compiler_stderr": "Error: read of uninitialized variable `i` before assignment\n",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": ""
+    },
+    "34_array_accumulator": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 0\n 5\n"
+    },
+    "35_scalar_array_assignment": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 10 10 10\n 11 11 11\n 33\n 1.5 1.5 2.5 2.5\n 2 2 2\n 6 6 6\n"
     }
   }
 }

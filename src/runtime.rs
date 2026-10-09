@@ -903,6 +903,8 @@ pub fn interpret(program: &Program) {
                         break;
                     }
                     if let Some(ret) = exec_stmts(body, funcs, call_stack) {
+                        if ret.0 == Some(1) { break; }
+                        if ret.0 == Some(2) { continue; }
                         return Some(ret);
                     }
                 },
@@ -971,6 +973,18 @@ pub fn interpret(program: &Program) {
                     }
                 }
                 Stmt::CallSub { name, args } => {
+                    if name == "@check_initialized" {
+                        let fr = call_stack.last().unwrap();
+                        let (strings, ints, real32, real64, logs) = (fr.env_str.clone(), fr.env_int.clone(), fr.env_real32.clone(), fr.env_real64.clone(), fr.env_log.clone());
+                        let value = eval_expr(&args[0], &strings, &ints, &real32, &real64, &logs, funcs, call_stack);
+                        if value.0 != Some(1) {
+                            let Expr::Str(variable) = &args[1] else { unreachable!() };
+                            eprintln!("Runtime error: read of uninitialized variable `{variable}`");
+                            std::process::exit(1);
+                        }
+                        idx += 1;
+                        continue;
+                    }
                     if name.eq_ignore_ascii_case("random_number") && !funcs.contains_key(name) {
                         let (id, index) = match &args[0] {
                             Expr::Ident(id) => (id, None),

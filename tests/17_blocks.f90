@@ -1,7 +1,7 @@
 program main
     implicit none
+    integer :: i
     block
-        integer :: i
         do i = 1, 10
             print *, "Inside block: ", i
         end do

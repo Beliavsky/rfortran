@@ -1,4 +1,4 @@
-//! Lower rank-one numeric reductions to scalar accumulator loops.
+//! Lower rank-one numeric reductions and scalar array assignments to loops.
 use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec, UnOp};
 use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
@@ -160,6 +160,44 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
             }
             _ => {}
         }
+        if let Stmt::Assign { name, value } = &stmt {
+            if let Some((kind, dims)) = symbols.get(name).filter(|(_, dims)| !dims.is_empty()) {
+                if dims.len() != 1 || !numeric(kind) {
+                    bail!("whole-array assignment currently requires a one-dimensional numeric array");
+                }
+                fn array_valued(e: &Expr, symbols: &Symbols) -> bool {
+                    match e {
+                        Expr::Ident(name) => symbols.get(name).is_some_and(|(_, dims)| !dims.is_empty()),
+                        Expr::Section { .. } => true,
+                        Expr::Bin(_, a, b) => array_valued(a, symbols) || array_valued(b, symbols),
+                        Expr::Un(_, a) => array_valued(a, symbols),
+                        Expr::Call(_, args) | Expr::Index(_, args) => args.iter().any(|arg| array_valued(arg, symbols)),
+                        _ => false,
+                    }
+                }
+                if array_valued(value, &symbols) {
+                    bail!("whole-array assignment currently requires a scalar right-hand side");
+                }
+                let extent = constant(&dims[0])?;
+                if extent < 0 { bail!("negative array extent is not supported"); }
+                *serial += 1;
+                let index = format!("@array_assign_index_{serial}");
+                let scalar = format!("@array_assign_value_{serial}");
+                prefix.push(Stmt::VarDecl { kind: TypeSpec::Integer(None), names: vec![index.clone()] });
+                prefix.push(Stmt::VarDecl { kind: kind.clone(), names: vec![scalar.clone()] });
+                // Capture before writing any elements, including when the RHS reads this array.
+                prefix.push(Stmt::Assign { name: scalar.clone(), value: value.clone() });
+                stmt = Stmt::Do {
+                    var: index.clone(), start: int(1), end: int(extent),
+                    body: vec![Stmt::AssignIndex {
+                        name: name.clone(), indices: vec![Expr::Ident(index)], value: Expr::Ident(scalar),
+                    }],
+                };
+                // Give generated temporaries a declaration scope even inside a loop or IF.
+                prefix.push(stmt);
+                stmt = Stmt::Block { body: std::mem::take(&mut prefix) };
+            }
+        }
         output.extend(prefix);
         output.push(stmt);
     }
@@ -174,6 +212,17 @@ pub fn resolve(mut program: Program) -> Result<Program> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn rejects_unsupported_array_assignment_shapes() {
+        for assignment in ["a = b", "a = b + 1", "a = b(:)", "a = sqrt(b)"] {
+            let source = format!("implicit none\nreal :: a(3), b(3)\n{assignment}\nend");
+            let tokens = crate::lexer::lex(&source);
+            let p = crate::parser::parse_with_src(&source, &tokens, "assignment.f90").unwrap();
+            let error = super::resolve(crate::parameters::resolve(p).unwrap()).unwrap_err();
+            assert!(error.to_string().contains("scalar right-hand side"), "{error:#}");
+        }
+    }
+
     #[test]
     fn rejects_invalid_reductions() {
         for (decls, expression, message) in [
