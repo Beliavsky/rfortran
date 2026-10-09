@@ -167,6 +167,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " sqrt 1.22474\n exp 4.48169\n log 0.405465\n log10 0.176091\n sin 0.997495\n cos 7.07372e-002\n tan 14.1014\n asin 0.523599\n acos 1.0472\n atan 0.982794\n atan2 0.321751\n atan2 quadrant 2.81984\n sinh 2.12928\n cosh 2.35241\n tanh 0.905148\n nested 1.5\n expression 2.10233\n double 1.4142135623731\n conversion 3.0 3.0\n abs 3 1.5\n int 2\n assignment 1.22474\n block 7.07372e-002\n double expression 1.4142135623731\n"
+    },
+    "25_random_number": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 0.280835 0.280835\n .TRUE.\n .TRUE.\n .TRUE.\n .TRUE.\n .TRUE.\n .TRUE.\n 0.673608 0.338664 0.749919 0.498828\n 0.177054 0.154888 0.736163\n 0.673608 0.874783 0.749919 0.498828\n 0.632465 0.154888 0.736163\n"
     }
   }
 }

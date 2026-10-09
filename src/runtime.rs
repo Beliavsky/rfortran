@@ -9,6 +9,20 @@ struct FuncDef {
 }
 
 pub fn interpret(program: &Program) {
+    thread_local! { static RANDOM_STATE: std::cell::Cell<u64> = const { std::cell::Cell::new(1) }; }
+    RANDOM_STATE.with(|state| state.set(1));
+    fn random_value(double: bool) -> f64 {
+        RANDOM_STATE.with(|state| {
+            let mut x = state.get();
+            x ^= x >> 12;
+            x ^= x << 25;
+            x ^= x >> 27;
+            state.set(x);
+            let precision = if double { 53 } else { 24 };
+            (x.wrapping_mul(2685821657736338717) >> (64 - precision)) as f64
+                / (1u64 << precision) as f64
+        })
+    }
     let env_str: HashMap<String, String> = HashMap::new();
     let env_int: HashMap<String, i64> = HashMap::new();
     let env_real32: HashMap<String, f32> = HashMap::new();
@@ -619,6 +633,7 @@ pub fn interpret(program: &Program) {
 
         env_int_arrays: HashMap<String, Vec<i64>>,
         env_real_arrays: HashMap<String, Vec<f64>>,
+        double_arrays: std::collections::HashSet<String>,
         func_name: Option<String>,
         is_function: bool,
     }
@@ -633,6 +648,7 @@ pub fn interpret(program: &Program) {
 
                 env_int_arrays: HashMap::new(),
                 env_real_arrays: HashMap::new(),
+                double_arrays: std::collections::HashSet::new(),
                 func_name,
                 is_function: fd.is_function,
             }
@@ -691,6 +707,7 @@ pub fn interpret(program: &Program) {
                                     }
                                     TypeSpec::Real | TypeSpec::DoublePrecision => {
                                         fr.env_real_arrays.insert(name.clone(), vec![0.0; len]);
+                                        if matches!(kind, TypeSpec::DoublePrecision) { fr.double_arrays.insert(name.clone()); }
                                     }
                                     _ => {}
                                 }
@@ -949,6 +966,33 @@ pub fn interpret(program: &Program) {
                     }
                 }
                 Stmt::CallSub { name, args } => {
+                    if name.eq_ignore_ascii_case("random_number") && !funcs.contains_key(name) {
+                        let (id, index) = match &args[0] {
+                            Expr::Ident(id) => (id, None),
+                            Expr::Call(id, indices) | Expr::Index(id, indices) => {
+                                let fr = call_stack.last().unwrap().clone();
+                                let value = eval_expr(&indices[0], &fr.env_str, &fr.env_int,
+                                    &fr.env_real32, &fr.env_real64, &fr.env_log, funcs, call_stack);
+                                (id, Some((value.0.unwrap() - 1) as usize))
+                            }
+                            _ => unreachable!("validated RANDOM_NUMBER destination"),
+                        };
+                        let fr = call_stack.last_mut().unwrap();
+                        if let Some(values) = fr.env_real_arrays.get_mut(id) {
+                            let double = fr.double_arrays.contains(id);
+                            if let Some(index) = index {
+                                values[index] = random_value(double);
+                            } else {
+                                for value in values { *value = random_value(double); }
+                            }
+                        } else if let Some(value) = fr.env_real64.get_mut(id) {
+                            *value = random_value(true);
+                        } else if let Some(value) = fr.env_real32.get_mut(id) {
+                            *value = random_value(false) as f32;
+                        }
+                        idx += 1;
+                        continue;
+                    }
                     if let Some(fd) = funcs.get(name) {
                         let (strs, ints, r32, r64, logs) = {
                             let fr = call_stack.last().unwrap();
@@ -1205,6 +1249,7 @@ pub fn interpret(program: &Program) {
         env_log,
         env_int_arrays: HashMap::new(),
         env_real_arrays: HashMap::new(),
+        double_arrays: std::collections::HashSet::new(),
         func_name: None,
         is_function: false,
     };

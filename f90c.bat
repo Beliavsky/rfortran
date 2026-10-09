@@ -32,13 +32,12 @@ if not exist "%UCRT_LIB%\ucrt.lib" (
     exit /b 1
 )
 
-"%F90C_COMPILER%" emit-obj "%~f1" "%~dpn1.obj"
+"%F90C_COMPILER%" --quiet emit-obj "%~f1" "%~dpn1.obj"
 if errorlevel 1 exit /b %errorlevel%
 
 ld.lld.exe -flavor link "/OUT:%~dpn1.exe" "%~dpn1.obj" /SUBSYSTEM:CONSOLE "/LIBPATH:%F90C_LIB%" "/LIBPATH:%MSVC_LIB%" "/LIBPATH:%UCRT_LIB%" msvcrt.lib legacy_stdio_definitions.lib kernel32.lib
 if errorlevel 1 exit /b %errorlevel%
 
-echo Created "%~dpn1.exe"
 exit /b 0
 
 :usage

@@ -778,8 +778,9 @@ pub fn analyze_with_src(
                 }
             }
             Stmt::Do {
-                start, end, body, ..
+                var, start, end, body, ..
             } => {
+                out.insert(var.to_ascii_lowercase());
                 walk_reads_for_program(start, out);
                 walk_reads_for_program(end, out);
                 for st in body {
@@ -1543,6 +1544,7 @@ pub fn analyze_with_src(
                         ..
                     } => {
                         let lname = var.to_ascii_lowercase();
+                        read_vars.insert(lname.clone());
                         let mut new_local = local.clone();
                         if !new_local.contains_key(&lname) {
                             new_local.insert(lname.clone(), TypeSpec::Integer(None));
@@ -2308,6 +2310,7 @@ pub fn analyze_with_src(
                 if !sym.contains_key(&lname)
                     && !fn_map.contains_key(&lname)
                     && !external_fn_ret.contains_key(&lname)
+                    && lname != "random_number"
                 {
                     if let Some(implicit_type) = implicit_typing.get_implicit_type(name) {
                         sym.insert(lname, implicit_type);
@@ -2403,6 +2406,7 @@ pub fn analyze_with_src(
                 if !sym.contains_key(&lname)
                     && !fn_map.contains_key(&lname)
                     && !external_fn_ret.contains_key(&lname)
+                    && lname != "random_number"
                 {
                     undef.push(name);
                 }
@@ -2592,6 +2596,9 @@ pub fn analyze_with_src(
             Expr::Call(name, args) => {
                 let key = name.to_ascii_lowercase();
                 if !functions.contains_key(&key) && !sym.contains_key(&key) {
+                    if key == "random_number" {
+                        problems.push((name.clone(), "RANDOM_NUMBER is a subroutine; use CALL RANDOM_NUMBER(harvest)".into()));
+                    }
                     let math = crate::intrinsics::math_arity(&key);
                     let arity = math.or_else(|| matches!(key.as_str(), "abs" | "int" | "real" | "dble").then_some(1));
                     if let Some(arity) = arity {
@@ -2658,7 +2665,21 @@ pub fn analyze_with_src(
         }
         for stmt in body {
             let mut expressions: Vec<&Expr> = Vec::new();
-            if let Stmt::CallSub { name, .. } = stmt {
+            if let Stmt::CallSub { name, args } = stmt {
+                if name.eq_ignore_ascii_case("random_number") && !functions.contains_key(&name.to_ascii_lowercase()) {
+                    let valid = args.len() == 1 && match &args[0] {
+                        Expr::Ident(id) => matches!(symbols.get(&id.to_ascii_lowercase()), Some(TypeSpec::Real | TypeSpec::DoublePrecision)),
+                        Expr::Call(id, indices) | Expr::Index(id, indices) => {
+                            arrays.contains(&id.to_ascii_lowercase()) && indices.len() == 1
+                                && matches!(symbols.get(&id.to_ascii_lowercase()), Some(TypeSpec::Real | TypeSpec::DoublePrecision))
+                                && matches!(infer_expr_type(&indices[0], &symbols, functions, returns), Some(TypeSpec::Integer(_)))
+                        }
+                        _ => false,
+                    };
+                    if !valid {
+                        problems.push((name.clone(), "RANDOM_NUMBER expects one writable REAL or DOUBLE PRECISION variable or array".into()));
+                    }
+                }
                 if crate::intrinsics::math_arity(name).is_some() && !functions.contains_key(&name.to_ascii_lowercase()) {
                     problems.push((name.clone(), format!("intrinsic `{name}` is a function, not a subroutine")));
                 }

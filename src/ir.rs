@@ -1,3 +1,26 @@
+// RANDOM_NUMBER defines its argument; constant propagation must preserve that storage.
+fn random_destinations(stmts: &[IStmt]) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+    for stmt in stmts {
+        match stmt {
+            IStmt::Call(name, args) if name.eq_ignore_ascii_case("random_number") => {
+                if let Some(IExpr::Ident(id) | IExpr::Index(id, _)) = args.first() { names.insert(id.clone()); }
+            }
+            IStmt::Do { body, .. } | IStmt::DoWhile { body, .. } | IStmt::Block { body } => names.extend(random_destinations(body)),
+            IStmt::If { then_body, else_body, .. } => {
+                names.extend(random_destinations(then_body));
+                if let Some(body) = else_body { names.extend(random_destinations(body)); }
+            }
+            IStmt::SelectCase { cases, default, .. } => {
+                for case in cases { names.extend(random_destinations(&case.body)); }
+                if let Some(body) = default { names.extend(random_destinations(body)); }
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
 #[derive(Debug, Clone)]
 pub struct Module {
     pub funcs: Vec<Function>,
@@ -643,7 +666,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
             }
         }
 
-        let mut multiply_assigned_vars = std::collections::HashSet::new();
+        let mut multiply_assigned_vars = random_destinations(&stmts);
         let mut assigned_once = std::collections::HashSet::new();
         for stmt in &stmts {
             match stmt {
@@ -1038,6 +1061,9 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                         collect_variable_uses(arg, &mut all_uses);
                     }
                 }
+                IStmt::Call(_, args) => {
+                    for arg in args { collect_variable_uses(arg, &mut all_uses); }
+                }
                 IStmt::AssignExpr(var, expr) => {
                     collect_variable_uses(expr, &mut all_uses);
 
@@ -1261,6 +1287,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
         stmt: &IStmt,
         assigned: &mut std::collections::HashSet<String>,
     ) {
+        assigned.extend(random_destinations(std::slice::from_ref(stmt)));
         match stmt {
             IStmt::AssignStr(var, _) => {
                 assigned.insert(var.clone());
@@ -1527,6 +1554,9 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                 vec![IStmt::Read(optimized_vars)]
             }
             IStmt::Call(name, args) => {
+                if name.eq_ignore_ascii_case("random_number") {
+                    return vec![IStmt::Call(name, args)];
+                }
                 let optimized_args = args
                     .into_iter()
                     .map(|arg| optimize_expr_with_constants(arg, constants))
@@ -2410,8 +2440,9 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
         }
 
         let mut replacements: Vec<(String, IExpr)> = Vec::new();
+        let random_outputs = random_destinations(&func.body);
         for (name, expr) in single_literal_map.into_iter() {
-            if assign_counts.get(&name).cloned().unwrap_or(0) == 1 {
+            if assign_counts.get(&name).cloned().unwrap_or(0) == 1 && !random_outputs.contains(&name) {
                 replacements.push((name, expr));
             }
         }

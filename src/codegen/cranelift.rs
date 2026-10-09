@@ -95,6 +95,24 @@ fn to_bool(b: &mut FunctionBuilder, v: CgVal) -> ir::Value {
     }
 }
 
+// xorshift64*: a repeatable default stream, shared by all RANDOM_NUMBER calls.
+fn random_value(b: &mut FunctionBuilder, state: ir::Value, double: bool) -> ir::Value {
+    let x = b.ins().load(ir::types::I64, ir::MemFlags::new(), state, 0);
+    let shifted = b.ins().ushr_imm(x, 12);
+    let x = b.ins().bxor(x, shifted);
+    let shifted = b.ins().ishl_imm(x, 25);
+    let x = b.ins().bxor(x, shifted);
+    let shifted = b.ins().ushr_imm(x, 27);
+    let x = b.ins().bxor(x, shifted);
+    b.ins().store(ir::MemFlags::new(), x, state, 0);
+    let bits = b.ins().imul_imm(x, 2685821657736338717);
+    let precision = if double { 53 } else { 24 };
+    let bits = b.ins().ushr_imm(bits, 64 - precision);
+    let value = b.ins().fcvt_from_uint(ir::types::F64, bits);
+    let scale = b.ins().f64const(1.0 / ((1u64 << precision) as f64));
+    b.ins().fmul(value, scale)
+}
+
 struct Externs {
     printf: ir::FuncRef,
     sprintf: ir::FuncRef,
@@ -2064,6 +2082,48 @@ fn gen_stmts(
                 b.switch_to_block(after_blk);
             }
             IStmt::Call(name, args) => {
+                if name.eq_ignore_ascii_case("random_number") && !func_meta.contains_key(name) {
+                    let (id, indices) = match &args[0] {
+                        IExpr::Ident(id) => (id, None),
+                        IExpr::Index(id, indices) => (id, Some(indices)),
+                        _ => anyhow::bail!("invalid RANDOM_NUMBER destination"),
+                    };
+                    let slot = reals.get(id).ok_or_else(|| anyhow::anyhow!("RANDOM_NUMBER requires a real destination"))?;
+                    let base = b.ins().stack_addr(ptr_ty, *slot, 0);
+                    let state_id = module.declare_data(".f90c.random_state", Linkage::Local, true, false)?;
+                    let state_global = module.declare_data_in_func(state_id, b.func);
+                    let state = b.ins().global_value(ptr_ty, state_global);
+                    let double = *real_kind.get(id).unwrap_or(&false);
+                    if let Some(indices) = indices {
+                        let index = eval_expr(b, ex, ptr_ty, &indices[0], ints, reals, bools, func_meta);
+                        let index = to_i64(b, index);
+                        let index = b.ins().iadd_imm(index, -1);
+                        let offset = b.ins().imul_imm(index, 8);
+                        let address = b.ins().iadd(base, offset);
+                        let value = random_value(b, state, double);
+                        b.ins().store(MemFlags::new(), value, address, 0);
+                    } else if let Some(len) = arrays.get(id) {
+                        let loop_block = b.create_block();
+                        let after = b.create_block();
+                        b.append_block_param(loop_block, ptr_ty);
+                        let end = b.ins().iadd_imm(base, (*len as i64) * 8);
+                        b.ins().jump(loop_block, &[base.into()]);
+                        b.switch_to_block(loop_block);
+                        let address = b.block_params(loop_block)[0];
+                        let value = random_value(b, state, double);
+                        b.ins().store(MemFlags::new(), value, address, 0);
+                        let next = b.ins().iadd_imm(address, 8);
+                        let more = b.ins().icmp(ir::condcodes::IntCC::UnsignedLessThan, next, end);
+                        b.ins().brif(more, loop_block, &[next.into()], after, &[]);
+                        b.seal_block(loop_block);
+                        b.switch_to_block(after);
+                        b.seal_block(after);
+                    } else {
+                        let value = random_value(b, state, double);
+                        b.ins().store(MemFlags::new(), value, base, 0);
+                    }
+                    continue;
+                }
                 if let Some(meta) = func_meta.get(name) {
                     let mut argv = Vec::new();
                     for (i, a) in args.iter().enumerate() {
@@ -2422,6 +2482,11 @@ impl Backend for CraneliftBackend {
             cranelift_module::default_libcall_names(),
         )?;
         let mut obj = ObjectModule::new(builder);
+        let random_state = obj.declare_data(".f90c.random_state", Linkage::Local, true, false)?;
+        let mut random_data = DataDescription::new();
+        random_data.define(1u64.to_le_bytes().to_vec().into_boxed_slice());
+        random_data.set_align(8);
+        obj.define_data(random_state, &random_data)?;
         let mut func_ids: HashMap<String, FuncId> = HashMap::new();
         let tokens_opt = tokens;
         let mut eff_ret: HashMap<String, crate::ast::TypeSpec> = HashMap::new();
@@ -2656,6 +2721,7 @@ impl Backend for CraneliftBackend {
             func_ids.insert(f.name.clone(), fid);
         }
         for (name, arity) in &import_arity {
+            if name.eq_ignore_ascii_case("random_number") { continue; }
             if let Some(arity) = crate::intrinsics::math_arity(name) {
                 if !func_ids.contains_key(name) {
                     let mut sig = obj.make_signature();
