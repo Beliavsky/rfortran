@@ -5,6 +5,7 @@
 !src/bin/tools/ld.lld
 !src/bin/releases/*
 *.obj
+*.f90c-sources.f90
 tests/tmp_test
 Cargo.lock
 src/fortran.rs

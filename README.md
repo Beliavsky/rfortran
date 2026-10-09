@@ -20,6 +20,32 @@ f90c [subcommand] [links.o (.obj)] [inputs.f90] [options]
 
 If no subcommand is provided, all `.f90` inputs are compiled into an executable, optionally linking with `.o` (`.obj`) object files.
 
+### Windows batch wrapper
+
+```bat
+f90c.bat m1.f90 m2.f90 main.f90
+```
+
+List modules in dependency order, followed by the main program: if `m2` uses
+`m1`, put `m1.f90` first. This creates `main.exe` and `main.obj` alongside the
+last source file. Quote paths containing spaces. Successful builds are silent;
+the default optimization level remains `-O2`.
+
+For multiple inputs, the wrapper uses the accompanying `f90c-sources.ps1`
+helper to combine the sources and compile them together. This makes module
+constants, procedure definitions, derived types, and operator interfaces
+available to the compiler. It does not create or reuse separately compiled
+module files. The compiler's existing language restrictions still apply.
+
+The generated `main.f90c-sources.f90` is retained next to the executable and
+ignored by Git. Diagnostics refer to its line numbers; `! Source:` comments
+identify the original files. A subsequent build refreshes this generated file.
+Single-source commands continue to compile the original file directly.
+
+Run the wrapper integration tests with `python tests/test_batch_sources.py`.
+They require Windows, a built compiler, and the linker/library setup specified
+in `f90c.bat`.
+
 ---
 
 ## Quick Reference

@@ -25,7 +25,7 @@ pub fn validate(program: &Program) -> Result<()> {
         match e {
             Expr::Call(name, args) => {
                 let intrinsic = crate::intrinsics::math_arity(name).is_some()
-                    || matches!(name.to_ascii_lowercase().as_str(), "mod" | "modulo" | "abs" | "int" | "real" | "dble" | "sum" | "product" | "minval" | "maxval" | "max" | "min" | "kind" | "tiny" | "huge" | "size" | "present" | "any" | "all" | "@array_constructor");
+                    || matches!(name.to_ascii_lowercase().as_str(), "mod" | "modulo" | "abs" | "int" | "real" | "dble" | "sum" | "product" | "minval" | "maxval" | "max" | "min" | "kind" | "selected_real_kind" | "selected_int_kind" | "tiny" | "huge" | "size" | "present" | "any" | "all" | "@array_constructor");
                 if !locals.contains(name) && !known.get(name).map(|p| p.pure).unwrap_or(intrinsic) {
                     bail!("PURE procedure cannot call impure or unknown procedure `{name}`");
                 }

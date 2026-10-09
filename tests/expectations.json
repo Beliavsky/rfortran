@@ -398,6 +398,13 @@
       "program_exit_code": 0,
       "program_stdout": " Operator edge tests passed.\n",
       "program_stderr": ""
+    },
+    "58_selected_kinds": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stdout": " 8 4 8 4 8 -999\n -999.0\n",
+      "program_stderr": ""
     }
   }
 }

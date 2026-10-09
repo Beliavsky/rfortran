@@ -12,6 +12,7 @@ extern {
         KW_PROCEDURE => TokenKind::KwProcedure,
         KW_INTERFACE => TokenKind::KwInterface,
         KW_OPERATOR => TokenKind::KwOperator,
+        KW_KIND => TokenKind::KwKind,
         PERCENT => TokenKind::Percent,
         ARROW => TokenKind::Arrow,
         LBRACKET => TokenKind::LBracket,
@@ -324,6 +325,8 @@ ParamList: Vec<String> = {
 CondExpr: Expr = { <e: OrExpr> => e };
 
 TypeSpec: TypeSpec = {
+    KW_REAL LPAREN KW_KIND EQ <kind: Ident> RPAREN => TypeSpec::RealKind(kind),
+    KW_REAL LPAREN KW_KIND EQ <kind: INT> RPAREN => TypeSpec::RealKind(kind),
     KW_REAL LPAREN <kind: Ident> RPAREN => TypeSpec::RealKind(kind),
     KW_REAL LPAREN <kind: INT> RPAREN => TypeSpec::RealKind(kind),
     KW_INTEGER => TypeSpec::Integer(None),

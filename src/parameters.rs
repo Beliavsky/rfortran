@@ -278,6 +278,31 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
     }
     if let Expr::Call(name, args) = expr {
         match name.to_ascii_lowercase().as_str() {
+            "selected_real_kind" => {
+                if !(1..=3).contains(&args.len()) { bail!("SELECTED_REAL_KIND expects 1 to 3 constant integer arguments"); }
+                let values = args.iter().map(|e| evaluate(e, constants)).collect::<Result<Vec<_>>>()
+                    .context("SELECTED_REAL_KIND currently requires constant integer arguments")?;
+                let p = values[0];
+                let r = values.get(1).copied().unwrap_or(0);
+                let radix = values.get(2).copied().unwrap_or(2);
+                // Only binary32 and binary64 are implemented. In particular,
+                // requesting quadruple precision must not silently select double.
+                let kind = if radix != 2 { -5 }
+                    else if p <= 6 && r <= 37 { 4 }
+                    else if p <= 15 && r <= 307 { 8 }
+                    else if p > 15 && r > 307 { -3 }
+                    else if p > 15 { -1 }
+                    else { -2 };
+                *expr = Expr::IntLit(kind.to_string());
+            }
+            "selected_int_kind" => {
+                if args.len() != 1 { bail!("SELECTED_INT_KIND expects one constant integer argument"); }
+                let range = evaluate(&args[0], constants)
+                    .context("SELECTED_INT_KIND currently requires a constant integer argument")?;
+                let kind = if range <= 2 { 1 } else if range <= 4 { 2 }
+                    else if range <= 9 { 4 } else if range <= 18 { 8 } else { -1 };
+                *expr = Expr::IntLit(kind.to_string());
+            }
             "kind" | "tiny" | "huge" if args.len() == 1 => {
                 let double = matches!(&args[0], Expr::Call(n, _) if n.eq_ignore_ascii_case("dble"));
                 if !double && !matches!(&args[0], Expr::RealLit(_) | Expr::IntLit(_)) {
@@ -417,6 +442,45 @@ fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolves_selected_kinds_and_keyword_real_kind() {
+        let source = include_str!("../tests/58_selected_kinds.f90");
+        let p = crate::parser::parse_with_src(source, &crate::lexer::lex(source), "kinds.f90").unwrap();
+        let p = resolve(p).unwrap();
+        let values = p.body.iter().find_map(|s| if let Stmt::Print { items } = s { Some(items) } else { None }).unwrap();
+        let values: Vec<_> = values.iter().map(|v| evaluate(v, &Constants::new()).unwrap()).collect();
+        assert_eq!(values, [8, 4, 8, 4, 8, -999]);
+        let p = resolve_source("integer,parameter :: dp=selected_real_kind(15,307)\nreal(kind=dp)::x\nreal(kind=4)::y", "x=1.0_dp\ny=2.0").unwrap();
+        assert!(p.body.iter().any(|s| matches!(s, Stmt::VarDecl { kind: TypeSpec::DoublePrecision, names } if names == &["x"])));
+        assert!(p.body.iter().any(|s| matches!(s, Stmt::VarDecl { kind: TypeSpec::Real, names } if names == &["y"])));
+        // KIND remains usable as an intrinsic and as an ordinary identifier.
+        resolve_source("integer :: kind\nreal :: x", "kind=4\nx=real(kind)\nprint *, kind(x)").unwrap();
+    }
+
+    #[test]
+    fn selected_kind_boundaries_and_invalid_requests() {
+        for (call, expected) in [
+            ("selected_real_kind(6,37)", 4), ("selected_real_kind(7,37)", 8),
+            ("selected_real_kind(6,38)", 8), ("selected_real_kind(15,307)", 8),
+            ("selected_real_kind(32)", -1), ("selected_real_kind(6,308)", -2),
+            ("selected_real_kind(32,400)", -3), ("selected_real_kind(6,37,10)", -5),
+            ("selected_real_kind(6,37,2)", 4), ("selected_real_kind(-1,-1)", 4),
+            ("selected_int_kind(0)", 1), ("selected_int_kind(2)", 1),
+            ("selected_int_kind(3)", 2), ("selected_int_kind(4)", 2),
+            ("selected_int_kind(5)", 4), ("selected_int_kind(9)", 4),
+            ("selected_int_kind(10)", 8), ("selected_int_kind(18)", 8),
+            ("selected_int_kind(19)", -1),
+        ] {
+            let p = resolve_source(&format!("integer,parameter :: k={call}"), "print *, k").unwrap();
+            let Stmt::Print { items } = p.body.last().unwrap() else { panic!() };
+            assert_eq!(evaluate(&items[0], &Constants::new()).unwrap(), expected, "{call}");
+        }
+        for call in ["selected_real_kind()", "selected_real_kind(1,2,3,4)", "selected_real_kind(6.0)", "selected_int_kind()", "selected_int_kind(1,2)", "selected_int_kind(9.0)", "selected_int_kind(n)"] {
+            assert!(resolve_source("integer :: n", &format!("print *, {call}")).is_err(), "{call}");
+        }
+        assert!(resolve_source("integer,parameter :: qp=selected_real_kind(32)\nreal(kind=qp)::x", "").is_err());
+    }
 
     #[test]
     fn resolves_real_kinds_and_module_constants() {
