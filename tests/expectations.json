@@ -188,6 +188,20 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 10.0 20.0 30.0\n 20.0 30.0\n 10.0 20.0\n 10.0 20.0 30.0\n 20.0\n 10.0 30.0\n\n 30.0 20.0 10.0\n 30.0 10.0\n emptyend\n\n mixed 10.0 99 2 3\n"
+    },
+    "28_array_reductions": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 6.0 30.0 -2.0 4.0 -24.0\n 6 30 -2 4 -24\n 8.0 3.0 5.0\n 0.0 1.0\n 14.0 30.0 6.0\n -24.0 -24.0\n"
+    },
+    "29_large_arrays": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 20000 40000.0 60000.0\n 1 2.0 3.0\n"
     }
   }
 }

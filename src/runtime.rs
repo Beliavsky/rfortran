@@ -254,6 +254,10 @@ pub fn interpret(program: &Program) {
                 }
             }
             Expr::Call(name, args) => {
+                if call_stack.last().is_some_and(|frame| frame.env_real_arrays.contains_key(name) || frame.env_int_arrays.contains_key(name)) {
+                    return eval_expr(&Expr::Index(name.clone(), args.clone()), env_str, env_int,
+                        env_real32, env_real64, env_log, funcs, call_stack);
+                }
                 if name == "__f90c_stop" {
                     let mut arg_vals: Vec<ValueTuple> = Vec::new();
                     for a in args {

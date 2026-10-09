@@ -667,6 +667,11 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
         }
 
         let mut multiply_assigned_vars = random_destinations(&stmts);
+        for stmt in &stmts {
+            if matches!(stmt, IStmt::Do { .. } | IStmt::DoWhile { .. } | IStmt::If { .. } | IStmt::Block { .. } | IStmt::SelectCase { .. }) {
+                collect_assigned_vars_in_stmt(stmt, &mut multiply_assigned_vars);
+            }
+        }
         let mut assigned_once = std::collections::HashSet::new();
         for stmt in &stmts {
             match stmt {
@@ -2441,7 +2446,12 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
         }
 
         let mut replacements: Vec<(String, IExpr)> = Vec::new();
-        let random_outputs = random_destinations(&func.body);
+        let mut random_outputs = random_destinations(&func.body);
+        for stmt in &func.body {
+            if matches!(stmt, IStmt::Do { .. } | IStmt::DoWhile { .. } | IStmt::If { .. } | IStmt::Block { .. } | IStmt::SelectCase { .. }) {
+                collect_assigned_vars_in_stmt(stmt, &mut random_outputs);
+            }
+        }
         for (name, expr) in single_literal_map.into_iter() {
             if assign_counts.get(&name).cloned().unwrap_or(0) == 1 && !random_outputs.contains(&name) {
                 replacements.push((name, expr));

@@ -15,6 +15,7 @@ mod linker;
 mod parser;
 mod parameters;
 mod sections;
+mod reductions;
 mod runtime;
 mod sema;
 mod utils;
@@ -127,7 +128,7 @@ fn main() -> Result<()> {
                     }
                 }
             };
-            let program = sections::resolve(parameters::resolve(program)?)?;
+            let program = sections::resolve(reductions::resolve(parameters::resolve(program)?)?)?;
             let empty_obj_exports = std::collections::HashSet::new();
             let sema_errs = sema::analyze_with_src(
                 &program,
@@ -235,7 +236,7 @@ fn main() -> Result<()> {
                     }
                 }
             };
-            let program = sections::resolve(parameters::resolve(program)?)?;
+            let program = sections::resolve(reductions::resolve(parameters::resolve(program)?)?)?;
             let empty_obj_exports = std::collections::HashSet::new();
             let sema_errs = sema::analyze_with_src(
                 &program,
@@ -355,7 +356,7 @@ fn compile_to_object(
             return Err(anyhow::anyhow!("parse failed"));
         }
     };
-    let program = sections::resolve(parameters::resolve(program)?)?;
+    let program = sections::resolve(reductions::resolve(parameters::resolve(program)?)?)?;
     let empty_obj_exports = std::collections::HashSet::new();
     let sema_errs = sema::analyze_with_src(
         &program,
