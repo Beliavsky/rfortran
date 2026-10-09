@@ -88,6 +88,7 @@ ModuleDef: Stmt = {
 };
 
 pub Program: Program = {
+    KW_END => Program { name: "main".to_string(), body: vec![] },
     <pre: LeadingFuncs> KW_PROGRAM <name: Ident> <body: Stmts> KW_END <_tail: EndTail> <post: FuncList> => {
         let mut all = pre; all.extend(body); all.extend(post); Program { name, body: all }
     },
@@ -129,10 +130,20 @@ IdentList: Vec<String> = {
 };
 
 // attribute list used in declarations, e.g. `integer, intent(in) :: a`.
-AttrList: () = {
-    /* empty */ => (),
-    <v: AttrList> COMMA <id: Ident> LPAREN <arg: Ident> RPAREN => (),
-    <v: AttrList> COMMA <id: Ident> => (),
+AttrList: Vec<String> = {
+    /* empty */ => vec![],
+    <mut v: AttrList> COMMA <id: Ident> LPAREN <arg: Ident> RPAREN => { v.push(format!("{}({})", id, arg)); v },
+    <mut v: AttrList> COMMA <id: Ident> => { v.push(id); v },
+};
+
+DeclEntities: Vec<(String, Option<Expr>)> = {
+    <e: DeclEntity> => vec![e],
+    <mut v: DeclEntities> COMMA <e: DeclEntity> => { v.push(e); v },
+};
+
+DeclEntity: (String, Option<Expr>) = {
+    <name: Ident> => (name, None),
+    <name: Ident> EQ <value: RhsExpr> => (name, Some(value)),
 };
 
 Stmts: Vec<Stmt> = {
@@ -164,7 +175,7 @@ Stmt: Stmt = {
     KW_DO <var: Ident> EQ <s: RhsExpr> COMMA <e: RhsExpr> <body: Stmts> KW_END KW_DO => Stmt::Do { var, start: s, end: e, body },
     KW_DO KW_WHILE LPAREN <cond: CondExpr> RPAREN <body: Stmts> KW_END KW_DO => Stmt::DoWhile { cond, body },
     KW_RETURN => Stmt::Return(None),
-    <t: TypeSpec> <_attrs: AttrList> DCOLON <vars: IdentList> => Stmt::VarDecl { kind: t, names: vars },
+    <t: TypeSpec> <attrs: AttrList> DCOLON <vars: DeclEntities> => crate::ast::scalar_decl(t, attrs, vars),
     // array declaration with dimensions, e.g. `integer :: a(5)`
     <t: TypeSpec> <_attrs: AttrList> DCOLON <id: Ident> LPAREN <dims: DimList> RPAREN => {
         // produce an explicit ArrayDecl so downstream lowering can see dims
@@ -307,6 +318,7 @@ Primary: Expr = {
     // treat it as a function call here (Expr::Call). Array element assignment is
     // handled at the statement level by the AssignIndex rule above.
     <id: Ident> LPAREN <args: CallArgList> RPAREN => Expr::Call(id, args),
+    KW_REAL LPAREN <args: CallArgList> RPAREN => Expr::Call("real".to_string(), args),
     <id: Ident> => Expr::Ident(id),
     LPAREN <e: OrExpr> RPAREN => e,
 };
@@ -355,7 +367,7 @@ CaseItem: CaseItem = {
     <e: RhsExpr> => CaseItem::Single(e),
 };
 
-PreFuncDecl: Stmt = { <t: TypeSpec> <_attrs: AttrList> DCOLON <names: IdentList> => Stmt::VarDecl { kind: t, names } };
+PreFuncDecl: Stmt = { <t: TypeSpec> <attrs: AttrList> DCOLON <names: DeclEntities> => crate::ast::scalar_decl(t, attrs, names) };
 
 ImplicitRuleList: Vec<ImplicitRule> = {
     <rule: ImplicitRuleItem> => vec![rule],

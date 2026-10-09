@@ -16,6 +16,11 @@ pub enum Stmt {
         kind: TypeSpec,
         names: Vec<String>,
     },
+    InitializedDecl {
+        kind: TypeSpec,
+        attributes: Vec<String>,
+        entities: Vec<(String, Option<Expr>)>,
+    },
 
     ArrayDecl {
         kind: TypeSpec,
@@ -93,6 +98,16 @@ pub enum TypeSpec {
     DoublePrecision,
     Character(Option<usize>),
     Logical,
+}
+
+pub fn scalar_decl(kind: TypeSpec, attributes: Vec<String>, entities: Vec<(String, Option<Expr>)>) -> Stmt {
+    if attributes.iter().any(|a| a.eq_ignore_ascii_case("parameter"))
+        || entities.iter().any(|(_, value)| value.is_some())
+    {
+        Stmt::InitializedDecl { kind, attributes, entities }
+    } else {
+        Stmt::VarDecl { kind, names: entities.into_iter().map(|(name, _)| name).collect() }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

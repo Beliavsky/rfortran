@@ -9,6 +9,20 @@ pub mod fortran {
     include!(concat!(env!("OUT_DIR"), "/fortran.rs"));
 }
 
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn bare_end_is_an_empty_main_program() {
+        for src in ["end\n", "! Empty main program\nEND ! done\n"] {
+            let tokens = crate::lexer::lex(src);
+            let program = super::parse_with_src(src, &tokens, "bare_end.f90")
+                .expect("a bare END must form an empty main program");
+            assert_eq!(program.name, "main");
+            assert!(program.body.is_empty());
+        }
+    }
+}
+
 fn human_expected(name: &str) -> String {
     match name {
         "KW_PROGRAM" => "keyword program".into(),

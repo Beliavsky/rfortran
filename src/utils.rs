@@ -1,4 +1,31 @@
 use anyhow::Result;
+
+// Exact INTEGER ** INTEGER, including Fortran's integer negative powers.
+// None denotes an unrepresentable result or zero raised to a negative power.
+pub fn checked_integer_power(mut base: i64, exponent: i64) -> Option<i64> {
+    if exponent < 0 {
+        return match base {
+            0 => None,
+            1 => Some(1),
+            -1 => Some(if exponent % 2 == 0 { 1 } else { -1 }),
+            _ => Some(0),
+        };
+    }
+    let mut exponent = exponent as u64;
+    let mut result = 1i64;
+    while exponent != 0 {
+        if exponent & 1 != 0 { result = result.checked_mul(base)?; }
+        exponent >>= 1;
+        if exponent != 0 { base = base.checked_mul(base)?; }
+    }
+    Some(result)
+}
+
+// Undelimited adjacent character values have no separator. Every record starts
+// with a blank; all other value boundaries get one blank.
+pub fn list_directed_separator(previous_character: Option<bool>, character: bool) -> &'static str {
+    if previous_character == Some(true) && character { "" } else { " " }
+}
 use std::{
     fs,
     path::{Path, PathBuf},

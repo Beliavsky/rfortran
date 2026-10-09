@@ -438,14 +438,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                     Sub => lval.checked_sub(rval)?,
                     Mul => lval.checked_mul(rval)?,
                     Div if rval != 0 => lval.checked_div(rval)?,
-                    Pow if rval >= 0 && rval <= 30 => {
-                        let result = (lval as f64).powf(rval as f64);
-                        if result.is_finite() {
-                            return Some(IExpr::RealLit(result.to_string()));
-                        } else {
-                            return None;
-                        }
-                    }
+                    Pow => crate::utils::checked_integer_power(lval, rval)?,
                     Eq => return Some(IExpr::Logical(lval == rval)),
                     Ne => return Some(IExpr::Logical(lval != rval)),
                     Lt => return Some(IExpr::Logical(lval < rval)),
@@ -1688,19 +1681,8 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                         (crate::ast::BinOp::Pow, expr, IExpr::IntLit(s)) if s == "1" => {
                             expr.clone()
                         }
-                        (crate::ast::BinOp::Pow, expr, IExpr::RealLit(s))
-                            if s == "1" || s == "1.0" =>
-                        {
-                            expr.clone()
-                        }
-                        (crate::ast::BinOp::Pow, _, IExpr::IntLit(s)) if s == "0" => {
-                            IExpr::IntLit("1".to_string())
-                        }
-                        (crate::ast::BinOp::Pow, _, IExpr::RealLit(s))
-                            if s == "0" || s == "0.0" =>
-                        {
-                            IExpr::RealLit("1.0".to_string())
-                        }
+                        // Other power identities depend on the base/result type;
+                        // leave them to typed code generation.
 
                         (crate::ast::BinOp::And, expr, IExpr::Logical(true))
                         | (crate::ast::BinOp::And, IExpr::Logical(true), expr) => expr.clone(),
@@ -1754,6 +1736,20 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
         }
     }
 
+    fn double_kind(e: &Expr, types: &std::collections::HashMap<String, crate::ast::TypeSpec>) -> bool {
+        match e {
+            Expr::Ident(name) | Expr::Index(name, _) => matches!(types.get(name), Some(crate::ast::TypeSpec::DoublePrecision)),
+            Expr::Bin(_, a, b) => double_kind(a, types) || double_kind(b, types),
+            Expr::Un(_, a) => double_kind(a, types),
+            Expr::Call(name, args) => {
+                if name.eq_ignore_ascii_case("dble") { return true; }
+                if name.eq_ignore_ascii_case("real") || name.eq_ignore_ascii_case("int") { return false; }
+                args.first().is_some_and(|arg| double_kind(arg, types))
+            }
+            _ => false,
+        }
+    }
+
     fn lower_expr(
         e: &Expr,
         types: &std::collections::HashMap<String, crate::ast::TypeSpec>,
@@ -1782,7 +1778,14 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                 } else {
                     IExpr::Call(
                         name.clone(),
-                        args.iter().map(|a| lower_expr(a, types)).collect(),
+                        args.iter().map(|a| {
+                            let lowered = lower_expr(a, types);
+                            // Keep the kind of a double argument when later constant
+                            // propagation replaces its variable with a real literal.
+                            if (crate::intrinsics::math_arity(name).is_some() || name.eq_ignore_ascii_case("abs")) && double_kind(a, types) {
+                                IExpr::Call("dble".into(), vec![lowered])
+                            } else { lowered }
+                        }).collect(),
                     )
                 }
             }
@@ -2139,6 +2142,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                 Stmt::Cycle => {
                     new_stmts.push(IStmt::Cycle);
                 }
+                Stmt::InitializedDecl { .. } => unreachable!("initialized declarations must be resolved before lowering"),
             }
 
             out.extend(new_stmts);

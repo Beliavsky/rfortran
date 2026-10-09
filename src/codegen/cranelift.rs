@@ -353,6 +353,43 @@ fn int_to_str(
     p
 }
 
+fn integer_power(b: &mut FunctionBuilder, base: ir::Value, exponent: ir::Value) -> ir::Value {
+    use ir::condcodes::IntCC;
+    let negative = b.create_block();
+    let head = b.create_block();
+    let body = b.create_block();
+    let done = b.create_block();
+    let factor = b.append_block_param(head, ir::types::I64);
+    let remaining = b.append_block_param(head, ir::types::I64);
+    let result = b.append_block_param(head, ir::types::I64);
+    let answer = b.append_block_param(done, ir::types::I64);
+    let one = b.ins().iconst(ir::types::I64, 1);
+    let is_negative = b.ins().icmp_imm(IntCC::SignedLessThan, exponent, 0);
+    b.ins().brif(is_negative, negative, &[], head, &[base.into(), exponent.into(), one.into()]);
+
+    b.switch_to_block(negative);
+    // Integer reciprocal gives 0 for |base| > 1, +/-1 otherwise; zero traps.
+    let reciprocal = b.ins().sdiv(one, base);
+    let magnitude = b.ins().ineg(exponent);
+    b.ins().jump(head, &[reciprocal.into(), magnitude.into(), one.into()]);
+
+    b.switch_to_block(head);
+    let finished = b.ins().icmp_imm(IntCC::Equal, remaining, 0);
+    b.ins().brif(finished, done, &[result.into()], body, &[]);
+    b.switch_to_block(body);
+    let bit = b.ins().band_imm(remaining, 1);
+    let odd = b.ins().icmp_imm(IntCC::NotEqual, bit, 0);
+    let product = b.ins().imul(result, factor);
+    let next_result = b.ins().select(odd, product, result);
+    let next_factor = b.ins().imul(factor, factor);
+    // Logical shift also handles the magnitude of the most negative exponent.
+    let next_exponent = b.ins().ushr_imm(remaining, 1);
+    b.ins().jump(head, &[next_factor.into(), next_exponent.into(), next_result.into()]);
+    for block in [negative, head, body, done] { b.seal_block(block); }
+    b.switch_to_block(done);
+    answer
+}
+
 fn eval_expr(
     b: &mut FunctionBuilder,
     ex: &Externs,
@@ -465,6 +502,9 @@ fn eval_expr(
                         }
                         (BinOp::Div, CgVal::I64(a), CgVal::I64(bv)) => {
                             CgVal::I64(b.ins().sdiv(*a, *bv))
+                        }
+                        (BinOp::Pow, CgVal::I64(a), CgVal::I64(bv)) => {
+                            CgVal::I64(integer_power(b, *a, *bv))
                         }
                         _ => {
                             let lv = to_f64(b, lv_raw);
@@ -687,6 +727,60 @@ fn eval_expr(
     }
 }
 
+fn is_character_output(e: &IExpr, chars: &HashMap<String, (ir::StackSlot, usize)>) -> bool {
+    match e {
+        IExpr::Str(_) => true,
+        IExpr::Ident(name) => chars.contains_key(name),
+        IExpr::Bin(crate::ast::BinOp::Concat, _, _) => true,
+        IExpr::Call(name, _) => matches!(name.to_ascii_lowercase().as_str(),
+            "trim" | "adjustl" | "adjustr" | "achar" | "char" | "repeat"),
+        _ => false,
+    }
+}
+
+fn double_expression(e: &IExpr, real_kind: &HashMap<String, bool>) -> bool {
+    match e {
+        IExpr::Ident(name) => *real_kind.get(name).unwrap_or(&false),
+        IExpr::Call(name, args) => {
+            if name.eq_ignore_ascii_case("dble") { return true; }
+            if name.eq_ignore_ascii_case("real") { return false; }
+            args.first().is_some_and(|arg| double_expression(arg, real_kind))
+        }
+        IExpr::Bin(_, a, b) => double_expression(a, real_kind) || double_expression(b, real_kind),
+        IExpr::Un(_, a) => double_expression(a, real_kind),
+        _ => false,
+    }
+}
+
+fn print_numeric_value(b: &mut FunctionBuilder, ex: &Externs, ptr_ty: ir::Type, value: CgVal, double: bool) {
+    use ir::types;
+    match value {
+        CgVal::I64(value) => {
+            let text = int_to_str(b, ex, ptr_ty, ex.sprintf, value);
+            ex.call_printf(b, &[ex.fmt_s, text]);
+        }
+        CgVal::F64(value) => {
+            // Saturating conversion keeps formatting NaN/infinity from trapping.
+            let integer = b.ins().fcvt_to_sint_sat(types::I64, value);
+            let back = b.ins().fcvt_from_sint(types::F64, integer);
+            let integral = b.ins().fcmp(ir::condcodes::FloatCC::Equal, value, back);
+            let int_slot = b.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot, 64, 0));
+            let int_text = b.ins().stack_addr(ptr_ty, int_slot, 0);
+            ex.call_sprintf(b, &[int_text, ex.fmt_i64_dot0, integer]);
+            let real_slot = b.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot, 64, 0));
+            let real_text = b.ins().stack_addr(ptr_ty, real_slot, 0);
+            let digits = b.ins().iconst(types::I32, if double { 15 } else { 6 });
+            ex.call_gcvt(b, &[value, digits, real_text]);
+            let text = b.ins().select(integral, int_text, real_text);
+            ex.call_printf(b, &[ex.fmt_s, text]);
+        }
+        CgVal::Bool(value) => {
+            let text = b.ins().select(value, ex.p_true, ex.p_false);
+            ex.call_printf(b, &[ex.fmt_s, text]);
+        }
+    }
+}
+
 fn print_expr(
     b: &mut FunctionBuilder,
     ex: &Externs,
@@ -787,20 +881,16 @@ fn print_expr(
                 let p = b.ins().global_value(ptr_ty, gv);
                 ex.call_printf(b, &[ex.fmt_s, p]);
             } else if let Some(len) = arrays.get(id) {
-                if let Some(ss) = ints.get(id) {
-                    for i in 0..*len {
-                        let a = b.ins().stack_addr(ptr_ty, *ss, 0);
-                        let addr = b.ins().iadd_imm(a, (i as i64) * 8);
-                        let v = b.ins().load(ir::types::I64, MemFlags::new(), addr, 0);
-                        let p = int_to_str(b, ex, ptr_ty, ex.sprintf, v);
-                        ex.call_printf(b, &[ex.fmt_s, p]);
-                        if i + 1 < *len {
-                            let sp = make_data(module, b, ptr_ty, &mut 0u32, b" ")?;
-                            ex.call_printf(b, &[ex.fmt_s, sp]);
-                        }
+                for i in 0..*len {
+                    if i > 0 {
+                        let sp = make_data(module, b, ptr_ty, &mut 0u32, b" ")?;
+                        ex.call_printf(b, &[ex.fmt_s, sp]);
                     }
-                    return Ok(());
+                    let element = IExpr::Index(id.clone(), vec![IExpr::IntLit((i + 1).to_string())]);
+                    print_expr(b, ex, ptr_ty, module, _dc, ints, reals, bools, chars,
+                        real_kind, i128_last, func_meta, arrays, &element)?;
                 }
+                return Ok(());
             } else if let Some(ss) = ints.get(id) {
                 let a = b.ins().stack_addr(ptr_ty, *ss, 0);
                 let v = b.ins().load(types::I64, MemFlags::new(), a, 0);
@@ -990,6 +1080,13 @@ fn print_expr(
         }
         IExpr::Call(name, args) => {
             let lname = name.to_ascii_lowercase();
+            if crate::intrinsics::math_arity(name).is_some()
+                || matches!(lname.as_str(), "abs" | "int" | "real" | "dble")
+            {
+                let value = eval_expr(b, ex, ptr_ty, e, ints, reals, bools, func_meta);
+                print_numeric_value(b, ex, ptr_ty, value, double_expression(e, real_kind));
+                return Ok(());
+            }
             if (lname == "trim" || lname == "adjustl" || lname == "adjustr") && args.len() == 1 {
                 use ir::condcodes::IntCC;
 
@@ -1426,11 +1523,18 @@ fn gen_stmts(
     for st in stmts {
         match st {
             IStmt::Print(items) => {
+                let space = make_data(module, b, ptr_ty, dc, b" ")?;
+                let mut previous_character = None;
                 for e in items.iter() {
+                    let character = is_character_output(e, chars);
+                    if !crate::utils::list_directed_separator(previous_character, character).is_empty() {
+                        ex.call_printf(b, &[ex.fmt_s, space]);
+                    }
                     print_expr(
                         b, ex, ptr_ty, module, dc, ints, reals, bools, chars, real_kind, i128_last,
                         func_meta, arrays, e,
                     )?;
+                    previous_character = Some(character);
                 }
                 ex.call_printf(b, &[ex.fmt_s, ex.p_nl]);
             }
@@ -2393,7 +2497,14 @@ impl Backend for CraneliftBackend {
         fn collect_calls_body(sts: &[IStmt], out: &mut Vec<(String, usize)>) {
             for st in sts {
                 match st {
-                    IStmt::Call(n, args) => out.push((n.clone(), args.len())),
+                    IStmt::Call(n, args) => {
+                        out.push((n.clone(), args.len()));
+                        for arg in args { collect_calls_expr(arg, out); }
+                    }
+                    IStmt::AssignIndex(_, indices, value) => {
+                        for index in indices { collect_calls_expr(index, out); }
+                        collect_calls_expr(value, out);
+                    }
                     IStmt::AssignExpr(_, e) => collect_calls_expr(e, out),
                     IStmt::Return(Some(e)) => collect_calls_expr(e, out),
                     IStmt::Print(items) => {
@@ -2424,6 +2535,16 @@ impl Backend for CraneliftBackend {
                         collect_calls_expr(end, out);
                         collect_calls_body(body, out);
                     }
+                    IStmt::DoWhile { cond, body } => {
+                        collect_calls_expr(cond, out);
+                        collect_calls_body(body, out);
+                    }
+                    IStmt::Block { body } => collect_calls_body(body, out),
+                    IStmt::SelectCase { selector, cases, default } => {
+                        collect_calls_expr(selector, out);
+                        for case in cases { collect_calls_body(&case.body, out); }
+                        if let Some(body) = default { collect_calls_body(body, out); }
+                    }
                     _ => {}
                 }
             }
@@ -2443,7 +2564,7 @@ impl Backend for CraneliftBackend {
         for name in import_arity.keys().cloned().collect::<Vec<_>>() {
             let lname = name.to_ascii_lowercase();
             match lname.as_str() {
-                "abs" | "aimag" | "aint" | "anint" | "ceiling" | "cmplx" | "conjg" | "dble"
+                "abs" | "aimag" | "aint" | "anint" | "ceiling" | "cmplx" | "conjg" | "dble" | "real"
                 | "dim" | "dprod" | "floor" | "db" | "sqrt" | "exp" | "log" | "log10" | "sin"
                 | "cos" | "tan" | "asin" | "acos" | "atan" | "atan2" | "sinh" | "cosh" | "tanh"
                 | "scale" | "set_exponent" | "nearest" | "fraction" | "exponent" | "spacing"
@@ -2535,6 +2656,19 @@ impl Backend for CraneliftBackend {
             func_ids.insert(f.name.clone(), fid);
         }
         for (name, arity) in &import_arity {
+            if let Some(arity) = crate::intrinsics::math_arity(name) {
+                if !func_ids.contains_key(name) {
+                    let mut sig = obj.make_signature();
+                    for _ in 0..arity { sig.params.push(AbiParam::new(types::F64)); }
+                    sig.returns.push(AbiParam::new(types::F64));
+                    let fid = obj.declare_function(&name.to_ascii_lowercase(), Linkage::Import, &sig)?;
+                    func_ids.insert(name.clone(), fid);
+                    eff_ret.insert(name.clone(), TypeSpec::Real);
+                    param_kinds_map.insert(name.clone(), vec![ParamKind::F64; arity]);
+                    param_double_flags.insert(name.clone(), vec![true; arity]);
+                }
+                continue;
+            }
             if eff_ret.contains_key(name) {
                 continue;
             }

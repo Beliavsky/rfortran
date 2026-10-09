@@ -159,6 +159,14 @@ pub fn interpret(program: &Program) {
                 match op {
                     BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow => {
                         let both_int = lv.0.is_some() && rv.0.is_some();
+                        if both_int && matches!(op, BinOp::Pow) {
+                            let result = crate::utils::checked_integer_power(lv.0.unwrap(), rv.0.unwrap())
+                                .unwrap_or_else(|| {
+                                    eprintln!("Error: integer exponentiation overflow or zero raised to a negative power");
+                                    std::process::exit(1);
+                                });
+                            return ValueTuple::from_int(result);
+                        }
                         if both_int && matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul) {
                             let li = lv.0.unwrap();
                             let ri = rv.0.unwrap();
@@ -312,7 +320,9 @@ pub fn interpret(program: &Program) {
         let n = name.to_ascii_lowercase();
         match n.as_str() {
             "abs" => {
-                if let Some(f) = to_real(args.get(0)?) {
+                if let Some(i) = args.get(0)?.0 {
+                    Some(ValueTuple::from_int(i.abs()))
+                } else if let Some(f) = to_real(args.get(0)?) {
                     Some(ValueTuple::from_real(f.abs()))
                 } else {
                     Some(ValueTuple::from_int(
@@ -563,6 +573,20 @@ pub fn interpret(program: &Program) {
         }
     }
 
+    fn double_expression(e: &Expr, doubles: &HashMap<String, f64>) -> bool {
+        match e {
+            Expr::Ident(name) => doubles.contains_key(name),
+            Expr::Call(name, args) => {
+                if name.eq_ignore_ascii_case("dble") { return true; }
+                if name.eq_ignore_ascii_case("real") { return false; }
+                args.first().is_some_and(|arg| double_expression(arg, doubles))
+            }
+            Expr::Bin(_, a, b) => double_expression(a, doubles) || double_expression(b, doubles),
+            Expr::Un(_, a) => double_expression(a, doubles),
+            _ => false,
+        }
+    }
+
     fn eval_logical(
         e: &Expr,
         env_log: &HashMap<String, bool>,
@@ -623,6 +647,7 @@ pub fn interpret(program: &Program) {
         while idx < stmts.len() {
             let stmt = &stmts[idx];
             match stmt {
+                Stmt::InitializedDecl { .. } => unreachable!("initialized declarations must be resolved before interpretation"),
                 Stmt::VarDecl { kind, names } => {
                     let frame = call_stack.last_mut().unwrap();
                     for n in names {
@@ -749,37 +774,42 @@ pub fn interpret(program: &Program) {
                             fr.env_log.clone(),
                         )
                     };
-                    let mut parts = Vec::new();
+                    let mut parts: Vec<(String, bool)> = Vec::new();
                     for it in items {
                         match it {
-                            Expr::Str(s) => parts.push(s.clone()),
-                            Expr::IntLit(s) => parts.push(s.clone()),
+                            Expr::Str(s) => parts.push((s.clone(), true)),
+                            Expr::IntLit(s) => parts.push((s.clone(), false)),
                             Expr::RealLit(s) => {
                                 let f = parse_f64_lossy(s);
-                                parts.push(format_real(f, false));
+                                parts.push((format_real(f, false), false));
                             }
-                            Expr::Logical(b) => parts.push(if *b {
+                            Expr::Logical(b) => parts.push((if *b {
                                 ".TRUE.".into()
                             } else {
                                 ".FALSE.".into()
-                            }),
+                            }, false)),
                             Expr::Ident(id) => {
-                                if let Some(v) = r64.get(id) {
-                                    parts.push(format_real(*v, true));
+                                let frame = call_stack.last().unwrap();
+                                if let Some(values) = frame.env_int_arrays.get(id) {
+                                    parts.extend(values.iter().map(|v| (v.to_string(), false)));
+                                } else if let Some(values) = frame.env_real_arrays.get(id) {
+                                    parts.extend(values.iter().map(|v| (format_real(*v, false), false)));
+                                } else if let Some(v) = r64.get(id) {
+                                    parts.push((format_real(*v, true), false));
                                 } else if let Some(v) = r32.get(id) {
-                                    parts.push(format_real(*v as f64, false));
+                                    parts.push((format_real(*v as f64, false), false));
                                 } else if let Some(v) = ints.get(id) {
-                                    parts.push(v.to_string());
+                                    parts.push((v.to_string(), false));
                                 } else if let Some(v) = logs.get(id) {
-                                    parts.push(if *v {
+                                    parts.push((if *v {
                                         ".TRUE.".into()
                                     } else {
                                         ".FALSE.".into()
-                                    });
+                                    }, false));
                                 } else if let Some(v) = strs.get(id) {
-                                    parts.push(v.clone());
+                                    parts.push((v.clone(), true));
                                 } else {
-                                    parts.push("0".into());
+                                    parts.push(("0".into(), false));
                                 }
                             }
                             _ => {
@@ -787,18 +817,25 @@ pub fn interpret(program: &Program) {
                                     it, &strs, &ints, &r32, &r64, &logs, funcs, call_stack,
                                 );
                                 if let Some(s) = vt.3 {
-                                    parts.push(s);
+                                    parts.push((s, true));
                                 } else if let Some(f) = vt.1 {
-                                    parts.push(format_real(f, false));
+                                    parts.push((format_real(f, double_expression(it, &r64)), false));
                                 } else if let Some(i) = vt.0 {
-                                    parts.push(i.to_string());
+                                    parts.push((i.to_string(), false));
                                 } else if let Some(b) = vt.2 {
-                                    parts.push(if b { ".TRUE.".into() } else { ".FALSE.".into() });
+                                    parts.push((if b { ".TRUE.".into() } else { ".FALSE.".into() }, false));
                                 }
                             }
                         }
                     }
-                    println!("{}", parts.join(" "));
+                    let mut record = String::new();
+                    let mut previous_character = None;
+                    for (text, character) in parts {
+                        record.push_str(crate::utils::list_directed_separator(previous_character, character));
+                        record.push_str(&text);
+                        previous_character = Some(character);
+                    }
+                    println!("{}", record);
                 }
                 Stmt::If {
                     cond,

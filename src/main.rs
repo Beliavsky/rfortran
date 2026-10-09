@@ -9,9 +9,11 @@ mod cli;
 mod codegen;
 mod errors;
 mod ir;
+mod intrinsics;
 mod lexer;
 mod linker;
 mod parser;
+mod parameters;
 mod runtime;
 mod sema;
 mod utils;
@@ -124,6 +126,7 @@ fn main() -> Result<()> {
                     }
                 }
             };
+            let program = parameters::resolve(program)?;
             let empty_obj_exports = std::collections::HashSet::new();
             let sema_errs = sema::analyze_with_src(
                 &program,
@@ -231,6 +234,7 @@ fn main() -> Result<()> {
                     }
                 }
             };
+            let program = parameters::resolve(program)?;
             let empty_obj_exports = std::collections::HashSet::new();
             let sema_errs = sema::analyze_with_src(
                 &program,
@@ -245,6 +249,9 @@ fn main() -> Result<()> {
                 for e in &sema_errs {
                     eprintln!("{}", e);
                 }
+            }
+            if sema_errs.iter().any(|e| matches!(e.kind, crate::errors::CompileErrorKind::Semantic)) {
+                anyhow::bail!("semantic checks failed");
             }
             runtime::interpret(&program);
         }
@@ -347,6 +354,7 @@ fn compile_to_object(
             return Err(anyhow::anyhow!("parse failed"));
         }
     };
+    let program = parameters::resolve(program)?;
     let empty_obj_exports = std::collections::HashSet::new();
     let sema_errs = sema::analyze_with_src(
         &program,

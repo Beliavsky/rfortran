@@ -5,28 +5,28 @@
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "comments test passed\n"
+      "program_stdout": " comments test passed\n"
     },
     "02_basic_returns": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "i: 42\nr: 3.5\n"
+      "program_stdout": " i:  42\n r:  3.5\n"
     },
     "03_external_decl_and_call": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "x: 5\n"
+      "program_stdout": " x:  5\n"
     },
     "04_integer_kinds": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "1242900000000012345678901234567890\n"
+      "program_stdout": " 1 2 42 9000000000 12345678901234567890\n"
     },
     "05_type_mismatch_in_function_result": {
       "compiler_exit_code": 1,
@@ -40,112 +40,133 @@
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "b_true: .TRUE.\nb_false: .FALSE.\n"
+      "program_stdout": " b_true:  .TRUE.\n b_false:  .FALSE.\n"
     },
     "07_character": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "s: hello world\nhello world\n"
+      "program_stdout": " s: hello world\n hello world\n"
     },
     "08_real_double": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "real: 3.14159\ndouble precision: 3.14159265358979\n"
+      "program_stdout": " real:  3.14159\n double precision:  3.14159265358979\n"
     },
     "09_if_else": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "if-then works\nelse branch\n"
+      "program_stdout": " if-then works\n else branch\n"
     },
     "10_do_loop": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "loop i: 1\nloop i: 2\nloop i: 3\n"
+      "program_stdout": " loop i:  1\n loop i:  2\n loop i:  3\n"
     },
     "11_operators": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "ops add: 5\nops sub: 6\nops mul: 42\nops div: 4\nops pow: 256.0\nops eq: .TRUE.\nops ne: .TRUE.\nops lt: .TRUE.\nops gt: .FALSE.\nops le: .TRUE.\nops ge: .TRUE.\nops and: .FALSE.\nops or: .TRUE.\nops not: .TRUE.\nops eqv: .TRUE.\nops neqv: .TRUE.\nops concat: hello world\n"
+      "program_stdout": " ops add:  5\n ops sub:  6\n ops mul:  42\n ops div:  4\n ops pow:  256\n ops eq:  .TRUE.\n ops ne:  .TRUE.\n ops lt:  .TRUE.\n ops gt:  .FALSE.\n ops le:  .TRUE.\n ops ge:  .TRUE.\n ops and:  .FALSE.\n ops or:  .TRUE.\n ops not:  .TRUE.\n ops eqv:  .TRUE.\n ops neqv:  .TRUE.\n ops concat: hello world\n"
     },
     "12_functions": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "in foo\nbar x: 5\ni4: 1\nj4: 5\n"
+      "program_stdout": " in foo\n bar x:  5\n i4:  1\n j4:  5\n"
     },
     "13_subroutine_and_args": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "add(10,32): 42\nmix(2,5,3): 13\nshow3 args: 123\nreal_add: 4.0\ndp_add: 4.0\n"
+      "program_stdout": " add(10,32):  42\n mix(2,5,3):  13\n show3 args:  1 2 3\n real_add:  4.0\n dp_add:  4.0\n"
     },
     "14_use": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "Result is 8\n"
+      "program_stdout": " Result is  8\n"
     },
     "15_read": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "Absolute value of t: 6969\nYou entered: HELLO and WORLD\n"
+      "program_stdout": " Absolute value of t:  6969\n You entered: HELLO and WORLD\n"
     },
     "16_select": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "You selected option 2\nYou selected option 3\nYou selected option 1\nInvalid option\n"
+      "program_stdout": " You selected option 2\n You selected option 3\n You selected option 1\n Invalid option\n"
     },
     "17_blocks": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "Inside block: 1\nInside block: 2\nInside block: 3\nInside block: 4\nInside block: 5\nInside block: 6\nInside block: 7\nInside block: 8\nInside block: 9\nInside block: 10\nExited block\ni: 11\n"
+      "program_stdout": " Inside block:  1\n Inside block:  2\n Inside block:  3\n Inside block:  4\n Inside block:  5\n Inside block:  6\n Inside block:  7\n Inside block:  8\n Inside block:  9\n Inside block:  10\n Exited block\ni:  11\n"
     },
     "18_cycle_exit_and_stop": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "i = 1 j = 1\ni = 1 j = 3\ni = 2 j = 1\ni = 2 j = 3\ni = 3 j = 1\ni = 3 j = 3\n"
+      "program_stdout": " i =  1  j =  1\n i =  1  j =  3\n i =  2  j =  1\n i =  2  j =  3\n i =  3  j =  1\n i =  3  j =  3\n"
     },
     "19_do_while": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "1\n2\n3\n5\n8\n13\n21\n34\n55\n89\n144\n"
+      "program_stdout": " 1\n 2\n 3\n 5\n 8\n 13\n 21\n 34\n 55\n 89\n 144\n"
     },
     "20_arrays": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "2 4 6 8 10\na1: 2\na5: 10\nsum: 30\n"
+      "program_stdout": " 2 4 6 8 10\n a1:  2\n a5:  10\n sum:  30\n"
     },
     "21_implicit": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "4298\n3.141\n"
+      "program_stdout": " 42 98\n 3.14 1\n"
+    },
+    "22_list_directed_output": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " n, n^2 = 5 25\n 1 2 3\n ABC\n left  right 4\n  9 Z\n array: 7 8 9\n real: 1.5 2.5 3.5\n logical: .TRUE. .FALSE.\n"
+    },
+    "23_integer_power": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " constant: 25 16677181699666569\n runtime: 16677181699666569\n zero and one: 1 3\n negative: 0 -1 1\n negative unit: 1 -1\n sign: -27 81\n real: 25.0 25.0 1.0 5.0\n"
+    },
+    "24_math_intrinsics": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " sqrt 1.22474\n exp 4.48169\n log 0.405465\n log10 0.176091\n sin 0.997495\n cos 7.07372e-002\n tan 14.1014\n asin 0.523599\n acos 1.0472\n atan 0.982794\n atan2 0.321751\n atan2 quadrant 2.81984\n sinh 2.12928\n cosh 2.35241\n tanh 0.905148\n nested 1.5\n expression 2.10233\n double 1.4142135623731\n conversion 3.0 3.0\n abs 3 1.5\n int 2\n assignment 1.22474\n block 7.07372e-002\n double expression 1.4142135623731\n"
     }
   }
 }

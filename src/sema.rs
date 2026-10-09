@@ -614,6 +614,11 @@ pub fn analyze_with_src(
     }
 
     let mut known_intrinsics: HashMap<String, TypeSpec> = HashMap::new();
+    for (name, _) in crate::intrinsics::REAL_MATH {
+        known_intrinsics.insert(name.to_string(), TypeSpec::Real);
+    }
+    known_intrinsics.insert("real".to_string(), TypeSpec::Real);
+    known_intrinsics.insert("dble".to_string(), TypeSpec::DoublePrecision);
     let mut external_fn_ret: HashMap<String, TypeSpec> = HashMap::new();
     for name in [
         "int", "nint", "ichar", "iachar", "len", "len_trim", "count", "size", "lbound", "ubound",
@@ -1228,8 +1233,14 @@ pub fn analyze_with_src(
                     Concat => Some(TypeSpec::Character(None)),
                 }
             }
-            Expr::Call(name, _) => {
+            Expr::Call(name, args) => {
                 let lname = name.to_ascii_lowercase();
+                if !fn_map.contains_key(&lname) {
+                    if let Some(kind) = sym.get(&lname) { return Some(kind.clone()); }
+                    if crate::intrinsics::math_arity(&lname).is_some() || lname == "abs" {
+                        return args.first().and_then(|arg| infer_expr_type(arg, sym, fn_map, external_fn_ret));
+                    }
+                }
                 if let Some(fi) = fn_map.get(&lname) {
                     fi.return_type
                         .clone()
@@ -2562,5 +2573,139 @@ pub fn analyze_with_src(
         }
     }
 
+    fn whole_array(e: &Expr, arrays: &HashSet<String>) -> bool {
+        match e {
+            Expr::Ident(name) => arrays.contains(&name.to_ascii_lowercase()),
+            Expr::Bin(_, a, b) => whole_array(a, arrays) || whole_array(b, arrays),
+            Expr::Un(_, a) => whole_array(a, arrays),
+            Expr::Call(name, args) if !arrays.contains(&name.to_ascii_lowercase()) => args.iter().any(|a| whole_array(a, arrays)),
+            _ => false,
+        }
+    }
+
+    fn check_math_expr(
+        e: &Expr, sym: &HashMap<String, TypeSpec>, arrays: &HashSet<String>,
+        functions: &HashMap<String, FnInfo>, returns: &HashMap<String, TypeSpec>,
+        problems: &mut Vec<(String, String)>,
+    ) {
+        match e {
+            Expr::Call(name, args) => {
+                let key = name.to_ascii_lowercase();
+                if !functions.contains_key(&key) && !sym.contains_key(&key) {
+                    let math = crate::intrinsics::math_arity(&key);
+                    let arity = math.or_else(|| matches!(key.as_str(), "abs" | "int" | "real" | "dble").then_some(1));
+                    if let Some(arity) = arity {
+                        if args.len() != arity {
+                            problems.push((name.clone(), format!("intrinsic `{name}` expects {arity} argument(s), got {}", args.len())));
+                        } else {
+                            let types: Vec<_> = args.iter().map(|a| infer_expr_type(a, sym, functions, returns)).collect();
+                            for (arg, kind) in args.iter().zip(&types) {
+                                if whole_array(arg, arrays) {
+                                    problems.push((name.clone(), format!("array arguments to intrinsic `{name}` are not yet supported")));
+                                } else if let Some(kind) = kind {
+                                    let valid = if math.is_some() {
+                                        matches!(kind, TypeSpec::Real | TypeSpec::DoublePrecision)
+                                    } else {
+                                        matches!(kind, TypeSpec::Integer(_) | TypeSpec::Real | TypeSpec::DoublePrecision)
+                                    };
+                                    if !valid {
+                                        let required = if math.is_some() { "REAL or DOUBLE PRECISION" } else { "numeric" };
+                                        problems.push((name.clone(), format!("intrinsic `{name}` requires {required} arguments")));
+                                    }
+                                }
+                            }
+                            if key == "atan2" {
+                                if let (Some(a), Some(b)) = (&types[0], &types[1]) {
+                                    if std::mem::discriminant(a) != std::mem::discriminant(b) {
+                                        problems.push((name.clone(), "ATAN2 arguments must have the same type and kind".into()));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                for arg in args { check_math_expr(arg, sym, arrays, functions, returns, problems); }
+            }
+            Expr::Index(_, args) => for arg in args { check_math_expr(arg, sym, arrays, functions, returns, problems); },
+            Expr::Bin(_, a, b) => {
+                check_math_expr(a, sym, arrays, functions, returns, problems);
+                check_math_expr(b, sym, arrays, functions, returns, problems);
+            }
+            Expr::Un(_, a) => check_math_expr(a, sym, arrays, functions, returns, problems),
+            _ => {}
+        }
+    }
+
+    fn check_math_body(
+        body: &[Stmt], inherited: &HashMap<String, TypeSpec>, inherited_arrays: &HashSet<String>,
+        functions: &HashMap<String, FnInfo>, returns: &HashMap<String, TypeSpec>,
+        problems: &mut Vec<(String, String)>,
+    ) {
+        let mut symbols = inherited.clone();
+        let mut arrays = inherited_arrays.clone();
+        for stmt in body {
+            match stmt {
+                Stmt::VarDecl { kind, names } => for name in names {
+                    symbols.insert(name.to_ascii_lowercase(), kind.clone());
+                    arrays.remove(&name.to_ascii_lowercase());
+                },
+                Stmt::ArrayDecl { kind, name, .. } => {
+                    symbols.insert(name.to_ascii_lowercase(), kind.clone());
+                    arrays.insert(name.to_ascii_lowercase());
+                }
+                _ => {}
+            }
+        }
+        for stmt in body {
+            let mut expressions: Vec<&Expr> = Vec::new();
+            if let Stmt::CallSub { name, .. } = stmt {
+                if crate::intrinsics::math_arity(name).is_some() && !functions.contains_key(&name.to_ascii_lowercase()) {
+                    problems.push((name.clone(), format!("intrinsic `{name}` is a function, not a subroutine")));
+                }
+            }
+            match stmt {
+                Stmt::Assign { value, .. } => expressions.push(value),
+                Stmt::AssignIndex { indices, value, .. } => { expressions.extend(indices); expressions.push(value); }
+                Stmt::ArrayDecl { dims, .. } => expressions.extend(dims),
+                Stmt::Print { items } => expressions.extend(items),
+                Stmt::Read { args } | Stmt::CallSub { args, .. } => expressions.extend(args),
+                Stmt::Return(Some(e)) => expressions.push(e),
+                Stmt::If { cond, then_body, else_body } => {
+                    expressions.push(cond);
+                    check_math_body(then_body, &symbols, &arrays, functions, returns, problems);
+                    if let Some(body) = else_body { check_math_body(body, &symbols, &arrays, functions, returns, problems); }
+                }
+                Stmt::Do { start, end, body, .. } => {
+                    expressions.extend([start, end]);
+                    check_math_body(body, &symbols, &arrays, functions, returns, problems);
+                }
+                Stmt::DoWhile { cond, body } => {
+                    expressions.push(cond);
+                    check_math_body(body, &symbols, &arrays, functions, returns, problems);
+                }
+                Stmt::Block { body } | Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } | Stmt::Module { body, .. } => {
+                    check_math_body(body, &symbols, &arrays, functions, returns, problems);
+                }
+                Stmt::SelectCase { expr, cases, default } => {
+                    expressions.push(expr);
+                    for case in cases {
+                        for item in &case.items {
+                            match item { CaseItem::Single(e) => expressions.push(e), CaseItem::Range(a,b) => expressions.extend([a,b]) }
+                        }
+                        check_math_body(&case.body, &symbols, &arrays, functions, returns, problems);
+                    }
+                    if let Some(body) = default { check_math_body(body, &symbols, &arrays, functions, returns, problems); }
+                }
+                _ => {}
+            }
+            for e in expressions { check_math_expr(e, &symbols, &arrays, functions, returns, problems); }
+        }
+    }
+
+    let mut math_problems = Vec::new();
+    check_math_body(&program.body, &sym, &HashSet::new(), &fn_map, &external_fn_ret, &mut math_problems);
+    for (name, message) in math_problems {
+        report_error(&message, find_ident_span(&name), &mut stderr, &file, &mut errors, false);
+    }
     errors
 }
