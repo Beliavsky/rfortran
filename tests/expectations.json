@@ -293,6 +293,34 @@
       "program_exit_code": 1,
       "program_stderr": "Runtime error: read of uninitialized variable `x` at 42_conditional_output.f90:19\n",
       "program_stdout": ""
+    },
+    "43_pure_subroutine": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 10 20 30\n 9 12\n 3.0\n 15 99\n"
+    },
+    "46_random_seed_reset": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " .TRUE.\n .TRUE.\n"
+    },
+    "44_real_kinds_parameters": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 8 4 3.0 6.28318530717959\n 1.25 1.e-003 2.5 -2.5\n 9 2 1.0\n 2.2250738585072e-308 1.17549435082229e-038\n"
+    },
+    "45_normal_random": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " Number of observations: 1000\n Mean:               2.86412816926697e-002\n Standard deviation: 0.972235006368056\n Kurtosis:           2.93515278974772\n Excess kurtosis:    -6.48472102522817e-002\n"
     }
   }
 }

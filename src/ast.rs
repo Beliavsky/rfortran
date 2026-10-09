@@ -9,6 +9,7 @@ pub struct Program {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Stmt {
+    Accessibility { public: bool, names: Vec<String> },
     DummyIntent { name: String, intent: String },
     /// Byte offset of the following source statement; retained through AST lowering.
     SourceLocation(usize),
@@ -64,6 +65,8 @@ pub enum Stmt {
         body: Vec<Stmt>,
     },
     Subroutine {
+        #[serde(default)]
+        pure: bool,
         name: String,
         params: Vec<String>,
         body: Vec<Stmt>,
@@ -100,6 +103,7 @@ pub enum Stmt {
 pub enum TypeSpec {
     Integer(Option<u8>),
     Real,
+    RealKind(String),
     DoublePrecision,
     Character(Option<usize>),
     Logical,

@@ -12,6 +12,8 @@ extern {
         KW_FUNCTION => TokenKind::KwFunction,
         KW_RESULT => TokenKind::KwResult,
         KW_PURE => TokenKind::KwPure,
+        KW_PUBLIC => TokenKind::KwPublic,
+        KW_PRIVATE => TokenKind::KwPrivate,
         KW_RETURN => TokenKind::KwReturn,
         KW_IMPLICIT => TokenKind::KwImplicit,
         KW_NONE => TokenKind::KwNone,
@@ -142,7 +144,7 @@ FunctionDef: Stmt = {
 };
 
 SubrDef: Stmt = {
-    KW_SUBROUTINE <name: Ident> LPAREN <params: ParamList> RPAREN <body: Stmts> KW_END KW_SUBROUTINE <_endname: Ident> => Stmt::Subroutine { name, params, body },
+    <pure: KW_PURE?> KW_SUBROUTINE <name: Ident> LPAREN <params: ParamList> RPAREN <body: Stmts> KW_END KW_SUBROUTINE <_endname: Ident> => Stmt::Subroutine { name, params, body, pure: pure.is_some() },
 };
 
 EndTail: () = {
@@ -160,6 +162,8 @@ IdentList: Vec<String> = {
 
 // attribute list used in declarations, e.g. `integer, intent(in) :: a`.
 AttrList: Vec<String> = {
+    <mut v: AttrList> COMMA KW_PUBLIC => { v.push("public".into()); v },
+    <mut v: AttrList> COMMA KW_PRIVATE => { v.push("private".into()); v },
     /* empty */ => vec![],
     <mut v: AttrList> COMMA <id: Ident> LPAREN <arg: Ident> RPAREN => { v.push(format!("{}({})", id, arg)); v },
     <mut v: AttrList> COMMA <id: Ident> => { v.push(id); v },
@@ -183,6 +187,10 @@ Stmts: Vec<Stmt> = {
 };
 
 Stmt: Stmt = {
+    KW_PUBLIC => Stmt::Accessibility { public: true, names: vec![] },
+    KW_PRIVATE => Stmt::Accessibility { public: false, names: vec![] },
+    KW_PUBLIC DCOLON <names: IdentList> => Stmt::Accessibility { public: true, names },
+    KW_PRIVATE DCOLON <names: IdentList> => Stmt::Accessibility { public: false, names },
     KW_PRINT STAR COMMA <es: ExprList> => Stmt::Print { items: es },
     KW_PRINT COMMA STAR COMMA <es: ExprList> => Stmt::Print { items: es },
     KW_PRINT LPAREN STAR COMMA <es: ExprList> RPAREN => Stmt::Print { items: es },
@@ -250,6 +258,8 @@ ParamList: Vec<String> = {
 CondExpr: Expr = { <e: OrExpr> => e };
 
 TypeSpec: TypeSpec = {
+    KW_REAL LPAREN <kind: Ident> RPAREN => TypeSpec::RealKind(kind),
+    KW_REAL LPAREN <kind: INT> RPAREN => TypeSpec::RealKind(kind),
     KW_INTEGER => TypeSpec::Integer(None),
     KW_INTEGER LPAREN <k: INT> RPAREN => {
         let kk: Option<u8> = k.parse::<u32>().ok().and_then(|v| u8::try_from(v).ok());

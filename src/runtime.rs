@@ -44,7 +44,7 @@ pub fn interpret(program: &Program) {
                     },
                 );
             }
-            Stmt::Subroutine { name, params, body } => {
+            Stmt::Subroutine { name, params, body, .. } => {
                 funcs.insert(
                     name.clone(),
                     FuncDef {
@@ -477,11 +477,15 @@ pub fn interpret(program: &Program) {
                     Some(ValueTuple::from_int(to_int(args.get(0)?)?))
                 }
             }
-            "maxval" | "minval" | "max" | "min" => {
-                if let Some(r) = to_real(args.get(0)?) {
-                    Some(ValueTuple::from_real(r))
+            "max" | "min" => {
+                if args.iter().all(|a| a.0.is_some()) {
+                    let mut values = args.iter().map(|a| a.0.unwrap());
+                    let first = values.next()?;
+                    Some(ValueTuple::from_int(values.fold(first, |a,b| if n == "max" { a.max(b) } else { a.min(b) })))
                 } else {
-                    Some(ValueTuple::from_int(to_int(args.get(0)?)?))
+                    let mut values = args.iter().map(|a| to_real(a).unwrap());
+                    let first = values.next()?;
+                    Some(ValueTuple::from_real(values.fold(first, |a,b| if n == "max" { a.max(b) } else { a.min(b) })))
                 }
             }
 
@@ -585,7 +589,9 @@ pub fn interpret(program: &Program) {
     }
 
     fn format_real(f: f64, double: bool) -> String {
-        if f.fract() == 0.0 {
+        if f != 0.0 && (f.abs() < 1e-4 || f.abs() >= if double { 1e15 } else { 1e6 }) {
+            if double { format!("{f:.14e}") } else { format!("{f:.5e}") }
+        } else if f.fract() == 0.0 {
             format!("{:.1}", f)
         } else if double {
             format!("{:.15}", f)
@@ -691,6 +697,7 @@ pub fn interpret(program: &Program) {
                             continue;
                         }
                         match kind {
+                            TypeSpec::RealKind(_) => unreachable!("unresolved real kind"),
                             TypeSpec::Integer(_) => {
                                 frame.env_int.entry(n.clone()).or_insert(0);
                             }
@@ -717,6 +724,7 @@ pub fn interpret(program: &Program) {
                             if let Ok(v128) = i128::from_str_radix(s.as_str(), 10) {
                                 let len = usize::try_from(v128).unwrap_or(0);
                                 match kind {
+                            TypeSpec::RealKind(_) => unreachable!("unresolved real kind"),
                                     TypeSpec::Integer(_) => {
                                         fr.env_int_arrays.insert(name.clone(), vec![0; len]);
                                     }
@@ -981,6 +989,7 @@ pub fn interpret(program: &Program) {
                     }
                 }
                 Stmt::CallSub { name, args } => {
+                    if name.eq_ignore_ascii_case("random_seed") && !funcs.contains_key(name) { RANDOM_STATE.with(|s| s.set(1)); idx += 1; continue; }
                     if name == "@check_initialized" {
                         let fr = call_stack.last().unwrap();
                         let (strings, ints, real32, real64, logs) = (fr.env_str.clone(), fr.env_int.clone(), fr.env_real32.clone(), fr.env_real64.clone(), fr.env_log.clone());
@@ -1101,7 +1110,7 @@ pub fn interpret(program: &Program) {
                     // Implicit statements are handled during semantic analysis
                 }
                 Stmt::SourceLocation(_) => {}
-                Stmt::DummyIntent { .. } => {}
+                Stmt::DummyIntent { .. } | Stmt::Accessibility { .. } => {}
                 Stmt::Block { body } => {
                     if let Some(ret) = exec_stmts(body, funcs, call_stack) {
                         return Some(ret);

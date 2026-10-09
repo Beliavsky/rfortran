@@ -130,7 +130,7 @@ pub fn resolve(mut program: Program) -> Result<Program> {
     fn collect(body: &[Stmt], routines: &mut HashMap<String, Routine>) {
         for s in body {
             match s {
-                Stmt::Subroutine { name, params, body } => { routines.insert(name.clone(), Routine { params: params.clone(), body: body.clone() }); }
+                Stmt::Subroutine { name, params, body, .. } => { routines.insert(name.clone(), Routine { params: params.clone(), body: body.clone() }); }
                 Stmt::Module { body, .. } => collect(body, routines),
                 _ => {}
             }

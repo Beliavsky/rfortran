@@ -195,6 +195,8 @@ fn human_token(tok: &TokenKind) -> String {
         TokenKind::KwFunction => "keyword function".into(),
         TokenKind::KwResult => "keyword result".into(),
         TokenKind::KwPure => "keyword pure".into(),
+        TokenKind::KwPublic => "keyword public".into(),
+        TokenKind::KwPrivate => "keyword private".into(),
         TokenKind::KwReturn => "keyword return".into(),
         TokenKind::KwBlock => "keyword block".into(),
         TokenKind::KwExit => "keyword exit".into(),

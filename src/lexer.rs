@@ -67,7 +67,7 @@ pub enum TokenKind {
         out
     })]
     Str(String),
-    #[regex(r"([0-9]+\.[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+", |lex| lex.slice().to_string())]
+    #[regex(r"(([0-9]+\.[0-9]*|\.[0-9]+)([eEdD][+-]?[0-9]+)?|[0-9]+[eEdD][+-]?[0-9]+)(_[A-Za-z0-9_]+)?", |lex| lex.slice().to_string())]
     Float(String),
     #[regex(r"[0-9]+", |lex| lex.slice().to_string())]
     Integer(String),
@@ -84,6 +84,10 @@ pub enum TokenKind {
     // Contextual keyword, assigned only after a function's parameter list.
     KwResult,
     KwPure,
+    #[token("public", ignore(ascii_case))]
+    KwPublic,
+    #[token("private", ignore(ascii_case))]
+    KwPrivate,
     #[token("return", ignore(ascii_case))]
     KwReturn,
     #[token("implicit", ignore(ascii_case))]
@@ -221,7 +225,7 @@ pub fn lex(input: &str) -> Vec<Token> {
     }
     for start in 0..tokens.len() {
         if matches!(&tokens[start].kind, TokenKind::Ident(name) if name.eq_ignore_ascii_case("pure"))
-            && matches!(tokens.get(start + 1).map(|t| &t.kind), Some(TokenKind::KwFunction)) {
+            && matches!(tokens.get(start + 1).map(|t| &t.kind), Some(TokenKind::KwFunction | TokenKind::KwSubroutine)) {
             tokens[start].kind = TokenKind::KwPure;
         }
         if !matches!(tokens[start].kind, TokenKind::KwFunction)

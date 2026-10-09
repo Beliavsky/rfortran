@@ -42,6 +42,9 @@ mod tests {
     #[test]
     fn rejects_invalid_scalar_math_calls() {
         for (declarations, statement, expected) in [
+            ("", "print *, max(1)", "expects 2 argument"),
+            ("", "print *, min(1,2,3.0)", "same type and kind"),
+            ("", "call random_seed(1)", "no-argument form"),
             ("", "print *, sqrt()", "expects 1 argument"),
             ("", "print *, sqrt(4)", "REAL or DOUBLE PRECISION"),
             ("", "print *, sin(\"text\")", "REAL or DOUBLE PRECISION"),

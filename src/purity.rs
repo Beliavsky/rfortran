@@ -1,26 +1,33 @@
-//! Validate the side-effect restrictions of the supported PURE function subset.
+//! Validate the side-effect restrictions of the supported PURE procedure subset.
 use crate::ast::{Expr, Program, Stmt};
 use anyhow::{bail, Result};
 use std::collections::{HashMap, HashSet};
 
+struct Procedure { pure: bool, intents: Option<Vec<String>> }
+fn intents(params: &[String], body: &[Stmt]) -> Vec<String> {
+    params.iter().map(|p| body.iter().find_map(|s| match s {
+        Stmt::DummyIntent { name, intent } if name == p => Some(intent.clone()), _ => None,
+    }).unwrap_or_default()).collect()
+}
+
 pub fn validate(program: &Program) -> Result<()> {
-    fn procedures(body: &[Stmt], known: &mut HashMap<String, bool>) {
+    fn procedures(body: &[Stmt], known: &mut HashMap<String, Procedure>) {
         for s in body {
             match s {
-                Stmt::Function { name, pure, .. } => { known.insert(name.clone(), *pure); }
-                Stmt::Subroutine { name, .. } => { known.insert(name.clone(), false); }
+                Stmt::Function { name, pure, .. } => { known.insert(name.clone(), Procedure { pure: *pure, intents: None }); }
+                Stmt::Subroutine { name, pure, params, body } => { known.insert(name.clone(), Procedure { pure: *pure, intents: Some(intents(params, body)) }); }
                 Stmt::Module { body, .. } => procedures(body, known),
                 _ => {}
             }
         }
     }
-    fn expression(e: &Expr, locals: &HashSet<String>, known: &HashMap<String, bool>) -> Result<()> {
+    fn expression(e: &Expr, locals: &HashSet<String>, known: &HashMap<String, Procedure>) -> Result<()> {
         match e {
             Expr::Call(name, args) => {
                 let intrinsic = crate::intrinsics::math_arity(name).is_some()
-                    || matches!(name.to_ascii_lowercase().as_str(), "abs" | "int" | "real" | "dble" | "sum" | "product" | "minval" | "maxval");
-                if !locals.contains(name) && !known.get(name).copied().unwrap_or(intrinsic) {
-                    bail!("PURE function cannot call impure or unknown procedure `{name}`");
+                    || matches!(name.to_ascii_lowercase().as_str(), "abs" | "int" | "real" | "dble" | "sum" | "product" | "minval" | "maxval" | "max" | "min" | "kind" | "tiny");
+                if !locals.contains(name) && !known.get(name).map(|p| p.pure).unwrap_or(intrinsic) {
+                    bail!("PURE procedure cannot call impure or unknown procedure `{name}`");
                 }
                 for arg in args { expression(arg, locals, known)?; }
             }
@@ -34,7 +41,7 @@ pub fn validate(program: &Program) -> Result<()> {
         }
         Ok(())
     }
-    fn check(body: &[Stmt], inherited: &HashSet<String>, readonly: &HashSet<String>, known: &HashMap<String, bool>) -> Result<()> {
+    fn check(body: &[Stmt], inherited: &HashSet<String>, readonly: &HashSet<String>, known: &HashMap<String, Procedure>) -> Result<()> {
         let mut locals = inherited.clone();
         for stmt in body {
             match stmt {
@@ -42,7 +49,7 @@ pub fn validate(program: &Program) -> Result<()> {
                 Stmt::ArrayDecl { name, .. } => { locals.insert(name.clone()); }
                 Stmt::InitializedDecl { attributes, entities, .. } => {
                     if !attributes.iter().any(|a| a.eq_ignore_ascii_case("parameter")) {
-                        bail!("PURE function cannot have saved or declaration-initialized local variables");
+                        bail!("PURE procedure cannot have saved or declaration-initialized local variables");
                     }
                     locals.extend(entities.iter().map(|(name, _)| name.clone()));
                 }
@@ -50,14 +57,28 @@ pub fn validate(program: &Program) -> Result<()> {
             }
         }
         let writable = |name: &str| -> Result<()> {
-            if readonly.contains(name) { bail!("PURE function cannot modify dummy argument `{name}`"); }
-            if !locals.contains(name) { bail!("PURE function cannot modify nonlocal variable `{name}`; declare local variables explicitly"); }
+            if readonly.contains(name) { bail!("PURE procedure cannot modify dummy argument `{name}`"); }
+            if !locals.contains(name) { bail!("PURE procedure cannot modify nonlocal variable `{name}`; declare local variables explicitly"); }
             Ok(())
         };
         for stmt in body {
             match stmt {
-                Stmt::Print { .. } | Stmt::Read { .. } => bail!("PURE function cannot perform external I/O"),
-                Stmt::CallSub { name, .. } => bail!("PURE function cannot call impure or unsupported subroutine `{name}`"),
+                Stmt::Print { .. } | Stmt::Read { .. } => bail!("PURE procedure cannot perform external I/O"),
+                Stmt::CallSub { name, args } => {
+                    let Some(Procedure { pure: true, intents: Some(intents) }) = known.get(name) else {
+                        bail!("PURE procedure cannot call impure or unknown subroutine `{name}`");
+                    };
+                    if args.len() != intents.len() { bail!("wrong argument count for subroutine `{name}`"); }
+                    for (arg, intent) in args.iter().zip(intents) {
+                        expression(arg, &locals, known)?;
+                        if intent != "intent(in)" {
+                            match arg {
+                                Expr::Ident(n) | Expr::Index(n, _) | Expr::Call(n, _) => writable(n)?,
+                                _ => bail!("output argument of PURE subroutine `{name}` must be writable"),
+                            }
+                        }
+                    }
+                },
                 Stmt::Assign { name, value } => { writable(name)?; expression(value, &locals, known)?; }
                 Stmt::AssignIndex { name, indices, value } => {
                     writable(name)?; expression(value, &locals, known)?;
@@ -84,13 +105,21 @@ pub fn validate(program: &Program) -> Result<()> {
         }
         Ok(())
     }
-    fn walk(body: &[Stmt], known: &HashMap<String, bool>) -> Result<()> {
+    fn walk(body: &[Stmt], known: &HashMap<String, Procedure>) -> Result<()> {
         for stmt in body {
             match stmt {
                 Stmt::Function { name, pure: true, params, body, .. } => {
                     let mut locals: HashSet<String> = params.iter().cloned().collect();
                     locals.insert(name.clone());
                     check(body, &locals, &params.iter().cloned().collect(), known)?;
+                }
+                Stmt::Subroutine { pure: true, params, body, .. } => {
+                    let declared = intents(params, body);
+                    if declared.iter().any(|i| !matches!(i.as_str(), "intent(in)" | "intent(out)" | "intent(inout)")) {
+                        bail!("PURE subroutine dummy arguments require an explicit INTENT");
+                    }
+                    let readonly = params.iter().zip(&declared).filter(|(_, i)| i.as_str() == "intent(in)").map(|(p, _)| p.clone()).collect();
+                    check(body, &params.iter().cloned().collect(), &readonly, known)?;
                 }
                 Stmt::Module { body, .. } => walk(body, known)?,
                 _ => {}
@@ -105,6 +134,31 @@ pub fn validate(program: &Program) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn validates_pure_subroutine_intents_and_calls() {
+        for (statement, error) in [
+            ("i=3\nj=i", "dummy argument"),
+            ("print *, i\nj=i", "external I/O"),
+            ("outside=3\nj=i", "nonlocal variable"),
+            ("call impure(j)", "impure or unknown subroutine"),
+            ("call helper(i)", "dummy argument"),
+            ("call helper(outside)", "nonlocal variable"),
+        ] {
+            let source = format!("pure subroutine f(i,j)\ninteger,intent(in) :: i\ninteger,intent(out) :: j\n{statement}\nend subroutine f\npure subroutine helper(x)\ninteger,intent(out) :: x\nx=7\nend subroutine helper");
+            let tokens = crate::lexer::lex(&source);
+            let p = crate::parser::parse_with_src(&source, &tokens, "pure_sub.f90").unwrap();
+            assert!(super::validate(&p).unwrap_err().to_string().contains(error), "{source}");
+        }
+        let source = include_str!("../tests/43_pure_subroutine.f90");
+        let tokens = crate::lexer::lex(source);
+        let p = crate::parser::parse_with_src(source, &tokens, "pure_sub.f90").unwrap();
+        super::validate(&p).unwrap();
+        let source = "pure subroutine f(i)\ninteger :: i\ni=1\nend subroutine f";
+        let tokens = crate::lexer::lex(source);
+        let p = crate::parser::parse_with_src(source, &tokens, "pure_sub.f90").unwrap();
+        assert!(super::validate(&p).unwrap_err().to_string().contains("explicit INTENT"));
+    }
+
     #[test]
     fn validates_pure_function_side_effects() {
         for (decl, statement, error) in [

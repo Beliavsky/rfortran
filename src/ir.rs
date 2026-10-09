@@ -1982,7 +1982,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                         return_type: eff_rt,
                     });
                 }
-                Stmt::Subroutine { name, params, body } => {
+                Stmt::Subroutine { name, params, body, .. } => {
                     let mut f_body: Vec<IStmt> = Vec::new();
                     let mut fn_types: std::collections::HashMap<String, crate::ast::TypeSpec> =
                         std::collections::HashMap::new();
@@ -2109,7 +2109,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                                     return_type: eff_rt.clone(),
                                 });
                             }
-                            Stmt::Subroutine { name, params, body } => {
+                            Stmt::Subroutine { name, params, body, .. } => {
                                 let mut f_body: Vec<IStmt> = Vec::new();
                                 let mut fn_types: std::collections::HashMap<
                                     String,
@@ -2170,7 +2170,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                 }
                 Stmt::InitializedDecl { .. } => unreachable!("initialized declarations must be resolved before lowering"),
                 Stmt::SourceLocation(_) => {}
-                Stmt::DummyIntent { .. } => {}
+                Stmt::DummyIntent { .. } | Stmt::Accessibility { .. } => {}
             }
 
             out.extend(new_stmts);
@@ -2210,7 +2210,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                 body: optimized_body,
                 return_type: eff_rt,
             });
-        } else if let Stmt::Subroutine { name, params, body } = s {
+        } else if let Stmt::Subroutine { name, params, body, .. } = s {
             let mut f_body: Vec<IStmt> = Vec::new();
             let mut fn_types: std::collections::HashMap<String, crate::ast::TypeSpec> =
                 std::collections::HashMap::new();

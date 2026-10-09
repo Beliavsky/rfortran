@@ -7,6 +7,7 @@ use crate::lexer::{Token, TokenKind};
 
 fn show_type(type_spec: &TypeSpec) -> String {
     match type_spec {
+        TypeSpec::RealKind(kind) => format!("REAL({kind})"),
         TypeSpec::Integer(None) => "INTEGER(4)".to_string(),
         TypeSpec::Integer(Some(kind)) => format!("INTEGER({})", kind),
         TypeSpec::Real => "REAL(4)".to_string(),
@@ -622,7 +623,7 @@ pub fn analyze_with_src(
     let mut external_fn_ret: HashMap<String, TypeSpec> = HashMap::new();
     for name in [
         "int", "nint", "ichar", "iachar", "len", "len_trim", "count", "size", "lbound", "ubound",
-        "maxloc", "minloc", "index", "scan", "verify", "abs",
+        "maxloc", "minloc", "index", "scan", "verify", "abs", "max", "min",
     ] {
         known_intrinsics.insert(name.to_string(), TypeSpec::Integer(None));
     }
@@ -1245,7 +1246,7 @@ pub fn analyze_with_src(
                 let lname = name.to_ascii_lowercase();
                 if !fn_map.contains_key(&lname) {
                     if let Some(kind) = sym.get(&lname) { return Some(kind.clone()); }
-                    if crate::intrinsics::math_arity(&lname).is_some() || lname == "abs" {
+                    if crate::intrinsics::math_arity(&lname).is_some() || matches!(lname.as_str(), "abs" | "max" | "min") {
                         return args.first().and_then(|arg| infer_expr_type(arg, sym, fn_map, external_fn_ret));
                     }
                 }
@@ -2331,7 +2332,7 @@ pub fn analyze_with_src(
                 if !sym.contains_key(&lname)
                     && !fn_map.contains_key(&lname)
                     && !external_fn_ret.contains_key(&lname)
-                    && lname != "random_number"
+                    && lname != "random_number" && lname != "random_seed"
                 {
                     if let Some(implicit_type) = implicit_typing.get_implicit_type(name) {
                         sym.insert(lname, implicit_type);
@@ -2427,7 +2428,7 @@ pub fn analyze_with_src(
                 if !sym.contains_key(&lname)
                     && !fn_map.contains_key(&lname)
                     && !external_fn_ret.contains_key(&lname)
-                    && lname != "random_number"
+                    && lname != "random_number" && lname != "random_seed"
                 {
                     undef.push(name);
                 }
@@ -2621,7 +2622,7 @@ pub fn analyze_with_src(
                         problems.push((name.clone(), "RANDOM_NUMBER is a subroutine; use CALL RANDOM_NUMBER(harvest)".into()));
                     }
                     let math = crate::intrinsics::math_arity(&key);
-                    let arity = math.or_else(|| matches!(key.as_str(), "abs" | "int" | "real" | "dble").then_some(1));
+                    let arity = (if matches!(key.as_str(), "max" | "min") { Some(args.len().max(2)) } else { math }).or_else(|| matches!(key.as_str(), "abs" | "int" | "real" | "dble").then_some(1));
                     if let Some(arity) = arity {
                         if args.len() != arity {
                             problems.push((name.clone(), format!("intrinsic `{name}` expects {arity} argument(s), got {}", args.len())));
@@ -2642,11 +2643,13 @@ pub fn analyze_with_src(
                                     }
                                 }
                             }
-                            if key == "atan2" {
-                                if let (Some(a), Some(b)) = (&types[0], &types[1]) {
+                            if matches!(key.as_str(), "atan2" | "max" | "min") {
+                                for pair in types.windows(2) {
+                                if let (Some(a), Some(b)) = (&pair[0], &pair[1]) {
                                     if std::mem::discriminant(a) != std::mem::discriminant(b) {
-                                        problems.push((name.clone(), "ATAN2 arguments must have the same type and kind".into()));
+                                        problems.push((name.clone(), format!("{} arguments must have the same type and kind", key.to_ascii_uppercase())));
                                     }
+                                }
                                 }
                             }
                         }
@@ -2687,6 +2690,7 @@ pub fn analyze_with_src(
         for stmt in body {
             let mut expressions: Vec<&Expr> = Vec::new();
             if let Stmt::CallSub { name, args } = stmt {
+                if name.eq_ignore_ascii_case("random_seed") && !args.is_empty() { problems.push((name.clone(), "RANDOM_SEED currently supports only the no-argument form".into())); }
                 if name.eq_ignore_ascii_case("random_number") && !functions.contains_key(&name.to_ascii_lowercase()) {
                     let valid = args.len() == 1 && match &args[0] {
                         Expr::Ident(id) => matches!(symbols.get(&id.to_ascii_lowercase()), Some(TypeSpec::Real | TypeSpec::DoublePrecision)),

@@ -631,6 +631,24 @@ fn eval_expr(
         IExpr::Call(name, args) => {
             let lname = name.to_ascii_lowercase();
             match lname.as_str() {
+                "max" | "min" => {
+                    let mut value = eval_expr(b, ex, ptr_ty, &args[0], ints, reals, bools, func_meta);
+                    for arg in &args[1..] {
+                        let next = eval_expr(b, ex, ptr_ty, arg, ints, reals, bools, func_meta);
+                        value = match (value, next) {
+                            (CgVal::I64(a), CgVal::I64(c)) => {
+                                let condition = b.ins().icmp(if lname == "max" { ir::condcodes::IntCC::SignedGreaterThan } else { ir::condcodes::IntCC::SignedLessThan }, a, c);
+                                CgVal::I64(b.ins().select(condition, a, c))
+                            }
+                            (a,c) => {
+                                let a = to_f64(b, a); let c = to_f64(b, c);
+                                let condition = b.ins().fcmp(if lname == "max" { ir::condcodes::FloatCC::GreaterThan } else { ir::condcodes::FloatCC::LessThan }, a, c);
+                                CgVal::F64(b.ins().select(condition, a, c))
+                            }
+                        };
+                    }
+                    value
+                }
                 "abs" => {
                     let v = eval_expr(b, ex, ptr_ty, &args[0], ints, reals, bools, func_meta);
                     match v {
@@ -1130,7 +1148,7 @@ fn print_expr(
         IExpr::Call(name, args) => {
             let lname = name.to_ascii_lowercase();
             if crate::intrinsics::math_arity(name).is_some()
-                || matches!(lname.as_str(), "abs" | "int" | "real" | "dble")
+                || matches!(lname.as_str(), "abs" | "int" | "real" | "dble" | "max" | "min")
             {
                 let value = eval_expr(b, ex, ptr_ty, e, ints, reals, bools, func_meta);
                 print_numeric_value(b, ex, ptr_ty, value, double_expression(e, real_kind));
@@ -1597,6 +1615,7 @@ fn gen_stmts(
                     continue;
                 }
                 match kind {
+                    crate::ast::TypeSpec::RealKind(_) => unreachable!("unresolved real kind"),
                     crate::ast::TypeSpec::Integer(Some(16)) => {
                         i128_vars.insert(name.clone());
                         i128_last.insert(name.clone(), "0".into());
@@ -2094,6 +2113,14 @@ fn gen_stmts(
                 b.switch_to_block(after_blk);
             }
             IStmt::Call(name, args) => {
+                if name.eq_ignore_ascii_case("random_seed") && !func_meta.contains_key(name) {
+                    let id = module.declare_data(".f90c.random_state", Linkage::Local, true, false)?;
+                    let global = module.declare_data_in_func(id, b.func);
+                    let address = b.ins().global_value(ptr_ty, global);
+                    let seed = b.ins().iconst(types::I64, 1);
+                    b.ins().store(MemFlags::new(), seed, address, 0);
+                    continue;
+                }
                 if name == "@check_initialized" {
                     let value = eval_expr(b, ex, ptr_ty, &args[0], ints, reals, bools, func_meta);
                     let initialized = to_bool(b, value);
@@ -2757,6 +2784,7 @@ impl Backend for CraneliftBackend {
                 }
             }
             match sig_rt {
+                    crate::ast::TypeSpec::RealKind(_) => unreachable!("unresolved real kind"),
                 crate::ast::TypeSpec::Integer(_) | crate::ast::TypeSpec::Logical => ctx
                     .func
                     .signature
@@ -2774,7 +2802,7 @@ impl Backend for CraneliftBackend {
             func_ids.insert(f.name.clone(), fid);
         }
         for (name, arity) in &import_arity {
-            if name == "@check_initialized" { continue; }
+            if name == "@check_initialized" || name.eq_ignore_ascii_case("random_seed") { continue; }
             if name.eq_ignore_ascii_case("random_number") { continue; }
             if let Some(arity) = crate::intrinsics::math_arity(name) {
                 if !func_ids.contains_key(name) {
@@ -2837,6 +2865,7 @@ impl Backend for CraneliftBackend {
             ret_kinds.insert(
                 name.clone(),
                 match rt {
+                    crate::ast::TypeSpec::RealKind(_) => unreachable!("unresolved real kind"),
                     crate::ast::TypeSpec::Integer(_) | crate::ast::TypeSpec::Logical => {
                         RetKind::I64
                     }
@@ -2862,6 +2891,7 @@ impl Backend for CraneliftBackend {
                 }
             }
             match rt {
+                    crate::ast::TypeSpec::RealKind(_) => unreachable!("unresolved real kind"),
                 TypeSpec::Integer(_) | TypeSpec::Logical => {
                     ctx_f.func.signature.returns.push(AbiParam::new(types::I64))
                 }
@@ -2929,6 +2959,7 @@ impl Backend for CraneliftBackend {
                     F64(ir::StackSlot),
                 }
                 let ret_slot: Option<RetSlot> = match rt {
+                    crate::ast::TypeSpec::RealKind(_) => unreachable!("unresolved real kind"),
                     TypeSpec::Integer(_) | TypeSpec::Logical => {
                         let ss = b.create_sized_stack_slot(ir::StackSlotData::new(
                             ir::StackSlotKind::ExplicitSlot,
