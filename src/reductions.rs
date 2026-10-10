@@ -201,16 +201,43 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
         }
         Expr::Call(name, args) if name == "reshape" => {
             let dims = crate::multidim::reshape_shape(args)?;
+            let order = crate::multidim::reshape_order(args,dims.len())?;
             let count = dims.iter().product::<i64>();
             lower_expr(&mut args[0], symbols, prefix, serial)?;
+            let has_pad = !matches!(&args[2],Expr::Call(tag,_) if tag == "@no_pad");
+            if has_pad { lower_expr(&mut args[2], symbols, prefix, serial)?; }
             *serial += 1;
             let temp = format!("@reshape_array_{serial}");
             let index = format!("@reshape_index_{serial}");
-            let (value,len,kind) = element(&args[0],&Expr::Ident(index.clone()),symbols)?;
-            if len.context("RESHAPE SOURCE must be an array")? < count { bail!("RESHAPE SOURCE has too few elements; PAD is not supported"); }
+            let id = Expr::Ident(index.clone());
+            let (value,len,kind) = element(&args[0],&id,symbols)?;
+            let len = len.context("RESHAPE SOURCE must be an array")?;
+            let pad = if has_pad {
+                let (_,plen,pkind) = element(&args[2],&int(1),symbols)?;
+                let plen = plen.context("RESHAPE PAD must be an array")?;
+                if !same_kind(&kind,&pkind) { bail!("RESHAPE PAD and SOURCE must have the same type and kind"); }
+                if count > len && plen == 0 { bail!("RESHAPE needs nonempty PAD when SOURCE has too few elements"); }
+                let pad_index = bin(BinOp::Add,int(1),Expr::Call("modulo".into(),vec![bin(BinOp::Sub,id.clone(),int(len+1)),int(plen.max(1))]));
+                Some(element(&args[2],&pad_index,symbols)?.0)
+            } else { None };
+            if count > len && pad.is_none() { bail!("RESHAPE SOURCE has too few elements; provide PAD"); }
+            let mut strides = vec![];
+            let mut stride = 1;
+            for dim in &dims { strides.push(stride); stride *= dim; }
+            let mut destination = int(1);
+            let mut fill_stride = 1;
+            for axis in order {
+                let coordinate = Expr::Call("modulo".into(),vec![bin(BinOp::Div,bin(BinOp::Sub,id.clone(),int(1)),int(fill_stride.max(1))),int(dims[axis].max(1))]);
+                destination = bin(BinOp::Add,destination,bin(BinOp::Mul,coordinate,int(strides[axis])));
+                fill_stride *= dims[axis];
+            }
+            let assign = |value| Stmt::AssignIndex { name:temp.clone(),indices:vec![destination.clone()],value };
+            let body = if count > len {
+                vec![Stmt::If { cond:bin(BinOp::Le,id.clone(),int(len)),then_body:vec![assign(value)],else_body:Some(vec![assign(pad.unwrap())]) }]
+            } else { vec![assign(value)] };
             prefix.push(Stmt::ArrayDecl { kind:kind.clone(),name:temp.clone(),dims:vec![int(count)] });
-            prefix.push(Stmt::VarDecl { kind:TypeSpec::Integer(None),names:vec![index.clone()] });
-            prefix.push(Stmt::Do { var:index.clone(),start:int(1),end:int(count),body:vec![Stmt::AssignIndex { name:temp.clone(),indices:vec![Expr::Ident(index)],value }] });
+            prefix.push(Stmt::VarDecl { kind:TypeSpec::Integer(Some(8)),names:vec![index.clone()] });
+            prefix.push(Stmt::Do { var:index,start:int(1),end:int(count),body });
             symbols.insert(temp.clone(),(kind,vec![int(count)]));
             *e = Expr::Ident(temp);
         }

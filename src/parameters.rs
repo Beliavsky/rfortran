@@ -478,20 +478,20 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
             }
             *args = vec![slots[0].take().context("CSHIFT requires ARRAY")?, slots[1].take().context("CSHIFT requires SHIFT")?, slots[2].take().unwrap_or(Expr::IntLit("1".into()))];
         } else if name == "reshape" {
-            let mut slots: [Option<Expr>; 2] = [None,None];
+            let mut slots: [Option<Expr>; 4] = [None,None,None,None];
             let mut keywords = false;
             for (position,arg) in args.iter().enumerate() {
                 let (slot,value) = match arg {
                     Expr::Call(tag,values) if tag.starts_with("@keyword:") => {
                         keywords = true;
-                        (match &tag[9..] { "source" => 0, "shape" => 1, "pad" | "order" => bail!("RESHAPE PAD and ORDER are not supported"), key => bail!("RESHAPE: unknown keyword `{key}`") }, &values[0])
+                        (match &tag[9..] { "source" => 0, "shape" => 1, "pad" => 2, "order" => 3, key => bail!("RESHAPE: unknown keyword `{key}`") }, &values[0])
                     }
                     _ => { if keywords { bail!("RESHAPE: positional argument after keyword argument"); } (position,arg) }
                 };
-                if slot >= 2 { bail!("RESHAPE PAD and ORDER are not supported"); }
+                if slot >= 4 { bail!("RESHAPE: too many arguments"); }
                 if slots[slot].replace(value.clone()).is_some() { bail!("RESHAPE: duplicate argument"); }
             }
-            *args = vec![slots[0].take().context("RESHAPE requires SOURCE")?, slots[1].take().context("RESHAPE requires SHAPE")?];
+            *args = vec![slots[0].take().context("RESHAPE requires SOURCE")?, slots[1].take().context("RESHAPE requires SHAPE")?, slots[2].take().unwrap_or(Expr::Call("@no_pad".into(),vec![])), slots[3].take().unwrap_or(Expr::Call("@no_order".into(),vec![]))];
         } else if matches!(name.as_str(), "lbound" | "ubound" | "size") {
             let (array, dim, kind) = crate::inquiries::arguments(name, args)?;
             if let Some(mut kind) = kind {

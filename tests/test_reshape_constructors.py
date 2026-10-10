@@ -32,7 +32,7 @@ class ReshapeConstructors(unittest.TestCase):
         cases=[
             ("print *,reshape([1,2],[2,2])", "too few elements"),
             ("print *,reshape([1,2],[-1,2])", "nonnegative"),
-            ("print *,reshape([1,2],[2],order=[1])", "PAD and ORDER"),
+            ("print *,reshape([1,2],[2],order=[2])", "permutation"),
             ("print *,reshape(shape=[2])", "requires SOURCE"),
             ("print *,reshape([1,2],source=[1,2],shape=[2])", "duplicate"),
             ("print *,sum([1,.true.])", "same type and kind"),

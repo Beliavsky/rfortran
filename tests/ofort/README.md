@@ -114,3 +114,10 @@ multidimensional masks, ELSEWHERE precedence, captured masks, empty arrays and
 uninitialized elements outside the enclosing mask. The external
 `xwhere_nested_elsewhere_pending.f90` now passes at O0/O2, bringing the sample
 to 11/18 passes (seven compile failures). All four selected WHERE cases pass.
+
+`102_reshape_options.f90` and `python tests/test_reshape_options.py` cover
+RESHAPE PAD repetition and constant ORDER permutations, including rank-three
+results, empty arrays and overlapping inputs. These implement the first two
+checks in `xintrinsic_transform_order_pending.f90`; the full probe still needs
+other transformations and remains a compile failure. The sample stays at
+11/18 passes.

@@ -331,10 +331,14 @@ Items must have matching element type and kind. Constructor temporaries preserve
 overlapping assignment semantics. CHARACTER and explicitly typed constructors
 remain outside this subset.
 
-`RESHAPE(SOURCE, SHAPE)` accepts numeric/LOGICAL array expressions and a constant
-SHAPE constructor, including zero extents. SOURCE must contain enough elements;
-extra elements are ignored. `SOURCE=` and `SHAPE=` may be reordered. PAD, ORDER
-and runtime shape vectors remain unsupported. `MOD` and `MODULO` accept
+`RESHAPE(SOURCE, SHAPE, PAD, ORDER)` accepts numeric/LOGICAL array expressions
+and a constant SHAPE constructor, including zero extents. Optional PAD supplies
+repeated elements when SOURCE is too short and must have the same type and kind.
+Optional ORDER is a constant permutation of the result dimensions specifying
+which dimension varies fastest during filling. Keywords may be reordered; extra
+SOURCE elements are ignored. Runtime SHAPE/ORDER vectors remain unsupported.
+Run `python tests/test_reshape_options.py` for padding and fill-order checks.
+`MOD` and `MODULO` accept
 conformable numeric array arguments and scalar expansion, preserving element
 kind. Run `python tests/test_reshape_constructors.py` for interpreter/native
 O0/O2 checks and gfortran comparison.

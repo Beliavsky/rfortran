@@ -1073,3 +1073,31 @@ gfortran as well as interpreter/native O0/O2 output. The isolated release report
 `target/ofort-nested-where.json` has 11/18 passes and seven compile failures;
 all reference runs succeed. `xwhere_nested_elsewhere_pending.f90` now passes
 at O0/O2, completing all four selected WHERE probes. Linux/macOS remain untested.
+
+
+## Checkpoint 41: RESHAPE PAD and ORDER
+
+RESHAPE normalizes SOURCE/SHAPE/PAD/ORDER arguments, including reordered
+keywords. PAD must be an array of the same element type/kind as SOURCE. When
+SOURCE is short, PAD elements repeat in array-element order; an empty PAD is
+rejected only when additional values are needed. ORDER must currently be a
+constant constructor containing a permutation of 1 through the result rank.
+The lowering maps fill positions to column-major destination indices using
+that permutation. Results are materialized before assignment, preserving
+aliases with SOURCE and PAD. Runtime SHAPE/ORDER remain unsupported.
+
+Fixture 102 covers repeated padding, reordered keywords, rank-three fill order,
+empty SOURCE/results, logical/double-precision values, reversed sections and
+overlapping assignments. Focused tests compare interpreter/native O0/O2 with
+gfortran, check PURE usage and unused empty padding, and diagnose invalid
+permutations, padding types and argument lists. Existing RESHAPE regressions
+continue to pass; the old unsupported-ORDER diagnostic test now checks an
+invalid permutation.
+
+Windows validation: 74 Rust unit tests, 102 native fixtures, 46 batch wrapper
+tests and nine focused RESHAPE/nested-WHERE tests passed. Focused suites passed
+with debug and rebuilt release compilers. The isolated release compatibility
+report `target/ofort-reshape-options.json` remains at 11/18 passes and seven
+compile failures, with all reference runs succeeding. The first two RESHAPE
+operations in the transformation probe are now supported, but its remaining
+transformations still prevent compilation. Linux/macOS remain untested.

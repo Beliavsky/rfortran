@@ -706,6 +706,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " -1 302 -3 104 0 206\n 1 2 3 -4 5 -6 -1 21 -3 -3 0 -5\n -1 70 -3 8 0 9\n 0\n"
+    },
+    "102_reshape_options": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 1 2 8 9 8 9\n 1 9 2 8 8 9\n 1 4 7 10 2 5 8 11 3 6 9 12\n 1 8 9 8 2 9\n 2 1\n 1 2 3 7 8\n 0\n .TRUE. .FALSE. .FALSE. .FALSE.\n 8.0\n"
     }
   }
 }
