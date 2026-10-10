@@ -6,6 +6,17 @@
 use crate::ast::Expr;
 use anyhow::{bail, Context, Result};
 
+/// Largest representable integer for the implemented scalar execution kinds.
+pub fn integer_huge(kind: Option<u8>) -> Result<i64> {
+    Ok(match kind.unwrap_or(4) {
+        1 => i8::MAX as i64,
+        2 => i16::MAX as i64,
+        4 => i32::MAX as i64,
+        8 => i64::MAX,
+        n => bail!("HUGE currently supports INTEGER kinds 1, 2, 4 and 8, not {n}"),
+    })
+}
+
 pub fn arguments(name: &str, args: &[Expr]) -> Result<(Expr, Option<Expr>, Option<Expr>)> {
     let mut slots: [Option<Expr>; 3] = [None, None, None];
     let mut keyword_seen = false;

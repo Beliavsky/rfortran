@@ -828,3 +828,41 @@ release compilers; execution matches gfortran at interpreter/native O0/O2 and
 undefined input elements remain diagnosed. The external sample remains 5/18
 passes at O0/O2; refreshed report: `target/ofort-function-arrays.json`.
 Linux/macOS execution remains untested.
+
+
+## Checkpoint 33: integer HUGE and empty/LOGICAL matrices
+
+HUGE now returns 127, 32767, 2147483647 and 9223372036854775807 for INTEGER kinds
+1, 2, 4 and 8. Default-integer constant expressions fold early, including HUGE(0)
+in PARAMETER initializers. Typed scalar/array inquiries lower to kind-preserving
+compiler temporaries without reading the argument. KIND now reports the actual
+integer kind and KIND(HUGE(variable)) folds without unnecessary temporaries.
+INTEGER(16) HUGE fails explicitly rather than returning a truncated limit; TINY
+continues to reject integer arguments.
+
+Fixture 93 covers limits, signed lower limits, literal expressions, PARAMETER
+folding, result kinds and empty arrays. Focused checks compare interpreter and
+native O0/O2 with gfortran, verify diagnostics, and confirm that an undefined
+argument can supply its type without an uninitialized read. General variable
+expressions and typed-variable inquiries in PARAMETER initializers still need
+broader compile-time type inference.
+
+Fixed-shape multidimensional arrays now accept zero extents and LOGICAL element
+types. Existing column-major lowering and guarded subscripts handle empty storage
+without an element read, including sections and whole-array reductions. Fixture
+94 covers zero extents in several axes/ranks, explicit bounds, numeric/logical
+empty identities, logical matrix assignment/output/sections and COUNT/ANY/ALL.
+Its focused tests also check both constant and runtime invalid element access.
+
+The ofort reductions case gets past integer HUGE and zero-extent/LOGICAL matrix
+declarations. It now reaches the explicit rejection of multidimensional DIM
+reductions; those array-valued results and the other remaining array operations
+are subsequent work. This checkpoint does not claim the full probe compiles.
+
+Validation on Windows x64: 74 Rust unit tests, 94 native fixtures, 41 batch tests
+and 5 focused tests passed. Both focused suites pass with debug and rebuilt
+release compilers and compare interpreter/native O0/O2 output with gfortran.
+The refreshed report `target/ofort-huge-matrices.json` remains at 5/18 passes;
+all 18 reference builds/runs succeeded. The reductions probe now stops at
+`sum: DIM reductions currently require a rank-one array`. Linux/macOS execution
+remains untested.

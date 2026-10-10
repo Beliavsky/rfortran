@@ -68,6 +68,22 @@ class BatchSources(unittest.TestCase):
         source.write_text((ROOT / "tests/76_defined_operators.f90").read_text())
         self.check_build([source], "14\n36\n18\n6\n  3.5\nF\nmatched\n10\n12")
 
+    def test_empty_logical_matrices(self):
+        import json
+        fixture = ROOT / "tests/94_empty_logical_matrices.f90"
+        source = self.directory / "empty matrices.f90"
+        source.write_text(fixture.read_text(encoding="utf-8"), encoding="utf-8")
+        expected = json.loads((ROOT / "tests/expectations.json").read_text(encoding="utf-8"))["cases"][fixture.stem]["program_stdout"]
+        self.check_build([source], expected.strip())
+
+    def test_integer_huge(self):
+        import json
+        fixture = ROOT / "tests/93_integer_huge.f90"
+        source = self.directory / "integer huge.f90"
+        source.write_text(fixture.read_text(encoding="utf-8"), encoding="utf-8")
+        expected = json.loads((ROOT / "tests/expectations.json").read_text(encoding="utf-8"))["cases"][fixture.stem]["program_stdout"]
+        self.check_build([source], expected.strip())
+
     def test_function_arrays(self):
         import json
         fixture = ROOT / "tests/92_function_arrays.f90"

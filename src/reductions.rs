@@ -196,13 +196,40 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             *e = int(length as i64);
         }
         Expr::Call(name, args) if matches!(name.as_str(), "tiny" | "huge" | "kind" | "size") => {
-            let [Expr::Ident(n)] = args.as_slice() else { bail!("{name} requires a typed variable"); };
+            if name == "kind" && args.len() == 1 {
+                if let Expr::Call(inquiry, inner) = &args[0] {
+                    if inquiry == "huge" {
+                        let [Expr::Ident(n)] = inner.as_slice() else { bail!("HUGE currently requires a typed variable or supported literal"); };
+                        let (kind, _) = symbols.get(n).context("undefined inquiry argument")?;
+                        match kind {
+                            TypeSpec::Integer(bytes) => { crate::inquiries::integer_huge(*bytes)?; },
+                            TypeSpec::Real | TypeSpec::DoublePrecision => {},
+                            _ => bail!("HUGE requires an INTEGER or REAL argument"),
+                        }
+                        args[0] = Expr::Ident(n.clone());
+                    }
+                }
+            }
+            let [Expr::Ident(n)] = args.as_slice() else { bail!("{name} currently requires a typed variable or supported literal"); };
             let (kind,dims)=symbols.get(n).context("undefined inquiry argument")?;
+            if name == "huge" {
+                if let TypeSpec::Integer(bytes) = kind {
+                    let value = crate::inquiries::integer_huge(*bytes)?;
+                    let kind = kind.clone();
+                    *serial += 1;
+                    let temp = format!("@integer_huge_{serial}");
+                    prefix.push(Stmt::VarDecl { kind: kind.clone(), names: vec![temp.clone()] });
+                    prefix.push(Stmt::Assign { name: temp.clone(), value: int(value) });
+                    symbols.insert(temp.clone(), (kind, vec![]));
+                    *e = Expr::Ident(temp);
+                    return Ok(());
+                }
+            }
             let double=matches!(kind,TypeSpec::DoublePrecision);
             *e=match name.as_str() {
                 "size" => { if dims.len()!=1 {bail!("SIZE requires a rank-one array");} dims[0].clone() },
-                "kind"=>int(if double {8} else {4}),
-                _=> { if !matches!(kind,TypeSpec::Real|TypeSpec::DoublePrecision) {bail!("{name} requires a REAL argument");} let v=if name=="tiny" {if double {f64::MIN_POSITIVE} else {f32::MIN_POSITIVE as f64}} else {if double {f64::MAX} else {f32::MAX as f64}}; let lit=Expr::RealLit(v.to_string()); if double {Expr::Call("dble".into(),vec![lit])} else {lit} }
+                "kind"=>int(match kind { TypeSpec::Integer(bytes) => i64::from(bytes.unwrap_or(4)), _ => if double {8} else {4} }),
+                _=> { if !matches!(kind,TypeSpec::Real|TypeSpec::DoublePrecision) { if name=="huge" {bail!("HUGE requires an INTEGER or REAL argument");} bail!("{name} requires a REAL argument");} let v=if name=="tiny" {if double {f64::MIN_POSITIVE} else {f32::MIN_POSITIVE as f64}} else {if double {f64::MAX} else {f32::MAX as f64}}; let lit=Expr::RealLit(v.to_string()); if double {Expr::Call("dble".into(),vec![lit])} else {lit} }
             };
         }
         Expr::Call(tag, _) if tag == "@matrix_view" => {},

@@ -72,3 +72,10 @@ The former pending function-array SUM reproduction now passes and is included in
 read-only array arguments to PURE functions in the interpreter and native O0/O2,
 with gfortran comparison. This subset copies all input elements; actual arrays
 must be fully initialized.
+
+`93_integer_huge.f90` covers integer HUGE for kinds 1/2/4/8, preserved KIND,
+constant initializers and empty-array inquiries. The full external reductions
+probe now gets past integer HUGE and zero-extent/LOGICAL matrix declarations.
+It stops at multidimensional DIM reductions, which still need implementation.
+`94_empty_logical_matrices.f90` and `python tests/test_empty_matrices.py` cover
+empty reductions, bounds, logical sections and invalid empty-dimension access.

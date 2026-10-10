@@ -90,14 +90,13 @@ Omitted section endpoints use the declared bounds, including for negative
 strides; write `v(2:-2:-1)` to reverse `v(-2:2)`.
 
 LBOUND/UBOUND of whole arrays preserve their declared bounds; section bounds
-start at 1. Empty rank-one dimensions report LBOUND=1 and UBOUND=0. SIZE reports
+start at 1. Empty dimensions report LBOUND=1 and UBOUND=0. SIZE reports
 extents independently of the lower bounds. An assumed-shape dummy `x(:)` retains
 its own default lower bound of 1; an explicit-shape dummy uses its declared
 bounds and still requires matching extents under the current call specialization.
 
-Runtime-dependent declaration bounds, explicit lower bounds on assumed-shape
-or allocatable arrays, and zero extents in multidimensional arrays remain
-unsupported. Existing limitations on array expressions and procedure arguments
+Runtime-dependent declaration bounds and explicit lower bounds on assumed-shape
+or allocatable arrays remain unsupported. Existing limitations on array expressions and procedure arguments
 still apply.
 
 ## WHERE and LOGICAL arrays
@@ -302,3 +301,19 @@ input storage is private to the function. This subset is limited to 1024 element
 per dummy and requires all actual arguments. Assumed-shape, optional/allocatable
 array dummies, array expressions/sections as actuals, and non-PURE array-argument
 functions are diagnosed as unsupported. Run `python tests/test_function_arrays.py`.
+
+`HUGE` supports INTEGER kinds 1, 2, 4 and 8. Default-integer literal/constant
+expressions such as `huge(0)` fold in PARAMETER initializers; executable inquiries
+also accept typed scalar or array variables without reading their values.
+`KIND` reports declared integer kinds correctly, including `kind(huge(i8))`.
+INTEGER(16) HUGE is diagnosed rather than truncated; TINY still requires REAL.
+Run `python tests/test_integer_huge.py` for interpreter/native O0/O2 and gfortran
+comparison checks. General variable expressions as HUGE arguments and typed
+variable inquiries inside PARAMETER initializers remain outside this subset.
+
+Fixed-shape numeric and LOGICAL multidimensional arrays may have zero extents.
+Whole-array/section operations and reductions without DIM handle empty inputs;
+constant and runtime subscripts into an empty dimension remain errors. LOGICAL
+matrices support element/section assignment, list-directed output and whole-array
+COUNT/ANY/ALL. Multidimensional WHERE and DIM reductions remain unsupported.
+Run `python tests/test_empty_matrices.py` for empty/LOGICAL matrix checks.

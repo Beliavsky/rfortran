@@ -744,16 +744,17 @@ impl Lowerer {
                             TypeSpec::Integer(None | Some(1 | 2 | 4 | 8))
                                 | TypeSpec::Real
                                 | TypeSpec::DoublePrecision
+                                | TypeSpec::Logical
                         ) {
-                            bail!("multidimensional array `{name}` requires a supported numeric element type");
+                            bail!("multidimensional array `{name}` requires a supported numeric or LOGICAL element type");
                         }
                         let extents = extents.with_context(|| {
                             format!(
                                 "multidimensional array `{name}` requires a statically known shape"
                             )
                         })?;
-                        if extents.iter().any(|d| *d < 1) {
-                            bail!("multidimensional array `{name}` currently requires positive extents");
+                        if extents.iter().any(|d| *d < 0) {
+                            bail!("multidimensional array `{name}` currently requires nonnegative extents");
                         }
                         total(&extents)?;
                         shapes.insert(name.clone(), extents);

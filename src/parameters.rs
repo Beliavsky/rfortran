@@ -575,10 +575,17 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
             }
             "kind" | "tiny" | "huge" if args.len() == 1 => {
                 let double = matches!(&args[0], Expr::Call(n, _) if n.eq_ignore_ascii_case("dble"));
-                if !double && !matches!(&args[0], Expr::RealLit(_) | Expr::IntLit(_)) {
+                let integer = integer_constant(&args[0]).is_ok();
+                if !double && !integer && !matches!(&args[0], Expr::RealLit(_)) {
                     return Ok(()); // Resolve inquiry on typed variables during array lowering.
                 }
-                if !name.eq_ignore_ascii_case("kind") && matches!(&args[0], Expr::IntLit(_)) { bail!("{name} currently requires a REAL argument"); }
+                if integer {
+                    if name.eq_ignore_ascii_case("huge") {
+                        *expr = Expr::IntLit(crate::inquiries::integer_huge(None)?.to_string());
+                        return Ok(());
+                    }
+                    if name.eq_ignore_ascii_case("tiny") { bail!("TINY requires a REAL argument"); }
+                }
                 *expr = if name.eq_ignore_ascii_case("kind") { Expr::IntLit(if double { "8" } else { "4" }.into()) }
                     else if name.eq_ignore_ascii_case("huge") { real_literal(if double { f64::MAX } else { f32::MAX as f64 }, double) }
                     else { real_literal(if double { f64::MIN_POSITIVE } else { f32::MIN_POSITIVE as f64 }, double) };
