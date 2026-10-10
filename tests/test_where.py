@@ -34,8 +34,6 @@ class WhereTests(unittest.TestCase):
             ("integer::a(2)\na=1", "where(a) a=2", "LOGICAL array"),
             ("integer::a(2),b(3)\na=1\nb=2", "where(b>0) a=2", "shape does not conform"),
             ("integer::a(2)\na=1", "where(a>0) a=.true.", "incompatible numeric/LOGICAL"),
-            ("integer::a(2,2)\na=1", "where(a>0) a=2", "rank-one"),
-            ("integer::a(2)\na=1", "where(a>0)\nwhere(a>1) a=3\nend where", "nested WHERE"),
             ("integer::a(2)\na=1", "where(a>0) a(:)=2", "section destinations"),
             ("integer::a(2),b(3)\na=1\nb=2", "where(a>0)\na=3\nelsewhere(b>0)\na=4\nendwhere", "mask shapes do not conform"),
         ]

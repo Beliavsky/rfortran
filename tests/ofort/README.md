@@ -46,8 +46,8 @@ binary hash/path, and reference compiler version for investigation.
   WHERE and array-intrinsic keyword arguments. The local 89_explicit_bounds.f90
   regression tests the new behavior independently against gfortran.
 
-The remaining WHERE probes exercise nested/multidimensional masking, constructors
-inside expressions, and CSHIFT, which need further work. The independent local
+At that checkpoint, the remaining WHERE probes required nested/multidimensional
+masking, constructors inside expressions, and CSHIFT. These now pass. The local
 88_where.f90 regression already checks mask capture, active-only RHS evaluation,
 ELEMENTAL calls, overlapping assignments, ELSEWHERE precedence, LOGICAL arrays,
 zero extents, and reduction RHS behavior.
@@ -108,3 +108,9 @@ raising the selected sample to 9/18 passes. Nine cases still fail compilation.
 multidimensional DIM, sections, empty arrays and overlapping WHERE assignments.
 `xwhere_mask_capture_pending.f90` now passes at O0/O2, raising the selected
 sample to 10/18 passes (eight compile failures).
+
+`101_nested_where.f90` and `python tests/test_nested_where.py` cover nested
+multidimensional masks, ELSEWHERE precedence, captured masks, empty arrays and
+uninitialized elements outside the enclosing mask. The external
+`xwhere_nested_elsewhere_pending.f90` now passes at O0/O2, bringing the sample
+to 11/18 passes (seven compile failures). All four selected WHERE cases pass.

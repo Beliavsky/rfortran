@@ -394,6 +394,10 @@ fn array_valued(e: &Expr, symbols: &Symbols) -> bool {
 // WHERE masks are captured before executing a branch. Each assignment then
 // snapshots only its selected RHS elements before writing any destination.
 fn lower_where(body: &mut Vec<Stmt>, symbols: &mut Symbols, serial: &mut usize) -> Result<()> {
+    lower_where_mask(body, symbols, serial, None)
+}
+
+fn lower_where_mask(body: &mut Vec<Stmt>, symbols: &mut Symbols, serial: &mut usize, parent: Option<(&str,i64)>) -> Result<()> {
     if !matches!(body.first(), Some(Stmt::CallSub{name,..}) if name == "@where") { return Ok(()); }
     *serial += 1;
     let index = format!("@where_index_{serial}");
@@ -416,6 +420,7 @@ fn lower_where(body: &mut Vec<Stmt>, symbols: &mut Symbols, serial: &mut usize) 
                 } else { (Expr::Logical(true),extent,TypeSpec::Logical) };
                 if kind != TypeSpec::Logical { bail!("WHERE mask must be a LOGICAL array"); }
                 let count=count.context("WHERE mask must be an array")?;
+                if parent.is_some_and(|(_,n)| n != count) { bail!("nested WHERE mask shapes do not conform"); }
                 if let Some(n)=extent { if n != count {bail!("WHERE mask shapes do not conform");} }
                 else {
                     extent=Some(count);
@@ -425,12 +430,16 @@ fn lower_where(body: &mut Vec<Stmt>, symbols: &mut Symbols, serial: &mut usize) 
                 }
                 output.extend(prefix);
                 let mut capture = if first {
-                    vec![set(&active,value)]
+                    if let Some((parent,_)) = parent {
+                        vec![set(&active,Expr::Logical(false)),Stmt::If{cond:item(parent),then_body:vec![set(&active,value)],else_body:None}]
+                    } else { vec![set(&active,value)] }
                 } else {
                     vec![set(&active,Expr::Logical(false)),Stmt::If{cond:item(&remaining),then_body:vec![set(&active,value)],else_body:None}]
                 };
                 let not_active=Expr::Un(UnOp::Not,Box::new(item(&active)));
-                capture.push(set(&remaining,if first {not_active} else {bin(BinOp::And,item(&remaining),not_active)}));
+                capture.push(set(&remaining,if first {
+                    if let Some((parent,_)) = parent { bin(BinOp::And,item(parent),not_active) } else { not_active }
+                } else {bin(BinOp::And,item(&remaining),not_active)}));
                 output.push(Stmt::Do{var:index.clone(),start:int(1),end:int(count),body:capture});
                 first=false;
             }
@@ -457,7 +466,11 @@ fn lower_where(body: &mut Vec<Stmt>, symbols: &mut Symbols, serial: &mut usize) 
                     cond:item(&active),then_body:vec![set(&name,item(&temp))],else_body:None,
                 }]});
             }
-            _ => bail!("WHERE currently supports whole-array assignments; nested WHERE and section destinations are not yet supported"),
+            Stmt::Block { mut body } if matches!(body.first(),Some(Stmt::CallSub{name,..}) if name == "@where") => {
+                lower_where_mask(&mut body,symbols,serial,Some((&active,extent.unwrap())))?;
+                output.push(Stmt::Block { body });
+            }
+            _ => bail!("WHERE currently supports whole-array assignments and nested WHERE; section destinations are not yet supported"),
         }
     }
     *body=output;

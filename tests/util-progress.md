@@ -1046,3 +1046,30 @@ the primary CSHIFT fixture also agrees with gfortran. The isolated release
 compatibility report is `target/ofort-cshift.json`: 10/18 passes, eight compile
 failures, with all reference runs succeeding. The new passing case is
 `xwhere_mask_capture_pending.f90` at O0/O2. Linux/macOS execution remains untested.
+
+
+## Checkpoint 40: nested and multidimensional WHERE
+
+WHERE now accepts fixed-shape multidimensional masks and nested constructs.
+Shape checks run before flattening and compare full ranks/extents for nested
+masks, ELSEWHERE masks and destinations. Nested lowering inherits the captured
+active mask of its enclosing branch. Inner masks evaluate elemental expressions
+only for those elements, and their remaining-element masks exclude everything
+outside the enclosing branch. Each assignment still snapshots its selected RHS
+before writing its destination. Section and CHARACTER destinations remain
+unsupported.
+
+Fixture 101 checks three nesting levels, masked and plain ELSEWHERE, changes to
+mask operands during a branch, continuing assignments after an inner block,
+uninitialized mask elements excluded by the enclosing mask, and empty arrays.
+Focused diagnostics include equal-size arrays with differing shapes and an
+uninitialized element that is selected by the outer mask. The former tests that
+expected rejection of nested/rank-two WHERE were removed.
+
+Validation on Windows: 74 Rust unit tests, 101 native fixtures, 46 batch wrapper
+tests, and nine focused WHERE/nested-WHERE/CSHIFT tests passed. The focused suites
+passed with debug and rebuilt release compilers; the nested fixture matches
+gfortran as well as interpreter/native O0/O2 output. The isolated release report
+`target/ofort-nested-where.json` has 11/18 passes and seven compile failures;
+all reference runs succeed. `xwhere_nested_elsewhere_pending.f90` now passes
+at O0/O2, completing all four selected WHERE probes. Linux/macOS remain untested.

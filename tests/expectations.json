@@ -699,6 +699,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 1 1 2 3 4 6\n 2 3 4 6 1 1 4 6 1 1 2 3\n 3 1 6\n .TRUE.\n .TRUE.\n .TRUE.\n 0 0\n 6.0\n 2\n"
+    },
+    "101_nested_where": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " -1 302 -3 104 0 206\n 1 2 3 -4 5 -6 -1 21 -3 -3 0 -5\n -1 70 -3 8 0 9\n 0\n"
     }
   }
 }

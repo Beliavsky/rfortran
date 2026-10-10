@@ -109,9 +109,12 @@ before the branch executes; each assignment captures selected RHS values before
 writing its destination. Inactive elemental RHS expressions are not evaluated.
 Non-elemental reductions still evaluate their complete array argument.
 
-This WHERE subset requires statically known rank-one shapes and whole-array
-numeric or LOGICAL destinations. Nested WHERE, section destinations and
-CHARACTER destinations remain unsupported.
+This WHERE subset supports nested constructs and statically known multidimensional
+shapes, with whole-array numeric or LOGICAL destinations. Inner masks evaluate
+elemental expressions only where the enclosing mask is active; ELSEWHERE never
+reactivates elements excluded by that enclosing mask. Section destinations and
+CHARACTER destinations remain unsupported. Run `python tests/test_nested_where.py`
+for nested mask, shape, and uninitialized-element checks.
 
 A selected external ofort compatibility suite is described in
 [tests/ofort/README.md](tests/ofort/README.md). It compares native O0/O2 output
@@ -314,7 +317,7 @@ Fixed-shape numeric and LOGICAL multidimensional arrays may have zero extents.
 Whole-array/section operations and reductions with or without DIM handle empty inputs;
 constant and runtime subscripts into an empty dimension remain errors. LOGICAL
 matrices support element/section assignment, list-directed output and whole-array
-COUNT/ANY/ALL. Multidimensional WHERE remains unsupported.
+COUNT/ANY/ALL. Multidimensional WHERE is also supported for whole-array destinations.
 Run `python tests/test_empty_matrices.py` for empty/LOGICAL matrix checks.
 
 `python tests/test_dim_reductions.py` checks multidimensional DIM reductions,
