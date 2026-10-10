@@ -18,6 +18,7 @@ mod sections;
 mod reductions;
 mod initialized;
 mod purity;
+mod elemental;
 mod subroutines;
 mod array_calls;
 mod multidim;

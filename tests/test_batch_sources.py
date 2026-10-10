@@ -138,6 +138,15 @@ class BatchSources(unittest.TestCase):
         program.write_text(source, encoding="utf-8")
         self.check_build([program], "1 1 1 1\n 21 22 23\n 23 22 21 13 12 11\n 32 34 36\n 68\n 0\n 1 1 1 1\n 5 5 5 9\n 13 12 11 23 22 21")
 
+    def test_elemental_functions(self):
+        source = (ROOT / "tests" / "70_elemental_functions.f90").read_text(encoding="utf-8")
+        module, main = source.split("end module elemental_math", 1)
+        library = self.directory / "elemental library.f90"
+        program = self.directory / "elemental main.f90"
+        library.write_text(module + "end module elemental_math\n", encoding="utf-8")
+        program.write_text(main, encoding="utf-8")
+        self.check_build([library, program], "2 4 6 7\n 12\n 4 12 24\n 3 6 9\n 24\n 0\n 8 8 8 8\n 24 24\n 1.0 0.648054 0.648054 1.0")
+
     def test_missing_source_preserves_existing_outputs(self):
         sources = self.sources()
         exe = sources[-1].with_suffix(".exe")

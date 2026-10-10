@@ -27,6 +27,7 @@ extern {
         KW_FUNCTION => TokenKind::KwFunction,
         KW_RESULT => TokenKind::KwResult,
         KW_PURE => TokenKind::KwPure,
+        KW_ELEMENTAL => TokenKind::KwElemental,
         KW_PUBLIC => TokenKind::KwPublic,
         KW_PRIVATE => TokenKind::KwPrivate,
         KW_RETURN => TokenKind::KwReturn,
@@ -147,10 +148,19 @@ FuncList: Vec<Stmt> = {
 };
 
 FuncDef: Stmt = {
-    <pure: KW_PURE?> <mut function: FunctionDef> => {
-        if let Stmt::Function { pure: flag, .. } = &mut function { *flag = pure.is_some(); }
+    <prefix: FunctionPrefix> <mut function: FunctionDef> => {
+        if let Stmt::Function { pure, elemental, .. } = &mut function { *pure = prefix.0; *elemental = prefix.1; }
         function
     },
+};
+
+#[inline]
+FunctionPrefix: (bool,bool) = {
+    => (false,false),
+    KW_PURE => (true,false),
+    KW_ELEMENTAL => (true,true),
+    KW_PURE KW_ELEMENTAL => (true,true),
+    KW_ELEMENTAL KW_PURE => (true,true),
 };
 
 FunctionDef: Stmt = {
@@ -160,10 +170,10 @@ FunctionDef: Stmt = {
     },
     <kind: TypeSpec> KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN <mut body: Stmts> KW_END KW_FUNCTION <_endname: Ident> => {
         body.insert(0,Stmt::VarDecl {kind:kind.clone(),names:vec![name.clone()]});
-        Stmt::Function { name, params, return_type:Some(kind),body,pure:false }
+        Stmt::Function { name, params, return_type:Some(kind),body,pure:false,elemental:false }
     },
     KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN KW_RESULT LPAREN <result: Ident> RPAREN <body: Stmts> KW_END KW_FUNCTION <_endname: Ident> => crate::ast::function_with_result(name, params, result, body),
-    KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN <body: Stmts> KW_END KW_FUNCTION <_endname: Ident> => Stmt::Function { name, params, return_type: None, body, pure: false },
+    KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN <body: Stmts> KW_END KW_FUNCTION <_endname: Ident> => Stmt::Function { name, params, return_type: None, body, pure: false, elemental:false },
 };
 
 SubrDef: Stmt = {

@@ -3,7 +3,19 @@ use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec, UnOp};
 use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
 
-type Symbols = HashMap<String, (TypeSpec, Vec<Expr>)>;
+#[derive(Clone,Default)]
+struct Symbols {
+    variables: HashMap<String,(TypeSpec,Vec<Expr>)>,
+    elementals: HashMap<String,TypeSpec>,
+}
+impl Symbols { fn new() -> Self { Self::default() } }
+impl std::ops::Deref for Symbols {
+    type Target=HashMap<String,(TypeSpec,Vec<Expr>)>;
+    fn deref(&self) -> &Self::Target { &self.variables }
+}
+impl std::ops::DerefMut for Symbols {
+    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.variables }
+}
 fn int(n: i64) -> Expr { Expr::IntLit(n.to_string()) }
 fn bin(op: BinOp, a: Expr, b: Expr) -> Expr { Expr::Bin(op, Box::new(a), Box::new(b)) }
 fn reduction(name: &str) -> bool { matches!(name.to_ascii_lowercase().as_str(), "sum" | "product" | "minval" | "maxval" | "any" | "all") }
@@ -69,6 +81,15 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
             let kind = symbols[name].0.clone();
             if !numeric(&kind) { bail!("reductions require numeric arrays"); }
             Ok((Expr::Index(name.clone(), vec![arg]), None, kind))
+        }
+        Expr::Call(name,args) if symbols.elementals.contains_key(name) => {
+            let mut shape=None; let mut values=vec![];
+            for arg in args {
+                let (value,count,_)=element(arg,index,symbols)?;
+                if let (Some(a),Some(b))=(shape,count) { if a!=b {bail!("ELEMENTAL argument shapes do not conform");} }
+                shape=shape.or(count); values.push(value);
+            }
+            Ok((Expr::Call(name.clone(),values),shape,symbols.elementals[name].clone()))
         }
         Expr::Call(name, args) if crate::intrinsics::math_arity(name).is_some() || matches!(name.as_str(), "dble" | "real" | "abs") => {
             let mut shape=None; let mut kind=TypeSpec::Real; let mut values=vec![];
@@ -138,6 +159,19 @@ fn lower_expr(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, seria
         Expr::Un(_, a) => lower_expr(a, symbols, prefix, serial)?,
         _ => {}
     }
+    if matches!(e,Expr::Call(name,_) if symbols.elementals.contains_key(name)) && array_valued(e,symbols) {
+        *serial+=1;
+        let index_name=format!("@elemental_index_{serial}");
+        let temp=format!("@elemental_result_{serial}");
+        let index=Expr::Ident(index_name.clone());
+        let (value,count,kind)=element(e,&index,symbols)?;
+        let count=count.context("ELEMENTAL array expression has no known shape")?;
+        prefix.push(Stmt::VarDecl{kind:TypeSpec::Integer(None),names:vec![index_name.clone()]});
+        prefix.push(Stmt::ArrayDecl{kind:kind.clone(),name:temp.clone(),dims:vec![int(count)]});
+        prefix.push(Stmt::Do{var:index_name,start:int(1),end:int(count),body:vec![Stmt::AssignIndex{name:temp.clone(),indices:vec![index],value}]});
+        symbols.insert(temp.clone(),(kind,vec![int(count)]));
+        *e=Expr::Ident(temp);
+    }
     Ok(())
 }
 
@@ -168,6 +202,17 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
             if name=="@allocate" {bail!("ALLOCATE is currently supported only in specialized local array subroutines");}
             if name=="@formatted_print" { let Some(Expr::Str(fmt))=args.first() else {bail!("PRINT format must be constant");};crate::formatting::parse(fmt,args.len()-1)?; }
             if name=="@error_stop" && !matches!(args.as_slice(),[Expr::Str(_)]) {bail!("ERROR STOP currently requires a character constant");}
+        }
+        if let Stmt::Read {args} = &stmt {
+            fn has_elemental(e: &Expr, symbols: &Symbols) -> bool {
+                match e {
+                    Expr::Call(n,args) | Expr::Index(n,args) => symbols.elementals.contains_key(n) || args.iter().any(|e|has_elemental(e,symbols)),
+                    Expr::Bin(_,a,b) => has_elemental(a,symbols) || has_elemental(b,symbols),
+                    Expr::Un(_,a) => has_elemental(a,symbols),
+                    _ => false,
+                }
+            }
+            if args.iter().any(|e|has_elemental(e,&symbols)) {bail!("ELEMENTAL function result is not a writable READ destination");}
         }
         match &mut stmt {
             Stmt::Print { items } | Stmt::Read { args: items } | Stmt::CallSub { args: items, .. } => for e in items { lower_expr(e, &mut symbols, &mut prefix, serial)?; },
@@ -276,7 +321,9 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
 }
 
 pub fn resolve(mut program: Program) -> Result<Program> {
-    lower_body(&mut program.body, &Symbols::new(), &mut 0)?;
+    let mut symbols=Symbols::new();
+    symbols.elementals=crate::elemental::functions(&program);
+    lower_body(&mut program.body, &symbols, &mut 0)?;
     Ok(program)
 }
 

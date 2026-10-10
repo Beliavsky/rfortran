@@ -115,6 +115,7 @@ pub enum TokenKind {
     // Contextual keyword, assigned only after a function's parameter list.
     KwResult,
     KwPure,
+    KwElemental,
     #[token("public", ignore(ascii_case))]
     KwPublic,
     #[token("private", ignore(ascii_case))]
@@ -296,9 +297,16 @@ pub fn lex(input: &str) -> Vec<Token> {
         }
         if matches!(&tokens[start].kind, TokenKind::Ident(n) if n.eq_ignore_ascii_case("error")) && matches!(tokens.get(start+1).map(|t| &t.kind), Some(TokenKind::KwStop)) { tokens[start].kind = TokenKind::KwError; }
         if matches!(&tokens[start].kind, TokenKind::Ident(n) if n.eq_ignore_ascii_case("allocate")) && matches!(tokens.get(start+1).map(|t| &t.kind), Some(TokenKind::LParen)) { tokens[start].kind = TokenKind::KwAllocate; }
-        if matches!(&tokens[start].kind, TokenKind::Ident(name) if name.eq_ignore_ascii_case("pure"))
-            && matches!(tokens.get(start + 1).map(|t| &t.kind), Some(TokenKind::KwFunction | TokenKind::KwSubroutine | TokenKind::KwLogical | TokenKind::KwInteger | TokenKind::KwReal | TokenKind::KwDouble | TokenKind::KwCharacter)) {
-            tokens[start].kind = TokenKind::KwPure;
+        if let TokenKind::Ident(name) = &tokens[start].kind {
+            if matches!(name.to_ascii_lowercase().as_str(), "pure" | "elemental") {
+                let next = tokens.get(start+1).map(|t| &t.kind);
+                let prefix = matches!(next, Some(TokenKind::Ident(n)) if matches!(n.to_ascii_lowercase().as_str(), "pure" | "elemental"));
+                let following = if prefix { tokens.get(start+2).map(|t| &t.kind) } else { next };
+                let same_line = tokens.get(start+if prefix {2} else {1}).is_some_and(|next| same_statement(&input[tokens[start].span.end..next.span.start]));
+                if same_line && matches!(following, Some(TokenKind::KwFunction | TokenKind::KwSubroutine | TokenKind::KwLogical | TokenKind::KwInteger | TokenKind::KwReal | TokenKind::KwDouble | TokenKind::KwCharacter)) {
+                    tokens[start].kind = if name.eq_ignore_ascii_case("elemental") { TokenKind::KwElemental } else { TokenKind::KwPure };
+                }
+            }
         }
         if !matches!(tokens[start].kind, TokenKind::KwFunction)
             || !matches!(tokens.get(start + 2).map(|t| &t.kind), Some(TokenKind::LParen)) { continue; }

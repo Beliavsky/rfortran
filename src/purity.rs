@@ -25,7 +25,7 @@ pub fn validate(program: &Program) -> Result<()> {
         match e {
             Expr::Call(name, args) => {
                 let intrinsic = crate::intrinsics::math_arity(name).is_some()
-                    || matches!(name.to_ascii_lowercase().as_str(), "mod" | "modulo" | "abs" | "int" | "real" | "dble" | "sum" | "product" | "minval" | "maxval" | "max" | "min" | "kind" | "selected_real_kind" | "selected_int_kind" | "tiny" | "huge" | "size" | "present" | "any" | "all" | "@array_constructor");
+                    || matches!(name.to_ascii_lowercase().as_str(), "mod" | "modulo" | "abs" | "int" | "real" | "dble" | "sum" | "product" | "minval" | "maxval" | "max" | "min" | "kind" | "selected_real_kind" | "selected_int_kind" | "tiny" | "huge" | "size" | "present" | "any" | "all" | "@array_constructor" | "@section_subscript");
                 if !locals.contains(name) && !known.get(name).map(|p| p.pure).unwrap_or(intrinsic) {
                     bail!("PURE procedure cannot call impure or unknown procedure `{name}`");
                 }
@@ -108,7 +108,8 @@ pub fn validate(program: &Program) -> Result<()> {
     fn walk(body: &[Stmt], known: &HashMap<String, Procedure>) -> Result<()> {
         for stmt in body {
             match stmt {
-                Stmt::Function { name, pure: true, params, body, .. } => {
+                Stmt::Function { name, pure: true, elemental, return_type, params, body, .. } => {
+                    if *elemental { crate::elemental::validate(name,params,return_type,body)?; }
                     let mut locals: HashSet<String> = params.iter().cloned().collect();
                     locals.insert(name.clone());
                     check(body, &locals, &params.iter().cloned().collect(), known)?;

@@ -160,6 +160,7 @@ fn section_view(name: &str, args: &[Expr], dims: &[i64]) -> Result<(Vec<i64>, Ex
 #[derive(Default)]
 struct Lowerer {
     guards: Vec<Stmt>,
+    elementals: std::collections::HashSet<String>,
     types: HashMap<String, TypeSpec>,
     functions: HashMap<String, TypeSpec>,
     module_arrays: std::collections::HashSet<String>,
@@ -206,7 +207,7 @@ impl Lowerer {
                     "size" | "len" | "count" => true,
                     "int" | "nint" | "floor" | "ceiling" => args
                         .first()
-                        .is_some_and(|e| Self::shape(e, shapes).is_ok_and(|s| s.is_none())),
+                        .is_some_and(|e| self.shape(e, shapes).is_ok_and(|s| s.is_none())),
                     "abs" | "mod" | "modulo" | "min" | "max" => {
                         args.iter().all(|a| self.integer_expr(a, shapes))
                     }
@@ -271,6 +272,7 @@ impl Lowerer {
                     name: function.clone(),
                     params: vec![parameter.clone()],
                     pure: false,
+                    elemental: false,
                     return_type: Some(TypeSpec::Integer(Some(8))),
                     body: vec![
                         Stmt::VarDecl {
@@ -314,6 +316,9 @@ impl Lowerer {
     }
 
     fn expression(&mut self, e: &mut Expr, shapes: &Shapes) -> Result<()> {
+        if matches!(e,Expr::Call(n,_) if self.elementals.contains(n)) {
+            self.shape(e, shapes)?;
+        }
         match e {
             Expr::Ident(n) => self.check_association(n)?,
             Expr::Call(n, args) if n == "size" => {
@@ -382,9 +387,20 @@ impl Lowerer {
         Ok(())
     }
 
-    fn shape(e: &Expr, shapes: &Shapes) -> Result<Option<Vec<i64>>> {
+    fn shape(&self, e: &Expr, shapes: &Shapes) -> Result<Option<Vec<i64>>> {
         match e {
             Expr::Ident(n) => Ok(shapes.get(n).cloned()),
+            Expr::Section { name, .. } if shapes.get(name).is_some_and(|d| d.len() == 1) => {
+                Ok(Some(
+                    section_view(
+                        name,
+                        &[Expr::Call("@section_subscript".into(), vec![e.clone()])],
+                        &shapes[name],
+                    )?
+                    .0,
+                ))
+            }
+
             Expr::Call(n, args) | Expr::Index(n, args)
                 if args.iter().any(|e| triplet(e).is_some()) =>
             {
@@ -395,8 +411,8 @@ impl Lowerer {
             }
 
             Expr::Bin(_, a, b) => {
-                let a = Self::shape(a, shapes)?;
-                let b = Self::shape(b, shapes)?;
+                let a = self.shape(a, shapes)?;
+                let b = self.shape(b, shapes)?;
                 if let (Some(a), Some(b)) = (&a, &b) {
                     if a != b {
                         bail!("nonconforming array shapes {a:?} and {b:?}");
@@ -404,11 +420,24 @@ impl Lowerer {
                 }
                 Ok(a.or(b))
             }
-            Expr::Un(_, a) => Self::shape(a, shapes),
-            Expr::Call(n, args) if crate::intrinsics::math_arity(n).is_some() || n == "abs" => args
-                .first()
-                .map(|e| Self::shape(e, shapes))
-                .unwrap_or(Ok(None)),
+            Expr::Un(_, a) => self.shape(a, shapes),
+            Expr::Call(n, args)
+                if self.elementals.contains(n)
+                    || crate::intrinsics::math_arity(n).is_some()
+                    || matches!(n.as_str(), "abs" | "dble" | "real") =>
+            {
+                let mut shape = None;
+                for arg in args {
+                    let next = self.shape(arg, shapes)?;
+                    if let (Some(a), Some(b)) = (&shape, &next) {
+                        if a != b {
+                            bail!("nonconforming array argument shapes {a:?} and {b:?}");
+                        }
+                    }
+                    shape = shape.or(next);
+                }
+                Ok(shape)
+            }
             _ => Ok(None),
         }
     }
@@ -466,7 +495,7 @@ impl Lowerer {
                 }
                 Stmt::Assign { name, value } => {
                     self.check_association(name)?;
-                    if let (Some(a), Some(b)) = (shapes.get(name), Self::shape(value, &shapes)?) {
+                    if let (Some(a), Some(b)) = (shapes.get(name), self.shape(value, &shapes)?) {
                         if *a != b {
                             bail!("nonconforming array assignment to `{name}`: {a:?} and {b:?}");
                         }
@@ -561,7 +590,9 @@ impl Lowerer {
     }
 }
 pub fn resolve(mut p: Program) -> Result<Program> {
+    crate::elemental::validate_program(&p)?;
     let mut lower = Lowerer::default();
+    lower.elementals = crate::elemental::functions(&p).into_keys().collect();
     for s in &p.body {
         if let Stmt::Module { body, .. } = s {
             for s in body {

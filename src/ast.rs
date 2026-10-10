@@ -61,6 +61,7 @@ pub enum Stmt {
         body: Vec<Stmt>,
     },
     Function {
+        elemental: bool,
         #[serde(default)]
         pure: bool,
         name: String,
@@ -143,7 +144,7 @@ pub fn function_with_result(name: String, params: Vec<String>, result: String, m
     });
     returns(&mut body, &result);
     body.push(Stmt::Return(Some(Expr::Ident(result))));
-    Stmt::Function { name, params, return_type, body, pure: false }
+    Stmt::Function { name, params, return_type, body, pure: false, elemental: false }
 }
 
 pub fn scalar_decl(kind: TypeSpec, attributes: Vec<String>, entities: Vec<(String, Option<Expr>)>) -> Stmt {

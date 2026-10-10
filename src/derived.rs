@@ -721,6 +721,7 @@ impl Lowerer {
     }
 }
 pub fn resolve(mut program: Program) -> Result<Program> {
+    crate::elemental::validate_program(&program)?;
     crate::imports::validate(&program)?;
     program = crate::operators::resolve(program)?;
     let mut lower = Lowerer {

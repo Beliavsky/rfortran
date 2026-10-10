@@ -127,8 +127,27 @@ Dynamic section bounds/scalar subscripts, vector subscripts, section destination
 SIZE of sections, and section procedure arguments remain unsupported. Unsupported
 section contexts are diagnosed rather than passed to the backend.
 
+The ninth checkpoint adds ELEMENTAL functions, implicitly PURE, with optional
+explicit PURE before or after ELEMENTAL. Arguments and results must currently
+be explicitly declared numeric scalars; arguments require INTENT(IN). Existing
+purity checks reject external I/O, dummy modification, and impure calls.
+Scalar calls use the existing function implementation. Array calls are lowered
+to scalar calls with temporary results, supporting scalar expansion, nested
+calls, whole-array assignments, direct output, and reductions. Array argument
+shapes are checked before multidimensional arrays are flattened. Test 70 covers
+module imports, typed and RESULT functions, integer and double-precision results,
+sections, matrices, empty arrays, and overlapping assignments. Native O0/O2 and
+interpreter results agree with gfortran within printed numeric precision.
+
+This is not full elemental procedure support: ELEMENTAL subroutines, IMPURE
+ELEMENTAL, optional arguments, nonnumeric arguments/results, integer kind 16,
+and elemental generic dispatch with array actual arguments remain unsupported.
+Array expressions retain the existing static-shape and numeric-expression limits.
+Procedure prefixes before the return type are supported; reordered type/prefix
+forms such as `real elemental function` are not yet supported.
+
 The full utility program still does not compile. Its next parser error is
-`elemental function sech`. Its character array parameters also remain unsupported.
+`forall (i=1:n2) ...`. Its character array parameters also remain unsupported.
 Further blockers include user-defined dotted
 operators such as `.in.` and `.exclude.`. The utility library also exercises
 features beyond the currently implemented array, character, and I/O subsets.
