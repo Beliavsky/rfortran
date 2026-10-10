@@ -899,3 +899,34 @@ The external sample remains at 5/18 passes at O0/O2, with all 18 reference runs
 successful (`target/ofort-dim-reductions.json`). The full reductions probe now
 passes DIM lowering and stops with `unsupported expression in numeric array
 reduction`; array constructors/RESHAPE and elemental MOD need subsequent work.
+
+
+## Checkpoint 35: RESHAPE and array expressions
+
+Numeric/LOGICAL constructors now materialize as typed temporary arrays in
+expressions, including comparisons and reduction arguments. Scalar and fixed
+array/section items are concatenated in element order. Shape checks use the
+expanded element count; array and section assignments preserve RHS snapshots.
+The prior assignment handling of empty constant implied-DOs is retained.
+
+RESHAPE accepts positional or reordered SOURCE=/SHAPE= arguments, a constant
+shape constructor and enough source elements. It copies elements in Fortran
+array order, preserves element kind, supports zero-sized results and retains
+result shape through DIM reductions and bound inquiries. PAD, ORDER and runtime
+shape vectors are explicitly unsupported. PURE routines may use RESHAPE.
+
+Elemental MOD/MODULO now scalarize array operands with shape and type checks.
+An existing interpreter MOD bug was fixed: real arguments no longer enter the
+integer remainder path. Fixture 96 covers the combined reductions workload,
+constructor sections and overlapping writes, reshaping, empty results, result
+bounds, logical/real arrays and signed integer/real remainders. Focused tests
+also exercise invalid shapes/types/keywords, INTEGER kinds and PURE calls.
+
+The full external `xintrinsic_reductions_dim_mask_pending.f90` now passes all
+17 checks at O0/O2, increasing the selected sample from 5/18 to 6/18. All 18
+gfortran reference runs succeed. Local validation includes 74 Rust unit tests,
+96 native fixtures and 11 focused checks (constructors, RESHAPE, DIM and WHERE).
+
+The release compiler was rebuilt and passed all 11 focused checks and 43 batch
+wrapper tests. The refreshed release report is `target/ofort-reshape.json`
+(6 passes, 12 compile failures). Linux/macOS execution remains untested.

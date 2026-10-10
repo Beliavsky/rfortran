@@ -427,7 +427,22 @@ fn constructor_items(items: &[Expr], constants: &Constants, output: &mut Vec<Exp
 
 fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
     if let Expr::Call(name, args) = expr {
-        if matches!(name.as_str(), "lbound" | "ubound" | "size") {
+        if name == "reshape" {
+            let mut slots: [Option<Expr>; 2] = [None,None];
+            let mut keywords = false;
+            for (position,arg) in args.iter().enumerate() {
+                let (slot,value) = match arg {
+                    Expr::Call(tag,values) if tag.starts_with("@keyword:") => {
+                        keywords = true;
+                        (match &tag[9..] { "source" => 0, "shape" => 1, "pad" | "order" => bail!("RESHAPE PAD and ORDER are not supported"), key => bail!("RESHAPE: unknown keyword `{key}`") }, &values[0])
+                    }
+                    _ => { if keywords { bail!("RESHAPE: positional argument after keyword argument"); } (position,arg) }
+                };
+                if slot >= 2 { bail!("RESHAPE PAD and ORDER are not supported"); }
+                if slots[slot].replace(value.clone()).is_some() { bail!("RESHAPE: duplicate argument"); }
+            }
+            *args = vec![slots[0].take().context("RESHAPE requires SOURCE")?, slots[1].take().context("RESHAPE requires SHAPE")?];
+        } else if matches!(name.as_str(), "lbound" | "ubound" | "size") {
             let (array, dim, kind) = crate::inquiries::arguments(name, args)?;
             if let Some(mut kind) = kind {
                 rewrite_expr(&mut kind, constants)?;

@@ -21,6 +21,16 @@ fn total(dims: &[i64]) -> Result<i64> {
     })
 }
 
+pub(crate) fn reshape_shape(args: &[Expr]) -> Result<Vec<i64>> {
+    if args.len() != 2 { bail!("RESHAPE currently requires SOURCE and SHAPE; PAD and ORDER are not supported"); }
+    let Expr::Call(tag, items) = &args[1] else { bail!("RESHAPE SHAPE must currently be a constant array constructor"); };
+    if tag != "@array_constructor" || items.is_empty() { bail!("RESHAPE SHAPE must be a nonempty constant array constructor"); }
+    let dims = items.iter().map(crate::parameters::integer_constant).collect::<Result<Vec<_>>>()?;
+    if dims.iter().any(|n| *n < 0) { bail!("RESHAPE SHAPE extents must be nonnegative"); }
+    total(&dims)?;
+    Ok(dims)
+}
+
 // A view stores its source, element count, and a linear index formula.
 // The private placeholder is replaced only when a consumer selects an element.
 pub(crate) fn view_element(e: &Expr, index: &Expr) -> Option<(Expr, i64)> {
@@ -338,11 +348,16 @@ impl Lowerer {
     }
 
     fn expression(&mut self, e: &mut Expr, shapes: &Shapes) -> Result<()> {
-        if matches!(e,Expr::Call(n,_) if self.elementals.contains(n)) {
+        if matches!(e,Expr::Call(n,_) if self.elementals.contains(n) || matches!(n.as_str(),"mod" | "modulo")) || matches!(e,Expr::Bin(..)) {
             self.shape(e, shapes)?;
         }
         match e {
             Expr::Ident(n) => self.check_association(n)?,
+            Expr::Call(n, args) if n == "reshape" => {
+                reshape_shape(args)?;
+                self.shape(&args[0], shapes)?.context("RESHAPE SOURCE must be an array")?;
+                self.expression(&mut args[0], shapes)?;
+            }
             Expr::Call(n, args) if matches!(n.as_str(), "sum" | "product" | "minval" | "maxval" | "@count_default" | "@count_i8" | "@any_reduction" | "@all_reduction") && args.len() == 3 => {
                 let intrinsic = match n.as_str() { "@count_default" | "@count_i8" => "count", "@any_reduction" => "any", "@all_reduction" => "all", _ => n.as_str() };
                 let dims = self.shape(&args[0], shapes)?.context("reduction argument must be an array")?;
@@ -442,6 +457,12 @@ impl Lowerer {
 
     fn shape(&self, e: &Expr, shapes: &Shapes) -> Result<Option<Vec<i64>>> {
         match e {
+            Expr::Call(n, args) if n == "reshape" => Ok(Some(reshape_shape(args)?)),
+            Expr::Call(n, args) if n == "@array_constructor" => {
+                let mut count = 0i64;
+                for arg in args { count = count.checked_add(match self.shape(arg, shapes)? { Some(dims) => total(&dims)?, None => 1 }).context("array constructor extent overflow")?; }
+                Ok(Some(vec![count]))
+            }
             Expr::Call(n, args) if matches!(n.as_str(), "sum" | "product" | "minval" | "maxval" | "@count_default" | "@count_i8" | "@any_reduction" | "@all_reduction") => {
                 if args.len() == 5 {
                     let Expr::Call(_, dims) = &args[4] else { unreachable!() };
@@ -495,7 +516,7 @@ impl Lowerer {
             Expr::Call(n, args)
                 if self.elementals.contains(n)
                     || crate::intrinsics::math_arity(n).is_some()
-                    || matches!(n.as_str(), "abs" | "dble" | "real") =>
+                    || matches!(n.as_str(), "abs" | "dble" | "real" | "mod" | "modulo") =>
             {
                 let mut shape = None;
                 for arg in args {
@@ -819,15 +840,7 @@ impl Lowerer {
                             format!("section `{name}` requires a declared array")
                         })?;
                         let (target_shape, view) = section_view(name, &section_indices, dims)?;
-                        let rhs_shape = if let Expr::Call(tag, items) = value {
-                            if tag == "@array_constructor" {
-                                Some(vec![items.len() as i64])
-                            } else {
-                                self.shape(value, &shapes)?
-                            }
-                        } else {
-                            self.shape(value, &shapes)?
-                        };
+                        let rhs_shape = self.shape(value, &shapes)?;
                         if let Some(rhs_shape) = rhs_shape {
                             if target_shape != rhs_shape {
                                 bail!("nonconforming section assignment to `{name}`: {target_shape:?} and {rhs_shape:?}");

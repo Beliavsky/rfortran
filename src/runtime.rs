@@ -422,9 +422,7 @@ pub fn interpret(program: &Program) {
                 }
             }
             "mod" => {
-                if to_int(args.get(0)?).is_some() && to_int(args.get(1)?).is_some() {
-                    let a = to_int(args.get(0)?)?;
-                    let b = to_int(args.get(1)?)?;
+                if let (Some(a),Some(b)) = (args.get(0)?.0,args.get(1)?.0) {
                     if b == 0 {
                         Some(ValueTuple::from_int(0))
                     } else {

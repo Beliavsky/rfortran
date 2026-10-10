@@ -24,6 +24,12 @@ fn int(n: i64) -> Expr { Expr::IntLit(n.to_string()) }
 fn bin(op: BinOp, a: Expr, b: Expr) -> Expr { Expr::Bin(op, Box::new(a), Box::new(b)) }
 fn reduction(name: &str) -> bool { matches!(name.to_ascii_lowercase().as_str(), "sum" | "product" | "minval" | "maxval" | "any" | "all" | "count" | "@count_i8" | "@count_default" | "@any_reduction" | "@all_reduction") }
 fn array_element_kind(kind: &TypeSpec) -> bool { matches!(kind, TypeSpec::Integer(_) | TypeSpec::Real | TypeSpec::DoublePrecision | TypeSpec::Logical) }
+fn same_kind(a: &TypeSpec, b: &TypeSpec) -> bool {
+    match (a,b) {
+        (TypeSpec::Integer(a),TypeSpec::Integer(b)) => a.unwrap_or(4) == b.unwrap_or(4),
+        _ => a == b,
+    }
+}
 fn merge_kind(a: TypeSpec, b: TypeSpec) -> TypeSpec {
     if matches!(a, TypeSpec::DoublePrecision) || matches!(b, TypeSpec::DoublePrecision) { TypeSpec::DoublePrecision }
     else if matches!(a, TypeSpec::Real) || matches!(b, TypeSpec::Real) { TypeSpec::Real }
@@ -96,6 +102,14 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
             }
             Ok((Expr::Call(name.clone(),values),shape,symbols.elementals[name].clone()))
         }
+        Expr::Call(name, args) if matches!(name.as_str(), "mod" | "modulo") => {
+            if args.len() != 2 { bail!("{name} requires two arguments"); }
+            let (a, alen, kind) = element(&args[0], index, symbols)?;
+            let (b, blen, other) = element(&args[1], index, symbols)?;
+            if !same_kind(&kind,&other) || matches!(kind, TypeSpec::Logical) { bail!("{name} arguments must have the same numeric type and kind"); }
+            if let (Some(a),Some(b)) = (alen,blen) { if a != b { bail!("{name} argument shapes do not conform"); } }
+            Ok((Expr::Call(name.clone(),vec![a,b]),alen.or(blen),kind))
+        }
         Expr::Call(name, args) if crate::intrinsics::math_arity(name).is_some() || matches!(name.as_str(), "dble" | "real" | "abs") => {
             let mut shape=None; let mut kind=TypeSpec::Real; let mut values=vec![];
             for arg in args { let (value,n,k)=element(arg,index,symbols)?; if let (Some(a),Some(b))=(shape,n) { if a!=b {bail!("array shapes do not conform");} } shape=shape.or(n);kind=merge_kind(kind,k); values.push(value); }
@@ -110,8 +124,68 @@ fn lower_expr(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, seria
     lower_expr_impl(e,symbols,prefix,serial,true)
 }
 
+fn lower_assignment_value(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, serial: &mut usize) -> Result<()> {
+    // Keep assignment-context conversion and scalar procedure calls supported
+    // by the existing constructor assignment path.
+    if let Expr::Call(tag, items) = e {
+        if tag == "@array_constructor" && items.iter().all(|item| !array_valued(item,symbols)) {
+            for item in items { lower_expr(item,symbols,prefix,serial)?; }
+            return Ok(());
+        }
+    }
+    lower_expr(e,symbols,prefix,serial)
+}
+
 fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, serial: &mut usize, expand_elementals: bool) -> Result<()> {
     match e {
+        Expr::Call(name, args) if name == "@array_constructor" => {
+            // Constant empty implied-DO constructors lose their element type
+            // during expansion. Preserve the existing assignment-context path.
+            if args.is_empty() { return Ok(()); }
+            let mut items = Vec::new();
+            let mut kind = None;
+            let mut count = 0i64;
+            for arg in args {
+                lower_expr_impl(arg, symbols, prefix, serial, expand_elementals)?;
+                let (_, len, item_kind) = element(arg, &int(1), symbols)?;
+                if kind.as_ref().is_some_and(|k| !same_kind(k,&item_kind)) { bail!("array constructor items must have the same type and kind"); }
+                kind = Some(item_kind);
+                let len = len.unwrap_or(1);
+                count = count.checked_add(len).context("array constructor extent overflow")?;
+                items.push((arg.clone(),len));
+            }
+            let kind = kind.context("empty untyped array constructor is not supported")?;
+            *serial += 1;
+            let temp = format!("@constructor_array_{serial}");
+            let index = format!("@constructor_index_{serial}");
+            prefix.push(Stmt::ArrayDecl { kind:kind.clone(), name:temp.clone(), dims:vec![int(count)] });
+            prefix.push(Stmt::VarDecl { kind:TypeSpec::Integer(None), names:vec![index.clone()] });
+            let mut offset = 0;
+            for (arg,len) in items {
+                let (value,_,_) = element(&arg,&Expr::Ident(index.clone()),symbols)?;
+                prefix.push(Stmt::Do { var:index.clone(),start:int(1),end:int(len),body:vec![Stmt::AssignIndex {
+                    name:temp.clone(),indices:vec![bin(BinOp::Add,int(offset),Expr::Ident(index.clone()))],value,
+                }] });
+                offset += len;
+            }
+            symbols.insert(temp.clone(),(kind,vec![int(count)]));
+            *e = Expr::Ident(temp);
+        }
+        Expr::Call(name, args) if name == "reshape" => {
+            let dims = crate::multidim::reshape_shape(args)?;
+            let count = dims.iter().product::<i64>();
+            lower_expr(&mut args[0], symbols, prefix, serial)?;
+            *serial += 1;
+            let temp = format!("@reshape_array_{serial}");
+            let index = format!("@reshape_index_{serial}");
+            let (value,len,kind) = element(&args[0],&Expr::Ident(index.clone()),symbols)?;
+            if len.context("RESHAPE SOURCE must be an array")? < count { bail!("RESHAPE SOURCE has too few elements; PAD is not supported"); }
+            prefix.push(Stmt::ArrayDecl { kind:kind.clone(),name:temp.clone(),dims:vec![int(count)] });
+            prefix.push(Stmt::VarDecl { kind:TypeSpec::Integer(None),names:vec![index.clone()] });
+            prefix.push(Stmt::Do { var:index.clone(),start:int(1),end:int(count),body:vec![Stmt::AssignIndex { name:temp.clone(),indices:vec![Expr::Ident(index)],value }] });
+            symbols.insert(temp.clone(),(kind,vec![int(count)]));
+            *e = Expr::Ident(temp);
+        }
         Expr::Call(name, args) if name == "@bounds_vector" => {
             *serial += 1;
             let temp = format!("@bounds_{serial}");
@@ -262,7 +336,7 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
         Expr::Un(_, a) => lower_expr_impl(a, symbols, prefix, serial, expand_elementals)?,
         _ => {}
     }
-    if expand_elementals && matches!(e,Expr::Call(name,_) if symbols.elementals.contains_key(name)) && array_valued(e,symbols) {
+    if expand_elementals && matches!(e,Expr::Call(name,_) if symbols.elementals.contains_key(name) || matches!(name.as_str(), "mod" | "modulo")) && array_valued(e,symbols) {
         *serial+=1;
         let index_name=format!("@elemental_index_{serial}");
         let temp=format!("@elemental_result_{serial}");
@@ -512,9 +586,10 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
         }
         match &mut stmt {
             Stmt::Print { items } | Stmt::Read { args: items } | Stmt::CallSub { args: items, .. } => for e in items { lower_expr(e, &mut symbols, &mut prefix, serial)?; },
-            Stmt::Assign { value, .. } | Stmt::Return(Some(value)) => lower_expr(value, &mut symbols, &mut prefix, serial)?,
+            Stmt::Assign { value, .. } => lower_assignment_value(value, &mut symbols, &mut prefix, serial)?,
+            Stmt::Return(Some(value)) => lower_expr(value, &mut symbols, &mut prefix, serial)?,
             Stmt::AssignIndex { value, indices, .. } => {
-                lower_expr(value, &mut symbols, &mut prefix, serial)?;
+                lower_assignment_value(value, &mut symbols, &mut prefix, serial)?;
                 for e in indices { lower_expr(e, &mut symbols, &mut prefix, serial)?; }
             }
             Stmt::If { cond, then_body, else_body } => {

@@ -664,6 +664,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 3 7 11 9 12\n 0 4 11 5 10\n 2 12 30 5 24\n 0 1 2 1 2\n .FALSE. .TRUE. .TRUE. .FALSE. .FALSE.\n 1 3 5 5 6\n 21 21\n 1 2\n 0 0 0 1 1 1\n 2147483647 2147483647 2147483647 -2147483648 -2147483648 -2147483648\n 0 .TRUE.\n 2147483647 2147483647 2147483647 -2147483648 -2147483648\n 0 0 0 .FALSE. .FALSE. .FALSE. .TRUE. .TRUE. .TRUE.\n 0 .TRUE.\n"
+    },
+    "96_reshape_constructors": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " .TRUE. .TRUE.\n .TRUE.\n .TRUE.\n .TRUE.\n .TRUE.\n .TRUE.\n 1 2 99 5 6 -1\n -1 6 5 99 2 1\n 1 2 3 4 5 6 30 70\n 1 1 2 3\n 0 .TRUE.\n 1 2\n 4.0 8.0\n -1 1 -2 2 1 1\n -1.5 1.5 0.5 1.5\n 15 .TRUE.\n"
     }
   }
 }

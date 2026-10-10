@@ -321,3 +321,17 @@ Run `python tests/test_empty_matrices.py` for empty/LOGICAL matrix checks.
 including masks, empty axes, nested reductions, rank-three sections, shape
 diagnostics and masked uninitialized elements. Interpreter and native O0/O2
 results are compared with gfortran when installed.
+
+Numeric/LOGICAL array constructors can be used in expressions and can contain
+fixed-shape array or section items, which are appended in array element order.
+Items must have matching element type and kind. Constructor temporaries preserve
+overlapping assignment semantics. CHARACTER and explicitly typed constructors
+remain outside this subset.
+
+`RESHAPE(SOURCE, SHAPE)` accepts numeric/LOGICAL array expressions and a constant
+SHAPE constructor, including zero extents. SOURCE must contain enough elements;
+extra elements are ignored. `SOURCE=` and `SHAPE=` may be reordered. PAD, ORDER
+and runtime shape vectors remain unsupported. `MOD` and `MODULO` accept
+conformable numeric array arguments and scalar expansion, preserving element
+kind. Run `python tests/test_reshape_constructors.py` for interpreter/native
+O0/O2 checks and gfortran comparison.

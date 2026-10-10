@@ -28,7 +28,7 @@ class Constructors(unittest.TestCase):
 
     def test_diagnostics(self):
         cases = [
-            ("integer::i,a(2),b(2)", "b=[1,2]\na=[(b,i=1,2)]", "items must currently be scalar"),
+            ("integer::i,a(2),b(2)", "b=[1,2]\na=[(b,i=1,2)]", "nonconforming array assignment"),
             ("integer::i,a(3)", "a=[(i,i=1,3,0)]", "stride must not be zero"),
             ("integer::i,n,a(3)", "n=3\na=[(i,i=1,n)]", "constant integers"),
             ("integer::a(3)", "a=[(i,i=1,3)]", "locally declared scalar INTEGER"),
@@ -36,7 +36,7 @@ class Constructors(unittest.TestCase):
             ("integer::i,a(3)", "a=[((i,i=1,2),i=1,2)]", "reuses index"),
             ("integer::i,a(3)", "a=[(i,i=1,3)]\nprint *,i", "uninitialized variable `i`"),
             ("integer::i,a(3)", "a=[(a(i),i=3,1,-1)]", "uninitialized"),
-            ("integer::i,a(3)", "a=[(i,i=1,4)]", "shape does not conform"),
+            ("integer::i,a(3)", "a=[(i,i=1,4)]", "nonconforming array assignment"),
             ("integer::i,a(3)", "a=[(i,i=1,1000000)]", "expansion limit"),
         ]
         with tempfile.TemporaryDirectory(prefix="bad-constructor-") as tmp:

@@ -59,9 +59,8 @@ local tests do not require the external ofort checkout.
 The local `90_masked_reductions.f90` fixture extracts numeric reductions into a
 supported subset: reordered ARRAY/DIM/MASK keywords, rank-one DIM=1, scalar and
 array masks, sections and empty arrays. `python tests/test_masked_reductions.py`
-checks interpreter/native O0/O2 output against gfortran. The external sample is
-still 5/18: the full reductions probe requires additional features, including
-array constructors in expressions and other array operations.
+checks interpreter/native O0/O2 output against gfortran. At that checkpoint the external sample was
+5/18; the reductions probe now passes with the constructor/RESHAPE work below.
 
 `91_logical_reductions.f90` covers COUNT (including KIND=8), ANY/ALL keywords,
 rank-one DIM=1, empty inputs, sections, relational masks and pure functions with
@@ -82,5 +81,10 @@ empty reductions, bounds, logical sections and invalid empty-dimension access.
 
 `95_dim_reductions.f90` and `python tests/test_dim_reductions.py` cover constant
 DIM for SUM/PRODUCT/MINVAL/MAXVAL/COUNT/ANY/ALL, with masks, empty axes,
-nested reductions and rank-three sections. The complete external reductions
-probe still requires further array-expression support.
+nested reductions and rank-three sections.
+
+`96_reshape_constructors.f90` and `python tests/test_reshape_constructors.py`
+cover constructors in expressions, array/section constructor items, constant
+RESHAPE, and elemental MOD/MODULO. Together with DIM reduction support, these
+make `xintrinsic_reductions_dim_mask_pending.f90` pass all 17 checks at O0/O2.
+The selected sample now has 6/18 passes; remaining cases still fail compilation.
