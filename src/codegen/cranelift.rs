@@ -1151,22 +1151,12 @@ fn print_expr(
         }
         IExpr::Bin(op, l, r) => {
             if let crate::ast::BinOp::Concat = op {
-                if let (IExpr::Str(ls), IExpr::Str(rs)) = (&**l, &**r) {
-                    let mut bytes = Vec::with_capacity(ls.len() + rs.len() + 1);
-                    bytes.extend_from_slice(ls.as_bytes());
-                    bytes.extend_from_slice(rs.as_bytes());
-                    bytes.push(0);
-                    let id_num = GLOBAL_STR_ID.fetch_add(1, Ordering::Relaxed);
-                    let name = format!(".str{}.data", id_num);
-                    let id = module.declare_data(&name, Linkage::Local, false, false)?;
-                    let mut dd = DataDescription::new();
-                    dd.define(bytes.into_boxed_slice());
-                    module.define_data(id, &dd)?;
-                    let gv = module.declare_data_in_func(id, b.func);
-                    let p = b.ins().global_value(ptr_ty, gv);
-                    ex.call_printf(b, &[ex.fmt_s, p]);
-                    return Ok(());
+                // Direct output can stream both operands without a temporary string.
+                for part in [l, r] {
+                    print_expr(b, ex, ptr_ty, module, _dc, ints, reals, bools, chars,
+                        real_kind, i128_last, func_meta, arrays, part)?;
                 }
+                return Ok(());
             }
             let val = eval_expr(b, ex, ptr_ty, e, ints, reals, bools, func_meta);
             match val {
@@ -1319,9 +1309,9 @@ fn print_expr(
                                 let ch = b.ins().load(ir::types::I8, ir::MemFlags::new(), p_cur, 0);
                                 let is_null = b.ins().icmp(IntCC::Equal, ch, term_i8);
 
-                                let cont_blk = b.create_block();
-                                b.ins().brif(is_null, after_blk, &[], cont_blk, &[]);
-                                b.switch_to_block(cont_blk);
+                                let character_blk = b.create_block();
+                                b.ins().brif(is_null, after_blk, &[], character_blk, &[]);
+                                b.switch_to_block(character_blk);
 
                                 let is_space = b.ins().icmp(IntCC::Equal, ch, space_i8);
 
@@ -1343,6 +1333,9 @@ fn print_expr(
                                 let lastv =
                                     b.ins()
                                         .load(ir::types::I64, ir::MemFlags::new(), last_addr, 0);
+                                let length = b.ins().iadd(lastv, one_i64);
+                                let terminator = b.ins().iadd(tmp_ptr, length);
+                                b.ins().store(ir::MemFlags::new(), term_i8, terminator, 0);
                                 let is_neg_last =
                                     b.ins().icmp(IntCC::SignedLessThan, lastv, zero_i64);
 
@@ -1380,6 +1373,10 @@ fn print_expr(
                                 b.ins().jump(done_copy_blk, &[]);
                                 b.switch_to_block(done_copy_blk);
 
+                                for block in [loop_blk, body_blk, after_blk, character_blk, then_blk,
+                                    cont_blk, copy_blk, done_copy_blk, loop2, body2, after2] {
+                                    b.seal_block(block);
+                                }
                                 ex.call_printf(b, &[ex.fmt_s, tmp_ptr]);
                                 return Ok(());
                             } else if lname == "adjustl" {
@@ -1681,13 +1678,22 @@ fn gen_stmts(
 ) -> Result<bool> {
     use ir::{types, MemFlags};
     for st in stmts {
+        // Fragments share scalar/array rendering with PRINT but do not delimit a record.
+        let fragment = matches!(st, IStmt::Call(name, _) if name == "@print_fragment");
+        let fragment_print;
+        let st = if let IStmt::Call(name, items) = st {
+            if name == "@print_fragment" {
+                fragment_print = IStmt::Print(items.clone());
+                &fragment_print
+            } else { st }
+        } else { st };
         match st {
             IStmt::Print(items) => {
                 let space = make_data(module, b, ptr_ty, dc, b" ")?;
                 let mut previous_character = None;
                 for e in items.iter() {
                     let character = is_character_output(e, chars);
-                    if !crate::utils::list_directed_separator(previous_character, character).is_empty() {
+                    if !fragment && !crate::utils::list_directed_separator(previous_character, character).is_empty() {
                         ex.call_printf(b, &[ex.fmt_s, space]);
                     }
                     print_expr(
@@ -1696,7 +1702,7 @@ fn gen_stmts(
                     )?;
                     previous_character = Some(character);
                 }
-                ex.call_printf(b, &[ex.fmt_s, ex.p_nl]);
+                if !fragment { ex.call_printf(b, &[ex.fmt_s, ex.p_nl]); }
             }
             IStmt::DeclVar(kind, name, dims) => {
                 if ints.contains_key(name)

@@ -692,6 +692,14 @@ pub fn interpret(program: &Program) {
         let mut idx: usize = 0;
         while idx < stmts.len() {
             let stmt = &stmts[idx];
+            let fragment = matches!(stmt, Stmt::CallSub { name, .. } if name == "@print_fragment");
+            let fragment_print;
+            let stmt = if let Stmt::CallSub { name, args } = stmt {
+                if name == "@print_fragment" {
+                    fragment_print = Stmt::Print { items: args.clone() };
+                    &fragment_print
+                } else { stmt }
+            } else { stmt };
             match stmt {
                 Stmt::InitializedDecl { .. } => unreachable!("initialized declarations must be resolved before interpretation"),
                 Stmt::VarDecl { kind, names } => {
@@ -885,11 +893,11 @@ pub fn interpret(program: &Program) {
                     let mut record = String::new();
                     let mut previous_character = None;
                     for (text, character) in parts {
-                        record.push_str(crate::utils::list_directed_separator(previous_character, character));
+                        if !fragment { record.push_str(crate::utils::list_directed_separator(previous_character, character)); }
                         record.push_str(&text);
                         previous_character = Some(character);
                     }
-                    println!("{}", record);
+                    if fragment { print!("{}", record); } else { println!("{}", record); }
                 }
                 Stmt::If {
                     cond,

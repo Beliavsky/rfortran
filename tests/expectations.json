@@ -517,6 +517,13 @@
       "program_exit_code": 0,
       "program_stdout": " value 7\n 1 2 3 4\n 4 2 99\n 21 22\n .TRUE. .FALSE. 1.5\nabc  7  1.50 T\n\n 42\n conditional\n\n 43\n continued 43\ndone\n",
       "program_stderr": ""
+    },
+    "75_output_implied_do": {
+      "program_stdout": " values: 10 20 30 40 end 5\n 4 41 2 21 0\n nested: 11 12 21 22 3 3\n empty:done 3\n reverse empty:done 1\n chars:hi hi hi done\n blank:..\n\n array: 10 20 30 40 1 2 40 20\n 2 3 4 5\n",
+      "program_exit_code": 0,
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_stderr": ""
     }
   }
 }

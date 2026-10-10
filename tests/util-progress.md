@@ -260,12 +260,43 @@ for list-directed real output. The batch suite checks silent compilation with
 the rebuilt release compiler. The test script supports F90C_TEST_COMPILER like
 the input scripts.
 
-The full utility program still does not compile. Executing
-`read (iu,"(a)") text` still requires file-unit support (OPEN/CLOSE and unit-to-stream
-mapping). The next parser error is the implied-DO output list in
-`write (*,*) (trim(words(i)) // " ",i=1,nread_)`.
-The internal READ of `nw,words` also needs multiple items and character arrays.
-Its character array parameters remain unsupported.
-Further blockers include user-defined dotted
-operators such as `.in.` and `.exclude.`. The utility library also exercises
-features beyond the currently implemented array, character, and I/O subsets.
+The fifteenth checkpoint adds implied-DO lists to list-directed PRINT and
+standard-output WRITE, including multiple items, nested loops, runtime bounds,
+and positive/negative runtime steps. Controls are evaluated once on loop entry;
+empty loops and final control-variable values follow ordinary DO semantics.
+The control variable must be an explicitly declared scalar INTEGER of kind 4
+or 8. Bounds and steps currently accept integer literals, scalar integer
+variables, arithmetic, and selected integer intrinsics. General user-function
+bounds, formatted/input implied-DOs, and constructor implied-DOs remain outside
+this subset and are rejected. A nested implied-DO cannot reuse an active index.
+
+Lowering uses ordinary AST assignments/loops with output fragments, retaining a
+single output record and the existing list-directed spacing rules, including
+adjacent character items. Whole numeric arrays and supported constant sections
+can appear alongside loops. Initialization checks run at each actual read,
+reporting the original source line and the first unset array element encountered.
+A constant zero step is a compile-time error; a runtime zero step or overflowing
+64-bit control-variable increment terminates with a diagnostic.
+
+The character-output regression also exposed native TRIM/concatenation bugs.
+Direct output now streams concatenation operands, and native TRIM seals its
+control-flow blocks and terminates the result at the trimmed length, including
+an all-blank argument. This covers the scalar pattern `trim(word)//" "`; it does
+not add general character-array storage or assumed-length character dummies.
+
+Test 75 and `python tests/test_output_implied_do.py` cover output records,
+positive/negative/empty/nested loops, dependent bounds, subroutine output,
+runtime controls, initialization errors, invalid forms, and overflow. Native
+O0/O2 and interpreted output agree, and the successful fixture agrees with
+gfortran apart from numeric field widths. The script supports F90C_TEST_COMPILER.
+The batch suite also verifies silent compilation and execution of the fixture.
+
+The full utility program still does not compile. The next parser blocker is
+`backspace(iu)` (combined source line 808; the error is reported at the following
+READ on line 809). File-positioning statements require external-file support.
+Executing `read (iu,"(a)") text` still requires file-unit support (OPEN/CLOSE and
+unit-to-stream mapping). The internal READ of `nw,words` also needs multiple
+items and character arrays. Its character array parameters remain unsupported.
+Further blockers include user-defined dotted operators such as `.in.` and
+`.exclude.`. The utility library also exercises features beyond the currently
+implemented array, character, and I/O subsets.

@@ -190,6 +190,12 @@ class BatchSources(unittest.TestCase):
         program.write_text(main + "\nend program forall_test\n", encoding="utf-8")
         self.check_build([library, program], "5 4 3 2 1 99\n 10 4 30 2 50\n 10 4 30 2 50\n 1 1 2 2 3 3\n 3 3 2 2 1 1\n 6.0 6.0 4.0 4.0 3.0 3.0\n 7\n 20 8 60 4 100\n 6")
 
+    def test_output_implied_do(self):
+        source = (ROOT / "tests/75_output_implied_do.f90").read_text(encoding="utf-8")
+        program = self.directory / "output implied do.f90"
+        program.write_text(source, encoding="utf-8")
+        self.check_build([program], "values: 10 20 30 40 end 5\n 4 41 2 21 0\n nested: 11 12 21 22 3 3\n empty:done 3\n reverse empty:done 1\n chars:hi hi hi done\n blank:..\n\n array: 10 20 30 40 1 2 40 20\n 2 3 4 5")
+
     def test_missing_source_preserves_existing_outputs(self):
         sources = self.sources()
         exe = sources[-1].with_suffix(".exe")

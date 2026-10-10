@@ -411,6 +411,8 @@ ExprList: Vec<Expr> = {
     <mut v: ExprList> COMMA <e: RhsExpr> => { v.push(e); v },
 };
 
+ImpliedDoStep: Expr = { COMMA <e:RhsExpr> => e };
+
 RhsExpr: Expr = { <e: OrExpr> => e };
 
 // Precedence climbing
@@ -483,6 +485,10 @@ Primary: Expr = {
     KW_REAL LPAREN <args: CallArgList> RPAREN => Expr::Call("real".to_string(), args),
     <id: Designator> => Expr::Ident(id),
     LPAREN <e: OrExpr> RPAREN => e,
+    LPAREN <items:ExprList> COMMA <var:Ident> EQ <start:RhsExpr> COMMA <end:RhsExpr> <step:ImpliedDoStep?> RPAREN => {
+        let mut args=vec![Expr::Ident(var),start,end,step.unwrap_or(Expr::IntLit("1".into()))];
+        args.extend(items);Expr::Call("@output_implied_do".into(),args)
+    },
 };
 
 WriteUnit: Expr = { STAR => Expr::IntLit("6".into()), <unit:RhsExpr> => unit };

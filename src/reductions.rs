@@ -104,6 +104,7 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
 
 fn lower_expr(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, serial: &mut usize) -> Result<()> {
     match e {
+        Expr::Call(name, _) if name == "@output_implied_do" => bail!("implied-DO is currently supported only in list-directed output"),
         Expr::Call(name, args) if reduction(name) => {
             if args.len() != 1 { bail!("{name} currently expects one array argument; DIM and MASK are not supported"); }
             lower_expr(&mut args[0], symbols, prefix, serial)?;
@@ -211,7 +212,15 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                 };
             }
         }
+        if let Stmt::Print { items } = &stmt {
+            if items.iter().any(crate::output::contains_implied_do) {
+                stmt = crate::output::lower(items, &symbols.variables, serial)?;
+            }
+        }
         if let Stmt::CallSub {name,args}=&stmt {
+            if name=="@formatted_print" && args.iter().any(crate::output::contains_implied_do) {
+                bail!("implied-DO is currently supported only in list-directed output");
+            }
             if name=="@internal_read" {
                 output.push(crate::input::lower_integer_read(args,&symbols.variables,serial)?);
                 continue;

@@ -15,7 +15,7 @@ fn constant(e: &Expr) -> Result<i64> {
         .context("array section bounds, strides, and extents must currently be constant integers")
 }
 
-fn expand(e: Expr, arrays: &Arrays, output: &mut Vec<Expr>) -> Result<()> {
+pub(crate) fn expand(e: Expr, arrays: &Arrays, output: &mut Vec<Expr>) -> Result<()> {
     if let Some((_,count)) = crate::multidim::view_element(&e,&Expr::IntLit("1".into())) {
         for i in 1..=count {
             output.push(crate::multidim::view_element(&e,&Expr::IntLit(i.to_string())).unwrap().0);
