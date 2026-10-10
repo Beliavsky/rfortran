@@ -71,6 +71,8 @@ pub enum Stmt {
     },
     Subroutine {
         #[serde(default)]
+        elemental: bool,
+        #[serde(default)]
         pure: bool,
         name: String,
         params: Vec<String>,

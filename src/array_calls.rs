@@ -10,8 +10,45 @@ use std::collections::{HashMap, HashSet};
 type Shapes = HashMap<String, (TypeSpec, Vec<Expr>)>;
 #[derive(Clone)]
 struct Routine {
+    elemental: bool,
     params: Vec<String>,
     body: Vec<Stmt>,
+}
+
+fn elemental_actual_kind(e: &Expr, shapes: &Shapes) -> Result<TypeSpec> {
+    use crate::ast::BinOp;
+    match e {
+        Expr::Ident(n) => {
+            let (kind, dims) = shapes.get(n).context("ELEMENTAL actual argument must be declared")?;
+            if !dims.is_empty() { bail!("ELEMENTAL subroutine array actual arguments are not yet supported; pass scalar arguments"); }
+            Ok(kind.clone())
+        }
+        Expr::IntLit(_) => Ok(TypeSpec::Integer(None)),
+        Expr::RealLit(_) => Ok(TypeSpec::Real),
+        Expr::Logical(_) => Ok(TypeSpec::Logical),
+        Expr::Str(s) => Ok(TypeSpec::Character(Some(s.len()))),
+        Expr::Un(_, a) => elemental_actual_kind(a, shapes),
+        Expr::Bin(op, a, b) => {
+            let a = elemental_actual_kind(a, shapes)?;
+            let b = elemental_actual_kind(b, shapes)?;
+            if matches!(op, BinOp::Concat) {
+                if let (TypeSpec::Character(a), TypeSpec::Character(b)) = (a, b) {
+                    return Ok(TypeSpec::Character(Some(a.unwrap_or(1) + b.unwrap_or(1))));
+                }
+                bail!("CHARACTER concatenation requires CHARACTER operands");
+            }
+            if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow) {
+                Ok(if matches!(a, TypeSpec::DoublePrecision) || matches!(b, TypeSpec::DoublePrecision) {TypeSpec::DoublePrecision}
+                   else if matches!(a, TypeSpec::Real) || matches!(b, TypeSpec::Real) {TypeSpec::Real} else {a})
+            } else { Ok(TypeSpec::Logical) }
+        }
+        Expr::Call(n, args) if matches!(n.as_str(), "dble" | "real" | "int") && args.len() == 1 => {
+            elemental_actual_kind(&args[0], shapes)?;
+            Ok(match n.as_str() { "dble" => TypeSpec::DoublePrecision, "real" => TypeSpec::Real, _ => TypeSpec::Integer(None) })
+        }
+        Expr::Section { .. } => bail!("ELEMENTAL subroutine array actual arguments are not yet supported; pass scalar arguments"),
+        _ => bail!("unsupported scalar actual expression in ELEMENTAL subroutine call"),
+    }
 }
 
 fn rewrite(
@@ -22,6 +59,7 @@ fn rewrite(
 ) -> Result<()> {
     match e {
         Expr::Ident(n) => {
+            if absent.contains(n) { bail!("reference to absent OPTIONAL dummy `{n}`"); }
             if let Some(v) = constants.get(n) {
                 *e = v.clone();
             }
@@ -550,8 +588,9 @@ fn expand(
     for s in body.iter_mut() {
         if let Stmt::CallSub { name, args } = s {
             if let Some(r) = routines.get(name) {
+                if r.elemental { crate::elemental::validate_subroutine(name, &r.params, &r.body)?; }
                 if active.contains(name) {
-                    bail!("recursive assumed-shape calls are not yet supported");
+                    bail!("recursive specialized subroutine calls are not yet supported");
                 }
                 if args.len() > r.params.len() {
                     bail!("too many arguments to `{name}`");
@@ -608,10 +647,22 @@ fn expand(
                         absent.insert(p.clone());
                         continue;
                     };
-                    let (kind, dims) = local
+                    let (mut kind, dims) = local
                         .get(p)
                         .context("dummy argument must be declared")?
                         .clone();
+                    if r.elemental {
+                        let actual_kind = elemental_actual_kind(actual, &shapes)?;
+                        if let TypeSpec::Character(length) = actual_kind {
+                            match kind {
+                                TypeSpec::CharacterAssumed => kind = TypeSpec::Character(length),
+                                TypeSpec::Character(expected) if expected.unwrap_or(1) == length.unwrap_or(1) => {},
+                                _ => bail!("type or CHARACTER length mismatch for ELEMENTAL dummy `{p}`"),
+                            }
+                        } else if kind != actual_kind {
+                            bail!("type mismatch for ELEMENTAL dummy `{p}`");
+                        }
+                    }
                     let intent = intents.get(p).map(String::as_str).unwrap_or("");
                     if intent != "intent(in)"
                         && matches!(actual,Expr::Ident(n) if readonly.contains(n))
@@ -684,8 +735,14 @@ fn expand(
                     &stable,
                 )?;
                 crate::subroutines::rename(&mut cloned, &names, &r.params, serial)?;
+                let mut call_shapes = shapes.clone();
+                for statement in &prefix {
+                    if let Stmt::VarDecl { kind, names } = statement {
+                        for name in names { call_shapes.insert(name.clone(), (kind.clone(), vec![])); }
+                    }
+                }
                 active.push(name.clone());
-                expand(&mut cloned, &shapes, routines, active, serial)?;
+                expand(&mut cloned, &call_shapes, routines, active, serial)?;
                 active.pop();
                 prefix.extend(cloned);
                 *s = Stmt::Block { body: prefix };
@@ -715,17 +772,19 @@ fn expand(
     Ok(())
 }
 pub fn resolve(mut p: Program) -> Result<Program> {
+    crate::elemental::validate_program(&p)?;
     fn collect(body: &mut Vec<Stmt>, routines: &mut HashMap<String, Routine>) {
         body.retain_mut(|s| match s {
             Stmt::Subroutine {
-                name, params, body, ..
-            } if body
+                name, params, body, elemental, ..
+            } if *elemental || body
                 .iter()
                 .any(|s| matches!(s,Stmt::ArrayDecl{name,..} if params.contains(name))) =>
             {
                 routines.insert(
                     name.clone(),
                     Routine {
+                        elemental: *elemental,
                         params: params.clone(),
                         body: body.clone(),
                     },

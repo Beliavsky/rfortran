@@ -655,6 +655,7 @@ impl Lowerer {
                     params,
                     body,
                     pure,
+                    ..
                 } => {
                     let proc = self.procedures[name].clone();
                     let old_params = params.clone();
@@ -705,6 +706,7 @@ impl Lowerer {
                             });
                         }
                         s = Stmt::Subroutine {
+                            elemental: false,
                             name: format!("@derived_result_{name}"),
                             params: new_params,
                             body: std::mem::take(body),

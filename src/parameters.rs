@@ -164,11 +164,11 @@ pub(crate) fn resolve_constants(mut program: Program) -> Result<Program> {
             for s in body.iter() {
                 if let Stmt::Accessibility { public, names } = s { for n in names { exports.insert(n.to_ascii_lowercase(), *public); } }
             }
-            let constants = resolve_scope(body, &Constants::new(), &[], &modules)?;
+            let constants = resolve_scope(body, &Constants::new(), &[], &modules, false)?;
             modules.insert(name.to_ascii_lowercase(), constants.into_iter().filter(|(n, _)| exports.get(n).copied().unwrap_or(default_public)).collect());
         }
     }
-    resolve_scope(&mut program.body, &Constants::new(), &[], &modules)?;
+    resolve_scope(&mut program.body, &Constants::new(), &[], &modules, false)?;
     Ok(program)
 }
 
@@ -228,7 +228,7 @@ pub(crate) fn integer_constant(expr: &Expr) -> Result<i64> {
     evaluate(expr, &Constants::new())
 }
 
-fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[String], modules: &Modules) -> Result<Constants> {
+fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[String], modules: &Modules, assumed_dummies: bool) -> Result<Constants> {
     validate_constructor_indices(body)?;
     let mut constants = inherited.clone();
     for stmt in body.iter() {
@@ -322,7 +322,7 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
         }
     }
     body.retain(|s| !matches!(s, Stmt::InitializedDecl { .. }));
-    rewrite_body(body, &constants, modules)?;
+    rewrite_body(body, &constants, modules, if assumed_dummies {arguments} else {&[]})?;
     let mut output = Vec::new();
     for stmt in std::mem::take(body) {
         let init = if let Stmt::ArrayDecl { name, dims, .. } = &stmt {
@@ -533,7 +533,7 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
     Ok(())
 }
 
-fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules) -> Result<()> {
+fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules, assumed: &[String]) -> Result<()> {
     for stmt in body {
         match stmt {
             Stmt::Print { items } => {
@@ -556,6 +556,7 @@ fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules) -> 
                 }
                 rewrite_expr(value, constants)?;
             }
+            Stmt::VarDecl { kind: TypeSpec::CharacterAssumed, names } if names.iter().all(|n| assumed.contains(n)) => {},
             Stmt::VarDecl { kind, .. } => resolve_kind(kind, constants)?,
             Stmt::DerivedType { components, .. } => {
                 // Component initializers are defaults, not PARAMETER declarations.
@@ -608,9 +609,9 @@ fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules) -> 
                 else_body,
             } => {
                 rewrite_expr(cond, constants)?;
-                rewrite_body(then_body, constants, modules)?;
+                rewrite_body(then_body, constants, modules, assumed)?;
                 if let Some(body) = else_body {
-                    rewrite_body(body, constants, modules)?;
+                    rewrite_body(body, constants, modules, assumed)?;
                 }
             }
             Stmt::Do {
@@ -622,11 +623,11 @@ fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules) -> 
                 variable(var, constants)?;
                 rewrite_expr(start, constants)?;
                 rewrite_expr(end, constants)?;
-                rewrite_body(body, constants, modules)?;
+                rewrite_body(body, constants, modules, assumed)?;
             }
             Stmt::DoWhile { cond, body } => {
                 rewrite_expr(cond, constants)?;
-                rewrite_body(body, constants, modules)?;
+                rewrite_body(body, constants, modules, assumed)?;
             }
             Stmt::SelectCase {
                 expr,
@@ -644,14 +645,14 @@ fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules) -> 
                             }
                         }
                     }
-                    rewrite_body(&mut case.body, constants, modules)?;
+                    rewrite_body(&mut case.body, constants, modules, assumed)?;
                 }
                 if let Some(body) = default {
-                    rewrite_body(body, constants, modules)?;
+                    rewrite_body(body, constants, modules, assumed)?;
                 }
             }
             Stmt::Function { params, body, return_type, .. } => {
-                let local = resolve_scope(body, constants, params, modules)?;
+                let local = resolve_scope(body, constants, params, modules, false)?;
                 if let Some(kind) = return_type { resolve_kind(kind, &local)?; }
                 let result_name = match body.last() { Some(Stmt::Return(Some(Expr::Ident(n)))) => Some(n), _ => None };
                 if matches!(return_type, Some(TypeSpec::Character(_))) || body.iter().any(|s| matches!(s,
@@ -659,8 +660,8 @@ fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules) -> 
                     bail!("CHARACTER-valued functions are not yet supported by native function-result storage");
                 }
             }
-            Stmt::Subroutine { params, body, .. } => { resolve_scope(body, constants, params, modules)?; }
-            Stmt::Block { body } => { resolve_scope(body, constants, &[], modules)?; },
+            Stmt::Subroutine { params, body, elemental, .. } => { resolve_scope(body, constants, params, modules, *elemental)?; }
+            Stmt::Block { body } => { resolve_scope(body, constants, &[], modules, false)?; },
             Stmt::Module { .. } => {},
             Stmt::InitializedDecl { .. } => {
                 bail!("PARAMETER declaration must be in a specification part")

@@ -52,6 +52,23 @@ and source inputs are protected from overwrite. A single source is compiled
 directly. The old `f90c-sources.ps1` helper is retained for legacy use; the
 native driver does not invoke it.
 
+## Elemental subroutine setters
+
+Scalar calls to ELEMENTAL subroutines support explicit INTENT(IN), INTENT(OUT),
+and INTENT(INOUT), trailing omitted OPTIONAL arguments, and PRESENT tests.
+ELEMENTAL implies PURE; PURE restrictions are checked. Supported dummy types
+include INTEGER, REAL, DOUBLE PRECISION, LOGICAL, and CHARACTER. Assumed
+CHARACTER dummy lengths are specialized to each scalar actual argument, with
+normal assignment padding and truncation.
+
+The four specific `set_optional_real`, `set_optional_integer`,
+`set_optional_logical`, and `set_optional_character` routines from the utility
+module are covered by the regression tests. This subset uses direct positional
+calls; it does not add generic OPTIONAL dispatch, keyword calls, array actual
+arguments, or the separate allocatable setters. Unsupported actual expressions
+and mismatched types produce diagnostics. Explicit-length CHARACTER dummies
+currently require matching actual lengths.
+
 ## Array bounds inquiries
 
 `LBOUND` and `UBOUND` support statically shaped arrays and sections. A constant
@@ -186,6 +203,7 @@ python tests/test_bound_inquiries.py
 python tests/test_named_formats.py
 python tests/test_runtime_formats.py
 python tests/test_nonadvancing_output.py
+python tests/test_elemental_setters.py
 ```
 
 The Python tests use `target/debug/rfort` (with `.exe` on Windows).

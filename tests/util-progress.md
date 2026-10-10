@@ -592,3 +592,38 @@ Validation on Windows x64: 74 Rust unit tests, all 85 native regression fixtures
 4 nonadvancing-output and 3 runtime-format tests with debug and release compilers,
 and all 32 batch tests passed. The release executable was rebuilt and the next
 utility parser error confirmed with it. Linux/macOS execution remains untested.
+
+The twenty-sixth checkpoint adds scalar ELEMENTAL subroutine calls. ELEMENTAL,
+PURE ELEMENTAL, and ELEMENTAL PURE prefixes are accepted, and ELEMENTAL implies
+PURE. Declaration and purity checks require supported scalar dummy types and
+explicit INTENT. The existing call specialization pass now handles these
+routines, resolves omitted trailing OPTIONAL arguments, folds PRESENT guards,
+and rejects references to absent arguments in surviving branches. PURE callers
+may omit optional arguments when calling another PURE subroutine. Nested calls
+retain the types of specialized input temporaries.
+
+All four elemental setter implementations from util.f90 are exercised in test 86:
+set_optional_real (DOUBLE PRECISION), set_optional_integer, set_optional_logical,
+and set_optional_character. Scalar assumed CHARACTER dummy lengths come from
+the actual arguments, preserving padding, truncation, and zero lengths. INOUT
+updates and nested elemental calls are covered too. Input copies and output
+initialization checks use the existing specialization machinery.
+
+This checkpoint supports direct positional calls with scalar actuals. Array
+actuals, generic OPTIONAL dispatch, keyword calls, recursive calls, general
+actual expressions, and the separate allocatable setter family need further
+work. Explicit-length CHARACTER dummies currently require matching actual
+lengths. Invalid types, missing required arguments, absent optional reads,
+invalid PRESENT operands, and purity violations produce diagnostics.
+
+python tests/test_elemental_setters.py compares interpreter and native O0/O2
+output exactly with gfortran and exercises diagnostics. The batch suite includes
+the fixture. Original utility sources remain unchanged. Parsing now passes all
+four elemental set_optional routines and stops at the negative-step DO loop in
+last_row_all_true, combined-source line 1442. Full utility compilation remains
+incomplete.
+
+Validation on Windows x64: 74 Rust unit tests, all 86 native regression fixtures,
+2 focused setter tests with debug and release compilers, and all 33 batch tests
+passed. The release executable was rebuilt and the next utility parser error
+confirmed with it. Linux/macOS execution remains untested.

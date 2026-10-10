@@ -184,7 +184,7 @@ FunctionDef: Stmt = {
 };
 
 SubrDef: Stmt = {
-    <pure: KW_PURE?> KW_SUBROUTINE <name: Ident> LPAREN <params: ParamList> RPAREN <body: Stmts> KW_END KW_SUBROUTINE <_endname: Ident> => Stmt::Subroutine { name, params, body, pure: pure.is_some() },
+    <prefix: FunctionPrefix> KW_SUBROUTINE <name: Ident> LPAREN <params: ParamList> RPAREN <body: Stmts> KW_END KW_SUBROUTINE <_endname: Ident> => Stmt::Subroutine { name, params, body, pure: prefix.0, elemental: prefix.1 },
 };
 
 EndTail: () = {

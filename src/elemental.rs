@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Beliavsky
 // See LICENSE-MIT in the repository root.
 
-//! Metadata and declaration checks for the supported ELEMENTAL function subset.
+//! Declaration checks for ELEMENTAL functions and scalar subroutine calls.
 use crate::ast::{Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Result};
 use std::collections::HashMap;
@@ -29,6 +29,68 @@ fn numeric(kind: &TypeSpec) -> bool {
             | TypeSpec::RealKind(_)
             | TypeSpec::DoublePrecision
     )
+}
+pub fn validate_subroutine(name: &str, params: &[String], body: &[Stmt]) -> Result<()> {
+    for param in params {
+        if body.iter().any(|s| matches!(s, Stmt::ArrayDecl { name, .. } if name == param)) {
+            bail!("ELEMENTAL subroutine `{name}` requires scalar dummy arguments");
+        }
+        if !body.iter().any(|s| matches!(s, Stmt::VarDecl { kind, names } if names.contains(param)
+            && (numeric(kind) || matches!(kind, TypeSpec::Logical | TypeSpec::Character(_) | TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed)))) {
+            bail!("ELEMENTAL dummy `{param}` requires a supported explicitly declared scalar type");
+        }
+        let attributes: Vec<_> = body.iter().filter_map(|s| match s {
+            Stmt::DummyIntent { name, intent } if name == param => Some(intent.as_str()), _ => None,
+        }).collect();
+        if attributes.iter().filter(|a| a.starts_with("intent(")).count() != 1 {
+            bail!("ELEMENTAL dummy `{param}` requires one explicit INTENT");
+        }
+        if attributes.iter().any(|a| !matches!(*a, "intent(in)" | "intent(out)" | "intent(inout)" | "optional")) {
+            bail!("unsupported attribute on ELEMENTAL dummy `{param}`");
+        }
+    }
+    fn expression(e: &Expr, params: &[String], body: &[Stmt]) -> Result<()> {
+        match e {
+            Expr::Call(n, args) if n == "present" => {
+                let [Expr::Ident(param)] = args.as_slice() else { bail!("PRESENT requires an OPTIONAL dummy argument"); };
+                if !params.contains(param) || !body.iter().any(|s| matches!(s, Stmt::DummyIntent { name, intent } if name == param && intent == "optional")) {
+                    bail!("PRESENT requires an OPTIONAL dummy argument");
+                }
+            }
+            Expr::Call(_, args) | Expr::Index(_, args) => for e in args { expression(e, params, body)?; },
+            Expr::Bin(_, a, b) => { expression(a, params, body)?; expression(b, params, body)?; }
+            Expr::Un(_, a) => expression(a, params, body)?,
+            _ => {}
+        }
+        Ok(())
+    }
+    fn walk(statements: &[Stmt], params: &[String], declarations: &[Stmt]) -> Result<()> {
+        for s in statements {
+            match s {
+                Stmt::Assign { value, .. } => expression(value, params, declarations)?,
+                Stmt::CallSub { args, .. } => for e in args { expression(e, params, declarations)?; },
+                Stmt::If { cond, then_body, else_body } => {
+                    expression(cond, params, declarations)?;
+                    walk(then_body, params, declarations)?;
+                    if let Some(body) = else_body { walk(body, params, declarations)?; }
+                }
+                Stmt::Do { start, end, body, .. } => {
+                    expression(start, params, declarations)?; expression(end, params, declarations)?;
+                    walk(body, params, declarations)?;
+                }
+                Stmt::DoWhile { cond, body } => { expression(cond, params, declarations)?; walk(body, params, declarations)?; }
+                Stmt::Block { body } => walk(body, params, declarations)?,
+                Stmt::Return(Some(e)) => expression(e, params, declarations)?,
+                Stmt::AssignIndex { indices, value, .. } => {
+                    for e in indices { expression(e, params, declarations)?; }
+                    expression(value, params, declarations)?;
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+    walk(body, params, body)
 }
 pub fn functions(program: &Program) -> HashMap<String, TypeSpec> {
     fn walk(body: &[Stmt], out: &mut HashMap<String, TypeSpec>) {
@@ -109,6 +171,10 @@ pub fn validate_program(program: &Program) -> Result<()> {
                     ..
                 } => {
                     validate(name, params, return_type, body)?;
+                    walk(body)?;
+                }
+                Stmt::Subroutine { name, elemental: true, params, body, .. } => {
+                    validate_subroutine(name, params, body)?;
                     walk(body)?;
                 }
                 Stmt::Module { body, .. }

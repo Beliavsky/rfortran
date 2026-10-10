@@ -594,6 +594,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": "left:  7\nempty-end\nloop: 1 2 3\nmixed: done\nslash:\nnext-end\nfinal"
+    },
+    "86_elemental_setters": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "  1.25\n  2.50\n  3\n  7\nF\nT\n[ab   ]\n[longe]\n[     ]\n[]\n  9\n 11\n"
     }
   }
 }

@@ -7,7 +7,7 @@ use crate::ast::{Expr, Program, Stmt};
 use anyhow::{bail, Result};
 use std::collections::{HashMap, HashSet};
 
-struct Procedure { pure: bool, intents: Option<Vec<String>> }
+struct Procedure { pure: bool, intents: Option<Vec<String>>, optional: Vec<bool> }
 fn intents(params: &[String], body: &[Stmt]) -> Vec<String> {
     params.iter().map(|p| body.iter().find_map(|s| match s {
         Stmt::DummyIntent { name, intent } if name == p && intent.starts_with("intent(") => Some(intent.clone()), _ => None,
@@ -18,8 +18,8 @@ pub fn validate(program: &Program) -> Result<()> {
     fn procedures(body: &[Stmt], known: &mut HashMap<String, Procedure>) {
         for s in body {
             match s {
-                Stmt::Function { name, pure, .. } => { known.insert(name.clone(), Procedure { pure: *pure, intents: None }); }
-                Stmt::Subroutine { name, pure, params, body } => { known.insert(name.clone(), Procedure { pure: *pure, intents: Some(intents(params, body)) }); }
+                Stmt::Function { name, pure, .. } => { known.insert(name.clone(), Procedure { pure: *pure, intents: None, optional: vec![] }); }
+                Stmt::Subroutine { name, pure, params, body, .. } => { known.insert(name.clone(), Procedure { pure: *pure, intents: Some(intents(params, body)), optional: params.iter().map(|p| body.iter().any(|s| matches!(s, Stmt::DummyIntent {name,intent} if name == p && intent == "optional"))).collect() }); }
                 Stmt::Module { body, .. } => procedures(body, known),
                 _ => {}
             }
@@ -82,10 +82,10 @@ pub fn validate(program: &Program) -> Result<()> {
                     for control in args.chunks_exact(4) { for e in &control[1..] {expression(e,&locals,known)?;} }
                 }
                 Stmt::CallSub { name, args } => {
-                    let Some(Procedure { pure: true, intents: Some(intents) }) = known.get(name) else {
+                    let Some(Procedure { pure: true, intents: Some(intents), optional }) = known.get(name) else {
                         bail!("PURE procedure cannot call impure or unknown subroutine `{name}`");
                     };
-                    if args.len() != intents.len() { bail!("wrong argument count for subroutine `{name}`"); }
+                    if args.len() > intents.len() || optional.iter().skip(args.len()).any(|o| !o) { bail!("wrong argument count for subroutine `{name}`"); }
                     for (arg, intent) in args.iter().zip(intents) {
                         expression(arg, &locals, known)?;
                         if intent != "intent(in)" {
@@ -131,7 +131,8 @@ pub fn validate(program: &Program) -> Result<()> {
                     locals.insert(name.clone());
                     check(body, &locals, &params.iter().cloned().collect(), known)?;
                 }
-                Stmt::Subroutine { pure: true, params, body, .. } => {
+                Stmt::Subroutine { name, pure: true, elemental, params, body, .. } => {
+                    if *elemental { crate::elemental::validate_subroutine(name,params,body)?; }
                     let declared = intents(params, body);
                     if declared.iter().any(|i| !matches!(i.as_str(), "intent(in)" | "intent(out)" | "intent(inout)")) {
                         bail!("PURE subroutine dummy arguments require an explicit INTENT");
