@@ -724,6 +724,7 @@ pub fn analyze_with_src(
     }
     fn walk_stmt_program_reads(s: &Stmt, out: &mut HashSet<String>) {
         match s {
+            Stmt::DummyIntent{name,intent} if intent == "@forall_index" => {out.insert(name.to_ascii_lowercase());}
             Stmt::Assign { value, .. } => walk_reads_for_program(value, out),
             Stmt::AssignIndex {
                 name,
@@ -1405,6 +1406,16 @@ pub fn analyze_with_src(
         }
         let mut has_path = false;
         let mut read_vars: HashSet<String> = HashSet::new();
+        fn forall_indices(body:&[Stmt], reads:&mut HashSet<String>) {
+            for stmt in body {match stmt {
+                Stmt::DummyIntent{name,intent} if intent == "@forall_index" => {reads.insert(name.to_ascii_lowercase());}
+                Stmt::Block{body}|Stmt::Do{body,..}|Stmt::DoWhile{body,..}=>forall_indices(body,reads),
+                Stmt::If{then_body,else_body,..}=>{forall_indices(then_body,reads);if let Some(body)=else_body{forall_indices(body,reads);}}
+                Stmt::SelectCase{cases,default,..}=>{for case in cases{forall_indices(&case.body,reads);}if let Some(body)=default{forall_indices(body,reads);}}
+                _=>{}
+            }}
+        }
+        forall_indices(body,&mut read_vars);
         for r in program_level_reads.iter() {
             read_vars.insert(r.clone());
         }
@@ -2406,6 +2417,7 @@ pub fn analyze_with_src(
         undef: &mut Vec<&'a str>,
     ) {
         match s {
+            Stmt::ArrayDecl{name,kind,..} => {sym.insert(name.to_ascii_lowercase(),kind.clone());}
             Stmt::VarDecl { kind, names } => {
                 for name in names {
                     sym.insert(name.to_ascii_lowercase(), kind.clone());

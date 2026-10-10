@@ -175,6 +175,8 @@ fn section_view(name: &str, args: &[Expr], dims: &[i64]) -> Result<(Vec<i64>, Ex
 #[derive(Default)]
 struct Lowerer {
     guards: Vec<Stmt>,
+    forall_serial: usize,
+    pure_functions: HashMap<String, bool>,
     elementals: std::collections::HashSet<String>,
     types: HashMap<String, TypeSpec>,
     functions: HashMap<String, TypeSpec>,
@@ -458,6 +460,228 @@ impl Lowerer {
         }
     }
 
+    fn expand_forall(&mut self, body: &mut Vec<Stmt>, shapes: &Shapes) -> Result<()> {
+        let Some(Stmt::CallSub { name: tag, args }) = body.first() else {
+            return Ok(());
+        };
+        if tag != "@forall" {
+            return Ok(());
+        }
+        let [Expr::Ident(index), start, end, step] = args.as_slice() else {
+            bail!("FORALL index must be an integer variable");
+        };
+        if shapes.contains_key(index)
+            || !matches!(
+                self.types.get(index),
+                Some(TypeSpec::Integer(None | Some(4 | 8)))
+            )
+        {
+            bail!("FORALL index `{index}` currently requires an explicitly declared scalar INTEGER of kind 4 or 8");
+        }
+        let (index, mut start, mut end, mut step) =
+            (index.clone(), start.clone(), end.clone(), step.clone());
+        for bound in [&mut start, &mut end, &mut step] {
+            self.expression(bound, shapes)?;
+        }
+        let constant = |e: &Expr| {
+            crate::parameters::integer_constant(e)
+                .context("FORALL bounds and stride must currently be constant integers")
+        };
+        let (start, end, step) = (constant(&start)?, constant(&end)?, constant(&step)?);
+        if step == 0 {
+            bail!("FORALL stride must not be zero");
+        }
+        let [_, Stmt::AssignIndex {
+            name,
+            indices,
+            value,
+        }] = body.as_slice()
+        else {
+            bail!("FORALL currently requires one array-element or array-section assignment");
+        };
+        self.check_association(name)?;
+        let dims = shapes.get(name).with_context(|| {
+            format!("FORALL destination `{name}` requires a statically shaped array")
+        })?;
+        let kind = self
+            .types
+            .get(name)
+            .context("FORALL destination type is unknown")?
+            .clone();
+        if !matches!(
+            kind,
+            TypeSpec::Integer(None | Some(1 | 2 | 4 | 8))
+                | TypeSpec::Real
+                | TypeSpec::DoublePrecision
+        ) {
+            bail!("FORALL currently requires a supported numeric destination array");
+        }
+        fn pure(e: &Expr, shapes: &Shapes, known: &HashMap<String, bool>) -> Result<()> {
+            match e {
+                Expr::Call(n, args) | Expr::Index(n, args) => {
+                    if n == "@array_constructor" {
+                        bail!("array constructors in FORALL assignments are not yet supported");
+                    }
+                    let intrinsic = crate::intrinsics::math_arity(n).is_some()
+                        || matches!(
+                            n.as_str(),
+                            "@section_subscript"
+                                | "@unary_plus"
+                                | "abs"
+                                | "min"
+                                | "max"
+                                | "mod"
+                                | "modulo"
+                                | "int"
+                                | "real"
+                                | "dble"
+                                | "size"
+                                | "sum"
+                                | "product"
+                                | "minval"
+                                | "maxval"
+                        );
+                    if !shapes.contains_key(n) && !known.get(n).copied().unwrap_or(intrinsic) {
+                        bail!("FORALL cannot call impure or unsupported procedure `{n}`");
+                    }
+                    for e in args {
+                        pure(e, shapes, known)?;
+                    }
+                }
+                Expr::Bin(_, a, b) => {
+                    pure(a, shapes, known)?;
+                    pure(b, shapes, known)?;
+                }
+                Expr::Un(_, a) => pure(a, shapes, known)?,
+                Expr::Section {
+                    lower,
+                    upper,
+                    stride,
+                    ..
+                } => {
+                    for e in [lower, upper, stride].into_iter().flatten() {
+                        pure(e, shapes, known)?;
+                    }
+                }
+                _ => {}
+            }
+            Ok(())
+        }
+        pure(value, shapes, &self.pure_functions)?;
+        fn replace(e: &mut Expr, index: &str, value: i64) {
+            match e {
+                Expr::Ident(n) if n == index => *e = int(value),
+                Expr::Bin(_, a, b) => {
+                    replace(a, index, value);
+                    replace(b, index, value);
+                }
+                Expr::Un(_, a) => replace(a, index, value),
+                Expr::Call(_, args) | Expr::Index(_, args) => {
+                    for e in args {
+                        replace(e, index, value);
+                    }
+                }
+                Expr::Section {
+                    lower,
+                    upper,
+                    stride,
+                    ..
+                } => {
+                    for e in [lower, upper, stride].into_iter().flatten() {
+                        replace(e, index, value);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut captures = vec![Stmt::DummyIntent {
+            name: index.clone(),
+            intent: "@forall_index".into(),
+        }];
+        let mut writes = vec![];
+        let mut destinations = std::collections::HashSet::new();
+        let (mut current, end, step) = (i128::from(start), i128::from(end), i128::from(step));
+        while if step > 0 {
+            current <= end
+        } else {
+            current >= end
+        } {
+            let mut indices = indices.clone();
+            let mut value = value.clone();
+            for e in &mut indices {
+                replace(e, &index, current as i64);
+            }
+            replace(&mut value, &index, current as i64);
+            let normalized = match indices.as_slice() {
+                [section @ Expr::Section { .. }] => vec![Expr::Call(
+                    "@section_subscript".into(),
+                    vec![section.clone()],
+                )],
+                _ => indices.clone(),
+            };
+            let shape = if normalized.iter().any(|e| triplet(e).is_some()) {
+                let (shape, view) = section_view(name, &normalized, dims)?;
+                for i in 1..=total(&shape)? {
+                    let (Expr::Index(_, offset), _) = view_element(&view, &int(i)).unwrap() else {
+                        unreachable!()
+                    };
+                    if !destinations.insert(constant(&offset[0])?) {
+                        bail!("FORALL iterations define the same destination element of `{name}` more than once");
+                    }
+                }
+                shape
+            } else {
+                for e in &indices {
+                    constant(e).context(
+                        "FORALL destination subscripts must be known for every iteration",
+                    )?;
+                }
+                let mut flattened = indices.clone();
+                self.indices(name, &mut flattened, dims)?;
+                if !destinations.insert(constant(&flattened[0])?) {
+                    bail!("FORALL iterations define the same destination element of `{name}` more than once");
+                }
+                vec![]
+            };
+            if let Some(rhs_shape) = self.shape(&value, shapes)? {
+                if rhs_shape != shape {
+                    bail!("nonconforming FORALL assignment shapes {shape:?} and {rhs_shape:?}");
+                }
+            }
+            if !shape.is_empty() && total(&shape)? == 0 {
+                current += step;
+                continue;
+            }
+            self.forall_serial += 1;
+            let temp = format!("@forall_value_{}", self.forall_serial);
+            captures.push(if shape.is_empty() {
+                Stmt::VarDecl {
+                    kind: kind.clone(),
+                    names: vec![temp.clone()],
+                }
+            } else {
+                Stmt::ArrayDecl {
+                    kind: kind.clone(),
+                    name: temp.clone(),
+                    dims: shape.into_iter().map(int).collect(),
+                }
+            });
+            captures.push(Stmt::Assign {
+                name: temp.clone(),
+                value,
+            });
+            writes.push(Stmt::AssignIndex {
+                name: name.clone(),
+                indices,
+                value: Expr::Ident(temp),
+            });
+            current += step;
+        }
+        captures.extend(writes);
+        *body = captures;
+        Ok(())
+    }
+
     fn body(&mut self, body: &mut [Stmt], inherited: &Shapes) -> Result<()> {
         let mut shapes = inherited.clone();
         let inherited_types = self.types.clone();
@@ -596,9 +820,13 @@ impl Lowerer {
                     self.expression(cond, &shapes)?;
                     self.body(body, &shapes)?;
                 }
-                Stmt::Block { body }
-                | Stmt::Function { body, .. }
-                | Stmt::Subroutine { body, .. } => self.body(body, &shapes)?,
+                Stmt::Block { body } => {
+                    self.expand_forall(body, &shapes)?;
+                    self.body(body, &shapes)?;
+                }
+                Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } => {
+                    self.body(body, &shapes)?
+                }
                 Stmt::Module { body, .. } => {
                     let saved = std::mem::take(&mut self.types);
                     self.body(body, &Shapes::new())?;
@@ -637,6 +865,23 @@ pub fn resolve(mut p: Program) -> Result<Program> {
     crate::elemental::validate_program(&p)?;
     let mut lower = Lowerer::default();
     lower.elementals = crate::elemental::functions(&p).into_keys().collect();
+    fn collect_pure(body: &[Stmt], out: &mut HashMap<String, bool>) {
+        for s in body {
+            match s {
+                Stmt::Function {
+                    name, pure, body, ..
+                } => {
+                    out.insert(name.clone(), *pure);
+                    collect_pure(body, out);
+                }
+                Stmt::Module { body, .. }
+                | Stmt::Subroutine { body, .. }
+                | Stmt::Block { body } => collect_pure(body, out),
+                _ => {}
+            }
+        }
+    }
+    collect_pure(&p.body, &mut lower.pure_functions);
     for s in &p.body {
         if let Stmt::Module { body, .. } = s {
             for s in body {
@@ -788,8 +1033,11 @@ mod tests {
             let p = crate::sections::resolve(crate::reductions::resolve(p).unwrap()).unwrap();
             assert_eq!(crate::initialized::instrument(p).is_ok(), valid, "{source}");
         }
-        let p=lower("logical::a(2)\na(:)=.true.\nend").unwrap();
-        assert!(crate::reductions::resolve(p).unwrap_err().to_string().contains("numeric arrays"));
+        let p = lower("logical::a(2)\na(:)=.true.\nend").unwrap();
+        assert!(crate::reductions::resolve(p)
+            .unwrap_err()
+            .to_string()
+            .contains("numeric arrays"));
         for (statement, expected) in [
             ("a(:,1:2)=b", "nonconforming section assignment"),
             ("v(:)=b", "nonconforming section assignment"),
@@ -801,6 +1049,65 @@ mod tests {
             let error = format!("{:#}", lower(&source).unwrap_err());
             assert!(error.contains(expected), "{error}");
         }
+    }
+
+    #[test]
+    fn forall_rejects_invalid_iterations_and_destinations() {
+        for (statement, expected) in [
+            ("forall(i=1:3:0) a(i)=i", "stride must not be zero"),
+            ("forall(i=1:3) a(1)=i", "same destination element"),
+            ("forall(i=1:3) a(i:i+1)=i", "same destination element"),
+            ("forall(i=1:6) a(i)=i", "outside 1:5"),
+            ("forall(i=1:n) a(i)=i", "constant integers"),
+            ("forall(i=1:3) a(n)=i", "destination subscripts"),
+            ("forall(i=1:3) a(i)=a", "nonconforming FORALL"),
+            ("forall(i=1:3) a(i)=unknown(i)", "impure or unsupported"),
+            ("forall(i=1:3) i=1", "requires one array-element"),
+            ("forall(r=1:3) a(1)=1", "scalar INTEGER"),
+        ] {
+            let source = format!("integer::i,n,a(5)\nreal::r\n{statement}\nend");
+            let error = format!("{:#}", lower(&source).unwrap_err());
+            assert!(error.contains(expected), "{source}: {error}");
+        }
+        let source="integer::i,a(3)\nforall(i=1:3) a(i)=abs(i)\ncontains\ninteger function abs(x)\ninteger::x\nabs=x\nend function abs\nend";
+        assert!(lower(source)
+            .unwrap_err()
+            .to_string()
+            .contains("impure or unsupported"));
+    }
+
+    #[test]
+    fn forall_preserves_definite_initialization() {
+        assert!(
+            lower("integer::i\nlogical::a(3)\nforall(i=1:3) a(i)=.true.\nend")
+                .unwrap_err()
+                .to_string()
+                .contains("numeric destination")
+        );
+        assert!(lower("integer::i,a(3)\nforall(i=1:1) a(:)=[1,2,3]\nend")
+            .unwrap_err()
+            .to_string()
+            .contains("array constructors"));
+        for (statement, output, valid) in [
+            ("forall(i=1:3) a(i)=i", "a(1:3)", true),
+            ("forall(i=1:3) a(i)=i", "a", false),
+            ("forall(i=1:3) a(i)=a(4)", "a(1)", false),
+            ("forall(i=2:1) a(i)=i", "a(1)", false),
+            ("forall(i=1:5) a(i)=i", "i", false),
+        ] {
+            let p = lower(&format!(
+                "integer::i,a(5)\n{statement}\nprint *,{output}\nend"
+            ))
+            .unwrap();
+            let p = crate::sections::resolve(crate::reductions::resolve(p).unwrap()).unwrap();
+            assert_eq!(
+                crate::initialized::instrument(p).is_ok(),
+                valid,
+                "{statement}; {output}"
+            );
+        }
+        let p = lower(include_str!("../tests/72_forall.f90")).unwrap();
+        crate::sections::resolve(crate::reductions::resolve(p).unwrap()).unwrap();
     }
 
     #[test]

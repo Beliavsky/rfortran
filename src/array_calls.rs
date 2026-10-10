@@ -117,6 +117,13 @@ fn specialize(
     constants: &mut HashMap<String, Expr>,
     stable: &HashSet<String>,
 ) -> Result<()> {
+    if let Some(Stmt::CallSub { name, args }) = body.first() {
+        if name == "@forall" {
+            if let Some(Expr::Ident(index)) = args.first() {
+                constants.remove(index);
+            }
+        }
+    }
     let allocatable: HashSet<_> = body
         .iter()
         .filter_map(|s| match s {
@@ -224,6 +231,11 @@ fn specialize(
                 rewrite_value(value, shapes, constants, absent)?;
                 for e in indices {
                     rewrite_value(e, shapes, constants, absent)?;
+                }
+            }
+            Stmt::CallSub { name, args } if name == "@forall" => {
+                for arg in args.iter_mut().skip(1) {
+                    rewrite(arg, shapes, constants, absent)?;
                 }
             }
             Stmt::CallSub { args, .. } | Stmt::Print { items: args } => {
@@ -433,6 +445,7 @@ fn stable(body: &[Stmt]) -> HashSet<String> {
                     }
                 }
                 Stmt::DoWhile { body, .. } | Stmt::Block { body } => scan(body, counts, true),
+                Stmt::CallSub { name, .. } if name == "@forall" => {}
                 Stmt::CallSub { args, .. } | Stmt::Read { args } => {
                     for a in args {
                         if let Expr::Ident(n) = a {

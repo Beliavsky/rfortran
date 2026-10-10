@@ -153,6 +153,17 @@ class BatchSources(unittest.TestCase):
         program.write_text(source, encoding="utf-8")
         self.check_build([program], "11 12 13 11 12 13 21 22 23\n 13 12 11 13 12 11 23 22 21\n -1 12 -1 13 12 11 -1 22 -1\n -2 34 -2\n 1 1 2 3 4\n 4 3 2 1 1\n 4 3 2 1 1\n 0 0 7 7 0 0 7 7\n 4.0 4.0 4.0 2.0 2.0 2.0\n 777\n 42 42 42 42 42")
 
+    def test_forall_module(self):
+        source = (ROOT / "tests" / "72_forall.f90").read_text(encoding="utf-8")
+        main, procedures = source.split("\ncontains\n", 1)
+        procedures = procedures.rsplit("end program forall_test", 1)[0]
+        library = self.directory / "forall library.f90"
+        program = self.directory / "forall main.f90"
+        library.write_text("module forall_helpers\nimplicit none\ncontains\n" + procedures + "end module forall_helpers\n", encoding="utf-8")
+        main = main.replace("program forall_test\n", "program forall_test\nuse forall_helpers, only: twice, checksum, scale_columns\n", 1)
+        program.write_text(main + "\nend program forall_test\n", encoding="utf-8")
+        self.check_build([library, program], "5 4 3 2 1 99\n 10 4 30 2 50\n 10 4 30 2 50\n 1 1 2 2 3 3\n 3 3 2 2 1 1\n 6.0 6.0 4.0 4.0 3.0 3.0\n 7\n 20 8 60 4 100\n 6")
+
     def test_missing_source_preserves_existing_outputs(self):
         sources = self.sources()
         exe = sources[-1].with_suffix(".exe")

@@ -116,6 +116,7 @@ pub enum TokenKind {
     KwResult,
     KwPure,
     KwElemental,
+    KwForall,
     #[token("public", ignore(ascii_case))]
     KwPublic,
     #[token("private", ignore(ascii_case))]
@@ -294,6 +295,12 @@ pub fn lex(input: &str) -> Vec<Token> {
                 Some(TokenKind::EndInterfaceName(n.clone()))
             } else { replacement };
             if let Some(kind)=replacement {tokens[start].kind=kind;}
+        }
+        if matches!(&tokens[start].kind,TokenKind::Ident(n) if n.eq_ignore_ascii_case("forall"))
+            && matches!(tokens.get(start+1).map(|t|&t.kind),Some(TokenKind::LParen))
+            && matches!(tokens.get(start+2).map(|t|&t.kind),Some(TokenKind::Ident(_)))
+            && matches!(tokens.get(start+3).map(|t|&t.kind),Some(TokenKind::Eq)) {
+            tokens[start].kind=TokenKind::KwForall;
         }
         if matches!(&tokens[start].kind, TokenKind::Ident(n) if n.eq_ignore_ascii_case("error")) && matches!(tokens.get(start+1).map(|t| &t.kind), Some(TokenKind::KwStop)) { tokens[start].kind = TokenKind::KwError; }
         if matches!(&tokens[start].kind, TokenKind::Ident(n) if n.eq_ignore_ascii_case("allocate")) && matches!(tokens.get(start+1).map(|t| &t.kind), Some(TokenKind::LParen)) { tokens[start].kind = TokenKind::KwAllocate; }

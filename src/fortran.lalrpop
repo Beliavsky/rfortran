@@ -28,6 +28,7 @@ extern {
         KW_RESULT => TokenKind::KwResult,
         KW_PURE => TokenKind::KwPure,
         KW_ELEMENTAL => TokenKind::KwElemental,
+        KW_FORALL => TokenKind::KwForall,
         KW_PUBLIC => TokenKind::KwPublic,
         KW_PRIVATE => TokenKind::KwPrivate,
         KW_RETURN => TokenKind::KwReturn,
@@ -294,6 +295,11 @@ Stmt: Stmt = {
     },
     KW_IF LPAREN <cnd: CondExpr> RPAREN KW_THEN <then_stmts: Stmts> KW_END KW_IF => Stmt::If { cond: cnd, then_body: then_stmts, else_body: None },
     KW_IF LPAREN <cnd: CondExpr> RPAREN KW_THEN <then_stmts: Stmts> KW_ELSE <else_stmts: Stmts> KW_END KW_IF => Stmt::If { cond: cnd, then_body: then_stmts, else_body: Some(else_stmts) },
+    KW_FORALL LPAREN <index:Ident> EQ <start:RhsExpr> COLON <end:RhsExpr> <step:ForallStride?> RPAREN <assignment:Stmt> => {
+        // A private marker keeps ordinary scope/expression passes traversing the
+        // assignment until static shapes are known and simultaneous writes lower.
+        Stmt::Block { body: vec![Stmt::CallSub {name:"@forall".into(),args:vec![Expr::Ident(index),start,end,step.unwrap_or(Expr::IntLit("1".into()))]},assignment] }
+    },
     KW_DO <var: Ident> EQ <s: RhsExpr> COMMA <e: RhsExpr> <body: Stmts> KW_END KW_DO => Stmt::Do { var, start: s, end: e, body },
     KW_DO KW_WHILE LPAREN <cond: CondExpr> RPAREN <body: Stmts> KW_END KW_DO => Stmt::DoWhile { cond, body },
     KW_RETURN => Stmt::Return(None),
@@ -453,6 +459,8 @@ Primary: Expr = {
     <id: Designator> => Expr::Ident(id),
     LPAREN <e: OrExpr> RPAREN => e,
 };
+
+ForallStride: Expr = { COLON <e:RhsExpr> => e };
 
 SubscriptList: Vec<Expr> = {
     => vec![],

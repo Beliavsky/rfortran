@@ -64,6 +64,9 @@ pub fn validate(program: &Program) -> Result<()> {
         for stmt in body {
             match stmt {
                 Stmt::Print { .. } | Stmt::Read { .. } => bail!("PURE procedure cannot perform external I/O"),
+                Stmt::CallSub {name,args} if name == "@forall" => {
+                    for e in args.iter().skip(1) {expression(e,&locals,known)?;}
+                }
                 Stmt::CallSub { name, args } => {
                     let Some(Procedure { pure: true, intents: Some(intents) }) = known.get(name) else {
                         bail!("PURE procedure cannot call impure or unknown subroutine `{name}`");

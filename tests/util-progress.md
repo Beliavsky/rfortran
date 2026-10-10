@@ -161,9 +161,30 @@ column-scaling calculation against gfortran, native O0/O2, and the interpreter.
 The lowering currently expands the destination elements at compile time; runtime
 bounds/subscripts and general array-valued constructor elements remain unsupported.
 
-The full utility program still does not compile. FORALL parsing and simultaneous
-iteration semantics are still the next step; its parser error remains
-`forall (i=1:n2) ...`. Its character array parameters also remain unsupported.
+The eleventh checkpoint implements single-statement FORALL with one explicitly
+declared integer index (kind 4 or 8), constant bounds/stride, and numeric array
+element or section destinations. Bounds can use PARAMETERs, SIZE, or constants
+proven during assumed-shape subroutine specialization. Each iteration's result
+is captured before any destination writes; duplicate destination elements are
+rejected. The outer index variable is left unchanged, and its prior initialization
+state is preserved. Calls in the assignment must be pure supported procedures.
+
+Test 72 covers overlapping reversals, negative strides, empty iteration ranges,
+section destinations, pure function calls, local arrays inside functions, and
+the utility's column-scaling FORALL body in a specialized subroutine. Native
+O0/O2 and interpreter output agree with gfortran. The batch suite also exercises
+these procedures through a separate module file. Local arrays are now registered
+in the undefined-name analysis, and FORALL indices are counted as used without
+introducing runtime reads or writes of the enclosing variable.
+
+FORALL constructs, multiple indices, masks, nested FORALL, runtime bounds,
+data-dependent destination subscripts, nonnumeric destinations, and array
+constructors in FORALL assignments remain unsupported. This implementation
+expands iterations at compile time and is intended for statically sized cases.
+
+The full utility program still does not compile. Its next parser error is
+`read (iu,"(a)") text`, which needs file-unit/formatted READ support. Its character
+array parameters also remain unsupported.
 Further blockers include user-defined dotted
 operators such as `.in.` and `.exclude.`. The utility library also exercises
 features beyond the currently implemented array, character, and I/O subsets.
