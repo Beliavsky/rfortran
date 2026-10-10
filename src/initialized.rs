@@ -144,7 +144,7 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
             Stmt::Read { args } => for arg in args {
                 if let Some((name, index)) = key(arg) { if let Some(i) = index { read(i, env, &mut before, serial)?; } write(name, index, env, &mut after, serial); }
             },
-            Stmt::CallSub { name, args } if name.eq_ignore_ascii_case("random_number") => {
+            Stmt::CallSub { name, args } if name.eq_ignore_ascii_case("random_number") || name == "@read_record" => {
                 if let Some((name, index)) = args.first().and_then(key) { if let Some(i) = index { read(i, env, &mut before, serial)?; } write(name, index, env, &mut after, serial); }
             }
             Stmt::CallSub { name, args } if name == "@undefine" => {

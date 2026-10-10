@@ -748,6 +748,11 @@ pub fn interpret(program: &Program) {
                         io::stdin().read_line(&mut input).ok();
                         let tok = input.trim_end();
                         if let Expr::Ident(id) = arg {
+                            // Numeric input consumes a token, not the unused rest of the record.
+                            let tok = if fr.env_str.contains_key(id) { tok } else {
+                                tok.split(|c: char| c.is_whitespace() || c == ',')
+                                    .find(|s| !s.is_empty()).unwrap_or("")
+                            };
                             if fr.env_int.contains_key(id) {
                                 let v = parse_i64_lossy(tok);
                                 fr.env_int.insert(id.clone(), v);
@@ -994,6 +999,24 @@ pub fn interpret(program: &Program) {
                 }
                 Stmt::CallSub { name, args } => {
                     if name == "@error_stop" { let Expr::Str(message)=&args[0] else {unreachable!()}; eprintln!("ERROR STOP {message}");std::process::exit(1); }
+                    if name == "@read_record" {
+                        let Expr::Ident(dest)=&args[0] else {unreachable!()};
+                        let Expr::IntLit(length)=&args[1] else {unreachable!()};
+                        let length:usize=length.parse().unwrap();
+                        let mut input=String::new();
+                        match std::io::stdin().read_line(&mut input) {
+                            Ok(0) | Err(_) => {eprintln!("Runtime error: end of file or input error in formatted READ");std::process::exit(1);}
+                            _ => {}
+                        }
+                        if input.ends_with('\n') {input.pop();if input.ends_with('\r') {input.pop();}}
+                        if input.bytes().any(|c| c==0 || c>127) {
+                            eprintln!("Runtime error: formatted READ currently requires non-NUL ASCII input");std::process::exit(1);
+                        }
+                        input.truncate(length);
+                        input.push_str(&" ".repeat(length-input.len()));
+                        call_stack.last_mut().unwrap().env_str.insert(dest.clone(),input);
+                        idx+=1;continue;
+                    }
                     if name == "@formatted_print" {
                         let Expr::Str(format)=&args[0] else {unreachable!()};let fields=crate::formatting::parse(format,args.len()-1).expect("validated output format");
                         let mut items=args[1..].iter();

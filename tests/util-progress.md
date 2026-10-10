@@ -182,9 +182,33 @@ data-dependent destination subscripts, nonnumeric destinations, and array
 constructors in FORALL assignments remain unsupported. This implementation
 expands iterations at compile time and is intended for statically sized cases.
 
-The full utility program still does not compile. Its next parser error is
-`read (iu,"(a)") text`, which needs file-unit/formatted READ support. Its character
-array parameters also remain unsupported.
+The twelfth checkpoint adds a prerequisite for file input: advancing formatted
+character-record READ from standard input, using `read(*,"(a)") text` or constant
+unit 5. One explicitly declared scalar CHARACTER destination is supported.
+Leading/trailing spaces and blank records are retained, short records are padded,
+and long records are truncated while consuming the entire record. A final record
+without a newline is accepted; EOF before any record is an error. Zero-length and
+bare CHARACTER destinations are covered. The current string representation limits
+input to non-NUL ASCII text; unsupported formats, destinations, and file units
+are rejected explicitly. PURE procedures cannot use this external I/O.
+
+The native list-directed reader now consumes the remainder of its last record,
+so a subsequent formatted READ does not see a leftover newline. The interpreter
+also ignores unused record text after a numeric input token. General list-directed
+input (including multiple items in the interpreter) still needs further work.
+
+`tests/io/record_read.f90` and `python tests/test_record_read.py` exercise native
+O0/O2 and interpreter input, exact padding/truncation, CRLF, 12,000-character
+records, mixed list-directed/formatted input, EOF, and invalid bytes. Successful
+output is also compared with gfortran when installed. Build the debug compiler
+first; set `F90C_TEST_COMPILER=target/release/f90c.exe` to test the release build.
+The batch suite includes a silent compilation and input/output check.
+
+The full utility program still does not compile. The parser now accepts
+`read (iu,"(a)") text`, but executing that statement still requires file-unit
+support (OPEN/CLOSE and unit-to-stream mapping). Its next parser error is
+`read (text,*,iostat=ierr) nw`, requiring internal-file list-directed input and
+IOSTAT. Its character array parameters also remain unsupported.
 Further blockers include user-defined dotted
 operators such as `.in.` and `.exclude.`. The utility library also exercises
 features beyond the currently implemented array, character, and I/O subsets.

@@ -72,6 +72,18 @@ class BatchSources(unittest.TestCase):
             extra.append(path)
         self.check_build([*extra, *sources])
 
+    def test_formatted_record_input(self):
+        source = self.directory / "record input.f90"
+        source.write_text("character(len=8) :: text\nread(*,'(a)') text\nprint '(a)', text\nend\n", encoding="utf-8")
+        result = self.batch(source)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout + result.stderr, "")
+        result = subprocess.run([str(source.with_suffix(".exe"))], input="  abc\n",
+                                capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "  abc   \n")
+        self.assertEqual(result.stderr, "")
+
     def test_single_source(self):
         source = self.directory / "single source.f90"
         source.write_text("print *, 42\nend\n", encoding="utf-8")

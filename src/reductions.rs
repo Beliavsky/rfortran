@@ -204,6 +204,27 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
             if name=="@formatted_print" { let Some(Expr::Str(fmt))=args.first() else {bail!("PRINT format must be constant");};crate::formatting::parse(fmt,args.len()-1)?; }
             if name=="@error_stop" && !matches!(args.as_slice(),[Expr::Str(_)]) {bail!("ERROR STOP currently requires a character constant");}
         }
+        if let Stmt::CallSub {name,args} = &mut stmt {
+            if name == "@formatted_read" {
+                if crate::parameters::integer_constant(&args[0]).ok() != Some(5) {
+                    bail!("formatted READ currently supports only standard input (* or unit 5)");
+                }
+                let Expr::Str(format)=&args[1] else {unreachable!()};
+                if format.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_ascii_lowercase() != "(a)" {
+                    bail!("formatted READ currently supports only the (A) format");
+                }
+                let [_,_,Expr::Ident(dest)] = args.as_slice() else {
+                    bail!("formatted READ requires one writable scalar CHARACTER variable");
+                };
+                let Some((TypeSpec::Character(length),dims))=symbols.get(dest) else {
+                    bail!("formatted READ requires one writable scalar CHARACTER variable");
+                };
+                if !dims.is_empty() {bail!("formatted READ requires a scalar CHARACTER variable");}
+                let length=length.unwrap_or(1);
+                *args=vec![Expr::Ident(dest.clone()),int(length as i64)];
+                *name="@read_record".into();
+            }
+        }
         if let Stmt::Read {args} = &stmt {
             fn has_elemental(e: &Expr, symbols: &Symbols) -> bool {
                 match e {
@@ -354,6 +375,31 @@ pub fn resolve(mut program: Program) -> Result<Program> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn validates_record_read_destinations_and_formats() {
+        for (declaration, statement, valid) in [
+            ("character(len=8) :: text", "read(*,'(a)') text", true),
+            ("character :: text", "read(5,'( A )') text", true),
+            ("character(len=0) :: text", "read(*,'(a)') text", true),
+            ("integer :: text", "read(*,'(a)') text", false),
+            ("character(len=8) :: text(2)", "read(*,'(a)') text", false),
+            ("character(len=8) :: text", "read(*,'(a)') trim(text)", false),
+            ("character(len=8) :: text", "read(*,'(a)') 'literal'", false),
+            ("character(len=8) :: text", "read(*,'(a)') text,text", false),
+            ("character(len=8) :: text", "read(*,'(a4)') text", false),
+            ("character(len=8) :: text", "read(10,'(a)') text", false),
+            ("character(len=8) :: text\ninteger :: iu", "read(iu,'(a)') text", false),
+            ("character(len=*),parameter :: text='constant'", "read(*,'(a)') text", false),
+        ] {
+            let source=format!("implicit none\n{declaration}\n{statement}\nprint *, text\nend");
+            let tokens=crate::lexer::lex(&source);
+            let p=crate::parser::parse_with_src(&source,&tokens,"read.f90").unwrap();
+            let result=crate::parameters::resolve(p).and_then(super::resolve)
+                .and_then(crate::initialized::instrument);
+            assert_eq!(result.is_ok(),valid,"{source}: {result:?}");
+        }
+    }
+
     #[test]
     fn section_assignment_tracks_initialized_elements() {
         for (assignment, output, valid) in [

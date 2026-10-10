@@ -1,19 +1,19 @@
-// RANDOM_NUMBER defines its argument; constant propagation must preserve that storage.
-fn random_destinations(stmts: &[IStmt]) -> std::collections::HashSet<String> {
+// Input operations define their first argument; preserve that storage during optimization.
+fn input_destinations(stmts: &[IStmt]) -> std::collections::HashSet<String> {
     let mut names = std::collections::HashSet::new();
     for stmt in stmts {
         match stmt {
-            IStmt::Call(name, args) if name.eq_ignore_ascii_case("random_number") => {
+            IStmt::Call(name, args) if name.eq_ignore_ascii_case("random_number") || name == "@read_record" => {
                 if let Some(IExpr::Ident(id) | IExpr::Index(id, _)) = args.first() { names.insert(id.clone()); }
             }
-            IStmt::Do { body, .. } | IStmt::DoWhile { body, .. } | IStmt::Block { body } => names.extend(random_destinations(body)),
+            IStmt::Do { body, .. } | IStmt::DoWhile { body, .. } | IStmt::Block { body } => names.extend(input_destinations(body)),
             IStmt::If { then_body, else_body, .. } => {
-                names.extend(random_destinations(then_body));
-                if let Some(body) = else_body { names.extend(random_destinations(body)); }
+                names.extend(input_destinations(then_body));
+                if let Some(body) = else_body { names.extend(input_destinations(body)); }
             }
             IStmt::SelectCase { cases, default, .. } => {
-                for case in cases { names.extend(random_destinations(&case.body)); }
-                if let Some(body) = default { names.extend(random_destinations(body)); }
+                for case in cases { names.extend(input_destinations(&case.body)); }
+                if let Some(body) = default { names.extend(input_destinations(body)); }
             }
             _ => {}
         }
@@ -666,7 +666,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
             }
         }
 
-        let mut multiply_assigned_vars = random_destinations(&stmts);
+        let mut multiply_assigned_vars = input_destinations(&stmts);
         for stmt in &stmts {
             if matches!(stmt, IStmt::Do { .. } | IStmt::DoWhile { .. } | IStmt::If { .. } | IStmt::Block { .. } | IStmt::SelectCase { .. }) {
                 collect_assigned_vars_in_stmt(stmt, &mut multiply_assigned_vars);
@@ -1293,7 +1293,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
         stmt: &IStmt,
         assigned: &mut std::collections::HashSet<String>,
     ) {
-        assigned.extend(random_destinations(std::slice::from_ref(stmt)));
+        assigned.extend(input_destinations(std::slice::from_ref(stmt)));
         match stmt {
             IStmt::AssignStr(var, _) => {
                 assigned.insert(var.clone());
@@ -1565,7 +1565,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                 vec![IStmt::Read(optimized_vars)]
             }
             IStmt::Call(name, args) => {
-                if name.eq_ignore_ascii_case("random_number") {
+                if name.eq_ignore_ascii_case("random_number") || name == "@read_record" {
                     return vec![IStmt::Call(name, args)];
                 }
                 let optimized_args = args
@@ -2445,14 +2445,14 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
         }
 
         let mut replacements: Vec<(String, IExpr)> = Vec::new();
-        let mut random_outputs = random_destinations(&func.body);
+        let mut input_outputs = input_destinations(&func.body);
         for stmt in &func.body {
             if matches!(stmt, IStmt::Do { .. } | IStmt::DoWhile { .. } | IStmt::If { .. } | IStmt::Block { .. } | IStmt::SelectCase { .. }) {
-                collect_assigned_vars_in_stmt(stmt, &mut random_outputs);
+                collect_assigned_vars_in_stmt(stmt, &mut input_outputs);
             }
         }
         for (name, expr) in single_literal_map.into_iter() {
-            if assign_counts.get(&name).cloned().unwrap_or(0) == 1 && !random_outputs.contains(&name) {
+            if assign_counts.get(&name).cloned().unwrap_or(0) == 1 && !input_outputs.contains(&name) {
                 replacements.push((name, expr));
             }
         }

@@ -145,6 +145,89 @@ fn random_value(b: &mut FunctionBuilder, state: ir::Value, double: bool) -> ir::
     b.ins().fmul(value, scale)
 }
 
+// Emit a bounded character record reader. Always consume the entire input record,
+// even when the destination is shorter; a following READ starts on the next one.
+fn read_record(
+    module: &mut ObjectModule, b: &mut FunctionBuilder, ptr_ty: ir::Type,
+    dc: &mut u32, destination: ir::Value, length: usize,
+) -> Result<()> {
+    use ir::{types, AbiParam, MemFlags, condcodes::IntCC};
+    let mut sig=module.make_signature();
+    sig.returns.push(AbiParam::new(types::I32));
+    let id=module.declare_function("getchar",Linkage::Import,&sig)?;
+    let getchar=module.declare_func_in_func(id,b.func);
+    let mut sig=module.make_signature();
+    sig.params.extend([AbiParam::new(ptr_ty),AbiParam::new(types::I32),AbiParam::new(ptr_ty)]);
+    sig.returns.push(AbiParam::new(ptr_ty));
+    let id=module.declare_function("memset",Linkage::Import,&sig)?;
+    let memset=module.declare_func_in_func(id,b.func);
+    let space=b.ins().iconst(types::I32,32);
+    let size=b.ins().iconst(ptr_ty,length as i64);
+    b.ins().call(memset,&[destination,space,size]);
+    let terminator=b.ins().iadd_imm(destination,length as i64);
+    let zero_byte=b.ins().iconst(types::I8,0);
+    b.ins().store(MemFlags::new(),zero_byte,terminator,0);
+    let read=b.create_block();let eof=b.create_block();let check=b.create_block();
+    let store=b.create_block();let advance=b.create_block();let done=b.create_block();
+    let invalid=b.create_block();let failure=b.create_block();
+    b.append_block_param(read,ptr_ty);
+    let zero=b.ins().iconst(ptr_ty,0);
+    b.ins().jump(read,&[zero.into()]);
+    b.switch_to_block(read);
+    let count=b.block_params(read)[0];
+    let call=b.ins().call(getchar,&[]);let ch=b.inst_results(call)[0];
+    let is_eof=b.ins().icmp_imm(IntCC::SignedLessThan,ch,0);
+    b.ins().brif(is_eof,eof,&[],check,&[]);
+    b.switch_to_block(eof);b.seal_block(eof);
+    let empty=b.ins().icmp_imm(IntCC::Equal,count,0);
+    b.ins().brif(empty,failure,&[],done,&[]);
+    b.switch_to_block(check);b.seal_block(check);
+    let newline=b.ins().icmp_imm(IntCC::Equal,ch,10);
+    let validate=b.create_block();
+    b.ins().brif(newline,done,&[],validate,&[]);
+    b.switch_to_block(validate);b.seal_block(validate);
+    let nul=b.ins().icmp_imm(IntCC::Equal,ch,0);
+    let non_ascii=b.ins().icmp_imm(IntCC::UnsignedGreaterThan,ch,127);
+    let bad=b.ins().bor(nul,non_ascii);
+    let capacity=b.create_block();b.ins().brif(bad,invalid,&[],capacity,&[]);
+    b.switch_to_block(capacity);b.seal_block(capacity);
+    let fits=b.ins().icmp_imm(IntCC::UnsignedLessThan,count,length as i64);
+    b.ins().brif(fits,store,&[],advance,&[]);
+    b.switch_to_block(store);b.seal_block(store);
+    let address=b.ins().iadd(destination,count);
+    let byte=b.ins().ireduce(types::I8,ch);
+    b.ins().store(MemFlags::new(),byte,address,0);
+    b.ins().jump(advance,&[]);
+    b.switch_to_block(advance);b.seal_block(advance);
+    // Saturate beyond capacity: still distinguishes an empty file for LEN=0.
+    let next=b.ins().iadd_imm(count,1);
+    let limit=b.ins().iconst(ptr_ty,length as i64+1);
+    let next=b.ins().umin(next,limit);
+    b.ins().jump(read,&[next.into()]);b.seal_block(read);
+    for (block,message) in [
+        (failure,"Runtime error: end of file or input error in formatted READ\n"),
+        (invalid,"Runtime error: formatted READ currently requires non-NUL ASCII input\n"),
+    ] {
+        b.switch_to_block(block);b.seal_block(block);
+        let pointer=make_data(module,b,ptr_ty,dc,message.as_bytes())?;
+        let mut sig=module.make_signature();
+        sig.params.extend([AbiParam::new(types::I32),AbiParam::new(ptr_ty),AbiParam::new(types::I32)]);
+        sig.returns.push(AbiParam::new(types::I32));
+        let id=module.declare_function("_write",Linkage::Import,&sig)?;
+        let write=module.declare_func_in_func(id,b.func);
+        let stderr=b.ins().iconst(types::I32,2);
+        let size=b.ins().iconst(types::I32,message.len() as i64);
+        b.ins().call(write,&[stderr,pointer,size]);
+        let mut sig=module.make_signature();sig.params.push(AbiParam::new(types::I32));
+        let id=module.declare_function("exit",Linkage::Import,&sig)?;
+        let exit=module.declare_func_in_func(id,b.func);
+        let code=b.ins().iconst(types::I32,1);b.ins().call(exit,&[code]);
+        b.ins().trap(ir::TrapCode::unwrap_user(1));
+    }
+    b.switch_to_block(done);b.seal_block(done);
+    Ok(())
+}
+
 struct Externs {
     printf: ir::FuncRef,
     sprintf: ir::FuncRef,
@@ -2118,6 +2201,15 @@ fn gen_stmts(
                     b.switch_to_block(after_blk);
             }
             IStmt::Call(name, args) => {
+                if name == "@read_record" {
+                    let [IExpr::Ident(dest),IExpr::IntLit(length)]=args.as_slice() else {anyhow::bail!("invalid record READ");};
+                    let (slot,capacity)=chars.get(dest).ok_or_else(|| anyhow::anyhow!("record READ requires CHARACTER storage"))?;
+                    let length:usize=length.parse()?;
+                    anyhow::ensure!(length<=*capacity,"record READ exceeds CHARACTER storage");
+                    let pointer=b.ins().stack_addr(ptr_ty,*slot,0);
+                    read_record(module,b,ptr_ty,dc,pointer,length)?;
+                    continue;
+                }
                 if name == "@formatted_print" {
                     let Some(IExpr::Str(format))=args.first() else {anyhow::bail!("PRINT requires a constant format");};
                     let fields=crate::formatting::parse(format,args.len()-1)?;
@@ -2295,6 +2387,20 @@ fn gen_stmts(
                         }
                     }
                 }
+                // Advancing input consumes the remainder of its final record.
+                // Otherwise a following (A) READ would see scanf's leftover newline.
+                let mut sig=module.make_signature();
+                sig.returns.push(ir::AbiParam::new(types::I32));
+                let id=module.declare_function("getchar",Linkage::Import,&sig)?;
+                let getchar=module.declare_func_in_func(id,b.func);
+                let discard=b.create_block();let done=b.create_block();
+                b.ins().jump(discard,&[]);b.switch_to_block(discard);
+                let call=b.ins().call(getchar,&[]);let ch=b.inst_results(call)[0];
+                let eof=b.ins().icmp_imm(ir::condcodes::IntCC::SignedLessThan,ch,0);
+                let newline=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,ch,10);
+                let end=b.ins().bor(eof,newline);
+                b.ins().brif(end,done,&[],discard,&[]);
+                b.seal_block(discard);b.switch_to_block(done);b.seal_block(done);
             }
             IStmt::SelectCase {
                 selector,
