@@ -89,7 +89,7 @@ bounds failure that would otherwise alias another column. Native O0/O2 and
 interpreter checks cover out-of-range indices in both dimensions.
 
 This uses static storage specialization, not a runtime array descriptor ABI.
-Dynamic/zero extents, DEALLOCATE/reallocation, multidimensional section destinations,
+Dynamic/zero extents, DEALLOCATE/reallocation,
 array lower bounds other than one, USE-associated multidimensional arrays,
 and procedure calls in multidimensional
 subscripts remain unsupported. Subscripts must have explicitly declared
@@ -123,7 +123,7 @@ from SIZE). Test 69 covers the consecutive-row difference from diff_matrix_real,
 strides, mixed subscripts, rank-three arrays, empty reductions, and overlap,
 with matching native O0/O2, interpreter, and gfortran results.
 
-Dynamic section bounds/scalar subscripts, vector subscripts, section destinations,
+Dynamic section bounds/scalar subscripts, vector subscripts,
 SIZE of sections, and section procedure arguments remain unsupported. Unsupported
 section contexts are diagnosed rather than passed to the backend.
 
@@ -146,7 +146,23 @@ Array expressions retain the existing static-shape and numeric-expression limits
 Procedure prefixes before the return type are supported; reordered type/prefix
 forms such as `real elemental function` are not yet supported.
 
-The full utility program still does not compile. Its next parser error is
+The tenth checkpoint implements a prerequisite for that FORALL statement:
+assignment to constant array sections, including mixed scalar/range subscripts,
+strided and reversed destinations, and conforming array expressions on the RHS.
+Rank-one section assignment also now accepts array RHS values and constructors
+of scalar elements. Original ranks/extents are checked before flattening, so
+arrays with equal element counts but different shapes are rejected.
+All RHS values are captured before any destination writes, preserving overlapping
+assignments; scalar RHS expressions are evaluated once. Constant destination
+indices preserve element-level definite-initialization checks.
+Test 71 compares overlapping shifts/reversals, matrix and tensor destinations,
+empty sections, scalar evaluation count, and a two-column version of the utility
+column-scaling calculation against gfortran, native O0/O2, and the interpreter.
+The lowering currently expands the destination elements at compile time; runtime
+bounds/subscripts and general array-valued constructor elements remain unsupported.
+
+The full utility program still does not compile. FORALL parsing and simultaneous
+iteration semantics are still the next step; its parser error remains
 `forall (i=1:n2) ...`. Its character array parameters also remain unsupported.
 Further blockers include user-defined dotted
 operators such as `.in.` and `.exclude.`. The utility library also exercises

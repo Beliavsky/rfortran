@@ -34,6 +34,7 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
     if let Some((value,count)) = crate::multidim::view_element(e,index) {
         let Expr::Index(name,_) = &value else {unreachable!()};
         let kind=symbols.get(name).context("undefined section source")?.0.clone();
+        if !numeric(&kind) { bail!("array sections currently require numeric arrays"); }
         return Ok((value,Some(count),kind));
     }
     match e {
@@ -250,22 +251,46 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
             _ => {}
         }
         if let Stmt::AssignIndex { name, indices, value } = &stmt {
-            if let [section @ Expr::Section { .. }] = indices.as_slice() {
-                let (_, count, kind) = element(section, &int(1), &symbols)?;
-                if array_valued(value, &symbols) {
-                    bail!("array section assignment currently requires a scalar right-hand side");
+            if let [section] = indices.as_slice() {
+                if matches!(section,Expr::Section{..}) || crate::multidim::view_element(section,&int(1)).is_some() {
+                    let (_, count, kind) = element(section, &int(1), &symbols)?;
+                    let count=count.unwrap();
+                    let constructor=match value {Expr::Call(tag,items) if tag == "@array_constructor" => Some(items),_ => None};
+                    if constructor.is_some_and(|items|items.iter().any(|e|array_valued(e,&symbols) || matches!(e,Expr::Call(tag,_) if tag == "@array_constructor"))) {
+                        bail!("section assignment constructor items must currently be scalar");
+                    }
+                    let array_rhs=constructor.is_some() || array_valued(value,&symbols);
+                    if array_rhs {
+                        let rhs_count=if let Some(items)=constructor {Some(items.len() as i64)} else {element(value,&int(1),&symbols)?.1};
+                        if rhs_count!=Some(count) {bail!("array section assignment shapes do not conform");}
+                    }
+                    let mut writes=Vec::new();
+                    let scalar = if !array_rhs {
+                        *serial+=1;
+                        let scalar=format!("@section_assign_value_{serial}");
+                        prefix.push(Stmt::VarDecl{kind:kind.clone(),names:vec![scalar.clone()]});
+                        prefix.push(Stmt::Assign{name:scalar.clone(),value:value.clone()});
+                        Some(scalar)
+                    } else {None};
+                    // Capture all RHS elements before any destination write, including
+                    // overlapping/reversed sections. Constant destinations retain exact
+                    // definite-initialization information.
+                    for i in 1..=count {
+                        let temp=if let Some(scalar)=&scalar {scalar.clone()} else {
+                            *serial+=1;
+                            let temp=format!("@section_assign_value_{serial}");
+                            let item=if let Some(items)=constructor {items[(i-1) as usize].clone()} else {element(value,&int(i),&symbols)?.0};
+                            prefix.push(Stmt::VarDecl{kind:kind.clone(),names:vec![temp.clone()]});
+                            prefix.push(Stmt::Assign{name:temp.clone(),value:item});
+                            temp
+                        };
+                        let (target,_,_)=element(section,&int(i),&symbols)?;
+                        let Expr::Index(_,indices)=target else {unreachable!()};
+                        writes.push(Stmt::AssignIndex{name:name.clone(),indices,value:Expr::Ident(temp)});
+                    }
+                    prefix.extend(writes);
+                    stmt=Stmt::Block{body:std::mem::take(&mut prefix)};
                 }
-                *serial += 1;
-                let scalar = format!("@section_assign_value_{serial}");
-                prefix.push(Stmt::VarDecl { kind, names: vec![scalar.clone()] });
-                prefix.push(Stmt::Assign { name: scalar.clone(), value: value.clone() });
-                // Constant indices preserve definite initialization information for each element.
-                for i in 1..=count.unwrap() {
-                    let (target, _, _) = element(section, &int(i), &symbols)?;
-                    let Expr::Index(_, indices) = target else { unreachable!() };
-                    prefix.push(Stmt::AssignIndex { name: name.clone(), indices, value: Expr::Ident(scalar.clone()) });
-                }
-                stmt = Stmt::Block { body: std::mem::take(&mut prefix) };
             }
         }
         if let Stmt::Assign { name, value } = &stmt {
@@ -346,7 +371,7 @@ mod tests {
             let p = crate::sections::resolve(super::resolve(crate::parameters::resolve(p).unwrap()).unwrap()).unwrap();
             assert_eq!(crate::initialized::instrument(p).is_ok(), valid, "{source}");
         }
-        for assignment in ["v(::0)=10", "v(0:2)=10", "v(2:4)=10", "v(:)=v"] {
+        for assignment in ["v(::0)=10", "v(0:2)=10", "v(2:4)=10", "v(:)=v(1:2)", "v(1:1)=[v]"] {
             let source = format!("integer :: v(3)\n{assignment}\nend");
             let tokens = crate::lexer::lex(&source);
             let p = crate::parser::parse_with_src(&source, &tokens, "assignment.f90").unwrap();

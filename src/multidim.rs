@@ -30,7 +30,7 @@ pub(crate) fn view_element(e: &Expr, index: &Expr) -> Option<(Expr, i64)> {
         unreachable!()
     };
     fn substitute(e: &Expr, index: &Expr) -> Expr {
-        match e {
+        let value = match e {
             Expr::Ident(n) if n == "@view_index" => index.clone(),
             Expr::Bin(op, a, b) => bin(op.clone(), substitute(a, index), substitute(b, index)),
             Expr::Call(n, args) => Expr::Call(
@@ -38,7 +38,22 @@ pub(crate) fn view_element(e: &Expr, index: &Expr) -> Option<(Expr, i64)> {
                 args.iter().map(|e| substitute(e, index)).collect(),
             ),
             _ => e.clone(),
+        };
+        if let Expr::Call(n, args) = &value {
+            if n == "mod" && args.len() == 2 {
+                if let (Ok(a), Ok(b)) = (
+                    crate::parameters::integer_constant(&args[0]),
+                    crate::parameters::integer_constant(&args[1]),
+                ) {
+                    if let Some(v) = a.checked_rem(b) {
+                        return int(v);
+                    }
+                }
+            }
         }
+        crate::parameters::integer_constant(&value)
+            .map(int)
+            .unwrap_or(value)
     }
     Some((
         Expr::Index(name.clone(), vec![substitute(offset, index)]),
@@ -390,6 +405,7 @@ impl Lowerer {
     fn shape(&self, e: &Expr, shapes: &Shapes) -> Result<Option<Vec<i64>>> {
         match e {
             Expr::Ident(n) => Ok(shapes.get(n).cloned()),
+
             Expr::Section { name, .. } if shapes.get(name).is_some_and(|d| d.len() == 1) => {
                 Ok(Some(
                     section_view(
@@ -508,8 +524,36 @@ impl Lowerer {
                     value,
                 } => {
                     self.check_association(name)?;
-                    if indices.len() > 1 && indices.iter().any(|e| triplet(e).is_some()) {
-                        bail!("assignment to multidimensional sections is not yet supported");
+                    let section_indices = match indices.as_slice() {
+                        [section @ Expr::Section { .. }] => Some(vec![Expr::Call(
+                            "@section_subscript".into(),
+                            vec![section.clone()],
+                        )]),
+                        _ if indices.iter().any(|e| triplet(e).is_some()) => Some(indices.clone()),
+                        _ => None,
+                    };
+                    if let Some(section_indices) = section_indices {
+                        let dims = shapes.get(name).with_context(|| {
+                            format!("section `{name}` requires a declared array")
+                        })?;
+                        let (target_shape, view) = section_view(name, &section_indices, dims)?;
+                        let rhs_shape = if let Expr::Call(tag, items) = value {
+                            if tag == "@array_constructor" {
+                                Some(vec![items.len() as i64])
+                            } else {
+                                self.shape(value, &shapes)?
+                            }
+                        } else {
+                            self.shape(value, &shapes)?
+                        };
+                        if let Some(rhs_shape) = rhs_shape {
+                            if target_shape != rhs_shape {
+                                bail!("nonconforming section assignment to `{name}`: {target_shape:?} and {rhs_shape:?}");
+                            }
+                        }
+                        *indices = vec![view];
+                        self.expression(value, &shapes)?;
+                        continue;
                     }
                     if shapes.get(name).is_some_and(|d| d.len() > 1) {
                         self.check_index_types(name, indices, &shapes)?;
@@ -712,7 +756,7 @@ mod tests {
             ("print *,a(:,:,1)", "requires 2 subscripts"),
             ("b=a(:,1:2)", "nonconforming array assignment"),
             ("b=a(1:1,:)+a(:,1:1)", "nonconforming array shapes"),
-            ("a(:,1)=0", "assignment to multidimensional sections"),
+            ("a(:,1)=b", "nonconforming section assignment"),
         ] {
             let source = format!("integer::a(2,3),b(1,3),i\ni=1\na=0\n{statement}\nend");
             let error = format!("{:#}", lower(&source).unwrap_err());
@@ -728,6 +772,35 @@ mod tests {
         let source = "integer::a(2,3)\na=1\ncall random_number(a(:,1:2))\nend";
         let p = lower(source).unwrap();
         assert!(crate::sections::resolve(crate::reductions::resolve(p).unwrap()).is_err());
+    }
+
+    #[test]
+    fn section_destinations_preserve_initialization_and_shape_checks() {
+        for (assignments, output, valid) in [
+            ("a(:,1)=1", "a(:,1)", true),
+            ("a(:,1)=1", "a(:,2)", false),
+            ("a(:,1)=1\na(:,2)=a(:,1)", "a", true),
+            ("a(:,1)=a(:,2)", "a(:,1)", false),
+            ("a(2:1,:)=1", "a", false),
+        ] {
+            let source = format!("integer::a(2,2)\n{assignments}\nprint *,{output}\nend");
+            let p = lower(&source).unwrap();
+            let p = crate::sections::resolve(crate::reductions::resolve(p).unwrap()).unwrap();
+            assert_eq!(crate::initialized::instrument(p).is_ok(), valid, "{source}");
+        }
+        let p=lower("logical::a(2)\na(:)=.true.\nend").unwrap();
+        assert!(crate::reductions::resolve(p).unwrap_err().to_string().contains("numeric arrays"));
+        for (statement, expected) in [
+            ("a(:,1:2)=b", "nonconforming section assignment"),
+            ("v(:)=b", "nonconforming section assignment"),
+            ("a(0:2,:)=1", "dimension 1"),
+            ("a(:,::0)=1", "stride must not be zero"),
+            ("a(:,i)=1", "constant integers"),
+        ] {
+            let source = format!("integer::a(2,3),b(1,4),v(4),i\n{statement}\nend");
+            let error = format!("{:#}", lower(&source).unwrap_err());
+            assert!(error.contains(expected), "{error}");
+        }
     }
 
     #[test]

@@ -489,6 +489,13 @@
       "program_exit_code": 0,
       "program_stdout": " 2 4 6 7\n 12\n 4 12 24\n 3 6 9\n 24\n 0\n 8 8 8 8\n 24 24\n 1.0 0.648054 0.648054 1.0\n",
       "program_stderr": ""
+    },
+    "71_section_assignment": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stdout": " 11 12 13 11 12 13 21 22 23\n 13 12 11 13 12 11 23 22 21\n -1 12 -1 13 12 11 -1 22 -1\n -2 34 -2\n 1 1 2 3 4\n 4 3 2 1 1\n 4 3 2 1 1\n 0 0 7 7 0 0 7 7\n 4.0 4.0 4.0 2.0 2.0 2.0\n 777\n 42 42 42 42 42\n",
+      "program_stderr": ""
     }
   }
 }

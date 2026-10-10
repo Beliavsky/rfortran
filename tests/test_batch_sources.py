@@ -147,6 +147,12 @@ class BatchSources(unittest.TestCase):
         program.write_text(main, encoding="utf-8")
         self.check_build([library, program], "2 4 6 7\n 12\n 4 12 24\n 3 6 9\n 24\n 0\n 8 8 8 8\n 24 24\n 1.0 0.648054 0.648054 1.0")
 
+    def test_section_assignment(self):
+        source = (ROOT / "tests" / "71_section_assignment.f90").read_text(encoding="utf-8")
+        program = self.directory / "section assignment.f90"
+        program.write_text(source, encoding="utf-8")
+        self.check_build([program], "11 12 13 11 12 13 21 22 23\n 13 12 11 13 12 11 23 22 21\n -1 12 -1 13 12 11 -1 22 -1\n -2 34 -2\n 1 1 2 3 4\n 4 3 2 1 1\n 4 3 2 1 1\n 0 0 7 7 0 0 7 7\n 4.0 4.0 4.0 2.0 2.0 2.0\n 777\n 42 42 42 42 42")
+
     def test_missing_source_preserves_existing_outputs(self):
         sources = self.sources()
         exe = sources[-1].with_suffix(".exe")
