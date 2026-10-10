@@ -1018,3 +1018,31 @@ with gfortran. The isolated release report
 `target/ofort-entity-character-lengths.json` has 9/18 passes (9 compile failures),
 including `xcharacter_len_expr.f90` at O0/O2. All 18 reference runs succeed.
 Linux/macOS execution remains untested.
+
+
+## Checkpoint 39: scalar CSHIFT
+
+CSHIFT now lowers fixed-shape numeric/LOGICAL arrays to temporary arrays and
+column-major loops. ARRAY/SHIFT/DIM keywords are normalized and validated;
+DIM must be constant, and SHIFT must be scalar INTEGER. Original shapes are
+retained before flattening so multidimensional conformance checks still apply.
+The shift is evaluated once and normalized before index arithmetic, including
+negative shifts and extreme 64-bit values. Empty axes avoid division by zero.
+Materializing the result preserves overlapping whole-array and WHERE assignments.
+PURE procedures may use CSHIFT. Array-valued SHIFT, runtime DIM and CHARACTER
+arrays remain unsupported.
+
+Fixture 100 and its focused tests cover positive/negative shifts, sections,
+multidimensional DIM, empty and logical arrays, numeric kinds, nested calls,
+PURE functions, overlapping WHERE assignments and invalid arguments. The native
+fixture harness now discovers numbered tests beyond 99. Its first run caught
+only a new expected-output formatting mismatch (REAL 6.0 versus 6), corrected
+before the successful rerun.
+
+Windows validation: 74 Rust unit tests, 100 native fixtures, 46 batch wrapper
+tests, and six focused CSHIFT/WHERE tests passed. The focused tests passed with
+both debug and rebuilt release compilers, exercising interpreter/native O0/O2;
+the primary CSHIFT fixture also agrees with gfortran. The isolated release
+compatibility report is `target/ofort-cshift.json`: 10/18 passes, eight compile
+failures, with all reference runs succeeding. The new passing case is
+`xwhere_mask_capture_pending.f90` at O0/O2. Linux/macOS execution remains untested.

@@ -363,3 +363,10 @@ and gfortran checks.
 
 Constant `TRIM` and `LEN_TRIM` calls, including CHARACTER PARAMETER arguments,
 are evaluated before code generation.
+
+CSHIFT supports fixed-shape numeric and LOGICAL arrays, scalar INTEGER SHIFT
+(including runtime values), and constant DIM. Sections, array expressions,
+empty arrays and overlapping assignments are supported. Array-valued SHIFT,
+runtime DIM and CHARACTER arrays remain unsupported.
+Run `python tests/test_cshift.py` for interpreter/native O0/O2 checks and a
+gfortran comparison.

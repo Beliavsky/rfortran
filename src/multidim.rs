@@ -353,6 +353,19 @@ impl Lowerer {
         }
         match e {
             Expr::Ident(n) => self.check_association(n)?,
+            Expr::Call(n, args) if n == "cshift" => {
+                let dims = self.shape(&args[0], shapes)?.context("CSHIFT ARRAY must be an array")?;
+                let dim = crate::parameters::integer_constant(&args[2]).context("CSHIFT DIM must currently be a constant INTEGER")?;
+                if dim < 1 || dim as usize > dims.len() { bail!("CSHIFT DIM must be between 1 and {}", dims.len()); }
+                if self.shape(&args[1], shapes)?.is_some() { bail!("CSHIFT currently requires scalar SHIFT"); }
+                self.expression(&mut args[0], shapes)?;
+                self.expression(&mut args[1], shapes)?;
+                let axis = dim as usize - 1;
+                args[2] = int(total(&dims[..axis])?);
+                args.push(int(dims[axis]));
+                args.push(Expr::Call("@shift_shape".into(),dims.into_iter().map(int).collect()));
+                *n = "@cshift".into();
+            }
             Expr::Call(n, args) if n == "reshape" => {
                 reshape_shape(args)?;
                 self.shape(&args[0], shapes)?.context("RESHAPE SOURCE must be an array")?;
@@ -457,6 +470,11 @@ impl Lowerer {
 
     fn shape(&self, e: &Expr, shapes: &Shapes) -> Result<Option<Vec<i64>>> {
         match e {
+            Expr::Call(n, args) if n == "cshift" => self.shape(&args[0], shapes),
+            Expr::Call(n, args) if n == "@cshift" => {
+                let Expr::Call(_, dims) = &args[4] else { unreachable!() };
+                Ok(Some(dims.iter().map(crate::parameters::integer_constant).collect::<Result<Vec<_>>>()?))
+            }
             Expr::Call(n, args) if n == "reshape" => Ok(Some(reshape_shape(args)?)),
             Expr::Call(n, args) if n == "@array_constructor" => {
                 let mut count = 0i64;

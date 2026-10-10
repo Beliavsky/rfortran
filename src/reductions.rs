@@ -171,6 +171,34 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             symbols.insert(temp.clone(),(kind,vec![int(count)]));
             *e = Expr::Ident(temp);
         }
+        Expr::Call(name, args) if name == "@cshift" => {
+            lower_expr(&mut args[0], symbols, prefix, serial)?;
+            lower_expr(&mut args[1], symbols, prefix, serial)?;
+            let (_,shift_len,shift_kind) = element(&args[1],&int(1),symbols)?;
+            if shift_len.is_some() || !matches!(shift_kind,TypeSpec::Integer(_)) { bail!("CSHIFT SHIFT must be scalar INTEGER"); }
+            let stride = constant(&args[2])?.max(1);
+            let axis_len = constant(&args[3])?.max(1);
+            *serial += 1;
+            let temp = format!("@shift_array_{serial}");
+            let index = format!("@shift_index_{serial}");
+            let shift = format!("@shift_value_{serial}");
+            let id = |n: &str| Expr::Ident(n.into());
+            let modulo = |a,b| Expr::Call("modulo".into(),vec![a,b]);
+            // Normalize before adding the axis coordinate, avoiding overflow
+            // from large positive or negative runtime shifts.
+            let ordinal = bin(BinOp::Sub,id(&index),int(1));
+            let coordinate = modulo(bin(BinOp::Div,ordinal.clone(),int(stride)),int(axis_len));
+            let shifted = modulo(bin(BinOp::Add,coordinate.clone(),id(&shift)),int(axis_len));
+            let source_index = bin(BinOp::Add,id(&index),bin(BinOp::Mul,bin(BinOp::Sub,shifted,coordinate),int(stride)));
+            let (value,count,kind) = element(&args[0],&source_index,symbols)?;
+            let count = count.context("CSHIFT ARRAY must be an array")?;
+            prefix.push(Stmt::ArrayDecl { kind:kind.clone(),name:temp.clone(),dims:vec![int(count)] });
+            prefix.push(Stmt::VarDecl { kind:TypeSpec::Integer(Some(8)),names:vec![index.clone(),shift.clone()] });
+            prefix.push(Stmt::Assign { name:shift,value:modulo(args[1].clone(),int(axis_len)) });
+            prefix.push(Stmt::Do { var:index.clone(),start:int(1),end:int(count),body:vec![Stmt::AssignIndex { name:temp.clone(),indices:vec![id(&index)],value }] });
+            symbols.insert(temp.clone(),(kind,vec![int(count)]));
+            *e = Expr::Ident(temp);
+        }
         Expr::Call(name, args) if name == "reshape" => {
             let dims = crate::multidim::reshape_shape(args)?;
             let count = dims.iter().product::<i64>();

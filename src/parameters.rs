@@ -462,7 +462,22 @@ fn constructor_items(items: &[Expr], constants: &Constants, output: &mut Vec<Exp
 
 fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
     if let Expr::Call(name, args) = expr {
-        if name == "reshape" {
+        if name == "cshift" {
+            let mut slots: [Option<Expr>; 3] = [None,None,None];
+            let mut keywords = false;
+            for (position,arg) in args.iter().enumerate() {
+                let (slot,value) = match arg {
+                    Expr::Call(tag,values) if tag.starts_with("@keyword:") => {
+                        keywords = true;
+                        (match &tag[9..] { "array" => 0, "shift" => 1, "dim" => 2, key => bail!("CSHIFT: unknown keyword `{key}`") }, &values[0])
+                    }
+                    _ => { if keywords { bail!("CSHIFT: positional argument after keyword argument"); } (position,arg) }
+                };
+                if slot >= 3 { bail!("CSHIFT: too many arguments"); }
+                if slots[slot].replace(value.clone()).is_some() { bail!("CSHIFT: duplicate argument"); }
+            }
+            *args = vec![slots[0].take().context("CSHIFT requires ARRAY")?, slots[1].take().context("CSHIFT requires SHIFT")?, slots[2].take().unwrap_or(Expr::IntLit("1".into()))];
+        } else if name == "reshape" {
             let mut slots: [Option<Expr>; 2] = [None,None];
             let mut keywords = false;
             for (position,arg) in args.iter().enumerate() {

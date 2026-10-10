@@ -183,20 +183,11 @@ fn list_test_files() -> Vec<PathBuf> {
                 .unwrap_or(false)
         })
         .filter(|p| {
-            // include only files with stem like "01_name" .. "99_name"
-            if let Some(stem_os) = p.file_stem() {
-                let s = stem_os.to_string_lossy();
-                if s.len() < 3 {
-                    return false;
-                }
-                // third char must be '_'
-                if s.as_bytes().get(2) != Some(&b'_') {
-                    return false;
-                }
-                // first two chars must be digits and between 01 and 99
-                let first2 = &s[0..2];
-                if let Ok(n) = first2.parse::<u8>() {
-                    return n >= 1 && n <= 99;
+            // Numbered fixtures may have two or more digits.
+            if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+                if let Some((number, _)) = stem.split_once('_') {
+                    return number.len() >= 2 && number.bytes().all(|b| b.is_ascii_digit())
+                        && number.parse::<u32>().is_ok_and(|n| n > 0);
                 }
             }
             false

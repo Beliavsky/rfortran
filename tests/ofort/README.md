@@ -103,3 +103,8 @@ The external `xparam.f90` now passes at O0/O2, raising the selected sample to
 cover per-entity CHARACTER lengths, LEN-based declaration lengths, and constant
 TRIM/LEN_TRIM. The external `xcharacter_len_expr.f90` now passes at O0/O2,
 raising the selected sample to 9/18 passes. Nine cases still fail compilation.
+
+`100_cshift.f90` and `python tests/test_cshift.py` cover scalar circular shifts,
+multidimensional DIM, sections, empty arrays and overlapping WHERE assignments.
+`xwhere_mask_capture_pending.f90` now passes at O0/O2, raising the selected
+sample to 10/18 passes (eight compile failures).
