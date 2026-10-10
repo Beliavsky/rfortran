@@ -47,7 +47,7 @@
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " s: hello world\n hello world\n"
+      "program_stdout": " s: hello world         \n hello world         \n"
     },
     "08_real_double": {
       "compiler_exit_code": 0,
@@ -538,6 +538,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " [alpha]\n [     ]\n [     ]\n [12345]\n [123456789]\n [     ]\n [last]\n [last]\n [alpha]\n [alpha]\n [alpha]\n"
+    },
+    "78_character_lengths": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "10\n [abcdefghij]\n [q  ]\n []\n []\n [ab]\n [abc    ]\n3\n [1234]\n9\n"
     }
   }
 }

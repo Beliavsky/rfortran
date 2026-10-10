@@ -715,15 +715,15 @@ pub fn resolve(mut program: Program) -> Result<Program> {
         body.iter().any(|s| match s {
             Stmt::GenericInterface { .. } | Stmt::OperatorInterface { .. } => true,
             Stmt::VarDecl {
-                kind: TypeSpec::IntegerKind(_),
+                kind: TypeSpec::IntegerKind(_) | TypeSpec::CharacterLength(_),
                 ..
             }
             | Stmt::ArrayDecl {
-                kind: TypeSpec::IntegerKind(_),
+                kind: TypeSpec::IntegerKind(_) | TypeSpec::CharacterLength(_),
                 ..
             }
             | Stmt::InitializedDecl {
-                kind: TypeSpec::IntegerKind(_),
+                kind: TypeSpec::IntegerKind(_) | TypeSpec::CharacterLength(_),
                 ..
             } => true,
             Stmt::DerivedType { components, .. } => needs_constants(components),

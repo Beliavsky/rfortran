@@ -14,6 +14,7 @@ the author recorded in this repository's Git history.
 - `src/driver.rs`
 - `src/file_io.rs`
 - `src/codegen/file_io.rs`
+- `src/codegen/characters.rs`
 - `src/elemental.rs`
 - `src/formatting.rs`
 - `src/imports.rs`

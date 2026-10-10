@@ -149,6 +149,17 @@ fn lower_expr(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, seria
             prefix.push(Stmt::Do { var: index_name, start: int(1), end: int(count), body: vec![Stmt::Assign { name: item_name, value }, update] });
             *e = acc;
         }
+        Expr::Call(name, args) if name == "len" => {
+            let length = match args.as_slice() {
+                [Expr::Str(s)] => s.len(),
+                [Expr::Ident(n)] => match symbols.get(n) {
+                    Some((TypeSpec::Character(length), dims)) if dims.is_empty() => length.unwrap_or(1),
+                    _ => bail!("LEN currently requires a scalar CHARACTER variable or constant"),
+                },
+                _ => bail!("LEN currently requires one scalar CHARACTER variable or constant"),
+            };
+            *e = int(length as i64);
+        }
         Expr::Call(name, args) if matches!(name.as_str(), "tiny" | "huge" | "kind" | "size") => {
             let [Expr::Ident(n)] = args.as_slice() else { bail!("{name} requires a typed variable"); };
             let (kind,dims)=symbols.get(n).context("undefined inquiry argument")?;
@@ -204,6 +215,23 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
     let mut output = Vec::new();
     for mut stmt in std::mem::take(body) {
         let mut prefix = Vec::new();
+        if let Stmt::Assign { name, value } = &stmt {
+            if let Some((TypeSpec::Character(length), dims)) = symbols.get(name) {
+                if dims.is_empty() {
+                    fn check(e: &Expr, symbols: &Symbols) -> Result<()> {
+                        match e {
+                            Expr::Str(s) if s.is_ascii() && !s.contains('\0') => Ok(()),
+                            Expr::Ident(n) if matches!(symbols.get(n), Some((TypeSpec::Character(_), d)) if d.is_empty()) => Ok(()),
+                            Expr::Bin(BinOp::Concat, a, b) => { check(a, symbols)?; check(b, symbols) },
+                            Expr::Call(n, a) if n.eq_ignore_ascii_case("trim") && a.len() == 1 => check(&a[0], symbols),
+                            _ => bail!("CHARACTER assignment requires a non-NUL ASCII literal, scalar CHARACTER variable, concatenation, or TRIM"),
+                        }
+                    }
+                    check(value, &symbols)?;
+                    stmt = Stmt::CallSub { name: "@character_assign".into(), args: vec![Expr::Ident(name.clone()), value.clone(), int(length.unwrap_or(1) as i64)] };
+                }
+            }
+        }
         if let Stmt::CallSub {name,args}=&stmt {
             if name=="@write" {
                 if crate::parameters::integer_constant(&args[0]).ok()!=Some(6) {

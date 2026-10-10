@@ -369,3 +369,32 @@ checks the new fixture. The original utility files remain unchanged. Their
 combined source now parses past BACKSPACE and stops at computed CHARACTER
 length in `join`: `character(len=(size(words)-1)*len(sep)+sum(len_trim(words)))`,
 combined-source line 852. Full utility compilation is still incomplete.
+
+The eighteenth checkpoint parses computed CHARACTER lengths and resolves the
+constant subset: integer arithmetic, named parameters, constant LEN/LEN_TRIM,
+MIN/MAX, ABS, and positional `character(n)`. Negative lengths become zero;
+overflow, invalid types, and runtime-dependent lengths produce diagnostics.
+LEN of a fixed-length scalar does not read its contents. CHARACTER arrays and
+CHARACTER-valued function results are explicitly rejected pending storage/ABI
+support, even though their length syntax can now be parsed.
+
+Scalar assignment now preserves the declared length instead of propagating an
+unpadded literal. Native and interpreter paths support literal/variable copies,
+concatenation, and TRIM, including self-assignment and overlapping expressions.
+Sources are evaluated before destination writes; uninitialized reads retain their
+checks. The default CHARACTER length is one. Regression 07 now expects the
+trailing spaces required by its declared length, verified with gfortran.
+
+Test 78 and `python tests/test_character_lengths.py` compare the interpreter and
+native O0/O2 with gfortran; the batch suite covers the new fixture. The utility
+source files remain unchanged. Their combined source parses past the computed
+length in `join` and now stops at `end function concat`, combined-source line
+945, because the preceding ELSE IF chain is not supported by the current grammar.
+Full utility compilation is still incomplete; the runtime lengths and character
+array/function results in these routines will also need implementation.
+
+Validation on Windows x64: 69 Rust unit tests, all 78 native regression fixtures,
+6 focused CHARACTER tests with both debug and release compilers, 25 batch tests,
+and the 21 formatted/internal input, WRITE, implied-DO output, and external-file
+checks passed. The release executable was rebuilt. Linux/macOS execution has
+not been validated in this checkpoint.

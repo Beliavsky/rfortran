@@ -403,10 +403,8 @@ TypeSpec: TypeSpec = {
     KW_CHARACTER => TypeSpec::Character(None),
     KW_CHARACTER LPAREN KW_LEN EQ STAR RPAREN => TypeSpec::CharacterAssumed,
     KW_CHARACTER LPAREN STAR RPAREN => TypeSpec::CharacterAssumed,
-    KW_CHARACTER LPAREN KW_LEN EQ <n: INT> RPAREN => {
-        let len = n.parse::<usize>().unwrap_or(0);
-        TypeSpec::Character(Some(len))
-    },
+    KW_CHARACTER LPAREN KW_LEN EQ <length:RhsExpr> RPAREN => crate::ast::character_length(length),
+    KW_CHARACTER LPAREN <length:RhsExpr> RPAREN => crate::ast::character_length(length),
     KW_LOGICAL => TypeSpec::Logical,
 };
 

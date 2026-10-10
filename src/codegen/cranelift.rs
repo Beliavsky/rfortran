@@ -1,5 +1,7 @@
 #[path = "file_io.rs"]
 mod file_io;
+#[path = "characters.rs"]
+mod characters;
 use anyhow::Result;
 use cranelift_codegen::{isa, settings};
 use cranelift_object::{ObjectBuilder, ObjectModule};
@@ -1737,7 +1739,7 @@ fn gen_stmts(
                     continue;
                 }
                 match kind {
-                    crate::ast::TypeSpec::CharacterAssumed | crate::ast::TypeSpec::RealKind(_) | crate::ast::TypeSpec::IntegerKind(_) => unreachable!("unresolved numeric kind"),
+                    crate::ast::TypeSpec::CharacterLength(_) | crate::ast::TypeSpec::CharacterAssumed | crate::ast::TypeSpec::RealKind(_) | crate::ast::TypeSpec::IntegerKind(_) => unreachable!("unresolved numeric kind"),
                     crate::ast::TypeSpec::Integer(Some(16)) => {
                         i128_vars.insert(name.clone());
                         i128_last.insert(name.clone(), "0".into());
@@ -1810,7 +1812,7 @@ fn gen_stmts(
                         real_kind.insert(name.clone(), true);
                     }
                     crate::ast::TypeSpec::Character(len_opt) => {
-                        let len = len_opt.unwrap_or(20);
+                        let len = len_opt.unwrap_or(1);
                         let ss = b.create_sized_stack_slot(ir::StackSlotData::new(
                             ir::StackSlotKind::ExplicitSlot,
                             (len + 1) as u32,
@@ -1833,7 +1835,7 @@ fn gen_stmts(
                     let bytes = s.as_bytes();
                     let a = storage_addr(b, ptr_ty, *ss);
                     for i in 0..*len {
-                        let byte = if i < bytes.len() { bytes[i] } else { 0 };
+                        let byte = if i < bytes.len() { bytes[i] } else { 32 };
                         let v = b.ins().iconst(ir::types::I8, byte as i64);
                         b.ins().store(MemFlags::new(), v, a, i as i32);
                     }
@@ -2230,6 +2232,11 @@ fn gen_stmts(
                     b.switch_to_block(after_blk);
             }
             IStmt::Call(name, args) => {
+                if name == "@character_assign" {
+                    let [IExpr::Ident(dest), source, _] = args.as_slice() else { anyhow::bail!("invalid CHARACTER assignment"); };
+                    characters::assign(module, b, ptr_ty, dc, chars, dest, source)?;
+                    continue;
+                }
                 if name == "@internal_read_byte" {
                     let [IExpr::Ident(dest),source,index,IExpr::IntLit(length)]=args.as_slice() else {anyhow::bail!("invalid internal input byte operation");};
                     let pointer=match source {
@@ -3011,7 +3018,7 @@ impl Backend for CraneliftBackend {
                 }
             }
             match sig_rt {
-                    crate::ast::TypeSpec::CharacterAssumed | crate::ast::TypeSpec::RealKind(_) | crate::ast::TypeSpec::IntegerKind(_) => unreachable!("unresolved numeric kind"),
+                    crate::ast::TypeSpec::CharacterLength(_) | crate::ast::TypeSpec::CharacterAssumed | crate::ast::TypeSpec::RealKind(_) | crate::ast::TypeSpec::IntegerKind(_) => unreachable!("unresolved numeric kind"),
                 crate::ast::TypeSpec::Integer(_) | crate::ast::TypeSpec::Logical => ctx
                     .func
                     .signature
@@ -3092,7 +3099,7 @@ impl Backend for CraneliftBackend {
             ret_kinds.insert(
                 name.clone(),
                 match rt {
-                    crate::ast::TypeSpec::CharacterAssumed | crate::ast::TypeSpec::RealKind(_) | crate::ast::TypeSpec::IntegerKind(_) => unreachable!("unresolved numeric kind"),
+                    crate::ast::TypeSpec::CharacterLength(_) | crate::ast::TypeSpec::CharacterAssumed | crate::ast::TypeSpec::RealKind(_) | crate::ast::TypeSpec::IntegerKind(_) => unreachable!("unresolved numeric kind"),
                     crate::ast::TypeSpec::Logical => RetKind::Bool,
                     crate::ast::TypeSpec::Integer(_) => {
                         RetKind::I64
@@ -3119,7 +3126,7 @@ impl Backend for CraneliftBackend {
                 }
             }
             match rt {
-                    crate::ast::TypeSpec::CharacterAssumed | crate::ast::TypeSpec::RealKind(_) | crate::ast::TypeSpec::IntegerKind(_) => unreachable!("unresolved numeric kind"),
+                    crate::ast::TypeSpec::CharacterLength(_) | crate::ast::TypeSpec::CharacterAssumed | crate::ast::TypeSpec::RealKind(_) | crate::ast::TypeSpec::IntegerKind(_) => unreachable!("unresolved numeric kind"),
                 TypeSpec::Integer(_) | TypeSpec::Logical => {
                     ctx_f.func.signature.returns.push(AbiParam::new(types::I64))
                 }
@@ -3187,7 +3194,7 @@ impl Backend for CraneliftBackend {
                     F64(ir::StackSlot),
                 }
                 let ret_slot: Option<RetSlot> = match rt {
-                    crate::ast::TypeSpec::CharacterAssumed | crate::ast::TypeSpec::RealKind(_) | crate::ast::TypeSpec::IntegerKind(_) => unreachable!("unresolved numeric kind"),
+                    crate::ast::TypeSpec::CharacterLength(_) | crate::ast::TypeSpec::CharacterAssumed | crate::ast::TypeSpec::RealKind(_) | crate::ast::TypeSpec::IntegerKind(_) => unreachable!("unresolved numeric kind"),
                     TypeSpec::Integer(_) | TypeSpec::Logical => {
                         let ss = b.create_sized_stack_slot(ir::StackSlotData::new(
                             ir::StackSlotKind::ExplicitSlot,

@@ -173,7 +173,6 @@ pub enum TokenKind {
     KwCharacter,
     #[token("logical", ignore(ascii_case))]
     KwLogical,
-    #[token("len", ignore(ascii_case))]
     KwLen,
     #[token("subroutine", ignore(ascii_case))]
     KwSubroutine,
@@ -302,6 +301,7 @@ pub fn lex(input: &str) -> Vec<Token> {
             let replacement=match n.to_ascii_lowercase().as_str() {
                 "default" if matches!(previous,Some(TokenKind::KwCase)) => Some(TokenKind::KwDefault),
                 "only" if matches!(next,Some(TokenKind::Colon)) && start >= 3 && matches!(tokens[start-3].kind,TokenKind::KwUse) => Some(TokenKind::KwOnly),
+                "len" if matches!(previous,Some(TokenKind::LParen)) && matches!(next,Some(TokenKind::Eq)) => Some(TokenKind::KwLen),
                 "kind" if matches!(previous,Some(TokenKind::LParen)) && matches!(next,Some(TokenKind::Eq)) => Some(TokenKind::KwKind),
                 "type" if matches!(next,Some(TokenKind::DColon|TokenKind::LParen)) || matches!(previous,Some(TokenKind::KwEnd)) => Some(TokenKind::KwType),
                 "class" if matches!(next,Some(TokenKind::LParen)) => Some(TokenKind::KwClass),

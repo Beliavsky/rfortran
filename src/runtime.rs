@@ -508,7 +508,7 @@ pub fn interpret(program: &Program) {
                 .and_then(|v| v.3.as_ref().map(|s| ValueTuple::from_int(s.len() as i64))),
             "len_trim" => args.get(0).and_then(|v| {
                 v.3.as_ref()
-                    .map(|s| ValueTuple::from_int(s.trim_end().len() as i64))
+                    .map(|s| ValueTuple::from_int(s.trim_end_matches(' ').len() as i64))
             }),
             "achar" => args.get(0).and_then(|v| {
                 to_int(v).map(|i| ValueTuple::from_str((i as u8 as char).to_string()))
@@ -519,7 +519,7 @@ pub fn interpret(program: &Program) {
             }),
             "trim" => args.get(0).and_then(|v| {
                 v.3.as_ref()
-                    .map(|s| ValueTuple::from_str(s.trim_end().to_string()))
+                    .map(|s| ValueTuple::from_str(s.trim_end_matches(' ').to_string()))
             }),
             "repeat" => {
                 if let Some(s) = args.get(0).and_then(|v| v.3.clone()) {
@@ -719,7 +719,7 @@ pub fn interpret(program: &Program) {
                             continue;
                         }
                         match kind {
-                            TypeSpec::CharacterAssumed | TypeSpec::RealKind(_) | TypeSpec::IntegerKind(_) => unreachable!("unresolved numeric kind"),
+                            TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed | TypeSpec::RealKind(_) | TypeSpec::IntegerKind(_) => unreachable!("unresolved numeric kind"),
                             TypeSpec::Integer(_) => {
                                 frame.env_int.entry(n.clone()).or_insert(0);
                             }
@@ -746,7 +746,7 @@ pub fn interpret(program: &Program) {
                             if let Ok(v128) = i128::from_str_radix(s.as_str(), 10) {
                                 let len = usize::try_from(v128).unwrap_or(0);
                                 match kind {
-                            TypeSpec::CharacterAssumed | TypeSpec::RealKind(_) | TypeSpec::IntegerKind(_) => unreachable!("unresolved numeric kind"),
+                            TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed | TypeSpec::RealKind(_) | TypeSpec::IntegerKind(_) => unreachable!("unresolved numeric kind"),
                                     TypeSpec::Integer(_) => {
                                         fr.env_int_arrays.insert(name.clone(), vec![0; len]);
                                     }
@@ -1021,6 +1021,16 @@ pub fn interpret(program: &Program) {
                 Stmt::CallSub { name, args } => {
                     if name == "@stop" { std::process::exit(0); }
                     if name == "@error_stop" { let Expr::Str(message)=&args[0] else {unreachable!()}; eprintln!("ERROR STOP {message}");std::process::exit(1); }
+                    if name == "@character_assign" {
+                        let [Expr::Ident(dest), source, Expr::IntLit(length)] = args.as_slice() else { unreachable!() };
+                        let fr = call_stack.last().unwrap().clone();
+                        let mut text = eval_expr(source, &fr.env_str, &fr.env_int, &fr.env_real32, &fr.env_real64, &fr.env_log, funcs, call_stack).3.unwrap();
+                        let length: usize = length.parse().unwrap();
+                        text.truncate(length);
+                        text.extend(std::iter::repeat(' ').take(length - text.len()));
+                        call_stack.last_mut().unwrap().env_str.insert(dest.clone(), text);
+                        idx += 1; continue;
+                    }
                     if name == "@internal_read_byte" {
                         let [Expr::Ident(dest),source,Expr::Ident(offset),Expr::IntLit(length)]=args.as_slice() else {unreachable!()};
                         let frame=call_stack.last_mut().unwrap();

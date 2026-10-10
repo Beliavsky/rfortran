@@ -114,6 +114,7 @@ pub enum TypeSpec {
     RealKind(String),
     DoublePrecision,
     Character(Option<usize>),
+    CharacterLength(Box<Expr>),
     CharacterAssumed,
     Logical,
 }
@@ -199,7 +200,7 @@ pub enum CaseOrDefault {
     Default(Vec<Stmt>),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub enum BinOp {
     Add,
     Sub,
@@ -219,13 +220,13 @@ pub enum BinOp {
     Concat,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub enum UnOp {
     Neg,
     Not,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub enum Expr {
     Section {
         name: String,
@@ -320,4 +321,12 @@ pub fn section_or_call(name: String, mut args: Vec<Expr>) -> Expr {
     }
     if single_section { args.remove(0) }
     else { Expr::Call(name, args) }
+}
+
+// Preserve the already-resolved representation for ordinary literal lengths.
+pub fn character_length(length: Expr) -> TypeSpec {
+    if let Expr::IntLit(n) = &length {
+        if let Ok(n) = n.parse::<usize>() { return TypeSpec::Character(Some(n)); }
+    }
+    TypeSpec::CharacterLength(Box::new(length))
 }

@@ -52,6 +52,18 @@ and source inputs are protected from overwrite. A single source is compiled
 directly. The old `f90c-sources.ps1` helper is retained for legacy use; the
 native driver does not invoke it.
 
+## CHARACTER support
+
+Scalar CHARACTER declarations accept constant integer length expressions,
+including named parameters, LEN/LEN_TRIM of character constants, and
+constant MIN/MAX and ABS calls.
+`character(n)` and `character(len=n)` are supported; negative lengths become
+zero. LEN of a fixed-length scalar variable does not require it to be initialized.
+Assignments pad with spaces or truncate to the declared length, including
+variable copies, concatenation, TRIM, and overlapping source/destination storage.
+This subset uses non-NUL ASCII. Runtime-dependent lengths, CHARACTER arrays,
+and CHARACTER-valued functions remain unsupported and produce diagnostics.
+
 ## File input
 
 The current external-file I/O subset supports read-only sequential formatted
@@ -132,6 +144,7 @@ python tests/test_write.py
 python tests/test_output_implied_do.py
 python tests/test_defined_operators.py
 python tests/test_file_io.py
+python tests/test_character_lengths.py
 ```
 
 The Python tests use `target/debug/rfort` (with `.exe` on Windows).

@@ -15,6 +15,17 @@ fn kind_number(name: &str, constants: &Constants) -> Result<i64> {
 }
 fn resolve_kind(kind: &mut TypeSpec, constants: &Constants) -> Result<()> {
     if matches!(kind, TypeSpec::CharacterAssumed) { bail!("assumed CHARACTER length is currently supported only for scalar PARAMETER declarations"); }
+    if let TypeSpec::CharacterLength(length) = kind {
+        let mut length = (**length).clone();
+        rewrite_expr(&mut length, constants)?;
+        fold_length_inquiries(&mut length)?;
+        let length = evaluate(&length, constants)
+            .context("CHARACTER length must be a supported constant INTEGER expression; runtime-dependent lengths are not yet supported")?;
+        *kind = TypeSpec::Character(Some(usize::try_from(length.max(0)).context("CHARACTER length is too large")?));
+    }
+    if matches!(kind, TypeSpec::Character(Some(n)) if *n > i32::MAX as usize - 1) {
+        bail!("CHARACTER length is too large for native storage");
+    }
     if let TypeSpec::IntegerKind(name) = kind {
         let value = kind_number(name, constants)?;
         if !matches!(value, 1 | 2 | 4 | 8 | 16) { bail!("unsupported INTEGER kind {value}; supported kinds are 1, 2, 4, 8 and 16"); }
@@ -29,6 +40,35 @@ fn resolve_kind(kind: &mut TypeSpec, constants: &Constants) -> Result<()> {
             4 => TypeSpec::Real, 8 => TypeSpec::DoublePrecision,
             other => bail!("unsupported REAL kind {other}; supported kinds are 4 and 8"),
         };
+    }
+    Ok(())
+}
+
+// These inquiries depend only on constants and do not read variable storage.
+fn fold_length_inquiries(expr: &mut Expr) -> Result<()> {
+    match expr {
+        Expr::Call(_, args) | Expr::Index(_, args) => for arg in args { fold_length_inquiries(arg)?; },
+        Expr::Bin(_, a, b) => { fold_length_inquiries(a)?; fold_length_inquiries(b)?; }
+        Expr::Un(_, a) => fold_length_inquiries(a)?,
+        _ => {}
+    }
+    if let Expr::Call(name, args) = expr {
+        let value = match name.as_str() {
+            "len" | "len_trim" if args.len() == 1 => {
+                let text = character_constant(&args[0])
+                    .context("LEN/LEN_TRIM in a CHARACTER length currently requires a character constant")?;
+                if !text.is_ascii() { bail!("constant CHARACTER length inquiries currently require ASCII"); }
+                if name == "len" { text.len() as i64 } else { text.trim_end_matches(' ').len() as i64 }
+            }
+            "min" | "max" if args.len() >= 2 => {
+                let values = args.iter().map(integer_constant).collect::<Result<Vec<_>>>()?;
+                if name == "min" { *values.iter().min().unwrap() } else { *values.iter().max().unwrap() }
+            }
+            "abs" if args.len() == 1 => integer_constant(&args[0])?.checked_abs().context("integer overflow in CHARACTER length")?,
+            "@unary_plus" if args.len() == 1 => integer_constant(&args[0])?,
+            _ => return Ok(()),
+        };
+        *expr = Expr::IntLit(value.to_string());
     }
     Ok(())
 }
@@ -433,6 +473,7 @@ fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules) -> 
             }
             Stmt::ArrayDecl { kind, dims, .. } => {
                 resolve_kind(kind, constants)?;
+                if matches!(kind, TypeSpec::Character(_)) { bail!("CHARACTER array storage is not yet supported"); }
                 for e in dims {
                     rewrite_expr(e, constants)?;
                 }
@@ -508,6 +549,11 @@ fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules) -> 
             Stmt::Function { params, body, return_type, .. } => {
                 let local = resolve_scope(body, constants, params, modules)?;
                 if let Some(kind) = return_type { resolve_kind(kind, &local)?; }
+                let result_name = match body.last() { Some(Stmt::Return(Some(Expr::Ident(n)))) => Some(n), _ => None };
+                if matches!(return_type, Some(TypeSpec::Character(_))) || body.iter().any(|s| matches!(s,
+                    Stmt::VarDecl { kind: TypeSpec::Character(_), names } if result_name.is_some_and(|n| names.contains(n)))) {
+                    bail!("CHARACTER-valued functions are not yet supported by native function-result storage");
+                }
             }
             Stmt::Subroutine { params, body, .. } => { resolve_scope(body, constants, params, modules)?; }
             Stmt::Block { body } => { resolve_scope(body, constants, &[], modules)?; },
@@ -524,6 +570,27 @@ fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolves_constant_character_lengths() {
+        for (expression, length) in [("2*n+1", 7), ("+n", 3), ("-n", 0),
+            ("len('ab  ')+len_trim(' z  ')", 6), ("max(1,abs(n-5))+min(n,2)", 4)] {
+            let p = resolve_source(&format!("integer, parameter :: n=3\ncharacter(len={expression}) :: text"), "text='a'").unwrap();
+            assert!(p.body.iter().any(|s| matches!(s, Stmt::VarDecl {
+                kind: TypeSpec::Character(Some(n)), names
+            } if *n == length && names == &["text"])));
+        }
+    }
+
+    #[test]
+    fn parses_runtime_character_length_but_rejects_unsupported_storage() {
+        let source = "program main\ninteger :: n\ncharacter(len=n*2) :: text\nend program main";
+        let p = crate::parser::parse_with_src(source, &crate::lexer::lex(source), "runtime-length.f90").unwrap();
+        assert!(resolve(p).unwrap_err().to_string().contains("runtime-dependent lengths"));
+        let source = "program main\ncontains\nfunction value() result(text)\ncharacter(len=2+1) :: text\ntext='abc'\nend function value\nend program main";
+        let p = crate::parser::parse_with_src(source, &crate::lexer::lex(source), "character-result.f90").unwrap();
+        assert!(resolve(p).unwrap_err().to_string().contains("CHARACTER-valued functions"));
+    }
 
     #[test]
     fn resolves_named_integer_kind_declarations() {
