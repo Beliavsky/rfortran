@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Beliavsky
+// See LICENSE-MIT in the repository root.
+
 //! Specialize local assumed-shape subroutine calls with statically known arrays.
 //! No descriptor ABI is claimed: unsupported dynamic shapes are diagnosed here.
 use crate::ast::{Expr, Program, Stmt, TypeSpec};

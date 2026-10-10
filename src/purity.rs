@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Beliavsky
+// See LICENSE-MIT in the repository root.
+
 //! Validate the side-effect restrictions of the supported PURE procedure subset.
 use crate::ast::{Expr, Program, Stmt};
 use anyhow::{bail, Result};

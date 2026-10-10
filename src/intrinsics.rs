@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Beliavsky
+// See LICENSE-MIT in the repository root.
+
 /// Scalar real math routines with the same argument order as the C math library.
 pub const REAL_MATH: &[(&str, usize)] = &[
     ("sqrt", 1), ("exp", 1), ("log", 1), ("log10", 1),

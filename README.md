@@ -246,4 +246,7 @@ f90c run main.f90
 
 ## License
 
-This project is licensed under the **[GPLv3 License](LICENSE)**.
+The combined compiler is licensed under **[GPLv3](LICENSE)**. Original Rust
+modules added in this fork and listed in [LICENSING.md](LICENSING.md) are also
+available individually under the **[MIT license](LICENSE-MIT)**. Their source
+files carry MIT SPDX headers. Upstream code remains subject to GPLv3.

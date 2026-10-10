@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Beliavsky
+// See LICENSE-MIT in the repository root.
+
 //! Lower list-directed output implied-DOs to ordinary checked control flow.
 use crate::ast::{BinOp, Expr, Stmt, TypeSpec, UnOp};
 use anyhow::{bail, Result};

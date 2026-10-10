@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Beliavsky
+// See LICENSE-MIT in the repository root.
+
 //! Supported explicit output descriptors. Reject unsupported formats explicitly.
 use anyhow::{bail, Result};
 #[derive(Clone, Debug)]

@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Beliavsky
+// See LICENSE-MIT in the repository root.
+
 //! Lower statically known multidimensional arrays to column-major vector storage.
 use crate::ast::{BinOp, CaseItem, Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Context, Result};

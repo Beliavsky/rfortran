@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Beliavsky
+// See LICENSE-MIT in the repository root.
+
 //! Expand locally defined scalar output-argument subroutines into scoped calls.
 //! The existing object ABI passes values; expansion preserves writable argument storage.
 use crate::ast::{Expr, Program, Stmt, TypeSpec};

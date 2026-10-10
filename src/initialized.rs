@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Beliavsky
+// See LICENSE-MIT in the repository root.
+
 //! Definite-unassignment errors plus runtime flags for path-dependent reads.
 use crate::ast::{Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Result};

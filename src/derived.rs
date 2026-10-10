@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Beliavsky
+// See LICENSE-MIT in the repository root.
+
 //! Lower scalar derived values to named component storage and local procedures.
 //! CLASS dummies have the declared concrete type; extension/dynamic dispatch
 //! and an external derived-value ABI are deliberately not implemented here.

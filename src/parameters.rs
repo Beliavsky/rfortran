@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Beliavsky
+// See LICENSE-MIT in the repository root.
+
 //! Resolve supported named constants before semantic analysis and lowering.
 use crate::ast::{BinOp, CaseItem, Expr, Program, Stmt, TypeSpec, UnOp};
 use anyhow::{bail, Context, Result};

@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Beliavsky
+// See LICENSE-MIT in the repository root.
+
 //! Lower the supported internal integer READ to ordinary control flow.
 //! Native execution and the interpreter share this scanner and its overflow checks.
 use crate::ast::{BinOp, Expr, Stmt, TypeSpec, UnOp};

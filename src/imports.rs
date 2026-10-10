@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Beliavsky
+// See LICENSE-MIT in the repository root.
+
 //! Check ONLY association before lowering erases module/type declarations.
 //! Backends still require unique procedure/type names within a compilation.
 use crate::ast::{CaseItem, Expr, Program, Stmt, TypeSpec};

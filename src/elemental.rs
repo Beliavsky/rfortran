@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Beliavsky
+// See LICENSE-MIT in the repository root.
+
 //! Metadata and declaration checks for the supported ELEMENTAL function subset.
 use crate::ast::{Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Result};

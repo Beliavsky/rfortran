@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Beliavsky
+// See LICENSE-MIT in the repository root.
+
 //! Resolve module-defined operators and named generics before derived values are flattened.
 //! Selection uses the original operand types, without numeric argument conversion.
 use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec, UnOp};

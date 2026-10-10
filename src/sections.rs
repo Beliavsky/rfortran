@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Beliavsky
+// See LICENSE-MIT in the repository root.
+
 //! Expand constant one-dimensional array sections in list-directed output.
 use crate::ast::{CaseItem, Expr, Program, Stmt};
 use anyhow::{bail, Context, Result};
