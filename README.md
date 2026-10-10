@@ -78,6 +78,28 @@ keywords for `SIZE`. Nondefault result kinds and runtime dimensions are not yet
 supported. Existing array-storage limits apply, including one-based declarations.
 Inquiries use shape metadata and do not require initialized array elements.
 
+## Explicit array bounds
+
+Fixed-shape declarations accept constant INTEGER lower and upper bounds, such
+as `integer :: a(0:1,-1:1), v(-2:2)`, including named-parameter expressions.
+Element access, sections and section assignments translate to the compiler's
+one-based storage. Dynamic supported scalar INTEGER subscripts are checked
+against the original bounds before translation; invalid indices cannot wrap
+and alias another element. Section endpoints/strides must currently be constant.
+Omitted section endpoints use the declared bounds, including for negative
+strides; write `v(2:-2:-1)` to reverse `v(-2:2)`.
+
+LBOUND/UBOUND of whole arrays preserve their declared bounds; section bounds
+start at 1. Empty rank-one dimensions report LBOUND=1 and UBOUND=0. SIZE reports
+extents independently of the lower bounds. An assumed-shape dummy `x(:)` retains
+its own default lower bound of 1; an explicit-shape dummy uses its declared
+bounds and still requires matching extents under the current call specialization.
+
+Runtime-dependent declaration bounds, explicit lower bounds on assumed-shape
+or allocatable arrays, and zero extents in multidimensional arrays remain
+unsupported. Existing limitations on array expressions and procedure arguments
+still apply.
+
 ## WHERE and LOGICAL arrays
 
 Rank-one LOGICAL arrays support constructors, whole-array and section
@@ -234,6 +256,7 @@ python tests/test_nonadvancing_output.py
 python tests/test_elemental_setters.py
 python tests/test_do_steps.py
 python tests/test_where.py
+python tests/test_explicit_bounds.py
 python tests/test_ofort_compat_runner.py
 ```
 

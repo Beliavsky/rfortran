@@ -1,0 +1,660 @@
+{
+  "compiler": "C:\\rust\\public_domain\\github\\rfortran\\target\\release\\rfort.exe",
+  "compiler_sha256": "78baca88e82a324cad0395061b7da8527e2a53916ade8a17d4183da0f4e33d06",
+  "reference": {
+    "returncode": 0,
+    "stdout": "GNU Fortran (GCC) 17.0.0 20260510 (experimental)\nCopyright (C) 2026 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n\n",
+    "stderr": ""
+  },
+  "ofort_root": "C:\\c\\ofort",
+  "cases": [
+    {
+      "source": "xloop.f90",
+      "results": {
+        "O0": {
+          "build": {
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "run": {
+            "returncode": 0,
+            "stdout": " 1 1\n 2 4\n 3 9\n 4\n 5\n 3\n 1\n -1\n",
+            "stderr": ""
+          },
+          "status": "pass"
+        },
+        "O2": {
+          "build": {
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "run": {
+            "returncode": 0,
+            "stdout": " 1 1\n 2 4\n 3 9\n 4\n 5\n 3\n 1\n -1\n",
+            "stderr": ""
+          },
+          "status": "pass"
+        }
+      },
+      "sha256": "c3d056331ac88200526c7bb9d2458e511bc08c6ea9e89aa0492a63f346d69692",
+      "reference_build": {
+        "returncode": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "reference_run": {
+        "returncode": 0,
+        "stdout": "           1           1\n           2           4\n           3           9\n           4\n           5\n           3\n           1\n          -1\n",
+        "stderr": ""
+      },
+      "status": "pass"
+    },
+    {
+      "source": "xparam.f90",
+      "results": {
+        "O0": {
+          "build": {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "error: unexpected keyword print: expected one of: '='\n  \u00e2\u201d\u0152\u00e2\u201d\u20ac C:\\c\\ofort\\tests\\cases\\xparam.f90:4:1\n  \u00e2\u201d\u201a\n4 \u00e2\u201d\u201a print*,i,j\n  \u00e2\u201d\u201a ^^^^^\n\nParse: unexpected keyword print: expected one of: '='\nError: parse failed\n"
+          },
+          "status": "compile_error"
+        },
+        "O2": {
+          "build": {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "error: unexpected keyword print: expected one of: '='\n  \u00e2\u201d\u0152\u00e2\u201d\u20ac C:\\c\\ofort\\tests\\cases\\xparam.f90:4:1\n  \u00e2\u201d\u201a\n4 \u00e2\u201d\u201a print*,i,j\n  \u00e2\u201d\u201a ^^^^^\n\nParse: unexpected keyword print: expected one of: '='\nError: parse failed\n"
+          },
+          "status": "compile_error"
+        }
+      },
+      "sha256": "b61b6d24d30b488eab4076d658cf619223c0733933579d0b7237745deccbaf7e",
+      "reference_build": {
+        "returncode": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "reference_run": {
+        "returncode": 0,
+        "stdout": "           5           7\n",
+        "stderr": ""
+      },
+      "status": "fail"
+    },
+    {
+      "source": "xarray_init.f90",
+      "results": {
+        "O0": {
+          "build": {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "Error: declaration initialization without PARAMETER is not yet supported\n"
+          },
+          "status": "compile_error"
+        },
+        "O2": {
+          "build": {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "Error: declaration initialization without PARAMETER is not yet supported\n"
+          },
+          "status": "compile_error"
+        }
+      },
+      "sha256": "011c42c8809a31dbbf22a017b07ce25594fb14eec3c60bba06d0fbccd1aaef1b",
+      "reference_build": {
+        "returncode": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "reference_run": {
+        "returncode": 0,
+        "stdout": "           1           2   1.5000000000000000        2.5000000000000000     \n",
+        "stderr": ""
+      },
+      "status": "fail"
+    },
+    {
+      "source": "xarray_section.f90",
+      "results": {
+        "O0": {
+          "build": {
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "run": {
+            "returncode": 0,
+            "stdout": " 10.0 30.0 50.0\n 30.0 40.0\n 5.0 5.0\n 10.0 30.0 5.0\n 2.0 4.0 6.0\n 9.0 2.0 9.0 4.0 9.0 6.0\n",
+            "stderr": ""
+          },
+          "status": "pass"
+        },
+        "O2": {
+          "build": {
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "run": {
+            "returncode": 0,
+            "stdout": " 10.0 30.0 50.0\n 30.0 40.0\n 5.0 5.0\n 10.0 30.0 5.0\n 2.0 4.0 6.0\n 9.0 2.0 9.0 4.0 9.0 6.0\n",
+            "stderr": ""
+          },
+          "status": "pass"
+        }
+      },
+      "sha256": "465911bf1f8483451348e09d01ebae762b227cf4e414ec5f5b251062df59d41f",
+      "reference_build": {
+        "returncode": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "reference_run": {
+        "returncode": 0,
+        "stdout": "   10.0000000       30.0000000       50.0000000    \n   30.0000000       40.0000000    \n   5.00000000       5.00000000    \n   10.0000000       30.0000000       5.00000000    \n   2.00000000       4.00000000       6.00000000    \n   9.00000000       2.00000000       9.00000000       4.00000000       9.00000000       6.00000000    \n",
+        "stderr": ""
+      },
+      "status": "pass"
+    },
+    {
+      "source": "xcharacter_len_expr.f90",
+      "results": {
+        "O0": {
+          "build": {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "error: unexpected '*': expected one of: kw_type, kw_class, kw_interface, kw_error, kw_allocate, keyword end, kw_forall, kw_where, kw_where_block, kw_public, kw_private, kw_return, keyword implicit, keyword print, kw_read, file_control, file_position, keyword write, keyword write, keyword if, kw_do, keyword integer, keyword real, keyword double, keyword character, keyword logical, identifier, ',', '=', '(', kw_call, kw_contains, kw_use, kw_select, kw_block, kw_exit, kw_cycle, kw_stop, keyword stop\n  \u00e2\u201d\u0152\u00e2\u201d\u20ac C:\\c\\ofort\\tests\\cases\\xcharacter_len_expr.f90:6:28\n  \u00e2\u201d\u201a\n6 \u00e2\u201d\u201a character, parameter :: tag*3 = \"abc\"\n  \u00e2\u201d\u201a                            ^\n\nParse: unexpected '*': expected one of: kw_type, kw_class, kw_interface, kw_error, kw_allocate, keyword end, kw_forall, kw_where, kw_where_block, kw_public, kw_private, kw_return, keyword implicit, keyword print, kw_read, file_control, file_position, keyword write, keyword write, keyword if, kw_do, keyword integer, keyword real, keyword double, keyword character, keyword logical, identifier, ',', '=', '(', kw_call, kw_contains, kw_use, kw_select, kw_block, kw_exit, kw_cycle, kw_stop, keyword stop\nError: parse failed\n"
+          },
+          "status": "compile_error"
+        },
+        "O2": {
+          "build": {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "error: unexpected '*': expected one of: kw_type, kw_class, kw_interface, kw_error, kw_allocate, keyword end, kw_forall, kw_where, kw_where_block, kw_public, kw_private, kw_return, keyword implicit, keyword print, kw_read, file_control, file_position, keyword write, keyword write, keyword if, kw_do, keyword integer, keyword real, keyword double, keyword character, keyword logical, identifier, ',', '=', '(', kw_call, kw_contains, kw_use, kw_select, kw_block, kw_exit, kw_cycle, kw_stop, keyword stop\n  \u00e2\u201d\u0152\u00e2\u201d\u20ac C:\\c\\ofort\\tests\\cases\\xcharacter_len_expr.f90:6:28\n  \u00e2\u201d\u201a\n6 \u00e2\u201d\u201a character, parameter :: tag*3 = \"abc\"\n  \u00e2\u201d\u201a                            ^\n\nParse: unexpected '*': expected one of: kw_type, kw_class, kw_interface, kw_error, kw_allocate, keyword end, kw_forall, kw_where, kw_where_block, kw_public, kw_private, kw_return, keyword implicit, keyword print, kw_read, file_control, file_position, keyword write, keyword write, keyword if, kw_do, keyword integer, keyword real, keyword double, keyword character, keyword logical, identifier, ',', '=', '(', kw_call, kw_contains, kw_use, kw_select, kw_block, kw_exit, kw_cycle, kw_stop, keyword stop\nError: parse failed\n"
+          },
+          "status": "compile_error"
+        }
+      },
+      "sha256": "8509d4a1323e01c1af85cf941531c8f112c20d1a461b518bfebe77cf16b008a6",
+      "reference_build": {
+        "returncode": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "reference_run": {
+        "returncode": 0,
+        "stdout": "           7\n           5           5           7           3\n helloabc\n",
+        "stderr": ""
+      },
+      "status": "fail"
+    },
+    {
+      "source": "xcharacter_len_star_parameter_concat.f90",
+      "results": {
+        "O0": {
+          "build": {
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "run": {
+            "returncode": 0,
+            "stdout": " file temp.txt already connected\n",
+            "stderr": ""
+          },
+          "status": "pass"
+        },
+        "O2": {
+          "build": {
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "run": {
+            "returncode": 0,
+            "stdout": " file temp.txt already connected\n",
+            "stderr": ""
+          },
+          "status": "pass"
+        }
+      },
+      "sha256": "11fbb04ebab7b90031bdaf00d76766232002f12e1afc79c344fe2e8aa81ad004",
+      "reference_build": {
+        "returncode": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "reference_run": {
+        "returncode": 0,
+        "stdout": " file temp.txt already connected\n",
+        "stderr": ""
+      },
+      "status": "pass"
+    },
+    {
+      "source": "xselect_case_selector_list.f90",
+      "results": {
+        "O0": {
+          "build": {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "error: unexpected ':': expected one of: defined_op, ',', dcolon, ')'\n  \u00e2\u201d\u0152\u00e2\u201d\u20ac C:\\c\\ofort\\tests\\cases\\xselect_case_selector_list.f90:6:10\n  \u00e2\u201d\u201a\n6 \u00e2\u201d\u201a   case (2:3,5)\n  \u00e2\u201d\u201a          ^\n\nParse: unexpected ':': expected one of: defined_op, ',', dcolon, ')'\nError: parse failed\n"
+          },
+          "status": "compile_error"
+        },
+        "O2": {
+          "build": {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "error: unexpected ':': expected one of: defined_op, ',', dcolon, ')'\n  \u00e2\u201d\u0152\u00e2\u201d\u20ac C:\\c\\ofort\\tests\\cases\\xselect_case_selector_list.f90:6:10\n  \u00e2\u201d\u201a\n6 \u00e2\u201d\u201a   case (2:3,5)\n  \u00e2\u201d\u201a          ^\n\nParse: unexpected ':': expected one of: defined_op, ',', dcolon, ')'\nError: parse failed\n"
+          },
+          "status": "compile_error"
+        }
+      },
+      "sha256": "8743905018f941ee7b5fcf06add6f80b2770e8b2fc5013b6180ed6fe6caf4841",
+      "reference_build": {
+        "returncode": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "reference_run": {
+        "returncode": 0,
+        "stdout": "           3\n",
+        "stderr": ""
+      },
+      "status": "fail"
+    },
+    {
+      "source": "xnumeric_integer_semantics_pending.f90",
+      "results": {
+        "O0": {
+          "build": {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "error: unexpected ',': expected one of: identifier\n  \u00e2\u201d\u0152\u00e2\u201d\u20ac C:\\c\\ofort\\tests\\cases\\xnumeric_integer_semantics_pending.f90:2:4\n  \u00e2\u201d\u201a\n2 \u00e2\u201d\u201a use, intrinsic :: iso_fortran_env, only: int64\n  \u00e2\u201d\u201a    ^\n\nParse: unexpected ',': expected one of: identifier\nError: parse failed\n"
+          },
+          "status": "compile_error"
+        },
+        "O2": {
+          "build": {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "error: unexpected ',': expected one of: identifier\n  \u00e2\u201d\u0152\u00e2\u201d\u20ac C:\\c\\ofort\\tests\\cases\\xnumeric_integer_semantics_pending.f90:2:4\n  \u00e2\u201d\u201a\n2 \u00e2\u201d\u201a use, intrinsic :: iso_fortran_env, only: int64\n  \u00e2\u201d\u201a    ^\n\nParse: unexpected ',': expected one of: identifier\nError: parse failed\n"
+          },
+          "status": "compile_error"
+        }
+      },
+      "sha256": "b2673d5c26564bfb628a6b2f012d9f2757afe0e294d31a7c0c29c30e03ff57e2",
+      "reference_build": {
+        "returncode": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "reference_run": {
+        "returncode": 0,
+        "stdout": "          -2          -1           2\n           2           1          -2\n           0          -1\n          -4           4         512\n T         150000000000\n           5000000001           3333333333\n",
+        "stderr": ""
+      },
+      "status": "fail"
+    },
+    {
+      "source": "xnumeric_mixed_kinds_pending.f90",
+      "results": {
+        "O0": {
+          "build": {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "error: unexpected ',': expected one of: identifier\n  \u00e2\u201d\u0152\u00e2\u201d\u20ac C:\\c\\ofort\\tests\\cases\\xnumeric_mixed_kinds_pending.f90:2:4\n  \u00e2\u201d\u201a\n2 \u00e2\u201d\u201a use, intrinsic :: iso_fortran_env, only: int32, int64, real32, real64\n  \u00e2\u201d\u201a    ^\n\nParse: unexpected ',': expected one of: identifier\nError: parse failed\n"
+          },
+          "status": "compile_error"
+        },
+        "O2": {
+          "build": {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "error: unexpected ',': expected one of: identifier\n  \u00e2\u201d\u0152\u00e2\u201d\u20ac C:\\c\\ofort\\tests\\cases\\xnumeric_mixed_kinds_pending.f90:2:4\n  \u00e2\u201d\u201a\n2 \u00e2\u201d\u201a use, intrinsic :: iso_fortran_env, only: int32, int64, real32, real64\n  \u00e2\u201d\u201a    ^\n\nParse: unexpected ',': expected one of: identifier\nError: parse failed\n"
+          },
+          "status": "compile_error"
+        }
+      },
+      "sha256": "477263695e84178a08a7ec98606204823f9ef15297d54babc259e7d37a5c93db",
+      "reference_build": {
+        "returncode": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "reference_run": {
+        "returncode": 0,
+        "stdout": " T          10000000003\n T\n T\n T\n T\n T\n T\n T\n",
+        "stderr": ""
+      },
+      "status": "fail"
+    },
+    {
+      "source": "xoptional.f90",
+      "results": {
+        "O0": {
+          "build": {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "Error: assumed CHARACTER length is currently supported only for scalar PARAMETER declarations\n"
+          },
+          "status": "compile_error"
+        },
+        "O2": {
+          "build": {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "Error: assumed CHARACTER length is currently supported only for scalar PARAMETER declarations\n"
+          },
+          "status": "compile_error"
+        }
+      },
+      "sha256": "645ccd20cd7138563178a31a7a3037e70aa3f9b09f7266092a32042fbb4a7542",
+      "reference_build": {
+        "returncode": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "reference_run": {
+        "returncode": 0,
+        "stdout": "   10.0000000    \n   20.0000000    \n   5.00000000    \n x =    5.00000000    \n   7.00000000    \n   21.0000000    \n",
+        "stderr": ""
+      },
+      "status": "fail"
+    },
+    {
+      "source": "xwhere_basic.f90",
+      "results": {
+        "O0": {
+          "build": {
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "run": {
+            "returncode": 0,
+            "stdout": " 10 2 30 4 50\n 1 2 1 2 1\n",
+            "stderr": ""
+          },
+          "status": "pass"
+        },
+        "O2": {
+          "build": {
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "run": {
+            "returncode": 0,
+            "stdout": " 10 2 30 4 50\n 1 2 1 2 1\n",
+            "stderr": ""
+          },
+          "status": "pass"
+        }
+      },
+      "sha256": "7a14cc66b8996a9a1eeb1ed25558f22bb57c5c07d2c5b72dfdf909c2f922d424",
+      "reference_build": {
+        "returncode": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "reference_run": {
+        "returncode": 0,
+        "stdout": "          10           2          30           4          50\n           1           2           1           2           1\n",
+        "stderr": ""
+      },
+      "status": "pass"
+    },
+    {
+      "source": "xwhere_elsewhere_forms.f90",
+      "results": {
+        "O0": {
+          "build": {
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "run": {
+            "returncode": 0,
+            "stdout": " 10 20 10 20\n 1 2 1 2\n",
+            "stderr": ""
+          },
+          "status": "pass"
+        },
+        "O2": {
+          "build": {
+            "returncode": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "run": {
+            "returncode": 0,
+            "stdout": " 10 20 10 20\n 1 2 1 2\n",
+            "stderr": ""
+          },
+          "status": "pass"
+        }
+      },
+      "sha256": "c29c9b98a98624f716865d95f898f38b3bd791da288afa10547aa5f57264a862",
+      "reference_build": {
+        "returncode": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "reference_run": {
+        "returncode": 0,
+        "stdout": "          10          20          10          20\n           1           2           1           2\n",
+        "stderr": ""
+      },
+      "status": "pass"
+    },
+    {
+      "source": "xwhere_mask_capture_pending.f90",
+      "results": {
+        "O0": {
+          "build": {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "Error: unsupported expression in numeric array reduction\n"
+          },
+          "status": "compile_error"
+        },
+        "O2": {
+          "build": {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "Error: unsupported expression in numeric array reduction\n"
+          },
+          "status": "compile_error"
+        }
+      },
+      "sha256": "0c3152033f0db6a82ad1143b40a52f32f4322d3c99b59118197b0c5c90653b00",
+      "reference_build": {
+        "returncode": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "reference_run": {
+        "returncode": 0,
+        "stdout": " T\n T\n T\n T\n",
+        "stderr": ""
+      },
+      "status": "fail"
+    },
+    {
+      "source": "xwhere_nested_elsewhere_pending.f90",
+      "results": {
+        "O0": {
+          "build": {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "Error: WHERE mask must be an array\n"
+          },
+          "status": "compile_error"
+        },
+        "O2": {
+          "build": {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "Error: WHERE mask must be an array\n"
+          },
+          "status": "compile_error"
+        }
+      },
+      "sha256": "7ef38d5f4c1e30f7911b0c593be06bbcf3c113802f52b464620162357f7486e8",
+      "reference_build": {
+        "returncode": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "reference_run": {
+        "returncode": 0,
+        "stdout": " T\n T\n",
+        "stderr": ""
+      },
+      "status": "fail"
+    },
+    {
+      "source": "xintrinsic_reductions_dim_mask_pending.f90",
+      "results": {
+        "O0": {
+          "build": {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "Error: keyword arguments are currently supported only for SIZE, LBOUND, and UBOUND\n"
+          },
+          "status": "compile_error"
+        },
+        "O2": {
+          "build": {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "Error: keyword arguments are currently supported only for SIZE, LBOUND, and UBOUND\n"
+          },
+          "status": "compile_error"
+        }
+      },
+      "sha256": "0201a553308aa09dfdd395039fdddd66267ae05587c2ab7b6e34553973d8c9fd",
+      "reference_build": {
+        "returncode": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "reference_run": {
+        "returncode": 0,
+        "stdout": " T\n T\n T\n T\n T\n T\n T\n T\n T\n T\n T\n T\n T\n T\n T\n T\n T\n",
+        "stderr": ""
+      },
+      "status": "fail"
+    },
+    {
+      "source": "xintrinsic_locations_dim_back_pending.f90",
+      "results": {
+        "O0": {
+          "build": {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "Error: keyword arguments are currently supported only for SIZE, LBOUND, and UBOUND\n"
+          },
+          "status": "compile_error"
+        },
+        "O2": {
+          "build": {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "Error: keyword arguments are currently supported only for SIZE, LBOUND, and UBOUND\n"
+          },
+          "status": "compile_error"
+        }
+      },
+      "sha256": "44853ffe3f1f47d53159871e2ce6002f3fa3247c406d70549cbd5aa491843a87",
+      "reference_build": {
+        "returncode": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "reference_run": {
+        "returncode": 0,
+        "stdout": " T\n T\n T\n T\n T\n T\n T\n T\n T\n T\n T\n T\n T\n T\n T\n",
+        "stderr": ""
+      },
+      "status": "fail"
+    },
+    {
+      "source": "xintrinsic_transform_order_pending.f90",
+      "results": {
+        "O0": {
+          "build": {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "Error: keyword arguments are currently supported only for SIZE, LBOUND, and UBOUND\n"
+          },
+          "status": "compile_error"
+        },
+        "O2": {
+          "build": {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "Error: keyword arguments are currently supported only for SIZE, LBOUND, and UBOUND\n"
+          },
+          "status": "compile_error"
+        }
+      },
+      "sha256": "b937297b5f7f108dd19d1c085439f6d654ceb3ce98274cd578f0336dbda1c993",
+      "reference_build": {
+        "returncode": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "reference_run": {
+        "returncode": 0,
+        "stdout": " T\n T\n T\n T\n T\n T\n T\n T\n T\n T\n T\n",
+        "stderr": ""
+      },
+      "status": "fail"
+    },
+    {
+      "source": "xcharacter_overlap_assignment_pending.f90",
+      "results": {
+        "O0": {
+          "build": {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "error: unexpected '(': expected one of: '='\n   \u00e2\u201d\u0152\u00e2\u201d\u20ac C:\\c\\ofort\\tests\\cases\\xcharacter_overlap_assignment_pending.f90:23:9\n   \u00e2\u201d\u201a\n23 \u00e2\u201d\u201a words(:)(2:4) = words(:)(1:3)\n   \u00e2\u201d\u201a         ^\n\nParse: unexpected '(': expected one of: '='\nError: parse failed\n"
+          },
+          "status": "compile_error"
+        },
+        "O2": {
+          "build": {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "error: unexpected '(': expected one of: '='\n   \u00e2\u201d\u0152\u00e2\u201d\u20ac C:\\c\\ofort\\tests\\cases\\xcharacter_overlap_assignment_pending.f90:23:9\n   \u00e2\u201d\u201a\n23 \u00e2\u201d\u201a words(:)(2:4) = words(:)(1:3)\n   \u00e2\u201d\u201a         ^\n\nParse: unexpected '(': expected one of: '='\nError: parse failed\n"
+          },
+          "status": "compile_error"
+        }
+      },
+      "sha256": "efbd4c057051ab2601e4788813694434a5d847bfc728092a3e8e454904b95eee",
+      "reference_build": {
+        "returncode": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "reference_run": {
+        "returncode": 0,
+        "stdout": " T\n T\n T\n T\n T\n",
+        "stderr": ""
+      },
+      "status": "fail"
+    }
+  ],
+  "summary": {
+    "pass": 5,
+    "fail": 13
+  }
+}

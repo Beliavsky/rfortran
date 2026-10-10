@@ -772,6 +772,7 @@ fn expand(
     Ok(())
 }
 pub fn resolve(mut p: Program) -> Result<Program> {
+    p = crate::array_bounds::resolve(p)?;
     crate::elemental::validate_program(&p)?;
     fn collect(body: &mut Vec<Stmt>, routines: &mut HashMap<String, Routine>) {
         body.retain_mut(|s| match s {

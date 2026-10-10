@@ -574,10 +574,13 @@ ArrayDecl: Stmt = {
 };
 
 DimList: Vec<Expr> = {
-    COLON => vec![Expr::Ident("@deferred_extent".into())],
-    <e: RhsExpr> => vec![e],
-    <mut v: DimList> COMMA <e: RhsExpr> => { v.push(e); v },
-    <mut v: DimList> COMMA COLON => { v.push(Expr::Ident("@deferred_extent".into())); v },
+    <d:DeclaredDimension> => vec![d],
+    <mut v:DimList> COMMA <d:DeclaredDimension> => { v.push(d); v },
+};
+DeclaredDimension: Expr = {
+    COLON => Expr::Ident("@deferred_extent".into()),
+    <e:RhsExpr> => e,
+    <lower:RhsExpr> COLON <upper:RhsExpr> => Expr::Call("@declared_bounds".into(),vec![lower,upper]),
 };
 
 CaseBlocks: Vec<CaseOrDefault> = {

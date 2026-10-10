@@ -243,7 +243,7 @@ impl Lowerer {
         fn has_procedure(e: &Expr, functions: &HashMap<String, TypeSpec>, shapes: &Shapes) -> bool {
             match e {
                 Expr::Call(n, args) | Expr::Index(n, args) => {
-                    (!shapes.contains_key(n) && functions.contains_key(n))
+                    (!n.starts_with("@lower_bound_index_") && !shapes.contains_key(n) && functions.contains_key(n))
                         || args.iter().any(|e| has_procedure(e, functions, shapes))
                 }
                 Expr::Bin(_, a, b) => {

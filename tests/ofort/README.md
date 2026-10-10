@@ -41,6 +41,10 @@ binary hash/path, and reference compiler version for investigation.
 - baseline.json: 3/18 cases pass at both O0/O2; 15 compile failures.
 - after-where.json: 5/18 pass; 13 compile failures. xwhere_basic and
   xwhere_elsewhere_forms now pass. All 18 reference programs build and run.
+- after-explicit-bounds.json: still 5/18 pass. Four cases now parse their explicit
+  lower-bound declarations and reach later unsupported features: nested/rank-two
+  WHERE and array-intrinsic keyword arguments. The local 89_explicit_bounds.f90
+  regression tests the new behavior independently against gfortran.
 
 The remaining WHERE probes exercise nested/multidimensional masking, constructors
 inside expressions, and CSHIFT, which need further work. The independent local

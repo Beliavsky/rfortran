@@ -695,3 +695,37 @@ comparison), 2 compatibility-runner tests, and all 35 batch tests passed. The
 release executable was rebuilt; its external ofort scan confirms 5 passes and
 13 compilation failures at both O0/O2, with all reference runs successful.
 Linux/macOS execution remains untested.
+
+
+## Checkpoint 29: explicit fixed array lower bounds
+
+Declarations now accept constant INTEGER lower:upper dimensions, with named
+parameters resolved before normalization. The new array_bounds pass preserves
+whole-array LBOUND/UBOUND values and rebases indices/sections to existing
+one-based storage before argument specialization and multidimensional flattening.
+Each dynamic explicit-bound index is evaluated once in a generated guard that
+checks the original range before subtraction, preventing overflow or cross-column
+aliasing. Constant bad indices and sections receive original-range diagnostics.
+Extent arithmetic is checked using wider intermediates.
+
+Fixture 89 exercises negative/zero/positive lower bounds, column-major dynamic
+indexing, explicit reversed sections, omitted endpoints, section assignments,
+whole/section bounds inquiries, empty rank-one arrays, WHERE, LOGICAL elements,
+local scope bounds, and actual/dummy rebasing. The focused Python tests compare
+interpreter and native O0/O2 output with gfortran and check diagnostics/runtime
+range failures, including an extreme invalid INTEGER index.
+
+The external selection remains at 5/18 passes. Its four explicit-declaration
+parser failures now advance to unsupported WHERE mask/shape handling and
+array-intrinsic keyword arguments. These are recorded in after-explicit-bounds.json;
+this checkpoint does not claim that those full examples compile. Runtime-dependent
+bounds, explicit assumed-shape lower bounds and allocatable bounds remain outside
+this subset; existing zero-extent multidimensional restrictions also remain.
+
+Validation on Windows x64: all 74 Rust unit tests, 89 native regression fixtures,
+36 batch tests, and 3 focused bounds tests with both debug and release compilers
+passed. The focused execution test also matches gfortran. The release executable
+was rebuilt and the refreshed external report confirms 5 passes / 13 compile
+failures at both O0/O2. All 18 reference builds/runs succeeded. The full utility
+build still stops at the existing CALL keyword argument at combined line 1963.
+Linux/macOS execution remains untested.
