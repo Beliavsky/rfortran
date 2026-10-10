@@ -283,7 +283,7 @@ Stmt: Stmt = {
     },
     KW_WRITE_EMPTY LPAREN <unit:WriteUnit> COMMA <fmt:WriteFormat> RPAREN =>
         Stmt::CallSub{name:"@write".into(),args:vec![unit,fmt]},
-    KW_PRINT <fmt: STR> COMMA <items: ExprList> => { let mut args = vec![Expr::Str(fmt)]; args.extend(items); Stmt::CallSub { name: "@formatted_print".into(), args } },
+    KW_PRINT <fmt: RhsExpr> COMMA <items: ExprList> => { let mut args = vec![fmt]; args.extend(items); Stmt::CallSub { name: "@formatted_print".into(), args } },
     KW_PUBLIC => Stmt::Accessibility { public: true, names: vec![] },
     KW_PRIVATE => Stmt::Accessibility { public: false, names: vec![] },
     KW_PUBLIC DCOLON <names: GenericNames> => Stmt::Accessibility { public: true, names },
@@ -507,7 +507,7 @@ Primary: Expr = {
 };
 
 WriteUnit: Expr = { STAR => Expr::IntLit("6".into()), <unit:RhsExpr> => unit };
-WriteFormat: Expr = { STAR => Expr::IntLit("0".into()), <fmt:STR> => Expr::Str(fmt) };
+WriteFormat: Expr = { STAR => Expr::Call("@list_directed".into(), vec![]), <fmt:RhsExpr> => fmt };
 
 ForallControls: Vec<Expr> = {
     <first:ForallControl> <rest:(COMMA <ForallControl>)*> => {

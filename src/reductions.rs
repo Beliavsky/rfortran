@@ -249,9 +249,8 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                     bail!("WRITE currently supports only standard output (* or constant unit 6)");
                 }
                 stmt=match &args[1] {
-                    Expr::IntLit(tag) if tag=="0" => Stmt::Print{items:args[2..].to_vec()},
-                    Expr::Str(_) => Stmt::CallSub{name:"@formatted_print".into(),args:args[1..].to_vec()},
-                    _ => bail!("WRITE requires a supported constant format"),
+                    Expr::Call(tag, _) if tag=="@list_directed" => Stmt::Print{items:args[2..].to_vec()},
+                    _ => Stmt::CallSub{name:"@formatted_print".into(),args:args[1..].to_vec()},
                 };
             }
         }
@@ -274,9 +273,14 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                 continue;
             }
         }
-        if let Stmt::CallSub {name,args}=&stmt {
+        if let Stmt::CallSub {name,args}=&mut stmt {
             if name=="@allocate" {bail!("ALLOCATE is currently supported only in specialized local array subroutines");}
-            if name=="@formatted_print" { let Some(Expr::Str(fmt))=args.first() else {bail!("PRINT format must be constant");};crate::formatting::parse(fmt,args.len()-1)?; }
+            if name=="@formatted_print" {
+                let fmt = crate::parameters::character_constant(&args[0])
+                    .map_err(|_| anyhow::anyhow!("WRITE/PRINT format must be a supported constant CHARACTER expression; runtime formats and numeric format labels are not yet supported"))?;
+                crate::formatting::parse(&fmt,args.len()-1)?;
+                args[0] = Expr::Str(fmt);
+            }
             if name=="@error_stop" && !matches!(args.as_slice(),[Expr::Str(_)]) {bail!("ERROR STOP currently requires a character constant");}
         }
         if let Stmt::CallSub {name,args} = &mut stmt {

@@ -106,7 +106,7 @@ fn real_constant(e: &Expr) -> Result<f64> {
 }
 
 // Character constants are lowered to literals before either backend sees them.
-fn character_constant(expr: &Expr) -> Result<String> {
+pub(crate) fn character_constant(expr: &Expr) -> Result<String> {
     match expr {
         Expr::Str(value) => Ok(value.clone()),
         Expr::Bin(BinOp::Concat, left, right) => {

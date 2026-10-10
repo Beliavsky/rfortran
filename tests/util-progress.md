@@ -508,3 +508,25 @@ Validation on Windows x64: 74 Rust unit tests, all 82 native regression fixtures
 3 focused inquiry tests with debug and release compilers, and 29 batch tests
 passed. The release executable was rebuilt and the next utility parser error
 confirmed with it. Linux/macOS execution remains untested.
+
+The twenty-third checkpoint accepts expression formats in WRITE and PRINT.
+Supported constant CHARACTER expressions, including imported PARAMETERs,
+padded named formats, and concatenation, are folded before output lowering.
+WRITE without output items also accepts named formats. List-directed WRITE now
+uses a distinct internal marker so numeric format labels (including zero) cannot
+silently become list-directed output. Runtime character formats and numeric
+labels produce explicit unsupported-feature diagnostics. Existing descriptor,
+output-unit, and format-reversion limits remain.
+
+Test 83 and `python tests/test_named_formats.py` compare exact formatted output
+in the interpreter and native O0/O2 builds with gfortran, and cover unsupported
+formats, units, and mismatched output lists. The batch suite covers the fixture.
+Original utility sources remain unchanged. Parsing now passes the variable
+format in `print_wall_time_elapsed` and stops at `ADVANCE="no"` on combined-source
+line 1261. That variable format still needs runtime formatting support, and
+full utility compilation remains incomplete.
+
+Validation on Windows x64: 74 Rust unit tests, all 83 native regression fixtures,
+2 focused format tests with both debug and release compilers, and all 30 batch
+tests passed. The release executable was rebuilt and the next utility parser
+error confirmed with it. Linux/macOS execution remains untested.

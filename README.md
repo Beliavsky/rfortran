@@ -73,6 +73,15 @@ variable copies, concatenation, TRIM, and overlapping source/destination storage
 This subset uses non-NUL ASCII. Runtime-dependent lengths, CHARACTER arrays,
 and CHARACTER-valued functions remain unsupported and produce diagnostics.
 
+## Formatted output
+
+WRITE and PRINT accept constant CHARACTER format expressions, including named
+PARAMETERs, imported constants, and concatenation. WRITE supports standard
+output (`*` or constant unit 6), with or without an output list. The supported
+flat formats use A, I, F, L descriptors and quoted literals. Runtime character
+formats, numeric format labels, format reversion, and ADVANCE are not yet
+supported; unsupported forms produce diagnostics.
+
 ## File input
 
 The current external-file I/O subset supports read-only sequential formatted
@@ -158,6 +167,7 @@ python tests/test_else_if.py
 python tests/test_multi_forall.py
 python tests/test_array_constructors.py
 python tests/test_bound_inquiries.py
+python tests/test_named_formats.py
 ```
 
 The Python tests use `target/debug/rfort` (with `.exe` on Windows).
