@@ -113,6 +113,7 @@ pub enum TypeSpec {
     RealKind(String),
     DoublePrecision,
     Character(Option<usize>),
+    CharacterAssumed,
     Logical,
 }
 

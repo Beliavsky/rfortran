@@ -698,7 +698,7 @@ pub fn interpret(program: &Program) {
                             continue;
                         }
                         match kind {
-                            TypeSpec::RealKind(_) | TypeSpec::IntegerKind(_) => unreachable!("unresolved numeric kind"),
+                            TypeSpec::CharacterAssumed | TypeSpec::RealKind(_) | TypeSpec::IntegerKind(_) => unreachable!("unresolved numeric kind"),
                             TypeSpec::Integer(_) => {
                                 frame.env_int.entry(n.clone()).or_insert(0);
                             }
@@ -725,7 +725,7 @@ pub fn interpret(program: &Program) {
                             if let Ok(v128) = i128::from_str_radix(s.as_str(), 10) {
                                 let len = usize::try_from(v128).unwrap_or(0);
                                 match kind {
-                            TypeSpec::RealKind(_) | TypeSpec::IntegerKind(_) => unreachable!("unresolved numeric kind"),
+                            TypeSpec::CharacterAssumed | TypeSpec::RealKind(_) | TypeSpec::IntegerKind(_) => unreachable!("unresolved numeric kind"),
                                     TypeSpec::Integer(_) => {
                                         fr.env_int_arrays.insert(name.clone(), vec![0; len]);
                                     }

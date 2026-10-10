@@ -14,6 +14,7 @@ fn show_type(type_spec: &TypeSpec) -> String {
         TypeSpec::Real => "REAL(4)".to_string(),
         TypeSpec::DoublePrecision => "REAL(8)".to_string(),
         TypeSpec::Logical => "LOGICAL".to_string(),
+        TypeSpec::CharacterAssumed => "CHARACTER(len=*)".to_string(),
         TypeSpec::Character(None) => "CHARACTER".to_string(),
         TypeSpec::Character(Some(len)) => format!("CHARACTER(len={})", len),
     }

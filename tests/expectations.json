@@ -468,6 +468,13 @@
       "program_exit_code": 1,
       "program_stdout": "",
       "program_stderr": "ERROR STOP array `a` dimension 1: subscript outside 1:2\n"
+    },
+    "68_character_parameters": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stdout": " [util::ready]\n [xy   ]\n [abcde]\n Ax\n first\nsecond\n util::child!\n",
+      "program_stderr": ""
     }
   }
 }

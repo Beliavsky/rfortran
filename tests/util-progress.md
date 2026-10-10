@@ -97,7 +97,23 @@ scalar integer types of at most 64 bits. Existing initialization diagnostics
 refer to the flattened element number. Numeric matrix elements are INTEGER
 kinds 1/2/4/8, REAL, or DOUBLE PRECISION.
 
-The full utility program still does not compile. Its next error is
-`character(len=*), parameter :: newl = achar(10), ...`. Further blockers include user-defined dotted
+The seventh checkpoint adds scalar CHARACTER PARAMETER declarations, including
+`character(len=*)` and `character(*)` inferred lengths, literal concatenation,
+and constant CHAR/ACHAR calls with integer constant expressions. Explicit
+lengths pad or truncate each initializer; bare CHARACTER has length one.
+Imported and host-associated character constants retain their resolved lengths.
+Test 68 checks module imports, host association, padding, truncation, zero
+length, concatenation, and embedded newlines against gfortran, native O0/O2,
+and the interpreter. The batch suite also builds it as two source files.
+
+Character constant evaluation currently accepts non-NUL ASCII only; CHAR and
+ACHAR accept codes 1 through 127. Character array parameters and assumed-length
+variables/dummies are explicitly rejected. Runtime character intrinsics,
+nonconstant or named length selectors, and general character arrays remain
+outside this checkpoint.
+
+The full utility program still does not compile. Its next parser error is the
+multidimensional section `xx(2:,:)` in `diff_mat`. Its character array parameters
+also remain unsupported. Further blockers include user-defined dotted
 operators such as `.in.` and `.exclude.`. The utility library also exercises
 features beyond the currently implemented array, character, and I/O subsets.

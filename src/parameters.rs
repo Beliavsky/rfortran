@@ -10,6 +10,7 @@ fn kind_number(name: &str, constants: &Constants) -> Result<i64> {
     name.parse().or_else(|_| evaluate(&Expr::Ident(name.into()), constants))
 }
 fn resolve_kind(kind: &mut TypeSpec, constants: &Constants) -> Result<()> {
+    if matches!(kind, TypeSpec::CharacterAssumed) { bail!("assumed CHARACTER length is currently supported only for scalar PARAMETER declarations"); }
     if let TypeSpec::IntegerKind(name) = kind {
         let value = kind_number(name, constants)?;
         if !matches!(value, 1 | 2 | 4 | 8 | 16) { bail!("unsupported INTEGER kind {value}; supported kinds are 1, 2, 4, 8 and 16"); }
@@ -58,6 +59,41 @@ fn real_constant(e: &Expr) -> Result<f64> {
     };
     if !value.is_finite() { bail!("non-finite real PARAMETER initializer"); }
     Ok(value)
+}
+
+// Character constants are lowered to literals before either backend sees them.
+fn character_constant(expr: &Expr) -> Result<String> {
+    match expr {
+        Expr::Str(value) => Ok(value.clone()),
+        Expr::Bin(BinOp::Concat, left, right) => {
+            Ok(character_constant(left)? + &character_constant(right)?)
+        }
+        Expr::Call(name, args) if matches!(name.as_str(), "char" | "achar") && args.len() == 1 => {
+            let code = integer_constant(&args[0])?;
+            // Native strings currently use NUL-terminated UTF-8 storage.
+            if !(1..=127).contains(&code) {
+                bail!("constant {name} currently supports character codes 1 through 127");
+            }
+            Ok(char::from(code as u8).to_string())
+        }
+        _ => bail!("CHARACTER PARAMETER initializer must be a supported character constant expression"),
+    }
+}
+fn character_parameter(expr: &Expr, kind: &TypeSpec) -> Result<Expr> {
+    let mut value = character_constant(expr)?;
+    if !value.is_ascii() || value.contains('\0') {
+        bail!("CHARACTER PARAMETER currently requires non-NUL ASCII characters");
+    }
+    let length = match kind {
+        TypeSpec::CharacterAssumed => value.len(),
+        TypeSpec::Character(length) => length.unwrap_or(1),
+        _ => unreachable!(),
+    };
+    value.truncate(length);
+    value.try_reserve(length.saturating_sub(value.len()))
+        .context("CHARACTER PARAMETER length is too large")?;
+    while value.len() < length { value.push(' '); }
+    Ok(Expr::Str(value))
 }
 
 pub fn resolve(mut program: Program) -> Result<Program> {
@@ -190,12 +226,12 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
             {
                 bail!("declaration initialization without PARAMETER is not yet supported");
             }
-            resolve_kind(kind, &constants)?;
+            if !matches!(kind, TypeSpec::CharacterAssumed) { resolve_kind(kind, &constants)?; }
             if matches!(kind, TypeSpec::Integer(Some(k)) if *k != 4) {
                 bail!("nondefault-kind INTEGER PARAMETER declarations are not yet supported");
             }
-            if !matches!(kind, TypeSpec::Integer(None | Some(4)) | TypeSpec::Real | TypeSpec::DoublePrecision) {
-                bail!("only numeric PARAMETER declarations are currently supported");
+            if !matches!(kind, TypeSpec::Integer(None | Some(4)) | TypeSpec::Real | TypeSpec::DoublePrecision | TypeSpec::Character(_) | TypeSpec::CharacterAssumed) {
+                bail!("only numeric and character PARAMETER declarations are currently supported");
             }
             if attributes
                 .iter()
@@ -214,6 +250,7 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
                 let mut initializer = initializer.clone();
                 rewrite_expr(&mut initializer, &constants)?;
                 if arrays.contains(&key) {
+                    if matches!(kind, TypeSpec::Character(_) | TypeSpec::CharacterAssumed) { bail!("CHARACTER array PARAMETER declarations are not yet supported"); }
                     let Expr::Call(tag, items) = initializer else { bail!("array PARAMETER requires an array constructor"); };
                     if tag != "@array_constructor" { bail!("array PARAMETER requires an array constructor"); }
                     let values: Vec<Expr> = items.iter().map(|e| -> Result<Expr> { Ok(if matches!(kind, TypeSpec::Integer(_)) { Expr::IntLit(evaluate(e, &constants)?.to_string()) } else { real_literal(if matches!(kind, TypeSpec::Real) { real_constant(e)? as f32 as f64 } else { real_constant(e)? }, matches!(kind, TypeSpec::DoublePrecision)) }) }).collect::<Result<_>>()?;
@@ -221,7 +258,9 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
                     array_values.insert(key, values);
                     continue;
                 }
-                let value = if matches!(kind, TypeSpec::Integer(_)) {
+                let value = if matches!(kind, TypeSpec::Character(_) | TypeSpec::CharacterAssumed) {
+                    character_parameter(&initializer, kind).with_context(|| format!("invalid initializer for PARAMETER `{name}`"))?
+                } else if matches!(kind, TypeSpec::Integer(_)) {
                     Expr::IntLit(evaluate(&initializer, &constants).with_context(|| format!("invalid initializer for PARAMETER `{name}`"))?.to_string())
                 } else {
                     let value = real_constant(&initializer)?;
@@ -577,6 +616,33 @@ mod tests {
         let tokens = crate::lexer::lex(source);
         let p = crate::parser::parse_with_src(source, &tokens, "private.f90").unwrap();
         assert!(resolve(p).is_err());
+    }
+
+    #[test]
+    fn character_parameters_infer_and_adjust_lengths() {
+        let p = resolve_source("character(len=*), parameter :: a='ab', b=a//'cd', nl=achar(10)\ncharacter(len=4), parameter :: padded='x', cut=b//'ef'\ncharacter, parameter :: single='xyz'\ncharacter(len=0), parameter :: empty='x'", "print *, a,b,nl,padded,cut,single,empty").unwrap();
+        let Stmt::Print { items } = p.body.last().unwrap() else { panic!() };
+        let expected = ["ab", "abcd", "\n", "x   ", "abcd", "x", ""];
+        for (item, expected) in items.iter().zip(expected) {
+            assert!(matches!(item, Expr::Str(value) if value == expected), "{item:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_unsupported_character_parameters() {
+        for (declarations, statements, expected) in [
+            ("character(len=*), parameter :: a=1", "", "character constant expression"),
+            ("character(len=*), parameter :: a=char(0)", "", "codes 1 through 127"),
+            ("character(len=*), parameter :: a=achar(128)", "", "codes 1 through 127"),
+            ("character(len=*), parameter :: a=char(-1)", "", "codes 1 through 127"),
+            ("character(len=*), parameter :: a=char(1,1)", "", "character constant expression"),
+            ("character(len=*), parameter :: a='x'", "a='y'", "cannot modify PARAMETER"),
+            ("character(len=2), parameter :: a(2)=['ab','cd']", "", "CHARACTER array PARAMETER"),
+            ("character(len=*) :: a", "", "only for scalar PARAMETER"),
+        ] {
+            let error = format!("{:#}", resolve_source(declarations, statements).unwrap_err());
+            assert!(error.contains(expected), "{error}");
+        }
     }
 
     fn resolve_source(declarations: &str, statements: &str) -> Result<Program> {

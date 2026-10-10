@@ -123,6 +123,15 @@ class BatchSources(unittest.TestCase):
         program.write_text(main, encoding="utf-8")
         self.check_build([library, program], "6 2 3\n 11 12 21 22 31 32\n 12 13 22 23 32 33\n 32\n 31\n 8 7 56\n 1.5 2.5 1.5 1.5 7.0\n 2")
 
+    def test_character_parameters(self):
+        source = (ROOT / "tests" / "68_character_parameters.f90").read_text(encoding="utf-8")
+        module, main = source.split("end module character_values", 1)
+        library = self.directory / "character library.f90"
+        program = self.directory / "character main.f90"
+        library.write_text(module + "end module character_values\n", encoding="utf-8")
+        program.write_text(main, encoding="utf-8")
+        self.check_build([library, program], "[util::ready]\n [xy   ]\n [abcde]\n Ax\n first\nsecond\n util::child!")
+
     def test_missing_source_preserves_existing_outputs(self):
         sources = self.sources()
         exe = sources[-1].with_suffix(".exe")

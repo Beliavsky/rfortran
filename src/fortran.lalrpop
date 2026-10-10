@@ -346,6 +346,8 @@ TypeSpec: TypeSpec = {
     KW_REAL => TypeSpec::Real,
     KW_DOUBLE KW_PRECISION => TypeSpec::DoublePrecision,
     KW_CHARACTER => TypeSpec::Character(None),
+    KW_CHARACTER LPAREN KW_LEN EQ STAR RPAREN => TypeSpec::CharacterAssumed,
+    KW_CHARACTER LPAREN STAR RPAREN => TypeSpec::CharacterAssumed,
     KW_CHARACTER LPAREN KW_LEN EQ <n: INT> RPAREN => {
         let len = n.parse::<usize>().unwrap_or(0);
         TypeSpec::Character(Some(len))
