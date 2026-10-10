@@ -363,6 +363,16 @@ impl Lowerer {
         }
         match e {
             Expr::Ident(n) => self.check_association(n)?,
+            Expr::Call(n, _) if n == "spread" => {
+                let dims = self.shape(e,shapes)?.unwrap();
+                let Expr::Call(n,args) = e else { unreachable!() };
+                let axis = crate::parameters::integer_constant(&args[1])? as usize - 1;
+                self.expression(&mut args[0],shapes)?;
+                args[1] = int(total(&dims[..axis])?);
+                args[2] = int(dims[axis]);
+                args.push(Expr::Call("@spread_shape".into(),dims.into_iter().map(int).collect()));
+                *n = "@spread".into();
+            }
             Expr::Call(n, args) if n == "transpose" => {
                 let dims = self.shape(e,shapes)?.unwrap();
                 let Expr::Call(_,args) = e else { unreachable!() };
@@ -513,6 +523,19 @@ impl Lowerer {
 
     fn shape(&self, e: &Expr, shapes: &Shapes) -> Result<Option<Vec<i64>>> {
         match e {
+            Expr::Call(n,args) if n == "spread" => {
+                let mut dims = self.shape(&args[0],shapes)?.unwrap_or_default();
+                let dim = crate::parameters::integer_constant(&args[1]).context("SPREAD DIM must currently be a constant INTEGER")?;
+                if dim < 1 || dim as usize > dims.len()+1 { bail!("SPREAD DIM must be between 1 and {}",dims.len()+1); }
+                let copies = crate::parameters::integer_constant(&args[2]).context("SPREAD NCOPIES must currently be a constant INTEGER")?.max(0);
+                dims.insert(dim as usize - 1,copies);
+                total(&dims)?;
+                Ok(Some(dims))
+            }
+            Expr::Call(n,args) if n == "@spread" => {
+                let Expr::Call(_,dims) = &args[3] else { unreachable!() };
+                Ok(Some(dims.iter().map(crate::parameters::integer_constant).collect::<Result<Vec<_>>>()?))
+            }
             Expr::Call(n, args) if n == "transpose" => {
                 let mut dims = self.shape(&args[0],shapes)?.context("TRANSPOSE MATRIX must be a rank-two array")?;
                 if dims.len() != 2 { bail!("TRANSPOSE MATRIX must be a rank-two array"); }

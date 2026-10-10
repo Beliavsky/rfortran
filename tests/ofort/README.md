@@ -133,3 +133,8 @@ scalar/array SHIFT and BOUNDARY, default boundaries, extreme shifts, empty array
 and overlapping inputs. The first six transformation checks now pass in isolation.
 SPREAD, PACK and UNPACK still block the full probe; the selected sample remains
 at 11/18 passes.
+
+`105_spread.f90` and `python tests/test_spread.py` cover scalar/array replication,
+all insertion positions for matrix sources, nested calls, constructors and empty
+results. The first eight transformation checks now pass in isolation. PACK and
+UNPACK still block the complete probe; the selected sample remains at 11/18 passes.

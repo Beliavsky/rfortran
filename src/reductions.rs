@@ -171,6 +171,32 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             symbols.insert(temp.clone(),(kind,vec![int(count)]));
             *e = Expr::Ident(temp);
         }
+        Expr::Call(name,args) if name == "@spread" => {
+            lower_expr(&mut args[0],symbols,prefix,serial)?;
+            let stride = constant(&args[1])?.max(1);
+            let copies = constant(&args[2])?.max(1);
+            let Expr::Call(_,dims) = &args[3] else { unreachable!() };
+            let count = dims.iter().try_fold(1i64,|n,d| n.checked_mul(constant(d)?).context("SPREAD result extent overflow"))?;
+            *serial += 1;
+            let temp = format!("@spread_array_{serial}");
+            let index = format!("@spread_index_{serial}");
+            let scalar = format!("@spread_scalar_{serial}");
+            let id = Expr::Ident(index.clone());
+            // Remove the inserted axis from the result's column-major ordinal.
+            let ordinal = bin(BinOp::Sub,id.clone(),int(1));
+            let source_index = bin(BinOp::Add,int(1),bin(BinOp::Add,Expr::Call("modulo".into(),vec![ordinal.clone(),int(stride)]),bin(BinOp::Mul,bin(BinOp::Div,ordinal,int(stride*copies)),int(stride))));
+            let (mut value,len,kind) = element(&args[0],&source_index,symbols)?;
+            if len.is_none() {
+                prefix.push(Stmt::VarDecl { kind:kind.clone(),names:vec![scalar.clone()] });
+                prefix.push(Stmt::Assign { name:scalar.clone(),value });
+                value = Expr::Ident(scalar);
+            }
+            prefix.push(Stmt::ArrayDecl { kind:kind.clone(),name:temp.clone(),dims:vec![int(count)] });
+            prefix.push(Stmt::VarDecl { kind:TypeSpec::Integer(Some(8)),names:vec![index.clone()] });
+            prefix.push(Stmt::Do { var:index,start:int(1),end:int(count),body:vec![Stmt::AssignIndex { name:temp.clone(),indices:vec![id],value }] });
+            symbols.insert(temp.clone(),(kind,vec![int(count)]));
+            *e = Expr::Ident(temp);
+        }
         Expr::Call(name, args) if name == "@eoshift" => {
             lower_expr(&mut args[0],symbols,prefix,serial)?;
             lower_expr(&mut args[1],symbols,prefix,serial)?;
@@ -464,6 +490,7 @@ fn array_valued(e: &Expr, symbols: &Symbols) -> bool {
     match e {
         Expr::Ident(name) => symbols.get(name).is_some_and(|(_, dims)| !dims.is_empty()),
         Expr::Section { .. } => true,
+        Expr::Call(name,_) if name == "@spread" => true,
         Expr::Bin(_, a, b) => array_valued(a, symbols) || array_valued(b, symbols),
         Expr::Un(_, a) => array_valued(a, symbols),
         Expr::Call(_, args) | Expr::Index(_, args) => args.iter().any(|arg| array_valued(arg, symbols)),

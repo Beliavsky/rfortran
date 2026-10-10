@@ -1157,3 +1157,34 @@ interpreter/native O0/O2; fixture 104 agrees with gfortran. The isolated release
 report `target/ofort-eoshift.json` remains at 11/18 passes and seven compile
 failures, with all reference runs succeeding. SPREAD, PACK and UNPACK still
 block the full transformation probe. Linux/macOS remain untested.
+
+
+## Checkpoint 44: SPREAD
+
+SPREAD accepts numeric/LOGICAL scalar or fixed-shape array SOURCE with constant
+DIM and NCOPIES. Shape validation inserts max(NCOPIES,0) at DIM and checks result
+extent overflow. Lowering removes that replication coordinate to select each
+source element in column-major order; scalar sources are captured once. A
+materialized result preserves overlapping assignments. Private SPREAD nodes are
+explicitly recognized as array-valued, including scalar-source calls nested in
+constructors. PURE usage is allowed. Runtime DIM/NCOPIES and CHARACTER sources
+remain unsupported.
+
+Fixture 105 covers scalar/vector/matrix sources, every matrix insertion position,
+sections, nested calls, constructor expansion, logical/double-precision values,
+zero/negative copy counts, empty sources, aliases and PURE functions. Focused
+tests add INTEGER(8), WHERE and shape/argument diagnostics. The first eight
+external transformation checks pass in isolation.
+
+A separate pre-existing output issue surfaced during testing: directly printing
+an array comparison such as `print *, a==x` printed one false value. Using
+`all(a==x)` confirms the replicated INTEGER(8) elements themselves are correct.
+Direct array-comparison output remains a follow-up issue.
+
+Windows validation: 74 Rust unit tests, 105 native fixtures, 46 batch wrapper
+tests and nine focused SPREAD/RESHAPE/EOSHIFT tests passed. Focused suites passed
+with debug and rebuilt release compilers, exercising interpreter/native O0/O2;
+fixture 105 agrees with gfortran. The isolated release compatibility report
+`target/ofort-spread.json` remains at 11/18 passes and seven compile failures,
+with all reference runs succeeding. PACK and UNPACK still block the complete
+transformation probe. Linux/macOS remain untested.

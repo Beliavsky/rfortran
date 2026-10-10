@@ -462,7 +462,22 @@ fn constructor_items(items: &[Expr], constants: &Constants, output: &mut Vec<Exp
 
 fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
     if let Expr::Call(name, args) = expr {
-        if name == "transpose" {
+        if name == "spread" {
+            let mut slots: [Option<Expr>; 3] = [None,None,None];
+            let mut keywords = false;
+            for (position,arg) in args.iter().enumerate() {
+                let (slot,value) = match arg {
+                    Expr::Call(tag,values) if tag.starts_with("@keyword:") => {
+                        keywords = true;
+                        (match &tag[9..] { "source" => 0, "dim" => 1, "ncopies" => 2, key => bail!("SPREAD: unknown keyword `{key}`") }, &values[0])
+                    }
+                    _ => { if keywords { bail!("SPREAD: positional argument after keyword argument"); } (position,arg) }
+                };
+                if slot >= 3 { bail!("SPREAD: too many arguments"); }
+                if slots[slot].replace(value.clone()).is_some() { bail!("SPREAD: duplicate argument"); }
+            }
+            *args = vec![slots[0].take().context("SPREAD requires SOURCE")?, slots[1].take().context("SPREAD requires DIM")?, slots[2].take().context("SPREAD requires NCOPIES")?];
+        } else if name == "transpose" {
             if args.len() != 1 { bail!("TRANSPOSE requires one MATRIX argument"); }
             if let Expr::Call(tag,values) = &args[0] {
                 if tag.starts_with("@keyword:") {

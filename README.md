@@ -388,3 +388,9 @@ SHIFT and optional BOUNDARY may be scalar or arrays shaped like ARRAY with DIM
 removed. Vacated elements use BOUNDARY, or zero/false when it is omitted.
 Sections, overlapping assignments and PURE usage are supported; runtime DIM
 and CHARACTER arrays remain unsupported. Run `python tests/test_eoshift.py`.
+
+SPREAD supports numeric/LOGICAL scalar and fixed-shape array sources with constant
+DIM and NCOPIES. It inserts the replication dimension at DIM; zero or negative
+NCOPIES produces an empty result. Sections, nested calls, constructors, overlapping
+assignments and PURE usage are supported. Runtime DIM/NCOPIES and CHARACTER
+sources remain unsupported. Run `python tests/test_spread.py`.
