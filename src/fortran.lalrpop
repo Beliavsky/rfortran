@@ -528,11 +528,14 @@ SubscriptList: Vec<Expr> = {
     <mut v: SubscriptList> COMMA <e: Subscript> => { v.push(e); v },
 };
 Subscript: Expr = {
+    <name:KeywordName> EQ <value:RhsExpr> => Expr::Call(format!("@keyword:{name}"), vec![value]),
     <e: RhsExpr> => e,
     <lower: RhsExpr?> COLON <upper: RhsExpr?> => Expr::Section { name: String::new(), lower: lower.map(Box::new), upper: upper.map(Box::new), stride: None },
     <lower: RhsExpr?> COLON <upper: RhsExpr?> COLON <stride: RhsExpr> => Expr::Section { name: String::new(), lower: lower.map(Box::new), upper: upper.map(Box::new), stride: Some(Box::new(stride)) },
     <lower: RhsExpr?> DCOLON <stride: RhsExpr> => Expr::Section { name: String::new(), lower: lower.map(Box::new), upper: None, stride: Some(Box::new(stride)) },
 };
+
+KeywordName: String = { <name:Ident> => name, KW_KIND => "kind".into() };
 
 CallArgList: Vec<Expr> = {
     /* empty */ => vec![],

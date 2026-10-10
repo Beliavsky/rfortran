@@ -108,6 +108,17 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
 
 fn lower_expr(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, serial: &mut usize) -> Result<()> {
     match e {
+        Expr::Call(name, args) if name == "@bounds_vector" => {
+            *serial += 1;
+            let temp = format!("@bounds_{serial}");
+            let dims = vec![int(args.len() as i64)];
+            prefix.push(Stmt::ArrayDecl { name: temp.clone(), kind: TypeSpec::Integer(None), dims: dims.clone() });
+            for (i, value) in args.iter().enumerate() {
+                prefix.push(Stmt::AssignIndex { name: temp.clone(), indices: vec![int(i as i64 + 1)], value: value.clone() });
+            }
+            symbols.insert(temp.clone(), (TypeSpec::Integer(None), dims));
+            *e = Expr::Ident(temp);
+        }
         Expr::Call(name, _) if name == "@output_implied_do" => bail!("implied-DO is currently supported only in list-directed output"),
         Expr::Call(name, args) if reduction(name) => {
             if args.len() != 1 { bail!("{name} currently expects one array argument; DIM and MASK are not supported"); }

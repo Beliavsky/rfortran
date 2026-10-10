@@ -226,6 +226,7 @@ impl Lowerer {
                 }
                 match n.as_str() {
                     "size" | "len" | "count" => true,
+                    "lbound" | "ubound" => args.len() == 2,
                     "int" | "nint" | "floor" | "ceiling" => args
                         .first()
                         .is_some_and(|e| self.shape(e, shapes).is_ok_and(|s| s.is_none())),
@@ -342,6 +343,16 @@ impl Lowerer {
         }
         match e {
             Expr::Ident(n) => self.check_association(n)?,
+            Expr::Call(n, args) if matches!(n.as_str(), "lbound" | "ubound") => {
+                let array = args.first().context("array bound inquiry requires ARRAY")?;
+                let owner = match array {
+                    Expr::Ident(n) | Expr::Section { name: n, .. } | Expr::Call(n, _) | Expr::Index(n, _) => n,
+                    _ => bail!("{n} currently requires an array variable or section"),
+                };
+                self.check_association(owner)?;
+                let dims = self.shape(array, shapes)?.with_context(|| format!("{n} requires an array with a statically known shape"))?;
+                *e = crate::inquiries::bounds(n, &dims, args.get(1))?;
+            }
             Expr::Call(n, args) if n == "size" => {
                 let Some(Expr::Ident(array)) = args.first() else {
                     bail!("SIZE currently requires a whole array");
@@ -410,6 +421,11 @@ impl Lowerer {
 
     fn shape(&self, e: &Expr, shapes: &Shapes) -> Result<Option<Vec<i64>>> {
         match e {
+            Expr::Call(n, args) if n == "@bounds_vector" => Ok(Some(vec![args.len() as i64])),
+            Expr::Call(n, args) if matches!(n.as_str(), "lbound" | "ubound") => {
+                let dims = self.shape(&args[0], shapes)?.context("bound inquiry requires an array")?;
+                Ok(if args.len() == 1 { Some(vec![dims.len() as i64]) } else { None })
+            }
             Expr::Ident(n) => Ok(shapes.get(n).cloned()),
 
             Expr::Section { name, .. } if shapes.get(name).is_some_and(|d| d.len() == 1) => {
@@ -545,6 +561,8 @@ impl Lowerer {
                                 | "real"
                                 | "dble"
                                 | "size"
+                                | "lbound"
+                                | "ubound"
                                 | "sum"
                                 | "product"
                                 | "minval"

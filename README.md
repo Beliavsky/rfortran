@@ -52,6 +52,15 @@ and source inputs are protected from overwrite. A single source is compiled
 directly. The old `f90c-sources.ps1` helper is retained for legacy use; the
 native driver does not invoke it.
 
+## Array bounds inquiries
+
+`LBOUND` and `UBOUND` support statically shaped arrays and sections. A constant
+`DIM` selects a scalar bound; omitting it returns a rank-one vector. Positional
+arguments and `ARRAY=`, `DIM=`, and `KIND=4` keywords are accepted, as are these
+keywords for `SIZE`. Nondefault result kinds and runtime dimensions are not yet
+supported. Existing array-storage limits apply, including one-based declarations.
+Inquiries use shape metadata and do not require initialized array elements.
+
 ## CHARACTER support
 
 Scalar CHARACTER declarations accept constant integer length expressions,
@@ -148,6 +157,7 @@ python tests/test_character_lengths.py
 python tests/test_else_if.py
 python tests/test_multi_forall.py
 python tests/test_array_constructors.py
+python tests/test_bound_inquiries.py
 ```
 
 The Python tests use `target/debug/rfort` (with `.exe` on Windows).

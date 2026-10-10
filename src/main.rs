@@ -10,6 +10,7 @@ mod codegen;
 mod errors;
 mod ir;
 mod intrinsics;
+mod inquiries;
 mod lexer;
 mod linker;
 mod parser;

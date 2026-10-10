@@ -60,6 +60,16 @@ fn rewrite(
                 _ => bail!("SIZE expects an array and optional dimension"),
             };
         }
+        Expr::Call(n, args) if matches!(n.as_str(), "lbound" | "ubound") => {
+            for dim in args.iter_mut().skip(1) { rewrite(dim, shapes, constants, absent)?; }
+            if let Some(Expr::Ident(array)) = args.first() {
+                if let Some((_, dims)) = shapes.get(array) {
+                    if let Ok(dims) = dims.iter().map(crate::parameters::integer_constant).collect::<Result<Vec<_>>>() {
+                        *e = crate::inquiries::bounds(n, &dims, args.get(1))?;
+                    }
+                }
+            }
+        }
         Expr::Call(_, args) | Expr::Index(_, args) => {
             for a in args {
                 rewrite(a, shapes, constants, absent)?;

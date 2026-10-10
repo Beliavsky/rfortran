@@ -426,6 +426,20 @@ fn constructor_items(items: &[Expr], constants: &Constants, output: &mut Vec<Exp
 }
 
 fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
+    if let Expr::Call(name, args) = expr {
+        if matches!(name.as_str(), "lbound" | "ubound" | "size") {
+            let (array, dim, kind) = crate::inquiries::arguments(name, args)?;
+            if let Some(mut kind) = kind {
+                rewrite_expr(&mut kind, constants)?;
+                if integer_constant(&kind)? != 4 { bail!("{name}: only default INTEGER KIND=4 is currently supported"); }
+            }
+            *args = vec![array];
+            args.extend(dim);
+        } else if name.starts_with("@keyword:") {
+            bail!("keyword arguments are currently supported only for SIZE, LBOUND, and UBOUND");
+        }
+    }
+
     if let Expr::Call(name, items) = expr {
         if name == "@array_constructor" {
             let mut expanded = Vec::new();

@@ -1,0 +1,109 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Beliavsky
+// See LICENSE-MIT in the repository root.
+
+//! Argument ordering and fixed-shape array inquiry results.
+use crate::ast::Expr;
+use anyhow::{bail, Context, Result};
+
+pub fn arguments(name: &str, args: &[Expr]) -> Result<(Expr, Option<Expr>, Option<Expr>)> {
+    let mut slots: [Option<Expr>; 3] = [None, None, None];
+    let mut keyword_seen = false;
+    for (position, arg) in args.iter().enumerate() {
+        let (slot, value) = if let Expr::Call(tag, values) = arg {
+            if let Some(key) = tag.strip_prefix("@keyword:") {
+                keyword_seen = true;
+                let slot = match key {
+                    "array" => 0,
+                    "dim" => 1,
+                    "kind" => 2,
+                    _ => bail!("{name}: unknown keyword `{key}`"),
+                };
+                (slot, &values[0])
+            } else {
+                if keyword_seen {
+                    bail!("{name}: positional argument after keyword argument");
+                }
+                (position, arg)
+            }
+        } else {
+            if keyword_seen {
+                bail!("{name}: positional argument after keyword argument");
+            }
+            (position, arg)
+        };
+        if slot >= 3 {
+            bail!("{name} expects ARRAY, optional DIM, and optional KIND");
+        }
+        if slots[slot].replace(value.clone()).is_some() {
+            bail!("{name}: duplicate argument");
+        }
+    }
+    Ok((
+        slots[0]
+            .take()
+            .with_context(|| format!("{name} requires ARRAY"))?,
+        slots[1].take(),
+        slots[2].take(),
+    ))
+}
+
+pub fn bounds(name: &str, dims: &[i64], dim: Option<&Expr>) -> Result<Expr> {
+    if dims.is_empty() {
+        bail!("{name} requires an array");
+    }
+    let bound =
+        |extent: i64| Expr::IntLit(if name == "lbound" { 1 } else { extent.max(0) }.to_string());
+    if let Some(dim) = dim {
+        let axis = crate::parameters::integer_constant(dim)
+            .with_context(|| format!("{name} DIM must currently be a constant INTEGER"))?;
+        if axis < 1 || axis as usize > dims.len() {
+            bail!("{name} DIM must be between 1 and {}", dims.len());
+        }
+        Ok(bound(dims[axis as usize - 1]))
+    } else {
+        Ok(Expr::Call(
+            "@bounds_vector".into(),
+            dims.iter().map(|n| bound(*n)).collect(),
+        ))
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn int(n: i64) -> Expr {
+        Expr::IntLit(n.to_string())
+    }
+    #[test]
+    fn scalar_and_vector_bounds_include_empty_extents() {
+        assert_eq!(
+            bounds("lbound", &[2, 0], None).unwrap(),
+            Expr::Call("@bounds_vector".into(), vec![int(1), int(1)])
+        );
+        assert_eq!(
+            bounds("ubound", &[2, 0], None).unwrap(),
+            Expr::Call("@bounds_vector".into(), vec![int(2), int(0)])
+        );
+        assert_eq!(bounds("ubound", &[2, 0], Some(&int(2))).unwrap(), int(0));
+        assert!(bounds("lbound", &[2, 0], Some(&int(3))).is_err());
+    }
+    #[test]
+    fn keywords_reorder_without_accepting_duplicates() {
+        let array = Expr::Ident("a".into());
+        let kw = |name: &str, value| Expr::Call(format!("@keyword:{name}"), vec![value]);
+        assert_eq!(
+            arguments(
+                "ubound",
+                &[
+                    kw("kind", int(4)),
+                    kw("dim", int(2)),
+                    kw("array", array.clone())
+                ]
+            )
+            .unwrap(),
+            (array.clone(), Some(int(2)), Some(int(4)))
+        );
+        assert!(arguments("lbound", &[array.clone(), int(1), kw("dim", int(2))]).is_err());
+        assert!(arguments("lbound", &[kw("array", array), int(1)]).is_err());
+    }
+}

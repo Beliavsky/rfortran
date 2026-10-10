@@ -480,3 +480,31 @@ Validation on Windows x64: 72 Rust unit tests, all 81 native regression fixtures
 2 focused constructor tests with debug and release compilers, and 28 batch tests
 passed. The release executable was rebuilt and the next utility parser error
 confirmed with it. Linux/macOS execution remains untested.
+
+The twenty-second checkpoint adds LBOUND and UBOUND for supported statically
+shaped arrays and sections. Constant DIM selects a scalar; omission returns a
+rank-one bounds vector usable in assignment, list-directed output, and reductions.
+Whole-array declarations currently start at one; sections are rebased to one,
+with zero upper bounds for empty dimensions. Shape-only inquiries do not read
+or initialize array contents. Specialized assumed-shape subroutines with whole-
+array actual arguments and PURE procedures are covered.
+
+ARRAY/DIM/KIND keywords are parsed and reordered for LBOUND, UBOUND, and SIZE.
+Unknown/duplicate keywords, positional arguments after keywords, missing ARRAY,
+scalar arguments, invalid dimensions, runtime DIM, and nondefault result kinds
+are diagnosed. Only default INTEGER KIND=4 is supported. Existing storage and
+specialization limits remain; this does not add arbitrary declared lower bounds,
+dynamic descriptors, section actual arguments, or inquiry PARAMETER initializers.
+
+Test 82 and `python tests/test_bound_inquiries.py` compare interpreter/native
+O0/O2 results with gfortran for scalars, vectors, sections, empty extents, PURE
+procedures, and assumed-shape dummies, and exercise the diagnostics. The batch
+suite covers the fixture. Original utility sources remain unchanged. The combined
+source now parses past both LBOUND and UBOUND in the slice routines and stops at
+`write (outu_,fmt_time_) ...`, combined-source line 1212, because formatted WRITE
+currently requires a literal format. Full utility compilation remains incomplete.
+
+Validation on Windows x64: 74 Rust unit tests, all 82 native regression fixtures,
+3 focused inquiry tests with debug and release compilers, and 29 batch tests
+passed. The release executable was rebuilt and the next utility parser error
+confirmed with it. Linux/macOS execution remains untested.
