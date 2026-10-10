@@ -72,6 +72,13 @@ class BatchSources(unittest.TestCase):
             extra.append(path)
         self.check_build([*extra, *sources])
 
+    def test_internal_integer_input(self):
+        import json
+        source = self.directory / "internal input.f90"
+        source.write_text((ROOT / "tests/73_internal_integer_read.f90").read_text(), encoding="utf-8")
+        expected = json.loads((ROOT / "tests/expectations.json").read_text(encoding="utf-8"))["cases"]["73_internal_integer_read"]["program_stdout"]
+        self.check_build([source], expected.strip())
+
     def test_formatted_record_input(self):
         source = self.directory / "record input.f90"
         source.write_text("character(len=8) :: text\nread(*,'(a)') text\nprint '(a)', text\nend\n", encoding="utf-8")

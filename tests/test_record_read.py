@@ -15,6 +15,25 @@ ROOT = Path(__file__).resolve().parent.parent
 COMPILER = Path(os.environ.get("F90C_TEST_COMPILER", ROOT / "target/debug/f90c.exe")).resolve()
 
 
+def build_commands(source, directory):
+    batch = (ROOT / "f90c.bat").read_text()
+    libs = [ROOT / "src/libs/x64"] + [Path(re.search(r'set "' + name + r'=(.*?)"', batch).group(1))
+             for name in ("MSVC_LIB", "UCRT_LIB")]
+    commands = [[COMPILER, "run", source]]
+    for opt in (0, 2):
+        obj = directory / f"read{opt}.obj"
+        exe = obj.with_suffix(".exe")
+        for cmd in ([COMPILER, "-O", str(opt), "emit-obj", source, obj],
+                    [shutil.which("ld.lld.exe"), "-flavor", "link", "/OUT:" + str(exe), obj,
+                     "/SUBSYSTEM:CONSOLE", *("/LIBPATH:" + str(p) for p in libs),
+                     "msvcrt.lib", "legacy_stdio_definitions.lib", "kernel32.lib"]):
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            if result.returncode:
+                raise AssertionError(result.stdout + result.stderr)
+        commands.append([exe])
+    return commands
+
+
 @unittest.skipUnless(os.name == "nt", "Windows native linker configuration")
 class RecordRead(unittest.TestCase):
     @classmethod
@@ -23,21 +42,7 @@ class RecordRead(unittest.TestCase):
         cls.addClassCleanup(cls.temporary.cleanup)
         cls.directory = Path(cls.temporary.name)
         cls.source = ROOT / "tests/io/record_read.f90"
-        batch = (ROOT / "f90c.bat").read_text()
-        libs = [ROOT / "src/libs/x64"] + [Path(re.search(r'set "' + name + r'=(.*?)"', batch).group(1))
-                 for name in ("MSVC_LIB", "UCRT_LIB")]
-        cls.commands = [[COMPILER, "run", cls.source]]
-        for opt in (0, 2):
-            obj = cls.directory / f"read{opt}.obj"
-            exe = obj.with_suffix(".exe")
-            for cmd in ([COMPILER, "-O", str(opt), "emit-obj", cls.source, obj],
-                        [shutil.which("ld.lld.exe"), "-flavor", "link", "/OUT:" + str(exe), obj,
-                         "/SUBSYSTEM:CONSOLE", *("/LIBPATH:" + str(p) for p in libs),
-                         "msvcrt.lib", "legacy_stdio_definitions.lib", "kernel32.lib"]):
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-                if result.returncode:
-                    raise AssertionError(result.stdout + result.stderr)
-            cls.commands.append([exe])
+        cls.commands = build_commands(cls.source, cls.directory)
 
     def run_input(self, data, expected=None, error=None):
         for command in self.commands:

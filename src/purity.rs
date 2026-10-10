@@ -64,6 +64,14 @@ pub fn validate(program: &Program) -> Result<()> {
         for stmt in body {
             match stmt {
                 Stmt::Print { .. } | Stmt::Read { .. } => bail!("PURE procedure cannot perform external I/O"),
+                Stmt::CallSub {name,args} if name == "@internal_read" => {
+                    expression(&args[0],&locals,known)?;
+                    let has_status=matches!(&args[1],Expr::Str(key) if !key.is_empty());
+                    for arg in args.iter().skip(if has_status {2} else {3}) {
+                        let Expr::Ident(dest)=arg else {bail!("internal READ currently requires scalar variable destinations");};
+                        writable(dest)?;
+                    }
+                }
                 Stmt::CallSub {name,..} if name == "@formatted_read" || name == "@read_record" => bail!("PURE procedure cannot perform external I/O"),
                 Stmt::CallSub {name,args} if name == "@forall" => {
                     for e in args.iter().skip(1) {expression(e,&locals,known)?;}
@@ -171,6 +179,7 @@ mod tests {
             ("", "read(*,*) j", "external I/O"),
             ("character(len=8) :: text", "read(*,'(a)') text", "external I/O"),
             ("", "i=3\nj=i", "dummy argument"),
+            ("character(len=8) :: text", "text='42'\nread(text,*) i", "dummy argument"),
             ("", "outside=3\nj=i", "nonlocal variable"),
             ("real :: x", "call random_number(x)\nj=i", "subroutine"),
             ("", "j=unknown(i)", "unknown procedure"),

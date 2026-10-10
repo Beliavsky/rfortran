@@ -217,6 +217,14 @@ pub fn interpret(program: &Program) {
                         }
                     }
                     BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => {
+                        if let (Some(a),Some(b))=(lv.0,rv.0) {
+                            let result=match op {
+                                BinOp::Eq=>a==b, BinOp::Ne=>a!=b, BinOp::Lt=>a<b,
+                                BinOp::Gt=>a>b, BinOp::Le=>a<=b, BinOp::Ge=>a>=b,
+                                _=>unreachable!(),
+                            };
+                            return ValueTuple::from_bool(result);
+                        }
                         let a = lv.1.or(lv.0.map(|v| v as f64)).unwrap_or(0.0);
                         let b = rv.1.or(rv.0.map(|v| v as f64)).unwrap_or(0.0);
                         let res = match op {
@@ -999,6 +1007,16 @@ pub fn interpret(program: &Program) {
                 }
                 Stmt::CallSub { name, args } => {
                     if name == "@error_stop" { let Expr::Str(message)=&args[0] else {unreachable!()}; eprintln!("ERROR STOP {message}");std::process::exit(1); }
+                    if name == "@internal_read_byte" {
+                        let [Expr::Ident(dest),source,Expr::Ident(offset),Expr::IntLit(length)]=args.as_slice() else {unreachable!()};
+                        let frame=call_stack.last_mut().unwrap();
+                        let text=match source {Expr::Str(text)=>text,Expr::Ident(name)=>&frame.env_str[name],_=>unreachable!()};
+                        let index=frame.env_int[offset] as usize;
+                        let length:usize=length.parse().unwrap();
+                        let byte=if index<length {text.as_bytes().get(index).copied().unwrap_or(0)} else {0};
+                        frame.env_int.insert(dest.clone(),i64::from(byte));
+                        idx+=1;continue;
+                    }
                     if name == "@read_record" {
                         let Expr::Ident(dest)=&args[0] else {unreachable!()};
                         let Expr::IntLit(length)=&args[1] else {unreachable!()};

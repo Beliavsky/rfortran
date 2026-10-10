@@ -724,6 +724,20 @@ pub fn analyze_with_src(
     }
     fn walk_stmt_program_reads(s: &Stmt, out: &mut HashSet<String>) {
         match s {
+            Stmt::Block {body} => {
+                let mut reads=HashSet::new();
+                for stmt in body {walk_stmt_program_reads(stmt,&mut reads);}
+                // Only references to enclosing variables escape the block's scope.
+                for stmt in body {match stmt {
+                    Stmt::VarDecl {names,..} => for name in names {reads.remove(&name.to_ascii_lowercase());},
+                    Stmt::ArrayDecl {name,..} => {reads.remove(&name.to_ascii_lowercase());},
+                    _=>{}
+                }}
+                // Lowering also declares private temporaries inside loops/branches;
+                // they are not source-level references to the enclosing program.
+                reads.retain(|name| !name.starts_with('@'));
+                out.extend(reads);
+            }
             Stmt::DummyIntent{name,intent} if intent == "@forall_index" => {out.insert(name.to_ascii_lowercase());}
             Stmt::Assign { value, .. } => walk_reads_for_program(value, out),
             Stmt::AssignIndex {
@@ -1606,6 +1620,7 @@ pub fn analyze_with_src(
                             settings,
                         );
                     }
+                    Stmt::Block {..} => walk_stmt_program_reads(st,read_vars),
                     Stmt::Function { .. } | Stmt::Subroutine { .. } => {}
                     Stmt::CallSub { name, args } => {
                         let callee = fn_map.get(&name.to_ascii_lowercase());

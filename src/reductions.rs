@@ -200,6 +200,12 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
     for mut stmt in std::mem::take(body) {
         let mut prefix = Vec::new();
         if let Stmt::CallSub {name,args}=&stmt {
+            if name=="@internal_read" {
+                output.push(crate::input::lower_integer_read(args,&symbols.variables,serial)?);
+                continue;
+            }
+        }
+        if let Stmt::CallSub {name,args}=&stmt {
             if name=="@allocate" {bail!("ALLOCATE is currently supported only in specialized local array subroutines");}
             if name=="@formatted_print" { let Some(Expr::Str(fmt))=args.first() else {bail!("PRINT format must be constant");};crate::formatting::parse(fmt,args.len()-1)?; }
             if name=="@error_stop" && !matches!(args.as_slice(),[Expr::Str(_)]) {bail!("ERROR STOP currently requires a character constant");}

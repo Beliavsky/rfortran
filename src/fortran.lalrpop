@@ -278,6 +278,14 @@ Stmt: Stmt = {
     KW_PRINT STAR COMMA <es: ExprList> => Stmt::Print { items: es },
     KW_PRINT COMMA STAR COMMA <es: ExprList> => Stmt::Print { items: es },
     KW_PRINT LPAREN STAR COMMA <es: ExprList> RPAREN => Stmt::Print { items: es },
+    KW_READ LPAREN <unit:RhsExpr> COMMA STAR COMMA <control:Ident> EQ <status:RhsExpr> RPAREN <items:ExprList> => {
+        let mut args=vec![unit,Expr::Str(control),status];args.extend(items);
+        Stmt::CallSub{name:"@internal_read".into(),args}
+    },
+    KW_READ LPAREN <unit:RhsExpr> COMMA STAR RPAREN <items:ExprList> => {
+        let mut args=vec![unit,Expr::Str(String::new()),Expr::IntLit("0".into())];args.extend(items);
+        Stmt::CallSub{name:"@internal_read".into(),args}
+    },
     KW_READ LPAREN STAR COMMA <fmt:STR> RPAREN <es:ExprList> => {
         let mut args=vec![Expr::IntLit("5".into()),Expr::Str(fmt)];args.extend(es);
         Stmt::CallSub{name:"@formatted_read".into(),args}

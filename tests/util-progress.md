@@ -204,11 +204,40 @@ output is also compared with gfortran when installed. Build the debug compiler
 first; set `F90C_TEST_COMPILER=target/release/f90c.exe` to test the release build.
 The batch suite includes a silent compilation and input/output check.
 
-The full utility program still does not compile. The parser now accepts
-`read (iu,"(a)") text`, but executing that statement still requires file-unit
-support (OPEN/CLOSE and unit-to-stream mapping). Its next parser error is
-`read (text,*,iostat=ierr) nw`, requiring internal-file list-directed input and
-IOSTAT. Its character array parameters also remain unsupported.
+The thirteenth checkpoint implements `read(text,*,iostat=ierr) nw` for one
+explicitly declared scalar INTEGER destination (kinds 1, 2, 4, and 8). The internal
+unit must be a scalar CHARACTER variable. IOSTAT is optional and, when present,
+must be a distinct writable scalar INTEGER of kind 4 or 8. The scanner accepts
+signed decimal integers, leading whitespace, comma/slash termination, null values,
+and positive repetition counts (including repeated nulls). It validates the
+entire first token and checks the destination kind's range before assignment.
+A null value preserves the destination; malformed input gives positive IOSTAT,
+and exhausted input gives negative IOSTAT. Error/EOF conservatively invalidates
+the destination for initialization checking. Without IOSTAT, an input error
+terminates the program. The supported internal READ is allowed in PURE procedures
+with the usual restrictions on writable variables.
+
+The scanner lowers to shared AST control flow plus a bounded byte-read primitive,
+so native and interpreted execution use the same conversion and overflow logic.
+Boundary testing also exposed and fixed interpreter integer comparisons that
+previously lost precision by converting both operands to floating point. Scoped
+usage analysis now recognizes source variables referenced in generated blocks.
+
+Test 73 covers conversion, null/repeated values, malformed tokens, all supported
+integer boundaries, optional IOSTAT, and a PURE function using internal input.
+`python tests/test_internal_read.py` compares native O0/O2 and interpreter output
+with the golden result and gfortran (when installed), checks failed/null reads
+against initialization guards, and combines standard-input record reads with
+internal conversion. It uses the same F90C_TEST_COMPILER override as the record
+input suite. Multiple input items, array destinations, real/logical/character
+conversion, internal arrays of records, arbitrary unit expressions, and other
+I/O control specifiers remain unsupported.
+
+The full utility program still does not compile. Executing
+`read (iu,"(a)") text` still requires file-unit support (OPEN/CLOSE and unit-to-stream
+mapping). The next parser error is the following `write (*,*)` statement. The later
+internal READ of `nw,words` will also require multiple items and character arrays.
+Its character array parameters remain unsupported.
 Further blockers include user-defined dotted
 operators such as `.in.` and `.exclude.`. The utility library also exercises
 features beyond the currently implemented array, character, and I/O subsets.

@@ -12,3 +12,4 @@ src/fortran.rs
 ./test.f90
 ./*.f90
 helpers.py
+tests/__pycache__/

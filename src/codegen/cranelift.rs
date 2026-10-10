@@ -2201,6 +2201,37 @@ fn gen_stmts(
                     b.switch_to_block(after_blk);
             }
             IStmt::Call(name, args) => {
+                if name == "@internal_read_byte" {
+                    let [IExpr::Ident(dest),source,index,IExpr::IntLit(length)]=args.as_slice() else {anyhow::bail!("invalid internal input byte operation");};
+                    let pointer=match source {
+                        IExpr::Str(text)=>make_data(module,b,ptr_ty,dc,text.as_bytes())?,
+                        IExpr::Ident(n)=> {
+                            let (slot,_)=chars.get(n).ok_or_else(||anyhow::anyhow!("internal READ requires CHARACTER storage"))?;
+                            b.ins().stack_addr(ptr_ty,*slot,0)
+                        }
+                        _=>anyhow::bail!("unsupported internal READ source"),
+                    };
+                    let index=eval_expr(b,ex,ptr_ty,index,ints,reals,bools,func_meta);
+                    let index=to_i64(b,index);
+                    let length:i64=length.parse()?;
+                    let inside=b.ins().icmp_imm(ir::condcodes::IntCC::UnsignedLessThan,index,length);
+                    let load=b.create_block();let end=b.create_block();let done=b.create_block();
+                    b.append_block_param(done,types::I64);
+                    b.ins().brif(inside,load,&[],end,&[]);
+                    b.switch_to_block(load);b.seal_block(load);
+                    let address=b.ins().iadd(pointer,index);
+                    let byte=b.ins().load(types::I8,MemFlags::new(),address,0);
+                    let value=b.ins().uextend(types::I64,byte);
+                    b.ins().jump(done,&[value.into()]);
+                    b.switch_to_block(end);b.seal_block(end);
+                    let zero=b.ins().iconst(types::I64,0);b.ins().jump(done,&[zero.into()]);
+                    b.switch_to_block(done);b.seal_block(done);
+                    let value=b.block_params(done)[0];
+                    let slot=ints.get(dest).ok_or_else(||anyhow::anyhow!("internal input byte requires INTEGER storage"))?;
+                    let address=storage_addr(b,ptr_ty,*slot);
+                    b.ins().store(MemFlags::new(),value,address,0);
+                    continue;
+                }
                 if name == "@read_record" {
                     let [IExpr::Ident(dest),IExpr::IntLit(length)]=args.as_slice() else {anyhow::bail!("invalid record READ");};
                     let (slot,capacity)=chars.get(dest).ok_or_else(|| anyhow::anyhow!("record READ requires CHARACTER storage"))?;
