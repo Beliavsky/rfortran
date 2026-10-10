@@ -620,6 +620,40 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
             }
             Stmt::SelectCase { expr, cases, default } => {
                 lower_expr(expr, &mut symbols, &mut prefix, serial)?;
+                if let Ok((_, None, TypeSpec::Integer(bytes))) = element(expr,&int(1),&symbols) {
+                    let max = crate::inquiries::integer_huge(bytes)?;
+                    let mut intervals: Vec<(i64,i64)> = Vec::new();
+                    for case in cases.iter_mut() {
+                        for item in &mut case.items {
+                            let bounds = match item {
+                                crate::ast::CaseItem::Single(e) => vec![(e,0)],
+                                crate::ast::CaseItem::Range(a,b) => vec![(a,-max-1),(b,max)],
+                            };
+                            for (bound,limit) in bounds {
+                                let value = if matches!(bound,Expr::Call(tag,_) if tag == "@case_unbounded") { limit }
+                                    else { crate::parameters::integer_constant(bound).context("integer CASE values must be constant INTEGER expressions")? };
+                                *bound = int(value);
+                            }
+                            let (lo,hi) = match item {
+                                crate::ast::CaseItem::Single(e) => { let n=constant(e)?; (n,n) },
+                                crate::ast::CaseItem::Range(a,b) => (constant(a)?,constant(b)?),
+                            };
+                            if lo <= hi {
+                                if intervals.iter().any(|(a,b)| lo <= *b && *a <= hi) { bail!("overlapping integer CASE selectors"); }
+                                intervals.push((lo,hi));
+                            }
+                        }
+                    }
+                    if !matches!(expr,Expr::Ident(_)) {
+                        *serial += 1;
+                        let temp = format!("@case_selector_{serial}");
+                        prefix.push(Stmt::VarDecl { kind:TypeSpec::Integer(bytes),names:vec![temp.clone()] });
+                        prefix.push(Stmt::Assign { name:temp.clone(),value:expr.clone() });
+                        *expr = Expr::Ident(temp);
+                    }
+                } else if cases.iter().any(|case| case.items.iter().any(|item| matches!(item,crate::ast::CaseItem::Range(..)))) {
+                    bail!("CASE ranges currently require a supported scalar INTEGER selector");
+                }
                 for case in cases { lower_body(&mut case.body, &symbols, serial)?; }
                 if let Some(body) = default { lower_body(body, &symbols, serial)?; }
             }

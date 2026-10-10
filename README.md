@@ -335,3 +335,10 @@ and runtime shape vectors remain unsupported. `MOD` and `MODULO` accept
 conformable numeric array arguments and scalar expansion, preserving element
 kind. Run `python tests/test_reshape_constructors.py` for interpreter/native
 O0/O2 checks and gfortran comparison.
+
+Integer `SELECT CASE` accepts comma-separated values and inclusive ranges using
+`:` (for example, `case (1,3:5,9:)` or `case (:0)`). Bounds must be constant
+integer expressions; duplicate/overlapping ranges are diagnosed. Literal and
+arithmetic selectors work in native builds, including selectors made constant
+by optimization. CHARACTER ranges remain unsupported. Run
+`python tests/test_case_ranges.py` for interpreter/native O0/O2 and gfortran checks.

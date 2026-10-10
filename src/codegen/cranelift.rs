@@ -2,7 +2,7 @@
 mod file_io;
 #[path = "characters.rs"]
 mod characters;
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 use cranelift_codegen::{isa, settings};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 use target_lexicon::Triple;
@@ -2541,6 +2541,36 @@ fn gen_stmts(
 
                 let mut cmp_next_blocks: Vec<ir::Block> = Vec::new();
                 match selector {
+                    IExpr::IntLit(s) => {
+                        let value: i64 = s.parse().context("SELECT CASE integer selector is out of range")?;
+                        let mut selected = None;
+                        for (ci, case) in cases.iter().enumerate() {
+                            for item in &case.items {
+                                let constant = |e: &IExpr| -> Result<i64> {
+                                    if let IExpr::IntLit(s) = e { Ok(s.parse()?) }
+                                    else { bail!("integer CASE values must be constant INTEGER expressions") }
+                                };
+                                let hit = match item {
+                                    IcCaseItem::Single(e) => value == constant(e)?,
+                                    IcCaseItem::Range(a,b) => value >= constant(a)? && value <= constant(b)?,
+                                    IcCaseItem::Multi(items) => {
+                                        let mut hit = false;
+                                        for item in items { hit |= value == constant(item)?; }
+                                        hit
+                                    }
+                                };
+                                if hit { selected = Some(ci); break; }
+                            }
+                            if selected.is_some() { break; }
+                        }
+                        if let Some(ci) = selected {
+                            let next = b.create_block();
+                            cmp_next_blocks.push(next);
+                            let yes = b.ins().iconst(ir::types::I8,1);
+                            b.ins().brif(yes,case_blocks[ci],&[],next,&[]);
+                            b.switch_to_block(next);
+                        }
+                    }
                     IExpr::Ident(sid) => {
                         if let Some(ss) = ints.get(sid) {
                             let sel_addr = storage_addr(b, ptr_ty, *ss);

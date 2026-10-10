@@ -930,3 +930,27 @@ gfortran reference runs succeed. Local validation includes 74 Rust unit tests,
 The release compiler was rebuilt and passed all 11 focused checks and 43 batch
 wrapper tests. The refreshed release report is `target/ofort-reshape.json`
 (6 passes, 12 compile failures). Linux/macOS execution remains untested.
+
+
+## Checkpoint 36: integer SELECT CASE ranges
+
+Corrected the range grammar from DCOLON to the standard COLON token and added
+open lower/upper bounds. Integer bounds fold to constants, omitted limits use
+the selector kind's range, and overlapping selectors are diagnosed. Arithmetic
+selectors are evaluated into a temporary; CHARACTER ranges are explicitly
+rejected in this subset.
+
+Native dispatch previously ignored literal selectors, including those created
+by constant propagation and loop unrolling. The backend now selects the matching
+case for integer literal selectors instead of always taking CASE DEFAULT.
+Fixture 97 covers mixed selector lists, open and closed ranges, PARAMETER and
+arithmetic bounds, literal/arithmetic selectors, INTEGER(8), defaults, EXIT and
+CYCLE. Focused tests compare interpreter/native O0/O2 with gfortran and check
+invalid bounds, overlap, the nonstandard double colon and CHARACTER ranges.
+
+Validation on Windows x64: 74 Rust unit tests, 97 native fixtures, 44 batch
+wrapper tests and 5 focused CASE/DO-step tests passed. Both focused suites pass
+with debug and rebuilt release compilers. The release compatibility report
+`target/ofort-case-ranges.json` has 7/18 passes (11 compile failures), including
+`xselect_case_selector_list.f90` at O0/O2. All 18 gfortran reference runs succeed.
+Linux/macOS execution remains untested.

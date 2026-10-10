@@ -87,4 +87,9 @@ nested reductions and rank-three sections.
 cover constructors in expressions, array/section constructor items, constant
 RESHAPE, and elemental MOD/MODULO. Together with DIM reduction support, these
 make `xintrinsic_reductions_dim_mask_pending.f90` pass all 17 checks at O0/O2.
-The selected sample now has 6/18 passes; remaining cases still fail compilation.
+That checkpoint raised the sample to 6/18 passes.
+
+`97_case_ranges.f90` and `python tests/test_case_ranges.py` cover integer CASE
+lists, closed/open ranges, constant selectors, optimization and loop control.
+`xselect_case_selector_list.f90` now passes at O0/O2, raising the selected sample
+to 7/18 passes; the other 11 cases still fail compilation.

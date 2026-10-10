@@ -599,7 +599,9 @@ CaseItemList: Vec<CaseItem> = {
 };
 
 CaseItem: CaseItem = {
-    <l: RhsExpr> DCOLON <r: RhsExpr> => CaseItem::Range(l, r),
+    <l: RhsExpr> COLON <r: RhsExpr> => CaseItem::Range(l, r),
+    COLON <r: RhsExpr> => CaseItem::Range(Expr::Call("@case_unbounded".into(),vec![]), r),
+    <l: RhsExpr> COLON => CaseItem::Range(l, Expr::Call("@case_unbounded".into(),vec![])),
     <e: RhsExpr> => CaseItem::Single(e),
 };
 
