@@ -146,6 +146,7 @@ python tests/test_defined_operators.py
 python tests/test_file_io.py
 python tests/test_character_lengths.py
 python tests/test_else_if.py
+python tests/test_multi_forall.py
 ```
 
 The Python tests use `target/debug/rfort` (with `.exe` on Windows).

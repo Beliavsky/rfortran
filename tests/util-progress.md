@@ -421,3 +421,32 @@ Validation on Windows x64: all 70 Rust unit tests, 79 native regression fixtures
 3 focused ELSE IF tests with debug and release compilers, and 26 batch tests
 passed. The release executable was rebuilt, and the next utility parser error
 was confirmed with that executable. Linux/macOS execution remains untested.
+
+The twentieth checkpoint extends single-statement FORALL to multiple explicitly
+specified integer indices. Independent constant triplets form a Cartesian
+product; all right-hand sides are captured before any destination writes, even
+across different index combinations. Two- and three-index cases, transposition,
+array-section snapshots, negative strides, empty products, and specialized PURE
+array subroutines are covered. Index variables retain their surrounding values
+and are not initialized by the construct. Specialization now protects every
+FORALL index from replacement by its enclosing value.
+
+Duplicate indices, repeated destination elements across the entire product,
+zero strides, invalid destination bounds, nonconstant/dependent triplets, and
+iteration-count overflow are diagnosed. Existing limits remain: numeric arrays,
+static shapes/bounds, one assignment, no masks or block FORALL, and compile-time
+expansion intended for small statically sized cases. Character destinations
+such as the one in `munge` will still require character-array support.
+
+Test 80 and `python tests/test_multi_forall.py` compare interpreter and native
+O0/O2 results with gfortran and check that uninitialized RHS reads cannot be
+hidden by earlier writes. The batch suite covers the new fixture. The original
+utility sources remain unchanged. Their combined source now parses past the
+multi-index FORALL and stops at `yy = (/(xx,i=1,n)/)` in `repeat_char`, line 1051:
+old-style array constructors and constructor implied-DO need further work.
+Full utility compilation remains incomplete.
+
+Validation on Windows x64: 71 Rust unit tests, all 80 native regression fixtures,
+2 focused multi-index FORALL tests with debug and release compilers, and 27
+batch tests passed. The release executable was rebuilt and the next utility
+parser error confirmed with it. Linux/macOS execution remains untested.

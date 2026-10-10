@@ -471,30 +471,35 @@ impl Lowerer {
         if tag != "@forall" {
             return Ok(());
         }
-        let [Expr::Ident(index), start, end, step] = args.as_slice() else {
-            bail!("FORALL index must be an integer variable");
-        };
-        if shapes.contains_key(index)
-            || !matches!(
-                self.types.get(index),
-                Some(TypeSpec::Integer(None | Some(4 | 8)))
-            )
-        {
-            bail!("FORALL index `{index}` currently requires an explicitly declared scalar INTEGER of kind 4 or 8");
-        }
-        let (index, mut start, mut end, mut step) =
-            (index.clone(), start.clone(), end.clone(), step.clone());
-        for bound in [&mut start, &mut end, &mut step] {
-            self.expression(bound, shapes)?;
+        if args.is_empty() || args.len() % 4 != 0 {
+            bail!("FORALL requires index triplets");
         }
         let constant = |e: &Expr| {
             crate::parameters::integer_constant(e)
                 .context("FORALL bounds and stride must currently be constant integers")
         };
-        let (start, end, step) = (constant(&start)?, constant(&end)?, constant(&step)?);
-        if step == 0 {
-            bail!("FORALL stride must not be zero");
+        let mut controls = Vec::new();
+        let mut names = std::collections::HashSet::new();
+        for control in args.chunks_exact(4) {
+            let Expr::Ident(index) = &control[0] else { bail!("FORALL index must be an integer variable"); };
+            if !names.insert(index.clone()) { bail!("duplicate FORALL index `{index}`"); }
+            if shapes.contains_key(index) || !matches!(self.types.get(index), Some(TypeSpec::Integer(None | Some(4 | 8)))) {
+                bail!("FORALL index `{index}` currently requires an explicitly declared scalar INTEGER of kind 4 or 8");
+            }
+            let mut bounds = control[1..].to_vec();
+            for bound in &mut bounds { self.expression(bound, shapes)?; }
+            let (start, end, step) = (i128::from(constant(&bounds[0])?), i128::from(constant(&bounds[1])?), i128::from(constant(&bounds[2])?));
+            if step == 0 { bail!("FORALL stride must not be zero"); }
+            let distance = if step > 0 { end - start } else { start - end };
+            let count = if distance < 0 { 0 } else { distance / step.abs() + 1 };
+            controls.push((index.clone(), start, step, count));
         }
+        let iterations = if controls.iter().any(|c| c.3 == 0) { 0 } else {
+            controls.iter().try_fold(1usize, |n, c| {
+                usize::try_from(c.3).ok().and_then(|count| n.checked_mul(count))
+                    .context("FORALL iteration count is too large")
+            })?
+        };
         let [_, Stmt::AssignIndex {
             name,
             indices,
@@ -598,24 +603,23 @@ impl Lowerer {
                 _ => {}
             }
         }
-        let mut captures = vec![Stmt::DummyIntent {
-            name: index.clone(),
-            intent: "@forall_index".into(),
-        }];
+        let mut captures: Vec<Stmt> = controls.iter().map(|c| Stmt::DummyIntent {
+            name: c.0.clone(), intent: "@forall_index".into(),
+        }).collect();
         let mut writes = vec![];
         let mut destinations = std::collections::HashSet::new();
-        let (mut current, end, step) = (i128::from(start), i128::from(end), i128::from(step));
-        while if step > 0 {
-            current <= end
-        } else {
-            current >= end
-        } {
+        // Enumerate the Cartesian product, capturing every RHS before any write.
+        for iteration in 0..iterations {
+            let mut ordinal = iteration;
             let mut indices = indices.clone();
             let mut value = value.clone();
-            for e in &mut indices {
-                replace(e, &index, current as i64);
+            for (index, start, step, count) in &controls {
+                let count = *count as usize;
+                let current = start + (ordinal % count) as i128 * step;
+                ordinal /= count;
+                for e in &mut indices { replace(e, index, current as i64); }
+                replace(&mut value, index, current as i64);
             }
-            replace(&mut value, &index, current as i64);
             let normalized = match indices.as_slice() {
                 [section @ Expr::Section { .. }] => vec![Expr::Call(
                     "@section_subscript".into(),
@@ -653,7 +657,6 @@ impl Lowerer {
                 }
             }
             if !shape.is_empty() && total(&shape)? == 0 {
-                current += step;
                 continue;
             }
             self.forall_serial += 1;
@@ -679,7 +682,6 @@ impl Lowerer {
                 indices,
                 value: Expr::Ident(temp),
             });
-            current += step;
         }
         captures.extend(writes);
         *body = captures;
@@ -1078,6 +1080,29 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("impure or unsupported"));
+    }
+
+    #[test]
+    fn multi_index_forall_checks_destinations_and_controls() {
+        for (statement, expected) in [
+            ("forall(i=1:2,i=1:2) a(i)=i", "duplicate FORALL index"),
+            ("forall(i=1:2,j=1:2) a(i)=j", "same destination element"),
+            ("forall(i=1:2,j=1:i) a(i+j)=j", "constant integers"),
+            ("forall(i=1:2,j=1:n) a(i+j)=j", "constant integers"),
+            ("forall(i=2:1,j=1:2:0) a(i+j)=j", "stride must not be zero"),
+            ("forall(i=1:2,j=1:2) a(2*i+j)=j", "outside 1:5"),
+            ("forall(i=1:4294967296,j=1:4294967296) a(1)=1", "iteration count is too large"),
+        ] {
+            let source = format!("integer::i,j,n,a(5)\n{statement}\nend");
+            let error = format!("{:#}", lower(&source).unwrap_err());
+            assert!(error.contains(expected), "{source}: {error}");
+        }
+        for output in ["i", "j"] {
+            let source = format!("integer::i,j,a(2,2)\nforall(i=1:2,j=1:2) a(i,j)=i+j\nprint *,{output}\nend");
+            let p = lower(&source).unwrap();
+            let p = crate::sections::resolve(crate::reductions::resolve(p).unwrap()).unwrap();
+            assert!(crate::initialized::instrument(p).is_err());
+        }
     }
 
     #[test]

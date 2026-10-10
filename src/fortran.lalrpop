@@ -323,10 +323,10 @@ Stmt: Stmt = {
         let mut v = Vec::new(); v.push(s); Stmt::If { cond: cnd, then_body: v, else_body: None }
     },
     KW_IF LPAREN <cnd: CondExpr> RPAREN KW_THEN <then_stmts: Stmts> <tail:IfTail> => Stmt::If { cond: cnd, then_body: then_stmts, else_body: tail },
-    KW_FORALL LPAREN <index:Ident> EQ <start:RhsExpr> COLON <end:RhsExpr> <step:ForallStride?> RPAREN <assignment:Stmt> => {
+    KW_FORALL LPAREN <controls:ForallControls> RPAREN <assignment:Stmt> => {
         // A private marker keeps ordinary scope/expression passes traversing the
         // assignment until static shapes are known and simultaneous writes lower.
-        Stmt::Block { body: vec![Stmt::CallSub {name:"@forall".into(),args:vec![Expr::Ident(index),start,end,step.unwrap_or(Expr::IntLit("1".into()))]},assignment] }
+        Stmt::Block { body: vec![Stmt::CallSub {name:"@forall".into(),args:controls},assignment] }
     },
     KW_DO <var: Ident> EQ <s: RhsExpr> COMMA <e: RhsExpr> <body: Stmts> KW_END KW_DO => Stmt::Do { var, start: s, end: e, body },
     KW_DO KW_WHILE LPAREN <cond: CondExpr> RPAREN <body: Stmts> KW_END KW_DO => Stmt::DoWhile { cond, body },
@@ -509,6 +509,17 @@ Primary: Expr = {
 WriteUnit: Expr = { STAR => Expr::IntLit("6".into()), <unit:RhsExpr> => unit };
 WriteFormat: Expr = { STAR => Expr::IntLit("0".into()), <fmt:STR> => Expr::Str(fmt) };
 
+ForallControls: Vec<Expr> = {
+    <first:ForallControl> <rest:(COMMA <ForallControl>)*> => {
+        let mut controls = first;
+        for control in rest { controls.extend(control); }
+        controls
+    },
+};
+ForallControl: Vec<Expr> = {
+    <index:Ident> EQ <start:RhsExpr> COLON <end:RhsExpr> <step:ForallStride?> =>
+        vec![Expr::Ident(index), start, end, step.unwrap_or(Expr::IntLit("1".into()))],
+};
 ForallStride: Expr = { COLON <e:RhsExpr> => e };
 
 SubscriptList: Vec<Expr> = {

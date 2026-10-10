@@ -68,6 +68,14 @@ class BatchSources(unittest.TestCase):
         source.write_text((ROOT / "tests/76_defined_operators.f90").read_text())
         self.check_build([source], "14\n36\n18\n6\n  3.5\nF\nmatched\n10\n12")
 
+    def test_multi_forall(self):
+        import json
+        fixture = ROOT / "tests/80_multi_forall.f90"
+        source = self.directory / "multi forall.f90"
+        source.write_text(fixture.read_text(encoding="utf-8"), encoding="utf-8")
+        expected = json.loads((ROOT / "tests/expectations.json").read_text(encoding="utf-8"))["cases"][fixture.stem]["program_stdout"]
+        self.check_build([source], expected.strip())
+
     def test_else_if(self):
         source = self.directory / "else if.f90"
         source.write_text((ROOT / "tests/79_else_if.f90").read_text(encoding="utf-8"), encoding="utf-8")

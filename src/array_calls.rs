@@ -123,8 +123,8 @@ fn specialize(
 ) -> Result<()> {
     if let Some(Stmt::CallSub { name, args }) = body.first() {
         if name == "@forall" {
-            if let Some(Expr::Ident(index)) = args.first() {
-                constants.remove(index);
+            for control in args.chunks_exact(4) {
+                if let Expr::Ident(index) = &control[0] { constants.remove(index); }
             }
         }
     }
@@ -238,8 +238,8 @@ fn specialize(
                 }
             }
             Stmt::CallSub { name, args } if name == "@forall" => {
-                for arg in args.iter_mut().skip(1) {
-                    rewrite(arg, shapes, constants, absent)?;
+                for control in args.chunks_exact_mut(4) {
+                    for arg in &mut control[1..] { rewrite(arg, shapes, constants, absent)?; }
                 }
             }
             Stmt::CallSub { args, .. } | Stmt::Print { items: args } => {
