@@ -175,7 +175,7 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             lower_expr(&mut args[0], symbols, prefix, serial)?;
             lower_expr(&mut args[1], symbols, prefix, serial)?;
             let (_,shift_len,shift_kind) = element(&args[1],&int(1),symbols)?;
-            if shift_len.is_some() || !matches!(shift_kind,TypeSpec::Integer(_)) { bail!("CSHIFT SHIFT must be scalar INTEGER"); }
+            if !matches!(shift_kind,TypeSpec::Integer(_)) { bail!("CSHIFT SHIFT must be INTEGER"); }
             let stride = constant(&args[2])?.max(1);
             let axis_len = constant(&args[3])?.max(1);
             *serial += 1;
@@ -194,8 +194,17 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             let count = count.context("CSHIFT ARRAY must be an array")?;
             prefix.push(Stmt::ArrayDecl { kind:kind.clone(),name:temp.clone(),dims:vec![int(count)] });
             prefix.push(Stmt::VarDecl { kind:TypeSpec::Integer(Some(8)),names:vec![index.clone(),shift.clone()] });
-            prefix.push(Stmt::Assign { name:shift,value:modulo(args[1].clone(),int(axis_len)) });
-            prefix.push(Stmt::Do { var:index.clone(),start:int(1),end:int(count),body:vec![Stmt::AssignIndex { name:temp.clone(),indices:vec![id(&index)],value }] });
+            let mut body = vec![];
+            if shift_len.is_some() {
+                // Remove the shifted axis from the column-major ordinal.
+                let slice = bin(BinOp::Add,int(1),bin(BinOp::Add,modulo(ordinal.clone(),int(stride)),bin(BinOp::Mul,bin(BinOp::Div,ordinal,int(stride*axis_len)),int(stride))));
+                let (amount,_,_) = element(&args[1],&slice,symbols)?;
+                body.push(Stmt::Assign { name:shift,value:modulo(amount,int(axis_len)) });
+            } else {
+                prefix.push(Stmt::Assign { name:shift,value:modulo(args[1].clone(),int(axis_len)) });
+            }
+            body.push(Stmt::AssignIndex { name:temp.clone(),indices:vec![id(&index)],value });
+            prefix.push(Stmt::Do { var:index.clone(),start:int(1),end:int(count),body });
             symbols.insert(temp.clone(),(kind,vec![int(count)]));
             *e = Expr::Ident(temp);
         }

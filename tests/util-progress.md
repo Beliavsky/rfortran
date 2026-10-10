@@ -1101,3 +1101,31 @@ report `target/ofort-reshape-options.json` remains at 11/18 passes and seven
 compile failures, with all reference runs succeeding. The first two RESHAPE
 operations in the transformation probe are now supported, but its remaining
 transformations still prevent compilation. Linux/macOS remain untested.
+
+
+## Checkpoint 42: TRANSPOSE and array-valued CSHIFT
+
+TRANSPOSE validates a rank-two MATRIX argument, reverses its shape and reuses
+the RESHAPE ORDER lowering to materialize the transposed result. It supports
+numeric/LOGICAL arrays, sections, expressions, keyword MATRIX and PURE contexts.
+CSHIFT now accepts INTEGER SHIFT arrays whose full shape matches ARRAY with DIM
+removed. Each column-major slice uses its corresponding shift, normalized
+before index arithmetic; scalar shifts retain their evaluate-once path.
+Materialization preserves overlapping ARRAY/SHIFT/destination inputs.
+Runtime DIM and CHARACTER transformations remain unsupported.
+
+Fixture 103 covers transpose round trips, matrix sections, shifts on either
+matrix dimension and a rank-three middle dimension, overlapping shifts,
+logical arrays, empty arrays and PURE functions. Focused tests additionally
+cover extreme INTEGER(8) shifts, double precision transposes and shape/type
+errors. Existing scalar CSHIFT tests now expect shape/type diagnostics for
+invalid array shifts. An isolated copy of the first five external transformation
+checks prints true for all five.
+
+Windows validation: 74 Rust unit tests, 103 native fixtures, 46 batch wrapper
+tests and nine focused matrix-transform/CSHIFT/RESHAPE tests passed. Focused
+suites passed with debug and rebuilt release compilers, exercising interpreter
+and native O0/O2; fixture 103 agrees with gfortran. The isolated release report
+`target/ofort-matrix-transforms.json` remains at 11/18 passes and seven compile
+failures, with all reference runs succeeding. EOSHIFT, SPREAD, PACK and UNPACK
+still block the complete transformation probe. Linux/macOS remain untested.

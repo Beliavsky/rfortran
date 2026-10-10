@@ -462,7 +462,15 @@ fn constructor_items(items: &[Expr], constants: &Constants, output: &mut Vec<Exp
 
 fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
     if let Expr::Call(name, args) = expr {
-        if name == "cshift" {
+        if name == "transpose" {
+            if args.len() != 1 { bail!("TRANSPOSE requires one MATRIX argument"); }
+            if let Expr::Call(tag,values) = &args[0] {
+                if tag.starts_with("@keyword:") {
+                    if tag != "@keyword:matrix" { bail!("TRANSPOSE: unknown keyword `{}`", &tag[9..]); }
+                    args[0] = values[0].clone();
+                }
+            }
+        } else if name == "cshift" {
             let mut slots: [Option<Expr>; 3] = [None,None,None];
             let mut keywords = false;
             for (position,arg) in args.iter().enumerate() {

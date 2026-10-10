@@ -121,3 +121,9 @@ results, empty arrays and overlapping inputs. These implement the first two
 checks in `xintrinsic_transform_order_pending.f90`; the full probe still needs
 other transformations and remains a compile failure. The sample stays at
 11/18 passes.
+
+`103_matrix_transforms.f90` and `python tests/test_matrix_transforms.py` cover
+TRANSPOSE and array-valued CSHIFT, including sections, rank-three arrays,
+overlapping inputs and empty arrays. The first five checks in the transformation
+probe are now supported. EOSHIFT, SPREAD, PACK and UNPACK still prevent the full
+probe from compiling, so the selected sample remains at 11/18 passes.

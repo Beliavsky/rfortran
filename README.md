@@ -371,9 +371,14 @@ and gfortran checks.
 Constant `TRIM` and `LEN_TRIM` calls, including CHARACTER PARAMETER arguments,
 are evaluated before code generation.
 
-CSHIFT supports fixed-shape numeric and LOGICAL arrays, scalar INTEGER SHIFT
-(including runtime values), and constant DIM. Sections, array expressions,
-empty arrays and overlapping assignments are supported. Array-valued SHIFT,
-runtime DIM and CHARACTER arrays remain unsupported.
+CSHIFT supports fixed-shape numeric and LOGICAL arrays and constant DIM. INTEGER
+SHIFT may be scalar or an array shaped like ARRAY with DIM removed, with runtime
+values in either case. Sections, array expressions, empty arrays and overlapping
+assignments are supported. Runtime DIM and CHARACTER arrays remain unsupported.
 Run `python tests/test_cshift.py` for interpreter/native O0/O2 checks and a
 gfortran comparison.
+
+TRANSPOSE accepts fixed-shape numeric or LOGICAL rank-two arrays, including
+sections and expressions. The MATRIX keyword and PURE usage are supported.
+Run `python tests/test_matrix_transforms.py` for TRANSPOSE and array-valued
+CSHIFT checks in the interpreter and native O0/O2 builds, plus gfortran comparison.

@@ -363,11 +363,20 @@ impl Lowerer {
         }
         match e {
             Expr::Ident(n) => self.check_association(n)?,
+            Expr::Call(n, args) if n == "transpose" => {
+                let dims = self.shape(e,shapes)?.unwrap();
+                let Expr::Call(_,args) = e else { unreachable!() };
+                *e = Expr::Call("reshape".into(),vec![args[0].clone(),Expr::Call("@array_constructor".into(),dims.into_iter().map(int).collect()),Expr::Call("@no_pad".into(),vec![]),Expr::Call("@array_constructor".into(),vec![int(2),int(1)])]);
+                self.expression(e,shapes)?;
+            }
             Expr::Call(n, args) if n == "cshift" => {
                 let dims = self.shape(&args[0], shapes)?.context("CSHIFT ARRAY must be an array")?;
                 let dim = crate::parameters::integer_constant(&args[2]).context("CSHIFT DIM must currently be a constant INTEGER")?;
                 if dim < 1 || dim as usize > dims.len() { bail!("CSHIFT DIM must be between 1 and {}", dims.len()); }
-                if self.shape(&args[1], shapes)?.is_some() { bail!("CSHIFT currently requires scalar SHIFT"); }
+                if let Some(shift_shape) = self.shape(&args[1], shapes)? {
+                    let mut expected = dims.clone(); expected.remove(dim as usize - 1);
+                    if shift_shape != expected { bail!("CSHIFT SHIFT shape must match ARRAY with DIM removed"); }
+                }
                 self.expression(&mut args[0], shapes)?;
                 self.expression(&mut args[1], shapes)?;
                 let axis = dim as usize - 1;
@@ -485,6 +494,12 @@ impl Lowerer {
 
     fn shape(&self, e: &Expr, shapes: &Shapes) -> Result<Option<Vec<i64>>> {
         match e {
+            Expr::Call(n, args) if n == "transpose" => {
+                let mut dims = self.shape(&args[0],shapes)?.context("TRANSPOSE MATRIX must be a rank-two array")?;
+                if dims.len() != 2 { bail!("TRANSPOSE MATRIX must be a rank-two array"); }
+                dims.reverse();
+                Ok(Some(dims))
+            }
             Expr::Call(n, args) if n == "cshift" => self.shape(&args[0], shapes),
             Expr::Call(n, args) if n == "@cshift" => {
                 let Expr::Call(_, dims) = &args[4] else { unreachable!() };
