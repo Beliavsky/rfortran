@@ -5,6 +5,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn bare_stop_does_not_consume_the_next_statement() {
+        let tokens=lex("stop; x=1\nif (.true.) stop ! done\nx=2\nstop 3\nerror stop 'bad'\nstop");
+        assert_eq!(tokens.iter().filter(|t|matches!(t.kind,TokenKind::KwStopEmpty)).count(),3);
+        assert_eq!(tokens.iter().filter(|t|matches!(t.kind,TokenKind::KwStop)).count(),2);
+    }
+
+    #[test]
+    fn write_is_contextual_and_empty_lists_end_at_statement_boundaries() {
+        let source="integer :: write(2,2)\nwrite(1,2)=3\ncall write(1,2)\nx=write(1,2)\nwrite(*,*) write(1,2)\nif (.true.) write(6,*) 7\nwrite(*,*); x=8\nwrite(*,*) ! blank\nx=9\nwrite(*,*) &\n & 10\n";
+        let tokens=lex(source);
+        assert_eq!(tokens.iter().filter(|t|matches!(t.kind,TokenKind::KwWrite)).count(),3);
+        assert_eq!(tokens.iter().filter(|t|matches!(t.kind,TokenKind::KwWriteEmpty)).count(),2);
+        assert_eq!(tokens.iter().filter(|t|matches!(&t.kind,TokenKind::Ident(n) if n.eq_ignore_ascii_case("write"))).count(),5);
+    }
+
+    #[test]
     fn default_is_a_keyword_only_after_case() {
         let source = "integer :: default\ndefault=2\nselect case(default)\ncase(1); default=3\nCaSe &\n & DeFaUlT; default=4\nend select\nuse m, only: default\n";
         let tokens = lex(source);
@@ -117,6 +133,8 @@ pub enum TokenKind {
     KwPure,
     KwElemental,
     KwForall,
+    KwWrite,
+    KwWriteEmpty,
     #[token("public", ignore(ascii_case))]
     KwPublic,
     #[token("private", ignore(ascii_case))]
@@ -179,6 +197,7 @@ pub enum TokenKind {
     KwCycle,
     #[token("stop", ignore(ascii_case))]
     KwStop,
+    KwStopEmpty,
     #[token("**")]
     Pow,
     #[token("//")]
@@ -296,6 +315,33 @@ pub fn lex(input: &str) -> Vec<Token> {
             } else { replacement };
             if let Some(kind)=replacement {tokens[start].kind=kind;}
         }
+        // WRITE is contextual: preserve variables, arrays, and procedures with
+        // this name. Mark empty output lists separately because the grammar
+        // otherwise has no statement-separator tokens to distinguish the next item.
+        if matches!(&tokens[start].kind,TokenKind::Ident(n) if n.eq_ignore_ascii_case("write"))
+            && matches!(tokens.get(start+1).map(|t|&t.kind),Some(TokenKind::LParen))
+            && same_statement(&input[tokens[start].span.end..tokens[start+1].span.start]) {
+            let mut begin=start;
+            while begin>0 && same_statement(&input[tokens[begin-1].span.end..tokens[begin].span.start]) {begin-=1;}
+            let inline_if=matches!(tokens[begin].kind,TokenKind::KwIf)
+                && start>begin && matches!(tokens[start-1].kind,TokenKind::RParen)
+                && tokens[begin..start].iter().fold(0i32,|depth,t|depth+match t.kind {
+                    TokenKind::LParen=>1,TokenKind::RParen=>-1,_=>0
+                })==0;
+            if begin==start || inline_if {
+                let mut depth=0;
+                for end in start+1..tokens.len() {
+                    match tokens[end].kind {TokenKind::LParen=>depth+=1,TokenKind::RParen=>depth-=1,_=>{}}
+                    if depth==0 {
+                        let next=tokens.get(end+1).filter(|t|same_statement(&input[tokens[end].span.end..t.span.start]));
+                        if !matches!(next.map(|t|&t.kind),Some(TokenKind::Eq)) {
+                            tokens[start].kind=if next.is_none() {TokenKind::KwWriteEmpty} else {TokenKind::KwWrite};
+                        }
+                        break;
+                    }
+                }
+            }
+        }
         if matches!(&tokens[start].kind,TokenKind::Ident(n) if n.eq_ignore_ascii_case("forall"))
             && matches!(tokens.get(start+1).map(|t|&t.kind),Some(TokenKind::LParen))
             && matches!(tokens.get(start+2).map(|t|&t.kind),Some(TokenKind::Ident(_)))
@@ -335,6 +381,14 @@ pub fn lex(input: &str) -> Vec<Token> {
                 }
                 _ => {}
             }
+        }
+    }
+    for index in 0..tokens.len() {
+        if matches!(tokens[index].kind,TokenKind::KwStop)
+            && !(index>0 && matches!(tokens[index-1].kind,TokenKind::KwError)
+                && same_statement(&input[tokens[index-1].span.end..tokens[index].span.start]))
+            && tokens.get(index+1).is_none_or(|next|!same_statement(&input[tokens[index].span.end..next.span.start])) {
+            tokens[index].kind=TokenKind::KwStopEmpty;
         }
     }
     tokens

@@ -233,10 +233,38 @@ input suite. Multiple input items, array destinations, real/logical/character
 conversion, internal arrays of records, arbitrary unit expressions, and other
 I/O control specifiers remain unsupported.
 
+The fourteenth checkpoint adds standard-output WRITE with positional controls:
+`write(*,*) items`, `write(6,*) items`, and the literal formats already supported
+by PRINT. Named integer PARAMETERs equal to 6 are accepted as units. List-directed
+WRITE uses the existing PRINT lowering, including whole arrays and supported
+sections. Empty lists produce a blank record. Other units, internal-file output,
+keyword controls, format labels/variables, and extended formatting remain outside
+this subset. A literal format must satisfy the existing output-format validator.
+
+WRITE is a contextual keyword, preserving variables, arrays, and procedures named
+`write`. Empty lists are recognized at logical statement boundaries, including
+comments, semicolons, continuations, and single-line IF statements. Output still
+checks initialized values, and external WRITE is forbidden in PURE procedures.
+
+The utility's following bare STOP also now parses and terminates the process with
+status zero, including when reached inside a block, loop, or called subroutine.
+Native main-program generation now honors terminated blocks instead of appending
+instructions after a terminating trap. This checkpoint covers STOP without a code;
+coded STOP syntax/runtime support is not extended here.
+
+Test 74 and `python tests/test_write.py` cover list-directed/formatted output,
+arrays/sections, blank records, contextual names, and termination. Native O0/O2
+output matches the golden result; values and formatted fields agree with gfortran
+and the interpreter. The interpreter retains its existing extra trailing zeros
+for list-directed real output. The batch suite checks silent compilation with
+the rebuilt release compiler. The test script supports F90C_TEST_COMPILER like
+the input scripts.
+
 The full utility program still does not compile. Executing
 `read (iu,"(a)") text` still requires file-unit support (OPEN/CLOSE and unit-to-stream
-mapping). The next parser error is the following `write (*,*)` statement. The later
-internal READ of `nw,words` will also require multiple items and character arrays.
+mapping). The next parser error is the implied-DO output list in
+`write (*,*) (trim(words(i)) // " ",i=1,nread_)`.
+The internal READ of `nw,words` also needs multiple items and character arrays.
 Its character array parameters remain unsupported.
 Further blockers include user-defined dotted
 operators such as `.in.` and `.exclude.`. The utility library also exercises

@@ -1006,6 +1006,7 @@ pub fn interpret(program: &Program) {
                     }
                 }
                 Stmt::CallSub { name, args } => {
+                    if name == "@stop" { std::process::exit(0); }
                     if name == "@error_stop" { let Expr::Str(message)=&args[0] else {unreachable!()}; eprintln!("ERROR STOP {message}");std::process::exit(1); }
                     if name == "@internal_read_byte" {
                         let [Expr::Ident(dest),source,Expr::Ident(offset),Expr::IntLit(length)]=args.as_slice() else {unreachable!()};

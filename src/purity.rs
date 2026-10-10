@@ -64,6 +64,7 @@ pub fn validate(program: &Program) -> Result<()> {
         for stmt in body {
             match stmt {
                 Stmt::Print { .. } | Stmt::Read { .. } => bail!("PURE procedure cannot perform external I/O"),
+                Stmt::CallSub {name,..} if name=="@stop" => bail!("PURE procedure cannot execute STOP"),
                 Stmt::CallSub {name,args} if name == "@internal_read" => {
                     expression(&args[0],&locals,known)?;
                     let has_status=matches!(&args[1],Expr::Str(key) if !key.is_empty());
@@ -72,7 +73,7 @@ pub fn validate(program: &Program) -> Result<()> {
                         writable(dest)?;
                     }
                 }
-                Stmt::CallSub {name,..} if name == "@formatted_read" || name == "@read_record" => bail!("PURE procedure cannot perform external I/O"),
+                Stmt::CallSub {name,..} if name == "@formatted_read" || name == "@read_record" || name == "@write" => bail!("PURE procedure cannot perform external I/O"),
                 Stmt::CallSub {name,args} if name == "@forall" => {
                     for e in args.iter().skip(1) {expression(e,&locals,known)?;}
                 }
@@ -177,6 +178,10 @@ mod tests {
         for (decl, statement, error) in [
             ("", "print *, i\nj=i", "external I/O"),
             ("", "read(*,*) j", "external I/O"),
+            ("", "write(*,*) i", "external I/O"),
+            ("", "write(*,*)", "external I/O"),
+            ("", "stop", "cannot execute STOP"),
+            ("", "write(6,'(i3)') i", "external I/O"),
             ("character(len=8) :: text", "read(*,'(a)') text", "external I/O"),
             ("", "i=3\nj=i", "dummy argument"),
             ("character(len=8) :: text", "text='42'\nread(text,*) i", "dummy argument"),

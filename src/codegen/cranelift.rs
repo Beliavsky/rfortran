@@ -2266,6 +2266,13 @@ fn gen_stmts(
                     }
                     ex.call_printf(b,&[ex.fmt_s,ex.p_nl]);continue;
                 }
+                if name == "@stop" {
+                    let mut sig=module.make_signature();sig.params.push(ir::AbiParam::new(types::I32));
+                    let id=module.declare_function("exit",Linkage::Import,&sig)?;
+                    let function=module.declare_func_in_func(id,b.func);
+                    let code=b.ins().iconst(types::I32,0);b.ins().call(function,&[code]);
+                    b.ins().trap(ir::TrapCode::unwrap_user(1));return Ok(true);
+                }
                 if name == "@error_stop" {
                     let [IExpr::Str(message)]=args.as_slice() else {anyhow::bail!("ERROR STOP currently requires a character constant");};
                     let message=format!("ERROR STOP {message}\n");let pointer=make_data(module,b,ptr_ty,dc,message.as_bytes())?;
@@ -3274,7 +3281,7 @@ impl Backend for CraneliftBackend {
                     );
                 }
                 let mut arrays: HashMap<String, usize> = HashMap::new();
-                let _tr = gen_stmts(
+                let terminated = gen_stmts(
                     &mut b,
                     &ex,
                     ptr_ty,
@@ -3295,8 +3302,10 @@ impl Backend for CraneliftBackend {
                     &mut arrays,
                     tokens_opt,
                 )?;
-                let z = b.ins().iconst(types::I32, 0);
-                b.ins().return_(&[z]);
+                if !terminated {
+                    let z = b.ins().iconst(types::I32, 0);
+                    b.ins().return_(&[z]);
+                }
                 b.finalize();
             }
             let main_id =

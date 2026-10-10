@@ -200,6 +200,18 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
     for mut stmt in std::mem::take(body) {
         let mut prefix = Vec::new();
         if let Stmt::CallSub {name,args}=&stmt {
+            if name=="@write" {
+                if crate::parameters::integer_constant(&args[0]).ok()!=Some(6) {
+                    bail!("WRITE currently supports only standard output (* or constant unit 6)");
+                }
+                stmt=match &args[1] {
+                    Expr::IntLit(tag) if tag=="0" => Stmt::Print{items:args[2..].to_vec()},
+                    Expr::Str(_) => Stmt::CallSub{name:"@formatted_print".into(),args:args[1..].to_vec()},
+                    _ => bail!("WRITE requires a supported constant format"),
+                };
+            }
+        }
+        if let Stmt::CallSub {name,args}=&stmt {
             if name=="@internal_read" {
                 output.push(crate::input::lower_integer_read(args,&symbols.variables,serial)?);
                 continue;
@@ -381,6 +393,40 @@ pub fn resolve(mut program: Program) -> Result<Program> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn write_checks_initialized_output_items() {
+        for statement in ["write(*,*) n", "write(6,'(i3)') n"] {
+            let source=format!("integer :: n\n{statement}\nend");
+            let tokens=crate::lexer::lex(&source);
+            let p=crate::parser::parse_with_src(&source,&tokens,"write.f90").unwrap();
+            let p=super::resolve(crate::parameters::resolve(p).unwrap()).unwrap();
+            let error=crate::initialized::instrument(p).unwrap_err().to_string();
+            assert!(error.contains("uninitialized variable `n`"),"{error}");
+        }
+    }
+
+    #[test]
+    fn validates_write_units_and_formats() {
+        for (declarations,statement,valid) in [
+            ("", "write(*,*) 42", true),
+            ("", "write(6,*)", true),
+            ("integer,parameter :: stdout=6", "write(stdout,*) 42", true),
+            ("", "write(*,'(i3)') 42", true),
+            ("", "write(*,*)\nx=42", true),
+            ("", "write(7,*) 42", false),
+            ("integer :: unit", "unit=6\nwrite(unit,*) 42", false),
+            ("character(len=8) :: text", "write(text,*) 42", false),
+            ("", "write(*,'*') 42", false),
+            ("", "write(*,'(q3)') 42", false),
+        ] {
+            let source=format!("integer :: x\n{declarations}\n{statement}\nend");
+            let tokens=crate::lexer::lex(&source);
+            let p=crate::parser::parse_with_src(&source,&tokens,"write.f90").unwrap();
+            let result=crate::parameters::resolve(p).and_then(super::resolve);
+            assert_eq!(result.is_ok(),valid,"{source}: {result:?}");
+        }
+    }
+
     #[test]
     fn validates_record_read_destinations_and_formats() {
         for (declaration, statement, valid) in [

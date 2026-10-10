@@ -36,6 +36,8 @@ extern {
         KW_NONE => TokenKind::KwNone,
         KW_PRINT => TokenKind::KwPrint,
         KW_READ => TokenKind::KwRead,
+        KW_WRITE => TokenKind::KwWrite,
+        KW_WRITE_EMPTY => TokenKind::KwWriteEmpty,
         KW_IF => TokenKind::KwIf,
         KW_THEN => TokenKind::KwThen,
         KW_ELSE => TokenKind::KwElse,
@@ -89,6 +91,7 @@ extern {
         KW_EXIT => TokenKind::KwExit,
         KW_CYCLE => TokenKind::KwCycle,
         KW_STOP => TokenKind::KwStop,
+        KW_STOP_EMPTY => TokenKind::KwStopEmpty,
     }
 }
 
@@ -270,6 +273,11 @@ Stmt: Stmt = {
     KW_INTERFACE KW_OPERATOR LPAREN <operator:Operator> RPAREN <procedures:OperatorProcedures> KW_END KW_INTERFACE <end_operator:EndOperator?> => Stmt::OperatorInterface { operator, procedures, end_operator },
     KW_ERROR KW_STOP <arg: RhsExpr> => Stmt::CallSub { name: "@error_stop".into(), args: vec![arg] },
     KW_ALLOCATE LPAREN <args: CallArgList> RPAREN => Stmt::CallSub { name: "@allocate".into(), args },
+    KW_WRITE LPAREN <unit:WriteUnit> COMMA <fmt:WriteFormat> RPAREN <items:ExprList> => {
+        let mut args=vec![unit,fmt];args.extend(items);Stmt::CallSub{name:"@write".into(),args}
+    },
+    KW_WRITE_EMPTY LPAREN <unit:WriteUnit> COMMA <fmt:WriteFormat> RPAREN =>
+        Stmt::CallSub{name:"@write".into(),args:vec![unit,fmt]},
     KW_PRINT <fmt: STR> COMMA <items: ExprList> => { let mut args = vec![Expr::Str(fmt)]; args.extend(items); Stmt::CallSub { name: "@formatted_print".into(), args } },
     KW_PUBLIC => Stmt::Accessibility { public: true, names: vec![] },
     KW_PRIVATE => Stmt::Accessibility { public: false, names: vec![] },
@@ -353,6 +361,7 @@ Stmt: Stmt = {
     KW_BLOCK <body: Stmts> KW_END KW_BLOCK => Stmt::Block { body },
     KW_EXIT => Stmt::Exit,
     KW_CYCLE => Stmt::Cycle,
+    KW_STOP_EMPTY => Stmt::CallSub { name: "@stop".into(), args: vec![] },
     KW_STOP <arg: RhsExpr> => Stmt::CallSub { name: "__f90c_stop".to_string(), args: vec![arg] },
 };
 
@@ -475,6 +484,9 @@ Primary: Expr = {
     <id: Designator> => Expr::Ident(id),
     LPAREN <e: OrExpr> RPAREN => e,
 };
+
+WriteUnit: Expr = { STAR => Expr::IntLit("6".into()), <unit:RhsExpr> => unit };
+WriteFormat: Expr = { STAR => Expr::IntLit("0".into()), <fmt:STR> => Expr::Str(fmt) };
 
 ForallStride: Expr = { COLON <e:RhsExpr> => e };
 

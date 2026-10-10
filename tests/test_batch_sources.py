@@ -72,6 +72,13 @@ class BatchSources(unittest.TestCase):
             extra.append(path)
         self.check_build([*extra, *sources])
 
+    def test_write_stdout_and_bare_stop(self):
+        import json
+        source = self.directory / "write output.f90"
+        source.write_text((ROOT / "tests/74_write_stdout.f90").read_text(), encoding="utf-8")
+        expected = json.loads((ROOT / "tests/expectations.json").read_text(encoding="utf-8"))["cases"]["74_write_stdout"]["program_stdout"]
+        self.check_build([source], expected.strip())
+
     def test_internal_integer_input(self):
         import json
         source = self.directory / "internal input.f90"
