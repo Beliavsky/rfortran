@@ -729,3 +729,36 @@ was rebuilt and the refreshed external report confirms 5 passes / 13 compile
 failures at both O0/O2. All 18 reference builds/runs succeeded. The full utility
 build still stops at the existing CALL keyword argument at combined line 1963.
 Linux/macOS execution remains untested.
+
+
+## Checkpoint 30: numeric reduction keywords and masks
+
+SUM, PRODUCT, MINVAL and MAXVAL now normalize ARRAY/DIM/MASK keywords,
+rejecting duplicates, unknown names, missing ARRAY and positional arguments
+following keywords. Fixed rank-one DIM=1 reduces to a scalar. Without DIM,
+whole-array reductions accept scalar LOGICAL masks or conformable array masks;
+shape checks run before multidimensional arrays are flattened. A positional
+mask with omitted DIM still requires spelling MASK=. Runtime DIM and
+multidimensional DIM results are explicitly rejected.
+
+The reduction loop updates its accumulator only where MASK is true. Integer
+MINVAL/MAXVAL initialization now respects the input kind, including empty and
+all-false reductions; this also removes the old oversized-literal warnings from
+fixture 28. Fixture 90 covers reordered keywords, masks, sections, explicit
+bounds, REAL reductions, whole matrices and empty arrays. The focused Python
+suite compares interpreter and native O0/O2 output with gfortran and checks
+invalid DIM, mask type/shape and keyword combinations. The Windows wrapper
+suite includes the same fixture.
+
+The external 18-case sample remains at 5 passes / 13 compile failures at O0/O2.
+The full reductions probe also needs COUNT keywords, multidimensional DIM
+results, constructors in expressions and other array operations, so this
+checkpoint is a tested smaller reproduction rather than a claim that the full
+probe works. The xutil CALL-keyword blocker remains unchanged.
+
+Validation on Windows x64: 74 Rust unit tests, 90 native fixtures, 37 batch
+integration tests and both focused tests passed. Focused tests passed with debug
+and rebuilt release compilers, exercising the interpreter plus native O0/O2 and
+gfortran comparison. The refreshed release ofort report is
+`target/ofort-masked-release.json`; all 18 reference builds/runs succeeded.
+Linux/macOS execution remains untested.

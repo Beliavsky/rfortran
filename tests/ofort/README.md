@@ -55,3 +55,10 @@ zero extents, and reduction RHS behavior.
 Use python tests/test_where.py for the local interpreter/native regression and
 python tests/test_ofort_compat_runner.py for the report/comparison checks. The
 local tests do not require the external ofort checkout.
+
+The local `90_masked_reductions.f90` fixture extracts numeric reductions into a
+supported subset: reordered ARRAY/DIM/MASK keywords, rank-one DIM=1, scalar and
+array masks, sections and empty arrays. `python tests/test_masked_reductions.py`
+checks interpreter/native O0/O2 output against gfortran. The external sample is
+still 5/18: the full reductions probe requires additional features, including
+COUNT and multidimensional DIM results.

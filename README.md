@@ -275,3 +275,13 @@ The combined compiler is licensed under **[GPLv3](LICENSE)**. Original Rust
 modules added in this fork and listed in [LICENSING.md](LICENSING.md) are also
 available individually under the **[MIT license](LICENSE-MIT)**. Their source
 files carry MIT SPDX headers. Upstream code remains subject to GPLv3.
+
+Numeric reductions (`SUM`, `PRODUCT`, `MINVAL`, `MAXVAL`) accept `ARRAY=`,
+`DIM=`, and `MASK=` keywords, including reordered keywords. Masks may be scalar
+LOGICAL values or conformable LOGICAL arrays/expressions. `DIM=1` is supported
+for rank-one arrays; reductions without DIM reduce the whole array. DIM must
+currently be constant, and multidimensional DIM results remain unsupported.
+For a positional mask without DIM, use `MASK=`. Empty/all-false integer extrema
+use the argument kind's largest/smallest representable values.
+Run `python tests/test_masked_reductions.py` for interpreter/native O0/O2 checks
+and comparison with gfortran when installed.

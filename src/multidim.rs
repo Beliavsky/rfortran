@@ -343,6 +343,19 @@ impl Lowerer {
         }
         match e {
             Expr::Ident(n) => self.check_association(n)?,
+            Expr::Call(n, args) if matches!(n.as_str(), "sum" | "product" | "minval" | "maxval") && args.len() == 3 => {
+                let dims = self.shape(&args[0], shapes)?.context("reduction argument must be an array")?;
+                if !matches!(&args[1], Expr::Call(tag, _) if tag == "@no_dim") {
+                    let dim = crate::parameters::integer_constant(&args[1]).context("reduction DIM must currently be a constant INTEGER; use MASK= for masks")?;
+                    if dim < 1 || dim as usize > dims.len() { bail!("{n}: DIM must be between 1 and {}", dims.len()); }
+                    if dims.len() != 1 { bail!("{n}: DIM reductions currently require a rank-one array"); }
+                }
+                if let Some(mask_shape) = self.shape(&args[2], shapes)? {
+                    if mask_shape != dims { bail!("{n}: MASK shape does not conform to ARRAY"); }
+                }
+                args.remove(1);
+                for arg in args { self.expression(arg, shapes)?; }
+            }
             Expr::Call(n, args) if matches!(n.as_str(), "lbound" | "ubound") => {
                 let array = args.first().context("array bound inquiry requires ARRAY")?;
                 let owner = match array {

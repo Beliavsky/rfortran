@@ -125,8 +125,10 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
         }
         Expr::Call(name, _) if name == "@output_implied_do" => bail!("implied-DO is currently supported only in list-directed output"),
         Expr::Call(name, args) if reduction(name) => {
-            if args.len() != 1 { bail!("{name} currently expects one array argument; DIM and MASK are not supported"); }
+            if matches!(name.as_str(), "any" | "all") && args.len() != 1 { bail!("{name} currently expects one array argument; DIM is not supported"); }
+            if args.is_empty() || args.len() > 2 { bail!("{name} requires normalized ARRAY and optional MASK arguments"); }
             lower_expr(&mut args[0], symbols, prefix, serial)?;
+            if args.len() == 2 { lower_expr(&mut args[1], symbols, prefix, serial)?; }
             *serial += 1;
             // These names cannot occur in source identifiers.
             let index_name = format!("@reduction_index_{serial}");
@@ -138,14 +140,16 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             let name = name.to_ascii_lowercase();
             if matches!(name.as_str(), "any" | "all") != matches!(kind, TypeSpec::Logical) { bail!("reduction argument has incorrect numeric/logical type"); }
             let integer = matches!(kind, TypeSpec::Integer(_));
+            let integer_max = match kind { TypeSpec::Integer(Some(1)) => i8::MAX as i64, TypeSpec::Integer(Some(2)) => i16::MAX as i64, TypeSpec::Integer(Some(8)) => i64::MAX, _ => i32::MAX as i64 };
+            let integer_min = -integer_max - 1;
             let huge = if matches!(kind, TypeSpec::DoublePrecision) { f64::MAX } else { f32::MAX as f64 };
             let identity = match name.as_str() {
                 "any" => Expr::Logical(false),
                 "all" => Expr::Logical(true),
                 "sum" => if integer { int(0) } else { Expr::RealLit("0.0".into()) },
                 "product" => if integer { int(1) } else { Expr::RealLit("1.0".into()) },
-                "minval" => if integer { int(i64::MAX) } else { Expr::RealLit(huge.to_string()) },
-                _ => if integer { int(-i64::MAX) } else { Expr::RealLit((-huge).to_string()) },
+                "minval" => if integer { int(integer_max) } else { Expr::RealLit(huge.to_string()) },
+                _ => if integer { int(integer_min) } else { Expr::RealLit((-huge).to_string()) },
             };
             prefix.push(Stmt::VarDecl { kind: TypeSpec::Integer(None), names: vec![index_name.clone()] });
             prefix.push(Stmt::VarDecl { kind: kind.clone(), names: vec![acc_name.clone(), item_name.clone()] });
@@ -161,7 +165,14 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
                     then_body: vec![Stmt::Assign { name: acc_name.clone(), value: item.clone() }], else_body: None,
                 },
             };
-            prefix.push(Stmt::Do { var: index_name, start: int(1), end: int(count), body: vec![Stmt::Assign { name: item_name, value }, update] });
+            let mut body = vec![Stmt::Assign { name: item_name, value }, update];
+            if let Some(mask) = args.get(1) {
+                let (condition, mask_count, mask_kind) = element(mask, &index, symbols)?;
+                if !matches!(mask_kind, TypeSpec::Logical) { bail!("{name}: MASK must be LOGICAL"); }
+                if mask_count.is_some_and(|n| n != count) { bail!("{name}: MASK shape does not conform to ARRAY"); }
+                body = vec![Stmt::If { cond: condition, then_body: body, else_body: None }];
+            }
+            prefix.push(Stmt::Do { var: index_name, start: int(1), end: int(count), body });
             *e = acc;
         }
         Expr::Call(name, args) if name == "len" => {
@@ -684,7 +695,7 @@ mod tests {
     fn rejects_invalid_reductions() {
         for (decls, expression, message) in [
             ("real :: x", "sum(x)", "must be an array"),
-            ("real :: x(3)", "sum(x,1)", "one array argument"),
+            ("logical :: x(3)", "any(x,.true.)", "one array argument"),
             ("real :: x(3), y(2)", "sum(x+y)", "do not conform"),
             ("real :: x(3)", "product(x(::0))", "stride must not be zero"),
             ("real :: x(3)", "minval(x(0:2))", "outside 1:3"),

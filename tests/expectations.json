@@ -191,7 +191,7 @@
     },
     "28_array_reductions": {
       "compiler_exit_code": 0,
-      "compiler_stderr": "warning: integer literal 9223372036854775807 does not fit in INTEGER(4 bytes)\n  ┌─ tests/28_array_reductions.f90:1:1\n  │\n1 │ program main\n  │ ^\n\nwarning: integer literal -9223372036854775807 does not fit in INTEGER(4 bytes)\n  ┌─ tests/28_array_reductions.f90:1:1\n  │\n1 │ program main\n  │ ^\n\nWarning: integer literal 9223372036854775807 does not fit in INTEGER(4 bytes)\nWarning: integer literal -9223372036854775807 does not fit in INTEGER(4 bytes)\n",
+      "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 6.0 30.0 -2.0 4.0 -24.0\n 6 30 -2 4 -24\n 8.0 3.0 5.0\n 0.0 1.0\n 14.0 30.0 6.0\n -24.0 -24.0\n"
@@ -622,6 +622,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " -10 -9 0 1 10 11\n 10 50 50 40 30 20 10\n 0 -1 1 1 6\n -2 2 1 5\n -1 1\n 1 0 0\n 0 1 -9 1 11 11 10 1 0 -9 -10\n 10 30 40 50 50\n 10 30 40 50 50 10 14\n 77 .TRUE.\n -77 30 -40 50 -50\n 1 5 -77\n 20 24 99\n -77 99 -40 50 -50\n 7 4 5\n -2 2\n"
+    },
+    "90_masked_reductions": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 15 12 60\n 3 5\n 15 60\n 0 1\n 0 1\n 2147483647 -2147483648\n 2147483647 -2147483648\n 4\n 8\n 12.0 3.0 5.0\n"
     }
   }
 }

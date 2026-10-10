@@ -435,8 +435,35 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
             }
             *args = vec![array];
             args.extend(dim);
+        } else if matches!(name.as_str(), "sum" | "product" | "minval" | "maxval") {
+            let mut slots: [Option<Expr>; 3] = [None, None, None];
+            let mut keywords = false;
+            for (position, arg) in args.iter().enumerate() {
+                let (slot, value) = match arg {
+                    Expr::Call(tag, values) if tag.starts_with("@keyword:") => {
+                        keywords = true;
+                        let key = &tag[9..];
+                        let slot = match key { "array" => 0, "dim" => 1, "mask" => 2,
+                            _ => bail!("{name}: unknown keyword `{key}`") };
+                        (slot, &values[0])
+                    }
+                    _ => {
+                        if keywords { bail!("{name}: positional argument after keyword argument"); }
+                        (position, arg)
+                    }
+                };
+                if slot >= 3 { bail!("{name} expects ARRAY, optional DIM, and optional MASK"); }
+                if slots[slot].replace(value.clone()).is_some() { bail!("{name}: duplicate argument"); }
+            }
+            let array = slots[0].take().with_context(|| format!("{name} requires ARRAY"))?;
+            *args = vec![array];
+            if slots[1].is_some() || slots[2].is_some() {
+                // Preserve omitted DIM distinctly from an invalid explicit zero.
+                args.push(slots[1].take().unwrap_or_else(|| Expr::Call("@no_dim".into(), vec![])));
+                args.push(slots[2].take().unwrap_or(Expr::Logical(true)));
+            }
         } else if name.starts_with("@keyword:") {
-            bail!("keyword arguments are currently supported only for SIZE, LBOUND, and UBOUND");
+            bail!("keyword arguments are currently supported only for SIZE, LBOUND, UBOUND, SUM, PRODUCT, MINVAL, and MAXVAL");
         }
     }
 
