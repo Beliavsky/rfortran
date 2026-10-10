@@ -614,6 +614,11 @@ fn eval_expr(
                     let a = storage_addr(b, ptr_ty, *ss);
                     let addr = b.ins().iadd(a, off);
                     CgVal::F64(b.ins().load(ir::types::F64, MemFlags::new(), addr, 0))
+                } else if let Some(ss) = bools.get(name.as_str()) {
+                    let a = storage_addr(b, ptr_ty, *ss);
+                    let addr = b.ins().iadd(a, off);
+                    let value = b.ins().load(ir::types::I8, MemFlags::new(), addr, 0);
+                    CgVal::Bool(b.ins().icmp_imm(ir::condcodes::IntCC::NotEqual, value, 0))
                 } else {
                     CgVal::I64(b.ins().iconst(ir::types::I64, 0))
                 }
@@ -1166,6 +1171,11 @@ fn print_expr(
                         let cmp = b.ins().fcmp(ir::condcodes::FloatCC::Equal, fv, converted);
                         let p_sel = b.ins().select(cmp, p_int, p_f);
                         ex.call_printf(b, &[ex.fmt_s, p_sel]);
+                    } else if bools.contains_key(name) {
+                        let value = eval_expr(b, ex, ptr_ty, e, ints, reals, bools, func_meta);
+                        let value = to_bool(b, value);
+                        let text = b.ins().select(value, ex.p_true, ex.p_false);
+                        ex.call_printf(b, &[ex.fmt_s, text]);
                     } else {
                         let z = b.ins().iconst(ir::types::I64, 0);
                         let p = int_to_str(b, ex, ptr_ty, ex.sprintf, z);
@@ -1821,6 +1831,13 @@ fn gen_stmts(
                         chars.insert(name.clone(), (ss, len));
                     }
                     crate::ast::TypeSpec::Logical => {
+                        if let [IExpr::IntLit(length)] = dims.as_slice() {
+                            let len: usize = length.parse()?;
+                            let ss = array_storage(b, module, len.max(1), current_fn.is_none())?;
+                            bools.insert(name.clone(), ss.into());
+                            arrays.insert(name.clone(), len);
+                            continue;
+                        }
                         let ss = b.create_sized_stack_slot(ir::StackSlotData::new(
                             ir::StackSlotKind::ExplicitSlot,
                             1,
@@ -1916,6 +1933,12 @@ fn gen_stmts(
                     let fv = to_f64(b, v);
                     let addr = b.ins().iadd(a, off);
                     b.ins().store(MemFlags::new(), fv, addr, 0);
+                } else if let Some(ss) = bools.get(name) {
+                    let a = storage_addr(b, ptr_ty, *ss);
+                    let value = eval_expr(b, ex, ptr_ty, val, ints, reals, bools, func_meta);
+                    let value = to_bool(b, value);
+                    let addr = b.ins().iadd(a, off);
+                    b.ins().store(MemFlags::new(), value, addr, 0);
                 }
             }
             IStmt::AssignIdent(dst, src) => {

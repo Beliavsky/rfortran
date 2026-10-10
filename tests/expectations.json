@@ -608,6 +608,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": "    6    7\n   23    0    5\n   23    1\n   23    6\n    7\n    9    7\n    9\n    2\n    6   -1\n    2\n   16    4\n"
+    },
+    "88_where": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 9\n .TRUE. .FALSE. .TRUE. .FALSE. .TRUE.\n .FALSE. .TRUE. .FALSE. .TRUE. .FALSE.\n .TRUE. .FALSE.\n 1 0 3 0 5\n 11 12 13 4 5\n 11 12 13 -4 -5\n 5 2 3 4 1\n 10 12 30 -4 50\n 3.0 -6.0 0.0 6.0 -3.0\n 100 100 200 200 300\n .FALSE. .TRUE. .FALSE. .TRUE. .FALSE.\n .TRUE. .FALSE.\n 10 900 30 900 50\n -6 -12 30 12 6\n .TRUE. .FALSE. .TRUE. .FALSE. .TRUE.\n"
     }
   }
 }

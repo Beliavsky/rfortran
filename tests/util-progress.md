@@ -657,3 +657,41 @@ Validation on Windows x64: all 74 Rust unit tests, 87 native regression
 fixtures, 3 focused tests with both debug and release compilers, and 34 batch
 integration tests passed. The release executable was rebuilt and the next
 utility parser error confirmed with it. Linux/macOS execution remains untested.
+
+
+## Checkpoint 28: ofort compatibility baseline and rank-one WHERE
+
+Added tests/run_ofort_compat.py with an 18-case external selection and recorded
+before/after reports in tests/ofort. The original ofort checkout is read only;
+the runner uses separate temporary working directories, execution timeouts,
+gfortran references, and native O0/O2 checks. It distinguishes compilation,
+execution, crashes/timeouts and wrong output, and records source/compiler hashes.
+The initial baseline had 3 passes and 15 compilation failures.
+
+WHERE now supports single assignments and block constructs with plain/masked
+ELSEWHERE, capturing each mask before modifying its inputs. Every assignment
+captures only selected RHS values before writing destinations, including
+reversed/overlapping RHS sections. ELEMENTAL array calls preserve masked
+evaluation; non-elemental reductions evaluate their full arguments. LOGICAL
+rank-one arrays now have interpreter and native storage, indexed reads/writes,
+constructors, assignments and output. Previously unsupported logical section
+assignment tests were updated to verify acceptance; invalid numeric reductions
+on logical arrays are still rejected.
+
+xwhere_basic and xwhere_elsewhere_forms now pass, bringing the sample to 5/18.
+The other 13 still fail compilation. This is a selected development sample, not
+a suite-wide compatibility percentage. Nested WHERE, multidimensional masks,
+section destinations, and CHARACTER destinations remain unsupported. Local
+fixture 88 tests mask/RHS snapshots, inactive uninitialized and division-by-zero
+operands, ELEMENTAL calls, ELSEWHERE precedence, LOGICAL output, and empty arrays.
+
+The full utility build now parses past WHERE and stops at the keyword actual
+argument stop_error=.true. in a CALL, combined-source line 1963. Utility sources
+are unchanged, and full compilation remains incomplete.
+
+Validation on Windows x64: 74 Rust unit tests, all 88 native regression fixtures,
+3 focused WHERE tests with debug and release compilers (including gfortran
+comparison), 2 compatibility-runner tests, and all 35 batch tests passed. The
+release executable was rebuilt; its external ofort scan confirms 5 passes and
+13 compilation failures at both O0/O2, with all reference runs successful.
+Linux/macOS execution remains untested.

@@ -29,6 +29,10 @@ extern {
         KW_PURE => TokenKind::KwPure,
         KW_ELEMENTAL => TokenKind::KwElemental,
         KW_FORALL => TokenKind::KwForall,
+        KW_WHERE => TokenKind::KwWhere,
+        KW_WHERE_BLOCK => TokenKind::KwWhereBlock,
+        KW_ELSEWHERE => TokenKind::KwElseWhere,
+        KW_ENDWHERE => TokenKind::KwEndWhere,
         KW_PUBLIC => TokenKind::KwPublic,
         KW_PRIVATE => TokenKind::KwPrivate,
         KW_RETURN => TokenKind::KwReturn,
@@ -323,6 +327,13 @@ Stmt: Stmt = {
         let mut v = Vec::new(); v.push(s); Stmt::If { cond: cnd, then_body: v, else_body: None }
     },
     KW_IF LPAREN <cnd: CondExpr> RPAREN KW_THEN <then_stmts: Stmts> <tail:IfTail> => Stmt::If { cond: cnd, then_body: then_stmts, else_body: tail },
+    KW_WHERE LPAREN <mask:CondExpr> RPAREN <assignment:Stmt> =>
+        Stmt::Block { body: vec![Stmt::CallSub { name:"@where".into(), args:vec![mask] }, assignment] },
+    KW_WHERE_BLOCK LPAREN <mask:CondExpr> RPAREN <body:Stmts> <tail:WhereTail> => {
+        let mut statements=vec![Stmt::CallSub {name:"@where".into(),args:vec![mask]}];
+        statements.extend(body); statements.extend(tail);
+        Stmt::Block {body:statements}
+    },
     KW_FORALL LPAREN <controls:ForallControls> RPAREN <assignment:Stmt> => {
         // A private marker keeps ordinary scope/expression passes traversing the
         // assignment until static shapes are known and simultaneous writes lower.
@@ -649,4 +660,16 @@ IfTail: Option<Vec<Stmt>> = {
     KW_ELSE <body:Stmts> KW_END KW_IF => Some(body),
     KW_ELSE_IF LPAREN <cond:CondExpr> RPAREN KW_THEN <body:Stmts> <tail:IfTail> =>
         Some(vec![Stmt::If { cond, then_body: body, else_body: tail }]),
+};
+
+WhereTail: Vec<Stmt> = {
+    KW_ENDWHERE => vec![],
+    KW_ELSEWHERE <body:Stmts> KW_ENDWHERE => {
+        let mut result=vec![Stmt::CallSub{name:"@elsewhere".into(),args:vec![]}];
+        result.extend(body); result
+    },
+    KW_ELSEWHERE LPAREN <mask:CondExpr> RPAREN <body:Stmts> <tail:WhereTail> => {
+        let mut result=vec![Stmt::CallSub{name:"@elsewhere".into(),args:vec![mask]}];
+        result.extend(body); result.extend(tail); result
+    },
 };

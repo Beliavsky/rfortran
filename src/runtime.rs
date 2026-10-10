@@ -144,7 +144,7 @@ pub fn interpret(program: &Program) {
                 if let Some(fr) = call_stack.last() {
                     if let Some(vec) = fr.env_int_arrays.get(name) {
                         if idx < vec.len() {
-                            return ValueTuple::from_int(vec[idx]);
+                            return if fr.logical_arrays.contains(name) { ValueTuple::from_bool(vec[idx] != 0) } else { ValueTuple::from_int(vec[idx]) };
                         }
                     }
                     if let Some(vec) = fr.env_real_arrays.get(name) {
@@ -661,6 +661,7 @@ pub fn interpret(program: &Program) {
         env_int_arrays: HashMap<String, Vec<i64>>,
         env_real_arrays: HashMap<String, Vec<f64>>,
         double_arrays: std::collections::HashSet<String>,
+        logical_arrays: std::collections::HashSet<String>,
         func_name: Option<String>,
         is_function: bool,
     }
@@ -684,6 +685,7 @@ pub fn interpret(program: &Program) {
                 env_int_arrays: HashMap::new(),
                 env_real_arrays: HashMap::new(),
                 double_arrays: std::collections::HashSet::new(),
+                logical_arrays: std::collections::HashSet::new(),
                 func_name,
                 is_function: fd.is_function,
             }
@@ -747,8 +749,9 @@ pub fn interpret(program: &Program) {
                                 let len = usize::try_from(v128).unwrap_or(0);
                                 match kind {
                             TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed | TypeSpec::RealKind(_) | TypeSpec::IntegerKind(_) => unreachable!("unresolved numeric kind"),
-                                    TypeSpec::Integer(_) => {
+                                    TypeSpec::Integer(_) | TypeSpec::Logical => {
                                         fr.env_int_arrays.insert(name.clone(), vec![0; len]);
+                                        if matches!(kind, TypeSpec::Logical) { fr.logical_arrays.insert(name.clone()); }
                                     }
                                     TypeSpec::Real | TypeSpec::DoublePrecision => {
                                         fr.env_real_arrays.insert(name.clone(), vec![0.0; len]);
@@ -858,7 +861,9 @@ pub fn interpret(program: &Program) {
                             Expr::Ident(id) => {
                                 let frame = call_stack.last().unwrap();
                                 if let Some(values) = frame.env_int_arrays.get(id) {
-                                    parts.extend(values.iter().map(|v| (v.to_string(), false)));
+                                    parts.extend(values.iter().map(|v| (
+                                        if frame.logical_arrays.contains(id) { if *v != 0 { ".TRUE.".into() } else { ".FALSE.".into() } }
+                                        else { v.to_string() }, false)));
                                 } else if let Some(values) = frame.env_real_arrays.get(id) {
                                     parts.extend(values.iter().map(|v| (format_real(*v, false), false)));
                                 } else if let Some(v) = r64.get(id) {
@@ -1376,7 +1381,7 @@ pub fn interpret(program: &Program) {
                         }
                     }
                     let frame = call_stack.last_mut().unwrap();
-                    if let Some(i) = vt.0 {
+                    if let Some(i) = vt.0.or(vt.2.map(i64::from)) {
                         let vec = frame
                             .env_int_arrays
                             .entry(name.clone())
@@ -1410,6 +1415,7 @@ pub fn interpret(program: &Program) {
         env_int_arrays: HashMap::new(),
         env_real_arrays: HashMap::new(),
         double_arrays: std::collections::HashSet::new(),
+        logical_arrays: std::collections::HashSet::new(),
         func_name: None,
         is_function: false,
     };

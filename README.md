@@ -78,6 +78,24 @@ keywords for `SIZE`. Nondefault result kinds and runtime dimensions are not yet
 supported. Existing array-storage limits apply, including one-based declarations.
 Inquiries use shape metadata and do not require initialized array elements.
 
+## WHERE and LOGICAL arrays
+
+Rank-one LOGICAL arrays support constructors, whole-array and section
+assignment, element access, list-directed output, and ALL/ANY reductions.
+WHERE accepts single-line assignments and block constructs with plain or masked
+ELSEWHERE (including `else where` and `end where` spellings). Masks are captured
+before the branch executes; each assignment captures selected RHS values before
+writing its destination. Inactive elemental RHS expressions are not evaluated.
+Non-elemental reductions still evaluate their complete array argument.
+
+This WHERE subset requires statically known rank-one shapes and whole-array
+numeric or LOGICAL destinations. Nested WHERE, section destinations and
+CHARACTER destinations remain unsupported.
+
+A selected external ofort compatibility suite is described in
+[tests/ofort/README.md](tests/ofort/README.md). It compares native O0/O2 output
+with gfortran and records failures without changing the ofort checkout.
+
 ## Explicit DO steps
 
 Counted loops accept `do i=first,last,step` with a constant nonzero INTEGER
@@ -215,6 +233,8 @@ python tests/test_runtime_formats.py
 python tests/test_nonadvancing_output.py
 python tests/test_elemental_setters.py
 python tests/test_do_steps.py
+python tests/test_where.py
+python tests/test_ofort_compat_runner.py
 ```
 
 The Python tests use `target/debug/rfort` (with `.exe` on Windows).

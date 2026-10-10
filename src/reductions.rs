@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Beliavsky
 // See LICENSE-MIT in the repository root.
 
-//! Lower rank-one numeric reductions and scalar array assignments to loops.
+//! Lower rank-one numeric/LOGICAL reductions, assignments and WHERE to loops.
 use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec, UnOp};
 use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
@@ -23,7 +23,7 @@ impl std::ops::DerefMut for Symbols {
 fn int(n: i64) -> Expr { Expr::IntLit(n.to_string()) }
 fn bin(op: BinOp, a: Expr, b: Expr) -> Expr { Expr::Bin(op, Box::new(a), Box::new(b)) }
 fn reduction(name: &str) -> bool { matches!(name.to_ascii_lowercase().as_str(), "sum" | "product" | "minval" | "maxval" | "any" | "all") }
-fn numeric(kind: &TypeSpec) -> bool { matches!(kind, TypeSpec::Integer(_) | TypeSpec::Real | TypeSpec::DoublePrecision) }
+fn array_element_kind(kind: &TypeSpec) -> bool { matches!(kind, TypeSpec::Integer(_) | TypeSpec::Real | TypeSpec::DoublePrecision | TypeSpec::Logical) }
 fn merge_kind(a: TypeSpec, b: TypeSpec) -> TypeSpec {
     if matches!(a, TypeSpec::DoublePrecision) || matches!(b, TypeSpec::DoublePrecision) { TypeSpec::DoublePrecision }
     else if matches!(a, TypeSpec::Real) || matches!(b, TypeSpec::Real) { TypeSpec::Real }
@@ -38,13 +38,13 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
     if let Some((value,count)) = crate::multidim::view_element(e,index) {
         let Expr::Index(name,_) = &value else {unreachable!()};
         let kind=symbols.get(name).context("undefined section source")?.0.clone();
-        if !numeric(&kind) { bail!("array sections currently require numeric arrays"); }
+        if !array_element_kind(&kind) { bail!("array sections currently require numeric or LOGICAL arrays"); }
         return Ok((value,Some(count),kind));
     }
     match e {
         Expr::Ident(name) | Expr::Section { name, .. } => {
             let (kind, dims) = symbols.get(name).with_context(|| format!("undefined reduction argument `{name}`"))?;
-            if !numeric(kind) { bail!("reductions require numeric arrays"); }
+            if !array_element_kind(kind) { bail!("reductions require numeric or LOGICAL arrays"); }
             if dims.is_empty() && matches!(e, Expr::Ident(_)) { return Ok((e.clone(), None, kind.clone())); }
             if dims.len() != 1 { bail!("reductions currently require one-dimensional arrays"); }
             let extent = constant(&dims[0])?;
@@ -69,9 +69,9 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
         Expr::Logical(_) => Ok((e.clone(), None, TypeSpec::Logical)),
         Expr::IntLit(_) => Ok((e.clone(), None, TypeSpec::Integer(None))),
         Expr::RealLit(_) => Ok((e.clone(), None, TypeSpec::Real)),
-        Expr::Un(UnOp::Neg, a) => {
+        Expr::Un(op @ (UnOp::Neg | UnOp::Not), a) => {
             let (a, len, kind) = element(a, index, symbols)?;
-            Ok((Expr::Un(UnOp::Neg, Box::new(a)), len, kind))
+            Ok((Expr::Un(op.clone(), Box::new(a)), len, kind))
         }
         Expr::Bin(op, a, b) => {
             let (a, alen, akind) = element(a, index, symbols)?;
@@ -84,7 +84,7 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
             let (arg, len, kind) = element(&args[0], index, symbols)?;
             if len.is_some() || !matches!(kind, TypeSpec::Integer(_)) { bail!("array subscript must be scalar INTEGER"); }
             let kind = symbols[name].0.clone();
-            if !numeric(&kind) { bail!("reductions require numeric arrays"); }
+            if !array_element_kind(&kind) { bail!("reductions require numeric or LOGICAL arrays"); }
             Ok((Expr::Index(name.clone(), vec![arg]), None, kind))
         }
         Expr::Call(name,args) if symbols.elementals.contains_key(name) => {
@@ -107,6 +107,10 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
 }
 
 fn lower_expr(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, serial: &mut usize) -> Result<()> {
+    lower_expr_impl(e,symbols,prefix,serial,true)
+}
+
+fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, serial: &mut usize, expand_elementals: bool) -> Result<()> {
     match e {
         Expr::Call(name, args) if name == "@bounds_vector" => {
             *serial += 1;
@@ -182,12 +186,12 @@ fn lower_expr(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, seria
             };
         }
         Expr::Call(tag, _) if tag == "@matrix_view" => {},
-        Expr::Call(_, args) | Expr::Index(_, args) => for arg in args { lower_expr(arg, symbols, prefix, serial)?; },
-        Expr::Bin(_, a, b) => { lower_expr(a, symbols, prefix, serial)?; lower_expr(b, symbols, prefix, serial)?; }
-        Expr::Un(_, a) => lower_expr(a, symbols, prefix, serial)?,
+        Expr::Call(_, args) | Expr::Index(_, args) => for arg in args { lower_expr_impl(arg, symbols, prefix, serial, expand_elementals)?; },
+        Expr::Bin(_, a, b) => { lower_expr_impl(a, symbols, prefix, serial, expand_elementals)?; lower_expr_impl(b, symbols, prefix, serial, expand_elementals)?; }
+        Expr::Un(_, a) => lower_expr_impl(a, symbols, prefix, serial, expand_elementals)?,
         _ => {}
     }
-    if matches!(e,Expr::Call(name,_) if symbols.elementals.contains_key(name)) && array_valued(e,symbols) {
+    if expand_elementals && matches!(e,Expr::Call(name,_) if symbols.elementals.contains_key(name)) && array_valued(e,symbols) {
         *serial+=1;
         let index_name=format!("@elemental_index_{serial}");
         let temp=format!("@elemental_result_{serial}");
@@ -212,6 +216,79 @@ fn array_valued(e: &Expr, symbols: &Symbols) -> bool {
         Expr::Call(_, args) | Expr::Index(_, args) => args.iter().any(|arg| array_valued(arg, symbols)),
         _ => false,
     }
+}
+
+// WHERE masks are captured before executing a branch. Each assignment then
+// snapshots only its selected RHS elements before writing any destination.
+fn lower_where(body: &mut Vec<Stmt>, symbols: &mut Symbols, serial: &mut usize) -> Result<()> {
+    if !matches!(body.first(), Some(Stmt::CallSub{name,..}) if name == "@where") { return Ok(()); }
+    *serial += 1;
+    let index = format!("@where_index_{serial}");
+    let active = format!("@where_active_{serial}");
+    let remaining = format!("@where_remaining_{serial}");
+    let id = |n: &str| Expr::Ident(n.into());
+    let item = |n: &str| Expr::Index(n.into(), vec![id(&index)]);
+    let set = |n: &str, value| Stmt::AssignIndex {name:n.into(),indices:vec![id(&index)],value};
+    let mut output = vec![Stmt::VarDecl{kind:TypeSpec::Integer(None),names:vec![index.clone()]}];
+    let mut extent = None;
+    let mut first = true;
+    for stmt in std::mem::take(body) {
+        match stmt {
+            Stmt::SourceLocation(_) => output.push(stmt),
+            Stmt::CallSub{name, mut args} if name == "@where" || name == "@elsewhere" => {
+                let mut prefix = vec![];
+                let (value,count,kind) = if let Some(mask) = args.first_mut() {
+                    lower_expr_impl(mask,symbols,&mut prefix,serial,false)?;
+                    element(mask,&id(&index),symbols)?
+                } else { (Expr::Logical(true),extent,TypeSpec::Logical) };
+                if kind != TypeSpec::Logical { bail!("WHERE mask must be a LOGICAL array"); }
+                let count=count.context("WHERE mask must be an array")?;
+                if let Some(n)=extent { if n != count {bail!("WHERE mask shapes do not conform");} }
+                else {
+                    extent=Some(count);
+                    for name in [&active,&remaining] {
+                        output.push(Stmt::ArrayDecl{kind:TypeSpec::Logical,name:name.clone(),dims:vec![int(count)]});
+                    }
+                }
+                output.extend(prefix);
+                let mut capture = if first {
+                    vec![set(&active,value)]
+                } else {
+                    vec![set(&active,Expr::Logical(false)),Stmt::If{cond:item(&remaining),then_body:vec![set(&active,value)],else_body:None}]
+                };
+                let not_active=Expr::Un(UnOp::Not,Box::new(item(&active)));
+                capture.push(set(&remaining,if first {not_active} else {bin(BinOp::And,item(&remaining),not_active)}));
+                output.push(Stmt::Do{var:index.clone(),start:int(1),end:int(count),body:capture});
+                first=false;
+            }
+            Stmt::Assign{name,mut value} => {
+                let count=extent.unwrap();
+                let (kind,dims)=symbols.get(&name).context("WHERE destination must be a declared array")?.clone();
+                if dims.len()!=1 || !array_element_kind(&kind) {bail!("WHERE currently requires a whole numeric or LOGICAL array destination");}
+                if constant(&dims[0])? != count {bail!("WHERE destination shape does not conform to mask");}
+                let mut prefix=vec![];
+                lower_expr_impl(&mut value,symbols,&mut prefix,serial,false)?;
+                let (value,rhs_count,rhs_kind)=element(&value,&id(&index),symbols)?;
+                if rhs_count.is_some_and(|n|n!=count) {bail!("WHERE assignment shapes do not conform");}
+                if matches!(kind,TypeSpec::Logical) != matches!(rhs_kind,TypeSpec::Logical) {
+                    bail!("WHERE assignment has incompatible numeric/LOGICAL types");
+                }
+                *serial+=1;
+                let temp=format!("@where_value_{serial}");
+                output.extend(prefix);
+                output.push(Stmt::ArrayDecl{kind,name:temp.clone(),dims:vec![int(count)]});
+                output.push(Stmt::Do{var:index.clone(),start:int(1),end:int(count),body:vec![Stmt::If{
+                    cond:item(&active),then_body:vec![set(&temp,value)],else_body:None,
+                }]});
+                output.push(Stmt::Do{var:index.clone(),start:int(1),end:int(count),body:vec![Stmt::If{
+                    cond:item(&active),then_body:vec![set(&name,item(&temp))],else_body:None,
+                }]});
+            }
+            _ => bail!("WHERE currently supports whole-array assignments; nested WHERE and section destinations are not yet supported"),
+        }
+    }
+    *body=output;
+    Ok(())
 }
 
 fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> Result<()> {
@@ -385,6 +462,7 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                 lower_body(body, &symbols, serial)?;
             }
             Stmt::Block { body } => {
+                lower_where(body, &mut symbols, serial)?;
                 crate::do_steps::lower(body, &symbols.variables, serial)?;
                 lower_body(body, &symbols, serial)?;
             }
@@ -446,8 +524,8 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
         }
         if let Stmt::Assign { name, value } = &stmt {
             if let Some((kind, dims)) = symbols.get(name).filter(|(_, dims)| !dims.is_empty()) {
-                if dims.len() != 1 || !numeric(kind) {
-                    bail!("whole-array assignment currently requires a one-dimensional numeric array");
+                if dims.len() != 1 || !array_element_kind(kind) {
+                    bail!("whole-array assignment currently requires a one-dimensional numeric or LOGICAL array");
                 }
                 if let Expr::Call(tag,values) = value { if tag == "@array_constructor" {
                     if values.iter().any(|e| array_valued(e, &symbols)) {
@@ -610,7 +688,7 @@ mod tests {
             ("real :: x(3), y(2)", "sum(x+y)", "do not conform"),
             ("real :: x(3)", "product(x(::0))", "stride must not be zero"),
             ("real :: x(3)", "minval(x(0:2))", "outside 1:3"),
-            ("logical :: x(3)", "maxval(x)", "numeric arrays"),
+            ("logical :: x(3)", "maxval(x)", "incorrect numeric/logical type"),
         ] {
             let source = format!("program main\nimplicit none\n{decls}\nprint *, {expression}\nend program main");
             let tokens = crate::lexer::lex(&source);

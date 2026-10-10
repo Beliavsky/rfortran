@@ -845,6 +845,22 @@ impl Lowerer {
                     self.body(body, &shapes)?;
                 }
                 Stmt::Block { body } => {
+                    // Check WHERE ranks before numeric arrays are flattened.
+                    if let Some(Stmt::CallSub{name,args}) = body.first() {
+                        if name == "@where" {
+                            let shape=self.shape(&args[0],&shapes)?.context("WHERE mask must be an array")?;
+                            if shape.len()!=1 {bail!("WHERE currently supports rank-one masks and destinations");}
+                            for stmt in body.iter() {
+                                match stmt {
+                                    Stmt::Assign{name,..} if shapes.get(name)!=Some(&shape) => bail!("WHERE destination shape does not conform to mask"),
+                                    Stmt::CallSub{name,args} if name == "@elsewhere" && !args.is_empty() => {
+                                        if self.shape(&args[0],&shapes)?.as_ref()!=Some(&shape) {bail!("WHERE mask shapes do not conform");}
+                                    }
+                                    _=>{}
+                                }
+                            }
+                        }
+                    }
                     self.expand_forall(body, &shapes)?;
                     self.body(body, &shapes)?;
                 }
@@ -1058,10 +1074,8 @@ mod tests {
             assert_eq!(crate::initialized::instrument(p).is_ok(), valid, "{source}");
         }
         let p = lower("logical::a(2)\na(:)=.true.\nend").unwrap();
-        assert!(crate::reductions::resolve(p)
-            .unwrap_err()
-            .to_string()
-            .contains("numeric arrays"));
+        let p = crate::reductions::resolve(p).unwrap();
+        assert!(crate::initialized::instrument(p).is_ok());
         for (statement, expected) in [
             ("a(:,1:2)=b", "nonconforming section assignment"),
             ("v(:)=b", "nonconforming section assignment"),

@@ -163,6 +163,10 @@ pub enum TokenKind {
     KwPure,
     KwElemental,
     KwForall,
+    KwWhere,
+    KwWhereBlock,
+    KwElseWhere,
+    KwEndWhere,
     KwWrite,
     KwWriteEmpty,
     #[token("public", ignore(ascii_case))]
@@ -338,6 +342,51 @@ pub fn lex(input: &str) -> Vec<Token> {
                 });
             }
         }
+    }
+    let mut start = 0;
+    while start < tokens.len() {
+        // WHERE is contextual. The token after ')' on this source statement
+        // distinguishes a single assignment from the block form.
+        let statement_start = start == 0 || !same_statement(&input[tokens[start-1].span.end..tokens[start].span.start]);
+        let mut assignment = matches!(tokens.get(start+1).map(|t|&t.kind),Some(TokenKind::Eq));
+        if matches!(tokens.get(start+1).map(|t|&t.kind),Some(TokenKind::LParen)) {
+            let mut depth=0;
+            for end in start+1..tokens.len() {
+                match tokens[end].kind {TokenKind::LParen=>depth+=1,TokenKind::RParen=>depth-=1,_=>{}}
+                if depth==0 { assignment=matches!(tokens.get(end+1).map(|t|&t.kind),Some(TokenKind::Eq)); break; }
+            }
+        }
+        if statement_start && !assignment {
+            if matches!(&tokens[start].kind,TokenKind::Ident(n) if n.eq_ignore_ascii_case("endwhere")) {
+                tokens[start].kind = TokenKind::KwEndWhere;
+            } else if matches!(tokens[start].kind,TokenKind::KwEnd)
+                && tokens.get(start+1).is_some_and(|t| matches!(&t.kind,TokenKind::Ident(n) if n.eq_ignore_ascii_case("where")) && same_statement(&input[tokens[start].span.end..t.span.start])) {
+                tokens[start].kind = TokenKind::KwEndWhere;
+                tokens[start].span.end = tokens[start+1].span.end;
+                tokens.remove(start+1);
+            } else if matches!(&tokens[start].kind,TokenKind::Ident(n) if n.eq_ignore_ascii_case("elsewhere")) {
+                tokens[start].kind = TokenKind::KwElseWhere;
+            } else if matches!(tokens[start].kind,TokenKind::KwElse)
+                && tokens.get(start+1).is_some_and(|t| matches!(&t.kind,TokenKind::Ident(n) if n.eq_ignore_ascii_case("where")) && same_statement(&input[tokens[start].span.end..t.span.start])) {
+                tokens[start].kind = TokenKind::KwElseWhere;
+                tokens[start].span.end = tokens[start+1].span.end;
+                tokens.remove(start+1);
+            } else if matches!(&tokens[start].kind,TokenKind::Ident(n) if n.eq_ignore_ascii_case("where"))
+                && matches!(tokens.get(start+1).map(|t|&t.kind),Some(TokenKind::LParen)) {
+                let mut depth = 0;
+                for end in start+1..tokens.len() {
+                    match tokens[end].kind { TokenKind::LParen=>depth+=1, TokenKind::RParen=>depth-=1, _=>{} }
+                    if depth == 0 {
+                        let next=tokens.get(end+1).filter(|t|same_statement(&input[tokens[end].span.end..t.span.start]));
+                        if !matches!(next.map(|t|&t.kind),Some(TokenKind::Eq)) {
+                            tokens[start].kind=if next.is_none() {TokenKind::KwWhereBlock} else {TokenKind::KwWhere};
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        start += 1;
     }
     for start in 0..tokens.len() {
         if let TokenKind::Ident(n) = &tokens[start].kind {

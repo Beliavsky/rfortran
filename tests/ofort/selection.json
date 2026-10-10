@@ -1,0 +1,23 @@
+{
+  "description": "Initial deterministic standard-Fortran sample; gfortran supplies reference output. These are compatibility probes, not expected-pass tests.",
+  "cases": [
+    "xloop.f90",
+    "xparam.f90",
+    "xarray_init.f90",
+    "xarray_section.f90",
+    "xcharacter_len_expr.f90",
+    "xcharacter_len_star_parameter_concat.f90",
+    "xselect_case_selector_list.f90",
+    "xnumeric_integer_semantics_pending.f90",
+    "xnumeric_mixed_kinds_pending.f90",
+    "xoptional.f90",
+    "xwhere_basic.f90",
+    "xwhere_elsewhere_forms.f90",
+    "xwhere_mask_capture_pending.f90",
+    "xwhere_nested_elsewhere_pending.f90",
+    "xintrinsic_reductions_dim_mask_pending.f90",
+    "xintrinsic_locations_dim_back_pending.f90",
+    "xintrinsic_transform_order_pending.f90",
+    "xcharacter_overlap_assignment_pending.f90"
+  ]
+}
