@@ -43,6 +43,7 @@ extern {
         KW_IF => TokenKind::KwIf,
         KW_THEN => TokenKind::KwThen,
         KW_ELSE => TokenKind::KwElse,
+        KW_ELSE_IF => TokenKind::KwElseIf,
     KW_DO => TokenKind::KwDo,
     KW_WHILE => TokenKind::KwWhile,
         KW_INTEGER => TokenKind::KwInteger,
@@ -321,8 +322,7 @@ Stmt: Stmt = {
     KW_IF LPAREN <cnd: CondExpr> RPAREN <s: Stmt> => {
         let mut v = Vec::new(); v.push(s); Stmt::If { cond: cnd, then_body: v, else_body: None }
     },
-    KW_IF LPAREN <cnd: CondExpr> RPAREN KW_THEN <then_stmts: Stmts> KW_END KW_IF => Stmt::If { cond: cnd, then_body: then_stmts, else_body: None },
-    KW_IF LPAREN <cnd: CondExpr> RPAREN KW_THEN <then_stmts: Stmts> KW_ELSE <else_stmts: Stmts> KW_END KW_IF => Stmt::If { cond: cnd, then_body: then_stmts, else_body: Some(else_stmts) },
+    KW_IF LPAREN <cnd: CondExpr> RPAREN KW_THEN <then_stmts: Stmts> <tail:IfTail> => Stmt::If { cond: cnd, then_body: then_stmts, else_body: tail },
     KW_FORALL LPAREN <index:Ident> EQ <start:RhsExpr> COLON <end:RhsExpr> <step:ForallStride?> RPAREN <assignment:Stmt> => {
         // A private marker keeps ordinary scope/expression passes traversing the
         // assignment until static shapes are known and simultaneous writes lower.
@@ -621,4 +621,12 @@ LetterRangeItem: LetterRange = {
         let end_char = end.chars().next().unwrap_or('z').to_ascii_lowercase();
         LetterRange { start: start_char, end: Some(end_char) }
     },
+};
+
+// Lower a branch chain to nested IF nodes, sharing a single closing END IF.
+IfTail: Option<Vec<Stmt>> = {
+    KW_END KW_IF => None,
+    KW_ELSE <body:Stmts> KW_END KW_IF => Some(body),
+    KW_ELSE_IF LPAREN <cond:CondExpr> RPAREN KW_THEN <body:Stmts> <tail:IfTail> =>
+        Some(vec![Stmt::If { cond, then_body: body, else_body: tail }]),
 };

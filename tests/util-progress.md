@@ -398,3 +398,26 @@ Validation on Windows x64: 69 Rust unit tests, all 78 native regression fixtures
 and the 21 formatted/internal input, WRITE, implied-DO output, and external-file
 checks passed. The release executable was rebuilt. Linux/macOS execution has
 not been validated in this checkpoint.
+
+The nineteenth checkpoint adds ELSE IF and ELSEIF branch chains, lowered to
+nested IF nodes with a single closing END IF. Only reached conditions are
+evaluated, and an optional final ELSE handles the unmatched case. A separate
+ELSE statement followed by IF remains a nested block requiring two END IFs;
+newlines, semicolons, comments, and continuation markers preserve that distinction.
+Continuation handling now accepts intervening blank/comment lines before an
+optional leading ampersand. ELSEIF remains usable as a variable/procedure name.
+
+Test 79 and `python tests/test_else_if.py` cover every branch, no final ELSE,
+nested blocks, both spellings, continued statements, malformed chains, and
+side-effecting conditions compared with gfortran in the interpreter and native
+O0/O2. The batch suite covers the same fixture.
+
+The original utility sources remain unchanged. Parsing now passes `concat`
+and reaches the two-index FORALL in `munge`, combined-source line 1033:
+`forall (ix=1:size(xx),iy=1:size(yy)) ...`. The existing FORALL subset accepts
+only one index. Full utility compilation remains incomplete.
+
+Validation on Windows x64: all 70 Rust unit tests, 79 native regression fixtures,
+3 focused ELSE IF tests with debug and release compilers, and 26 batch tests
+passed. The release executable was rebuilt, and the next utility parser error
+was confirmed with that executable. Linux/macOS execution remains untested.

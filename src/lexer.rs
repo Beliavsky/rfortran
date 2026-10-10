@@ -5,6 +5,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn else_if_obeys_statement_boundaries() {
+        for gap in [" ", " & ! comment\n! intervening comment\n\n & "] {
+            let source = format!("else{gap}if (x) then");
+            let tokens = lex(&source);
+            assert!(matches!(tokens[0].kind, TokenKind::KwElseIf));
+            assert_eq!(&source[tokens[0].span.clone()], format!("else{gap}if"));
+            assert!(!tokens.iter().any(|t| matches!(t.kind, TokenKind::Error(_))));
+        }
+        for gap in ["\n", ";", " ! comment\n"] {
+            let tokens = lex(&format!("else{gap}if (x) then"));
+            assert!(matches!(tokens[0].kind, TokenKind::KwElse));
+            assert!(matches!(tokens[1].kind, TokenKind::KwIf));
+        }
+        for source in ["elseif=1", "elseif(1)=2", "call elseif(x)", "x=elseif(y)"] {
+            assert!(!lex(source).iter().any(|t| matches!(t.kind, TokenKind::KwElseIf)));
+        }
+    }
+
+    #[test]
     fn bare_stop_does_not_consume_the_next_statement() {
         let tokens=lex("stop; x=1\nif (.true.) stop ! done\nx=2\nstop 3\nerror stop 'bad'\nstop");
         assert_eq!(tokens.iter().filter(|t|matches!(t.kind,TokenKind::KwStopEmpty)).count(),3);
@@ -79,7 +98,7 @@ pub enum TokenKind {
     _WS,
     #[regex(r"![^\n]*", logos::skip)]
     _COMMENT,
-    #[regex(r"&[ \t]*(?:![^\n]*)?\r?\n[ \t]*&?", logos::skip)]
+    #[regex(r"&[ \t]*(?:![^\n]*)?\r?\n", continuation)]
     _Continuation,
     #[token("[")]
     LBracket,
@@ -157,6 +176,7 @@ pub enum TokenKind {
     KwThen,
     #[token("else", ignore(ascii_case))]
     KwElse,
+    KwElseIf,
     #[token("do", ignore(ascii_case))]
     KwDo,
     #[token("while", ignore(ascii_case))]
@@ -258,6 +278,22 @@ pub enum TokenKind {
 pub struct Token {
     pub kind: TokenKind,
     pub span: std::ops::Range<usize>,
+}
+
+// After a trailing &, blank/comment lines may precede the optional leading &.
+fn continuation(lexer: &mut logos::Lexer<TokenKind>) -> logos::Skip {
+    let bytes = lexer.remainder().as_bytes();
+    let mut end = 0;
+    while end < bytes.len() {
+        match bytes[end] {
+            b' ' | b'\t' | b'\r' | b'\n' => end += 1,
+            b'!' => { while end < bytes.len() && bytes[end] != b'\n' { end += 1; } }
+            b'&' => { end += 1; break; }
+            _ => break,
+        }
+    }
+    lexer.bump(end);
+    logos::Skip
 }
 
 // END INTERFACE's optional name must be in the same logical statement.
@@ -419,6 +455,32 @@ pub fn lex(input: &str) -> Vec<Token> {
             && tokens.get(index+1).is_none_or(|next|!same_statement(&input[tokens[index].span.end..next.span.start])) {
             tokens[index].kind=TokenKind::KwStopEmpty;
         }
+    }
+    // ELSE IF is one branch only within a logical statement. ELSE followed by
+    // an IF on the next statement is a nested construct with its own END IF.
+    let mut index = 0;
+    while index < tokens.len() {
+        if matches!(tokens[index].kind, TokenKind::KwElse)
+            && tokens.get(index + 1).is_some_and(|t| matches!(t.kind, TokenKind::KwIf)
+                && same_statement(&input[tokens[index].span.end..t.span.start])) {
+            let end = tokens.remove(index + 1).span.end;
+            tokens[index].kind = TokenKind::KwElseIf;
+            tokens[index].span.end = end;
+        } else if matches!(&tokens[index].kind, TokenKind::Ident(n) if n.eq_ignore_ascii_case("elseif"))
+            && tokens.get(index + 1).is_some_and(|t| matches!(t.kind, TokenKind::LParen)) {
+            // Keep ELSEIF available as an ordinary variable/procedure name.
+            let mut depth = 0;
+            for end in index + 1..tokens.len() {
+                match tokens[end].kind { TokenKind::LParen => depth += 1, TokenKind::RParen => depth -= 1, _ => {} }
+                if depth == 0 {
+                    if tokens.get(end + 1).is_some_and(|t| matches!(t.kind, TokenKind::KwThen)) {
+                        tokens[index].kind = TokenKind::KwElseIf;
+                    }
+                    break;
+                }
+            }
+        }
+        index += 1;
     }
     tokens
 }

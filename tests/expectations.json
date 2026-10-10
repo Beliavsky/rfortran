@@ -545,6 +545,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": "10\n [abcdefghij]\n [q  ]\n []\n []\n [ab]\n [abc    ]\n3\n [1234]\n9\n"
+    },
+    "79_else_if": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "7\n10\n20\n30\n40\n99\n50\n60\n"
     }
   }
 }

@@ -166,6 +166,7 @@ fn human_token(tok: &TokenKind) -> String {
         TokenKind::KwIf => "keyword if".into(),
         TokenKind::KwThen => "keyword then".into(),
         TokenKind::KwElse => "keyword else".into(),
+        TokenKind::KwElseIf => "keyword else if".into(),
         TokenKind::KwInteger => "keyword integer".into(),
         TokenKind::KwReal => "keyword real".into(),
         TokenKind::KwDouble => "keyword double".into(),
