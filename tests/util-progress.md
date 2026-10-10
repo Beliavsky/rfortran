@@ -562,3 +562,33 @@ Validation on Windows x64: 74 Rust unit tests, all 84 native regression fixtures
 3 runtime-format and 2 named-format tests with both debug and release compilers,
 and all 31 batch tests passed. The release executable was rebuilt and the next
 utility parser error confirmed with it. Linux/macOS execution remains untested.
+
+The twenty-fifth checkpoint adds ADVANCE='no' and ADVANCE='yes' to formatted
+standard-output WRITE, including writes with empty output lists and runtime
+format strings. ADVANCE accepts constant CHARACTER expressions, including
+named parameters and concatenation. Duplicate controls, invalid values, unknown
+WRITE controls, and ADVANCE on list-directed output are diagnosed. Runtime
+ADVANCE values remain unsupported. Other existing formatted-output limits stay
+in place.
+
+Nonadvancing writes omit the final newline and flush stdout so prompts are
+visible before input. Subsequent writes continue on the same line. Final
+nonadvancing stdout output remains unterminated at program exit or STOP,
+matching the gfortran reference tested here. Explicit / descriptors still
+start a new record. The native helper uses a new entry point with an advancing
+flag; the old advancing-only ABI remains available for previously emitted
+objects.
+
+Test 85 and python tests/test_nonadvancing_output.py exercise joined records,
+loops, empty output lists, mixed formatted/list-directed output, record breaks,
+constant ADVANCE expressions, STOP, and invalid controls. A pipe-based prompt
+test waits for output before supplying input to verify flushing in interpreter
+and native O0/O2 modes. The output fixture is compared exactly with gfortran.
+Original utility sources remain unchanged. Parsing now passes ADVANCE='no'
+and stops at elemental subroutine set_optional_real on combined-source line
+1356. Full utility compilation remains incomplete.
+
+Validation on Windows x64: 74 Rust unit tests, all 85 native regression fixtures,
+4 nonadvancing-output and 3 runtime-format tests with debug and release compilers,
+and all 32 batch tests passed. The release executable was rebuilt and the next
+utility parser error confirmed with it. Linux/macOS execution remains untested.

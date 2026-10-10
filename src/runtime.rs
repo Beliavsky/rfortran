@@ -1073,7 +1073,7 @@ pub fn interpret(program: &Program) {
                         call_stack.last_mut().unwrap().env_str.insert(dest.clone(),input);
                         idx+=1;continue;
                     }
-                    if name == "@formatted_print" {
+                    if name == "@formatted_print" || name == "@formatted_write_noadvance" {
                         let fr=call_stack.last().unwrap().clone();
                         let format=eval_expr(&args[0],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).3.unwrap();
                         let fields=crate::formatting::parse(&format,args.len()-1).unwrap_or_else(|e| {
@@ -1096,7 +1096,13 @@ pub fn interpret(program: &Program) {
                             let text=match field.code {'a'=>v.3.unwrap(),  'i'=>{let i=v.0.unwrap();if i==0 && field.precision==0 {String::new()}else{format!("{}{:0width$}",if i<0 {"-"} else {""},i.unsigned_abs(),width=field.precision)}}, 'l'=>if v.2.unwrap_or(v.0==Some(1)) {"T".into()}else{"F".into()},_=>format!("{:.*}",field.precision,v.1.unwrap_or(v.0.unwrap_or(0) as f64))};
                             if field.width==0 {if field.code=='i' && text.is_empty() {print!(" ");}else{print!("{text}");}} else if text.len()>field.width {if field.code=='a' {print!("{}",text.chars().take(field.width).collect::<String>());}else{print!("{}","*".repeat(field.width));}}else{print!("{:>width$}",text,width=field.width);}
                         }
-                        println!();idx+=1;continue;
+                        if name == "@formatted_write_noadvance" {
+                            use std::io::Write;
+                            io_result(std::io::stdout().flush().map_err(Into::into));
+                        } else {
+                            println!();
+                        }
+                        idx+=1;continue;
                     }
                     if name.eq_ignore_ascii_case("random_seed") && !funcs.contains_key(name) { RANDOM_STATE.with(|s| s.set(1)); idx += 1; continue; }
                     if name == "@check_initialized" {

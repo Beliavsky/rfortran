@@ -587,6 +587,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": "number=-007\n 12***\n  ab  T    1.25\n\n wall time elapsed(s) =     2.500\n  29\n100%, isn't it?\n\n  1\n  002\n"
+    },
+    "85_nonadvancing_output": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "left:  7\nempty-end\nloop: 1 2 3\nmixed: done\nslash:\nnext-end\nfinal"
     }
   }
 }

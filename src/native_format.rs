@@ -12,6 +12,7 @@ extern "C" {
     fn sprintf(buffer: *mut u8, format: *const u8, ...) -> i32;
     fn putchar(c: i32) -> i32;
     fn exit(code: i32) -> !;
+    fn fflush(stream: *mut core::ffi::c_void) -> i32;
     #[cfg(windows)]
     fn _write(fd: i32, data: *const u8, len: u32) -> i32;
     #[cfg(not(windows))]
@@ -50,11 +51,12 @@ fn checked<T>(result: Result<T, &'static str>) -> T {
 /// Items. CHARACTER items contain a valid pointer and length; other items hold
 /// INTEGER, REAL, or LOGICAL bits. All storage remains live for this call.
 #[no_mangle]
-pub unsafe extern "C" fn rfort_formatted_output(
+pub unsafe extern "C" fn rfort_formatted_write(
     format: *const u8,
     length: usize,
     items: *const Item,
     count: usize,
+    advance: i32,
 ) {
     let bytes = core::slice::from_raw_parts(format, length);
     let items = core::slice::from_raw_parts(items, count);
@@ -159,5 +161,20 @@ pub unsafe extern "C" fn rfort_formatted_output(
             }
         }
     }
-    putchar(10);
+    if advance != 0 {
+        putchar(10);
+    } else {
+        fflush(core::ptr::null_mut());
+    }
+}
+
+// Preserve the advancing-only ABI used by previously emitted objects.
+#[no_mangle]
+pub unsafe extern "C" fn rfort_formatted_output(
+    format: *const u8,
+    length: usize,
+    items: *const Item,
+    count: usize,
+) {
+    rfort_formatted_write(format, length, items, count, 1);
 }

@@ -248,9 +248,29 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                 if crate::parameters::integer_constant(&args[0]).ok()!=Some(6) {
                     bail!("WRITE currently supports only standard output (* or constant unit 6)");
                 }
+                let mut first_item = 2;
+                let mut advance = None;
+                while let Some(Expr::Call(option, values)) = args.get(first_item) {
+                    let Some(option) = option.strip_prefix("@write_option:") else { break; };
+                    if option != "advance" { bail!("unsupported WRITE control `{option}`"); }
+                    if advance.is_some() { bail!("duplicate ADVANCE in WRITE"); }
+                    let value = crate::parameters::character_constant(&values[0])
+                        .context("ADVANCE currently requires a constant CHARACTER expression")?;
+                    advance = Some(match value.trim_end().to_ascii_lowercase().as_str() {
+                        "yes" => true, "no" => false,
+                        _ => bail!("ADVANCE must be 'yes' or 'no'"),
+                    });
+                    first_item += 1;
+                }
                 stmt=match &args[1] {
-                    Expr::Call(tag, _) if tag=="@list_directed" => Stmt::Print{items:args[2..].to_vec()},
-                    _ => Stmt::CallSub{name:"@formatted_print".into(),args:args[1..].to_vec()},
+                    Expr::Call(tag, _) if tag=="@list_directed" => {
+                        if advance.is_some() { bail!("ADVANCE requires an explicit format; list-directed WRITE is not allowed"); }
+                        Stmt::Print{items:args[first_item..].to_vec()}
+                    }
+                    _ => {
+                        let mut values = vec![args[1].clone()]; values.extend_from_slice(&args[first_item..]);
+                        Stmt::CallSub{name:if advance == Some(false) {"@formatted_write_noadvance"} else {"@formatted_print"}.into(),args:values}
+                    }
                 };
             }
         }
@@ -265,7 +285,7 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
             }
         }
         if let Stmt::CallSub {name,args}=&stmt {
-            if name=="@formatted_print" && args.iter().any(crate::output::contains_implied_do) {
+            if matches!(name.as_str(), "@formatted_print" | "@formatted_write_noadvance") && args.iter().any(crate::output::contains_implied_do) {
                 bail!("implied-DO is currently supported only in list-directed output");
             }
             if name=="@internal_read" {
@@ -275,7 +295,7 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
         }
         if let Stmt::CallSub {name,args}=&mut stmt {
             if name=="@allocate" {bail!("ALLOCATE is currently supported only in specialized local array subroutines");}
-            if name=="@formatted_print" {
+            if matches!(name.as_str(), "@formatted_print" | "@formatted_write_noadvance") {
                 fn array_value(e: &Expr, symbols: &Symbols) -> bool {
                     match e {
                         Expr::Ident(n) => symbols.get(n).is_some_and(|(_, dims)| !dims.is_empty()),

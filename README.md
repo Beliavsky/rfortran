@@ -83,9 +83,16 @@ quoted literals, `nX` spacing, and `/` record breaks. Runtime formats are checke
 for syntax, descriptor counts, and item types before the statement prints.
 Uninitialized format variables use the usual initialization checks.
 
+Formatted WRITE accepts `ADVANCE='no'` to continue on the same output line and
+`ADVANCE='yes'` for the default behavior. ADVANCE must be a constant CHARACTER
+expression (named parameters and concatenation are accepted). Nonadvancing
+writes flush stdout, so prompts appear before a following READ. A final
+nonadvancing write leaves stdout without an added newline, including at STOP.
+ADVANCE cannot be used with list-directed (`*`) formats.
+
 Output items must be scalar; existing CHARACTER procedure-argument limitations
 remain. Numeric format labels, nested format groups,
-format reversion, and ADVANCE are not yet supported. The existing limits of
+format reversion, and runtime ADVANCE values are not yet supported. The existing limits of
 256 for field width/precision and 10,000 for repeat counts apply.
 The native formatting runtime is written in Rust, built with the compiler,
 and embedded in `rfort`; no separate runtime installation is needed. Use
@@ -178,6 +185,7 @@ python tests/test_array_constructors.py
 python tests/test_bound_inquiries.py
 python tests/test_named_formats.py
 python tests/test_runtime_formats.py
+python tests/test_nonadvancing_output.py
 ```
 
 The Python tests use `target/debug/rfort` (with `.exe` on Windows).

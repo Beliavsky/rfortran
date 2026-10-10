@@ -2289,7 +2289,7 @@ fn gen_stmts(
                     read_record(module,b,ptr_ty,dc,pointer,length,file)?;
                     continue;
                 }
-                if name == "@formatted_print" {
+                if name == "@formatted_print" || name == "@formatted_write_noadvance" {
                     let format = characters::view(module,b,ptr_ty,dc,chars,&args[0])?;
                     let count = args.len()-1;
                     let size = count.checked_mul(24).and_then(|n| u32::try_from(n.max(24)).ok())
@@ -2317,10 +2317,12 @@ fn gen_stmts(
                     }
                     let mut sig = module.make_signature();
                     sig.params.extend((0..4).map(|_| ir::AbiParam::new(ptr_ty)));
-                    let id = module.declare_function("rfort_formatted_output",Linkage::Import,&sig)?;
+                    sig.params.push(ir::AbiParam::new(types::I32));
+                    let id = module.declare_function("rfort_formatted_write",Linkage::Import,&sig)?;
                     let function = module.declare_func_in_func(id,b.func);
                     let count = b.ins().iconst(ptr_ty,count as i64);
-                    b.ins().call(function,&[format.address,format.length,items,count]);
+                    let advance = b.ins().iconst(types::I32,i64::from(name != "@formatted_write_noadvance"));
+                    b.ins().call(function,&[format.address,format.length,items,count,advance]);
                     continue;
                 }
                 if name == "@stop" {
