@@ -739,7 +739,7 @@ pub fn analyze_with_src(
                 reads.retain(|name| !name.starts_with('@'));
                 out.extend(reads);
             }
-            Stmt::DummyIntent{name,intent} if intent == "@forall_index" => {out.insert(name.to_ascii_lowercase());}
+            Stmt::DummyIntent{name,intent} if matches!(intent.as_str(), "@forall_index" | "@constructor_index") => {out.insert(name.to_ascii_lowercase());}
             Stmt::Assign { value, .. } => walk_reads_for_program(value, out),
             Stmt::AssignIndex {
                 name,
@@ -1423,7 +1423,7 @@ pub fn analyze_with_src(
         let mut read_vars: HashSet<String> = HashSet::new();
         fn forall_indices(body:&[Stmt], reads:&mut HashSet<String>) {
             for stmt in body {match stmt {
-                Stmt::DummyIntent{name,intent} if intent == "@forall_index" => {reads.insert(name.to_ascii_lowercase());}
+                Stmt::DummyIntent{name,intent} if matches!(intent.as_str(), "@forall_index" | "@constructor_index") => {reads.insert(name.to_ascii_lowercase());}
                 Stmt::Block{body}|Stmt::Do{body,..}|Stmt::DoWhile{body,..}=>forall_indices(body,reads),
                 Stmt::If{then_body,else_body,..}=>{forall_indices(then_body,reads);if let Some(body)=else_body{forall_indices(body,reads);}}
                 Stmt::SelectCase{cases,default,..}=>{for case in cases{forall_indices(&case.body,reads);}if let Some(body)=default{forall_indices(body,reads);}}

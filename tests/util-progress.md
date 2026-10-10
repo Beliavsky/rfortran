@@ -450,3 +450,33 @@ Validation on Windows x64: 71 Rust unit tests, all 80 native regression fixtures
 2 focused multi-index FORALL tests with debug and release compilers, and 27
 batch tests passed. The release executable was rebuilt and the next utility
 parser error confirmed with it. Linux/macOS execution remains untested.
+
+The twenty-first checkpoint accepts both `[ ... ]` and `(/ ... /)` array
+constructors, including whitespace in old-style delimiters. Lexer normalization
+preserves ordinary division and OPERATOR(/) interfaces. Constant-bound implied-DOs
+expand in element order, including nested loops with bounds depending on outer
+indices, signed strides, empty ranges, mixed scalar/loop items, and nested
+constructors. Numeric PARAMETER array initializers and PURE procedures use the
+same expansion. Assignment retains the existing capture-before-write behavior,
+so reversing an array through a constructor reads its original values.
+
+This subset requires implied-DO indices declared locally as scalar INTEGERs;
+the surrounding variables are neither read nor defined. Runtime bounds, array-
+valued items, and CHARACTER-array storage remain unsupported. Duplicate active
+indices, zero strides, undefined source reads, shape mismatches, and excessive
+compile-time expansion produce diagnostics. Expansion is limited to 100,000
+steps per constructor (iterations and scalar items count toward that limit).
+A missing scalar-item check in whole-array assignment was also fixed, preventing
+array-valued constructor items from silently taking a scalar storage path.
+
+Test 81 and `python tests/test_array_constructors.py` compare the interpreter,
+native O0/O2, and gfortran, and cover invalid/unsupported forms. The batch suite
+includes the new fixture. The original utility sources remain unchanged.
+Parsing now passes the old-style constructor in `repeat_char` and stops at
+`lbound(ivec,dim=1)` on combined-source line 1115: keyword intrinsic arguments
+need further work. Full utility compilation remains incomplete.
+
+Validation on Windows x64: 72 Rust unit tests, all 81 native regression fixtures,
+2 focused constructor tests with debug and release compilers, and 28 batch tests
+passed. The release executable was rebuilt and the next utility parser error
+confirmed with it. Linux/macOS execution remains untested.

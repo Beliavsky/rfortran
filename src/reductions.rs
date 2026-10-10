@@ -385,6 +385,9 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                     bail!("whole-array assignment currently requires a one-dimensional numeric array");
                 }
                 if let Expr::Call(tag,values) = value { if tag == "@array_constructor" {
+                    if values.iter().any(|e| array_valued(e, &symbols)) {
+                        bail!("array constructor items must currently be scalar");
+                    }
                     if constant(&dims[0])? != values.len() as i64 {bail!("array constructor shape does not conform");}
                     let mut writes=vec![];
                     for (i,v) in values.iter().enumerate() {

@@ -229,6 +229,7 @@ pub(crate) fn integer_constant(expr: &Expr) -> Result<i64> {
 }
 
 fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[String], modules: &Modules) -> Result<Constants> {
+    validate_constructor_indices(body)?;
     let mut constants = inherited.clone();
     for stmt in body.iter() {
         if let Stmt::Use { module, only } = stmt {
@@ -343,7 +344,96 @@ fn variable(name: &str, constants: &Constants) -> Result<()> {
     Ok(())
 }
 
+// Constructor implied-DO indices have local values and never read/write the
+// enclosing variable. Require explicit scalar INTEGER declarations in this subset.
+fn validate_constructor_indices(body: &mut Vec<Stmt>) -> Result<()> {
+    let mut integers = HashSet::new();
+    for s in body.iter() {
+        if let Stmt::VarDecl { kind: TypeSpec::Integer(_) | TypeSpec::IntegerKind(_), names } = s {
+            integers.extend(names.iter().cloned());
+        }
+    }
+    for s in body.iter() { if let Stmt::ArrayDecl { name, .. } = s { integers.remove(name); } }
+    fn expr(e: &Expr, constructor: bool, integers: &HashSet<String>, active: &mut HashSet<String>, used: &mut HashSet<String>) -> Result<()> {
+        match e {
+            Expr::Call(n, args) if n == "@array_constructor" => for e in args { expr(e, true, integers, active, used)?; },
+            Expr::Call(n, args) if constructor && n == "@output_implied_do" => {
+                let Some(Expr::Ident(index)) = args.first() else { bail!("invalid constructor implied-DO index"); };
+                if !integers.contains(index) { bail!("constructor implied-DO index `{index}` requires a locally declared scalar INTEGER variable"); }
+                if !active.insert(index.clone()) { bail!("nested constructor implied-DO reuses index `{index}`"); }
+                used.insert(index.clone());
+                for e in &args[1..4] { expr(e, false, integers, active, used)?; }
+                for e in &args[4..] { expr(e, true, integers, active, used)?; }
+                active.remove(index);
+            }
+            Expr::Call(_, args) | Expr::Index(_, args) => for e in args { expr(e, false, integers, active, used)?; },
+            Expr::Bin(_, a, b) => { expr(a, false, integers, active, used)?; expr(b, false, integers, active, used)?; }
+            Expr::Un(_, a) => expr(a, false, integers, active, used)?,
+            Expr::Section { lower, upper, stride, .. } => for e in [lower, upper, stride].into_iter().flatten() { expr(e, false, integers, active, used)?; },
+            _ => {}
+        }
+        Ok(())
+    }
+    fn visit(body: &[Stmt], integers: &HashSet<String>, used: &mut HashSet<String>) -> Result<()> {
+        for s in body {
+            let mut check = |e: &Expr| expr(e, false, integers, &mut HashSet::new(), used);
+            match s {
+                Stmt::Assign { value, .. } | Stmt::Return(Some(value)) => check(value)?,
+                Stmt::AssignIndex { indices, value, .. } => { for e in indices { check(e)?; } check(value)?; }
+                Stmt::Print { items } | Stmt::Read { args: items } | Stmt::CallSub { args: items, .. } => for e in items { check(e)?; },
+                Stmt::InitializedDecl { entities, .. } => for (_, e) in entities { if let Some(e) = e { check(e)?; } },
+                Stmt::ArrayDecl { dims, .. } => for e in dims { check(e)?; },
+                Stmt::If { cond, then_body, else_body } => { check(cond)?; visit(then_body, integers, used)?; if let Some(b) = else_body { visit(b, integers, used)?; } }
+                Stmt::Do { start, end, body, .. } => { check(start)?; check(end)?; visit(body, integers, used)?; }
+                Stmt::DoWhile { cond, body } => { check(cond)?; visit(body, integers, used)?; }
+                Stmt::SelectCase { expr, cases, default } => { check(expr)?; for c in cases { visit(&c.body, integers, used)?; } if let Some(b) = default { visit(b, integers, used)?; } }
+                _ => {} // Nested scopes validate their own declarations.
+            }
+        }
+        Ok(())
+    }
+    let mut used = HashSet::new();
+    visit(body, &integers, &mut used)?;
+    let mut used: Vec<_> = used.into_iter().collect(); used.sort();
+    for name in used { body.insert(0, Stmt::DummyIntent { name, intent: "@constructor_index".into() }); }
+    Ok(())
+}
+
+fn constructor_items(items: &[Expr], constants: &Constants, output: &mut Vec<Expr>, budget: &mut usize) -> Result<()> {
+    for item in items {
+        match item {
+            Expr::Call(n, args) if n == "@output_implied_do" => {
+                let Expr::Ident(index) = &args[0] else { bail!("invalid constructor implied-DO index"); };
+                let mut bounds = args[1..4].to_vec();
+                for e in &mut bounds { rewrite_expr(e, constants)?; }
+                let bounds = bounds.iter().map(integer_constant).collect::<Result<Vec<_>>>()
+                    .context("constructor implied-DO bounds and stride must currently be constant integers")?;
+                let (mut current, end, step) = (i128::from(bounds[0]), i128::from(bounds[1]), i128::from(bounds[2]));
+                if step == 0 { bail!("constructor implied-DO stride must not be zero"); }
+                let mut local = constants.clone();
+                while if step > 0 { current <= end } else { current >= end } {
+                    *budget = budget.checked_sub(1).context("array constructor exceeds the supported compile-time expansion limit")?;
+                    local.insert(index.clone(), Expr::IntLit(current.to_string()));
+                    constructor_items(&args[4..], &local, output, budget)?;
+                    current += step;
+                }
+            }
+            Expr::Call(n, args) if n == "@array_constructor" => constructor_items(args, constants, output, budget)?,
+            _ => { *budget = budget.checked_sub(1).context("array constructor exceeds the supported compile-time expansion limit")?; let mut item = item.clone(); rewrite_expr(&mut item, constants)?; output.push(item); }
+        }
+    }
+    Ok(())
+}
+
 fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
+    if let Expr::Call(name, items) = expr {
+        if name == "@array_constructor" {
+            let mut expanded = Vec::new();
+            constructor_items(items, constants, &mut expanded, &mut 100_000)?;
+            *items = expanded;
+            return Ok(());
+        }
+    }
     match expr {
         Expr::RealLit(text) => {
             let (number, kind) = text.split_once('_').map_or((text.as_str(), None), |(n,k)| (n,Some(k)));

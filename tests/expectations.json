@@ -559,6 +559,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 11 12 21 22 31 32\n 11 12 21 22\n 101 201 102 202 103 203\n 111 211 121 221 112 212 122 222\n 32 31 22 21 12 11\n 122 222 112 212 121 221 111 211\n 99 98 97\n 2 3 3 4\n"
+    },
+    "81_array_constructors": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 11 12 21 22 31 32\n 32 31 22 21 12 11\n 9 1 2 3 8\n 1 2 3 4 5\n 2 3 4 4 5 6\n 2 4 6\n 77 88\n 5 3 2 2 1\n14\n"
     }
   }
 }

@@ -5,6 +5,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn old_constructor_delimiters_preserve_division_and_operator_interfaces() {
+        let tokens = lex("a=( / 6/(2), (/3,4/) / )\ninterface operator(/)\nend interface operator(/)");
+        assert_eq!(tokens.iter().filter(|t|matches!(t.kind,TokenKind::LBracket)).count(),2);
+        assert_eq!(tokens.iter().filter(|t|matches!(t.kind,TokenKind::RBracket)).count(),2);
+        assert_eq!(tokens.iter().filter(|t|matches!(t.kind,TokenKind::Slash)).count(),3);
+        assert!(!tokens.iter().any(|t|matches!(t.kind,TokenKind::Error(_))));
+    }
+
+    #[test]
     fn else_if_obeys_statement_boundaries() {
         for gap in [" ", " & ! comment\n! intervening comment\n\n & "] {
             let source = format!("else{gap}if (x) then");
@@ -482,5 +491,31 @@ pub fn lex(input: &str) -> Vec<Token> {
         }
         index += 1;
     }
-    tokens
+    // Normalize old-style constructor delimiters without confusing OPERATOR(/)
+    // or division inside parenthesized expressions with constructor punctuation.
+    let mut normalized: Vec<Token> = Vec::new();
+    let mut stack = Vec::new();
+    let mut iter = tokens.into_iter().peekable();
+    while let Some(mut token) = iter.next() {
+        match token.kind {
+            TokenKind::LParen if iter.peek().is_some_and(|t| matches!(t.kind, TokenKind::Slash))
+                && !normalized.last().is_some_and(|t| matches!(t.kind, TokenKind::KwOperator)) => {
+                token.span.end = iter.next().unwrap().span.end;
+                token.kind = TokenKind::LBracket;
+                stack.push('c');
+            }
+            TokenKind::Slash if stack.last() == Some(&'c')
+                && iter.peek().is_some_and(|t| matches!(t.kind, TokenKind::RParen)) => {
+                token.span.end = iter.next().unwrap().span.end;
+                token.kind = TokenKind::RBracket;
+                stack.pop();
+            }
+            TokenKind::LParen => stack.push('p'),
+            TokenKind::LBracket => stack.push('b'),
+            TokenKind::RParen | TokenKind::RBracket => { stack.pop(); }
+            _ => {}
+        }
+        normalized.push(token);
+    }
+    normalized
 }
