@@ -39,6 +39,19 @@ fn constant(e: &Expr) -> Result<i64> {
     crate::parameters::integer_constant(e).context("reduction extents and section bounds must be constant integers")
 }
 
+// Runtime PACK results retain bounded storage plus a separate logical length.
+fn runtime_extent(e: &Expr) -> Option<Expr> {
+    match e {
+        Expr::Call(n,args) if n == "@packed_view" => Some(args[1].clone()),
+        Expr::Bin(_,a,b) => runtime_extent(a).or_else(|| runtime_extent(b)),
+        Expr::Un(_,a) => runtime_extent(a),
+        _ => None,
+    }
+}
+fn shape_guard(a: Expr,b: Expr) -> Stmt {
+    Stmt::If { cond:bin(BinOp::Ne,a,b),then_body:vec![Stmt::CallSub {name:"@error_stop".into(),args:vec![Expr::Str("runtime PACK result shape does not conform".into())]}],else_body:None }
+}
+
 // Produce a scalar expression for element `index`, its shape, and its type.
 fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i64>, TypeSpec)> {
     if let Some((value,count)) = crate::multidim::view_element(e,index) {
@@ -48,6 +61,10 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
         return Ok((value,Some(count),kind));
     }
     match e {
+        Expr::Call(n,args) if n == "@packed_view" => {
+            let (value,_,kind) = element(&args[0],index,symbols)?;
+            Ok((value,Some(-1),kind))
+        }
         Expr::Ident(name) | Expr::Section { name, .. } => {
             let (kind, dims) = symbols.get(name).with_context(|| format!("undefined reduction argument `{name}`"))?;
             if !array_element_kind(kind) { bail!("reductions require numeric or LOGICAL arrays"); }
@@ -82,7 +99,7 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
         Expr::Bin(op, a, b) => {
             let (a, alen, akind) = element(a, index, symbols)?;
             let (b, blen, bkind) = element(b, index, symbols)?;
-            if let (Some(a), Some(b)) = (alen, blen) { if a != b { bail!("array shapes in reduction expression do not conform"); } }
+            if let (Some(a), Some(b)) = (alen, blen) { if a >= 0 && b >= 0 && a != b { bail!("array shapes in reduction expression do not conform"); } }
             Ok((bin(op.clone(), a, b), alen.or(blen), if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow) { merge_kind(akind, bkind) } else { TypeSpec::Logical }))
         }
         Expr::Index(name, args) | Expr::Call(name, args) if symbols.get(name).is_some_and(|(_, d)| d.len() == 1) => {
@@ -151,6 +168,7 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
                 if kind.as_ref().is_some_and(|k| !same_kind(k,&item_kind)) { bail!("array constructor items must have the same type and kind"); }
                 kind = Some(item_kind);
                 let len = len.unwrap_or(1);
+                if len < 0 { bail!("runtime PACK results in constructors are not yet supported"); }
                 count = count.checked_add(len).context("array constructor extent overflow")?;
                 items.push((arg.clone(),len));
             }
@@ -176,7 +194,9 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             let has_vector = unpack || !matches!(&args[2],Expr::Call(tag,_) if tag == "@no_vector");
             for arg in &mut args[..3] { lower_expr(arg,symbols,prefix,serial)?; }
             let Expr::Call(_,dims) = &args[3] else { unreachable!() };
-            let count = dims.iter().try_fold(1i64,|n,d| n.checked_mul(constant(d)?).context("PACK/UNPACK result extent overflow"))?;
+            let dynamic = !unpack && dims.len()==1 && constant(&dims[0])? == -1;
+            let count = if dynamic { element(&args[0],&int(1),symbols)?.1.context("PACK ARRAY must be an array")? } else { dims.iter().try_fold(1i64,|n,d| n.checked_mul(constant(d)?).context("PACK/UNPACK result extent overflow"))? };
+            if count < 0 { bail!("nested runtime PACK results are not yet supported"); }
             *serial += 1;
             let temp = format!("@packing_array_{serial}");
             let index = format!("@packing_index_{serial}");
@@ -209,7 +229,8 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
                 prefix.push(Stmt::Do { var:index.clone(),start:bin(BinOp::Add,id(&cursor),int(1)),end:int(count),body:vec![set(id(&index),vector)] });
             }
             symbols.insert(temp.clone(),(kind,vec![int(count)]));
-            *e = Expr::Ident(temp);
+            symbols.insert(cursor.clone(),(TypeSpec::Integer(Some(8)),vec![]));
+            *e = if dynamic { Expr::Call("@packed_view".into(),vec![Expr::Ident(temp),Expr::Ident(cursor)]) } else { Expr::Ident(temp) };
         }
         Expr::Call(name,args) if name == "@spread" => {
             lower_expr(&mut args[0],symbols,prefix,serial)?;
@@ -399,6 +420,8 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             } else { Expr::Ident(index_name.clone()) };
             let (value, count, kind) = element(&args[0], &index, symbols)?;
             let count = count.context("reduction argument must be an array")?;
+            let dynamic_end = runtime_extent(&args[0]);
+            if dynamic_end.is_some() && args.len()!=1 { bail!("runtime PACK reductions with DIM or MASK are not yet supported"); }
             let name = match name.as_str() {
                 "@count_default" => "count", "@any_reduction" => "any", "@all_reduction" => "all", _ => name.as_str()
             }.to_ascii_lowercase();
@@ -445,7 +468,7 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
                 if mask_count.is_some_and(|n| n != count) { bail!("{name}: MASK shape does not conform to ARRAY"); }
                 body = vec![Stmt::If { cond: condition, then_body: body, else_body: None }];
             }
-            prefix.push(Stmt::Do { var: index_name, start: int(1), end: int(dim_reduction.map_or(count, |(_,n,_)| n)), body });
+            prefix.push(Stmt::Do { var: index_name, start: int(1), end: dynamic_end.unwrap_or_else(|| int(dim_reduction.map_or(count, |(_,n,_)| n))), body });
             if let Some((_, _, output_len)) = dim_reduction {
                 let mut body = prefix.split_off(loop_start);
                 body.push(Stmt::AssignIndex { name: output_name.clone(), indices: vec![Expr::Ident(outer_name.clone())], value: acc });
@@ -504,11 +527,23 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
                 _=> { if !matches!(kind,TypeSpec::Real|TypeSpec::DoublePrecision) { if name=="huge" {bail!("HUGE requires an INTEGER or REAL argument");} bail!("{name} requires a REAL argument");} let v=if name=="tiny" {if double {f64::MIN_POSITIVE} else {f32::MIN_POSITIVE as f64}} else {if double {f64::MAX} else {f32::MAX as f64}}; let lit=Expr::RealLit(v.to_string()); if double {Expr::Call("dble".into(),vec![lit])} else {lit} }
             };
         }
-        Expr::Call(tag, _) if tag == "@matrix_view" => {},
+        Expr::Call(tag, _) if matches!(tag.as_str(),"@matrix_view" | "@packed_view") => {},
         Expr::Call(_, args) | Expr::Index(_, args) => for arg in args { lower_expr_impl(arg, symbols, prefix, serial, expand_elementals)?; },
-        Expr::Bin(_, a, b) => { lower_expr_impl(a, symbols, prefix, serial, expand_elementals)?; lower_expr_impl(b, symbols, prefix, serial, expand_elementals)?; }
+        Expr::Bin(_, a, b) => {
+            lower_expr_impl(a, symbols, prefix, serial, expand_elementals)?;
+            lower_expr_impl(b, symbols, prefix, serial, expand_elementals)?;
+            if runtime_extent(a).is_some() || runtime_extent(b).is_some() {
+                let extent = |e: &Expr| -> Result<Option<Expr>> { Ok(runtime_extent(e).or(element(e,&int(1),symbols)?.1.map(int))) };
+                if let (Some(a),Some(b)) = (extent(a)?,extent(b)?) { prefix.push(shape_guard(a,b)); }
+            }
+        }
         Expr::Un(_, a) => lower_expr_impl(a, symbols, prefix, serial, expand_elementals)?,
         _ => {}
+    }
+    if let Expr::Call(name,args) = e {
+        if name != "@packed_view" && args.iter().any(|arg| runtime_extent(arg).is_some()) {
+            bail!("runtime PACK results are not yet supported as arguments to `{name}`");
+        }
     }
     if expand_elementals && matches!(e,Expr::Call(name,_) if symbols.elementals.contains_key(name) || matches!(name.as_str(), "mod" | "modulo")) && array_valued(e,symbols) {
         *serial+=1;
@@ -890,6 +925,26 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                 }
             }
         }
+        if let Stmt::Print { items } = &mut stmt {
+            if items.iter().any(|e| runtime_extent(e).is_some()) {
+                let mut declarations = vec![];
+                for item in items.iter_mut() {
+                    if let Some(length) = runtime_extent(item) {
+                        *serial += 1;
+                        let index = format!("@packed_output_{serial}");
+                        let kind = TypeSpec::Integer(Some(8));
+                        declarations.push(Stmt::VarDecl {kind:kind.clone(),names:vec![index.clone()]});
+                        symbols.insert(index.clone(),(kind,vec![]));
+                        let value = element(item,&Expr::Ident(index.clone()),&symbols)?.0;
+                        *item = Expr::Call("@output_implied_do".into(),vec![Expr::Ident(index),int(1),length,int(1),value]);
+                    }
+                }
+                let mut printed = crate::output::lower(items,&symbols.variables,serial)?;
+                let Stmt::Block {body} = &mut printed else { unreachable!() };
+                body.splice(0..0,declarations);
+                output.extend(prefix); output.push(printed); continue;
+            }
+        }
         if let Stmt::Assign { name, value } = &stmt {
             if let Some((kind, dims)) = symbols.get(name).filter(|(_, dims)| !dims.is_empty()) {
                 if dims.len() != 1 || !array_element_kind(kind) {
@@ -911,7 +966,8 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                 if array_valued(value, &symbols) {
                     *serial+=1;let index=format!("@array_index_{serial}");let temp=format!("@array_temp_{serial}");let index_expr=Expr::Ident(index.clone());
                     let (scalar,count,_)=element(value,&index_expr,&symbols)?;let extent=constant(&dims[0])?;
-                    if count!=Some(extent) {bail!("array assignment shapes do not conform");}
+                    if let Some(length) = runtime_extent(value) { prefix.push(shape_guard(length,int(extent))); }
+                    else if count!=Some(extent) {bail!("array assignment shapes do not conform");}
                     prefix.push(Stmt::VarDecl{kind:TypeSpec::Integer(None),names:vec![index.clone()]});
                     prefix.push(Stmt::ArrayDecl{kind:kind.clone(),name:temp.clone(),dims:vec![int(extent)]});
                     prefix.push(Stmt::Do{var:index.clone(),start:int(1),end:int(extent),body:vec![Stmt::AssignIndex{name:temp.clone(),indices:vec![index_expr.clone()],value:scalar}]});

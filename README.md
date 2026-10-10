@@ -397,9 +397,13 @@ sources remain unsupported. Run `python tests/test_spread.py`.
 
 PACK supports fixed-shape numeric/LOGICAL arrays with scalar or conformable
 LOGICAL masks. A supplied rank-one VECTOR sets the result length and supplies
-trailing values after selected ARRAY elements. Without VECTOR, MASK must currently
-be a logical literal or a constructor of logical literals, so the result length
-is known at compile time. Runtime-sized PACK results remain unsupported.
+trailing values after selected ARRAY elements. Without VECTOR, runtime masks are
+supported by bounded temporary storage with a separate result length. Such results
+work in list-directed printing, basic arithmetic/comparisons, whole-array assignment
+to rank-one fixed-size arrays, and reductions without DIM/MASK options. Assignments
+and array expressions check shape conformance at runtime. Further transformations,
+constructors, array inquiries and WHERE assignments involving runtime-sized results
+remain unsupported. Run `python tests/test_runtime_pack.py`.
 UNPACK supports a rank-one VECTOR, fixed-shape LOGICAL MASK and scalar or
 conformable FIELD of the same type/kind as VECTOR. Both intrinsics preserve
 array-element order and check at runtime that VECTOR has enough elements.

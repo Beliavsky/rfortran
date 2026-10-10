@@ -1218,3 +1218,33 @@ Focused suites passed with debug and rebuilt release compilers; fixture 106
 agrees with gfortran. The isolated release report `target/ofort-packing.json`
 remains at 11/18 passes and seven compile failures, with all reference runs
 succeeding. Linux/macOS remain untested.
+
+
+## Checkpoint 46: runtime-mask PACK without VECTOR
+
+PACK can now retain source-sized temporary storage while carrying a separate
+runtime selected-element count. A private packed-view expression exposes only
+that logical length to consumers. Shape analysis retains rank one with an
+unknown extent, deferring conformance checks to lowering; fixed-shape transforms
+reject that extent explicitly. Basic binary/unary expressions propagate the
+length and check two array operands for runtime conformance. Reductions without
+DIM/MASK options iterate only selected elements and retain empty identities.
+Fixed-size rank-one assignment checks the result length before writing. Dynamic
+list-directed output uses the existing implied-DO output machinery; generated
+control declarations stay in their output block, avoiding spurious warnings.
+
+Fixture 107 covers scalar/array masks, print lists, arithmetic, both comparison
+operand orders, two packed operands, fixed-size assignment, varying lengths in
+loops, empty selections, numeric/logical reductions and PURE usage. Focused tests
+check too-short/too-long results, mismatched packed operands, inactive undefined
+source elements and empty sources. Further transforms, constructors, inquiries,
+WHERE assignment and DIM/MASK reduction options on runtime-sized results remain
+unsupported. Existing fixed-size PACK/UNPACK behavior is retained.
+
+Windows validation: 74 Rust unit tests, 107 native fixtures, 46 batch wrapper
+tests and ten focused runtime-PACK, fixed-size PACK/UNPACK and masked-reduction
+tests passed. Focused suites passed with debug and rebuilt release compilers;
+fixture 107 agrees with gfortran in interpreter/native O0/O2 comparisons.
+The isolated release report `target/ofort-runtime-pack.json` has 12/18 passes
+and six compile failures, with all reference runs succeeding. The unmodified
+transformation probe passes all eleven checks at O0/O2. Linux/macOS remain untested.

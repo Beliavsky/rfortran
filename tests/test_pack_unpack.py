@@ -39,7 +39,6 @@ class PackingTests(unittest.TestCase):
             ("print *,unpack([1],[.true.],[2,3])", "FIELD shape"),
             ("print *,pack([1,2],[.true.])", "MASK shape"),
             ("integer::a(2,3)\na=1\nprint *,pack(a,reshape([.true.,.true.,.true.,.true.,.true.,.true.],[3,2]),[1,2])", "MASK shape"),
-            ("logical::m(2)\nm=.true.\nprint *,pack([1,2],m)", "runtime MASK currently requires VECTOR"),
             ("print *,unpack([1],[.true.])", "requires FIELD"),
             ("print *,pack([1],.true.,mask=.true.)", "duplicate"),
         ]

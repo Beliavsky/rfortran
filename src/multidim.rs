@@ -16,9 +16,15 @@ fn bin(op: BinOp, a: Expr, b: Expr) -> Expr {
 }
 fn total(dims: &[i64]) -> Result<i64> {
     dims.iter().try_fold(1i64, |n, d| {
+        if *d < 0 { bail!("this array operation requires a statically known shape; runtime PACK results are not supported here"); }
         n.checked_mul(*d)
             .context("array element count overflows INTEGER(8)")
     })
+}
+
+// -1 denotes a runtime PACK extent; reductions inserts the runtime checks.
+fn conform(a: &[i64], b: &[i64]) -> bool {
+    a.len()==b.len() && a.iter().zip(b).all(|(a,b)| a==b || *a == -1 || *b == -1)
 }
 
 pub(crate) fn reshape_shape(args: &[Expr]) -> Result<Vec<i64>> {
@@ -368,11 +374,15 @@ impl Lowerer {
                 let Expr::Call(n,args) = e else { unreachable!() };
                 if n == "pack" {
                     let source = self.shape(&args[0],shapes)?.context("PACK ARRAY must be an array")?;
+                    total(&source)?;
                     if let Some(mask) = self.shape(&args[1],shapes)? {
                         if mask != source { bail!("PACK MASK shape must conform to ARRAY"); }
                     }
-                } else if let Some(field) = self.shape(&args[2],shapes)? {
-                    if field != dims { bail!("UNPACK FIELD shape must conform to MASK"); }
+                } else {
+                    total(&dims)?;
+                    if let Some(field) = self.shape(&args[2],shapes)? {
+                        if field != dims { bail!("UNPACK FIELD shape must conform to MASK"); }
+                    }
                 }
                 for arg in args.iter_mut() { self.expression(arg,shapes)?; }
                 args.push(Expr::Call("@packing_shape".into(),dims.into_iter().map(int).collect()));
@@ -396,6 +406,7 @@ impl Lowerer {
             }
             Expr::Call(n, args) if n == "eoshift" => {
                 let dims = self.shape(&args[0],shapes)?.context("EOSHIFT ARRAY must be an array")?;
+                total(&dims)?;
                 let dim = crate::parameters::integer_constant(&args[3]).context("EOSHIFT DIM must currently be a constant INTEGER")?;
                 if dim < 1 || dim as usize > dims.len() { bail!("EOSHIFT DIM must be between 1 and {}",dims.len()); }
                 let axis = dim as usize - 1;
@@ -415,6 +426,7 @@ impl Lowerer {
             }
             Expr::Call(n, args) if n == "cshift" => {
                 let dims = self.shape(&args[0], shapes)?.context("CSHIFT ARRAY must be an array")?;
+                total(&dims)?;
                 let dim = crate::parameters::integer_constant(&args[2]).context("CSHIFT DIM must currently be a constant INTEGER")?;
                 if dim < 1 || dim as usize > dims.len() { bail!("CSHIFT DIM must be between 1 and {}", dims.len()); }
                 if let Some(shift_shape) = self.shape(&args[1], shapes)? {
@@ -442,6 +454,7 @@ impl Lowerer {
             Expr::Call(n, args) if matches!(n.as_str(), "sum" | "product" | "minval" | "maxval" | "@count_default" | "@count_i8" | "@any_reduction" | "@all_reduction") && args.len() == 3 => {
                 let intrinsic = match n.as_str() { "@count_default" | "@count_i8" => "count", "@any_reduction" => "any", "@all_reduction" => "all", _ => n.as_str() };
                 let dims = self.shape(&args[0], shapes)?.context("reduction argument must be an array")?;
+                total(&dims)?;
                 let mut reduction_axis = None;
                 if !matches!(&args[1], Expr::Call(tag, _) if tag == "@no_dim") {
                     let dim = crate::parameters::integer_constant(&args[1]).context("reduction DIM must currently be a constant INTEGER; use MASK= for masks")?;
@@ -468,6 +481,7 @@ impl Lowerer {
                 };
                 self.check_association(owner)?;
                 let dims = self.shape(array, shapes)?.with_context(|| format!("{n} requires an array with a statically known shape"))?;
+                total(&dims)?;
                 *e = crate::inquiries::bounds(n, &dims, args.get(1))?;
             }
             Expr::Call(n, args) if n == "size" => {
@@ -541,6 +555,7 @@ impl Lowerer {
             Expr::Call(n,args) if n == "unpack" => {
                 let vector = self.shape(&args[0],shapes)?.context("UNPACK VECTOR must be a rank-one array")?;
                 if vector.len()!=1 { bail!("UNPACK VECTOR must be a rank-one array"); }
+                total(&vector)?;
                 Ok(Some(self.shape(&args[1],shapes)?.context("UNPACK MASK must be an array")?))
             }
             Expr::Call(n,args) if n == "pack" => {
@@ -548,12 +563,13 @@ impl Lowerer {
                 let count = if !matches!(&args[2],Expr::Call(tag,_) if tag == "@no_vector") {
                     let vector = self.shape(&args[2],shapes)?.context("PACK VECTOR must be a rank-one array")?;
                     if vector.len()!=1 { bail!("PACK VECTOR must be a rank-one array"); }
+                    total(&vector)?;
                     vector[0]
                 } else {
                     match &args[1] {
                         Expr::Logical(value) => if *value { total(&source)? } else { 0 },
                         Expr::Call(tag,items) if tag == "@array_constructor" && items.iter().all(|e| matches!(e,Expr::Logical(_))) => items.iter().filter(|e| matches!(e,Expr::Logical(true))).count() as i64,
-                        _ => bail!("PACK with a runtime MASK currently requires VECTOR; runtime-sized results are not yet supported"),
+                        _ => -1,
                     }
                 };
                 Ok(Some(vec![count]))
@@ -635,7 +651,7 @@ impl Lowerer {
                 let a = self.shape(a, shapes)?;
                 let b = self.shape(b, shapes)?;
                 if let (Some(a), Some(b)) = (&a, &b) {
-                    if a != b {
+                    if !conform(a,b) {
                         bail!("nonconforming array shapes {a:?} and {b:?}");
                     }
                 }
@@ -944,7 +960,7 @@ impl Lowerer {
                 Stmt::Assign { name, value } => {
                     self.check_association(name)?;
                     if let (Some(a), Some(b)) = (shapes.get(name), self.shape(value, &shapes)?) {
-                        if *a != b {
+                        if !conform(a,&b) {
                             bail!("nonconforming array assignment to `{name}`: {a:?} and {b:?}");
                         }
                     }

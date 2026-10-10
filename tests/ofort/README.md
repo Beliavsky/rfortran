@@ -145,3 +145,9 @@ aliases, inactive undefined elements and runtime errors for short vectors.
 The external transformation probe now has one unsupported operation: PACK with
 a runtime mask and no VECTOR. With that one assertion omitted, its other ten
 assertions pass; the unmodified selected suite remains at 11/18 passes.
+
+`107_runtime_pack.f90` and `python tests/test_runtime_pack.py` cover runtime-mask
+PACK without VECTOR. Logical result lengths are distinct from storage capacity,
+with runtime conformance checks for comparisons and assignments. The original
+`xintrinsic_transform_order_pending.f90` now passes all eleven assertions at
+O0/O2, bringing the selected sample to 12/18 passes (six compile failures).
