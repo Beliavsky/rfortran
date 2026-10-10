@@ -30,6 +30,7 @@ the author recorded in this repository's Git history.
 - `src/output.rs`
 - `src/parameters.rs`
 - `src/purity.rs`
+- `src/do_steps.rs`
 - `src/reductions.rs`
 - `src/sections.rs`
 - `src/subroutines.rs`

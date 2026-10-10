@@ -78,6 +78,16 @@ keywords for `SIZE`. Nondefault result kinds and runtime dimensions are not yet
 supported. Existing array-storage limits apply, including one-based declarations.
 Inquiries use shape metadata and do not require initialized array elements.
 
+## Explicit DO steps
+
+Counted loops accept `do i=first,last,step` with a constant nonzero INTEGER
+step, including negative steps and named parameters. The control variable must
+be a declared scalar INTEGER. Supported scalar INTEGER bounds are evaluated
+once before the control variable is assigned. CYCLE advances the index, EXIT
+preserves it, and empty loops retain the initial value. Increment overflow in
+the compiler's 64-bit INTEGER storage reports a runtime error. Runtime-variable
+steps and named loops are not yet supported.
+
 ## CHARACTER support
 
 Scalar CHARACTER declarations accept constant integer length expressions,
@@ -204,6 +214,7 @@ python tests/test_named_formats.py
 python tests/test_runtime_formats.py
 python tests/test_nonadvancing_output.py
 python tests/test_elemental_setters.py
+python tests/test_do_steps.py
 ```
 
 The Python tests use `target/debug/rfort` (with `.exe` on Windows).

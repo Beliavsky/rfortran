@@ -627,3 +627,33 @@ Validation on Windows x64: 74 Rust unit tests, all 86 native regression fixtures
 2 focused setter tests with debug and release compilers, and all 33 batch tests
 passed. The release executable was rebuilt and the next utility parser error
 confirmed with it. Linux/macOS execution remains untested.
+
+
+## Checkpoint 27: explicit constant DO steps
+
+The parser accepts a third DO control expression. A lowering pass snapshots
+both bounds before assigning the control variable, selects the comparison for
+the step's sign, and advances on normal iterations and CYCLE. EXIT and nested
+loop control retain their targets. Steps must currently be constant nonzero
+INTEGER expressions; bounds and the declared control variable must be scalar
+INTEGER. Increment overflow in 64-bit storage reports ERROR STOP rather than
+wrapping. Runtime-variable steps and named loops remain unsupported.
+
+Native SELECT CASE now preserves enclosing loop targets and compiles every
+branch even when another branch terminates. A selector with no matching case
+and no default continues after SELECT. Fixture 87 covers these paths along with
+positive/negative/named steps, empty loops, final indices, bound snapshots,
+nesting, PURE functions and assumed-shape INTEGER subroutine calls.
+python tests/test_do_steps.py checks interpreter/native O0/O2 against gfortran,
+invalid controls, and positive/negative increment overflow.
+
+Original utility sources remain unchanged. The full build now parses past the
+reverse loop and stops at `where (.not. ygood) yy = ydefault`, combined-source
+line 1743. Extracting last_row_all_true also exposes the separate unsupported
+multidimensional LOGICAL array limitation; this checkpoint does not claim that
+routine or the full utility module compiles yet.
+
+Validation on Windows x64: all 74 Rust unit tests, 87 native regression
+fixtures, 3 focused tests with both debug and release compilers, and 34 batch
+integration tests passed. The release executable was rebuilt and the next
+utility parser error confirmed with it. Linux/macOS execution remains untested.

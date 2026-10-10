@@ -384,7 +384,11 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                 if !prefix.is_empty() { bail!("reductions in DO WHILE conditions are not yet supported"); }
                 lower_body(body, &symbols, serial)?;
             }
-            Stmt::Block { body } | Stmt::Module { body, .. } => lower_body(body, &symbols, serial)?,
+            Stmt::Block { body } => {
+                crate::do_steps::lower(body, &symbols.variables, serial)?;
+                lower_body(body, &symbols, serial)?;
+            }
+            Stmt::Module { body, .. } => lower_body(body, &symbols, serial)?,
             Stmt::Function { body, params, .. } | Stmt::Subroutine { body, params, .. } => {
                 let mut local = symbols.clone();
                 for param in params { local.remove(param); }

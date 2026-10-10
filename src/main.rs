@@ -21,6 +21,7 @@ mod initialized;
 mod input;
 mod file_io;
 mod output;
+mod do_steps;
 mod purity;
 mod elemental;
 mod subroutines;

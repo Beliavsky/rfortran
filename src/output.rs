@@ -40,7 +40,7 @@ pub fn contains_implied_do(e: &Expr) -> bool {
     }
 }
 
-fn integer(e: &Expr, symbols: &Symbols) -> bool {
+pub(crate) fn integer(e: &Expr, symbols: &Symbols) -> bool {
     match e {
         Expr::IntLit(_) => true,
         Expr::Ident(n) => {

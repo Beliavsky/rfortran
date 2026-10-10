@@ -78,6 +78,10 @@ pub fn validate(program: &Program) -> Result<()> {
                     }
                 }
                 Stmt::CallSub {name,..} if name == "@formatted_read" || name == "@read_record" || name == "@write" || name.starts_with("@io_") || name.starts_with("@file_") => bail!("PURE procedure cannot perform external I/O"),
+                Stmt::CallSub {name,args} if name == "@do_step" => {
+                    if let Expr::Ident(var) = &args[0] { writable(var)?; }
+                    for e in &args[1..] { expression(e,&locals,known)?; }
+                }
                 Stmt::CallSub {name,args} if name == "@forall" => {
                     for control in args.chunks_exact(4) { for e in &control[1..] {expression(e,&locals,known)?;} }
                 }

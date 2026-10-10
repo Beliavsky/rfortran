@@ -601,6 +601,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": "  1.25\n  2.50\n  3\n  7\nF\nT\n[ab   ]\n[longe]\n[     ]\n[]\n  9\n 11\n"
+    },
+    "87_do_steps": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "    6    7\n   23    0    5\n   23    1\n   23    6\n    7\n    9    7\n    9\n    2\n    6   -1\n    2\n   16    4\n"
     }
   }
 }

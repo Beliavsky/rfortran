@@ -2720,9 +2720,8 @@ fn gen_stmts(
                     _ => {}
                 }
 
-                if let Some(def_blk) = default_blk {
-                    b.ins().jump(def_blk, &[]);
-                }
+                b.ins().jump(default_blk.unwrap_or(cont_blk), &[]);
+                let mut all_terminated = default_blk.is_some();
 
                 for nb in cmp_next_blocks.iter() {
                     b.seal_block(*nb);
@@ -2746,35 +2745,33 @@ fn gen_stmts(
                         i128_last,
                         func_meta,
                         current_fn,
-                        None,
-                        None,
+                        current_loop_after,
+                        current_loop_continue,
                         arrays,
                         tokens,
                     )?;
-                    if tr {
-                        return Ok(true);
-                    }
-                    b.ins().jump(cont_blk, &[]);
+                    all_terminated &= tr;
+                    if !tr { b.ins().jump(cont_blk, &[]); }
 
                     b.seal_block(case_blocks[ci]);
                 }
 
                 if let Some(def_blk) = default_blk {
                     b.switch_to_block(def_blk);
+                    let mut tr = false;
                     if let Some(dbody) = default {
-                        let tr = gen_stmts(
+                        tr = gen_stmts(
                             b, ex, ptr_ty, module, dc, dbody, ints, reals, bools, chars, real_kind,
-                            i128_vars, i128_last, func_meta, current_fn, None, None, arrays,
+                            i128_vars, i128_last, func_meta, current_fn, current_loop_after, current_loop_continue, arrays,
                             tokens,
                         )?;
-                        if tr {
-                            return Ok(true);
-                        }
                     }
-                    b.ins().jump(cont_blk, &[]);
+                    all_terminated &= tr;
+                    if !tr { b.ins().jump(cont_blk, &[]); }
                     b.seal_block(def_blk);
                 }
 
+                if all_terminated { return Ok(true); }
                 b.seal_block(cont_blk);
                 b.switch_to_block(cont_blk);
             }

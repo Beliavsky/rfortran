@@ -170,7 +170,7 @@ fn specialize(
     stable: &HashSet<String>,
 ) -> Result<()> {
     if let Some(Stmt::CallSub { name, args }) = body.first() {
-        if name == "@forall" {
+        if name == "@forall" || name == "@do_step" {
             for control in args.chunks_exact(4) {
                 if let Expr::Ident(index) = &control[0] { constants.remove(index); }
             }
@@ -285,7 +285,7 @@ fn specialize(
                     rewrite_value(e, shapes, constants, absent)?;
                 }
             }
-            Stmt::CallSub { name, args } if name == "@forall" => {
+            Stmt::CallSub { name, args } if name == "@forall" || name == "@do_step" => {
                 for control in args.chunks_exact_mut(4) {
                     for arg in &mut control[1..] { rewrite(arg, shapes, constants, absent)?; }
                 }

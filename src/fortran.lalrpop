@@ -328,6 +328,11 @@ Stmt: Stmt = {
         // assignment until static shapes are known and simultaneous writes lower.
         Stmt::Block { body: vec![Stmt::CallSub {name:"@forall".into(),args:controls},assignment] }
     },
+    KW_DO <var: Ident> EQ <s: RhsExpr> COMMA <e: RhsExpr> COMMA <step: RhsExpr> <body: Stmts> KW_END KW_DO => {
+        let mut statements = vec![Stmt::CallSub { name: "@do_step".into(), args: vec![Expr::Ident(var), s, e, step] }];
+        statements.extend(body);
+        Stmt::Block { body: statements }
+    },
     KW_DO <var: Ident> EQ <s: RhsExpr> COMMA <e: RhsExpr> <body: Stmts> KW_END KW_DO => Stmt::Do { var, start: s, end: e, body },
     KW_DO KW_WHILE LPAREN <cond: CondExpr> RPAREN <body: Stmts> KW_END KW_DO => Stmt::DoWhile { cond, body },
     KW_RETURN => Stmt::Return(None),
