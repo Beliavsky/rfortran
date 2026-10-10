@@ -125,15 +125,30 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
         }
         Expr::Call(name, _) if name == "@output_implied_do" => bail!("implied-DO is currently supported only in list-directed output"),
         Expr::Call(name, args) if reduction(name) => {
-            if args.is_empty() || args.len() > 2 { bail!("{name} requires normalized ARRAY and optional MASK arguments"); }
+            if args.is_empty() || (args.len() > 2 && args.len() != 5) { bail!("{name} requires normalized ARRAY and optional MASK arguments"); }
             lower_expr(&mut args[0], symbols, prefix, serial)?;
-            if args.len() == 2 { lower_expr(&mut args[1], symbols, prefix, serial)?; }
+            if args.len() >= 2 { lower_expr(&mut args[1], symbols, prefix, serial)?; }
             *serial += 1;
             // These names cannot occur in source identifiers.
             let index_name = format!("@reduction_index_{serial}");
             let acc_name = format!("@reduction_value_{serial}");
             let item_name = format!("@reduction_item_{serial}");
-            let index = Expr::Ident(index_name.clone());
+            let outer_name = format!("@reduction_outer_{serial}");
+            let output_name = format!("@reduction_array_{serial}");
+            let dim_reduction = if args.len() == 5 {
+                let stride = constant(&args[2])?;
+                let axis_len = constant(&args[3])?;
+                let Expr::Call(_, dims) = &args[4] else { unreachable!() };
+                let output_len = dims.iter().try_fold(1i64, |n,d| n.checked_mul(constant(d)?).context("reduction result extent overflow"))?;
+                Some((stride, axis_len, output_len))
+            } else { None };
+            let index = if let Some((stride, axis_len, _)) = dim_reduction {
+                let ordinal = bin(BinOp::Sub, Expr::Ident(outer_name.clone()), int(1));
+                let offset = bin(BinOp::Add,
+                    Expr::Call("mod".into(), vec![ordinal.clone(), int(stride.max(1))]),
+                    bin(BinOp::Mul, bin(BinOp::Div, ordinal, int(stride.max(1))), int(stride.checked_mul(axis_len).context("reduction stride overflow")?)));
+                bin(BinOp::Add, int(1), bin(BinOp::Add, offset, bin(BinOp::Mul, bin(BinOp::Sub, Expr::Ident(index_name.clone()), int(1)), int(stride))))
+            } else { Expr::Ident(index_name.clone()) };
             let (value, count, kind) = element(&args[0], &index, symbols)?;
             let count = count.context("reduction argument must be an array")?;
             let name = match name.as_str() {
@@ -157,7 +172,8 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             prefix.push(Stmt::VarDecl { kind: TypeSpec::Integer(None), names: vec![index_name.clone()] });
             prefix.push(Stmt::VarDecl { kind, names: vec![item_name.clone()] });
             prefix.push(Stmt::VarDecl { kind: result_kind.clone(), names: vec![acc_name.clone()] });
-            symbols.insert(acc_name.clone(), (result_kind, vec![]));
+            symbols.insert(acc_name.clone(), (result_kind.clone(), vec![]));
+            let loop_start = prefix.len();
             prefix.push(Stmt::Assign { name: acc_name.clone(), value: identity });
             let acc = Expr::Ident(acc_name.clone());
             let item = Expr::Ident(item_name.clone());
@@ -181,8 +197,16 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
                 if mask_count.is_some_and(|n| n != count) { bail!("{name}: MASK shape does not conform to ARRAY"); }
                 body = vec![Stmt::If { cond: condition, then_body: body, else_body: None }];
             }
-            prefix.push(Stmt::Do { var: index_name, start: int(1), end: int(count), body });
-            *e = acc;
+            prefix.push(Stmt::Do { var: index_name, start: int(1), end: int(dim_reduction.map_or(count, |(_,n,_)| n)), body });
+            if let Some((_, _, output_len)) = dim_reduction {
+                let mut body = prefix.split_off(loop_start);
+                body.push(Stmt::AssignIndex { name: output_name.clone(), indices: vec![Expr::Ident(outer_name.clone())], value: acc });
+                prefix.push(Stmt::VarDecl { kind: TypeSpec::Integer(None), names: vec![outer_name.clone()] });
+                prefix.push(Stmt::ArrayDecl { kind: result_kind.clone(), name: output_name.clone(), dims: vec![int(output_len)] });
+                prefix.push(Stmt::Do { var: outer_name, start: int(1), end: int(output_len), body });
+                symbols.insert(output_name.clone(), (result_kind, vec![int(output_len)]));
+                *e = Expr::Ident(output_name);
+            } else { *e = acc; }
         }
         Expr::Call(name, args) if name == "len" => {
             let length = match args.as_slice() {

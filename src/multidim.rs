@@ -346,16 +346,23 @@ impl Lowerer {
             Expr::Call(n, args) if matches!(n.as_str(), "sum" | "product" | "minval" | "maxval" | "@count_default" | "@count_i8" | "@any_reduction" | "@all_reduction") && args.len() == 3 => {
                 let intrinsic = match n.as_str() { "@count_default" | "@count_i8" => "count", "@any_reduction" => "any", "@all_reduction" => "all", _ => n.as_str() };
                 let dims = self.shape(&args[0], shapes)?.context("reduction argument must be an array")?;
+                let mut reduction_axis = None;
                 if !matches!(&args[1], Expr::Call(tag, _) if tag == "@no_dim") {
                     let dim = crate::parameters::integer_constant(&args[1]).context("reduction DIM must currently be a constant INTEGER; use MASK= for masks")?;
                     if dim < 1 || dim as usize > dims.len() { bail!("{intrinsic}: DIM must be between 1 and {}", dims.len()); }
-                    if dims.len() != 1 { bail!("{intrinsic}: DIM reductions currently require a rank-one array"); }
+                    if dims.len() > 1 { reduction_axis = Some(dim as usize - 1); }
                 }
                 if let Some(mask_shape) = self.shape(&args[2], shapes)? {
                     if mask_shape != dims { bail!("{n}: MASK shape does not conform to ARRAY"); }
                 }
                 args.remove(1);
-                for arg in args { self.expression(arg, shapes)?; }
+                for arg in args.iter_mut() { self.expression(arg, shapes)?; }
+                if let Some(axis) = reduction_axis {
+                    let stride = total(&dims[..axis])?;
+                    let mut result_dims = dims.clone();
+                    result_dims.remove(axis);
+                    args.extend([int(stride), int(dims[axis]), Expr::Call("@reduction_shape".into(), result_dims.into_iter().map(int).collect())]);
+                }
             }
             Expr::Call(n, args) if matches!(n.as_str(), "lbound" | "ubound") => {
                 let array = args.first().context("array bound inquiry requires ARRAY")?;
@@ -435,6 +442,18 @@ impl Lowerer {
 
     fn shape(&self, e: &Expr, shapes: &Shapes) -> Result<Option<Vec<i64>>> {
         match e {
+            Expr::Call(n, args) if matches!(n.as_str(), "sum" | "product" | "minval" | "maxval" | "@count_default" | "@count_i8" | "@any_reduction" | "@all_reduction") => {
+                if args.len() == 5 {
+                    let Expr::Call(_, dims) = &args[4] else { unreachable!() };
+                    return Ok(Some(dims.iter().map(crate::parameters::integer_constant).collect::<Result<Vec<_>>>()?));
+                }
+                if args.len() != 3 || matches!(&args[1],Expr::Call(tag,_) if tag == "@no_dim") { return Ok(None); }
+                let mut dims = self.shape(&args[0], shapes)?.context("reduction argument must be an array")?;
+                let axis = crate::parameters::integer_constant(&args[1]).context("reduction DIM must currently be a constant INTEGER")?;
+                if axis < 1 || axis as usize > dims.len() { bail!("reduction DIM must be between 1 and {}", dims.len()); }
+                dims.remove(axis as usize - 1);
+                Ok(if dims.is_empty() { None } else { Some(dims) })
+            }
             Expr::Call(n, args) if n == "@bounds_vector" => Ok(Some(vec![args.len() as i64])),
             Expr::Call(n, args) if matches!(n.as_str(), "lbound" | "ubound") => {
                 let dims = self.shape(&args[0], shapes)?.context("bound inquiry requires an array")?;

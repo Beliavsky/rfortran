@@ -191,13 +191,17 @@ pub fn interpret(program: &Program) {
                                 });
                             return ValueTuple::from_int(result);
                         }
-                        if both_int && matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul) {
+                        if both_int && matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div) {
                             let li = lv.0.unwrap();
                             let ri = rv.0.unwrap();
                             let res = match op {
                                 BinOp::Add => li + ri,
                                 BinOp::Sub => li - ri,
                                 BinOp::Mul => li * ri,
+                                BinOp::Div => li.checked_div(ri).unwrap_or_else(|| {
+                                    eprintln!("Runtime error: integer division by zero or overflow");
+                                    std::process::exit(1);
+                                }),
                                 _ => 0,
                             };
                             ValueTuple::from_int(res)

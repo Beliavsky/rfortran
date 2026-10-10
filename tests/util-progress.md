@@ -866,3 +866,36 @@ The refreshed report `target/ofort-huge-matrices.json` remains at 5/18 passes;
 all 18 reference builds/runs succeeded. The reductions probe now stops at
 `sum: DIM reductions currently require a rank-one array`. Linux/macOS execution
 remains untested.
+
+
+## Checkpoint 34: multidimensional DIM reductions
+
+SUM, PRODUCT, MINVAL, MAXVAL, COUNT, ANY and ALL now reduce one constant axis
+of a fixed-shape array. Shape inference removes that axis before storage is
+flattened, so assignments and masks retain shape checks and bound inquiries
+see the correct result shape. Lowering emits one accumulator loop per result
+element using column-major input indexing. Masks guard element reads; empty
+axes use the existing reduction identities and zero-size results do no work.
+Runtime DIM remains unsupported.
+
+This exposed an interpreter bug: INTEGER division returned a real value,
+which broke computed array subscripts. Integer operands now produce an integer
+quotient truncated toward zero; invalid division reports a runtime error.
+
+Fixture 95 covers numeric and logical reductions, explicit lower bounds,
+empty numeric/logical axes, nested reductions, masks and result bounds.
+The focused suite adds rank-three arrays, reversed/strided sections, REAL and
+DOUBLE PRECISION values, shape diagnostics, integer division in subscripts,
+and masked undefined input elements. Interpreter and native O0/O2 execution
+are compared with gfortran.
+
+Validation on Windows x64: 74 Rust unit tests, 95 native fixtures, 42 batch
+checks, and 12 focused tests passed. The three reduction suites (7 tests) also
+pass with the rebuilt release compiler. The updated fixture was rechecked in
+the interpreter, native O0/O2 and gfortran after adding empty logical axes.
+Linux/macOS execution remains untested.
+
+The external sample remains at 5/18 passes at O0/O2, with all 18 reference runs
+successful (`target/ofort-dim-reductions.json`). The full reductions probe now
+passes DIM lowering and stops with `unsupported expression in numeric array
+reduction`; array constructors/RESHAPE and elemental MOD need subsequent work.

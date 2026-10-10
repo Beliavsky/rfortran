@@ -277,9 +277,9 @@ files carry MIT SPDX headers. Upstream code remains subject to GPLv3.
 
 Numeric reductions (`SUM`, `PRODUCT`, `MINVAL`, `MAXVAL`) accept `ARRAY=`,
 `DIM=`, and `MASK=` keywords, including reordered keywords. Masks may be scalar
-LOGICAL values or conformable LOGICAL arrays/expressions. `DIM=1` is supported
-for rank-one arrays; reductions without DIM reduce the whole array. DIM must
-currently be constant, and multidimensional DIM results remain unsupported.
+LOGICAL values or conformable LOGICAL arrays/expressions. A constant `DIM` reduces
+one axis of a fixed-shape array, preserving the other axes in order; without
+DIM the whole array is reduced. Runtime DIM remains unsupported.
 For a positional mask without DIM, use `MASK=`. Empty/all-false integer extrema
 use the argument kind's largest/smallest representable values.
 Run `python tests/test_masked_reductions.py` for interpreter/native O0/O2 checks
@@ -287,10 +287,9 @@ and comparison with gfortran when installed.
 
 Logical reductions `COUNT`, `ANY`, and `ALL` accept `MASK=` and `DIM=` keywords.
 `COUNT` supports constant `KIND=4` (default) and `KIND=8`; `ANY` and `ALL` return
-LOGICAL. Whole-array and rank-one `DIM=1` reductions support logical arrays,
+LOGICAL. Whole-array and constant-DIM reductions support logical arrays,
 sections, and relational array expressions. Empty inputs yield 0, false, and
-true respectively. Runtime DIM and multidimensional DIM results remain
-unsupported. Run `python tests/test_logical_reductions.py` for interpreter,
+true respectively. Runtime DIM remains unsupported. Run `python tests/test_logical_reductions.py` for interpreter,
 native O0/O2, and gfortran comparison checks.
 
 PURE functions with fixed-size numeric/LOGICAL `INTENT(IN)` array dummies now
@@ -312,8 +311,13 @@ comparison checks. General variable expressions as HUGE arguments and typed
 variable inquiries inside PARAMETER initializers remain outside this subset.
 
 Fixed-shape numeric and LOGICAL multidimensional arrays may have zero extents.
-Whole-array/section operations and reductions without DIM handle empty inputs;
+Whole-array/section operations and reductions with or without DIM handle empty inputs;
 constant and runtime subscripts into an empty dimension remain errors. LOGICAL
 matrices support element/section assignment, list-directed output and whole-array
-COUNT/ANY/ALL. Multidimensional WHERE and DIM reductions remain unsupported.
+COUNT/ANY/ALL. Multidimensional WHERE remains unsupported.
 Run `python tests/test_empty_matrices.py` for empty/LOGICAL matrix checks.
+
+`python tests/test_dim_reductions.py` checks multidimensional DIM reductions,
+including masks, empty axes, nested reductions, rank-three sections, shape
+diagnostics and masked uninitialized elements. Interpreter and native O0/O2
+results are compared with gfortran when installed.

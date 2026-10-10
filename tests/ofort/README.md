@@ -61,7 +61,7 @@ supported subset: reordered ARRAY/DIM/MASK keywords, rank-one DIM=1, scalar and
 array masks, sections and empty arrays. `python tests/test_masked_reductions.py`
 checks interpreter/native O0/O2 output against gfortran. The external sample is
 still 5/18: the full reductions probe requires additional features, including
-multidimensional DIM results and other array operations.
+array constructors in expressions and other array operations.
 
 `91_logical_reductions.f90` covers COUNT (including KIND=8), ANY/ALL keywords,
 rank-one DIM=1, empty inputs, sections, relational masks and pure functions with
@@ -76,6 +76,11 @@ must be fully initialized.
 `93_integer_huge.f90` covers integer HUGE for kinds 1/2/4/8, preserved KIND,
 constant initializers and empty-array inquiries. The full external reductions
 probe now gets past integer HUGE and zero-extent/LOGICAL matrix declarations.
-It stops at multidimensional DIM reductions, which still need implementation.
+Multidimensional DIM reductions are covered by checkpoint 34 below.
 `94_empty_logical_matrices.f90` and `python tests/test_empty_matrices.py` cover
 empty reductions, bounds, logical sections and invalid empty-dimension access.
+
+`95_dim_reductions.f90` and `python tests/test_dim_reductions.py` cover constant
+DIM for SUM/PRODUCT/MINVAL/MAXVAL/COUNT/ANY/ALL, with masks, empty axes,
+nested reductions and rank-three sections. The complete external reductions
+probe still requires further array-expression support.
