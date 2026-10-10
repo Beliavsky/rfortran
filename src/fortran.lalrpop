@@ -288,10 +288,11 @@ Stmt: Stmt = {
     KW_DO KW_WHILE LPAREN <cond: CondExpr> RPAREN <body: Stmts> KW_END KW_DO => Stmt::DoWhile { cond, body },
     KW_RETURN => Stmt::Return(None),
     <name: Designator> EQ <rhs: RhsExpr> => Stmt::Assign { name, value: rhs },
-    <id: Designator> LPAREN <args: CallArgList> RPAREN EQ <rhs: RhsExpr> => Stmt::AssignIndex { name: id, indices: args, value: rhs },
-    <name: Designator> LPAREN <lower: RhsExpr?> COLON <upper: RhsExpr?> RPAREN EQ <value: RhsExpr> => Stmt::AssignIndex { name: name.clone(), indices: vec![Expr::Section { name, lower: lower.map(Box::new), upper: upper.map(Box::new), stride: None }], value },
-    <name: Designator> LPAREN <lower: RhsExpr?> COLON <upper: RhsExpr?> COLON <stride: RhsExpr> RPAREN EQ <value: RhsExpr> => Stmt::AssignIndex { name: name.clone(), indices: vec![Expr::Section { name, lower: lower.map(Box::new), upper: upper.map(Box::new), stride: Some(Box::new(stride)) }], value },
-    <name: Designator> LPAREN <lower: RhsExpr?> DCOLON <stride: RhsExpr> RPAREN EQ <value: RhsExpr> => Stmt::AssignIndex { name: name.clone(), indices: vec![Expr::Section { name, lower: lower.map(Box::new), upper: None, stride: Some(Box::new(stride)) }], value },
+    <id: Designator> LPAREN <args: SubscriptList> RPAREN EQ <rhs: RhsExpr> => {
+        let expr = crate::ast::section_or_call(id.clone(), args);
+        let indices = match expr { Expr::Section { .. } => vec![expr], Expr::Call(_, args) => args.into_iter().map(|e| if matches!(e,Expr::Section {..}) { Expr::Call("@vector_subscript".into(),vec![e]) } else {e}).collect(), _ => unreachable!() };
+        Stmt::AssignIndex { name: id, indices, value: rhs }
+    },
     KW_USE <m: Ident> => Stmt::Use { module: m, only: None },
     KW_USE <m: Ident> COMMA KW_ONLY COLON <names:GenericNames> => Stmt::Use { module:m, only:Some(names) },
     KW_IMPLICIT KW_NONE => Stmt::Implicit(Implicit::None),
@@ -429,9 +430,6 @@ UnaryExpr: Expr = {
 
 Primary: Expr = {
     LBRACKET <items: ExprList> RBRACKET => Expr::Call("@array_constructor".into(), items),
-    <name: Designator> LPAREN <lower: RhsExpr?> COLON <upper: RhsExpr?> RPAREN => Expr::Section { name, lower: lower.map(Box::new), upper: upper.map(Box::new), stride: None },
-    <name: Designator> LPAREN <lower: RhsExpr?> COLON <upper: RhsExpr?> COLON <stride: RhsExpr> RPAREN => Expr::Section { name, lower: lower.map(Box::new), upper: upper.map(Box::new), stride: Some(Box::new(stride)) },
-    <name: Designator> LPAREN <lower: RhsExpr?> DCOLON <stride: RhsExpr> RPAREN => Expr::Section { name, lower: lower.map(Box::new), upper: None, stride: Some(Box::new(stride)) },
     <n: INT> => Expr::IntLit(n),
     <f: FLOAT> => Expr::RealLit(f),
     <s: STR> => Expr::Str(s),
@@ -440,10 +438,22 @@ Primary: Expr = {
     // Ident(args) can be either a function call or an array indexing expression;
     // treat it as a function call here (Expr::Call). Array element assignment is
     // handled at the statement level by the AssignIndex rule above.
-    <id: Designator> LPAREN <args: CallArgList> RPAREN => Expr::Call(id, args),
+    <id: Designator> LPAREN <args: SubscriptList> RPAREN => crate::ast::section_or_call(id, args),
     KW_REAL LPAREN <args: CallArgList> RPAREN => Expr::Call("real".to_string(), args),
     <id: Designator> => Expr::Ident(id),
     LPAREN <e: OrExpr> RPAREN => e,
+};
+
+SubscriptList: Vec<Expr> = {
+    => vec![],
+    <e: Subscript> => vec![e],
+    <mut v: SubscriptList> COMMA <e: Subscript> => { v.push(e); v },
+};
+Subscript: Expr = {
+    <e: RhsExpr> => e,
+    <lower: RhsExpr?> COLON <upper: RhsExpr?> => Expr::Section { name: String::new(), lower: lower.map(Box::new), upper: upper.map(Box::new), stride: None },
+    <lower: RhsExpr?> COLON <upper: RhsExpr?> COLON <stride: RhsExpr> => Expr::Section { name: String::new(), lower: lower.map(Box::new), upper: upper.map(Box::new), stride: Some(Box::new(stride)) },
+    <lower: RhsExpr?> DCOLON <stride: RhsExpr> => Expr::Section { name: String::new(), lower: lower.map(Box::new), upper: None, stride: Some(Box::new(stride)) },
 };
 
 CallArgList: Vec<Expr> = {

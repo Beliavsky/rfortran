@@ -132,6 +132,12 @@ class BatchSources(unittest.TestCase):
         program.write_text(main, encoding="utf-8")
         self.check_build([library, program], "[util::ready]\n [xy   ]\n [abcde]\n Ax\n first\nsecond\n util::child!")
 
+    def test_matrix_sections(self):
+        source = (ROOT / "tests" / "69_matrix_sections.f90").read_text(encoding="utf-8")
+        program = self.directory / "matrix sections.f90"
+        program.write_text(source, encoding="utf-8")
+        self.check_build([program], "1 1 1 1\n 21 22 23\n 23 22 21 13 12 11\n 32 34 36\n 68\n 0\n 1 1 1 1\n 5 5 5 9\n 13 12 11 23 22 21")
+
     def test_missing_source_preserves_existing_outputs(self):
         sources = self.sources()
         exe = sources[-1].with_suffix(".exe")

@@ -305,3 +305,18 @@ impl Expr {
         Expr::Un(UnOp::Not, Box::new(e))
     }
 }
+
+// Preserve the existing rank-one section representation.
+pub fn section_or_call(name: String, mut args: Vec<Expr>) -> Expr {
+    let single_section = args.len() == 1 && matches!(&args[0], Expr::Section { name, .. } if name.is_empty());
+    for arg in &mut args {
+        if let Expr::Section { name: owner, .. } = arg {
+            if owner.is_empty() {
+                *owner = name.clone();
+                if !single_section { *arg = Expr::Call("@section_subscript".into(), vec![arg.clone()]); }
+            }
+        }
+    }
+    if single_section { args.remove(0) }
+    else { Expr::Call(name, args) }
+}

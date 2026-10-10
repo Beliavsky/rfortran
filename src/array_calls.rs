@@ -66,12 +66,48 @@ fn rewrite(
             rewrite(b, shapes, constants, absent)?;
         }
         Expr::Un(_, a) => rewrite(a, shapes, constants, absent)?,
+        Expr::Section {
+            lower,
+            upper,
+            stride,
+            ..
+        } => {
+            for e in [lower, upper, stride].into_iter().flatten() {
+                rewrite(e, shapes, constants, absent)?;
+            }
+        }
+
         _ => {}
     }
     if let Ok(n) = crate::parameters::integer_constant(e) {
         *e = Expr::IntLit(n.to_string());
     }
     Ok(())
+}
+
+// Substitute proven constants only in section bounds; keep ordinary variable
+// references so later initialization and unused-variable checks retain them.
+fn rewrite_value(
+    e: &mut Expr,
+    shapes: &Shapes,
+    constants: &HashMap<String, Expr>,
+    absent: &HashSet<String>,
+) -> Result<()> {
+    match e {
+        Expr::Section { .. } => return rewrite(e, shapes, constants, absent),
+        Expr::Call(_, args) | Expr::Index(_, args) => {
+            for e in args {
+                rewrite_value(e, shapes, constants, absent)?;
+            }
+        }
+        Expr::Bin(_, a, b) => {
+            rewrite_value(a, shapes, constants, absent)?;
+            rewrite_value(b, shapes, constants, absent)?;
+        }
+        Expr::Un(_, a) => rewrite_value(a, shapes, constants, absent)?,
+        _ => {}
+    }
+    rewrite(e, shapes, &HashMap::new(), absent)
 }
 
 fn specialize(
@@ -182,17 +218,17 @@ fn specialize(
                 {
                     constants.insert(name.clone(), folded);
                 }
-                rewrite(value, shapes, &HashMap::new(), absent)?;
+                rewrite_value(value, shapes, constants, absent)?;
             }
             Stmt::AssignIndex { value, indices, .. } => {
-                rewrite(value, shapes, &HashMap::new(), absent)?;
+                rewrite_value(value, shapes, constants, absent)?;
                 for e in indices {
-                    rewrite(e, shapes, &HashMap::new(), absent)?;
+                    rewrite_value(e, shapes, constants, absent)?;
                 }
             }
             Stmt::CallSub { args, .. } | Stmt::Print { items: args } => {
                 for e in args {
-                    rewrite(e, shapes, &HashMap::new(), absent)?;
+                    rewrite_value(e, shapes, constants, absent)?;
                 }
             }
             Stmt::If {

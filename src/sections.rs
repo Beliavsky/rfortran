@@ -16,7 +16,11 @@ fn constant(e: &Expr) -> Result<i64> {
 }
 
 fn expand(e: Expr, arrays: &Arrays, output: &mut Vec<Expr>) -> Result<()> {
-    if let Expr::Section { name, lower, upper, stride } = e {
+    if let Some((_,count)) = crate::multidim::view_element(&e,&Expr::IntLit("1".into())) {
+        for i in 1..=count {
+            output.push(crate::multidim::view_element(&e,&Expr::IntLit(i.to_string())).unwrap().0);
+        }
+    } else if let Expr::Section { name, lower, upper, stride } = e {
         let dims = arrays.get(&name.to_ascii_lowercase())
             .with_context(|| format!("array section `{name}` requires a declared array"))?;
         if dims.len() != 1 { bail!("only one-dimensional array sections are currently supported"); }
@@ -44,6 +48,7 @@ fn expand(e: Expr, arrays: &Arrays, output: &mut Vec<Expr>) -> Result<()> {
 
 fn reject_section(e: &Expr) -> Result<()> {
     match e {
+        Expr::Call(tag,_) if tag == "@matrix_view" => bail!("multidimensional section is unsupported in this context"),
         Expr::Section { .. } => bail!("array sections are currently supported only as direct PRINT items"),
         Expr::Bin(_, a, b) => { reject_section(a)?; reject_section(b)?; }
         Expr::Un(_, a) => reject_section(a)?,

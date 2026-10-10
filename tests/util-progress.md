@@ -89,7 +89,7 @@ bounds failure that would otherwise alias another column. Native O0/O2 and
 interpreter checks cover out-of-range indices in both dimensions.
 
 This uses static storage specialization, not a runtime array descriptor ABI.
-Dynamic/zero extents, DEALLOCATE/reallocation, multidimensional sections,
+Dynamic/zero extents, DEALLOCATE/reallocation, multidimensional section destinations,
 array lower bounds other than one, USE-associated multidimensional arrays,
 and procedure calls in multidimensional
 subscripts remain unsupported. Subscripts must have explicitly declared
@@ -112,8 +112,23 @@ variables/dummies are explicitly rejected. Runtime character intrinsics,
 nonconstant or named length selectors, and general character arrays remain
 outside this checkpoint.
 
-The full utility program still does not compile. Its next parser error is the
-multidimensional section `xx(2:,:)` in `diff_mat`. Its character array parameters
-also remain unsupported. Further blockers include user-defined dotted
+The eighth checkpoint adds multidimensional section expressions with constant
+bounds, strides, and scalar subscripts. Mixed scalar/range subscripts reduce
+rank, and sections preserve column-major order. Whole-array assignment checks
+the original section shapes before flattening and preserves overlapping RHS
+values. Direct list-directed output and existing numeric reductions also accept
+these sections, including empty sections. Assumed-shape subroutine specialization
+substitutes proven constants in section bounds (for example a local assigned
+from SIZE). Test 69 covers the consecutive-row difference from diff_matrix_real,
+strides, mixed subscripts, rank-three arrays, empty reductions, and overlap,
+with matching native O0/O2, interpreter, and gfortran results.
+
+Dynamic section bounds/scalar subscripts, vector subscripts, section destinations,
+SIZE of sections, and section procedure arguments remain unsupported. Unsupported
+section contexts are diagnosed rather than passed to the backend.
+
+The full utility program still does not compile. Its next parser error is
+`elemental function sech`. Its character array parameters also remain unsupported.
+Further blockers include user-defined dotted
 operators such as `.in.` and `.exclude.`. The utility library also exercises
 features beyond the currently implemented array, character, and I/O subsets.

@@ -17,6 +17,146 @@ fn total(dims: &[i64]) -> Result<i64> {
     })
 }
 
+// A view stores its source, element count, and a linear index formula.
+// The private placeholder is replaced only when a consumer selects an element.
+pub(crate) fn view_element(e: &Expr, index: &Expr) -> Option<(Expr, i64)> {
+    let Expr::Call(tag, args) = e else {
+        return None;
+    };
+    if tag != "@matrix_view" {
+        return None;
+    }
+    let [Expr::Ident(name), count, offset] = args.as_slice() else {
+        unreachable!()
+    };
+    fn substitute(e: &Expr, index: &Expr) -> Expr {
+        match e {
+            Expr::Ident(n) if n == "@view_index" => index.clone(),
+            Expr::Bin(op, a, b) => bin(op.clone(), substitute(a, index), substitute(b, index)),
+            Expr::Call(n, args) => Expr::Call(
+                n.clone(),
+                args.iter().map(|e| substitute(e, index)).collect(),
+            ),
+            _ => e.clone(),
+        }
+    }
+    Some((
+        Expr::Index(name.clone(), vec![substitute(offset, index)]),
+        crate::parameters::integer_constant(count).unwrap(),
+    ))
+}
+
+fn triplet(e: &Expr) -> Option<&Expr> {
+    if let Expr::Call(tag, args) = e {
+        if tag == "@section_subscript" {
+            return args.first();
+        }
+    }
+    None
+}
+
+fn section_view(name: &str, args: &[Expr], dims: &[i64]) -> Result<(Vec<i64>, Expr)> {
+    if args.len() != dims.len() {
+        bail!(
+            "array `{name}` requires {} subscripts, got {}",
+            dims.len(),
+            args.len()
+        );
+    }
+    let mut shape = vec![];
+    let mut offset = int(1);
+    let mut storage_stride = 1;
+    let mut view_stride = 1i64;
+    for (axis, (arg, extent)) in args.iter().zip(dims).enumerate() {
+        let constant = |e: &Expr| {
+            crate::parameters::integer_constant(e)
+            .context("multidimensional section bounds and scalar subscripts must currently be constant integers")
+        };
+        let position = if let Some(Expr::Section {
+            lower,
+            upper,
+            stride,
+            ..
+        }) = triplet(arg)
+        {
+            let step = stride.as_deref().map(&constant).transpose()?.unwrap_or(1);
+            if step == 0 {
+                bail!("array section stride must not be zero");
+            }
+            let first = lower.as_deref().map(&constant).transpose()?.unwrap_or(1);
+            let last = upper
+                .as_deref()
+                .map(&constant)
+                .transpose()?
+                .unwrap_or(*extent);
+            let distance = (i128::from(last) - i128::from(first)) * i128::from(step.signum());
+            let count = if distance < 0 {
+                0
+            } else {
+                i64::try_from(distance / i128::from(step).abs() + 1)
+                    .context("section size overflow")?
+            };
+            let final_index =
+                i128::from(first) + i128::from(count.saturating_sub(1)) * i128::from(step);
+            if count > 0
+                && (first < 1
+                    || first > *extent
+                    || final_index < 1
+                    || final_index > i128::from(*extent))
+            {
+                bail!(
+                    "array `{name}` dimension {}: section outside 1:{extent}",
+                    axis + 1
+                );
+            }
+            let ordinal = Expr::Call(
+                "mod".into(),
+                vec![
+                    bin(
+                        BinOp::Div,
+                        bin(BinOp::Sub, Expr::Ident("@view_index".into()), int(1)),
+                        int(view_stride.max(1)),
+                    ),
+                    int(count.max(1)),
+                ],
+            );
+            shape.push(count);
+            view_stride = view_stride
+                .checked_mul(count)
+                .context("section size overflow")?;
+            bin(BinOp::Add, int(first), bin(BinOp::Mul, ordinal, int(step)))
+        } else {
+            let index = constant(arg)?;
+            if index < 1 || index > *extent {
+                bail!(
+                    "array `{name}` dimension {}: subscript {index} outside 1:{extent}",
+                    axis + 1
+                );
+            }
+            int(index)
+        };
+        offset = bin(
+            BinOp::Add,
+            offset,
+            bin(
+                BinOp::Mul,
+                bin(BinOp::Sub, position, int(1)),
+                int(storage_stride),
+            ),
+        );
+        storage_stride = storage_stride
+            .checked_mul(*extent)
+            .context("array stride overflow")?;
+    }
+    Ok((
+        shape.clone(),
+        Expr::Call(
+            "@matrix_view".into(),
+            vec![Expr::Ident(name.into()), int(total(&shape)?), offset],
+        ),
+    ))
+}
+
 #[derive(Default)]
 struct Lowerer {
     guards: Vec<Stmt>,
@@ -198,6 +338,15 @@ impl Lowerer {
                 };
                 *e = int(value);
             }
+            Expr::Call(n, args) | Expr::Index(n, args)
+                if args.iter().any(|e| triplet(e).is_some()) =>
+            {
+                self.check_association(n)?;
+                let dims = shapes
+                    .get(n)
+                    .with_context(|| format!("section `{n}` requires a declared array"))?;
+                *e = section_view(n, args, dims)?.1;
+            }
             Expr::Call(n, args) | Expr::Index(n, args) => {
                 self.check_association(n)?;
                 if shapes.get(n).is_some_and(|d| d.len() > 1) {
@@ -236,6 +385,15 @@ impl Lowerer {
     fn shape(e: &Expr, shapes: &Shapes) -> Result<Option<Vec<i64>>> {
         match e {
             Expr::Ident(n) => Ok(shapes.get(n).cloned()),
+            Expr::Call(n, args) | Expr::Index(n, args)
+                if args.iter().any(|e| triplet(e).is_some()) =>
+            {
+                let dims = shapes
+                    .get(n)
+                    .with_context(|| format!("section `{n}` requires a declared array"))?;
+                Ok(Some(section_view(n, args, dims)?.0))
+            }
+
             Expr::Bin(_, a, b) => {
                 let a = Self::shape(a, shapes)?;
                 let b = Self::shape(b, shapes)?;
@@ -321,6 +479,9 @@ impl Lowerer {
                     value,
                 } => {
                     self.check_association(name)?;
+                    if indices.len() > 1 && indices.iter().any(|e| triplet(e).is_some()) {
+                        bail!("assignment to multidimensional sections is not yet supported");
+                    }
                     if shapes.get(name).is_some_and(|d| d.len() > 1) {
                         self.check_index_types(name, indices, &shapes)?;
                     }
@@ -507,6 +668,37 @@ mod tests {
             assert!(err.contains(expected), "{source}: {err}");
         }
     }
+    #[test]
+    fn rejects_invalid_multidimensional_sections() {
+        for (statement, expected) in [
+            ("print *,a(0:2,:)", "dimension 1"),
+            ("print *,a(:,1:4)", "dimension 2"),
+            ("print *,a(::0,:)", "stride must not be zero"),
+            ("print *,a(:,4)", "dimension 2"),
+            ("print *,a(:,1.5)", "constant integers"),
+            ("print *,a(:,a(:,1))", "constant integers"),
+            ("print *,a(:,i)", "constant integers"),
+            ("print *,a(:,:,1)", "requires 2 subscripts"),
+            ("b=a(:,1:2)", "nonconforming array assignment"),
+            ("b=a(1:1,:)+a(:,1:1)", "nonconforming array shapes"),
+            ("a(:,1)=0", "assignment to multidimensional sections"),
+        ] {
+            let source = format!("integer::a(2,3),b(1,3),i\ni=1\na=0\n{statement}\nend");
+            let error = format!("{:#}", lower(&source).unwrap_err());
+            assert!(error.contains(expected), "{statement}: {error}");
+        }
+    }
+
+    #[test]
+    fn lowers_multidimensional_section_expressions() {
+        let p = lower(include_str!("../tests/69_matrix_sections.f90")).unwrap();
+        let p = crate::sections::resolve(crate::reductions::resolve(p).unwrap()).unwrap();
+        assert!(!format!("{p:?}").contains("@matrix_view"));
+        let source = "integer::a(2,3)\na=1\ncall random_number(a(:,1:2))\nend";
+        let p = lower(source).unwrap();
+        assert!(crate::sections::resolve(crate::reductions::resolve(p).unwrap()).is_err());
+    }
+
     #[test]
     fn matrices_preserve_column_major_storage_and_initialization_checks() {
         let p = lower(include_str!("../tests/66_allocatable_matrices.f90")).unwrap();

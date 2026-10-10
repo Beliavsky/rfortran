@@ -19,6 +19,11 @@ fn constant(e: &Expr) -> Result<i64> {
 
 // Produce a scalar expression for element `index`, its shape, and its type.
 fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i64>, TypeSpec)> {
+    if let Some((value,count)) = crate::multidim::view_element(e,index) {
+        let Expr::Index(name,_) = &value else {unreachable!()};
+        let kind=symbols.get(name).context("undefined section source")?.0.clone();
+        return Ok((value,Some(count),kind));
+    }
     match e {
         Expr::Ident(name) | Expr::Section { name, .. } => {
             let (kind, dims) = symbols.get(name).with_context(|| format!("undefined reduction argument `{name}`"))?;
@@ -127,6 +132,7 @@ fn lower_expr(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, seria
                 _=> { if !matches!(kind,TypeSpec::Real|TypeSpec::DoublePrecision) {bail!("{name} requires a REAL argument");} let v=if name=="tiny" {if double {f64::MIN_POSITIVE} else {f32::MIN_POSITIVE as f64}} else {if double {f64::MAX} else {f32::MAX as f64}}; let lit=Expr::RealLit(v.to_string()); if double {Expr::Call("dble".into(),vec![lit])} else {lit} }
             };
         }
+        Expr::Call(tag, _) if tag == "@matrix_view" => {},
         Expr::Call(_, args) | Expr::Index(_, args) => for arg in args { lower_expr(arg, symbols, prefix, serial)?; },
         Expr::Bin(_, a, b) => { lower_expr(a, symbols, prefix, serial)?; lower_expr(b, symbols, prefix, serial)?; }
         Expr::Un(_, a) => lower_expr(a, symbols, prefix, serial)?,
