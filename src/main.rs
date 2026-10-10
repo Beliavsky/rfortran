@@ -57,7 +57,7 @@ fn main() -> Result<()> {
 
     if args.version {
         let version = env!("CARGO_PKG_VERSION");
-        println!("f90c version: {}", version);
+        println!("rfort version: {}", version);
         let linker_version = env!("LINKER_VERSION");
         println!("linker version: {}", linker_version);
         return Ok(());

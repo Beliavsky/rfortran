@@ -3,8 +3,8 @@ use structopt::StructOpt;
 
 #[derive(Debug, StructOpt, Clone)]
 #[structopt(
-    name = "f90c",
-    about = "Single executable Fortran 90 compiler written in Rust"
+    name = "rfort",
+    about = "Fortran compiler written in Rust"
 )]
 pub struct Cli {
     pub inputs: Vec<PathBuf>,

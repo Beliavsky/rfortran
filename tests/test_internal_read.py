@@ -1,4 +1,4 @@
-"""Internal integer input regression tests; run after cargo build --bin f90c.
+"""Internal integer input regression tests; run after cargo build --bin rfort.
 
 Run: python tests/test_internal_read.py
 Uses the same F90C_TEST_COMPILER override as test_record_read.py.

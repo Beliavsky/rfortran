@@ -72,11 +72,11 @@ struct AllExpectations {
     cases: HashMap<String, Expectation>,
 }
 
-fn build_f90c_exe() -> PathBuf {
+fn build_rfort_exe() -> PathBuf {
     let exe = if cfg!(windows) {
-        "target\\debug\\f90c.exe"
+        "target\\debug\\rfort.exe"
     } else {
-        "target/debug/f90c"
+        "target/debug/rfort"
     };
     if !Path::new(&exe).exists() {
         panic!("build first: cargo build");
@@ -306,7 +306,7 @@ fn compile_and_run_tests() {
         record = true;
     }
 
-    let f90c = build_f90c_exe();
+    let f90c = build_rfort_exe();
     let mut all = load_all();
     let mut changed = false;
     let mut failures = Vec::new();

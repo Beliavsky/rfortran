@@ -201,7 +201,7 @@ input (including multiple items in the interpreter) still needs further work.
 O0/O2 and interpreter input, exact padding/truncation, CRLF, 12,000-character
 records, mixed list-directed/formatted input, EOF, and invalid bytes. Successful
 output is also compared with gfortran when installed. Build the debug compiler
-first; set `F90C_TEST_COMPILER=target/release/f90c.exe` to test the release build.
+first; set `F90C_TEST_COMPILER=target/release/rfort.exe` to test the release build.
 The batch suite includes a silent compilation and input/output check.
 
 The thirteenth checkpoint implements `read(text,*,iostat=ierr) nw` for one
@@ -300,3 +300,10 @@ items and character arrays. Its character array parameters remain unsupported.
 Further blockers include user-defined dotted operators such as `.in.` and
 `.exclude.`. The utility library also exercises features beyond the currently
 implemented array, character, and I/O subsets.
+
+The compiler executable is now `rfort` (`rfort.exe` on Windows), built with
+`cargo build --release --bin rfort`. Use `rfort.bat` for silent Windows
+compilation; `f90c.bat` forwards to it for compatibility. The source-combining
+helper and `.f90c-sources.f90` suffix retain their existing names. Test scripts
+use `target/debug/rfort.exe`; `RFORT_TEST_COMPILER` overrides that path, and the
+legacy `F90C_TEST_COMPILER` variable is also accepted.

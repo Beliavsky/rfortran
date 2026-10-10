@@ -1,12 +1,23 @@
-# f90c - Single Executable Fortran 90 Compiler in Rust
+# rfortran - Fortran compiler in Rust
 
-`f90c` is a single executable Fortran 90 compiler written in Rust. It can compile, link, and run Fortran 90 sources, supporting object files, optimizations, warnings, and multiple subcommands.
+The compiler command is `rfort`. This project is a fork of
+[SirPigari/f90c](https://github.com/SirPigari/f90c).
+
+`rfort` is a single executable Fortran compiler written in Rust. It can compile, link, and run Fortran 90 sources, supporting object files, optimizations, warnings, and multiple subcommands.
 
 ---
 
 ## Installation
 
-Download the precompiled binary from the [GitHub releases page](https://github.com/SirPigari/f90c/releases) and place it in a directory included in your `PATH`.  
+Build the compiler from this checkout:
+
+```bash
+cargo build --release --bin rfort
+```
+
+On Windows this creates `target/release/rfort.exe`. Add this repository to your
+`PATH` to use `rfort.bat`, or invoke it as `rfort.bat` from this directory.
+On other systems the executable is `target/release/rfort`.
 
 ---
 
@@ -15,7 +26,7 @@ Download the precompiled binary from the [GitHub releases page](https://github.c
 The general command structure is:
 
 ```bash
-f90c [subcommand] [links.o (.obj)] [inputs.f90] [options]
+rfort [subcommand] [links.o (.obj)] [inputs.f90] [options]
 ```
 
 If no subcommand is provided, all `.f90` inputs are compiled into an executable, optionally linking with `.o` (`.obj`) object files.
@@ -23,8 +34,11 @@ If no subcommand is provided, all `.f90` inputs are compiled into an executable,
 ### Windows batch wrapper
 
 ```bat
-f90c.bat m1.f90 m2.f90 main.f90
+rfort.bat m1.f90 m2.f90 main.f90
 ```
+
+`f90c.bat` remains as a compatibility entry point and delegates to `rfort.bat`.
+Both use the same compiler, arguments, and exit status.
 
 List modules in dependency order, followed by the main program: if `m2` uses
 `m1`, put `m1.f90` first. This creates `main.exe` and `main.obj` alongside the
@@ -44,7 +58,7 @@ Single-source commands continue to compile the original file directly.
 
 Run the wrapper integration tests with `python tests/test_batch_sources.py`.
 They require Windows, a built compiler, and the linker/library setup specified
-in `f90c.bat`.
+in `rfort.bat`.
 
 ---
 
@@ -59,7 +73,7 @@ in `f90c.bat`.
 | `link` | Link `.o` (`.obj`) object files and `.f90` sources into an executable |
 | `emitobj` | Emit a `.f90` source as a `.o` (`.obj`) object file |
 | `run` | Parse, check, and execute a `.f90` source file via JIT |
-| `help` | Show help for `f90c` or subcommands |
+| `help` | Show help for `rfort` or subcommands |
 
 ### Options
 
@@ -81,7 +95,7 @@ in `f90c.bat`.
 ### `lex`
 
 ```bash
-f90c lex input.f90
+rfort lex input.f90
 ```
 
 - `input.f90` – Input Fortran 90 source file
@@ -91,7 +105,7 @@ f90c lex input.f90
 ### `parse`
 
 ```bash
-f90c parse input.f90
+rfort parse input.f90
 ```
 
 - `input.f90` – Input Fortran 90 source file
@@ -101,7 +115,7 @@ f90c parse input.f90
 ### `check`
 
 ```bash
-f90c check input.f90
+rfort check input.f90
 ```
 
 - `input.f90` – Input Fortran 90 source file
@@ -113,7 +127,7 @@ f90c check input.f90
 Compile a `.f90` source into an **executable**.
 
 ```bash
-f90c build input.f90 [options]
+rfort build input.f90 [options]
 ```
 
 Options:
@@ -128,7 +142,7 @@ Options:
 Link `.o` (`.obj`) object files and `.f90` sources into an executable.
 
 ```bash
-f90c link links.o inputs.f90 [options]
+rfort link links.o inputs.f90 [options]
 ```
 
 Options:
@@ -144,7 +158,7 @@ Options:
 Emit a `.f90` source as a `.o` (`.obj`) object file to a specific path.
 
 ```bash
-f90c emitobj input.f90 -o output.o
+rfort emitobj input.f90 -o output.o
 ```
 
 - `input.f90` – Input Fortran 90 source file  
@@ -157,7 +171,7 @@ f90c emitobj input.f90 -o output.o
 Parse, check, and execute a `.f90` source file via JIT.
 
 ```bash
-f90c run input.f90
+rfort run input.f90
 ```
 
 - `input.f90` – Input Fortran 90 source file
@@ -166,10 +180,10 @@ f90c run input.f90
 
 ### `help`
 
-Show help for `f90c` or subcommands.
+Show help for `rfort` or subcommands.
 
 ```bash
-f90c help
+rfort help
 ```
 
 ---
@@ -179,7 +193,7 @@ f90c help
 Compile a single `.f90` source into an executable:
 
 ```bash
-f90c main.f90
+rfort main.f90
 ```
 
 This produces an executable derived from the first source name.
@@ -189,7 +203,7 @@ This produces an executable derived from the first source name.
 Compile multiple `.f90` sources directly:
 
 ```bash
-f90c main.f90 file1.f90 file2.f90
+rfort main.f90 file1.f90 file2.f90
 ```
 
 Each file is compiled **separately** into its own executable.  
@@ -200,8 +214,8 @@ This does **not** link them together.
 Build reusable object files (modules only, no `program`):
 
 ```bash
-f90c lib1.f90
-f90c utils.f90
+rfort lib1.f90
+rfort utils.f90
 ```
 
 This produces `lib1.o` (`lib1.obj`) and `utils.o` (`utils.obj`).
@@ -211,7 +225,7 @@ This produces `lib1.o` (`lib1.obj`) and `utils.o` (`utils.obj`).
 Link a main program with object files:
 
 ```bash
-f90c main.f90 lib1.o utils.o
+rfort main.f90 lib1.o utils.o
 ```
 
 This compiles `main.f90` and links it with the object files into a single executable.
@@ -221,7 +235,7 @@ This compiles `main.f90` and links it with the object files into a single execut
 Build an executable with a custom name:
 
 ```bash
-f90c build main.f90 -o program
+rfort build main.f90 -o program
 ```
 
 This compiles `main.f90` into an executable named `program`.
@@ -231,7 +245,7 @@ This compiles `main.f90` into an executable named `program`.
 Enable all warnings and treat them as errors:
 
 ```bash
-f90c main.f90 --Wall --Werror
+rfort main.f90 --Wall --Werror
 ```
 
 ---
@@ -239,7 +253,7 @@ f90c main.f90 --Wall --Werror
 Run a `.f90` program with JIT:
 
 ```bash
-f90c run main.f90
+rfort run main.f90
 ```
 
 ---

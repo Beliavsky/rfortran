@@ -1,4 +1,4 @@
-"""Windows batch integration checks; requires a built f90c and the batch's linker setup.
+"""Windows batch integration checks; requires a built rfort and the batch's linker setup.
 
 Run: python tests/test_batch_sources.py
 """
@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
-BATCH = ROOT / "f90c.bat"
+BATCH = ROOT / "rfort.bat"
 FIXTURES = ROOT / "tests" / "multifile"
 
 
@@ -20,9 +20,9 @@ class BatchSources(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.directory = Path(self.temporary.name)
 
-    def batch(self, *sources):
+    def batch(self, *sources, wrapper=BATCH):
         # Explicit cmd quoting also handles shell metacharacters in path names.
-        arguments = " ".join('"' + str(p) + '"' for p in (BATCH, *sources))
+        arguments = " ".join('"' + str(p) + '"' for p in (wrapper, *sources))
         return subprocess.run(
             'cmd.exe /d /v:off /s /c "' + arguments + '"',
             cwd=self.directory, capture_output=True, text=True, timeout=90,
@@ -50,6 +50,25 @@ class BatchSources(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), expected)
         self.assertEqual(result.stderr, "")
+
+    def test_legacy_wrapper(self):
+        sources = self.sources()
+        result = self.batch(*sources, wrapper=ROOT / "f90c.bat")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout + result.stderr, "")
+        result = subprocess.run([sources[-1].with_suffix(".exe")], capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "42")
+        result = self.batch(self.directory / "missing.f90", wrapper=ROOT / "f90c.bat")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Source file not found", result.stderr)
+
+    def test_compiler_command_name(self):
+        from test_record_read import COMPILER
+        for argument in ("--help", "--version"):
+            result = subprocess.run([COMPILER, argument], capture_output=True, text=True, timeout=15)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("rfort", result.stdout)
 
     def test_module_dependency_chain_and_repeat_build(self):
         sources = self.sources()

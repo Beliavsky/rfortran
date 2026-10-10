@@ -1,7 +1,7 @@
 """Formatted input checks on Windows, using the system LLD linker.
 
-Run after cargo build --bin f90c: python tests/test_record_read.py
-Set F90C_TEST_COMPILER to test another build (e.g. target/release/f90c.exe).
+Run after cargo build --bin rfort: python tests/test_record_read.py
+Set RFORT_TEST_COMPILER (or the legacy F90C_TEST_COMPILER) to test another build (e.g. target/release/rfort.exe).
 """
 import os
 from pathlib import Path
@@ -12,11 +12,11 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
-COMPILER = Path(os.environ.get("F90C_TEST_COMPILER", ROOT / "target/debug/f90c.exe")).resolve()
+COMPILER = Path(os.environ.get("RFORT_TEST_COMPILER", os.environ.get("F90C_TEST_COMPILER", ROOT / "target/debug/rfort.exe"))).resolve()
 
 
 def build_commands(source, directory):
-    batch = (ROOT / "f90c.bat").read_text()
+    batch = (ROOT / "rfort.bat").read_text()
     libs = [ROOT / "src/libs/x64"] + [Path(re.search(r'set "' + name + r'=(.*?)"', batch).group(1))
              for name in ("MSVC_LIB", "UCRT_LIB")]
     commands = [[COMPILER, "run", source]]

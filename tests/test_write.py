@@ -1,4 +1,4 @@
-"""WRITE and bare STOP checks on Windows. Run after cargo build --bin f90c.
+"""WRITE and bare STOP checks on Windows. Run after cargo build --bin rfort.
 
 Run: python tests/test_write.py
 Set F90C_TEST_COMPILER to use the release compiler.

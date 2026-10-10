@@ -1,4 +1,4 @@
-"""Run after cargo build --bin f90c: python tests/test_output_implied_do.py."""
+"""Run after cargo build --bin rfort: python tests/test_output_implied_do.py."""
 import json
 import os
 from pathlib import Path
