@@ -954,3 +954,36 @@ with debug and rebuilt release compilers. The release compatibility report
 `target/ofort-case-ranges.json` has 7/18 passes (11 compile failures), including
 `xselect_case_selector_list.f90` at O0/O2. All 18 gfortran reference runs succeed.
 Linux/macOS execution remains untested.
+
+
+## Checkpoint 37: separate PARAMETER statements
+
+The lexer recognizes PARAMETER contextually at the start of a definition
+statement, preserving ordinary variables/arrays/procedures named parameter.
+The parser records a separate PARAMETER statement as a temporary initialized
+declaration marker. Before constant resolution, explicitly declared scalar
+names are converted to ordinary typed PARAMETER declarations and removed from
+their previous variable declarations. This reuses initializer evaluation,
+substitution, module export and assignment-protection handling.
+
+This subset requires preceding scalar type declarations and retains the modern
+PARAMETER implementation's supported numeric/CHARACTER types. Implicit typing
+and separate array PARAMETER definitions are not yet supported. Duplicate
+parameter definitions, dummy arguments, forward/self references and writes to
+constants are diagnosed. Fixture 98 covers dependent values, module constants,
+CHARACTER padding, real kinds, local shadowing in PURE functions and arrays
+named parameter. Focused tests compare interpreter/native O0/O2 with gfortran
+and verify the diagnostics.
+
+Validation on Windows x64: 74 Rust unit tests, 98 native fixtures, 45 batch
+wrapper tests and both focused tests passed. The focused tests pass with debug
+and rebuilt release compilers and compare interpreter/native O0/O2 with gfortran.
+The release report `target/ofort-parameter-statements.json` has 8/18 passes
+(10 compile failures), with `xparam.f90` passing at O0/O2. All 18 reference runs
+succeed. Linux/macOS execution remains untested.
+
+The first release compatibility run reported empty stdout once for the existing
+reductions probe at O0 (exit status 0). Six fresh isolated O0 builds/runs all
+produced the expected output; an isolated full rerun also passed that probe.
+The final report above is that rerun. The initial anomaly was not reproduced
+and its cause remains undetermined.

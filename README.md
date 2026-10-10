@@ -342,3 +342,12 @@ integer expressions; duplicate/overlapping ranges are diagnosed. Literal and
 arithmetic selectors work in native builds, including selectors made constant
 by optimization. CHARACTER ranges remain unsupported. Run
 `python tests/test_case_ranges.py` for interpreter/native O0/O2 and gfortran checks.
+
+Separate `PARAMETER (name=value, ...)` statements are supported for explicitly
+declared scalar constants. For example, `integer :: i, j` followed by
+`parameter (i=5, j=i+2)` defines the same constants as a modern PARAMETER
+attribute declaration. The type declaration must precede the statement; values
+use the existing numeric/CHARACTER constant evaluation and conversion rules.
+Module exports, host association, PURE procedures and assignment protection
+are preserved. Implicitly typed constants and array names in separate PARAMETER
+statements remain unsupported. Run `python tests/test_parameter_statements.py`.

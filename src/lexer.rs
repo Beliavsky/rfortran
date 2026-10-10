@@ -163,6 +163,7 @@ pub enum TokenKind {
     KwPure,
     KwElemental,
     KwForall,
+    KwParameter,
     KwWhere,
     KwWhereBlock,
     KwElseWhere,
@@ -464,6 +465,13 @@ pub fn lex(input: &str) -> Vec<Token> {
                     }
                 }
             }
+        }
+        if matches!(&tokens[start].kind,TokenKind::Ident(n) if n.eq_ignore_ascii_case("parameter"))
+            && (start == 0 || !same_statement(&input[tokens[start-1].span.end..tokens[start].span.start]))
+            && matches!(tokens.get(start+1).map(|t| &t.kind),Some(TokenKind::LParen))
+            && matches!(tokens.get(start+2).map(|t| &t.kind),Some(TokenKind::Ident(_)))
+            && matches!(tokens.get(start+3).map(|t| &t.kind),Some(TokenKind::Eq)) {
+            tokens[start].kind = TokenKind::KwParameter;
         }
         if matches!(&tokens[start].kind,TokenKind::Ident(n) if n.eq_ignore_ascii_case("forall"))
             && matches!(tokens.get(start+1).map(|t|&t.kind),Some(TokenKind::LParen))

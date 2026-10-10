@@ -228,7 +228,40 @@ pub(crate) fn integer_constant(expr: &Expr) -> Result<i64> {
     evaluate(expr, &Constants::new())
 }
 
+fn separate_parameters(body: &mut Vec<Stmt>, arguments: &[String]) -> Result<()> {
+    if !body.iter().any(|s| matches!(s,Stmt::InitializedDecl { attributes, .. } if attributes.iter().any(|a| a == "@separate_parameter"))) { return Ok(()); }
+    let mut declared: HashMap<String,TypeSpec> = HashMap::new();
+    let mut converted = HashSet::new();
+    let mut output = Vec::new();
+    for stmt in std::mem::take(body) {
+        match stmt {
+            Stmt::InitializedDecl { attributes, entities, .. } if attributes.iter().any(|a| a == "@separate_parameter") => {
+                for (name, value) in entities {
+                    if arguments.contains(&name) { bail!("dummy argument `{name}` cannot be a PARAMETER"); }
+                    if !converted.insert(name.clone()) { bail!("duplicate PARAMETER definition `{name}`"); }
+                    let kind = declared.get(&name).with_context(|| format!("separate PARAMETER `{name}` currently requires a preceding scalar type declaration"))?.clone();
+                    output.push(Stmt::InitializedDecl { kind, attributes:vec!["parameter".into()], entities:vec![(name,value)] });
+                }
+            }
+            Stmt::VarDecl { ref kind, ref names } => {
+                for name in names {
+                    if declared.insert(name.clone(),kind.clone()).is_some() { bail!("duplicate type declaration `{name}`"); }
+                }
+                output.push(stmt);
+            }
+            other => output.push(other),
+        }
+    }
+    for stmt in &mut output {
+        if let Stmt::VarDecl { names, .. } = stmt { names.retain(|n| !converted.contains(n)); }
+    }
+    output.retain(|s| !matches!(s,Stmt::VarDecl { names, .. } if names.is_empty()));
+    *body = output;
+    Ok(())
+}
+
 fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[String], modules: &Modules, assumed_dummies: bool) -> Result<Constants> {
+    separate_parameters(body, arguments)?;
     validate_constructor_indices(body)?;
     let mut constants = inherited.clone();
     for stmt in body.iter() {

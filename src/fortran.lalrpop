@@ -29,6 +29,7 @@ extern {
         KW_PURE => TokenKind::KwPure,
         KW_ELEMENTAL => TokenKind::KwElemental,
         KW_FORALL => TokenKind::KwForall,
+        KW_PARAMETER => TokenKind::KwParameter,
         KW_WHERE => TokenKind::KwWhere,
         KW_WHERE_BLOCK => TokenKind::KwWhereBlock,
         KW_ELSEWHERE => TokenKind::KwElseWhere,
@@ -276,6 +277,9 @@ Stmts: Vec<Stmt> = {
 };
 
 Stmt: Stmt = {
+    KW_PARAMETER LPAREN <entities:ParameterEntities> RPAREN => Stmt::InitializedDecl {
+        kind:TypeSpec::Integer(None), attributes:vec!["parameter".into(),"@separate_parameter".into()], entities,
+    },
     <op:FILE_CONTROL> LPAREN <args:IoControls> RPAREN => Stmt::CallSub { name:format!("@io_{op}"), args },
     <op:FILE_POSITION> <unit:RhsExpr> => Stmt::CallSub { name:format!("@io_{op}"), args:vec![unit] },
     KW_INTERFACE <name:Ident> <procedures:OperatorProcedures> KW_END KW_INTERFACE <end_name:END_INTERFACE_NAME?> => Stmt::GenericInterface { name, procedures, end_name },
@@ -596,6 +600,11 @@ CaseBlockRule: CaseOrDefault = {
 CaseItemList: Vec<CaseItem> = {
     <it: CaseItem> => vec![it],
     <mut v: CaseItemList> COMMA <it: CaseItem> => { v.push(it); v },
+};
+
+ParameterEntities: Vec<(String, Option<Expr>)> = {
+    <name:Ident> EQ <value:RhsExpr> => vec![(name,Some(value))],
+    <mut entities:ParameterEntities> COMMA <name:Ident> EQ <value:RhsExpr> => { entities.push((name,Some(value))); entities },
 };
 
 CaseItem: CaseItem = {

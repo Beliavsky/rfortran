@@ -219,6 +219,7 @@ fn human_token(tok: &TokenKind) -> String {
         TokenKind::KwWhere | TokenKind::KwWhereBlock => "keyword where".into(),
         TokenKind::KwElseWhere => "keyword elsewhere".into(),
         TokenKind::KwEndWhere => "keyword end where".into(),
+        TokenKind::KwParameter => "keyword parameter".into(),
         TokenKind::KwForall => "keyword forall".to_string(),
         TokenKind::KwElemental => "keyword elemental".to_string(),
         TokenKind::KwPublic => "keyword public".into(),

@@ -92,4 +92,9 @@ That checkpoint raised the sample to 6/18 passes.
 `97_case_ranges.f90` and `python tests/test_case_ranges.py` cover integer CASE
 lists, closed/open ranges, constant selectors, optimization and loop control.
 `xselect_case_selector_list.f90` now passes at O0/O2, raising the selected sample
-to 7/18 passes; the other 11 cases still fail compilation.
+to 7/18 passes at that checkpoint.
+
+`98_parameter_statements.f90` and `python tests/test_parameter_statements.py`
+cover separate PARAMETER statements with preceding scalar declarations.
+The external `xparam.f90` now passes at O0/O2, raising the selected sample to
+8/18 passes. The other 10 selected cases still fail compilation.

@@ -678,6 +678,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 226\n 42\n 7\n 2147483648\n 3\n 4\n"
+    },
+    "98_parameter_statements": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 5 7 3 5 35\n 1.25 2.5 [ab  ] 11 12\n 11\n"
     }
   }
 }
