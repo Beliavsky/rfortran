@@ -67,6 +67,8 @@ multidimensional DIM results and other array operations.
 rank-one DIM=1, empty inputs, sections, relational masks and pure functions with
 local arrays. Run `python tests/test_logical_reductions.py` independently of ofort.
 
-`tests/pending/function_array_reduction.f90` records an existing wrong-result bug
-in functions receiving array arguments. Its expected result is 15; it is excluded
-from the passing numbered fixtures until array dummy argument handling is fixed.
+The former pending function-array SUM reproduction now passes and is included in
+`92_function_arrays.f90`. `python tests/test_function_arrays.py` tests fixed-size
+read-only array arguments to PURE functions in the interpreter and native O0/O2,
+with gfortran comparison. This subset copies all input elements; actual arrays
+must be fully initialized.

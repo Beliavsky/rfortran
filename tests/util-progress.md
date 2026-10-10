@@ -793,3 +793,38 @@ with both debug and rebuilt release compilers. The release ofort report at
 `target/ofort-logical-reductions.json` remains 5/18 passes (all reference cases
 build/run); the full reductions case now gets past COUNT keywords and stops at
 unsupported integer HUGE. Linux/macOS execution remains untested.
+
+
+## Checkpoint 32: fixed-size array inputs to pure functions
+
+The pending SUM reproduction now produces 15 in both interpreter and native
+O0/O2 execution. Previously the scalar function ABI silently treated an array
+actual as a scalar and left the dummy array unrelated to the caller's data.
+The new function_arrays pass expands fixed-size array parameters/actuals into
+scalar element parameters and reconstructs a private local array at function
+entry. This retains ordinary function expression evaluation, including repeated
+DO WHILE conditions, nested calls and returns, across both execution paths.
+Compiler-generated parameters no longer receive unused-parameter warnings.
+
+The deliberately bounded subset requires PURE, numeric/LOGICAL INTENT(IN) array
+dummies, fixed exactly matching shapes, whole-array actuals and all arguments.
+Default INTEGER and INTEGER(KIND=4) are compatible. Different original lower
+bounds are handled after bounds normalization; multidimensional transfer uses
+Fortran column-major order. Empty rank-one arrays are supported. Each array dummy
+is limited to 1024 elements to bound scalar ABI expansion. Because all elements
+are copied, actual arrays must be fully initialized. Assumed-shape,
+OPTIONAL/ALLOCATABLE, non-PURE, writable and section/expression actual forms are
+not implemented; supported-path constraints are diagnosed before code generation.
+
+The pending file is promoted into numbered fixture 92, which adds multiple and
+mixed scalar/array arguments, INTEGER/REAL/DOUBLE PRECISION/LOGICAL inputs,
+matrices, empty arrays, explicit bounds and nested/repeated calls. The focused
+Python test compares all three execution modes with gfortran and checks invalid
+forms. The same fixture is included in the Windows batch integration suite.
+
+Validation on Windows x64: 74 Rust unit tests, 92 native fixtures, 39 batch tests
+and 3 focused tests passed. The focused tests passed with both debug and rebuilt
+release compilers; execution matches gfortran at interpreter/native O0/O2 and
+undefined input elements remain diagnosed. The external sample remains 5/18
+passes at O0/O2; refreshed report: `target/ofort-function-arrays.json`.
+Linux/macOS execution remains untested.

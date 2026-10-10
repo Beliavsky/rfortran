@@ -293,3 +293,12 @@ sections, and relational array expressions. Empty inputs yield 0, false, and
 true respectively. Runtime DIM and multidimensional DIM results remain
 unsupported. Run `python tests/test_logical_reductions.py` for interpreter,
 native O0/O2, and gfortran comparison checks.
+
+PURE functions with fixed-size numeric/LOGICAL `INTENT(IN)` array dummies now
+accept whole-array arguments of matching shape and element kind. The compiler
+copies the input elements through its scalar calling convention, so actual
+arrays must be fully initialized. Different declared lower bounds are supported;
+input storage is private to the function. This subset is limited to 1024 elements
+per dummy and requires all actual arguments. Assumed-shape, optional/allocatable
+array dummies, array expressions/sections as actuals, and non-PURE array-argument
+functions are diagnosed as unsupported. Run `python tests/test_function_arrays.py`.

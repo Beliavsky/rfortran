@@ -26,6 +26,7 @@ mod purity;
 mod elemental;
 mod subroutines;
 mod array_calls;
+mod function_arrays;
 mod array_bounds;
 mod multidim;
 mod formatting;

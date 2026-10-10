@@ -1733,7 +1733,7 @@ pub fn analyze_with_src(
         for p in params.iter() {
             let lname = p.to_ascii_lowercase();
             if local_param_intent.get(&lname) == Some(&ParamIntent::Out) && assigned.contains(&lname) { continue; }
-            if lname == "dummy" || lname.contains('%') {
+            if lname == "dummy" || lname.contains('%') || lname.starts_with('@') {
                 continue;
             }
             if !read_vars.contains(&lname) {
