@@ -987,3 +987,34 @@ reductions probe at O0 (exit status 0). Six fresh isolated O0 builds/runs all
 produced the expected output; an isolated full rerun also passed that probe.
 The final report above is that rerun. The initial anomaly was not reproduced
 and its cause remains undetermined.
+
+
+## Checkpoint 38: per-entity CHARACTER lengths
+
+Declarations with `::` now accept entity-specific lengths such as tag*3,
+s*(n+1), and PARAMETER tag*(*). Overrides are applied per entity, preserving
+the shared length for other names. Non-CHARACTER overrides are diagnosed;
+CHARACTER arrays and runtime-dependent lengths retain explicit unsupported
+errors.
+
+The declaration rewrite records fixed CHARACTER lengths separately from values.
+LEN of a known local/host variable folds in subsequent length expressions and
+executable inquiries without reading storage. Local declarations and dummy
+arguments hide inherited length information. Fixture 99 covers mixed lengths,
+PARAMETER truncation/padding/inference, zero length and dependent declarations.
+Focused tests check host association, local shadowing and undefined values in
+PURE functions, as well as invalid declarations. Ordinary unused-variable
+warnings may still appear for locals used only in folded inquiries.
+
+The external probe also exposed native TRIM of a constant argument producing
+empty output. Constant TRIM and LEN_TRIM now fold during parameter rewriting;
+fixture 99 checks both on padded/truncated named constants. Nonconstant string
+operations continue through their existing execution paths.
+
+Validation on Windows x64: 74 Rust unit tests, 99 native fixtures, 46 batch
+wrapper tests and 9 focused CHARACTER tests passed. Both focused suites pass
+with debug and rebuilt release compilers and compare interpreter/native O0/O2
+with gfortran. The isolated release report
+`target/ofort-entity-character-lengths.json` has 9/18 passes (9 compile failures),
+including `xcharacter_len_expr.f90` at O0/O2. All 18 reference runs succeed.
+Linux/macOS execution remains untested.

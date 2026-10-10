@@ -351,3 +351,15 @@ use the existing numeric/CHARACTER constant evaluation and conversion rules.
 Module exports, host association, PURE procedures and assignment protection
 are preserved. Implicitly typed constants and array names in separate PARAMETER
 statements remain unsupported. Run `python tests/test_parameter_statements.py`.
+
+CHARACTER declarations using `::` accept per-entity lengths, for example
+`character(2) :: a*3, b, c*(n+1)`. An entity length overrides the shared length
+without changing its neighbors. Scalar PARAMETER entities also accept `*(*)`.
+Fixed-length local and host CHARACTER variables may supply `LEN(variable)` in
+later CHARACTER length declarations, without reading their values. Runtime
+lengths and CHARACTER array storage remain unsupported. Run
+`python tests/test_entity_character_lengths.py` for interpreter/native O0/O2
+and gfortran checks.
+
+Constant `TRIM` and `LEN_TRIM` calls, including CHARACTER PARAMETER arguments,
+are evaluated before code generation.

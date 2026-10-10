@@ -16,6 +16,7 @@ fn kind_number(name: &str, constants: &Constants) -> Result<i64> {
 fn resolve_kind(kind: &mut TypeSpec, constants: &Constants) -> Result<()> {
     if matches!(kind, TypeSpec::CharacterAssumed) { bail!("assumed CHARACTER length is currently supported only for scalar PARAMETER declarations"); }
     if let TypeSpec::CharacterLength(length) = kind {
+        if matches!(length.as_ref(),Expr::Call(tag,_) if tag == "@invalid_entity_length") { bail!("per-entity character length requires a CHARACTER declaration"); }
         let mut length = (**length).clone();
         rewrite_expr(&mut length, constants)?;
         fold_length_inquiries(&mut length)?;
@@ -288,6 +289,7 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
     }
     for name in &locals {
         constants.remove(name);
+        constants.remove(&format!("@character_length:{name}"));
     }
     // Local parameter names also hide host constants, even in their initializers.
     for stmt in body.iter() {
@@ -596,6 +598,18 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
     }
     if let Expr::Call(name, args) = expr {
         match name.to_ascii_lowercase().as_str() {
+            "trim" | "len_trim" if args.len() == 1 => {
+                if let Ok(value) = character_constant(&args[0]) {
+                    let value = value.trim_end_matches(' ');
+                    *expr = if name.eq_ignore_ascii_case("trim") { Expr::Str(value.into()) }
+                        else { Expr::IntLit(value.len().to_string()) };
+                }
+            }
+            "len" if args.len() == 1 => {
+                if let Expr::Ident(n) = &args[0] {
+                    if let Some(length) = constants.get(&format!("@character_length:{n}")) { *expr = length.clone(); }
+                }
+            }
             "selected_real_kind" => {
                 if !(1..=3).contains(&args.len()) { bail!("SELECTED_REAL_KIND expects 1 to 3 constant integer arguments"); }
                 let values = args.iter().map(|e| evaluate(e, constants)).collect::<Result<Vec<_>>>()
@@ -651,7 +665,17 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
 }
 
 fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules, assumed: &[String]) -> Result<()> {
+    let mut scoped = constants.clone();
+    // A local declaration hides host type information as well as its value.
+    for stmt in body.iter() {
+        match stmt {
+            Stmt::VarDecl { names, .. } => for name in names { scoped.remove(&format!("@character_length:{name}")); },
+            Stmt::ArrayDecl { name, .. } => { scoped.remove(&format!("@character_length:{name}")); },
+            _ => {},
+        }
+    }
     for stmt in body {
+        let constants = &scoped;
         match stmt {
             Stmt::Print { items } => {
                 for e in items {
@@ -674,7 +698,12 @@ fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules, ass
                 rewrite_expr(value, constants)?;
             }
             Stmt::VarDecl { kind: TypeSpec::CharacterAssumed, names } if names.iter().all(|n| assumed.contains(n)) => {},
-            Stmt::VarDecl { kind, .. } => resolve_kind(kind, constants)?,
+            Stmt::VarDecl { kind, names } => {
+                resolve_kind(kind, constants)?;
+                if let TypeSpec::Character(length) = kind {
+                    for name in names { scoped.insert(format!("@character_length:{name}"),Expr::IntLit(length.unwrap_or(1).to_string())); }
+                }
+            }
             Stmt::DerivedType { components, .. } => {
                 // Component initializers are defaults, not PARAMETER declarations.
                 // Resolve them in their defining scope before those constants disappear.

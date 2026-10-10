@@ -97,4 +97,9 @@ to 7/18 passes at that checkpoint.
 `98_parameter_statements.f90` and `python tests/test_parameter_statements.py`
 cover separate PARAMETER statements with preceding scalar declarations.
 The external `xparam.f90` now passes at O0/O2, raising the selected sample to
-8/18 passes. The other 10 selected cases still fail compilation.
+8/18 passes at that checkpoint.
+
+`99_entity_character_lengths.f90` and `python tests/test_entity_character_lengths.py`
+cover per-entity CHARACTER lengths, LEN-based declaration lengths, and constant
+TRIM/LEN_TRIM. The external `xcharacter_len_expr.f90` now passes at O0/O2,
+raising the selected sample to 9/18 passes. Nine cases still fail compilation.

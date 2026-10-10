@@ -685,6 +685,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 5 7 3 5 35\n 1.25 2.5 [ab  ] 11 12\n 11\n"
+    },
+    "99_entity_character_lengths": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 3 2 4 3 5 0\n [hel][wo][q   ]\n [hel][hel  ][]\n [abc][xy   ][four]\n abcxy 2\n"
     }
   }
 }

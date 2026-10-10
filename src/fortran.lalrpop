@@ -258,16 +258,26 @@ AttrList: Vec<String> = {
     <mut v: AttrList> COMMA <id: Ident> => { v.push(id); v },
 };
 
-DeclEntities: Vec<(String, Vec<Expr>, Option<Expr>)> = {
+DeclEntities: Vec<(String, Vec<Expr>, Option<Expr>, Option<TypeSpec>)> = {
     <e: DeclEntity> => vec![e],
     <mut v: DeclEntities> COMMA <e: DeclEntity> => { v.push(e); v },
 };
 
-DeclEntity: (String, Vec<Expr>, Option<Expr>) = {
-    <name: Ident> => (name, vec![], None),
-    <name: Ident> EQ <value: RhsExpr> => (name, vec![], Some(value)),
-    <name: Ident> LPAREN <dims: DimList> RPAREN => (name, dims, None),
-    <name: Ident> LPAREN <dims: DimList> RPAREN EQ <value: RhsExpr> => (name, dims, Some(value)),
+DeclEntity: (String, Vec<Expr>, Option<Expr>, Option<TypeSpec>) = {
+    <name:Ident> STAR <length:EntityCharLength> => (name,vec![],None,Some(length)),
+    <name:Ident> STAR <length:EntityCharLength> EQ <value:RhsExpr> => (name,vec![],Some(value),Some(length)),
+    <name:Ident> LPAREN <dims:DimList> RPAREN STAR <length:EntityCharLength> => (name,dims,None,Some(length)),
+
+    <name: Ident> => (name, vec![], None, None),
+    <name: Ident> EQ <value: RhsExpr> => (name, vec![], Some(value), None),
+    <name: Ident> LPAREN <dims: DimList> RPAREN => (name, dims, None, None),
+    <name: Ident> LPAREN <dims: DimList> RPAREN EQ <value: RhsExpr> => (name, dims, Some(value), None),
+};
+
+EntityCharLength: TypeSpec = {
+    <n:INT> => crate::ast::character_length(Expr::IntLit(n)),
+    LPAREN <n:RhsExpr> RPAREN => crate::ast::character_length(n),
+    LPAREN STAR RPAREN => TypeSpec::CharacterAssumed,
 };
 
 Stmts: Vec<Stmt> = {
@@ -620,7 +630,12 @@ PreFuncDecl: Vec<Stmt> = {
     KW_TYPE LPAREN <type_name:Ident> RPAREN <attributes:AttrList> DCOLON <names:IdentList> => vec![Stmt::DerivedDecl{type_name,names,attributes,polymorphic:false}],
     KW_CLASS LPAREN <type_name:Ident> RPAREN <attributes:AttrList> DCOLON <names:IdentList> => vec![Stmt::DerivedDecl{type_name,names,attributes,polymorphic:true}],
     <t: TypeSpec> <attrs: AttrList> DCOLON <entities: DeclEntities> => {
-        entities.into_iter().flat_map(|(name, dims, value)| {
+        entities.into_iter().flat_map(|(name, dims, value, length)| {
+            let t = match length {
+                Some(length) if matches!(t,TypeSpec::Character(_) | TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed) => length,
+                Some(_) => crate::ast::character_length(Expr::Call("@invalid_entity_length".into(),vec![])),
+                None => t.clone(),
+            };
             let mut declarations = Vec::new();
             for attr in &attrs {
                 if attr.to_ascii_lowercase().starts_with("intent(") || matches!(attr.to_ascii_lowercase().as_str(), "optional" | "allocatable" | "parameter") {
