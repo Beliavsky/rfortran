@@ -382,3 +382,9 @@ TRANSPOSE accepts fixed-shape numeric or LOGICAL rank-two arrays, including
 sections and expressions. The MATRIX keyword and PURE usage are supported.
 Run `python tests/test_matrix_transforms.py` for TRANSPOSE and array-valued
 CSHIFT checks in the interpreter and native O0/O2 builds, plus gfortran comparison.
+
+EOSHIFT supports fixed-shape numeric and LOGICAL arrays with constant DIM.
+SHIFT and optional BOUNDARY may be scalar or arrays shaped like ARRAY with DIM
+removed. Vacated elements use BOUNDARY, or zero/false when it is omitted.
+Sections, overlapping assignments and PURE usage are supported; runtime DIM
+and CHARACTER arrays remain unsupported. Run `python tests/test_eoshift.py`.

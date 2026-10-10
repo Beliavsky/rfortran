@@ -470,6 +470,21 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
                     args[0] = values[0].clone();
                 }
             }
+        } else if name == "eoshift" {
+            let mut slots: [Option<Expr>; 4] = [None,None,None,None];
+            let mut keywords = false;
+            for (position,arg) in args.iter().enumerate() {
+                let (slot,value) = match arg {
+                    Expr::Call(tag,values) if tag.starts_with("@keyword:") => {
+                        keywords = true;
+                        (match &tag[9..] { "array" => 0, "shift" => 1, "boundary" => 2, "dim" => 3, key => bail!("EOSHIFT: unknown keyword `{key}`") }, &values[0])
+                    }
+                    _ => { if keywords { bail!("EOSHIFT: positional argument after keyword argument"); } (position,arg) }
+                };
+                if slot >= 4 { bail!("EOSHIFT: too many arguments"); }
+                if slots[slot].replace(value.clone()).is_some() { bail!("EOSHIFT: duplicate argument"); }
+            }
+            *args = vec![slots[0].take().context("EOSHIFT requires ARRAY")?, slots[1].take().context("EOSHIFT requires SHIFT")?, slots[2].take().unwrap_or(Expr::Call("@no_boundary".into(),vec![])), slots[3].take().unwrap_or(Expr::IntLit("1".into()))];
         } else if name == "cshift" {
             let mut slots: [Option<Expr>; 3] = [None,None,None];
             let mut keywords = false;

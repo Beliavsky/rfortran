@@ -127,3 +127,9 @@ TRANSPOSE and array-valued CSHIFT, including sections, rank-three arrays,
 overlapping inputs and empty arrays. The first five checks in the transformation
 probe are now supported. EOSHIFT, SPREAD, PACK and UNPACK still prevent the full
 probe from compiling, so the selected sample remains at 11/18 passes.
+
+`104_eoshift.f90` and `python tests/test_eoshift.py` cover end-off shifts with
+scalar/array SHIFT and BOUNDARY, default boundaries, extreme shifts, empty arrays
+and overlapping inputs. The first six transformation checks now pass in isolation.
+SPREAD, PACK and UNPACK still block the full probe; the selected sample remains
+at 11/18 passes.

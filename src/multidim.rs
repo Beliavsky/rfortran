@@ -369,6 +369,25 @@ impl Lowerer {
                 *e = Expr::Call("reshape".into(),vec![args[0].clone(),Expr::Call("@array_constructor".into(),dims.into_iter().map(int).collect()),Expr::Call("@no_pad".into(),vec![]),Expr::Call("@array_constructor".into(),vec![int(2),int(1)])]);
                 self.expression(e,shapes)?;
             }
+            Expr::Call(n, args) if n == "eoshift" => {
+                let dims = self.shape(&args[0],shapes)?.context("EOSHIFT ARRAY must be an array")?;
+                let dim = crate::parameters::integer_constant(&args[3]).context("EOSHIFT DIM must currently be a constant INTEGER")?;
+                if dim < 1 || dim as usize > dims.len() { bail!("EOSHIFT DIM must be between 1 and {}",dims.len()); }
+                let axis = dim as usize - 1;
+                let mut expected = dims.clone(); expected.remove(axis);
+                for (arg,label) in [(&args[1],"SHIFT"),(&args[2],"BOUNDARY")] {
+                    if let Some(shape) = self.shape(arg,shapes)? {
+                        if shape != expected { bail!("EOSHIFT {label} shape must match ARRAY with DIM removed"); }
+                    }
+                }
+                for arg in &mut args[..3] { self.expression(arg,shapes)?; }
+                let boundary = args[2].clone();
+                args[2] = int(total(&dims[..axis])?);
+                args[3] = int(dims[axis]);
+                args.push(Expr::Call("@shift_shape".into(),dims.into_iter().map(int).collect()));
+                args.push(boundary);
+                *n = "@eoshift".into();
+            }
             Expr::Call(n, args) if n == "cshift" => {
                 let dims = self.shape(&args[0], shapes)?.context("CSHIFT ARRAY must be an array")?;
                 let dim = crate::parameters::integer_constant(&args[2]).context("CSHIFT DIM must currently be a constant INTEGER")?;
@@ -500,8 +519,8 @@ impl Lowerer {
                 dims.reverse();
                 Ok(Some(dims))
             }
-            Expr::Call(n, args) if n == "cshift" => self.shape(&args[0], shapes),
-            Expr::Call(n, args) if n == "@cshift" => {
+            Expr::Call(n, args) if matches!(n.as_str(),"cshift" | "eoshift") => self.shape(&args[0], shapes),
+            Expr::Call(n, args) if matches!(n.as_str(),"@cshift" | "@eoshift") => {
                 let Expr::Call(_, dims) = &args[4] else { unreachable!() };
                 Ok(Some(dims.iter().map(crate::parameters::integer_constant).collect::<Result<Vec<_>>>()?))
             }

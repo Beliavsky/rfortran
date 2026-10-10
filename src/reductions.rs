@@ -171,6 +171,50 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             symbols.insert(temp.clone(),(kind,vec![int(count)]));
             *e = Expr::Ident(temp);
         }
+        Expr::Call(name, args) if name == "@eoshift" => {
+            lower_expr(&mut args[0],symbols,prefix,serial)?;
+            lower_expr(&mut args[1],symbols,prefix,serial)?;
+            let default_boundary = matches!(&args[5],Expr::Call(tag,_) if tag == "@no_boundary");
+            if !default_boundary { lower_expr(&mut args[5],symbols,prefix,serial)?; }
+            let (_,shift_len,shift_kind) = element(&args[1],&int(1),symbols)?;
+            if !matches!(shift_kind,TypeSpec::Integer(_)) { bail!("EOSHIFT SHIFT must be INTEGER"); }
+            let stride = constant(&args[2])?.max(1);
+            let axis_len = constant(&args[3])?.max(1);
+            *serial += 1;
+            let temp = format!("@eoshift_array_{serial}");
+            let index = format!("@eoshift_index_{serial}");
+            let shift = format!("@eoshift_value_{serial}");
+            let id = |n: &str| Expr::Ident(n.into());
+            let modulo = |a,b| Expr::Call("modulo".into(),vec![a,b]);
+            let ordinal = bin(BinOp::Sub,id(&index),int(1));
+            let coordinate = modulo(bin(BinOp::Div,ordinal.clone(),int(stride)),int(axis_len));
+            let slice = bin(BinOp::Add,int(1),bin(BinOp::Add,modulo(ordinal.clone(),int(stride)),bin(BinOp::Mul,bin(BinOp::Div,ordinal,int(stride*axis_len)),int(stride))));
+            let source_index = bin(BinOp::Add,id(&index),bin(BinOp::Mul,id(&shift),int(stride)));
+            let (value,count,kind) = element(&args[0],&source_index,symbols)?;
+            let count = count.context("EOSHIFT ARRAY must be an array")?;
+            let boundary = if default_boundary {
+                match kind { TypeSpec::Logical => Expr::Logical(false), TypeSpec::Real => Expr::RealLit("0.0".into()), TypeSpec::DoublePrecision => Expr::RealLit("0.0d0".into()), _ => int(0) }
+            } else {
+                let (value,_,boundary_kind) = element(&args[5],&slice,symbols)?;
+                if !same_kind(&kind,&boundary_kind) { bail!("EOSHIFT BOUNDARY and ARRAY must have the same type and kind"); }
+                value
+            };
+            prefix.push(Stmt::ArrayDecl { kind:kind.clone(),name:temp.clone(),dims:vec![int(count)] });
+            prefix.push(Stmt::VarDecl { kind:TypeSpec::Integer(Some(8)),names:vec![index.clone(),shift.clone()] });
+            let mut body = vec![];
+            if shift_len.is_some() {
+                let (amount,_,_) = element(&args[1],&slice,symbols)?;
+                body.push(Stmt::Assign { name:shift.clone(),value:amount });
+            } else { prefix.push(Stmt::Assign { name:shift.clone(),value:args[1].clone() }); }
+            // Test bounds before adding/multiplying SHIFT, so extreme INTEGER(8)
+            // shifts fill with BOUNDARY without overflowing or reading ARRAY.
+            let valid = bin(BinOp::And,bin(BinOp::Ge,id(&shift),bin(BinOp::Sub,int(0),coordinate.clone())),bin(BinOp::Le,id(&shift),bin(BinOp::Sub,int(axis_len-1),coordinate)));
+            let assign = |value| Stmt::AssignIndex { name:temp.clone(),indices:vec![id(&index)],value };
+            body.push(Stmt::If { cond:valid,then_body:vec![assign(value)],else_body:Some(vec![assign(boundary)]) });
+            prefix.push(Stmt::Do { var:index,start:int(1),end:int(count),body });
+            symbols.insert(temp.clone(),(kind,vec![int(count)]));
+            *e = Expr::Ident(temp);
+        }
         Expr::Call(name, args) if name == "@cshift" => {
             lower_expr(&mut args[0], symbols, prefix, serial)?;
             lower_expr(&mut args[1], symbols, prefix, serial)?;

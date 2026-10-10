@@ -1129,3 +1129,31 @@ and native O0/O2; fixture 103 agrees with gfortran. The isolated release report
 `target/ofort-matrix-transforms.json` remains at 11/18 passes and seven compile
 failures, with all reference runs succeeding. EOSHIFT, SPREAD, PACK and UNPACK
 still block the complete transformation probe. Linux/macOS remain untested.
+
+
+## Checkpoint 43: EOSHIFT
+
+EOSHIFT accepts fixed-shape numeric/LOGICAL ARRAY, scalar or array INTEGER
+SHIFT, optional scalar/array BOUNDARY, and constant DIM. SHIFT and BOUNDARY
+arrays must have the complete shape of ARRAY with DIM removed. Explicit
+BOUNDARY must match ARRAY's element type/kind; omitted boundaries are zero
+or false. Keyword normalization checks missing, duplicate and unknown arguments.
+The lowering uses per-slice shifts and checks the permitted coordinate range
+before adding or multiplying a shift. Extreme INTEGER(8) shifts therefore fill
+with BOUNDARY without overflow or out-of-bounds source reads. A temporary result
+preserves overlapping inputs and WHERE assignments. PURE usage is allowed;
+runtime DIM and CHARACTER arrays remain unsupported.
+
+Fixture 104 covers positive/negative/zero shifts, scalar and array boundaries,
+defaults, rank-three arrays, sections, aliases, logical/double-precision values,
+empty arrays and PURE functions. Focused tests add extreme INTEGER(8) shifts,
+masked overlapping assignment and shape/type/argument diagnostics. The first
+six checks from the external transformation probe pass in isolation.
+
+Windows validation: 74 Rust unit tests, 104 native fixtures, 46 batch wrapper
+tests and nine focused EOSHIFT/CSHIFT/matrix-transformation tests passed. The
+focused suites passed with debug and rebuilt release compilers, exercising
+interpreter/native O0/O2; fixture 104 agrees with gfortran. The isolated release
+report `target/ofort-eoshift.json` remains at 11/18 passes and seven compile
+failures, with all reference runs succeeding. SPREAD, PACK and UNPACK still
+block the full transformation probe. Linux/macOS remain untested.
