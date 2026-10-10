@@ -68,6 +68,14 @@ class BatchSources(unittest.TestCase):
         source.write_text((ROOT / "tests/76_defined_operators.f90").read_text())
         self.check_build([source], "14\n36\n18\n6\n  3.5\nF\nmatched\n10\n12")
 
+    def test_runtime_formats(self):
+        import json
+        fixture = ROOT / "tests/84_runtime_formats.f90"
+        source = self.directory / "runtime formats.f90"
+        source.write_text(fixture.read_text(encoding="utf-8"), encoding="utf-8")
+        expected = json.loads((ROOT / "tests/expectations.json").read_text(encoding="utf-8"))["cases"][fixture.stem]["program_stdout"]
+        self.check_build([source], expected.strip())
+
     def test_named_formats(self):
         import json
         fixture = ROOT / "tests/83_named_formats.f90"

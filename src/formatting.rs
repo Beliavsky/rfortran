@@ -12,85 +12,19 @@ pub struct Field {
     pub literal: Option<String>,
 }
 pub fn parse(format: &str, count: usize) -> Result<Vec<Field>> {
-    let format = format.trim();
-    let Some(inner) = format.strip_prefix('(').and_then(|s| s.strip_suffix(')')) else {
-        bail!("output format must be parenthesized");
-    };
-    let mut fields = vec![];
-    let mut parts = Vec::new();
-    let mut start = 0;
-    let mut quote = None;
-    let mut chars = inner.char_indices().peekable();
-    while let Some((i, c)) = chars.next() {
-        if let Some(q) = quote {
-            if c == q {
-                if chars.peek().is_some_and(|(_, next)| *next == q) {
-                    chars.next();
-                } else {
-                    quote = None;
-                }
+    let mut parser = crate::format_spec::Parser::new(format.as_bytes()).map_err(anyhow::Error::msg)?;
+    let mut fields = Vec::new();
+    while let Some(d) = parser.next().map_err(anyhow::Error::msg)? {
+        let literal = match d.code {
+            b'\'' | b'"' => {
+                let quote = d.code as char;
+                Some(std::str::from_utf8(d.literal)?.replace(&format!("{quote}{quote}"), &quote.to_string()))
             }
-        } else if c == '\'' || c == '"' {
-            quote = Some(c);
-        } else if c == ',' {
-            parts.push(&inner[start..i]);
-            start = i + 1;
-        }
-    }
-    if quote.is_some() {
-        bail!("unterminated literal in output format");
-    }
-    parts.push(&inner[start..]);
-    for item in parts {
-        let item = item.trim();
-        if item.starts_with(['\'', '"']) {
-            let quote = item.chars().next().unwrap();
-            if item.len() < 2 || !item.ends_with(quote) {
-                bail!("invalid literal output descriptor");
-            }
-            let literal =
-                item[1..item.len() - 1].replace(&format!("{quote}{quote}"), &quote.to_string());
-            fields.push(Field {
-                code: 'a',
-                width: 0,
-                precision: 0,
-                literal: Some(literal),
-            });
-            continue;
-        }
-        let Some(pos) = item.find(|c: char| c.is_ascii_alphabetic()) else {
-            bail!("invalid output descriptor");
+            b'x' => Some(" ".into()),
+            b'/' => Some("\n".into()),
+            _ => None,
         };
-        let repeat: usize = if pos == 0 { 1 } else { item[..pos].parse()? };
-        let code = (item.as_bytes()[pos] as char).to_ascii_lowercase();
-        if !matches!(code, 'a' | 'i' | 'f' | 'l') {
-            bail!("unsupported output descriptor `{code}`");
-        }
-        let tail = &item[pos + 1..];
-        let (width, precision) = if code == 'f' || (code == 'i' && tail.contains('.')) {
-            let Some((w, p)) = tail.split_once('.') else {
-                bail!("F descriptor requires width and precision");
-            };
-            (w.parse()?, p.parse()?)
-        } else {
-            (
-                if tail.is_empty() && code == 'a' {
-                    0
-                } else {
-                    tail.parse()?
-                },
-                if code == 'i' { 1 } else { 0 },
-            )
-        };
-        if repeat == 0 || repeat > 10000 || width > 256 || precision > 256 {
-            bail!("output descriptor exceeds supported limits");
-        }
-        fields.extend((0..repeat).map(|_| Field {
-            code,
-            width,
-            precision,
-            literal: None,
-        }));
+        fields.extend((0..d.repeat).map(|_| Field { code: d.code as char, width: d.width, precision: d.precision, literal: literal.clone() }));
     }
     if fields.iter().filter(|f| f.literal.is_none()).count() != count {
         bail!("format descriptor count must match the output list; format reversion is not yet supported");

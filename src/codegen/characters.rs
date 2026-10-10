@@ -12,13 +12,13 @@ use cranelift_object::ObjectModule;
 use std::collections::HashMap;
 
 type Characters = HashMap<String, (ir::StackSlot, usize)>;
-struct View {
-    address: ir::Value,
-    length: ir::Value,
+pub(super) struct View {
+    pub(super) address: ir::Value,
+    pub(super) length: ir::Value,
     capacity: usize,
 }
 
-fn view(
+pub(super) fn view(
     module: &mut ObjectModule,
     b: &mut FunctionBuilder,
     ptr: ir::Type,

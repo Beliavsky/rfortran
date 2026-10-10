@@ -33,9 +33,6 @@ class NamedFormats(unittest.TestCase):
 
     def test_diagnostics(self):
         cases = [
-            ("character(8)::fmt", "fmt='(i3)'\nwrite (*,fmt) 1", "runtime formats"),
-            ("character(8)::fmt", "fmt='(i3)'\nprint fmt, 1", "runtime formats"),
-            ("character(8)::fmt", "fmt='i3'\nwrite (*,'('//fmt//')') 1", "runtime formats"),
             ("", "write (*,0) 1", "numeric format labels"),
             ("", "write (*,100) 1", "numeric format labels"),
             ("integer,parameter::fmt=0", "write (*,fmt) 1", "numeric format labels"),

@@ -2290,29 +2290,38 @@ fn gen_stmts(
                     continue;
                 }
                 if name == "@formatted_print" {
-                    let Some(IExpr::Str(format))=args.first() else {anyhow::bail!("PRINT requires a constant format");};
-                    let fields=crate::formatting::parse(format,args.len()-1)?;
-                    let mut items=args[1..].iter();
-                    for field in &fields {
-                        if let Some(text)=&field.literal {let pointer=make_data(module,b,ptr_ty,dc,format!("{text}\0").as_bytes())?;ex.call_printf(b,&[ex.fmt_s,pointer]);continue;}
-                        let e=items.next().unwrap();
-                        let buffer=b.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,1024,0));
-                        let pointer=b.ins().stack_addr(ptr_ty,buffer,0);
-                        let (format,value)=match field.code {
-                            'a'=>{let pointer=match e {IExpr::Str(text)=>make_data(module,b,ptr_ty,dc,format!("{text}\0").as_bytes())?, IExpr::Ident(n) if chars.contains_key(n)=>b.ins().stack_addr(ptr_ty,chars[n].0,0), _=>anyhow::bail!("A output descriptor requires CHARACTER")}; (if field.width==0 {"%s".into()} else {format!("%{}.{}s",field.width,field.width)},pointer)},
-                            'l'=>{let v=eval_expr(b,ex,ptr_ty,e,ints,reals,bools,func_meta);let v=to_bool(b,v);let t=make_data(module,b,ptr_ty,dc,b"T\0")?;let f=make_data(module,b,ptr_ty,dc,b"F\0")?;(format!("%{}s",field.width),b.ins().select(v,t,f))},
-                            'i'=>{let v=eval_expr(b,ex,ptr_ty,e,ints,reals,bools,func_meta);(format!("%{}.{}lld",if field.width==0 && field.precision==0 {1} else {field.width},field.precision),to_i64(b,v))},
-                            _=>{let v=eval_expr(b,ex,ptr_ty,e,ints,reals,bools,func_meta);(format!("%{}.{}f",field.width,field.precision),to_f64(b,v))}
+                    let format = characters::view(module,b,ptr_ty,dc,chars,&args[0])?;
+                    let count = args.len()-1;
+                    let size = count.checked_mul(24).and_then(|n| u32::try_from(n.max(24)).ok())
+                        .ok_or_else(|| anyhow::anyhow!("formatted output list is too large"))?;
+                    let slot = b.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,size,3));
+                    let items = b.ins().stack_addr(ptr_ty,slot,0);
+                    for (index,e) in args[1..].iter().enumerate() {
+                        let (tag,bits,length) = if let Ok(view) = characters::view(module,b,ptr_ty,dc,chars,e) {
+                            let bits = if ptr_ty == types::I64 { view.address } else { b.ins().uextend(types::I64,view.address) };
+                            let length = if ptr_ty == types::I64 { view.length } else { b.ins().uextend(types::I64,view.length) };
+                            (4,bits,length)
+                        } else {
+                            let value = eval_expr(b,ex,ptr_ty,e,ints,reals,bools,func_meta);
+                            let (tag,bits) = match value {
+                                CgVal::I64(v) => (1,v),
+                                CgVal::F64(v) => (2,b.ins().bitcast(types::I64,MemFlags::new(),v)),
+                                CgVal::Bool(v) => (3,b.ins().uextend(types::I64,v)),
+                            };
+                            (tag,bits,b.ins().iconst(types::I64,0))
                         };
-                        if field.code=='a' && field.width==0 { ex.call_printf(b,&[ex.fmt_s,value]); continue; }
-                        let format=make_data(module,b,ptr_ty,dc,format!("{format}\0").as_bytes())?;
-                        // Windows uses integer registers here; the Unix C adapter decodes these bits.
-                        let value=if b.func.dfg.value_type(value)==types::F64 {b.ins().bitcast(types::I64,MemFlags::new(),value)} else {value};
-                        let call=ex.call_sprintf(b,&[pointer,format,value]);let length=b.inst_results(call)[0];
-                        let pointer=if field.width>0 && field.code!='a' {let overflow=b.ins().icmp_imm(ir::condcodes::IntCC::SignedGreaterThan,length,field.width as i64);let stars=make_data(module,b,ptr_ty,dc,format!("{}\0","*".repeat(field.width)).as_bytes())?;b.ins().select(overflow,stars,pointer)} else {pointer};
-                        ex.call_printf(b,&[ex.fmt_s,pointer]);
+                        let tag = b.ins().iconst(types::I64,tag);
+                        for (offset,value) in [(0,tag),(8,bits),(16,length)] {
+                            b.ins().store(MemFlags::new(),value,items,(index*24+offset) as i32);
+                        }
                     }
-                    ex.call_printf(b,&[ex.fmt_s,ex.p_nl]);continue;
+                    let mut sig = module.make_signature();
+                    sig.params.extend((0..4).map(|_| ir::AbiParam::new(ptr_ty)));
+                    let id = module.declare_function("rfort_formatted_output",Linkage::Import,&sig)?;
+                    let function = module.declare_func_in_func(id,b.func);
+                    let count = b.ins().iconst(ptr_ty,count as i64);
+                    b.ins().call(function,&[format.address,format.length,items,count]);
+                    continue;
                 }
                 if name == "@stop" {
                     let mut sig=module.make_signature();sig.params.push(ir::AbiParam::new(types::I32));

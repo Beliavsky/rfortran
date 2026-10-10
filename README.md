@@ -75,12 +75,21 @@ and CHARACTER-valued functions remain unsupported and produce diagnostics.
 
 ## Formatted output
 
-WRITE and PRINT accept constant CHARACTER format expressions, including named
-PARAMETERs, imported constants, and concatenation. WRITE supports standard
-output (`*` or constant unit 6), with or without an output list. The supported
-flat formats use A, I, F, L descriptors and quoted literals. Runtime character
-formats, numeric format labels, format reversion, and ADVANCE are not yet
-supported; unsupported forms produce diagnostics.
+WRITE and PRINT accept scalar CHARACTER format expressions: literals, named
+PARAMETERs, variables (including formats read from input), concatenation, and
+TRIM. WRITE supports standard output (`*` or constant unit 6), with or without
+an output list. Supported flat formats use A, I, F, L descriptors, repeat counts,
+quoted literals, `nX` spacing, and `/` record breaks. Runtime formats are checked
+for syntax, descriptor counts, and item types before the statement prints.
+Uninitialized format variables use the usual initialization checks.
+
+Output items must be scalar; existing CHARACTER procedure-argument limitations
+remain. Numeric format labels, nested format groups,
+format reversion, and ADVANCE are not yet supported. The existing limits of
+256 for field width/precision and 10,000 for repeat counts apply.
+The native formatting runtime is written in Rust, built with the compiler,
+and embedded in `rfort`; no separate runtime installation is needed. Use
+`rfort link` when linking emitted objects so it supplies this runtime.
 
 ## File input
 
@@ -168,6 +177,7 @@ python tests/test_multi_forall.py
 python tests/test_array_constructors.py
 python tests/test_bound_inquiries.py
 python tests/test_named_formats.py
+python tests/test_runtime_formats.py
 ```
 
 The Python tests use `target/debug/rfort` (with `.exe` on Windows).

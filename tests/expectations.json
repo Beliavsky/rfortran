@@ -580,6 +580,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": "value= 42\nvalue= -7\nreal=  1.25\n  9\nhello\ndone\n 123\n"
+    },
+    "84_runtime_formats": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "number=-007\n 12***\n  ab  T    1.25\n\n wall time elapsed(s) =     2.500\n  29\n100%, isn't it?\n\n  1\n  002\n"
     }
   }
 }

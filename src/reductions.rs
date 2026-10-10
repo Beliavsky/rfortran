@@ -276,10 +276,36 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
         if let Stmt::CallSub {name,args}=&mut stmt {
             if name=="@allocate" {bail!("ALLOCATE is currently supported only in specialized local array subroutines");}
             if name=="@formatted_print" {
-                let fmt = crate::parameters::character_constant(&args[0])
-                    .map_err(|_| anyhow::anyhow!("WRITE/PRINT format must be a supported constant CHARACTER expression; runtime formats and numeric format labels are not yet supported"))?;
-                crate::formatting::parse(&fmt,args.len()-1)?;
-                args[0] = Expr::Str(fmt);
+                fn array_value(e: &Expr, symbols: &Symbols) -> bool {
+                    match e {
+                        Expr::Ident(n) => symbols.get(n).is_some_and(|(_, dims)| !dims.is_empty()),
+                        Expr::Section { .. } => true,
+                        Expr::Call(n, _) if n == "@matrix_view" => true,
+                        Expr::Bin(_, a, b) => array_value(a, symbols) || array_value(b, symbols),
+                        Expr::Un(_, a) => array_value(a, symbols),
+                        _ => false,
+                    }
+                }
+                if args[1..].iter().any(|e| array_value(e, &symbols)) {
+                    bail!("formatted output currently requires scalar output items");
+                }
+                if let Ok(fmt) = crate::parameters::character_constant(&args[0]) {
+                    crate::formatting::parse(&fmt,args.len()-1)?;
+                    args[0] = Expr::Str(fmt);
+                } else {
+                    fn character(e: &Expr, symbols: &Symbols) -> bool {
+                        match e {
+                            Expr::Str(_) => true,
+                            Expr::Ident(n) => matches!(symbols.get(n), Some((TypeSpec::Character(_), dims)) if dims.is_empty()),
+                            Expr::Bin(BinOp::Concat, a, b) => character(a, symbols) && character(b, symbols),
+                            Expr::Call(n, args) if n == "trim" && args.len() == 1 => character(&args[0], symbols),
+                            _ => false,
+                        }
+                    }
+                    if !character(&args[0], &symbols) {
+                        bail!("WRITE/PRINT format must be scalar CHARACTER; numeric format labels are not yet supported");
+                    }
+                }
             }
             if name=="@error_stop" && !matches!(args.as_slice(),[Expr::Str(_)]) {bail!("ERROR STOP currently requires a character constant");}
         }

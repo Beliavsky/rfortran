@@ -1074,12 +1074,25 @@ pub fn interpret(program: &Program) {
                         idx+=1;continue;
                     }
                     if name == "@formatted_print" {
-                        let Expr::Str(format)=&args[0] else {unreachable!()};let fields=crate::formatting::parse(format,args.len()-1).expect("validated output format");
-                        let mut items=args[1..].iter();
+                        let fr=call_stack.last().unwrap().clone();
+                        let format=eval_expr(&args[0],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).3.unwrap();
+                        let fields=crate::formatting::parse(&format,args.len()-1).unwrap_or_else(|e| {
+                            eprintln!("Runtime error: invalid output format: {e}"); std::process::exit(1)
+                        });
+                        let values:Vec<_>=args[1..].iter().map(|e| {
+                            let fr=call_stack.last().unwrap().clone();
+                            eval_expr(e,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack)
+                        }).collect();
+                        for (field,value) in fields.iter().filter(|f| f.literal.is_none()).zip(&values) {
+                            let tag=if value.3.is_some() {4} else if value.2.is_some() {3} else if value.1.is_some() {2} else {1};
+                            if !crate::format_spec::matches_type(field.code as u8,tag) {
+                                eprintln!("Runtime error: invalid output format: descriptor does not match output item type"); std::process::exit(1)
+                            }
+                        }
+                        let mut items=values.into_iter();
                         for field in &fields {
                             if let Some(text)=&field.literal {print!("{text}");continue;}
-                            let e=items.next().unwrap();
-                            let fr=call_stack.last().unwrap().clone();let v=eval_expr(e,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack);
+                            let v=items.next().unwrap();
                             let text=match field.code {'a'=>v.3.unwrap(),  'i'=>{let i=v.0.unwrap();if i==0 && field.precision==0 {String::new()}else{format!("{}{:0width$}",if i<0 {"-"} else {""},i.unsigned_abs(),width=field.precision)}}, 'l'=>if v.2.unwrap_or(v.0==Some(1)) {"T".into()}else{"F".into()},_=>format!("{:.*}",field.precision,v.1.unwrap_or(v.0.unwrap_or(0) as f64))};
                             if field.width==0 {if field.code=='i' && text.is_empty() {print!(" ");}else{print!("{text}");}} else if text.len()>field.width {if field.code=='a' {print!("{}",text.chars().take(field.width).collect::<String>());}else{print!("{}","*".repeat(field.width));}}else{print!("{:>width$}",text,width=field.width);}
                         }

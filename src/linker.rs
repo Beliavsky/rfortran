@@ -157,6 +157,8 @@ pub fn link(objects: &[PathBuf], out: &Path, cli: &Cli) -> Result<()> {
         bail!("--lto is not supported for Cranelift native objects");
     }
     let work = WorkDir::new()?;
+    let format_runtime = work.0.join("rfort_format.lib");
+    fs::write(&format_runtime, include_bytes!(concat!(env!("OUT_DIR"), "/rfort_format.lib")))?;
     #[cfg(target_os = "windows")]
     {
         let tool = if let Some(path) = env::var_os("RFORT_LINKER") {
@@ -175,7 +177,7 @@ pub fn link(objects: &[PathBuf], out: &Path, cli: &Cli) -> Result<()> {
         command.args(["/NOLOGO", "/SUBSYSTEM:CONSOLE"]);
         let mut output_arg = std::ffi::OsString::from("/OUT:");
         output_arg.push(out);
-        command.arg(output_arg).args(objects);
+        command.arg(output_arg).args(objects).arg(&format_runtime);
         for (name, bytes) in [
             ("msvcrt.lib", MSVCRT_LIB),
             ("kernel32.lib", KERNEL32_LIB),
@@ -218,7 +220,7 @@ pub fn link(objects: &[PathBuf], out: &Path, cli: &Cli) -> Result<()> {
             cli,
         )?;
         let mut command = make_command();
-        command.args(objects).arg(&object).arg("-o").arg(out);
+        command.args(objects).arg(&object).arg(&format_runtime).arg("-o").arg(out);
         #[cfg(target_os = "linux")]
         command.args(["-no-pie", "-lm"]);
         run(&mut command, cli)?;

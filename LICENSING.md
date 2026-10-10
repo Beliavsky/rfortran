@@ -17,6 +17,8 @@ the author recorded in this repository's Git history.
 - `src/codegen/characters.rs`
 - `src/elemental.rs`
 - `src/formatting.rs`
+- `src/format_spec.rs`
+- `src/native_format.rs`
 - `src/imports.rs`
 - `src/initialized.rs`
 - `src/input.rs`

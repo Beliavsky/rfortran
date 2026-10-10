@@ -530,3 +530,35 @@ Validation on Windows x64: 74 Rust unit tests, all 83 native regression fixtures
 2 focused format tests with both debug and release compilers, and all 30 batch
 tests passed. The release executable was rebuilt and the next utility parser
 error confirmed with it. Linux/macOS execution remains untested.
+
+The twenty-fourth checkpoint adds runtime scalar CHARACTER formats to WRITE
+and PRINT, including variable formats, formats read from input, concatenation,
+and TRIM. A shared allocation-free parser keeps constant-format validation,
+interpreter execution, and the native runtime aligned. Supported descriptors
+are A, I, F, L, quoted literals, repeat counts, nX spacing, and / record breaks.
+The empty format () supports an empty output list. Existing width/precision
+and repeat limits remain. Scalar output items are evaluated once, and syntax,
+item counts, and descriptor types are validated before statement output starts.
+Malformed runtime formats exit nonzero with an explicit runtime diagnostic.
+Uninitialized format variables retain the existing initialization checks.
+
+The native helper is Rust without the standard library, built by build.rs for
+the compiler target and embedded as a static archive. rfort link supplies it
+automatically on Windows/Linux/macOS; users need no separate runtime files or
+Rust installation to run generated programs. Constant native formats use this
+helper as well. Numeric labels, nested groups, reversion, ADVANCE, formatted
+array output, and existing CHARACTER procedure-argument limitations remain.
+
+Test 84 and python tests/test_runtime_formats.py cover changing formats, input
+formats, concatenation/TRIM, literal quoting, padding, numeric field overflow,
+spacing, record breaks, empty output lists, invalid descriptors, count/type
+mismatches, and compile-time initialization/type checks. Formatted output is
+compared exactly with gfortran. Named-format tests were updated to remove the
+now-obsolete runtime-format rejection cases. Original utility sources remain
+unchanged; their next parser error is still ADVANCE="no" on combined-source
+line 1261. Full utility compilation remains incomplete.
+
+Validation on Windows x64: 74 Rust unit tests, all 84 native regression fixtures,
+3 runtime-format and 2 named-format tests with both debug and release compilers,
+and all 31 batch tests passed. The release executable was rebuilt and the next
+utility parser error confirmed with it. Linux/macOS execution remains untested.
