@@ -629,6 +629,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 15 12 60\n 3 5\n 15 60\n 0 1\n 0 1\n 2147483647 -2147483648\n 2147483647 -2147483648\n 4\n 8\n 12.0 3.0 5.0\n"
+    },
+    "91_logical_reductions": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 2 3 3\n 2 2\n 2 2147483649\n .TRUE. .FALSE.\n .TRUE. .FALSE.\n 0 .FALSE. .TRUE.\n 0 .FALSE. .TRUE.\n 1 2\n 6 .TRUE. .TRUE.\n 2 3\n"
     }
   }
 }

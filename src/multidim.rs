@@ -225,7 +225,7 @@ impl Lowerer {
                     return matches!(kind, TypeSpec::Integer(_));
                 }
                 match n.as_str() {
-                    "size" | "len" | "count" => true,
+                    "size" | "len" | "count" | "@count_default" | "@count_i8" => true,
                     "lbound" | "ubound" => args.len() == 2,
                     "int" | "nint" | "floor" | "ceiling" => args
                         .first()
@@ -343,12 +343,13 @@ impl Lowerer {
         }
         match e {
             Expr::Ident(n) => self.check_association(n)?,
-            Expr::Call(n, args) if matches!(n.as_str(), "sum" | "product" | "minval" | "maxval") && args.len() == 3 => {
+            Expr::Call(n, args) if matches!(n.as_str(), "sum" | "product" | "minval" | "maxval" | "@count_default" | "@count_i8" | "@any_reduction" | "@all_reduction") && args.len() == 3 => {
+                let intrinsic = match n.as_str() { "@count_default" | "@count_i8" => "count", "@any_reduction" => "any", "@all_reduction" => "all", _ => n.as_str() };
                 let dims = self.shape(&args[0], shapes)?.context("reduction argument must be an array")?;
                 if !matches!(&args[1], Expr::Call(tag, _) if tag == "@no_dim") {
                     let dim = crate::parameters::integer_constant(&args[1]).context("reduction DIM must currently be a constant INTEGER; use MASK= for masks")?;
-                    if dim < 1 || dim as usize > dims.len() { bail!("{n}: DIM must be between 1 and {}", dims.len()); }
-                    if dims.len() != 1 { bail!("{n}: DIM reductions currently require a rank-one array"); }
+                    if dim < 1 || dim as usize > dims.len() { bail!("{intrinsic}: DIM must be between 1 and {}", dims.len()); }
+                    if dims.len() != 1 { bail!("{intrinsic}: DIM reductions currently require a rank-one array"); }
                 }
                 if let Some(mask_shape) = self.shape(&args[2], shapes)? {
                     if mask_shape != dims { bail!("{n}: MASK shape does not conform to ARRAY"); }

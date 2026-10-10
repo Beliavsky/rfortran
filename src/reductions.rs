@@ -22,7 +22,7 @@ impl std::ops::DerefMut for Symbols {
 }
 fn int(n: i64) -> Expr { Expr::IntLit(n.to_string()) }
 fn bin(op: BinOp, a: Expr, b: Expr) -> Expr { Expr::Bin(op, Box::new(a), Box::new(b)) }
-fn reduction(name: &str) -> bool { matches!(name.to_ascii_lowercase().as_str(), "sum" | "product" | "minval" | "maxval" | "any" | "all") }
+fn reduction(name: &str) -> bool { matches!(name.to_ascii_lowercase().as_str(), "sum" | "product" | "minval" | "maxval" | "any" | "all" | "count" | "@count_i8" | "@count_default" | "@any_reduction" | "@all_reduction") }
 fn array_element_kind(kind: &TypeSpec) -> bool { matches!(kind, TypeSpec::Integer(_) | TypeSpec::Real | TypeSpec::DoublePrecision | TypeSpec::Logical) }
 fn merge_kind(a: TypeSpec, b: TypeSpec) -> TypeSpec {
     if matches!(a, TypeSpec::DoublePrecision) || matches!(b, TypeSpec::DoublePrecision) { TypeSpec::DoublePrecision }
@@ -125,7 +125,6 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
         }
         Expr::Call(name, _) if name == "@output_implied_do" => bail!("implied-DO is currently supported only in list-directed output"),
         Expr::Call(name, args) if reduction(name) => {
-            if matches!(name.as_str(), "any" | "all") && args.len() != 1 { bail!("{name} currently expects one array argument; DIM is not supported"); }
             if args.is_empty() || args.len() > 2 { bail!("{name} requires normalized ARRAY and optional MASK arguments"); }
             lower_expr(&mut args[0], symbols, prefix, serial)?;
             if args.len() == 2 { lower_expr(&mut args[1], symbols, prefix, serial)?; }
@@ -137,13 +136,17 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             let index = Expr::Ident(index_name.clone());
             let (value, count, kind) = element(&args[0], &index, symbols)?;
             let count = count.context("reduction argument must be an array")?;
-            let name = name.to_ascii_lowercase();
-            if matches!(name.as_str(), "any" | "all") != matches!(kind, TypeSpec::Logical) { bail!("reduction argument has incorrect numeric/logical type"); }
+            let name = match name.as_str() {
+                "@count_default" => "count", "@any_reduction" => "any", "@all_reduction" => "all", _ => name.as_str()
+            }.to_ascii_lowercase();
+            if matches!(name.as_str(), "any" | "all" | "count" | "@count_i8") != matches!(kind, TypeSpec::Logical) { bail!("reduction argument has incorrect numeric/logical type"); }
+            let result_kind = match name.as_str() { "count" => TypeSpec::Integer(None), "@count_i8" => TypeSpec::Integer(Some(8)), _ => kind.clone() };
             let integer = matches!(kind, TypeSpec::Integer(_));
             let integer_max = match kind { TypeSpec::Integer(Some(1)) => i8::MAX as i64, TypeSpec::Integer(Some(2)) => i16::MAX as i64, TypeSpec::Integer(Some(8)) => i64::MAX, _ => i32::MAX as i64 };
             let integer_min = -integer_max - 1;
             let huge = if matches!(kind, TypeSpec::DoublePrecision) { f64::MAX } else { f32::MAX as f64 };
             let identity = match name.as_str() {
+                "count" | "@count_i8" => int(0),
                 "any" => Expr::Logical(false),
                 "all" => Expr::Logical(true),
                 "sum" => if integer { int(0) } else { Expr::RealLit("0.0".into()) },
@@ -152,12 +155,18 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
                 _ => if integer { int(integer_min) } else { Expr::RealLit((-huge).to_string()) },
             };
             prefix.push(Stmt::VarDecl { kind: TypeSpec::Integer(None), names: vec![index_name.clone()] });
-            prefix.push(Stmt::VarDecl { kind: kind.clone(), names: vec![acc_name.clone(), item_name.clone()] });
-            symbols.insert(acc_name.clone(), (kind, vec![]));
+            prefix.push(Stmt::VarDecl { kind, names: vec![item_name.clone()] });
+            prefix.push(Stmt::VarDecl { kind: result_kind.clone(), names: vec![acc_name.clone()] });
+            symbols.insert(acc_name.clone(), (result_kind, vec![]));
             prefix.push(Stmt::Assign { name: acc_name.clone(), value: identity });
             let acc = Expr::Ident(acc_name.clone());
             let item = Expr::Ident(item_name.clone());
             let update = match name.as_str() {
+                "count" | "@count_i8" => Stmt::If {
+                    cond: item.clone(),
+                    then_body: vec![Stmt::Assign { name: acc_name.clone(), value: bin(BinOp::Add, acc.clone(), int(1)) }],
+                    else_body: None,
+                },
                 "any" | "all" => Stmt::Assign { name: acc_name.clone(), value: bin(if name == "any" { BinOp::Or } else { BinOp::And }, acc.clone(), item.clone()) },
                 "sum" | "product" => Stmt::Assign { name: acc_name.clone(), value: bin(if name == "sum" { BinOp::Add } else { BinOp::Mul }, acc.clone(), item.clone()) },
                 _ => Stmt::If {
@@ -695,7 +704,7 @@ mod tests {
     fn rejects_invalid_reductions() {
         for (decls, expression, message) in [
             ("real :: x", "sum(x)", "must be an array"),
-            ("logical :: x(3)", "any(x,.true.)", "one array argument"),
+            ("logical :: x(3)", "any(x,.true.)", "normalized ARRAY"),
             ("real :: x(3), y(2)", "sum(x+y)", "do not conform"),
             ("real :: x(3)", "product(x(::0))", "stride must not be zero"),
             ("real :: x(3)", "minval(x(0:2))", "outside 1:3"),

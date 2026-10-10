@@ -61,4 +61,12 @@ supported subset: reordered ARRAY/DIM/MASK keywords, rank-one DIM=1, scalar and
 array masks, sections and empty arrays. `python tests/test_masked_reductions.py`
 checks interpreter/native O0/O2 output against gfortran. The external sample is
 still 5/18: the full reductions probe requires additional features, including
-COUNT and multidimensional DIM results.
+multidimensional DIM results and other array operations.
+
+`91_logical_reductions.f90` covers COUNT (including KIND=8), ANY/ALL keywords,
+rank-one DIM=1, empty inputs, sections, relational masks and pure functions with
+local arrays. Run `python tests/test_logical_reductions.py` independently of ofort.
+
+`tests/pending/function_array_reduction.f90` records an existing wrong-result bug
+in functions receiving array arguments. Its expected result is 15; it is excluded
+from the passing numbered fixtures until array dummy argument handling is fixed.

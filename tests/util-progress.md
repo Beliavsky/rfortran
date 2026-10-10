@@ -762,3 +762,34 @@ and rebuilt release compilers, exercising the interpreter plus native O0/O2 and
 gfortran comparison. The refreshed release ofort report is
 `target/ofort-masked-release.json`; all 18 reference builds/runs succeeded.
 Linux/macOS execution remains untested.
+
+
+## Checkpoint 31: COUNT and logical reduction arguments
+
+COUNT now lowers LOGICAL arrays/expressions to a counting loop with INTEGER(4)
+or INTEGER(8) result. COUNT, ANY and ALL accept positional/keyword MASK and
+constant rank-one DIM=1; COUNT also accepts constant KIND=4/8. Reordered keywords,
+parameter-valued DIM/KIND and calls within PURE procedures are supported.
+Normalized internal intrinsic names keep argument rewriting idempotent when
+procedure specialization revisits expressions. Empty arrays produce COUNT=0,
+ANY=false and ALL=true without reading an element. Invalid keyword combinations,
+mask types, scalar masks, dimensions and unsupported/nonconstant kinds fail.
+
+Fixture 91 compares interpreter and native O0/O2 against gfortran, including
+sections, explicit bounds, numeric matrix comparisons reduced without DIM,
+KIND=8 arithmetic and pure functions with local arrays. Matrix DIM results still
+need separate lowering and shape preservation; the full ofort reductions case
+is not yet supported.
+
+During testing, array arguments to functions produced wrong results in both
+interpreter and native execution. A SUM-only reproduction also fails in the
+previous release, establishing that this is an existing bug. It is retained in
+`tests/pending/function_array_reduction.f90` (expected output 15), outside the
+passing numbered suite, for the next checkpoint.
+
+Validation on Windows x64: 74 Rust unit tests, 91 native fixtures, 38 batch tests,
+and 2 focused tests passed. Focused interpreter/native O0/O2 checks match gfortran
+with both debug and rebuilt release compilers. The release ofort report at
+`target/ofort-logical-reductions.json` remains 5/18 passes (all reference cases
+build/run); the full reductions case now gets past COUNT keywords and stops at
+unsupported integer HUGE. Linux/macOS execution remains untested.

@@ -285,3 +285,11 @@ For a positional mask without DIM, use `MASK=`. Empty/all-false integer extrema
 use the argument kind's largest/smallest representable values.
 Run `python tests/test_masked_reductions.py` for interpreter/native O0/O2 checks
 and comparison with gfortran when installed.
+
+Logical reductions `COUNT`, `ANY`, and `ALL` accept `MASK=` and `DIM=` keywords.
+`COUNT` supports constant `KIND=4` (default) and `KIND=8`; `ANY` and `ALL` return
+LOGICAL. Whole-array and rank-one `DIM=1` reductions support logical arrays,
+sections, and relational array expressions. Empty inputs yield 0, false, and
+true respectively. Runtime DIM and multidimensional DIM results remain
+unsupported. Run `python tests/test_logical_reductions.py` for interpreter,
+native O0/O2, and gfortran comparison checks.

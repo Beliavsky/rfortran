@@ -435,6 +435,41 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
             }
             *args = vec![array];
             args.extend(dim);
+        } else if matches!(name.as_str(), "count" | "any" | "all") {
+            let count = name == "count";
+            let mut slots: [Option<Expr>; 3] = [None, None, None];
+            let mut keywords = false;
+            for (position, arg) in args.iter().enumerate() {
+                let (slot, value) = match arg {
+                    Expr::Call(tag, values) if tag.starts_with("@keyword:") => {
+                        keywords = true;
+                        let key = &tag[9..];
+                        let slot = match key { "mask" => 0, "dim" => 1, "kind" if count => 2,
+                            _ => bail!("{name}: unknown keyword `{key}`") };
+                        (slot, &values[0])
+                    }
+                    _ => {
+                        if keywords { bail!("{name}: positional argument after keyword argument"); }
+                        (position, arg)
+                    }
+                };
+                if slot >= if count { 3 } else { 2 } { bail!("{name}: too many arguments"); }
+                if slots[slot].replace(value.clone()).is_some() { bail!("{name}: duplicate argument"); }
+            }
+            let mask = slots[0].take().with_context(|| format!("{name} requires MASK"))?;
+            if let Some(mut kind) = slots[2].take() {
+                rewrite_expr(&mut kind, constants)?;
+                match integer_constant(&kind).context("COUNT KIND must be a constant INTEGER")? {
+                    4 => {},
+                    8 => *name = "@count_i8".into(),
+                    _ => bail!("COUNT currently supports KIND=4 or KIND=8"),
+                }
+            }
+            *name = match name.as_str() { "count" => "@count_default", "any" => "@any_reduction", "all" => "@all_reduction", _ => "@count_i8" }.into();
+            *args = vec![mask];
+            if let Some(dim) = slots[1].take() {
+                args.extend([dim, Expr::Logical(true)]);
+            }
         } else if matches!(name.as_str(), "sum" | "product" | "minval" | "maxval") {
             let mut slots: [Option<Expr>; 3] = [None, None, None];
             let mut keywords = false;
@@ -463,7 +498,7 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
                 args.push(slots[2].take().unwrap_or(Expr::Logical(true)));
             }
         } else if name.starts_with("@keyword:") {
-            bail!("keyword arguments are currently supported only for SIZE, LBOUND, UBOUND, SUM, PRODUCT, MINVAL, and MAXVAL");
+            bail!("keyword arguments are currently supported only for SIZE, LBOUND, UBOUND, SUM, PRODUCT, MINVAL, MAXVAL, COUNT, ANY, and ALL");
         }
     }
 
