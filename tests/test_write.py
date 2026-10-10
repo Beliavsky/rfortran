@@ -23,7 +23,6 @@ def tokens(output):
     return [convert(token) for token in output.split()]
 
 
-@unittest.skipUnless(os.name == "nt", "Windows native linker configuration")
 class WriteOutput(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="write-output-")

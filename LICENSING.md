@@ -4,19 +4,21 @@ This compiler is a fork of [SirPigari/f90c](https://github.com/SirPigari/f90c).
 The combined compiler is distributed under GPLv3; see [LICENSE](LICENSE).
 Upstream source and files containing upstream source remain subject to GPLv3.
 
-The following original Rust modules added in this fork are additionally
+The following original Rust modules and C runtime adapter added in this fork are additionally
 available under the [MIT license](LICENSE-MIT). Each carries an
 `SPDX-License-Identifier: MIT` header and a copyright notice for Beliavsky,
 the author recorded in this repository's Git history.
 
 - `src/array_calls.rs`
 - `src/derived.rs`
+- `src/driver.rs`
 - `src/elemental.rs`
 - `src/formatting.rs`
 - `src/imports.rs`
 - `src/initialized.rs`
 - `src/input.rs`
 - `src/intrinsics.rs`
+- `src/libs/portable_runtime.c`
 - `src/multidim.rs`
 - `src/operators.rs`
 - `src/output.rs`
@@ -36,7 +38,7 @@ licenses.
 
 ## Comparison used for these notices
 
-On 2026-10-10, these modules were compared with the saved upstream source in
+On 2026-10-10, the original 16 Rust modules were compared with the saved upstream source in
 `C:\rust\public_domain\github\f90c`. None of their paths exists in that
 baseline, and their Git histories record Beliavsky as their author. Comparison
 of source contents found no substantial copied blocks in those modules.
@@ -44,3 +46,6 @@ This is a source-provenance review, not a guarantee about all possible
 copyright claims or third-party sources. The GPL license file was preserved
 unchanged. Existing upstream files and additions within those mixed files were
 not given whole-file MIT notices.
+
+The shared driver and portable runtime adapter were added under MIT during the
+native-driver redesign after the baseline comparison described above.

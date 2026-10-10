@@ -191,7 +191,7 @@
     },
     "28_array_reductions": {
       "compiler_exit_code": 0,
-      "compiler_stderr": "",
+      "compiler_stderr": "warning: integer literal 9223372036854775807 does not fit in INTEGER(4 bytes)\n  ┌─ tests/28_array_reductions.f90:1:1\n  │\n1 │ program main\n  │ ^\n\nwarning: integer literal -9223372036854775807 does not fit in INTEGER(4 bytes)\n  ┌─ tests/28_array_reductions.f90:1:1\n  │\n1 │ program main\n  │ ^\n\nWarning: integer literal 9223372036854775807 does not fit in INTEGER(4 bytes)\nWarning: integer literal -9223372036854775807 does not fit in INTEGER(4 bytes)\n",
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 6.0 30.0 -2.0 4.0 -24.0\n 6 30 -2 4 -24\n 8.0 3.0 5.0\n 0.0 1.0\n 14.0 30.0 6.0\n -24.0 -24.0\n"
@@ -282,7 +282,7 @@
     },
     "41_subroutine_outputs": {
       "compiler_exit_code": 0,
-      "compiler_stderr": "",
+      "compiler_stderr": "warning: parameter `i` is never read\n  ┌─ tests/41_subroutine_outputs.f90:4:16\n  │\n4 │ subroutine sub(i, i2, i3)\n  │                ^\n\nWarning: parameter `i` is never read\n",
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 10 20 30\n 9 12\n 3.0\n 15 99\n"
@@ -296,7 +296,7 @@
     },
     "43_pure_subroutine": {
       "compiler_exit_code": 0,
-      "compiler_stderr": "",
+      "compiler_stderr": "warning: parameter `i` is never read\n  ┌─ tests/43_pure_subroutine.f90:4:21\n  │\n4 │ pure subroutine sub(i, i2, i3)\n  │                     ^\n\nWarning: parameter `i` is never read\n",
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 10 20 30\n 9 12\n 3.0\n 15 99\n"

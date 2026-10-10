@@ -3,260 +3,130 @@
 The compiler command is `rfort`. This project is a fork of
 [SirPigari/f90c](https://github.com/SirPigari/f90c).
 
-`rfort` is a single executable Fortran compiler written in Rust. It can compile, link, and run Fortran 90 sources, supporting object files, optimizations, warnings, and multiple subcommands.
+## Build
 
----
-
-## Installation
-
-Build the compiler from this checkout:
-
-```bash
+```sh
 cargo build --release --bin rfort
 ```
 
-On Windows this creates `target/release/rfort.exe`. Add this repository to your
-`PATH` to use `rfort.bat`, or invoke it as `rfort.bat` from this directory.
-On other systems the executable is `target/release/rfort`.
+This creates `target/release/rfort.exe` on Windows and `target/release/rfort`
+on Linux/macOS. Put the executable in a directory on `PATH`. The native driver
+handles compilation and linking, including multiple source files, without a
+batch file or PowerShell. The Windows `rfort.bat` and `f90c.bat` entry points
+forward arguments to the built executable for compatibility.
 
----
+## Compile and run
 
-## Usage
-
-The general command structure is:
-
-```bash
-rfort [subcommand] [links.o (.obj)] [inputs.f90] [options]
-```
-
-If no subcommand is provided, all `.f90` inputs are compiled into an executable, optionally linking with `.o` (`.obj`) object files.
-
-### Windows batch wrapper
-
-```bat
-rfort.bat m1.f90 m2.f90 main.f90
-```
-
-`f90c.bat` remains as a compatibility entry point and delegates to `rfort.bat`.
-Both use the same compiler, arguments, and exit status.
-
-List modules in dependency order, followed by the main program: if `m2` uses
-`m1`, put `m1.f90` first. This creates `main.exe` and `main.obj` alongside the
-last source file. Quote paths containing spaces. Successful builds are silent;
-the default optimization level remains `-O2`.
-
-For multiple inputs, the wrapper uses the accompanying `f90c-sources.ps1`
-helper to combine the sources and compile them together. This makes module
-constants, procedure definitions, derived types, and operator interfaces
-available to the compiler. It does not create or reuse separately compiled
-module files. The compiler's existing language restrictions still apply.
-
-The generated `main.f90c-sources.f90` is retained next to the executable and
-ignored by Git. Diagnostics refer to its line numbers; `! Source:` comments
-identify the original files. A subsequent build refreshes this generated file.
-Single-source commands continue to compile the original file directly.
-
-Run the wrapper integration tests with `python tests/test_batch_sources.py`.
-They require Windows, a built compiler, and the linker/library setup specified
-in `rfort.bat`.
-
----
-
-## Quick Reference
-
-| Subcommand | Description |
-|------------|-------------|
-| `lex` | Dump tokens of a `.f90` source file |
-| `parse` | Dump AST of a `.f90` source file |
-| `check` | Run semantic checks only |
-| `build` | Compile a `.f90` source into an executable |
-| `link` | Link `.o` (`.obj`) object files and `.f90` sources into an executable |
-| `emitobj` | Emit a `.f90` source as a `.o` (`.obj`) object file |
-| `run` | Parse, check, and execute a `.f90` source file via JIT |
-| `help` | Show help for `rfort` or subcommands |
-
-### Options
-
-| Flag | Description |
-|------|-------------|
-| `-o`, `--out <path>` | Output executable or object path. Defaults derived from the first source |
-| `--Wall` | Enable all warnings |
-| `--Werror` | Treat warnings as errors |
-| `--lto` | Enable Link Time Optimization (LTO) for better performance |
-| `-O`, `--opt-level <LEVEL>` | Set optimization level: `0`, `1`, `2`, `3`, `s`, `z`, `S`, `Z` (default `2`) |
-| `-q`, `--quiet` | Suppress all output except errors |
-| `-h`, `--help` | Show help message |
-| `-v`, `--version` | Show version information |
-
----
-
-## Subcommands Details
-
-### `lex`
-
-```bash
-rfort lex input.f90
-```
-
-- `input.f90` – Input Fortran 90 source file
-
----
-
-### `parse`
-
-```bash
-rfort parse input.f90
-```
-
-- `input.f90` – Input Fortran 90 source file
-
----
-
-### `check`
-
-```bash
-rfort check input.f90
-```
-
-- `input.f90` – Input Fortran 90 source file
-
----
-
-### `build`
-
-Compile a `.f90` source into an **executable**.
-
-```bash
-rfort build input.f90 [options]
-```
-
-Options:
-
-- `-o`, `--out <path>` – Output path for the executable  
-- `--run` – Run after build
-
----
-
-### `link`
-
-Link `.o` (`.obj`) object files and `.f90` sources into an executable.
-
-```bash
-rfort link links.o inputs.f90 [options]
-```
-
-Options:
-
-- `-o`, `--out <path>` – Output executable path  
-
-> Sources will be compiled first into `.o` (`.obj`) object files if included
-
----
-
-### `emitobj`
-
-Emit a `.f90` source as a `.o` (`.obj`) object file to a specific path.
-
-```bash
-rfort emitobj input.f90 -o output.o
-```
-
-- `input.f90` – Input Fortran 90 source file  
-- `output.o` – Output object file path (`.obj` on Windows)
-
----
-
-### `run`
-
-Parse, check, and execute a `.f90` source file via JIT.
-
-```bash
-rfort run input.f90
-```
-
-- `input.f90` – Input Fortran 90 source file
-
----
-
-### `help`
-
-Show help for `rfort` or subcommands.
-
-```bash
-rfort help
-```
-
----
-
-## Examples
-
-Compile a single `.f90` source into an executable:
-
-```bash
+```sh
 rfort main.f90
+rfort m1.f90 m2.f90 main.f90
+rfort -o myprogram.exe main.f90
+rfort -O0 --run main.f90
+rfort -c main.f90 -o main.obj
+rfort link main.obj -o myprogram.exe
+rfort --verbose main.f90
 ```
 
-This produces an executable derived from the first source name.
+On Linux/macOS, choose names such as `myprogram` and `main.o` instead.
+Successful builds are silent by default; warnings and errors remain visible.
+The default optimization level is `-O2`. `--verbose` shows compilation progress
+and tool commands; `--quiet` suppresses that progress. `--run` executes the
+linked program and propagates its failure status.
 
----
+List source files in dependency order, with the main program last. They are
+compiled as one source group; the compiler does not yet load module interfaces
+from separately compiled object files. Existing `.obj`/`.o` files can also be
+supplied for linking. Free-form `.f90`, `.f95`, `.f03`, and `.f08` inputs are
+accepted. The existing language limitations still apply.
 
-Compile multiple `.f90` sources directly:
+The default executable and object names come from the last source file:
+`main.exe` and `main.obj` on Windows, or `main` and `main.o` on Linux/macOS.
+`-o` changes the executable name, or the object name when used with `-c`.
+A source group without a main program emits an object without linking;
+use `-c -o file.obj` to select its object filename.
 
-```bash
-rfort main.f90 file1.f90 file2.f90
-```
+For multiple source files, the driver retains `main.f90c-sources.f90` for
+diagnostics. `! Source:` comments identify the original files. Existing
+wrapper-generated files are recognized and refreshed, while handwritten files
+and source inputs are protected from overwrite. A single source is compiled
+directly. The old `f90c-sources.ps1` helper is retained for legacy use; the
+native driver does not invoke it.
 
-Each file is compiled **separately** into its own executable.  
-This does **not** link them together.
+## Toolchains
 
----
+Windows x64 is tested. Linux and macOS have explicit driver paths but still
+need native execution validation; their presence is not a claim that every
+compiler feature works on those platforms.
 
-Build reusable object files (modules only, no `program`):
+### Windows
 
-```bash
-rfort lib1.f90
-rfort utils.f90
-```
+Install LLVM (with `ld.lld.exe` or `lld-link.exe` on `PATH`), Visual Studio C++
+Build Tools, and a Windows SDK. The driver uses the installed LLVM linker and
+embeds the three compatibility import libraries previously used by the wrapper.
+It discovers additional libraries from `LIB`, `VCToolsInstallDir`, `vswhere`,
+and the Windows SDK installation. No version-specific installation paths are
+compiled into the executable.
 
-This produces `lib1.o` (`lib1.obj`) and `utils.o` (`utils.obj`).
+Optional environment overrides:
 
----
+- `RFORT_LINKER`: linker executable path or command name. `ld.lld` receives
+  `-flavor link`; `lld-link` and MSVC `link` receive their native arguments.
+- `RFORT_LIB_PATH`: semicolon-separated additional library directories.
 
-Link a main program with object files:
+### Linux
 
-```bash
-rfort main.f90 lib1.o utils.o
-```
+The driver invokes the system `cc` to compile its embedded C runtime adapters
+and link generated objects. Install a C compiler and development libraries.
+The system toolchain supplies startup files and system library paths; bundled
+Linux linker binaries and `patch.o` are no longer used.
 
-This compiles `main.f90` and links it with the object files into a single executable.
+### macOS
 
----
+The driver invokes `xcrun --sdk macosx clang`, using the selected Apple Command
+Line Tools/Xcode installation and SDK. It compiles the same C runtime adapters
+for the host architecture. Install Apple's Command Line Tools before use.
 
-Build an executable with a custom name:
+On Linux/macOS, `RFORT_CC` (or `CC`) can select a C compiler driver. The value
+must name one executable, not a shell command containing additional arguments.
+Cross-target compilation and `--lto` are currently rejected explicitly.
+The executable still requires an installed platform toolchain for linking.
 
-```bash
-rfort build main.f90 -o program
-```
+## Other commands
 
-This compiles `main.f90` into an executable named `program`.
-
----
-
-Enable all warnings and treat them as errors:
-
-```bash
-rfort main.f90 --Wall --Werror
-```
-
----
-
-Run a `.f90` program with JIT:
-
-```bash
+```sh
+rfort lex main.f90
+rfort parse main.f90
+rfort check main.f90
+rfort build m1.f90 main.f90 -o myprogram.exe
+rfort emit-obj main.f90 main.obj
 rfort run main.f90
+rfort --help
+rfort --version
 ```
 
----
+`run` uses the interpreter; `--run` builds and runs a native executable.
+Place general options such as `--verbose` before an explicit subcommand.
+
+## Tests
+
+```sh
+cargo build --bin rfort
+cargo test --bin rfort --test testsuite -- --test-threads=1
+python tests/test_driver.py
+python tests/test_record_read.py
+python tests/test_internal_read.py
+python tests/test_write.py
+python tests/test_output_implied_do.py
+```
+
+The Python tests use `target/debug/rfort` (with `.exe` on Windows).
+`RFORT_TEST_COMPILER` selects another build; the legacy `F90C_TEST_COMPILER`
+variable also works. The Rust integration suite uses the debug executable.
+Tests require the platform linker/toolchain described above. The regression
+runner no longer invokes `git clean`.
+
+On Windows, after building release, also run `python tests/test_batch_sources.py`
+to verify the compatibility wrappers and multi-source fixtures.
 
 ## License
 

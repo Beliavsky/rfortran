@@ -213,7 +213,7 @@ fn read_record(
         let mut sig=module.make_signature();
         sig.params.extend([AbiParam::new(types::I32),AbiParam::new(ptr_ty),AbiParam::new(types::I32)]);
         sig.returns.push(AbiParam::new(types::I32));
-        let id=module.declare_function("_write",Linkage::Import,&sig)?;
+        let id=module.declare_function(if cfg!(windows) { "_write" } else { "rfort_write" },Linkage::Import,&sig)?;
         let write=module.declare_func_in_func(id,b.func);
         let stderr=b.ins().iconst(types::I32,2);
         let size=b.ins().iconst(types::I32,message.len() as i64);
@@ -292,21 +292,21 @@ fn declare_externs(
     sig_printf.params.push(AbiParam::new(ptr_ty));
     sig_printf.params.push(AbiParam::new(ptr_ty));
     sig_printf.returns.push(AbiParam::new(types::I32));
-    let printf_id = module.declare_function("printf", Linkage::Import, &sig_printf)?;
+    let printf_id = module.declare_function(if cfg!(windows) { "printf" } else { "rfort_printf" }, Linkage::Import, &sig_printf)?;
     let printf_ref = module.declare_func_in_func(printf_id, b.func);
     let mut sig_sprintf = Signature::new(cc);
     sig_sprintf.params.push(AbiParam::new(ptr_ty));
     sig_sprintf.params.push(AbiParam::new(ptr_ty));
     sig_sprintf.params.push(AbiParam::new(types::I64));
     sig_sprintf.returns.push(AbiParam::new(types::I32));
-    let sprintf_id = module.declare_function("sprintf", Linkage::Import, &sig_sprintf)?;
+    let sprintf_id = module.declare_function(if cfg!(windows) { "sprintf" } else { "rfort_sprintf" }, Linkage::Import, &sig_sprintf)?;
     let sprintf_ref = module.declare_func_in_func(sprintf_id, b.func);
     let mut sig_gcvt = Signature::new(cc);
     sig_gcvt.params.push(AbiParam::new(types::F64));
     sig_gcvt.params.push(AbiParam::new(types::I32));
     sig_gcvt.params.push(AbiParam::new(ptr_ty));
     sig_gcvt.returns.push(AbiParam::new(ptr_ty));
-    let gcvt_id = module.declare_function("_gcvt", Linkage::Import, &sig_gcvt)?;
+    let gcvt_id = module.declare_function(if cfg!(windows) { "_gcvt" } else { "rfort_gcvt" }, Linkage::Import, &sig_gcvt)?;
     let gcvt_ref = module.declare_func_in_func(gcvt_id, b.func);
     let mut sig_pow = Signature::new(cc);
     sig_pow.params.push(AbiParam::new(types::F64));
@@ -319,7 +319,7 @@ fn declare_externs(
     sig_scanf.params.push(AbiParam::new(ptr_ty));
     sig_scanf.params.push(AbiParam::new(ptr_ty));
     sig_scanf.returns.push(AbiParam::new(types::I32));
-    let scanf_id = module.declare_function("scanf", Linkage::Import, &sig_scanf)?;
+    let scanf_id = module.declare_function(if cfg!(windows) { "scanf" } else { "rfort_scanf" }, Linkage::Import, &sig_scanf)?;
     let scanf_ref = module.declare_func_in_func(scanf_id, b.func);
 
     let mut sig_strcmp = Signature::new(cc);
@@ -2264,7 +2264,7 @@ fn gen_stmts(
                         };
                         if field.code=='a' && field.width==0 { ex.call_printf(b,&[ex.fmt_s,value]); continue; }
                         let format=make_data(module,b,ptr_ty,dc,format!("{format}\0").as_bytes())?;
-                        // Windows x64 variadic floating arguments are read from integer registers.
+                        // Windows uses integer registers here; the Unix C adapter decodes these bits.
                         let value=if b.func.dfg.value_type(value)==types::F64 {b.ins().bitcast(types::I64,MemFlags::new(),value)} else {value};
                         let call=ex.call_sprintf(b,&[pointer,format,value]);let length=b.inst_results(call)[0];
                         let pointer=if field.width>0 && field.code!='a' {let overflow=b.ins().icmp_imm(ir::condcodes::IntCC::SignedGreaterThan,length,field.width as i64);let stars=make_data(module,b,ptr_ty,dc,format!("{}\0","*".repeat(field.width)).as_bytes())?;b.ins().select(overflow,stars,pointer)} else {pointer};
@@ -2283,7 +2283,7 @@ fn gen_stmts(
                     let [IExpr::Str(message)]=args.as_slice() else {anyhow::bail!("ERROR STOP currently requires a character constant");};
                     let message=format!("ERROR STOP {message}\n");let pointer=make_data(module,b,ptr_ty,dc,message.as_bytes())?;
                     let mut sig=module.make_signature();sig.params.extend([ir::AbiParam::new(types::I32),ir::AbiParam::new(ptr_ty),ir::AbiParam::new(types::I32)]);sig.returns.push(ir::AbiParam::new(types::I32));
-                    let id=module.declare_function("_write",Linkage::Import,&sig)?;let function=module.declare_func_in_func(id,b.func);let fd=b.ins().iconst(types::I32,2);let len=b.ins().iconst(types::I32,message.len() as i64);b.ins().call(function,&[fd,pointer,len]);
+                    let id=module.declare_function(if cfg!(windows) { "_write" } else { "rfort_write" },Linkage::Import,&sig)?;let function=module.declare_func_in_func(id,b.func);let fd=b.ins().iconst(types::I32,2);let len=b.ins().iconst(types::I32,message.len() as i64);b.ins().call(function,&[fd,pointer,len]);
                     let mut sig=module.make_signature();sig.params.push(ir::AbiParam::new(types::I32));let id=module.declare_function("exit",Linkage::Import,&sig)?;let function=module.declare_func_in_func(id,b.func);let code=b.ins().iconst(types::I32,1);b.ins().call(function,&[code]);b.ins().trap(ir::TrapCode::unwrap_user(1));return Ok(true);
                 }
                 if name.eq_ignore_ascii_case("random_seed") && !func_meta.contains_key(name) {
@@ -2321,7 +2321,7 @@ fn gen_stmts(
                     let mut sig = module.make_signature();
                     sig.params.extend([ir::AbiParam::new(types::I32), ir::AbiParam::new(ptr_ty), ir::AbiParam::new(types::I32)]);
                     sig.returns.push(ir::AbiParam::new(types::I32));
-                    let id = module.declare_function("_write", Linkage::Import, &sig)?;
+                    let id = module.declare_function(if cfg!(windows) { "_write" } else { "rfort_write" }, Linkage::Import, &sig)?;
                     let function = module.declare_func_in_func(id, b.func);
                     let stderr = b.ins().iconst(types::I32, 2);
                     b.ins().call(function, &[stderr, pointer, length]);
@@ -2948,7 +2948,7 @@ impl Backend for CraneliftBackend {
             .first()
             .map(|f| f.name.clone())
             .unwrap_or_else(|| "main".into());
-        let is_real_main = entry_func_name == "main";
+        let is_real_main = entry_func_name == "main" && !module.funcs.is_empty();
         for (idx, f) in module.funcs.iter().enumerate() {
             if idx == 0 && is_real_main {
                 continue;
@@ -3239,7 +3239,7 @@ impl Backend for CraneliftBackend {
             .first()
             .map(|f| f.name.clone())
             .unwrap_or_else(|| "main".into());
-        let is_real_main = entry_func_name == "main";
+        let is_real_main = entry_func_name == "main" && !module.funcs.is_empty();
         if is_real_main {
             let mut ctx_main = obj.make_context();
             let ptr_ty = isa.pointer_type();

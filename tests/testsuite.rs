@@ -111,26 +111,9 @@ fn compile_and_run(f90c: &Path, src: &Path) -> Expectation {
         }
     }
 
-    for link_path in &link_files {
-        let link_out = Command::new(f90c)
-            .arg(&link_path)
-            .output()
-            .expect("failed to compile link-with file");
-        exp.compiler_stderr
-            .push_str(&String::from_utf8_lossy(&link_out.stderr));
-        if !link_out.status.success() {
-            exp.compiler_exit_code = link_out.status.code().unwrap_or(-1);
-            return exp;
-        }
-    }
-
     let mut comp_cmd = Command::new(f90c);
-    if !link_files.is_empty() {
-        for link_path in &link_files {
-            let obj_name = link_path.with_extension(if cfg!(windows) { "obj" } else { "o" });
-            comp_cmd.arg(obj_name);
-        }
-    }
+    // Module interfaces are currently resolved from source in dependency order.
+    comp_cmd.args(&link_files);
     comp_cmd.arg(src).arg("-o").arg(&exe_path);
 
     let comp_out = comp_cmd.output().expect("failed to compile main file");
@@ -312,6 +295,7 @@ fn compile_and_run_tests() {
     let mut failures = Vec::new();
 
     for path in list_test_files() {
+        if path.to_string_lossy().ends_with(".f90c-sources.f90") { continue; }
         let stem = path.file_stem().unwrap().to_string_lossy().to_string();
         let got = compile_and_run(&f90c, &path);
         process_case(&stem, got, &mut all, record, &mut changed, &mut failures);
@@ -324,11 +308,7 @@ fn compile_and_run_tests() {
         save_all(&all);
     }
 
-    if !failures.is_empty() {
-        eprintln!("test failures: {:?}", failures);
-        std::process::exit(1);
-    }
+    assert!(failures.is_empty(), "test failures: {:?}", failures);
 
-    std::env::set_current_dir("tests").expect("set current dir to tests");
-    let _ = Command::new("git").arg("clean").arg("-fdX").output();
+    let _ = fs::remove_file(if cfg!(windows) { "tests/tmp_test.exe" } else { "tests/tmp_test" });
 }

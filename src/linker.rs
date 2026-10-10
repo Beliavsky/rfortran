@@ -1,14 +1,10 @@
 use crate::cli::Cli;
-use anyhow::Context;
-use std::env;
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-
-#[cfg(target_os = "windows")]
-const LINKER_BYTES: &[u8] = include_bytes!("bin/tools/lld-link.exe");
-#[cfg(not(target_os = "windows"))]
-const LINKER_BYTES: &[u8] = include_bytes!("bin/tools/ld.lld");
+use anyhow::{bail, Context, Result};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 #[cfg(all(windows, target_pointer_width = "64"))]
 const MSVCRT_LIB: &[u8] = include_bytes!("libs/x64/msvcrt.lib");
@@ -24,224 +20,210 @@ const KERNEL32_LIB: &[u8] = include_bytes!("libs/x86/kernel32.lib");
 #[cfg(all(windows, target_pointer_width = "32"))]
 const LEGACY_STDIO_LIB: &[u8] = include_bytes!("libs/x86/legacy_stdio_definitions.lib");
 
-#[cfg(all(not(windows), target_pointer_width = "64"))]
-const LIBCXX_LIB: &[u8] = include_bytes!("libs/x64/libc++.so");
-#[cfg(all(not(windows), target_pointer_width = "64"))]
-const PATCH_LIB: &[u8] = include_bytes!("libs/x64/patch.o");
-
-#[cfg(all(not(windows), target_pointer_width = "32"))]
-const LIBCXX_LIB: &[u8] = include_bytes!("libs/x86/libc++.so");
-#[cfg(all(not(windows), target_pointer_width = "32"))]
-const PATCH_LIB: &[u8] = include_bytes!("libs/x86/patch.o");
-
-#[cfg(not(target_os = "windows"))]
-fn find_crt_files() -> anyhow::Result<(PathBuf, PathBuf, PathBuf)> {
-    let candidates = [
-        "/usr/lib/crt1.o",
-        "/usr/lib64/crt1.o",
-        "/usr/lib/x86_64-linux-gnu/crt1.o",
-        "/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/crtbegin.o",
-    ];
-
-    let crt1 = candidates.iter().find(|p| Path::new(p).exists());
-    let crti = crt1.map(|p| Path::new(p).parent().unwrap().join("crti.o"));
-    let crtn = crt1.map(|p| Path::new(p).parent().unwrap().join("crtn.o"));
-
-    if let (Some(crt1), Some(crti), Some(crtn)) = (crt1, crti, crtn) {
-        Ok((PathBuf::from(crt1), crti, crtn))
-    } else {
-        anyhow::bail!("Could not find CRT startup files. Install libc dev packages.");
+struct WorkDir(PathBuf);
+impl WorkDir {
+    fn new() -> Result<Self> {
+        let path = env::temp_dir().join(format!("rfort-link-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&path)?;
+        Ok(Self(path))
+    }
+}
+impl Drop for WorkDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
     }
 }
 
-pub fn link(objects: &[PathBuf], out: &Path, cli: &Cli) -> anyhow::Result<()> {
+fn run(command: &mut Command, cli: &Cli) -> Result<()> {
+    if !cli.quiet {
+        eprintln!("[link] {command:?}");
+    }
+    let output = command
+        .output()
+        .with_context(|| format!("could not execute {command:?}"))?;
+    if !output.status.success() {
+        bail!(
+            "tool failed ({})\n{}{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    // Keep tool warnings visible even for otherwise silent successful builds.
+    if !output.stdout.is_empty() {
+        eprint!("{}", String::from_utf8_lossy(&output.stdout));
+    }
+    if !output.stderr.is_empty() {
+        eprint!("{}", String::from_utf8_lossy(&output.stderr));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn latest_directory(root: &Path, suffix: &Path) -> Option<PathBuf> {
+    let mut candidates: Vec<_> = fs::read_dir(root)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.join(suffix).is_dir())
+        .collect();
+    candidates.sort_by_key(|p| {
+        p.file_name()
+            .unwrap()
+            .to_string_lossy()
+            .split('.')
+            .map(|v| v.parse::<u32>().unwrap_or(0))
+            .collect::<Vec<_>>()
+    });
+    candidates.pop().map(|p| p.join(suffix))
+}
+
+#[cfg(windows)]
+fn windows_libraries() -> Result<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    if let Some(value) = env::var_os("RFORT_LIB_PATH") {
+        for path in env::split_paths(&value) {
+            if !path.is_dir() {
+                bail!(
+                    "RFORT_LIB_PATH directory does not exist: {}",
+                    path.display()
+                );
+            }
+            paths.push(path);
+        }
+    }
+    if let Some(value) = env::var_os("LIB") {
+        paths.extend(env::split_paths(&value));
+    }
+    let arch = if cfg!(target_arch = "aarch64") {
+        "arm64"
+    } else if cfg!(target_pointer_width = "64") {
+        "x64"
+    } else {
+        "x86"
+    };
+    let suffix = PathBuf::from("lib").join(arch);
+    if let Some(root) = env::var_os("VCToolsInstallDir") {
+        let path = PathBuf::from(root).join(&suffix);
+        if path.is_dir() {
+            paths.push(path);
+        }
+    }
+    let program_files = env::var_os("ProgramFiles(x86)").or_else(|| env::var_os("ProgramFiles"));
+    if let Some(root) = &program_files {
+        let vswhere = PathBuf::from(root).join("Microsoft Visual Studio/Installer/vswhere.exe");
+        if let Ok(output) = Command::new(vswhere)
+            .args([
+                "-latest",
+                "-products",
+                "*",
+                "-requires",
+                "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                "-property",
+                "installationPath",
+                "-utf8",
+            ])
+            .output()
+        {
+            if output.status.success() {
+                let install = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+                if !install.is_empty() {
+                    if let Some(path) =
+                        latest_directory(&PathBuf::from(install).join("VC/Tools/MSVC"), &suffix)
+                    {
+                        paths.push(path);
+                    }
+                }
+            }
+        }
+    }
+    let sdk = env::var_os("WindowsSdkDir")
+        .map(PathBuf::from)
+        .or_else(|| program_files.map(|p| PathBuf::from(p).join("Windows Kits/10")));
+    if let Some(root) = sdk {
+        for component in ["ucrt", "um"] {
+            if let Some(path) =
+                latest_directory(&root.join("Lib"), &PathBuf::from(component).join(arch))
+            {
+                paths.push(path);
+            }
+        }
+    }
+    Ok(paths)
+}
+
+pub fn link(objects: &[PathBuf], out: &Path, cli: &Cli) -> Result<()> {
+    if cli.lto {
+        bail!("--lto is not supported for Cranelift native objects");
+    }
+    let work = WorkDir::new()?;
     #[cfg(target_os = "windows")]
-    let linker_path = {
-        use std::process::Command;
-
-        let cache_base = env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"));
-        let cache_dir = cache_base.join(".f90c-link");
-        if !cache_dir.exists() {
-            fs::create_dir_all(&cache_dir)?;
-            let _ = Command::new("attrib")
-                .args(&["+h", cache_dir.to_str().unwrap()])
-                .status();
-        }
-
-        let arch = if cfg!(target_pointer_width = "64") {
-            "x64"
+    {
+        let tool = if let Some(path) = env::var_os("RFORT_LINKER") {
+            PathBuf::from(path)
         } else {
-            "x86"
+            which::which("ld.lld.exe").or_else(|_| which::which("lld-link.exe"))
+                .context("No LLVM linker found; install LLVM and put ld.lld.exe or lld-link.exe on PATH, or set RFORT_LINKER")?
         };
-        let arch_dir = cache_dir.join(arch);
-        if !arch_dir.exists() {
-            fs::create_dir_all(&arch_dir)?;
+        let mut command = Command::new(&tool);
+        if tool
+            .file_stem()
+            .is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case("ld.lld"))
+        {
+            command.args(["-flavor", "link"]);
         }
-
-        let linker_path = arch_dir.join("lld-link.exe");
-        if !linker_path.exists() {
-            println!("[link] writing linker to {}", linker_path.display());
-            fs::write(&linker_path, LINKER_BYTES)?;
-        }
-
-        let libs = [
+        command.args(["/NOLOGO", "/SUBSYSTEM:CONSOLE"]);
+        let mut output_arg = std::ffi::OsString::from("/OUT:");
+        output_arg.push(out);
+        command.arg(output_arg).args(objects);
+        for (name, bytes) in [
             ("msvcrt.lib", MSVCRT_LIB),
             ("kernel32.lib", KERNEL32_LIB),
             ("legacy_stdio_definitions.lib", LEGACY_STDIO_LIB),
-        ];
-        for (name, bytes) in libs {
-            let path = arch_dir.join(name);
-            if !path.exists() {
-                fs::write(&path, bytes)?;
+        ] {
+            fs::write(work.0.join(name), bytes)?;
+        }
+        let paths = std::iter::once(work.0.clone()).chain(windows_libraries()?);
+        for path in paths {
+            let mut arg = std::ffi::OsString::from("/LIBPATH:");
+            arg.push(path);
+            command.arg(arg);
+        }
+        command.args(["msvcrt.lib", "legacy_stdio_definitions.lib", "kernel32.lib"]);
+        run(&mut command, cli).context("Windows linking failed; install Visual Studio C++ Build Tools and the Windows SDK, or set RFORT_LIB_PATH to their library directories")?;
+    }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        let compiler = env::var_os("RFORT_CC").or_else(|| env::var_os("CC"));
+        let make_command = || {
+            if let Some(tool) = &compiler {
+                Command::new(tool)
+            } else if cfg!(target_os = "macos") {
+                let mut c = Command::new("xcrun");
+                c.args(["--sdk", "macosx", "clang"]);
+                c
+            } else {
+                Command::new("cc")
             }
-        }
-
-        linker_path
-    };
-
-    #[cfg(not(target_os = "windows"))]
-    let linker_path = {
-        use std::os::unix::fs::PermissionsExt;
-
-        let home_dir = env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/usr/local"));
-        let cache_dir = home_dir.join(".f90c-link");
-        if !cache_dir.exists() {
-            fs::create_dir_all(&cache_dir)?;
-        }
-
-        let arch = if cfg!(target_pointer_width = "64") {
-            "x64"
-        } else {
-            "x86"
         };
-        let arch_dir = cache_dir.join(arch);
-        if !arch_dir.exists() {
-            fs::create_dir_all(&arch_dir)?;
-        }
-
-        let linker_path = arch_dir.join("ld.lld");
-        if !linker_path.exists() {
-            let mut f = fs::File::create(&linker_path)?;
-            println!("[link] writing linker to {}", linker_path.display());
-            use std::io::Write;
-            f.write_all(LINKER_BYTES)?;
-            fs::set_permissions(&linker_path, fs::Permissions::from_mode(0o755))?;
-        }
-
-        let libs = [
-            ("libc++.so", LIBCXX_LIB),
-            ("patch.o", PATCH_LIB),
-        ];
-        for (name, bytes) in libs {
-            let path = arch_dir.join(name);
-            if !path.exists() {
-                fs::write(&path, bytes)?;
-            }
-        }
-
-        linker_path
-    };
-
-    let mut args: Vec<String> = Vec::new();
-
-    #[cfg(target_os = "windows")]
-    {
-        args.push(format!("/OUT:{}", out.display()));
-        for obj in objects {
-            if !cli.quiet {
-                println!("[link] adding {}", obj.display());
-            }
-            args.push(obj.display().to_string());
-        }
-        if cli.lto {
-            if !cli.quiet {
-                println!("[link] enabling LTO");
-            }
-            args.push("/LTCG".into());
-        }
-        args.push("/SUBSYSTEM:CONSOLE".into());
-
-        let lib_dir = linker_path.parent().unwrap();
-        args.push(format!("/LIBPATH:{}", lib_dir.display()));
-        args.push("msvcrt.lib".into());
-        args.push("legacy_stdio_definitions.lib".into());
-        args.push("kernel32.lib".into());
+        let source = work.0.join("runtime.c");
+        let object = work.0.join("runtime.o");
+        fs::write(&source, include_str!("libs/portable_runtime.c"))?;
+        run(
+            make_command()
+                .args(["-c", "-O2"])
+                .arg(&source)
+                .arg("-o")
+                .arg(&object),
+            cli,
+        )?;
+        let mut command = make_command();
+        command.args(objects).arg(&object).arg("-o").arg(out);
+        #[cfg(target_os = "linux")]
+        command.args(["-no-pie", "-lm"]);
+        run(&mut command, cli)?;
     }
-
-    #[cfg(unix)]
-    {
-        args.push("--gc-sections".into());
-        args.push("--strip-all".into());
-        args.push("--sort-section=alignment".into());
-
-        if cli.lto {
-            if !cli.quiet {
-                println!("[link] enabling LTO");
-            }
-            args.push("-flto".into());
-        }
-
-        args.push("-no-pie".into());
-
-        let (crt1, crti, crtn) = find_crt_files()?;
-        if !cli.quiet {
-            println!(
-                "[link] using crt files: {}, {}, {}",
-                crt1.display(),
-                crti.display(),
-                crtn.display()
-            );
-        }
-
-        args.push("-o".into());
-        args.push(out.display().to_string());
-
-        args.push(crt1.display().to_string());
-        args.push(crti.display().to_string());
-
-        for obj in objects {
-            if !cli.quiet {
-                println!("[link] adding {}", obj.display());
-            }
-            args.push(obj.display().to_string());
-        }
-
-        args.push(crtn.display().to_string());
-
-        let lib_dir = linker_path.parent().unwrap();
-
-        args.push(lib_dir.join("patch.o").display().to_string());
-        args.push("--dynamic-linker".into());
-        args.push("/lib64/ld-linux-x86-64.so.2".into());
-
-        args.push(format!("-L{}", lib_dir.display()));
-        args.push("-lc++".into());
-        args.push("-lc".into());
-        args.push("-lm".into());
-    }
-
-    if !cli.quiet {
-        println!("[link] invoking linker {}", env!("LINKER_VERSION"));
-    }
-    let status = Command::new(&linker_path)
-        .args(&args)
-        .status()
-        .with_context(|| format!("failed to execute linker at {:?}", linker_path))?;
-
-    if !status.success() {
-        anyhow::bail!(
-            "linker exited with status {:?}",
-            status.code().unwrap_or(-1)
-        );
-    }
-
-    if !cli.quiet {
-        println!("[link] successfully linked {}", out.display());
-    }
-
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    bail!("Native linking is supported only on Windows, Linux, and macOS");
     Ok(())
 }

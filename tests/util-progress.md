@@ -307,3 +307,11 @@ compilation; `f90c.bat` forwards to it for compatibility. The source-combining
 helper and `.f90c-sources.f90` suffix retain their existing names. Test scripts
 use `target/debug/rfort.exe`; `RFORT_TEST_COMPILER` overrides that path, and the
 legacy `F90C_TEST_COMPILER` variable is also accepted.
+
+The native driver now owns source grouping and linking. `rfort` compiles ordered
+source groups directly; both Windows wrappers delegate to it. Windows toolchain
+paths are discovered at runtime, and Linux/macOS use explicit system C compiler
+paths with portable runtime adapters. See README.md for overrides and platform
+validation limits. `tests/test_driver.py` exercises the executable directly,
+including a copied executable outside the checkout. `tests/testsuite.rs` now
+passes module dependency sources together and no longer runs `git clean`.

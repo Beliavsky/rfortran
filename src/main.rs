@@ -1,4 +1,3 @@
-use crate::cli::Cli;
 use crate::codegen::Backend;
 use anyhow::Result;
 use cranelift_codegen::settings::{self, Configurable, Flags};
@@ -6,6 +5,7 @@ use structopt::StructOpt;
 
 mod ast;
 mod cli;
+mod driver;
 mod codegen;
 mod errors;
 mod ir;
@@ -40,10 +40,7 @@ const OBJDUMP_BYTES: Option<&[u8]> = None;
 #[derive(Debug, Clone)]
 struct BuildArtifact {
     object: std::path::PathBuf,
-    defines_modules: Vec<String>,
-    uses_modules: Vec<String>,
     has_program: bool,
-    link_deps: Vec<std::path::PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -58,11 +55,15 @@ fn main() -> Result<()> {
     if args.version {
         let version = env!("CARGO_PKG_VERSION");
         println!("rfort version: {}", version);
-        let linker_version = env!("LINKER_VERSION");
-        println!("linker version: {}", linker_version);
+        println!("Host target: {}", target_lexicon::Triple::host());
         return Ok(());
     }
 
+    if let Some(target) = &args.target {
+        if target != &target_lexicon::Triple::host().to_string() {
+            anyhow::bail!("cross-target compilation is not yet supported; build and run rfort on the target platform");
+        }
+    }
     match args.cmd.clone().unwrap_or(cli::Command::Help) {
         cli::Command::Lex { input, out } => {
             let src = utils::read_file_to_string(&input)?;
@@ -168,57 +169,8 @@ fn main() -> Result<()> {
                 println!("No problems found.");
             }
         }
-        cli::Command::Build { input, out, run } => {
-            let output = utils::default_object_output_path(&input);
-            if !args.quiet {
-                println!("Compiling file: {}", input.display());
-            }
-            if !input.exists() {
-                eprintln!("Error: Input file does not exist: {}", input.display());
-                std::process::exit(1);
-            }
-            let art = compile_to_object(&input, &output, args.wall, args.werror, &args, false)?;
-            if !args.quiet {
-                println!("Wrote object: {}", art.object.display());
-            }
-            if !art.has_program {
-                println!("No PROGRAM unit found; emitted object file only.");
-                return Ok(());
-            }
-            let exe_out = out.unwrap_or_else(|| utils::default_exe_output_path(&input));
-            link_executable(&[art.object.clone()], &exe_out, &args)?;
-            if !args.quiet {
-                println!("Linked: {}", exe_out.display());
-            }
-            let path = exe_out.canonicalize().unwrap();
-            let mut path_str = path.display().to_string();
-            if path_str.starts_with(r"\\?\") {
-                path_str = path_str[4..].to_string();
-            }
-            path_str = path_str.replace("\\", "/");
-            let file_size = utils::file_size(&exe_out)?;
-            if !args.quiet {
-                println!(
-                    "Compiled {} to '{}', [{} BYTES, {}]",
-                    exe_out.display(),
-                    path_str,
-                    file_size,
-                    utils::format_bytes(file_size)
-                );
-            } else {
-                println!("Successfully compiled to {}", path_str);
-            }
-            if run {
-                if !args.quiet {
-                    println!("Running executable: {}", exe_out.display());
-                    println!("-----------------------------------------");
-                }
-                let code = runtime::run_executable(&exe_out);
-                if !args.quiet {
-                    println!("-----------------------------------------");
-                    println!("{} exited with code {}", exe_out.display(), code);
-                }
-            }
+        cli::Command::Build { inputs, out, run } => {
+            driver::build(&inputs, out.or_else(|| args.out.clone()), run || args.run, false, &args)?;
         }
         cli::Command::EmitObj { input, out } => {
             let art = compile_to_object(&input, &out, args.wall, args.werror, &args, false)?;
@@ -272,72 +224,7 @@ fn main() -> Result<()> {
             runtime::interpret(&program);
         }
         cli::Command::Link { inputs, out } => {
-            let mut artifacts = Vec::new();
-            for inp in inputs {
-                if inp
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .map(|e| e.eq_ignore_ascii_case("f90"))
-                    .unwrap_or(false)
-                {
-                    let obj_out = utils::default_object_output_path(&inp);
-                    if !args.quiet {
-                        println!("Compiling: {}", inp.display());
-                    }
-                    let art =
-                        compile_to_object(&inp, &obj_out, args.wall, args.werror, &args, true)?;
-                    if !args.quiet {
-                        println!("  -> {}", obj_out.display());
-                    }
-                    artifacts.push(art);
-                } else {
-                    artifacts.push(BuildArtifact {
-                        object: inp,
-                        defines_modules: vec![],
-                        uses_modules: vec![],
-                        has_program: false,
-                        link_deps: vec![],
-                    });
-                }
-            }
-
-            compute_link_deps(&mut artifacts);
-
-            let mut objects: Vec<std::path::PathBuf> = Vec::new();
-            let mut seen = std::collections::HashSet::new();
-            for art in &artifacts {
-                if seen.insert(art.object.clone()) {
-                    objects.push(art.object.clone());
-                }
-                for d in &art.link_deps {
-                    if seen.insert(d.clone()) {
-                        objects.push(d.clone());
-                    }
-                }
-            }
-
-            let exe_out = if let Some(o) = out {
-                o
-            } else {
-                if let Some(prog_art) = artifacts.iter().find(|a| a.has_program) {
-                    let mut p = prog_art.object.clone();
-                    p.set_extension("exe");
-                    p
-                } else {
-                    let mut p = objects
-                        .get(0)
-                        .cloned()
-                        .unwrap_or_else(|| std::path::PathBuf::from("a.obj"));
-                    p.set_extension("exe");
-                    p
-                }
-            };
-
-            if !args.quiet {
-                println!("Linking {} object files...", objects.len());
-            }
-            link_executable(&objects, &exe_out, &args)?;
-            println!("Linked: {}", exe_out.display());
+            driver::build(&inputs, out.or_else(|| args.out.clone()), args.run, true, &args)?;
         }
         cli::Command::Help => {
             utils::print_help();
@@ -398,9 +285,11 @@ fn compile_to_object(
     }
     let program = initialized::instrument_with_source(program, &src, input.file_name().and_then(|name| name.to_str()).unwrap_or("<unknown>"))?;
     let lowered = ir::lower_to_ir_with_debug(&program, args.debug_ir)?;
-    let defines_modules = lowered.defines_modules.clone();
-    let uses_modules = lowered.uses_modules.clone();
     let has_program = lowered.has_program;
+    if !args.quiet {
+        if !lowered.defines_modules.is_empty() { eprintln!("Defines modules: {}", lowered.defines_modules.join(", ")); }
+        if !lowered.uses_modules.is_empty() { eprintln!("Uses modules: {}", lowered.uses_modules.join(", ")); }
+    }
     let module = lowered.module;
     let mut flag_builder = settings::builder();
     // Touch each guard page before using a large generated stack frame.
@@ -578,36 +467,6 @@ fn compile_to_object(
     }
     Ok(BuildArtifact {
         object: out.to_path_buf(),
-        defines_modules,
-        uses_modules,
         has_program,
-        link_deps: Vec::new(),
     })
-}
-fn compute_link_deps(arts: &mut [BuildArtifact]) {
-    use std::collections::HashMap;
-    let mut mod_map: HashMap<String, std::path::PathBuf> = HashMap::new();
-    for a in arts.iter() {
-        for m in &a.defines_modules {
-            mod_map.insert(m.clone(), a.object.clone());
-        }
-    }
-    for a in arts.iter_mut() {
-        a.link_deps.clear();
-        for u in &a.uses_modules {
-            if let Some(p) = mod_map.get(u) {
-                if *p != a.object {
-                    a.link_deps.push(p.clone());
-                }
-            }
-        }
-    }
-}
-
-fn link_executable(
-    objects: &[std::path::PathBuf],
-    out: &std::path::Path,
-    args: &Cli,
-) -> Result<()> {
-    linker::link(objects, out, args)
 }

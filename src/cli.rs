@@ -12,7 +12,7 @@ pub struct Cli {
     #[structopt(
         short = "o",
         long,
-        help = "Output object/executable path (defaults derived from first source)"
+        help = "Output object/executable path (defaults derived from last source)"
     )]
     pub out: Option<PathBuf>,
 
@@ -50,9 +50,15 @@ pub struct Cli {
     #[structopt(
         long = "quiet",
         short = "q",
-        help = "Suppress all output except errors"
+        help = "Suppress build progress (warnings and errors remain visible)"
     )]
     pub quiet: bool,
+
+    #[structopt(long, help = "Show compilation and linker commands")]
+    pub verbose: bool,
+
+    #[structopt(short = "c", long = "compile-only", help = "Emit an object without linking")]
+    pub compile_only: bool,
 
     #[structopt(long = "debug-ir", help = "Show IR before and after optimizations")]
     pub debug_ir: bool,
@@ -98,7 +104,8 @@ pub enum Command {
         input: PathBuf,
     },
     Build {
-        input: PathBuf,
+        #[structopt(required = true)]
+        inputs: Vec<PathBuf>,
         #[structopt(short = "o", long)]
         out: Option<PathBuf>,
         #[structopt(long)]
@@ -121,19 +128,11 @@ pub enum Command {
 
 impl Cli {
     pub fn normalize(mut self) -> Self {
-        if self.cmd.is_none() {
-            if self.inputs.len() > 1 {
-                self.cmd = Some(Command::Link {
-                    inputs: self.inputs.clone(),
-                    out: self.out.clone(),
-                });
-            } else if let Some(first) = self.inputs.get(0) {
-                self.cmd = Some(Command::Build {
-                    input: first.clone(),
-                    out: self.out.clone(),
-                    run: self.run,
-                });
-            }
+        self.quiet = self.quiet || !self.verbose;
+        if self.cmd.is_none() && !self.inputs.is_empty() {
+            self.cmd = Some(Command::Build {
+                inputs: self.inputs.clone(), out: self.out.clone(), run: self.run,
+            });
         }
         if let Some(Command::Lex {
             ref input,

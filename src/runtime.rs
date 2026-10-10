@@ -1446,15 +1446,3 @@ pub extern "C" fn f90c_read_str(out: *mut u8, len: usize) -> i32 {
     }
     0
 }
-
-pub fn run_executable(path: &std::path::Path) -> i32 {
-    use std::process::Command;
-
-    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-
-    match Command::new(path).status() {
-        Ok(status) if status.success() => 0,
-        Ok(status) => status.code().unwrap_or(-1),
-        Err(_) => -1,
-    }
-}

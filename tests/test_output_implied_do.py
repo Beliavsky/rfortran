@@ -10,7 +10,6 @@ import unittest
 from test_record_read import ROOT, COMPILER, build_commands
 
 
-@unittest.skipUnless(os.name == "nt", "Windows native linker configuration")
 class OutputImpliedDo(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="output-implied-do-")
