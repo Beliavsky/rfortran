@@ -524,6 +524,13 @@
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_stderr": ""
+    },
+    "76_defined_operators": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "14\n36\n18\n6\n  3.5\nF\nmatched\n10\n12\n"
     }
   }
 }

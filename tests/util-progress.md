@@ -297,8 +297,8 @@ READ on line 809). File-positioning statements require external-file support.
 Executing `read (iu,"(a)") text` still requires file-unit support (OPEN/CLOSE and
 unit-to-stream mapping). The internal READ of `nw,words` also needs multiple
 items and character arrays. Its character array parameters remain unsupported.
-Further blockers include user-defined dotted operators such as `.in.` and
-`.exclude.`. The utility library also exercises features beyond the currently
+The array forms of user-defined dotted operators such as `.in.` and
+`.exclude.` remain blockers. The utility library also exercises features beyond the currently
 implemented array, character, and I/O subsets.
 
 The compiler executable is now `rfort` (`rfort.exe` on Windows), built with
@@ -315,3 +315,28 @@ paths with portable runtime adapters. See README.md for overrides and platform
 validation limits. `tests/test_driver.py` exercises the executable directly,
 including a copied executable outside the checkout. `tests/testsuite.rs` now
 passes module dependency sources together and no longer runs `git clean`.
+
+The sixteenth language checkpoint adds expressions using user-defined dotted
+operators. Unary defined operators bind more tightly than exponentiation;
+binary defined operators bind below intrinsic operators and associate left to
+right. Names are case-insensitive. Module interfaces select scalar functions by
+operand type, kind and arity, with INTENT(IN), nonoptional dummy arguments.
+USE ONLY, private/public access, re-export and host association use the existing
+operator visibility rules. Mismatched and ambiguous overloads are diagnosed.
+Intrinsic-operator overload restrictions are unchanged.
+
+Constant/kind resolution now has a separate early entry point for overload
+selection. PURE validation still runs after operator calls and derived values
+are lowered, so it checks the actual selected function instead of a parser
+placeholder. It rejects calls to impure operator implementations from PURE
+procedures.
+
+Test 76 and `python tests/test_defined_operators.py` cover unary/binary
+precedence, integer/real dispatch, nested calls, re-export, and PURE calls.
+Native O0/O2 and interpreter output match gfortran. Unit tests cover invalid
+interfaces, inaccessible/missing overloads, type/rank mismatch, and the explicit
+rejection of array operands/results: the existing function lowering cannot yet
+pass these correctly. Thus this checkpoint does not implement the array-based
+`.in.` or character-array `.exclude.` operations used in util.f90. The full
+`kind.f90 util.f90 xutil.f90` build still stops at BACKSPACE, as described above;
+the user source files have not been modified.

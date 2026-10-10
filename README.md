@@ -117,6 +117,7 @@ python tests/test_record_read.py
 python tests/test_internal_read.py
 python tests/test_write.py
 python tests/test_output_implied_do.py
+python tests/test_defined_operators.py
 ```
 
 The Python tests use `target/debug/rfort` (with `.exe` on Windows).

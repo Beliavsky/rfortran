@@ -18,6 +18,18 @@ enum Ty {
 type Vars = HashMap<String, Ty>;
 type Bindings = HashMap<String, Vec<String>>;
 
+fn defined_operator(op: &str) -> bool {
+    op.starts_with('.') && !matches!(op, ".and." | ".or." | ".not." | ".eqv." | ".neqv.")
+}
+
+fn known_type(ty: &Ty) -> bool {
+    match ty {
+        Ty::Unknown => false,
+        Ty::Array(element, _) => known_type(element),
+        _ => true,
+    }
+}
+
 fn scalar(kind: &TypeSpec) -> Ty {
     Ty::Scalar(match kind {
         TypeSpec::Integer(None) => TypeSpec::Integer(Some(4)),
@@ -217,7 +229,12 @@ impl Resolver {
                                     .map(|p| vars.get(p).cloned().unwrap_or(Ty::Unknown))
                                     .collect(),
                                 result,
-                                inputs: params.iter().all(|p| inputs.contains(p)),
+                                inputs: params.iter().all(|p| inputs.contains(p))
+                                    && !body.iter().any(|s| match s {
+                                        Stmt::DummyIntent { intent, .. } => intent == "optional",
+                                        Stmt::DerivedDecl { attributes, .. } => attributes.iter().any(|a| a == "optional"),
+                                        _ => false,
+                                    }),
                                 subroutine: false,
                             },
                         )
@@ -328,20 +345,23 @@ impl Resolver {
                     }
                     let arity_ok = match operator.as_str() {
                         "+" | "-" => matches!(p.args.len(), 1 | 2),
+                        op if defined_operator(op) => matches!(p.args.len(), 1 | 2),
                         ".not." => p.args.len() == 1,
                         _ => p.args.len() == 2,
                     };
                     if !arity_ok || !p.inputs || p.subroutine {
-                        bail!("operator({operator}) function `{name}` must have the appropriate number of INTENT(IN) operands");
+                        bail!("operator({operator}) function `{name}` must have the appropriate number of nonoptional INTENT(IN) operands");
                     }
-                    if matches!(p.result, Ty::Unknown | Ty::Array(..))
+                    if !known_type(&p.result) || p.args.iter().any(|a| !known_type(a)) {
+                        bail!("operator({operator}) function `{name}` requires explicitly typed arguments and result");
+                    }
+                    if !defined_operator(operator) && (matches!(p.result, Ty::Array(..))
                         || p.args
                             .iter()
-                            .any(|a| matches!(a, Ty::Unknown | Ty::Array(..)))
-                    {
+                            .any(|a| matches!(a, Ty::Array(..)))) {
                         bail!("operator({operator}) function `{name}` requires explicitly typed scalar arguments and result");
                     }
-                    if !p.args.iter().any(|a| matches!(a, Ty::Derived(_))) {
+                    if !defined_operator(operator) && !p.args.iter().any(|a| matches!(a, Ty::Derived(_))) {
                         bail!("operator({operator}) overload `{name}` currently requires a derived-type operand");
                     }
                     let names = bindings.entry(operator.clone()).or_insert_with(Vec::new);
@@ -393,7 +413,7 @@ impl Resolver {
         Ok(visible)
     }
     fn select(&self, op: &str, args: &[Ty], visible: &Bindings) -> Result<Option<String>> {
-        if !args.iter().any(|a| matches!(a, Ty::Derived(_))) {
+        if !defined_operator(op) && !args.iter().any(|a| matches!(a, Ty::Derived(_))) {
             return Ok(None);
         }
         let matches: Vec<_> = visible
@@ -448,6 +468,18 @@ impl Resolver {
     }
     fn expression(&self, e: &mut Expr, vars: &Vars, visible: &Bindings) -> Result<Ty> {
         if let Expr::Call(name, args) = e {
+            if let Some(op) = name.strip_prefix("@defined_operator:") {
+                let op = op.to_owned();
+                let types = args.iter_mut().map(|a| self.expression(a, vars, visible)).collect::<Result<Vec<_>>>()?;
+                let target = self.select(&op, &types, visible)?.expect("defined operators always resolve or fail");
+                // Ordinary function lowering does not yet pass array descriptors.
+                // Do not silently treat array operands as scalar values.
+                if types.iter().any(|t| matches!(t, Ty::Array(..))) || matches!(self.procedures[&target].result, Ty::Array(..)) {
+                    bail!("operator({op}) resolves to `{target}`, but array operands/results in defined operator calls are not yet supported");
+                }
+                *name = target.clone();
+                return Ok(self.procedures[&target].result.clone());
+            }
             if name == "@unary_plus" {
                 let ty = self.expression(&mut args[0], vars, visible)?;
                 if let Some(target) = self.select("+", &[ty.clone()], visible)? {
@@ -500,6 +532,10 @@ impl Resolver {
                     match self.name_type(n, vars) {
                         Ty::Array(t, _) => *t,
                         _ => match n.as_str() {
+                            "@array_constructor" if !arg_types.is_empty() && arg_types.iter().all(|t| t == &arg_types[0]) => {
+                                let element = match &arg_types[0] { Ty::Array(t, _) => (**t).clone(), t => t.clone() };
+                                Ty::Array(Box::new(element), 1)
+                            }
                             "size" | "len" => scalar(&TypeSpec::Integer(None)),
                             "int" | "nint" | "floor" | "ceiling" | "real" | "dble" => {
                                 let kind = match args.get(1) {
@@ -677,7 +713,7 @@ impl Resolver {
 pub fn resolve(mut program: Program) -> Result<Program> {
     fn needs_constants(body: &[Stmt]) -> bool {
         body.iter().any(|s| match s {
-            Stmt::GenericInterface { .. } => true,
+            Stmt::GenericInterface { .. } | Stmt::OperatorInterface { .. } => true,
             Stmt::VarDecl {
                 kind: TypeSpec::IntegerKind(_),
                 ..
@@ -713,7 +749,7 @@ pub fn resolve(mut program: Program) -> Result<Program> {
     }
     // Overload selection must see resolved kind parameters and literal suffixes.
     if needs_constants(&program.body) {
-        program = crate::parameters::resolve(program)?;
+        program = crate::parameters::resolve_constants(program)?;
     }
     let mut resolver = Resolver::default();
     resolver.collect(&program.body)?;
@@ -743,6 +779,37 @@ pub fn resolve(mut program: Program) -> Result<Program> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn defined_operator_diagnostics_and_visibility() {
+        let original = include_str!("../tests/76_defined_operators.f90");
+        lower(original).unwrap();
+        for (source, message) in [
+            (original.replace("x=2 .PLUS. 3*4", "x=2 .plus. 3.0"), "no matching operator(.plus.)"),
+            (original.replace("x=2 .PLUS. 3*4", "x=.plus. 3"), "no matching operator(.plus.)"),
+            (original.replace("x=2 .PLUS. 3*4", "x=2 .missing. 3"), "no matching operator(.missing.)"),
+            (original.replace("module procedure add_int, add_real", "module procedure add_int, add_int"), "ambiguous operator(.plus.)"),
+            (original.replace("integer, intent(in) :: a,b", "integer, intent(out) :: a,b"), "INTENT(IN) operands"),
+            (original.replace("integer, intent(in) :: a,b", "integer, intent(in), optional :: a,b"), "nonoptional"),
+            (original.replace("end interface operator(.plus.)", "end interface operator(.wrong.)"), "does not match"),
+            (original.replace("use public_ops, only: operator(.plus.),", "use public_ops, only:"), "no matching operator(.plus.)"),
+            (original.replace("public :: operator(.plus.),", "public ::"), "not a public entity"),
+        ] {
+            let error = lower(&source).unwrap_err().to_string();
+            assert!(error.contains(message), "expected {message}: {error}");
+        }
+    }
+
+    #[test]
+    fn defined_array_operators_fail_before_incorrect_scalar_lowering() {
+        let source = "module m\ninterface operator(.in.)\nmodule procedure member\nend interface\ncontains\nlogical function member(x,a) result(found)\ninteger,intent(in)::x,a(3)\nfound=any(a==x)\nend function member\nend module m\nuse m\ninteger::a(3)\na=[1,3,5]\nprint *,3 .in. a\nend";
+        for operand in ["a", "[1,3,5]", "a(:)"] {
+            let error = lower(&source.replace("3 .in. a", &format!("3 .in. {operand}"))).unwrap_err().to_string();
+            assert!(error.contains("array operands/results"), "{error}");
+        }
+        let error = lower(&source.replace("3 .in. a", "3 .in. a(1)")).unwrap_err().to_string();
+        assert!(error.contains("no matching operator(.in.)"), "{error}");
+    }
+
     #[test]
     fn generic_dispatch_preserves_rank_and_local_array_shadowing() {
         let source = "module m\ninterface g\nmodule procedure one, two\nend interface\ncontains\nsubroutine one(x)\nreal :: x(:)\nend subroutine one\nsubroutine two(x)\nreal :: x(2,2)\nend subroutine two\ninteger function local()\ninteger :: g(2)\ng=3\nlocal=g(1)\nend function local\nend module m\nuse m, only: g\nreal :: a(2),b(2,2)\ncall g(a+1.0)\ncall g(b)\nend";

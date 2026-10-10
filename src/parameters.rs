@@ -100,8 +100,14 @@ fn character_parameter(expr: &Expr, kind: &TypeSpec) -> Result<Expr> {
     Ok(Expr::Str(value))
 }
 
-pub fn resolve(mut program: Program) -> Result<Program> {
+pub fn resolve(program: Program) -> Result<Program> {
     crate::purity::validate(&program)?;
+    resolve_constants(program)
+}
+
+// Operator selection needs kinds before calls and derived components have
+// been lowered. Purity is checked by resolve() after that lowering.
+pub(crate) fn resolve_constants(mut program: Program) -> Result<Program> {
     let mut modules = Modules::new();
     for stmt in &mut program.body {
         if let Stmt::Module { name, body } = stmt {

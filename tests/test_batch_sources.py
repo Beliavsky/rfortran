@@ -63,6 +63,11 @@ class BatchSources(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Source file not found", result.stderr)
 
+    def test_defined_operators(self):
+        source = self.directory / "defined operators.f90"
+        source.write_text((ROOT / "tests/76_defined_operators.f90").read_text())
+        self.check_build([source], "14\n36\n18\n6\n  3.5\nF\nmatched\n10\n12")
+
     def test_compiler_command_name(self):
         from test_record_read import COMPILER
         for argument in ("--help", "--version"):
