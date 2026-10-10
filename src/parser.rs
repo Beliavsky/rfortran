@@ -139,6 +139,7 @@ fn human_expected(name: &str) -> String {
 
 fn human_token(tok: &TokenKind) -> String {
     match tok {
+        TokenKind::FileControl(name) | TokenKind::FilePosition(name) => format!("keyword {name}"),
         TokenKind::KwType => "keyword type".into(),
         TokenKind::KwClass => "keyword class".into(),
         TokenKind::KwProcedure => "keyword procedure".into(),

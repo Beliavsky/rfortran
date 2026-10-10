@@ -68,6 +68,14 @@ class BatchSources(unittest.TestCase):
         source.write_text((ROOT / "tests/76_defined_operators.f90").read_text())
         self.check_build([source], "14\n36\n18\n6\n  3.5\nF\nmatched\n10\n12")
 
+    def test_file_positioning(self):
+        import json
+        source = self.directory / "file positioning.f90"
+        fixture = ROOT / "tests/77_file_positioning.f90"
+        source.write_text(fixture.read_text().replace("'tests/io/file_records.txt'", "'" + (ROOT / "tests/io/file_records.txt").as_posix() + "'"))
+        expected = json.loads((ROOT / "tests/expectations.json").read_text(encoding="utf-8"))["cases"][fixture.stem]["program_stdout"]
+        self.check_build([source], expected.strip())
+
     def test_compiler_command_name(self):
         from test_record_read import COMPILER
         for argument in ("--help", "--version"):

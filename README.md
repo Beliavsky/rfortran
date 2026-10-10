@@ -52,6 +52,19 @@ and source inputs are protected from overwrite. A single source is compiled
 directly. The old `f90c-sources.ps1` helper is retained for legacy use; the
 native driver does not invoke it.
 
+## File input
+
+The current external-file I/O subset supports read-only sequential formatted
+files: `OPEN(unit=20,file='data.txt',status='old',action='read')`,
+`READ(20,'(a)') text`, `BACKSPACE(20)`, `REWIND(20)`, and `CLOSE(20)`.
+FILE must be constant; STATUS and ACTION must be specified as shown. Units are
+0 through 1023 except preconnected units 5 and 6. `(A)` reads accept one scalar
+CHARACTER destination; input records must contain non-NUL ASCII. Reads consume
+the entire record and handle LF/CRLF endings.
+File output, external list-directed input, NEWUNIT and IOSTAT are not yet
+supported. Connections are shared within a compiled source group. Native file
+I/O currently requires a 64-bit target.
+
 ## Toolchains
 
 Windows x64 is tested. Linux and macOS have explicit driver paths but still
@@ -118,6 +131,7 @@ python tests/test_internal_read.py
 python tests/test_write.py
 python tests/test_output_implied_do.py
 python tests/test_defined_operators.py
+python tests/test_file_io.py
 ```
 
 The Python tests use `target/debug/rfort` (with `.exe` on Windows).

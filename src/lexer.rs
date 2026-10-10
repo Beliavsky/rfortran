@@ -87,6 +87,8 @@ pub enum TokenKind {
     RBracket,
     KwError,
     KwAllocate,
+    FileControl(String),
+    FilePosition(String),
     KwType,
     KwClass,
     KwProcedure,
@@ -314,6 +316,33 @@ pub fn lex(input: &str) -> Vec<Token> {
                 Some(TokenKind::EndInterfaceName(n.clone()))
             } else { replacement };
             if let Some(kind)=replacement {tokens[start].kind=kind;}
+        }
+        // File-control words are contextual, including after a single-line IF.
+        if let TokenKind::Ident(word) = &tokens[start].kind {
+            let word = word.to_ascii_lowercase();
+            if matches!(word.as_str(), "open" | "close" | "backspace" | "rewind") {
+                let mut begin = start;
+                while begin > 0 && same_statement(&input[tokens[begin-1].span.end..tokens[begin].span.start]) { begin -= 1; }
+                let inline_if = matches!(tokens[begin].kind, TokenKind::KwIf) && start > begin
+                    && matches!(tokens[start-1].kind, TokenKind::RParen)
+                    && tokens[begin..start].iter().fold(0i32, |d,t| d + match t.kind {TokenKind::LParen=>1,TokenKind::RParen=>-1,_=>0}) == 0;
+                if begin == start || inline_if {
+                    if matches!(tokens.get(start+1).map(|t| &t.kind), Some(TokenKind::LParen)) {
+                        let mut depth = 0;
+                        for end in start+1..tokens.len() {
+                            match tokens[end].kind {TokenKind::LParen=>depth+=1,TokenKind::RParen=>depth-=1,_=>{}}
+                            if depth == 0 {
+                                let following=tokens.get(end+1).filter(|t|same_statement(&input[tokens[end].span.end..t.span.start]));
+                                if !matches!(following.map(|t|&t.kind),Some(TokenKind::Eq)) { tokens[start].kind=TokenKind::FileControl(word.clone()); }
+                                break;
+                            }
+                        }
+                    } else if matches!(word.as_str(), "backspace" | "rewind")
+                        && tokens.get(start+1).is_some_and(|t| !matches!(t.kind,TokenKind::Eq) && same_statement(&input[tokens[start].span.end..t.span.start])) {
+                        tokens[start].kind=TokenKind::FilePosition(word);
+                    }
+                }
+            }
         }
         // WRITE is contextual: preserve variables, arrays, and procedures with
         // this name. Mark empty output lists separately because the grammar

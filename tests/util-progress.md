@@ -291,7 +291,7 @@ O0/O2 and interpreted output agree, and the successful fixture agrees with
 gfortran apart from numeric field widths. The script supports F90C_TEST_COMPILER.
 The batch suite also verifies silent compilation and execution of the fixture.
 
-The full utility program still does not compile. The next parser blocker is
+At the fifteenth checkpoint, the next parser blocker was
 `backspace(iu)` (combined source line 808; the error is reported at the following
 READ on line 809). File-positioning statements require external-file support.
 Executing `read (iu,"(a)") text` still requires file-unit support (OPEN/CLOSE and
@@ -338,5 +338,34 @@ interfaces, inaccessible/missing overloads, type/rank mismatch, and the explicit
 rejection of array operands/results: the existing function lowering cannot yet
 pass these correctly. Thus this checkpoint does not implement the array-based
 `.in.` or character-array `.exclude.` operations used in util.f90. The full
-`kind.f90 util.f90 xutil.f90` build still stops at BACKSPACE, as described above;
+`kind.f90 util.f90 xutil.f90` build still stopped at BACKSPACE at this checkpoint;
 the user source files have not been modified.
+
+The seventeenth checkpoint adds read-only sequential formatted external files.
+OPEN requires explicit STATUS='OLD', ACTION='READ', and a constant FILE name;
+optional ACCESS='SEQUENTIAL' and FORM='FORMATTED' are accepted. Unit numbers
+must be in 0..1023 excluding preconnected units 5/6. The supported `(A)` READ
+accepts one scalar CHARACTER destination, pads/truncates it, and consumes the
+whole record. BACKSPACE supports repeated backward positioning and is a no-op
+at the beginning; REWIND returns to the beginning. CLOSE permits reopening a
+unit and is a no-op for an unconnected unit. Both parenthesized positioning
+controls and bare BACKSPACE/REWIND unit syntax are accepted. These words remain
+available as ordinary variable and procedure names.
+
+Native code calls nonvariadic host C file functions, using 64-bit offsets;
+the interpreter uses Rust file/seek operations. LF, CRLF, long and blank
+records, and a final record without newline are covered. File connections are
+shared across procedures in a compiled source group. Separate-object sharing,
+external list-directed numeric/array reads, file writes, NEWUNIT, IOSTAT, and
+other file modes remain outside this subset. Unsupported controls are rejected;
+open/position/read failures terminate with a runtime diagnostic. PURE procedures
+cannot perform these operations, and file-unit expressions are checked for
+initialization before use.
+
+Test 77 and `python tests/test_file_io.py` compare native O0/O2 and interpreter
+output with gfortran, including repeated backspaces, multiple units, reopening,
+truncation, line endings, and missing/unconnected files. The batch suite also
+checks the new fixture. The original utility files remain unchanged. Their
+combined source now parses past BACKSPACE and stops at computed CHARACTER
+length in `join`: `character(len=(size(words)-1)*len(sep)+sum(len_trim(words)))`,
+combined-source line 852. Full utility compilation is still incomplete.

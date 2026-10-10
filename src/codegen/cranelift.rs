@@ -1,3 +1,5 @@
+#[path = "file_io.rs"]
+mod file_io;
 use anyhow::Result;
 use cranelift_codegen::{isa, settings};
 use cranelift_object::{ObjectBuilder, ObjectModule};
@@ -149,12 +151,13 @@ fn random_value(b: &mut FunctionBuilder, state: ir::Value, double: bool) -> ir::
 // even when the destination is shorter; a following READ starts on the next one.
 fn read_record(
     module: &mut ObjectModule, b: &mut FunctionBuilder, ptr_ty: ir::Type,
-    dc: &mut u32, destination: ir::Value, length: usize,
+    dc: &mut u32, destination: ir::Value, length: usize, file: Option<ir::Value>,
 ) -> Result<()> {
     use ir::{types, AbiParam, MemFlags, condcodes::IntCC};
     let mut sig=module.make_signature();
+    if file.is_some() { sig.params.push(AbiParam::new(ptr_ty)); }
     sig.returns.push(AbiParam::new(types::I32));
-    let id=module.declare_function("getchar",Linkage::Import,&sig)?;
+    let id=module.declare_function(if file.is_some() { "fgetc" } else { "getchar" },Linkage::Import,&sig)?;
     let getchar=module.declare_func_in_func(id,b.func);
     let mut sig=module.make_signature();
     sig.params.extend([AbiParam::new(ptr_ty),AbiParam::new(types::I32),AbiParam::new(ptr_ty)]);
@@ -175,7 +178,7 @@ fn read_record(
     b.ins().jump(read,&[zero.into()]);
     b.switch_to_block(read);
     let count=b.block_params(read)[0];
-    let call=b.ins().call(getchar,&[]);let ch=b.inst_results(call)[0];
+    let call=b.ins().call(getchar,&file.into_iter().collect::<Vec<_>>());let ch=b.inst_results(call)[0];
     let is_eof=b.ins().icmp_imm(IntCC::SignedLessThan,ch,0);
     b.ins().brif(is_eof,eof,&[],check,&[]);
     b.switch_to_block(eof);b.seal_block(eof);
@@ -225,6 +228,26 @@ fn read_record(
         b.ins().trap(ir::TrapCode::unwrap_user(1));
     }
     b.switch_to_block(done);b.seal_block(done);
+    if let Some(file) = file {
+        let error=file_io::call(module,b,"ferror",&[file],types::I32)?;
+        let okay=b.ins().icmp_imm(IntCC::Equal,error,0);
+        file_io::require(module,b,ptr_ty,dc,okay,"file input failed")?;
+        // Binary file streams preserve CR. Strip it only immediately before LF,
+        // and only if it was stored rather than truncated past the destination.
+        let newline=b.ins().icmp_imm(IntCC::Equal,ch,10);
+        let nonempty=b.ins().icmp_imm(IntCC::UnsignedGreaterThan,count,0);
+        let fits=b.ins().icmp_imm(IntCC::UnsignedLessThanOrEqual,count,length as i64);
+        let strip=b.ins().band(newline,nonempty);let strip=b.ins().band(strip,fits);
+        let inspect=b.create_block();let finish=b.create_block();
+        b.ins().brif(strip,inspect,&[],finish,&[]);
+        b.switch_to_block(inspect);b.seal_block(inspect);
+        let offset=b.ins().iadd_imm(count,-1);let address=b.ins().iadd(destination,offset);
+        let byte=b.ins().load(types::I8,MemFlags::new(),address,0);
+        let cr=b.ins().icmp_imm(IntCC::Equal,byte,13);
+        let blank=b.ins().iconst(types::I8,32);let value=b.ins().select(cr,blank,byte);
+        b.ins().store(MemFlags::new(),value,address,0);
+        b.ins().jump(finish,&[]);b.switch_to_block(finish);b.seal_block(finish);
+    }
     Ok(())
 }
 
@@ -2238,13 +2261,25 @@ fn gen_stmts(
                     b.ins().store(MemFlags::new(),value,address,0);
                     continue;
                 }
+                if matches!(name.as_str(), "@file_open" | "@file_close" | "@file_rewind" | "@file_backspace") {
+                    let unit=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);
+                    let unit=to_i64(b,unit);
+                    let path=match args.get(1) {Some(IExpr::Str(path))=>Some(path.as_str()),_=>None};
+                    file_io::operation(module,b,ptr_ty,dc,name,unit,path)?;
+                    continue;
+                }
                 if name == "@read_record" {
-                    let [IExpr::Ident(dest),IExpr::IntLit(length)]=args.as_slice() else {anyhow::bail!("invalid record READ");};
+                    let [IExpr::Ident(dest),IExpr::IntLit(length),..]=args.as_slice() else {anyhow::bail!("invalid record READ");};
                     let (slot,capacity)=chars.get(dest).ok_or_else(|| anyhow::anyhow!("record READ requires CHARACTER storage"))?;
                     let length:usize=length.parse()?;
                     anyhow::ensure!(length<=*capacity,"record READ exceeds CHARACTER storage");
                     let pointer=b.ins().stack_addr(ptr_ty,*slot,0);
-                    read_record(module,b,ptr_ty,dc,pointer,length)?;
+                    let file=if let Some(unit)=args.get(2) {
+                        let value=eval_expr(b,ex,ptr_ty,unit,ints,reals,bools,func_meta);
+                        let unit=to_i64(b,value);
+                        Some(file_io::handle(module,b,ptr_ty,dc,unit)?)
+                    } else {None};
+                    read_record(module,b,ptr_ty,dc,pointer,length,file)?;
                     continue;
                 }
                 if name == "@formatted_print" {
@@ -2749,6 +2784,11 @@ impl Backend for CraneliftBackend {
             cranelift_module::default_libcall_names(),
         )?;
         let mut obj = ObjectModule::new(builder);
+        let file_units = obj.declare_data(".rfort.file_units", Linkage::Local, true, false)?;
+        let mut file_data = DataDescription::new();
+        file_data.define_zeroinit(1024 * 8);
+        file_data.set_align(8);
+        obj.define_data(file_units, &file_data)?;
         let random_state = obj.declare_data(".f90c.random_state", Linkage::Local, true, false)?;
         let mut random_data = DataDescription::new();
         random_data.define(1u64.to_le_bytes().to_vec().into_boxed_slice());

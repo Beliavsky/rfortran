@@ -36,6 +36,8 @@ extern {
         KW_NONE => TokenKind::KwNone,
         KW_PRINT => TokenKind::KwPrint,
         KW_READ => TokenKind::KwRead,
+        FILE_CONTROL => TokenKind::FileControl(<String>),
+        FILE_POSITION => TokenKind::FilePosition(<String>),
         KW_WRITE => TokenKind::KwWrite,
         KW_WRITE_EMPTY => TokenKind::KwWriteEmpty,
         KW_IF => TokenKind::KwIf,
@@ -269,6 +271,8 @@ Stmts: Vec<Stmt> = {
 };
 
 Stmt: Stmt = {
+    <op:FILE_CONTROL> LPAREN <args:IoControls> RPAREN => Stmt::CallSub { name:format!("@io_{op}"), args },
+    <op:FILE_POSITION> <unit:RhsExpr> => Stmt::CallSub { name:format!("@io_{op}"), args:vec![unit] },
     KW_INTERFACE <name:Ident> <procedures:OperatorProcedures> KW_END KW_INTERFACE <end_name:END_INTERFACE_NAME?> => Stmt::GenericInterface { name, procedures, end_name },
     KW_INTERFACE KW_OPERATOR LPAREN <operator:Operator> RPAREN <procedures:OperatorProcedures> KW_END KW_INTERFACE <end_operator:EndOperator?> => Stmt::OperatorInterface { operator, procedures, end_operator },
     KW_ERROR KW_STOP <arg: RhsExpr> => Stmt::CallSub { name: "@error_stop".into(), args: vec![arg] },
@@ -372,6 +376,15 @@ ParamList: Vec<String> = {
 };
 
 CondExpr: Expr = { <e: RhsExpr> => e };
+
+IoControls: Vec<Expr> = {
+    <arg:IoControl> => vec![arg],
+    <mut args:IoControls> COMMA <arg:IoControl> => {args.push(arg);args},
+};
+IoControl: Expr = {
+    <key:Ident> EQ <value:RhsExpr> => Expr::Call(format!("@io_spec:{key}"),vec![value]),
+    <value:RhsExpr> => value,
+};
 
 TypeSpec: TypeSpec = {
     KW_REAL LPAREN KW_KIND EQ <kind: Ident> RPAREN => TypeSpec::RealKind(kind),

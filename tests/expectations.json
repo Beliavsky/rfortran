@@ -531,6 +531,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": "14\n36\n18\n6\n  3.5\nF\nmatched\n10\n12\n"
+    },
+    "77_file_positioning": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " [alpha]\n [     ]\n [     ]\n [12345]\n [123456789]\n [     ]\n [last]\n [last]\n [alpha]\n [alpha]\n [alpha]\n"
     }
   }
 }

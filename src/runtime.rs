@@ -11,6 +11,11 @@ struct FuncDef {
 pub fn interpret(program: &Program) {
     thread_local! { static RANDOM_STATE: std::cell::Cell<u64> = const { std::cell::Cell::new(1) }; }
     RANDOM_STATE.with(|state| state.set(1));
+    thread_local! { static FILES: std::cell::RefCell<crate::file_io::Files> = std::cell::RefCell::new(crate::file_io::Files::default()); }
+    FILES.with(|files| *files.borrow_mut() = crate::file_io::Files::default());
+    fn io_result<T>(result: anyhow::Result<T>) -> T {
+        match result { Ok(value)=>value, Err(error)=>{eprintln!("Runtime error: {error:#}");std::process::exit(1);} }
+    }
     fn random_value(double: bool) -> f64 {
         RANDOM_STATE.with(|state| {
             let mut x = state.get();
@@ -1026,10 +1031,24 @@ pub fn interpret(program: &Program) {
                         frame.env_int.insert(dest.clone(),i64::from(byte));
                         idx+=1;continue;
                     }
+                    if matches!(name.as_str(), "@file_open" | "@file_close" | "@file_rewind" | "@file_backspace") {
+                        let fr=call_stack.last().unwrap().clone();
+                        let unit=eval_expr(&args[0],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
+                        let path=match args.get(1) {Some(Expr::Str(path))=>Some(path.as_str()),_=>None};
+                        io_result(FILES.with(|files| files.borrow_mut().operation(name,unit,path)));
+                        idx+=1;continue;
+                    }
                     if name == "@read_record" {
                         let Expr::Ident(dest)=&args[0] else {unreachable!()};
                         let Expr::IntLit(length)=&args[1] else {unreachable!()};
                         let length:usize=length.parse().unwrap();
+                        if let Some(unit) = args.get(2) {
+                            let fr=call_stack.last().unwrap().clone();
+                            let unit=eval_expr(unit,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
+                            let input=io_result(FILES.with(|files| files.borrow_mut().record(unit,length)));
+                            call_stack.last_mut().unwrap().env_str.insert(dest.clone(),input);
+                            idx+=1;continue;
+                        }
                         let mut input=String::new();
                         match std::io::stdin().read_line(&mut input) {
                             Ok(0) | Err(_) => {eprintln!("Runtime error: end of file or input error in formatted READ");std::process::exit(1);}

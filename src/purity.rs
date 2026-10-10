@@ -77,7 +77,7 @@ pub fn validate(program: &Program) -> Result<()> {
                         writable(dest)?;
                     }
                 }
-                Stmt::CallSub {name,..} if name == "@formatted_read" || name == "@read_record" || name == "@write" => bail!("PURE procedure cannot perform external I/O"),
+                Stmt::CallSub {name,..} if name == "@formatted_read" || name == "@read_record" || name == "@write" || name.starts_with("@io_") || name.starts_with("@file_") => bail!("PURE procedure cannot perform external I/O"),
                 Stmt::CallSub {name,args} if name == "@forall" => {
                     for e in args.iter().skip(1) {expression(e,&locals,known)?;}
                 }

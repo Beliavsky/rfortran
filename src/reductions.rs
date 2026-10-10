@@ -216,6 +216,11 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                 };
             }
         }
+        if let Stmt::CallSub { name, args } = &stmt {
+            if name.starts_with("@io_") {
+                stmt = crate::file_io::lower(name, args, &symbols.variables)?;
+            }
+        }
         if let Stmt::Print { items } = &stmt {
             if items.iter().any(crate::output::contains_implied_do) {
                 stmt = crate::output::lower(items, &symbols.variables, serial)?;
@@ -237,9 +242,9 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
         }
         if let Stmt::CallSub {name,args} = &mut stmt {
             if name == "@formatted_read" {
-                if crate::parameters::integer_constant(&args[0]).ok() != Some(5) {
-                    bail!("formatted READ currently supports only standard input (* or unit 5)");
-                }
+                let external = crate::parameters::integer_constant(&args[0]).ok() != Some(5);
+                if external { crate::file_io::unit(&args[0], &symbols.variables)?; }
+                let unit = args[0].clone();
                 let Expr::Str(format)=&args[1] else {unreachable!()};
                 if format.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_ascii_lowercase() != "(a)" {
                     bail!("formatted READ currently supports only the (A) format");
@@ -253,6 +258,7 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                 if !dims.is_empty() {bail!("formatted READ requires a scalar CHARACTER variable");}
                 let length=length.unwrap_or(1);
                 *args=vec![Expr::Ident(dest.clone()),int(length as i64)];
+                if external { args.push(unit); }
                 *name="@read_record".into();
             }
         }
@@ -452,7 +458,7 @@ mod tests {
             ("character(len=8) :: text", "read(*,'(a)') 'literal'", false),
             ("character(len=8) :: text", "read(*,'(a)') text,text", false),
             ("character(len=8) :: text", "read(*,'(a4)') text", false),
-            ("character(len=8) :: text", "read(10,'(a)') text", false),
+            ("character(len=8) :: text", "read(10,'(a)') text", true),
             ("character(len=8) :: text\ninteger :: iu", "read(iu,'(a)') text", false),
             ("character(len=*),parameter :: text='constant'", "read(*,'(a)') text", false),
         ] {

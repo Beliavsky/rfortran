@@ -12,6 +12,8 @@ the author recorded in this repository's Git history.
 - `src/array_calls.rs`
 - `src/derived.rs`
 - `src/driver.rs`
+- `src/file_io.rs`
+- `src/codegen/file_io.rs`
 - `src/elemental.rs`
 - `src/formatting.rs`
 - `src/imports.rs`
