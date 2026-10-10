@@ -171,6 +171,46 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             symbols.insert(temp.clone(),(kind,vec![int(count)]));
             *e = Expr::Ident(temp);
         }
+        Expr::Call(name,args) if matches!(name.as_str(),"@pack" | "@unpack") => {
+            let unpack = name == "@unpack";
+            let has_vector = unpack || !matches!(&args[2],Expr::Call(tag,_) if tag == "@no_vector");
+            for arg in &mut args[..3] { lower_expr(arg,symbols,prefix,serial)?; }
+            let Expr::Call(_,dims) = &args[3] else { unreachable!() };
+            let count = dims.iter().try_fold(1i64,|n,d| n.checked_mul(constant(d)?).context("PACK/UNPACK result extent overflow"))?;
+            *serial += 1;
+            let temp = format!("@packing_array_{serial}");
+            let index = format!("@packing_index_{serial}");
+            let cursor = format!("@packing_cursor_{serial}");
+            let id = |n: &str| Expr::Ident(n.into());
+            let (mask,mask_len,mask_kind) = element(&args[1],&id(&index),symbols)?;
+            if mask_kind != TypeSpec::Logical { bail!("PACK/UNPACK MASK must be LOGICAL"); }
+            let (source,source_len,kind) = element(&args[0],&id(if unpack {&cursor} else {&index}),symbols)?;
+            let source_len = source_len.context("PACK ARRAY / UNPACK VECTOR must be an array")?;
+            if !unpack && mask_len.is_some_and(|n| n!=source_len) { bail!("PACK MASK shape must conform to ARRAY"); }
+            let set = |index,value| Stmt::AssignIndex { name:temp.clone(),indices:vec![index],value };
+            let next = Stmt::Assign { name:cursor.clone(),value:bin(BinOp::Add,id(&cursor),int(1)) };
+            let guard = |limit| Stmt::If { cond:bin(BinOp::Gt,id(&cursor),int(limit)),then_body:vec![Stmt::CallSub { name:"@error_stop".into(),args:vec![Expr::Str(format!("{} VECTOR has too few elements for MASK",if unpack {"UNPACK"} else {"PACK"}))] }],else_body:None };
+            let mut body;
+            if unpack {
+                let (field,field_len,field_kind) = element(&args[2],&id(&index),symbols)?;
+                if !same_kind(&kind,&field_kind) { bail!("UNPACK VECTOR and FIELD must have the same type and kind"); }
+                if field_len.is_some_and(|n| n!=count) { bail!("UNPACK FIELD shape must conform to MASK"); }
+                body = vec![Stmt::If { cond:mask,then_body:vec![next,guard(source_len),set(id(&index),source)],else_body:Some(vec![set(id(&index),field)]) }];
+            } else {
+                body = vec![Stmt::If { cond:mask,then_body:vec![next,guard(count),set(id(&cursor),source)],else_body:None }];
+            }
+            prefix.push(Stmt::ArrayDecl { kind:kind.clone(),name:temp.clone(),dims:vec![int(count)] });
+            prefix.push(Stmt::VarDecl { kind:TypeSpec::Integer(Some(8)),names:vec![index.clone(),cursor.clone()] });
+            prefix.push(Stmt::Assign { name:cursor.clone(),value:int(0) });
+            prefix.push(Stmt::Do { var:index.clone(),start:int(1),end:int(if unpack {count} else {source_len}),body:std::mem::take(&mut body) });
+            if !unpack && has_vector {
+                let (vector,_,vector_kind) = element(&args[2],&id(&index),symbols)?;
+                if !same_kind(&kind,&vector_kind) { bail!("PACK ARRAY and VECTOR must have the same type and kind"); }
+                prefix.push(Stmt::Do { var:index.clone(),start:bin(BinOp::Add,id(&cursor),int(1)),end:int(count),body:vec![set(id(&index),vector)] });
+            }
+            symbols.insert(temp.clone(),(kind,vec![int(count)]));
+            *e = Expr::Ident(temp);
+        }
         Expr::Call(name,args) if name == "@spread" => {
             lower_expr(&mut args[0],symbols,prefix,serial)?;
             let stride = constant(&args[1])?.max(1);

@@ -462,7 +462,25 @@ fn constructor_items(items: &[Expr], constants: &Constants, output: &mut Vec<Exp
 
 fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
     if let Expr::Call(name, args) = expr {
-        if name == "spread" {
+        if matches!(name.as_str(),"pack" | "unpack") {
+            let unpack = name == "unpack";
+            let keys = if unpack { ["vector","mask","field"] } else { ["array","mask","vector"] };
+            let mut slots: [Option<Expr>;3] = [None,None,None];
+            let mut keywords = false;
+            for (position,arg) in args.iter().enumerate() {
+                let (slot,value) = match arg {
+                    Expr::Call(tag,values) if tag.starts_with("@keyword:") => {
+                        keywords = true;
+                        (keys.iter().position(|key| *key == &tag[9..]).with_context(|| format!("{name}: unknown keyword `{}`",&tag[9..]))?,&values[0])
+                    }
+                    _ => { if keywords { bail!("{name}: positional argument after keyword argument"); } (position,arg) }
+                };
+                if slot >= 3 { bail!("{name}: too many arguments"); }
+                if slots[slot].replace(value.clone()).is_some() { bail!("{name}: duplicate argument"); }
+            }
+            *args = vec![slots[0].take().with_context(|| format!("{name} requires {}",keys[0].to_uppercase()))?,slots[1].take().context("PACK/UNPACK requires MASK")?,
+                if unpack { slots[2].take().context("UNPACK requires FIELD")? } else { slots[2].take().unwrap_or(Expr::Call("@no_vector".into(),vec![])) }];
+        } else if name == "spread" {
             let mut slots: [Option<Expr>; 3] = [None,None,None];
             let mut keywords = false;
             for (position,arg) in args.iter().enumerate() {

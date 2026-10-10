@@ -138,3 +138,10 @@ at 11/18 passes.
 all insertion positions for matrix sources, nested calls, constructors and empty
 results. The first eight transformation checks now pass in isolation. PACK and
 UNPACK still block the complete probe; the selected sample remains at 11/18 passes.
+
+`106_pack_unpack.f90` and `python tests/test_pack_unpack.py` cover PACK with VECTOR
+or literal masks, and UNPACK with scalar/array FIELD. Tests include vector tails,
+aliases, inactive undefined elements and runtime errors for short vectors.
+The external transformation probe now has one unsupported operation: PACK with
+a runtime mask and no VECTOR. With that one assertion omitted, its other ten
+assertions pass; the unmodified selected suite remains at 11/18 passes.

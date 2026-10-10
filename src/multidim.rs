@@ -363,6 +363,21 @@ impl Lowerer {
         }
         match e {
             Expr::Ident(n) => self.check_association(n)?,
+            Expr::Call(n, _) if matches!(n.as_str(),"pack" | "unpack") => {
+                let dims = self.shape(e,shapes)?.unwrap();
+                let Expr::Call(n,args) = e else { unreachable!() };
+                if n == "pack" {
+                    let source = self.shape(&args[0],shapes)?.context("PACK ARRAY must be an array")?;
+                    if let Some(mask) = self.shape(&args[1],shapes)? {
+                        if mask != source { bail!("PACK MASK shape must conform to ARRAY"); }
+                    }
+                } else if let Some(field) = self.shape(&args[2],shapes)? {
+                    if field != dims { bail!("UNPACK FIELD shape must conform to MASK"); }
+                }
+                for arg in args.iter_mut() { self.expression(arg,shapes)?; }
+                args.push(Expr::Call("@packing_shape".into(),dims.into_iter().map(int).collect()));
+                *n = format!("@{n}");
+            }
             Expr::Call(n, _) if n == "spread" => {
                 let dims = self.shape(e,shapes)?.unwrap();
                 let Expr::Call(n,args) = e else { unreachable!() };
@@ -523,6 +538,30 @@ impl Lowerer {
 
     fn shape(&self, e: &Expr, shapes: &Shapes) -> Result<Option<Vec<i64>>> {
         match e {
+            Expr::Call(n,args) if n == "unpack" => {
+                let vector = self.shape(&args[0],shapes)?.context("UNPACK VECTOR must be a rank-one array")?;
+                if vector.len()!=1 { bail!("UNPACK VECTOR must be a rank-one array"); }
+                Ok(Some(self.shape(&args[1],shapes)?.context("UNPACK MASK must be an array")?))
+            }
+            Expr::Call(n,args) if n == "pack" => {
+                let source = self.shape(&args[0],shapes)?.context("PACK ARRAY must be an array")?;
+                let count = if !matches!(&args[2],Expr::Call(tag,_) if tag == "@no_vector") {
+                    let vector = self.shape(&args[2],shapes)?.context("PACK VECTOR must be a rank-one array")?;
+                    if vector.len()!=1 { bail!("PACK VECTOR must be a rank-one array"); }
+                    vector[0]
+                } else {
+                    match &args[1] {
+                        Expr::Logical(value) => if *value { total(&source)? } else { 0 },
+                        Expr::Call(tag,items) if tag == "@array_constructor" && items.iter().all(|e| matches!(e,Expr::Logical(_))) => items.iter().filter(|e| matches!(e,Expr::Logical(true))).count() as i64,
+                        _ => bail!("PACK with a runtime MASK currently requires VECTOR; runtime-sized results are not yet supported"),
+                    }
+                };
+                Ok(Some(vec![count]))
+            }
+            Expr::Call(n,args) if matches!(n.as_str(),"@pack" | "@unpack") => {
+                let Expr::Call(_,dims) = &args[3] else { unreachable!() };
+                Ok(Some(dims.iter().map(crate::parameters::integer_constant).collect::<Result<Vec<_>>>()?))
+            }
             Expr::Call(n,args) if n == "spread" => {
                 let mut dims = self.shape(&args[0],shapes)?.unwrap_or_default();
                 let dim = crate::parameters::integer_constant(&args[1]).context("SPREAD DIM must currently be a constant INTEGER")?;

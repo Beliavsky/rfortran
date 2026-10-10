@@ -394,3 +394,13 @@ DIM and NCOPIES. It inserts the replication dimension at DIM; zero or negative
 NCOPIES produces an empty result. Sections, nested calls, constructors, overlapping
 assignments and PURE usage are supported. Runtime DIM/NCOPIES and CHARACTER
 sources remain unsupported. Run `python tests/test_spread.py`.
+
+PACK supports fixed-shape numeric/LOGICAL arrays with scalar or conformable
+LOGICAL masks. A supplied rank-one VECTOR sets the result length and supplies
+trailing values after selected ARRAY elements. Without VECTOR, MASK must currently
+be a logical literal or a constructor of logical literals, so the result length
+is known at compile time. Runtime-sized PACK results remain unsupported.
+UNPACK supports a rank-one VECTOR, fixed-shape LOGICAL MASK and scalar or
+conformable FIELD of the same type/kind as VECTOR. Both intrinsics preserve
+array-element order and check at runtime that VECTOR has enough elements.
+CHARACTER arrays remain unsupported. Run `python tests/test_pack_unpack.py`.

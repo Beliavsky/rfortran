@@ -1188,3 +1188,33 @@ fixture 105 agrees with gfortran. The isolated release compatibility report
 `target/ofort-spread.json` remains at 11/18 passes and seven compile failures,
 with all reference runs succeeding. PACK and UNPACK still block the complete
 transformation probe. Linux/macOS remain untested.
+
+
+## Checkpoint 45: fixed-size PACK and UNPACK
+
+PACK accepts numeric/LOGICAL ARRAY and scalar/conformable LOGICAL MASK. VECTOR,
+when supplied, must be rank one with the same element type/kind and determines
+the result size. Selected ARRAY elements are copied in array-element order,
+followed by VECTOR elements at the remaining result positions. Without VECTOR,
+MASK currently must be a logical literal or a constructor of logical literals;
+other masks are rejected explicitly because their result size depends on runtime
+data. UNPACK uses MASK's full shape, consumes VECTOR in order for true mask
+elements and selects scalar/conformable FIELD elsewhere. VECTOR/FIELD kinds
+must match. Both operations materialize results to preserve overlapping inputs,
+and stop with an intrinsic-specific error if VECTOR is too short. PURE usage
+is supported. CHARACTER arrays and runtime-sized PACK results remain unsupported.
+
+Fixture 106 covers matrix masks, VECTOR tails, literal masks, empty PACK results,
+FIELD arrays and scalars, aliases, logical/double-precision values and PURE usage.
+Focused tests confirm inactive source/field elements and unused vector prefixes
+are not read, short-vector failures occur in interpreter/native O0/O2, and
+shape/type/argument errors are diagnosed. Removing only the unsupported runtime
+PACK-without-VECTOR assertion from an isolated copy of the external transformation
+probe leaves ten passing assertions; the original external case is unchanged.
+
+Windows validation: 74 Rust unit tests, 106 native fixtures, 46 batch wrapper
+tests and nine focused PACK/UNPACK, SPREAD and masked-reduction tests passed.
+Focused suites passed with debug and rebuilt release compilers; fixture 106
+agrees with gfortran. The isolated release report `target/ofort-packing.json`
+remains at 11/18 passes and seven compile failures, with all reference runs
+succeeding. Linux/macOS remain untested.
