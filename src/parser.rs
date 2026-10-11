@@ -12,6 +12,18 @@ pub mod fortran {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn impure_elemental_prefixes_and_contextual_identifiers() {
+        for prefix in ["impure elemental", "elemental impure", "IMPURE &\n ELEMENTAL"] {
+            let source=format!("{prefix} subroutine f(i)\ninteger,intent(in)::i\nprint *,i\nend subroutine f");
+            let program=super::parse_with_src(&source,&crate::lexer::lex(&source),"impure.f90").unwrap();
+            assert!(matches!(&program.body[0],crate::ast::Stmt::Subroutine {pure:false,elemental:true,..}));
+        }
+        let tokens=crate::lexer::lex("integer::impure,elemental\nimpure=elemental\ncall impure(elemental)");
+        assert!(!tokens.iter().any(|t|matches!(t.kind,crate::lexer::TokenKind::KwImpure|crate::lexer::TokenKind::KwElemental)));
+        let source="pure impure subroutine f()\nend subroutine f";
+        assert!(super::parse_with_src(source,&crate::lexer::lex(source),"invalid.f90").is_err());
+    }
+    #[test]
     fn recursive_prefixes_and_contextual_identifiers() {
         for prefix in ["recursive", "pure recursive", "recursive pure", "pure &\n recursive"] {
             let source=format!("module m\ncontains\n{prefix} subroutine f(a)\ninteger,intent(inout)::a\na=a+1\nend subroutine f\nend module m\nprogram main\ninteger::recursive\nrecursive=3\ncall f(recursive)\ncontains\nrecursive integer function g(a) result(v)\ninteger::a,v\nv=a\nend function g\nend program main");
@@ -118,6 +130,7 @@ fn human_expected(name: &str) -> String {
         "KW_PROGRAM" => "keyword program".into(),
         "KW_RESULT" => "keyword result".into(),
         "KW_PURE" => "keyword pure".into(),
+        "KW_IMPURE" => "keyword impure".into(),
         "KW_RECURSIVE" => "keyword recursive".into(),
         "KW_END" => "keyword end".into(),
         "KW_IMPLICIT" => "keyword implicit".into(),
@@ -230,6 +243,7 @@ fn human_token(tok: &TokenKind) -> String {
         TokenKind::KwFunction => "keyword function".into(),
         TokenKind::KwResult => "keyword result".into(),
         TokenKind::KwPure => "keyword pure".into(),
+        TokenKind::KwImpure => "keyword impure".into(),
         TokenKind::KwRecursive => "keyword recursive".into(),
         TokenKind::KwWhere | TokenKind::KwWhereBlock => "keyword where".into(),
         TokenKind::KwElseWhere => "keyword elsewhere".into(),

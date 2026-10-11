@@ -112,7 +112,10 @@ native driver does not invoke it.
 
 Scalar calls to ELEMENTAL subroutines support explicit INTENT(IN), INTENT(OUT),
 and INTENT(INOUT), omitted OPTIONAL arguments, named arguments, and PRESENT tests.
-ELEMENTAL implies PURE; PURE restrictions are checked. Supported dummy types
+ELEMENTAL implies PURE unless IMPURE is specified; PURE restrictions are checked.
+IMPURE ELEMENTAL functions and subroutines may perform external I/O and other
+supported side effects. Either prefix order (`impure elemental` or `elemental
+impure`) is accepted. Supported dummy types
 include INTEGER, REAL, DOUBLE PRECISION, LOGICAL, and CHARACTER. Assumed
 CHARACTER dummy lengths are specialized to each scalar actual argument, with
 normal assignment padding and truncation.
@@ -120,11 +123,23 @@ normal assignment padding and truncation.
 The four specific `set_optional_real`, `set_optional_integer`,
 `set_optional_logical`, and `set_optional_character` routines from the utility
 module are covered by the regression tests. Positional and named scalar calls
-are supported, including through supported generic interfaces. Array actual
-arguments to ELEMENTAL subroutines and the separate allocatable setters remain
-outside this subset. Unsupported actual expressions and mismatched types produce
+are supported, including through supported generic interfaces. Numeric and
+LOGICAL array actuals with constant rank-one extents are also supported for
+ELEMENTAL subroutines: constructors, supported array expressions, whole arrays,
+and constant sections. Scalar inputs are broadcast; writable actuals must be
+arrays or sections when any actual is an array. Calls run in array element order,
+preserving impure I/O and side effects. Output sections need not be initialized.
+Mismatched extents and calls to impure procedures from PURE or FORALL contexts
+are rejected. Dynamic extents, multidimensional whole-array subroutine actuals,
+CHARACTER array actuals, and the separate allocatable setters remain outside
+this subset. Unsupported actual expressions and mismatched types produce
 diagnostics. Explicit-length CHARACTER dummies currently require matching actual
 lengths.
+
+`tests/126_impure_elemental.f90` and `python tests/test_impure_elemental.py`
+check constructors, writable arrays and sections, OPTIONAL/named arguments,
+impure elemental function calls, empty arrays, side-effect order, and diagnostics
+through interpreter/native O0/O2 execution with gfortran comparisons.
 
 ## Array bounds inquiries
 
@@ -739,6 +754,7 @@ python tests/test_named_formats.py
 python tests/test_runtime_formats.py
 python tests/test_nonadvancing_output.py
 python tests/test_elemental_setters.py
+python tests/test_impure_elemental.py
 python tests/test_do_steps.py
 python tests/test_where.py
 python tests/test_explicit_bounds.py

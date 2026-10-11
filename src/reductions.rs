@@ -165,6 +165,13 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
         _ => bail!("unsupported expression in numeric array reduction"),
     }
 }
+/// Select scalar storage without materializing or reading an OUT actual.
+pub(crate) fn elemental_element(e: &Expr, index: &Expr, shapes: &HashMap<String,(TypeSpec,Vec<Expr>)>) -> Result<(Expr,Option<i64>,TypeSpec)> {
+    let mut symbols=Symbols::new();
+    symbols.variables=shapes.clone();
+    element(e,index,&symbols)
+}
+
 /// Materialize an array expression before a specialized procedure call, using
 /// the same constructor/PACK lowering as ordinary expressions.
 pub(crate) fn argument(e: &mut Expr, shapes: &HashMap<String,(TypeSpec,Vec<Expr>)>, prefix: &mut Vec<Stmt>, serial: &mut usize) -> Result<(TypeSpec,i64,Expr)> {

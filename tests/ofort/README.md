@@ -216,6 +216,25 @@ The full discovery inventory has not been rerun after this change. Its five
 bit-output differences are resolved; the previously recorded REAL128 difference
 and 372 compile failures have not been reassessed by this selected run.
 
+### Impure elemental procedures (2026-10-11)
+
+`ximpure_elemental.f90` now passes against gfortran at O0/O2. The release
+compiler retains all 68 passes from the bit-intrinsic selection, for **69
+selected passes**. `target/ofort-impure-elemental-release.json` records those
+cases and `xelemental.f90`, which now compiles and runs but still fails the
+output comparison because DOUBLE PRECISION arrays print only six significant
+digits. Its scalar DOUBLE PRECISION output retains greater precision.
+The full discovery inventory has not been rerun.
+
+IMPURE ELEMENTAL subroutines now expand supported rank-one array calls in
+element order. Constructors, constant sections, scalar input broadcasting,
+writable array arguments, OPTIONAL arguments, and named arguments are covered.
+Ordinary ELEMENTAL procedures retain their implicit PURE restrictions. The
+new local fixture is `126_impure_elemental.f90`; `python
+tests/test_impure_elemental.py` passes five focused tests with debug and release
+builds through interpreter/native O0/O2 execution, including gfortran checks.
+The local suite passes 84 Rust unit tests and 126 Fortran fixtures.
+
 ### Quick-sample history
 
 - baseline.json: 3/18 cases pass at both O0/O2; 15 compile failures.

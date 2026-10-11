@@ -15,6 +15,90 @@ struct Routine {
     body: Vec<Stmt>,
 }
 
+fn array_actual(e: &Expr, shapes: &Shapes) -> bool {
+    match e {
+        Expr::Ident(name) => shapes.get(name).is_some_and(|(_,dims)|!dims.is_empty()),
+        Expr::Section {..} => true,
+        Expr::Un(_,a) => array_actual(a,shapes),
+        Expr::Bin(_,a,b) => array_actual(a,shapes)||array_actual(b,shapes),
+        Expr::Call(name,args) if !shapes.contains_key(name) => {
+            matches!(name.as_str(),"@array_constructor"|"@matrix_view"|"@packed_view"|"reshape"|"pack")
+                || args.iter().any(|a|array_actual(a,shapes))
+        }
+        _ => false,
+    }
+}
+
+// Expand array calls before ordinary scalar specialization. Keeping this in a
+// separate function also limits the stack frame of the recursive `expand` pass.
+fn elemental_array_call(name: &str, args: &[Expr], routine: &Routine, shapes: &Shapes, readonly: &HashSet<String>, serial: &mut usize) -> Result<Option<Stmt>> {
+    if !args.iter().any(|a|array_actual(a,shapes)) {return Ok(None);}
+    if args.len()>routine.params.len() {bail!("too many arguments to `{name}`");}
+    *serial+=1;
+    let index=format!("@elemental_index_{serial}");
+    let position=Expr::Ident(index.clone());
+    let mut prefix=vec![Stmt::VarDecl {kind:TypeSpec::Integer(None),names:vec![index.clone()]}];
+    let mut local=shapes.clone();
+    let mut extent=None;
+    let mut scalars=vec![];
+    let mut before=vec![];
+    let mut after=vec![];
+    for (param,actual) in routine.params.iter().zip(args) {
+        if crate::named_arguments::omitted(actual) {scalars.push(actual.clone());continue;}
+        let intent=routine.body.iter().find_map(|s|match s {
+            Stmt::DummyIntent {name,intent} if name==param && intent.starts_with("intent(")=>Some(intent.as_str()),_=>None,
+        }).context("ELEMENTAL dummy requires explicit INTENT")?;
+        let array=array_actual(actual,&local);
+        if intent!="intent(in)" && !array {bail!("ELEMENTAL writable dummy `{param}` requires an array actual when any argument is an array");}
+        if intent!="intent(in)" && matches!(actual,Expr::Ident(n)|Expr::Section {name:n,..} if readonly.contains(n)) {
+            bail!("cannot pass PARAMETER as writable argument `{param}`");
+        }
+        let (kind,value)=if array {
+            if intent!="intent(in)" && !matches!(actual,Expr::Ident(_)|Expr::Section {..}) {
+                bail!("ELEMENTAL writable dummy `{param}` requires a whole array or section variable");
+            }
+            let (value,count,kind)=if intent=="intent(in)" {
+                let mut captured=actual.clone();
+                let (kind,capacity,length)=crate::reductions::argument(&mut captured,&local,&mut prefix,serial)?;
+                let count=crate::parameters::integer_constant(&length).context("ELEMENTAL array calls currently require constant rank-one extents")?;
+                if count!=capacity {bail!("ELEMENTAL array calls currently require constant rank-one extents");}
+                for s in &prefix {match s {
+                    Stmt::ArrayDecl {kind,name,dims}=>{local.insert(name.clone(),(kind.clone(),dims.clone()));},
+                    Stmt::VarDecl {kind,names}=>for n in names {local.insert(n.clone(),(kind.clone(),vec![]));},_=>{}
+                }}
+                (crate::reductions::elemental_element(&captured,&position,&local)?.0,count,kind)
+            } else {
+                // An OUT section must select storage without reading its unset values.
+                let (value,count,kind)=crate::reductions::elemental_element(actual,&position,&local)?;
+                (value,count.context("ELEMENTAL writable argument must be an array")?,kind)
+            };
+            if extent.is_some_and(|n|n!=count) {bail!("ELEMENTAL array actual shapes do not conform");}
+            extent=Some(count);
+            (kind,value)
+        } else {(scalar_actual_kind(actual,&local)?,actual.clone())};
+        *serial+=1;
+        let temp=format!("@elemental_actual_{serial}");
+        let declaration=Stmt::VarDecl {kind,names:vec![temp.clone()]};
+        if array {
+            before.push(declaration);
+            if intent!="intent(out)" {before.push(Stmt::Assign {name:temp.clone(),value:value.clone()});}
+            if intent!="intent(in)" {
+                let Expr::Index(array,indices)=value else {bail!("ELEMENTAL writable argument must identify array elements");};
+                after.push(Stmt::AssignIndex {name:array,indices,value:Expr::Ident(temp.clone())});
+            }
+        } else {
+            // Evaluate scalar input expressions once, even for a zero-size call.
+            prefix.push(declaration);
+            prefix.push(Stmt::Assign {name:temp.clone(),value});
+        }
+        scalars.push(Expr::Ident(temp));
+    }
+    before.push(Stmt::CallSub {name:name.into(),args:scalars});
+    before.extend(after);
+    prefix.push(Stmt::Do {var:index,start:Expr::IntLit("1".into()),end:Expr::IntLit(extent.unwrap().to_string()),body:vec![Stmt::Block {body:before}]});
+    Ok(Some(Stmt::Block {body:prefix}))
+}
+
 pub(crate) fn scalar_actual_kind(e: &Expr, shapes: &Shapes) -> Result<TypeSpec> {
     use crate::ast::BinOp;
     match e {
@@ -639,6 +723,14 @@ fn expand(
                 if active.contains(name) {
                     bail!("recursive specialized subroutine calls are not yet supported");
                 }
+                if r.elemental {
+                    if let Some(mut expanded)=elemental_array_call(name,args,r,&shapes,&readonly,serial)? {
+                        let Stmt::Block {body}=&mut expanded else {unreachable!()};
+                        expand(body,&shapes,routines,active,serial)?;
+                        *s=expanded;
+                        continue;
+                    }
+                }
                 if args.len() > r.params.len() {
                     bail!("too many arguments to `{name}`");
                 }
@@ -713,7 +805,7 @@ fn expand(
                                 TypeSpec::Character(expected) if expected.unwrap_or(1) == length.unwrap_or(1) => {},
                                 _ => bail!("type or CHARACTER length mismatch for dummy `{p}`"),
                             }
-                        } else if kind != actual_kind {
+                        } else if !matches!((&kind,&actual_kind),(TypeSpec::Integer(a),TypeSpec::Integer(b)) if a.unwrap_or(4)==b.unwrap_or(4)) && kind != actual_kind {
                             bail!("type mismatch for dummy `{p}`");
                         }
                     }

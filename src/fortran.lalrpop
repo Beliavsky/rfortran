@@ -27,6 +27,7 @@ extern {
         KW_FUNCTION => TokenKind::KwFunction,
         KW_RESULT => TokenKind::KwResult,
         KW_PURE => TokenKind::KwPure,
+        KW_IMPURE => TokenKind::KwImpure,
         KW_RECURSIVE => TokenKind::KwRecursive,
         KW_ELEMENTAL => TokenKind::KwElemental,
         KW_FORALL => TokenKind::KwForall,
@@ -174,12 +175,22 @@ FuncDef: Stmt = {
 
 #[inline]
 FunctionPrefix: (bool,bool) = {
-    <prefix:ProcedureModifier*> => (prefix.iter().any(|p| p.0),prefix.iter().any(|p| p.1)),
+    <prefix:ProcedureModifier*> =>? {
+        let pure=prefix.iter().any(|p|p.0==Some(true));
+        let impure=prefix.iter().any(|p|p.0==Some(false));
+        let elemental=prefix.iter().any(|p|p.1);
+        if pure && impure {
+            Err(lalrpop_util::ParseError::User {error:"a procedure cannot specify both PURE and IMPURE"})
+        } else {
+            Ok((pure || elemental && !impure,elemental))
+        }
+    },
 };
-ProcedureModifier: (bool,bool) = {
-    KW_PURE => (true,false),
-    KW_ELEMENTAL => (true,true),
-    KW_RECURSIVE => (false,false),
+ProcedureModifier: (Option<bool>,bool) = {
+    KW_PURE => (Some(true),false),
+    KW_IMPURE => (Some(false),false),
+    KW_ELEMENTAL => (None,true),
+    KW_RECURSIVE => (None,false),
 };
 
 FunctionDef: Stmt = {

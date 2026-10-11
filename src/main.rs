@@ -182,6 +182,7 @@ fn main() -> Result<()> {
             if sema_errs.is_empty() && !any_err {
                 println!("No problems found.");
             }
+            if any_err { anyhow::bail!("parse failed"); }
         }
         cli::Command::Build { inputs, out, run } => {
             driver::build(&inputs, out.or_else(|| args.out.clone()), run || args.run, false, &args)?;

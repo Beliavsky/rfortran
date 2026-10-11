@@ -874,6 +874,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 8 14 6 -11\n .TRUE. 11 2 10\n 5 7\n 10\n 1 8\n 127 -128 0\n 127 0 0\n -1 0 .TRUE.\n 9223372036854775807 0 0\n 5 8 5\n .TRUE.\n"
+    },
+    "126_impure_elemental": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 2 1.41421\n 3 1.73205\n 4 2.0\n 11\n 12\n 13\n 11 12 13\n 14\n 14\n 14\n 14 14 14\n 7 7 7\n 14 14 14\n 4\n 2\n 3\n 8 4 6\n 9 3.0\n"
     }
   }
 }
