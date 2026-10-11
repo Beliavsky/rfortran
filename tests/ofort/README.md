@@ -187,3 +187,9 @@ scalar CHARACTER arguments with per-call lengths. The original `xoptional.f90`
 now passes at O0/O2 against gfortran. The isolated release report
 `target/ofort-optional-procedures.json` has 17/18 passes; overlapping CHARACTER
 array/substring assignment is the remaining compile failure.
+
+`114_character_comparisons.f90` and `python tests/test_character_comparisons.py`
+cover scalar CHARACTER relations, blank padding, concatenations, TRIM, empty
+strings and loop-condition reevaluation. This fixes a prerequisite for checking
+overlap results; the remaining external probe still needs CHARACTER array
+storage and substring assignment support.

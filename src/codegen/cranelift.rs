@@ -581,7 +581,10 @@ fn eval_expr(
             }
         }
         IExpr::Ident(id) => {
-            if let Some(ss) = ints.get(id) {
+            if let Some(ss) = ints.get(&format!("@character_pointer:{id}")) {
+                let a = storage_addr(b, ptr_ty, *ss);
+                CgVal::I64(b.ins().load(ir::types::I64, MemFlags::new(), a, 0))
+            } else if let Some(ss) = ints.get(id) {
                 let a = storage_addr(b, ptr_ty, *ss);
                 CgVal::I64(b.ins().load(ir::types::I64, MemFlags::new(), a, 0))
             } else if let Some(ss) = reals.get(id) {
@@ -1829,6 +1832,11 @@ fn gen_stmts(
                             0,
                         ));
                         chars.insert(name.clone(), (ss, len));
+                        let address=b.ins().stack_addr(ptr_ty,ss,0);
+                        let pointer=b.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,8,0));
+                        let value=if ptr_ty==types::I64 {address} else {b.ins().uextend(types::I64,address)};
+                        b.ins().stack_store(value,pointer,0);
+                        ints.insert(format!("@character_pointer:{name}"),pointer.into());
                     }
                     crate::ast::TypeSpec::Logical => {
                         if let [IExpr::IntLit(length)] = dims.as_slice() {
@@ -3231,6 +3239,25 @@ impl Backend for CraneliftBackend {
                     );
                 }
                 for (idx, pname) in f.params.iter().enumerate() {
+                    if let Some(length)=f.body.iter().find_map(|s|match s {
+                        IStmt::DeclVar(TypeSpec::Character(length),name,_) if name==pname => Some(length.unwrap_or(1)),
+                        _=>None,
+                    }) {
+                        let source=b.block_params(entry)[idx];
+                        let source=if ptr_ty==types::I64 {source} else {b.ins().ireduce(ptr_ty,source)};
+                        let slot=b.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,(length+1) as u32,0));
+                        let address=b.ins().stack_addr(ptr_ty,slot,0);
+                        let count=b.ins().iconst(ptr_ty,length as i64);
+                        file_io::call(&mut obj,&mut b,"memcpy",&[address,source,count],ptr_ty)?;
+                        let zero=b.ins().iconst(types::I8,0);
+                        b.ins().store(ir::MemFlags::new(),zero,address,length as i32);
+                        chars.insert(pname.clone(),(slot,length));
+                        let pointer=b.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,8,0));
+                        let value=if ptr_ty==types::I64 {address} else {b.ins().uextend(types::I64,address)};
+                        b.ins().stack_store(value,pointer,0);
+                        ints.insert(format!("@character_pointer:{pname}"),pointer.into());
+                        continue;
+                    }
                     let slot = b.create_sized_stack_slot(ir::StackSlotData::new(
                         ir::StackSlotKind::ExplicitSlot,
                         8,

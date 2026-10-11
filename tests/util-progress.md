@@ -1449,3 +1449,46 @@ and native O0/O2 execution. The focused output comparisons agree with gfortran.
 The isolated release report `target/ofort-optional-procedures.json` records
 17/18 passes at O0/O2. The remaining failure is overlapping CHARACTER
 array/substring assignment. Linux/macOS remain untested.
+
+## Checkpoint 53: scalar CHARACTER comparisons
+
+The remaining overlap probe exposed a separate correctness issue: scalar
+CHARACTER comparisons fell through numeric comparison code. Lower comparisons
+to captured, blank-padded CHARACTER temporaries and a bytewise comparison that
+retains the first differing byte. The resulting integer ordering supports all
+six relational operators in both interpreter and native execution, reusing the
+existing character assignment and byte-read operations. Operands are evaluated
+once; fixed-length variables, ASCII literals, concatenations, TRIM and zero
+lengths are supported. Mixed CHARACTER/numeric comparisons are diagnosed.
+
+DO WHILE conditions that need lowering now place their executable captures at
+the start of each iteration and exit when the condition is false. Declarations
+are hoisted before the loop. This also handles numeric reductions in conditions
+and ensures CYCLE reevaluates the condition.
+
+Fixture 114 and the focused tests cover all six relations, unequal lengths,
+blank padding, empty strings, first-difference ordering, TRIM/concatenations,
+logical assignment, IF, DO WHILE/CYCLE, scalar CHARACTER dummy arguments and
+mixed-type diagnostics. CHARACTER array storage and substring assignments still
+block the remaining external overlap probe.
+
+The full-suite check also exposed a latent function-argument bug in fixture 64:
+its CHARACTER comparison had previously succeeded through numeric zero/zero
+comparison. Fixed-length CHARACTER function actuals are now captured into local
+temporaries and passed by address in the native scalar ABI; the callee copies
+the declared number of bytes into its own CHARACTER storage. Interpreter calls
+receive the same captured text. Function-to-function forwarding works. Dummies
+must be read-only, and actuals must have fixed lengths at least as large as the
+dummy; longer actuals are truncated to the dummy length. Assumed lengths,
+writable dummies and subroutine forwarding from these function dummies remain
+unsupported. Focused tests cover different strings, longer actuals, empty
+arguments, forwarding and diagnostics so a constant comparison result cannot
+mask another argument-passing regression.
+
+Validation on Windows: 75 Rust unit tests, all 114 native fixtures, 46 batch
+driver tests and five focused CHARACTER tests passed. The focused tests passed
+with both debug and rebuilt release compilers in interpreter/native O0/O2 modes,
+with output compared to gfortran. The isolated release report
+`target/ofort-character-comparisons.json` remains at 17/18 passes at O0/O2;
+overlapping CHARACTER array/substring assignment is still the sole compile
+failure. Linux/macOS remain untested.

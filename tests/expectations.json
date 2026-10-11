@@ -790,6 +790,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 5.0 10.0\n 5.0\n [tag:] 4 5.0\n [start] 5 5.0\n [abc] 3 5.0\n [] 0 5.0\n 5.0\n 15.0\n [none ]\n [done ]\n 10 30\n"
+    },
+    "114_character_comparisons": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " .FALSE. .TRUE. .TRUE. .TRUE. .FALSE. .FALSE.\n .TRUE. .TRUE. .TRUE. .TRUE.\n .TRUE. .TRUE. .TRUE. .TRUE.\n .TRUE. .TRUE. .TRUE. .TRUE.\n .TRUE. .FALSE. .TRUE.\n 123\n 1 .TRUE. .TRUE. .TRUE.\n .TRUE. .FALSE.\n"
     }
   }
 }

@@ -11,6 +11,7 @@ use std::collections::HashMap;
 struct Symbols {
     variables: HashMap<String,(TypeSpec,Vec<Expr>)>,
     elementals: HashMap<String,TypeSpec>,
+    character_functions: HashMap<String,Vec<Option<usize>>>,
 }
 impl Symbols { fn new() -> Self { Self::default() } }
 impl std::ops::Deref for Symbols {
@@ -233,6 +234,61 @@ fn lower_location(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, s
     symbols.insert(temp.clone(),(result_kind,if scalar {vec![]} else {vec![int(output_len)]}));
     *e = Expr::Ident(temp);
     Ok(())
+}
+
+// Capture both operands at a common padded length before comparing bytes. This
+// also handles runtime TRIM lengths without relying on NUL-terminated strcmp.
+fn character_capacity(e: &Expr, symbols: &Symbols) -> Result<Option<usize>> {
+    Ok(match e {
+        Expr::Str(s) => {
+            if !s.is_ascii() || s.contains('\0') { bail!("CHARACTER comparison requires non-NUL ASCII text"); }
+            Some(s.len())
+        }
+        Expr::Ident(n) => match symbols.get(n) {
+            Some((TypeSpec::Character(n), dims)) if dims.is_empty() => Some(n.unwrap_or(1)),
+            _ => None,
+        },
+        Expr::Bin(BinOp::Concat, a, b) => match (character_capacity(a,symbols)?, character_capacity(b,symbols)?) {
+            (Some(a),Some(b)) => Some(a.checked_add(b).context("CHARACTER comparison is too large")?),
+            _ => None,
+        },
+        Expr::Call(n,args) if n.eq_ignore_ascii_case("trim") && args.len()==1 => character_capacity(&args[0],symbols)?,
+        _ => None,
+    })
+}
+
+fn lower_character_comparison(op: BinOp, a: &Expr, b: &Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, serial: &mut usize) -> Result<Option<Expr>> {
+    let lengths = (character_capacity(a,symbols)?,character_capacity(b,symbols)?);
+    let length = match lengths {
+        (None,None) => return Ok(None),
+        (Some(a),Some(b)) => a.max(b),
+        _ => bail!("CHARACTER comparison requires two scalar CHARACTER operands"),
+    };
+    if length >= i32::MAX as usize { bail!("CHARACTER comparison is too large"); }
+    *serial += 1;
+    let names: Vec<String> = ["left","right","index","a","b","order"].iter()
+        .map(|part| format!("@character_compare_{serial}_{part}")).collect();
+    let id = |i: usize| Expr::Ident(names[i].clone());
+    for (i,name) in names.iter().enumerate() {
+        let kind = if i<2 {TypeSpec::Character(Some(length))} else {TypeSpec::Integer(Some(8))};
+        prefix.push(Stmt::VarDecl {kind:kind.clone(), names:vec![name.clone()]});
+        symbols.insert(name.clone(),(kind,vec![]));
+    }
+    for (i,source) in [a,b].into_iter().enumerate() {
+        prefix.push(Stmt::CallSub {name:"@character_assign".into(),args:vec![id(i),source.clone(),int(length as i64)]});
+    }
+    prefix.push(Stmt::Assign {name:names[5].clone(),value:int(0)});
+    let mut body = Vec::new();
+    for i in 0..2 {
+        body.push(Stmt::CallSub {name:"@internal_read_byte".into(),args:vec![id(i+3),id(i),id(2),int(length as i64)]});
+    }
+    body.push(Stmt::If {cond:bin(BinOp::Ne,id(3),id(4)),then_body:vec![
+        Stmt::Assign {name:names[5].clone(),value:bin(BinOp::Sub,id(3),id(4))}
+    ],else_body:None});
+    prefix.push(Stmt::Do {var:names[2].clone(),start:int(0),end:int(length as i64-1),body:vec![
+        Stmt::If {cond:bin(BinOp::Eq,id(5),int(0)),then_body:body,else_body:None}
+    ]});
+    Ok(Some(bin(op,id(5),int(0))))
 }
 
 fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, serial: &mut usize, expand_elementals: bool) -> Result<()> {
@@ -629,9 +685,15 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
         }
         Expr::Call(tag, _) if matches!(tag.as_str(),"@matrix_view" | "@packed_view") => {},
         Expr::Call(_, args) | Expr::Index(_, args) => for arg in args { lower_expr_impl(arg, symbols, prefix, serial, expand_elementals)?; },
-        Expr::Bin(_, a, b) => {
+        Expr::Bin(op, a, b) => {
             lower_expr_impl(a, symbols, prefix, serial, expand_elementals)?;
             lower_expr_impl(b, symbols, prefix, serial, expand_elementals)?;
+            if matches!(op,BinOp::Eq|BinOp::Ne|BinOp::Lt|BinOp::Le|BinOp::Gt|BinOp::Ge) {
+                if let Some(comparison) = lower_character_comparison(op.clone(),a,b,symbols,prefix,serial)? {
+                    *e = comparison;
+                    return Ok(());
+                }
+            }
             if runtime_extent(a).is_some() || runtime_extent(b).is_some() {
                 let extent = |e: &Expr| -> Result<Option<Expr>> { Ok(runtime_extent(e).or(element(e,&int(1),symbols)?.1.map(int))) };
                 if let (Some(a),Some(b)) = (extent(a)?,extent(b)?) { prefix.push(shape_guard(a,b)); }
@@ -641,6 +703,28 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
         _ => {}
     }
     if let Expr::Call(name,args) = e {
+        if let Some(lengths) = symbols.character_functions.get(name).cloned() {
+            if args.len()!=lengths.len() { bail!("wrong number of arguments to CHARACTER-argument function `{name}`"); }
+            for (arg,length) in args.iter_mut().zip(lengths) {
+                if let Some(length) = length {
+                    fn fixed(e: &Expr) -> bool { match e {
+                        Expr::Str(_) | Expr::Ident(_) => true,
+                        Expr::Bin(BinOp::Concat,a,b) => fixed(a) && fixed(b),
+                        _ => false,
+                    }}
+                    let actual=character_capacity(arg,symbols)?.context("function argument requires scalar CHARACTER text")?;
+                    if !fixed(arg) { bail!("CHARACTER function arguments currently require fixed-length actuals"); }
+                    if actual<length { bail!("CHARACTER function actual is shorter than its dummy argument"); }
+                    *serial+=1;
+                    let temp=format!("@character_argument_{serial}");
+                    let kind=TypeSpec::Character(Some(length));
+                    prefix.push(Stmt::VarDecl {kind:kind.clone(),names:vec![temp.clone()]});
+                    prefix.push(Stmt::CallSub {name:"@character_assign".into(),args:vec![Expr::Ident(temp.clone()),arg.clone(),int(length as i64)]});
+                    symbols.insert(temp.clone(),(kind,vec![]));
+                    *arg=Expr::Ident(temp);
+                }
+            }
+        }
         if name != "@packed_view" && args.iter().any(|arg| runtime_extent(arg).is_some()) {
             bail!("runtime PACK results are not yet supported as arguments to `{name}`");
         }
@@ -927,8 +1011,17 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
             }
             Stmt::DoWhile { cond, body } => {
                 lower_expr(cond, &mut symbols, &mut prefix, serial)?;
-                if !prefix.is_empty() { bail!("reductions in DO WHILE conditions are not yet supported"); }
                 lower_body(body, &symbols, serial)?;
+                if !prefix.is_empty() {
+                    // Evaluate captures on every iteration, including after CYCLE.
+                    let (declarations,mut evaluate): (Vec<_>,Vec<_>) = std::mem::take(&mut prefix).into_iter()
+                        .partition(|s| matches!(s,Stmt::VarDecl{..}|Stmt::ArrayDecl{..}));
+                    prefix=declarations;
+                    evaluate.push(Stmt::If {cond:Expr::Un(UnOp::Not,Box::new(cond.clone())),then_body:vec![Stmt::Exit],else_body:None});
+                    evaluate.append(body);
+                    *body=evaluate;
+                    *cond=Expr::Logical(true);
+                }
             }
             Stmt::Block { body } => {
                 lower_where(body, &mut symbols, serial)?;
@@ -1107,8 +1200,50 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
 pub fn resolve(mut program: Program) -> Result<Program> {
     let mut symbols=Symbols::new();
     symbols.elementals=crate::elemental::functions(&program);
+    collect_character_functions(&program.body,&mut symbols.character_functions)?;
     lower_body(&mut program.body, &symbols, &mut 0)?;
     Ok(program)
+}
+
+// CHARACTER inputs use local value copies. Reject writable dummies until a
+// caller-storage ABI is available, including writes through subroutine calls.
+fn collect_character_functions(body: &[Stmt], signatures: &mut HashMap<String,Vec<Option<usize>>>) -> Result<()> {
+    fn mentions(e: &Expr, names: &[String]) -> bool { match e {
+        Expr::Ident(n) => names.contains(n),
+        Expr::Bin(_,a,b) => mentions(a,names)||mentions(b,names),
+        Expr::Un(_,a) => mentions(a,names),
+        Expr::Call(n,args)|Expr::Index(n,args) => names.contains(n)||args.iter().any(|e|mentions(e,names)),
+        Expr::Section{name,..} => names.contains(name),
+        _ => false,
+    }}
+    fn readonly(body: &[Stmt], names: &[String]) -> Result<()> {
+        for s in body { match s {
+            Stmt::Assign{name,..}|Stmt::AssignIndex{name,..} if names.contains(name) => bail!("CHARACTER function dummies currently must be read-only"),
+            Stmt::DummyIntent{name,intent} if names.contains(name) && matches!(intent.as_str(),"intent(out)"|"intent(inout)") => bail!("CHARACTER function dummies currently must be read-only"),
+            Stmt::Read{args}|Stmt::CallSub{args,..} if args.iter().any(|e|mentions(e,names)) => bail!("writable or subroutine-forwarded CHARACTER function dummies are not yet supported"),
+            Stmt::If{then_body,else_body,..} => {readonly(then_body,names)?;if let Some(b)=else_body {readonly(b,names)?;}}
+            Stmt::Do{body,..}|Stmt::DoWhile{body,..}|Stmt::Block{body} => readonly(body,names)?,
+            Stmt::SelectCase{cases,default,..} => {for c in cases {readonly(&c.body,names)?;}if let Some(b)=default {readonly(b,names)?;}}
+            _ => {}
+        }}
+        Ok(())
+    }
+    for s in body { match s {
+        Stmt::Function{name,params,body,..} => {
+            let lengths:Vec<_>=params.iter().map(|p|body.iter().find_map(|s|match s {
+                Stmt::VarDecl{kind:TypeSpec::Character(length),names} if names.contains(p) => Some(length.unwrap_or(1)),
+                _=>None,
+            })).collect();
+            if lengths.iter().any(Option::is_some) {
+                let names=params.iter().zip(&lengths).filter(|(_,n)|n.is_some()).map(|(p,_)|p.clone()).collect::<Vec<_>>();
+                readonly(body,&names)?;
+                signatures.insert(name.clone(),lengths);
+            }
+        }
+        Stmt::Module{body,..} => collect_character_functions(body,signatures)?,
+        _=>{}
+    }}
+    Ok(())
 }
 
 #[cfg(test)]

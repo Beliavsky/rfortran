@@ -469,3 +469,17 @@ lengths currently require an exact match. Expressions require INTENT(IN), while
 writable arguments must be variables. CHARACTER arrays, assumed-length function
 dummies and explicit RETURN inside expanded CHARACTER subroutines remain outside
 this subset. Run `python tests/test_optional_procedures.py`.
+
+Scalar CHARACTER comparisons support all six relational operators with blank
+padding of the shorter operand. Fixed-length variables, ASCII literals,
+concatenations, TRIM and zero-length strings are supported. Comparison captures
+in DO WHILE conditions are reevaluated on every iteration, including after CYCLE.
+Run `python tests/test_character_comparisons.py`. CHARACTER arrays and substring
+assignments remain unsupported.
+
+Local functions can receive fixed-length, read-only scalar CHARACTER arguments.
+Actuals may be variables, literals or fixed-length concatenations; they must be
+at least as long as the dummy, and longer actuals contribute their leading
+characters. Function-to-function forwarding is supported. Writable CHARACTER
+function dummies, runtime-length actuals and assumed-length dummies remain
+unsupported.
