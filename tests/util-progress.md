@@ -1316,3 +1316,27 @@ O0/O2 tests passed with debug and rebuilt release compilers; fixture 109 agrees
 with gfortran. The isolated release report `target/ofort-intrinsic-env.json`
 remains at 13/18 passes and five compile failures, with all reference runs
 succeeding. Linux/macOS remain untested.
+
+
+## Checkpoint 49: contextual DOUBLE PRECISION words
+
+The lexer retains DOUBLE and PRECISION as type keywords only when they form a
+pair in the same logical source statement; elsewhere they become identifiers.
+Continuation lines are accepted between the type words, while new statements
+and semicolons cannot accidentally form a type phrase. This allows the original
+mixed-kind probe's `real(real64) :: double` declaration to parse. Its next blocker,
+like the integer probe, is an integer literal with a kind suffix. Literal kinds
+must be preserved through constant folding and arithmetic; that remains future
+work rather than silently stripping suffixes.
+
+Fixture 110 checks scalar/array names, kind inquiries, a PURE DOUBLE PRECISION
+function and a dummy named double. Focused tests add procedure names, a precision
+dummy and a mixed-case continued type declaration. A lexer unit test covers
+statement boundaries, calls and assignments. No external ofort files changed.
+
+Windows validation: 75 Rust unit tests, 110 native fixtures, 46 wrapper tests
+and two focused contextual-keyword tests passed. Focused tests passed in the
+interpreter and native O0/O2 with debug and rebuilt release compilers; fixture
+110 agrees with gfortran. The isolated release report
+`target/ofort-double-context.json` remains at 13/18 passes and five compile
+failures, with all reference runs succeeding. Linux/macOS remain untested.

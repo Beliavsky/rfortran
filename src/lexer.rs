@@ -5,6 +5,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn double_precision_is_a_contextual_phrase() {
+        for gap in [" ", " & ! comment\n & "] {
+            let tokens = lex(&format!("DoUbLe{gap}PrEcIsIoN :: double, precision"));
+            assert!(matches!(tokens[0].kind, TokenKind::KwDouble));
+            assert!(matches!(tokens[1].kind, TokenKind::KwPrecision));
+            assert!(matches!(&tokens[3].kind, TokenKind::Ident(n) if n == "double"));
+            assert!(matches!(&tokens[5].kind, TokenKind::Ident(n) if n == "precision"));
+        }
+        for gap in ["\n", ";", " ! comment\n"] {
+            let tokens = lex(&format!("double{gap}precision=2"));
+            assert!(matches!(&tokens[0].kind, TokenKind::Ident(n) if n == "double"));
+            assert!(matches!(&tokens[1].kind, TokenKind::Ident(n) if n == "precision"));
+        }
+        for source in ["real :: double, precision", "double=2", "precision(1)=3", "call double(precision)", "x=double(precision)"] {
+            assert!(!lex(source).iter().any(|t| matches!(t.kind, TokenKind::KwDouble | TokenKind::KwPrecision)));
+        }
+    }
+
+    #[test]
     fn old_constructor_delimiters_preserve_division_and_operator_interfaces() {
         let tokens = lex("a=( / 6/(2), (/3,4/) / )\ninterface operator(/)\nend interface operator(/)");
         assert_eq!(tokens.iter().filter(|t|matches!(t.kind,TokenKind::LBracket)).count(),2);
@@ -342,6 +361,23 @@ pub fn lex(input: &str) -> Vec<Token> {
                     span,
                 });
             }
+        }
+    }
+    // DOUBLE PRECISION is a type phrase, not two reserved identifiers.
+    // Preserve the pair only within the same logical source statement.
+    let type_words: Vec<bool> = (0..tokens.len()).map(|i| {
+        matches!(tokens[i].kind, TokenKind::KwDouble)
+            && tokens.get(i+1).is_some_and(|next| matches!(next.kind, TokenKind::KwPrecision)
+                && same_statement(&input[tokens[i].span.end..next.span.start]))
+    }).collect();
+    for i in 0..tokens.len() {
+        let identifier = match tokens[i].kind {
+            TokenKind::KwDouble => !type_words[i],
+            TokenKind::KwPrecision => i == 0 || !type_words[i-1],
+            _ => false,
+        };
+        if identifier {
+            tokens[i].kind = TokenKind::Ident(input[tokens[i].span.clone()].to_ascii_lowercase());
         }
     }
     let mut start = 0;

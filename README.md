@@ -427,3 +427,8 @@ NON_INTRINSIC requires a user module in the same source group. Other intrinsic
 modules and other ISO_FORTRAN_ENV entities are not yet implemented. This does
 not add integer kind-suffixed literals or general mixed-kind expression support.
 Run `python tests/test_intrinsic_env.py`.
+
+DOUBLE and PRECISION are contextual words: they form a type declaration when
+paired within one logical statement, including continued lines. Otherwise they
+can name variables, arrays, arguments or procedures. Run
+`python tests/test_double_precision_names.py`.

@@ -162,3 +162,8 @@ ISO_FORTRAN_ENV numeric kind imports, ONLY, re-export, host association and
 explicit intrinsic/non-intrinsic module selection. This supplies a dependency
 of both pending numeric probes; integer kind suffixes and further numeric
 semantics still need work. The selected sample remains at 13/18 passes.
+
+`110_double_precision_names.f90` and `python tests/test_double_precision_names.py`
+cover DOUBLE/PRECISION as identifiers while preserving the DOUBLE PRECISION type
+phrase. The original mixed-kind probe now gets past its `double` declaration;
+both numeric probes still require integer kind-suffixed literal support.

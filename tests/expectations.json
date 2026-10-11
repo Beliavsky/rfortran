@@ -762,6 +762,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 1 2 4 8 4 8\n 1 2 4 8 4 8\n 12 1234 123456 9223372036854775807\n 1.25 2.5\n"
+    },
+    "110_double_precision_names": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 0.5 1.0 2.0 3.0 1.0\n 8 8 8\n 2.0 4.0 6.0\n"
     }
   }
 }
