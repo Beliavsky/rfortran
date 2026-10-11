@@ -1,7 +1,10 @@
 [package]
-name = "f90c"
+name = "rfortran"
 version = "0.1.0"
 edition = "2021"
+description = "Experimental Fortran compiler written in Rust"
+repository = "https://github.com/Beliavsky/rfortran"
+license-file = "LICENSE"
 
 [[bin]]
 name = "rfort"
