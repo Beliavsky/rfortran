@@ -206,12 +206,21 @@ be a declared scalar INTEGER. Supported scalar INTEGER bounds are evaluated
 once before the control variable is assigned. CYCLE advances the index, EXIT
 preserves it, and empty loops retain the initial value. Increment overflow in
 the compiler's 64-bit INTEGER storage reports a runtime error. Runtime-variable
-steps and named loops are not yet supported.
+steps are not yet supported.
 
 Unbounded `do` / `end do` loops repeat until EXIT, RETURN, or STOP transfers
 control. CYCLE starts the next iteration; nested loops target the innermost
 loop. A bare DO may end with a newline, a comment, or a semicolon. Continued
 counted DO and DO WHILE headers retain their control clauses.
+
+Counted, unbounded, and DO WHILE loops accept construct names, for example
+`do_i: do i=1,ni` with `end do do_i` (or `enddo do_i`). `CYCLE do_i` and
+`EXIT do_i` target that enclosing loop even from nested loops, BLOCK, IF, or
+SELECT CASE constructs. Names are case-insensitive. Named loops require a
+matching name on END DO; duplicate names and transfers to non-enclosing loops
+are rejected. Unnamed CYCLE/EXIT continue to target the innermost loop.
+Run `python tests/test_named_loops.py` for interpreter/native O0/O2 checks with
+gfortran comparisons; `tests/137_named_loops.f90` is in the Cargo fixture suite.
 
 ## CHARACTER support
 
@@ -939,6 +948,7 @@ cargo test --bin rfort --test testsuite -- --test-threads=1
 python tests/test_driver.py
 python tests/test_record_read.py
 python tests/test_runtime_read_format.py
+python tests/test_named_loops.py
 python tests/test_empty_read.py
 python tests/test_statement_labels.py
 python tests/test_unnamed_procedure_ends.py

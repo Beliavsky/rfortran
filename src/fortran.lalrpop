@@ -59,6 +59,11 @@ extern {
         KW_ELSE_IF => TokenKind::KwElseIf,
     KW_DO => TokenKind::KwDo,
     KW_DO_UNBOUNDED => TokenKind::KwDoUnbounded,
+    KW_ENDDO => TokenKind::KwEndDo,
+    CONSTRUCT_NAME => TokenKind::ConstructName(<String>),
+    END_LOOP_NAME => TokenKind::EndLoopName(<String>),
+    NAMED_EXIT => TokenKind::NamedExit(<String>),
+    NAMED_CYCLE => TokenKind::NamedCycle(<String>),
     KW_WHILE => TokenKind::KwWhile,
         KW_INTEGER => TokenKind::KwInteger,
         KW_REAL => TokenKind::KwReal,
@@ -432,14 +437,7 @@ Stmt: Stmt = {
         // assignment until static shapes are known and simultaneous writes lower.
         Stmt::Block { body: vec![Stmt::CallSub {name:"@forall".into(),args:controls},assignment] }
     },
-    KW_DO <var: Ident> EQ <s: RhsExpr> COMMA <e: RhsExpr> COMMA <step: RhsExpr> <body: Stmts> KW_END KW_DO => {
-        let mut statements = vec![Stmt::CallSub { name: "@do_step".into(), args: vec![Expr::Ident(var), s, e, step] }];
-        statements.extend(body);
-        Stmt::Block { body: statements }
-    },
-    KW_DO <var: Ident> EQ <s: RhsExpr> COMMA <e: RhsExpr> <body: Stmts> KW_END KW_DO => Stmt::Do { var, start: s, end: e, body },
-    KW_DO KW_WHILE LPAREN <cond: CondExpr> RPAREN <body: Stmts> KW_END KW_DO => Stmt::DoWhile { cond, body },
-    KW_DO_UNBOUNDED <body: Stmts> KW_END KW_DO => Stmt::DoWhile { cond: Expr::Logical(true), body },
+    <name:LoopName?> <stmt:DoLoop> <end:END_LOOP_NAME?> => crate::named_loops::parsed(stmt,name,end),
     KW_RETURN => Stmt::Return(None),
     <name: Designator> EQ <rhs: RhsExpr> => Stmt::Assign { name, value: rhs },
     <name:Designator> ARROW <target:RhsExpr> => Stmt::CallSub {name:"@pointer_associate".into(),args:vec![Expr::Ident(name),target]},
@@ -475,6 +473,8 @@ Stmt: Stmt = {
         Stmt::SelectCase { expr: e, cases: blocks, default }
     },
     KW_BLOCK <body: Stmts> KW_END KW_BLOCK => Stmt::Block { body },
+    <name:NAMED_EXIT> => Stmt::CallSub {name:"@named_exit".into(),args:vec![Expr::Str(name)]},
+    <name:NAMED_CYCLE> => Stmt::CallSub {name:"@named_cycle".into(),args:vec![Expr::Str(name)]},
     KW_EXIT => Stmt::Exit,
     KW_CYCLE => Stmt::Cycle,
     KW_CONTINUE => Stmt::CallSub{name:"@continue".into(),args:vec![]},
@@ -813,3 +813,17 @@ UseOnly: Option<Vec<String>> = {
     => None,
     COMMA KW_ONLY COLON <names:GenericNames> => Some(names),
 };
+
+LoopName: String = { <name:CONSTRUCT_NAME> COLON => name };
+DoLoop: Stmt = {
+    KW_DO <var: Ident> EQ <s: RhsExpr> COMMA <e: RhsExpr> COMMA <step: RhsExpr> <body: Stmts> LoopEnd => {
+        let mut statements = vec![Stmt::CallSub { name: "@do_step".into(), args: vec![Expr::Ident(var), s, e, step] }];
+        statements.extend(body);
+        Stmt::Block { body: statements }
+    },
+    KW_DO <var: Ident> EQ <s: RhsExpr> COMMA <e: RhsExpr> <body: Stmts> LoopEnd => Stmt::Do { var, start: s, end: e, body },
+    KW_DO KW_WHILE LPAREN <cond: CondExpr> RPAREN <body: Stmts> LoopEnd => Stmt::DoWhile { cond, body },
+    KW_DO_UNBOUNDED <body: Stmts> LoopEnd => Stmt::DoWhile { cond: Expr::Logical(true), body },
+};
+
+LoopEnd: () = { KW_END KW_DO => (), KW_ENDDO => () };

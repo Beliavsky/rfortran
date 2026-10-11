@@ -319,6 +319,11 @@ fn human_token(tok: &TokenKind) -> String {
         TokenKind::KwStop | TokenKind::KwStopEmpty => "keyword stop".into(),
         TokenKind::_WS => "whitespace".into(),
         TokenKind::_COMMENT => "comment".into(),
+        TokenKind::ConstructName(n) => format!("DO construct name {n}"),
+        TokenKind::KwEndDo => "keyword enddo".into(),
+        TokenKind::EndLoopName(n) => format!("END DO construct name {n}"),
+        TokenKind::NamedExit(n) => format!("EXIT {n}"),
+        TokenKind::NamedCycle(n) => format!("CYCLE {n}"),
         TokenKind::Error(e) => format!("error: {}", e),
     }
 }

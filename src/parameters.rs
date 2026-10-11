@@ -252,6 +252,7 @@ fn character_parameter(expr: &Expr, kind: &TypeSpec) -> Result<Expr> {
 
 pub fn resolve(program: Program) -> Result<Program> {
     let program = crate::statement_labels::resolve(program)?;
+    let program = crate::named_loops::resolve(program)?;
     crate::purity::validate(&program)?;
     resolve_constants(program)
 }

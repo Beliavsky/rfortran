@@ -314,6 +314,12 @@ pub enum TokenKind {
     #[token("do", ignore(ascii_case))]
     KwDo,
     KwDoUnbounded,
+    #[token("enddo", ignore(ascii_case))]
+    KwEndDo,
+    ConstructName(String),
+    EndLoopName(String),
+    NamedExit(String),
+    NamedCycle(String),
     #[token("while", ignore(ascii_case))]
     KwWhile,
     #[token("integer", ignore(ascii_case))]
@@ -762,6 +768,35 @@ pub fn lex(input: &str) -> Vec<Token> {
             }
         }
     }
+    // Distinct name tokens keep optional END DO names and named transfers from
+    // consuming an identifier on the following logical statement.
+    let mut named_index=0;
+    while named_index<tokens.len() {
+        if named_index+2<tokens.len()
+            && matches!(tokens[named_index].kind,TokenKind::Ident(_))
+            && matches!(tokens[named_index+1].kind,TokenKind::Colon)
+            && matches!(tokens[named_index+2].kind,TokenKind::KwDo)
+            && same_statement(&input[tokens[named_index].span.end..tokens[named_index+2].span.start]) {
+            let TokenKind::Ident(name)=tokens[named_index].kind.clone() else {unreachable!()};
+            tokens[named_index].kind=TokenKind::ConstructName(name);
+        }
+        if named_index+1<tokens.len()
+            && same_statement(&input[tokens[named_index].span.end..tokens[named_index+1].span.start]) {
+            if let TokenKind::Ident(name)=tokens[named_index+1].kind.clone() {
+                if matches!(tokens[named_index].kind,TokenKind::KwExit|TokenKind::KwCycle) {
+                    tokens[named_index].kind=if matches!(tokens[named_index].kind,TokenKind::KwExit) {TokenKind::NamedExit(name)} else {TokenKind::NamedCycle(name)};
+                    tokens[named_index].span.end=tokens[named_index+1].span.end;
+                    tokens.remove(named_index+1);
+                } else if matches!(tokens[named_index].kind,TokenKind::KwEndDo)
+                    || (named_index>0 && matches!(tokens[named_index].kind,TokenKind::KwDo)
+                    && matches!(tokens[named_index-1].kind,TokenKind::KwEnd)
+                    && same_statement(&input[tokens[named_index-1].span.end..tokens[named_index].span.start])) {
+                    tokens[named_index+1].kind=TokenKind::EndLoopName(name);
+                }
+            }
+        }
+        named_index+=1;
+    }
     for index in 0..tokens.len() {
         // Newlines are skipped by the grammar. Distinguish PRINT * without an
         // output list so it cannot consume the following statement as an item.
@@ -776,7 +811,8 @@ pub fn lex(input: &str) -> Vec<Token> {
         // Require a statement start so END DO retains its closing DO token.
         if matches!(tokens[index].kind, TokenKind::KwDo)
             && (index == 0 || !same_statement(&input[tokens[index-1].span.end..tokens[index].span.start])
-                || matches!(tokens[index-1].kind,TokenKind::StatementLabel(_)))
+                || matches!(tokens[index-1].kind,TokenKind::StatementLabel(_))
+                || (index>=2 && matches!(tokens[index-1].kind,TokenKind::Colon) && matches!(tokens[index-2].kind,TokenKind::ConstructName(_))))
             && tokens.get(index+1).is_none_or(|next| !same_statement(&input[tokens[index].span.end..next.span.start])) {
             tokens[index].kind = TokenKind::KwDoUnbounded;
         }
