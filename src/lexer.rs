@@ -59,6 +59,19 @@ mod tests {
     }
 
     #[test]
+    fn unbounded_do_obeys_logical_statement_boundaries() {
+        for gap in ["\n", ";", " ! comment\r\n", " ! comment\n\n! another comment\n"] {
+            let tokens = lex(&format!("Do{gap}i=1\nend do\n"));
+            assert!(matches!(tokens[0].kind, TokenKind::KwDoUnbounded));
+            assert!(matches!(tokens.last().unwrap().kind, TokenKind::KwDo));
+        }
+        for source in ["do i=1,3", "do while (.true.)", "do & ! comment\n! comment\n & i=1,3", "do &\n & while (.true.)", "end &\n & do", "end do"] {
+            let tokens = lex(source);
+            assert!(!tokens.iter().any(|t| matches!(t.kind, TokenKind::KwDoUnbounded)));
+        }
+    }
+
+    #[test]
     fn write_is_contextual_and_empty_lists_end_at_statement_boundaries() {
         let source="integer :: write(2,2)\nwrite(1,2)=3\ncall write(1,2)\nx=write(1,2)\nwrite(*,*) write(1,2)\nif (.true.) write(6,*) 7\nwrite(*,*); x=8\nwrite(*,*) ! blank\nx=9\nwrite(*,*) &\n & 10\n";
         let tokens=lex(source);
@@ -212,6 +225,7 @@ pub enum TokenKind {
     KwElseIf,
     #[token("do", ignore(ascii_case))]
     KwDo,
+    KwDoUnbounded,
     #[token("while", ignore(ascii_case))]
     KwWhile,
     #[token("integer", ignore(ascii_case))]
@@ -553,6 +567,14 @@ pub fn lex(input: &str) -> Vec<Token> {
         }
     }
     for index in 0..tokens.len() {
+        // Bare DO has no control clause. The grammar otherwise consumes the
+        // following assignment as a counted DO header because newlines are skipped.
+        // Require a statement start so END DO retains its closing DO token.
+        if matches!(tokens[index].kind, TokenKind::KwDo)
+            && (index == 0 || !same_statement(&input[tokens[index-1].span.end..tokens[index].span.start]))
+            && tokens.get(index+1).is_none_or(|next| !same_statement(&input[tokens[index].span.end..next.span.start])) {
+            tokens[index].kind = TokenKind::KwDoUnbounded;
+        }
         if matches!(tokens[index].kind,TokenKind::KwStop)
             && !(index>0 && matches!(tokens[index-1].kind,TokenKind::KwError)
                 && same_statement(&input[tokens[index-1].span.end..tokens[index].span.start]))

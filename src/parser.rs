@@ -112,6 +112,7 @@ fn human_expected(name: &str) -> String {
         "KW_PRINT" => "keyword print".into(),
         "KW_WRITE" | "KW_WRITE_EMPTY" => "keyword write".into(),
         "KW_STOP_EMPTY" => "keyword stop".into(),
+        "KW_DO_UNBOUNDED" => "kw_do".into(),
         "KW_IF" => "keyword if".into(),
         "KW_THEN" => "keyword then".into(),
         "KW_ELSE" => "keyword else".into(),
@@ -174,7 +175,7 @@ fn human_token(tok: &TokenKind) -> String {
         TokenKind::KwCharacter => "keyword character".into(),
         TokenKind::KwLogical => "keyword logical".into(),
         TokenKind::KwLen => "keyword len".into(),
-        TokenKind::KwDo => "keyword do".into(),
+        TokenKind::KwDo | TokenKind::KwDoUnbounded => "keyword do".into(),
         TokenKind::KwWhile => "keyword while".into(),
         TokenKind::KwSubroutine => "keyword subroutine".into(),
         TokenKind::KwCall => "keyword call".into(),
@@ -280,7 +281,8 @@ pub fn parse_with_src(
                     ((location)..(location + 1), "invalid token".to_string())
                 }
                 lalrpop_util::ParseError::UnrecognizedEof { expected, .. } => {
-                    let human: Vec<String> = expected.iter().map(|s| human_expected(s)).collect();
+                    let mut human: Vec<String> = expected.iter().map(|s| human_expected(s)).collect();
+                    human.dedup();
                     (
                         (src.len())..(src.len()),
                         format!(
@@ -293,7 +295,8 @@ pub fn parse_with_src(
                     token: (start, tok, end),
                     expected,
                 } => {
-                    let human: Vec<String> = expected.iter().map(|s| human_expected(s)).collect();
+                    let mut human: Vec<String> = expected.iter().map(|s| human_expected(s)).collect();
+                    human.dedup();
                     (
                         (start)..(end),
                         format!(

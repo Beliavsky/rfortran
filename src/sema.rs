@@ -1009,6 +1009,7 @@ pub fn analyze_with_src(
                             | TokenKind::KwSubroutine
                             | TokenKind::KwIf
                             | TokenKind::KwDo
+                            | TokenKind::KwDoUnbounded
                             | TokenKind::KwEnd
                     ) {
                         break;
@@ -1622,6 +1623,15 @@ pub fn analyze_with_src(
                             assigned,
                             read_vars,
                             settings,
+                        );
+                    }
+                    Stmt::DoWhile { cond, body } => {
+                        walk_reads_in_expr(cond, read_vars);
+                        inner(
+                            body, fname, is_function, declared_ret, local,
+                            fn_map, external_fn_ret, find_ident_span, errors,
+                            has_path, stderr, file, type_span_map, params,
+                            local_param_intent, assigned, read_vars, settings,
                         );
                     }
                     Stmt::Block {..} => walk_stmt_program_reads(st,read_vars),

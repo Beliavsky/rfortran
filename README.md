@@ -18,7 +18,7 @@ Implemented subsets include:
 
 - Scalar INTEGER, REAL, DOUBLE PRECISION, LOGICAL and CHARACTER values;
   named constants, supported kind selectors, arithmetic and common math intrinsics.
-- Counted DO and DO WHILE loops, conditionals, SELECT CASE, and array operations
+- Counted DO, unbounded DO, and DO WHILE loops, conditionals, SELECT CASE, and array operations
   including sections, explicit bounds, vector subscripts, WHERE and reductions.
 - Functions and subroutines, PURE/ELEMENTAL checks, INTENT, OPTIONAL/PRESENT,
   named arguments, and supported generic procedure calls.
@@ -181,6 +181,11 @@ once before the control variable is assigned. CYCLE advances the index, EXIT
 preserves it, and empty loops retain the initial value. Increment overflow in
 the compiler's 64-bit INTEGER storage reports a runtime error. Runtime-variable
 steps and named loops are not yet supported.
+
+Unbounded `do` / `end do` loops repeat until EXIT, RETURN, or STOP transfers
+control. CYCLE starts the next iteration; nested loops target the innermost
+loop. A bare DO may end with a newline, a comment, or a semicolon. Continued
+counted DO and DO WHILE headers retain their control clauses.
 
 ## CHARACTER support
 

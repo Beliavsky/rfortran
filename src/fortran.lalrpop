@@ -50,6 +50,7 @@ extern {
         KW_ELSE => TokenKind::KwElse,
         KW_ELSE_IF => TokenKind::KwElseIf,
     KW_DO => TokenKind::KwDo,
+    KW_DO_UNBOUNDED => TokenKind::KwDoUnbounded,
     KW_WHILE => TokenKind::KwWhile,
         KW_INTEGER => TokenKind::KwInteger,
         KW_REAL => TokenKind::KwReal,
@@ -360,6 +361,7 @@ Stmt: Stmt = {
     },
     KW_DO <var: Ident> EQ <s: RhsExpr> COMMA <e: RhsExpr> <body: Stmts> KW_END KW_DO => Stmt::Do { var, start: s, end: e, body },
     KW_DO KW_WHILE LPAREN <cond: CondExpr> RPAREN <body: Stmts> KW_END KW_DO => Stmt::DoWhile { cond, body },
+    KW_DO_UNBOUNDED <body: Stmts> KW_END KW_DO => Stmt::DoWhile { cond: Expr::Logical(true), body },
     KW_RETURN => Stmt::Return(None),
     <name: Designator> EQ <rhs: RhsExpr> => Stmt::Assign { name, value: rhs },
     <id: Designator> LPAREN <args: SubscriptList> RPAREN LPAREN <range: Subscript> RPAREN EQ <rhs: RhsExpr> =>
