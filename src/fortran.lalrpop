@@ -69,6 +69,8 @@ extern {
         STR => TokenKind::Str(<String>),
         FLOAT => TokenKind::Float(<String>),
         INT => TokenKind::Integer(<String>),
+        LABEL => TokenKind::StatementLabel(<String>),
+        KW_CONTINUE => TokenKind::KwContinue,
         TRUE => TokenKind::True,
         FALSE => TokenKind::False,
         COMMA => TokenKind::Comma,
@@ -155,6 +157,14 @@ UnnamedMainBody: Vec<Stmt> = {
     <pre: LeadingFuncs> => pre,
     <pos:@L> <first: Stmt> <rest: Stmts> => { let mut body = vec![Stmt::SourceLocation(pos), first]; body.extend(rest); body },
     <mut pre: LeadingFuncs> <pos:@L> <first: Stmt> <rest: Stmts> => { pre.push(Stmt::SourceLocation(pos)); pre.push(first); pre.extend(rest); pre },
+    <pos:@L> <label:LABEL> <first:Stmt> <rest:Stmts> => {
+        let mut body=vec![Stmt::SourceLocation(pos),Stmt::CallSub{name:"@statement_label".into(),args:vec![Expr::IntLit(label)]},first];
+        body.extend(rest); body
+    },
+    <mut pre:LeadingFuncs> <pos:@L> <label:LABEL> <first:Stmt> <rest:Stmts> => {
+        pre.extend([Stmt::SourceLocation(pos),Stmt::CallSub{name:"@statement_label".into(),args:vec![Expr::IntLit(label)]},first]);
+        pre.extend(rest); pre
+    },
 };
 
 UnnamedEndTail: () = {
@@ -315,6 +325,9 @@ Stmts: Vec<Stmt> = {
     /* empty */ => vec![],
     <v: Stmts> <pos:@L> <s: Stmt> => { let mut v = v; v.push(Stmt::SourceLocation(pos)); v.push(s); v },
     <mut v: Stmts> <d: PreFuncDecl> => { v.extend(d); v },
+    <mut v:Stmts> <pos:@L> <label:LABEL> <s:Stmt> => {
+        v.extend([Stmt::SourceLocation(pos),Stmt::CallSub{name:"@statement_label".into(),args:vec![Expr::IntLit(label)]},s]); v
+    },
 };
 
 Stmt: Stmt = {
@@ -446,6 +459,7 @@ Stmt: Stmt = {
     KW_BLOCK <body: Stmts> KW_END KW_BLOCK => Stmt::Block { body },
     KW_EXIT => Stmt::Exit,
     KW_CYCLE => Stmt::Cycle,
+    KW_CONTINUE => Stmt::CallSub{name:"@continue".into(),args:vec![]},
     KW_STOP_EMPTY => Stmt::CallSub { name: "@stop".into(), args: vec![] },
     KW_STOP <arg: RhsExpr> => Stmt::CallSub { name: "__f90c_stop".to_string(), args: vec![arg] },
 };

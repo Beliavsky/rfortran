@@ -15,6 +15,7 @@ mod inquiries;
 mod lexer;
 mod linker;
 mod parser;
+mod statement_labels;
 mod parameters;
 mod sections;
 mod reductions;

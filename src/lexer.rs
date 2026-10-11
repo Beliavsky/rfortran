@@ -5,6 +5,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn labels_preserve_contextual_statement_keywords() {
+        let tokens=lex("10 write(*,*) 7\n20 if (.true.) write(*,*) 8\n30 open(unit=20)\n40 continue\n50 if (.true.) continue\ninteger::continue\ncontinue=1\nend subroutine continue");
+        assert_eq!(tokens.iter().filter(|t|matches!(t.kind,TokenKind::StatementLabel(_))).count(),5);
+        assert_eq!(tokens.iter().filter(|t|matches!(t.kind,TokenKind::KwWrite)).count(),2);
+        assert_eq!(tokens.iter().filter(|t|matches!(t.kind,TokenKind::FileControl(_))).count(),1);
+        assert_eq!(tokens.iter().filter(|t|matches!(t.kind,TokenKind::KwContinue)).count(),2);
+        assert_eq!(tokens.iter().filter(|t|matches!(&t.kind,TokenKind::Ident(n) if n=="continue")).count(),3);
+        let tokens=lex("a=[1, &\n & 2]\nprint *, &\n & 3");
+        assert!(!tokens.iter().any(|t|matches!(t.kind,TokenKind::StatementLabel(_))));
+    }
+
+    #[test]
     fn empty_reads_respect_logical_statement_boundaries() {
         for source in ["read(20,*)", "read(*,*); x=1", "read(5,*) ! skip\nx=1",
             "if (.true.) read(iunit,*)", "read(*,*,iostat=ios)\nend",
@@ -227,6 +239,8 @@ pub enum TokenKind {
     Float(String),
     #[regex(r"[0-9]+(_[A-Za-z0-9_]+)?", |lex| lex.slice().to_string())]
     Integer(String),
+    StatementLabel(String),
+    KwContinue,
     #[token(".true.", ignore(ascii_case))]
     True,
     #[token(".false.", ignore(ascii_case))]
@@ -428,6 +442,18 @@ pub fn lex(input: &str) -> Vec<Token> {
             }
         }
     }
+    // A leading decimal number belongs to the following statement, rather
+    // than to an expression. Keep it distinct for grammar and scope checks.
+    for i in 0..tokens.len() {
+        if (i == 0 || !same_statement(&input[tokens[i-1].span.end..tokens[i].span.start]))
+            && tokens.get(i+1).is_some_and(|next| same_statement(&input[tokens[i].span.end..next.span.start])) {
+            if let TokenKind::Integer(number) = &tokens[i].kind {
+                if number.bytes().all(|c| c.is_ascii_digit()) {
+                    tokens[i].kind = TokenKind::StatementLabel(number.clone());
+                }
+            }
+        }
+    }
     // INTENT(IN OUT) and INTENT(INOUT) are the same declaration attribute.
     // Normalize only this phrase, within a single logical statement, so both
     // the parser and source-token semantic checks see the canonical spelling.
@@ -489,7 +515,20 @@ pub fn lex(input: &str) -> Vec<Token> {
     while start < tokens.len() {
         // WHERE is contextual. The token after ')' on this source statement
         // distinguishes a single assignment from the block form.
-        let statement_start = start == 0 || !same_statement(&input[tokens[start-1].span.end..tokens[start].span.start]);
+        let statement_start = start == 0 || !same_statement(&input[tokens[start-1].span.end..tokens[start].span.start])
+            || matches!(tokens[start-1].kind, TokenKind::StatementLabel(_));
+        if matches!(&tokens[start].kind, TokenKind::Ident(n) if n.eq_ignore_ascii_case("continue"))
+            && tokens.get(start+1).is_none_or(|next| !same_statement(&input[tokens[start].span.end..next.span.start])) {
+            let mut begin=start;
+            while begin>0 && same_statement(&input[tokens[begin-1].span.end..tokens[begin].span.start]) { begin-=1; }
+            if matches!(tokens[begin].kind,TokenKind::StatementLabel(_)) { begin+=1; }
+            let inline_if=matches!(tokens[begin].kind,TokenKind::KwIf) && start>begin
+                && matches!(tokens[start-1].kind,TokenKind::RParen)
+                && tokens[begin..start].iter().fold(0i32,|depth,t|depth+match t.kind {
+                    TokenKind::LParen=>1,TokenKind::RParen=>-1,_=>0
+                })==0;
+            if statement_start || inline_if { tokens[start].kind = TokenKind::KwContinue; }
+        }
         let mut assignment = matches!(tokens.get(start+1).map(|t|&t.kind),Some(TokenKind::Eq));
         if matches!(tokens.get(start+1).map(|t|&t.kind),Some(TokenKind::LParen)) {
             let mut depth=0;
@@ -561,6 +600,7 @@ pub fn lex(input: &str) -> Vec<Token> {
             if matches!(word.as_str(), "open" | "close" | "backspace" | "rewind" | "inquire") {
                 let mut begin = start;
                 while begin > 0 && same_statement(&input[tokens[begin-1].span.end..tokens[begin].span.start]) { begin -= 1; }
+                if matches!(tokens[begin].kind, TokenKind::StatementLabel(_)) { begin += 1; }
                 let inline_if = matches!(tokens[begin].kind, TokenKind::KwIf) && start > begin
                     && matches!(tokens[start-1].kind, TokenKind::RParen)
                     && tokens[begin..start].iter().fold(0i32, |d,t| d + match t.kind {TokenKind::LParen=>1,TokenKind::RParen=>-1,_=>0}) == 0;
@@ -606,6 +646,7 @@ pub fn lex(input: &str) -> Vec<Token> {
             && same_statement(&input[tokens[start].span.end..tokens[start+1].span.start]) {
             let mut begin=start;
             while begin>0 && same_statement(&input[tokens[begin-1].span.end..tokens[begin].span.start]) {begin-=1;}
+            if matches!(tokens[begin].kind,TokenKind::StatementLabel(_)) { begin+=1; }
             let inline_if=matches!(tokens[begin].kind,TokenKind::KwIf)
                 && start>begin && matches!(tokens[start-1].kind,TokenKind::RParen)
                 && tokens[begin..start].iter().fold(0i32,|depth,t|depth+match t.kind {
@@ -644,6 +685,7 @@ pub fn lex(input: &str) -> Vec<Token> {
             && matches!(tokens.get(start+1).map(|t|&t.kind),Some(TokenKind::LParen)) {
             let mut begin=start;
             while begin>0 && same_statement(&input[tokens[begin-1].span.end..tokens[begin].span.start]) {begin-=1;}
+            if matches!(tokens[begin].kind,TokenKind::StatementLabel(_)) { begin+=1; }
             let inline_if=matches!(tokens[begin].kind,TokenKind::KwIf) && start>begin
                 && matches!(tokens[start-1].kind,TokenKind::RParen)
                 && tokens[begin..start].iter().fold(0i32,|d,t|d+match t.kind {TokenKind::LParen=>1,TokenKind::RParen=>-1,_=>0})==0;
@@ -705,7 +747,8 @@ pub fn lex(input: &str) -> Vec<Token> {
         // following assignment as a counted DO header because newlines are skipped.
         // Require a statement start so END DO retains its closing DO token.
         if matches!(tokens[index].kind, TokenKind::KwDo)
-            && (index == 0 || !same_statement(&input[tokens[index-1].span.end..tokens[index].span.start]))
+            && (index == 0 || !same_statement(&input[tokens[index-1].span.end..tokens[index].span.start])
+                || matches!(tokens[index-1].kind,TokenKind::StatementLabel(_)))
             && tokens.get(index+1).is_none_or(|next| !same_statement(&input[tokens[index].span.end..next.span.start])) {
             tokens[index].kind = TokenKind::KwDoUnbounded;
         }

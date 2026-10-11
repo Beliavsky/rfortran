@@ -379,6 +379,21 @@ checks apply to the input values. Whole-array calls, INTEGER kind 16, and
 Run `python tests/test_bit_intrinsics.py` for interpreter/native O0/O2 checks
 with gfortran comparisons. `tests/125_bit_intrinsics.f90` is the local fixture.
 
+## Statement labels
+
+Executable statements may have numeric labels of one to five digits, with
+values from 1 through 99999. Labels are local to a program unit, so different
+procedures may reuse them; duplicates within a unit and undefined I/O branch
+targets are diagnosed. `CONTINUE` is a no-op, and remains available as an
+identifier outside statement context. Labelled output, input, assignments,
+single-line IF statements, and supported file operations use the same behavior
+as their unlabelled forms.
+
+Labels do not yet enable GOTO, labelled DO termination, FORMAT statements, or
+I/O control transfers through `ERR=`, `END=`, and `EOR=`. Unsupported controls
+are rejected rather than ignored. Run `python tests/test_statement_labels.py`
+for interpreter/native O0/O2 checks with gfortran comparisons.
+
 ## DIMENSION declarations and SHAPE
 
 Intrinsic type declarations accept `DIMENSION(...)` alongside attributes such
@@ -833,6 +848,7 @@ cargo test --bin rfort --test testsuite -- --test-threads=1
 python tests/test_driver.py
 python tests/test_record_read.py
 python tests/test_empty_read.py
+python tests/test_statement_labels.py
 python tests/test_recursive_allocatables.py
 python tests/test_deallocate.py
 python tests/test_runtime_allocatables.py
