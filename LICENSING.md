@@ -33,6 +33,7 @@ the author recorded in this repository's Git history.
 - `src/substrings.rs`
 - `src/character_arrays.rs`
 - `src/vector_subscripts.rs`
+- `src/named_arguments.rs`
 - `src/output.rs`
 - `src/parameters.rs`
 - `src/purity.rs`

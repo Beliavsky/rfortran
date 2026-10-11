@@ -780,9 +780,9 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
                 args.push(slots[1].take().unwrap_or_else(|| Expr::Call("@no_dim".into(), vec![])));
                 args.push(slots[2].take().unwrap_or(Expr::Logical(true)));
             }
-        } else if name.starts_with("@keyword:") {
-            bail!("keyword arguments are currently supported only for SIZE, LBOUND, UBOUND, SUM, PRODUCT, MINVAL, MAXVAL, COUNT, ANY, and ALL");
         }
+        // Retain user keyword wrappers until generic overload selection can
+        // associate them with the selected specific procedure's dummy names.
     }
 
     if let Expr::Call(name, items) = expr {

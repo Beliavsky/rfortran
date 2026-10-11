@@ -359,7 +359,7 @@ impl Lowerer {
     fn actuals(
         &mut self,
         name: &str,
-        args: Vec<Expr>,
+        mut args: Vec<Expr>,
         objects: &Objects,
         prefix: &mut Vec<Stmt>,
     ) -> Result<Vec<Expr>> {
@@ -370,6 +370,13 @@ impl Lowerer {
             }
             return Ok(args);
         };
+        if crate::named_arguments::has_keywords(&args) {
+            let signature = crate::named_arguments::Signature {
+                params: proc.params.iter().map(|(name, _)| name.clone()).collect(),
+                optional: HashSet::new(),
+            };
+            signature.reorder(name, &mut args)?;
+        }
         if args.len() != proc.params.len() {
             bail!("wrong argument count for procedure `{name}`");
         }
@@ -730,7 +737,9 @@ pub fn resolve(mut program: Program) -> Result<Program> {
     crate::parameters::resolve_intrinsic_modules(&mut program)?;
     crate::elemental::validate_program(&program)?;
     crate::imports::validate(&program)?;
+    program = crate::named_arguments::resolve(program, false)?;
     program = crate::operators::resolve(program)?;
+    program = crate::named_arguments::resolve(program, true)?;
     let mut lower = Lowerer {
         types: HashMap::new(),
         procedures: HashMap::new(),

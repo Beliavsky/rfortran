@@ -1654,3 +1654,40 @@ both optimization levels: the eight probes plus all 44 previously passing
 expanded-baseline cases. The full discovery inventory was not rerun; its
 tracked snapshot remains the pre-fix baseline. External fixtures remain
 unchanged; Linux/macOS remain untested.
+
+## Checkpoint 58: named procedure arguments
+
+Added keyword arguments to CALL syntax and a shared association pass for known
+procedure definitions. Calls are matched to dummy names before positional
+lowering, including mixed positional/keyword calls, arbitrary keyword order,
+case-insensitive names and OPTIONAL gaps. Missing positions are represented by
+an internal absence marker, which OPTIONAL specialization consumes without
+reading the omitted argument. Absence forwarding and PURE output checks retain
+the correct dummy association.
+
+Generic resolution matches each candidate's dummy names and then the associated
+argument types/ranks, including optional specifics. Common association errors
+are reported directly when all candidates reject the same invalid keyword call.
+Type-bound calls match keywords after adding the passed object. Named scalar,
+supported array/CHARACTER and derived procedure arguments reuse the existing
+lowering; their prior type, intent, shape and initialization checks still apply.
+Common math intrinsics, REAL/default INT conversions and RANDOM_NUMBER harvest
+arguments accept names. Existing intrinsic-specific keyword normalizers remain
+in place. Constant rewriting preserves wrappers while generic selection needs
+them, and the final association pass diagnoses unknown procedure interfaces.
+
+Named calls require definitions in the source group and unique procedure names
+within the compilation. External interface-only declarations, procedure pointers
+and procedure/array forms outside the existing supported subsets remain
+unsupported. Added 118_named_arguments.f90, two association unit tests and eight
+focused Python tests. The rebuilt release compiler creates and runs
+xnamed_arg.exe from the unchanged xnamed_arg.f90, printing 10.0 20.0 30.0.
+
+Validation on Windows: all 77 Rust unit tests and all 118 native fixtures passed.
+The eight focused tests pass with debug and rebuilt release compilers in
+interpreter/native O0/O2 modes; valid results are compared with gfortran.
+Three existing OPTIONAL-procedure tests, seven vector-subscript tests and all
+46 batch driver tests also pass. The release report
+target/ofort-named-regressions.json records 52/52 previously passing expanded
+and vector probes at both O0/O2. The full external discovery inventory was not
+rerun, and its source fixtures remain unchanged. Linux/macOS remain untested.

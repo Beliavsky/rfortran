@@ -27,6 +27,7 @@ mod elemental;
 mod subroutines;
 mod array_calls;
 mod optional;
+mod named_arguments;
 mod substrings;
 mod character_arrays;
 mod vector_subscripts;

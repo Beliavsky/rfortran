@@ -120,6 +120,7 @@ fn declarations(body: &[Stmt], inherited: &Vars) -> Vars {
 
 #[derive(Clone)]
 struct Procedure {
+    signature: crate::named_arguments::Signature,
     args: Vec<Ty>,
     result: Ty,
     inputs: bool,
@@ -224,6 +225,7 @@ impl Resolver {
                         .insert(
                             name.clone(),
                             Procedure {
+                                signature: crate::named_arguments::Signature::new(params, body),
                                 args: params
                                     .iter()
                                     .map(|p| vars.get(p).cloned().unwrap_or(Ty::Unknown))
@@ -253,6 +255,7 @@ impl Resolver {
                         .insert(
                             name.clone(),
                             Procedure {
+                                signature: crate::named_arguments::Signature::new(params, body),
                                 args: params
                                     .iter()
                                     .map(|n| vars.get(n).cloned().unwrap_or(Ty::Unknown))
@@ -431,6 +434,7 @@ impl Resolver {
     fn select_generic(
         &self,
         name: &str,
+        actuals: &mut Vec<Expr>,
         args: &[Ty],
         subroutine: bool,
         visible: &Bindings,
@@ -438,15 +442,27 @@ impl Resolver {
         let Some(candidates) = visible.get(&format!("generic:{name}")) else {
             return Ok(None);
         };
-        let matches: Vec<_> = candidates
-            .iter()
-            .filter(|n| {
-                let p = &self.procedures[*n];
-                p.args == args && p.subroutine == subroutine
-            })
-            .collect();
+        let mut matches = vec![];
+        let mut association_errors = vec![];
+        for n in candidates {
+            let p = &self.procedures[n];
+            if p.subroutine != subroutine { continue; }
+            match p.signature.associate(name, actuals) {
+                Ok(slots) if p.args.iter().zip(&slots).all(|(ty, slot)| slot.is_none_or(|i| ty == &args[i])) => matches.push(n),
+                Ok(_) => {},
+                Err(error) => association_errors.push(error),
+            }
+        }
         match matches.as_slice() {
-            [name] => Ok(Some((*name).clone())),
+            [target] => {
+                self.procedures[*target].signature.reorder(name, actuals)?;
+                Ok(Some((*target).clone()))
+            },
+            [] if crate::named_arguments::has_keywords(actuals)
+                && association_errors.len() == candidates.len()
+                && !association_errors.is_empty()
+                && association_errors.iter().all(|e| e.to_string() == association_errors[0].to_string())
+                => Err(association_errors.remove(0)),
             [] => bail!(
                 "no matching specific procedure for generic `{name}` with argument types {args:?}"
             ),
@@ -468,6 +484,9 @@ impl Resolver {
     }
     fn expression(&self, e: &mut Expr, vars: &Vars, visible: &Bindings) -> Result<Ty> {
         if let Expr::Call(name, args) = e {
+            if name.starts_with("@keyword:") && args.len() == 1 {
+                return self.expression(&mut args[0], vars, visible);
+            }
             if let Some(op) = name.strip_prefix("@defined_operator:") {
                 let op = op.to_owned();
                 let types = args.iter_mut().map(|a| self.expression(a, vars, visible)).collect::<Result<Vec<_>>>()?;
@@ -509,7 +528,7 @@ impl Resolver {
                 if let Ty::Array(element, _) = self.name_type(n, vars) {
                     return Ok(*element);
                 }
-                if let Some(target) = self.select_generic(n, &arg_types, false, visible)? {
+                if let Some(target) = self.select_generic(n, args, &arg_types, false, visible)? {
                     *n = target;
                     return Ok(self.procedures[n].result.clone());
                 }
@@ -637,7 +656,7 @@ impl Resolver {
                         .iter_mut()
                         .map(|e| self.expression(e, &vars, &visible))
                         .collect::<Result<Vec<_>>>()?;
-                    if let Some(target) = self.select_generic(name, &types, true, &visible)? {
+                    if let Some(target) = self.select_generic(name, args, &types, true, &visible)? {
                         *name = target;
                     }
                 }

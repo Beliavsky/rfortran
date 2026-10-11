@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Beliavsky
 // See LICENSE-MIT in the repository root.
 
-//! Specialize local OPTIONAL procedures by the presence of positional arguments.
+//! Specialize local OPTIONAL procedures by associated argument presence.
 //! Values remain runtime arguments; no optional-argument descriptor ABI is used.
 use crate::ast::{BinOp, Expr, Program, Stmt, UnOp};
 use anyhow::{bail, Result};
@@ -78,7 +78,8 @@ impl Specializer {
         for (i, param) in params.iter().enumerate() {
             let supplied = args
                 .get(i)
-                .filter(|e| !matches!(e,Expr::Ident(n) if absent.contains(n)));
+                .filter(|e| !crate::named_arguments::omitted(e)
+                    && !matches!(e,Expr::Ident(n) if absent.contains(n)));
             mask.push(supplied.is_some());
             if let Some(actual) = supplied {
                 if matches!(actual,Expr::Call(n,_) if n.starts_with("@keyword:")) {

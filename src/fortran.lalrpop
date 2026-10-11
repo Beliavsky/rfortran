@@ -577,8 +577,12 @@ KeywordName: String = { <name:Ident> => name, KW_KIND => "kind".into() };
 
 CallArgList: Vec<Expr> = {
     /* empty */ => vec![],
-    <e: RhsExpr> => vec![e],
-    <mut v: CallArgList> COMMA <e: RhsExpr> => { v.push(e); v },
+    <e: CallArgument> => vec![e],
+    <mut v: CallArgList> COMMA <e: CallArgument> => { v.push(e); v },
+};
+CallArgument: Expr = {
+    <name:KeywordName> EQ <value:RhsExpr> => Expr::Call(format!("@keyword:{name}"), vec![value]),
+    <e:RhsExpr> => e,
 };
 
 ArrayDeclList: Vec<Stmt> = {

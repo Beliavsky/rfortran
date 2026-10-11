@@ -532,3 +532,18 @@ Higher-rank and CHARACTER selections, runtime-sized index vectors, READ
 destinations, vector actuals to subroutines and vector selections in WHERE
 assignments remain unsupported. Other vector expressions are rejected when they
 reach scalar array-index lowering, instead of silently using their first element.
+
+Calls to procedures defined in the source group support named arguments,
+including reordered keywords and positional arguments followed by keywords.
+Omitted OPTIONAL arguments can occur before later named arguments, and absent
+OPTIONAL values can be forwarded by name. Generic calls associate keywords with
+each candidate's dummy names before matching types. Named scalar, supported
+array/CHARACTER and type-bound procedure calls use the existing procedure
+lowering. Common math intrinsics and RANDOM_NUMBER(HARVEST=...) also accept names;
+existing intrinsic keyword support remains available.
+
+Unknown keywords, duplicate arguments, positional arguments after keywords and
+missing required arguments are compile errors. Named procedure calls currently
+require a known definition in the source group and unique procedure names within
+the compilation; external interface-only declarations and procedure pointers
+remain unsupported. Run `python tests/test_named_arguments.py`.
