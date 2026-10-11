@@ -12,6 +12,30 @@ pub mod fortran {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn dimension_attributes_lower_to_array_declarations() {
+        use crate::ast::{Expr, Stmt};
+        let source = "program main\ninteger, dimension(2,3) :: a,b\nreal, dimension(2,3) :: c(4)\ncontains\npure subroutine f(nn)\ninteger,dimension(:),intent(in)::nn\nend subroutine f\nend program main";
+        let program = super::parse_with_src(source, &crate::lexer::lex(source), "dimension.f90").unwrap();
+        for name in ["a", "b"] {
+            assert!(program.body.iter().any(|s| matches!(s, Stmt::ArrayDecl { name: n, dims, .. }
+                if n == name && matches!(&dims[..], [Expr::IntLit(x), Expr::IntLit(y)] if x == "2" && y == "3"))));
+        }
+        assert!(program.body.iter().any(|s| matches!(s, Stmt::ArrayDecl { name, dims, .. }
+            if name == "c" && matches!(&dims[..], [Expr::IntLit(x)] if x == "4"))));
+        let body = program.body.iter().find_map(|s| match s {
+            Stmt::Subroutine { body, .. } => Some(body), _ => None,
+        }).unwrap();
+        assert!(body.iter().any(|s| matches!(s, Stmt::DummyIntent { name, intent }
+            if name == "nn" && intent == "intent(in)")));
+        assert!(body.iter().any(|s| matches!(s, Stmt::ArrayDecl { name, dims, .. }
+            if name == "nn" && matches!(&dims[..], [Expr::Ident(x)] if x == "@deferred_extent"))));
+        for attributes in ["dimension()", "dimension(2),dimension(3)"] {
+            let source = format!("program main\ninteger,{attributes}::a\nend program main");
+            assert!(super::parse_with_src(&source, &crate::lexer::lex(&source), "invalid.f90").is_err());
+        }
+    }
+
+    #[test]
     fn impure_elemental_prefixes_and_contextual_identifiers() {
         for prefix in ["impure elemental", "elemental impure", "IMPURE &\n ELEMENTAL"] {
             let source=format!("{prefix} subroutine f(i)\ninteger,intent(in)::i\nprint *,i\nend subroutine f");
@@ -183,6 +207,7 @@ fn human_token(tok: &TokenKind) -> String {
         TokenKind::RBracket => "']'".into(),
         TokenKind::KwError => "keyword error".into(),
         TokenKind::KwAllocate => "keyword allocate".into(),
+        TokenKind::KwDimension => "keyword dimension".into(),
         TokenKind::KwDeallocate => "keyword deallocate".into(),
         TokenKind::KwProgram => "keyword program".into(),
         TokenKind::KwEnd => "keyword end".into(),

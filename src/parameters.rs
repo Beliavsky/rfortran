@@ -756,7 +756,7 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
                 if slots[slot].replace(value.clone()).is_some() { bail!("RESHAPE: duplicate argument"); }
             }
             *args = vec![slots[0].take().context("RESHAPE requires SOURCE")?, slots[1].take().context("RESHAPE requires SHAPE")?, slots[2].take().unwrap_or(Expr::Call("@no_pad".into(),vec![])), slots[3].take().unwrap_or(Expr::Call("@no_order".into(),vec![]))];
-        } else if matches!(name.as_str(), "lbound" | "ubound" | "size") {
+        } else if matches!(name.as_str(), "lbound" | "ubound" | "size" | "shape") {
             let (array, dim, kind) = crate::inquiries::arguments(name, args)?;
             if let Some(mut kind) = kind {
                 rewrite_expr(&mut kind, constants)?;

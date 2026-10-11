@@ -368,6 +368,23 @@ checks apply to the input values. Whole-array calls, INTEGER kind 16, and
 Run `python tests/test_bit_intrinsics.py` for interpreter/native O0/O2 checks
 with gfortran comparisons. `tests/125_bit_intrinsics.f90` is the local fixture.
 
+## DIMENSION declarations and SHAPE
+
+Intrinsic type declarations accept `DIMENSION(...)` alongside attributes such
+as `INTENT`, `OPTIONAL`, `ALLOCATABLE`, `PARAMETER`, and `SAVE`. Bounds apply to
+each entity; an entity's own array declarator overrides the attribute's bounds.
+For example, `integer, dimension(2,3) :: a,b` declares two matrices, and
+`integer, dimension(:), intent(in) :: nn` declares an assumed-shape argument.
+These forms use the same supported array operations as per-entity bounds.
+
+`SHAPE` supports fixed-size numeric/LOGICAL array variables and sections,
+specialized array arguments, and supported runtime allocatable arrays. Fixed-size inquiries do
+not read the array's elements, so the array need not be initialized.
+The optional result `KIND` currently supports only default INTEGER (`KIND=4`);
+`SOURCE=` and `KIND=` keywords are accepted. Run
+`python tests/test_dimension_attribute.py` for interpreter/native O0/O2 checks
+with gfortran comparisons.
+
 ## Empty arrays
 
 Fixed-shape numeric and LOGICAL multidimensional arrays may have zero extents.
@@ -586,7 +603,7 @@ Growing array call cycles cannot supply a finite storage
 bound and are diagnosed. Run `python tests/test_recursive_allocatables.py` for
 interpreter/native O0/O2 checks and comparison with gfortran.
 
-DEALLOCATE accepts lists of whole bounded rank-one allocatable arrays and
+DEALLOCATE accepts lists of whole bounded allocatable arrays and
 deferred-length scalar CHARACTER locals, including in single-line IF statements.
 It clears ALLOCATED and initialization state, permits subsequent allocation or
 CHARACTER assignment, and reports an error when an object is already unallocated.
@@ -595,9 +612,29 @@ from their ALLOCATE shapes, which must be known during call-site specialization;
 different extents and zero-sized allocations are supported within that capacity.
 Supported allocatable INTENT(INOUT) dummies share allocation state with the caller;
 INTENT(IN) objects and nonlocal objects in PURE procedures cannot be deallocated.
-Multidimensional arrays, pointers, derived-type objects, and STAT/ERRMSG options
+Pointers, derived-type objects, and STAT/ERRMSG options
 remain outside this DEALLOCATE subset. Run `python tests/test_deallocate.py` for
 interpreter/native O0/O2 checks and comparison with gfortran.
+
+Local numeric/LOGICAL multidimensional allocatables explicitly deallocated in
+the source can also use runtime allocation dimensions with proven finite bounds.
+For example, choosing `(3,4)` or `(10,20)` in an IF/ELSE reserves capacity for 200
+elements while each ALLOCATE sets the active dimensions and element count.
+SIZE (including constant DIM), SHAPE, LBOUND, UBOUND, ALLOCATED, whole-array filling,
+arithmetic, list-directed output, full-array reductions, and RANDOM_NUMBER use the
+current allocation. Element indexing uses the current column-major strides and
+checks each subscript against its dimension. Array operations check each logical
+dimension, including when different shapes have the same total element count.
+Deallocation and reallocation reset element initialization state; empty allocations
+can be queried and reduced without reading storage.
+
+This continues to use bounded local storage. Input-dependent bounds and
+loop-carried growth without a finite proof are diagnosed; general heap allocation
+is not implemented. Runtime-sized multidimensional sections, procedure arguments,
+array transformations, masked/DIM reductions, mixing fixed and runtime-sized
+multidimensional array expressions, and explicit non-unit allocation lower bounds
+remain unsupported. Run `python tests/test_runtime_allocatables.py` for
+interpreter/native O0/O2 checks and comparisons with gfortran for deterministic cases.
 
 ## CHARACTER comparisons and function arguments
 
@@ -786,6 +823,8 @@ python tests/test_driver.py
 python tests/test_record_read.py
 python tests/test_recursive_allocatables.py
 python tests/test_deallocate.py
+python tests/test_runtime_allocatables.py
+python tests/test_dimension_attribute.py
 python tests/test_internal_read.py
 python tests/test_write.py
 python tests/test_output_implied_do.py

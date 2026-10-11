@@ -5,6 +5,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn dimension_is_contextual_to_declaration_attributes() {
+        for source in ["integer, dimension(2,3) :: a,b",
+            "real(kind=8), intent(in), DIMENSION(:,:) :: a",
+            "double precision, & ! comment\n & dimension(2) :: a"] {
+            assert_eq!(lex(source).iter().filter(|t| matches!(t.kind, TokenKind::KwDimension)).count(), 1);
+        }
+        for source in ["integer :: x, dimension(2)", "dimension=2",
+            "call dimension(x)", "x=dimension(y)", "call f(x,dimension=y)",
+            "integer :: x\ncall f(x,dimension)"] {
+            assert!(!lex(source).iter().any(|t| matches!(t.kind, TokenKind::KwDimension)), "{source}");
+        }
+    }
+
+    #[test]
     fn double_precision_is_a_contextual_phrase() {
         for gap in [" ", " & ! comment\n & "] {
             let tokens = lex(&format!("DoUbLe{gap}PrEcIsIoN :: double, precision"));
@@ -166,6 +180,7 @@ pub enum TokenKind {
     KwError,
     KwAllocate,
     KwDeallocate,
+    KwDimension,
     FileControl(String),
     FilePosition(String),
     KwType,
@@ -416,6 +431,28 @@ pub fn lex(input: &str) -> Vec<Token> {
             tokens[index+2].span.end = end;
         }
         index += 1;
+    }
+    // DIMENSION is a keyword only in the attribute part of an intrinsic
+    // type declaration. Variables and procedures named dimension stay identifiers.
+    let mut declaration = false;
+    let mut depth = 0;
+    for i in 0..tokens.len() {
+        if i == 0 || !same_statement(&input[tokens[i-1].span.end..tokens[i].span.start]) {
+            declaration = matches!(tokens[i].kind, TokenKind::KwInteger | TokenKind::KwReal
+                | TokenKind::KwDouble | TokenKind::KwCharacter | TokenKind::KwLogical);
+            depth = 0;
+        }
+        if declaration && depth == 0 && i > 0
+            && matches!(tokens[i-1].kind, TokenKind::Comma)
+            && matches!(&tokens[i].kind, TokenKind::Ident(n) if n.eq_ignore_ascii_case("dimension")) {
+            tokens[i].kind = TokenKind::KwDimension;
+        }
+        match tokens[i].kind {
+            TokenKind::LParen => depth += 1,
+            TokenKind::RParen => depth -= 1,
+            TokenKind::DColon if depth == 0 => declaration = false,
+            _ => {}
+        }
     }
     // DOUBLE PRECISION is a type phrase, not two reserved identifiers.
     // Preserve the pair only within the same logical source statement.

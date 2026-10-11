@@ -125,6 +125,7 @@ pub fn integer_huge(kind: Option<u8>) -> Result<i64> {
 }
 
 pub fn arguments(name: &str, args: &[Expr]) -> Result<(Expr, Option<Expr>, Option<Expr>)> {
+    let shape = name == "shape";
     let mut slots: [Option<Expr>; 3] = [None, None, None];
     let mut keyword_seen = false;
     for (position, arg) in args.iter().enumerate() {
@@ -132,9 +133,10 @@ pub fn arguments(name: &str, args: &[Expr]) -> Result<(Expr, Option<Expr>, Optio
             if let Some(key) = tag.strip_prefix("@keyword:") {
                 keyword_seen = true;
                 let slot = match key {
-                    "array" => 0,
-                    "dim" => 1,
-                    "kind" => 2,
+                    "array" if !shape => 0,
+                    "source" if shape => 0,
+                    "dim" if !shape => 1,
+                    "kind" => if shape { 1 } else { 2 },
                     _ => bail!("{name}: unknown keyword `{key}`"),
                 };
                 (slot, &values[0])
@@ -150,6 +152,9 @@ pub fn arguments(name: &str, args: &[Expr]) -> Result<(Expr, Option<Expr>, Optio
             }
             (position, arg)
         };
+        if shape && slot >= 2 {
+            bail!("SHAPE expects SOURCE and optional KIND");
+        }
         if slot >= 3 {
             bail!("{name} expects ARRAY, optional DIM, and optional KIND");
         }
@@ -160,9 +165,9 @@ pub fn arguments(name: &str, args: &[Expr]) -> Result<(Expr, Option<Expr>, Optio
     Ok((
         slots[0]
             .take()
-            .with_context(|| format!("{name} requires ARRAY"))?,
-        slots[1].take(),
-        slots[2].take(),
+            .with_context(|| format!("{name} requires {}", if shape { "SOURCE" } else { "ARRAY" }))?,
+        if shape { None } else { slots[1].take() },
+        if shape { slots[1].take() } else { slots[2].take() },
     ))
 }
 

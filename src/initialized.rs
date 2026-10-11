@@ -16,6 +16,7 @@ struct Variable {
     extent: Option<i64>,
     state: State,
     elements: BTreeMap<i64, State>,
+    runtime_sized: bool,
 }
 type Env = BTreeMap<String, Variable>;
 fn int(n: i64) -> Expr { Expr::IntLit(n.to_string()) }
@@ -207,6 +208,13 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                 write(var, None, env, &mut before, serial);
                 if !matches!((constant(start), constant(end)), (Some(a), Some(b)) if a > b) {
                     let mut inner = env.clone(); possible_writes(body, &mut inner);
+                    // A reduction over runtime-sized storage can execute zero
+                    // iterations. Check its uninitialized elements only if read.
+                    if constant(end).is_none() {
+                        for v in inner.values_mut() {
+                            if v.runtime_sized && v.state==State::No {v.state=State::Maybe;}
+                        }
+                    }
                     flow(body, &mut inner, result, serial)?;
                     *env = merge(env, &inner);
                 }
@@ -305,7 +313,8 @@ fn scope(body: &mut Vec<Stmt>, inherited: &mut Env, params: &[String], result: O
         *serial += 1;
         let flag = format!("@initialized_{serial}");
         let assigned = params.contains(&name) && !body.iter().any(|s| matches!(s, Stmt::DummyIntent { name: n, intent } if n == &name && intent == "intent(out)"));
-        let v = Variable { flag: flag.clone(), extent, state: if assigned { State::Yes } else { State::No }, elements: BTreeMap::new() };
+        let runtime_sized=body.iter().any(|s|matches!(s,Stmt::DummyIntent {name:n,intent} if n==&name && intent.starts_with("@bounded:")));
+        let v = Variable { flag: flag.clone(), extent, state: if assigned { State::Yes } else { State::No }, elements: BTreeMap::new(), runtime_sized };
         if let Some(n) = extent {
             prefix.push(Stmt::ArrayDecl { kind: TypeSpec::Integer(None), name: flag.clone(), dims: vec![int(n)] });
             let index = format!("@init_clear_{serial}");

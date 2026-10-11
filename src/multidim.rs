@@ -488,6 +488,17 @@ impl Lowerer {
                     args.extend([int(stride), int(dims[axis]), Expr::Call("@reduction_shape".into(), result_dims.into_iter().map(int).collect())]);
                 }
             }
+            Expr::Call(n, args) if n == "shape" => {
+                let [source] = args.as_slice() else { bail!("SHAPE expects SOURCE and optional KIND"); };
+                let owner = match source {
+                    Expr::Ident(n) | Expr::Section { name: n, .. } | Expr::Call(n, _) | Expr::Index(n, _) => n,
+                    _ => bail!("SHAPE currently requires an array variable or section"),
+                };
+                self.check_association(owner)?;
+                let dims = self.shape(source, shapes)?.context("SHAPE requires an array with a statically known shape")?;
+                total(&dims)?;
+                *e = Expr::Call("@bounds_vector".into(), dims.into_iter().map(int).collect());
+            }
             Expr::Call(n, args) if matches!(n.as_str(), "lbound" | "ubound") => {
                 let array = args.first().context("array bound inquiry requires ARRAY")?;
                 let owner = match array {
@@ -649,6 +660,11 @@ impl Lowerer {
                 Ok(if dims.is_empty() { None } else { Some(dims) })
             }
             Expr::Call(n, args) if n == "@bounds_vector" => Ok(Some(vec![args.len() as i64])),
+            Expr::Call(n, args) if n == "shape" => {
+                let [source] = args.as_slice() else { bail!("SHAPE expects SOURCE and optional KIND"); };
+                let dims = self.shape(source, shapes)?.context("SHAPE requires an array")?;
+                Ok(Some(vec![dims.len() as i64]))
+            }
             Expr::Call(n, args) if matches!(n.as_str(), "lbound" | "ubound") => {
                 let dims = self.shape(&args[0], shapes)?.context("bound inquiry requires an array")?;
                 Ok(if args.len() == 1 { Some(vec![dims.len() as i64]) } else { None })

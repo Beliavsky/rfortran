@@ -58,6 +58,7 @@ extern {
     KW_WHILE => TokenKind::KwWhile,
         KW_INTEGER => TokenKind::KwInteger,
         KW_REAL => TokenKind::KwReal,
+        KW_DIMENSION => TokenKind::KwDimension,
         KW_DOUBLE => TokenKind::KwDouble,
         KW_PRECISION => TokenKind::KwPrecision,
         KW_CHARACTER => TokenKind::KwCharacter,
@@ -275,6 +276,16 @@ AttrList: Vec<String> = {
     /* empty */ => vec![],
     <mut v: AttrList> COMMA <id: Ident> LPAREN <arg: Ident> RPAREN => { v.push(format!("{}({})", id, arg)); v },
     <mut v: AttrList> COMMA <id: Ident> => { v.push(id); v },
+};
+
+// DIMENSION uses the same bounds as entity declarators, while the remaining
+// attributes keep their existing representation (INTENT, PARAMETER, etc.).
+IntrinsicAttrList: (Vec<String>, Option<Vec<Expr>>) = {
+    <attrs:AttrList> => (attrs,None),
+    <mut before:AttrList> COMMA KW_DIMENSION LPAREN <dims:DimList> RPAREN <after:AttrList> => {
+        before.extend(after);
+        (before,Some(dims))
+    },
 };
 
 DeclEntities: Vec<(String, Vec<Expr>, Option<Expr>, Option<TypeSpec>)> = {
@@ -673,8 +684,10 @@ PreFuncDecl: Vec<Stmt> = {
     KW_TYPE DCOLON <name:Ident> <components:Components> KW_CONTAINS <bindings:Bindings> KW_END KW_TYPE <_end:Ident> => vec![Stmt::DerivedType{name,components,bindings}],
     KW_TYPE LPAREN <type_name:Ident> RPAREN <attributes:AttrList> DCOLON <names:IdentList> => vec![Stmt::DerivedDecl{type_name,names,attributes,polymorphic:false}],
     KW_CLASS LPAREN <type_name:Ident> RPAREN <attributes:AttrList> DCOLON <names:IdentList> => vec![Stmt::DerivedDecl{type_name,names,attributes,polymorphic:true}],
-    <t: TypeSpec> <attrs: AttrList> DCOLON <entities: DeclEntities> => {
+    <t: TypeSpec> <attributes: IntrinsicAttrList> DCOLON <entities: DeclEntities> => {
+        let (attrs, dimension) = attributes;
         entities.into_iter().flat_map(|(name, dims, value, length)| {
+            let dims = if dims.is_empty() { dimension.clone().unwrap_or_default() } else { dims };
             let t = match length {
                 Some(length) if matches!(t,TypeSpec::Character(_) | TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed) => length,
                 Some(_) => crate::ast::character_length(Expr::Call("@invalid_entity_length".into(),vec![])),

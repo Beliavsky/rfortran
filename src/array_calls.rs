@@ -28,7 +28,19 @@ fn array_actual(e: &Expr, shapes: &Shapes) -> bool {
         _ => false,
     }
 }
-
+fn runtime_matrix_actual(e: &Expr, shapes: &Shapes) -> bool {
+    match e {
+        Expr::Ident(n) | Expr::Section { name: n, .. } => {
+            crate::allocatables::axes(n, shapes).is_some()
+        }
+        Expr::Bin(_, a, b) => runtime_matrix_actual(a, shapes) || runtime_matrix_actual(b, shapes),
+        Expr::Un(_, a) => runtime_matrix_actual(a, shapes),
+        Expr::Call(n, args) if !shapes.contains_key(n) => {
+            args.iter().any(|a| runtime_matrix_actual(a, shapes))
+        }
+        _ => false,
+    }
+}
 // Expand array calls before ordinary scalar specialization. Keeping this in a
 // separate function also limits the stack frame of the recursive `expand` pass.
 fn elemental_array_call(name: &str, args: &[Expr], routine: &Routine, shapes: &Shapes, readonly: &HashSet<String>, serial: &mut usize) -> Result<Option<Stmt>> {
@@ -141,6 +153,12 @@ fn rewrite(
     constants: &HashMap<String, Expr>,
     absent: &HashSet<String>,
 ) -> Result<()> {
+    if let Expr::Call(n,args)=e {
+        if matches!(n.as_str(),"allocated"|"size"|"lbound"|"ubound"|"shape") {
+            for dim in args.iter_mut().skip(1) {rewrite(dim,shapes,constants,absent)?;}
+            if let Some(value)=crate::allocatables::inquiry(n,args,shapes)? {*e=value;return Ok(());}
+        }
+    }
     match e {
         Expr::Ident(n) => {
             if absent.contains(n) { bail!("reference to absent OPTIONAL dummy `{n}`"); }
@@ -203,6 +221,17 @@ fn rewrite(
                 _ => bail!("SIZE expects an array and optional dimension"),
             };
         }
+        Expr::Call(n, args) if n == "shape" => {
+            if let [Expr::Ident(array)] = args.as_slice() {
+                if absent.contains(array) { bail!("reference to absent OPTIONAL dummy `{array}`"); }
+                if let Some((_, dims)) = shapes.get(array) {
+                    if dims.is_empty() { bail!("SHAPE currently requires an array"); }
+                    if dims.iter().all(|d| crate::parameters::integer_constant(d).is_ok()) {
+                        *e = Expr::Call("@bounds_vector".into(), dims.clone());
+                    }
+                }
+            }
+        }
         Expr::Call(n, args) if matches!(n.as_str(), "lbound" | "ubound") => {
             for dim in args.iter_mut().skip(1) { rewrite(dim, shapes, constants, absent)?; }
             if let Some(Expr::Ident(array)) = args.first() {
@@ -260,7 +289,7 @@ fn rewrite_value(
     absent: &HashSet<String>,
 ) -> Result<()> {
     match e {
-        Expr::Call(n,_) if matches!(n.as_str(),"size" | "lbound" | "ubound" | "present" | "allocated" | "@packed_view") => return rewrite(e,shapes,constants,absent),
+        Expr::Call(n,_) if matches!(n.as_str(),"size" | "lbound" | "ubound" | "shape" | "present" | "allocated" | "@packed_view") => return rewrite(e,shapes,constants,absent),
         // Literal substring bounds can be evaluated at runtime; retaining the
         // original variables also preserves initialization and usage diagnostics.
         Expr::Call(n, _) if n == "@literal_substring" => return rewrite(e, shapes, &HashMap::new(), absent),
@@ -563,6 +592,7 @@ fn specialize(
     constants: &mut HashMap<String, Expr>,
     stable: &HashSet<String>,
 ) -> Result<()> {
+    crate::allocatables::prepare_matrices(body, shapes, constants)?;
     prepare_deallocated_locals(body, shapes, constants, absent, stable)?;
     if let Some(Stmt::CallSub { name, args }) = body.first() {
         if name == "@forall" || name == "@do_step" {
@@ -767,6 +797,8 @@ fn specialize(
                         local.remove(&name);
                         local.remove(&format!("@allocated:{name}"));
                         local.remove(&format!("@extent:{name}"));
+                        local.remove(&format!("@axes:{name}"));
+                        local.remove(&format!("@axis_limits:{name}"));
                         values.remove(&name);
                     }
                 }
@@ -939,6 +971,7 @@ fn stable(body: &[Stmt]) -> HashSet<String> {
     // Their declaration-time initializers do not make them constants.
     for statement in body {
         if let Stmt::DummyIntent {intent,..}=statement {
+            if let Some(rest)=intent.strip_prefix("@bounded_shape:") {for axis in rest.split(':') {counts.remove(axis);}}
             if let Some(rest)=intent.strip_prefix("@bounded:") {
                 if let Some((length,flag))=rest.split_once(':') {
                     counts.remove(length);
@@ -1027,6 +1060,7 @@ fn expand(
     for s in body.iter_mut() {
         if let Stmt::CallSub { name, args } = s {
             if let Some(r) = routines.get(name) {
+                if args.iter().any(|a|runtime_matrix_actual(a,&shapes)) {bail!("runtime-sized multidimensional procedure arguments are not yet supported");}
                 if r.elemental { crate::elemental::validate_subroutine(name, &r.params, &r.body)?; }
                 if active.contains(name) {
                     bail!("recursive specialized subroutine calls are not yet supported");
@@ -1141,6 +1175,7 @@ fn expand(
                             (k,vec![Expr::IntLit(capacity.to_string())],Some(length))
                         };
                         let a=match &captured {Expr::Ident(a)=>a.clone(),Expr::Call(n,v) if n=="@packed_view"=>if let Expr::Ident(a)=&v[0] {a.clone()} else {bail!("array view requires materialized storage");},_=>bail!("array dummy `{p}` requires a materialized array argument")};
+                        if crate::allocatables::axes(&a,&shapes).is_some() {bail!("runtime-sized multidimensional procedure arguments are not yet supported");}
                         if matches!(kind, TypeSpec::CharacterAssumed) && matches!(actual_kind, TypeSpec::Character(_)) {
                             kind = actual_kind.clone();
                         }

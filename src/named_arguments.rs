@@ -137,6 +137,7 @@ fn intrinsic_keywords(name: &str) -> bool {
         "size"
             | "lbound"
             | "ubound"
+            | "shape"
             | "sum"
             | "product"
             | "minval"

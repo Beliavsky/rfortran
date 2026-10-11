@@ -58,6 +58,22 @@ fn rename_with_prefix(
     }
     for s in body.iter_mut() {
         match s {
+            Stmt::DummyIntent { name: n, intent } if intent.starts_with("@bounded_shape:") => {
+                let rest = intent.trim_start_matches("@bounded_shape:");
+                let axes = rest
+                    .split(':')
+                    .map(|n| {
+                        let mut n = n.to_owned();
+                        name(&mut n, &names);
+                        n
+                    })
+                    .collect::<Vec<_>>();
+                name(n, &names);
+                *intent = format!("@bounded_shape:{}", axes.join(":"));
+            }
+            Stmt::DummyIntent { name: n, intent } if intent.starts_with("@bounded_limits:") => {
+                name(n, &names)
+            }
             Stmt::DummyIntent { name: n, intent } if intent.starts_with("@bounded:") => {
                 let rest = intent.trim_start_matches("@bounded:");
                 if let Some((length, flag)) = rest.split_once(':') {
@@ -152,7 +168,7 @@ fn rename_with_prefix(
             _ => {}
         }
     }
-    body.retain(|s| !matches!(s, Stmt::ArrayDecl { name, .. } if params.contains(name)) && !matches!(s, Stmt::DummyIntent { intent,.. } if prefix!="@alloc_block" && !intent.starts_with("@bounded:")) && !matches!(s, Stmt::VarDecl { names, .. } if names.is_empty()));
+    body.retain(|s| !matches!(s, Stmt::ArrayDecl { name, .. } if params.contains(name)) && !matches!(s, Stmt::DummyIntent { intent,.. } if prefix!="@alloc_block" && !intent.starts_with("@bounded:") && !intent.starts_with("@bounded_shape:") && !intent.starts_with("@bounded_limits:")) && !matches!(s, Stmt::VarDecl { names, .. } if names.is_empty()));
     Ok(())
 }
 /// Preserve procedure RETURN when its body is expanded into the caller.

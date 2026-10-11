@@ -28,6 +28,7 @@ mod elemental;
 mod subroutines;
 mod array_calls;
 mod allocatables;
+mod allocation_bounds;
 mod optional;
 mod named_arguments;
 mod substrings;
