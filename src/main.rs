@@ -36,6 +36,7 @@ mod array_bounds;
 mod multidim;
 mod formatting;
 mod format_spec;
+mod record_input;
 mod derived;
 mod operators;
 mod imports;

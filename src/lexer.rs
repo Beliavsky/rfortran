@@ -72,6 +72,24 @@ mod tests {
     }
 
     #[test]
+    fn spaced_inout_is_contextual_and_preserves_its_span() {
+        for gap in [" ", "\t", " & ! comment\n! intervening comment\n & "] {
+            let source = format!("integer, InTeNt(In{gap}OuT) :: x");
+            let tokens = lex(&source);
+            let inout = tokens.iter().find(|t| matches!(&t.kind, TokenKind::Ident(n) if n == "inout")).unwrap();
+            assert_eq!(&source[inout.span.clone()], format!("In{gap}OuT"));
+        }
+        for source in [
+            "integer :: in, out", "in=out", "call f(in,out)",
+            "integer, intent(in) :: x", "integer, intent(out) :: x",
+            "integer, intent(in\nout) :: x", "integer, intent(in;out) :: x",
+            "integer, intent(in,out) :: x", "integer, other(in out) :: x",
+        ] {
+            assert!(!lex(source).iter().any(|t| matches!(&t.kind, TokenKind::Ident(n) if n == "inout")), "{source}");
+        }
+    }
+
+    #[test]
     fn write_is_contextual_and_empty_lists_end_at_statement_boundaries() {
         let source="integer :: write(2,2)\nwrite(1,2)=3\ncall write(1,2)\nx=write(1,2)\nwrite(*,*) write(1,2)\nif (.true.) write(6,*) 7\nwrite(*,*); x=8\nwrite(*,*) ! blank\nx=9\nwrite(*,*) &\n & 10\n";
         let tokens=lex(source);
@@ -376,6 +394,24 @@ pub fn lex(input: &str) -> Vec<Token> {
                 });
             }
         }
+    }
+    // INTENT(IN OUT) and INTENT(INOUT) are the same declaration attribute.
+    // Normalize only this phrase, within a single logical statement, so both
+    // the parser and source-token semantic checks see the canonical spelling.
+    let mut index = 1;
+    while index + 4 < tokens.len() {
+        if matches!(tokens[index-1].kind, TokenKind::Comma)
+            && matches!(&tokens[index].kind, TokenKind::Ident(n) if n.eq_ignore_ascii_case("intent"))
+            && matches!(tokens[index+1].kind, TokenKind::LParen)
+            && matches!(&tokens[index+2].kind, TokenKind::Ident(n) if n.eq_ignore_ascii_case("in"))
+            && matches!(&tokens[index+3].kind, TokenKind::Ident(n) if n.eq_ignore_ascii_case("out"))
+            && matches!(tokens[index+4].kind, TokenKind::RParen)
+            && tokens[index-1..index+5].windows(2).all(|pair| same_statement(&input[pair[0].span.end..pair[1].span.start])) {
+            let end = tokens.remove(index+3).span.end;
+            tokens[index+2].kind = TokenKind::Ident("inout".into());
+            tokens[index+2].span.end = end;
+        }
+        index += 1;
     }
     // DOUBLE PRECISION is a type phrase, not two reserved identifiers.
     // Preserve the pair only within the same logical source statement.

@@ -113,6 +113,38 @@ pub(super) fn handle(
     Ok(file)
 }
 
+// READ with IOSTAT reports connection/range errors without terminating.
+// A null handle with status zero denotes preconnected standard input (unit 5).
+pub(super) fn read_handle(
+    module: &mut ObjectModule, b: &mut FunctionBuilder, ptr: ir::Type,
+    unit: ir::Value,
+) -> Result<(ir::Value, ir::Value)> {
+    anyhow::ensure!(ptr == types::I64, "file I/O currently requires a 64-bit target");
+    let done=b.create_block();let file=b.create_block();let lookup=b.create_block();let invalid=b.create_block();
+    b.append_block_param(done,ptr);b.append_block_param(done,types::I64);
+    let zero=b.ins().iconst(ptr,0);let error=b.ins().iconst(types::I64,1);
+    let stdin=b.ins().icmp_imm(IntCC::Equal,unit,5);
+    b.ins().brif(stdin,done,&[zero.into(),zero.into()],file,&[]);
+    b.switch_to_block(file);b.seal_block(file);
+    let range=b.ins().icmp_imm(IntCC::UnsignedLessThan,unit,1024);
+    let not_stdout=b.ins().icmp_imm(IntCC::NotEqual,unit,6);
+    let valid=b.ins().band(range,not_stdout);
+    b.ins().brif(valid,lookup,&[],invalid,&[]);
+    b.switch_to_block(invalid);b.seal_block(invalid);
+    b.ins().jump(done,&[zero.into(),error.into()]);
+    b.switch_to_block(lookup);b.seal_block(lookup);
+    let id=module.declare_data(".rfort.file_units",Linkage::Local,true,false)?;
+    let global=module.declare_data_in_func(id,b.func);
+    let base=b.ins().global_value(ptr,global);
+    let offset=b.ins().imul_imm(unit,8);let address=b.ins().iadd(base,offset);
+    let handle=b.ins().load(ptr,MemFlags::new(),address,0);
+    let connected=b.ins().icmp_imm(IntCC::NotEqual,handle,0);
+    let status=b.ins().select(connected,zero,error);
+    b.ins().jump(done,&[handle.into(),status.into()]);
+    b.switch_to_block(done);b.seal_block(done);
+    Ok((b.block_params(done)[0],b.block_params(done)[1]))
+}
+
 fn seek(
     module: &mut ObjectModule,
     b: &mut FunctionBuilder,

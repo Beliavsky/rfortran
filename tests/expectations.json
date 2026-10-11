@@ -839,6 +839,20 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": "0\n123\n-907\n 3 4 6\n"
+    },
+    "121_intent_in_out": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 5 5 5\n 3 4 5\n .TRUE. .TRUE. .TRUE.\n"
+    },
+    "122_record_read_iostat": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "[abcde]\n .TRUE.\n 0 .TRUE.\n[xy   ]\n .TRUE.\n .TRUE.\n"
     }
   }
 }

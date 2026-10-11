@@ -172,6 +172,13 @@ reactivates elements excluded by that enclosing mask. Section destinations and
 CHARACTER destinations remain unsupported. Run `python tests/test_nested_where.py`
 for nested mask, shape, and uninitialized-element checks.
 
+## INTENT spellings
+
+`intent(inout)` and `intent(in out)` are equivalent declaration attributes.
+Both spellings use the same argument checks and propagate updates to the caller.
+They are case insensitive, and `in` / `out` may be separated by a valid
+free-form continuation. `intent(in)` and `intent(out)` retain their usual meanings.
+
 ## Explicit DO steps
 
 Counted loops accept `do i=first,last,step` with a constant nonzero INTEGER
@@ -235,9 +242,17 @@ FILE must be constant; STATUS and ACTION must be specified as shown. Units are
 0 through 1023 except preconnected units 5 and 6. `(A)` reads accept one scalar
 CHARACTER destination; input records must contain non-NUL ASCII. Reads consume
 the entire record and handle LF/CRLF endings.
-File output, external list-directed input, NEWUNIT and IOSTAT are not yet
-supported. Connections are shared within a compiled source group. Native file
-I/O currently requires a 64-bit target.
+`READ(unit,'(a)',iostat=status) text` reports zero on success, a negative value
+at end of file, and a positive value on an input, encoding, or connection error.
+IOSTAT must be a writable scalar INTEGER of kind 4 or 8. Failed reads leave the
+CHARACTER destination undefined; reading it then triggers an initialization error.
+The reader consumes invalid records so a subsequent read can continue with the
+next record. These reads accept standard input as `*`, constant unit 5, or an
+INTEGER unit variable whose value is 5. Input records may end without a final newline.
+
+File output, external list-directed input, NEWUNIT, and IOSTAT on OPEN/CLOSE or
+positioning operations are not yet supported. Connections are shared within a
+compiled source group. Native file I/O currently requires a 64-bit target.
 
 ## Numeric and logical reductions
 

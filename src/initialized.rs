@@ -165,6 +165,13 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                 if name == "@read_record" { for arg in &args[1..] { read(arg, env, &mut before, serial)?; } }
                 if let Some((name, index)) = args.first().and_then(key) { if let Some(i) = index { read(i, env, &mut before, serial)?; } write(name, index, env, &mut after, serial); }
             }
+            Stmt::CallSub { name, args } if name == "@read_record_status" => {
+                for arg in &args[2..] { read(arg, env, &mut before, serial)?; }
+                for arg in &args[..2] {
+                    let Expr::Ident(dest) = arg else { unreachable!() };
+                    write(dest, None, env, &mut after, serial);
+                }
+            }
             Stmt::CallSub { name, args } if name == "@undefine" => {
                 let Expr::Ident(name) = &args[0] else { unreachable!() };
                 let v = env.get_mut(name).ok_or_else(|| anyhow::anyhow!("undefined output argument `{name}`"))?;

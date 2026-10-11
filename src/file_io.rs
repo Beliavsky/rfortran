@@ -181,4 +181,25 @@ impl Files {
         bytes.resize(length, b' ');
         Ok(String::from_utf8(bytes).unwrap())
     }
+
+    pub(crate) fn record_status(&mut self, unit: i64, buffer: &mut [u8]) -> i64 {
+        if unit == 5 {
+            let stdin = std::io::stdin();
+            let mut input = stdin.lock();
+            return crate::record_input::record(buffer, || {
+                let mut byte = [0];
+                match input.read(&mut byte) {
+                    Ok(0) => Ok(None), Ok(_) => Ok(Some(byte[0])), Err(_) => Err(()),
+                }
+            });
+        }
+        if Self::valid(unit).is_err() { return crate::record_input::ERROR; }
+        let Some(file) = self.0.get_mut(&unit) else { return crate::record_input::ERROR; };
+        crate::record_input::record(buffer, || {
+            let mut byte = [0];
+            match file.read(&mut byte) {
+                Ok(0) => Ok(None), Ok(_) => Ok(Some(byte[0])), Err(_) => Err(()),
+            }
+        })
+    }
 }

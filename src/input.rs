@@ -272,6 +272,50 @@ pub(crate) fn lower_integer_read(
     Ok(Stmt::Block { body })
 }
 
+pub(crate) fn lower_record_read(
+    args: &[Expr],
+    symbols: &HashMap<String, (TypeSpec, Vec<Expr>)>,
+    serial: &mut usize,
+) -> Result<Stmt> {
+    let [unit, Expr::Str(format), Expr::Str(control), status, Expr::Ident(dest)] = args else {
+        bail!("formatted READ requires one writable scalar CHARACTER variable");
+    };
+    if !control.eq_ignore_ascii_case("iostat") {
+        bail!("formatted READ currently supports only the IOSTAT control specifier");
+    }
+    if format.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_ascii_lowercase() != "(a)" {
+        bail!("formatted READ currently supports only the (A) format");
+    }
+    if crate::parameters::integer_constant(unit).ok() != Some(5) {
+        crate::file_io::unit(unit, symbols)?;
+    }
+    let Some((TypeSpec::Character(length), dims)) = symbols.get(dest) else {
+        bail!("formatted READ requires one writable scalar CHARACTER variable");
+    };
+    if !dims.is_empty() { bail!("formatted READ requires a scalar CHARACTER variable"); }
+    if !matches!(integer_kind(status, symbols), Some(4 | 8)) {
+        bail!("IOSTAT must be a writable scalar INTEGER of kind 4 or 8");
+    }
+    let Expr::Ident(status) = status else { unreachable!() };
+    *serial += 1;
+    let code = format!("@record_read_status_{serial}");
+    let buffer = format!("@record_read_buffer_{serial}");
+    Ok(Stmt::Block { body: vec![
+        Stmt::VarDecl { kind: TypeSpec::Integer(None), names: vec![code.clone()] },
+        Stmt::VarDecl { kind: TypeSpec::Character(*length), names: vec![buffer.clone()] },
+        set(&buffer, Expr::Str(String::new())),
+        Stmt::CallSub { name: "@read_record_status".into(), args: vec![var(&code),var(&buffer),int(length.unwrap_or(1) as i64),unit.clone()] },
+        set(status, var(&code)),
+        Stmt::If {
+            cond: equal(&code, 0), then_body: vec![Stmt::CallSub {
+                name: "@character_assign".into(),
+                args: vec![var(dest),var(&buffer),int(length.unwrap_or(1) as i64)],
+            }],
+            else_body: Some(vec![Stmt::CallSub { name: "@undefine".into(), args: vec![var(dest)] }]),
+        },
+    ] })
+}
+
 #[cfg(test)]
 mod tests {
     fn lower(source: &str) -> anyhow::Result<crate::ast::Program> {

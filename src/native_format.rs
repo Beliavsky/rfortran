@@ -5,9 +5,18 @@
 //! Built once with the compiler and embedded as a native static library.
 #![no_std]
 mod format_spec;
+mod record_input;
 use format_spec::Parser;
 
 extern "C" {
+    fn fgetc(stream: *mut core::ffi::c_void) -> i32;
+    fn ferror(stream: *mut core::ffi::c_void) -> i32;
+    #[cfg(windows)]
+    fn __acrt_iob_func(index: u32) -> *mut core::ffi::c_void;
+    #[cfg(target_os = "macos")]
+    static mut __stdinp: *mut core::ffi::c_void;
+    #[cfg(not(any(windows, target_os = "macos")))]
+    static mut stdin: *mut core::ffi::c_void;
     fn printf(format: *const u8, ...) -> i32;
     fn sprintf(buffer: *mut u8, format: *const u8, ...) -> i32;
     fn putchar(c: i32) -> i32;
@@ -17,6 +26,31 @@ extern "C" {
     fn _write(fd: i32, data: *const u8, len: u32) -> i32;
     #[cfg(not(windows))]
     fn write(fd: i32, data: *const u8, len: usize) -> isize;
+}
+
+/// A null stream denotes standard input. The destination holds `length` bytes
+/// plus a terminator; the compiler copies it to user storage only on success.
+#[no_mangle]
+pub unsafe extern "C" fn rfort_read_record(
+    stream: *mut core::ffi::c_void, destination: *mut u8, length: usize,
+) -> i64 {
+    let stream = if stream.is_null() {
+        #[cfg(windows)]
+        { __acrt_iob_func(0) }
+        #[cfg(target_os = "macos")]
+        { __stdinp }
+        #[cfg(not(any(windows, target_os = "macos")))]
+        { stdin }
+    } else { stream };
+    let buffer = core::slice::from_raw_parts_mut(destination, length);
+    let status = record_input::record(buffer, || {
+        let value = fgetc(stream);
+        if value >= 0 { Ok(Some(value as u8)) }
+        else if ferror(stream) != 0 { Err(()) }
+        else { Ok(None) }
+    });
+    *destination.add(length) = 0;
+    status
 }
 fn fail(message: &str) -> ! {
     unsafe {

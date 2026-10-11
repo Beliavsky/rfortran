@@ -2318,6 +2318,33 @@ fn gen_stmts(
                     file_io::operation(module,b,ptr_ty,dc,name,unit,path)?;
                     continue;
                 }
+                if name == "@read_record_status" {
+                    let [IExpr::Ident(status),IExpr::Ident(dest),IExpr::IntLit(length),unit]=args.as_slice() else {anyhow::bail!("invalid record READ with IOSTAT");};
+                    let (slot,capacity)=chars.get(dest).ok_or_else(||anyhow::anyhow!("record READ requires CHARACTER storage"))?;
+                    let length:usize=length.parse()?;
+                    anyhow::ensure!(length<=*capacity,"record READ exceeds CHARACTER storage");
+                    let pointer=b.ins().stack_addr(ptr_ty,*slot,0);
+                    let (file,code)=if matches!(unit,IExpr::IntLit(n) if n == "5") {
+                        (b.ins().iconst(ptr_ty,0),b.ins().iconst(types::I64,0))
+                    } else {
+                        let value=eval_expr(b,ex,ptr_ty,unit,ints,reals,bools,func_meta);
+                        let unit=to_i64(b,value);
+                        file_io::read_handle(module,b,ptr_ty,unit)?
+                    };
+                    let read=b.create_block();let done=b.create_block();b.append_block_param(done,types::I64);
+                    let okay=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,code,0);
+                    b.ins().brif(okay,read,&[],done,&[code.into()]);
+                    b.switch_to_block(read);b.seal_block(read);
+                    let size=b.ins().iconst(ptr_ty,length as i64);
+                    let code=file_io::call(module,b,"rfort_read_record",&[file,pointer,size],types::I64)?;
+                    b.ins().jump(done,&[code.into()]);
+                    b.switch_to_block(done);b.seal_block(done);
+                    let code=b.block_params(done)[0];
+                    let storage=ints.get(status).ok_or_else(||anyhow::anyhow!("IOSTAT requires INTEGER storage"))?;
+                    let address=storage_addr(b,ptr_ty,*storage);
+                    b.ins().store(MemFlags::new(),code,address,0);
+                    continue;
+                }
                 if name == "@read_record" {
                     let [IExpr::Ident(dest),IExpr::IntLit(length),..]=args.as_slice() else {anyhow::bail!("invalid record READ");};
                     let (slot,capacity)=chars.get(dest).ok_or_else(|| anyhow::anyhow!("record READ requires CHARACTER storage"))?;

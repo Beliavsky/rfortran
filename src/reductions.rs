@@ -940,6 +940,10 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                 output.push(crate::input::lower_integer_read(args,&symbols.variables,serial)?);
                 continue;
             }
+            if name=="@formatted_read_status" {
+                output.push(crate::input::lower_record_read(args,&symbols.variables,serial)?);
+                continue;
+            }
         }
         if let Stmt::CallSub {name,args}=&mut stmt {
             if name=="@allocate" {bail!("ALLOCATE is currently supported only in specialized local array subroutines");}

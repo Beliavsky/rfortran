@@ -24,6 +24,7 @@ the author recorded in this repository's Git history.
 - `src/imports.rs`
 - `src/initialized.rs`
 - `src/input.rs`
+- `src/record_input.rs`
 - `src/intrinsics.rs`
 - `src/inquiries.rs`
 - `src/libs/portable_runtime.c`
