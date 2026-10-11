@@ -27,6 +27,7 @@ mod elemental;
 mod subroutines;
 mod array_calls;
 mod optional;
+mod substrings;
 mod function_arrays;
 mod array_bounds;
 mod multidim;

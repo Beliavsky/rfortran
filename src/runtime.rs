@@ -275,6 +275,14 @@ pub fn interpret(program: &Program) {
                 }
             }
             Expr::Call(name, args) => {
+                if name == "@substring" {
+                    let text=eval_expr(&args[0],env_str,env_int,env_real32,env_real64,env_log,funcs,call_stack).3.unwrap();
+                    let Expr::IntLit(start)=&args[1] else {unreachable!()};
+                    let Expr::IntLit(length)=&args[2] else {unreachable!()};
+                    let start:usize=start.parse().unwrap();
+                    let length:usize=length.parse().unwrap();
+                    return ValueTuple::from_str(text[start..start+length].to_string());
+                }
                 if call_stack.last().is_some_and(|frame| frame.env_real_arrays.contains_key(name) || frame.env_int_arrays.contains_key(name)) {
                     return eval_expr(&Expr::Index(name.clone(), args.clone()), env_str, env_int,
                         env_real32, env_real64, env_log, funcs, call_stack);

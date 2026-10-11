@@ -27,6 +27,22 @@ pub(super) fn view(
     expr: &IExpr,
 ) -> Result<View> {
     match expr {
+        IExpr::Call(name, args) if name == "@substring" => {
+            let [source, IExpr::IntLit(start), IExpr::IntLit(length)] = args.as_slice() else {
+                bail!("invalid substring view");
+            };
+            let source = view(module, b, ptr, dc, chars, source)?;
+            let start: usize = start.parse()?;
+            let length: usize = length.parse()?;
+            if start.checked_add(length).is_none_or(|end| end > source.capacity) {
+                bail!("substring view exceeds CHARACTER storage");
+            }
+            Ok(View {
+                address: b.ins().iadd_imm(source.address, start as i64),
+                length: b.ins().iconst(ptr, length as i64),
+                capacity: length,
+            })
+        }
         IExpr::Str(text) => Ok(View {
             address: super::make_data(module, b, ptr, dc, text.as_bytes())?,
             length: b.ins().iconst(ptr, text.len() as i64),

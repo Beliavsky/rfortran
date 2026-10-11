@@ -797,6 +797,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " .FALSE. .TRUE. .TRUE. .TRUE. .FALSE. .FALSE.\n .TRUE. .TRUE. .TRUE. .TRUE.\n .TRUE. .TRUE. .TRUE. .TRUE.\n .TRUE. .TRUE. .TRUE. .TRUE.\n .TRUE. .FALSE. .TRUE.\n 123\n 1 .TRUE. .TRUE. .TRUE.\n .TRUE. .FALSE.\n"
+    },
+    "115_scalar_substrings": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " .TRUE.\n .TRUE.\n [abX  fgh] .TRUE.\n .TRUE.\n .TRUE. .TRUE.\n [123][ab][fgh]\n .TRUE.\n"
     }
   }
 }

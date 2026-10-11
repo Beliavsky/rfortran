@@ -1492,3 +1492,38 @@ with output compared to gfortran. The isolated release report
 `target/ofort-character-comparisons.json` remains at 17/18 passes at O0/O2;
 overlapping CHARACTER array/substring assignment is still the sole compile
 failure. Linux/macOS remain untested.
+
+## Checkpoint 54: fixed-bound scalar substrings
+
+Added an MIT-licensed substrings.rs pass between local procedure specialization
+and multidimensional array lowering. It distinguishes scalar CHARACTER ranges
+from array sections, checks constant bounds and converts substring writes into
+a captured RHS plus preserved prefix/suffix. This handles overlapping copies,
+blank padding, truncation, omitted endpoints and zero-length ranges. Full-range
+writes do not read the previous destination; partial writes conservatively
+require the parent string to be initialized until per-character initialization
+tracking is implemented. Empty destinations perform no write.
+
+Substring expressions are captured into fixed-length CHARACTER temporaries;
+the native backend copies the bounded view, and the interpreter slices the same
+range. Generated substring declarations are hoisted into the enclosing procedure
+while their captures stay inside the original branches/loops. LEN inquiries use
+the substring length without reading its parent. Substrings work in comparisons,
+concatenations, output and fixed-length function actuals, as well as inside
+specialized CHARACTER subroutines and read-only functions.
+
+Dynamic bounds, CHARACTER arrays, PARAMETER string substrings, substring READ
+destinations and subroutine actuals remain unsupported. Bounds currently require
+lower in 1:LEN+1 and upper in 0:LEN, with lower greater than upper producing an
+empty substring. Strides are rejected. Fixture 115 covers the original scalar
+overlap examples and padding/truncation; focused tests add scopes, empty strings,
+non-reading LEN, functions, DO WHILE/CYCLE and diagnostics. No external ofort
+fixture was changed.
+
+Validation on Windows: 75 Rust unit tests, all 115 native fixtures, 46 batch
+driver tests and three focused substring tests passed. The focused tests passed
+in interpreter/native O0/O2 modes with both debug and rebuilt release compilers,
+and their output agrees with gfortran. The isolated release report
+`target/ofort-scalar-substrings.json` remains at 17/18 passes at O0/O2. The full
+overlap probe still requires CHARACTER arrays and array substring assignments.
+Linux/macOS remain untested.

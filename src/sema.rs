@@ -635,6 +635,7 @@ pub fn analyze_with_src(
     }
     for name in [
         "achar",
+        "@substring",
         "char",
         "repeat",
         "trim",

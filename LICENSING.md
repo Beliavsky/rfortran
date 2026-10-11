@@ -30,6 +30,7 @@ the author recorded in this repository's Git history.
 - `src/multidim.rs`
 - `src/operators.rs`
 - `src/optional.rs`
+- `src/substrings.rs`
 - `src/output.rs`
 - `src/parameters.rs`
 - `src/purity.rs`

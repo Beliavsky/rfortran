@@ -193,3 +193,8 @@ cover scalar CHARACTER relations, blank padding, concatenations, TRIM, empty
 strings and loop-condition reevaluation. This fixes a prerequisite for checking
 overlap results; the remaining external probe still needs CHARACTER array
 storage and substring assignment support.
+
+`115_scalar_substrings.f90` and `python tests/test_scalar_substrings.py` cover
+fixed-bound scalar substring reads and overlapping assignments, including both
+copy directions from the original overlap probe. The complete external case
+still needs CHARACTER array storage and array substring assignments.

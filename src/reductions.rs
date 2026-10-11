@@ -293,6 +293,16 @@ fn lower_character_comparison(op: BinOp, a: &Expr, b: &Expr, symbols: &mut Symbo
 
 fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, serial: &mut usize, expand_elementals: bool) -> Result<()> {
     match e {
+        Expr::Call(tag,args) if tag == "@substring" => {
+            let length=constant(&args[2])? as usize;
+            *serial+=1;
+            let temp=format!("@substring_read_{serial}");
+            let kind=TypeSpec::Character(Some(length));
+            prefix.push(Stmt::VarDecl {kind:kind.clone(),names:vec![temp.clone()]});
+            prefix.push(Stmt::CallSub {name:"@character_assign".into(),args:vec![Expr::Ident(temp.clone()),e.clone(),int(length as i64)]});
+            symbols.insert(temp.clone(),(kind,vec![]));
+            *e=Expr::Ident(temp);
+        }
         Expr::Call(tag,args) if tag == "@integer_literal" => {
             let kind = TypeSpec::Integer(Some(constant(&args[1])? as u8));
             *serial += 1;
@@ -638,6 +648,7 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
         Expr::Call(name, args) if name == "len" => {
             let length = match args.as_slice() {
                 [Expr::Str(s)] => s.len(),
+                [Expr::Call(n,a)] if n == "@substring" => constant(&a[2])? as usize,
                 [Expr::Ident(n)] => match symbols.get(n) {
                     Some((TypeSpec::Character(length), dims)) if dims.is_empty() => length.unwrap_or(1),
                     _ => bail!("LEN currently requires a scalar CHARACTER variable or constant"),
@@ -864,6 +875,7 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                             Expr::Ident(n) if matches!(symbols.get(n), Some((TypeSpec::Character(_), d)) if d.is_empty()) => Ok(()),
                             Expr::Bin(BinOp::Concat, a, b) => { check(a, symbols)?; check(b, symbols) },
                             Expr::Call(n, a) if n.eq_ignore_ascii_case("trim") && a.len() == 1 => check(&a[0], symbols),
+                            Expr::Call(n, a) if n == "@substring" && a.len() == 3 => check(&a[0], symbols),
                             _ => bail!("CHARACTER assignment requires a non-NUL ASCII literal, scalar CHARACTER variable, concatenation, or TRIM"),
                         }
                     }
@@ -1202,6 +1214,7 @@ pub fn resolve(mut program: Program) -> Result<Program> {
     symbols.elementals=crate::elemental::functions(&program);
     collect_character_functions(&program.body,&mut symbols.character_functions)?;
     lower_body(&mut program.body, &symbols, &mut 0)?;
+    crate::substrings::hoist(&mut program.body);
     Ok(program)
 }
 

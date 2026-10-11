@@ -474,8 +474,8 @@ Scalar CHARACTER comparisons support all six relational operators with blank
 padding of the shorter operand. Fixed-length variables, ASCII literals,
 concatenations, TRIM and zero-length strings are supported. Comparison captures
 in DO WHILE conditions are reevaluated on every iteration, including after CYCLE.
-Run `python tests/test_character_comparisons.py`. CHARACTER arrays and substring
-assignments remain unsupported.
+Run `python tests/test_character_comparisons.py`. CHARACTER arrays remain
+unsupported.
 
 Local functions can receive fixed-length, read-only scalar CHARACTER arguments.
 Actuals may be variables, literals or fixed-length concatenations; they must be
@@ -483,3 +483,13 @@ at least as long as the dummy, and longer actuals contribute their leading
 characters. Function-to-function forwarding is supported. Writable CHARACTER
 function dummies, runtime-length actuals and assumed-length dummies remain
 unsupported.
+
+Scalar CHARACTER variables support substring reads and assignments with constant
+integer bounds, including omitted endpoints and empty ranges. Overlapping
+assignments capture the right-hand side before updating the destination;
+shorter values are blank-padded and longer ones truncated. LEN of a substring
+uses its declared bounds without reading the parent string. Partial writes
+currently require an initialized parent string; initialization tracking is not
+yet per character. Dynamic bounds, CHARACTER array substrings, substrings of
+PARAMETER strings, READ destinations and substring actuals to subroutines remain
+unsupported. Run `python tests/test_scalar_substrings.py`.

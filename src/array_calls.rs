@@ -815,7 +815,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
     let mut routines = HashMap::new();
     collect(&mut p.body, &mut routines);
     expand(&mut p.body, &Shapes::new(), &routines, &mut vec![], &mut 0)?;
-    crate::multidim::resolve(crate::function_arrays::resolve(p)?)
+    crate::multidim::resolve(crate::function_arrays::resolve(crate::substrings::resolve(p)?)?)
 }
 
 #[cfg(test)]
