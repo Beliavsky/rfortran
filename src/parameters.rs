@@ -162,6 +162,30 @@ fn real_literal(value: f64, double: bool) -> Expr {
     let literal = Expr::RealLit(value.to_string());
     if double { Expr::Call("dble".into(), vec![literal]) } else { literal }
 }
+
+fn model_type_key(name: &str) -> String { format!("@model_type:{name}") }
+fn model_metadata_name(name: &str) -> &str {
+    name.strip_prefix("@model_type:").or_else(||name.strip_prefix("@model_procedure:")).unwrap_or(name)
+}
+fn record_model_type(constants: &mut Constants, name: &str, kind: &TypeSpec, rank: usize) {
+    let code = match kind {
+        TypeSpec::Integer(bytes) => -i64::from(bytes.unwrap_or(4)),
+        TypeSpec::Real => 4,
+        TypeSpec::DoublePrecision => 8,
+        _ => 0,
+    };
+    constants.insert(model_type_key(name),Expr::Call("@model_type".into(),vec![Expr::IntLit(code.to_string()),Expr::IntLit(rank.to_string())]));
+}
+fn model_type_lookup(constants: &Constants, name: &str) -> Option<(TypeSpec,usize)> {
+    let Expr::Call(_,args)=constants.get(&model_type_key(name))? else {return None};
+    let [Expr::IntLit(code),Expr::IntLit(rank)]=args.as_slice() else {return None};
+    Some((match code.parse::<i64>().ok()? {
+        n if n < 0 => TypeSpec::Integer(Some((-n) as u8)),
+        4 => TypeSpec::Real,
+        8 => TypeSpec::DoublePrecision,
+        _ => TypeSpec::Logical,
+    },rank.parse().ok()?))
+}
 fn real_constant(e: &Expr) -> Result<f64> {
     fn integral(e: &Expr) -> bool {
         match e { Expr::Call(tag,_) if tag == "@integer_literal" => true, Expr::IntLit(_) => true, Expr::Un(_, a) => integral(a), Expr::Bin(_, a,b) => integral(a) && integral(b), _ => false }
@@ -251,7 +275,7 @@ pub(crate) fn resolve_constants(mut program: Program) -> Result<Program> {
                 if let Stmt::Accessibility { public, names } = s { for n in names { exports.insert(n.to_ascii_lowercase(), *public); } }
             }
             let constants = resolve_scope(body, &Constants::new(), &[], &modules, false, false)?;
-            modules.insert(name.to_ascii_lowercase(), constants.into_iter().filter(|(n, _)| exports.get(n).copied().unwrap_or(default_public)).collect());
+            modules.insert(name.to_ascii_lowercase(), constants.into_iter().filter(|(n, _)| exports.get(model_metadata_name(n)).copied().unwrap_or(default_public)).collect());
         }
     }
     resolve_scope(&mut program.body, &Constants::new(), &[], &modules, false, true)?;
@@ -379,7 +403,7 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
     for stmt in body.iter() {
         if let Stmt::Use { module, only, .. } = stmt {
             if let Some(imports) = modules.get(&module.to_ascii_lowercase()) {
-                constants.extend(imports.iter().filter(|(name, _)| only.as_ref().is_none_or(|names| names.contains(name)))
+                constants.extend(imports.iter().filter(|(name, _)| only.as_ref().is_none_or(|names| names.iter().any(|n| n == model_metadata_name(name))))
                     .map(|(n, value)| (n.clone(), value.clone())));
             }
         }
@@ -402,16 +426,35 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
     for name in &locals {
         constants.remove(name);
         constants.remove(&format!("@character_length:{name}"));
+        constants.remove(&model_type_key(name));
     }
     // Local parameter names also hide host constants, even in their initializers.
     for stmt in body.iter() {
         if let Stmt::InitializedDecl { entities, .. } = stmt {
             for (name, _) in entities {
                 constants.remove(&name.to_ascii_lowercase());
+                constants.remove(&model_type_key(name));
             }
         }
     }
     for stmt in body.iter_mut() {
+        if let Stmt::Function {name,..} | Stmt::Subroutine {name,..} = stmt {
+            constants.insert(format!("@model_procedure:{name}"),Expr::Logical(true));
+        }
+    }
+    for stmt in body.iter_mut() {
+        // Keep type information separately from constant values. Numeric model
+        // inquiries can appear in PARAMETER initializers and must not read X.
+        let (kind,names,rank) = match &*stmt {
+            Stmt::VarDecl {kind,names} => (Some(kind),names.clone(),0),
+            Stmt::ArrayDecl {kind,name,dims} => (Some(kind),vec![name.clone()],dims.len()),
+            _ => (None,vec![],0),
+        };
+        if let Some(kind) = kind {
+            let mut kind=kind.clone();
+            if matches!(kind,TypeSpec::IntegerKind(_) | TypeSpec::RealKind(_)) { resolve_kind(&mut kind,&constants)?; }
+            for name in names { record_model_type(&mut constants,&name,&kind,rank); }
+        }
         if let Stmt::InitializedDecl {
             kind,
             attributes,
@@ -429,6 +472,7 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
                 resolve_kind(kind,&constants)?;
                 let mut scalars = vec![];
                 for (name,initializer) in entities.iter() {
+                    if !arrays.contains(name) { record_model_type(&mut constants,name,kind,0); }
                     let key = name.to_ascii_lowercase();
                     if !locals.insert(key.clone()) && !arrays.contains(&key) { bail!("duplicate declaration of initialized variable `{name}`"); }
                     let mut value = initializer.clone().with_context(|| format!("initialized declaration `{name}` requires a value"))?;
@@ -457,6 +501,7 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
                 bail!("additional attributes on PARAMETER declarations are not yet supported");
             }
             for (name, initializer) in entities {
+                if !arrays.contains(name) { record_model_type(&mut constants,name,kind,0); }
                 let key = name.to_ascii_lowercase();
                 if !locals.insert(key.clone()) && !arrays.contains(&key) {
                     bail!("duplicate declaration of PARAMETER `{name}`");
@@ -875,6 +920,13 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
                 let kind = if range <= 2 { 1 } else if range <= 4 { 2 }
                     else if range <= 9 { 4 } else if range <= 18 { 8 } else { -1 };
                 *expr = Expr::IntLit(kind.to_string());
+            }
+            name if crate::inquiries::numeric_model(name) && !constants.contains_key(&model_type_key(name))
+                && !constants.contains_key(&format!("@model_procedure:{name}")) => {
+                let [arg]=args.as_slice() else { bail!("{name} expects one argument"); };
+                if let Some(kind)=crate::inquiries::model_type(arg,&|n|model_type_lookup(constants,n))? {
+                    *expr=crate::inquiries::model_value(name,&kind)?;
+                }
             }
             "kind" | "tiny" | "huge" if args.len() == 1 => {
                 let double = matches!(&args[0], Expr::Call(n, _) if n.eq_ignore_ascii_case("dble"));

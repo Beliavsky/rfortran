@@ -3,8 +3,108 @@
 // See LICENSE-MIT in the repository root.
 
 //! Argument ordering and fixed-shape array inquiry results.
-use crate::ast::Expr;
+use crate::ast::{BinOp, Expr, TypeSpec, UnOp};
 use anyhow::{bail, Context, Result};
+
+pub fn numeric_model(name: &str) -> bool {
+    matches!(name, "epsilon" | "digits" | "radix" | "precision" | "range" | "minexponent" | "maxexponent")
+}
+
+/// These inquiries describe a type, and do not evaluate the argument's value.
+pub fn model_value(name: &str, kind: &TypeSpec) -> Result<Expr> {
+    let int = |n: i64| Expr::IntLit(n.to_string());
+    if let TypeSpec::Integer(bytes) = kind {
+        if !matches!(name, "digits" | "radix" | "range") {
+            bail!("{} requires a REAL argument", name.to_ascii_uppercase());
+        }
+        let bytes = bytes.unwrap_or(4);
+        if !matches!(bytes,1|2|4|8) { bail!("{} currently supports INTEGER kinds 1, 2, 4 and 8, not {bytes}",name.to_ascii_uppercase()); }
+        return Ok(int(match name {
+            "digits" => i64::from(bytes) * 8 - 1,
+            "radix" => 2,
+            _ => match bytes { 1 => 2, 2 => 4, 4 => 9, 8 => 18, _ => unreachable!() },
+        }));
+    }
+    let double = match kind {
+        TypeSpec::Real => false,
+        TypeSpec::DoublePrecision => true,
+        _ => bail!("{} requires {} argument", name.to_ascii_uppercase(),
+            if matches!(name,"digits" | "radix" | "range") { "an INTEGER or REAL" } else { "a REAL" }),
+    };
+    Ok(match name {
+        "epsilon" => {
+            let value = Expr::RealLit(if double { f64::EPSILON } else { f32::EPSILON as f64 }.to_string());
+            if double { Expr::Call("dble".into(), vec![value]) } else { value }
+        }
+        "digits" => int(if double { 53 } else { 24 }),
+        "radix" => int(2),
+        "precision" => int(if double { 15 } else { 6 }),
+        "range" => int(if double { 307 } else { 37 }),
+        "minexponent" => int(if double { -1021 } else { -125 }),
+        "maxexponent" => int(if double { 1024 } else { 128 }),
+        _ => bail!("unknown numeric model inquiry `{name}`"),
+    })
+}
+
+/// Infer supported inquiry argument types without generating reads or calls.
+/// Array shape and subscript values do not affect these scalar results.
+pub fn model_type(e: &Expr, lookup: &impl Fn(&str) -> Option<(TypeSpec,usize)>) -> Result<Option<TypeSpec>> {
+    let subscript = |e: &Expr| -> Result<()> {
+        let kind=model_type(e,lookup)?.context("undefined or unsupported inquiry subscript type")?;
+        if !matches!(kind,TypeSpec::Integer(_)) { bail!("inquiry array subscript must be INTEGER"); }
+        Ok(())
+    };
+    let kind = match e {
+        Expr::Ident(n) => lookup(n).map(|(kind,_)|kind),
+        Expr::Section {name,lower,upper,stride} => {
+            for bound in [lower,upper,stride].into_iter().flatten() {subscript(bound)?;}
+            let Some((kind,rank))=lookup(name) else {return Ok(None)};
+            if rank!=1 {bail!("numeric inquiry section currently requires a rank-one array");}
+            Some(kind)
+        },
+        Expr::Index(n,a) | Expr::Call(n,a) if lookup(n).is_some() => {
+            let (kind,rank)=lookup(n).unwrap();
+            if rank==0 || rank!=a.len() {bail!("numeric inquiry array argument `{n}` has the wrong number of subscripts");}
+            for arg in a {subscript(arg)?;}
+            Some(kind)
+        },
+        Expr::IntLit(_) => Some(TypeSpec::Integer(None)),
+        Expr::RealLit(_) => Some(TypeSpec::Real),
+        Expr::Logical(_) => Some(TypeSpec::Logical),
+        Expr::Str(_) => Some(TypeSpec::Character(None)),
+        Expr::Un(UnOp::Not,_) => Some(TypeSpec::Logical),
+        Expr::Un(_,a) => model_type(a,lookup)?,
+        Expr::Bin(op,a,b) => {
+            if !matches!(op,BinOp::Add|BinOp::Sub|BinOp::Mul|BinOp::Div|BinOp::Pow) { Some(TypeSpec::Logical) }
+            else {
+                match (model_type(a,lookup)?,model_type(b,lookup)?) {
+                    (Some(a),Some(b)) => {
+                        if !matches!(a,TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision)
+                            || !matches!(b,TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision) {
+                            bail!("numeric inquiry argument has nonnumeric arithmetic operands");
+                        }
+                        Some(if matches!(op,BinOp::Pow) && matches!(b,TypeSpec::Integer(_)) { a }
+                            else if a==TypeSpec::DoublePrecision || b==TypeSpec::DoublePrecision {TypeSpec::DoublePrecision}
+                            else if a==TypeSpec::Real || b==TypeSpec::Real {TypeSpec::Real}
+                            else if let (TypeSpec::Integer(a),TypeSpec::Integer(b))=(a,b) {TypeSpec::Integer(Some(a.unwrap_or(4).max(b.unwrap_or(4))))}
+                            else { unreachable!() })
+                    },
+                    _ => None,
+                }
+            }
+        },
+        Expr::Call(n,a) if n=="@integer_literal" && a.len()==2 => Some(TypeSpec::Integer(Some(crate::parameters::integer_constant(&a[1])? as u8))),
+        Expr::Call(n,a) if matches!(n.as_str(),"dble"|"real"|"int"|"abs"|"@unary_plus") && a.len()==1 => {
+            let input=model_type(&a[0],lookup)?;
+            if input.as_ref().is_some_and(|k|!matches!(k,TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision)) {
+                bail!("{} requires a numeric argument",n.to_ascii_uppercase());
+            }
+            input.map(|k| match n.as_str() {"dble"=>TypeSpec::DoublePrecision,"real"=>TypeSpec::Real,"int"=>TypeSpec::Integer(None),_=>k})
+        },
+        _ => None,
+    };
+    Ok(kind)
+}
 
 /// Largest representable integer for the implemented scalar execution kinds.
 pub fn integer_huge(kind: Option<u8>) -> Result<i64> {

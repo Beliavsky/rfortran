@@ -41,6 +41,7 @@ extern {
         KW_IMPLICIT => TokenKind::KwImplicit,
         KW_NONE => TokenKind::KwNone,
         KW_PRINT => TokenKind::KwPrint,
+        KW_PRINT_EMPTY => TokenKind::KwPrintEmpty,
         KW_READ => TokenKind::KwRead,
         FILE_CONTROL => TokenKind::FileControl(<String>),
         FILE_POSITION => TokenKind::FilePosition(<String>),
@@ -313,6 +314,7 @@ Stmt: Stmt = {
     KW_PUBLIC DCOLON <names: GenericNames> => Stmt::Accessibility { public: true, names },
     KW_PRIVATE DCOLON <names: GenericNames> => Stmt::Accessibility { public: false, names },
     KW_PRINT STAR COMMA <es: ExprList> => Stmt::Print { items: es },
+    KW_PRINT_EMPTY STAR => Stmt::Print { items: vec![] },
     KW_PRINT COMMA STAR COMMA <es: ExprList> => Stmt::Print { items: es },
     KW_PRINT LPAREN STAR COMMA <es: ExprList> RPAREN => Stmt::Print { items: es },
     KW_READ LPAREN <unit:RhsExpr> COMMA STAR COMMA <control:Ident> EQ <status:RhsExpr> RPAREN <items:ExprList> => {

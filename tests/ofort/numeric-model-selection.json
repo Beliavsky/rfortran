@@ -1,0 +1,4 @@
+{
+  "description": "Numeric model inquiries and blank PRINT records; compare original ofort fixtures with gfortran at O0 and O2.",
+  "cases": ["xdigits.f90", "xepsilon.f90", "xradix.f90"]
+}

@@ -78,9 +78,9 @@ I/O cases. Format-layout conformance needs separate tests in the ordinary
 regression suite. Reports retain unnormalized stdout/stderr, source SHA-256 hashes, compiler
 binary hash/path, and reference compiler version for investigation.
 
-## Recorded results (Windows x64, 2026-10-10)
+## Recorded results (Windows x64)
 
-### Expanded inventory
+### Expanded inventory (2026-10-10)
 
 [`expanded-baseline.json`](expanded-baseline.json) records the broader snapshot.
 The checkout contained 768 Fortran sources: 474 candidates were attempted and
@@ -141,7 +141,50 @@ pre-fix baseline; the REAL128 capability difference remains unchanged.
 The rebuilt release compiler passes all **8/8 vector probes at O0/O2** against
 gfortran. `target/ofort-vector-regressions.json` records **52/52 passes** at both
 levels: these eight probes and the 44 previously passing expanded-baseline
-cases. The full discovery inventory was not rerun.
+cases. At that checkpoint the full discovery inventory had not been rerun.
+
+### Numeric model inquiries (2026-10-11)
+
+[`numeric-model-checkpoint.json`](numeric-model-checkpoint.json) records a fresh
+full discovery run with the debug compiler: 474 candidates, 294 exclusions, and
+440 stable, stderr-free gfortran references. The refreshed compiler before these
+changes passed 58 cases; after the changes, **62/440 pass at both O0 and O2**,
+with no lost passes. The remaining outcomes are 372 compile failures and six
+output differences. There are no rfort crashes, timeouts or differences between
+optimization levels. Reference failures comprise 31 compile failures, two runtime
+errors and one timeout, and remain separate from rfort results.
+
+New inventory passes are `xdigits.f90`, `xepsilon.f90`, `xmodulo.f90`, and
+`xtype_bound.f90`. Empty list-directed `PRINT *` now emits a blank record.
+Numeric model inquiries support REAL kinds 4/8 and the applicable INTEGER kinds
+1/2/4/8, including `X=` and PARAMETER initialization. Type inquiries do not read
+unset argument values. The large-real output crash exposed by `xepsilon.f90`
+is fixed, including finite DOUBLE PRECISION output at the upper range boundary.
+
+The focused selection includes `xradix.f90`, which discovery excludes because
+it has neither saved output nor a pending suffix. Run the three original inquiry
+fixtures with the default release compiler:
+
+```bat
+python tests/run_ofort_compat.py --ofort-root C:\c\ofort --selection tests/ofort/numeric-model-selection.json --strict --jobs 3 --report target/ofort-numeric-model.json
+```
+
+The release compiler also passes all **63/63** selected regressions at O0/O2:
+the 62 passing inventory cases plus `xradix.f90`. Full logs are in
+`target/ofort-model-release-regressions.json`. The local fixture
+`124_numeric_model.f90` and `python tests/test_numeric_model.py` cover models,
+result kinds, scope/import rules, invalid arguments, empty PRINT boundaries,
+unset arguments and large real output through interpreter/native O0/O2 execution
+with gfortran comparisons. All nine focused tests pass with debug and release
+compilers; the local suite passes 82 Rust unit tests and 124 Fortran fixtures.
+
+Fixing empty PRINT also lets five bit-intrinsic probes reach native execution:
+`xbtest.f90`, `xiand.f90`, `xibclr.f90`, `xibits.f90`, and `xibset.f90` omit
+their intrinsic call results from output. These are outstanding code generation
+bugs that were previously hidden by parse failures. The sixth output difference
+is the known REAL128 capability difference in `xkinds_supported.f90`.
+`xprecision.f90` and `xrange.f90` still stop on their unsupported COMPLEX
+examples; their INTEGER/REAL model behavior is covered by the local tests.
 
 ### Quick-sample history
 

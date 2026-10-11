@@ -462,6 +462,15 @@ impl Externs {
     }
 
     fn call_gcvt(&self, b: &mut FunctionBuilder, args: &[ir::Value]) -> ir::Inst {
+        // Fifteen-digit rounding can print HUGE(REAL(8)) just above f64::MAX.
+        // Retain enough digits at the upper boundary to round back to a finite
+        // value, including when a caller normally uses only six digits.
+        let magnitude=b.ins().fabs(args[0]);
+        let boundary=b.ins().f64const(f64::MAX * 0.99);
+        let large=b.ins().fcmp(ir::condcodes::FloatCC::GreaterThan,magnitude,boundary);
+        let full=b.ins().iconst(ir::types::I32,17);
+        let digits=b.ins().select(large,full,args[1]);
+        let args=&[args[0],digits,args[2]];
         if let (Some(addr), Some(sig)) = (self.gcvt_addr, self.sig_gcvt) {
             b.ins().call_indirect(sig, addr, args)
         } else {
@@ -944,6 +953,19 @@ fn double_expression(e: &IExpr, real_kind: &HashMap<String, bool>) -> bool {
     }
 }
 
+// Formatting tests whether a real has an exact INTEGER(8) representation.
+// Conversion must not trap for large finite values, infinities or NaNs. Also
+// exclude 2**63: converting i64::MAX back to f64 rounds up to that value.
+fn print_integer_candidate(b: &mut FunctionBuilder, value: ir::Value) -> (ir::Value, ir::Value) {
+    let integer=b.ins().fcvt_to_sint_sat(ir::types::I64,value);
+    let back=b.ins().fcvt_from_sint(ir::types::F64,integer);
+    let equal=b.ins().fcmp(ir::condcodes::FloatCC::Equal,value,back);
+    let upper=b.ins().f64const(9223372036854775808.0);
+    let below=b.ins().fcmp(ir::condcodes::FloatCC::LessThan,value,upper);
+    let integral=b.ins().band(equal,below);
+    (integer,integral)
+}
+
 fn print_numeric_value(b: &mut FunctionBuilder, ex: &Externs, ptr_ty: ir::Type, value: CgVal, double: bool) {
     use ir::types;
     match value {
@@ -952,10 +974,7 @@ fn print_numeric_value(b: &mut FunctionBuilder, ex: &Externs, ptr_ty: ir::Type, 
             ex.call_printf(b, &[ex.fmt_s, text]);
         }
         CgVal::F64(value) => {
-            // Saturating conversion keeps formatting NaN/infinity from trapping.
-            let integer = b.ins().fcvt_to_sint_sat(types::I64, value);
-            let back = b.ins().fcvt_from_sint(types::F64, integer);
-            let integral = b.ins().fcmp(ir::condcodes::FloatCC::Equal, value, back);
+            let (integer,integral) = print_integer_candidate(b,value);
             let int_slot = b.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot, 64, 0));
             let int_text = b.ins().stack_addr(ptr_ty, int_slot, 0);
             ex.call_sprintf(b, &[int_text, ex.fmt_i64_dot0, integer]);
@@ -989,7 +1008,6 @@ fn print_expr(
     arrays: &HashMap<String, usize>,
     e: &IExpr,
 ) -> Result<()> {
-    use ir::condcodes::FloatCC;
     use ir::{types, MemFlags};
     match e {
         IExpr::Str(s) => {
@@ -1033,9 +1051,7 @@ fn print_expr(
         IExpr::RealLit(s) => {
             let v = s.parse::<f64>().unwrap_or(0.0);
             let fv = b.ins().f64const(v);
-            let trunc = b.ins().fcvt_to_sint(types::I64, fv);
-            let back = b.ins().fcvt_from_sint(types::F64, trunc);
-            let is_int = b.ins().fcmp(FloatCC::Equal, fv, back);
+            let (trunc,is_int) = print_integer_candidate(b,fv);
             let buf_int = b.create_sized_stack_slot(ir::StackSlotData::new(
                 ir::StackSlotKind::ExplicitSlot,
                 64,
@@ -1091,9 +1107,7 @@ fn print_expr(
             } else if let Some(ss) = reals.get(id) {
                 let a = storage_addr(b, ptr_ty, *ss);
                 let fv = b.ins().load(types::F64, MemFlags::new(), a, 0);
-                let trunc = b.ins().fcvt_to_sint(types::I64, fv);
-                let back = b.ins().fcvt_from_sint(types::F64, trunc);
-                let is_int = b.ins().fcmp(FloatCC::Equal, fv, back);
+                let (trunc,is_int) = print_integer_candidate(b,fv);
                 let buf_int = b.create_sized_stack_slot(ir::StackSlotData::new(
                     ir::StackSlotKind::ExplicitSlot,
                     64,
@@ -1154,7 +1168,7 @@ fn print_expr(
                         let a = storage_addr(b, ptr_ty, *ss);
                         let addr = b.ins().iadd(a, off);
                         let fv = b.ins().load(ir::types::F64, MemFlags::new(), addr, 0);
-                        let trunc = b.ins().fcvt_to_sint(ir::types::I64, fv);
+                        let (trunc,cmp) = print_integer_candidate(b,fv);
                         let buf_int = b.create_sized_stack_slot(ir::StackSlotData::new(
                             ir::StackSlotKind::ExplicitSlot,
                             64,
@@ -1170,8 +1184,6 @@ fn print_expr(
                         let p_f = b.ins().stack_addr(ptr_ty, buf_f, 0);
                         let nd = b.ins().iconst(ir::types::I32, 6);
                         ex.call_gcvt(b, &[fv, nd, p_f]);
-                        let converted = b.ins().fcvt_from_sint(ir::types::F64, trunc);
-                        let cmp = b.ins().fcmp(ir::condcodes::FloatCC::Equal, fv, converted);
                         let p_sel = b.ins().select(cmp, p_int, p_f);
                         ex.call_printf(b, &[ex.fmt_s, p_sel]);
                     } else if bools.contains_key(name) {
@@ -1203,9 +1215,7 @@ fn print_expr(
                     ex.call_printf(b, &[ex.fmt_s, p]);
                 }
                 CgVal::F64(x) => {
-                    let trunc = b.ins().fcvt_to_sint(types::I64, x);
-                    let back = b.ins().fcvt_from_sint(types::F64, trunc);
-                    let is_int = b.ins().fcmp(FloatCC::Equal, x, back);
+                    let (trunc,is_int) = print_integer_candidate(b,x);
                     let buf_int = b.create_sized_stack_slot(ir::StackSlotData::new(
                         ir::StackSlotKind::ExplicitSlot,
                         64,
@@ -1238,9 +1248,7 @@ fn print_expr(
                     ex.call_printf(b, &[ex.fmt_s, p]);
                 }
                 CgVal::F64(x) => {
-                    let trunc = b.ins().fcvt_to_sint(types::I64, x);
-                    let back = b.ins().fcvt_from_sint(types::F64, trunc);
-                    let is_int = b.ins().fcmp(FloatCC::Equal, x, back);
+                    let (trunc,is_int) = print_integer_candidate(b,x);
                     let buf_int = b.create_sized_stack_slot(ir::StackSlotData::new(
                         ir::StackSlotKind::ExplicitSlot,
                         64,
@@ -1664,9 +1672,7 @@ fn print_expr(
                     RetKind::F64 => {
                         if !res.is_empty() {
                             let x = res[0];
-                            let trunc = b.ins().fcvt_to_sint(ir::types::I64, x);
-                            let back = b.ins().fcvt_from_sint(ir::types::F64, trunc);
-                            let is_int = b.ins().fcmp(ir::condcodes::FloatCC::Equal, x, back);
+                            let (trunc,is_int) = print_integer_candidate(b,x);
                             let buf_int = b.create_sized_stack_slot(ir::StackSlotData::new(
                                 ir::StackSlotKind::ExplicitSlot,
                                 64,

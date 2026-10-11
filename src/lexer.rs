@@ -233,6 +233,7 @@ pub enum TokenKind {
     KwNone,
     #[token("print", ignore(ascii_case))]
     KwPrint,
+    KwPrintEmpty,
     #[token("read", ignore(ascii_case))]
     KwRead,
     #[token("if", ignore(ascii_case))]
@@ -604,6 +605,14 @@ pub fn lex(input: &str) -> Vec<Token> {
         }
     }
     for index in 0..tokens.len() {
+        // Newlines are skipped by the grammar. Distinguish PRINT * without an
+        // output list so it cannot consume the following statement as an item.
+        if matches!(tokens[index].kind, TokenKind::KwPrint)
+            && tokens.get(index+1).is_some_and(|next| matches!(next.kind, TokenKind::Star)
+                && same_statement(&input[tokens[index].span.end..next.span.start]))
+            && tokens.get(index+2).is_none_or(|next| !same_statement(&input[tokens[index+1].span.end..next.span.start])) {
+            tokens[index].kind = TokenKind::KwPrintEmpty;
+        }
         // Bare DO has no control clause. The grammar otherwise consumes the
         // following assignment as a counted DO header because newlines are skipped.
         // Require a statement start so END DO retains its closing DO token.

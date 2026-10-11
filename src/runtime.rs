@@ -611,6 +611,7 @@ pub fn interpret(program: &Program) {
     }
 
     fn format_real(f: f64, double: bool) -> String {
+        if f.is_finite() && f.abs() > f64::MAX * 0.99 { return format!("{f:.16e}"); }
         if f != 0.0 && (f.abs() < 1e-4 || f.abs() >= if double { 1e15 } else { 1e6 }) {
             if double { format!("{f:.14e}") } else { format!("{f:.5e}") }
         } else if f.fract() == 0.0 {

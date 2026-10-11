@@ -38,11 +38,12 @@ allocatable/pointer and polymorphic behavior, CHARACTER-valued functions,
 separately compiled module interfaces, and broad file I/O support. The feature
 notes below describe the supported forms and their restrictions.
 
-The expanded ofort inventory recorded on **2026-10-10** had 440 cases with valid
-gfortran references: 44 passed, 391 failed compilation, and 5 differed in output.
-Subsequent vector-subscript fixes passed all eight vector probes, and the combined
-52-case regression selection passed at both O0 and O2. The full inventory has
-not been rerun after those fixes. This remains an early compiler, not a
+The expanded ofort inventory refreshed on **2026-10-11** has 440 cases with valid
+gfortran references: 62 pass, 372 fail compilation, and 6 differ in output at both
+O0 and O2. The full inventory uses the debug compiler; the release compiler also
+passes all 63 selected regressions (the 62 inventory passes plus `xradix.f90`).
+Five output differences expose bit-intrinsic code generation bugs; the sixth is
+the known REAL128 capability difference. This remains an early compiler, not a
 replacement for an established production compiler. See
 [ofort compatibility coverage](tests/ofort/README.md) for the scope, exclusions
 and recorded results.
@@ -294,6 +295,25 @@ INTEGER(16) HUGE is diagnosed rather than truncated; TINY still requires REAL.
 Run `python tests/test_integer_huge.py` for interpreter/native O0/O2 and gfortran
 comparison checks. General variable expressions as HUGE arguments and typed
 variable inquiries inside PARAMETER initializers remain outside this subset.
+
+`EPSILON`, `DIGITS`, `RADIX`, `PRECISION`, `RANGE`, `MINEXPONENT`, and
+`MAXEXPONENT` support REAL kinds 4 and 8. `DIGITS`, `RADIX`, and `RANGE` also
+support INTEGER kinds 1, 2, 4 and 8. EPSILON retains its argument's real kind;
+the other results are default INTEGER scalars, including for array arguments.
+The inquiries accept `X=` and work in PARAMETER initializers using supported
+constants or previously declared variables. They determine the type without
+reading variable values or evaluating array subscripts; an unset variable is
+valid here. Supported arguments include variables, whole arrays, array elements,
+rank-one sections, arithmetic expressions and scalar REAL/DBLE/INT conversions.
+General procedure-call arguments and COMPLEX model inquiries are not implemented.
+Variables and user procedures may still use these intrinsic names.
+
+List-directed `PRINT *` with no output items emits a blank record. Large real
+output, including `HUGE(0.0)` and `HUGE(0.0_8)`, no longer traps while choosing
+an output representation. Values near the largest DOUBLE PRECISION number retain
+enough output digits to avoid rounding beyond the finite range.
+Run `python tests/test_numeric_model.py` for interpreter/native O0/O2 comparisons
+with gfortran, statement boundaries, initialization behavior and invalid arguments.
 
 ## Empty arrays
 
@@ -713,6 +733,7 @@ python tests/test_scalar_substrings.py
 python tests/test_vector_subscripts.py
 python tests/test_named_arguments.py
 python tests/test_ofort_compat_runner.py
+python tests/test_numeric_model.py
 ```
 
 The Python tests use `target/debug/rfort` (with `.exe` on Windows).

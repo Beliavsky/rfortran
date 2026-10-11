@@ -163,7 +163,9 @@ def probe(name, ofort_root, compiler, reference, timeout, repeat_reference=False
         item["status"] = "missing_source"
         return item
     item["sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
-    with tempfile.TemporaryDirectory(prefix="rfort-ofort-") as tmp:
+    # Windows can briefly retain a lock on an executable after it exits (for
+    # example while it is scanned). Cleanup must not discard the entire report.
+    with tempfile.TemporaryDirectory(prefix="rfort-ofort-", ignore_cleanup_errors=True) as tmp:
         directory = Path(tmp)
         exe_name = "program.exe" if os.name == "nt" else "program"
         ref_dir = directory / "reference"

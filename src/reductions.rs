@@ -5,13 +5,14 @@
 //! Lower rank-one numeric/LOGICAL reductions, assignments and WHERE to loops.
 use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec, UnOp};
 use anyhow::{bail, Context, Result};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone,Default)]
 struct Symbols {
     variables: HashMap<String,(TypeSpec,Vec<Expr>)>,
     elementals: HashMap<String,TypeSpec>,
     character_functions: HashMap<String,Vec<Option<usize>>>,
+    procedures: HashSet<String>,
 }
 impl Symbols { fn new() -> Self { Self::default() } }
 impl std::ops::Deref for Symbols {
@@ -712,6 +713,12 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             };
             *e = int(length as i64);
         }
+        Expr::Call(name, args) if crate::inquiries::numeric_model(name) && !symbols.contains_key(name) && !symbols.procedures.contains(name) => {
+            let [arg] = args.as_slice() else { bail!("{name} expects one argument"); };
+            let kind=crate::inquiries::model_type(arg,&|n|symbols.get(n).map(|(k,d)|(k.clone(),d.len())))?
+                .with_context(||format!("{name}: unsupported or undefined inquiry argument type"))?;
+            *e=crate::inquiries::model_value(name,&kind)?;
+        }
         Expr::Call(name, args) if matches!(name.as_str(), "tiny" | "huge" | "kind" | "size") => {
             if name == "kind" && args.len() == 1 {
                 if let Expr::Call(inquiry, inner) = &args[0] {
@@ -1277,6 +1284,16 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
 
 pub fn resolve(mut program: Program) -> Result<Program> {
     let mut symbols=Symbols::new();
+    fn procedures(body:&[Stmt],names:&mut HashSet<String>) {
+        for stmt in body {
+            match stmt {
+                Stmt::Function {name,body,..}|Stmt::Subroutine {name,body,..} => {names.insert(name.clone());procedures(body,names);},
+                Stmt::Module {body,..}|Stmt::Block {body} => procedures(body,names),
+                _ => {},
+            }
+        }
+    }
+    procedures(&program.body,&mut symbols.procedures);
     symbols.elementals=crate::elemental::functions(&program);
     collect_character_functions(&program.body,&mut symbols.character_functions)?;
     // Call arguments may have been materialized in an earlier pass. Continue
