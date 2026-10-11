@@ -379,6 +379,18 @@ checks apply to the input values. Whole-array calls, INTEGER kind 16, and
 Run `python tests/test_bit_intrinsics.py` for interpreter/native O0/O2 checks
 with gfortran comparisons. `tests/125_bit_intrinsics.f90` is the local fixture.
 
+## Declarations without `::`
+
+Intrinsic type declarations may omit `::` when they have no attributes or
+initializers. Examples include `character(len=8) ampm`,
+`integer(kind=4) values(8)`, and `real x,y(2)`. These forms support the same
+type selectors, entity lengths, and array bounds as declarations with `::`.
+Attributes such as `PARAMETER` or `INTENT`, and declaration initialization,
+still require `::`.
+
+Run `python tests/test_declarations_without_colons.py` for interpreter/native
+O0/O2 checks with gfortran comparisons.
+
 ## Procedure and module endings
 
 Subroutines and functions accept a bare `END`, an unnamed `END SUBROUTINE`
@@ -478,7 +490,7 @@ statements remain unsupported. Run `python tests/test_parameter_statements.py`.
 
 ## CHARACTER entity lengths
 
-CHARACTER declarations using `::` accept per-entity lengths, for example
+CHARACTER declarations accept per-entity lengths, for example
 `character(2) :: a*3, b, c*(n+1)`. An entity length overrides the shared length
 without changing its neighbors. Scalar PARAMETER entities also accept `*(*)`.
 Fixed-length local and host CHARACTER variables may supply `LEN(variable)` in
@@ -861,6 +873,7 @@ python tests/test_record_read.py
 python tests/test_empty_read.py
 python tests/test_statement_labels.py
 python tests/test_unnamed_procedure_ends.py
+python tests/test_declarations_without_colons.py
 python tests/test_recursive_allocatables.py
 python tests/test_deallocate.py
 python tests/test_runtime_allocatables.py

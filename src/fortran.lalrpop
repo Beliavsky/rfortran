@@ -308,6 +308,12 @@ IntrinsicAttrList: (Vec<String>, Option<Vec<Expr>>) = {
     },
 };
 
+// Attributes and initialization require ::; simple declarations may omit it.
+IntrinsicDeclHead: (TypeSpec, Vec<String>, Option<Vec<Expr>>, bool) = {
+    <t:TypeSpec> <attributes:IntrinsicAttrList> DCOLON => (t,attributes.0,attributes.1,true),
+    <t:TypeSpec> => (t,vec![],None,false),
+};
+
 DeclEntities: Vec<(String, Vec<Expr>, Option<Expr>, Option<TypeSpec>)> = {
     <e: DeclEntity> => vec![e],
     <mut v: DeclEntities> COMMA <e: DeclEntity> => { v.push(e); v },
@@ -716,9 +722,12 @@ PreFuncDecl: Vec<Stmt> = {
     KW_TYPE DCOLON <name:Ident> <components:Components> KW_CONTAINS <bindings:Bindings> KW_END KW_TYPE <_end:Ident> => vec![Stmt::DerivedType{name,components,bindings}],
     KW_TYPE LPAREN <type_name:Ident> RPAREN <attributes:AttrList> DCOLON <names:IdentList> => vec![Stmt::DerivedDecl{type_name,names,attributes,polymorphic:false}],
     KW_CLASS LPAREN <type_name:Ident> RPAREN <attributes:AttrList> DCOLON <names:IdentList> => vec![Stmt::DerivedDecl{type_name,names,attributes,polymorphic:true}],
-    <t: TypeSpec> <attributes: IntrinsicAttrList> DCOLON <entities: DeclEntities> => {
-        let (attrs, dimension) = attributes;
-        entities.into_iter().flat_map(|(name, dims, value, length)| {
+    <head:IntrinsicDeclHead> <entities:DeclEntities> =>? {
+        let (t,attrs,dimension,has_colons) = head;
+        if !has_colons && entities.iter().any(|(_,_,value,_)| value.is_some()) {
+            return Err(lalrpop_util::ParseError::User {error:"declaration initialization requires `::`"});
+        }
+        Ok(entities.into_iter().flat_map(|(name, dims, value, length)| {
             let dims = if dims.is_empty() { dimension.clone().unwrap_or_default() } else { dims };
             let t = match length {
                 Some(length) if matches!(t,TypeSpec::Character(_) | TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed) => length,
@@ -739,7 +748,7 @@ PreFuncDecl: Vec<Stmt> = {
             };
             declarations.push(declaration);
             declarations
-        }).collect()
+        }).collect())
     }
 };
 

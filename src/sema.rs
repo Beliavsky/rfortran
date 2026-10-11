@@ -1000,6 +1000,9 @@ pub fn analyze_with_src(
         let mut j = ident_index;
         while j > 0 {
             j -= 1;
+            if !crate::lexer::same_statement(&src[tokens[j].span.end..tokens[j+1].span.start]) {
+                break;
+            }
             match tokens[j].kind {
                 TokenKind::KwInteger
                 | TokenKind::KwReal
@@ -1040,6 +1043,9 @@ pub fn analyze_with_src(
                                 let mut intent_found = ParamIntent::None;
                                 let mut i = type_tok_idx + 1;
                                 while i < tokens.len() {
+                                    if !crate::lexer::same_statement(&src[tokens[i-1].span.end..tokens[i].span.start]) {
+                                        break;
+                                    }
                                     match &tokens[i].kind {
                                         TokenKind::DColon => break,
                                         TokenKind::Ident(s) if s.eq_ignore_ascii_case("intent") => {
@@ -1386,6 +1392,9 @@ pub fn analyze_with_src(
                             if let Some(type_tok_idx) = tokens.iter().position(|t| t.span == ts) {
                                 let mut i = type_tok_idx + 1;
                                 while i < tokens.len() {
+                                    if !crate::lexer::same_statement(&file.source()[tokens[i-1].span.end..tokens[i].span.start]) {
+                                        break;
+                                    }
                                     match &tokens[i].kind {
                                         TokenKind::DColon => break,
                                         TokenKind::Ident(sid)

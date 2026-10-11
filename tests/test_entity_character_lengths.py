@@ -5,10 +5,21 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import test_deallocate
 from test_record_read import ROOT, COMPILER, build_commands
 from run_ofort_compat import equivalent
 
 class EntityCharacterLengths(unittest.TestCase):
+    def test_array_entity_lengths(self):
+        for separator in ("::", ""):
+            with self.subTest(separator=separator):
+                test_deallocate.Deallocate.check(self,f"""program main
+character {separator} a(2)*3
+a=['one','two']
+print *,len(a),a(1),size(a),a(2)
+end program main
+""","3 one 2 two\n")
+
     def test_execution(self):
         source=ROOT / "tests/99_entity_character_lengths.f90"
         expected=json.loads((ROOT/"tests/expectations.json").read_text(encoding="utf-8"))["cases"][source.stem]["program_stdout"]
@@ -64,7 +75,6 @@ end program main
             ("integer::i*3", "requires a CHARACTER"),
             ("integer::n\ncharacter::s*(n)", "constant INTEGER"),
             ("character::s*(*)", "assumed CHARACTER length"),
-            ("character::a(2)*3", "CHARACTER array storage"),
         ]
         with tempfile.TemporaryDirectory(prefix="entity-length-errors-") as tmp:
             source=Path(tmp)/"main.f90"

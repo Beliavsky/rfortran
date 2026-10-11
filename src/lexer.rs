@@ -49,7 +49,7 @@ mod tests {
             "double precision, & ! comment\n & dimension(2) :: a"] {
             assert_eq!(lex(source).iter().filter(|t| matches!(t.kind, TokenKind::KwDimension)).count(), 1);
         }
-        for source in ["integer :: x, dimension(2)", "dimension=2",
+        for source in ["integer :: x, dimension(2)", "integer x, dimension(2)", "dimension=2",
             "call dimension(x)", "x=dimension(y)", "call f(x,dimension=y)",
             "integer :: x\ncall f(x,dimension)"] {
             assert!(!lex(source).iter().any(|t| matches!(t.kind, TokenKind::KwDimension)), "{source}");
@@ -424,7 +424,7 @@ fn continuation(lexer: &mut logos::Lexer<TokenKind>) -> logos::Skip {
 }
 
 // END INTERFACE's optional name must be in the same logical statement.
-fn same_statement(gap: &str) -> bool {
+pub(crate) fn same_statement(gap: &str) -> bool {
     let mut continued = false;
     for line in gap.split_inclusive('\n') {
         let code = line.split('!').next().unwrap_or("").trim();
@@ -493,8 +493,13 @@ pub fn lex(input: &str) -> Vec<Token> {
     let mut depth = 0;
     for i in 0..tokens.len() {
         if i == 0 || !same_statement(&input[tokens[i-1].span.end..tokens[i].span.start]) {
+            let mut end = i+1;
+            while end < tokens.len() && same_statement(&input[tokens[end-1].span.end..tokens[end].span.start]) {
+                end += 1;
+            }
             declaration = matches!(tokens[i].kind, TokenKind::KwInteger | TokenKind::KwReal
-                | TokenKind::KwDouble | TokenKind::KwCharacter | TokenKind::KwLogical);
+                | TokenKind::KwDouble | TokenKind::KwCharacter | TokenKind::KwLogical)
+                && tokens[i..end].iter().any(|t| matches!(t.kind,TokenKind::DColon));
             depth = 0;
         }
         if declaration && depth == 0 && i > 0

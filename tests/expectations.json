@@ -896,6 +896,13 @@
       "program_stderr": "",
       "program_stdout": " .FALSE.\n 2 3 .TRUE.\n .FALSE. .FALSE. .FALSE.\n 9 9 .TRUE.\n .TRUE. 0\n .TRUE. 0\n new 3\n .FALSE. .FALSE.\n"
     },
+    "134_declarations_without_colons": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 8 AM 3 16 1.5 .TRUE.\n one 2.0 two\n"
+    },
     "133_unnamed_procedure_ends": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",

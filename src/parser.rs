@@ -111,6 +111,8 @@ mod tests {
     fn mixed_scalar_and_array_declarations_preserve_order_and_scope() {
         use crate::ast::{Stmt, TypeSpec};
         for source in [
+            "program main\nreal x, y(2), z, a(3)\nend program main",
+            "subroutine example()\nreal x, y(2), z, a(3)\nend subroutine",
             "program main\nreal :: x, y(2), z, a(3)\nend program main",
             "subroutine example()\nreal :: x, y(2), z, a(3)\nend subroutine example",
             "module example\nreal :: x, y(2), z, a(3)\nend module example",
@@ -134,6 +136,19 @@ mod tests {
                     _ => panic!("unexpected declaration: {stmt:?}"),
                 }
             }
+        }
+    }
+
+    #[test]
+    fn declarations_without_colons_preserve_character_lengths_and_kind_selectors() {
+        use crate::ast::{Stmt, TypeSpec};
+        let source="character(len=8) ampm\ninteger(kind=4) values(8)\nampm='AM'\nend";
+        let program=super::parse_with_src(source,&crate::lexer::lex(source),"plain.f90").unwrap();
+        assert!(matches!(&program.body[0],Stmt::VarDecl{kind:TypeSpec::Character(Some(8)),names} if names==&["ampm"]));
+        assert!(matches!(&program.body[1],Stmt::ArrayDecl{kind:TypeSpec::IntegerKind(kind),name,dims} if kind=="4" && name=="values" && dims.len()==1));
+        for source in ["integer i=1\nend", "character(2) s='hi'\nend",
+                       "integer,parameter n=1\nend", "real,dimension(2) a\nend"] {
+            assert!(super::parse_with_src(source,&crate::lexer::lex(source),"invalid.f90").is_err(),"{source}");
         }
     }
 
