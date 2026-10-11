@@ -2574,6 +2574,7 @@ pub fn analyze_with_src(
                 walk_calls(r, called);
             }
             Expr::Un(_, inner) => walk_calls(inner, called),
+            Expr::Index(_, args) => for arg in args { walk_calls(arg, called); },
             _ => {}
         }
     }

@@ -695,7 +695,12 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             };
         }
         Expr::Call(tag, _) if matches!(tag.as_str(),"@matrix_view" | "@packed_view") => {},
-        Expr::Call(_, args) | Expr::Index(_, args) => for arg in args { lower_expr_impl(arg, symbols, prefix, serial, expand_elementals)?; },
+        Expr::Call(name, args) | Expr::Index(name, args) => {
+            for arg in args.iter_mut() { lower_expr_impl(arg, symbols, prefix, serial, expand_elementals)?; }
+            if symbols.get(name).is_some_and(|(_, dims)| !dims.is_empty()) && args.iter().any(|arg|array_valued(arg,symbols)) {
+                bail!("this vector subscript expression is not yet supported");
+            }
+        },
         Expr::Bin(op, a, b) => {
             lower_expr_impl(a, symbols, prefix, serial, expand_elementals)?;
             lower_expr_impl(b, symbols, prefix, serial, expand_elementals)?;

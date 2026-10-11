@@ -511,3 +511,24 @@ array PARAMETERs and the other array transformational intrinsics remain outside
 this subset. Array constructors currently require equal-length CHARACTER
 literals (including substituted constants). Run
 `python tests/test_character_arrays.py`.
+
+Local fixed rank-one numeric and LOGICAL arrays support INTEGER vector subscripts with
+up to 1024 selected elements. Selectors may be fixed-size INTEGER arrays,
+constructors, constant implied-DOs, sections, supported arithmetic, ABS/MOD/MODULO
+or default INT conversions. Reads preserve order and repetitions. Assignments
+capture all indices and right-hand values before writing, including scalar fills,
+overlapping selections and an array used as its own index vector. Nondefault
+lower bounds and INTEGER kinds 1/2/4/8 are supported.
+
+Constant invalid indices and duplicate assignment indices are compile errors;
+dynamic indices are checked against the original bounds before any writes, and
+dynamic duplicate destinations cause a runtime error. Duplicate indices remain
+valid for reads. SIZE, LBOUND, UBOUND and KIND of supported selections use shape
+and type information without reading the array or index values. Only selected
+source elements must be initialized. Loop-condition captures are reevaluated on
+every iteration, including after CYCLE. Run `python tests/test_vector_subscripts.py`.
+
+Higher-rank and CHARACTER selections, runtime-sized index vectors, READ
+destinations, vector actuals to subroutines and vector selections in WHERE
+assignments remain unsupported. Other vector expressions are rejected when they
+reach scalar array-index lowering, instead of silently using their first element.

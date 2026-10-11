@@ -28,6 +28,8 @@ mod subroutines;
 mod array_calls;
 mod optional;
 mod substrings;
+mod character_arrays;
+mod vector_subscripts;
 mod function_arrays;
 mod array_bounds;
 mod multidim;

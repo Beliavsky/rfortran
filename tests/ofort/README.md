@@ -101,13 +101,13 @@ run. The 391 compile failures comprise 309 parse errors, 55 other compile errors
 18 explicitly unsupported features and 9 name-resolution errors. These coarse
 groups classify diagnostics rather than count independent missing features.
 
-Four output differences expose vector-subscript correctness problems:
+Four output differences exposed vector-subscript correctness problems:
 `xvec_sub.f90`, `xvec_sub_order.f90`,
 `xvector_subscript_expr_pending.f90`, and
 `xvector_subscript_read_pending.f90`. Reads lose elements; the overlapping swap
 `x([1,2]) = x([2,1])` produces `[20,20,30]` instead of `[20,10,30]`, and a scalar
-fill updates only the first selected element. These are the next correctness
-priorities. The fifth difference, `xkinds_supported.f90`, is the documented
+fill updates only the first selected element. These are fixed in the vector
+checkpoint below. The fifth difference, `xkinds_supported.f90`, is the documented
 capability difference for REAL128: rfort returns -1, while gfortran provides
 kind 16. It is not evidence of an incorrect arithmetic result.
 
@@ -118,6 +118,30 @@ and individual source hashes are in `target/ofort-expanded.json`; the tracked
 snapshot keeps outcome/exclusion groups, compiler identity, a source-manifest
 hash and the five output comparisons. Discovery remains a fixture inventory,
 not a complete ofort-suite or Fortran-conformance measure.
+
+### Vector-subscript fixes
+
+The vector-subscript checkpoint fixes all four execution bugs found in the
+expanded baseline. [`vector-selection.json`](vector-selection.json) selects
+eight external vector probes, adding scalar/constructor fills, section RHS
+values, reductions and self-indexed assignments to the four original failures.
+Run them with:
+
+```bat
+python tests/run_ofort_compat.py --ofort-root C:\c\ofort --selection tests/ofort/vector-selection.json --strict --jobs 4 --report target/ofort-vectors.json
+```
+
+The local `117_vector_subscripts.f90` fixture and
+`python tests/test_vector_subscripts.py` also check interpreter execution,
+nondefault bounds, repeated read indices, empty selections, scalar operand
+capture, loop-condition reevaluation, numeric kinds, duplicates, invalid indices
+and selected-element initialization. The earlier expanded snapshot remains the
+pre-fix baseline; the REAL128 capability difference remains unchanged.
+
+The rebuilt release compiler passes all **8/8 vector probes at O0/O2** against
+gfortran. `target/ofort-vector-regressions.json` records **52/52 passes** at both
+levels: these eight probes and the 44 previously passing expanded-baseline
+cases. The full discovery inventory was not rerun.
 
 ### Quick-sample history
 

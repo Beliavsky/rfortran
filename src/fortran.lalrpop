@@ -362,6 +362,8 @@ Stmt: Stmt = {
     KW_DO KW_WHILE LPAREN <cond: CondExpr> RPAREN <body: Stmts> KW_END KW_DO => Stmt::DoWhile { cond, body },
     KW_RETURN => Stmt::Return(None),
     <name: Designator> EQ <rhs: RhsExpr> => Stmt::Assign { name, value: rhs },
+    <id: Designator> LPAREN <args: SubscriptList> RPAREN LPAREN <range: Subscript> RPAREN EQ <rhs: RhsExpr> =>
+        Stmt::CallSub {name:"@array_substring_assign".into(), args:vec![crate::ast::section_or_call(id,args),range,rhs]},
     <id: Designator> LPAREN <args: SubscriptList> RPAREN EQ <rhs: RhsExpr> => {
         let expr = crate::ast::section_or_call(id.clone(), args);
         let indices = match expr { Expr::Section { .. } => vec![expr], Expr::Call(_, args) => args.into_iter().map(|e| if matches!(e,Expr::Section {..}) { Expr::Call("@vector_subscript".into(),vec![e]) } else {e}).collect(), _ => unreachable!() };
@@ -530,6 +532,8 @@ Primary: Expr = {
     // treat it as a function call here (Expr::Call). Array element assignment is
     // handled at the statement level by the AssignIndex rule above.
     <id: Designator> LPAREN <args: SubscriptList> RPAREN => crate::ast::section_or_call(id, args),
+    <id: Designator> LPAREN <args: SubscriptList> RPAREN LPAREN <range: Subscript> RPAREN =>
+        Expr::Call("@array_substring".into(),vec![crate::ast::section_or_call(id,args),range]),
     KW_REAL LPAREN <args: CallArgList> RPAREN => Expr::Call("real".to_string(), args),
     <id: Designator> => Expr::Ident(id),
     LPAREN <e: RhsExpr> RPAREN => e,

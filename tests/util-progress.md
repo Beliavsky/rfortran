@@ -1608,3 +1608,49 @@ missing sources, output mismatches and snapshot inventory accounting. The
 original 18-case selection still passes at both O0/O2 with --strict. A filtered
 --discover --strict xloop smoke test passed. No compiler source or external
 ofort fixture was changed in this checkpoint. Linux/macOS remain untested.
+
+## Checkpoint 57: vector-subscript reads and captured assignments
+
+Fixed the four vector-subscript execution differences from the expanded ofort
+baseline. A new lowering pass recognizes fixed rank-one INTEGER selectors,
+captures every original index, checks bounds and gathers the selected values.
+Reads preserve selector order and repeated indices. Assignments capture all
+indices and RHS values before writing, so overlapping swaps, scalar fills,
+section RHS values and self-indexed assignments produce the expected results.
+
+Supported local source arrays are numeric or LOGICAL, with up to 1024 selected
+elements. Selectors include INTEGER kinds 1/2/4/8, fixed arrays, constructors,
+constant implied-DOs, sections, supported arithmetic, ABS/MOD/MODULO and default
+INT conversions. Nondefault source/index lower bounds and empty selections are
+covered. Constant invalid indices and duplicate destinations are compile errors;
+dynamic bounds and duplicate destinations are checked before writes. Only
+selected source elements are read by a gather. SIZE/LBOUND/UBOUND/KIND inquiries
+use shape/type metadata without reading uninitialized source or selector values.
+
+Scalar operands of selectors are captured once. Loop-condition gathers execute
+on every iteration, including after CYCLE. Generated vector and reduction
+declarations are hoisted to procedure scope. The unused-function scan now visits
+index expressions, avoiding spurious warnings for generated lower-bound helpers.
+Residual unsupported array-valued indices fail explicitly during reduction
+lowering rather than silently selecting their first element. Higher ranks,
+CHARACTER selections, runtime-sized index vectors, READ destinations,
+subroutine vector actuals and vector selections in WHERE assignments remain
+outside this subset.
+
+Vector expressions in PRINT and list-directed WRITE are materialized as arrays
+before output lowering, so arithmetic and unary operations on gathers print
+every element. This fixes
+the additional xvector_subscript_section_pending probe found while checking
+the broader regression selection.
+
+Added 117_vector_subscripts.f90, seven focused Python tests and eight external
+probes in tests/ofort/vector-selection.json. Validation on Windows: 75 Rust unit
+tests and all 117 native fixtures passed, along with seven focused tests using
+both debug and rebuilt release compilers in interpreter/native O0/O2 modes,
+three explicit-bounds tests, four CHARACTER-array tests and 46 batch driver
+tests. All eight external vector probes pass at O0/O2 against gfortran. The
+release report target/ofort-vector-regressions.json records 52/52 passes at
+both optimization levels: the eight probes plus all 44 previously passing
+expanded-baseline cases. The full discovery inventory was not rerun; its
+tracked snapshot remains the pre-fix baseline. External fixtures remain
+unchanged; Linux/macOS remain untested.

@@ -30,6 +30,9 @@ fn flag(v: &Variable, index: Option<Expr>) -> Expr {
     match index { Some(i) => Expr::Index(v.flag.clone(), vec![i]), None => Expr::Ident(v.flag.clone()) }
 }
 fn guard(value: Expr, name: &str, index: Option<Expr>) -> Stmt {
+    let (name,index)=if let Some((original,element))=crate::character_arrays::original_element(name) {
+        (original,Some(int(element)))
+    } else {(name,index)};
     let mut args = vec![value, Expr::Str(name.into())];
     args.extend(index);
     Stmt::CallSub { name: "@check_initialized".into(), args }
@@ -49,7 +52,12 @@ fn check(name: &str, index: Option<&Expr>, env: &Env, out: &mut Vec<Stmt>, seria
         else if v.state == State::No && !v.elements.is_empty() { State::Maybe } else { v.state }
     } else { v.state };
     match state {
-        State::No => bail!("read of uninitialized variable `{name}` before assignment"),
+        State::No => {
+            if let Some((original,element))=crate::character_arrays::original_element(name) {
+                bail!("read of uninitialized variable `{original}`: element {element} before assignment");
+            }
+            bail!("read of uninitialized variable `{name}` before assignment");
+        }
         State::Yes => {}
         State::Maybe => {
             if let (Some(n), None) = (v.extent, index) {

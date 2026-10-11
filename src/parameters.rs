@@ -965,7 +965,6 @@ fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules, ass
             }
             Stmt::ArrayDecl { kind, dims, .. } => {
                 resolve_kind(kind, constants)?;
-                if matches!(kind, TypeSpec::Character(_)) { bail!("CHARACTER array storage is not yet supported"); }
                 for e in dims {
                     rewrite_expr(e, constants)?;
                 }

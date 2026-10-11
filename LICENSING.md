@@ -32,6 +32,7 @@ the author recorded in this repository's Git history.
 - `src/optional.rs`
 - `src/substrings.rs`
 - `src/character_arrays.rs`
+- `src/vector_subscripts.rs`
 - `src/output.rs`
 - `src/parameters.rs`
 - `src/purity.rs`

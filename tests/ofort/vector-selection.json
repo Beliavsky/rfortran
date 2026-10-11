@@ -1,0 +1,13 @@
+{
+  "description": "Rank-one vector-subscript reads, expressions, scalar fills and overlapping assignments; expected to pass against gfortran at O0/O2.",
+  "cases": [
+    "xvec_sub.f90",
+    "xvec_sub_order.f90",
+    "xvector_subscript_expr_pending.f90",
+    "xvector_subscript_read_pending.f90",
+    "xvec_sub_assign.f90",
+    "xoverlap_vector_pending.f90",
+    "xvector_subscript_assign_pending.f90",
+    "xvector_subscript_section_pending.f90"
+  ]
+}

@@ -784,6 +784,7 @@ fn expand(
 }
 pub fn resolve(mut p: Program) -> Result<Program> {
     p = crate::optional::resolve(p)?;
+    p = crate::vector_subscripts::resolve(p)?;
     p = crate::array_bounds::resolve(p)?;
     crate::elemental::validate_program(&p)?;
     fn collect(body: &mut Vec<Stmt>, routines: &mut HashMap<String, Routine>) {
@@ -815,6 +816,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
     let mut routines = HashMap::new();
     collect(&mut p.body, &mut routines);
     expand(&mut p.body, &Shapes::new(), &routines, &mut vec![], &mut 0)?;
+    let p = crate::character_arrays::resolve(p)?;
     crate::multidim::resolve(crate::function_arrays::resolve(crate::substrings::resolve(p)?)?)
 }
 
