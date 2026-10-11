@@ -42,7 +42,7 @@ fn declared(body: &[Stmt]) -> HashSet<String> {
 fn imported(body: &[Stmt], modules: &Modules) -> Result<Symbols> {
     let mut selected = Symbols::new();
     for s in body {
-        if let Stmt::Use { module, only } = s {
+        if let Stmt::Use { module, only, .. } = s {
             let Some(exports) = modules.get(module) else {
                 if only.is_some() {
                     bail!("USE ONLY requires module `{module}` earlier in the same source group");

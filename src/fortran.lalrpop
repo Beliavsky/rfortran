@@ -367,8 +367,7 @@ Stmt: Stmt = {
         let indices = match expr { Expr::Section { .. } => vec![expr], Expr::Call(_, args) => args.into_iter().map(|e| if matches!(e,Expr::Section {..}) { Expr::Call("@vector_subscript".into(),vec![e]) } else {e}).collect(), _ => unreachable!() };
         Stmt::AssignIndex { name: id, indices, value: rhs }
     },
-    KW_USE <m: Ident> => Stmt::Use { module: m, only: None },
-    KW_USE <m: Ident> COMMA KW_ONLY COLON <names:GenericNames> => Stmt::Use { module:m, only:Some(names) },
+    KW_USE <head:UseHead> <only:UseOnly> => Stmt::Use { module:head.0, nature:head.1, only },
     KW_IMPLICIT KW_NONE => Stmt::Implicit(Implicit::None),
     KW_IMPLICIT <rules: ImplicitRuleList> => {
         if rules.len() == 1 {
@@ -701,4 +700,14 @@ WhereTail: Vec<Stmt> = {
         let mut result=vec![Stmt::CallSub{name:"@elsewhere".into(),args:vec![mask]}];
         result.extend(body); result.extend(tail); result
     },
+};
+
+UseHead: (String, Option<String>) = {
+    <m:Ident> => (m,None),
+    DCOLON <m:Ident> => (m,None),
+    COMMA <nature:Ident> DCOLON <m:Ident> => (m,Some(nature)),
+};
+UseOnly: Option<Vec<String>> = {
+    => None,
+    COMMA KW_ONLY COLON <names:GenericNames> => Some(names),
 };

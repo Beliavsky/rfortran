@@ -727,6 +727,7 @@ impl Lowerer {
     }
 }
 pub fn resolve(mut program: Program) -> Result<Program> {
+    crate::parameters::resolve_intrinsic_modules(&mut program)?;
     crate::elemental::validate_program(&program)?;
     crate::imports::validate(&program)?;
     program = crate::operators::resolve(program)?;

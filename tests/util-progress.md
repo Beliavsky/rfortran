@@ -1283,3 +1283,36 @@ gfortran across interpreter/native O0/O2. The isolated release report
 `target/ofort-locations.json` has 13/18 passes and five compile failures, with
 all reference runs succeeding. The unmodified location probe passes all fifteen
 checks at O0/O2. Linux/macOS remain untested.
+
+
+## Checkpoint 48: ISO_FORTRAN_ENV kind constants
+
+USE now retains an optional module nature and accepts `USE :: module` and
+`USE, INTRINSIC/NON_INTRINSIC :: module`, with or without ONLY. Before import
+validation, intrinsic ISO_FORTRAN_ENV associations are bound to a compiler-owned
+module containing ordinary integer PARAMETER declarations. This reuses existing
+ONLY, PUBLIC/PRIVATE, re-export and host-association handling. Explicit INTRINSIC
+cannot bind to a user module of the same name; ordinary USE prefers such a user
+module, and NON_INTRINSIC requires one in the current source group. Unsupported
+module natures, intrinsic modules and imported entities are diagnosed.
+
+Supported constants are INT8=1, INT16=2, INT32=4, INT64=8, REAL32=4 and REAL64=8.
+REAL128=-1 reports that no such real kind is supported. Other ISO_FORTRAN_ENV
+entities remain outside this subset. Fixture 109 exercises declarations, inquiry
+results, 64-bit storage and private-module re-export. Focused tests cover host
+association, unqualified imports, user-module collisions, mixed-case continued
+USE statements and diagnostics. INTRINSIC/NON_INTRINSIC remain valid ordinary
+identifiers outside USE. No external ofort source files were changed.
+
+The next parser blockers in the original numeric probes are integer literal kind
+suffixes (`10000000000_int64`) and the identifier `double` being reserved as a
+keyword. Mixed-kind arithmetic/inquiries will require further validation after
+those syntax blockers. This checkpoint supplies kind imports, not complete
+support for those probes.
+
+Windows validation: 74 Rust unit tests, 109 native fixtures, 46 wrapper tests
+and three focused intrinsic-module tests passed. Focused interpreter/native
+O0/O2 tests passed with debug and rebuilt release compilers; fixture 109 agrees
+with gfortran. The isolated release report `target/ofort-intrinsic-env.json`
+remains at 13/18 passes and five compile failures, with all reference runs
+succeeding. Linux/macOS remain untested.

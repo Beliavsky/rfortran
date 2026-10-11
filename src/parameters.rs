@@ -10,6 +10,64 @@ use std::collections::{HashMap, HashSet};
 type Constants = HashMap<String, Expr>;
 type Modules = HashMap<String, Constants>;
 
+// Give intrinsic imports a separate identity so an explicitly INTRINSIC USE
+// never binds to a user module with the same name. Constants then follow the
+// ordinary ONLY, visibility, re-export and host-association paths.
+pub(crate) fn resolve_intrinsic_modules(program: &mut Program) -> Result<()> {
+    const INTERNAL: &str = "@intrinsic_iso_fortran_env";
+    let user_modules: HashSet<String> = program.body.iter().filter_map(|s| {
+        if let Stmt::Module { name, .. } = s { Some(name.clone()) } else { None }
+    }).collect();
+    fn visit(body: &mut [Stmt], modules: &HashSet<String>, needed: &mut bool) -> Result<()> {
+        for stmt in body {
+            match stmt {
+                Stmt::Use { module, nature, only } => {
+                    let intrinsic = match nature.take().map(|n| n.to_ascii_lowercase()).as_deref() {
+                        Some("intrinsic") => true,
+                        Some("non_intrinsic") => {
+                            if !modules.contains(module) { bail!("NON_INTRINSIC module `{module}` must be provided in the same source group"); }
+                            false
+                        }
+                        Some(other) => bail!("unknown USE module nature `{other}`; expected INTRINSIC or NON_INTRINSIC"),
+                        None => module.eq_ignore_ascii_case("iso_fortran_env") && !modules.contains(module),
+                    };
+                    if intrinsic {
+                        if !module.eq_ignore_ascii_case("iso_fortran_env") { bail!("intrinsic module `{module}` is not yet supported"); }
+                        *module = INTERNAL.into();
+                        if let Some(names) = only { for name in names { name.make_ascii_lowercase(); } }
+                        *needed = true;
+                    }
+                }
+                Stmt::Module { body, .. } | Stmt::Function { body, .. }
+                | Stmt::Subroutine { body, .. } | Stmt::Block { body }
+                | Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } => visit(body, modules, needed)?,
+                Stmt::If { then_body, else_body, .. } => {
+                    visit(then_body, modules, needed)?;
+                    if let Some(body) = else_body { visit(body, modules, needed)?; }
+                }
+                Stmt::SelectCase { cases, default, .. } => {
+                    for case in cases { visit(&mut case.body, modules, needed)?; }
+                    if let Some(body) = default { visit(body, modules, needed)?; }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+    let mut needed = false;
+    visit(&mut program.body, &user_modules, &mut needed)?;
+    if needed && !user_modules.contains(INTERNAL) {
+        let body = [("int8",1), ("int16",2), ("int32",4), ("int64",8),
+                    ("real32",4), ("real64",8), ("real128",-1)].into_iter()
+            .map(|(name,value)| Stmt::InitializedDecl {
+                kind: TypeSpec::Integer(None), attributes: vec!["parameter".into()],
+                entities: vec![(name.into(),Some(Expr::IntLit(value.to_string())))],
+            }).collect();
+        program.body.insert(0, Stmt::Module { name: INTERNAL.into(), body });
+    }
+    Ok(())
+}
+
 fn kind_number(name: &str, constants: &Constants) -> Result<i64> {
     name.parse().or_else(|_| evaluate(&Expr::Ident(name.into()), constants))
 }
@@ -266,7 +324,7 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
     validate_constructor_indices(body)?;
     let mut constants = inherited.clone();
     for stmt in body.iter() {
-        if let Stmt::Use { module, only } = stmt {
+        if let Stmt::Use { module, only, .. } = stmt {
             if let Some(imports) = modules.get(&module.to_ascii_lowercase()) {
                 constants.extend(imports.iter().filter(|(name, _)| only.as_ref().is_none_or(|names| names.contains(name)))
                     .map(|(n, value)| (n.clone(), value.clone())));

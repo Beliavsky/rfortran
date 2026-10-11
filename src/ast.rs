@@ -89,6 +89,8 @@ pub enum Stmt {
     Use {
         module: String,
         #[serde(default)]
+        nature: Option<String>,
+        #[serde(default)]
         only: Option<Vec<String>>,
     },
     Module {

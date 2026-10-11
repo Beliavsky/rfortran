@@ -333,7 +333,7 @@ impl Lowerer {
             symbols.remove(p);
         }
         for s in body.iter() {
-            if let Stmt::Use { module, only } = s {
+            if let Stmt::Use { module, only, .. } = s {
                 if let Some((a, t)) = self.modules.get(module) {
                     for (n, v) in a {
                         if only.as_ref().is_none_or(|names| names.contains(n)) {

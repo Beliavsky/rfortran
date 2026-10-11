@@ -380,7 +380,7 @@ impl Resolver {
         let mut visible = inherited.clone();
         merge(&mut visible, &self.local_bindings(body)?);
         for s in body {
-            if let Stmt::Use { module, only } = s {
+            if let Stmt::Use { module, only, .. } = s {
                 if let Some(exported) = self.exports.get(module) {
                     let selected = exported
                         .iter()

@@ -156,3 +156,9 @@ O0/O2, bringing the selected sample to 12/18 passes (six compile failures).
 DIM, MASK, KIND and BACK, including empty selections and nondefault lower bounds.
 `xintrinsic_locations_dim_back_pending.f90` now passes all fifteen checks at
 O0/O2, raising the selected sample to 13/18 passes (five compile failures).
+
+`109_intrinsic_env.f90` and `python tests/test_intrinsic_env.py` cover intrinsic
+ISO_FORTRAN_ENV numeric kind imports, ONLY, re-export, host association and
+explicit intrinsic/non-intrinsic module selection. This supplies a dependency
+of both pending numeric probes; integer kind suffixes and further numeric
+semantics still need work. The selected sample remains at 13/18 passes.

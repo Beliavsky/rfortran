@@ -417,3 +417,13 @@ return zeros. KIND=4 and KIND=8 are supported. FINDLOC VALUE must currently have
 the same type/kind as ARRAY. Use MASK= when omitting DIM; the positional MASK-only
 form, runtime DIM, CHARACTER arrays and runtime-sized PACK inputs remain outside
 this subset. Run `python tests/test_locations.py`.
+
+ISO_FORTRAN_ENV currently provides the INTEGER kind constants INT8/INT16/INT32/
+INT64 (1/2/4/8) and REAL32/REAL64 (4/8). REAL128 is -1 to indicate an unsupported
+real kind. USE, INTRINSIC :: ISO_FORTRAN_ENV, ordinary USE and USE :: forms support
+ONLY lists, host association and re-export through user modules. Explicit
+INTRINSIC selects the built-in module even if a user module has the same name;
+NON_INTRINSIC requires a user module in the same source group. Other intrinsic
+modules and other ISO_FORTRAN_ENV entities are not yet implemented. This does
+not add integer kind-suffixed literals or general mixed-kind expression support.
+Run `python tests/test_intrinsic_env.py`.
