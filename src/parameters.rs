@@ -814,7 +814,7 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
             else if kind.is_some() { *expr = real_literal((value as f32) as f64, false); }
         }
         Expr::Section { name, lower, upper, stride } => {
-            if constants.contains_key(&name.to_ascii_lowercase()) { bail!("PARAMETER `{name}` is not an array"); }
+            if constants.get(&name.to_ascii_lowercase()).is_some_and(|v|!matches!(v,Expr::Call(n,_) if n=="@array_constant")) { bail!("PARAMETER `{name}` is not an array"); }
             for bound in [lower, upper, stride].into_iter().flatten() { rewrite_expr(bound, constants)?; }
         }
         Expr::Ident(name) => {

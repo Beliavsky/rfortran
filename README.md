@@ -396,8 +396,11 @@ supported by bounded temporary storage with a separate result length. Such resul
 work in list-directed printing, basic arithmetic/comparisons, whole-array assignment
 to rank-one fixed-size arrays, and reductions without DIM/MASK options. Assignments
 and array expressions check shape conformance at runtime. Further transformations,
-constructors, array inquiries and WHERE assignments involving runtime-sized results
-remain unsupported. Run `python tests/test_runtime_pack.py`.
+constructors, general array inquiries and WHERE assignments involving runtime-sized
+results remain unsupported. Rank-one runtime PACK results can also be passed to
+specialized INTENT(IN) array dummies, including nested PACK arguments; dummy
+SIZE/LBOUND/UBOUND use the logical result extent. Run
+`python tests/test_runtime_pack.py` and `python tests/test_recursive_allocatables.py`.
 UNPACK supports a rank-one VECTOR, fixed-shape LOGICAL MASK and scalar or
 conformable FIELD of the same type/kind as VECTOR. Both intrinsics preserve
 array-element order and check at runtime that VECTOR has enough elements.
@@ -464,16 +467,44 @@ forwarding an absent optional dummy to another optional dummy. PRESENT
 and simple logical combinations of presence tests select the applicable branches;
 a missing required argument or an unguarded absent-dummy reference is diagnosed.
 Optional functions currently require explicit INTENT(IN) on their arguments.
-Recursive optional specialization and a separate-object optional-argument ABI
-remain unsupported. Named calls require a definition in the source group.
+Recursive calls reuse the specialization for each argument-presence combination.
+A separate-object optional-argument ABI remains unsupported. Named calls require
+a definition in the source group.
 
 Scalar CHARACTER subroutine arguments support fixed and assumed lengths,
 including OPTIONAL inputs and writable variables. Assumed lengths follow each
 actual argument; LEN, empty strings and literal/concatenated inputs work. Fixed
 lengths currently require an exact match. Expressions require INTENT(IN), while
-writable arguments must be variables. CHARACTER arrays, assumed-length function
-dummies and explicit RETURN inside expanded CHARACTER subroutines remain outside
-this subset. Run `python tests/test_optional_procedures.py`.
+writable arguments must be variables. Explicit RETURN leaves an expanded
+subroutine, including from nested loops, and execution resumes in its caller.
+CHARACTER arrays and assumed-length function dummies remain outside this subset.
+Run `python tests/test_optional_procedures.py`.
+
+## Recursive procedures and bounded allocatable outputs
+
+RECURSIVE is accepted on functions and subroutines, including PURE RECURSIVE
+and RECURSIVE PURE prefixes. Scalar recursive functions can reuse OPTIONAL
+specializations. Array subroutines still use call-site expansion: recursion must
+terminate during specialization, as in `xpure_recursive.f90`, whose recursive
+call omits the optional bounds and selects the copy branch. General recursive
+array calls remain unsupported and produce a diagnostic.
+
+Local rank-one numeric/LOGICAL ALLOCATABLE INTENT(OUT) dummies can associate with
+main-program allocatable arrays. Storage capacity is inferred from bounded array
+inputs across the source group's call sites; allocation state and the current
+extent remain runtime values. INTENT(OUT) deallocates the previous output on entry.
+ALLOCATE accepts runtime extents within that capacity, including zero, followed
+by conformable whole-array assignment or scalar filling. ALLOCATED, SIZE, LBOUND,
+UBOUND, reductions and list-directed output use the current allocation and extent.
+Repeated allocation, reads of unallocated arrays and allocations exceeding the
+inferred capacity report runtime errors. Element initialization checks still apply.
+
+This does not provide general heap allocation, automatic reallocation on array
+assignment, dynamic input declaration bounds, multidimensional allocatable outputs,
+sections of runtime-sized dummies/allocatable arrays, or a descriptor ABI.
+Growing array call cycles cannot supply a finite storage
+bound and are diagnosed. Run `python tests/test_recursive_allocatables.py` for
+interpreter/native O0/O2 checks and comparison with gfortran.
 
 ## CHARACTER comparisons and function arguments
 
@@ -655,6 +686,7 @@ cargo build --bin rfort
 cargo test --bin rfort --test testsuite -- --test-threads=1
 python tests/test_driver.py
 python tests/test_record_read.py
+python tests/test_recursive_allocatables.py
 python tests/test_internal_read.py
 python tests/test_write.py
 python tests/test_output_implied_do.py

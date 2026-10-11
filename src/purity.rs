@@ -29,7 +29,7 @@ pub fn validate(program: &Program) -> Result<()> {
         match e {
             Expr::Call(_, _) if crate::named_arguments::omitted(e) => {},
             Expr::Call(name, args) => {
-                let intrinsic = name.starts_with("@keyword:") || crate::intrinsics::math_arity(name).is_some()
+                let intrinsic = name == "allocated" || name.starts_with("@keyword:") || crate::intrinsics::math_arity(name).is_some()
                     || matches!(name.to_ascii_lowercase().as_str(), "@integer_literal" | "minloc" | "maxloc" | "findloc" | "@minloc" | "@maxloc" | "@findloc" | "pack" | "unpack" | "spread" | "eoshift" | "transpose" | "cshift" | "reshape" | "mod" | "modulo" | "abs" | "int" | "real" | "dble" | "sum" | "product" | "minval" | "maxval" | "max" | "min" | "kind" | "selected_real_kind" | "selected_int_kind" | "tiny" | "huge" | "size" | "lbound" | "ubound" | "len" | "present" | "any" | "all" | "count" | "@count_i8" | "@count_default" | "@any_reduction" | "@all_reduction" | "@array_constructor" | "@output_implied_do" | "@section_subscript");
                 if !locals.contains(name) && !known.get(name).map(|p| p.pure).unwrap_or(intrinsic) {
                     bail!("PURE procedure cannot call impure or unknown procedure `{name}`");
@@ -88,6 +88,16 @@ pub fn validate(program: &Program) -> Result<()> {
                 }
                 Stmt::CallSub {name,args} if name == "@forall" => {
                     for control in args.chunks_exact(4) { for e in &control[1..] {expression(e,&locals,known)?;} }
+                }
+                Stmt::CallSub {name,args} if name == "@allocate" => {
+                    // Allocation is permitted for local storage and writable
+                    // allocatable dummies, while host and INTENT(IN) objects
+                    // remain protected by the ordinary PURE write checks.
+                    for arg in args {
+                        let Expr::Call(array,bounds)=arg else {bail!("ALLOCATE expects array bounds");};
+                        writable(array)?;
+                        for bound in bounds {expression(bound,&locals,known)?;}
+                    }
                 }
                 Stmt::CallSub { name, args } => {
                     let Some(Procedure { pure: true, intents: Some(intents), optional }) = known.get(name) else {
@@ -165,6 +175,21 @@ pub fn validate(program: &Program) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn pure_allocation_protects_inputs_and_host_storage() {
+        for (declarations,expected) in [
+            ("integer,allocatable,intent(out)::a(:)",None),
+            ("integer,allocatable,intent(in)::a(:)",Some("dummy argument")),
+        ] {
+            let source=format!("pure recursive subroutine f(a)\n{declarations}\nallocate(a(2))\nend subroutine f");
+            let p=crate::parser::parse_with_src(&source,&crate::lexer::lex(&source),"pure.f90").unwrap();
+            let result=super::validate(&p);
+            if let Some(error)=expected {assert!(result.unwrap_err().to_string().contains(error));} else {result.unwrap();}
+        }
+        let source="module m\ninteger,allocatable::outside(:)\ncontains\npure subroutine f()\nallocate(outside(2))\nend subroutine f\nend module m";
+        let p=crate::parser::parse_with_src(source,&crate::lexer::lex(source),"pure.f90").unwrap();
+        assert!(super::validate(&p).unwrap_err().to_string().contains("nonlocal variable"));
+    }
     #[test]
     fn validates_pure_subroutine_intents_and_calls() {
         for (statement, error) in [

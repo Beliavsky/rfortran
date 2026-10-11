@@ -62,11 +62,50 @@ pub(crate) fn rename(body: &mut Vec<Stmt>, inherited: &Names, params: &[String],
                 for case in cases { rename(&mut case.body, &names, params, serial)?; }
                 if let Some(body) = default { rename(body, &names, params, serial)?; }
             }
-            Stmt::Return(_) => bail!("explicit RETURN in an output-argument subroutine is not yet supported"),
+            Stmt::Return(Some(value)) => expr(value, &names),
             _ => {}
         }
     }
     body.retain(|s| !matches!(s, Stmt::ArrayDecl { name, .. } if params.contains(name)) && !matches!(s, Stmt::DummyIntent { .. }) && !matches!(s, Stmt::VarDecl { names, .. } if names.is_empty()));
+    Ok(())
+}
+/// Preserve procedure RETURN when its body is expanded into the caller.
+/// A flag skips the remainder of the call and exits enclosing loops, without
+/// changing ordinary EXIT/CYCLE or returning from the caller itself.
+pub(crate) fn inline_returns(body: &mut Vec<Stmt>, serial: &mut usize) -> Result<()> {
+    fn contains(body: &[Stmt]) -> bool { body.iter().any(|s| match s {
+        Stmt::Return(_) => true,
+        Stmt::If {then_body,else_body,..} => contains(then_body) || else_body.as_ref().is_some_and(|b| contains(b)),
+        Stmt::Do {body,..} | Stmt::DoWhile {body,..} | Stmt::Block {body} => contains(body),
+        Stmt::SelectCase {cases,default,..} => cases.iter().any(|c| contains(&c.body)) || default.as_ref().is_some_and(|b|contains(b)),
+        _ => false,
+    }) }
+    if !contains(body) { return Ok(()); }
+    *serial += 1;
+    let flag = format!("@sub_returned_{serial}");
+    fn lower(body: &mut Vec<Stmt>, flag: &str) -> Result<()> {
+        let mut out = vec![];
+        for mut s in std::mem::take(body) {
+            match &mut s {
+                Stmt::Return(Some(_)) => bail!("a subroutine RETURN cannot have a value"),
+                Stmt::Return(None) => s = Stmt::Assign {name:flag.into(),value:Expr::Logical(true)},
+                Stmt::If {then_body,else_body,..} => { lower(then_body,flag)?; if let Some(b)=else_body {lower(b,flag)?;} }
+                Stmt::Do {body,..} | Stmt::DoWhile {body,..} => {
+                    lower(body,flag)?;
+                    body.push(Stmt::If {cond:Expr::Ident(flag.into()),then_body:vec![Stmt::Exit],else_body:None});
+                }
+                Stmt::Block {body} => lower(body,flag)?,
+                Stmt::SelectCase {cases,default,..} => { for c in cases {lower(&mut c.body,flag)?;} if let Some(b)=default {lower(b,flag)?;} }
+                _ => {}
+            }
+            if matches!(s,Stmt::VarDecl {..} | Stmt::ArrayDecl {..} | Stmt::SourceLocation(_) | Stmt::Implicit(_) | Stmt::DummyIntent {..}) { out.push(s); }
+            else { out.push(Stmt::If {cond:Expr::Un(crate::ast::UnOp::Not,Box::new(Expr::Ident(flag.into()))),then_body:vec![s],else_body:None}); }
+        }
+        *body=out; Ok(())
+    }
+    lower(body,&flag)?;
+    body.insert(0,Stmt::Assign {name:flag.clone(),value:Expr::Logical(false)});
+    body.insert(0,Stmt::VarDecl {kind:TypeSpec::Logical,names:vec![flag]});
     Ok(())
 }
 fn expand(body: &mut Vec<Stmt>, routines: &HashMap<String, Routine>, active: &mut Vec<String>, serial: &mut usize) -> Result<()> {
@@ -108,6 +147,7 @@ fn expand(body: &mut Vec<Stmt>, routines: &HashMap<String, Routine>, active: &mu
                     active.push(callee.clone());
                     expand(&mut expanded, routines, active, serial)?;
                     active.pop();
+                    inline_returns(&mut expanded, serial)?;
                     prefix.extend(undefine); prefix.extend(expanded);
                     *stmt = Stmt::Block { body: prefix };
                     continue;

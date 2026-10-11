@@ -853,6 +853,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": "[abcde]\n .TRUE.\n 0 .TRUE.\n[xy   ]\n .TRUE.\n .TRUE.\n"
+    },
+    "123_recursive_allocatable": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "PASS: copy all values\nPASS: inclusive lower bound\nPASS: inclusive upper bound\nPASS: both bounds, preserving duplicates and order\nPASS: no matching values\nPASS: reversed bounds\nPASS: empty input\n"
     }
   }
 }

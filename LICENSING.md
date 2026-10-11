@@ -10,6 +10,7 @@ available under the [MIT license](LICENSE-MIT). Each carries an
 the author recorded in this repository's Git history.
 
 - `src/array_calls.rs`
+- `src/allocatables.rs`
 - `src/function_arrays.rs`
 - `src/array_bounds.rs`
 - `src/derived.rs`

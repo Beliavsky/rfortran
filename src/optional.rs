@@ -36,7 +36,6 @@ struct Specializer {
     templates: HashMap<String, Stmt>,
     cache: HashMap<(String, Vec<bool>), String>,
     generated: Vec<Stmt>,
-    active: Names,
 }
 impl Specializer {
     fn call(
@@ -52,9 +51,6 @@ impl Specializer {
             }
             return Ok(());
         };
-        if self.active.contains(name) {
-            bail!("recursive OPTIONAL procedure specialization is not yet supported: `{name}`");
-        }
         let function = matches!(template, Stmt::Function { .. });
         let (params, body) = match &mut template {
             Stmt::Function { params, body, .. } | Stmt::Subroutine { params, body, .. } => {
@@ -102,6 +98,8 @@ impl Specializer {
             return Ok(());
         }
         let variant = format!("@optional_{}", self.cache.len());
+        // Register before visiting calls: recursive presence variants form a
+        // finite graph and reuse this entry rather than expanding indefinitely.
         self.cache.insert(key, variant.clone());
         params.retain(|n| !missing.contains(n));
         for stmt in body.iter_mut() {
@@ -119,7 +117,6 @@ impl Specializer {
             }),
             _ => None,
         };
-        self.active.insert(name.clone());
         match &mut template {
             Stmt::Function { name, body, .. } | Stmt::Subroutine { name, body, .. } => {
                 *name = variant.clone();
@@ -130,7 +127,6 @@ impl Specializer {
             }
             _ => unreachable!(),
         }
-        self.active.remove(name);
         self.generated.push(template);
         *name = variant;
         *args = actuals;
@@ -329,7 +325,6 @@ pub fn resolve(mut program: Program) -> Result<Program> {
         templates: HashMap::new(),
         cache: HashMap::new(),
         generated: vec![],
-        active: Names::new(),
     };
     collect(&mut program.body, &mut pass.templates);
     if pass.templates.is_empty() {

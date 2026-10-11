@@ -50,6 +50,14 @@ fn runtime_extent(e: &Expr) -> Option<Expr> {
         _ => None,
     }
 }
+fn storage_extent(e:&Expr,symbols:&Symbols)->Result<i64> {
+    match e {
+        Expr::Call(n,a) if n=="@packed_view"=>storage_extent(&a[0],symbols),
+        Expr::Bin(_,a,b)=>if element(a,&int(1),symbols)?.1.is_some() {storage_extent(a,symbols)} else {storage_extent(b,symbols)},
+        Expr::Un(_,a)=>storage_extent(a,symbols),
+        _=>element(e,&int(1),symbols)?.1.context("array argument requires bounded storage"),
+    }
+}
 fn shape_guard(a: Expr,b: Expr) -> Stmt {
     Stmt::If { cond:bin(BinOp::Ne,a,b),then_body:vec![Stmt::CallSub {name:"@error_stop".into(),args:vec![Expr::Str("runtime PACK result shape does not conform".into())]}],else_body:None }
 }
@@ -143,6 +151,33 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
         }
         _ => bail!("unsupported expression in numeric array reduction"),
     }
+}
+/// Materialize an array expression before a specialized procedure call, using
+/// the same constructor/PACK lowering as ordinary expressions.
+pub(crate) fn argument(e: &mut Expr, shapes: &HashMap<String,(TypeSpec,Vec<Expr>)>, prefix: &mut Vec<Stmt>, serial: &mut usize) -> Result<(TypeSpec,i64,Expr)> {
+    let mut symbols = Symbols::new();
+    symbols.variables = shapes.clone();
+    if matches!(e,Expr::Section {..}) { *e=Expr::Call("@array_constructor".into(),vec![e.clone()]); }
+    lower_expr(e,&mut symbols,prefix,serial)?;
+    let backing = if let Expr::Call(n,a)=e { if n=="@packed_view" {&a[0]} else {&*e} } else {&*e};
+    let (_,_,kind)=element(backing,&int(1),&symbols)?;
+    let count=storage_extent(backing,&symbols)?;
+    if count<0 {bail!("array argument requires bounded storage");}
+    let length=runtime_extent(e).unwrap_or(int(count));
+    if !matches!(e,Expr::Ident(_)) && !matches!(e,Expr::Call(n,_) if n=="@packed_view") {
+        *serial+=1;
+        let temp=format!("@call_array_{serial}"); let index=format!("@call_array_index_{serial}");
+        let value=element(e,&Expr::Ident(index.clone()),&symbols)?.0;
+        prefix.push(Stmt::ArrayDecl {kind:kind.clone(),name:temp.clone(),dims:vec![int(count)]});
+        prefix.push(Stmt::VarDecl {kind:TypeSpec::Integer(None),names:vec![index.clone()]});
+        prefix.push(Stmt::Do {var:index.clone(),start:int(1),end:length.clone(),body:vec![Stmt::AssignIndex {name:temp.clone(),indices:vec![Expr::Ident(index)],value}]});
+        *e=if runtime_extent(e).is_some() {Expr::Call("@packed_view".into(),vec![Expr::Ident(temp),length.clone()])} else {Expr::Ident(temp)};
+    }
+    Ok((kind,count,length))
+}
+pub(crate) fn argument_element(e: &Expr, index: &Expr, shapes: &HashMap<String,(TypeSpec,Vec<Expr>)>) -> Result<Expr> {
+    let mut symbols=Symbols::new(); symbols.variables=shapes.clone();
+    Ok(element(e,index,&symbols)?.0)
 }
 
 fn lower_expr(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, serial: &mut usize) -> Result<()> {
@@ -294,6 +329,20 @@ fn lower_character_comparison(op: BinOp, a: &Expr, b: &Expr, symbols: &mut Symbo
 
 fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, serial: &mut usize, expand_elementals: bool) -> Result<()> {
     match e {
+        // Call specialization precedes multidimensional normalization. Its
+        // rank-one PACK actuals can use the same bounded lowering directly.
+        Expr::Call(name,args) if name=="pack" => {
+            if args.len()!=3 {bail!("PACK requires normalized ARRAY, MASK and VECTOR arguments");}
+            for arg in &mut args[..2] {lower_expr(arg,symbols,prefix,serial)?;}
+            let count=if matches!(&args[2],Expr::Call(n,_) if n=="@no_vector") {-1} else {
+                lower_expr(&mut args[2],symbols,prefix,serial)?;
+                let (_,count,_)=element(&args[2],&int(1),symbols)?;
+                count.context("PACK VECTOR must be an array")?
+            };
+            *name="@pack".into();
+            args.push(Expr::Call("@packing_shape".into(),vec![int(count)]));
+            lower_expr_impl(e,symbols,prefix,serial,expand_elementals)?;
+        }
         Expr::Call(tag,args) if tag == "@substring" => {
             let length=constant(&args[2])? as usize;
             *serial+=1;
@@ -362,7 +411,7 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             for arg in &mut args[..3] { lower_expr(arg,symbols,prefix,serial)?; }
             let Expr::Call(_,dims) = &args[3] else { unreachable!() };
             let dynamic = !unpack && dims.len()==1 && constant(&dims[0])? == -1;
-            let count = if dynamic { element(&args[0],&int(1),symbols)?.1.context("PACK ARRAY must be an array")? } else { dims.iter().try_fold(1i64,|n,d| n.checked_mul(constant(d)?).context("PACK/UNPACK result extent overflow"))? };
+            let count = if dynamic { storage_extent(&args[0],symbols)? } else { dims.iter().try_fold(1i64,|n,d| n.checked_mul(constant(d)?).context("PACK/UNPACK result extent overflow"))? };
             if count < 0 { bail!("nested runtime PACK results are not yet supported"); }
             *serial += 1;
             let temp = format!("@packing_array_{serial}");
@@ -373,7 +422,12 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             if mask_kind != TypeSpec::Logical { bail!("PACK/UNPACK MASK must be LOGICAL"); }
             let (source,source_len,kind) = element(&args[0],&id(if unpack {&cursor} else {&index}),symbols)?;
             let source_len = source_len.context("PACK ARRAY / UNPACK VECTOR must be an array")?;
-            if !unpack && mask_len.is_some_and(|n| n!=source_len) { bail!("PACK MASK shape must conform to ARRAY"); }
+            if !unpack && mask_len.is_some_and(|n| n>=0 && source_len>=0 && n!=source_len) { bail!("PACK MASK shape must conform to ARRAY"); }
+            let source_extent=runtime_extent(&args[0]).unwrap_or(int(source_len));
+            if !unpack && mask_len.is_some() {
+                let mask_extent=runtime_extent(&args[1]).unwrap_or(int(mask_len.unwrap()));
+                if mask_extent!=source_extent {prefix.push(shape_guard(source_extent.clone(),mask_extent));}
+            }
             let set = |index,value| Stmt::AssignIndex { name:temp.clone(),indices:vec![index],value };
             let next = Stmt::Assign { name:cursor.clone(),value:bin(BinOp::Add,id(&cursor),int(1)) };
             let guard = |limit| Stmt::If { cond:bin(BinOp::Gt,id(&cursor),int(limit)),then_body:vec![Stmt::CallSub { name:"@error_stop".into(),args:vec![Expr::Str(format!("{} VECTOR has too few elements for MASK",if unpack {"UNPACK"} else {"PACK"}))] }],else_body:None };
@@ -389,7 +443,7 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             prefix.push(Stmt::ArrayDecl { kind:kind.clone(),name:temp.clone(),dims:vec![int(count)] });
             prefix.push(Stmt::VarDecl { kind:TypeSpec::Integer(Some(8)),names:vec![index.clone(),cursor.clone()] });
             prefix.push(Stmt::Assign { name:cursor.clone(),value:int(0) });
-            prefix.push(Stmt::Do { var:index.clone(),start:int(1),end:int(if unpack {count} else {source_len}),body:std::mem::take(&mut body) });
+            prefix.push(Stmt::Do { var:index.clone(),start:int(1),end:if unpack {int(count)} else {source_extent},body:std::mem::take(&mut body) });
             if !unpack && has_vector {
                 let (vector,_,vector_kind) = element(&args[2],&id(&index),symbols)?;
                 if !same_kind(&kind,&vector_kind) { bail!("PACK ARRAY and VECTOR must have the same type and kind"); }
@@ -1225,7 +1279,21 @@ pub fn resolve(mut program: Program) -> Result<Program> {
     let mut symbols=Symbols::new();
     symbols.elementals=crate::elemental::functions(&program);
     collect_character_functions(&program.body,&mut symbols.character_functions)?;
-    lower_body(&mut program.body, &symbols, &mut 0)?;
+    // Call arguments may have been materialized in an earlier pass. Continue
+    // its numbering so constructor and PACK temporaries cannot shadow them.
+    fn maximum(body: &[Stmt]) -> usize {
+        body.iter().map(|s| match s {
+            Stmt::ArrayDecl {name,..} => suffix(name),
+            Stmt::VarDecl {names,..} => names.iter().map(|n|suffix(n)).max().unwrap_or(0),
+            Stmt::Module {body,..} | Stmt::Function {body,..} | Stmt::Subroutine {body,..} | Stmt::Block {body} | Stmt::Do {body,..} | Stmt::DoWhile {body,..} => maximum(body),
+            Stmt::If {then_body,else_body,..} => maximum(then_body).max(else_body.as_ref().map(|b|maximum(b)).unwrap_or(0)),
+            Stmt::SelectCase {cases,default,..} => cases.iter().map(|c|maximum(&c.body)).max().unwrap_or(0).max(default.as_ref().map(|b|maximum(b)).unwrap_or(0)),
+            _=>0,
+        }).max().unwrap_or(0)
+    }
+    fn suffix(n: &str)->usize {if n.starts_with('@') {n.rsplit('_').next().and_then(|s|s.parse().ok()).unwrap_or(0)} else {0}}
+    let mut serial=maximum(&program.body);
+    lower_body(&mut program.body, &symbols, &mut serial)?;
     crate::substrings::hoist(&mut program.body);
     Ok(program)
 }

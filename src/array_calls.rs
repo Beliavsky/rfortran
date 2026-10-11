@@ -15,7 +15,7 @@ struct Routine {
     body: Vec<Stmt>,
 }
 
-fn scalar_actual_kind(e: &Expr, shapes: &Shapes) -> Result<TypeSpec> {
+pub(crate) fn scalar_actual_kind(e: &Expr, shapes: &Shapes) -> Result<TypeSpec> {
     use crate::ast::BinOp;
     match e {
         Expr::Ident(n) => {
@@ -62,7 +62,19 @@ fn rewrite(
             if absent.contains(n) { bail!("reference to absent OPTIONAL dummy `{n}`"); }
             if let Some(v) = constants.get(n) {
                 *e = v.clone();
+            } else if crate::allocatables::length(n,shapes).is_some() {
+                *e=crate::allocatables::view(n,shapes);
             }
+        }
+        Expr::Call(n,_) if n=="@packed_view" => {},
+        Expr::Call(n,args) if n=="@matrix_view" => {
+            if matches!(args.first(),Some(Expr::Ident(array)) if crate::allocatables::length(array,shapes).is_some_and(|e|crate::parameters::integer_constant(&e).is_err())) {
+                bail!("sections of runtime-sized array dummies are not yet supported");
+            }
+            for e in args.iter_mut().skip(1) {rewrite(e,shapes,constants,absent)?;}
+        },
+        Expr::Call(n,args) if n=="allocated" => {
+            if let [Expr::Ident(array)]=args.as_slice() {if let Some(flag)=crate::allocatables::allocated(array,shapes) {*e=flag;}}
         }
         Expr::Call(n, args) if n == "present" => {
             let [Expr::Ident(param)] = args.as_slice() else {
@@ -72,6 +84,10 @@ fn rewrite(
             *e = Expr::Logical(!absent.contains(param));
         }
         Expr::Call(n, args) if n == "size" => {
+            if let Some(Expr::Call(tag,a))=args.first() {if tag=="@packed_view" {
+                if args.len()>2 || args.get(1).is_some_and(|d|crate::parameters::integer_constant(d).ok()!=Some(1)) {bail!("SIZE dimension must be 1 for a rank-one array");}
+                *e=a[1].clone();return Ok(());
+            }}
             let Some(Expr::Ident(array)) = args.first() else {
                 bail!("SIZE currently requires a whole array");
             };
@@ -80,6 +96,10 @@ fn rewrite(
                 .context("SIZE argument must be an array")?;
             if dims.is_empty() {
                 bail!("SIZE argument must be an array");
+            }
+            if let Some(length)=crate::allocatables::length(array,shapes) {
+                if args.len()>2 || args.get(1).is_some_and(|d|crate::parameters::integer_constant(d).ok()!=Some(1)) {bail!("SIZE dimension must be 1 for a rank-one array");}
+                *e=if let Some(flag)=crate::allocatables::allocated(array,shapes) {Expr::Call("@allocated_extent".into(),vec![flag,length,Expr::Str(array.clone())])} else {length};return Ok(());
             }
             *e = match args.as_slice() {
                 [_] => dims
@@ -102,6 +122,13 @@ fn rewrite(
         Expr::Call(n, args) if matches!(n.as_str(), "lbound" | "ubound") => {
             for dim in args.iter_mut().skip(1) { rewrite(dim, shapes, constants, absent)?; }
             if let Some(Expr::Ident(array)) = args.first() {
+                if let Some(length)=crate::allocatables::length(array,shapes) {
+                    if args.len()>2 || args.get(1).is_some_and(|d|crate::parameters::integer_constant(d).ok()!=Some(1)) {bail!("array bound dimension must be 1 for a rank-one array");}
+                    let mut value=if n=="ubound" {length} else {Expr::IntLit("1".into())};
+                    if let Some(flag)=crate::allocatables::allocated(array,shapes) {value=Expr::Call("@allocated_extent".into(),vec![flag,value,Expr::Str(array.clone())]);}
+                    *e=if args.len()==1 {Expr::Call("@array_constructor".into(),vec![value])} else {value};
+                    return Ok(());
+                }
                 if let Some((_, dims)) = shapes.get(array) {
                     if let Ok(dims) = dims.iter().map(crate::parameters::integer_constant).collect::<Result<Vec<_>>>() {
                         *e = crate::inquiries::bounds(n, &dims, args.get(1))?;
@@ -120,11 +147,13 @@ fn rewrite(
         }
         Expr::Un(_, a) => rewrite(a, shapes, constants, absent)?,
         Expr::Section {
+            name,
             lower,
             upper,
             stride,
             ..
         } => {
+            if crate::allocatables::length(name,shapes).is_some_and(|e|crate::parameters::integer_constant(&e).is_err()) {bail!("sections of runtime-sized array dummies are not yet supported");}
             for e in [lower, upper, stride].into_iter().flatten() {
                 rewrite(e, shapes, constants, absent)?;
             }
@@ -147,6 +176,7 @@ fn rewrite_value(
     absent: &HashSet<String>,
 ) -> Result<()> {
     match e {
+        Expr::Call(n,_) if matches!(n.as_str(),"size" | "lbound" | "ubound" | "present" | "allocated" | "@packed_view") => return rewrite(e,shapes,constants,absent),
         // Literal substring bounds can be evaluated at runtime; retaining the
         // original variables also preserves initialization and usage diagnostics.
         Expr::Call(n, _) if n == "@literal_substring" => return rewrite(e, shapes, &HashMap::new(), absent),
@@ -223,6 +253,10 @@ fn specialize(
                 }
             }
             Stmt::CallSub { name, args } if name == "@allocate" => {
+                if args.iter().all(|a|matches!(a,Expr::Call(n,_) if crate::allocatables::allocated(n,shapes).is_some())) {
+                    for a in args {if let Expr::Call(_,dims)=a {for d in dims {rewrite_value(d,shapes,constants,absent)?;}}}
+                    output.push(s);continue;
+                }
                 for a in args {
                     let Expr::Call(n, dims) = a else {
                         bail!("ALLOCATE expects array bounds");
@@ -295,7 +329,13 @@ fn specialize(
                     for arg in &mut control[1..] { rewrite(arg, shapes, constants, absent)?; }
                 }
             }
-            Stmt::CallSub { args, .. } | Stmt::Print { items: args } => {
+            Stmt::CallSub { args, .. } => {
+                for e in args {
+                    if matches!(e,Expr::Ident(n) if crate::allocatables::allocated(n,shapes).is_some()) {continue;}
+                    rewrite_value(e, shapes, constants, absent)?;
+                }
+            }
+            Stmt::Print { items: args } => {
                 for e in args {
                     rewrite_value(e, shapes, constants, absent)?;
                 }
@@ -531,6 +571,7 @@ fn validate_input_writes(body: &[Stmt], inputs: &HashSet<String>) -> Result<()> 
             {
                 bail!("cannot modify INTENT(IN) dummy `{name}`")
             }
+            Stmt::CallSub {name,args} if name=="@allocate" && args.iter().any(|e|matches!(e,Expr::Call(n,_) if inputs.contains(n))) => bail!("cannot allocate an INTENT(IN) dummy"),
             Stmt::If {
                 then_body,
                 else_body,
@@ -590,6 +631,7 @@ fn expand(
             _ => {}
         }
     }
+    crate::allocatables::metadata(body,&mut shapes);
     for s in body.iter_mut() {
         if let Stmt::CallSub { name, args } = s {
             if let Some(r) = routines.get(name) {
@@ -627,7 +669,7 @@ fn expand(
                         .filter_map(|(n, i)| (i == "intent(in)").then_some(n.clone()))
                         .collect(),
                 )?;
-                let mut local = Shapes::new();
+                let mut local = shapes.clone();
                 for d in &r.body {
                     match d {
                         Stmt::VarDecl { kind, names } => {
@@ -648,7 +690,10 @@ fn expand(
                 let mut names = HashMap::new();
                 let mut absent = HashSet::new();
                 let mut prefix = vec![];
+                let mut undefine = vec![];
                 for (i, p) in r.params.iter().enumerate() {
+                    local.remove(&format!("@extent:{p}"));
+                    local.remove(&format!("@allocated:{p}"));
                     let Some(actual) = args.get(i) else {
                         if !optional.contains(p) {
                             bail!("missing required argument `{p}` of `{name}`");
@@ -680,19 +725,30 @@ fn expand(
                         bail!("cannot pass PARAMETER as writable argument `{p}`");
                     }
                     if !dims.is_empty() {
-                        let Expr::Ident(a) = actual else {
-                            bail!("array dummy `{p}` currently requires a whole-array actual argument");
+                        let allocatable=r.body.iter().any(|s|matches!(s,Stmt::DummyIntent {name,intent} if name==p && intent=="allocatable"));
+                        let mut captured=actual.clone();
+                        let (actual_kind,actual_dims,length) = if let Expr::Ident(a)=actual {
+                            let (k,d)=shapes.get(a).context("undeclared array argument")?;
+                            (k.clone(),d.clone(),crate::allocatables::length(a,&shapes))
+                        } else {
+                            if intent!="intent(in)" {bail!("writable array dummy `{p}` requires a whole-array actual argument");}
+                            let start=prefix.len();
+                            let (k,capacity,length)=crate::reductions::argument(&mut captured,&shapes,&mut prefix,serial)?;
+                            for s in &prefix[start..] {match s {
+                                Stmt::ArrayDecl {kind,name,dims}=>{shapes.insert(name.clone(),(kind.clone(),dims.clone()));},
+                                Stmt::VarDecl {kind,names}=>for n in names {shapes.insert(n.clone(),(kind.clone(),vec![]));},_=>{}
+                            }}
+                            (k,vec![Expr::IntLit(capacity.to_string())],Some(length))
                         };
-                        let (actual_kind, actual_dims) =
-                            shapes.get(a).context("undeclared array argument")?;
-                        if actual_kind != &kind || actual_dims.len() != dims.len() {
+                        let a=match &captured {Expr::Ident(a)=>a.clone(),Expr::Call(n,v) if n=="@packed_view"=>if let Expr::Ident(a)=&v[0] {a.clone()} else {bail!("array view requires materialized storage");},_=>bail!("array dummy `{p}` requires a materialized array argument")};
+                        if actual_kind != kind || actual_dims.len() != dims.len() {
                             bail!("type or rank mismatch for `{p}`");
                         }
                         if !dims
                             .iter()
                             .all(|d| matches!(d, Expr::Ident(n) if n == "@deferred_extent"))
                         {
-                            if dims.iter().zip(actual_dims).any(|(a, b)| {
+                            if dims.iter().zip(&actual_dims).any(|(a, b)| {
                                 crate::parameters::integer_constant(a)
                                     .ok()
                                     .zip(crate::parameters::integer_constant(b).ok())
@@ -700,11 +756,29 @@ fn expand(
                             }) {
                                 bail!("explicit-shape dummy `{p}` currently requires an exactly matching extent");
                             }
+                            if let Some(length)=&length {
+                                let extent=actual_dims.iter().cloned().reduce(|a,b|Expr::Bin(crate::ast::BinOp::Mul,Box::new(a),Box::new(b))).unwrap();
+                                prefix.push(Stmt::If {cond:Expr::Bin(crate::ast::BinOp::Ne,Box::new(length.clone()),Box::new(extent)),then_body:vec![Stmt::CallSub {name:"@error_stop".into(),args:vec![Expr::Str(format!("explicit-shape dummy `{p}` requires a matching actual extent"))]}],else_body:None});
+                            }
                         }
                         local.insert(p.clone(), (kind, actual_dims.clone()));
+                        if let Some(length)=length {local.insert(format!("@extent:{p}"),(TypeSpec::Integer(None),vec![length]));}
+                        if allocatable {
+                            let flag=crate::allocatables::allocated(&a,&shapes).context("ALLOCATABLE dummy requires an ALLOCATABLE actual")?;
+                            local.insert(format!("@allocated:{p}"),(TypeSpec::Logical,vec![flag.clone()]));
+                            if intent=="intent(out)" {
+                                if let Expr::Ident(flag)=flag {undefine.push(Stmt::Assign {name:flag,value:Expr::Logical(false)});}
+                                if let Some(Expr::Ident(len))=crate::allocatables::length(&a,&shapes) {undefine.push(Stmt::Assign {name:len,value:Expr::IntLit("0".into())});}
+                            }
+                        }
                         names.insert(p.clone(), a.clone());
+                        if intent!="intent(out)" || !allocatable {
+                            if let Some(flag)=crate::allocatables::allocated(&a,&shapes) {
+                                prefix.push(Stmt::If {cond:Expr::Un(crate::ast::UnOp::Not,Box::new(flag)),then_body:vec![Stmt::CallSub {name:"@error_stop".into(),args:vec![Expr::Str(format!("unallocated array `{a}` passed as an input argument"))]}],else_body:None});
+                            }
+                        }
                         if intent == "intent(out)" {
-                            prefix.push(Stmt::CallSub {
+                            undefine.push(Stmt::CallSub {
                                 name: "@undefine".into(),
                                 args: vec![actual.clone()],
                             });
@@ -727,13 +801,14 @@ fn expand(
                         };
                         names.insert(p.clone(), a.clone());
                         if intent == "intent(out)" {
-                            prefix.push(Stmt::CallSub {
+                            undefine.push(Stmt::CallSub {
                                 name: "@undefine".into(),
                                 args: vec![actual.clone()],
                             });
                         }
                     }
                 }
+                prefix.extend(undefine);
                 let mut cloned = r.body.clone();
                 for declaration in &mut cloned {
                     if let Stmt::VarDecl {names,..} = declaration { names.retain(|n| !r.params.contains(n)); }
@@ -758,6 +833,7 @@ fn expand(
                 active.push(name.clone());
                 expand(&mut cloned, &call_shapes, routines, active, serial)?;
                 active.pop();
+                crate::subroutines::inline_returns(&mut cloned,serial)?;
                 prefix.extend(cloned);
                 *s = Stmt::Block { body: prefix };
                 continue;
@@ -787,6 +863,7 @@ fn expand(
 }
 pub fn resolve(mut p: Program) -> Result<Program> {
     p = crate::optional::resolve(p)?;
+    p = crate::allocatables::prepare(p)?;
     p = crate::vector_subscripts::resolve(p)?;
     p = crate::array_bounds::resolve(p)?;
     crate::elemental::validate_program(&p)?;
@@ -819,6 +896,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
     let mut routines = HashMap::new();
     collect(&mut p.body, &mut routines);
     expand(&mut p.body, &Shapes::new(), &routines, &mut vec![], &mut 0)?;
+    p = crate::allocatables::finish(p)?;
     let p = crate::character_arrays::resolve(p)?;
     crate::multidim::resolve(crate::function_arrays::resolve(crate::substrings::resolve(p)?)?)
 }

@@ -12,6 +12,18 @@ pub mod fortran {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn recursive_prefixes_and_contextual_identifiers() {
+        for prefix in ["recursive", "pure recursive", "recursive pure", "pure &\n recursive"] {
+            let source=format!("module m\ncontains\n{prefix} subroutine f(a)\ninteger,intent(inout)::a\na=a+1\nend subroutine f\nend module m\nprogram main\ninteger::recursive\nrecursive=3\ncall f(recursive)\ncontains\nrecursive integer function g(a) result(v)\ninteger::a,v\nv=a\nend function g\nend program main");
+            let tokens=crate::lexer::lex(&source);
+            let p=super::parse_with_src(&source,&tokens,"recursive.f90").unwrap();
+            let crate::ast::Stmt::Module {body,..}=&p.body[0] else {panic!("module missing")};
+            assert!(body.iter().any(|s|matches!(s,crate::ast::Stmt::Subroutine {pure,..} if *pure==prefix.contains("pure"))));
+        }
+        let tokens=crate::lexer::lex("integer::recursive,pure\nrecursive=pure\ncall recursive(pure)\n");
+        assert!(!tokens.iter().any(|t|matches!(t.kind,crate::lexer::TokenKind::KwRecursive | crate::lexer::TokenKind::KwPure)));
+    }
+    #[test]
     fn named_results_and_result_identifiers() {
         let source = include_str!("../tests/39_function_result.f90");
         let tokens = crate::lexer::lex(source);
@@ -106,6 +118,7 @@ fn human_expected(name: &str) -> String {
         "KW_PROGRAM" => "keyword program".into(),
         "KW_RESULT" => "keyword result".into(),
         "KW_PURE" => "keyword pure".into(),
+        "KW_RECURSIVE" => "keyword recursive".into(),
         "KW_END" => "keyword end".into(),
         "KW_IMPLICIT" => "keyword implicit".into(),
         "KW_NONE" => "keyword none".into(),
@@ -217,6 +230,7 @@ fn human_token(tok: &TokenKind) -> String {
         TokenKind::KwFunction => "keyword function".into(),
         TokenKind::KwResult => "keyword result".into(),
         TokenKind::KwPure => "keyword pure".into(),
+        TokenKind::KwRecursive => "keyword recursive".into(),
         TokenKind::KwWhere | TokenKind::KwWhereBlock => "keyword where".into(),
         TokenKind::KwElseWhere => "keyword elsewhere".into(),
         TokenKind::KwEndWhere => "keyword end where".into(),

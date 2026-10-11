@@ -27,6 +27,7 @@ extern {
         KW_FUNCTION => TokenKind::KwFunction,
         KW_RESULT => TokenKind::KwResult,
         KW_PURE => TokenKind::KwPure,
+        KW_RECURSIVE => TokenKind::KwRecursive,
         KW_ELEMENTAL => TokenKind::KwElemental,
         KW_FORALL => TokenKind::KwForall,
         KW_PARAMETER => TokenKind::KwParameter,
@@ -131,6 +132,9 @@ pub Program: Program = {
     <pre: LeadingFuncs> KW_PROGRAM <name: Ident> <body: Stmts> KW_END <_tail: EndTail> <post: FuncList> => {
         let mut all = pre; all.extend(body); all.extend(post); Program { name, body: all }
     },
+    <pre: LeadingFuncs> KW_PROGRAM <name: Ident> <body: Stmts> KW_CONTAINS <contained: FuncList> KW_END <_tail: EndTail> => {
+        let mut all = pre; all.extend(body); all.extend(contained); Program { name, body: all }
+    },
     KW_PROGRAM <name: Ident> <body: Stmts> KW_CONTAINS <contained: FuncList> KW_END <_tail: EndTail> => {
         let mut all = body; all.extend(contained); Program { name, body: all }
     },
@@ -169,11 +173,12 @@ FuncDef: Stmt = {
 
 #[inline]
 FunctionPrefix: (bool,bool) = {
-    => (false,false),
+    <prefix:ProcedureModifier*> => (prefix.iter().any(|p| p.0),prefix.iter().any(|p| p.1)),
+};
+ProcedureModifier: (bool,bool) = {
     KW_PURE => (true,false),
     KW_ELEMENTAL => (true,true),
-    KW_PURE KW_ELEMENTAL => (true,true),
-    KW_ELEMENTAL KW_PURE => (true,true),
+    KW_RECURSIVE => (false,false),
 };
 
 FunctionDef: Stmt = {

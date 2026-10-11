@@ -26,6 +26,7 @@ mod purity;
 mod elemental;
 mod subroutines;
 mod array_calls;
+mod allocatables;
 mod optional;
 mod named_arguments;
 mod substrings;
