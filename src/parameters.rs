@@ -249,11 +249,11 @@ pub(crate) fn resolve_constants(mut program: Program) -> Result<Program> {
             for s in body.iter() {
                 if let Stmt::Accessibility { public, names } = s { for n in names { exports.insert(n.to_ascii_lowercase(), *public); } }
             }
-            let constants = resolve_scope(body, &Constants::new(), &[], &modules, false)?;
+            let constants = resolve_scope(body, &Constants::new(), &[], &modules, false, false)?;
             modules.insert(name.to_ascii_lowercase(), constants.into_iter().filter(|(n, _)| exports.get(n).copied().unwrap_or(default_public)).collect());
         }
     }
-    resolve_scope(&mut program.body, &Constants::new(), &[], &modules, false)?;
+    resolve_scope(&mut program.body, &Constants::new(), &[], &modules, false, true)?;
     Ok(program)
 }
 
@@ -346,7 +346,32 @@ fn separate_parameters(body: &mut Vec<Stmt>, arguments: &[String]) -> Result<()>
     Ok(())
 }
 
-fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[String], modules: &Modules, assumed_dummies: bool) -> Result<Constants> {
+// Main-program storage exists for the whole execution. Other scopes need a
+// separate persistent-storage implementation before initialized locals are safe.
+fn initial_value(kind: &TypeSpec, value: &Expr) -> Result<Expr> {
+    if let Expr::Call(tag,items) = value {
+        if tag == "@array_constructor" {
+            return Ok(Expr::Call(tag.clone(),items.iter().map(|e| initial_value(kind,e)).collect::<Result<_>>()?));
+        }
+    }
+    match kind {
+        TypeSpec::Integer(bytes) => typed_integer(integer_constant(value)
+            .context("INTEGER declaration initializer must be a supported integer constant expression")?,bytes.unwrap_or(4)),
+        TypeSpec::Real | TypeSpec::DoublePrecision => {
+            let value = real_constant(value).context("REAL declaration initializer must be a supported constant expression")?;
+            let double = matches!(kind,TypeSpec::DoublePrecision);
+            let value = if double { value } else { value as f32 as f64 };
+            if !value.is_finite() { bail!("declaration initializer exceeds the REAL kind's range"); }
+            Ok(real_literal(value,double))
+        }
+        TypeSpec::Character(_) => character_parameter(value,kind),
+        TypeSpec::Logical => if let Expr::Logical(_) = value { Ok(value.clone()) }
+            else { bail!("LOGICAL declaration initializer currently requires a logical literal"); },
+        _ => bail!("unsupported declaration initialization type"),
+    }
+}
+
+fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[String], modules: &Modules, assumed_dummies: bool, main_scope: bool) -> Result<Constants> {
     separate_parameters(body, arguments)?;
     validate_constructor_indices(body)?;
     let mut constants = inherited.clone();
@@ -358,8 +383,9 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
             }
         }
     }
-    let arrays: HashSet<String> = body.iter().filter_map(|s| if let Stmt::ArrayDecl { name, .. } = s { Some(name.clone()) } else { None }).collect();
+    let arrays: HashSet<String> = body.iter().filter_map(|s| if let Stmt::ArrayDecl { name, .. } = s { Some(name.to_ascii_lowercase()) } else { None }).collect();
     let mut array_values = HashMap::new();
+    let mut variable_values = HashMap::new();
     let mut locals: HashSet<String> = arguments.iter().map(|s| s.to_ascii_lowercase()).collect();
     for stmt in body.iter() {
         match stmt {
@@ -395,7 +421,26 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
                 .iter()
                 .any(|a| a.eq_ignore_ascii_case("parameter"))
             {
-                bail!("declaration initialization without PARAMETER is not yet supported");
+                if !main_scope { bail!("declaration initialization without PARAMETER is currently supported only in the main program; persistent SAVE storage in other scopes is not yet implemented"); }
+                if attributes.iter().any(|a| !a.eq_ignore_ascii_case("save")) {
+                    bail!("unsupported attribute on initialized main-program variable");
+                }
+                resolve_kind(kind,&constants)?;
+                let mut scalars = vec![];
+                for (name,initializer) in entities.iter() {
+                    let key = name.to_ascii_lowercase();
+                    if !locals.insert(key.clone()) && !arrays.contains(&key) { bail!("duplicate declaration of initialized variable `{name}`"); }
+                    let mut value = initializer.clone().with_context(|| format!("initialized declaration `{name}` requires a value"))?;
+                    rewrite_expr(&mut value,&constants)?;
+                    if !arrays.contains(&key) && matches!(&value,Expr::Call(tag,_) if tag == "@array_constructor") {
+                        bail!("scalar declaration initializer cannot be an array");
+                    }
+                    let value = initial_value(kind,&value).with_context(|| format!("invalid declaration initializer for `{name}`"))?;
+                    if variable_values.insert(key.clone(),value).is_some() { bail!("duplicate initialization of `{name}`"); }
+                    if !arrays.contains(&key) { scalars.push(name.clone()); }
+                }
+                *stmt = Stmt::VarDecl {kind:kind.clone(),names:scalars};
+                continue;
             }
             if !matches!(kind, TypeSpec::CharacterAssumed) { resolve_kind(kind, &constants)?; }
             if matches!(kind, TypeSpec::Integer(Some(k)) if *k != 4) {
@@ -451,7 +496,13 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
                 values.iter().enumerate().map(|(i,v)| Stmt::AssignIndex { name: name.clone(), indices: vec![Expr::IntLit((i+1).to_string())], value: v.clone() }).collect()
             } else { vec![] }
         } else { vec![] };
-        output.push(stmt); output.extend(init);
+        let variable_init: Vec<Stmt> = match &stmt {
+            Stmt::VarDecl {names,..} => names.iter().filter_map(|name| variable_values.remove(&name.to_ascii_lowercase()).map(|value| Stmt::Assign{name:name.clone(),value})).collect(),
+            Stmt::ArrayDecl {name,..} => variable_values.remove(&name.to_ascii_lowercase()).map(|value| vec![Stmt::Assign{name:name.clone(),value}]).unwrap_or_default(),
+            _ => vec![],
+        };
+        if !matches!(&stmt,Stmt::VarDecl {names,..} if names.is_empty()) { output.push(stmt); }
+        output.extend(init); output.extend(variable_init);
     }
     *body = output;
     Ok(constants)
@@ -988,7 +1039,7 @@ fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules, ass
                 }
             }
             Stmt::Function { params, body, return_type, .. } => {
-                let local = resolve_scope(body, constants, params, modules, false)?;
+                let local = resolve_scope(body, constants, params, modules, false, false)?;
                 if let Some(kind) = return_type { resolve_kind(kind, &local)?; }
                 let result_name = match body.last() { Some(Stmt::Return(Some(Expr::Ident(n)))) => Some(n), _ => None };
                 if matches!(return_type, Some(TypeSpec::Character(_))) || body.iter().any(|s| matches!(s,
@@ -996,8 +1047,8 @@ fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules, ass
                     bail!("CHARACTER-valued functions are not yet supported by native function-result storage");
                 }
             }
-            Stmt::Subroutine { params, body, elemental, .. } => { resolve_scope(body, constants, params, modules, *elemental)?; }
-            Stmt::Block { body } => { resolve_scope(body, constants, &[], modules, false)?; },
+            Stmt::Subroutine { params, body, elemental, .. } => { resolve_scope(body, constants, params, modules, *elemental, false)?; }
+            Stmt::Block { body } => { resolve_scope(body, constants, &[], modules, false, false)?; },
             Stmt::Module { .. } => {},
             Stmt::InitializedDecl { .. } => {
                 bail!("PARAMETER declaration must be in a specification part")

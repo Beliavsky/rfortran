@@ -174,3 +174,9 @@ expressions and exponentiation precedence. Both pending numeric probes now
 pass at O0/O2, raising the selected sample to 15/18 passes (three compile
 failures). Remaining probes cover declaration initialization, optional CHARACTER
 arguments and overlapping CHARACTER array substring assignments.
+
+`112_main_initialization.f90` and `python tests/test_main_initialization.py`
+cover constant main-program declaration initializers, mutable values, array
+constructors/fills, explicit bounds and diagnostics for other storage scopes.
+The original `xarray_init.f90` now passes at O0/O2, bringing the selected sample
+to 16/18 passes. Optional CHARACTER arguments and CHARACTER array overlap remain.

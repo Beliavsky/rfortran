@@ -776,6 +776,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 127 32767 2147483647 9223372036854775807\n 1 2 4 8 8 8\n 8 8 8\n 8 8 30000000000\n 1 2 3 6 8\n 127 32767 9223372036854775807 8\n 14 6\n -4 4 512 -4 0\n"
+    },
+    "112_main_initialization": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 1 2 3 2 9 10000000000\n 1.25 2.5 2.5 2.5 2.5 1.5 2.5\n .TRUE. .FALSE. .TRUE. .TRUE.\n [ok   ]\n 7 7 7 7 0\n 4 5 6 5 10 10000000001 2.25 .FALSE.\n [done ]\n"
     }
   }
 }

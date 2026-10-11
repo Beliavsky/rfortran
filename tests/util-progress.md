@@ -1373,3 +1373,39 @@ comparison of fixture 111. The isolated release report
 both original numeric probes now pass at O0/O2 and all reference runs succeed.
 Remaining probes are xarray_init, xoptional and the CHARACTER overlap case.
 Linux/macOS remain untested.
+
+
+## Checkpoint 51: main-program declaration initialization
+
+Constant declaration initializers in the main program now produce ordinary
+mutable declarations and startup assignments. They do not enter the PARAMETER
+substitution table. Initializers resolve preceding/imported constants and kind
+selectors, validate their value/range, and use normal array assignment lowering
+for constructors or scalar expansion. This preserves explicit lower bounds and
+supports multidimensional scalar fills and zero-size arrays. Explicit SAVE on
+initialized main-program variables is accepted because their lifetime already
+covers the whole execution.
+
+The supported subset includes integer constant expressions, supported real
+constant expressions, logical literals and fixed-length scalar character
+constants (including padding/truncation/concatenation). Constant implied-DO
+constructors use existing expansion. INTEGER initialization from REAL, arbitrary
+logical constant expressions, CHARACTER arrays and further constant transforms
+remain unsupported. Modules, procedures and BLOCK scopes explicitly reject
+non-PARAMETER declaration initialization: they need a persistent-storage design
+rather than an assignment repeated each time control enters the scope.
+
+Fixture 112 covers initialization followed by mutation, multiple types/kinds,
+array bounds, scalar array fills, empty arrays and explicit SAVE. Focused tests
+check uppercase identifiers, constant expressions, implied-DO constructors,
+mixed initialized/uninitialized entity lists, invalid initializer references,
+range/shape errors and diagnostics at the persistent-storage boundary. The
+external ofort sources are unchanged.
+
+Windows validation: 75 Rust unit tests, 112 native fixtures, 46 wrapper tests
+and three focused main-initialization tests passed. Focused tests passed in
+interpreter/native O0/O2 with debug and rebuilt release compilers; fixture 112
+agrees with gfortran. The isolated release report `target/ofort-main-init.json`
+has 16/18 passes and two compile failures, with all reference runs succeeding.
+The remaining failures are optional CHARACTER arguments and CHARACTER array
+overlap/substring assignment. Linux/macOS remain untested.

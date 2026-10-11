@@ -442,3 +442,14 @@ more tightly than unary signs and associates to the right: `-2**2` is -4,
 `(-2)**2` is 4, and `2**3**2` is 512. Nondefault-kind INTEGER PARAMETER declarations
 and kind-16 integer literals remain unsupported. Run
 `python tests/test_integer_literals.py`.
+
+Main-program variables support declaration initialization from supported constant
+expressions. Numeric scalars, rank-one array constructors (including constant
+implied-DOs), scalar array fills, LOGICAL literals and fixed-length CHARACTER
+scalars are supported. Values remain mutable; initialization runs once before
+normal use, including declarations with an explicit SAVE attribute. INTEGER
+initializers currently require integer constant expressions. LOGICAL expressions
+beyond literals, CHARACTER arrays and additional constant array transformations
+remain outside this subset. Initialized locals in procedures, modules and BLOCK
+scopes are rejected until persistent storage is implemented. Run
+`python tests/test_main_initialization.py`.
