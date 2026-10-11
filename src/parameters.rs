@@ -462,7 +462,33 @@ fn constructor_items(items: &[Expr], constants: &Constants, output: &mut Vec<Exp
 
 fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
     if let Expr::Call(name, args) = expr {
-        if matches!(name.as_str(),"pack" | "unpack") {
+        if matches!(name.as_str(),"minloc" | "maxloc" | "findloc") {
+            let find = name == "findloc";
+            let keys: &[&str] = if find { &["array","value","dim","mask","kind","back"] } else { &["array","dim","mask","kind","back"] };
+            let mut slots: Vec<Option<Expr>> = vec![None;keys.len()];
+            let mut keywords = false;
+            for (position,arg) in args.iter().enumerate() {
+                let (slot,value) = match arg {
+                    Expr::Call(tag,values) if tag.starts_with("@keyword:") => {
+                        keywords = true;
+                        (keys.iter().position(|key| *key == &tag[9..]).with_context(|| format!("{name}: unknown keyword `{}`",&tag[9..]))?,&values[0])
+                    }
+                    _ => { if keywords { bail!("{name}: positional argument after keyword argument"); } (position,arg) }
+                };
+                if slot >= keys.len() { bail!("{name}: too many arguments"); }
+                if slots[slot].replace(value.clone()).is_some() { bail!("{name}: duplicate argument"); }
+            }
+            let offset = usize::from(find);
+            let mut kind = slots[3+offset].take().unwrap_or(Expr::IntLit("4".into()));
+            rewrite_expr(&mut kind,constants)?;
+            let bytes = integer_constant(&kind).context("location KIND must be constant INTEGER")?;
+            if !matches!(bytes,4 | 8) { bail!("location intrinsics currently support KIND=4 or KIND=8"); }
+            *args = vec![slots[0].take().with_context(|| format!("{name} requires ARRAY"))?,
+                if find { slots[1].take().context("FINDLOC requires VALUE")? } else { Expr::Call("@no_value".into(),vec![]) },
+                slots[1+offset].take().unwrap_or(Expr::Call("@no_dim".into(),vec![])),
+                slots[2+offset].take().unwrap_or(Expr::Logical(true)),kind,slots[4+offset].take().unwrap_or(Expr::Logical(false))];
+            *name = format!("@{name}");
+        } else if matches!(name.as_str(),"pack" | "unpack") {
             let unpack = name == "unpack";
             let keys = if unpack { ["vector","mask","field"] } else { ["array","mask","vector"] };
             let mut slots: [Option<Expr>;3] = [None,None,None];

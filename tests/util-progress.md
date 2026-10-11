@@ -1248,3 +1248,38 @@ fixture 107 agrees with gfortran in interpreter/native O0/O2 comparisons.
 The isolated release report `target/ofort-runtime-pack.json` has 12/18 passes
 and six compile failures, with all reference runs succeeding. The unmodified
 transformation probe passes all eleven checks at O0/O2. Linux/macOS remain untested.
+
+
+## Checkpoint 47: MINLOC, MAXLOC and FINDLOC
+
+Location intrinsics now normalize ARRAY, VALUE (FINDLOC), DIM, MASK, KIND and
+BACK arguments. Result shapes are computed before flattening; without DIM the
+result has one position per source dimension, and with constant DIM it removes
+that dimension (including scalar rank-one results). Lowering scans array-element
+order, tests masks before reading values and records first/last matches according
+to runtime scalar BACK. Empty/unselected results are zero. Locations are relative
+positions, independent of declared lower bounds. KIND=4/8 and PURE usage work.
+FINDLOC supports numeric and LOGICAL arrays; logical matching uses equivalence
+so interpreter and native execution agree. Current limits: FINDLOC VALUE must
+match ARRAY's type/kind; runtime DIM, CHARACTER arrays, runtime PACK inputs and
+the positional MASK-without-DIM overload remain unsupported (use MASK=).
+
+Fixture 108 covers ties, all optional controls, sections, rank-three arrays,
+nondefault lower bounds, empty slices/results, scalar DIM results, REAL/LOGICAL
+inputs and PURE functions. Focused tests add INTEGER(8)/double precision, masked
+uninitialized elements and argument/shape/type diagnostics. Testing exposed a
+stray native value when printing a zero-size result array; empty array identifiers
+now contribute no PRINT items. Compiler-generated locals/program variables are
+also excluded from unused-variable warnings, matching existing generated-parameter
+handling. The tests verify empty output and warning-free generated temporaries.
+The first full fixture run exposed a Windows debug stack overflow in CSHIFT after
+the recursive expression-lowering function grew. Location lowering was moved to
+a separate helper; focused CSHIFT and location tests passed before the full rerun.
+
+Windows validation: 74 Rust unit tests, 108 native fixtures, 46 batch wrapper
+tests and thirteen focused location/DIM-reduction/runtime-PACK/CSHIFT tests passed. Focused
+suites passed with debug and rebuilt release compilers; fixture 108 agrees with
+gfortran across interpreter/native O0/O2. The isolated release report
+`target/ofort-locations.json` has 13/18 passes and five compile failures, with
+all reference runs succeeding. The unmodified location probe passes all fifteen
+checks at O0/O2. Linux/macOS remain untested.

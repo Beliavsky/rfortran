@@ -408,3 +408,12 @@ UNPACK supports a rank-one VECTOR, fixed-shape LOGICAL MASK and scalar or
 conformable FIELD of the same type/kind as VECTOR. Both intrinsics preserve
 array-element order and check at runtime that VECTOR has enough elements.
 CHARACTER arrays remain unsupported. Run `python tests/test_pack_unpack.py`.
+
+MINLOC/MAXLOC support fixed-shape numeric arrays; FINDLOC also supports LOGICAL
+arrays. Optional constant DIM reduces rank, or omitting DIM returns one position
+per source dimension. MASK may be scalar or conformable LOGICAL; runtime scalar
+BACK selects the last matching location instead of the first. Empty selections
+return zeros. KIND=4 and KIND=8 are supported. FINDLOC VALUE must currently have
+the same type/kind as ARRAY. Use MASK= when omitting DIM; the positional MASK-only
+form, runtime DIM, CHARACTER arrays and runtime-sized PACK inputs remain outside
+this subset. Run `python tests/test_locations.py`.

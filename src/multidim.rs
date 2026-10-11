@@ -369,6 +369,21 @@ impl Lowerer {
         }
         match e {
             Expr::Ident(n) => self.check_association(n)?,
+            Expr::Call(n,_) if matches!(n.as_str(),"@minloc" | "@maxloc" | "@findloc") => {
+                let result_dims = self.shape(e,shapes)?.unwrap_or_default();
+                let Expr::Call(_,args) = e else { unreachable!() };
+                let dims = self.shape(&args[0],shapes)?.context("location ARRAY must be an array")?;
+                let count = total(&dims)?;
+                if let Some(mask) = self.shape(&args[3],shapes)? {
+                    if mask != dims { bail!("location MASK shape must conform to ARRAY"); }
+                }
+                let (stride,axis_len) = if matches!(&args[2],Expr::Call(tag,_) if tag == "@no_dim") { (1,count) } else {
+                    let axis = crate::parameters::integer_constant(&args[2])? as usize - 1;
+                    (total(&dims[..axis])?,dims[axis])
+                };
+                for i in [0,1,3,5] { self.expression(&mut args[i],shapes)?; }
+                args.extend([int(stride),int(axis_len),Expr::Call("@location_source_shape".into(),dims.into_iter().map(int).collect()),Expr::Call("@location_result_shape".into(),result_dims.into_iter().map(int).collect())]);
+            }
             Expr::Call(n, _) if matches!(n.as_str(),"pack" | "unpack") => {
                 let dims = self.shape(e,shapes)?.unwrap();
                 let Expr::Call(n,args) = e else { unreachable!() };
@@ -552,6 +567,19 @@ impl Lowerer {
 
     fn shape(&self, e: &Expr, shapes: &Shapes) -> Result<Option<Vec<i64>>> {
         match e {
+            Expr::Call(n,args) if matches!(n.as_str(),"@minloc" | "@maxloc" | "@findloc") => {
+                if args.len()==10 {
+                    let Expr::Call(_,dims) = &args[9] else { unreachable!() };
+                    return Ok(if dims.is_empty() { None } else { Some(dims.iter().map(crate::parameters::integer_constant).collect::<Result<Vec<_>>>()?) });
+                }
+                let mut dims = self.shape(&args[0],shapes)?.context("location ARRAY must be an array")?;
+                total(&dims)?;
+                if matches!(&args[2],Expr::Call(tag,_) if tag == "@no_dim") { return Ok(Some(vec![dims.len() as i64])); }
+                let dim = crate::parameters::integer_constant(&args[2]).context("location DIM must currently be a constant INTEGER; use MASK= when omitting DIM")?;
+                if dim<1 || dim as usize>dims.len() { bail!("location DIM must be between 1 and {}",dims.len()); }
+                dims.remove(dim as usize-1);
+                Ok(if dims.is_empty() {None} else {Some(dims)})
+            }
             Expr::Call(n,args) if n == "unpack" => {
                 let vector = self.shape(&args[0],shapes)?.context("UNPACK VECTOR must be a rank-one array")?;
                 if vector.len()!=1 { bail!("UNPACK VECTOR must be a rank-one array"); }

@@ -1752,7 +1752,7 @@ pub fn analyze_with_src(
         for name in local_declared_names.iter() {
             let lname = name.to_ascii_lowercase();
             if params.iter().any(|p| p.eq_ignore_ascii_case(name)) { continue; }
-            if lname == "dummy" || lname.contains('%') {
+            if lname == "dummy" || lname.contains('%') || lname.starts_with('@') {
                 continue;
             }
             if !read_vars.contains(&lname) {
@@ -2067,7 +2067,7 @@ pub fn analyze_with_src(
         if let Stmt::VarDecl { names, .. } = stmt {
             for n in names {
                 let lname = n.to_ascii_lowercase();
-                if lname == "dummy" || lname.contains('%') {
+                if lname == "dummy" || lname.contains('%') || lname.starts_with('@') {
                     continue;
                 }
                 if fn_map.contains_key(&lname) || external_fn_ret.contains_key(&lname) {

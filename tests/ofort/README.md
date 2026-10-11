@@ -151,3 +151,8 @@ PACK without VECTOR. Logical result lengths are distinct from storage capacity,
 with runtime conformance checks for comparisons and assignments. The original
 `xintrinsic_transform_order_pending.f90` now passes all eleven assertions at
 O0/O2, bringing the selected sample to 12/18 passes (six compile failures).
+
+`108_locations.f90` and `python tests/test_locations.py` cover MINLOC/MAXLOC/FINDLOC,
+DIM, MASK, KIND and BACK, including empty selections and nondefault lower bounds.
+`xintrinsic_locations_dim_back_pending.f90` now passes all fifteen checks at
+O0/O2, raising the selected sample to 13/18 passes (five compile failures).

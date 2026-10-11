@@ -153,6 +153,81 @@ fn lower_assignment_value(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<
     lower_expr(e,symbols,prefix,serial)
 }
 
+// Keep the location lowering outside the recursive expression function so its
+// temporaries do not inflate every recursive stack frame on Windows debug builds.
+fn lower_location(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, serial: &mut usize) -> Result<()> {
+    let Expr::Call(name,args) = e else { unreachable!() };
+    for i in [0,1,3,5] { lower_expr(&mut args[i],symbols,prefix,serial)?; }
+    let find = name == "@findloc";
+    let dim = !matches!(&args[2],Expr::Call(tag,_) if tag == "@no_dim");
+    let stride = constant(&args[6])?.max(1);
+    let axis_len = constant(&args[7])?;
+    let Expr::Call(_,source_dims) = &args[8] else { unreachable!() };
+    let source_dims = source_dims.iter().map(constant).collect::<Result<Vec<_>>>()?;
+    let Expr::Call(_,result_dims) = &args[9] else { unreachable!() };
+    let scalar = result_dims.is_empty();
+    let output_len = result_dims.iter().try_fold(1i64,|n,d| n.checked_mul(constant(d)?).context("location result extent overflow"))?;
+    let result_kind = TypeSpec::Integer(Some(constant(&args[4])? as u8));
+    *serial += 1;
+    let temp = format!("@location_result_{serial}");
+    let index = format!("@location_index_{serial}");
+    let outer = format!("@location_outer_{serial}");
+    let position = format!("@location_position_{serial}");
+    let best = format!("@location_best_{serial}");
+    let item = format!("@location_item_{serial}");
+    let back = format!("@location_back_{serial}");
+    let sought = format!("@location_sought_{serial}");
+    let id = |n: &str| Expr::Ident(n.into());
+    let assign = |n: &str,value| Stmt::Assign {name:n.into(),value};
+    let source_index = if dim {
+        let ordinal = bin(BinOp::Sub,id(&outer),int(1));
+        bin(BinOp::Add,int(1),bin(BinOp::Add,Expr::Call("modulo".into(),vec![ordinal.clone(),int(stride)]),bin(BinOp::Add,bin(BinOp::Mul,bin(BinOp::Div,ordinal,int(stride)),int(stride*axis_len)),bin(BinOp::Mul,bin(BinOp::Sub,id(&index),int(1)),int(stride)))))
+    } else { id(&index) };
+    let (value,_,kind) = element(&args[0],&source_index,symbols)?;
+    if !find && kind == TypeSpec::Logical { bail!("MINLOC/MAXLOC ARRAY must be numeric"); }
+    let (mask,_,mask_kind) = element(&args[3],&source_index,symbols)?;
+    if mask_kind != TypeSpec::Logical { bail!("location MASK must be LOGICAL"); }
+    let (_,back_len,back_kind) = element(&args[5],&int(1),symbols)?;
+    if back_len.is_some() || back_kind != TypeSpec::Logical { bail!("location BACK must be scalar LOGICAL"); }
+    prefix.push(Stmt::VarDecl {kind:TypeSpec::Integer(Some(8)),names:if dim {vec![index.clone(),outer.clone(),position.clone()]} else {vec![index.clone(),position.clone()]}});
+    prefix.push(Stmt::VarDecl {kind:TypeSpec::Logical,names:vec![back.clone()]});
+    prefix.push(assign(&back,args[5].clone()));
+    prefix.push(Stmt::VarDecl {kind:kind.clone(),names:if find {vec![item.clone()]} else {vec![item.clone(),best.clone()]}});
+    if find {
+        let (_,len,value_kind) = element(&args[1],&int(1),symbols)?;
+        if len.is_some() || !same_kind(&kind,&value_kind) { bail!("FINDLOC VALUE must be scalar with the same type and kind as ARRAY"); }
+        prefix.push(Stmt::VarDecl {kind:kind.clone(),names:vec![sought.clone()]});
+        prefix.push(assign(&sought,args[1].clone()));
+    }
+    if scalar { prefix.push(Stmt::VarDecl {kind:result_kind.clone(),names:vec![temp.clone()]}); }
+    else { prefix.push(Stmt::ArrayDecl {kind:result_kind.clone(),name:temp.clone(),dims:vec![int(output_len)]}); }
+    let first = bin(BinOp::Eq,id(&position),int(0));
+    let update = if find {
+        bin(BinOp::And,bin(if kind == TypeSpec::Logical {BinOp::Eqv} else {BinOp::Eq},id(&item),id(&sought)),bin(BinOp::Or,first,id(&back)))
+    } else {
+        bin(BinOp::Or,first,bin(BinOp::Or,bin(if name == "@minloc" {BinOp::Lt} else {BinOp::Gt},id(&item),id(&best)),bin(BinOp::And,id(&back),bin(BinOp::Eq,id(&item),id(&best)))))
+    };
+    let mut body = vec![assign(&position,int(0))];
+    if !find { body.push(assign(&best,int(0))); }
+    body.push(Stmt::Do {var:index.clone(),start:int(1),end:int(axis_len),body:vec![Stmt::If {cond:mask,then_body:vec![assign(&item,value),Stmt::If {cond:update,then_body:if find {vec![assign(&position,id(&index))]} else {vec![assign(&position,id(&index)),assign(&best,id(&item))]},else_body:None}],else_body:None}]});
+    if dim {
+        body.push(if scalar { assign(&temp,id(&position)) } else { Stmt::AssignIndex {name:temp.clone(),indices:vec![id(&outer)],value:id(&position)} });
+        prefix.push(Stmt::Do {var:outer,start:int(1),end:int(output_len),body});
+    } else {
+        let mut stride = 1;
+        for (axis,extent) in source_dims.iter().enumerate() {
+            let coordinate = bin(BinOp::Add,int(1),Expr::Call("modulo".into(),vec![bin(BinOp::Div,bin(BinOp::Sub,id(&position),int(1)),int(stride.max(1))),int((*extent).max(1))]));
+            let set = |value| Stmt::AssignIndex {name:temp.clone(),indices:vec![int(axis as i64+1)],value};
+            body.push(Stmt::If {cond:bin(BinOp::Eq,id(&position),int(0)),then_body:vec![set(int(0))],else_body:Some(vec![set(coordinate)])});
+            stride *= extent;
+        }
+        prefix.extend(body);
+    }
+    symbols.insert(temp.clone(),(result_kind,if scalar {vec![]} else {vec![int(output_len)]}));
+    *e = Expr::Ident(temp);
+    Ok(())
+}
+
 fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, serial: &mut usize, expand_elementals: bool) -> Result<()> {
     match e {
         Expr::Call(name, args) if name == "@array_constructor" => {
@@ -189,6 +264,7 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             symbols.insert(temp.clone(),(kind,vec![int(count)]));
             *e = Expr::Ident(temp);
         }
+        Expr::Call(name,_) if matches!(name.as_str(),"@minloc" | "@maxloc" | "@findloc") => lower_location(e,symbols,prefix,serial)?,
         Expr::Call(name,args) if matches!(name.as_str(),"@pack" | "@unpack") => {
             let unpack = name == "@unpack";
             let has_vector = unpack || !matches!(&args[2],Expr::Call(tag,_) if tag == "@no_vector");
@@ -926,6 +1002,9 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
             }
         }
         if let Stmt::Print { items } = &mut stmt {
+            // A zero-size array contributes no output items (but PRINT still
+            // terminates the record), regardless of its allocated storage.
+            items.retain(|e| !matches!(e,Expr::Ident(n) if symbols.get(n).is_some_and(|(_,dims)| dims.len()==1 && constant(&dims[0]).ok()==Some(0))));
             if items.iter().any(|e| runtime_extent(e).is_some()) {
                 let mut declarations = vec![];
                 for item in items.iter_mut() {
