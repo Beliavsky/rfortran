@@ -2314,7 +2314,7 @@ fn gen_stmts(
                     b.switch_to_block(after_blk);
             }
             IStmt::Call(name, args) => {
-                if name == "@character_assign" {
+                if name == "@character_assign" || name=="@character_element_read" {
                     let [IExpr::Ident(dest), source, _] = args.as_slice() else { anyhow::bail!("invalid CHARACTER assignment"); };
                     characters::assign(module, b, ptr_ty, dc, chars, ints, dest, source)?;
                     continue;
@@ -2359,7 +2359,37 @@ fn gen_stmts(
                     b.ins().store(MemFlags::new(),value,address,0);
                     continue;
                 }
-                if matches!(name.as_str(), "@file_open" | "@file_close" | "@file_rewind" | "@file_backspace") {
+                if name=="@file_newunit" {
+                    let IExpr::Ident(dest)=&args[0] else {anyhow::bail!("NEWUNIT requires INTEGER storage");};
+                    let unit=file_io::newunit(module,b,ptr_ty,dc)?;
+                    let slot=ints.get(dest).ok_or_else(||anyhow::anyhow!("NEWUNIT requires INTEGER storage"))?;
+                    let address=storage_addr(b,ptr_ty,*slot);b.ins().store(MemFlags::new(),unit,address,0);
+                    continue;
+                }
+                if name=="@read_character_field" {
+                    let IExpr::Ident(status)=&args[0] else {anyhow::bail!("internal READ status requires INTEGER storage");};
+                    let dest=characters::view(module,b,ptr_ty,dc,chars,ints,&args[1])?;
+                    let source=characters::view(module,b,ptr_ty,dc,chars,ints,&args[2])?;
+                    let code=file_io::call(module,b,"rfort_read_character_field",&[source.address,source.length,dest.address,dest.length],types::I64)?;
+                    let slot=ints.get(status).ok_or_else(||anyhow::anyhow!("internal READ status requires INTEGER storage"))?;
+                    let address=storage_addr(b,ptr_ty,*slot);b.ins().store(MemFlags::new(),code,address,0);continue;
+                }
+                if name=="@file_name" {
+                    let dest=characters::view(module,b,ptr_ty,dc,chars,ints,&args[0])?;
+                    let unit=eval_expr(b,ex,ptr_ty,&args[1],ints,reals,bools,func_meta);let unit=to_i64(b,unit);
+                    let source=file_io::name(module,b,ptr_ty,dc,unit)?;
+                    file_io::call(module,b,"rfort_file_name",&[source,dest.address,dest.length],types::I32)?;
+                    continue;
+                }
+                if name=="@file_write_record" {
+                    let unit=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);let unit=to_i64(b,unit);
+                    let file=file_io::handle(module,b,ptr_ty,dc,unit)?;
+                    let text=characters::view(module,b,ptr_ty,dc,chars,ints,&args[1])?;
+                    let code=file_io::call(module,b,"rfort_file_write_record",&[file,text.address,text.length],types::I32)?;
+                    let okay=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,code,0);
+                    file_io::require(module,b,ptr_ty,dc,okay,"formatted file WRITE failed")?;continue;
+                }
+                if matches!(name.as_str(), "@file_open" | "@file_close" | "@file_rewind" | "@file_backspace" | "@file_scratch") {
                     let unit=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);
                     let unit=to_i64(b,unit);
                     let path=match args.get(1) {Some(IExpr::Str(path))=>Some(path.as_str()),_=>None};
@@ -2949,9 +2979,11 @@ impl Backend for CraneliftBackend {
         let mut obj = ObjectModule::new(builder);
         let file_units = obj.declare_data(".rfort.file_units", Linkage::Local, true, false)?;
         let mut file_data = DataDescription::new();
-        file_data.define_zeroinit(1024 * 8);
+        file_data.define_zeroinit(2048 * 8);
         file_data.set_align(8);
         obj.define_data(file_units, &file_data)?;
+        let file_names=obj.declare_data(".rfort.file_names",Linkage::Local,true,false)?;
+        obj.define_data(file_names,&file_data)?;
         let random_state = obj.declare_data(".f90c.random_state", Linkage::Local, true, false)?;
         let mut random_data = DataDescription::new();
         random_data.define(1u64.to_le_bytes().to_vec().into_boxed_slice());

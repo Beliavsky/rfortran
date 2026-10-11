@@ -74,6 +74,11 @@ pub(crate) fn lower_integer_read(
         },
         _ => bail!("internal READ requires a scalar CHARACTER variable as its unit"),
     };
+    if let Expr::Ident(dest)=destination {
+        if let Some((TypeSpec::Character(len),dims))=symbols.get(dest) {
+            if dims.is_empty() {return lower_character_read(source,control,status,dest,len.unwrap_or(1),symbols,serial);}
+        }
+    }
     let Some(kind @ (1 | 2 | 4 | 8)) = integer_kind(destination, symbols) else {
         bail!("internal READ destination must be a writable scalar INTEGER of kind 1, 2, 4, or 8");
     };
@@ -270,6 +275,27 @@ pub(crate) fn lower_integer_read(
         ));
     }
     Ok(Stmt::Block { body })
+}
+
+fn lower_character_read(source:&Expr,control:&str,status:&Expr,dest:&str,length:usize,
+                        symbols:&HashMap<String,(TypeSpec,Vec<Expr>)>,serial:&mut usize)->Result<Stmt> {
+    if !control.is_empty() && !matches!(integer_kind(status,symbols),Some(4|8)) {bail!("IOSTAT must be a writable scalar INTEGER of kind 4 or 8");}
+    *serial+=1;
+    let code=format!("@character_read_code_{serial}");
+    let buffer=format!("@character_read_buffer_{serial}");
+    let mut body=vec![Stmt::VarDecl {kind:TypeSpec::Integer(None),names:vec![code.clone()]},
+        Stmt::VarDecl {kind:TypeSpec::Character(Some(length)),names:vec![buffer.clone()]},
+        set(&buffer,Expr::Str(String::new())),
+        Stmt::CallSub {name:"@read_character_field".into(),args:vec![var(&code),var(&buffer),source.clone(),int(length as i64)]},
+        branch(equal(&code,0),vec![Stmt::CallSub {name:"@character_assign".into(),args:vec![var(dest),var(&buffer),int(length as i64)]}])];
+    if control.is_empty() {
+        body.push(branch(bin(BinOp::And,bin(BinOp::Ne,var(&code),int(0)),bin(BinOp::Ne,var(&code),int(1))),vec![Stmt::CallSub {name:"@error_stop".into(),args:vec![Expr::Str("invalid or exhausted internal CHARACTER input".into())]}]));
+    } else {
+        let Expr::Ident(status)=status else {unreachable!()};
+        body.push(set(status,var(&code)));
+        body.push(branch(equal(&code,1),vec![set(status,int(0))]));
+    }
+    Ok(Stmt::Block {body})
 }
 
 pub(crate) fn lower_record_read(

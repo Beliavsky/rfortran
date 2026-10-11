@@ -1017,7 +1017,21 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
         if let Stmt::CallSub {name,args}=&stmt {
             if name=="@write" {
                 if crate::parameters::integer_constant(&args[0]).ok()!=Some(6) {
-                    bail!("WRITE currently supports only standard output (* or constant unit 6)");
+                    crate::file_io::unit(&args[0], &symbols.variables)?;
+                    let format=crate::parameters::character_constant(&args[1])?;
+                    if format.chars().filter(|c|!c.is_whitespace()).collect::<String>().to_ascii_lowercase()!="(a)" {
+                        bail!("external file WRITE currently supports only the (A) format");
+                    }
+                    if args[2..].iter().any(|e|matches!(e,Expr::Call(n,_) if n.starts_with("@write_option:"))) {
+                        bail!("external file WRITE control options are not yet supported");
+                    }
+                    let items=if args.len()==2 {vec![Expr::Str(String::new())]} else {args[2..].to_vec()};
+                    let mut body=Vec::new();
+                    for item in items {
+                        if !matches!(crate::array_calls::scalar_actual_kind(&item,&symbols.variables)?,TypeSpec::Character(_)) {bail!("(A) file WRITE requires CHARACTER items");}
+                        body.push(Stmt::CallSub {name:"@file_write_record".into(),args:vec![args[0].clone(),item]});
+                    }
+                    output.push(Stmt::Block {body});continue;
                 }
                 let mut first_item = 2;
                 let mut advance = None;

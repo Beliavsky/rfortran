@@ -797,7 +797,7 @@ fn expand(
                         .get(p)
                         .context("dummy argument must be declared")?
                         .clone();
-                    if r.elemental || matches!(kind,TypeSpec::Character(_) | TypeSpec::CharacterAssumed) {
+                    if r.elemental || (dims.is_empty() && matches!(kind,TypeSpec::Character(_) | TypeSpec::CharacterAssumed)) {
                         let actual_kind = scalar_actual_kind(actual, &shapes)?;
                         if let TypeSpec::Character(length) = actual_kind {
                             match kind {
@@ -833,6 +833,9 @@ fn expand(
                             (k,vec![Expr::IntLit(capacity.to_string())],Some(length))
                         };
                         let a=match &captured {Expr::Ident(a)=>a.clone(),Expr::Call(n,v) if n=="@packed_view"=>if let Expr::Ident(a)=&v[0] {a.clone()} else {bail!("array view requires materialized storage");},_=>bail!("array dummy `{p}` requires a materialized array argument")};
+                        if matches!(kind, TypeSpec::CharacterAssumed) && matches!(actual_kind, TypeSpec::Character(_)) {
+                            kind = actual_kind.clone();
+                        }
                         if actual_kind != kind || actual_dims.len() != dims.len() {
                             bail!("type or rank mismatch for `{p}`");
                         }

@@ -60,7 +60,6 @@ end program
             ("a=['a ','bb','cc']", "nonconforming CHARACTER array assignment"),
             ("a=['a','bb']", "constructor elements must have equal lengths"),
             ("a='ab'\nprint *,a(3)", "outside 1:2"),
-            ("a='ab'\ni=1\nprint *,a(i)", "must currently be constant integers"),
         ]
         with tempfile.TemporaryDirectory(prefix="character-array-errors-") as tmp:
             directory = Path(tmp)

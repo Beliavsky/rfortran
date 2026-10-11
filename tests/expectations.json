@@ -881,6 +881,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 2 1.41421\n 3 1.73205\n 4 2.0\n 11\n 12\n 13\n 11 12 13\n 14\n 14\n 14\n 14 14 14\n 7 7 7\n 14 14 14\n 4\n 2\n 3\n 8 4 6\n 9 3.0\n"
+    },
+    "127_read_comments": {
+      "compiler_stderr": "",
+      "compiler_exit_code": 0,
+      "program_stdout": " comments read: 2\n ! first comment\n !\n first non-comment: !not_a_comment\n read_comments tests passed\n",
+      "program_stderr": "",
+      "program_exit_code": 0
     }
   }
 }

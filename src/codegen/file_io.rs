@@ -79,7 +79,7 @@ fn slot(
         ptr == types::I64,
         "file I/O currently requires a 64-bit target"
     );
-    let range = b.ins().icmp_imm(IntCC::UnsignedLessThan, unit, 1024);
+    let (index,range) = unit_index(b,unit);
     let not_stdin = b.ins().icmp_imm(IntCC::NotEqual, unit, 5);
     let not_stdout = b.ins().icmp_imm(IntCC::NotEqual, unit, 6);
     let valid = b.ins().band(range, not_stdin);
@@ -95,8 +95,38 @@ fn slot(
     let id = module.declare_data(".rfort.file_units", Linkage::Local, true, false)?;
     let global = module.declare_data_in_func(id, b.func);
     let base = b.ins().global_value(ptr, global);
-    let offset = b.ins().imul_imm(unit, 8);
+    let offset = b.ins().imul_imm(index, 8);
     Ok(b.ins().iadd(base, offset))
+}
+fn unit_index(b: &mut FunctionBuilder, unit:ir::Value)->(ir::Value,ir::Value) {
+    let positive=b.ins().icmp_imm(IntCC::UnsignedLessThan,unit,1024);
+    let negated=b.ins().ineg(unit);let negative=b.ins().iadd_imm(negated,-10);
+    let valid_negative=b.ins().icmp_imm(IntCC::UnsignedLessThan,negative,1024);
+    let mapped=b.ins().iadd_imm(negative,1024);
+    (b.ins().select(positive,unit,mapped),b.ins().bor(positive,valid_negative))
+}
+fn table(b: &mut FunctionBuilder,module:&mut ObjectModule,ptr:ir::Type,name:&str)->Result<ir::Value> {
+    let id=module.declare_data(name,Linkage::Local,true,false)?;
+    let global=module.declare_data_in_func(id,b.func);
+    Ok(b.ins().global_value(ptr,global))
+}
+pub(super) fn newunit(module:&mut ObjectModule,b:&mut FunctionBuilder,ptr:ir::Type,dc:&mut u32)->Result<ir::Value> {
+    let slots=table(b,module,ptr,".rfort.file_units")?;
+    let unit=call(module,b,"rfort_scratch_newunit",&[slots],types::I64)?;
+    let okay=b.ins().icmp_imm(IntCC::NotEqual,unit,0);
+    require(module,b,ptr,dc,okay,"scratch OPEN failed or no free NEWUNIT slots")?;
+    let (index,_)=unit_index(b,unit);
+    let names=table(b,module,ptr,".rfort.file_names")?;
+    let offset=b.ins().imul_imm(index,8);let address=b.ins().iadd(names,offset);
+    let zero=b.ins().iconst(ptr,0);b.ins().store(MemFlags::new(),zero,address,0);
+    Ok(unit)
+}
+pub(super) fn name(module:&mut ObjectModule,b:&mut FunctionBuilder,ptr:ir::Type,dc:&mut u32,unit:ir::Value)->Result<ir::Value> {
+    handle(module,b,ptr,dc,unit)?;
+    let (index,_)=unit_index(b,unit);
+    let base=table(b,module,ptr,".rfort.file_names")?;
+    let offset=b.ins().imul_imm(index,8);let address=b.ins().iadd(base,offset);
+    Ok(b.ins().load(ptr,MemFlags::new(),address,0))
 }
 
 pub(super) fn handle(
@@ -126,7 +156,7 @@ pub(super) fn read_handle(
     let stdin=b.ins().icmp_imm(IntCC::Equal,unit,5);
     b.ins().brif(stdin,done,&[zero.into(),zero.into()],file,&[]);
     b.switch_to_block(file);b.seal_block(file);
-    let range=b.ins().icmp_imm(IntCC::UnsignedLessThan,unit,1024);
+    let (index,range)=unit_index(b,unit);
     let not_stdout=b.ins().icmp_imm(IntCC::NotEqual,unit,6);
     let valid=b.ins().band(range,not_stdout);
     b.ins().brif(valid,lookup,&[],invalid,&[]);
@@ -136,7 +166,7 @@ pub(super) fn read_handle(
     let id=module.declare_data(".rfort.file_units",Linkage::Local,true,false)?;
     let global=module.declare_data_in_func(id,b.func);
     let base=b.ins().global_value(ptr,global);
-    let offset=b.ins().imul_imm(unit,8);let address=b.ins().iadd(base,offset);
+    let offset=b.ins().imul_imm(index,8);let address=b.ins().iadd(base,offset);
     let handle=b.ins().load(ptr,MemFlags::new(),address,0);
     let connected=b.ins().icmp_imm(IntCC::NotEqual,handle,0);
     let status=b.ins().select(connected,zero,error);
@@ -176,7 +206,7 @@ pub(super) fn operation(
 ) -> Result<()> {
     let slot = slot(module, b, ptr, dc, unit)?;
     let file = b.ins().load(ptr, MemFlags::new(), slot, 0);
-    if op == "@file_open" {
+    if op == "@file_open" || op=="@file_scratch" {
         let closed = b.ins().icmp_imm(IntCC::Equal, file, 0);
         require(
             module,
@@ -186,12 +216,19 @@ pub(super) fn operation(
             closed,
             "OPEN on an already connected unit is not yet supported",
         )?;
-        let path = super::make_data(module, b, ptr, dc, path.unwrap().as_bytes())?;
-        let mode = super::make_data(module, b, ptr, dc, b"rb")?;
-        let file = call(module, b, "fopen", &[path, mode], ptr)?;
+        let (file,path)=if op=="@file_scratch" {
+            (call(module,b,"tmpfile",&[],ptr)?,b.ins().iconst(ptr,0))
+        } else {
+            let path = super::make_data(module, b, ptr, dc, path.unwrap().as_bytes())?;
+            let mode = super::make_data(module, b, ptr, dc, b"rb")?;
+            (call(module, b, "fopen", &[path, mode], ptr)?,path)
+        };
         let okay = b.ins().icmp_imm(IntCC::NotEqual, file, 0);
         require(module, b, ptr, dc, okay, "OPEN failed")?;
         b.ins().store(MemFlags::new(), file, slot, 0);
+        let (index,_)=unit_index(b,unit);let base=table(b,module,ptr,".rfort.file_names")?;
+        let offset=b.ins().imul_imm(index,8);let address=b.ins().iadd(base,offset);
+        b.ins().store(MemFlags::new(),path,address,0);
         return Ok(());
     }
     if op == "@file_close" {

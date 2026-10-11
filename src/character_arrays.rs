@@ -3,7 +3,7 @@
 // See LICENSE-MIT in the repository root.
 
 //! Bounded scalar storage for fixed-size rank-one CHARACTER arrays.
-use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec};
+use crate::ast::{BinOp, CaseBlock, CaseItem, Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
 
@@ -11,6 +11,7 @@ use std::collections::HashMap;
 struct Array {
     length: usize,
     elements: Vec<String>,
+    extent: Option<Expr>,
 }
 type Arrays = HashMap<String, Array>;
 pub fn original_element(name: &str) -> Option<(&str, i64)> {
@@ -332,6 +333,50 @@ fn assign(
     output.extend(writes);
     Ok(())
 }
+fn capture_index(name: &str, index: Expr, arrays: &Arrays, serial: &mut usize,
+                 output: &mut Vec<Stmt>) -> Expr {
+    *serial += 1;
+    let temp = format!("@character_index_{serial}");
+    output.push(Stmt::VarDecl {kind:TypeSpec::Integer(Some(8)),names:vec![temp.clone()]});
+    output.push(Stmt::Assign {name:temp.clone(),value:index});
+    let index=Expr::Ident(temp);
+    if let Some(extent)=&arrays[name].extent {
+        output.push(Stmt::If {
+            cond:Expr::Bin(BinOp::Or,
+                Box::new(Expr::Bin(BinOp::Lt,Box::new(index.clone()),Box::new(Expr::IntLit("1".into())))),
+                Box::new(Expr::Bin(BinOp::Gt,Box::new(index.clone()),Box::new(extent.clone())))),
+            then_body:vec![Stmt::CallSub {name:"@error_stop".into(),args:vec![Expr::Str(format!("CHARACTER array `{name}` index outside allocated extent"))]}],else_body:None});
+    }
+    index
+}
+fn dispatch(name: &str, index: Expr, arrays: &Arrays, action: impl Fn(String)->Stmt) -> Stmt {
+    Stmt::SelectCase {expr:index,cases:arrays[name].elements.iter().enumerate().map(|(i,n)|CaseBlock {
+        items:vec![CaseItem::Single(Expr::IntLit((i+1).to_string()))],body:vec![action(n.clone())]
+    }).collect(),default:Some(vec![Stmt::CallSub {name:"@error_stop".into(),args:vec![Expr::Str(format!("CHARACTER array `{name}` index out of bounds"))]}])}
+}
+// Dispatch at runtime to exactly one scalar slot, preserving initialization checks.
+fn dynamic(mut e: Expr, arrays: &Arrays, serial: &mut usize, output: &mut Vec<Stmt>) -> Result<Expr> {
+    match &mut e {
+        Expr::Call(n,a) | Expr::Index(n,a) if arrays.contains_key(n) && a.len()==1 => {
+            let index=dynamic(a[0].clone(),arrays,serial,output)?;
+            if crate::parameters::integer_constant(&index).is_ok() && arrays[n].extent.is_none() { return Ok(e); }
+            let index=capture_index(n,index,arrays,serial,output);
+            *serial+=1;
+            let temp=format!("@character_element_{serial}");
+            output.push(Stmt::VarDecl {kind:TypeSpec::Character(Some(arrays[n].length)),names:vec![temp.clone()]});
+            output.push(dispatch(n,index,arrays,|slot|Stmt::CallSub {name:"@character_element_read".into(),args:vec![Expr::Ident(temp.clone()),Expr::Ident(slot),Expr::IntLit(arrays[n].length.to_string())]}));
+            return Ok(Expr::Ident(temp));
+        }
+        Expr::Call(_,a) | Expr::Index(_,a) => for x in a { *x=dynamic(x.clone(),arrays,serial,output)?; },
+        Expr::Bin(_,a,b) => { **a=dynamic((**a).clone(),arrays,serial,output)?; **b=dynamic((**b).clone(),arrays,serial,output)?; }
+        Expr::Un(_,a) => **a=dynamic((**a).clone(),arrays,serial,output)?,
+        _=>{}
+    }
+    Ok(e)
+}
+fn expanded(e: Expr, arrays: &Arrays, serial: &mut usize, output: &mut Vec<Stmt>) -> Result<Value> {
+    expression(dynamic(e,arrays,serial,output)?,arrays)
+}
 fn body(
     stmts: &mut Vec<Stmt>,
     inherited: &Arrays,
@@ -343,6 +388,8 @@ fn body(
     for p in params {
         arrays.remove(p);
     }
+    let mut shapes=HashMap::new();
+    crate::allocatables::metadata(stmts,&mut shapes);
     for s in stmts.iter() {
         match s {
             Stmt::VarDecl { names, .. } => {
@@ -370,6 +417,7 @@ fn body(
                     name.clone(),
                     Array {
                         length: length.unwrap_or(1),
+                        extent: crate::allocatables::length(name,&shapes),
                         elements: (1..=extent)
                             .map(|i| format!("@character_array_{serial}_{name}_{i}"))
                             .collect(),
@@ -385,6 +433,11 @@ fn body(
     let mut output = Vec::new();
     for mut s in std::mem::take(stmts) {
         match &mut s {
+            Stmt::CallSub {name,args} if name=="@undefine" && args.len()==1 && matches!(&args[0],Expr::Ident(n) if arrays.contains_key(n)) => {
+                let Expr::Ident(n)=&args[0] else {unreachable!()};
+                output.extend(arrays[n].elements.iter().map(|n|Stmt::CallSub {name:"@undefine".into(),args:vec![Expr::Ident(n.clone())]}));
+                continue;
+            }
             Stmt::ArrayDecl {
                 kind: TypeSpec::Character(_),
                 name,
@@ -400,11 +453,12 @@ fn body(
                 continue;
             }
             Stmt::Assign { name, value } if arrays.contains_key(name) => {
+                let value=dynamic(value.clone(),&arrays,serial,&mut output)?;
                 assign(
                     select(name, None, &arrays)?,
                     arrays[name].length,
                     None,
-                    value.clone(),
+                    value,
                     &arrays,
                     serial,
                     &mut output,
@@ -419,11 +473,23 @@ fn body(
                 let [index] = indices.as_slice() else {
                     bail!("CHARACTER arrays currently require one subscript");
                 };
+                if !matches!(index,Expr::Section {..}) && (crate::parameters::integer_constant(index).is_err() || arrays[name].extent.is_some()) {
+                    let index=dynamic(index.clone(),&arrays,serial,&mut output)?;
+                    let index=capture_index(name,index,&arrays,serial,&mut output);
+                    let value=expanded(value.clone(),&arrays,serial,&mut output)?.expr();
+                    *serial+=1;
+                    let temp=format!("@character_store_{serial}");
+                    output.push(Stmt::VarDecl {kind:TypeSpec::Character(Some(arrays[name].length)),names:vec![temp.clone()]});
+                    output.push(Stmt::Assign {name:temp.clone(),value});
+                    output.push(dispatch(name,index,&arrays,|slot|Stmt::Assign {name:slot,value:Expr::Ident(temp.clone())}));
+                    continue;
+                }
+                let value=dynamic(value.clone(),&arrays,serial,&mut output)?;
                 assign(
                     select(name, Some(index), &arrays)?,
                     arrays[name].length,
                     None,
-                    value.clone(),
+                    value,
                     &arrays,
                     serial,
                     &mut output,
@@ -456,35 +522,61 @@ fn body(
                 continue;
             }
             Stmt::Print { items } => {
-                let mut expanded = Vec::new();
+                let mut values = Vec::new();
                 for e in std::mem::take(items) {
-                    match expression(e, &arrays)? {
-                        Value::Scalar(e) => expanded.push(e),
-                        Value::Array(v) => expanded.extend(v),
+                    match expanded(e, &arrays, serial, &mut output)? {
+                        Value::Scalar(e) => values.push(e),
+                        Value::Array(v) => values.extend(v),
                     }
                 }
-                *items = expanded;
+                *items = values;
             }
             Stmt::Assign { value, .. } | Stmt::Return(Some(value)) => {
-                *value = expression(value.clone(), &arrays)?.expr()
+                *value = expanded(value.clone(), &arrays, serial, &mut output)?.expr()
             }
             Stmt::AssignIndex { indices, value, .. } => {
                 for e in indices {
-                    *e = expression(e.clone(), &arrays)?.expr();
+                    *e = expanded(e.clone(), &arrays, serial, &mut output)?.expr();
                 }
-                *value = expression(value.clone(), &arrays)?.expr();
+                *value = expanded(value.clone(), &arrays, serial, &mut output)?.expr();
             }
-            Stmt::CallSub { args, .. } | Stmt::Read { args } => {
-                for e in args {
-                    *e=match expression(e.clone(),&arrays)? {Value::Scalar(e)=>e,Value::Array(_)=>bail!("CHARACTER array I/O destinations and procedure arguments are not yet supported")};
+            Stmt::CallSub { name, args } => {
+                if name=="@internal_read" && matches!(args.get(3),Some(Expr::Call(n,_)|Expr::Index(n,_)) if arrays.contains_key(n)) {
+                    bail!("internal READ currently requires a scalar CHARACTER destination, not an array element");
                 }
+                let dest=match name.as_str() {"@formatted_read_status"=>Some((4,Some(3))),"@formatted_read"=>Some((2,None)),_=>None};
+                let mut suffix=Vec::new();
+                if let Some((position,status))=dest {
+                    if let Some(Expr::Call(n,a) | Expr::Index(n,a))=args.get(position).cloned() {
+                        if arrays.contains_key(&n) && a.len()==1 {
+                            let index=dynamic(a[0].clone(),&arrays,serial,&mut output)?;
+                            let index=capture_index(&n,index,&arrays,serial,&mut output);
+                            *serial+=1;
+                            let temp=format!("@character_read_{serial}");
+                            output.push(Stmt::VarDecl {kind:TypeSpec::Character(Some(arrays[&n].length)),names:vec![temp.clone()]});
+                            args[position]=Expr::Ident(temp.clone());
+                            let store=dispatch(&n,index.clone(),&arrays,|slot|Stmt::Assign {name:slot,value:Expr::Ident(temp.clone())});
+                            suffix.push(if let Some(status)=status {
+                                let code=&args[status];
+                                if !matches!(code,Expr::Ident(_)) {store} else {Stmt::If {cond:Expr::Bin(BinOp::Eq,Box::new(code.clone()),Box::new(Expr::IntLit("0".into()))),then_body:vec![store],else_body:Some(vec![dispatch(&n,index,&arrays,|slot|Stmt::CallSub {name:"@undefine".into(),args:vec![Expr::Ident(slot)]})])}}
+                            } else {store});
+                        }
+                    }
+                }
+                for e in args {
+                    *e=match expanded(e.clone(),&arrays,serial,&mut output)? {Value::Scalar(e)=>e,Value::Array(_)=>bail!("CHARACTER array I/O destinations and procedure arguments are not yet supported")};
+                }
+                output.push(s);output.extend(suffix);continue;
+            }
+            Stmt::Read { args } => {
+                for e in args { *e=expanded(e.clone(),&arrays,serial,&mut output)?.expr(); }
             }
             Stmt::If {
                 cond,
                 then_body,
                 else_body,
             } => {
-                *cond = expression(cond.clone(), &arrays)?.expr();
+                *cond = expanded(cond.clone(), &arrays, serial, &mut output)?.expr();
                 body(then_body, &arrays, &[], false, serial)?;
                 if let Some(b) = else_body {
                     body(b, &arrays, &[], false, serial)?;
@@ -496,13 +588,18 @@ fn body(
                 body: b,
                 ..
             } => {
-                *start = expression(start.clone(), &arrays)?.expr();
-                *end = expression(end.clone(), &arrays)?.expr();
+                *start = expanded(start.clone(), &arrays, serial, &mut output)?.expr();
+                *end = expanded(end.clone(), &arrays, serial, &mut output)?.expr();
                 body(b, &arrays, &[], false, serial)?;
             }
             Stmt::DoWhile { cond, body: b } => {
-                *cond = expression(cond.clone(), &arrays)?.expr();
+                let mut prefix=Vec::new();
+                *cond = expanded(cond.clone(), &arrays, serial, &mut prefix)?.expr();
                 body(b, &arrays, &[], false, serial)?;
+                if !prefix.is_empty() {
+                    prefix.push(Stmt::If {cond:Expr::Un(crate::ast::UnOp::Not,Box::new(cond.clone())),then_body:vec![Stmt::Exit],else_body:None});
+                    prefix.append(b);*b=prefix;*cond=Expr::Logical(true);
+                }
             }
             Stmt::Function {
                 params, body: b, ..
@@ -517,7 +614,7 @@ fn body(
                 cases,
                 default,
             } => {
-                *expr = expression(expr.clone(), &arrays)?.expr();
+                *expr = expanded(expr.clone(), &arrays, serial, &mut output)?.expr();
                 for c in cases {
                     body(&mut c.body, &arrays, &[], false, serial)?;
                 }

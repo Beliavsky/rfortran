@@ -6,11 +6,21 @@
 #![no_std]
 mod format_spec;
 mod record_input;
+mod character_input;
 use format_spec::Parser;
 
 extern "C" {
     fn fgetc(stream: *mut core::ffi::c_void) -> i32;
     fn ferror(stream: *mut core::ffi::c_void) -> i32;
+    fn tmpfile() -> *mut core::ffi::c_void;
+    fn fwrite(data: *const u8, size: usize, count: usize, stream: *mut core::ffi::c_void) -> usize;
+    fn fseek(stream:*mut core::ffi::c_void,offset:core::ffi::c_long,origin:i32)->i32;
+    #[cfg(windows)] fn _fileno(stream:*mut core::ffi::c_void)->i32;
+    #[cfg(windows)] fn _ftelli64(stream:*mut core::ffi::c_void)->i64;
+    #[cfg(windows)] fn _chsize_s(fd:i32,length:i64)->i32;
+    #[cfg(not(windows))] fn fileno(stream:*mut core::ffi::c_void)->i32;
+    #[cfg(not(windows))] fn ftello(stream:*mut core::ffi::c_void)->i64;
+    #[cfg(not(windows))] fn ftruncate(fd:i32,length:i64)->i32;
     #[cfg(windows)]
     fn __acrt_iob_func(index: u32) -> *mut core::ffi::c_void;
     #[cfg(target_os = "macos")]
@@ -26,6 +36,38 @@ extern "C" {
     fn _write(fd: i32, data: *const u8, len: u32) -> i32;
     #[cfg(not(windows))]
     fn write(fd: i32, data: *const u8, len: usize) -> isize;
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rfort_scratch_newunit(slots: *mut *mut core::ffi::c_void) -> i64 {
+    for i in 1024..2048 {
+        if (*slots.add(i)).is_null() {
+            let file=tmpfile();
+            if file.is_null() {return 0;}
+            *slots.add(i)=file;
+            return -10-(i-1024) as i64;
+        }
+    }
+    0
+}
+#[no_mangle]
+pub unsafe extern "C" fn rfort_file_write_record(stream:*mut core::ffi::c_void, data:*const u8, length:usize)->i32 {
+    // Positioning permits switching from input to output on a C update stream.
+    if fseek(stream,0,1)!=0 || fwrite(data,1,length,stream)!=length || fwrite(b"\n".as_ptr(),1,1,stream)!=1 || fflush(stream)!=0 {return 1;}
+    // Sequential Fortran output replaces the remainder after the new record.
+    #[cfg(windows)] {let pos=_ftelli64(stream);if pos<0 {1} else {_chsize_s(_fileno(stream),pos)}}
+    #[cfg(not(windows))] {let pos=ftello(stream);if pos<0 {1} else {ftruncate(fileno(stream),pos)}}
+}
+#[no_mangle]
+pub unsafe extern "C" fn rfort_file_name(source:*const u8, destination:*mut u8, length:usize)->i32 {
+    let mut ended=source.is_null();
+    for i in 0..length {
+        let ch=if ended {b' '} else {*source.add(i)};
+        if ch==0 {ended=true;}
+        *destination.add(i)=if ended {b' '} else {ch};
+    }
+    *destination.add(length)=0;
+    0
 }
 
 /// A null stream denotes standard input. The destination holds `length` bytes
@@ -51,6 +93,12 @@ pub unsafe extern "C" fn rfort_read_record(
     });
     *destination.add(length) = 0;
     status
+}
+#[no_mangle]
+pub unsafe extern "C" fn rfort_read_character_field(source:*const u8,source_length:usize,destination:*mut u8,length:usize)->i64 {
+    let code=character_input::field(core::slice::from_raw_parts(source,source_length),core::slice::from_raw_parts_mut(destination,length));
+    *destination.add(length)=0;
+    code
 }
 fn fail(message: &str) -> ! {
     unsafe {

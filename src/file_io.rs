@@ -2,11 +2,11 @@
 // Copyright (c) 2026 Beliavsky
 // See LICENSE-MIT in the repository root.
 
-//! Read-only sequential formatted files. Keep unsupported connection modes explicit.
+//! Sequential formatted files, including scratch connections.
 use crate::ast::{Expr, Stmt, TypeSpec};
 use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, Write, Seek, SeekFrom};
 
 pub(crate) fn unit(expr: &Expr, symbols: &HashMap<String, (TypeSpec, Vec<Expr>)>) -> Result<()> {
     match expr {
@@ -43,22 +43,47 @@ pub(crate) fn lower(
         };
         if !matches!(
             key.as_str(),
-            "unit" | "file" | "status" | "action" | "access" | "form"
+            "unit" | "newunit" | "file" | "status" | "action" | "access" | "form" | "name"
         ) {
             bail!("{operation}: unsupported I/O control `{key}`");
         }
-        if operation != "open" && key != "unit" {
+        if operation != "open" && key != "unit" && !(operation=="inquire" && key=="name") {
             bail!("{operation} currently supports only UNIT");
         }
+        if operation=="open" && key=="name" {bail!("OPEN: unsupported I/O control `name`");}
         if controls.insert(key.clone(), value).is_some() {
             bail!("{operation}: duplicate {key} control");
         }
     }
+    if operation=="open" && matches!(controls.get("status"),Some(Expr::Str(s)) if s.trim_end().eq_ignore_ascii_case("scratch")) {
+        if controls.contains_key("file") { bail!("scratch OPEN must not specify FILE"); }
+        let newunit=controls.remove("newunit");
+        if newunit.is_some() && controls.contains_key("unit") {bail!("OPEN must not specify both UNIT and NEWUNIT");}
+        let destination=newunit.clone().or_else(||controls.remove("unit")).context("OPEN requires UNIT or NEWUNIT")?;
+        unit(&destination,symbols)?;
+        if newunit.is_some() && !matches!(destination,Expr::Ident(_)) {bail!("NEWUNIT requires a writable scalar INTEGER variable");}
+        for (key,expected) in [("action","readwrite"),("access","sequential"),("form","formatted")] {
+            if let Some(v)=controls.remove(key) {
+                if !matches!(v,Expr::Str(s) if s.trim_end().eq_ignore_ascii_case(expected)) {bail!("scratch OPEN currently supports {key}='{expected}'");}
+            }
+        }
+        return Ok(Stmt::CallSub {name:if newunit.is_some(){"@file_newunit"}else{"@file_scratch"}.into(),args:vec![destination]});
+    }
+    if controls.contains_key("newunit") {bail!("NEWUNIT currently requires STATUS='scratch'");}
     let unit_expr = controls
         .remove("unit")
         .context("file operation requires UNIT")?;
     unit(&unit_expr, symbols)?;
     let mut args = vec![unit_expr];
+    if operation=="inquire" {
+        let dest=controls.remove("name").context("INQUIRE currently requires NAME")?;
+        if !matches!(&dest,Expr::Ident(n) if matches!(symbols.get(n),Some((TypeSpec::Character(_),d)) if d.is_empty())) {
+            bail!("INQUIRE NAME requires a writable scalar CHARACTER variable");
+        }
+        let Expr::Ident(n)=&dest else {unreachable!()};
+        let TypeSpec::Character(length)=symbols[n].0 else {unreachable!()};
+        return Ok(Stmt::CallSub {name:"@file_name".into(),args:vec![dest,args.remove(0),Expr::IntLit(length.unwrap_or(1).to_string())]});
+    }
     if operation == "open" {
         for (key, expected, required) in [
             ("status", "old", true),
@@ -95,10 +120,10 @@ pub(crate) fn lower(
 }
 
 #[derive(Default)]
-pub(crate) struct Files(HashMap<i64, std::fs::File>);
+pub(crate) struct Files(HashMap<i64, std::fs::File>, HashMap<i64,String>);
 impl Files {
     fn valid(unit: i64) -> Result<()> {
-        if !(0..1024).contains(&unit) || matches!(unit, 5 | 6) {
+        if (!(0..1024).contains(&unit) && !(-1033..=-10).contains(&unit)) || matches!(unit, 5 | 6) {
             bail!("file units must be in 0..1023, excluding preconnected units 5 and 6");
         }
         Ok(())
@@ -111,11 +136,13 @@ impl Files {
             }
             let file = std::fs::File::open(path.unwrap()).context("OPEN failed")?;
             self.0.insert(unit, file);
+            self.1.insert(unit,path.unwrap().into());
             return Ok(());
         }
         // CLOSE on an unconnected unit is a successful no-op.
         if op == "@file_close" {
             self.0.remove(&unit);
+            self.1.remove(&unit);
             return Ok(());
         }
         let file = self
@@ -144,6 +171,45 @@ impl Files {
             position -= 1;
         }
         file.seek(SeekFrom::Start(position))?;
+        Ok(())
+    }
+    pub(crate) fn scratch(&mut self, requested: Option<i64>) -> Result<i64> {
+        let unit=if let Some(unit)=requested {Self::valid(unit)?;unit} else {
+            (-1033..=-10).rev().find(|u|!self.0.contains_key(u)).context("no free NEWUNIT file slots")?
+        };
+        if self.0.contains_key(&unit) {bail!("OPEN on an already connected unit is not yet supported");}
+        // Delete-on-close on Windows; on Unix unlink immediately after opening.
+        let mut options=std::fs::OpenOptions::new(); options.read(true).write(true).create_new(true);
+        #[cfg(windows)] {
+            use std::os::windows::fs::OpenOptionsExt;
+            options.custom_flags(0x04000000).access_mode(0xc0010000).share_mode(0x7);
+        }
+        let mut result=None;
+        for serial in 0..1000 {
+            let path=std::env::temp_dir().join(format!("rfort-scratch-{}-{unit}-{serial}",std::process::id()));
+            match options.open(&path) {
+                Ok(file)=>{
+                    #[cfg(not(windows))] std::fs::remove_file(&path)?;
+                    result=Some(file);break;
+                }
+                Err(e) if e.kind()==std::io::ErrorKind::AlreadyExists=>continue,
+                Err(e)=>return Err(e.into()),
+            }
+        }
+        self.0.insert(unit,result.context("could not create scratch file")?);
+        self.1.remove(&unit);
+        Ok(unit)
+    }
+    pub(crate) fn name(&self, unit:i64)->Result<String> {
+        Self::valid(unit)?;
+        if !self.0.contains_key(&unit) {bail!("file unit is not connected");}
+        Ok(self.1.get(&unit).cloned().unwrap_or_default())
+    }
+    pub(crate) fn write_record(&mut self, unit:i64, text:&str)->Result<()> {
+        Self::valid(unit)?;
+        let file=self.0.get_mut(&unit).context("file unit is not connected")?;
+        file.write_all(text.as_bytes())?;file.write_all(b"\n")?;
+        let position=file.stream_position()?;file.set_len(position)?;
         Ok(())
     }
     pub(crate) fn record(&mut self, unit: i64, length: usize) -> Result<String> {

@@ -520,7 +520,7 @@ pub fn hoist(body: &mut Vec<Stmt>) {
     fn walk(body: &mut Vec<Stmt>, declarations: &mut Vec<Stmt>) {
         let mut output = Vec::new();
         for mut s in std::mem::take(body) {
-            if matches!(&s, Stmt::VarDecl {names,..} if names.iter().all(|n|n.starts_with("@substring_") || n.starts_with("@character_array_") || n.starts_with("@character_compare_") || n.starts_with("@character_argument_") || n.starts_with("@vector_") || n.starts_with("@reduction_")))
+            if matches!(&s, Stmt::VarDecl {names,..} if names.iter().all(|n|n.starts_with("@substring_") || n.starts_with("@character_") || n.starts_with("@vector_") || n.starts_with("@reduction_")))
                 || matches!(&s, Stmt::ArrayDecl {name,..} if name.starts_with("@vector_") || name.starts_with("@reduction_"))
             {
                 declarations.push(s);

@@ -1033,9 +1033,11 @@ fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules, ass
                     }
                 }
             }
-            Stmt::ArrayDecl { kind, dims, .. } => {
+            Stmt::ArrayDecl { kind, name, dims } => {
                 if crate::substrings::deferred(kind) { bail!("deferred CHARACTER arrays are not yet supported"); }
-                resolve_kind(kind, constants)?;
+                if !matches!(kind, TypeSpec::CharacterAssumed) || !assumed.contains(name) {
+                    resolve_kind(kind, constants)?;
+                }
                 for e in dims {
                     rewrite_expr(e, constants)?;
                 }

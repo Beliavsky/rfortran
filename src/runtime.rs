@@ -1040,7 +1040,7 @@ pub fn interpret(program: &Program) {
                 Stmt::CallSub { name, args } => {
                     if name == "@stop" { std::process::exit(0); }
                     if name == "@error_stop" { let Expr::Str(message)=&args[0] else {unreachable!()}; eprintln!("ERROR STOP {message}");std::process::exit(1); }
-                    if name == "@character_assign" {
+                    if name == "@character_assign" || name=="@character_element_read" {
                         let [Expr::Ident(dest), source, Expr::IntLit(length)] = args.as_slice() else { unreachable!() };
                         let fr = call_stack.last().unwrap().clone();
                         let mut text = eval_expr(source, &fr.env_str, &fr.env_int, &fr.env_real32, &fr.env_real64, &fr.env_log, funcs, call_stack).3.unwrap();
@@ -1066,6 +1066,42 @@ pub fn interpret(program: &Program) {
                         let byte=if index<length {text.as_bytes().get(index).copied().unwrap_or(0)} else {0};
                         frame.env_int.insert(dest.clone(),i64::from(byte));
                         idx+=1;continue;
+                    }
+                    if name=="@file_newunit" {
+                        let Expr::Ident(dest)=&args[0] else {unreachable!()};
+                        let unit=io_result(FILES.with(|files|files.borrow_mut().scratch(None)));
+                        call_stack.last_mut().unwrap().env_int.insert(dest.clone(),unit);
+                        idx+=1;continue;
+                    }
+                    if name=="@read_character_field" {
+                        let [Expr::Ident(status),Expr::Ident(dest),source,Expr::IntLit(length)]=args.as_slice() else {unreachable!()};
+                        let fr=call_stack.last().unwrap().clone();
+                        let text=eval_expr(source,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).3.unwrap();
+                        let mut buffer=vec![b' ';length.parse().unwrap()];
+                        let code=crate::character_input::field(text.as_bytes(),&mut buffer);
+                        let fr=call_stack.last_mut().unwrap();
+                        fr.env_int.insert(status.clone(),code);fr.env_str.insert(dest.clone(),String::from_utf8(buffer).unwrap());idx+=1;continue;
+                    }
+                    if name=="@file_name" {
+                        let Expr::Ident(dest)=&args[0] else {unreachable!()};
+                        let fr=call_stack.last().unwrap().clone();
+                        let unit=eval_expr(&args[1],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
+                        let mut value=io_result(FILES.with(|files|files.borrow().name(unit)));
+                        let Expr::IntLit(length)=&args[2] else {unreachable!()};
+                        let length:usize=length.parse().unwrap();
+                        value.truncate(length);value.push_str(&" ".repeat(length-value.len()));
+                        call_stack.last_mut().unwrap().env_str.insert(dest.clone(),value);idx+=1;continue;
+                    }
+                    if name=="@file_write_record" {
+                        let fr=call_stack.last().unwrap().clone();
+                        let unit=eval_expr(&args[0],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
+                        let text=eval_expr(&args[1],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).3.unwrap();
+                        io_result(FILES.with(|files|files.borrow_mut().write_record(unit,&text)));idx+=1;continue;
+                    }
+                    if name=="@file_scratch" {
+                        let fr=call_stack.last().unwrap().clone();
+                        let unit=eval_expr(&args[0],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
+                        io_result(FILES.with(|files|files.borrow_mut().scratch(Some(unit))));idx+=1;continue;
                     }
                     if matches!(name.as_str(), "@file_open" | "@file_close" | "@file_rewind" | "@file_backspace") {
                         let fr=call_stack.last().unwrap().clone();

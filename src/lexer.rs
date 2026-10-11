@@ -506,7 +506,7 @@ pub fn lex(input: &str) -> Vec<Token> {
         // File-control words are contextual, including after a single-line IF.
         if let TokenKind::Ident(word) = &tokens[start].kind {
             let word = word.to_ascii_lowercase();
-            if matches!(word.as_str(), "open" | "close" | "backspace" | "rewind") {
+            if matches!(word.as_str(), "open" | "close" | "backspace" | "rewind" | "inquire") {
                 let mut begin = start;
                 while begin > 0 && same_statement(&input[tokens[begin-1].span.end..tokens[begin].span.start]) { begin -= 1; }
                 let inline_if = matches!(tokens[begin].kind, TokenKind::KwIf) && start > begin

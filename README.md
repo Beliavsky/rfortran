@@ -25,7 +25,7 @@ Implemented subsets include:
 - Modules compiled in one source group, scalar derived types, type-bound
   procedures, and defined operators, including derived-type comparisons.
 - List-directed output, a subset of formatted input/output, runtime format
-  strings, nonadvancing output, and read-only external files.
+  strings, nonadvancing output, read-only named files, and scratch-file input/output.
 - Initialization checks: definite reads before assignment are compile errors;
   uncertain reads are checked at runtime, with source locations and an element
   number for array errors.
@@ -267,9 +267,29 @@ The reader consumes invalid records so a subsequent read can continue with the
 next record. These reads accept standard input as `*`, constant unit 5, or an
 INTEGER unit variable whose value is 5. Input records may end without a final newline.
 
-File output, external list-directed input, NEWUNIT, and IOSTAT on OPEN/CLOSE or
-positioning operations are not yet supported. Connections are shared within a
+Scratch files support `OPEN(newunit=iu,status='scratch',action='readwrite')`
+or an explicit UNIT, with sequential formatted access. NEWUNIT assigns a
+negative unit and supports up to 1024 simultaneous scratch connections.
+`WRITE(iu,'(a)')` accepts scalar CHARACTER items, producing a record for each
+item through format reversion; an empty list writes an empty record. Writes
+replace subsequent records at the current position. Scratch files are deleted
+on close. `INQUIRE(unit=iu,name=text)` supports connected units; named files
+return their OPEN path, while scratch files fill NAME with blanks.
+`(A)` READ destinations may also be dynamically indexed local CHARACTER elements.
+
+External list-directed input, other external output formats, named writable
+files, and IOSTAT on OPEN/CLOSE or positioning operations remain unsupported.
+Connections are shared within a
 compiled source group. Native file I/O currently requires a 64-bit target.
+Run `python tests/test_read_comments.py` for interpreter/native O0/O2 and
+gfortran comparisons of these features.
+
+Internal list-directed READ also accepts one scalar CHARACTER destination.
+It handles unquoted or quoted fields, doubled quote escapes, repeated values,
+null fields and slash termination, with blank padding or truncation. IOSTAT
+reports success, exhausted input or malformed fields; null fields leave the
+destination unchanged. Internal CHARACTER array-element destinations and
+multi-record quoted strings remain unsupported.
 
 ## Numeric and logical reductions
 
@@ -530,7 +550,9 @@ actual argument; LEN, empty strings and literal/concatenated inputs work. Fixed
 lengths currently require an exact match. Expressions require INTENT(IN), while
 writable arguments must be variables. Explicit RETURN leaves an expanded
 subroutine, including from nested loops, and execution resumes in its caller.
-CHARACTER arrays and assumed-length function dummies remain outside this subset.
+Fixed-length rank-one CHARACTER array subroutine arguments also use call-site
+specialization, including assumed-length dummies. Assumed-length function
+dummies remain outside this subset.
 Run `python tests/test_optional_procedures.py`.
 
 ## Recursive procedures and bounded allocatable outputs
@@ -542,15 +564,20 @@ terminate during specialization, as in `xpure_recursive.f90`, whose recursive
 call omits the optional bounds and selects the copy branch. General recursive
 array calls remain unsupported and produce a diagnostic.
 
-Local rank-one numeric/LOGICAL ALLOCATABLE INTENT(OUT) dummies can associate with
+Local rank-one numeric/LOGICAL or fixed-length CHARACTER ALLOCATABLE INTENT(OUT) dummies can associate with
 main-program allocatable arrays. Storage capacity is inferred from bounded array
-inputs across the source group's call sites; allocation state and the current
+inputs across the source group's call sites, or from fixed local arrays when
+no array input is available; allocation state and the current
 extent remain runtime values. INTENT(OUT) deallocates the previous output on entry.
 ALLOCATE accepts runtime extents within that capacity, including zero, followed
 by conformable whole-array assignment or scalar filling. ALLOCATED, SIZE, LBOUND,
 UBOUND, reductions and list-directed output use the current allocation and extent.
 Repeated allocation, reads of unallocated arrays and allocations exceeding the
 inferred capacity report runtime errors. Element initialization checks still apply.
+CHARACTER outputs support ALLOCATED, SIZE, element access, scalar filling and
+conformable whole-array or constant-stride section copying, including padding
+and truncation when element lengths differ. CHARACTER reductions and whole-array
+output of runtime-sized CHARACTER arrays remain unsupported.
 
 This does not provide general heap allocation, automatic reallocation on array
 assignment, dynamic input declaration bounds, multidimensional allocatable outputs,
@@ -624,14 +651,19 @@ O0/O2 results with gfortran when available.
 Fixed-size rank-one CHARACTER arrays support up to 1024 elements in local
 storage. Supported operations include literal constructors, main-program
 declaration initialization, scalar fills, whole-array copies, constant element
-indices and sections (including strides), and elementwise substring assignment.
+indices, runtime element indexing, constant sections (including strides), and
+elementwise substring assignment.
 All source values are captured before overlapping destinations are written.
 Array comparisons support scalar broadcasting and ALL/ANY without DIM;
 list-directed PRINT, whole-array SIZE and LEN are supported. Initialization is
 tracked per element, with diagnostics naming the original array and its storage
 element number. Partial substring writes still require initialized elements.
 
-Dynamic indexing, higher ranks, module/dummy CHARACTER array storage, CHARACTER
+Dynamic accesses check bounds and initialize only the selected element; DO WHILE
+conditions with dynamic CHARACTER indexing are evaluated on every iteration.
+Local CHARACTER array subroutines can specialize fixed/assumed-length dummies
+to caller storage, including bounded allocatable outputs.
+Higher ranks, module CHARACTER array storage, CHARACTER
 array PARAMETERs and the other array transformational intrinsics remain outside
 this subset. Array constructors currently require equal-length CHARACTER
 literals (including substituted constants). Run
@@ -745,6 +777,7 @@ python tests/test_write.py
 python tests/test_output_implied_do.py
 python tests/test_defined_operators.py
 python tests/test_file_io.py
+python tests/test_read_comments.py
 python tests/test_character_lengths.py
 python tests/test_else_if.py
 python tests/test_multi_forall.py
