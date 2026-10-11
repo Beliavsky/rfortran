@@ -1,4 +1,45 @@
-# ofort compatibility sample
+# ofort compatibility coverage
+
+Run the broader external inventory:
+
+```bat
+python tests/run_ofort_compat.py --ofort-root C:\c\ofort --discover --jobs 4 --report target/ofort-expanded.json
+```
+
+Discovery considers `.f90`/`.F90` files in `tests/cases` that have a sibling
+`.out` file or a name ending in `_pending`. Saved output identifies candidates;
+gfortran supplies the expected output. The runner does not import or execute the
+ofort Python tests. This covers standalone fixture files, not generated tests,
+REPL tests, or the full pytest suite.
+
+The report inventories every Fortran source in that directory and records a
+reason for each exclusion. Discovery conservatively excludes temporary sources,
+initialization/undefined-read diagnostic probes, calls involving randomness,
+timing or process control, argument/environment queries, standard-input READ,
+includes, missing companion modules, and the resource-dependent 40 GB allocation
+probe. These categories need explicit inputs, companion sources or tailored
+oracles. The scan is a heuristic rather than a Fortran parser; an explicit
+`--selection` can include a reviewed case that discovery excludes.
+
+Each discovered gfortran reference is run twice in fresh directories. Reference
+build/run failures, runtime stderr and unstable output are recorded separately
+and do not count as rfort failures. Stable reference output is compared with
+rfort at both O0 and O2. Passing these checks does not establish that a source
+is standard-conforming or free of undefined behavior.
+
+Use `--filter` to focus on a filename glob, for example:
+
+```bat
+python tests/run_ofort_compat.py --ofort-root C:\c\ofort --discover --filter "xcharacter*" --jobs 4 --report target/ofort-character.json
+```
+
+`--jobs` runs independent cases concurrently (default 1); each compilation and
+execution retains its own directory. Reports remain ordered by source name and
+include per-optimization outcomes, approximate feature groups based on filenames,
+and failure groups based on diagnostics. Full stdout/stderr and source/compiler
+hashes remain available for investigating individual failures.
+
+## Quick sample
 
 Run the selected external fixtures without building or modifying ofort:
 
@@ -13,7 +54,7 @@ Each reference and rfort executable runs in a separate temporary directory with
 closed standard input and a timeout (15 seconds by default; --timeout changes
 it). Both native O0 and O2 are checked. Source files stay in the external tree;
 compiler outputs, module files and program-created files go in temporary work
-directories. This initial selection consists of standalone, deterministic
+directories. The quick selection consists of standalone, deterministic
 programs that do not need input files or companion sources.
 
 selection.json selects 18 cases covering loops, arrays, numeric semantics,
@@ -32,11 +73,53 @@ script. Missing compiler tools are always a command-line error.
 Comparison tokenizes whitespace and accepts T/F or .TRUE./.FALSE. Integer tokens
 are compared exactly. Real tokens allow relative error 2e-6 or absolute error
 1e-7, reflecting the compiler's current list-directed precision. This comparison
-is unsuitable for format-layout tests; those belong in the ordinary regression
-suite. Reports retain unnormalized stdout/stderr, source SHA-256 hashes, compiler
+checks output values rather than precise formatting, including for discovered
+I/O cases. Format-layout conformance needs separate tests in the ordinary
+regression suite. Reports retain unnormalized stdout/stderr, source SHA-256 hashes, compiler
 binary hash/path, and reference compiler version for investigation.
 
 ## Recorded results (Windows x64, 2026-10-10)
+
+### Expanded inventory
+
+[`expanded-baseline.json`](expanded-baseline.json) records the broader snapshot.
+The checkout contained 768 Fortran sources: 474 candidates were attempted and
+294 were excluded with recorded reasons. Of the candidates, 440 built and ran
+successfully with a stable, stderr-free gfortran reference.
+
+| Outcome | Cases |
+| --- | ---: |
+| rfort passes at both O0/O2 | 44 |
+| rfort compilation fails at both O0/O2 | 391 |
+| rfort output differs at both O0/O2 | 5 |
+| Reference compilation fails | 31 |
+| Reference execution fails | 2 |
+| Reference execution crashes | 1 |
+
+No rfort crashes, timeouts or optimization-dependent outcomes occurred in this
+run. The 391 compile failures comprise 309 parse errors, 55 other compile errors,
+18 explicitly unsupported features and 9 name-resolution errors. These coarse
+groups classify diagnostics rather than count independent missing features.
+
+Four output differences expose vector-subscript correctness problems:
+`xvec_sub.f90`, `xvec_sub_order.f90`,
+`xvector_subscript_expr_pending.f90`, and
+`xvector_subscript_read_pending.f90`. Reads lose elements; the overlapping swap
+`x([1,2]) = x([2,1])` produces `[20,20,30]` instead of `[20,10,30]`, and a scalar
+fill updates only the first selected element. These are the next correctness
+priorities. The fifth difference, `xkinds_supported.f90`, is the documented
+capability difference for REAL128: rfort returns -1, while gfortran provides
+kind 16. It is not evidence of an incorrect arithmetic result.
+
+The original quick selection still passes **18/18** through the revised runner.
+Run `python tests/test_ofort_compat_runner.py` for 12 local reporting/discovery
+tests, which do not require the external checkout. Full compiler/reference logs
+and individual source hashes are in `target/ofort-expanded.json`; the tracked
+snapshot keeps outcome/exclusion groups, compiler identity, a source-manifest
+hash and the five output comparisons. Discovery remains a fixture inventory,
+not a complete ofort-suite or Fortran-conformance measure.
+
+### Quick-sample history
 
 - baseline.json: 3/18 cases pass at both O0/O2; 15 compile failures.
 - after-where.json: 5/18 pass; 13 compile failures. xwhere_basic and

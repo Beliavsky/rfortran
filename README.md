@@ -116,9 +116,11 @@ reactivates elements excluded by that enclosing mask. Section destinations and
 CHARACTER destinations remain unsupported. Run `python tests/test_nested_where.py`
 for nested mask, shape, and uninitialized-element checks.
 
-A selected external ofort compatibility suite is described in
+A broader external ofort compatibility runner is described in
 [tests/ofort/README.md](tests/ofort/README.md). It compares native O0/O2 output
 with gfortran and records failures without changing the ofort checkout.
+Use `--discover --jobs 4` to inventory standalone output/pending fixtures and
+record exclusions; the default selection remains the quick 18-case sample.
 
 ## Explicit DO steps
 

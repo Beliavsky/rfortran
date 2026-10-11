@@ -1562,3 +1562,49 @@ substring and main-initialization tests also passed. The isolated release report
 `target/ofort-character-arrays.json` records 18/18 selected ofort cases passing
 at both O0 and O2, including the original overlap probe. No external fixture was
 changed. Linux/macOS remain untested.
+
+
+## Checkpoint 56: broader ofort compatibility inventory
+
+Expanded the external compatibility runner with --discover, --filter and --jobs.
+Discovery inventories .f90/.F90 fixture files with saved output or named pending
+probes and records every exclusion. Saved .out files identify candidates; the
+same source built with gfortran supplies reference values. Conservative scans
+exclude temporary files, undefined-read/initialization diagnostic probes,
+randomness/timing/process control, argument/environment input, standard-input
+READ, includes, missing companion modules and the 40 GB allocation probe.
+The external pytest suite and its build hooks are not imported or executed.
+
+Discovered references run twice in fresh directories; failed or unstable
+references are separated from rfort failures. Independent cases can run in
+parallel while report order remains deterministic. Reports include per-O0/O2
+outcomes, filename-based feature groups and diagnostic-based failure groups.
+Windows gfortran signal reports are classified as crashes even when its process
+returns a positive exit status. Token comparison checks values, not exact format
+layout. Discovery is heuristic and does not establish source validity.
+
+The Windows checkout contained 768 Fortran sources: 474 candidates and 294
+recorded exclusions. Stable gfortran references were available for 440 cases.
+Both rfort optimization levels produced identical classifications: 44 passes,
+391 compile failures and 5 output differences. Another 31 candidates failed
+reference compilation, 2 failed reference execution and 1 crashed the reference.
+There were no rfort crashes or timeouts. The SIGSEGV reference case was rerun
+independently to verify the crash classification. Full logs/source hashes are
+in target/ofort-expanded.json; tests/ofort/expanded-baseline.json records the
+compact outcome/exclusion groups and compiler/source-manifest identities.
+
+Four output differences are vector-subscript correctness bugs: xvec_sub,
+xvec_sub_order, xvector_subscript_expr_pending and
+xvector_subscript_read_pending. Reads print only one element; overlapping vector
+assignments and scalar fills update incorrect values. These should precede
+further feature expansion. The fifth difference, xkinds_supported, reflects
+unsupported REAL128 (-1 versus gfortran kind 16), not faulty arithmetic.
+Compile failures group as 309 parse errors, 55 other compile errors,
+18 explicitly unsupported features and 9 name-resolution errors.
+
+Validation: 12 local runner tests passed, including discovery exclusions,
+quoted/comment scanning, reference instability/crashes, optimization results,
+missing sources, output mismatches and snapshot inventory accounting. The
+original 18-case selection still passes at both O0/O2 with --strict. A filtered
+--discover --strict xloop smoke test passed. No compiler source or external
+ofort fixture was changed in this checkpoint. Linux/macOS remain untested.
