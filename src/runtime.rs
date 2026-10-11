@@ -275,12 +275,10 @@ pub fn interpret(program: &Program) {
                 }
             }
             Expr::Call(name, args) => {
-                if name == "@substring" {
+                if name == "@substring" || name == "@dynamic_substring" {
                     let text=eval_expr(&args[0],env_str,env_int,env_real32,env_real64,env_log,funcs,call_stack).3.unwrap();
-                    let Expr::IntLit(start)=&args[1] else {unreachable!()};
-                    let Expr::IntLit(length)=&args[2] else {unreachable!()};
-                    let start:usize=start.parse().unwrap();
-                    let length:usize=length.parse().unwrap();
+                    let start = eval_expr(&args[1],env_str,env_int,env_real32,env_real64,env_log,funcs,call_stack).0.unwrap() as usize;
+                    let length = eval_expr(&args[2],env_str,env_int,env_real32,env_real64,env_log,funcs,call_stack).0.unwrap() as usize;
                     return ValueTuple::from_str(text[start..start+length].to_string());
                 }
                 if call_stack.last().is_some_and(|frame| frame.env_real_arrays.contains_key(name) || frame.env_int_arrays.contains_key(name)) {
@@ -1044,6 +1042,13 @@ pub fn interpret(program: &Program) {
                         text.truncate(length);
                         text.extend(std::iter::repeat(' ').take(length - text.len()));
                         call_stack.last_mut().unwrap().env_str.insert(dest.clone(), text);
+                        idx += 1; continue;
+                    }
+                    if name == "@character_length" {
+                        let [Expr::Ident(dest), source] = args.as_slice() else { unreachable!() };
+                        let fr = call_stack.last().unwrap().clone();
+                        let text = eval_expr(source, &fr.env_str, &fr.env_int, &fr.env_real32, &fr.env_real64, &fr.env_log, funcs, call_stack).3.unwrap();
+                        call_stack.last_mut().unwrap().env_int.insert(dest.clone(), text.len() as i64);
                         idx += 1; continue;
                     }
                     if name == "@internal_read_byte" {

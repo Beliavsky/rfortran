@@ -432,6 +432,8 @@ TypeSpec: TypeSpec = {
     KW_REAL => TypeSpec::Real,
     KW_DOUBLE KW_PRECISION => TypeSpec::DoublePrecision,
     KW_CHARACTER => TypeSpec::Character(None),
+    KW_CHARACTER LPAREN KW_LEN EQ COLON RPAREN => crate::ast::character_length(Expr::Ident("@deferred_character".into())),
+    KW_CHARACTER LPAREN COLON RPAREN => crate::ast::character_length(Expr::Ident("@deferred_character".into())),
     KW_CHARACTER LPAREN KW_LEN EQ STAR RPAREN => TypeSpec::CharacterAssumed,
     KW_CHARACTER LPAREN STAR RPAREN => TypeSpec::CharacterAssumed,
     KW_CHARACTER LPAREN KW_LEN EQ <length:RhsExpr> RPAREN => crate::ast::character_length(length),
@@ -526,6 +528,7 @@ Primary: Expr = {
     <n: INT> => Expr::IntLit(n),
     <f: FLOAT> => Expr::RealLit(f),
     <s: STR> => Expr::Str(s),
+    <s: STR> LPAREN <range: Subscript> RPAREN => Expr::Call("@literal_substring".into(), vec![Expr::Str(s), range]),
     TRUE => Expr::Logical(true),
     FALSE => Expr::Logical(false),
     // Ident(args) can be either a function call or an array indexing expression;

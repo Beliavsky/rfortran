@@ -925,7 +925,7 @@ fn is_character_output(e: &IExpr, chars: &HashMap<String, (ir::StackSlot, usize)
         IExpr::Ident(name) => chars.contains_key(name),
         IExpr::Bin(crate::ast::BinOp::Concat, _, _) => true,
         IExpr::Call(name, _) => matches!(name.to_ascii_lowercase().as_str(),
-            "trim" | "adjustl" | "adjustr" | "achar" | "char" | "repeat"),
+            "trim" | "adjustl" | "adjustr" | "achar" | "char" | "repeat" | "@dynamic_substring" | "@substring"),
         _ => false,
     }
 }
@@ -1734,10 +1734,13 @@ fn gen_stmts(
                     if !fragment && !crate::utils::list_directed_separator(previous_character, character).is_empty() {
                         ex.call_printf(b, &[ex.fmt_s, space]);
                     }
-                    print_expr(
+                    if let Ok(source) = characters::view(module, b, ptr_ty, dc, chars, ints, e) {
+                        let text = characters::terminated(module, b, ptr_ty, source)?;
+                        ex.call_printf(b, &[ex.fmt_s, text]);
+                    } else { print_expr(
                         b, ex, ptr_ty, module, dc, ints, reals, bools, chars, real_kind, i128_last,
                         func_meta, arrays, e,
-                    )?;
+                    )?; }
                     previous_character = Some(character);
                 }
                 if !fragment { ex.call_printf(b, &[ex.fmt_s, ex.p_nl]); }
@@ -2265,7 +2268,16 @@ fn gen_stmts(
             IStmt::Call(name, args) => {
                 if name == "@character_assign" {
                     let [IExpr::Ident(dest), source, _] = args.as_slice() else { anyhow::bail!("invalid CHARACTER assignment"); };
-                    characters::assign(module, b, ptr_ty, dc, chars, dest, source)?;
+                    characters::assign(module, b, ptr_ty, dc, chars, ints, dest, source)?;
+                    continue;
+                }
+                if name == "@character_length" {
+                    let [IExpr::Ident(dest), source] = args.as_slice() else { anyhow::bail!("invalid CHARACTER length capture"); };
+                    let source = characters::view(module, b, ptr_ty, dc, chars, ints, source)?;
+                    let value = if ptr_ty == types::I64 { source.length } else { b.ins().uextend(types::I64, source.length) };
+                    let slot = ints.get(dest).ok_or_else(|| anyhow::anyhow!("missing CHARACTER length destination"))?;
+                    let address = storage_addr(b, ptr_ty, *slot);
+                    b.ins().store(MemFlags::new(), value, address, 0);
                     continue;
                 }
                 if name == "@internal_read_byte" {
@@ -2321,14 +2333,14 @@ fn gen_stmts(
                     continue;
                 }
                 if name == "@formatted_print" || name == "@formatted_write_noadvance" {
-                    let format = characters::view(module,b,ptr_ty,dc,chars,&args[0])?;
+                    let format = characters::view(module,b,ptr_ty,dc,chars,ints,&args[0])?;
                     let count = args.len()-1;
                     let size = count.checked_mul(24).and_then(|n| u32::try_from(n.max(24)).ok())
                         .ok_or_else(|| anyhow::anyhow!("formatted output list is too large"))?;
                     let slot = b.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,size,3));
                     let items = b.ins().stack_addr(ptr_ty,slot,0);
                     for (index,e) in args[1..].iter().enumerate() {
-                        let (tag,bits,length) = if let Ok(view) = characters::view(module,b,ptr_ty,dc,chars,e) {
+                        let (tag,bits,length) = if let Ok(view) = characters::view(module,b,ptr_ty,dc,chars,ints,e) {
                             let bits = if ptr_ty == types::I64 { view.address } else { b.ins().uextend(types::I64,view.address) };
                             let length = if ptr_ty == types::I64 { view.length } else { b.ins().uextend(types::I64,view.length) };
                             (4,bits,length)

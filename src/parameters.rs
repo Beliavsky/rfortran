@@ -98,6 +98,7 @@ fn kind_number(name: &str, constants: &Constants) -> Result<i64> {
     name.parse().or_else(|_| evaluate(&Expr::Ident(name.into()), constants))
 }
 fn resolve_kind(kind: &mut TypeSpec, constants: &Constants) -> Result<()> {
+    if crate::substrings::deferred(kind) { return Ok(()); }
     if matches!(kind, TypeSpec::CharacterAssumed) { bail!("assumed CHARACTER length is currently supported only for scalar PARAMETER declarations"); }
     if let TypeSpec::CharacterLength(length) = kind {
         if matches!(length.as_ref(),Expr::Call(tag,_) if tag == "@invalid_entity_length") { bail!("per-entity character length requires a CHARACTER declaration"); }
@@ -964,6 +965,7 @@ fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules, ass
                 }
             }
             Stmt::ArrayDecl { kind, dims, .. } => {
+                if crate::substrings::deferred(kind) { bail!("deferred CHARACTER arrays are not yet supported"); }
                 resolve_kind(kind, constants)?;
                 for e in dims {
                     rewrite_expr(e, constants)?;

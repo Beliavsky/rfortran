@@ -12,10 +12,11 @@ use cranelift_object::ObjectModule;
 use std::collections::HashMap;
 
 type Characters = HashMap<String, (ir::StackSlot, usize)>;
+type Integers = HashMap<String, super::Storage>;
 pub(super) struct View {
     pub(super) address: ir::Value,
     pub(super) length: ir::Value,
-    capacity: usize,
+    pub(super) capacity: usize,
 }
 
 pub(super) fn view(
@@ -24,6 +25,7 @@ pub(super) fn view(
     ptr: ir::Type,
     dc: &mut u32,
     chars: &Characters,
+    ints: &Integers,
     expr: &IExpr,
 ) -> Result<View> {
     match expr {
@@ -31,7 +33,7 @@ pub(super) fn view(
             let [source, IExpr::IntLit(start), IExpr::IntLit(length)] = args.as_slice() else {
                 bail!("invalid substring view");
             };
-            let source = view(module, b, ptr, dc, chars, source)?;
+            let source = view(module, b, ptr, dc, chars, ints, source)?;
             let start: usize = start.parse()?;
             let length: usize = length.parse()?;
             if start.checked_add(length).is_none_or(|end| end > source.capacity) {
@@ -42,6 +44,27 @@ pub(super) fn view(
                 length: b.ins().iconst(ptr, length as i64),
                 capacity: length,
             })
+        }
+        IExpr::Call(name, args) if name == "@dynamic_substring" => {
+            let [source, start, length, IExpr::IntLit(capacity)] = args.as_slice() else { bail!("invalid dynamic substring view"); };
+            let source = view(module, b, ptr, dc, chars, ints, source)?;
+            let capacity: usize = capacity.parse()?;
+            if capacity > source.capacity { bail!("dynamic substring exceeds CHARACTER storage capacity"); }
+            let mut integer = |e: &IExpr| -> Result<ir::Value> {
+                let value = match e {
+                    IExpr::IntLit(n) => b.ins().iconst(types::I64, n.parse::<i64>()?),
+                    IExpr::Ident(n) => {
+                        let slot = ints.get(n).context("missing substring bound storage")?;
+                        let address = super::storage_addr(b, ptr, *slot);
+                        b.ins().load(types::I64, MemFlags::new(), address, 0)
+                    }
+                    _ => bail!("dynamic substring bounds must be captured integers"),
+                };
+                Ok(if ptr == types::I64 { value } else { b.ins().ireduce(ptr, value) })
+            };
+            let start = integer(start)?;
+            let length = integer(length)?;
+            Ok(View { address: b.ins().iadd(source.address, start), length, capacity })
         }
         IExpr::Str(text) => Ok(View {
             address: super::make_data(module, b, ptr, dc, text.as_bytes())?,
@@ -59,8 +82,8 @@ pub(super) fn view(
             })
         }
         IExpr::Bin(crate::ast::BinOp::Concat, left, right) => {
-            let left = view(module, b, ptr, dc, chars, left)?;
-            let right = view(module, b, ptr, dc, chars, right)?;
+            let left = view(module, b, ptr, dc, chars, ints, left)?;
+            let right = view(module, b, ptr, dc, chars, ints, right)?;
             let capacity = left
                 .capacity
                 .checked_add(right.capacity)
@@ -94,7 +117,7 @@ pub(super) fn view(
             })
         }
         IExpr::Call(name, args) if name.eq_ignore_ascii_case("trim") && args.len() == 1 => {
-            let source = view(module, b, ptr, dc, chars, &args[0])?;
+            let source = view(module, b, ptr, dc, chars, ints, &args[0])?;
             let head = b.create_block();
             let inspect = b.create_block();
             let done = b.create_block();
@@ -131,10 +154,11 @@ pub(super) fn assign(
     ptr: ir::Type,
     dc: &mut u32,
     chars: &Characters,
+    ints: &Integers,
     dest: &str,
     expr: &IExpr,
 ) -> Result<()> {
-    let source = view(module, b, ptr, dc, chars, expr)?;
+    let source = view(module, b, ptr, dc, chars, ints, expr)?;
     let (slot, length) = chars
         .get(dest)
         .context("missing CHARACTER destination storage")?;
@@ -153,4 +177,15 @@ pub(super) fn assign(
     b.ins()
         .store(MemFlags::new(), zero, address, *length as i32);
     Ok(())
+}
+
+pub(super) fn terminated(module: &mut ObjectModule, b: &mut FunctionBuilder, ptr: ir::Type, source: View) -> Result<ir::Value> {
+    let size = source.capacity.checked_add(1).and_then(|n| u32::try_from(n).ok()).context("CHARACTER output is too large")?;
+    let slot = b.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot, size, 0));
+    let address = b.ins().stack_addr(ptr, slot, 0);
+    call(module, b, "memcpy", &[address, source.address, source.length], ptr)?;
+    let end = b.ins().iadd(address, source.length);
+    let zero = b.ins().iconst(types::I8, 0);
+    b.ins().store(MemFlags::new(), zero, end, 0);
+    Ok(address)
 }

@@ -156,7 +156,7 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
             Stmt::Read { args } => for arg in args {
                 if let Some((name, index)) = key(arg) { if let Some(i) = index { read(i, env, &mut before, serial)?; } write(name, index, env, &mut after, serial); }
             },
-            Stmt::CallSub { name, args } if name == "@internal_read_byte" || name == "@character_assign" => {
+            Stmt::CallSub { name, args } if name == "@internal_read_byte" || name == "@character_assign" || name == "@character_length" => {
                 for arg in &args[1..] { read(arg, env, &mut before, serial)?; }
                 let Expr::Ident(dest)=&args[0] else {unreachable!()};
                 write(dest,None,env,&mut after,serial);

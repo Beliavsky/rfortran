@@ -33,7 +33,7 @@ Implemented subsets include:
 These are bounded implementations, not claims of full language support. Many
 array operations require statically known shapes, and procedure calls use
 specialization rather than a general Fortran descriptor ABI. Important gaps
-include runtime-dependent declaration bounds and CHARACTER lengths, general
+include runtime-dependent declaration bounds and explicit CHARACTER lengths, general
 allocatable/pointer and polymorphic behavior, CHARACTER-valued functions,
 separately compiled module interfaces, and broad file I/O support. The feature
 notes below describe the supported forms and their restrictions.
@@ -192,8 +192,9 @@ zero. LEN of a fixed-length scalar variable does not require it to be initialize
 Assignments pad with spaces or truncate to the declared length, including
 variable copies, concatenation, TRIM, and overlapping source/destination storage.
 This subset uses non-NUL ASCII. Fixed rank-one CHARACTER arrays are supported
-as described below. Runtime-dependent lengths and CHARACTER-valued functions
-remain unsupported and produce diagnostics.
+as described below. Runtime-dependent explicit lengths and CHARACTER-valued
+functions remain unsupported and produce diagnostics. Bounded deferred-length
+scalar assignment is described below.
 
 ## Formatted output
 
@@ -471,15 +472,48 @@ unsupported.
 
 ## Scalar substrings
 
-Scalar CHARACTER variables support substring reads and assignments with constant
-integer bounds, including omitted endpoints and empty ranges. Overlapping
+Scalar CHARACTER variables support substring reads with constant or runtime
+scalar INTEGER bounds, including omitted endpoints and empty ranges. String
+literals also accept substring syntax, such as `'0123456789'(first:last)`.
+Runtime bounds are evaluated once and checked against the current string length
+before reading its storage. Substring assignments still require constant bounds.
+Overlapping
 assignments capture the right-hand side before updating the destination;
 shorter values are blank-padded and longer ones truncated. LEN of a substring
 uses its declared bounds without reading the parent string. Partial writes
 currently require an initialized parent string; initialization tracking is not
-yet per character. Dynamic bounds, substrings of
+yet per character. Dynamic assignment bounds, substrings of
 PARAMETER strings, READ destinations and substring actuals to subroutines remain
 unsupported. Run `python tests/test_scalar_substrings.py`.
+
+### Deferred-length scalar CHARACTER
+
+Main-program and BLOCK locals declared `character(len=:), allocatable` support
+assignment from literals, supported scalar CHARACTER expressions and substrings.
+Assignment adjusts the logical length, including shrinking to zero, while
+preserving overlapping source values. LEN, LEN_TRIM, ALLOCATED, concatenation,
+comparisons and supported output operations use the current value and length.
+For example:
+
+```fortran
+implicit none
+character(len=:), allocatable :: s
+integer :: first=3, last=7
+s = '0123456789'(first:last)
+print '(a)', s  ! 23456
+end
+```
+
+This subset reserves bounded storage inferred from the possible assignment
+sources; it does not implement general heap allocation. An unknown maximum
+length or growing self-concatenation such as `s=s//'x'` is diagnosed. Deferred
+CHARACTER arrays, procedure/module storage and host association, explicit
+allocation/deallocation, and READ into a deferred-length destination remain
+unsupported. Other intrinsic/procedure calls with runtime-length CHARACTER
+arguments are diagnosed unless implemented for this subset (such as TRIM).
+Runtime substring conditions are reevaluated on each loop iteration,
+including after CYCLE. The scalar substring tests compare interpreter and native
+O0/O2 results with gfortran when available.
 
 ## CHARACTER arrays
 

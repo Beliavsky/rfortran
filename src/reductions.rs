@@ -253,6 +253,7 @@ fn character_capacity(e: &Expr, symbols: &Symbols) -> Result<Option<usize>> {
             _ => None,
         },
         Expr::Call(n,args) if n.eq_ignore_ascii_case("trim") && args.len()==1 => character_capacity(&args[0],symbols)?,
+        Expr::Call(n,args) if n == "@dynamic_substring" && args.len() == 4 => Some(constant(&args[3])? as usize),
         _ => None,
     })
 }
@@ -881,6 +882,7 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                             Expr::Bin(BinOp::Concat, a, b) => { check(a, symbols)?; check(b, symbols) },
                             Expr::Call(n, a) if n.eq_ignore_ascii_case("trim") && a.len() == 1 => check(&a[0], symbols),
                             Expr::Call(n, a) if n == "@substring" && a.len() == 3 => check(&a[0], symbols),
+                            Expr::Call(n, a) if n == "@dynamic_substring" && a.len() == 4 => check(&a[0], symbols),
                             _ => bail!("CHARACTER assignment requires a non-NUL ASCII literal, scalar CHARACTER variable, concatenation, or TRIM"),
                         }
                     }
@@ -965,6 +967,7 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                             Expr::Ident(n) => matches!(symbols.get(n), Some((TypeSpec::Character(_), dims)) if dims.is_empty()),
                             Expr::Bin(BinOp::Concat, a, b) => character(a, symbols) && character(b, symbols),
                             Expr::Call(n, args) if n == "trim" && args.len() == 1 => character(&args[0], symbols),
+                            Expr::Call(n, args) if n == "@dynamic_substring" && args.len() == 4 => character(&args[0], symbols),
                             _ => false,
                         }
                     }

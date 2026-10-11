@@ -147,6 +147,9 @@ fn rewrite_value(
     absent: &HashSet<String>,
 ) -> Result<()> {
     match e {
+        // Literal substring bounds can be evaluated at runtime; retaining the
+        // original variables also preserves initialization and usage diagnostics.
+        Expr::Call(n, _) if n == "@literal_substring" => return rewrite(e, shapes, &HashMap::new(), absent),
         Expr::Section { .. } => return rewrite(e, shapes, constants, absent),
         Expr::Call(_, args) | Expr::Index(_, args) => {
             for e in args {
