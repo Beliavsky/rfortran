@@ -586,6 +586,19 @@ Growing array call cycles cannot supply a finite storage
 bound and are diagnosed. Run `python tests/test_recursive_allocatables.py` for
 interpreter/native O0/O2 checks and comparison with gfortran.
 
+DEALLOCATE accepts lists of whole bounded rank-one allocatable arrays and
+deferred-length scalar CHARACTER locals, including in single-line IF statements.
+It clears ALLOCATED and initialization state, permits subsequent allocation or
+CHARACTER assignment, and reports an error when an object is already unallocated.
+Local rank-one arrays explicitly deallocated in the source reserve bounded storage
+from their ALLOCATE shapes, which must be known during call-site specialization;
+different extents and zero-sized allocations are supported within that capacity.
+Supported allocatable INTENT(INOUT) dummies share allocation state with the caller;
+INTENT(IN) objects and nonlocal objects in PURE procedures cannot be deallocated.
+Multidimensional arrays, pointers, derived-type objects, and STAT/ERRMSG options
+remain outside this DEALLOCATE subset. Run `python tests/test_deallocate.py` for
+interpreter/native O0/O2 checks and comparison with gfortran.
+
 ## CHARACTER comparisons and function arguments
 
 Scalar CHARACTER comparisons support all six relational operators with blank
@@ -639,7 +652,7 @@ This subset reserves bounded storage inferred from the possible assignment
 sources; it does not implement general heap allocation. An unknown maximum
 length or growing self-concatenation such as `s=s//'x'` is diagnosed. Deferred
 CHARACTER arrays, procedure/module storage and host association, explicit
-allocation/deallocation, and READ into a deferred-length destination remain
+ALLOCATE, and READ into a deferred-length destination remain
 unsupported. Other intrinsic/procedure calls with runtime-length CHARACTER
 arguments are diagnosed unless implemented for this subset (such as TRIM).
 Runtime substring conditions are reevaluated on each loop iteration,
@@ -772,6 +785,7 @@ cargo test --bin rfort --test testsuite -- --test-threads=1
 python tests/test_driver.py
 python tests/test_record_read.py
 python tests/test_recursive_allocatables.py
+python tests/test_deallocate.py
 python tests/test_internal_read.py
 python tests/test_write.py
 python tests/test_output_implied_do.py

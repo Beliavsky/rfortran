@@ -99,6 +99,9 @@ pub fn validate(program: &Program) -> Result<()> {
                         for bound in bounds {expression(bound,&locals,known)?;}
                     }
                 }
+                Stmt::CallSub {name,args} if name=="@deallocate" => {
+                    for object in crate::allocatables::deallocation_targets(args)? {writable(&object)?;}
+                }
                 Stmt::CallSub { name, args } => {
                     let Some(Procedure { pure: true, intents: Some(intents), optional }) = known.get(name) else {
                         bail!("PURE procedure cannot call impure or unknown subroutine `{name}`");

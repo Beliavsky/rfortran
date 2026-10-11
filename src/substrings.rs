@@ -440,6 +440,19 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
     for mut statement in std::mem::take(statements) {
         let mut prefix = vec![];
         match &mut statement {
+            Stmt::CallSub {name,args} if name=="@deallocate" => {
+                for n in crate::allocatables::deallocation_targets(args)? {
+                    let length=scope.lengths.get(&n).with_context(||format!("DEALLOCATE requires a supported ALLOCATABLE variable `{n}`"))?.clone();
+                    if scope.procedure {bail!("deferred CHARACTER host association in procedures is not yet supported");}
+                    let flag=allocation_flag(&length);
+                    result.push(Stmt::If {cond:Expr::Un(crate::ast::UnOp::Not,Box::new(ident(&flag))),
+                        then_body:vec![Stmt::CallSub {name:"@error_stop".into(),args:vec![Expr::Str(format!("DEALLOCATE of unallocated CHARACTER `{n}`"))]}],else_body:None});
+                    result.push(Stmt::Assign {name:flag,value:Expr::Logical(false)});
+                    result.push(Stmt::Assign {name:length,value:int(0)});
+                    result.push(Stmt::CallSub {name:"@undefine".into(),args:vec![ident(&n)]});
+                }
+                continue;
+            }
             Stmt::VarDecl { kind, names } if deferred(kind) => {
                 for name in names {
                     result.push(Stmt::VarDecl { kind: TypeSpec::Character(Some(scope.characters[name])), names: vec![name.clone()] });

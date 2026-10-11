@@ -67,6 +67,22 @@ pub(crate) fn view(name: &str, shapes: &Shapes) -> Expr {
         .map(|n| Expr::Call("@packed_view".into(), vec![id(name), n]))
         .unwrap_or(id(name))
 }
+pub(crate) fn deallocation_targets(args: &[Expr]) -> Result<Vec<String>> {
+    if args.is_empty() {
+        bail!("DEALLOCATE requires at least one ALLOCATABLE object");
+    }
+    args.iter()
+        .map(|e| match e {
+            Expr::Ident(n) => Ok(n.clone()),
+            Expr::Call(n, _) if n.starts_with("@keyword:") => {
+                bail!("DEALLOCATE STAT/ERRMSG options are not yet supported")
+            }
+            _ => bail!(
+                "DEALLOCATE requires whole ALLOCATABLE variables, not elements or expressions"
+            ),
+        })
+        .collect()
+}
 fn capacity(e: &Expr, arrays: &HashMap<String, i64>) -> Option<i64> {
     match e {
         Expr::Ident(n) => arrays.get(n).copied(),
@@ -405,10 +421,14 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
         for s in body.iter() {
             match s {
                 Stmt::ArrayDecl { kind, name, dims } => {
+                    shapes.remove(&format!("@extent:{name}"));
+                    shapes.remove(&format!("@allocated:{name}"));
                     shapes.insert(name.clone(), (kind.clone(), dims.clone()));
                 }
                 Stmt::VarDecl { kind, names } => {
                     for n in names {
+                        shapes.remove(&format!("@extent:{n}"));
+                        shapes.remove(&format!("@allocated:{n}"));
                         shapes.insert(n.clone(), (kind.clone(), vec![]));
                     }
                 }
@@ -420,6 +440,21 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
         for mut s in std::mem::take(body) {
             let mut guards = vec![];
             match &mut s {
+                Stmt::CallSub { name, args } if name=="@deallocate" => {
+                    for n in deallocation_targets(args)? {
+                        if let Some(flag)=allocated(&n,&shapes) {
+                            out.push(fail(Expr::Un(UnOp::Not,Box::new(flag.clone())),&format!("DEALLOCATE of unallocated array `{n}`")));
+                            let Expr::Ident(flag)=flag else {bail!("DEALLOCATE requires writable allocation state");};
+                            out.push(assign(&flag,Expr::Logical(false)));
+                            if let Some(Expr::Ident(len))=length(&n,&shapes) {out.push(assign(&len,int(0)));}
+                            out.push(Stmt::CallSub {name:"@undefine".into(),args:vec![id(&n)]});
+                        } else {
+                            // Deferred-length scalar CHARACTER is lowered next.
+                            out.push(Stmt::CallSub {name:"@deallocate".into(),args:vec![id(&n)]});
+                        }
+                    }
+                    continue;
+                }
                 Stmt::CallSub { name, args } if name == "@allocate" => {
                     let mut handled = true;
                     for arg in args.iter() {
@@ -602,8 +637,15 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                         *cond = Expr::Logical(true);
                     }
                 }
-                Stmt::Block { body }
-                | Stmt::Module { body, .. }
+                Stmt::Block { body } => {
+                    lower(body, &shapes, serial)?;
+                    // Give bounded BLOCK storage distinct names before the
+                    // interpreter and native lowering flatten local storage.
+                    if body.iter().any(|s|matches!(s,Stmt::DummyIntent {intent,..} if intent.starts_with("@bounded:"))) {
+                        crate::subroutines::rename_allocation_block(body, serial)?;
+                    }
+                }
+                Stmt::Module { body, .. }
                 | Stmt::Subroutine { body, .. }
                 | Stmt::Function { body, .. } => lower(body, &shapes, serial)?,
                 Stmt::SelectCase {

@@ -22,6 +22,7 @@ extern {
         RBRACKET => TokenKind::RBracket,
         KW_ERROR => TokenKind::KwError,
         KW_ALLOCATE => TokenKind::KwAllocate,
+        KW_DEALLOCATE => TokenKind::KwDeallocate,
         KW_PROGRAM => TokenKind::KwProgram,
         KW_END => TokenKind::KwEnd,
         KW_FUNCTION => TokenKind::KwFunction,
@@ -314,6 +315,7 @@ Stmt: Stmt = {
     KW_INTERFACE KW_OPERATOR LPAREN <operator:Operator> RPAREN <procedures:OperatorProcedures> KW_END KW_INTERFACE <end_operator:EndOperator?> => Stmt::OperatorInterface { operator, procedures, end_operator },
     KW_ERROR KW_STOP <arg: RhsExpr> => Stmt::CallSub { name: "@error_stop".into(), args: vec![arg] },
     KW_ALLOCATE LPAREN <args: CallArgList> RPAREN => Stmt::CallSub { name: "@allocate".into(), args },
+    KW_DEALLOCATE LPAREN <args: CallArgList> RPAREN => Stmt::CallSub { name: "@deallocate".into(), args },
     KW_WRITE LPAREN <unit:WriteUnit> COMMA <fmt:WriteFormat> <options:(COMMA <WriteOption>)*> RPAREN <items:ExprList> => {
         let mut args=vec![unit,fmt];args.extend(options);args.extend(items);Stmt::CallSub{name:"@write".into(),args}
     },

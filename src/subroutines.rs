@@ -24,7 +24,24 @@ fn expr(e: &mut Expr, names: &Names) {
         _ => {}
     }
 }
-pub(crate) fn rename(body: &mut Vec<Stmt>, inherited: &Names, params: &[String], serial: &mut usize) -> Result<()> {
+pub(crate) fn rename(
+    body: &mut Vec<Stmt>,
+    inherited: &Names,
+    params: &[String],
+    serial: &mut usize,
+) -> Result<()> {
+    rename_with_prefix(body, inherited, params, serial, "@sub_local")
+}
+pub(crate) fn rename_allocation_block(body: &mut Vec<Stmt>, serial: &mut usize) -> Result<()> {
+    rename_with_prefix(body, &Names::new(), &[], serial, "@alloc_block")
+}
+fn rename_with_prefix(
+    body: &mut Vec<Stmt>,
+    inherited: &Names,
+    params: &[String],
+    serial: &mut usize,
+    prefix: &str,
+) -> Result<()> {
     let mut names = inherited.clone();
     for s in body.iter() {
         let declared = match s {
@@ -33,40 +50,109 @@ pub(crate) fn rename(body: &mut Vec<Stmt>, inherited: &Names, params: &[String],
             _ => vec![],
         };
         for n in declared {
-            if !params.contains(&n) { *serial += 1; names.insert(n, format!("@sub_local_{serial}")); }
+            if !params.contains(&n) {
+                *serial += 1;
+                names.insert(n, format!("{prefix}_{serial}"));
+            }
         }
     }
     for s in body.iter_mut() {
         match s {
-            Stmt::VarDecl { names: declared, .. } => {
+            Stmt::DummyIntent { name: n, intent } if intent.starts_with("@bounded:") => {
+                let rest = intent.trim_start_matches("@bounded:");
+                if let Some((length, flag)) = rest.split_once(':') {
+                    let mut length = length.to_owned();
+                    let mut flag = flag.to_owned();
+                    name(&mut length, &names);
+                    name(&mut flag, &names);
+                    name(n, &names);
+                    *intent = format!("@bounded:{length}:{flag}");
+                }
+            }
+            Stmt::DummyIntent { name: n, .. } if prefix == "@alloc_block" => name(n, &names),
+            Stmt::VarDecl {
+                names: declared, ..
+            } => {
                 declared.retain(|n| !params.contains(n));
-                for n in declared { name(n, &names); }
+                for n in declared {
+                    name(n, &names);
+                }
             }
-            Stmt::ArrayDecl { name: n, dims, .. } => { if !params.contains(n) { name(n, &names); for e in dims { expr(e, &names); } } }
-            Stmt::Assign { name: n, value } => { name(n, &names); expr(value, &names); }
-            Stmt::AssignIndex { name: n, indices, value } => {
-                name(n, &names); for e in indices { expr(e, &names); } expr(value, &names);
+            Stmt::ArrayDecl { name: n, dims, .. } => {
+                if !params.contains(n) {
+                    name(n, &names);
+                    for e in dims {
+                        expr(e, &names);
+                    }
+                }
             }
-            Stmt::Print { items } | Stmt::Read { args: items } | Stmt::CallSub { args: items, .. } => for e in items { expr(e, &names); },
-            Stmt::If { cond, then_body, else_body } => {
-                expr(cond, &names); rename(then_body, &names, params, serial)?;
-                if let Some(body) = else_body { rename(body, &names, params, serial)?; }
+            Stmt::Assign { name: n, value } => {
+                name(n, &names);
+                expr(value, &names);
             }
-            Stmt::Do { var, start, end, body } => {
-                name(var, &names); expr(start, &names); expr(end, &names); rename(body, &names, params, serial)?;
+            Stmt::AssignIndex {
+                name: n,
+                indices,
+                value,
+            } => {
+                name(n, &names);
+                for e in indices {
+                    expr(e, &names);
+                }
+                expr(value, &names);
             }
-            Stmt::DoWhile { cond, body } => { expr(cond, &names); rename(body, &names, params, serial)?; }
-            Stmt::Block { body } => rename(body, &names, &[], serial)?,
-            Stmt::SelectCase { expr: e, cases, default } => {
+            Stmt::Print { items }
+            | Stmt::Read { args: items }
+            | Stmt::CallSub { args: items, .. } => {
+                for e in items {
+                    expr(e, &names);
+                }
+            }
+            Stmt::If {
+                cond,
+                then_body,
+                else_body,
+            } => {
+                expr(cond, &names);
+                rename_with_prefix(then_body, &names, params, serial, prefix)?;
+                if let Some(body) = else_body {
+                    rename_with_prefix(body, &names, params, serial, prefix)?;
+                }
+            }
+            Stmt::Do {
+                var,
+                start,
+                end,
+                body,
+            } => {
+                name(var, &names);
+                expr(start, &names);
+                expr(end, &names);
+                rename_with_prefix(body, &names, params, serial, prefix)?;
+            }
+            Stmt::DoWhile { cond, body } => {
+                expr(cond, &names);
+                rename_with_prefix(body, &names, params, serial, prefix)?;
+            }
+            Stmt::Block { body } => rename_with_prefix(body, &names, &[], serial, prefix)?,
+            Stmt::SelectCase {
+                expr: e,
+                cases,
+                default,
+            } => {
                 expr(e, &names);
-                for case in cases { rename(&mut case.body, &names, params, serial)?; }
-                if let Some(body) = default { rename(body, &names, params, serial)?; }
+                for case in cases {
+                    rename_with_prefix(&mut case.body, &names, params, serial, prefix)?;
+                }
+                if let Some(body) = default {
+                    rename_with_prefix(body, &names, params, serial, prefix)?;
+                }
             }
             Stmt::Return(Some(value)) => expr(value, &names),
             _ => {}
         }
     }
-    body.retain(|s| !matches!(s, Stmt::ArrayDecl { name, .. } if params.contains(name)) && !matches!(s, Stmt::DummyIntent { .. }) && !matches!(s, Stmt::VarDecl { names, .. } if names.is_empty()));
+    body.retain(|s| !matches!(s, Stmt::ArrayDecl { name, .. } if params.contains(name)) && !matches!(s, Stmt::DummyIntent { intent,.. } if prefix!="@alloc_block" && !intent.starts_with("@bounded:")) && !matches!(s, Stmt::VarDecl { names, .. } if names.is_empty()));
     Ok(())
 }
 /// Preserve procedure RETURN when its body is expanded into the caller.

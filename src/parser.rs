@@ -183,6 +183,7 @@ fn human_token(tok: &TokenKind) -> String {
         TokenKind::RBracket => "']'".into(),
         TokenKind::KwError => "keyword error".into(),
         TokenKind::KwAllocate => "keyword allocate".into(),
+        TokenKind::KwDeallocate => "keyword deallocate".into(),
         TokenKind::KwProgram => "keyword program".into(),
         TokenKind::KwEnd => "keyword end".into(),
         TokenKind::KwImplicit => "keyword implicit".into(),

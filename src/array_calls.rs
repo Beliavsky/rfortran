@@ -280,6 +280,282 @@ fn rewrite_value(
     rewrite(e, shapes, &HashMap::new(), absent)
 }
 
+// Local arrays that are explicitly deallocated need runtime allocation state.
+// Infer bounded backing storage from ALLOCATE shapes known at this call site.
+fn prepare_deallocated_locals(
+    body: &mut Vec<Stmt>,
+    shapes: &mut Shapes,
+    constants: &HashMap<String, Expr>,
+    absent: &HashSet<String>,
+    stable: &HashSet<String>,
+) -> Result<()> {
+    let candidates: HashSet<_>=body.iter().filter_map(|s|match s {
+        Stmt::ArrayDecl {name,dims,..} if dims.len()==1 && matches!(&dims[0],Expr::Ident(n) if n=="@deferred_extent")
+            && crate::allocatables::allocated(name,shapes).is_none()
+            && body.iter().any(|s|matches!(s,Stmt::DummyIntent {name:n,intent} if n==name && intent=="allocatable"))=>Some(name.clone()),
+        _=>None,
+    }).collect();
+    fn targets(body: &[Stmt], candidates: &HashSet<String>, found: &mut HashSet<String>) {
+        for s in body {
+            match s {
+                Stmt::CallSub { name, args } if name == "@deallocate" => {
+                    for e in args {
+                        if let Expr::Ident(n) = e {
+                            if candidates.contains(n) {
+                                found.insert(n.clone());
+                            }
+                        }
+                    }
+                }
+                Stmt::If {
+                    then_body,
+                    else_body,
+                    ..
+                } => {
+                    targets(then_body, candidates, found);
+                    if let Some(b) = else_body {
+                        targets(b, candidates, found);
+                    }
+                }
+                Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } => {
+                    targets(body, candidates, found)
+                }
+                Stmt::Block { body } => {
+                    let mut visible = candidates.clone();
+                    for s in body {
+                        match s {
+                            Stmt::ArrayDecl { name, .. } => {
+                                visible.remove(name);
+                            }
+                            Stmt::VarDecl { names, .. } => {
+                                for n in names {
+                                    visible.remove(n);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    targets(body, &visible, found);
+                }
+                Stmt::SelectCase { cases, default, .. } => {
+                    for c in cases {
+                        targets(&c.body, candidates, found);
+                    }
+                    if let Some(b) = default {
+                        targets(b, candidates, found);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut wanted = HashSet::new();
+    targets(body, &candidates, &mut wanted);
+    if wanted.is_empty() {
+        return Ok(());
+    }
+    let mut local = shapes.clone();
+    for s in body.iter() {
+        match s {
+            Stmt::ArrayDecl { name, kind, dims } => {
+                local
+                    .entry(name.clone())
+                    .or_insert((kind.clone(), dims.clone()));
+            }
+            Stmt::VarDecl { kind, names } => {
+                for n in names {
+                    local.entry(n.clone()).or_insert((kind.clone(), vec![]));
+                }
+            }
+            _ => {}
+        }
+    }
+    fn infer(
+        body: &[Stmt],
+        wanted: &HashSet<String>,
+        shapes: &mut Shapes,
+        constants: &mut HashMap<String, Expr>,
+        absent: &HashSet<String>,
+        stable: &HashSet<String>,
+        bounds: &mut HashMap<String, i64>,
+    ) -> Result<()> {
+        for s in body {
+            match s {
+                Stmt::Assign { name, value } if stable.contains(name) => {
+                    let mut value = value.clone();
+                    rewrite(&mut value, shapes, constants, absent)?;
+                    if crate::parameters::integer_constant(&value).is_ok() {
+                        constants.insert(name.clone(), value);
+                    }
+                }
+                Stmt::CallSub { name, args } if name == "@allocate" => {
+                    for a in args {
+                        if let Expr::Call(n, dims) = a {
+                            if wanted.contains(n) {
+                                let [dim] = dims.as_slice() else {
+                                    bail!("ALLOCATE rank mismatch for `{n}`");
+                                };
+                                let mut dim = dim.clone();
+                                rewrite(&mut dim, shapes, constants, absent)?;
+                                let size=crate::parameters::integer_constant(&dim).context("ALLOCATE currently requires a shape known at the call site")?.max(0);
+                                bounds
+                                    .entry(n.clone())
+                                    .and_modify(|v| *v = (*v).max(size))
+                                    .or_insert(size);
+                                if let Some((_, d)) = shapes.get_mut(n) {
+                                    *d = vec![Expr::IntLit(size.to_string())];
+                                }
+                            }
+                        }
+                    }
+                }
+                Stmt::If {
+                    then_body,
+                    else_body,
+                    ..
+                } => {
+                    infer(
+                        then_body,
+                        wanted,
+                        &mut shapes.clone(),
+                        &mut constants.clone(),
+                        absent,
+                        stable,
+                        bounds,
+                    )?;
+                    if let Some(b) = else_body {
+                        infer(
+                            b,
+                            wanted,
+                            &mut shapes.clone(),
+                            &mut constants.clone(),
+                            absent,
+                            stable,
+                            bounds,
+                        )?;
+                    }
+                }
+                Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } => infer(
+                    body,
+                    wanted,
+                    &mut shapes.clone(),
+                    &mut constants.clone(),
+                    absent,
+                    stable,
+                    bounds,
+                )?,
+                Stmt::Block { body } => {
+                    let mut visible = wanted.clone();
+                    for s in body {
+                        match s {
+                            Stmt::ArrayDecl { name, .. } => {
+                                visible.remove(name);
+                            }
+                            Stmt::VarDecl { names, .. } => {
+                                for n in names {
+                                    visible.remove(n);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    infer(
+                        body,
+                        &visible,
+                        &mut shapes.clone(),
+                        &mut constants.clone(),
+                        absent,
+                        stable,
+                        bounds,
+                    )?;
+                }
+                Stmt::SelectCase { cases, default, .. } => {
+                    for c in cases {
+                        infer(
+                            &c.body,
+                            wanted,
+                            &mut shapes.clone(),
+                            &mut constants.clone(),
+                            absent,
+                            stable,
+                            bounds,
+                        )?;
+                    }
+                    if let Some(b) = default {
+                        infer(
+                            b,
+                            wanted,
+                            &mut shapes.clone(),
+                            &mut constants.clone(),
+                            absent,
+                            stable,
+                            bounds,
+                        )?;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+    let mut bounds = HashMap::new();
+    infer(
+        body,
+        &wanted,
+        &mut local,
+        &mut constants.clone(),
+        absent,
+        stable,
+        &mut bounds,
+    )?;
+    let mut declarations = vec![];
+    for s in body.iter_mut() {
+        if let Stmt::ArrayDecl { name, dims, kind } = s {
+            if wanted.contains(name) {
+                *dims = vec![Expr::IntLit(
+                    bounds.get(name).copied().unwrap_or(0).to_string(),
+                )];
+                shapes.insert(name.clone(), (kind.clone(), dims.clone()));
+                let mut suffix = 0;
+                let (length, flag) = loop {
+                    let length = format!("@dealloc_length_{name}_{suffix}");
+                    let flag = format!("@dealloc_flag_{name}_{suffix}");
+                    if !shapes.contains_key(&length) && !shapes.contains_key(&flag) {
+                        break (length, flag);
+                    }
+                    suffix += 1;
+                };
+                declarations.extend([
+                    Stmt::VarDecl {
+                        kind: TypeSpec::Integer(None),
+                        names: vec![length.clone()],
+                    },
+                    Stmt::VarDecl {
+                        kind: TypeSpec::Logical,
+                        names: vec![flag.clone()],
+                    },
+                    Stmt::Assign {
+                        name: length.clone(),
+                        value: Expr::IntLit("0".into()),
+                    },
+                    Stmt::Assign {
+                        name: flag.clone(),
+                        value: Expr::Logical(false),
+                    },
+                    Stmt::DummyIntent {
+                        name: name.clone(),
+                        intent: format!("@bounded:{length}:{flag}"),
+                    },
+                ]);
+            }
+        }
+    }
+    body.retain(|s|!matches!(s,Stmt::DummyIntent {name,intent} if wanted.contains(name) && intent=="allocatable"));
+    declarations.append(body);
+    *body = declarations;
+    crate::allocatables::metadata(body, shapes);
+    Ok(())
+}
 fn specialize(
     body: &mut Vec<Stmt>,
     shapes: &mut Shapes,
@@ -287,6 +563,7 @@ fn specialize(
     constants: &mut HashMap<String, Expr>,
     stable: &HashSet<String>,
 ) -> Result<()> {
+    prepare_deallocated_locals(body, shapes, constants, absent, stable)?;
     if let Some(Stmt::CallSub { name, args }) = body.first() {
         if name == "@forall" || name == "@do_step" {
             for control in args.chunks_exact(4) {
@@ -337,14 +614,15 @@ fn specialize(
                 }
             }
             Stmt::CallSub { name, args } if name == "@allocate" => {
-                if args.iter().all(|a|matches!(a,Expr::Call(n,_) if crate::allocatables::allocated(n,shapes).is_some())) {
-                    for a in args {if let Expr::Call(_,dims)=a {for d in dims {rewrite_value(d,shapes,constants,absent)?;}}}
-                    output.push(s);continue;
-                }
                 for a in args {
                     let Expr::Call(n, dims) = a else {
                         bail!("ALLOCATE expects array bounds");
                     };
+                    if crate::allocatables::allocated(n,shapes).is_some() {
+                        for d in dims {rewrite_value(d,shapes,constants,absent)?;}
+                        output.push(Stmt::CallSub {name:"@allocate".into(),args:vec![a.clone()]});
+                        continue;
+                    }
                     if !allocatable.contains(n) {
                         bail!("ALLOCATE requires ALLOCATABLE array `{n}`");
                     }
@@ -389,6 +667,10 @@ fn specialize(
                     });
                 }
                 continue;
+            }
+            Stmt::CallSub {name,args} if name=="@deallocate"=>{
+                crate::allocatables::deallocation_targets(args)?;
+                output.push(s);continue;
             }
             Stmt::Assign { name, value } => {
                 if absent.contains(name) { bail!("assignment to absent OPTIONAL dummy `{name}`"); }
@@ -470,13 +752,26 @@ fn specialize(
                     stable,
                 )?;
             }
-            Stmt::Block { body } => specialize(
-                body,
-                &mut shapes.clone(),
-                absent,
-                &mut constants.clone(),
-                stable,
-            )?,
+            Stmt::Block { body } => {
+                let mut local = shapes.clone();
+                let mut values = constants.clone();
+                // A BLOCK declaration shadows both the outer storage and its
+                // allocation metadata, even when the source name is identical.
+                for declaration in body.iter() {
+                    let names = match declaration {
+                        Stmt::ArrayDecl { name, .. } => vec![name.clone()],
+                        Stmt::VarDecl { names, .. } => names.clone(),
+                        _ => vec![],
+                    };
+                    for name in names {
+                        local.remove(&name);
+                        local.remove(&format!("@allocated:{name}"));
+                        local.remove(&format!("@extent:{name}"));
+                        values.remove(&name);
+                    }
+                }
+                specialize(body, &mut local, absent, &mut values, stable)?;
+            }
             _ => {}
         }
         output.push(s);
@@ -536,7 +831,7 @@ fn check_allocated(s: &Stmt, pending: &HashSet<String>) -> Result<()> {
             }
             expr(value, pending)?;
         }
-        Stmt::CallSub { name: n, .. } if n == "@allocate" => {}
+        Stmt::CallSub { name: n, .. } if n == "@allocate" || n=="@deallocate" => {}
         Stmt::CallSub { args, .. } | Stmt::Read { args } | Stmt::Print { items: args } => {
             for e in args {
                 expr(e, pending)?;
@@ -640,6 +935,18 @@ fn stable(body: &[Stmt]) -> HashSet<String> {
     }
     let mut counts = HashMap::new();
     scan(body, &mut counts, false);
+    // ALLOCATE/DEALLOCATE update these values in a later lowering pass.
+    // Their declaration-time initializers do not make them constants.
+    for statement in body {
+        if let Stmt::DummyIntent {intent,..}=statement {
+            if let Some(rest)=intent.strip_prefix("@bounded:") {
+                if let Some((length,flag))=rest.split_once(':') {
+                    counts.remove(length);
+                    counts.remove(flag);
+                }
+            }
+        }
+    }
     counts
         .into_iter()
         .filter_map(|(n, c)| (c == 1).then_some(n))
@@ -656,6 +963,7 @@ fn validate_input_writes(body: &[Stmt], inputs: &HashSet<String>) -> Result<()> 
                 bail!("cannot modify INTENT(IN) dummy `{name}`")
             }
             Stmt::CallSub {name,args} if name=="@allocate" && args.iter().any(|e|matches!(e,Expr::Call(n,_) if inputs.contains(n))) => bail!("cannot allocate an INTENT(IN) dummy"),
+            Stmt::CallSub {name,args} if name=="@deallocate" && args.iter().any(|e|matches!(e,Expr::Ident(n) if inputs.contains(n))) => bail!("cannot deallocate an INTENT(IN) dummy"),
             Stmt::If {
                 then_body,
                 else_body,
