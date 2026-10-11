@@ -198,3 +198,11 @@ storage and substring assignment support.
 fixed-bound scalar substring reads and overlapping assignments, including both
 copy directions from the original overlap probe. The complete external case
 still needs CHARACTER array storage and array substring assignments.
+
+`116_character_arrays.f90` and `python tests/test_character_arrays.py` cover
+fixed rank-one CHARACTER arrays, overlapping sections and array substring
+assignments, scalar fills, comparisons, empty arrays and initialization checks.
+The original `xcharacter_overlap_assignment_pending.f90` now passes at O0/O2
+against gfortran. The rebuilt release report `target/ofort-character-arrays.json`
+records **18/18 selected cases passing**, with no remaining failures in this
+sample. This is the selected compatibility sample, not the entire ofort suite.

@@ -31,6 +31,7 @@ the author recorded in this repository's Git history.
 - `src/operators.rs`
 - `src/optional.rs`
 - `src/substrings.rs`
+- `src/character_arrays.rs`
 - `src/output.rs`
 - `src/parameters.rs`
 - `src/purity.rs`

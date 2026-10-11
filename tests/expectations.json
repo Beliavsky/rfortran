@@ -804,6 +804,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " .TRUE.\n .TRUE.\n [abX  fgh] .TRUE.\n .TRUE.\n .TRUE. .TRUE.\n [123][ab][fgh]\n .TRUE.\n"
+    },
+    "116_character_arrays": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " .TRUE.\n .TRUE.\n .TRUE.\n .TRUE.\n .TRUE.\n .TRUE. .TRUE.\n .TRUE. .FALSE. 3 2\n .TRUE.\n .TRUE. .FALSE. 0 2\n a b c \n"
     }
   }
 }

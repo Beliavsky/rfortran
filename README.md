@@ -139,8 +139,9 @@ constant MIN/MAX and ABS calls.
 zero. LEN of a fixed-length scalar variable does not require it to be initialized.
 Assignments pad with spaces or truncate to the declared length, including
 variable copies, concatenation, TRIM, and overlapping source/destination storage.
-This subset uses non-NUL ASCII. Runtime-dependent lengths, CHARACTER arrays,
-and CHARACTER-valued functions remain unsupported and produce diagnostics.
+This subset uses non-NUL ASCII. Fixed rank-one CHARACTER arrays are supported
+as described below. Runtime-dependent lengths and CHARACTER-valued functions
+remain unsupported and produce diagnostics.
 
 ## Formatted output
 
@@ -364,7 +365,7 @@ CHARACTER declarations using `::` accept per-entity lengths, for example
 without changing its neighbors. Scalar PARAMETER entities also accept `*(*)`.
 Fixed-length local and host CHARACTER variables may supply `LEN(variable)` in
 later CHARACTER length declarations, without reading their values. Runtime
-lengths and CHARACTER array storage remain unsupported. Run
+lengths remain unsupported. Run
 `python tests/test_entity_character_lengths.py` for interpreter/native O0/O2
 and gfortran checks.
 
@@ -449,7 +450,7 @@ implied-DOs), scalar array fills, LOGICAL literals and fixed-length CHARACTER
 scalars are supported. Values remain mutable; initialization runs once before
 normal use, including declarations with an explicit SAVE attribute. INTEGER
 initializers currently require integer constant expressions. LOGICAL expressions
-beyond literals, CHARACTER arrays and additional constant array transformations
+beyond literals and additional constant array transformations
 remain outside this subset. Initialized locals in procedures, modules and BLOCK
 scopes are rejected until persistent storage is implemented. Run
 `python tests/test_main_initialization.py`.
@@ -474,8 +475,7 @@ Scalar CHARACTER comparisons support all six relational operators with blank
 padding of the shorter operand. Fixed-length variables, ASCII literals,
 concatenations, TRIM and zero-length strings are supported. Comparison captures
 in DO WHILE conditions are reevaluated on every iteration, including after CYCLE.
-Run `python tests/test_character_comparisons.py`. CHARACTER arrays remain
-unsupported.
+Run `python tests/test_character_comparisons.py`.
 
 Local functions can receive fixed-length, read-only scalar CHARACTER arguments.
 Actuals may be variables, literals or fixed-length concatenations; they must be
@@ -490,6 +490,22 @@ assignments capture the right-hand side before updating the destination;
 shorter values are blank-padded and longer ones truncated. LEN of a substring
 uses its declared bounds without reading the parent string. Partial writes
 currently require an initialized parent string; initialization tracking is not
-yet per character. Dynamic bounds, CHARACTER array substrings, substrings of
+yet per character. Dynamic bounds, substrings of
 PARAMETER strings, READ destinations and substring actuals to subroutines remain
 unsupported. Run `python tests/test_scalar_substrings.py`.
+
+Fixed-size rank-one CHARACTER arrays support up to 1024 elements in local
+storage. Supported operations include literal constructors, main-program
+declaration initialization, scalar fills, whole-array copies, constant element
+indices and sections (including strides), and elementwise substring assignment.
+All source values are captured before overlapping destinations are written.
+Array comparisons support scalar broadcasting and ALL/ANY without DIM;
+list-directed PRINT, whole-array SIZE and LEN are supported. Initialization is
+tracked per element, with diagnostics naming the original array and its storage
+element number. Partial substring writes still require initialized elements.
+
+Dynamic indexing, higher ranks, module/dummy CHARACTER array storage, CHARACTER
+array PARAMETERs and the other array transformational intrinsics remain outside
+this subset. Array constructors currently require equal-length CHARACTER
+literals (including substituted constants). Run
+`python tests/test_character_arrays.py`.

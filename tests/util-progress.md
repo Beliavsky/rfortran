@@ -1374,7 +1374,6 @@ both original numeric probes now pass at O0/O2 and all reference runs succeed.
 Remaining probes are xarray_init, xoptional and the CHARACTER overlap case.
 Linux/macOS remain untested.
 
-
 ## Checkpoint 51: main-program declaration initialization
 
 Constant declaration initializers in the main program now produce ordinary
@@ -1527,3 +1526,39 @@ and their output agrees with gfortran. The isolated release report
 `target/ofort-scalar-substrings.json` remains at 17/18 passes at O0/O2. The full
 overlap probe still requires CHARACTER arrays and array substring assignments.
 Linux/macOS remain untested.
+
+## Checkpoint 55: fixed rank-one CHARACTER arrays
+
+Added the MIT-licensed character_arrays.rs pass after local procedure
+specialization and before scalar substring/array lowering. Local fixed-size
+rank-one arrays (up to 1024 elements) use separate scalar CHARACTER storage.
+Whole-array assignments and constant section assignments first capture all
+source values, then write destinations. Scalar fills capture the source once.
+Literal constructors, constant element references, scalar broadcasting,
+elementwise comparisons, ALL/ANY without DIM, whole-array SIZE/LEN and PRINT
+are supported. Main-program declaration initialization uses the existing
+constant-initializer path. Empty arrays preserve ALL/ANY identities.
+
+The parser accepts chained array/substring designators on both sides of an
+assignment. Array substring assignments capture all element sources before
+performing scalar substring updates, preserving overlap across elements and
+characters. Generated CHARACTER temporaries are hoisted out of conditional
+and loop bodies while their captures remain in place. Initialization flags
+track each scalar element; diagnostics translate generated names back to the
+original array and one-based storage element number.
+
+Dynamic subscripts, higher ranks, module/dummy storage, CHARACTER array
+PARAMETERs, nonliteral constructors and other array transforms remain outside
+this subset. Partial substring writes require initialized elements. Regression
+coverage includes reverse/strided sections, explicit lower bounds, omitted
+negative-stride endpoints, nested branches, aliased scalar fills, empty arrays,
+length/shape errors and compile-time/runtime unset-element diagnostics.
+
+Validation on Windows: 75 Rust unit tests, all 116 native fixtures, 46 batch
+driver tests and four focused CHARACTER array tests passed. The focused tests
+passed with debug and rebuilt release compilers in interpreter/native O0/O2
+modes, with valid output compared to gfortran. Eleven related scalar CHARACTER,
+substring and main-initialization tests also passed. The isolated release report
+`target/ofort-character-arrays.json` records 18/18 selected ofort cases passing
+at both O0 and O2, including the original overlap probe. No external fixture was
+changed. Linux/macOS remain untested.
