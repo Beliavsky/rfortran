@@ -467,7 +467,7 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
                 .any(|a| a.eq_ignore_ascii_case("parameter"))
             {
                 if !main_scope { bail!("declaration initialization without PARAMETER is currently supported only in the main program; persistent SAVE storage in other scopes is not yet implemented"); }
-                if attributes.iter().any(|a| !a.eq_ignore_ascii_case("save")) {
+                if attributes.iter().any(|a| !a.eq_ignore_ascii_case("save") && !a.eq_ignore_ascii_case("target")) {
                     bail!("unsupported attribute on initialized main-program variable");
                 }
                 resolve_kind(kind,&constants)?;

@@ -16,6 +16,7 @@ mod lexer;
 mod linker;
 mod parser;
 mod statement_labels;
+mod pointers;
 mod parameters;
 mod sections;
 mod reductions;

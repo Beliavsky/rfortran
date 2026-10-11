@@ -5,6 +5,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn nullify_is_a_contextual_statement() {
+        let tokens=lex("integer::nullify\nnullify=3\nnullify(p)\nif (.true.) nullify(p,q)\ncall nullify(x)\nx=nullify(3)");
+        assert_eq!(tokens.iter().filter(|t|matches!(t.kind,TokenKind::KwNullify)).count(),2);
+        assert_eq!(tokens.iter().filter(|t|matches!(&t.kind,TokenKind::Ident(n) if n=="nullify")).count(),4);
+    }
+
+    #[test]
     fn unit_ends_respect_logical_statement_boundaries() {
         let tokens = lex("end subroutine\nx=1\nend function; y=2\nend module ! comment\nz=3\nend & ! continued\n & function &\n & f\nend program main\nend; end if\nend do");
         let names: Vec<_> = tokens.iter().filter_map(|t| match &t.kind {
@@ -218,6 +225,7 @@ pub enum TokenKind {
     KwError,
     KwAllocate,
     KwDeallocate,
+    KwNullify,
     KwDimension,
     FileControl(String),
     FilePosition(String),
@@ -617,7 +625,7 @@ pub fn lex(input: &str) -> Vec<Token> {
         // File-control words are contextual, including after a single-line IF.
         if let TokenKind::Ident(word) = &tokens[start].kind {
             let word = word.to_ascii_lowercase();
-            if matches!(word.as_str(), "open" | "close" | "backspace" | "rewind" | "inquire") {
+            if matches!(word.as_str(), "open" | "close" | "backspace" | "rewind" | "inquire" | "nullify") {
                 let mut begin = start;
                 while begin > 0 && same_statement(&input[tokens[begin-1].span.end..tokens[begin].span.start]) { begin -= 1; }
                 if matches!(tokens[begin].kind, TokenKind::StatementLabel(_)) { begin += 1; }
@@ -631,7 +639,7 @@ pub fn lex(input: &str) -> Vec<Token> {
                             match tokens[end].kind {TokenKind::LParen=>depth+=1,TokenKind::RParen=>depth-=1,_=>{}}
                             if depth == 0 {
                                 let following=tokens.get(end+1).filter(|t|same_statement(&input[tokens[end].span.end..t.span.start]));
-                                if !matches!(following.map(|t|&t.kind),Some(TokenKind::Eq)) { tokens[start].kind=TokenKind::FileControl(word.clone()); }
+                                if !matches!(following.map(|t|&t.kind),Some(TokenKind::Eq)) { tokens[start].kind=if word=="nullify" {TokenKind::KwNullify}else{TokenKind::FileControl(word.clone())}; }
                                 break;
                             }
                         }

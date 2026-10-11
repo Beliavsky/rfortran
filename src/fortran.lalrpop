@@ -25,6 +25,7 @@ extern {
         KW_ERROR => TokenKind::KwError,
         KW_ALLOCATE => TokenKind::KwAllocate,
         KW_DEALLOCATE => TokenKind::KwDeallocate,
+        KW_NULLIFY => TokenKind::KwNullify,
         KW_PROGRAM => TokenKind::KwProgram,
         KW_END => TokenKind::KwEnd,
         KW_FUNCTION => TokenKind::KwFunction,
@@ -356,6 +357,7 @@ Stmt: Stmt = {
     KW_ERROR KW_STOP <arg: RhsExpr> => Stmt::CallSub { name: "@error_stop".into(), args: vec![arg] },
     KW_ALLOCATE LPAREN <args: CallArgList> RPAREN => Stmt::CallSub { name: "@allocate".into(), args },
     KW_DEALLOCATE LPAREN <args: CallArgList> RPAREN => Stmt::CallSub { name: "@deallocate".into(), args },
+    KW_NULLIFY LPAREN <args:CallArgList> RPAREN => Stmt::CallSub{name:"@nullify".into(),args},
     KW_WRITE LPAREN <unit:WriteUnit> COMMA <fmt:WriteFormat> <options:(COMMA <WriteOption>)*> RPAREN <items:ExprList> => {
         let mut args=vec![unit,fmt];args.extend(options);args.extend(items);Stmt::CallSub{name:"@write".into(),args}
     },
@@ -440,6 +442,7 @@ Stmt: Stmt = {
     KW_DO_UNBOUNDED <body: Stmts> KW_END KW_DO => Stmt::DoWhile { cond: Expr::Logical(true), body },
     KW_RETURN => Stmt::Return(None),
     <name: Designator> EQ <rhs: RhsExpr> => Stmt::Assign { name, value: rhs },
+    <name:Designator> ARROW <target:RhsExpr> => Stmt::CallSub {name:"@pointer_associate".into(),args:vec![Expr::Ident(name),target]},
     <id: Designator> LPAREN <args: SubscriptList> RPAREN LPAREN <range: Subscript> RPAREN EQ <rhs: RhsExpr> =>
         Stmt::CallSub {name:"@array_substring_assign".into(), args:vec![crate::ast::section_or_call(id,args),range,rhs]},
     <id: Designator> LPAREN <args: SubscriptList> RPAREN EQ <rhs: RhsExpr> => {
@@ -736,7 +739,7 @@ PreFuncDecl: Vec<Stmt> = {
             };
             let mut declarations = Vec::new();
             for attr in &attrs {
-                if attr.to_ascii_lowercase().starts_with("intent(") || matches!(attr.to_ascii_lowercase().as_str(), "optional" | "allocatable" | "parameter") {
+                if attr.to_ascii_lowercase().starts_with("intent(") || matches!(attr.to_ascii_lowercase().as_str(), "optional" | "allocatable" | "parameter" | "pointer" | "target") {
                     declarations.push(Stmt::DummyIntent { name: name.clone(), intent: attr.to_ascii_lowercase() });
                 }
             }

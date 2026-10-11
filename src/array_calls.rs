@@ -153,6 +153,10 @@ fn rewrite(
     constants: &HashMap<String, Expr>,
     absent: &HashSet<String>,
 ) -> Result<()> {
+    if matches!(e,Expr::Ident(n) if shapes.contains_key(&format!("@pointer:{n}"))) { return Ok(()); }
+    if let Expr::Call(n,args)=e {
+        if matches!(n.as_str(),"size"|"shape"|"lbound"|"ubound"|"associated") && matches!(args.first(),Some(Expr::Ident(p)) if shapes.contains_key(&format!("@pointer:{p}"))) { return Ok(()); }
+    }
     if let Expr::Call(n,args)=e {
         if matches!(n.as_str(),"allocated"|"size"|"lbound"|"ubound"|"shape") {
             for dim in args.iter_mut().skip(1) {rewrite(dim,shapes,constants,absent)?;}
@@ -615,7 +619,7 @@ fn specialize(
             Stmt::ArrayDecl { name, kind, dims }
                 if dims
                     .iter()
-                    .any(|d| matches!(d, Expr::Ident(n) if n == "@deferred_extent")) =>
+                    .any(|d| matches!(d, Expr::Ident(n) if n == "@deferred_extent")) && !shapes.contains_key(&format!("@pointer:{name}")) =>
             {
                 Some((name.clone(), (kind.clone(), dims.clone())))
             }
@@ -1022,6 +1026,12 @@ fn expand(
     active: &mut Vec<String>,
     serial: &mut usize,
 ) -> Result<()> {
+    let mut inherited=inherited.clone();
+    for s in body.iter() {
+        if let Stmt::DummyIntent{name,intent}=s {
+            if matches!(intent.as_str(),"pointer"|"target") {inherited.insert(format!("@{intent}:{name}"),(TypeSpec::Logical,vec![]));}
+        }
+    }
     if body
         .iter()
         .any(|s| matches!(s, Stmt::DummyIntent { intent, .. } if intent == "allocatable"))
@@ -1057,6 +1067,11 @@ fn expand(
         }
     }
     crate::allocatables::metadata(body,&mut shapes);
+    for s in body.iter() {
+        if let Stmt::DummyIntent {name,intent}=s {
+            if matches!(intent.as_str(),"pointer"|"target") {shapes.insert(format!("@{intent}:{name}"),(TypeSpec::Logical,vec![]));}
+        }
+    }
     for s in body.iter_mut() {
         if let Stmt::CallSub { name, args } = s {
             if let Some(r) = routines.get(name) {
@@ -1104,6 +1119,7 @@ fn expand(
                         .collect(),
                 )?;
                 let mut local = shapes.clone();
+                for p in &r.params {local.remove(&format!("@pointer:{p}"));local.remove(&format!("@target:{p}"));}
                 for d in &r.body {
                     match d {
                         Stmt::VarDecl { kind, names } => {
@@ -1114,6 +1130,7 @@ fn expand(
                         Stmt::ArrayDecl { kind, name, dims } => {
                             local.insert(name.clone(), (kind.clone(), dims.clone()));
                         }
+                        Stmt::DummyIntent {name,intent} if matches!(intent.as_str(),"pointer"|"target") => {local.insert(format!("@{intent}:{name}"),(TypeSpec::Logical,vec![]));}
                         _ => {}
                     }
                 }
@@ -1153,6 +1170,19 @@ fn expand(
                     }
                     local.insert(p.clone(),(kind.clone(),dims.clone()));
                     let intent = intents.get(p).map(String::as_str).unwrap_or("");
+                    if local.contains_key(&format!("@pointer:{p}")) {
+                        let Expr::Ident(a)=actual else {bail!("POINTER dummy `{p}` requires a POINTER variable");};
+                        if !shapes.contains_key(&format!("@pointer:{a}")) {bail!("POINTER dummy `{p}` requires a POINTER actual");}
+                        let (actual_kind,actual_dims)=shapes.get(a).context("undeclared POINTER actual")?;
+                        if !crate::pointers::same_kind(actual_kind,&kind) || actual_dims.len()!=dims.len() {bail!("type or rank mismatch for POINTER dummy `{p}`");}
+                        if intent=="intent(in)" {bail!("INTENT(IN) POINTER dummy arguments are not yet supported");}
+                        names.insert(p.clone(),a.clone());
+                        if intent=="intent(out)" {undefine.push(Stmt::CallSub{name:"@nullify".into(),args:vec![actual.clone()]});}
+                        continue;
+                    }
+                    if matches!(actual,Expr::Ident(a) if shapes.contains_key(&format!("@pointer:{a}"))) {bail!("POINTER actuals currently require POINTER dummy arguments");}
+                    let pointer_target=local.contains_key(&format!("@target:{p}")) && r.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if intent=="pointer" && r.params.contains(name)));
+                    if pointer_target && !matches!(actual,Expr::Ident(a) if shapes.contains_key(&format!("@target:{a}"))) {bail!("escaping POINTER association requires a TARGET actual for `{p}`");}
                     if intent != "intent(in)"
                         && matches!(actual,Expr::Ident(n) if readonly.contains(n))
                     {
@@ -1221,6 +1251,10 @@ fn expand(
                                 args: vec![actual.clone()],
                             });
                         }
+                    } else if pointer_target {
+                        let Expr::Ident(a)=actual else {bail!("pointer TARGET requires a variable");};
+                        if shapes.get(a).is_none_or(|(k,d)| *k!=kind || !d.is_empty()) {bail!("type or rank mismatch for TARGET dummy `{p}`");}
+                        names.insert(p.clone(),a.clone());
                     } else if intent == "intent(in)" {
                         *serial += 1;
                         let temp = format!("@array_call_input_{serial}");
@@ -1248,6 +1282,12 @@ fn expand(
                 }
                 prefix.extend(undefine);
                 let mut cloned = r.body.clone();
+                for p in &r.params {
+                    if local.contains_key(&format!("@target:{p}")) && intents.get(p).is_some_and(|i|i=="intent(in)") {
+                        cloned.push(Stmt::DummyIntent{name:p.clone(),intent:"@pointer_readonly_target".into()});
+                    }
+                }
+                cloned.retain(|s|!matches!(s,Stmt::DummyIntent{name,intent} if intent=="target" && r.params.contains(name)));
                 for declaration in &mut cloned {
                     if let Stmt::VarDecl {names,..} = declaration { names.retain(|n| !r.params.contains(n)); }
                 }
@@ -1301,6 +1341,7 @@ fn expand(
 }
 pub fn resolve(mut p: Program) -> Result<Program> {
     p = crate::optional::resolve(p)?;
+    p = crate::pointers::prepare(p)?;
     p = crate::allocatables::prepare(p)?;
     p = crate::vector_subscripts::resolve(p)?;
     p = crate::array_bounds::resolve(p)?;
@@ -1309,7 +1350,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
         body.retain_mut(|s| match s {
             Stmt::Subroutine {
                 name, params, body, elemental, ..
-            } if *elemental || body
+            } if *elemental || body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if intent=="pointer" && params.contains(name))) || body
                 .iter()
                 .any(|s| matches!(s,Stmt::ArrayDecl{name,..} if params.contains(name))
                     || matches!(s,Stmt::VarDecl {kind:TypeSpec::Character(_) | TypeSpec::CharacterAssumed,names} if names.iter().any(|n| params.contains(n)))) =>
@@ -1334,6 +1375,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
     let mut routines = HashMap::new();
     collect(&mut p.body, &mut routines);
     expand(&mut p.body, &Shapes::new(), &routines, &mut vec![], &mut 0)?;
+    p = crate::pointers::resolve(p)?;
     p = crate::allocatables::finish(p)?;
     let p = crate::character_arrays::resolve(p)?;
     crate::multidim::resolve(crate::function_arrays::resolve(crate::substrings::resolve(p)?)?)

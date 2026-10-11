@@ -12,6 +12,18 @@ pub mod fortran {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn pointer_association_retains_declaration_attributes() {
+        use crate::ast::{Expr,Stmt};
+        let source="integer,target::x\ninteger,pointer::p\np=>x\nnullify(p)\nend";
+        let program=super::parse_with_src(source,&crate::lexer::lex(source),"pointer.f90").unwrap();
+        for (n,a) in [("x","target"),("p","pointer")] {
+            assert!(program.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==n && intent==a)));
+        }
+        assert!(program.body.iter().any(|s|matches!(s,Stmt::CallSub{name,args} if name=="@pointer_associate" && matches!(args.as_slice(),[Expr::Ident(p),Expr::Ident(x)] if p=="p" && x=="x"))));
+        assert!(program.body.iter().any(|s|matches!(s,Stmt::CallSub{name,..} if name=="@nullify")));
+    }
+
+    #[test]
     fn dimension_attributes_lower_to_array_declarations() {
         use crate::ast::{Expr, Stmt};
         let source = "program main\ninteger, dimension(2,3) :: a,b\nreal, dimension(2,3) :: c(4)\ncontains\npure subroutine f(nn)\ninteger,dimension(:),intent(in)::nn\nend subroutine f\nend program main";
@@ -216,6 +228,7 @@ fn human_token(tok: &TokenKind) -> String {
         TokenKind::EndInterfaceName(n) => format!("interface name {n}"),
         TokenKind::EndUnitName(n) => format!("unit name {n}"),
         TokenKind::BareEnd => "keyword end".into(),
+        TokenKind::KwNullify => "keyword nullify".into(),
         TokenKind::DefinedOperator(name) => format!("defined operator {name}"),
         TokenKind::Percent => "'%'".into(),
         TokenKind::Arrow => "'=>'".into(),

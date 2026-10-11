@@ -50,6 +50,7 @@ pub fn validate(program: &Program) -> Result<()> {
         let mut locals = inherited.clone();
         for stmt in body {
             match stmt {
+                Stmt::CallSub {name,..} if name=="@pointer_associate" || name=="@nullify" => bail!("pointer association in PURE procedures is not yet supported"),
                 Stmt::VarDecl { names, .. } => locals.extend(names.iter().cloned()),
                 Stmt::ArrayDecl { name, .. } => { locals.insert(name.clone()); }
                 Stmt::InitializedDecl { attributes, entities, .. } => {

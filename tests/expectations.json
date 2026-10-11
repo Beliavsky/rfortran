@@ -896,6 +896,13 @@
       "program_stderr": "",
       "program_stdout": " .FALSE.\n 2 3 .TRUE.\n .FALSE. .FALSE. .FALSE.\n 9 9 .TRUE.\n .TRUE. 0\n .TRUE. 0\n new 3\n .FALSE. .FALSE.\n"
     },
+    "135_pointer_association": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " .TRUE. 3 15.0 1 3\n 7.0 8.0 6.0\n 7.0 8.0 6.0\n 8.0 9.0 7.0\n 1.0 2.0 3.0\n 1.0 2.0 3.0\n .FALSE.\n"
+    },
     "134_declarations_without_colons": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
