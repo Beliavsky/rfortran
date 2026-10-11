@@ -15,6 +15,8 @@ extern {
         KW_KIND => TokenKind::KwKind,
         KW_ONLY => TokenKind::KwOnly,
         END_INTERFACE_NAME => TokenKind::EndInterfaceName(<String>),
+        END_UNIT_NAME => TokenKind::EndUnitName(<String>),
+        BARE_END => TokenKind::BareEnd,
         DEFINED_OP => TokenKind::DefinedOperator(<String>),
         PERCENT => TokenKind::Percent,
         ARROW => TokenKind::Arrow,
@@ -124,28 +126,28 @@ LeadingFuncs: Vec<Stmt> = {
 };
 
 ModuleDef: Stmt = {
-    KW_MODULE <mn: Ident> <mb: Stmts> KW_END KW_MODULE <_emn: Ident> => Stmt::Module { name: mn, body: mb },
-    KW_MODULE <mn: Ident> <mb: Stmts> KW_CONTAINS <contained: FuncList> KW_END KW_MODULE <_emn: Ident> => { let mut all = mb; all.extend(contained); Stmt::Module { name: mn, body: all } },
+    KW_MODULE <mn: Ident> <mb: Stmts> KW_END KW_MODULE <_emn: END_UNIT_NAME?> => Stmt::Module { name: mn, body: mb },
+    KW_MODULE <mn: Ident> <mb: Stmts> KW_CONTAINS <contained: FuncList> KW_END KW_MODULE <_emn: END_UNIT_NAME?> => { let mut all = mb; all.extend(contained); Stmt::Module { name: mn, body: all } },
 };
 
 pub Program: Program = {
-    KW_END <_tail: UnnamedEndTail> <post: FuncList> => Program { name: "main".to_string(), body: post },
-    <mut body: UnnamedMainBody> KW_END <_tail: UnnamedEndTail> <post: FuncList> => {
+    <_end: UnnamedEnd> <post: FuncList> => Program { name: "main".to_string(), body: post },
+    <mut body: UnnamedMainBody> <_end: UnnamedEnd> <post: FuncList> => {
         body.extend(post); Program { name: "main".to_string(), body }
     },
-    <mut body: UnnamedMainBody> KW_CONTAINS <contained: FuncList> KW_END <_tail: UnnamedEndTail> => {
+    <mut body: UnnamedMainBody> KW_CONTAINS <contained: FuncList> <_end: UnnamedEnd> => {
         body.extend(contained); Program { name: "main".to_string(), body }
     },
-    <pre: LeadingFuncs> KW_PROGRAM <name: Ident> <body: Stmts> KW_END <_tail: EndTail> <post: FuncList> => {
+    <pre: LeadingFuncs> KW_PROGRAM <name: Ident> <body: Stmts> <_end: ProgramEnd> <post: FuncList> => {
         let mut all = pre; all.extend(body); all.extend(post); Program { name, body: all }
     },
-    <pre: LeadingFuncs> KW_PROGRAM <name: Ident> <body: Stmts> KW_CONTAINS <contained: FuncList> KW_END <_tail: EndTail> => {
+    <pre: LeadingFuncs> KW_PROGRAM <name: Ident> <body: Stmts> KW_CONTAINS <contained: FuncList> <_end: ProgramEnd> => {
         let mut all = pre; all.extend(body); all.extend(contained); Program { name, body: all }
     },
-    KW_PROGRAM <name: Ident> <body: Stmts> KW_CONTAINS <contained: FuncList> KW_END <_tail: EndTail> => {
+    KW_PROGRAM <name: Ident> <body: Stmts> KW_CONTAINS <contained: FuncList> <_end: ProgramEnd> => {
         let mut all = body; all.extend(contained); Program { name, body: all }
     },
-    KW_PROGRAM <name: Ident> <body: Stmts> KW_END <_tail: EndTail> <funcs: FuncList> => {
+    KW_PROGRAM <name: Ident> <body: Stmts> <_end: ProgramEnd> <funcs: FuncList> => {
         let mut all = body; all.extend(funcs); Program { name, body: all }
     },
     <only: LeadingFuncs> => Program { name: "<anon>".to_string(), body: only },
@@ -167,9 +169,9 @@ UnnamedMainBody: Vec<Stmt> = {
     },
 };
 
-UnnamedEndTail: () = {
-    /* empty */ => (),
-    KW_PROGRAM => (),
+UnnamedEnd: () = {
+    BARE_END => (),
+    KW_END KW_PROGRAM => (),
 };
 
 FuncList: Vec<Stmt> = {
@@ -207,26 +209,33 @@ ProcedureModifier: (Option<bool>,bool) = {
 };
 
 FunctionDef: Stmt = {
-    <kind: TypeSpec> KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN KW_RESULT LPAREN <result: Ident> RPAREN <mut body: Stmts> KW_END KW_FUNCTION <_endname: Ident> => {
+    <kind: TypeSpec> KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN KW_RESULT LPAREN <result: Ident> RPAREN <mut body: Stmts> <_end: FunctionEnd> => {
         body.insert(0, Stmt::VarDecl { kind, names: vec![result.clone()] });
         crate::ast::function_with_result(name, params, result, body)
     },
-    <kind: TypeSpec> KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN <mut body: Stmts> KW_END KW_FUNCTION <_endname: Ident> => {
+    <kind: TypeSpec> KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN <mut body: Stmts> <_end: FunctionEnd> => {
         body.insert(0,Stmt::VarDecl {kind:kind.clone(),names:vec![name.clone()]});
         Stmt::Function { name, params, return_type:Some(kind),body,pure:false,elemental:false }
     },
-    KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN KW_RESULT LPAREN <result: Ident> RPAREN <body: Stmts> KW_END KW_FUNCTION <_endname: Ident> => crate::ast::function_with_result(name, params, result, body),
-    KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN <body: Stmts> KW_END KW_FUNCTION <_endname: Ident> => Stmt::Function { name, params, return_type: None, body, pure: false, elemental:false },
+    KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN KW_RESULT LPAREN <result: Ident> RPAREN <body: Stmts> <_end: FunctionEnd> => crate::ast::function_with_result(name, params, result, body),
+    KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN <body: Stmts> <_end: FunctionEnd> => Stmt::Function { name, params, return_type: None, body, pure: false, elemental:false },
 };
 
 SubrDef: Stmt = {
-    <prefix: FunctionPrefix> KW_SUBROUTINE <name: Ident> LPAREN <params: ParamList> RPAREN <body: Stmts> KW_END KW_SUBROUTINE <_endname: Ident> => Stmt::Subroutine { name, params, body, pure: prefix.0, elemental: prefix.1 },
+    <prefix: FunctionPrefix> KW_SUBROUTINE <name: Ident> LPAREN <params: ParamList> RPAREN <body: Stmts> <_end: SubroutineEnd> => Stmt::Subroutine { name, params, body, pure: prefix.0, elemental: prefix.1 },
 };
 
-EndTail: () = {
-    /* empty */ => (),
-    KW_PROGRAM Ident => (),
-    KW_PROGRAM => (),
+FunctionEnd: () = {
+    BARE_END => (),
+    KW_END KW_FUNCTION END_UNIT_NAME? => (),
+};
+SubroutineEnd: () = {
+    BARE_END => (),
+    KW_END KW_SUBROUTINE END_UNIT_NAME? => (),
+};
+ProgramEnd: () = {
+    BARE_END => (),
+    KW_END KW_PROGRAM END_UNIT_NAME? => (),
 };
 
 Ident: String = { <s:ID> => s };

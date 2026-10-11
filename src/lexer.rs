@@ -5,13 +5,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn unit_ends_respect_logical_statement_boundaries() {
+        let tokens = lex("end subroutine\nx=1\nend function; y=2\nend module ! comment\nz=3\nend & ! continued\n & function &\n & f\nend program main\nend; end if\nend do");
+        let names: Vec<_> = tokens.iter().filter_map(|t| match &t.kind {
+            TokenKind::EndUnitName(n) => Some(n.as_str()), _ => None,
+        }).collect();
+        assert_eq!(names, vec!["f", "main"]);
+        assert_eq!(tokens.iter().filter(|t| matches!(t.kind, TokenKind::BareEnd)).count(), 1);
+        for name in ["x", "y", "z"] {
+            assert!(tokens.iter().any(|t| matches!(&t.kind, TokenKind::Ident(n) if n == name)));
+        }
+    }
+
+    #[test]
     fn labels_preserve_contextual_statement_keywords() {
         let tokens=lex("10 write(*,*) 7\n20 if (.true.) write(*,*) 8\n30 open(unit=20)\n40 continue\n50 if (.true.) continue\ninteger::continue\ncontinue=1\nend subroutine continue");
         assert_eq!(tokens.iter().filter(|t|matches!(t.kind,TokenKind::StatementLabel(_))).count(),5);
         assert_eq!(tokens.iter().filter(|t|matches!(t.kind,TokenKind::KwWrite)).count(),2);
         assert_eq!(tokens.iter().filter(|t|matches!(t.kind,TokenKind::FileControl(_))).count(),1);
         assert_eq!(tokens.iter().filter(|t|matches!(t.kind,TokenKind::KwContinue)).count(),2);
-        assert_eq!(tokens.iter().filter(|t|matches!(&t.kind,TokenKind::Ident(n) if n=="continue")).count(),3);
+        assert_eq!(tokens.iter().filter(|t|matches!(&t.kind,TokenKind::Ident(n) if n=="continue")).count(),2);
         let tokens=lex("a=[1, &\n & 2]\nprint *, &\n & 3");
         assert!(!tokens.iter().any(|t|matches!(t.kind,TokenKind::StatementLabel(_))));
     }
@@ -213,6 +226,8 @@ pub enum TokenKind {
     KwProcedure,
     KwInterface,
     EndInterfaceName(String),
+    EndUnitName(String),
+    BareEnd,
     KwOperator,
     KwKind,
     KwOnly,
@@ -784,6 +799,29 @@ pub fn lex(input: &str) -> Vec<Token> {
             }
         }
         index += 1;
+    }
+    // Unit-ending names belong to this logical statement only. The grammar
+    // skips newlines, so an optional ordinary identifier could otherwise eat
+    // the first statement following an unnamed END SUBROUTINE or END MODULE.
+    for index in 0..tokens.len() {
+        if !matches!(tokens[index].kind, TokenKind::KwEnd)
+            || index > 0 && same_statement(&input[tokens[index-1].span.end..tokens[index].span.start]) {
+            continue;
+        }
+        let following = tokens.get(index+1).filter(|t|
+            same_statement(&input[tokens[index].span.end..t.span.start]));
+        if following.is_none() {
+            tokens[index].kind = TokenKind::BareEnd;
+        } else if matches!(following.map(|t| &t.kind), Some(TokenKind::KwFunction | TokenKind::KwSubroutine | TokenKind::KwModule | TokenKind::KwProgram)) {
+            let end = tokens[index+1].span.end;
+            if let Some(name) = tokens.get_mut(index+2) {
+                if same_statement(&input[end..name.span.start]) {
+                    if let TokenKind::Ident(n) = &name.kind {
+                        name.kind = TokenKind::EndUnitName(n.clone());
+                    }
+                }
+            }
+        }
     }
     // Normalize old-style constructor delimiters without confusing OPERATOR(/)
     // or division inside parenthesized expressions with constructor punctuation.

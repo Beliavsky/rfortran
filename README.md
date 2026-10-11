@@ -379,6 +379,17 @@ checks apply to the input values. Whole-array calls, INTEGER kind 16, and
 Run `python tests/test_bit_intrinsics.py` for interpreter/native O0/O2 checks
 with gfortran comparisons. `tests/125_bit_intrinsics.f90` is the local fixture.
 
+## Procedure and module endings
+
+Subroutines and functions accept a bare `END`, an unnamed `END SUBROUTINE`
+or `END FUNCTION`, or an ending with the procedure name. Modules accept
+`END MODULE` with or without their name. An omitted name does not consume the
+following source statement, including across comments and semicolons;
+continuations within an ending statement are supported.
+
+Run `python tests/test_unnamed_procedure_ends.py` for interpreter/native O0/O2
+checks with gfortran comparisons.
+
 ## Statement labels
 
 Executable statements may have numeric labels of one to five digits, with
@@ -849,6 +860,7 @@ python tests/test_driver.py
 python tests/test_record_read.py
 python tests/test_empty_read.py
 python tests/test_statement_labels.py
+python tests/test_unnamed_procedure_ends.py
 python tests/test_recursive_allocatables.py
 python tests/test_deallocate.py
 python tests/test_runtime_allocatables.py
