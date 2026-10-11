@@ -15,22 +15,22 @@ struct Routine {
     body: Vec<Stmt>,
 }
 
-fn elemental_actual_kind(e: &Expr, shapes: &Shapes) -> Result<TypeSpec> {
+fn scalar_actual_kind(e: &Expr, shapes: &Shapes) -> Result<TypeSpec> {
     use crate::ast::BinOp;
     match e {
         Expr::Ident(n) => {
-            let (kind, dims) = shapes.get(n).context("ELEMENTAL actual argument must be declared")?;
-            if !dims.is_empty() { bail!("ELEMENTAL subroutine array actual arguments are not yet supported; pass scalar arguments"); }
+            let (kind, dims) = shapes.get(n).context("scalar actual argument must be declared")?;
+            if !dims.is_empty() { bail!("subroutine array actual arguments are not yet supported; pass scalar arguments"); }
             Ok(kind.clone())
         }
         Expr::IntLit(_) => Ok(TypeSpec::Integer(None)),
         Expr::RealLit(_) => Ok(TypeSpec::Real),
         Expr::Logical(_) => Ok(TypeSpec::Logical),
         Expr::Str(s) => Ok(TypeSpec::Character(Some(s.len()))),
-        Expr::Un(_, a) => elemental_actual_kind(a, shapes),
+        Expr::Un(_, a) => scalar_actual_kind(a, shapes),
         Expr::Bin(op, a, b) => {
-            let a = elemental_actual_kind(a, shapes)?;
-            let b = elemental_actual_kind(b, shapes)?;
+            let a = scalar_actual_kind(a, shapes)?;
+            let b = scalar_actual_kind(b, shapes)?;
             if matches!(op, BinOp::Concat) {
                 if let (TypeSpec::Character(a), TypeSpec::Character(b)) = (a, b) {
                     return Ok(TypeSpec::Character(Some(a.unwrap_or(1) + b.unwrap_or(1))));
@@ -43,11 +43,11 @@ fn elemental_actual_kind(e: &Expr, shapes: &Shapes) -> Result<TypeSpec> {
             } else { Ok(TypeSpec::Logical) }
         }
         Expr::Call(n, args) if matches!(n.as_str(), "dble" | "real" | "int") && args.len() == 1 => {
-            elemental_actual_kind(&args[0], shapes)?;
+            scalar_actual_kind(&args[0], shapes)?;
             Ok(match n.as_str() { "dble" => TypeSpec::DoublePrecision, "real" => TypeSpec::Real, _ => TypeSpec::Integer(None) })
         }
-        Expr::Section { .. } => bail!("ELEMENTAL subroutine array actual arguments are not yet supported; pass scalar arguments"),
-        _ => bail!("unsupported scalar actual expression in ELEMENTAL subroutine call"),
+        Expr::Section { .. } => bail!("subroutine array actual arguments are not yet supported; pass scalar arguments"),
+        _ => bail!("unsupported scalar actual expression in specialized subroutine call"),
     }
 }
 
@@ -68,6 +68,7 @@ fn rewrite(
             let [Expr::Ident(param)] = args.as_slice() else {
                 bail!("PRESENT requires an optional dummy argument");
             };
+            if !shapes.contains_key(&format!("@optional:{param}")) { bail!("PRESENT requires an OPTIONAL dummy argument"); }
             *e = Expr::Logical(!absent.contains(param));
         }
         Expr::Call(n, args) if n == "size" => {
@@ -269,6 +270,7 @@ fn specialize(
                 continue;
             }
             Stmt::Assign { name, value } => {
+                if absent.contains(name) { bail!("assignment to absent OPTIONAL dummy `{name}`"); }
                 let mut folded = value.clone();
                 rewrite(&mut folded, shapes, constants, absent)?;
                 if stable.contains(name)
@@ -636,6 +638,10 @@ fn expand(
                         _ => {}
                     }
                 }
+                for p in &optional {
+                    if !r.params.contains(p) { bail!("OPTIONAL attribute requires a dummy argument `{p}`"); }
+                    local.insert(format!("@optional:{p}"),(TypeSpec::Logical,vec![]));
+                }
                 let mut names = HashMap::new();
                 let mut absent = HashSet::new();
                 let mut prefix = vec![];
@@ -651,18 +657,19 @@ fn expand(
                         .get(p)
                         .context("dummy argument must be declared")?
                         .clone();
-                    if r.elemental {
-                        let actual_kind = elemental_actual_kind(actual, &shapes)?;
+                    if r.elemental || matches!(kind,TypeSpec::Character(_) | TypeSpec::CharacterAssumed) {
+                        let actual_kind = scalar_actual_kind(actual, &shapes)?;
                         if let TypeSpec::Character(length) = actual_kind {
                             match kind {
                                 TypeSpec::CharacterAssumed => kind = TypeSpec::Character(length),
                                 TypeSpec::Character(expected) if expected.unwrap_or(1) == length.unwrap_or(1) => {},
-                                _ => bail!("type or CHARACTER length mismatch for ELEMENTAL dummy `{p}`"),
+                                _ => bail!("type or CHARACTER length mismatch for dummy `{p}`"),
                             }
                         } else if kind != actual_kind {
-                            bail!("type mismatch for ELEMENTAL dummy `{p}`");
+                            bail!("type mismatch for dummy `{p}`");
                         }
                     }
+                    local.insert(p.clone(),(kind.clone(),dims.clone()));
                     let intent = intents.get(p).map(String::as_str).unwrap_or("");
                     if intent != "intent(in)"
                         && matches!(actual,Expr::Ident(n) if readonly.contains(n))
@@ -725,7 +732,11 @@ fn expand(
                     }
                 }
                 let mut cloned = r.body.clone();
-                cloned.retain(|s| !matches!(s,Stmt::ArrayDecl{name,..} if r.params.contains(name)));
+                for declaration in &mut cloned {
+                    if let Stmt::VarDecl {names,..} = declaration { names.retain(|n| !r.params.contains(n)); }
+                }
+                cloned.retain(|s| !matches!(s,Stmt::ArrayDecl{name,..} if r.params.contains(name))
+                    && !matches!(s,Stmt::VarDecl {names,..} if names.is_empty()));
                 let stable = stable(&cloned);
                 specialize(
                     &mut cloned,
@@ -772,6 +783,7 @@ fn expand(
     Ok(())
 }
 pub fn resolve(mut p: Program) -> Result<Program> {
+    p = crate::optional::resolve(p)?;
     p = crate::array_bounds::resolve(p)?;
     crate::elemental::validate_program(&p)?;
     fn collect(body: &mut Vec<Stmt>, routines: &mut HashMap<String, Routine>) {
@@ -780,7 +792,8 @@ pub fn resolve(mut p: Program) -> Result<Program> {
                 name, params, body, elemental, ..
             } if *elemental || body
                 .iter()
-                .any(|s| matches!(s,Stmt::ArrayDecl{name,..} if params.contains(name))) =>
+                .any(|s| matches!(s,Stmt::ArrayDecl{name,..} if params.contains(name))
+                    || matches!(s,Stmt::VarDecl {kind:TypeSpec::Character(_) | TypeSpec::CharacterAssumed,names} if names.iter().any(|n| params.contains(n)))) =>
             {
                 routines.insert(
                     name.clone(),

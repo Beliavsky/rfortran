@@ -453,3 +453,19 @@ beyond literals, CHARACTER arrays and additional constant array transformations
 remain outside this subset. Initialized locals in procedures, modules and BLOCK
 scopes are rejected until persistent storage is implemented. Run
 `python tests/test_main_initialization.py`.
+
+Local OPTIONAL functions and subroutines can be specialized for positional calls,
+including forwarding an absent optional dummy to another optional dummy. PRESENT
+and simple logical combinations of presence tests select the applicable branches;
+a missing required argument or an unguarded absent-dummy reference is diagnosed.
+Optional functions currently require explicit INTENT(IN) on their arguments.
+Recursive optional specialization, keyword actual arguments and a separate-object
+optional-argument ABI remain unsupported.
+
+Scalar CHARACTER subroutine arguments support fixed and assumed lengths,
+including OPTIONAL inputs and writable variables. Assumed lengths follow each
+actual argument; LEN, empty strings and literal/concatenated inputs work. Fixed
+lengths currently require an exact match. Expressions require INTENT(IN), while
+writable arguments must be variables. CHARACTER arrays, assumed-length function
+dummies and explicit RETURN inside expanded CHARACTER subroutines remain outside
+this subset. Run `python tests/test_optional_procedures.py`.

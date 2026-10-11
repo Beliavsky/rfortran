@@ -1047,7 +1047,7 @@ fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules, ass
                     bail!("CHARACTER-valued functions are not yet supported by native function-result storage");
                 }
             }
-            Stmt::Subroutine { params, body, elemental, .. } => { resolve_scope(body, constants, params, modules, *elemental, false)?; }
+            Stmt::Subroutine { params, body, .. } => { resolve_scope(body, constants, params, modules, true, false)?; }
             Stmt::Block { body } => { resolve_scope(body, constants, &[], modules, false, false)?; },
             Stmt::Module { .. } => {},
             Stmt::InitializedDecl { .. } => {

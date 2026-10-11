@@ -180,3 +180,10 @@ cover constant main-program declaration initializers, mutable values, array
 constructors/fills, explicit bounds and diagnostics for other storage scopes.
 The original `xarray_init.f90` now passes at O0/O2, bringing the selected sample
 to 16/18 passes. Optional CHARACTER arguments and CHARACTER array overlap remain.
+
+`113_optional_procedures.f90` and `python tests/test_optional_procedures.py` cover
+optional scalar functions/subroutines, PRESENT, absent-argument forwarding and
+scalar CHARACTER arguments with per-call lengths. The original `xoptional.f90`
+now passes at O0/O2 against gfortran. The isolated release report
+`target/ofort-optional-procedures.json` has 17/18 passes; overlapping CHARACTER
+array/substring assignment is the remaining compile failure.

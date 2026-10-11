@@ -1409,3 +1409,43 @@ agrees with gfortran. The isolated release report `target/ofort-main-init.json`
 has 16/18 passes and two compile failures, with all reference runs succeeding.
 The remaining failures are optional CHARACTER arguments and CHARACTER array
 overlap/substring assignment. Linux/macOS remain untested.
+
+
+## Checkpoint 52: OPTIONAL procedures and scalar CHARACTER arguments
+
+The new MIT-licensed optional.rs pass specializes same-source-group procedures
+by a positional argument-presence vector, caching each generated variant. Present
+values remain runtime arguments; absent arguments are removed from the variant's
+signature and declarations. PRESENT, NOT and constant logical combinations prune
+unselected branches. An absent dummy can be forwarded directly to another
+optional dummy, including a nontrailing position after argument reordering.
+Required-argument omissions and actual reads/writes of absent dummies are errors.
+Functions retain their result variables through explicit returns; an early RETURN
+in a presence-selected branch terminates specialization of unreachable statements.
+Optional functions require explicit INTENT(IN) dummies. Recursive specialization,
+keyword calls and a standalone optional-argument ABI remain unsupported.
+
+Subroutine dummy declarations now defer assumed CHARACTER lengths to call
+specialization for ordinary as well as ELEMENTAL subroutines. Scalar CHARACTER
+subroutines are included in the existing inlining pass; each call determines
+assumed lengths from its actual arguments. Input expressions are copied into
+typed temporaries, and writable variables retain their storage. Formal scalar
+declarations are removed before body specialization so they cannot overwrite
+resolved actual lengths. Exact fixed-length matching is required for now.
+CHARACTER arrays, assumed-length function dummies and explicit RETURN in expanded
+CHARACTER subroutines remain unsupported.
+
+Fixture 113 covers absent/present calls, changing string lengths, concatenation,
+empty strings, LEN, writable CHARACTER outputs and reordered forwarding. Focused
+tests add PURE early returns, explicit RESULT variables, nested CHARACTER
+forwarding, intent/type/length diagnostics and invalid absent accesses. Existing
+ELEMENTAL setter tests also exercise the new specialization path. No external
+ofort source was changed.
+
+Validation on Windows: all 75 Rust unit tests, 113 native fixtures and 46 batch
+driver tests passed. The three focused OPTIONAL tests and two ELEMENTAL setter
+tests passed with both debug and rebuilt release compilers, exercising interpreter
+and native O0/O2 execution. The focused output comparisons agree with gfortran.
+The isolated release report `target/ofort-optional-procedures.json` records
+17/18 passes at O0/O2. The remaining failure is overlapping CHARACTER
+array/substring assignment. Linux/macOS remain untested.

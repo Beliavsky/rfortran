@@ -29,6 +29,7 @@ the author recorded in this repository's Git history.
 - `src/libs/portable_runtime.c`
 - `src/multidim.rs`
 - `src/operators.rs`
+- `src/optional.rs`
 - `src/output.rs`
 - `src/parameters.rs`
 - `src/purity.rs`
