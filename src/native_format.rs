@@ -95,6 +95,17 @@ pub unsafe extern "C" fn rfort_read_record(
     status
 }
 #[no_mangle]
+pub unsafe extern "C" fn rfort_read_record_format(
+    stream: *mut core::ffi::c_void, destination: *mut u8, length: usize,
+    format: *const u8, format_length: usize,
+) -> i64 {
+    if !record_input::valid_format(core::slice::from_raw_parts(format, format_length)) {
+        return record_input::INVALID_FORMAT;
+    }
+    rfort_read_record(stream, destination, length)
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn rfort_read_character_field(source:*const u8,source_length:usize,destination:*mut u8,length:usize)->i64 {
     let code=character_input::field(core::slice::from_raw_parts(source,source_length),core::slice::from_raw_parts_mut(destination,length));
     *destination.add(length)=0;

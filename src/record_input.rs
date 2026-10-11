@@ -6,6 +6,14 @@
 pub(crate) const END: i64 = -1;
 pub(crate) const ERROR: i64 = 1;
 pub(crate) const INVALID: i64 = 2;
+pub(crate) const INVALID_FORMAT: i64 = 3;
+
+/// The supported scalar CHARACTER transfer consumes one complete record.
+/// Share validation between compile-time checks, interpreter and native runtime.
+pub(crate) fn valid_format(format: &[u8]) -> bool {
+    format.iter().copied().filter(|c| !c.is_ascii_whitespace())
+        .map(|c| c.to_ascii_lowercase()).eq(b"(a)".iter().copied())
+}
 
 pub(crate) fn record(
     destination: &mut [u8],

@@ -269,6 +269,16 @@ The reader consumes invalid records so a subsequent read can continue with the
 next record. These reads accept standard input as `*`, constant unit 5, or an
 INTEGER unit variable whose value is 5. Input records may end without a final newline.
 
+The format may also be a runtime scalar CHARACTER expression, including a
+variable, `TRIM`, concatenation, or substring. `READ(unit,fmt,iostat=status)`
+validates the format before consuming input; the supported format is `(A)`
+(case-insensitive, with optional whitespace). An invalid or unsupported runtime
+format gives a positive IOSTAT and leaves the destination undefined. Without
+IOSTAT it stops with a runtime error. Numeric input descriptors and CHARACTER
+field widths remain unsupported. Run `python tests/test_runtime_read_format.py`
+for interpreter/native O0/O2 checks, including optional format dummies and
+CHARACTER array-element destinations.
+
 Empty list-directed `READ(unit,*)` and `READ(*,*)` consume exactly one record
 without interpreting its contents. They support connected sequential formatted
 files, scratch files, and standard input, including blank/long records and a
@@ -928,6 +938,7 @@ cargo build --bin rfort
 cargo test --bin rfort --test testsuite -- --test-threads=1
 python tests/test_driver.py
 python tests/test_record_read.py
+python tests/test_runtime_read_format.py
 python tests/test_empty_read.py
 python tests/test_statement_labels.py
 python tests/test_unnamed_procedure_ends.py

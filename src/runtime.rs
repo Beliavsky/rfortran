@@ -1138,11 +1138,15 @@ pub fn interpret(program: &Program) {
                         idx+=1;continue;
                     }
                     if name == "@read_record_status" {
-                        let [Expr::Ident(status),Expr::Ident(dest),Expr::IntLit(length),unit] = args.as_slice() else { unreachable!() };
+                        let [Expr::Ident(status),Expr::Ident(dest),Expr::IntLit(length),unit,..] = args.as_slice() else { unreachable!() };
                         let fr=call_stack.last().unwrap().clone();
                         let unit=eval_expr(unit,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
                         let mut buffer=vec![b' ';length.parse().unwrap()];
-                        let code=FILES.with(|files| files.borrow_mut().record_status(unit,&mut buffer));
+                        let valid=args.get(4).is_none_or(|format| {
+                            let text=eval_expr(format,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).3.unwrap();
+                            crate::record_input::valid_format(text.as_bytes())
+                        });
+                        let code=if valid {FILES.with(|files| files.borrow_mut().record_status(unit,&mut buffer))} else {crate::record_input::INVALID_FORMAT};
                         let frame=call_stack.last_mut().unwrap();
                         frame.env_int.insert(status.clone(),code);
                         if code == 0 { frame.env_str.insert(dest.clone(),String::from_utf8(buffer).unwrap()); }

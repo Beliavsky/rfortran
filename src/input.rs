@@ -347,14 +347,28 @@ pub(crate) fn lower_record_read(
     symbols: &HashMap<String, (TypeSpec, Vec<Expr>)>,
     serial: &mut usize,
 ) -> Result<Stmt> {
-    let [unit, Expr::Str(format), Expr::Str(control), status, Expr::Ident(dest)] = args else {
+    let [unit, format, Expr::Str(control), status, Expr::Ident(dest)] = args else {
         bail!("formatted READ requires one writable scalar CHARACTER variable");
     };
-    if !control.eq_ignore_ascii_case("iostat") {
+    if !control.is_empty() && !control.eq_ignore_ascii_case("iostat") {
         bail!("formatted READ currently supports only the IOSTAT control specifier");
     }
-    if format.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_ascii_lowercase() != "(a)" {
-        bail!("formatted READ currently supports only the (A) format");
+    fn character(e: &Expr, symbols: &HashMap<String, (TypeSpec, Vec<Expr>)>) -> bool {
+        match e {
+            Expr::Str(_) => true,
+            Expr::Ident(n) => matches!(symbols.get(n),Some((TypeSpec::Character(_),dims)) if dims.is_empty()),
+            Expr::Bin(BinOp::Concat,a,b) => character(a,symbols) && character(b,symbols),
+            Expr::Call(n,a) if n=="trim" && a.len()==1 => character(&a[0],symbols),
+            Expr::Call(n,a) if n=="@dynamic_substring" && a.len()==4 => character(&a[0],symbols),
+            _ => false,
+        }
+    }
+    if let Ok(text)=crate::parameters::character_constant(format) {
+        if !crate::record_input::valid_format(text.as_bytes()) {
+            bail!("formatted READ currently supports only the (A) format");
+        }
+    } else if !character(format,symbols) {
+        bail!("READ format must be scalar CHARACTER; numeric format labels are not yet supported");
     }
     if crate::parameters::integer_constant(unit).ok() != Some(5) {
         crate::file_io::unit(unit, symbols)?;
@@ -363,19 +377,25 @@ pub(crate) fn lower_record_read(
         bail!("formatted READ requires one writable scalar CHARACTER variable");
     };
     if !dims.is_empty() { bail!("formatted READ requires a scalar CHARACTER variable"); }
-    if !matches!(integer_kind(status, symbols), Some(4 | 8)) {
+    if control.is_empty() && crate::parameters::character_constant(format).is_ok() {
+        let mut args=vec![var(dest),int(length.unwrap_or(1) as i64)];
+        if crate::parameters::integer_constant(unit).ok()!=Some(5) {args.push(unit.clone());}
+        return Ok(Stmt::CallSub {name:"@read_record".into(),args});
+    }
+    if !control.is_empty() && !matches!(integer_kind(status, symbols), Some(4 | 8)) {
         bail!("IOSTAT must be a writable scalar INTEGER of kind 4 or 8");
     }
-    let Expr::Ident(status) = status else { unreachable!() };
     *serial += 1;
     let code = format!("@record_read_status_{serial}");
     let buffer = format!("@record_read_buffer_{serial}");
-    Ok(Stmt::Block { body: vec![
+    let mut read_args=vec![var(&code),var(&buffer),int(length.unwrap_or(1) as i64),unit.clone()];
+    // Constants were validated above; dynamic formats are checked before input.
+    if crate::parameters::character_constant(format).is_err() {read_args.push(format.clone());}
+    let mut body=vec![
         Stmt::VarDecl { kind: TypeSpec::Integer(None), names: vec![code.clone()] },
         Stmt::VarDecl { kind: TypeSpec::Character(*length), names: vec![buffer.clone()] },
         set(&buffer, Expr::Str(String::new())),
-        Stmt::CallSub { name: "@read_record_status".into(), args: vec![var(&code),var(&buffer),int(length.unwrap_or(1) as i64),unit.clone()] },
-        set(status, var(&code)),
+        Stmt::CallSub { name: "@read_record_status".into(), args: read_args },
         Stmt::If {
             cond: equal(&code, 0), then_body: vec![Stmt::CallSub {
                 name: "@character_assign".into(),
@@ -383,7 +403,25 @@ pub(crate) fn lower_record_read(
             }],
             else_body: Some(vec![Stmt::CallSub { name: "@undefine".into(), args: vec![var(dest)] }]),
         },
-    ] })
+    ];
+    if control.is_empty() {
+        for (value,message) in [
+            (crate::record_input::INVALID_FORMAT,"unsupported runtime format in formatted READ (only (A) is supported)"),
+            (crate::record_input::INVALID,"formatted READ currently requires non-NUL ASCII input"),
+        ] {
+            body.push(branch(equal(&code,value),vec![Stmt::CallSub {
+                name:"@error_stop".into(),args:vec![Expr::Str(message.into())],
+            }]));
+        }
+        body.push(branch(bin(BinOp::Ne,var(&code),int(0)),vec![Stmt::CallSub {
+            name:"@error_stop".into(),args:vec![Expr::Str("end of file or input error in formatted READ".into())],
+        }]));
+    } else {
+        let Expr::Ident(status)=status else {unreachable!()};
+        // Evaluate the unit and format before writing potentially aliased IOSTAT.
+        body.insert(4,set(status,var(&code)));
+    }
+    Ok(Stmt::Block {body})
 }
 
 #[cfg(test)]
