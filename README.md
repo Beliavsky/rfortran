@@ -1,9 +1,56 @@
 # rfortran - Fortran compiler in Rust
 
-The compiler command is `rfort`. This project is a fork of
-[SirPigari/f90c](https://github.com/SirPigari/f90c).
+**rfortran is an experimental Fortran compiler written in Rust**, forked from
+[SirPigari/f90c](https://github.com/SirPigari/f90c). The compiler executable is
+named `rfort`; the Cargo package and repository are named `rfortran`. The project
+is not limited to Fortran 90, but it does not yet implement a complete Fortran
+standard. Native object code is generated with Cranelift, and an interpreter is
+available for development and testing.
+
+## Current status
+
+Development is focused on compiling small programs correctly and extending
+coverage through local regressions and cases from the external ofort test suite.
+Windows x64 is the tested platform. Linux and macOS have native driver paths,
+but execution on those platforms still needs validation.
+
+Implemented subsets include:
+
+- Scalar INTEGER, REAL, DOUBLE PRECISION, LOGICAL and CHARACTER values;
+  named constants, supported kind selectors, arithmetic and common math intrinsics.
+- Counted DO and DO WHILE loops, conditionals, SELECT CASE, and array operations
+  including sections, explicit bounds, vector subscripts, WHERE and reductions.
+- Functions and subroutines, PURE/ELEMENTAL checks, INTENT, OPTIONAL/PRESENT,
+  named arguments, and supported generic procedure calls.
+- Modules compiled in one source group, scalar derived types, type-bound
+  procedures, and defined operators, including derived-type comparisons.
+- List-directed output, a subset of formatted input/output, runtime format
+  strings, nonadvancing output, and read-only external files.
+- Initialization checks: definite reads before assignment are compile errors;
+  uncertain reads are checked at runtime, with source locations and an element
+  number for array errors.
+
+These are bounded implementations, not claims of full language support. Many
+array operations require statically known shapes, and procedure calls use
+specialization rather than a general Fortran descriptor ABI. Important gaps
+include runtime-dependent declaration bounds and CHARACTER lengths, general
+allocatable/pointer and polymorphic behavior, CHARACTER-valued functions,
+separately compiled module interfaces, and broad file I/O support. The feature
+notes below describe the supported forms and their restrictions.
+
+The expanded ofort inventory recorded on **2026-10-10** had 440 cases with valid
+gfortran references: 44 passed, 391 failed compilation, and 5 differed in output.
+Subsequent vector-subscript fixes passed all eight vector probes, and the combined
+52-case regression selection passed at both O0 and O2. The full inventory has
+not been rerun after those fixes. This remains an early compiler, not a
+replacement for an established production compiler. See
+[ofort compatibility coverage](tests/ofort/README.md) for the scope, exclusions
+and recorded results.
 
 ## Build
+
+Install Rust/Cargo and the host platform's [linking toolchain](#toolchains).
+Build from the repository root:
 
 ```sh
 cargo build --release --bin rfort
@@ -14,6 +61,13 @@ on Linux/macOS. Put the executable in a directory on `PATH`. The native driver
 handles compilation and linking, including multiple source files, without a
 batch file or PowerShell. The Windows `rfort.bat` and `f90c.bat` entry points
 forward arguments to the built executable for compatibility.
+
+For the current Windows Command Prompt session, you can add the release build
+directory to PATH while in the repository root:
+
+```bat
+set "PATH=%CD%\target\release;%PATH%"
+```
 
 ## Compile and run
 
@@ -55,7 +109,7 @@ native driver does not invoke it.
 ## Elemental subroutine setters
 
 Scalar calls to ELEMENTAL subroutines support explicit INTENT(IN), INTENT(OUT),
-and INTENT(INOUT), trailing omitted OPTIONAL arguments, and PRESENT tests.
+and INTENT(INOUT), omitted OPTIONAL arguments, named arguments, and PRESENT tests.
 ELEMENTAL implies PURE; PURE restrictions are checked. Supported dummy types
 include INTEGER, REAL, DOUBLE PRECISION, LOGICAL, and CHARACTER. Assumed
 CHARACTER dummy lengths are specialized to each scalar actual argument, with
@@ -63,11 +117,12 @@ normal assignment padding and truncation.
 
 The four specific `set_optional_real`, `set_optional_integer`,
 `set_optional_logical`, and `set_optional_character` routines from the utility
-module are covered by the regression tests. This subset uses direct positional
-calls; it does not add generic OPTIONAL dispatch, keyword calls, array actual
-arguments, or the separate allocatable setters. Unsupported actual expressions
-and mismatched types produce diagnostics. Explicit-length CHARACTER dummies
-currently require matching actual lengths.
+module are covered by the regression tests. Positional and named scalar calls
+are supported, including through supported generic interfaces. Array actual
+arguments to ELEMENTAL subroutines and the separate allocatable setters remain
+outside this subset. Unsupported actual expressions and mismatched types produce
+diagnostics. Explicit-length CHARACTER dummies currently require matching actual
+lengths.
 
 ## Array bounds inquiries
 
@@ -75,7 +130,8 @@ currently require matching actual lengths.
 `DIM` selects a scalar bound; omitting it returns a rank-one vector. Positional
 arguments and `ARRAY=`, `DIM=`, and `KIND=4` keywords are accepted, as are these
 keywords for `SIZE`. Nondefault result kinds and runtime dimensions are not yet
-supported. Existing array-storage limits apply, including one-based declarations.
+supported. Constant explicit lower bounds are supported as described below;
+the existing restrictions on shapes and array storage still apply.
 Inquiries use shape metadata and do not require initialized array elements.
 
 ## Explicit array bounds
@@ -115,12 +171,6 @@ elemental expressions only where the enclosing mask is active; ELSEWHERE never
 reactivates elements excluded by that enclosing mask. Section destinations and
 CHARACTER destinations remain unsupported. Run `python tests/test_nested_where.py`
 for nested mask, shape, and uninitialized-element checks.
-
-A broader external ofort compatibility runner is described in
-[tests/ofort/README.md](tests/ofort/README.md). It compares native O0/O2 output
-with gfortran and records failures without changing the ofort checkout.
-Use `--discover --jobs 4` to inventory standalone output/pending fixtures and
-record exclusions; the default selection remains the quick 18-case sample.
 
 ## Explicit DO steps
 
@@ -182,6 +232,312 @@ the entire record and handle LF/CRLF endings.
 File output, external list-directed input, NEWUNIT and IOSTAT are not yet
 supported. Connections are shared within a compiled source group. Native file
 I/O currently requires a 64-bit target.
+
+## Numeric and logical reductions
+
+Numeric reductions (`SUM`, `PRODUCT`, `MINVAL`, `MAXVAL`) accept `ARRAY=`,
+`DIM=`, and `MASK=` keywords, including reordered keywords. Masks may be scalar
+LOGICAL values or conformable LOGICAL arrays/expressions. A constant `DIM` reduces
+one axis of a fixed-shape array, preserving the other axes in order; without
+DIM the whole array is reduced. Runtime DIM remains unsupported.
+For a positional mask without DIM, use `MASK=`. Empty/all-false integer extrema
+use the argument kind's largest/smallest representable values.
+Run `python tests/test_masked_reductions.py` for interpreter/native O0/O2 checks
+and comparison with gfortran when installed.
+
+Logical reductions `COUNT`, `ANY`, and `ALL` accept `MASK=` and `DIM=` keywords.
+`COUNT` supports constant `KIND=4` (default) and `KIND=8`; `ANY` and `ALL` return
+LOGICAL. Whole-array and constant-DIM reductions support logical arrays,
+sections, and relational array expressions. Empty inputs yield 0, false, and
+true respectively. Runtime DIM remains unsupported. Run `python tests/test_logical_reductions.py` for interpreter,
+native O0/O2, and gfortran comparison checks.
+
+## Array arguments to functions
+
+PURE functions with fixed-size numeric/LOGICAL `INTENT(IN)` array dummies now
+accept whole-array arguments of matching shape and element kind. The compiler
+copies the input elements through its scalar calling convention, so actual
+arrays must be fully initialized. Different declared lower bounds are supported;
+input storage is private to the function. This subset is limited to 1024 elements
+per dummy and requires all actual arguments. Assumed-shape, optional/allocatable
+array dummies, array expressions/sections as actuals, and non-PURE array-argument
+functions are diagnosed as unsupported. Run `python tests/test_function_arrays.py`.
+
+## Integer and real inquiries
+
+`HUGE` supports INTEGER kinds 1, 2, 4 and 8. Default-integer literal/constant
+expressions such as `huge(0)` fold in PARAMETER initializers; executable inquiries
+also accept typed scalar or array variables without reading their values.
+`KIND` reports declared integer kinds correctly, including `kind(huge(i8))`.
+INTEGER(16) HUGE is diagnosed rather than truncated; TINY still requires REAL.
+Run `python tests/test_integer_huge.py` for interpreter/native O0/O2 and gfortran
+comparison checks. General variable expressions as HUGE arguments and typed
+variable inquiries inside PARAMETER initializers remain outside this subset.
+
+## Empty arrays
+
+Fixed-shape numeric and LOGICAL multidimensional arrays may have zero extents.
+Whole-array/section operations and reductions with or without DIM handle empty inputs;
+constant and runtime subscripts into an empty dimension remain errors. LOGICAL
+matrices support element/section assignment, list-directed output and whole-array
+COUNT/ANY/ALL. Multidimensional WHERE is also supported for whole-array destinations.
+Run `python tests/test_empty_matrices.py` for empty/LOGICAL matrix checks.
+
+`python tests/test_dim_reductions.py` checks multidimensional DIM reductions,
+including masks, empty axes, nested reductions, rank-three sections, shape
+diagnostics and masked uninitialized elements. Interpreter and native O0/O2
+results are compared with gfortran when installed.
+
+## Constructors and RESHAPE
+
+Numeric/LOGICAL array constructors can be used in expressions and can contain
+fixed-shape array or section items, which are appended in array element order.
+Items must have matching element type and kind. Constructor temporaries preserve
+overlapping assignment semantics. CHARACTER and explicitly typed constructors
+remain outside this subset.
+
+`RESHAPE(SOURCE, SHAPE, PAD, ORDER)` accepts numeric/LOGICAL array expressions
+and a constant SHAPE constructor, including zero extents. Optional PAD supplies
+repeated elements when SOURCE is too short and must have the same type and kind.
+Optional ORDER is a constant permutation of the result dimensions specifying
+which dimension varies fastest during filling. Keywords may be reordered; extra
+SOURCE elements are ignored. Runtime SHAPE/ORDER vectors remain unsupported.
+Run `python tests/test_reshape_options.py` for padding and fill-order checks.
+`MOD` and `MODULO` accept
+conformable numeric array arguments and scalar expansion, preserving element
+kind. Run `python tests/test_reshape_constructors.py` for interpreter/native
+O0/O2 checks and gfortran comparison.
+
+## SELECT CASE ranges
+
+Integer `SELECT CASE` accepts comma-separated values and inclusive ranges using
+`:` (for example, `case (1,3:5,9:)` or `case (:0)`). Bounds must be constant
+integer expressions; duplicate/overlapping ranges are diagnosed. Literal and
+arithmetic selectors work in native builds, including selectors made constant
+by optimization. CHARACTER ranges remain unsupported. Run
+`python tests/test_case_ranges.py` for interpreter/native O0/O2 and gfortran checks.
+
+## PARAMETER statements
+
+Separate `PARAMETER (name=value, ...)` statements are supported for explicitly
+declared scalar constants. For example, `integer :: i, j` followed by
+`parameter (i=5, j=i+2)` defines the same constants as a modern PARAMETER
+attribute declaration. The type declaration must precede the statement; values
+use the existing numeric/CHARACTER constant evaluation and conversion rules.
+Module exports, host association, PURE procedures and assignment protection
+are preserved. Implicitly typed constants and array names in separate PARAMETER
+statements remain unsupported. Run `python tests/test_parameter_statements.py`.
+
+## CHARACTER entity lengths
+
+CHARACTER declarations using `::` accept per-entity lengths, for example
+`character(2) :: a*3, b, c*(n+1)`. An entity length overrides the shared length
+without changing its neighbors. Scalar PARAMETER entities also accept `*(*)`.
+Fixed-length local and host CHARACTER variables may supply `LEN(variable)` in
+later CHARACTER length declarations, without reading their values. Runtime
+lengths remain unsupported. Run
+`python tests/test_entity_character_lengths.py` for interpreter/native O0/O2
+and gfortran checks.
+
+Constant `TRIM` and `LEN_TRIM` calls, including CHARACTER PARAMETER arguments,
+are evaluated before code generation.
+
+## Array transformations and locations
+
+CSHIFT supports fixed-shape numeric and LOGICAL arrays and constant DIM. INTEGER
+SHIFT may be scalar or an array shaped like ARRAY with DIM removed, with runtime
+values in either case. Sections, array expressions, empty arrays and overlapping
+assignments are supported. Runtime DIM and CHARACTER arrays remain unsupported.
+Run `python tests/test_cshift.py` for interpreter/native O0/O2 checks and a
+gfortran comparison.
+
+TRANSPOSE accepts fixed-shape numeric or LOGICAL rank-two arrays, including
+sections and expressions. The MATRIX keyword and PURE usage are supported.
+Run `python tests/test_matrix_transforms.py` for TRANSPOSE and array-valued
+CSHIFT checks in the interpreter and native O0/O2 builds, plus gfortran comparison.
+
+EOSHIFT supports fixed-shape numeric and LOGICAL arrays with constant DIM.
+SHIFT and optional BOUNDARY may be scalar or arrays shaped like ARRAY with DIM
+removed. Vacated elements use BOUNDARY, or zero/false when it is omitted.
+Sections, overlapping assignments and PURE usage are supported; runtime DIM
+and CHARACTER arrays remain unsupported. Run `python tests/test_eoshift.py`.
+
+SPREAD supports numeric/LOGICAL scalar and fixed-shape array sources with constant
+DIM and NCOPIES. It inserts the replication dimension at DIM; zero or negative
+NCOPIES produces an empty result. Sections, nested calls, constructors, overlapping
+assignments and PURE usage are supported. Runtime DIM/NCOPIES and CHARACTER
+sources remain unsupported. Run `python tests/test_spread.py`.
+
+PACK supports fixed-shape numeric/LOGICAL arrays with scalar or conformable
+LOGICAL masks. A supplied rank-one VECTOR sets the result length and supplies
+trailing values after selected ARRAY elements. Without VECTOR, runtime masks are
+supported by bounded temporary storage with a separate result length. Such results
+work in list-directed printing, basic arithmetic/comparisons, whole-array assignment
+to rank-one fixed-size arrays, and reductions without DIM/MASK options. Assignments
+and array expressions check shape conformance at runtime. Further transformations,
+constructors, array inquiries and WHERE assignments involving runtime-sized results
+remain unsupported. Run `python tests/test_runtime_pack.py`.
+UNPACK supports a rank-one VECTOR, fixed-shape LOGICAL MASK and scalar or
+conformable FIELD of the same type/kind as VECTOR. Both intrinsics preserve
+array-element order and check at runtime that VECTOR has enough elements.
+CHARACTER arrays remain unsupported. Run `python tests/test_pack_unpack.py`.
+
+MINLOC/MAXLOC support fixed-shape numeric arrays; FINDLOC also supports LOGICAL
+arrays. Optional constant DIM reduces rank, or omitting DIM returns one position
+per source dimension. MASK may be scalar or conformable LOGICAL; runtime scalar
+BACK selects the last matching location instead of the first. Empty selections
+return zeros. KIND=4 and KIND=8 are supported. FINDLOC VALUE must currently have
+the same type/kind as ARRAY. Use MASK= when omitting DIM; the positional MASK-only
+form, runtime DIM, CHARACTER arrays and runtime-sized PACK inputs remain outside
+this subset. Run `python tests/test_locations.py`.
+
+## Intrinsic modules
+
+ISO_FORTRAN_ENV currently provides the INTEGER kind constants INT8/INT16/INT32/
+INT64 (1/2/4/8) and REAL32/REAL64 (4/8). REAL128 is -1 to indicate an unsupported
+real kind. USE, INTRINSIC :: ISO_FORTRAN_ENV, ordinary USE and USE :: forms support
+ONLY lists, host association and re-export through user modules. Explicit
+INTRINSIC selects the built-in module even if a user module has the same name;
+NON_INTRINSIC requires a user module in the same source group. Other intrinsic
+modules and other ISO_FORTRAN_ENV entities are not yet implemented.
+Run `python tests/test_intrinsic_env.py`.
+
+## Contextual keywords
+
+DOUBLE and PRECISION are contextual words: they form a type declaration when
+paired within one logical statement, including continued lines. Otherwise they
+can name variables, arrays, arguments or procedures. Run
+`python tests/test_double_precision_names.py`.
+
+## Numeric kinds and expression semantics
+
+Integer literals accept numeric or named kind suffixes, such as `127_1` and
+`10000000000_int64`, for kinds 1, 2, 4 and 8. The compiler checks literal ranges
+and preserves their kinds in supported expressions, array constructors and
+procedure arguments. KIND supports numeric arithmetic expressions without
+reading their operands; mixed INTEGER operands select the wider kind. A REAL
+base raised to an INTEGER power retains the base kind. Exponentiation binds
+more tightly than unary signs and associates to the right: `-2**2` is -4,
+`(-2)**2` is 4, and `2**3**2` is 512. Nondefault-kind INTEGER PARAMETER declarations
+and kind-16 integer literals remain unsupported. Run
+`python tests/test_integer_literals.py`.
+
+## Declaration initialization
+
+Main-program variables support declaration initialization from supported constant
+expressions. Numeric scalars, rank-one array constructors (including constant
+implied-DOs), scalar array fills, LOGICAL literals and fixed-length CHARACTER
+scalars are supported. Values remain mutable; initialization runs once before
+normal use, including declarations with an explicit SAVE attribute. INTEGER
+initializers currently require integer constant expressions. LOGICAL expressions
+beyond literals and additional constant array transformations
+remain outside this subset. Initialized locals in procedures, modules and BLOCK
+scopes are rejected until persistent storage is implemented. Run
+`python tests/test_main_initialization.py`.
+
+## OPTIONAL procedures
+
+Local OPTIONAL functions and subroutines can be specialized for positional and
+named calls, including omitted arguments before later named arguments and
+forwarding an absent optional dummy to another optional dummy. PRESENT
+and simple logical combinations of presence tests select the applicable branches;
+a missing required argument or an unguarded absent-dummy reference is diagnosed.
+Optional functions currently require explicit INTENT(IN) on their arguments.
+Recursive optional specialization and a separate-object optional-argument ABI
+remain unsupported. Named calls require a definition in the source group.
+
+Scalar CHARACTER subroutine arguments support fixed and assumed lengths,
+including OPTIONAL inputs and writable variables. Assumed lengths follow each
+actual argument; LEN, empty strings and literal/concatenated inputs work. Fixed
+lengths currently require an exact match. Expressions require INTENT(IN), while
+writable arguments must be variables. CHARACTER arrays, assumed-length function
+dummies and explicit RETURN inside expanded CHARACTER subroutines remain outside
+this subset. Run `python tests/test_optional_procedures.py`.
+
+## CHARACTER comparisons and function arguments
+
+Scalar CHARACTER comparisons support all six relational operators with blank
+padding of the shorter operand. Fixed-length variables, ASCII literals,
+concatenations, TRIM and zero-length strings are supported. Comparison captures
+in DO WHILE conditions are reevaluated on every iteration, including after CYCLE.
+Run `python tests/test_character_comparisons.py`.
+
+Local functions can receive fixed-length, read-only scalar CHARACTER arguments.
+Actuals may be variables, literals or fixed-length concatenations; they must be
+at least as long as the dummy, and longer actuals contribute their leading
+characters. Function-to-function forwarding is supported. Writable CHARACTER
+function dummies, runtime-length actuals and assumed-length dummies remain
+unsupported.
+
+## Scalar substrings
+
+Scalar CHARACTER variables support substring reads and assignments with constant
+integer bounds, including omitted endpoints and empty ranges. Overlapping
+assignments capture the right-hand side before updating the destination;
+shorter values are blank-padded and longer ones truncated. LEN of a substring
+uses its declared bounds without reading the parent string. Partial writes
+currently require an initialized parent string; initialization tracking is not
+yet per character. Dynamic bounds, substrings of
+PARAMETER strings, READ destinations and substring actuals to subroutines remain
+unsupported. Run `python tests/test_scalar_substrings.py`.
+
+## CHARACTER arrays
+
+Fixed-size rank-one CHARACTER arrays support up to 1024 elements in local
+storage. Supported operations include literal constructors, main-program
+declaration initialization, scalar fills, whole-array copies, constant element
+indices and sections (including strides), and elementwise substring assignment.
+All source values are captured before overlapping destinations are written.
+Array comparisons support scalar broadcasting and ALL/ANY without DIM;
+list-directed PRINT, whole-array SIZE and LEN are supported. Initialization is
+tracked per element, with diagnostics naming the original array and its storage
+element number. Partial substring writes still require initialized elements.
+
+Dynamic indexing, higher ranks, module/dummy CHARACTER array storage, CHARACTER
+array PARAMETERs and the other array transformational intrinsics remain outside
+this subset. Array constructors currently require equal-length CHARACTER
+literals (including substituted constants). Run
+`python tests/test_character_arrays.py`.
+
+## Vector subscripts
+
+Local fixed rank-one numeric and LOGICAL arrays support INTEGER vector subscripts with
+up to 1024 selected elements. Selectors may be fixed-size INTEGER arrays,
+constructors, constant implied-DOs, sections, supported arithmetic, ABS/MOD/MODULO
+or default INT conversions. Reads preserve order and repetitions. Assignments
+capture all indices and right-hand values before writing, including scalar fills,
+overlapping selections and an array used as its own index vector. Nondefault
+lower bounds and INTEGER kinds 1/2/4/8 are supported.
+
+Constant invalid indices and duplicate assignment indices are compile errors;
+dynamic indices are checked against the original bounds before any writes, and
+dynamic duplicate destinations cause a runtime error. Duplicate indices remain
+valid for reads. SIZE, LBOUND, UBOUND and KIND of supported selections use shape
+and type information without reading the array or index values. Only selected
+source elements must be initialized. Loop-condition captures are reevaluated on
+every iteration, including after CYCLE. Run `python tests/test_vector_subscripts.py`.
+
+Higher-rank and CHARACTER selections, runtime-sized index vectors, READ
+destinations, vector actuals to subroutines and vector selections in WHERE
+assignments remain unsupported. Other vector expressions are rejected when they
+reach scalar array-index lowering, instead of silently using their first element.
+
+## Named arguments
+
+Calls to procedures defined in the source group support named arguments,
+including reordered keywords and positional arguments followed by keywords.
+Omitted OPTIONAL arguments can occur before later named arguments, and absent
+OPTIONAL values can be forwarded by name. Generic calls associate keywords with
+each candidate's dummy names before matching types. Named scalar, supported
+array/CHARACTER and type-bound procedure calls use the existing procedure
+lowering. Common math intrinsics and RANDOM_NUMBER(HARVEST=...) also accept names;
+existing intrinsic keyword support remains available.
+
+Unknown keywords, duplicate arguments, positional arguments after keywords and
+missing required arguments are compile errors. Named procedure calls currently
+require a known definition in the source group and unique procedure names within
+the compilation; external interface-only declarations and procedure pointers
+remain unsupported. Run `python tests/test_named_arguments.py`.
 
 ## Toolchains
 
@@ -262,6 +618,14 @@ python tests/test_elemental_setters.py
 python tests/test_do_steps.py
 python tests/test_where.py
 python tests/test_explicit_bounds.py
+python tests/test_nested_where.py
+python tests/test_masked_reductions.py
+python tests/test_dim_reductions.py
+python tests/test_optional_procedures.py
+python tests/test_character_arrays.py
+python tests/test_scalar_substrings.py
+python tests/test_vector_subscripts.py
+python tests/test_named_arguments.py
 python tests/test_ofort_compat_runner.py
 ```
 
@@ -271,8 +635,32 @@ variable also works. The Rust integration suite uses the debug executable.
 Tests require the platform linker/toolchain described above. The regression
 runner no longer invokes `git clean`.
 
+The Rust integration suite checks the numbered native fixtures against
+[tests/expectations.json](tests/expectations.json). The commands above include
+focused Python checks for the driver and language features; additional
+`tests/test_*.py` scripts cover other implemented subsets. Many compare interpreter
+execution with native builds at O0 and O2, and also compare with gfortran when it
+is available. Python is required for these scripts; gfortran is required for the
+external compatibility runner.
+
 On Windows, after building release, also run `python tests/test_batch_sources.py`
 to verify the compatibility wrappers and multi-source fixtures.
+
+### External ofort fixtures
+
+After building release, run the quick 18-case sample or the broader inventory:
+
+```bat
+python tests/run_ofort_compat.py --ofort-root C:\c\ofort --report target/ofort-compat.json
+python tests/run_ofort_compat.py --ofort-root C:\c\ofort --discover --jobs 4 --report target/ofort-expanded.json
+```
+
+Replace `C:\c\ofort` with your ofort checkout. These commands compile standalone
+fixtures with rfort and gfortran; they do not run the full ofort Python suite or
+modify its checkout. Reports distinguish compilation failures, runtime failures,
+wrong output and reference failures. Add `--strict` to return a failing status
+when a comparison fails. See [tests/ofort/README.md](tests/ofort/README.md) for
+selection files, discovery exclusions and reproducible checkpoints.
 
 ## License
 
@@ -280,270 +668,3 @@ The combined compiler is licensed under **[GPLv3](LICENSE)**. Original Rust
 modules added in this fork and listed in [LICENSING.md](LICENSING.md) are also
 available individually under the **[MIT license](LICENSE-MIT)**. Their source
 files carry MIT SPDX headers. Upstream code remains subject to GPLv3.
-
-Numeric reductions (`SUM`, `PRODUCT`, `MINVAL`, `MAXVAL`) accept `ARRAY=`,
-`DIM=`, and `MASK=` keywords, including reordered keywords. Masks may be scalar
-LOGICAL values or conformable LOGICAL arrays/expressions. A constant `DIM` reduces
-one axis of a fixed-shape array, preserving the other axes in order; without
-DIM the whole array is reduced. Runtime DIM remains unsupported.
-For a positional mask without DIM, use `MASK=`. Empty/all-false integer extrema
-use the argument kind's largest/smallest representable values.
-Run `python tests/test_masked_reductions.py` for interpreter/native O0/O2 checks
-and comparison with gfortran when installed.
-
-Logical reductions `COUNT`, `ANY`, and `ALL` accept `MASK=` and `DIM=` keywords.
-`COUNT` supports constant `KIND=4` (default) and `KIND=8`; `ANY` and `ALL` return
-LOGICAL. Whole-array and constant-DIM reductions support logical arrays,
-sections, and relational array expressions. Empty inputs yield 0, false, and
-true respectively. Runtime DIM remains unsupported. Run `python tests/test_logical_reductions.py` for interpreter,
-native O0/O2, and gfortran comparison checks.
-
-PURE functions with fixed-size numeric/LOGICAL `INTENT(IN)` array dummies now
-accept whole-array arguments of matching shape and element kind. The compiler
-copies the input elements through its scalar calling convention, so actual
-arrays must be fully initialized. Different declared lower bounds are supported;
-input storage is private to the function. This subset is limited to 1024 elements
-per dummy and requires all actual arguments. Assumed-shape, optional/allocatable
-array dummies, array expressions/sections as actuals, and non-PURE array-argument
-functions are diagnosed as unsupported. Run `python tests/test_function_arrays.py`.
-
-`HUGE` supports INTEGER kinds 1, 2, 4 and 8. Default-integer literal/constant
-expressions such as `huge(0)` fold in PARAMETER initializers; executable inquiries
-also accept typed scalar or array variables without reading their values.
-`KIND` reports declared integer kinds correctly, including `kind(huge(i8))`.
-INTEGER(16) HUGE is diagnosed rather than truncated; TINY still requires REAL.
-Run `python tests/test_integer_huge.py` for interpreter/native O0/O2 and gfortran
-comparison checks. General variable expressions as HUGE arguments and typed
-variable inquiries inside PARAMETER initializers remain outside this subset.
-
-Fixed-shape numeric and LOGICAL multidimensional arrays may have zero extents.
-Whole-array/section operations and reductions with or without DIM handle empty inputs;
-constant and runtime subscripts into an empty dimension remain errors. LOGICAL
-matrices support element/section assignment, list-directed output and whole-array
-COUNT/ANY/ALL. Multidimensional WHERE is also supported for whole-array destinations.
-Run `python tests/test_empty_matrices.py` for empty/LOGICAL matrix checks.
-
-`python tests/test_dim_reductions.py` checks multidimensional DIM reductions,
-including masks, empty axes, nested reductions, rank-three sections, shape
-diagnostics and masked uninitialized elements. Interpreter and native O0/O2
-results are compared with gfortran when installed.
-
-Numeric/LOGICAL array constructors can be used in expressions and can contain
-fixed-shape array or section items, which are appended in array element order.
-Items must have matching element type and kind. Constructor temporaries preserve
-overlapping assignment semantics. CHARACTER and explicitly typed constructors
-remain outside this subset.
-
-`RESHAPE(SOURCE, SHAPE, PAD, ORDER)` accepts numeric/LOGICAL array expressions
-and a constant SHAPE constructor, including zero extents. Optional PAD supplies
-repeated elements when SOURCE is too short and must have the same type and kind.
-Optional ORDER is a constant permutation of the result dimensions specifying
-which dimension varies fastest during filling. Keywords may be reordered; extra
-SOURCE elements are ignored. Runtime SHAPE/ORDER vectors remain unsupported.
-Run `python tests/test_reshape_options.py` for padding and fill-order checks.
-`MOD` and `MODULO` accept
-conformable numeric array arguments and scalar expansion, preserving element
-kind. Run `python tests/test_reshape_constructors.py` for interpreter/native
-O0/O2 checks and gfortran comparison.
-
-Integer `SELECT CASE` accepts comma-separated values and inclusive ranges using
-`:` (for example, `case (1,3:5,9:)` or `case (:0)`). Bounds must be constant
-integer expressions; duplicate/overlapping ranges are diagnosed. Literal and
-arithmetic selectors work in native builds, including selectors made constant
-by optimization. CHARACTER ranges remain unsupported. Run
-`python tests/test_case_ranges.py` for interpreter/native O0/O2 and gfortran checks.
-
-Separate `PARAMETER (name=value, ...)` statements are supported for explicitly
-declared scalar constants. For example, `integer :: i, j` followed by
-`parameter (i=5, j=i+2)` defines the same constants as a modern PARAMETER
-attribute declaration. The type declaration must precede the statement; values
-use the existing numeric/CHARACTER constant evaluation and conversion rules.
-Module exports, host association, PURE procedures and assignment protection
-are preserved. Implicitly typed constants and array names in separate PARAMETER
-statements remain unsupported. Run `python tests/test_parameter_statements.py`.
-
-CHARACTER declarations using `::` accept per-entity lengths, for example
-`character(2) :: a*3, b, c*(n+1)`. An entity length overrides the shared length
-without changing its neighbors. Scalar PARAMETER entities also accept `*(*)`.
-Fixed-length local and host CHARACTER variables may supply `LEN(variable)` in
-later CHARACTER length declarations, without reading their values. Runtime
-lengths remain unsupported. Run
-`python tests/test_entity_character_lengths.py` for interpreter/native O0/O2
-and gfortran checks.
-
-Constant `TRIM` and `LEN_TRIM` calls, including CHARACTER PARAMETER arguments,
-are evaluated before code generation.
-
-CSHIFT supports fixed-shape numeric and LOGICAL arrays and constant DIM. INTEGER
-SHIFT may be scalar or an array shaped like ARRAY with DIM removed, with runtime
-values in either case. Sections, array expressions, empty arrays and overlapping
-assignments are supported. Runtime DIM and CHARACTER arrays remain unsupported.
-Run `python tests/test_cshift.py` for interpreter/native O0/O2 checks and a
-gfortran comparison.
-
-TRANSPOSE accepts fixed-shape numeric or LOGICAL rank-two arrays, including
-sections and expressions. The MATRIX keyword and PURE usage are supported.
-Run `python tests/test_matrix_transforms.py` for TRANSPOSE and array-valued
-CSHIFT checks in the interpreter and native O0/O2 builds, plus gfortran comparison.
-
-EOSHIFT supports fixed-shape numeric and LOGICAL arrays with constant DIM.
-SHIFT and optional BOUNDARY may be scalar or arrays shaped like ARRAY with DIM
-removed. Vacated elements use BOUNDARY, or zero/false when it is omitted.
-Sections, overlapping assignments and PURE usage are supported; runtime DIM
-and CHARACTER arrays remain unsupported. Run `python tests/test_eoshift.py`.
-
-SPREAD supports numeric/LOGICAL scalar and fixed-shape array sources with constant
-DIM and NCOPIES. It inserts the replication dimension at DIM; zero or negative
-NCOPIES produces an empty result. Sections, nested calls, constructors, overlapping
-assignments and PURE usage are supported. Runtime DIM/NCOPIES and CHARACTER
-sources remain unsupported. Run `python tests/test_spread.py`.
-
-PACK supports fixed-shape numeric/LOGICAL arrays with scalar or conformable
-LOGICAL masks. A supplied rank-one VECTOR sets the result length and supplies
-trailing values after selected ARRAY elements. Without VECTOR, runtime masks are
-supported by bounded temporary storage with a separate result length. Such results
-work in list-directed printing, basic arithmetic/comparisons, whole-array assignment
-to rank-one fixed-size arrays, and reductions without DIM/MASK options. Assignments
-and array expressions check shape conformance at runtime. Further transformations,
-constructors, array inquiries and WHERE assignments involving runtime-sized results
-remain unsupported. Run `python tests/test_runtime_pack.py`.
-UNPACK supports a rank-one VECTOR, fixed-shape LOGICAL MASK and scalar or
-conformable FIELD of the same type/kind as VECTOR. Both intrinsics preserve
-array-element order and check at runtime that VECTOR has enough elements.
-CHARACTER arrays remain unsupported. Run `python tests/test_pack_unpack.py`.
-
-MINLOC/MAXLOC support fixed-shape numeric arrays; FINDLOC also supports LOGICAL
-arrays. Optional constant DIM reduces rank, or omitting DIM returns one position
-per source dimension. MASK may be scalar or conformable LOGICAL; runtime scalar
-BACK selects the last matching location instead of the first. Empty selections
-return zeros. KIND=4 and KIND=8 are supported. FINDLOC VALUE must currently have
-the same type/kind as ARRAY. Use MASK= when omitting DIM; the positional MASK-only
-form, runtime DIM, CHARACTER arrays and runtime-sized PACK inputs remain outside
-this subset. Run `python tests/test_locations.py`.
-
-ISO_FORTRAN_ENV currently provides the INTEGER kind constants INT8/INT16/INT32/
-INT64 (1/2/4/8) and REAL32/REAL64 (4/8). REAL128 is -1 to indicate an unsupported
-real kind. USE, INTRINSIC :: ISO_FORTRAN_ENV, ordinary USE and USE :: forms support
-ONLY lists, host association and re-export through user modules. Explicit
-INTRINSIC selects the built-in module even if a user module has the same name;
-NON_INTRINSIC requires a user module in the same source group. Other intrinsic
-modules and other ISO_FORTRAN_ENV entities are not yet implemented.
-Run `python tests/test_intrinsic_env.py`.
-
-DOUBLE and PRECISION are contextual words: they form a type declaration when
-paired within one logical statement, including continued lines. Otherwise they
-can name variables, arrays, arguments or procedures. Run
-`python tests/test_double_precision_names.py`.
-
-Integer literals accept numeric or named kind suffixes, such as `127_1` and
-`10000000000_int64`, for kinds 1, 2, 4 and 8. The compiler checks literal ranges
-and preserves their kinds in supported expressions, array constructors and
-procedure arguments. KIND supports numeric arithmetic expressions without
-reading their operands; mixed INTEGER operands select the wider kind. A REAL
-base raised to an INTEGER power retains the base kind. Exponentiation binds
-more tightly than unary signs and associates to the right: `-2**2` is -4,
-`(-2)**2` is 4, and `2**3**2` is 512. Nondefault-kind INTEGER PARAMETER declarations
-and kind-16 integer literals remain unsupported. Run
-`python tests/test_integer_literals.py`.
-
-Main-program variables support declaration initialization from supported constant
-expressions. Numeric scalars, rank-one array constructors (including constant
-implied-DOs), scalar array fills, LOGICAL literals and fixed-length CHARACTER
-scalars are supported. Values remain mutable; initialization runs once before
-normal use, including declarations with an explicit SAVE attribute. INTEGER
-initializers currently require integer constant expressions. LOGICAL expressions
-beyond literals and additional constant array transformations
-remain outside this subset. Initialized locals in procedures, modules and BLOCK
-scopes are rejected until persistent storage is implemented. Run
-`python tests/test_main_initialization.py`.
-
-Local OPTIONAL functions and subroutines can be specialized for positional calls,
-including forwarding an absent optional dummy to another optional dummy. PRESENT
-and simple logical combinations of presence tests select the applicable branches;
-a missing required argument or an unguarded absent-dummy reference is diagnosed.
-Optional functions currently require explicit INTENT(IN) on their arguments.
-Recursive optional specialization, keyword actual arguments and a separate-object
-optional-argument ABI remain unsupported.
-
-Scalar CHARACTER subroutine arguments support fixed and assumed lengths,
-including OPTIONAL inputs and writable variables. Assumed lengths follow each
-actual argument; LEN, empty strings and literal/concatenated inputs work. Fixed
-lengths currently require an exact match. Expressions require INTENT(IN), while
-writable arguments must be variables. CHARACTER arrays, assumed-length function
-dummies and explicit RETURN inside expanded CHARACTER subroutines remain outside
-this subset. Run `python tests/test_optional_procedures.py`.
-
-Scalar CHARACTER comparisons support all six relational operators with blank
-padding of the shorter operand. Fixed-length variables, ASCII literals,
-concatenations, TRIM and zero-length strings are supported. Comparison captures
-in DO WHILE conditions are reevaluated on every iteration, including after CYCLE.
-Run `python tests/test_character_comparisons.py`.
-
-Local functions can receive fixed-length, read-only scalar CHARACTER arguments.
-Actuals may be variables, literals or fixed-length concatenations; they must be
-at least as long as the dummy, and longer actuals contribute their leading
-characters. Function-to-function forwarding is supported. Writable CHARACTER
-function dummies, runtime-length actuals and assumed-length dummies remain
-unsupported.
-
-Scalar CHARACTER variables support substring reads and assignments with constant
-integer bounds, including omitted endpoints and empty ranges. Overlapping
-assignments capture the right-hand side before updating the destination;
-shorter values are blank-padded and longer ones truncated. LEN of a substring
-uses its declared bounds without reading the parent string. Partial writes
-currently require an initialized parent string; initialization tracking is not
-yet per character. Dynamic bounds, substrings of
-PARAMETER strings, READ destinations and substring actuals to subroutines remain
-unsupported. Run `python tests/test_scalar_substrings.py`.
-
-Fixed-size rank-one CHARACTER arrays support up to 1024 elements in local
-storage. Supported operations include literal constructors, main-program
-declaration initialization, scalar fills, whole-array copies, constant element
-indices and sections (including strides), and elementwise substring assignment.
-All source values are captured before overlapping destinations are written.
-Array comparisons support scalar broadcasting and ALL/ANY without DIM;
-list-directed PRINT, whole-array SIZE and LEN are supported. Initialization is
-tracked per element, with diagnostics naming the original array and its storage
-element number. Partial substring writes still require initialized elements.
-
-Dynamic indexing, higher ranks, module/dummy CHARACTER array storage, CHARACTER
-array PARAMETERs and the other array transformational intrinsics remain outside
-this subset. Array constructors currently require equal-length CHARACTER
-literals (including substituted constants). Run
-`python tests/test_character_arrays.py`.
-
-Local fixed rank-one numeric and LOGICAL arrays support INTEGER vector subscripts with
-up to 1024 selected elements. Selectors may be fixed-size INTEGER arrays,
-constructors, constant implied-DOs, sections, supported arithmetic, ABS/MOD/MODULO
-or default INT conversions. Reads preserve order and repetitions. Assignments
-capture all indices and right-hand values before writing, including scalar fills,
-overlapping selections and an array used as its own index vector. Nondefault
-lower bounds and INTEGER kinds 1/2/4/8 are supported.
-
-Constant invalid indices and duplicate assignment indices are compile errors;
-dynamic indices are checked against the original bounds before any writes, and
-dynamic duplicate destinations cause a runtime error. Duplicate indices remain
-valid for reads. SIZE, LBOUND, UBOUND and KIND of supported selections use shape
-and type information without reading the array or index values. Only selected
-source elements must be initialized. Loop-condition captures are reevaluated on
-every iteration, including after CYCLE. Run `python tests/test_vector_subscripts.py`.
-
-Higher-rank and CHARACTER selections, runtime-sized index vectors, READ
-destinations, vector actuals to subroutines and vector selections in WHERE
-assignments remain unsupported. Other vector expressions are rejected when they
-reach scalar array-index lowering, instead of silently using their first element.
-
-Calls to procedures defined in the source group support named arguments,
-including reordered keywords and positional arguments followed by keywords.
-Omitted OPTIONAL arguments can occur before later named arguments, and absent
-OPTIONAL values can be forwarded by name. Generic calls associate keywords with
-each candidate's dummy names before matching types. Named scalar, supported
-array/CHARACTER and type-bound procedure calls use the existing procedure
-lowering. Common math intrinsics and RANDOM_NUMBER(HARVEST=...) also accept names;
-existing intrinsic keyword support remains available.
-
-Unknown keywords, duplicate arguments, positional arguments after keywords and
-missing required arguments are compile errors. Named procedure calls currently
-require a known definition in the source group and unique procedure names within
-the compilation; external interface-only declarations and procedure pointers
-remain unsupported. Run `python tests/test_named_arguments.py`.
