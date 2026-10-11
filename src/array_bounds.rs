@@ -394,6 +394,7 @@ impl Lowerer {
                         }
                     }
                 }
+                Stmt::CallSub { name, .. } if name == "@pointer_associate" => {},
                 Stmt::Print { items }
                 | Stmt::Read { args: items }
                 | Stmt::CallSub { args: items, .. } => {

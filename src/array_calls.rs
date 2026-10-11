@@ -153,7 +153,7 @@ fn rewrite(
     constants: &HashMap<String, Expr>,
     absent: &HashSet<String>,
 ) -> Result<()> {
-    if matches!(e,Expr::Ident(n) if shapes.contains_key(&format!("@pointer:{n}"))) { return Ok(()); }
+    if matches!(e,Expr::Ident(n) if shapes.contains_key(&format!("@pointer:{n}")) || shapes.contains_key(&format!("@target:{n}"))) { return Ok(()); }
     if let Expr::Call(n,args)=e {
         if matches!(n.as_str(),"size"|"shape"|"lbound"|"ubound"|"associated") && matches!(args.first(),Some(Expr::Ident(p)) if shapes.contains_key(&format!("@pointer:{p}"))) { return Ok(()); }
     }

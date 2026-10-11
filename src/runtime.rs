@@ -275,6 +275,17 @@ pub fn interpret(program: &Program) {
                 }
             }
             Expr::Call(name, args) => {
+                if name=="@ptr_name" || name.starts_with("@ptr_load_") {
+                    let handle=eval_expr(&args[0],env_str,env_int,env_real32,env_real64,env_log,funcs,call_stack).0.unwrap();
+                    let offset=if name=="@ptr_name" {0}else{eval_expr(&args[1],env_str,env_int,env_real32,env_real64,env_log,funcs,call_stack).0.unwrap()};
+                    let fr=call_stack.last().unwrap();
+                    let target=fr.pointer_storage.get(handle as usize).expect("invalid pointer storage handle");
+                    if name=="@ptr_name" {return ValueTuple::from_str(target.clone());}
+                    let index=usize::try_from(offset).expect("negative pointer offset");
+                    if let Some(a)=fr.env_int_arrays.get(target){let v=*a.get(index).expect("pointer read outside target");return if name=="@ptr_load_l"{ValueTuple::from_bool(v!=0)}else{ValueTuple::from_int(v)};}
+                    if let Some(a)=fr.env_real_arrays.get(target){return ValueTuple::from_real(*a.get(index).expect("pointer read outside target"));}
+                    assert_eq!(offset,0,"pointer scalar offset");return fr.result_value(target);
+                }
                 if name == "@substring" || name == "@dynamic_substring" {
                     let text=eval_expr(&args[0],env_str,env_int,env_real32,env_real64,env_log,funcs,call_stack).3.unwrap();
                     let start = eval_expr(&args[1],env_str,env_int,env_real32,env_real64,env_log,funcs,call_stack).0.unwrap() as usize;
@@ -666,6 +677,7 @@ pub fn interpret(program: &Program) {
 
     #[derive(Clone, Debug)]
     struct CallFrame {
+        pointer_storage: Vec<String>,
         env_str: HashMap<String, String>,
         env_int: HashMap<String, i64>,
         env_real32: HashMap<String, f32>,
@@ -690,6 +702,7 @@ pub fn interpret(program: &Program) {
         }
         fn new(fd: &FuncDef, func_name: Option<String>) -> Self {
             Self {
+                pointer_storage: vec![String::new()],
                 env_str: HashMap::new(),
                 env_int: HashMap::new(),
                 env_real32: HashMap::new(),
@@ -1038,6 +1051,20 @@ pub fn interpret(program: &Program) {
                     }
                 }
                 Stmt::CallSub { name, args } => {
+                    if name=="@ptr_bind" {
+                        let [Expr::Ident(data),Expr::Ident(flags),Expr::Ident(label),Expr::Ident(target),Expr::Ident(flag)]=args.as_slice() else{panic!("invalid pointer storage binding")};
+                        let fr=call_stack.last_mut().unwrap();
+                        let mut handles=vec![];for n in [target,flag] {let handle=if let Some(i)=fr.pointer_storage.iter().position(|v|v==n){i}else{fr.pointer_storage.push(n.clone());fr.pointer_storage.len()-1};handles.push(handle as i64);}
+                        fr.env_int.insert(data.clone(),handles[0]);fr.env_int.insert(flags.clone(),handles[1]);fr.env_int.insert(label.clone(),handles[0]);idx+=1;continue;
+                    }
+                    if let Some(kind)=name.strip_prefix("@ptr_store_") {
+                        let fr=call_stack.last().unwrap().clone();
+                        let values=args.iter().map(|a|eval_expr(a,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack)).collect::<Vec<_>>();
+                        let frame=call_stack.last_mut().unwrap();let target=frame.pointer_storage[values[0].0.unwrap() as usize].clone();let flag=frame.pointer_storage[values[1].0.unwrap() as usize].clone();let offset=usize::try_from(values[2].0.unwrap()).expect("negative pointer store offset");let value=&values[3];
+                        if matches!(kind,"r4"|"r8") {let v=value.1.unwrap_or_else(||value.0.unwrap_or(0) as f64);let v=if kind=="r4"{v as f32 as f64}else{v};if let Some(a)=frame.env_real_arrays.get_mut(&target){a[offset]=v;}else if frame.env_real32.contains_key(&target){assert_eq!(offset,0);frame.env_real32.insert(target,v as f32);}else{assert_eq!(offset,0);frame.env_real64.insert(target,v);}}
+                        else {let v=if kind=="l"{i64::from(value.2.unwrap_or(false))}else{value.0.unwrap_or_else(||value.1.unwrap_or(0.0) as i64)};if let Some(a)=frame.env_int_arrays.get_mut(&target){a[offset]=v;}else if kind=="l"{assert_eq!(offset,0);frame.env_log.insert(target,v!=0);}else{assert_eq!(offset,0);frame.env_int.insert(target,v);}}
+                        if let Some(a)=frame.env_int_arrays.get_mut(&flag){a[offset]=1;}else{assert_eq!(offset,0);frame.env_int.insert(flag,1);}idx+=1;continue;
+                    }
                     if name == "@stop" { std::process::exit(0); }
                     if name == "@error_stop" { let Expr::Str(message)=&args[0] else {unreachable!()}; eprintln!("ERROR STOP {message}");std::process::exit(1); }
                     if name == "@character_assign" || name=="@character_element_read" {
@@ -1183,7 +1210,7 @@ pub fn interpret(program: &Program) {
                         let (strings, ints, real32, real64, logs) = (fr.env_str.clone(), fr.env_int.clone(), fr.env_real32.clone(), fr.env_real64.clone(), fr.env_log.clone());
                         let value = eval_expr(&args[0], &strings, &ints, &real32, &real64, &logs, funcs, call_stack);
                         if value.0 != Some(1) {
-                            let Expr::Str(variable) = &args[1] else { unreachable!() };
+                            let variable=eval_expr(&args[1],&strings,&ints,&real32,&real64,&logs,funcs,call_stack).3.expect("invalid initialization guard name");
                             let location = match args.get(3) { Some(Expr::Str(location)) => format!(" at {location}"), _ => String::new() };
                             if let Some(index) = args.get(2).filter(|e| !matches!(e, Expr::Str(_))) {
                                 let index = eval_expr(index, &strings, &ints, &real32, &real64, &logs, funcs, call_stack);
@@ -1475,6 +1502,7 @@ pub fn interpret(program: &Program) {
         None
     }
     let top_frame = CallFrame {
+        pointer_storage: vec![String::new()],
         env_str,
         env_int,
         env_real32,

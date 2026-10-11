@@ -147,6 +147,16 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
         let mut before = Vec::new();
         let mut after = Vec::new();
         match &mut stmt {
+            Stmt::CallSub { name, args } if name == "@ptr_bind" => {
+                let Expr::Ident(target) = &args[3] else { bail!("invalid pointer storage binding"); };
+                let target=target.clone();
+                let variable=env.get_mut(&target).ok_or_else(||anyhow::anyhow!("unknown pointer target `{target}`"))?;
+                let target_flag=variable.flag.clone();
+                // Subsequent pointer stores can define this storage indirectly.
+                if variable.state==State::No {variable.state=State::Maybe;}
+                for arg in &args[..3] {let Expr::Ident(dest)=arg else{unreachable!()};write(dest,None,env,&mut after,serial);}
+                args.push(Expr::Ident(target_flag));
+            }
             Stmt::Print { items } => for e in items { read(e, env, &mut before, serial)?; },
             Stmt::Assign { name, value } => { read(value, env, &mut before, serial)?; write(name, None, env, &mut after, serial); }
             Stmt::AssignIndex { name, indices, value } => {
@@ -313,7 +323,7 @@ fn scope(body: &mut Vec<Stmt>, inherited: &mut Env, params: &[String], result: O
         *serial += 1;
         let flag = format!("@initialized_{serial}");
         let assigned = params.contains(&name) && !body.iter().any(|s| matches!(s, Stmt::DummyIntent { name: n, intent } if n == &name && intent == "intent(out)"));
-        let runtime_sized=body.iter().any(|s|matches!(s,Stmt::DummyIntent {name:n,intent} if n==&name && intent.starts_with("@bounded:")));
+        let runtime_sized=name.starts_with("@pointer_") || body.iter().any(|s|matches!(s,Stmt::DummyIntent {name:n,intent} if n==&name && intent.starts_with("@bounded:")));
         let v = Variable { flag: flag.clone(), extent, state: if assigned { State::Yes } else { State::No }, elements: BTreeMap::new(), runtime_sized };
         if let Some(n) = extent {
             prefix.push(Stmt::ArrayDecl { kind: TypeSpec::Integer(None), name: flag.clone(), dims: vec![int(n)] });

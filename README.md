@@ -22,8 +22,8 @@ Implemented subsets include:
   including sections, explicit bounds, vector subscripts, WHERE and reductions.
 - Functions and subroutines, PURE/ELEMENTAL checks, INTENT, OPTIONAL/PRESENT,
   named arguments, and supported generic procedure calls.
-- Scalar and rank-one pointer aliases to fixed `TARGET` storage, including
-  matrix-column views returned through subroutine output pointers.
+- Scalar and rank-1 through rank-15 pointer descriptors over fixed `TARGET`
+  storage, including array views returned through subroutine output pointers.
 - Modules compiled in one source group, scalar derived types, type-bound
   procedures, and defined operators, including derived-type comparisons.
 - List-directed output, a subset of formatted input/output, runtime format
@@ -383,32 +383,47 @@ with gfortran comparisons. `tests/125_bit_intrinsics.f90` is the local fixture.
 
 ## Pointer association
 
-Scalar and deferred-shape rank-one numeric or LOGICAL pointers support `p => x`
-with fixed, one-based `TARGET` storage. Array sections can have constant bounds
-and strides; scalar subscripts, including a matrix column in `p => a(:,column)`,
-are captured at association time. Reads and writes use the target's current
-storage. Reassociation changes the target, and overlapping whole-array
-assignments preserve the right-hand side before writing.
+Scalar and deferred-shape numeric or LOGICAL pointers of ranks 1 through 15
+support `p => x` with fixed `TARGET` storage. The same descriptor lowering handles
+every rank. Descriptors contain the storage and initialization addresses, an
+association state, an origin offset, and per-dimension lower bounds, extents,
+and strides. The interpreter represents addresses with checked storage handles.
+
+Whole targets retain their lower bounds. Sections support runtime bounds,
+strides, and scalar subscripts, captured at association time; scalar subscripts
+reduce rank. Noncontiguous and negative-stride views use the original storage.
+Pointer-to-pointer association copies the descriptor. Reassociation can change
+the shape and total element count, and there is no pointer-specific 4096-element
+limit. Whole-array and section assignments snapshot array right-hand sides to
+preserve overlapping aliases; temporary capacity is bounded by known targets.
 
 `NULLIFY`, `p => NULL()`, and one-argument `ASSOCIATED(p)` are supported.
-Array pointers support element and whole-array assignment, section reads,
-`SIZE`, `SHAPE`, `LBOUND`, and `UBOUND`. Association and shape inquiries do not
+Array pointers support element and whole-array assignment, section reads/writes,
+`SIZE`, `SHAPE`, `LBOUND`, and `UBOUND`, including runtime DIM. Whole-array SUM,
+PRODUCT, MINVAL, MAXVAL, ANY, ALL, and COUNT are supported. Reduction DIM
+arguments and numeric-reduction MASK arguments remain unsupported for pointers.
+Association and shape inquiries do not
 read the target's values; ordinary uninitialized-value checks apply when data
 is read through the pointer. Unassociated accesses and invalid dynamic
 subscripts produce runtime errors. Compiler-managed pointer status starts
 disassociated; standard Fortran leaves an uninitialized pointer's status
 undefined, so portable code should explicitly nullify or associate it first.
 
-Locally defined subroutines can return associations through scalar or rank-one
+Locally defined subroutines can return associations through scalar or rank-1–15
 `POINTER` dummies, including OPTIONAL and named arguments. An `INTENT(OUT)`
 pointer loses its association on entry without undefining the target's data.
 Targets for escaping associations must be caller-owned `TARGET` variables;
 associations to storage in a narrower BLOCK or call scope are rejected.
 
-This initial implementation requires all targets of a given array pointer to
-have the same fixed extent, at most 4096 elements. Pointer-to-pointer association,
-declaration initialization, rank remapping, multidimensional pointers, pointer
-allocation, dynamic or allocatable targets, pointer section assignment, pointer
+The native descriptor is currently lowered to scalar local fields. Procedure
+calls still use specialization; a general descriptor calling convention and
+heap-backed allocation remain future work. Early IR transformations that assume
+direct variable access are disabled for procedures that access pointer storage;
+Cranelift still applies the requested native optimization level.
+
+Pointer declaration initialization, bounds/rank remapping, pointer
+allocation, dynamic or allocatable targets, CHARACTER/derived-type pointers,
+INTEGER(16) pointers, pointer
 function arguments and results, host pointer references from unspecialized
 procedures, `INTENT(IN)` pointer dummies, two-argument `ASSOCIATED`,
 pointer association in PURE procedures, READ through pointers, and passing
@@ -417,6 +432,10 @@ pointers to ordinary subroutine dummies remain unsupported.
 Run `python tests/test_pointer_association.py` for interpreter/native O0/O2
 checks with gfortran comparisons. `tests/135_pointer_association.f90` tests the
 column-pointer output pattern used by `util.f90`'s `get_data`.
+Run `python tests/test_pointer_descriptors.py` for ranks 2–15, changing shapes,
+nonunit bounds, strided views, output dummies, overlap, and initialization checks.
+`tests/136_pointer_descriptors.f90` covers multidimensional descriptors in the
+regular Cargo regression suite.
 
 ## Declarations without `::`
 
@@ -914,6 +933,7 @@ python tests/test_statement_labels.py
 python tests/test_unnamed_procedure_ends.py
 python tests/test_declarations_without_colons.py
 python tests/test_pointer_association.py
+python tests/test_pointer_descriptors.py
 python tests/test_recursive_allocatables.py
 python tests/test_deallocate.py
 python tests/test_runtime_allocatables.py

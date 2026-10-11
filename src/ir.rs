@@ -1,3 +1,15 @@
+// The early scalar optimizer has no model for stores through descriptors.
+// Cranelift still optimizes the generated loads, stores and loops at -O1/-O2.
+fn has_pointer_access(body: &[IStmt]) -> bool {
+    body.iter().any(|s| match s {
+        IStmt::Call(n, _) if n.starts_with("@ptr_") => true,
+        IStmt::Do { body, .. } | IStmt::DoWhile { body, .. } | IStmt::Block { body } => has_pointer_access(body),
+        IStmt::If { then_body, else_body, .. } => has_pointer_access(then_body) || else_body.as_ref().is_some_and(|b|has_pointer_access(b)),
+        IStmt::SelectCase { cases, default, .. } => cases.iter().any(|c|has_pointer_access(&c.body)) || default.as_ref().is_some_and(|b|has_pointer_access(b)),
+        _ => false,
+    })
+}
+
 // Input operations define their first argument; preserve that storage during optimization.
 fn input_destinations(stmts: &[IStmt]) -> std::collections::HashSet<String> {
     let mut names = std::collections::HashSet::new();
@@ -611,6 +623,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
     }
 
     fn optimize_stmt_list(stmts: Vec<IStmt>, func_name: Option<&str>) -> Vec<IStmt> {
+        if has_pointer_access(&stmts) { return stmts; }
         let mut constants = std::collections::HashMap::new();
 
         let mut potential_function_names = std::collections::HashSet::new();
@@ -2268,10 +2281,12 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
         print_ir(&unoptimized_module, "IR Before Optimization");
     }
     for func in &mut funcs {
+        if has_pointer_access(&func.body) {continue;}
         func.body = optimize_stmt_list(func.body.clone(), Some(&func.name));
     }
 
     for func in &mut funcs {
+        if has_pointer_access(&func.body) {continue;}
         let mut array_elem_consts: std::collections::HashMap<(String, i64), i64> =
             std::collections::HashMap::new();
         for st in &func.body {
@@ -2410,10 +2425,12 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
     }
 
     for func in &mut funcs {
+        if has_pointer_access(&func.body) {continue;}
         func.body = eliminate_dead_code_final(func.body.clone(), Some(&func.name));
     }
 
     for func in &mut funcs {
+        if has_pointer_access(&func.body) {continue;}
         let mut single_literal_map: std::collections::HashMap<String, IExpr> =
             std::collections::HashMap::new();
         let mut assign_counts: std::collections::HashMap<String, usize> =
@@ -2525,6 +2542,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
 
     let mut pre_fm = final_module.clone();
     for func in &mut pre_fm.funcs {
+        if has_pointer_access(&func.body) {continue;}
         let mut assign_counts: std::collections::HashMap<String, usize> =
             std::collections::HashMap::new();
         let mut str_assigns: std::collections::HashMap<String, String> =

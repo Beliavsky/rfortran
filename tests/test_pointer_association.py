@@ -272,7 +272,7 @@ end
         for declaration,statement,message in [
             ("integer,pointer::p", "nullify(p)\nprint *,p", "unassociated pointer `p`"),
             ("integer,target::a(2)\ninteger,pointer::p(:)", "nullify(p)\nprint *,size(p)", "unassociated pointer `p`"),
-            ("integer,target::a(2)\ninteger,pointer::p(:)\ninteger::i", "a=1\np=>a\ni=3\nprint *,p(i)", "pointer `p` subscript outside 1:2"),
+            ("integer,target::a(2)\ninteger,pointer::p(:)\ninteger::i", "a=1\np=>a\ni=3\nprint *,p(i)", "pointer `p` subscript outside bounds"),
         ]:
             self.check(f"program main\n{declaration}\n{statement}\nend",error=message)
 
@@ -292,9 +292,6 @@ end
             ("integer::x\ninteger,pointer::p", "p=>x", "requires TARGET"),
             ("real,target::x\ninteger,pointer::p", "p=>x", "type or kind mismatch"),
             ("integer,target::a(2)\ninteger,pointer::p", "p=>a", "rank mismatch"),
-            ("integer,target::a(2),b(3)\ninteger,pointer::p(:)", "p=>a\np=>b", "same fixed extent"),
-            ("integer,pointer::p,q", "p=>q", "pointer-to-pointer"),
-            ("integer,target::a(-1:1)\ninteger,pointer::p(:)", "p=>a", "fixed one-based"),
         ]:
             self.reject(f"program main\n{declarations}\n{statement}\nend",message)
 

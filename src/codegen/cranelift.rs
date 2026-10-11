@@ -756,6 +756,17 @@ fn eval_expr(
         IExpr::Str(_) => CgVal::I64(b.ins().iconst(ir::types::I64, 0)),
         IExpr::Call(name, args) => {
             let lname = name.to_ascii_lowercase();
+            if let Some(kind) = lname.strip_prefix("@ptr_load_") {
+                let base=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);
+                let base=to_i64(b,base);
+                let offset=eval_expr(b,ex,ptr_ty,&args[1],ints,reals,bools,func_meta);
+                let offset=to_i64(b,offset);let bytes=b.ins().imul_imm(offset,8);let address=b.ins().iadd(base,bytes);
+                return match kind {
+                    "r4"|"r8"=>CgVal::F64(b.ins().load(ir::types::F64,MemFlags::new(),address,0)),
+                    "l"=>{let value=b.ins().load(ir::types::I8,MemFlags::new(),address,0);CgVal::Bool(b.ins().icmp_imm(ir::condcodes::IntCC::NotEqual,value,0))},
+                    _=>CgVal::I64(b.ins().load(ir::types::I64,MemFlags::new(),address,0)),
+                };
+            }
             if let Some((operation,bytes))=crate::bit_intrinsics::decode(&lname) {
                 let values=args.iter().map(|arg| {
                     let value=eval_expr(b,ex,ptr_ty,arg,ints,reals,bools,func_meta);
@@ -2495,6 +2506,25 @@ fn gen_stmts(
                     b.ins().store(MemFlags::new(), seed, address, 0);
                     continue;
                 }
+                if name == "@ptr_bind" {
+                    let [IExpr::Ident(data),IExpr::Ident(flags),IExpr::Ident(label),IExpr::Ident(target),IExpr::Ident(flag)] = args.as_slice() else {anyhow::bail!("invalid pointer storage binding");};
+                    let slot=ints.get(target).or_else(||reals.get(target)).or_else(||bools.get(target)).ok_or_else(||anyhow::anyhow!("unknown pointer target `{target}`"))?;
+                    let address=storage_addr(b,ptr_ty,*slot);let destination=storage_addr(b,ptr_ty,ints[data]);b.ins().store(MemFlags::new(),address,destination,0);
+                    let address=storage_addr(b,ptr_ty,ints[flag]);let destination=storage_addr(b,ptr_ty,ints[flags]);b.ins().store(MemFlags::new(),address,destination,0);
+                    let mut text=target.as_bytes().to_vec();text.push(0);let address=make_data(module,b,ptr_ty,dc,&text)?;
+                    let destination=storage_addr(b,ptr_ty,ints[label]);b.ins().store(MemFlags::new(),address,destination,0);
+                    continue;
+                }
+                if let Some(kind)=name.strip_prefix("@ptr_store_") {
+                    let base=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);let base=to_i64(b,base);
+                    let flags=eval_expr(b,ex,ptr_ty,&args[1],ints,reals,bools,func_meta);let flags=to_i64(b,flags);
+                    let offset=eval_expr(b,ex,ptr_ty,&args[2],ints,reals,bools,func_meta);let offset=to_i64(b,offset);let bytes=b.ins().imul_imm(offset,8);
+                    let address=b.ins().iadd(base,bytes);let flag=b.ins().iadd(flags,bytes);
+                    let value=eval_expr(b,ex,ptr_ty,&args[3],ints,reals,bools,func_meta);
+                    let value=match kind {"r4"=>{let v=to_f64(b,value);let narrow=b.ins().fdemote(types::F32,v);b.ins().fpromote(types::F64,narrow)},"r8"=>to_f64(b,value),"l"=>to_bool(b,value),_=>to_i64(b,value)};
+                    b.ins().store(MemFlags::new(),value,address,0);let one=b.ins().iconst(types::I64,1);b.ins().store(MemFlags::new(),one,flag,0);
+                    continue;
+                }
                 if name == "@check_initialized" {
                     let value = eval_expr(b, ex, ptr_ty, &args[0], ints, reals, bools, func_meta);
                     let initialized = to_bool(b, value);
@@ -2502,7 +2532,7 @@ fn gen_stmts(
                     let failure = b.create_block();
                     b.ins().brif(initialized, success, &[], failure, &[]);
                     b.switch_to_block(failure); b.seal_block(failure);
-                    let IExpr::Str(variable) = &args[1] else { anyhow::bail!("invalid initialization guard"); };
+                    let variable = match &args[1] {IExpr::Str(variable)=>variable.as_str(),IExpr::Call(n,_) if n=="@ptr_name"=>"%s",_=>anyhow::bail!("invalid initialization guard")};
                     let location = match args.get(3) { Some(IExpr::Str(location)) => format!(" at {location}"), _ => String::new() };
                     let (pointer, length) = if let Some(index) = args.get(2).filter(|e| !matches!(e, IExpr::Str(_))) {
                         let index = eval_expr(b, ex, ptr_ty, index, ints, reals, bools, func_meta);
@@ -2510,9 +2540,10 @@ fn gen_stmts(
                         let message = format!("Runtime error: read of uninitialized variable `{variable}`: element %lld{}\n\0", location.replace('%', "%%"));
                         let format = make_data(module, b, ptr_ty, dc, message.as_bytes())?;
                         // The variable name is fixed; 32 extra bytes cover any signed 64-bit index.
-                        let buffer = b.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot, (message.len() + 32) as u32, 0));
+                        let name_length=if let IExpr::Call(_,a)=&args[1] {if let Some(IExpr::IntLit(n))=a.get(1){n.parse::<usize>()?}else{0}}else{0};
+                        let buffer = b.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot, (message.len() + name_length + 32) as u32, 0));
                         let pointer = b.ins().stack_addr(ptr_ty, buffer, 0);
-                        let call = ex.call_sprintf(b, &[pointer, format, index]);
+                        let call = if let IExpr::Call(_,a)=&args[1] {let name=eval_expr(b,ex,ptr_ty,&a[0],ints,reals,bools,func_meta);let name=to_i64(b,name);let mut sig=module.make_signature();sig.params.extend([ir::AbiParam::new(ptr_ty),ir::AbiParam::new(ptr_ty),ir::AbiParam::new(ptr_ty),ir::AbiParam::new(types::I64)]);sig.returns.push(ir::AbiParam::new(types::I32));let sig=b.import_signature(sig);let address=b.ins().func_addr(ptr_ty,ex.sprintf);b.ins().call_indirect(sig,address,&[pointer,format,name,index])}else{ex.call_sprintf(b, &[pointer, format, index])};
                         (pointer, b.inst_results(call)[0])
                     } else {
                         let message = format!("Runtime error: read of uninitialized variable `{variable}`{location}\n");
