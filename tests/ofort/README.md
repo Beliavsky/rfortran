@@ -167,3 +167,10 @@ semantics still need work. The selected sample remains at 13/18 passes.
 cover DOUBLE/PRECISION as identifiers while preserving the DOUBLE PRECISION type
 phrase. The original mixed-kind probe now gets past its `double` declaration;
 both numeric probes still require integer kind-suffixed literal support.
+
+`111_integer_literals.f90` and `python tests/test_integer_literals.py` cover
+integer kind suffixes, literal range checks, integer promotion, numeric KIND
+expressions and exponentiation precedence. Both pending numeric probes now
+pass at O0/O2, raising the selected sample to 15/18 passes (three compile
+failures). Remaining probes cover declaration initialization, optional CHARACTER
+arguments and overlapping CHARACTER array substring assignments.

@@ -1340,3 +1340,36 @@ interpreter and native O0/O2 with debug and rebuilt release compilers; fixture
 110 agrees with gfortran. The isolated release report
 `target/ofort-double-context.json` remains at 13/18 passes and five compile
 failures, with all reference runs succeeding. Linux/macOS remain untested.
+
+
+## Checkpoint 50: integer literal kinds and numeric expressions
+
+The lexer accepts integer kind suffixes. Parameter resolution resolves numeric
+or named selectors (including imported ISO_FORTRAN_ENV constants), validates
+kinds 1/2/4/8 and rejects out-of-range literals. A private typed-literal expression
+retains kind information through constant evaluation and inquiries; scalar
+lowering materializes it in typed storage shared by interpreter/native paths.
+Supported constant contexts include ordinary PARAMETER initializers, extents,
+indices and declaration kind selectors. Nondefault-kind INTEGER PARAMETER
+declarations and kind-16 literal values remain explicitly unsupported.
+
+KIND now infers supported numeric expression types without evaluating operands.
+Integer promotion uses the wider kind in array lowering and semantic checks,
+including integer exponentiation. REAL raised to INTEGER retains the REAL kind;
+ABS preserves its operand kind. HUGE of a suffixed literal preserves kind too.
+Unary signs now bind less tightly than exponentiation, while powers remain
+right-associative. Fixture 111 and focused tests cover all supported literal
+kinds, maximum values, arrays, PURE calls, mixed integer operands, constant
+contexts, uninitialized inquiry operands, range errors and power precedence.
+The gfortran comparison corrected an initial mistaken assumption that integer
+exponentiation always retained the base kind; both integer kinds participate.
+No external ofort source files were modified.
+
+Windows validation: 75 Rust unit tests, 111 native fixtures, 46 wrapper tests
+and three focused integer-literal tests passed. Focused tests passed with debug
+and rebuilt release compilers in interpreter/native O0/O2, including a gfortran
+comparison of fixture 111. The isolated release report
+`target/ofort-integer-literals.json` has 15/18 passes and three compile failures;
+both original numeric probes now pass at O0/O2 and all reference runs succeed.
+Remaining probes are xarray_init, xoptional and the CHARACTER overlap case.
+Linux/macOS remain untested.

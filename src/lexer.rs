@@ -165,7 +165,7 @@ pub enum TokenKind {
     Str(String),
     #[regex(r"(([0-9]+\.[0-9]*|\.[0-9]+)([eEdD][+-]?[0-9]+)?|[0-9]+[eEdD][+-]?[0-9]+)(_[A-Za-z0-9_]+)?", |lex| lex.slice().to_string())]
     Float(String),
-    #[regex(r"[0-9]+", |lex| lex.slice().to_string())]
+    #[regex(r"[0-9]+(_[A-Za-z0-9_]+)?", |lex| lex.slice().to_string())]
     Integer(String),
     #[token(".true.", ignore(ascii_case))]
     True,

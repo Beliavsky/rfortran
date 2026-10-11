@@ -424,11 +424,21 @@ real kind. USE, INTRINSIC :: ISO_FORTRAN_ENV, ordinary USE and USE :: forms supp
 ONLY lists, host association and re-export through user modules. Explicit
 INTRINSIC selects the built-in module even if a user module has the same name;
 NON_INTRINSIC requires a user module in the same source group. Other intrinsic
-modules and other ISO_FORTRAN_ENV entities are not yet implemented. This does
-not add integer kind-suffixed literals or general mixed-kind expression support.
+modules and other ISO_FORTRAN_ENV entities are not yet implemented.
 Run `python tests/test_intrinsic_env.py`.
 
 DOUBLE and PRECISION are contextual words: they form a type declaration when
 paired within one logical statement, including continued lines. Otherwise they
 can name variables, arrays, arguments or procedures. Run
 `python tests/test_double_precision_names.py`.
+
+Integer literals accept numeric or named kind suffixes, such as `127_1` and
+`10000000000_int64`, for kinds 1, 2, 4 and 8. The compiler checks literal ranges
+and preserves their kinds in supported expressions, array constructors and
+procedure arguments. KIND supports numeric arithmetic expressions without
+reading their operands; mixed INTEGER operands select the wider kind. A REAL
+base raised to an INTEGER power retains the base kind. Exponentiation binds
+more tightly than unary signs and associates to the right: `-2**2` is -4,
+`(-2)**2` is 4, and `2**3**2` is 512. Nondefault-kind INTEGER PARAMETER declarations
+and kind-16 integer literals remain unsupported. Run
+`python tests/test_integer_literals.py`.

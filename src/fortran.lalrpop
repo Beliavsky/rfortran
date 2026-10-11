@@ -497,19 +497,23 @@ AddExpr: Expr = {
 };
 
 MulExpr: Expr = {
-    <l: PowExpr> => l,
-    <l: MulExpr> STAR <r: PowExpr> => Expr::mul(l, r),
-    <l: MulExpr> SLASH <r: PowExpr> => Expr::div(l, r),
+    <l: UnaryExpr> => l,
+    <l: MulExpr> STAR <r: UnaryExpr> => Expr::mul(l, r),
+    <l: MulExpr> SLASH <r: UnaryExpr> => Expr::div(l, r),
 };
 
 PowExpr: Expr = {
-    <l: UnaryExpr> => l,
-    <l: UnaryExpr> POW <r: PowExpr> => Expr::pow(l, r),
+    <l: PowerBase> => l,
+    <l: PowerBase> POW <r: UnaryExpr> => Expr::pow(l, r),
+};
+
+PowerBase: Expr = {
+    <p: Primary> => p,
+    <op: DEFINED_OP> <p: Primary> => Expr::Call(format!("@defined_operator:{op}"), vec![p]),
 };
 
 UnaryExpr: Expr = {
-    <p: Primary> => p,
-    <op: DEFINED_OP> <p: Primary> => Expr::Call(format!("@defined_operator:{op}"), vec![p]),
+    <p: PowExpr> => p,
     PLUS <p: UnaryExpr> => Expr::Call("@unary_plus".into(), vec![p]),
     MINUS <p: UnaryExpr> => Expr::neg(p),
     NOT <p: UnaryExpr> => Expr::not(p),

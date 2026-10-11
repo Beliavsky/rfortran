@@ -1244,8 +1244,9 @@ pub fn analyze_with_src(
                         let lt = infer_expr_type(l, sym, fn_map, external_fn_ret);
                         let rt = infer_expr_type(r, sym, fn_map, external_fn_ret);
                         match (lt, rt) {
-                            (Some(TypeSpec::Integer(_)), Some(TypeSpec::Integer(_))) => {
-                                Some(TypeSpec::Integer(None))
+                            (Some(TypeSpec::Integer(a)), Some(TypeSpec::Integer(b))) => {
+                                let kind = a.unwrap_or(4).max(b.unwrap_or(4));
+                                Some(TypeSpec::Integer(if kind == 4 {None} else {Some(kind)}))
                             }
                             (Some(TypeSpec::DoublePrecision), _)
                             | (_, Some(TypeSpec::DoublePrecision)) => {

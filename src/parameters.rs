@@ -68,7 +68,33 @@ pub(crate) fn resolve_intrinsic_modules(program: &mut Program) -> Result<()> {
     Ok(())
 }
 
+// Keep a literal's kind explicit until scalar lowering can allocate typed storage.
+pub(crate) fn integer_literal_kind(expr: &Expr) -> Option<u8> {
+    match expr {
+        Expr::IntLit(_) => Some(4),
+        Expr::Call(tag, args) if tag == "@integer_literal" && args.len() == 2 =>
+            if let Expr::IntLit(k) = &args[1] { k.parse().ok() } else { None },
+        Expr::Un(UnOp::Neg, a) => integer_literal_kind(a),
+        Expr::Bin(op, a, b) if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow) => {
+            let (a,b) = (integer_literal_kind(a)?, integer_literal_kind(b)?);
+            Some(a.max(b))
+        }
+        _ => None,
+    }
+}
+fn typed_integer(value: i64, kind: u8) -> Result<Expr> {
+    let max = crate::inquiries::integer_huge(Some(kind))?;
+    if value < -max-1 || value > max { bail!("integer literal {value} is out of range for kind {kind}"); }
+    let value = Expr::IntLit(value.to_string());
+    Ok(if kind == 4 { value } else { Expr::Call("@integer_literal".into(),vec![value,Expr::IntLit(kind.to_string())]) })
+}
+
 fn kind_number(name: &str, constants: &Constants) -> Result<i64> {
+    if name.split_once('_').is_some_and(|(number,_)| number.parse::<i64>().is_ok()) {
+        let mut literal = Expr::IntLit(name.into());
+        rewrite_expr(&mut literal,constants)?;
+        return evaluate(&literal,constants);
+    }
     name.parse().or_else(|_| evaluate(&Expr::Ident(name.into()), constants))
 }
 fn resolve_kind(kind: &mut TypeSpec, constants: &Constants) -> Result<()> {
@@ -137,7 +163,7 @@ fn real_literal(value: f64, double: bool) -> Expr {
 }
 fn real_constant(e: &Expr) -> Result<f64> {
     fn integral(e: &Expr) -> bool {
-        match e { Expr::IntLit(_) => true, Expr::Un(_, a) => integral(a), Expr::Bin(_, a,b) => integral(a) && integral(b), _ => false }
+        match e { Expr::Call(tag,_) if tag == "@integer_literal" => true, Expr::IntLit(_) => true, Expr::Un(_, a) => integral(a), Expr::Bin(_, a,b) => integral(a) && integral(b), _ => false }
     }
     if integral(e) { return Ok(evaluate(e, &Constants::new())? as f64); }
     let value = match e {
@@ -234,6 +260,7 @@ pub(crate) fn resolve_constants(mut program: Program) -> Result<Program> {
 fn evaluate(expr: &Expr, constants: &Constants) -> Result<i64> {
     let value = match expr {
         Expr::IntLit(s) => s.parse().ok(),
+        Expr::Call(tag,args) if tag == "@integer_literal" && args.len() == 2 => return evaluate(&args[0],constants),
         Expr::Ident(name) => {
             return constants
                 .get(&name.to_ascii_lowercase())
@@ -716,6 +743,13 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
         }
     }
     match expr {
+        Expr::IntLit(text) if text.contains('_') => {
+            let (number,suffix) = text.split_once('_').unwrap();
+            let kind = kind_number(suffix,constants)?;
+            if !matches!(kind,1|2|4|8) { bail!("unsupported integer literal kind {kind}; supported kinds are 1, 2, 4 and 8"); }
+            let value = number.parse::<i64>().context("integer literal exceeds the supported 64-bit range")?;
+            *expr = typed_integer(value,kind as u8)?;
+        }
         Expr::RealLit(text) => {
             let (number, kind) = text.split_once('_').map_or((text.as_str(), None), |(n,k)| (n,Some(k)));
             let double = match kind {
@@ -792,18 +826,19 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
             }
             "kind" | "tiny" | "huge" if args.len() == 1 => {
                 let double = matches!(&args[0], Expr::Call(n, _) if n.eq_ignore_ascii_case("dble"));
-                let integer = integer_constant(&args[0]).is_ok();
+                let integer_kind = integer_literal_kind(&args[0]);
+                let integer = integer_kind.is_some();
                 if !double && !integer && !matches!(&args[0], Expr::RealLit(_)) {
                     return Ok(()); // Resolve inquiry on typed variables during array lowering.
                 }
                 if integer {
                     if name.eq_ignore_ascii_case("huge") {
-                        *expr = Expr::IntLit(crate::inquiries::integer_huge(None)?.to_string());
+                        *expr = typed_integer(crate::inquiries::integer_huge(integer_kind)?,integer_kind.unwrap())?;
                         return Ok(());
                     }
                     if name.eq_ignore_ascii_case("tiny") { bail!("TINY requires a REAL argument"); }
                 }
-                *expr = if name.eq_ignore_ascii_case("kind") { Expr::IntLit(if double { "8" } else { "4" }.into()) }
+                *expr = if name.eq_ignore_ascii_case("kind") { Expr::IntLit(integer_kind.map(|k|k.to_string()).unwrap_or_else(|| if double { "8" } else { "4" }.into())) }
                     else if name.eq_ignore_ascii_case("huge") { real_literal(if double { f64::MAX } else { f32::MAX as f64 }, double) }
                     else { real_literal(if double { f64::MIN_POSITIVE } else { f32::MIN_POSITIVE as f64 }, double) };
             }

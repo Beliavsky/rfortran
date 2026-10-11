@@ -33,6 +33,7 @@ fn same_kind(a: &TypeSpec, b: &TypeSpec) -> bool {
 fn merge_kind(a: TypeSpec, b: TypeSpec) -> TypeSpec {
     if matches!(a, TypeSpec::DoublePrecision) || matches!(b, TypeSpec::DoublePrecision) { TypeSpec::DoublePrecision }
     else if matches!(a, TypeSpec::Real) || matches!(b, TypeSpec::Real) { TypeSpec::Real }
+    else if let (TypeSpec::Integer(a),TypeSpec::Integer(b)) = (&a,&b) { TypeSpec::Integer(Some(a.unwrap_or(4).max(b.unwrap_or(4)))) }
     else { a }
 }
 fn constant(e: &Expr) -> Result<i64> {
@@ -90,6 +91,7 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
             Ok((Expr::Index(name.clone(), vec![subscript]), Some(count), kind.clone()))
         }
         Expr::Logical(_) => Ok((e.clone(), None, TypeSpec::Logical)),
+        Expr::Call(tag,args) if tag == "@integer_literal" => Ok((e.clone(),None,TypeSpec::Integer(Some(constant(&args[1])? as u8)))),
         Expr::IntLit(_) => Ok((e.clone(), None, TypeSpec::Integer(None))),
         Expr::RealLit(_) => Ok((e.clone(), None, TypeSpec::Real)),
         Expr::Un(op @ (UnOp::Neg | UnOp::Not), a) => {
@@ -100,7 +102,7 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
             let (a, alen, akind) = element(a, index, symbols)?;
             let (b, blen, bkind) = element(b, index, symbols)?;
             if let (Some(a), Some(b)) = (alen, blen) { if a >= 0 && b >= 0 && a != b { bail!("array shapes in reduction expression do not conform"); } }
-            Ok((bin(op.clone(), a, b), alen.or(blen), if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow) { merge_kind(akind, bkind) } else { TypeSpec::Logical }))
+            Ok((bin(op.clone(), a, b), alen.or(blen), if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow) { if matches!(op,BinOp::Pow) && matches!(bkind,TypeSpec::Integer(_)) && !matches!(akind,TypeSpec::Integer(_)) { akind } else { merge_kind(akind, bkind) } } else { TypeSpec::Logical }))
         }
         Expr::Index(name, args) | Expr::Call(name, args) if symbols.get(name).is_some_and(|(_, d)| d.len() == 1) => {
             if args.len() != 1 { bail!("array element requires one subscript"); }
@@ -126,6 +128,11 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
             if !same_kind(&kind,&other) || matches!(kind, TypeSpec::Logical) { bail!("{name} arguments must have the same numeric type and kind"); }
             if let (Some(a),Some(b)) = (alen,blen) { if a != b { bail!("{name} argument shapes do not conform"); } }
             Ok((Expr::Call(name.clone(),vec![a,b]),alen.or(blen),kind))
+        }
+        Expr::Call(name,args) if name == "abs" && args.len() == 1 => {
+            let (value,count,kind) = element(&args[0],index,symbols)?;
+            if !array_element_kind(&kind) || kind == TypeSpec::Logical { bail!("ABS requires a numeric argument"); }
+            Ok((Expr::Call(name.clone(),vec![value]),count,kind))
         }
         Expr::Call(name, args) if crate::intrinsics::math_arity(name).is_some() || matches!(name.as_str(), "dble" | "real" | "abs") => {
             let mut shape=None; let mut kind=TypeSpec::Real; let mut values=vec![];
@@ -230,6 +237,23 @@ fn lower_location(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, s
 
 fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, serial: &mut usize, expand_elementals: bool) -> Result<()> {
     match e {
+        Expr::Call(tag,args) if tag == "@integer_literal" => {
+            let kind = TypeSpec::Integer(Some(constant(&args[1])? as u8));
+            *serial += 1;
+            let temp = format!("@integer_literal_{serial}");
+            prefix.push(Stmt::VarDecl {kind:kind.clone(),names:vec![temp.clone()]});
+            prefix.push(Stmt::Assign {name:temp.clone(),value:args[0].clone()});
+            symbols.insert(temp.clone(),(kind,vec![]));
+            *e = Expr::Ident(temp);
+        }
+        Expr::Call(name,args) if name == "kind" && args.len() == 1 && !matches!(&args[0],Expr::Ident(_)) && !matches!(&args[0],Expr::Call(n,_) if n == "huge") => {
+            let argument = match &args[0] {
+                Expr::Call(n,inner) if matches!(n.as_str(),"sum" | "product" | "minval" | "maxval") && !inner.is_empty() => &inner[0],
+                other => other,
+            };
+            let (_,_,kind) = element(argument,&int(1),symbols)?;
+            *e = int(match kind { TypeSpec::Integer(k) => k.unwrap_or(4) as i64, TypeSpec::DoublePrecision => 8, _ => 4 });
+        }
         Expr::Call(name, args) if name == "@array_constructor" => {
             // Constant empty implied-DO constructors lose their element type
             // during expansion. Preserve the existing assignment-context path.
