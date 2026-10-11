@@ -10,6 +10,7 @@ mod codegen;
 mod errors;
 mod ir;
 mod intrinsics;
+mod bit_intrinsics;
 mod inquiries;
 mod lexer;
 mod linker;

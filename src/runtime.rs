@@ -361,6 +361,11 @@ pub fn interpret(program: &Program) {
     }
 
     fn handle_intrinsic(name: &str, args: &[ValueTuple]) -> Option<ValueTuple> {
+        if let Some((operation,bytes))=crate::bit_intrinsics::decode(name) {
+            let values=args.iter().map(to_int).collect::<Option<Vec<_>>>()?;
+            let value=crate::bit_intrinsics::evaluate(operation,bytes,&values).ok()?;
+            return Some(if operation=="btest" {ValueTuple::from_bool(value!=0)} else {ValueTuple::from_int(value)});
+        }
         let n = name.to_ascii_lowercase();
         match n.as_str() {
             "abs" => {

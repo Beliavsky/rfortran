@@ -921,6 +921,23 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
                     else if range <= 9 { 4 } else if range <= 18 { 8 } else { -1 };
                 *expr = Expr::IntLit(kind.to_string());
             }
+            name if crate::bit_intrinsics::keys(name).is_some() && !constants.contains_key(&model_type_key(name))
+                && !constants.contains_key(&format!("@model_procedure:{name}")) => {
+                let arity=crate::bit_intrinsics::keys(name).unwrap().len();
+                if args.len()!=arity {bail!("{} expects {arity} arguments, got {}",name.to_ascii_uppercase(),args.len());}
+                let kinds=args.iter().map(|arg|crate::inquiries::model_type(arg,&|n|model_type_lookup(constants,n))).collect::<Result<Vec<_>>>()?;
+                if let Some(kinds)=kinds.into_iter().collect::<Option<Vec<_>>>() {
+                    crate::bit_intrinsics::result_kind(name,&kinds)?;
+                    let TypeSpec::Integer(bytes)=kinds[0] else {unreachable!()};
+                    let bytes=bytes.unwrap_or(4);
+                    let values=args.iter().map(|arg|integer_constant(arg).ok()).collect::<Vec<_>>();
+                    crate::bit_intrinsics::validate_controls(name,bytes,&values)?;
+                    if let Some(values)=values.into_iter().collect::<Option<Vec<_>>>() {
+                        let value=crate::bit_intrinsics::evaluate(name,bytes,&values)?;
+                        *expr=if name=="btest" {Expr::Logical(value!=0)} else {typed_integer(value,bytes)?};
+                    }
+                }
+            }
             name if crate::inquiries::numeric_model(name) && !constants.contains_key(&model_type_key(name))
                 && !constants.contains_key(&format!("@model_procedure:{name}")) => {
                 let [arg]=args.as_slice() else { bail!("{name} expects one argument"); };

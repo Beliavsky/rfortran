@@ -39,11 +39,12 @@ separately compiled module interfaces, and broad file I/O support. The feature
 notes below describe the supported forms and their restrictions.
 
 The expanded ofort inventory refreshed on **2026-10-11** has 440 cases with valid
-gfortran references: 62 pass, 372 fail compilation, and 6 differ in output at both
-O0 and O2. The full inventory uses the debug compiler; the release compiler also
-passes all 63 selected regressions (the 62 inventory passes plus `xradix.f90`).
-Five output differences expose bit-intrinsic code generation bugs; the sixth is
-the known REAL128 capability difference. This remains an early compiler, not a
+gfortran references. That full run recorded 62 passes, 372 compile failures, and
+6 output differences at both O0 and O2. Subsequent bit-intrinsic fixes resolve
+five of those output differences. Debug and release compilers now pass all 68
+selected regressions (67 inventory cases plus `xradix.f90`) at both levels;
+the full inventory has not been rerun after these fixes. The remaining recorded
+output difference is the known REAL128 capability difference. This remains an early compiler, not a
 replacement for an established production compiler. See
 [ofort compatibility coverage](tests/ofort/README.md) for the scope, exclusions
 and recorded results.
@@ -314,6 +315,23 @@ an output representation. Values near the largest DOUBLE PRECISION number retain
 enough output digits to avoid rounding beyond the finite range.
 Run `python tests/test_numeric_model.py` for interpreter/native O0/O2 comparisons
 with gfortran, statement boundaries, initialization behavior and invalid arguments.
+
+## Integer bit intrinsics
+
+Scalar `BTEST`, `IAND`, `IOR`, `IEOR`, `NOT`, `IBSET`, `IBCLR`, `IBITS`, and
+`ISHFT` support INTEGER kinds 1/2/4/8 in expressions, output, conditions, PURE
+procedures, and constant initialization. Named arguments are accepted. `BTEST`
+returns LOGICAL; the other results retain the first argument's INTEGER kind.
+`IAND`, `IOR`, and `IEOR` require both arguments to have the same kind.
+
+Bit positions start at zero. Invalid constant positions, field lengths, and
+shift counts are compile errors; dynamic values are checked at runtime.
+Zero-length fields and shifts by the full bit width are supported. Initialization
+checks apply to the input values. Whole-array calls, INTEGER kind 16, and
+`ISHFTC` are not yet supported; scalar array elements are supported.
+
+Run `python tests/test_bit_intrinsics.py` for interpreter/native O0/O2 checks
+with gfortran comparisons. `tests/125_bit_intrinsics.f90` is the local fixture.
 
 ## Empty arrays
 
@@ -734,6 +752,7 @@ python tests/test_vector_subscripts.py
 python tests/test_named_arguments.py
 python tests/test_ofort_compat_runner.py
 python tests/test_numeric_model.py
+python tests/test_bit_intrinsics.py
 ```
 
 The Python tests use `target/debug/rfort` (with `.exe` on Windows).

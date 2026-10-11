@@ -29,7 +29,7 @@ pub fn validate(program: &Program) -> Result<()> {
         match e {
             Expr::Call(_, _) if crate::named_arguments::omitted(e) => {},
             Expr::Call(name, args) => {
-                let intrinsic = name == "allocated" || name.starts_with("@keyword:") || crate::intrinsics::math_arity(name).is_some() || crate::inquiries::numeric_model(name)
+                let intrinsic = name == "allocated" || name.starts_with("@keyword:") || crate::intrinsics::math_arity(name).is_some() || crate::inquiries::numeric_model(name) || crate::bit_intrinsics::keys(name).is_some()
                     || matches!(name.to_ascii_lowercase().as_str(), "@integer_literal" | "minloc" | "maxloc" | "findloc" | "@minloc" | "@maxloc" | "@findloc" | "pack" | "unpack" | "spread" | "eoshift" | "transpose" | "cshift" | "reshape" | "mod" | "modulo" | "abs" | "int" | "real" | "dble" | "sum" | "product" | "minval" | "maxval" | "max" | "min" | "kind" | "selected_real_kind" | "selected_int_kind" | "tiny" | "huge" | "size" | "lbound" | "ubound" | "len" | "present" | "any" | "all" | "count" | "@count_i8" | "@count_default" | "@any_reduction" | "@all_reduction" | "@array_constructor" | "@output_implied_do" | "@section_subscript");
                 if !locals.contains(name) && !known.get(name).map(|p| p.pure).unwrap_or(intrinsic) {
                     bail!("PURE procedure cannot call impure or unknown procedure `{name}`");

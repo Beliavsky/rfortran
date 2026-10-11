@@ -756,7 +756,48 @@ fn eval_expr(
         IExpr::Str(_) => CgVal::I64(b.ins().iconst(ir::types::I64, 0)),
         IExpr::Call(name, args) => {
             let lname = name.to_ascii_lowercase();
-            match lname.as_str() {
+            if let Some((operation,bytes))=crate::bit_intrinsics::decode(&lname) {
+                let values=args.iter().map(|arg| {
+                    let value=eval_expr(b,ex,ptr_ty,arg,ints,reals,bools,func_meta);
+                    to_i64(b,value)
+                }).collect::<Vec<_>>();
+                let bits=i64::from(bytes)*8;
+                let zero=b.ins().iconst(ir::types::I64,0);
+                let one=b.ins().iconst(ir::types::I64,1);
+                let mask=b.ins().iconst(ir::types::I64,if bits==64 {-1} else {(1i64<<bits)-1});
+                let i=b.ins().band(values[0],mask);
+                let result=match operation {
+                    "btest"=>{let shifted=b.ins().ushr(i,values[1]);let bit=b.ins().band(shifted,one);return CgVal::Bool(b.ins().icmp_imm(ir::condcodes::IntCC::NotEqual,bit,0));},
+                    "iand"=>b.ins().band(i,values[1]),
+                    "ior"=>b.ins().bor(i,values[1]),
+                    "ieor"=>b.ins().bxor(i,values[1]),
+                    "not"=>b.ins().bnot(i),
+                    "ibset"=>{let bit=b.ins().ishl(one,values[1]);b.ins().bor(i,bit)},
+                    "ibclr"=>{let bit=b.ins().ishl(one,values[1]);let clear=b.ins().bnot(bit);b.ins().band(i,clear)},
+                    "ibits"=>{
+                        let shifted=b.ins().ushr(i,values[1]);
+                        let top=b.ins().ishl(one,values[2]);let short=b.ins().isub(top,one);
+                        let full=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,values[2],64);
+                        let all=b.ins().iconst(ir::types::I64,-1);let mask=b.ins().select(full,all,short);
+                        b.ins().band(shifted,mask)
+                    },
+                    "ishft"=>{
+                        let positive=b.ins().icmp_imm(ir::condcodes::IntCC::SignedGreaterThanOrEqual,values[1],0);
+                        let negative=b.ins().ineg(values[1]);let magnitude=b.ins().select(positive,values[1],negative);
+                        let left=b.ins().ishl(i,magnitude);let right=b.ins().ushr(i,magnitude);
+                        let shifted=b.ins().select(positive,left,right);
+                        let full=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,magnitude,bits);
+                        b.ins().select(full,zero,shifted)
+                    },
+                    _=>unreachable!(),
+                };
+                let result=if bytes<8 {
+                    let narrow=b.ins().ireduce(match bytes {1=>ir::types::I8,2=>ir::types::I16,_=>ir::types::I32},result);
+                    b.ins().sextend(ir::types::I64,narrow)
+                } else {result};
+                return CgVal::I64(result);
+            }
+            match if crate::bit_intrinsics::keys(&lname).is_some() && func_meta.contains_key(name) { "" } else { lname.as_str() } {
                 "max" | "min" => {
                     let mut value = eval_expr(b, ex, ptr_ty, &args[0], ints, reals, bools, func_meta);
                     for arg in &args[1..] {
@@ -1276,6 +1317,7 @@ fn print_expr(
         IExpr::Call(name, args) => {
             let lname = name.to_ascii_lowercase();
             if crate::intrinsics::math_arity(name).is_some()
+                || crate::bit_intrinsics::decode(name).is_some()
                 || matches!(lname.as_str(), "abs" | "int" | "real" | "dble" | "max" | "min" | "mod" | "modulo")
             {
                 let value = eval_expr(b, ex, ptr_ty, e, ints, reals, bools, func_meta);

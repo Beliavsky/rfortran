@@ -1,0 +1,4 @@
+{
+  "description": "Five original bit-intrinsic output failures exposed by empty PRINT support; compare with gfortran at O0/O2.",
+  "cases": ["xbtest.f90", "xiand.f90", "xibclr.f90", "xibits.f90", "xibset.f90"]
+}

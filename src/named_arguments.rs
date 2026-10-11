@@ -110,6 +110,7 @@ impl Signature {
 
 fn intrinsic(name: &str) -> Option<Signature> {
     let keys: &[&str] = match name {
+        name if crate::bit_intrinsics::keys(name).is_some() => crate::bit_intrinsics::keys(name).unwrap(),
         name if crate::inquiries::numeric_model(name) => &["x"],
         "atan2" => &["y", "x"],
         "sqrt" | "exp" | "log" | "log10" | "sin" | "cos" | "tan" | "asin" | "acos" | "atan"

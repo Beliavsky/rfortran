@@ -72,6 +72,18 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
         return Ok((value,Some(count),kind));
     }
     match e {
+        Expr::Call(name,args) if crate::bit_intrinsics::keys(name).is_some() && !symbols.contains_key(name) && !symbols.procedures.contains(name)
+            || crate::bit_intrinsics::decode(name).is_some() => {
+            let mut values=vec![];let mut kinds=vec![];let mut shape=None;
+            for arg in args {
+                let (value,count,kind)=element(arg,index,symbols)?;
+                if let (Some(a),Some(b))=(shape,count) {if a!=b {bail!("bit intrinsic array shapes do not conform");}}
+                shape=shape.or(count);values.push(value);kinds.push(kind);
+            }
+            let public=crate::bit_intrinsics::decode(name).map_or(name.as_str(),|(n,_)|n);
+            let kind=crate::bit_intrinsics::result_kind(public,&kinds)?;
+            Ok((Expr::Call(name.clone(),values),shape,kind))
+        },
         Expr::Call(n,args) if n == "@packed_view" => {
             let (value,_,kind) = element(&args[0],index,symbols)?;
             Ok((value,Some(-1),kind))
@@ -328,8 +340,51 @@ fn lower_character_comparison(op: BinOp, a: &Expr, b: &Expr, symbols: &mut Symbo
     Ok(Some(bin(op,id(5),int(0))))
 }
 
+// Keep bit captures/checks outside the recursive lowering frame on Windows.
+fn lower_bit(e:&mut Expr,symbols:&mut Symbols,prefix:&mut Vec<Stmt>,serial:&mut usize,expand_elementals:bool)->Result<()> {
+    let Expr::Call(name,args)=e else {unreachable!()};
+    let arity=crate::bit_intrinsics::keys(name).unwrap().len();
+    if args.len()!=arity {bail!("{} expects {arity} arguments, got {}",name.to_ascii_uppercase(),args.len());}
+    let mut kinds=vec![];
+    for arg in args.iter_mut() {
+        lower_expr_impl(arg,symbols,prefix,serial,expand_elementals)?;
+        let (_,shape,kind)=element(arg,&int(1),symbols)?;
+        if shape.is_some() {bail!("{} currently requires scalar arguments; whole-array bit operations are not yet supported",name.to_ascii_uppercase());}
+        kinds.push(kind);
+    }
+    crate::bit_intrinsics::result_kind(name,&kinds)?;
+    let TypeSpec::Integer(bytes)=kinds[0] else {unreachable!()};
+    let bytes=bytes.unwrap_or(4);let bits=i64::from(bytes)*8;
+    let values=args.iter().map(|arg|crate::parameters::integer_constant(arg).ok()).collect::<Vec<_>>();
+    crate::bit_intrinsics::validate_controls(name,bytes,&values)?;
+    // Capture before checks so each argument is evaluated exactly once.
+    for (arg,kind) in args.iter_mut().zip(kinds) {
+        *serial+=1;let temp=format!("@bit_argument_{serial}");
+        prefix.push(Stmt::VarDecl {kind:kind.clone(),names:vec![temp.clone()]});
+        prefix.push(Stmt::Assign {name:temp.clone(),value:arg.clone()});
+        symbols.insert(temp.clone(),(kind,vec![]));*arg=Expr::Ident(temp);
+    }
+    if name=="ibits" {
+        // Check each bound before subtracting POS, even for INTEGER(8) extremes.
+        let cond=bin(BinOp::Or,
+            bin(BinOp::Or,bin(BinOp::Lt,args[1].clone(),int(0)),bin(BinOp::Gt,args[1].clone(),int(bits))),
+            bin(BinOp::Or,bin(BinOp::Lt,args[2].clone(),int(0)),bin(BinOp::Gt,args[2].clone(),int(bits))));
+        prefix.push(Stmt::If {cond,then_body:vec![Stmt::CallSub {name:"@error_stop".into(),args:vec![Expr::Str(crate::bit_intrinsics::range_message(name,bits))]}],else_body:None});
+    }
+    let control=match name.as_str() {
+        "btest"|"ibset"|"ibclr"=>Some(bin(BinOp::Or,bin(BinOp::Lt,args[1].clone(),int(0)),bin(BinOp::Ge,args[1].clone(),int(bits)))),
+        "ishft"=>Some(bin(BinOp::Or,bin(BinOp::Lt,args[1].clone(),int(-bits)),bin(BinOp::Gt,args[1].clone(),int(bits)))),
+        "ibits"=>Some(bin(BinOp::Gt,args[2].clone(),bin(BinOp::Sub,int(bits),args[1].clone()))),
+        _=>None,
+    };
+    if let Some(cond)=control {prefix.push(Stmt::If {cond,then_body:vec![Stmt::CallSub {name:"@error_stop".into(),args:vec![Expr::Str(crate::bit_intrinsics::range_message(name,bits))]}],else_body:None});}
+    *name=crate::bit_intrinsics::tag(name,bytes);
+    Ok(())
+}
+
 fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, serial: &mut usize, expand_elementals: bool) -> Result<()> {
     match e {
+        Expr::Call(name,args) if crate::bit_intrinsics::keys(name).is_some() && !symbols.contains_key(name) && !symbols.procedures.contains(name) => lower_bit(e,symbols,prefix,serial,expand_elementals)?,
         // Call specialization precedes multidimensional normalization. Its
         // rank-one PACK actuals can use the same bounded lowering directly.
         Expr::Call(name,args) if name=="pack" => {
@@ -1223,6 +1278,10 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                 let mut printed = crate::output::lower(items,&symbols.variables,serial)?;
                 let Stmt::Block {body} = &mut printed else { unreachable!() };
                 body.splice(0..0,declarations);
+                if prefix.iter().any(|s|matches!(s,Stmt::VarDecl {names,..} if names.iter().any(|n|n.starts_with("@bit_argument_")))) {
+                    prefix.push(printed);
+                    printed=Stmt::Block {body:std::mem::take(&mut prefix)};
+                }
                 output.extend(prefix); output.push(printed); continue;
             }
         }
@@ -1274,6 +1333,12 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                 prefix.push(stmt);
                 stmt = Stmt::Block { body: std::mem::take(&mut prefix) };
             }
+        }
+        // Captured bit arguments need a declaration scope inside loops and
+        // branches, as well as when captures precede a DO WHILE condition.
+        if prefix.iter().any(|s|matches!(s,Stmt::VarDecl {names,..} if names.iter().any(|n|n.starts_with("@bit_argument_")))) {
+            prefix.push(stmt);
+            stmt=Stmt::Block {body:std::mem::take(&mut prefix)};
         }
         output.extend(prefix);
         output.push(stmt);

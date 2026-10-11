@@ -658,6 +658,13 @@ pub fn analyze_with_src(
         known_intrinsics.insert(name.to_string(), TypeSpec::Integer(None));
     }
 
+    known_intrinsics.insert("btest".into(),TypeSpec::Logical);
+    for name in crate::bit_intrinsics::NAMES {
+        for bytes in [1,2,4,8] {
+            let tag=crate::bit_intrinsics::tag(name,bytes);
+            known_intrinsics.insert(tag.clone(),crate::bit_intrinsics::tag_kind(&tag).unwrap());
+        }
+    }
     for (k, v) in known_intrinsics {
         external_fn_ret.entry(k).or_insert(v);
     }
@@ -1634,7 +1641,31 @@ pub fn analyze_with_src(
                             local_param_intent, assigned, read_vars, settings,
                         );
                     }
-                    Stmt::Block {..} => walk_stmt_program_reads(st,read_vars),
+                    Stmt::Block { body } => {
+                        let mut scoped = local.clone();
+                        for s in body {
+                            match s {
+                                Stmt::VarDecl { kind, names } => {
+                                    for name in names {
+                                        scoped.insert(name.clone(), kind.clone());
+                                    }
+                                }
+                                Stmt::ArrayDecl { kind, name, .. } => {
+                                    scoped.insert(name.clone(), kind.clone());
+                                }
+                                _ => {}
+                            }
+                        }
+                        inner(
+                            body, fname, is_function, declared_ret, &scoped,
+                            fn_map, external_fn_ret, find_ident_span, errors,
+                            has_path, stderr, file, type_span_map, params,
+                            local_param_intent, assigned, read_vars, settings,
+                        );
+                        // Preserve enclosing reads, including loop controls that
+                        // lowering updates after their last source-level use.
+                        walk_stmt_program_reads(st, read_vars);
+                    }
                     Stmt::Function { .. } | Stmt::Subroutine { .. } => {}
                     Stmt::CallSub { name, args } => {
                         let callee = fn_map.get(&name.to_ascii_lowercase());

@@ -181,10 +181,40 @@ compilers; the local suite passes 82 Rust unit tests and 124 Fortran fixtures.
 Fixing empty PRINT also lets five bit-intrinsic probes reach native execution:
 `xbtest.f90`, `xiand.f90`, `xibclr.f90`, `xibits.f90`, and `xibset.f90` omit
 their intrinsic call results from output. These are outstanding code generation
-bugs that were previously hidden by parse failures. The sixth output difference
+bugs that were previously hidden by parse failures, now fixed in the bit-intrinsic
+checkpoint below. The sixth output difference
 is the known REAL128 capability difference in `xkinds_supported.f90`.
 `xprecision.f90` and `xrange.f90` still stop on their unsupported COMPLEX
 examples; their INTEGER/REAL model behavior is covered by the local tests.
+
+### Scalar integer bit intrinsics (2026-10-11)
+
+[`bit-checkpoint.json`](bit-checkpoint.json) records **68/68 selected passes**
+at O0/O2 with debug and release compilers: the previous 63 regressions and
+`xbtest.f90`, `xiand.f90`, `xibclr.f90`, `xibits.f90`, and `xibset.f90`.
+These five original ofort output failures now match gfortran. Run them with:
+
+```bat
+python tests/run_ofort_compat.py --ofort-root C:\c\ofort --selection tests/ofort/bit-selection.json --strict --jobs 4 --report target/ofort-bits.json
+```
+
+Use `--selection tests/ofort/bit-regression-selection.json` to run all 68
+regressions recorded at this checkpoint.
+
+Scalar BTEST/IAND/IOR/IEOR/NOT/IBSET/IBCLR/IBITS/ISHFT now retain INTEGER
+kinds 1/2/4/8 and handle sign bits, full-width shifts, and zero-length fields.
+Constant and runtime control arguments receive bounds checks. Named arguments,
+PARAMETER folding, PURE procedures, scalar array elements, and initialization
+checks are covered. Whole-array calls, INTEGER(16), and ISHFTC remain unsupported.
+
+`python tests/test_bit_intrinsics.py` passes eight focused tests through the
+interpreter and native O0/O2 code, with gfortran comparisons, using both compiler
+profiles. The local suite passes 83 Rust unit tests and 125 Fortran fixtures.
+Full selected-release logs are in `target/ofort-bit-regressions-release.json`.
+
+The full discovery inventory has not been rerun after this change. Its five
+bit-output differences are resolved; the previously recorded REAL128 difference
+and 372 compile failures have not been reassessed by this selected run.
 
 ### Quick-sample history
 
