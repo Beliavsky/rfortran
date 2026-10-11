@@ -267,6 +267,16 @@ The reader consumes invalid records so a subsequent read can continue with the
 next record. These reads accept standard input as `*`, constant unit 5, or an
 INTEGER unit variable whose value is 5. Input records may end without a final newline.
 
+Empty list-directed `READ(unit,*)` and `READ(*,*)` consume exactly one record
+without interpreting its contents. They support connected sequential formatted
+files, scratch files, and standard input, including blank/long records and a
+final record without a newline. `IOSTAT=` accepts a writable scalar INTEGER of
+kind 4 or 8 and reports zero on success, a negative value at EOF, and a positive
+value on an input or connection error. Without IOSTAT, failures stop with a
+runtime error. Continuations, semicolon separators, and single-line IF statements
+are supported. Run `python tests/test_empty_read.py` for interpreter/native
+O0/O2 checks with gfortran comparisons.
+
 Scratch files support `OPEN(newunit=iu,status='scratch',action='readwrite')`
 or an explicit UNIT, with sequential formatted access. NEWUNIT assigns a
 negative unit and supports up to 1024 simultaneous scratch connections.
@@ -277,8 +287,9 @@ on close. `INQUIRE(unit=iu,name=text)` supports connected units; named files
 return their OPEN path, while scratch files fill NAME with blanks.
 `(A)` READ destinations may also be dynamically indexed local CHARACTER elements.
 
-External list-directed input, other external output formats, named writable
-files, and IOSTAT on OPEN/CLOSE or positioning operations remain unsupported.
+External list-directed input with transfer items, other external output formats,
+named writable files, and IOSTAT on OPEN/CLOSE or positioning operations remain
+unsupported.
 Connections are shared within a
 compiled source group. Native file I/O currently requires a 64-bit target.
 Run `python tests/test_read_comments.py` for interpreter/native O0/O2 and
@@ -821,6 +832,7 @@ cargo build --bin rfort
 cargo test --bin rfort --test testsuite -- --test-threads=1
 python tests/test_driver.py
 python tests/test_record_read.py
+python tests/test_empty_read.py
 python tests/test_recursive_allocatables.py
 python tests/test_deallocate.py
 python tests/test_runtime_allocatables.py

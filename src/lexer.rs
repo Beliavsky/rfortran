@@ -5,6 +5,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn empty_reads_respect_logical_statement_boundaries() {
+        for source in ["read(20,*)", "read(*,*); x=1", "read(5,*) ! skip\nx=1",
+            "if (.true.) read(iunit,*)", "read(*,*,iostat=ios)\nend",
+            "read & ! comment\n & (20,*)"] {
+            assert_eq!(lex(source).iter().filter(|t| matches!(t.kind, TokenKind::KwReadEmpty)).count(), 1, "{source}");
+        }
+        for source in ["read(*,*) n", "read(text,*,iostat=ios) n",
+            "read(*,*) & ! comment\n! intervening comment\n & n"] {
+            assert!(!lex(source).iter().any(|t| matches!(t.kind, TokenKind::KwReadEmpty)), "{source}");
+        }
+    }
+
+    #[test]
     fn dimension_is_contextual_to_declaration_attributes() {
         for source in ["integer, dimension(2,3) :: a,b",
             "real(kind=8), intent(in), DIMENSION(:,:) :: a",
@@ -253,6 +266,7 @@ pub enum TokenKind {
     KwPrintEmpty,
     #[token("read", ignore(ascii_case))]
     KwRead,
+    KwReadEmpty,
     #[token("if", ignore(ascii_case))]
     KwIf,
     #[token("then", ignore(ascii_case))]
@@ -565,6 +579,22 @@ pub fn lex(input: &str) -> Vec<Token> {
                         && tokens.get(start+1).is_some_and(|t| !matches!(t.kind,TokenKind::Eq) && same_statement(&input[tokens[start].span.end..t.span.start])) {
                         tokens[start].kind=TokenKind::FilePosition(word);
                     }
+                }
+            }
+        }
+        // An empty READ ends at the closing control list, within its logical
+        // source statement; a continued input list still uses ordinary READ.
+        if matches!(tokens[start].kind, TokenKind::KwRead)
+            && matches!(tokens.get(start+1).map(|t| &t.kind), Some(TokenKind::LParen)) {
+            let mut depth = 0;
+            for end in start+1..tokens.len() {
+                if !same_statement(&input[tokens[end-1].span.end..tokens[end].span.start]) { break; }
+                match tokens[end].kind { TokenKind::LParen => depth += 1, TokenKind::RParen => depth -= 1, _ => {} }
+                if depth == 0 {
+                    if tokens.get(end+1).is_none_or(|next| !same_statement(&input[tokens[end].span.end..next.span.start])) {
+                        tokens[start].kind = TokenKind::KwReadEmpty;
+                    }
+                    break;
                 }
             }
         }

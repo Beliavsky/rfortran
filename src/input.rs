@@ -298,6 +298,50 @@ fn lower_character_read(source:&Expr,control:&str,status:&Expr,dest:&str,length:
     Ok(Stmt::Block {body})
 }
 
+pub(crate) fn lower_empty_read(
+    args: &[Expr],
+    symbols: &HashMap<String, (TypeSpec, Vec<Expr>)>,
+    serial: &mut usize,
+) -> Result<Stmt> {
+    let [unit, Expr::Str(control), status] = args else {
+        bail!("invalid empty READ control list");
+    };
+    if crate::parameters::integer_constant(unit).ok() != Some(5) {
+        crate::file_io::unit(unit, symbols)?;
+    }
+    let status_name = if control.is_empty() {
+        None
+    } else {
+        if !control.eq_ignore_ascii_case("iostat") {
+            bail!("empty READ currently supports only the IOSTAT control specifier");
+        }
+        if !matches!(integer_kind(status, symbols), Some(4 | 8)) {
+            bail!("IOSTAT must be a writable scalar INTEGER of kind 4 or 8");
+        }
+        let Expr::Ident(name) = status else { unreachable!() };
+        Some(name)
+    };
+    *serial += 1;
+    let code = format!("@empty_read_status_{serial}");
+    let buffer = format!("@empty_read_buffer_{serial}");
+    let mut body = vec![
+        Stmt::VarDecl { kind: TypeSpec::Integer(None), names: vec![code.clone()] },
+        Stmt::VarDecl { kind: TypeSpec::Character(Some(0)), names: vec![buffer.clone()] },
+        set(&buffer, Expr::Str(String::new())),
+        Stmt::CallSub { name: "@read_record_status".into(),
+            args: vec![var(&code), var(&buffer), int(0), unit.clone()] },
+    ];
+    if let Some(status) = status_name {
+        body.push(set(status, var(&code)));
+    } else {
+        body.push(branch(bin(BinOp::Ne, var(&code), int(0)), vec![Stmt::CallSub {
+            name: "@error_stop".into(),
+            args: vec![Expr::Str("end of file or input error in empty READ".into())],
+        }]));
+    }
+    Ok(Stmt::Block { body })
+}
+
 pub(crate) fn lower_record_read(
     args: &[Expr],
     symbols: &HashMap<String, (TypeSpec, Vec<Expr>)>,

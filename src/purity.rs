@@ -69,6 +69,7 @@ pub fn validate(program: &Program) -> Result<()> {
         for stmt in body {
             match stmt {
                 Stmt::Print { .. } | Stmt::Read { .. } => bail!("PURE procedure cannot perform external I/O"),
+                Stmt::CallSub {name,..} if name == "@empty_read" => bail!("PURE procedure cannot perform external I/O"),
                 Stmt::CallSub {name,..} if name=="@stop" => bail!("PURE procedure cannot execute STOP"),
                 Stmt::CallSub {name,args} if name == "@internal_read" => {
                     expression(&args[0],&locals,known)?;

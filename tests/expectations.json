@@ -896,6 +896,13 @@
       "program_stderr": "",
       "program_stdout": " .FALSE.\n 2 3 .TRUE.\n .FALSE. .FALSE. .FALSE.\n 9 9 .TRUE.\n .TRUE. 0\n .TRUE. 0\n new 3\n .FALSE. .FALSE.\n"
     },
+    "131_empty_read": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " kept\n .TRUE.\n .TRUE.\n .TRUE.\n .TRUE.\n"
+    },
     "130_dimension_attribute": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",

@@ -216,6 +216,7 @@ fn human_token(tok: &TokenKind) -> String {
         TokenKind::KwPrint | TokenKind::KwPrintEmpty => "keyword print".into(),
         TokenKind::KwWrite | TokenKind::KwWriteEmpty => "keyword write".into(),
         TokenKind::KwRead => "keyword read".into(),
+        TokenKind::KwReadEmpty => "keyword read".into(),
         TokenKind::KwIf => "keyword if".into(),
         TokenKind::KwThen => "keyword then".into(),
         TokenKind::KwElse => "keyword else".into(),

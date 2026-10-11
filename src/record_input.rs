@@ -11,6 +11,19 @@ pub(crate) fn record(
     destination: &mut [u8],
     mut byte: impl FnMut() -> Result<Option<u8>, ()>,
 ) -> i64 {
+    // With no characters transferred, discard the record without interpreting
+    // its bytes. This is also used by an empty list-directed READ.
+    if destination.is_empty() {
+        let mut consumed = false;
+        loop {
+            match byte() {
+                Ok(Some(b'\n')) => return 0,
+                Ok(Some(_)) => consumed = true,
+                Ok(None) => return if consumed { 0 } else { END },
+                Err(()) => return ERROR,
+            }
+        }
+    }
     destination.fill(b' ');
     let mut count = 0usize;
     let mut previous = 0u8;
@@ -37,6 +50,14 @@ pub(crate) fn record(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_transfers_skip_arbitrary_records_without_losing_eof() {
+        let mut input = b"\xff\0\xc3\xa9\r\n\nlast".iter().copied();
+        for _ in 0..3 { assert_eq!(record(&mut [], || Ok(input.next())), 0); }
+        assert_eq!(record(&mut [], || Ok(input.next())), END);
+        assert_eq!(record(&mut [], || Err(())), ERROR);
+    }
 
     #[test]
     fn consumes_records_and_distinguishes_eof_from_errors() {

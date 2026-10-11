@@ -1073,6 +1073,10 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
             if matches!(name.as_str(), "@formatted_print" | "@formatted_write_noadvance") && args.iter().any(crate::output::contains_implied_do) {
                 bail!("implied-DO is currently supported only in list-directed output");
             }
+            if name=="@empty_read" {
+                output.push(crate::input::lower_empty_read(args,&symbols.variables,serial)?);
+                continue;
+            }
             if name=="@internal_read" {
                 output.push(crate::input::lower_integer_read(args,&symbols.variables,serial)?);
                 continue;

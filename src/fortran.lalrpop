@@ -45,6 +45,7 @@ extern {
         KW_PRINT => TokenKind::KwPrint,
         KW_PRINT_EMPTY => TokenKind::KwPrintEmpty,
         KW_READ => TokenKind::KwRead,
+        KW_READ_EMPTY => TokenKind::KwReadEmpty,
         FILE_CONTROL => TokenKind::FileControl(<String>),
         FILE_POSITION => TokenKind::FilePosition(<String>),
         KW_WRITE => TokenKind::KwWrite,
@@ -341,6 +342,14 @@ Stmt: Stmt = {
     KW_PRINT_EMPTY STAR => Stmt::Print { items: vec![] },
     KW_PRINT COMMA STAR COMMA <es: ExprList> => Stmt::Print { items: es },
     KW_PRINT LPAREN STAR COMMA <es: ExprList> RPAREN => Stmt::Print { items: es },
+    KW_READ_EMPTY LPAREN <unit:RhsExpr> COMMA STAR RPAREN =>
+        Stmt::CallSub{name:"@empty_read".into(),args:vec![unit,Expr::Str(String::new()),Expr::IntLit("0".into())]},
+    KW_READ_EMPTY LPAREN STAR COMMA STAR RPAREN =>
+        Stmt::CallSub{name:"@empty_read".into(),args:vec![Expr::IntLit("5".into()),Expr::Str(String::new()),Expr::IntLit("0".into())]},
+    KW_READ_EMPTY LPAREN <unit:RhsExpr> COMMA STAR COMMA <control:Ident> EQ <status:RhsExpr> RPAREN =>
+        Stmt::CallSub{name:"@empty_read".into(),args:vec![unit,Expr::Str(control),status]},
+    KW_READ_EMPTY LPAREN STAR COMMA STAR COMMA <control:Ident> EQ <status:RhsExpr> RPAREN =>
+        Stmt::CallSub{name:"@empty_read".into(),args:vec![Expr::IntLit("5".into()),Expr::Str(control),status]},
     KW_READ LPAREN <unit:RhsExpr> COMMA STAR COMMA <control:Ident> EQ <status:RhsExpr> RPAREN <items:ExprList> => {
         let mut args=vec![unit,Expr::Str(control),status];args.extend(items);
         Stmt::CallSub{name:"@internal_read".into(),args}
