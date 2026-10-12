@@ -43,6 +43,7 @@ struct Lower {
 }
 impl Lower {
     fn view(&self, e: &Expr, symbols: &Symbols) -> Result<Value> {
+        if let Some(kind)=crate::empty_constructors::kind(e)? {return Ok(Value {kind,items:Some(vec![])});}
         let scalar = |kind| Ok(Value { kind, items: None });
         match e {
             Expr::Str(s) => scalar(TypeSpec::Character(Some(s.len()))),
@@ -99,24 +100,10 @@ impl Lower {
                 let items = base
                     .items
                     .context("elemental array section requires an array")?;
-                let first = lower
-                    .as_deref()
-                    .map(crate::parameters::integer_constant)
-                    .transpose()?
-                    .unwrap_or(1);
-                let last = upper
-                    .as_deref()
-                    .map(crate::parameters::integer_constant)
-                    .transpose()?
-                    .unwrap_or(items.len() as i64);
-                let step = stride
-                    .as_deref()
-                    .map(crate::parameters::integer_constant)
-                    .transpose()?
-                    .unwrap_or(1);
-                if step == 0 {
-                    bail!("array section stride must not be zero");
-                }
+                let step = stride.as_deref().map(crate::parameters::integer_constant).transpose()?.unwrap_or(1);
+                if step==0 {bail!("array section stride must not be zero");}
+                let first = lower.as_deref().map(crate::parameters::integer_constant).transpose()?.unwrap_or(if step>0 {1} else {items.len() as i64});
+                let last = upper.as_deref().map(crate::parameters::integer_constant).transpose()?.unwrap_or(if step>0 {items.len() as i64} else {1});
                 let mut output = vec![];
                 let mut i = first;
                 while if step > 0 { i <= last } else { i >= last } {
@@ -365,7 +352,12 @@ impl Lower {
             .map(|arg| self.view(arg, symbols))
             .collect::<Result<Vec<_>>>()?;
         if !routine.elemental {
-            if views.iter().any(|view|view.items.is_some()) {bail!("non-elemental CHARACTER function `{name}` currently requires scalar actuals");}
+            for (param,view) in routine.params.iter().zip(&views) {
+                let array=routine.body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,..} if name==param));
+                if array && view.items.is_none() {bail!("CHARACTER function array dummy `{param}` requires a rank-one array actual");}
+                if !array && view.items.is_some() {bail!("non-elemental CHARACTER function `{name}` currently requires scalar actuals for `{param}`");}
+                if array && routine.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==param&&matches!(intent.as_str(),"pointer"|"allocatable"))) {bail!("POINTER/ALLOCATABLE CHARACTER function array dummies are not yet supported");}
+            }
             for param in &routine.params {
                 if !routine.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==param&&intent=="intent(in)")) {
                     bail!("CHARACTER function `{name}` currently requires INTENT(IN) scalar dummy `{param}`");
@@ -374,6 +366,7 @@ impl Lower {
         }
         let mut count = None;
         for view in &views {
+            if !routine.elemental {break;}
             if let Some(items) = &view.items {
                 if count.is_some_and(|c| c != items.len()) {
                     bail!("nonconforming elemental array argument shapes");
@@ -410,7 +403,18 @@ impl Lower {
                 value.truncate(size);
                 value.extend(std::iter::repeat_n(' ',size-value.len()));
                 constants.insert(param.clone(),Expr::Str(value));
+            } else if let Ok(value)=crate::parameters::integer_constant(arg) {
+                constants.insert(param.clone(),int(value));
             }
+        }
+        let mut specialized=routine.body.clone();
+        self.specialize_types(&mut specialized,&routine,&views,&constants)?;
+        let result_dims=specialized.iter().find_map(|s|if let Stmt::ArrayDecl{name,dims,..}=s {if name==&routine.result {Some(dims.clone())} else {None}} else {None});
+        if let Some(dims)=&result_dims {
+            if routine.elemental {bail!("ELEMENTAL function requires a scalar result");}
+            if dims.len()!=1 {bail!("CHARACTER function array results currently require rank one");}
+            let count=crate::parameters::integer_constant(&dims[0]).context("CHARACTER function result extent must resolve to a call-site constant")?;
+            if !(0..=1024).contains(&count) {bail!("CHARACTER function array results support at most 1024 elements");}
         }
         let result_kind = self.call_kind(&routine, &views, &constants)?;
         for i in 0..count.unwrap_or(1) {
@@ -418,39 +422,46 @@ impl Lower {
                 .iter()
                 .zip(&views)
                 .map(|(arg, v)| {
-                    v.items
+                    if !routine.elemental {arg.clone()} else {v.items
                         .as_ref()
-                        .map_or_else(|| arg.clone(), |items| items[i].clone())
+                        .map_or_else(|| arg.clone(), |items| items[i].clone())}
                 })
                 .collect::<Vec<_>>();
             self.serial += 1;
             let result = format!("@character_elemental_result_{}", self.serial);
-            prefix.push(Stmt::VarDecl {
-                kind: result_kind.clone(),
-                names: vec![result.clone()],
-            });
+            prefix.push(if let Some(dims)=&result_dims {
+                Stmt::ArrayDecl {kind:result_kind.clone(),name:result.clone(),dims:dims.clone()}
+            } else {Stmt::VarDecl {kind:result_kind.clone(),names:vec![result.clone()]}});
             if crate::substrings::deferred(&result_kind) {
                 prefix.push(Stmt::DummyIntent{name:result.clone(),intent:"allocatable".into()});
             }
-            symbols.insert(result.clone(), (result_kind.clone(), vec![]));
+            symbols.insert(result.clone(), (result_kind.clone(), result_dims.clone().unwrap_or_default()));
             let mut names = HashMap::new();
             names.insert(routine.result.clone(), result.clone());
             let mut expanded = vec![];
             for (param, arg) in routine.params.iter().zip(args) {
                 self.serial += 1;
                 let temp = format!("@character_elemental_dummy_{}", self.serial);
-                expanded.push(Stmt::VarDecl {
-                    kind: bound_types[param].clone(),
-                    names: vec![temp.clone()],
-                });
-                expanded.push(Stmt::Assign {
-                    name: temp.clone(),
-                    value: arg,
-                });
+                let view=&views[routine.params.iter().position(|p|p==param).unwrap()];
+                if !routine.elemental && view.items.is_some() {
+                    let items=view.items.as_ref().unwrap();
+                    expanded.push(Stmt::ArrayDecl {kind:bound_types[param].clone(),name:temp.clone(),dims:vec![int(items.len() as i64)]});
+                    for (i,value) in items.iter().enumerate() {expanded.push(Stmt::AssignIndex {name:temp.clone(),indices:vec![int(i as i64+1)],value:value.clone()});}
+                } else {
+                    expanded.push(Stmt::VarDecl {kind:bound_types[param].clone(),names:vec![temp.clone()]});
+                    expanded.push(Stmt::Assign {name:temp.clone(),value:arg});
+                }
                 names.insert(param.clone(), temp);
             }
-            let mut body = routine.body.clone();
-            self.specialize_types(&mut body, &routine, &views, &constants)?;
+            let mut body = specialized.clone();
+            if !routine.elemental {
+                let mut shapes=HashMap::new();
+                for stmt in &body {match stmt {
+                    Stmt::VarDecl {kind,names}=>for n in names {shapes.insert(n.clone(),(kind.clone(),vec![]));},
+                    Stmt::ArrayDecl {kind,name,dims}=>{shapes.insert(name.clone(),(kind.clone(),dims.clone()));},_=>{}
+                }}
+                crate::array_calls::specialize_character_function(&mut body,&mut shapes,&constants)?;
+            }
             if matches!(body.last(),Some(Stmt::Return(Some(Expr::Ident(n)))) if n==&routine.result)
             {
                 body.pop();
@@ -491,6 +502,7 @@ impl Lower {
             body.retain(|s| {
                 !matches!(s, Stmt::DummyIntent { .. } | Stmt::Implicit(_))
                     && !matches!(s,Stmt::VarDecl{names,..} if names.is_empty())
+                    && !matches!(s,Stmt::ArrayDecl{name,..} if bound.contains(name))
             });
             crate::subroutines::inline_returns(&mut body, &mut self.serial)?;
             expanded.extend(body);
@@ -546,6 +558,7 @@ impl Lower {
                 .iter()
                 .find_map(|s| match s {
                     Stmt::VarDecl { kind, names } if names.contains(param) => Some(kind),
+                    Stmt::ArrayDecl {kind,name,..} if name==param=>Some(kind),
                     _ => None,
                 })
                 .context("CHARACTER function dummy must be a declared scalar")?;
@@ -555,6 +568,9 @@ impl Lower {
                     actual.kind.clone()
                 }
                 TypeSpec::Character(_) => {
+                    if routine.body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,..} if name==param)) && length(&actual.kind)?!=length(declared)? {
+                        bail!("fixed-length CHARACTER array dummy `{param}` currently requires a matching element length");
+                    }
                     if length(&actual.kind)? < length(declared)? {
                         bail!("actual CHARACTER length is shorter than elemental dummy `{param}`");
                     }
@@ -595,6 +611,20 @@ impl Lower {
             }
         }
     }
+    fn fold_sizes(e:&mut Expr,sizes:&HashMap<String,i64>) {
+        match e {
+            Expr::Call(n,args) if n=="size"=>{
+                if let Some(Expr::Ident(name))=args.first() {
+                    if let Some(count)=sizes.get(name) {
+                        if args.len()==1 || args.len()==2&&crate::parameters::integer_constant(&args[1]).ok()==Some(1) {*e=int(*count);return;}
+                    }
+                }
+                for e in args {Self::fold_sizes(e,sizes);}
+            },
+            Expr::Call(_,args)|Expr::Index(_,args)=>for e in args {Self::fold_sizes(e,sizes);},
+            Expr::Bin(_,a,b)=>{Self::fold_sizes(a,sizes);Self::fold_sizes(b,sizes);},Expr::Un(_,e)=>Self::fold_sizes(e,sizes),_=>{}
+        }
+    }
     fn length_constants(e:&mut Expr, constants:&HashMap<String,Expr>) {
         match e {
             Expr::Ident(n)=>if let Some(value)=constants.get(n) {*e=value.clone();},
@@ -632,7 +662,23 @@ impl Lower {
         constants:&HashMap<String,Expr>,
     ) -> Result<()> {
         let mut types = self.types(routine, views)?;
+        let sizes:HashMap<_,_>=routine.params.iter().zip(views).filter_map(|(n,v)|v.items.as_ref().map(|items|(n.clone(),items.len() as i64))).collect();
         for s in body {
+            if let Stmt::ArrayDecl {kind,name,dims}=s {
+                if routine.params.contains(name) {
+                    let count=*sizes.get(name).context("array dummy requires a rank-one array actual")?;
+                    if dims.len()!=1 {bail!("CHARACTER function array dummies currently require rank one");}
+                    if !matches!(&dims[0],Expr::Ident(n) if n=="@deferred_extent") {
+                        let mut dim=dims[0].clone();Self::fold_sizes(&mut dim,&sizes);Self::length_constants(&mut dim,constants);
+                        if crate::parameters::integer_constant(&dim)?!=count {bail!("explicit-shape CHARACTER function dummy `{name}` requires a matching extent");}
+                    }
+                    *kind=types[name].clone();*dims=vec![int(count)];
+                } else {
+                    *kind=Self::specialize_kind(kind,&types,constants)?;
+                    for dim in dims {Self::fold_sizes(dim,&sizes);Self::length_constants(dim,constants);}
+                    types.insert(name.clone(),kind.clone());
+                }
+            }
             if let Stmt::VarDecl { kind, names } = s {
                 if names.iter().all(|n| routine.params.contains(n)) {
                     continue;
@@ -695,6 +741,7 @@ impl Lower {
                 _ => {}
             }
         }
+        crate::multidim::character_foralls(body,&symbols,&mut self.serial)?;
         let mut out = vec![];
         for mut stmt in std::mem::take(body) {
             if let Stmt::Block { body } = &stmt {
@@ -1034,8 +1081,6 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
         Ok(())
     }
     collect(&mut p.body, &mut lower)?;
-    if !lower.routines.is_empty() {
-        lower.body(&mut p.body, &Symbols::new())?;
-    }
+    lower.body(&mut p.body, &Symbols::new())?;
     Ok(p)
 }

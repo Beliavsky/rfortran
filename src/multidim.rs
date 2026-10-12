@@ -780,9 +780,9 @@ impl Lowerer {
             kind,
             TypeSpec::Integer(None | Some(1 | 2 | 4 | 8))
                 | TypeSpec::Real
-                | TypeSpec::DoublePrecision
+                | TypeSpec::DoublePrecision | TypeSpec::Character(_)
         ) {
-            bail!("FORALL currently requires a supported numeric destination array");
+            bail!("FORALL currently requires a supported numeric or CHARACTER destination array");
         }
         fn pure(e: &Expr, shapes: &Shapes, known: &HashMap<String, bool>) -> Result<()> {
             match e {
@@ -809,7 +809,7 @@ impl Lowerer {
                                 | "sum"
                                 | "product"
                                 | "minval"
-                                | "maxval"
+                                | "maxval" | "trim" | "len" | "len_trim" | "adjustl" | "adjustr" | "repeat" | "char" | "achar"
                         );
                     if !shapes.contains_key(n) && !known.get(n).copied().unwrap_or(intrinsic) {
                         bail!("FORALL cannot call impure or unsupported procedure `{n}`");
@@ -921,7 +921,7 @@ impl Lowerer {
                 continue;
             }
             self.forall_serial += 1;
-            let temp = format!("@forall_value_{}", self.forall_serial);
+            let temp = if matches!(kind,TypeSpec::Character(_)) {format!("@character_forall_value_{}",self.forall_serial)} else {format!("@forall_value_{}",self.forall_serial)};
             captures.push(if shape.is_empty() {
                 Stmt::VarDecl {
                     kind: kind.clone(),
@@ -1143,6 +1143,26 @@ impl Lowerer {
         Ok(())
     }
 }
+// CHARACTER arrays become scalar slots before the main multidimensional pass.
+// Expand only their FORALL statements here, using the same snapshot rules.
+pub(crate) fn character_foralls(body:&mut Vec<Stmt>,symbols:&HashMap<String,(TypeSpec,Vec<Expr>)>,serial:&mut usize)->Result<()> {
+    let mut lower=Lowerer {forall_serial:*serial,..Default::default()};
+    lower.types=symbols.iter().map(|(n,(kind,_))|(n.clone(),kind.clone())).collect();
+    let shapes=symbols.iter().filter_map(|(n,(_,dims))|if dims.is_empty() {None} else {Some((n.clone(),dims.iter().map(crate::parameters::integer_constant).collect::<Result<Vec<_>>>()))}).filter_map(|(n,dims)|dims.ok().map(|d|(n,d))).collect();
+    for stmt in body {
+        if let Stmt::Block {body}=stmt {
+            if matches!(body.first(),Some(Stmt::CallSub{name,..}) if name=="@forall") && matches!(body.get(1),Some(Stmt::AssignIndex{name,..}) if matches!(lower.types.get(name),Some(TypeSpec::Character(_)))) {
+                let Some(Stmt::AssignIndex{name,..})=body.get(1) else {unreachable!()};
+                let (_,dims)=&symbols[name];
+                if dims.len()!=1 || crate::parameters::integer_constant(&dims[0]).is_ok_and(|n|!(0..=1024).contains(&n)) {bail!("CHARACTER FORALL requires a fixed rank-one destination with at most 1024 elements");}
+                lower.expand_forall(body,&shapes)?;
+            }
+        }
+    }
+    *serial=lower.forall_serial;
+    Ok(())
+}
+
 pub fn resolve(mut p: Program) -> Result<Program> {
     crate::elemental::validate_program(&p)?;
     let mut lower = Lowerer::default();
@@ -1385,7 +1405,7 @@ mod tests {
             lower("integer::i\nlogical::a(3)\nforall(i=1:3) a(i)=.true.\nend")
                 .unwrap_err()
                 .to_string()
-                .contains("numeric destination")
+                .contains("numeric or CHARACTER destination")
         );
         assert!(lower("integer::i,a(3)\nforall(i=1:1) a(:)=[1,2,3]\nend")
             .unwrap_err()

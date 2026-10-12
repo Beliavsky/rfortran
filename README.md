@@ -154,7 +154,7 @@ Deferred-length ALLOCATABLE scalar results use the existing bounded CHARACTER
 storage lowering for calls from the main program. Assignment sets the runtime
 result length, so concatenation, LEN and assignment to a caller's allocatable
 variable preserve that length. Runtime lengths for explicitly sized results,
-recursive CHARACTER calls, writable or array dummies, host captures, and a
+recursive CHARACTER calls, writable dummies, host captures, and a
 separate-object CHARACTER result ABI remain unsupported. Runtime-length results
 as actual arguments to other procedures remain outside this subset.
 
@@ -164,6 +164,36 @@ interpreter/native O0/O2 checks and gfortran comparisons. Unused CHARACTER
 function definitions are removed before native result-storage validation;
 this allows the `exe_name` definition in `util.f90` to pass that blocker.
 GETCWD and GET_COMMAND_ARGUMENT themselves remain unsupported when called.
+
+## CHARACTER array functions
+
+CHARACTER functions can accept read-only rank-one arrays and return fixed
+rank-one arrays. Calls specialize assumed lengths and shapes from actual
+arguments; result lengths and extents may use LEN and SIZE of the dummies.
+Inputs and results use local buffers with at most 1024 elements per array.
+Literal constructors, typed empty constructors, fixed arrays, constant sections,
+named calls, and another CHARACTER array function's result are supported as
+actuals. The input arrays need not have equal extents. Fixed-length array dummies
+currently require the actual element length to match; explicit-shape dummies
+require matching extents. Scalar INTEGER constant actuals can supply result
+extents. Runtime-dependent result extents, nonunit declaration bounds in these calls,
+higher ranks, POINTER/ALLOCATABLE
+array dummies, deferred-length array results, and module CHARACTER array storage
+remain unsupported. Array actuals are copied and must be initialized.
+
+CHARACTER FORALL assignments to fixed rank-one arrays with lower bound one
+now use the existing
+numeric FORALL snapshot rules: capture all right-hand sides before destination
+writes, check bounds, and reject duplicate destinations. Triplets and destination
+subscripts must resolve to constants; stable local constants can be used in
+subscripts after function specialization. CHARACTER procedure calls inside
+FORALL remain unsupported. Function results support assignment, concatenation,
+formatted output, LEN/SIZE inquiries, nested calls, and early RETURN.
+
+`tests/148_character_array_functions.f90` reproduces `xmunge.f90` and the
+`munge` function in `util.f90`. Run `python tests/test_character_array_functions.py`
+for interpreter/native O0/O2 checks and gfortran comparisons, including empty
+arrays, zero element lengths, input sections, and overlapping FORALL assignment.
 
 ## Elemental function results
 
@@ -1176,6 +1206,7 @@ python tests/test_elemental_setters.py
 python tests/test_impure_elemental.py
 python tests/test_character_elemental.py
 python tests/test_character_functions.py
+python tests/test_character_array_functions.py
 python tests/test_source_diagnostics.py
 python tests/test_do_steps.py
 python tests/test_where.py

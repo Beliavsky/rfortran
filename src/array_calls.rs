@@ -806,7 +806,15 @@ fn specialize(
                         values.remove(&name);
                     }
                 }
+                let forall=matches!(body.first(),Some(Stmt::CallSub{name,..}) if name=="@forall");
                 specialize(body, &mut local, absent, &mut values, stable)?;
+                if forall {
+                    for statement in body {
+                        if let Stmt::AssignIndex {indices,..}=statement {
+                            for e in indices {rewrite(e,&local,&values,absent)?;}
+                        }
+                    }
+                }
             }
             _ => {}
         }
@@ -814,6 +822,12 @@ fn specialize(
     }
     *body = output;
     Ok(())
+}
+// Resolve a CHARACTER function's fixed declarations and stable local constants
+// while its original dummy names still identify the associated array shapes.
+pub(crate) fn specialize_character_function(body:&mut Vec<Stmt>,shapes:&mut Shapes,constants:&HashMap<String,Expr>)->Result<()> {
+    let stable=stable(body);
+    specialize(body,shapes,&HashSet::new(),&mut constants.clone(),&stable)
 }
 fn check_allocated(s: &Stmt, pending: &HashSet<String>) -> Result<()> {
     fn name(n: &str, pending: &HashSet<String>) -> Result<()> {

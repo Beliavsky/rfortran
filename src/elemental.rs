@@ -17,6 +17,7 @@ pub fn result_kind(name: &str, declared: &Option<TypeSpec>, body: &[Stmt]) -> Op
     };
     body.iter().find_map(|s| match s {
         Stmt::VarDecl { kind, names } if names.iter().any(|n| n == result) => Some(kind.clone()),
+        Stmt::ArrayDecl {kind,name,..} if name==result && matches!(kind,TypeSpec::Character(_)|TypeSpec::CharacterLength(_)|TypeSpec::CharacterAssumed)=>Some(kind.clone()),
         _ => None,
     })
 }

@@ -1028,6 +1028,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " F T F\n 1\n"
+    },
+    "148_character_array_functions": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 'a-1' 'b-1' 'a-2' 'b-2'\n"
     }
   }
 }
