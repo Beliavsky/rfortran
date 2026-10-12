@@ -3287,7 +3287,8 @@ impl Backend for CraneliftBackend {
                     .push(ir::AbiParam::new(ir::types::F64)),
                 crate::ast::TypeSpec::Character(_) => {}
             }
-            let fid = obj.declare_function(&f.name, Linkage::Export, &ctx.func.signature)?;
+            let linkage=if f.name.starts_with("@internal_") {Linkage::Local} else {Linkage::Export};
+            let fid = obj.declare_function(&f.name, linkage, &ctx.func.signature)?;
             obj.clear_context(&mut ctx);
             func_ids.insert(f.name.clone(), fid);
         }

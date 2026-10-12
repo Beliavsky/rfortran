@@ -215,20 +215,20 @@ ProcedureModifier: (Option<bool>,bool) = {
 };
 
 FunctionDef: Stmt = {
-    <kind: TypeSpec> KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN KW_RESULT LPAREN <result: Ident> RPAREN <mut body: Stmts> <_end: FunctionEnd> => {
+    <kind: TypeSpec> KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN KW_RESULT LPAREN <result: Ident> RPAREN <mut body:ProcedureBody> <_end: FunctionEnd> => {
         body.insert(0, Stmt::VarDecl { kind, names: vec![result.clone()] });
         crate::ast::function_with_result(name, params, result, body)
     },
-    <kind: TypeSpec> KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN <mut body: Stmts> <_end: FunctionEnd> => {
+    <kind: TypeSpec> KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN <mut body:ProcedureBody> <_end: FunctionEnd> => {
         body.insert(0,Stmt::VarDecl {kind:kind.clone(),names:vec![name.clone()]});
         Stmt::Function { name, params, return_type:Some(kind),body,pure:false,elemental:false }
     },
-    KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN KW_RESULT LPAREN <result: Ident> RPAREN <body: Stmts> <_end: FunctionEnd> => crate::ast::function_with_result(name, params, result, body),
-    KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN <body: Stmts> <_end: FunctionEnd> => Stmt::Function { name, params, return_type: None, body, pure: false, elemental:false },
+    KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN KW_RESULT LPAREN <result: Ident> RPAREN <body:ProcedureBody> <_end: FunctionEnd> => crate::ast::function_with_result(name, params, result, body),
+    KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN <body:ProcedureBody> <_end: FunctionEnd> => Stmt::Function { name, params, return_type: None, body, pure: false, elemental:false },
 };
 
 SubrDef: Stmt = {
-    <prefix: FunctionPrefix> KW_SUBROUTINE <name: Ident> LPAREN <params: ParamList> RPAREN <body: Stmts> <_end: SubroutineEnd> => Stmt::Subroutine { name, params, body, pure: prefix.0, elemental: prefix.1 },
+    <prefix: FunctionPrefix> KW_SUBROUTINE <name: Ident> LPAREN <params: ParamList> RPAREN <body:ProcedureBody> <_end: SubroutineEnd> => Stmt::Subroutine { name, params, body, pure: prefix.0, elemental: prefix.1 },
 };
 
 FunctionEnd: () = {
@@ -838,3 +838,8 @@ DoLoop: Stmt = {
 
 LoopEnd: () = { KW_END KW_DO => (), KW_ENDDO => () };
 CharacterConstructorLength: Expr = { KW_LEN EQ <e:RhsExpr> => e, <e:RhsExpr> => e };
+
+ProcedureBody: Vec<Stmt> = {
+    <body:Stmts> => body,
+    <mut body:Stmts> KW_CONTAINS <contained:FuncList> => {body.extend(contained);body},
+};

@@ -1,8 +1,18 @@
 // The early scalar optimizer has no model for stores through descriptors.
 // Cranelift still optimizes the generated loads, stores and loops at -O1/-O2.
 fn has_pointer_access(body: &[IStmt]) -> bool {
+    fn access(expr:&IExpr)->bool {
+        match expr {
+            IExpr::Call(n,args)=>n.starts_with("@ptr_") || args.iter().any(access),
+            IExpr::Index(_,args)=>args.iter().any(access),
+            IExpr::Bin(_,a,b)=>access(a)||access(b),
+            IExpr::Un(_,a)=>access(a),
+            _=>false,
+        }
+    }
     body.iter().any(|s| match s {
-        IStmt::Call(n, _) if n.starts_with("@ptr_") => true,
+        IStmt::Call(n,args)=>n.starts_with("@ptr_") || args.iter().any(access),
+        IStmt::AssignExpr(_,expr)=>access(expr),
         IStmt::Do { body, .. } | IStmt::DoWhile { body, .. } | IStmt::Block { body } => has_pointer_access(body),
         IStmt::If { then_body, else_body, .. } => has_pointer_access(then_body) || else_body.as_ref().is_some_and(|b|has_pointer_access(b)),
         IStmt::SelectCase { cases, default, .. } => cases.iter().any(|c|has_pointer_access(&c.body)) || default.as_ref().is_some_and(|b|has_pointer_access(b)),

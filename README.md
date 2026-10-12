@@ -721,6 +721,34 @@ specialization, including assumed-length dummies. Assumed-length function
 dummies remain outside this subset.
 Run `python tests/test_optional_procedures.py`.
 
+## Internal procedures and host association
+
+Functions and subroutines accept CONTAINS with internal functions/subroutines.
+Internal procedures can read and update INTEGER(4/8), REAL(4/8), and LOGICAL
+variables explicitly declared in the enclosing procedure, including its dummy arguments
+and array elements of ranks 1 through 15. Array accesses retain lower bounds,
+check subscripts, and share the original storage and initialization flags.
+SIZE, SHAPE, LBOUND, and UBOUND inquiries are supported; DIM must be constant.
+
+Recursive helpers with scalar input arguments forward their host environment,
+so a quick-sort helper can modify the enclosing procedure's arrays without
+copying them. Sibling calls share that environment, local declarations shadow
+host variables, and identical helper names in separate hosts remain distinct.
+Reads of undefined host values retain runtime checks; writes to host INTENT(IN)
+variables are rejected. The native backend passes borrowed storage addresses;
+the interpreter uses handles identifying the owning call frame.
+
+Capturing CHARACTER, POINTER, ALLOCATABLE, or OPTIONAL host objects, whole-array
+host values/assignments, sections, READ/I/O definitions through host objects,
+and forwarding captured objects directly to ordinary subroutine dummies or
+internal writable dummy arguments remain unsupported. Internal function results
+must have explicit types. Internal procedures cannot yet
+contain further internal procedures. Procedure values/escaping closures are
+unsupported; recursive array/output dummy arguments retain the limits below.
+Run `python tests/test_internal_procedures.py` for interpreter/native O0/O2 checks
+with gfortran comparisons. The Cargo suite includes
+`tests/140_internal_procedures.f90`.
+
 ## Recursive procedures and bounded allocatable outputs
 
 RECURSIVE is accepted on functions and subroutines, including PURE RECURSIVE
@@ -976,6 +1004,7 @@ python tests/test_runtime_read_format.py
 python tests/test_named_loops.py
 python tests/test_write_controls.py
 python tests/test_formatted_implied_do.py
+python tests/test_internal_procedures.py
 python tests/test_empty_read.py
 python tests/test_statement_labels.py
 python tests/test_unnamed_procedure_ends.py

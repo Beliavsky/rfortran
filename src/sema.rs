@@ -1750,6 +1750,21 @@ pub fn analyze_with_src(
             &mut read_vars,
             settings,
         );
+        fn borrowed_storage(body:&[Stmt],names:&mut HashSet<String>) {
+            for stmt in body {
+                match stmt {
+                    Stmt::CallSub {name,args} if name=="@ptr_bind"=>{
+                        if let Some(Expr::Ident(target))=args.get(3) {names.insert(target.to_ascii_lowercase());}
+                    }
+                    Stmt::Block {body}|Stmt::Do {body,..}|Stmt::DoWhile {body,..}=>borrowed_storage(body,names),
+                    Stmt::If {then_body,else_body,..}=>{borrowed_storage(then_body,names);if let Some(b)=else_body {borrowed_storage(b,names);}},
+                    Stmt::SelectCase {cases,default,..}=>{for c in cases {borrowed_storage(&c.body,names);}if let Some(b)=default {borrowed_storage(b,names);}},
+                    _=>{}
+                }
+            }
+        }
+        let mut borrowed=HashSet::new();borrowed_storage(body,&mut borrowed);
+        read_vars.extend(borrowed.iter().cloned());
         if is_function && declared_ret.is_some() {
             if !has_path {
                 let span = match type_span_map.get(&fname.to_ascii_lowercase()) {
@@ -1771,7 +1786,7 @@ pub fn analyze_with_src(
         }
         for (p, intent) in local_param_intent.iter() {
             if *intent == ParamIntent::Out {
-                if !assigned.contains(p) {
+                if !assigned.contains(p) && !borrowed.contains(p) {
                     let span = match type_span_map.get(p) {
                         Some(s) => s.clone(),
                         None => find_ident_span(p),

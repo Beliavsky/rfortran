@@ -26,6 +26,7 @@ mod file_io;
 mod output;
 mod do_steps;
 mod named_loops;
+mod internal_procedures;
 mod purity;
 mod elemental;
 mod subroutines;
