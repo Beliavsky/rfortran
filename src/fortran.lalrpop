@@ -494,6 +494,28 @@ TypeSpec: TypeSpec = {
     KW_LOGICAL => TypeSpec::Logical,
 };
 
+ConstructorType: TypeSpec = {
+    KW_REAL => TypeSpec::Real,
+    KW_REAL LPAREN <args:CallArgList> RPAREN =>? crate::empty_constructors::real_kind(args)
+        .map_err(|error|lalrpop_util::ParseError::User {error}),
+    KW_INTEGER => TypeSpec::Integer(None),
+    KW_INTEGER LPAREN KW_KIND EQ <kind: Ident> RPAREN => TypeSpec::IntegerKind(kind),
+    KW_INTEGER LPAREN KW_KIND EQ <kind: INT> RPAREN => TypeSpec::IntegerKind(kind),
+    KW_INTEGER LPAREN <kind: Ident> RPAREN => TypeSpec::IntegerKind(kind),
+    KW_INTEGER LPAREN <k: INT> RPAREN => {
+        match k.parse::<u8>() { Ok(k) => TypeSpec::Integer(Some(k)), Err(_) => TypeSpec::IntegerKind(k) }
+    },
+    KW_DOUBLE KW_PRECISION => TypeSpec::DoublePrecision,
+    KW_CHARACTER => TypeSpec::Character(None),
+    KW_CHARACTER LPAREN KW_LEN EQ COLON RPAREN => crate::ast::character_length(Expr::Ident("@deferred_character".into())),
+    KW_CHARACTER LPAREN COLON RPAREN => crate::ast::character_length(Expr::Ident("@deferred_character".into())),
+    KW_CHARACTER LPAREN KW_LEN EQ STAR RPAREN => TypeSpec::CharacterAssumed,
+    KW_CHARACTER LPAREN STAR RPAREN => TypeSpec::CharacterAssumed,
+    KW_CHARACTER LPAREN KW_LEN EQ <length:RhsExpr> RPAREN => crate::ast::character_length(length),
+    KW_CHARACTER LPAREN <length:RhsExpr> RPAREN => crate::ast::character_length(length),
+    KW_LOGICAL => TypeSpec::Logical,
+};
+
 // Separate type spec rule for implicit statements to avoid conflicts
 ImplicitTypeSpec: TypeSpec = {
     KW_INTEGER => TypeSpec::Integer(None),
@@ -578,9 +600,8 @@ UnaryExpr: Expr = {
 
 Primary: Expr = {
     LBRACKET <items: ExprList> RBRACKET => Expr::Call("@array_constructor".into(), items),
-    LBRACKET KW_CHARACTER LPAREN <length:CharacterConstructorLength> RPAREN DCOLON <items:ExprList> RBRACKET => {
-        let mut args=vec![length];args.extend(items);Expr::Call("@typed_character_constructor".into(),args)
-    },
+    LBRACKET <kind:ConstructorType> DCOLON <items:ExprList?> RBRACKET =>
+        crate::empty_constructors::parsed(kind,items.unwrap_or_default()),
     <n: INT> => Expr::IntLit(n),
     <f: FLOAT> => Expr::RealLit(f),
     <s: STR> => Expr::Str(s),
@@ -815,7 +836,6 @@ DoLoop: Stmt = {
 };
 
 LoopEnd: () = { KW_END KW_DO => (), KW_ENDDO => () };
-CharacterConstructorLength: Expr = { KW_LEN EQ <e:RhsExpr> => e, <e:RhsExpr> => e };
 
 ProcedureBody: Vec<Stmt> = {
     <body:Stmts> => body,

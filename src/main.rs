@@ -18,6 +18,7 @@ mod parser;
 mod statement_labels;
 mod pointers;
 mod parameters;
+mod empty_constructors;
 mod sections;
 mod reductions;
 mod initialized;

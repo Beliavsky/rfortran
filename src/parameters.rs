@@ -376,6 +376,14 @@ fn separate_parameters(body: &mut Vec<Stmt>, arguments: &[String]) -> Result<()>
 // Main-program storage exists for the whole execution. Other scopes need a
 // separate persistent-storage implementation before initialized locals are safe.
 fn initial_value(kind: &TypeSpec, value: &Expr) -> Result<Expr> {
+    if let Some(source)=crate::empty_constructors::kind(value)? {
+        let numeric=|kind:&TypeSpec|matches!(kind,TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision);
+        if !(numeric(kind)&&numeric(&source)
+            || matches!((kind,&source),(TypeSpec::Logical,TypeSpec::Logical)|(TypeSpec::Character(_),TypeSpec::Character(_)))) {
+            bail!("typed array constructor type is incompatible with declaration");
+        }
+        return Ok(Expr::Call("@array_constructor".into(),vec![]));
+    }
     if let Expr::Call(tag,items) = value {
         if tag == "@array_constructor" {
             return Ok(Expr::Call(tag.clone(),items.iter().map(|e| initial_value(kind,e)).collect::<Result<_>>()?));
@@ -479,7 +487,7 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
                     if !locals.insert(key.clone()) && !arrays.contains(&key) { bail!("duplicate declaration of initialized variable `{name}`"); }
                     let mut value = initializer.clone().with_context(|| format!("initialized declaration `{name}` requires a value"))?;
                     rewrite_expr(&mut value,&constants)?;
-                    if !arrays.contains(&key) && matches!(&value,Expr::Call(tag,_) if tag == "@array_constructor") {
+                    if !arrays.contains(&key) && matches!(&value,Expr::Call(tag,_) if tag == "@array_constructor" || tag == "@typed_constructor") {
                         bail!("scalar declaration initializer cannot be an array");
                     }
                     let value = initial_value(kind,&value).with_context(|| format!("invalid declaration initializer for `{name}`"))?;
@@ -515,6 +523,7 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
                 rewrite_expr(&mut initializer, &constants)?;
                 if arrays.contains(&key) {
                     if matches!(kind, TypeSpec::Character(_) | TypeSpec::CharacterAssumed) { bail!("CHARACTER array PARAMETER declarations are not yet supported"); }
+                    let initializer=if crate::empty_constructors::kind(&initializer)?.is_some() {initial_value(kind,&initializer)?} else {initializer};
                     let Expr::Call(tag, items) = initializer else { bail!("array PARAMETER requires an array constructor"); };
                     if tag != "@array_constructor" { bail!("array PARAMETER requires an array constructor"); }
                     let values: Vec<Expr> = items.iter().map(|e| -> Result<Expr> { Ok(if matches!(kind, TypeSpec::Integer(_)) { Expr::IntLit(evaluate(e, &constants)?.to_string()) } else { real_literal(if matches!(kind, TypeSpec::Real) { real_constant(e)? as f32 as f64 } else { real_constant(e)? }, matches!(kind, TypeSpec::DoublePrecision)) }) }).collect::<Result<_>>()?;
@@ -553,6 +562,7 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
         output.extend(init); output.extend(variable_init);
     }
     *body = output;
+    crate::empty_constructors::materialize(body)?;
     Ok(constants)
 }
 
@@ -645,6 +655,20 @@ fn constructor_items(items: &[Expr], constants: &Constants, output: &mut Vec<Exp
 }
 
 fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
+    if let Some(mut kind)=crate::empty_constructors::kind(expr)? {
+        resolve_kind(&mut kind,constants)?;
+        if crate::substrings::deferred(&kind) {bail!("typed CHARACTER constructor requires an explicit constant length");}
+        let Expr::Call(_,args)=expr else {unreachable!()};
+        if args.len()==1 {
+            *expr=crate::empty_constructors::parsed(kind,vec![]);
+        } else {
+            let mut items=vec![];constructor_items(&args[1..],constants,&mut items,&mut 4096)?;
+            let items=items.iter().map(|e|initial_value(&kind,e)).collect::<Result<Vec<_>>>()
+                .context("typed array constructor currently requires constant elements")?;
+            *expr=Expr::Call("@array_constructor".into(),items);
+        }
+        return Ok(());
+    }
     if let Expr::Call(name,args)=expr {
         if name=="@typed_character_constructor" {
             let mut length=args[0].clone();rewrite_expr(&mut length,constants)?;
@@ -894,6 +918,24 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
             }
         }
         _ => {}
+    }
+    if let Expr::Call(name,args)=expr {
+        if args.len()==1 {
+            if let Some(kind)=crate::empty_constructors::kind(&args[0])? {
+                let folded=match name.as_str() {
+                    "size"=>Some(Expr::IntLit("0".into())),
+                    "kind"=>Some(Expr::IntLit(match kind {
+                        TypeSpec::Integer(bytes)=>bytes.unwrap_or(4),
+                        TypeSpec::DoublePrecision=>8,
+                        TypeSpec::Character(_)=>1,
+                        _=>4,
+                    }.to_string())),
+                    "len"=>if let TypeSpec::Character(length)=kind {Some(Expr::IntLit(length.unwrap_or(1).to_string()))} else {None},
+                    _=>None,
+                };
+                if let Some(value)=folded {*expr=value;return Ok(());}
+            }
+        }
     }
     if let Expr::Call(name, args) = expr {
         match name.to_ascii_lowercase().as_str() {

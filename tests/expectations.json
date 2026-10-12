@@ -986,6 +986,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 3\n"
+    },
+    "142_empty_constructors": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 0 0 0 0 0\n 8 8 4 1\n 3 0\n 0 1 0.0 1.0\n .TRUE. .FALSE. 0\n 7\n"
     }
   }
 }

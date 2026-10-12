@@ -564,8 +564,20 @@ results are compared with gfortran when installed.
 Numeric/LOGICAL array constructors can be used in expressions and can contain
 fixed-shape array or section items, which are appended in array element order.
 Items must have matching element type and kind. Constructor temporaries preserve
-overlapping assignment semantics. Explicitly typed numeric/LOGICAL constructors
-remain outside this subset; CHARACTER constructors use the subset described below.
+overlapping assignment semantics.
+
+Empty typed bracket constructors preserve the declared element type and kind:
+`[real(kind=dp)::]`, `[integer(kind=8)::]`, `[logical::]`,
+`[character(len=3)::]`, and `[double precision::]` all have size zero.
+Named kind and length parameters, including imported parameters, are resolved
+before array lowering. These constructors support type/size inquiries,
+reductions, zero-length assignments, numeric array PARAMETER initializers,
+and procedure arguments under the compiler's existing array-shape rules.
+Nonempty explicitly typed constructors currently require constant elements.
+Untyped empty constructors remain invalid. Run
+`python tests/test_empty_constructors.py` for interpreter/native O0/O2 checks
+with gfortran comparisons; the Cargo suite includes
+`tests/142_empty_constructors.f90`.
 
 `RESHAPE(SOURCE, SHAPE, PAD, ORDER)` accepts numeric/LOGICAL array expressions
 and a constant SHAPE constructor, including zero extents. Optional PAD supplies
@@ -1015,6 +1027,7 @@ python tests/test_runtime_read_format.py
 python tests/test_named_loops.py
 python tests/test_write_controls.py
 python tests/test_formatted_implied_do.py
+python tests/test_empty_constructors.py
 python tests/test_internal_procedures.py
 python tests/test_empty_read.py
 python tests/test_read_end.py
