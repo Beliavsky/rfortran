@@ -8,6 +8,91 @@ use crate::ast::{BinOp, Expr, Stmt, TypeSpec, UnOp};
 use anyhow::{bail, Result};
 use std::collections::HashMap;
 
+/// Canonicalize READ controls before the shared I/O lowering passes.
+pub(crate) fn read_controls(
+    controls: Vec<Expr>,
+    items: Vec<Expr>,
+) -> std::result::Result<Stmt, &'static str> {
+    let mut unit = None;
+    let mut format = None;
+    let mut option = None;
+    let mut named = false;
+    let mut seen = std::collections::HashSet::new();
+    let mut stdin_star = false;
+    for (position, value) in controls.into_iter().enumerate() {
+        let (key, value) = match value {
+            Expr::Call(name, args) if name.starts_with("@read_control:") => {
+                named = true;
+                (name[14..].to_ascii_lowercase(), args[0].clone())
+            }
+            value => {
+                if named {
+                    return Err("positional READ controls must precede named controls");
+                }
+                let key = match position {
+                    0 => "unit",
+                    1 => "fmt",
+                    _ => return Err("only UNIT and FMT may be positional in READ"),
+                };
+                (key.into(), value)
+            }
+        };
+        if !seen.insert(key.clone()) {
+            return Err("duplicate READ control specifier");
+        }
+        let star = matches!(&value,Expr::Call(n,_) if n=="@write_star");
+        match key.as_str() {
+            "unit" => {
+                stdin_star = star;
+                unit = Some(if star { int(5) } else { value });
+            }
+            "fmt" => format = Some(value),
+            _ => {
+                if star {
+                    return Err("only READ UNIT and FMT may use '*'");
+                }
+                if option.is_some() {
+                    return Err("READ currently supports one status or branch control");
+                }
+                option = Some((key, value));
+            }
+        }
+    }
+    let unit = unit.ok_or("READ requires UNIT")?;
+    let format = format.ok_or("READ currently requires FMT")?;
+    let list = matches!(&format,Expr::Call(n,_) if n=="@write_star");
+    if !list && items.is_empty() {
+        return Err("empty READ currently requires list-directed FMT='*'");
+    }
+    if list && stdin_star && option.is_none() && !items.is_empty() {
+        return Ok(Stmt::Read { args: items });
+    }
+    let empty = items.is_empty();
+    let mut args = vec![unit];
+    if !list {
+        args.push(format);
+    }
+    let status = option.is_some();
+    if list || status {
+        let (control, value) = option.unwrap_or_else(|| (String::new(), int(0)));
+        args.extend([Expr::Str(control), value]);
+    }
+    args.extend(items);
+    let name = if empty {
+        "@empty_read"
+    } else if list {
+        "@internal_read"
+    } else if status {
+        "@formatted_read_status"
+    } else {
+        "@formatted_read"
+    };
+    Ok(Stmt::CallSub {
+        name: name.into(),
+        args,
+    })
+}
+
 fn int(n: i64) -> Expr {
     Expr::IntLit(n.to_string())
 }

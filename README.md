@@ -321,6 +321,16 @@ runtime error. Continuations, semicolon separators, and single-line IF statement
 are supported. Run `python tests/test_empty_read.py` for interpreter/native
 O0/O2 checks with gfortran comparisons.
 
+READ accepts named `UNIT=` and `FMT=` controls, including reordered keywords.
+`END=label` on an empty list-directed or scalar CHARACTER formatted READ branches
+at EOF to a following labelled statement in the same or an enclosing statement
+sequence. It can exit nested loops; other input errors still stop execution.
+Backward branches, transfers into loops or IF arms, and combining END with
+IOSTAT remain unsupported. Use named EXIT/CYCLE for transfers across the
+region skipped by END; unqualified transfers there are diagnosed.
+Run `python tests/test_read_end.py` for interpreter/native O0/O2 checks
+with gfortran comparisons.
+
 Scratch files support `OPEN(newunit=iu,status='scratch',action='readwrite')`
 or an explicit UNIT, with sequential formatted access. NEWUNIT assigns a
 negative unit and supports up to 1024 simultaneous scratch connections.
@@ -513,7 +523,8 @@ single-line IF statements, and supported file operations use the same behavior
 as their unlabelled forms.
 
 Labels do not yet enable GOTO, labelled DO termination, FORMAT statements, or
-I/O control transfers through `ERR=`, `END=`, and `EOR=`. Unsupported controls
+I/O control transfers through `ERR=` and `EOR=`. READ supports the forward
+`END=` transfers described above. Unsupported controls
 are rejected rather than ignored. Run `python tests/test_statement_labels.py`
 for interpreter/native O0/O2 checks with gfortran comparisons.
 
@@ -1006,6 +1017,7 @@ python tests/test_write_controls.py
 python tests/test_formatted_implied_do.py
 python tests/test_internal_procedures.py
 python tests/test_empty_read.py
+python tests/test_read_end.py
 python tests/test_statement_labels.py
 python tests/test_unnamed_procedure_ends.py
 python tests/test_declarations_without_colons.py

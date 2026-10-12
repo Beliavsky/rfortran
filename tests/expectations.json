@@ -979,6 +979,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 5 4 3 2 1\n 1 2 3 4 5\n"
+    },
+    "141_read_end": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 3\n"
     }
   }
 }

@@ -379,43 +379,12 @@ Stmt: Stmt = {
     KW_PRINT_EMPTY STAR => Stmt::Print { items: vec![] },
     KW_PRINT COMMA STAR COMMA <es: ExprList> => Stmt::Print { items: es },
     KW_PRINT LPAREN STAR COMMA <es: ExprList> RPAREN => Stmt::Print { items: es },
-    KW_READ_EMPTY LPAREN <unit:RhsExpr> COMMA STAR RPAREN =>
-        Stmt::CallSub{name:"@empty_read".into(),args:vec![unit,Expr::Str(String::new()),Expr::IntLit("0".into())]},
-    KW_READ_EMPTY LPAREN STAR COMMA STAR RPAREN =>
-        Stmt::CallSub{name:"@empty_read".into(),args:vec![Expr::IntLit("5".into()),Expr::Str(String::new()),Expr::IntLit("0".into())]},
-    KW_READ_EMPTY LPAREN <unit:RhsExpr> COMMA STAR COMMA <control:Ident> EQ <status:RhsExpr> RPAREN =>
-        Stmt::CallSub{name:"@empty_read".into(),args:vec![unit,Expr::Str(control),status]},
-    KW_READ_EMPTY LPAREN STAR COMMA STAR COMMA <control:Ident> EQ <status:RhsExpr> RPAREN =>
-        Stmt::CallSub{name:"@empty_read".into(),args:vec![Expr::IntLit("5".into()),Expr::Str(control),status]},
-    KW_READ LPAREN <unit:RhsExpr> COMMA STAR COMMA <control:Ident> EQ <status:RhsExpr> RPAREN <items:ExprList> => {
-        let mut args=vec![unit,Expr::Str(control),status];args.extend(items);
-        Stmt::CallSub{name:"@internal_read".into(),args}
-    },
-    KW_READ LPAREN <unit:RhsExpr> COMMA STAR RPAREN <items:ExprList> => {
-        let mut args=vec![unit,Expr::Str(String::new()),Expr::IntLit("0".into())];args.extend(items);
-        Stmt::CallSub{name:"@internal_read".into(),args}
-    },
-    KW_READ LPAREN STAR COMMA <fmt:RhsExpr> RPAREN <es:ExprList> => {
-        let mut args=vec![Expr::IntLit("5".into()),fmt];args.extend(es);
-        Stmt::CallSub{name:"@formatted_read".into(),args}
-    },
-    KW_READ LPAREN STAR COMMA <fmt:RhsExpr> COMMA <control:Ident> EQ <status:RhsExpr> RPAREN <es:ExprList> => {
-        let mut args=vec![Expr::IntLit("5".into()),fmt,Expr::Str(control),status];args.extend(es);
-        Stmt::CallSub{name:"@formatted_read_status".into(),args}
-    },
-    KW_READ LPAREN <unit:RhsExpr> COMMA <fmt:RhsExpr> COMMA <control:Ident> EQ <status:RhsExpr> RPAREN <es:ExprList> => {
-        let mut args=vec![unit,fmt,Expr::Str(control),status];args.extend(es);
-        Stmt::CallSub{name:"@formatted_read_status".into(),args}
-    },
-    KW_READ LPAREN <unit:RhsExpr> COMMA <fmt:RhsExpr> RPAREN <es:ExprList> => {
-        let mut args=vec![unit,fmt];args.extend(es);
-        Stmt::CallSub{name:"@formatted_read".into(),args}
-    },
-    KW_READ LPAREN STAR COMMA STAR RPAREN <es: ExprList> => {
-        let mut cloned: Vec<Expr> = Vec::new();
-        for e in &es { cloned.push(e.clone()); }
-        Stmt::Read { args: cloned }
-    },
+    KW_READ_EMPTY LPAREN <controls:ReadControls> RPAREN =>?
+        crate::input::read_controls(controls,vec![])
+            .map_err(|error|lalrpop_util::ParseError::User {error}),
+    KW_READ LPAREN <controls:ReadControls> RPAREN <items:ExprList> =>?
+        crate::input::read_controls(controls,items)
+            .map_err(|error|lalrpop_util::ParseError::User {error}),
     KW_READ STAR COMMA STAR COMMA <es: ExprList> => {
         let mut cloned: Vec<Expr> = Vec::new();
         for e in &es { cloned.push(e.clone()); }
@@ -631,6 +600,15 @@ Primary: Expr = {
         let mut args=vec![Expr::Ident(var),start,end,step.unwrap_or(Expr::IntLit("1".into()))];
         args.extend(items);Expr::Call("@output_implied_do".into(),args)
     },
+};
+
+ReadControls: Vec<Expr> = { <first:ReadControl> <rest:(COMMA <ReadControl>)*> => {
+    let mut args=vec![first];args.extend(rest);args
+} };
+ReadControl: Expr = {
+    <name:Ident> EQ <value:WriteValue> => Expr::Call(format!("@read_control:{name}"),vec![value]),
+    KW_END EQ <value:RhsExpr> => Expr::Call("@read_control:end".into(),vec![value]),
+    <value:WriteValue> => value,
 };
 
 WriteControls: Vec<Expr> = { <first:WriteControl> <rest:(COMMA <WriteControl>)*> => {
