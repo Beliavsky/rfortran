@@ -1042,6 +1042,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": "   1.0   2.0\n  -1.0  -2.0\n"
+    },
+    "150_character_array_scalar_result": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 2\n 4\n"
     }
   }
 }

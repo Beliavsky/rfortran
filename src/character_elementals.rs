@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Beliavsky
 // See LICENSE-MIT in the repository root.
 
-//! Specialize functions with CHARACTER results or array results and CHARACTER inputs. Results
+//! Specialize functions with CHARACTER results/array inputs or array results and CHARACTER inputs. Results
 //! use caller-owned local buffers, keeping the numeric object ABI unchanged.
 use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Context, Result};
@@ -498,13 +498,15 @@ impl Lower {
             returns(&mut body);
             let mut bound = routine.params.clone();
             bound.push(routine.result.clone());
-            crate::subroutines::rename(&mut body, &names, &bound, &mut self.serial)?;
+            // Function and subroutine expansion have independent counters.
+            // Keep their locals distinct when an expanded function calls a helper.
+            crate::subroutines::rename_with_prefix(&mut body, &names, &bound, &mut self.serial, "@character_function_local")?;
             body.retain(|s| {
                 !matches!(s, Stmt::DummyIntent { .. } | Stmt::Implicit(_))
                     && !matches!(s,Stmt::VarDecl{names,..} if names.is_empty())
                     && !matches!(s,Stmt::ArrayDecl{name,..} if bound.contains(name))
             });
-            crate::subroutines::inline_returns(&mut body, &mut self.serial)?;
+            crate::subroutines::inline_returns_with_prefix(&mut body, &mut self.serial, "@character_function_returned")?;
             expanded.extend(body);
             self.body(&mut expanded, symbols)?;
             prefix.push(Stmt::Block { body: expanded });

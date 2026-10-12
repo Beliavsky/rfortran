@@ -35,7 +35,7 @@ pub(crate) fn rename(
 pub(crate) fn rename_allocation_block(body: &mut Vec<Stmt>, serial: &mut usize) -> Result<()> {
     rename_with_prefix(body, &Names::new(), &[], serial, "@alloc_block")
 }
-fn rename_with_prefix(
+pub(crate) fn rename_with_prefix(
     body: &mut Vec<Stmt>,
     inherited: &Names,
     params: &[String],
@@ -175,6 +175,9 @@ fn rename_with_prefix(
 /// A flag skips the remainder of the call and exits enclosing loops, without
 /// changing ordinary EXIT/CYCLE or returning from the caller itself.
 pub(crate) fn inline_returns(body: &mut Vec<Stmt>, serial: &mut usize) -> Result<()> {
+    inline_returns_with_prefix(body, serial, "@sub_returned")
+}
+pub(crate) fn inline_returns_with_prefix(body: &mut Vec<Stmt>, serial: &mut usize, prefix: &str) -> Result<()> {
     fn contains(body: &[Stmt]) -> bool { body.iter().any(|s| match s {
         Stmt::Return(_) => true,
         Stmt::If {then_body,else_body,..} => contains(then_body) || else_body.as_ref().is_some_and(|b| contains(b)),
@@ -184,7 +187,7 @@ pub(crate) fn inline_returns(body: &mut Vec<Stmt>, serial: &mut usize) -> Result
     }) }
     if !contains(body) { return Ok(()); }
     *serial += 1;
-    let flag = format!("@sub_returned_{serial}");
+    let flag = format!("{prefix}_{serial}");
     fn lower(body: &mut Vec<Stmt>, flag: &str) -> Result<()> {
         let mut out = vec![];
         for mut s in std::mem::take(body) {

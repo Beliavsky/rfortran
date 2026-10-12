@@ -58,10 +58,13 @@ pub(crate) fn inline_character(
         Some(Stmt::Return(Some(Expr::Ident(n)))) => n.as_str(),
         _ => name,
     };
-    // Array results with CHARACTER inputs also need call-site specialization:
+    // Array results or CHARACTER array inputs need call-site specialization:
     // the numeric scalar ABI cannot carry the string or its assumed length.
     let array_result = body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,..} if name==result));
+    let character_array_input = body.iter().any(|s|matches!(s,
+        Stmt::ArrayDecl {kind,name,..} if character(kind)&&params.contains(name)));
     result_kind(name,declared,body).as_ref().is_some_and(character)
+        || character_array_input
         || ((elemental || array_result) && body.iter().any(|s| match s {
             Stmt::VarDecl {kind,names} => character(kind)&&names.iter().any(|n|params.contains(n)),
             Stmt::ArrayDecl {kind,name,..} => character(kind)&&params.contains(name),

@@ -207,6 +207,16 @@ blocker from `util.f90:combine_vec_mat_real` with a rank-one result.
 Run `python tests/test_numeric_array_character_arg.py` for interpreter/native
 O0/O2 checks and gfortran comparisons.
 
+Functions with read-only rank-one CHARACTER array inputs can also return
+numeric or LOGICAL scalars. This includes assumed element lengths, typed
+function headers, named calls, fixed array sections, empty arrays, and CHARACTER
+array function results as actuals. Array extents must be known at the call site;
+their string contents can be read at runtime. The same input initialization,
+rank, and size limits above apply. `tests/150_character_array_scalar_result.f90`
+reproduces the CHARACTER dummy blocker in `util.f90:num_unique_char`.
+Run `python tests/test_character_array_scalar_result.py` for interpreter/native
+O0/O2 checks and gfortran comparisons.
+
 ## Elemental function results
 
 ELEMENTAL functions support explicitly declared numeric, LOGICAL, and CHARACTER
