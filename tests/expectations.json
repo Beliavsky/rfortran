@@ -1014,6 +1014,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " aa bb cc\n aa bb cc\n"
+    },
+    "146_character_functions": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "'abc def'\n'abc def'\n"
     }
   }
 }

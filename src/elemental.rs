@@ -53,8 +53,8 @@ pub(crate) fn inline_character(
             TypeSpec::Character(_) | TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed
         )
     };
-    elemental && (result_kind(name,declared,body).as_ref().is_some_and(character)
-        || body.iter().any(|s|matches!(s,Stmt::VarDecl{kind,names} if character(kind)&&names.iter().any(|n|params.contains(n)))))
+    result_kind(name,declared,body).as_ref().is_some_and(character)
+        || (elemental && body.iter().any(|s|matches!(s,Stmt::VarDecl{kind,names} if character(kind)&&names.iter().any(|n|params.contains(n)))))
 }
 
 pub fn validate_subroutine(name: &str, params: &[String], body: &[Stmt]) -> Result<()> {

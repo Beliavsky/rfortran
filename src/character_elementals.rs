@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Beliavsky
 // See LICENSE-MIT in the repository root.
 
-//! Specialize scalar/array elemental calls involving CHARACTER storage. Results
+//! Specialize scalar CHARACTER function calls and CHARACTER elemental calls. Results
 //! use caller-owned local buffers, keeping the numeric object ABI unchanged.
 use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Context, Result};
@@ -11,6 +11,7 @@ type Symbols = HashMap<String, (TypeSpec, Vec<Expr>)>;
 #[derive(Clone)]
 struct Routine {
     params: Vec<String>,
+    elemental: bool,
     body: Vec<Stmt>,
     result: String,
     kind: TypeSpec,
@@ -348,15 +349,23 @@ impl Lower {
             return Ok(());
         };
         if self.active.contains(name) {
-            bail!("recursive CHARACTER elemental function `{name}` is not yet supported");
+            bail!("recursive CHARACTER function `{name}` is not yet supported");
         }
         if args.len() != routine.params.len() {
-            bail!("wrong argument count for elemental function `{name}`");
+            bail!("wrong argument count for CHARACTER function `{name}`");
         }
         let views = args
             .iter()
             .map(|arg| self.view(arg, symbols))
             .collect::<Result<Vec<_>>>()?;
+        if !routine.elemental {
+            if views.iter().any(|view|view.items.is_some()) {bail!("non-elemental CHARACTER function `{name}` currently requires scalar actuals");}
+            for param in &routine.params {
+                if !routine.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==param&&intent=="intent(in)")) {
+                    bail!("CHARACTER function `{name}` currently requires INTENT(IN) scalar dummy `{param}`");
+                }
+            }
+        }
         let mut count = None;
         for view in &views {
             if let Some(items) = &view.items {
@@ -388,7 +397,16 @@ impl Lower {
         let mut results = vec![];
         // Check declarations and result length even when the result has zero size.
         let bound_types = self.types(&routine, &views)?;
-        let result_kind = self.call_kind(&routine, &views)?;
+        let mut constants=HashMap::new();
+        for (param,arg) in routine.params.iter().zip(args.iter()) {
+            if let Ok(mut value)=crate::parameters::character_constant(arg) {
+                let size=length(&bound_types[param])?;
+                value.truncate(size);
+                value.extend(std::iter::repeat_n(' ',size-value.len()));
+                constants.insert(param.clone(),Expr::Str(value));
+            }
+        }
+        let result_kind = self.call_kind(&routine, &views, &constants)?;
         for i in 0..count.unwrap_or(1) {
             let args = actuals
                 .iter()
@@ -405,6 +423,9 @@ impl Lower {
                 kind: result_kind.clone(),
                 names: vec![result.clone()],
             });
+            if crate::substrings::deferred(&result_kind) {
+                prefix.push(Stmt::DummyIntent{name:result.clone(),intent:"allocatable".into()});
+            }
             symbols.insert(result.clone(), (result_kind.clone(), vec![]));
             let mut names = HashMap::new();
             names.insert(routine.result.clone(), result.clone());
@@ -423,7 +444,7 @@ impl Lower {
                 names.insert(param.clone(), temp);
             }
             let mut body = routine.body.clone();
-            self.specialize_types(&mut body, &routine, &views)?;
+            self.specialize_types(&mut body, &routine, &views, &constants)?;
             if matches!(body.last(),Some(Stmt::Return(Some(Expr::Ident(n)))) if n==&routine.result)
             {
                 body.pop();
@@ -521,7 +542,7 @@ impl Lower {
                     Stmt::VarDecl { kind, names } if names.contains(param) => Some(kind),
                     _ => None,
                 })
-                .context("elemental dummy must be declared")?;
+                .context("CHARACTER function dummy must be a declared scalar")?;
             let kind = match declared {
                 TypeSpec::CharacterAssumed => {
                     length(&actual.kind)?;
@@ -568,25 +589,41 @@ impl Lower {
             }
         }
     }
-    fn specialize_kind(kind: &TypeSpec, types: &HashMap<String, TypeSpec>) -> Result<TypeSpec> {
+    fn length_constants(e:&mut Expr, constants:&HashMap<String,Expr>) {
+        match e {
+            Expr::Ident(n)=>if let Some(value)=constants.get(n) {*e=value.clone();},
+            Expr::Call(_,args)|Expr::Index(_,args)=>for e in args {Self::length_constants(e,constants);},
+            Expr::Bin(_,a,b)=>{Self::length_constants(a,constants);Self::length_constants(b,constants);},
+            Expr::Un(_,e)=>Self::length_constants(e,constants),_=>{}
+        }
+    }
+    fn specialize_kind(kind: &TypeSpec, types: &HashMap<String, TypeSpec>, constants: &HashMap<String,Expr>) -> Result<TypeSpec> {
         let mut kind = kind.clone();
         if let TypeSpec::CharacterLength(length) = &mut kind {
             Self::fold_lengths(length, types);
+            Self::length_constants(length,constants);
         }
-        let kind=crate::parameters::concrete_kind(kind).context("elemental CHARACTER result/local length must resolve to a compile-time constant for these actuals")?;
+        let kind=crate::parameters::concrete_kind(kind).context("CHARACTER function result/local length must resolve to a compile-time constant for these actuals")?;
         if crate::substrings::deferred(&kind) || matches!(kind, TypeSpec::CharacterAssumed) {
-            bail!("elemental result requires an explicit fixed CHARACTER length");
+            bail!("CHARACTER function result requires an explicit fixed length or supported ALLOCATABLE storage");
         }
         Ok(kind)
     }
-    fn call_kind(&self, routine: &Routine, views: &[Value]) -> Result<TypeSpec> {
-        Self::specialize_kind(&routine.kind, &self.types(routine, views)?)
+    fn call_kind(&self, routine: &Routine, views: &[Value], constants:&HashMap<String,Expr>) -> Result<TypeSpec> {
+        if !routine.elemental && crate::substrings::deferred(&routine.kind) {
+            if !routine.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==&routine.result&&intent=="allocatable")) {
+                bail!("deferred CHARACTER function result `{}` requires ALLOCATABLE",routine.result);
+            }
+            return Ok(routine.kind.clone());
+        }
+        Self::specialize_kind(&routine.kind, &self.types(routine, views)?,constants)
     }
     fn specialize_types(
         &self,
         body: &mut [Stmt],
         routine: &Routine,
         views: &[Value],
+        constants:&HashMap<String,Expr>,
     ) -> Result<()> {
         let mut types = self.types(routine, views)?;
         for s in body {
@@ -594,7 +631,8 @@ impl Lower {
                 if names.iter().all(|n| routine.params.contains(n)) {
                     continue;
                 }
-                *kind = Self::specialize_kind(kind, &types)?;
+                if names.contains(&routine.result) && !routine.elemental && crate::substrings::deferred(kind) {continue;}
+                *kind = Self::specialize_kind(kind, &types,constants)?;
                 for n in names {
                     types.insert(n.clone(), kind.clone());
                 }
@@ -779,7 +817,7 @@ fn validate_locals(
         .collect::<std::collections::HashSet<_>>();
     let variable = |n: &str| -> Result<()> {
         if !locals.contains(n) {
-            bail!("CHARACTER elemental function `{name}` requires explicitly declared locals; host variable `{n}` is not yet supported");
+            bail!("CHARACTER function `{name}` requires explicitly declared locals; host variable `{n}` is not yet supported");
         }
         Ok(())
     };
@@ -826,15 +864,23 @@ fn validate_locals(
         }
         Ok(())
     }
+    let writable=|n:&str|->Result<()> {
+        variable(n)?;
+        if params.iter().any(|param|param==n) && body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==n&&intent=="intent(in)")) {
+            bail!("CHARACTER function `{name}` cannot modify INTENT(IN) dummy `{n}`");
+        }
+        Ok(())
+    };
     fn statements(
         body: &[Stmt],
         variable: &impl Fn(&str) -> Result<()>,
+        writable: &impl Fn(&str) -> Result<()>,
         forbidden: &std::collections::HashSet<String>,
     ) -> Result<()> {
         for stmt in body {
             match stmt {
                 Stmt::Assign { name, value } => {
-                    variable(name)?;
+                    writable(name)?;
                     expression(value, variable, forbidden)?;
                 }
                 Stmt::AssignIndex {
@@ -842,19 +888,22 @@ fn validate_locals(
                     indices,
                     value,
                 } => {
-                    variable(name)?;
+                    writable(name)?;
                     for index in indices {
                         expression(index, variable, forbidden)?;
                     }
                     expression(value, variable, forbidden)?;
                 }
                 Stmt::Print { items }
-                | Stmt::CallSub { args: items, .. }
-                | Stmt::Read { args: items } => {
+                | Stmt::CallSub { args: items, .. } => {
                     for item in items {
                         expression(item, variable, forbidden)?;
                     }
                 }
+                Stmt::Read {args}=>for e in args {
+                    if let Expr::Ident(n)|Expr::Call(n,_)|Expr::Index(n,_)=e {writable(n)?;}
+                    expression(e,variable,forbidden)?;
+                },
                 Stmt::Return(Some(e)) => expression(e, variable, forbidden)?,
                 Stmt::If {
                     cond,
@@ -862,9 +911,9 @@ fn validate_locals(
                     else_body,
                 } => {
                     expression(cond, variable, forbidden)?;
-                    statements(then_body, variable, forbidden)?;
+                    statements(then_body, variable, writable, forbidden)?;
                     if let Some(body) = else_body {
-                        statements(body, variable, forbidden)?;
+                        statements(body, variable, writable, forbidden)?;
                     }
                 }
                 Stmt::Do {
@@ -873,16 +922,16 @@ fn validate_locals(
                     end,
                     body,
                 } => {
-                    variable(var)?;
+                    writable(var)?;
                     expression(start, variable, forbidden)?;
                     expression(end, variable, forbidden)?;
-                    statements(body, variable, forbidden)?;
+                    statements(body, variable, writable, forbidden)?;
                 }
                 Stmt::DoWhile { cond, body } => {
                     expression(cond, variable, forbidden)?;
-                    statements(body, variable, forbidden)?;
+                    statements(body, variable, writable, forbidden)?;
                 }
-                Stmt::Block { body } => statements(body, variable, forbidden)?,
+                Stmt::Block { body } => statements(body, variable, writable, forbidden)?,
                 Stmt::SelectCase {
                     expr,
                     cases,
@@ -890,21 +939,21 @@ fn validate_locals(
                 } => {
                     expression(expr, variable, forbidden)?;
                     for c in cases {
-                        statements(&c.body, variable, forbidden)?;
+                        statements(&c.body, variable, writable, forbidden)?;
                     }
                     if let Some(body) = default {
-                        statements(body, variable, forbidden)?;
+                        statements(body, variable, writable, forbidden)?;
                     }
                 }
                 Stmt::Function { .. } | Stmt::Subroutine { .. } => bail!(
-                    "internal procedures in CHARACTER elemental functions are not yet supported"
+                    "internal procedures in CHARACTER functions are not yet supported"
                 ),
                 _ => {}
             }
         }
         Ok(())
     }
-    statements(body, &variable, &forbidden)
+    statements(body, &variable, &writable, &forbidden)
 }
 
 pub(crate) fn resolve(mut p: Program) -> Result<Program> {
@@ -954,12 +1003,13 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
                         };
                         validate_locals(name, params, &result, body, &host)?;
                         if lower.routines.contains_key(name) {
-                            bail!("same-named CHARACTER elemental functions from different scopes are not yet supported: `{name}`");
+                            bail!("same-named CHARACTER functions from different scopes are not yet supported: `{name}`");
                         }
                         lower.routines.insert(
                             name.clone(),
                             Routine {
                                 params: params.clone(),
+                                elemental: *elemental,
                                 body: body.clone(),
                                 result,
                                 kind,

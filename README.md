@@ -139,6 +139,32 @@ CHARACTER array limit of 1024 elements; this does not add general assumed-size
 dummy arrays. Run `python tests/test_character_array_parameters.py` for
 interpreter/native O0/O2 checks and gfortran comparisons.
 
+## Scalar CHARACTER functions
+
+Ordinary scalar CHARACTER functions defined in the source group now specialize
+calls into caller-owned result buffers. Fixed-length and call-site constant
+result lengths, including `len(a)` and `len_trim(a)` for constant actuals,
+support assignments, concatenation, formatted output, named and nested calls,
+early RETURN, OPTIONAL inputs, and procedures with no arguments. Scalar dummies
+currently require explicit INTENT(IN), and locals must be explicitly declared.
+Constant length evaluation respects fixed dummy lengths, including truncation
+of a longer actual argument.
+
+Deferred-length ALLOCATABLE scalar results use the existing bounded CHARACTER
+storage lowering for calls from the main program. Assignment sets the runtime
+result length, so concatenation, LEN and assignment to a caller's allocatable
+variable preserve that length. Runtime lengths for explicitly sized results,
+recursive CHARACTER calls, writable or array dummies, host captures, and a
+separate-object CHARACTER result ABI remain unsupported. Runtime-length results
+as actual arguments to other procedures remain outside this subset.
+
+`tests/146_character_functions.f90` reproduces `xchar_func.f90`, including its
+allocatable-result function. Run `python tests/test_character_functions.py` for
+interpreter/native O0/O2 checks and gfortran comparisons. Unused CHARACTER
+function definitions are removed before native result-storage validation;
+this allows the `exe_name` definition in `util.f90` to pass that blocker.
+GETCWD and GET_COMMAND_ARGUMENT themselves remain unsupported when called.
+
 ## Elemental function results
 
 ELEMENTAL functions support explicitly declared numeric, LOGICAL, and CHARACTER
@@ -289,10 +315,10 @@ zero. LEN of a fixed-length scalar variable does not require it to be initialize
 Assignments pad with spaces or truncate to the declared length, including
 variable copies, concatenation, TRIM, and overlapping source/destination storage.
 This subset uses non-NUL ASCII. Fixed rank-one CHARACTER arrays are supported
-as described below. CHARACTER elemental functions use the specialization
-described above. Runtime-dependent explicit lengths and other CHARACTER-valued
-functions remain unsupported and produce diagnostics. Bounded deferred-length
-scalar assignment is described below.
+as described below. Scalar and elemental CHARACTER functions use the
+specialization described above. Runtime-dependent explicit lengths and
+CHARACTER functions outside those subsets remain unsupported and produce
+diagnostics. Bounded deferred-length scalar assignment is described below.
 
 ## Formatted output
 
@@ -912,12 +938,14 @@ concatenations, TRIM and zero-length strings are supported. Comparison captures
 in DO WHILE conditions are reevaluated on every iteration, including after CYCLE.
 Run `python tests/test_character_comparisons.py`.
 
-Local functions can receive fixed-length, read-only scalar CHARACTER arguments.
+Functions using the numeric/LOGICAL result ABI can receive fixed-length,
+read-only scalar CHARACTER arguments.
 Actuals may be variables, literals or fixed-length concatenations; they must be
 at least as long as the dummy, and longer actuals contribute their leading
 characters. Function-to-function forwarding is supported. Writable CHARACTER
 function dummies, runtime-length actuals and assumed-length dummies remain
-unsupported.
+unsupported for that ABI; the CHARACTER-result specialization above supports
+assumed-length scalar inputs.
 
 ## Scalar substrings
 
@@ -1125,6 +1153,7 @@ python tests/test_nonadvancing_output.py
 python tests/test_elemental_setters.py
 python tests/test_impure_elemental.py
 python tests/test_character_elemental.py
+python tests/test_character_functions.py
 python tests/test_source_diagnostics.py
 python tests/test_do_steps.py
 python tests/test_where.py

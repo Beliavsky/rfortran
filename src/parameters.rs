@@ -1299,7 +1299,7 @@ mod tests {
         assert!(resolve(p).unwrap_err().to_string().contains("runtime-dependent lengths"));
         let source = "program main\ncontains\nfunction value() result(text)\ncharacter(len=2+1) :: text\ntext='abc'\nend function value\nend program main";
         let p = crate::parser::parse_with_src(source, &crate::lexer::lex(source), "character-result.f90").unwrap();
-        assert!(resolve(p).unwrap_err().to_string().contains("CHARACTER-valued functions"));
+        assert!(resolve(p).is_ok());
     }
 
     #[test]
