@@ -73,8 +73,7 @@ class OutputImpliedDo(unittest.TestCase):
             ("integer::i\nprint *, ((i,i=1,2),i=1,2)", "reuse active variable"),
             ("integer::i,n\nprint *, (i,i=1,n)", "uninitialized variable `n`"),
             ("integer::i\nprint *, (i,i=1.5,3)", "scalar INTEGER expressions"),
-            ("integer::i\nwrite(*,'(i3)') (i,i=1,3)", "only in list-directed output"),
-            ("integer::i,x\nx=(i,i=1,3)", "only in list-directed output"),
+            ("integer::i,x\nx=(i,i=1,3)", "array constructor"),
             ("integer::i\nprint *, 2+(i,i=1,3)", "direct list-directed output item"),
         ]:
             with self.subTest(text=text):

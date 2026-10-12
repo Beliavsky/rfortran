@@ -1021,6 +1021,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": "'abc def'\n'abc def'\n"
+    },
+    "147_runtime_constructors": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " F T F\n 1\n"
     }
   }
 }

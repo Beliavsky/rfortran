@@ -650,6 +650,27 @@ fixed-shape array or section items, which are appended in array element order.
 Items must have matching element type and kind. Constructor temporaries preserve
 overlapping assignment semantics.
 
+Constructor implied-DO expansion can wait until procedure specialization resolves
+bounds such as `size(xx)` for an assumed-shape dummy. Runtime-bound constructors
+with scalar items also support whole-array assignment to bounded rank-one
+numeric/LOGICAL storage. Controls are captured on entry to each implied-DO;
+constant positive/negative strides, dependent nested bounds, mixed scalar items,
+and empty iteration ranges are supported. Each index uses local storage and
+retains its declared INTEGER kind. The enclosing index variable is unchanged.
+A temporary captures every result before destination writes; too many elements
+or a final shape mismatch produce a runtime error.
+
+Runtime-bound constructors in other expression contexts, array-valued runtime
+items, runtime strides, and CHARACTER function calls inside delayed constructors
+remain unsupported. PARAMETER and declaration initializers still require
+constant expressions. CHARACTER scalar-element constructors can be passed to
+read-only CHARACTER array dummies, including typed empty constructors. Constant
+formats can print fixed whole numeric/LOGICAL arrays in element order; runtime
+format strings with whole numeric/LOGICAL array lists remain unsupported.
+Run `python tests/test_runtime_constructors.py` for interpreter/native O0/O2
+checks and gfortran comparisons; `tests/147_runtime_constructors.f90` reproduces
+`xconstructor_implied_do.f90` and the comparison expression in `util.f90`.
+
 Empty typed bracket constructors preserve the declared element type and kind:
 `[real(kind=dp)::]`, `[integer(kind=8)::]`, `[logical::]`,
 `[character(len=3)::]`, and `[double precision::]` all have size zero.
@@ -1146,6 +1167,7 @@ python tests/test_character_lengths.py
 python tests/test_else_if.py
 python tests/test_multi_forall.py
 python tests/test_array_constructors.py
+python tests/test_runtime_constructors.py
 python tests/test_bound_inquiries.py
 python tests/test_named_formats.py
 python tests/test_runtime_formats.py

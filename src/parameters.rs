@@ -686,8 +686,15 @@ fn constructor_items(items: &[Expr], constants: &Constants, output: &mut Vec<Exp
                 let Expr::Ident(index) = &args[0] else { bail!("invalid constructor implied-DO index"); };
                 let mut bounds = args[1..4].to_vec();
                 for e in &mut bounds { rewrite_expr(e, constants)?; }
-                let bounds = bounds.iter().map(integer_constant).collect::<Result<Vec<_>>>()
-                    .context("constructor implied-DO bounds and stride must currently be constant integers")?;
+                let constant_bounds = bounds.iter().map(integer_constant).collect::<Result<Vec<_>>>();
+                let Ok(bounds) = constant_bounds else {
+                    let mut local=constants.clone();local.remove(index);
+                    let mut values=vec![];
+                    constructor_items(&args[4..],&local,&mut values,budget)?;
+                    let mut delayed=vec![Expr::Ident(index.clone())];delayed.extend(bounds);delayed.extend(values);
+                    output.push(Expr::Call("@output_implied_do".into(),delayed));
+                    continue;
+                };
                 let (mut current, end, step) = (i128::from(bounds[0]), i128::from(bounds[1]), i128::from(bounds[2]));
                 if step == 0 { bail!("constructor implied-DO stride must not be zero"); }
                 let mut local = constants.clone();
@@ -704,6 +711,17 @@ fn constructor_items(items: &[Expr], constants: &Constants, output: &mut Vec<Exp
                 constructor_items(items,constants,output,budget)?;
             }
             _ => { *budget = budget.checked_sub(1).context("array constructor exceeds the supported compile-time expansion limit")?; let mut item = item.clone(); rewrite_expr(&mut item, constants)?; output.push(item); }
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn expand_constructor(expr:&mut Expr)->Result<()> {
+    if let Expr::Call(tag,items)=expr {
+        if tag=="@array_constructor" {
+            let mut expanded=vec![];
+            constructor_items(items,&Constants::new(),&mut expanded,&mut 100_000)?;
+            *items=expanded;
         }
     }
     Ok(())

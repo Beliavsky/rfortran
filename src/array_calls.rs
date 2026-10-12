@@ -1019,6 +1019,29 @@ fn validate_input_writes(body: &[Stmt], inputs: &HashSet<String>) -> Result<()> 
     }
     Ok(())
 }
+// CHARACTER constructors need CHARACTER storage before array-dummy specialization;
+// the numeric reduction materializer cannot provide that storage.
+fn character_constructor(actual:&mut Expr, shapes:&Shapes, prefix:&mut Vec<Stmt>, serial:&mut usize)->Result<Option<(TypeSpec,i64,Expr)>> {
+    let empty=crate::empty_constructors::kind(actual)?;
+    let values=match actual {
+        Expr::Call(tag,items) if tag=="@array_constructor"=>items.clone(),
+        _ if empty.as_ref().is_some_and(|k|matches!(k,TypeSpec::Character(_)))=>vec![],
+        _=>return Ok(None),
+    };
+    let kind=if let Some(value)=values.first() {scalar_actual_kind(value,shapes)?} else {empty.context("empty CHARACTER constructor requires an explicit type")?};
+    if !matches!(kind,TypeSpec::Character(_)) {bail!("CHARACTER array actual requires CHARACTER constructor elements");}
+    for value in &values {
+        if matches!(value,Expr::Ident(n) if shapes.get(n).is_some_and(|(_,dims)|!dims.is_empty())) {bail!("CHARACTER array actual constructor elements must currently be scalar");}
+        if scalar_actual_kind(value,shapes)?!=kind {bail!("CHARACTER constructor elements must have equal lengths");}
+    }
+    if values.len()>1024 {bail!("CHARACTER array actual constructors support at most 1024 elements");}
+    *serial+=1;let temp=format!("@call_character_array_{serial}");let count=values.len() as i64;
+    prefix.push(Stmt::ArrayDecl {kind:kind.clone(),name:temp.clone(),dims:vec![Expr::IntLit(count.to_string())]});
+    for (i,value) in values.into_iter().enumerate() {prefix.push(Stmt::AssignIndex {name:temp.clone(),indices:vec![Expr::IntLit((i+1).to_string())],value});}
+    *actual=Expr::Ident(temp);
+    Ok(Some((kind,count,Expr::IntLit(count.to_string()))))
+}
+
 fn expand(
     body: &mut Vec<Stmt>,
     inherited: &Shapes,
@@ -1198,7 +1221,9 @@ fn expand(
                         } else {
                             if intent!="intent(in)" {bail!("writable array dummy `{p}` requires a whole-array actual argument");}
                             let start=prefix.len();
-                            let (k,capacity,length)=crate::reductions::argument_with_elementals(&mut captured,&shapes,&mut prefix,serial,functions)?;
+                            let (k,capacity,length)=if matches!(kind,TypeSpec::Character(_)|TypeSpec::CharacterAssumed) {
+                                character_constructor(&mut captured,&shapes,&mut prefix,serial)?.context("CHARACTER array dummy currently requires a whole array or scalar-element constructor")?
+                            } else {crate::reductions::argument_with_elementals(&mut captured,&shapes,&mut prefix,serial,functions)?};
                             for s in &prefix[start..] {match s {
                                 Stmt::ArrayDecl {kind,name,dims}=>{shapes.insert(name.clone(),(kind.clone(),dims.clone()));},
                                 Stmt::VarDecl {kind,names}=>for n in names {shapes.insert(n.clone(),(kind.clone(),vec![]));},_=>{}
@@ -1384,6 +1409,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
     expand(&mut p.body, &Shapes::new(), &routines, &functions, &mut vec![], &mut 0)?;
     p = crate::pointers::resolve(p)?;
     p = crate::allocatables::finish(p)?;
+    p = crate::constructors::resolve(p)?;
     let p = crate::character_arrays::resolve(p)?;
     crate::multidim::resolve(crate::function_arrays::resolve(crate::substrings::resolve(p)?)?)
 }

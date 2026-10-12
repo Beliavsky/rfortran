@@ -329,6 +329,12 @@ impl Lower {
         symbols: &mut Symbols,
         prefix: &mut Vec<Stmt>,
     ) -> Result<()> {
+        if matches!(e,Expr::Call(n,_) if n=="@array_constructor") && crate::constructors::delayed(e) {
+            if self.contains_calls(&[Stmt::Print {items:vec![e.clone()]}]) {
+                bail!("CHARACTER function calls in delayed constructor implied-DOs are not yet supported");
+            }
+            return Ok(());
+        }
         match e {
             Expr::Call(_, args) | Expr::Index(_, args) => {
                 for arg in args {

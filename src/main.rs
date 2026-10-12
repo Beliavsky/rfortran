@@ -32,6 +32,7 @@ mod internal_procedures;
 mod purity;
 mod elemental;
 mod character_elementals;
+mod constructors;
 mod subroutines;
 mod array_calls;
 mod allocatables;

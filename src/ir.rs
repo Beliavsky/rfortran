@@ -25,6 +25,11 @@ fn input_destinations(stmts: &[IStmt]) -> std::collections::HashSet<String> {
     let mut names = std::collections::HashSet::new();
     for stmt in stmts {
         match stmt {
+            IStmt::Read(args) => {
+                for arg in args {
+                    if let IExpr::Ident(id) | IExpr::Index(id, _) = arg { names.insert(id.clone()); }
+                }
+            }
             IStmt::Call(name, args) if name == "@format_begin" => {
                 if let Some(IExpr::Ident(id))=args.first() {names.insert(id.clone());}
             }
@@ -1586,13 +1591,8 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                     .collect();
                 vec![IStmt::Print(optimized_args)]
             }
-            IStmt::Read(vars) => {
-                let optimized_vars = vars
-                    .into_iter()
-                    .map(|var| optimize_expr_with_constants(var, constants))
-                    .collect();
-                vec![IStmt::Read(optimized_vars)]
-            }
+            // READ operands designate writable storage, not values to substitute.
+            IStmt::Read(vars) => vec![IStmt::Read(vars)],
             IStmt::Call(name, args) => {
                 if name.eq_ignore_ascii_case("random_number") || name == "@format_begin" || name == "@read_record" || name == "@read_record_status" || name == "@internal_read_byte" || name == "@character_assign" || name == "@character_length" {
                     return vec![IStmt::Call(name, args)];

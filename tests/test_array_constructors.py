@@ -30,7 +30,7 @@ class Constructors(unittest.TestCase):
         cases = [
             ("integer::i,a(2),b(2)", "b=[1,2]\na=[(b,i=1,2)]", "nonconforming array assignment"),
             ("integer::i,a(3)", "a=[(i,i=1,3,0)]", "stride must not be zero"),
-            ("integer::i,n,a(3)", "n=3\na=[(i,i=1,n)]", "constant integers"),
+            ("integer::i,a(3)\nreal::n", "n=3\na=[(i,i=1,n)]", "bounds must be scalar INTEGER"),
             ("integer::a(3)", "a=[(i,i=1,3)]", "locally declared scalar INTEGER"),
             ("real::i\ninteger::a(3)", "a=[(i,i=1,3)]", "scalar INTEGER"),
             ("integer::i,a(3)", "a=[((i,i=1,2),i=1,2)]", "reuses index"),

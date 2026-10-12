@@ -1479,6 +1479,16 @@ pub fn analyze_with_src(
             read_vars: &mut HashSet<String>,
             settings: &SemaSettings,
         ) {
+            // Lowering may declare temporaries inside a loop or branch. Their
+            // explicit types take precedence over implicit/global symbol entries.
+            let mut scoped=local.clone();
+            for st in stmts {
+                match st {
+                    Stmt::VarDecl {kind,names}=>for n in names {scoped.insert(n.to_ascii_lowercase(),kind.clone());},
+                    Stmt::ArrayDecl {kind,name,..}=>{scoped.insert(name.to_ascii_lowercase(),kind.clone());},_=>{}
+                }
+            }
+            let local=&scoped;
             for st in stmts {
                 match st {
                     Stmt::Assign { name, value } => {

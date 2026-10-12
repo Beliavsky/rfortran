@@ -1118,6 +1118,23 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                         _ => false,
                     }
                 }
+                // A constant format can consume a fixed whole numeric/LOGICAL
+                // array in element order. Runtime-format array lists remain separate.
+                if crate::parameters::character_constant(&args[0]).is_ok() {
+                    let mut expanded=vec![args[0].clone()];
+                    for e in &args[1..] {
+                        if let Expr::Ident(n)=e {
+                            if let Some((kind,dims))=symbols.get(n) {
+                                if dims.len()==1 && array_element_kind(kind) {
+                                    for i in 1..=constant(&dims[0])? {expanded.push(Expr::Index(n.clone(),vec![int(i)]));}
+                                    continue;
+                                }
+                            }
+                        }
+                        expanded.push(e.clone());
+                    }
+                    *args=expanded;
+                }
                 if args[1..].iter().any(|e| array_value(e, &symbols)) {
                     bail!("formatted output currently requires scalar output items");
                 }
