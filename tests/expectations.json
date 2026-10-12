@@ -40,7 +40,7 @@
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " b_true:  .TRUE.\n b_false:  .FALSE.\n"
+      "program_stdout": " b_true:  T\n b_false:  F\n"
     },
     "07_character": {
       "compiler_exit_code": 0,
@@ -75,7 +75,7 @@
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " ops add:  5\n ops sub:  6\n ops mul:  42\n ops div:  4\n ops pow:  256\n ops eq:  .TRUE.\n ops ne:  .TRUE.\n ops lt:  .TRUE.\n ops gt:  .FALSE.\n ops le:  .TRUE.\n ops ge:  .TRUE.\n ops and:  .FALSE.\n ops or:  .TRUE.\n ops not:  .TRUE.\n ops eqv:  .TRUE.\n ops neqv:  .TRUE.\n ops concat: hello world\n"
+      "program_stdout": " ops add:  5\n ops sub:  6\n ops mul:  42\n ops div:  4\n ops pow:  256\n ops eq:  T\n ops ne:  T\n ops lt:  T\n ops gt:  F\n ops le:  T\n ops ge:  T\n ops and:  F\n ops or:  T\n ops not:  T\n ops eqv:  T\n ops neqv:  T\n ops concat: hello world\n"
     },
     "12_functions": {
       "compiler_exit_code": 0,
@@ -152,7 +152,7 @@
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " n, n^2 = 5 25\n 1 2 3\n ABC\n left  right 4\n  9 Z\n array: 7 8 9\n real: 1.5 2.5 3.5\n logical: .TRUE. .FALSE.\n"
+      "program_stdout": " n, n^2 = 5 25\n 1 2 3\n ABC\n left  right 4\n  9 Z\n array: 7 8 9\n real: 1.5 2.5 3.5\n logical: T F\n"
     },
     "23_integer_power": {
       "compiler_exit_code": 0,
@@ -173,7 +173,7 @@
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " 0.280835 0.280835\n .TRUE.\n .TRUE.\n .TRUE.\n .TRUE.\n .TRUE.\n .TRUE.\n 0.673608 0.338664 0.749919 0.498828\n 0.177054 0.154888 0.736163\n 0.673608 0.874783 0.749919 0.498828\n 0.632465 0.154888 0.736163\n"
+      "program_stdout": " 0.280835 0.280835\n T\n T\n T\n T\n T\n T\n 0.673608 0.338664 0.749919 0.498828\n 0.177054 0.154888 0.736163\n 0.673608 0.874783 0.749919 0.498828\n 0.632465 0.154888 0.736163\n"
     },
     "26_mixed_declarations": {
       "compiler_exit_code": 0,
@@ -306,7 +306,7 @@
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " .TRUE.\n .TRUE.\n"
+      "program_stdout": " T\n T\n"
     },
     "44_real_kinds_parameters": {
       "compiler_exit_code": 0,
@@ -347,7 +347,7 @@
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
-      "program_stdout": " Initial date:\n2026-10\n Valid: .TRUE.\n After adding 5 months:\n2027-03\n After subtracting 15 months:\n2025-12\n Month 13 valid: .FALSE.\n",
+      "program_stdout": " Initial date:\n2026-10\n Valid: T\n After adding 5 months:\n2027-03\n After subtracting 15 months:\n2025-12\n Month 13 valid: F\n",
       "program_stderr": ""
     },
     "51_derived_edges": {
@@ -389,7 +389,7 @@
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
-      "program_stdout": " Date a:\n2026-10\n Date b:\n2027-03\n a + 5:\n2027-03\n 5 + a:\n2027-03\n b - 5:\n2026-10\n b - a = 5\n a - b = -5\n a <  b: .TRUE.\n a <= b: .TRUE.\n a == b: .FALSE.\n a >= b: .FALSE.\n a >  b: .FALSE.\n 2026-01 minus 2 months:\n2025-11\n All tests passed.\n",
+      "program_stdout": " Date a:\n2026-10\n Date b:\n2027-03\n a + 5:\n2027-03\n 5 + a:\n2027-03\n b - 5:\n2026-10\n b - a = 5\n a - b = -5\n a <  b: T\n a <= b: T\n a == b: F\n a >= b: F\n a >  b: F\n 2026-01 minus 2 months:\n2025-11\n All tests passed.\n",
       "program_stderr": ""
     },
     "57_derived_operator_edges": {
@@ -515,7 +515,7 @@
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
-      "program_stdout": " value 7\n 1 2 3 4\n 4 2 99\n 21 22\n .TRUE. .FALSE. 1.5\nabc  7  1.50 T\n\n 42\n conditional\n\n 43\n continued 43\ndone\n",
+      "program_stdout": " value 7\n 1 2 3 4\n 4 2 99\n 21 22\n T F 1.5\nabc  7  1.50 T\n\n 42\n conditional\n\n 43\n continued 43\ndone\n",
       "program_stderr": ""
     },
     "75_output_implied_do": {
@@ -614,14 +614,14 @@
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " 9\n .TRUE. .FALSE. .TRUE. .FALSE. .TRUE.\n .FALSE. .TRUE. .FALSE. .TRUE. .FALSE.\n .TRUE. .FALSE.\n 1 0 3 0 5\n 11 12 13 4 5\n 11 12 13 -4 -5\n 5 2 3 4 1\n 10 12 30 -4 50\n 3.0 -6.0 0.0 6.0 -3.0\n 100 100 200 200 300\n .FALSE. .TRUE. .FALSE. .TRUE. .FALSE.\n .TRUE. .FALSE.\n 10 900 30 900 50\n -6 -12 30 12 6\n .TRUE. .FALSE. .TRUE. .FALSE. .TRUE.\n"
+      "program_stdout": " 9\n T F T F T\n F T F T F\n T F\n 1 0 3 0 5\n 11 12 13 4 5\n 11 12 13 -4 -5\n 5 2 3 4 1\n 10 12 30 -4 50\n 3.0 -6.0 0.0 6.0 -3.0\n 100 100 200 200 300\n F T F T F\n T F\n 10 900 30 900 50\n -6 -12 30 12 6\n T F T F T\n"
     },
     "89_explicit_bounds": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " -10 -9 0 1 10 11\n 10 50 50 40 30 20 10\n 0 -1 1 1 6\n -2 2 1 5\n -1 1\n 1 0 0\n 0 1 -9 1 11 11 10 1 0 -9 -10\n 10 30 40 50 50\n 10 30 40 50 50 10 14\n 77 .TRUE.\n -77 30 -40 50 -50\n 1 5 -77\n 20 24 99\n -77 99 -40 50 -50\n 7 4 5\n -2 2\n"
+      "program_stdout": " -10 -9 0 1 10 11\n 10 50 50 40 30 20 10\n 0 -1 1 1 6\n -2 2 1 5\n -1 1\n 1 0 0\n 0 1 -9 1 11 11 10 1 0 -9 -10\n 10 30 40 50 50\n 10 30 40 50 50 10 14\n 77 T\n -77 30 -40 50 -50\n 1 5 -77\n 20 24 99\n -77 99 -40 50 -50\n 7 4 5\n -2 2\n"
     },
     "90_masked_reductions": {
       "compiler_exit_code": 0,
@@ -635,7 +635,7 @@
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " 2 3 3\n 2 2\n 2 2147483649\n .TRUE. .FALSE.\n .TRUE. .FALSE.\n 0 .FALSE. .TRUE.\n 0 .FALSE. .TRUE.\n 1 2\n 6 .TRUE. .TRUE.\n 2 3\n"
+      "program_stdout": " 2 3 3\n 2 2\n 2 2147483649\n T F\n T F\n 0 F T\n 0 F T\n 1 2\n 6 T T\n 2 3\n"
     },
     "92_function_arrays": {
       "compiler_exit_code": 0,
@@ -656,21 +656,21 @@
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " 0 0 3 1 1 0 3\n 0 2 0 1 1 2 0\n 0 1 1 1 2 0 3\n 1 -2 0 0 0\n 0 1 2147483647 -2147483648\n 0 1 0.0\n 0 .FALSE. .TRUE. 0\n 5 .TRUE. .FALSE.\n .TRUE. .FALSE. .TRUE. .FALSE. .TRUE.\n 4 .TRUE. .TRUE. .TRUE. .FALSE. .TRUE. .FALSE.\n 0 1\n"
+      "program_stdout": " 0 0 3 1 1 0 3\n 0 2 0 1 1 2 0\n 0 1 1 1 2 0 3\n 1 -2 0 0 0\n 0 1 2147483647 -2147483648\n 0 1 0.0\n 0 F T 0\n 5 T F\n T F T F T\n 4 T T T F T F\n 0 1\n"
     },
     "95_dim_reductions": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " 3 7 11 9 12\n 0 4 11 5 10\n 2 12 30 5 24\n 0 1 2 1 2\n .FALSE. .TRUE. .TRUE. .FALSE. .FALSE.\n 1 3 5 5 6\n 21 21\n 1 2\n 0 0 0 1 1 1\n 2147483647 2147483647 2147483647 -2147483648 -2147483648 -2147483648\n 0 .TRUE.\n 2147483647 2147483647 2147483647 -2147483648 -2147483648\n 0 0 0 .FALSE. .FALSE. .FALSE. .TRUE. .TRUE. .TRUE.\n 0 .TRUE.\n"
+      "program_stdout": " 3 7 11 9 12\n 0 4 11 5 10\n 2 12 30 5 24\n 0 1 2 1 2\n F T T F F\n 1 3 5 5 6\n 21 21\n 1 2\n 0 0 0 1 1 1\n 2147483647 2147483647 2147483647 -2147483648 -2147483648 -2147483648\n 0 T\n 2147483647 2147483647 2147483647 -2147483648 -2147483648\n 0 0 0 F F F T T T\n 0 T\n"
     },
     "96_reshape_constructors": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " .TRUE. .TRUE.\n .TRUE.\n .TRUE.\n .TRUE.\n .TRUE.\n .TRUE.\n 1 2 99 5 6 -1\n -1 6 5 99 2 1\n 1 2 3 4 5 6 30 70\n 1 1 2 3\n 0 .TRUE.\n 1 2\n 4.0 8.0\n -1 1 -2 2 1 1\n -1.5 1.5 0.5 1.5\n 15 .TRUE.\n"
+      "program_stdout": " T T\n T\n T\n T\n T\n T\n 1 2 99 5 6 -1\n -1 6 5 99 2 1\n 1 2 3 4 5 6 30 70\n 1 1 2 3\n 0 T\n 1 2\n 4.0 8.0\n -1 1 -2 2 1 1\n -1.5 1.5 0.5 1.5\n 15 T\n"
     },
     "97_case_ranges": {
       "compiler_exit_code": 0,
@@ -698,7 +698,7 @@
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " 1 1 2 3 4 6\n 2 3 4 6 1 1 4 6 1 1 2 3\n 3 1 6\n .TRUE.\n .TRUE.\n .TRUE.\n 0 0\n 6.0\n 2\n"
+      "program_stdout": " 1 1 2 3 4 6\n 2 3 4 6 1 1 4 6 1 1 2 3\n 3 1 6\n T\n T\n T\n 0 0\n 6.0\n 2\n"
     },
     "101_nested_where": {
       "compiler_exit_code": 0,
@@ -712,42 +712,42 @@
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " 1 2 8 9 8 9\n 1 9 2 8 8 9\n 1 4 7 10 2 5 8 11 3 6 9 12\n 1 8 9 8 2 9\n 2 1\n 1 2 3 7 8\n 0\n .TRUE. .FALSE. .FALSE. .FALSE.\n 8.0\n"
+      "program_stdout": " 1 2 8 9 8 9\n 1 9 2 8 8 9\n 1 4 7 10 2 5 8 11 3 6 9 12\n 1 8 9 8 2 9\n 2 1\n 1 2 3 7 8\n 0\n T F F F\n 8.0\n"
     },
     "103_matrix_transforms": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " 1 3 5 2 4 6\n .TRUE.\n 3 5 4 6\n 2 1 3 4 6 5\n 3 6 5 2 1 4\n 3 6 5 2 1 4 11 8 7 10 9 12\n 1 4 3 6 5 2\n .FALSE. .FALSE. .FALSE. .TRUE. .TRUE. .TRUE.\n 0 0\n 3\n"
+      "program_stdout": " 1 3 5 2 4 6\n T\n 3 5 4 6\n 2 1 3 4 6 5\n 3 6 5 2 1 4\n 3 6 5 2 1 4 11 8 7 10 9 12\n 1 4 3 6 5 2\n F F F T T T\n 0 0\n 3\n"
     },
     "104_eoshift": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " 2 3 4 0 9 9 1 2 1 2 3 4\n 3 88 5 2 99 4\n 2 7 4 8 6 9\n 3 6 5 6 5 6\n 3 0 0 2 5 0 7 0\n .FALSE. .TRUE. .TRUE. .TRUE. .TRUE. .TRUE.\n 2.0 3.0 0.0 4.0 4.0 1.0\n 0 0\n 0 4 3 2 12\n"
+      "program_stdout": " 2 3 4 0 9 9 1 2 1 2 3 4\n 3 88 5 2 99 4\n 2 7 4 8 6 9\n 3 6 5 6 5 6\n 3 0 0 2 5 0 7 0\n F T T T T T\n 2.0 3.0 0.0 4.0 4.0 1.0\n 0 0\n 0 4 3 2 12\n"
     },
     "105_spread": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " 7 7 7\n 1 1 2 2 3 3\n 1 2 3 1 2 3\n 1 1 2 2 3 3 4 4\n 1 2 1 2 1 2 3 4 3 4 3 4\n 1 2 3 4 1 2 3 4\n 3 2 1 3 2 1\n 5 5 5 5 5 5\n 0 0 0\n .TRUE. .TRUE. .FALSE. .FALSE.\n 1.0 2.0 1.0 2.0 3.0 3.0\n 1 2 1 2 9\n 5 5 6\n"
+      "program_stdout": " 7 7 7\n 1 1 2 2 3 3\n 1 2 3 1 2 3\n 1 1 2 2 3 3 4 4\n 1 2 1 2 1 2 3 4 3 4 3 4\n 1 2 3 4 1 2 3 4\n 3 2 1 3 2 1\n 5 5 5 5 5 5\n 0 0 0\n T T F F\n 1.0 2.0 1.0 2.0 3.0 3.0\n 1 2 1 2 9\n 5 5 6\n"
     },
     "106_pack_unpack": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " 2 4 6 40 50\n 1 2 3 4 5 6\n 2 3\n 0 0\n -1 7 -3 8 -5 9\n 99 10 99 20 99 30\n 30 40 50 40 50\n .TRUE. .TRUE. .TRUE. .FALSE.\n .FALSE. .TRUE. .TRUE. .TRUE.\n 2.0 3.0 9.0 9.0\n 1.0 2.0 2.0\n 13\n"
+      "program_stdout": " 2 4 6 40 50\n 1 2 3 4 5 6\n 2 3\n 0 0\n -1 7 -3 8 -5 9\n 99 10 99 20 99 30\n 30 40 50 40 50\n T T T F\n F T T T\n 2.0 3.0 9.0 9.0\n 1.0 2.0 2.0\n 13\n"
     },
     "107_runtime_pack": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " 2 4 6\n 10 3 5 7 20\n 2 4 6\n .TRUE.\n .TRUE.\n .FALSE.\n 0 21 720\n 2 18 360\n 4 11 30\n 6 0 1\n\n 0 .TRUE. .FALSE.\n .TRUE. .FALSE. 1\n 4 6\n 5\n"
+      "program_stdout": " 2 4 6\n 10 3 5 7 20\n 2 4 6\n T\n T\n F\n 0 21 720\n 2 18 360\n 4 11 30\n 6 0 1\n\n 0 T F\n T F 1\n 4 6\n 5\n"
     },
     "108_locations": {
       "compiler_exit_code": 0,
@@ -782,7 +782,7 @@
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " 1 2 3 2 9 10000000000\n 1.25 2.5 2.5 2.5 2.5 1.5 2.5\n .TRUE. .FALSE. .TRUE. .TRUE.\n [ok   ]\n 7 7 7 7 0\n 4 5 6 5 10 10000000001 2.25 .FALSE.\n [done ]\n"
+      "program_stdout": " 1 2 3 2 9 10000000000\n 1.25 2.5 2.5 2.5 2.5 1.5 2.5\n T F T T\n [ok   ]\n 7 7 7 7 0\n 4 5 6 5 10 10000000001 2.25 F\n [done ]\n"
     },
     "113_optional_procedures": {
       "compiler_exit_code": 0,
@@ -796,28 +796,28 @@
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " .FALSE. .TRUE. .TRUE. .TRUE. .FALSE. .FALSE.\n .TRUE. .TRUE. .TRUE. .TRUE.\n .TRUE. .TRUE. .TRUE. .TRUE.\n .TRUE. .TRUE. .TRUE. .TRUE.\n .TRUE. .FALSE. .TRUE.\n 123\n 1 .TRUE. .TRUE. .TRUE.\n .TRUE. .FALSE.\n"
+      "program_stdout": " F T T T F F\n T T T T\n T T T T\n T T T T\n T F T\n 123\n 1 T T T\n T F\n"
     },
     "115_scalar_substrings": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " .TRUE.\n .TRUE.\n [abX  fgh] .TRUE.\n .TRUE.\n .TRUE. .TRUE.\n [123][ab][fgh]\n .TRUE.\n"
+      "program_stdout": " T\n T\n [abX  fgh] T\n T\n T T\n [123][ab][fgh]\n T\n"
     },
     "116_character_arrays": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " .TRUE.\n .TRUE.\n .TRUE.\n .TRUE.\n .TRUE.\n .TRUE. .TRUE.\n .TRUE. .FALSE. 3 2\n .TRUE.\n .TRUE. .FALSE. 0 2\n a b c \n"
+      "program_stdout": " T\n T\n T\n T\n T\n T T\n T F 3 2\n T\n T F 0 2\n a b c \n"
     },
     "117_vector_subscripts": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " 10.0 20.0 10.0\n 20.0 10.0 30.0\n -1.0 -1.0 30.0\n 50 10 30\n 50 10 30 10 30 50\n 30 10 50 50 50\n 20 20 30 40 10 60\n 1 2 3 4 5 6\n 1 20 3 40 5 60\n 5 1 3\n 2 2 3 4 1\n .FALSE. .TRUE. .FALSE. .TRUE.\n .FALSE. .FALSE. .FALSE.\n 9 3 1 3\n 0 .TRUE.\n 1 20 3 40 5 60\n"
+      "program_stdout": " 10.0 20.0 10.0\n 20.0 10.0 30.0\n -1.0 -1.0 30.0\n 50 10 30\n 50 10 30 10 30 50\n 30 10 50 50 50\n 20 20 30 40 10 60\n 1 2 3 4 5 6\n 1 20 3 40 5 60\n 5 1 3\n 2 2 3 4 1\n F T F T\n F F F\n 9 3 1 3\n 0 T\n 1 20 3 40 5 60\n"
     },
     "118_named_arguments": {
       "compiler_exit_code": 0,
@@ -831,7 +831,7 @@
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "23456\n 5 .TRUE.\n[x]\n 0 .TRUE.\n"
+      "program_stdout": "23456\n 5 T\n[x]\n 0 T\n"
     },
     "120_unbounded_do": {
       "compiler_exit_code": 0,
@@ -845,14 +845,14 @@
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " 5 5 5\n 3 4 5\n .TRUE. .TRUE. .TRUE.\n"
+      "program_stdout": " 5 5 5\n 3 4 5\n T T T\n"
     },
     "122_record_read_iostat": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": "[abcde]\n .TRUE.\n 0 .TRUE.\n[xy   ]\n .TRUE.\n .TRUE.\n"
+      "program_stdout": "[abcde]\n T\n 0 T\n[xy   ]\n T\n T\n"
     },
     "123_recursive_allocatable": {
       "compiler_exit_code": 0,
@@ -873,7 +873,7 @@
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " 8 14 6 -11\n .TRUE. 11 2 10\n 5 7\n 10\n 1 8\n 127 -128 0\n 127 0 0\n -1 0 .TRUE.\n 9223372036854775807 0 0\n 5 8 5\n .TRUE.\n"
+      "program_stdout": " 8 14 6 -11\n T 11 2 10\n 5 7\n 10\n 1 8\n 127 -128 0\n 127 0 0\n -1 0 T\n 9223372036854775807 0 0\n 5 8 5\n T\n"
     },
     "126_impure_elemental": {
       "compiler_exit_code": 0,
@@ -887,28 +887,28 @@
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " .FALSE.\n 1 12 3 4 24.0 2.0\n 3 4 1 1 3 4\n 12.0 12.0 12.0 12.0 12.0 12.0 12.0 12.0 12.0 12.0 12.0 12.0\n 2 10 2 5 20.0 2.0\n 2 5 1 1 2 5\n 10.0 10.0 10.0 10.0 10.0 10.0 10.0 10.0 10.0 10.0\n 3 12 3 4 24.0 2.0\n 3 4 1 1 3 4\n 12.0 12.0 12.0 12.0 12.0 12.0 12.0 12.0 12.0 12.0 12.0 12.0\n .FALSE.\n"
+      "program_stdout": " F\n 1 12 3 4 24.0 2.0\n 3 4 1 1 3 4\n 12.0 12.0 12.0 12.0 12.0 12.0 12.0 12.0 12.0 12.0 12.0 12.0\n 2 10 2 5 20.0 2.0\n 2 5 1 1 2 5\n 10.0 10.0 10.0 10.0 10.0 10.0 10.0 10.0 10.0 10.0\n 3 12 3 4 24.0 2.0\n 3 4 1 1 3 4\n 12.0 12.0 12.0 12.0 12.0 12.0 12.0 12.0 12.0 12.0 12.0 12.0\n F\n"
     },
     "128_deallocate": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " .FALSE.\n 2 3 .TRUE.\n .FALSE. .FALSE. .FALSE.\n 9 9 .TRUE.\n .TRUE. 0\n .TRUE. 0\n new 3\n .FALSE. .FALSE.\n"
+      "program_stdout": " F\n 2 3 T\n F F F\n 9 9 T\n T 0\n T 0\n new 3\n F F\n"
     },
     "135_pointer_association": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " .TRUE. 3 15.0 1 3\n 7.0 8.0 6.0\n 7.0 8.0 6.0\n 8.0 9.0 7.0\n 1.0 2.0 3.0\n 1.0 2.0 3.0\n .FALSE.\n"
+      "program_stdout": " T 3 15.0 1 3\n 7.0 8.0 6.0\n 7.0 8.0 6.0\n 8.0 9.0 7.0\n 1.0 2.0 3.0\n 1.0 2.0 3.0\n F\n"
     },
     "134_declarations_without_colons": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " 8 AM 3 16 1.5 .TRUE.\n one 2.0 two\n"
+      "program_stdout": " 8 AM 3 16 1.5 T\n one 2.0 two\n"
     },
     "133_unnamed_procedure_ends": {
       "compiler_exit_code": 0,
@@ -929,7 +929,7 @@
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " kept\n .TRUE.\n .TRUE.\n .TRUE.\n .TRUE.\n"
+      "program_stdout": " kept\n T\n T\n T\n T\n"
     },
     "130_dimension_attribute": {
       "compiler_exit_code": 0,
@@ -992,7 +992,7 @@
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " 0 0 0 0 0\n 8 8 4 1\n 3 0\n 0 1 0.0 1.0\n .TRUE. .FALSE. 0\n 7\n"
+      "program_stdout": " 0 0 0 0 0\n 8 8 4 1\n 3 0\n 0 1 0.0 1.0\n T F 0\n 7\n"
     },
     "143_character_elemental": {
       "compiler_exit_code": 0,
@@ -1049,6 +1049,20 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 2\n 4\n"
+    },
+    "151_named_constants": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " F T T T F\n F T T\n 1 2 4 8\n 12 1234 123456 10000000000\n 10000000000 10000000001\n 1.25 2.5 5.0\n 1.25 2.5 2.5 5.0\nabC\n ab cd\n"
+    },
+    "152_logical_list_output": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " F\nF\n T F\n T F\n F F T\n T F\nTF\n .TRUE..FALSE.\n"
     }
   }
 }

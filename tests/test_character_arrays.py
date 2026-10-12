@@ -90,7 +90,7 @@ end program
                 with self.subTest(command=command):
                     ok = subprocess.run(command, input="1\n", capture_output=True, text=True, timeout=15)
                     self.assertEqual(ok.returncode, 0, ok.stderr)
-                    self.assertIn(".TRUE.", ok.stdout)
+                    self.assertIn("T", ok.stdout.split())
                     bad = subprocess.run(command, input="0\n", capture_output=True, text=True, timeout=15)
                     self.assertNotEqual(bad.returncode, 0)
                     self.assertIn("variable `a`: element 1", bad.stderr)

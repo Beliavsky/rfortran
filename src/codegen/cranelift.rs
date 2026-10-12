@@ -359,8 +359,8 @@ fn declare_externs(
     let fmt_f64 = make_data(module, b, ptr_ty, &mut c, b"%lf")?;
     let fmt_i64 = make_data(module, b, ptr_ty, &mut c, b"%lld")?;
     let fmt_i64_dot0 = make_data(module, b, ptr_ty, &mut c, b"%lld.0")?;
-    let p_true = make_data(module, b, ptr_ty, &mut c, b".TRUE.")?;
-    let p_false = make_data(module, b, ptr_ty, &mut c, b".FALSE.")?;
+    let p_true = make_data(module, b, ptr_ty, &mut c, b"T")?;
+    let p_false = make_data(module, b, ptr_ty, &mut c, b"F")?;
     let p_nl = make_data(module, b, ptr_ty, &mut c, b"\n")?;
 
     Ok(Externs {

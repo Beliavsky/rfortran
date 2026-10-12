@@ -186,6 +186,47 @@ fn model_type_lookup(constants: &Constants, name: &str) -> Option<(TypeSpec,usiz
         _ => TypeSpec::Logical,
     },rank.parse().ok()?))
 }
+fn logical_constant(e: &Expr, constants: &Constants) -> Result<bool> {
+    Ok(match e {
+        Expr::Logical(value) => *value,
+        Expr::Ident(name) => logical_constant(constants.get(name)
+            .context("LOGICAL PARAMETER initializer must be a supported logical constant expression")?, &Constants::new())?,
+        Expr::Un(UnOp::Not, value) => !logical_constant(value, constants)?,
+        Expr::Bin(op, a, b) if matches!(op, BinOp::And | BinOp::Or | BinOp::Eqv | BinOp::Neqv) => {
+            let (a, b) = (logical_constant(a, constants)?, logical_constant(b, constants)?);
+            match op { BinOp::And => a && b, BinOp::Or => a || b, BinOp::Eqv => a == b, _ => a != b }
+        }
+        Expr::Bin(op, a, b) if matches!(op, BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge) => {
+            let ordering = if let (Ok(mut a), Ok(mut b)) = (character_constant(a), character_constant(b)) {
+                let size = a.len().max(b.len());
+                a.extend(std::iter::repeat_n(' ', size-a.len()));
+                b.extend(std::iter::repeat_n(' ', size-b.len()));
+                a.cmp(&b)
+            } else if let (Ok(a), Ok(b)) = (evaluate(a, constants), evaluate(b, constants)) {
+                a.cmp(&b)
+            } else {
+                real_constant(a)?.partial_cmp(&real_constant(b)?).context("invalid constant comparison")?
+            };
+            use std::cmp::Ordering::{Less, Equal, Greater};
+            match op {
+                BinOp::Eq => ordering == Equal, BinOp::Ne => ordering != Equal,
+                BinOp::Lt => ordering == Less, BinOp::Le => ordering != Greater,
+                BinOp::Gt => ordering == Greater, _ => ordering != Less,
+            }
+        }
+        Expr::Call(name, args) if matches!(name.as_str(), "all" | "any" | "@all_reduction" | "@any_reduction") && matches!(args.len(),1 | 3) => {
+            if args.len()==3 && integer_constant(&args[1])?!=1 { bail!("constant logical reduction DIM must be 1 for a rank-one array"); }
+            let actual = if let Expr::Ident(n)=&args[0] { constants.get(n).unwrap_or(&args[0]) } else { &args[0] };
+            let values = if crate::empty_constructors::kind(actual)?==Some(TypeSpec::Logical) { vec![] }
+                else if let Expr::Call(tag, items)=actual {
+                    if !matches!(tag.as_str(), "@array_constructor" | "@array_constant") { bail!("constant {name} requires a logical array constructor or PARAMETER array"); }
+                    items.iter().map(|e|logical_constant(e,constants)).collect::<Result<Vec<_>>>()?
+                } else { bail!("constant {name} requires a logical array constructor or PARAMETER array"); };
+            if matches!(name.as_str(),"all" | "@all_reduction") {values.iter().all(|v|*v)} else {values.iter().any(|v|*v)}
+        }
+        _ => bail!("LOGICAL PARAMETER initializer must be a supported logical constant expression"),
+    })
+}
 fn real_constant(e: &Expr) -> Result<f64> {
     fn integral(e: &Expr) -> bool {
         match e { Expr::Call(tag,_) if tag == "@integer_literal" => true, Expr::IntLit(_) => true, Expr::Un(_, a) => integral(a), Expr::Bin(_, a,b) => integral(a) && integral(b), _ => false }
@@ -400,8 +441,7 @@ fn initial_value(kind: &TypeSpec, value: &Expr) -> Result<Expr> {
             Ok(real_literal(value,double))
         }
         TypeSpec::Character(_) => character_parameter(value,kind),
-        TypeSpec::Logical => if let Expr::Logical(_) = value { Ok(value.clone()) }
-            else { bail!("LOGICAL declaration initializer currently requires a logical literal"); },
+        TypeSpec::Logical => Ok(Expr::Logical(logical_constant(value, &Constants::new())?)),
         _ => bail!("unsupported declaration initialization type"),
     }
 }
@@ -502,11 +542,8 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
                 return Ok(());
             }
             if !matches!(kind, TypeSpec::CharacterAssumed) { resolve_kind(kind, &constants)?; }
-            if matches!(kind, TypeSpec::Integer(Some(k)) if *k != 4) {
-                bail!("nondefault-kind INTEGER PARAMETER declarations are not yet supported");
-            }
-            if !matches!(kind, TypeSpec::Integer(None | Some(4)) | TypeSpec::Real | TypeSpec::DoublePrecision | TypeSpec::Character(_) | TypeSpec::CharacterAssumed) {
-                bail!("only numeric and character PARAMETER declarations are currently supported");
+            if !matches!(kind, TypeSpec::Integer(None | Some(1 | 2 | 4 | 8)) | TypeSpec::Real | TypeSpec::DoublePrecision | TypeSpec::Logical | TypeSpec::Character(_) | TypeSpec::CharacterAssumed) {
+                bail!("PARAMETER declarations require a supported INTEGER, REAL, LOGICAL, or CHARACTER type");
             }
             if attributes
                 .iter()
@@ -553,18 +590,20 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
                         TypeSpec::Character(Some(length))
                     } else {kind.clone()};
                     if let TypeSpec::Character(length)=&element_kind {constants.insert(format!("@character_length:{name}"),Expr::IntLit(length.unwrap_or(1).to_string()));}
-                    let values: Vec<Expr> = items.iter().map(|e| -> Result<Expr> { Ok(if matches!(element_kind,TypeSpec::Character(_)) {character_parameter(e,&element_kind)?} else if matches!(kind, TypeSpec::Integer(_)) { Expr::IntLit(evaluate(e, &constants)?.to_string()) } else { real_literal(if matches!(kind, TypeSpec::Real) { real_constant(e)? as f32 as f64 } else { real_constant(e)? }, matches!(kind, TypeSpec::DoublePrecision)) }) }).collect::<Result<_>>()?;
+                    let values: Vec<Expr> = items.iter().map(|e| -> Result<Expr> {
+                        if matches!(element_kind, TypeSpec::Logical) { Ok(Expr::Logical(logical_constant(e, &constants)?)) }
+                        else { initial_value(&element_kind, e) }
+                    }).collect::<Result<_>>()?;
                     constants.insert(key.clone(), Expr::Call("@array_constant".into(), values.clone()));
                     array_values.insert(key, values);
                     continue;
                 }
                 let value = if matches!(kind, TypeSpec::Character(_) | TypeSpec::CharacterAssumed) {
                     character_parameter(&initializer, kind).with_context(|| format!("invalid initializer for PARAMETER `{name}`"))?
-                } else if matches!(kind, TypeSpec::Integer(_)) {
-                    Expr::IntLit(evaluate(&initializer, &constants).with_context(|| format!("invalid initializer for PARAMETER `{name}`"))?.to_string())
+                } else if matches!(kind, TypeSpec::Logical) {
+                    Expr::Logical(logical_constant(&initializer, &constants).with_context(|| format!("invalid initializer for PARAMETER `{name}`"))?)
                 } else {
-                    let value = real_constant(&initializer)?;
-                    real_literal(if matches!(kind, TypeSpec::Real) { (value as f32) as f64 } else { value }, matches!(kind, TypeSpec::DoublePrecision))
+                    initial_value(kind, &initializer).with_context(|| format!("invalid initializer for PARAMETER `{name}`"))?
                 };
                 constants.insert(key, value);
             }
@@ -1351,11 +1390,21 @@ mod tests {
             ("integer, parameter :: k=-1\ninteger(k) :: x", "unsupported INTEGER kind -1"),
             ("integer(k) :: x", "not a previously defined integer PARAMETER"),
             ("integer :: k\ninteger(kind=k) :: x", "not a previously defined integer PARAMETER"),
-            ("integer(kind=8), parameter :: x=1", "nondefault-kind INTEGER PARAMETER"),
         ] {
             let err = resolve_source(declarations, "").unwrap_err().to_string();
             assert!(err.contains(expected), "{declarations}: {err}");
         }
+    }
+
+    #[test]
+    fn integer_parameters_preserve_declared_kind_and_range() {
+        for (kind, value) in [(1,127), (2,32767), (4,2147483647), (8,10000000000i64)] {
+            let p = resolve_source(&format!("integer(kind={kind}), parameter :: x={value}_8"), "print *,x").unwrap();
+            let items = p.body.iter().find_map(|s|if let Stmt::Print{items}=s {Some(items)}else{None}).unwrap();
+            assert_eq!(integer_literal_kind(&items[0]), Some(kind));
+            assert_eq!(integer_constant(&items[0]).unwrap(), value);
+        }
+        assert!(resolve_source("integer(kind=1), parameter :: x=128", "").is_err());
     }
 
     #[test]

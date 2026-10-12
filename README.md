@@ -545,6 +545,10 @@ rank-one sections, arithmetic expressions and scalar REAL/DBLE/INT conversions.
 General procedure-call arguments and COMPLEX model inquiries are not implemented.
 Variables and user procedures may still use these intrinsic names.
 
+List-directed LOGICAL output uses `T` and `F` for scalar values, array elements,
+expressions and procedure results. CHARACTER strings containing `.TRUE.` or
+`.FALSE.` retain their spelling. Run `python tests/test_logical_list_output.py`
+for strict spelling checks in the interpreter and native code at O0/O2.
 List-directed `PRINT *` with no output items emits a blank record. Large real
 output, including `HUGE(0.0)` and `HUGE(0.0_8)`, no longer traps while choosing
 an output representation. Values near the largest DOUBLE PRECISION number retain
@@ -861,15 +865,27 @@ procedure arguments. KIND supports numeric arithmetic expressions without
 reading their operands; mixed INTEGER operands select the wider kind. A REAL
 base raised to an INTEGER power retains the base kind. Exponentiation binds
 more tightly than unary signs and associates to the right: `-2**2` is -4,
-`(-2)**2` is 4, and `2**3**2` is 512. Nondefault-kind INTEGER PARAMETER declarations
-and kind-16 integer literals remain unsupported. Run
+`(-2)**2` is 4, and `2**3**2` is 512. INTEGER PARAMETER declarations support
+kinds 1, 2, 4 and 8, preserving kind and checking the declared range.
+Kind-16 integer literals remain unsupported. Run
 `python tests/test_integer_literals.py`.
+
+Named constants support INTEGER, REAL (kinds 4 and 8), DOUBLE PRECISION,
+default LOGICAL and CHARACTER scalars and rank-one arrays. LOGICAL initializers
+support literals, previously defined constants, `.not.`, `.and.`, `.or.`,
+`.eqv.`, `.neqv.`, scalar numeric/CHARACTER comparisons, and ALL/ANY of logical
+constructors or named constant arrays (including empty arrays). CHARACTER
+comparisons pad the shorter operand with spaces; INTEGER comparisons retain
+integer precision. Module imports, host association and separate PARAMETER
+statements use the same constant resolution. Constant arrays still have the
+existing rank-one limits; COMPLEX and derived-type named constants are not
+implemented. Run `python tests/test_named_constants.py`.
 
 ## Declaration initialization
 
 Main-program variables support declaration initialization from supported constant
 expressions. Numeric scalars, rank-one array constructors (including constant
-implied-DOs), scalar array fills, LOGICAL literals and fixed-length CHARACTER
+implied-DOs), scalar array fills, supported LOGICAL constant expressions and fixed-length CHARACTER
 scalars are supported. Values remain mutable; initialization runs once before
 normal use, including declarations with an explicit SAVE attribute. INTEGER
 initializers currently require integer constant expressions. LOGICAL expressions

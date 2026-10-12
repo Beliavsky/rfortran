@@ -888,15 +888,15 @@ pub fn interpret(program: &Program) {
                                 parts.push((format_real(f, false), false));
                             }
                             Expr::Logical(b) => parts.push((if *b {
-                                ".TRUE.".into()
+                                "T".into()
                             } else {
-                                ".FALSE.".into()
+                                "F".into()
                             }, false)),
                             Expr::Ident(id) => {
                                 let frame = call_stack.last().unwrap();
                                 if let Some(values) = frame.env_int_arrays.get(id) {
                                     parts.extend(values.iter().map(|v| (
-                                        if frame.logical_arrays.contains(id) { if *v != 0 { ".TRUE.".into() } else { ".FALSE.".into() } }
+                                        if frame.logical_arrays.contains(id) { if *v != 0 { "T".into() } else { "F".into() } }
                                         else { v.to_string() }, false)));
                                 } else if let Some(values) = frame.env_real_arrays.get(id) {
                                     parts.extend(values.iter().map(|v| (format_real(*v, false), false)));
@@ -908,9 +908,9 @@ pub fn interpret(program: &Program) {
                                     parts.push((v.to_string(), false));
                                 } else if let Some(v) = logs.get(id) {
                                     parts.push((if *v {
-                                        ".TRUE.".into()
+                                        "T".into()
                                     } else {
-                                        ".FALSE.".into()
+                                        "F".into()
                                     }, false));
                                 } else if let Some(v) = strs.get(id) {
                                     parts.push((v.clone(), true));
@@ -929,7 +929,7 @@ pub fn interpret(program: &Program) {
                                 } else if let Some(i) = vt.0 {
                                     parts.push((i.to_string(), false));
                                 } else if let Some(b) = vt.2 {
-                                    parts.push((if b { ".TRUE.".into() } else { ".FALSE.".into() }, false));
+                                    parts.push((if b { "T".into() } else { "F".into() }, false));
                                 }
                             }
                         }
