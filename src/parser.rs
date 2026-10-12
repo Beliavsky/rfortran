@@ -136,6 +136,7 @@ mod tests {
                 Stmt::Subroutine { body, .. } | Stmt::Module { body, .. } => body,
                 _ => &program.body,
             };
+            let body:Vec<_>=body.iter().filter(|s|!matches!(s,Stmt::SourceLocation(_))).collect();
             assert_eq!(body.len(), 4);
             let expected = [("x", None), ("y", Some("2")), ("z", None), ("a", Some("3"))];
             for (stmt, (expected_name, expected_dim)) in body.iter().zip(expected) {
@@ -156,8 +157,9 @@ mod tests {
         use crate::ast::{Stmt, TypeSpec};
         let source="character(len=8) ampm\ninteger(kind=4) values(8)\nampm='AM'\nend";
         let program=super::parse_with_src(source,&crate::lexer::lex(source),"plain.f90").unwrap();
-        assert!(matches!(&program.body[0],Stmt::VarDecl{kind:TypeSpec::Character(Some(8)),names} if names==&["ampm"]));
-        assert!(matches!(&program.body[1],Stmt::ArrayDecl{kind:TypeSpec::IntegerKind(kind),name,dims} if kind=="4" && name=="values" && dims.len()==1));
+        let declarations:Vec<_>=program.body.iter().filter(|s|!matches!(s,Stmt::SourceLocation(_))).collect();
+        assert!(matches!(declarations[0],Stmt::VarDecl{kind:TypeSpec::Character(Some(8)),names} if names==&["ampm"]));
+        assert!(matches!(declarations[1],Stmt::ArrayDecl{kind:TypeSpec::IntegerKind(kind),name,dims} if kind=="4" && name=="values" && dims.len()==1));
         for source in ["integer i=1\nend", "character(2) s='hi'\nend",
                        "integer,parameter n=1\nend", "real,dimension(2) a\nend"] {
             assert!(super::parse_with_src(source,&crate::lexer::lex(source),"invalid.f90").is_err(),"{source}");

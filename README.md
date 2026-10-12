@@ -110,6 +110,21 @@ and source inputs are protected from overwrite. A single source is compiled
 directly. The old `f90c-sources.ps1` helper is retained for legacy use; the
 native driver does not invoke it.
 
+## Declaration diagnostics
+
+Unsupported ELEMENTAL declarations and errors while resolving types or
+constant initializers now report the source filename, line, and column and
+underline the relevant attribute, name, or statement. For example, an OPTIONAL
+ELEMENTAL function dummy is diagnosed at its declaration, naming the argument
+and procedure. The same reporting is used by native builds, `check`, and `run`.
+
+Native multi-source builds retain explicit source ranges so these diagnostics
+refer to the original file and line instead of `main.f90c-sources.f90`.
+Declaration source offsets remain available through AST transformations;
+passes that have not yet attached source locations retain their existing text
+errors. Run `python tests/test_source_diagnostics.py` to check CLI modes,
+continuations, repeated names, type errors, and original-file mapping.
+
 ## Elemental function results
 
 ELEMENTAL functions support explicitly declared numeric, LOGICAL, and CHARACTER
@@ -1086,6 +1101,7 @@ python tests/test_nonadvancing_output.py
 python tests/test_elemental_setters.py
 python tests/test_impure_elemental.py
 python tests/test_character_elemental.py
+python tests/test_source_diagnostics.py
 python tests/test_do_steps.py
 python tests/test_where.py
 python tests/test_explicit_bounds.py

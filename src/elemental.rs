@@ -60,20 +60,20 @@ pub(crate) fn inline_character(
 pub fn validate_subroutine(name: &str, params: &[String], body: &[Stmt]) -> Result<()> {
     for param in params {
         if body.iter().any(|s| matches!(s, Stmt::ArrayDecl { name, .. } if name == param)) {
-            bail!("ELEMENTAL subroutine `{name}` requires scalar dummy arguments");
+            return Err(crate::source_diagnostics::declaration(body,param,None,format!("ELEMENTAL subroutine `{name}` requires scalar dummy arguments")));
         }
         if !body.iter().any(|s| matches!(s, Stmt::VarDecl { kind, names } if names.contains(param)
             && (numeric(kind) || matches!(kind, TypeSpec::Logical | TypeSpec::Character(_) | TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed)))) {
-            bail!("ELEMENTAL dummy `{param}` requires a supported explicitly declared scalar type");
+            return Err(crate::source_diagnostics::declaration(body,param,None,format!("ELEMENTAL dummy `{param}` requires a supported explicitly declared scalar type")));
         }
         let attributes: Vec<_> = body.iter().filter_map(|s| match s {
             Stmt::DummyIntent { name, intent } if name == param => Some(intent.as_str()), _ => None,
         }).collect();
         if attributes.iter().filter(|a| a.starts_with("intent(")).count() != 1 {
-            bail!("ELEMENTAL dummy `{param}` requires one explicit INTENT");
+            return Err(crate::source_diagnostics::declaration(body,param,None,format!("ELEMENTAL dummy `{param}` requires one explicit INTENT")));
         }
         if attributes.iter().any(|a| !matches!(*a, "intent(in)" | "intent(out)" | "intent(inout)" | "optional")) {
-            bail!("unsupported attribute on ELEMENTAL dummy `{param}`");
+            return Err(crate::source_diagnostics::declaration(body,param,None,format!("unsupported attribute on ELEMENTAL dummy `{param}`")));
         }
     }
     fn expression(e: &Expr, params: &[String], body: &[Stmt]) -> Result<()> {
@@ -161,25 +161,29 @@ pub fn validate(
         .iter()
         .any(|s| matches!(s,Stmt::ArrayDecl{name,..} if params.contains(name) || name == result))
     {
-        bail!("ELEMENTAL function `{name}` requires scalar dummy arguments and a scalar result");
+        let target=body.iter().find_map(|s|match s {Stmt::ArrayDecl{name,..} if params.contains(name)||name==result=>Some(name.as_str()),_=>None}).unwrap();
+        return Err(crate::source_diagnostics::declaration(body,target,None,format!("ELEMENTAL function `{name}` requires scalar dummy arguments and a scalar result")));
     }
     if !result_kind(name, declared, body)
         .as_ref()
         .is_some_and(scalar)
     {
-        bail!("ELEMENTAL function `{name}` requires an explicitly declared supported scalar result");
+        return Err(crate::source_diagnostics::declaration(body,result,None,format!("ELEMENTAL function `{name}` requires an explicitly declared supported scalar result")));
     }
     for param in params {
         if !body.iter().any(
             |s| matches!(s,Stmt::VarDecl{kind,names} if names.contains(param) && scalar(kind)),
         ) {
-            bail!("ELEMENTAL dummy argument `{param}` requires an explicitly declared supported scalar type");
+            return Err(crate::source_diagnostics::declaration(body,param,None,format!("ELEMENTAL dummy argument `{param}` requires an explicitly declared supported scalar type")));
         }
         if !body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name == param && intent == "intent(in)")) {
-            bail!("ELEMENTAL function dummy argument `{param}` requires INTENT(IN)");
+            return Err(crate::source_diagnostics::declaration(body,param,None,format!("ELEMENTAL function dummy argument `{param}` requires INTENT(IN)")));
         }
         if body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name == param && intent != "intent(in)")) {
-            bail!("additional attributes on ELEMENTAL dummy argument `{param}` are not yet supported");
+            let attribute=body.iter().find_map(|s|match s {Stmt::DummyIntent{name,intent} if name==param&&intent!="intent(in)"=>Some(intent.as_str()),_=>None}).unwrap();
+            let message=if attribute=="optional" {format!("OPTIONAL dummy argument `{param}` is not yet supported in ELEMENTAL function `{name}`")}
+                else {format!("additional attributes on ELEMENTAL dummy argument `{param}` are not yet supported")};
+            return Err(crate::source_diagnostics::declaration(body,param,Some(attribute),message));
         }
     }
     Ok(())
@@ -244,7 +248,7 @@ mod tests {
             (
                 "integer,optional,intent(in)::i\ninteger::j",
                 "j=i",
-                "additional attributes",
+                "OPTIONAL dummy argument",
             ),
             (
                 "integer,intent(in)::i\ninteger::j",

@@ -188,8 +188,8 @@ FuncList: Vec<Stmt> = {
 };
 
 FuncDef: Stmt = {
-    <prefix: FunctionPrefix> <mut function: FunctionDef> => {
-        if let Stmt::Function { pure, elemental, .. } = &mut function { *pure = prefix.0; *elemental = prefix.1; }
+    <pos:@L> <prefix: FunctionPrefix> <mut function: FunctionDef> => {
+        if let Stmt::Function { pure, elemental, body, .. } = &mut function { *pure = prefix.0; *elemental = prefix.1; body.insert(0,Stmt::SourceLocation(pos)); }
         function
     },
 };
@@ -228,7 +228,10 @@ FunctionDef: Stmt = {
 };
 
 SubrDef: Stmt = {
-    <prefix: FunctionPrefix> KW_SUBROUTINE <name: Ident> LPAREN <params: ParamList> RPAREN <body:ProcedureBody> <_end: SubroutineEnd> => Stmt::Subroutine { name, params, body, pure: prefix.0, elemental: prefix.1 },
+    <pos:@L> <prefix: FunctionPrefix> KW_SUBROUTINE <name: Ident> LPAREN <params: ParamList> RPAREN <mut body:ProcedureBody> <_end: SubroutineEnd> => {
+        body.insert(0,Stmt::SourceLocation(pos));
+        Stmt::Subroutine { name, params, body, pure: prefix.0, elemental: prefix.1 }
+    },
 };
 
 FunctionEnd: () = {
@@ -730,6 +733,11 @@ CaseItem: CaseItem = {
 };
 
 PreFuncDecl: Vec<Stmt> = {
+    <pos:@L> <declarations:PreFuncDeclData> => {
+        let mut body=vec![Stmt::SourceLocation(pos)];body.extend(declarations);body
+    },
+};
+PreFuncDeclData: Vec<Stmt> = {
     KW_TYPE DCOLON <name:Ident> <components:Components> KW_END KW_TYPE <_end:Ident> => vec![Stmt::DerivedType{name,components,bindings:vec![]}],
     KW_TYPE DCOLON <name:Ident> <components:Components> KW_CONTAINS <bindings:Bindings> KW_END KW_TYPE <_end:Ident> => vec![Stmt::DerivedType{name,components,bindings}],
     KW_TYPE LPAREN <type_name:Ident> RPAREN <attributes:AttrList> DCOLON <names:IdentList> => vec![Stmt::DerivedDecl{type_name,names,attributes,polymorphic:false}],

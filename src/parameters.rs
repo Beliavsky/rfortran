@@ -452,7 +452,10 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
             constants.insert(format!("@model_procedure:{name}"),Expr::Logical(true));
         }
     }
+    let mut declaration_offset=None;
     for stmt in body.iter_mut() {
+        if let Stmt::SourceLocation(offset)=stmt {declaration_offset=Some(*offset);}
+        (|| -> Result<()> {
         // Keep type information separately from constant values. Numeric model
         // inquiries can appear in PARAMETER initializers and must not read X.
         let (kind,names,rank) = match &*stmt {
@@ -495,7 +498,7 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
                     if !arrays.contains(&key) { scalars.push(name.clone()); }
                 }
                 *stmt = Stmt::VarDecl {kind:kind.clone(),names:scalars};
-                continue;
+                return Ok(());
             }
             if !matches!(kind, TypeSpec::CharacterAssumed) { resolve_kind(kind, &constants)?; }
             if matches!(kind, TypeSpec::Integer(Some(k)) if *k != 4) {
@@ -542,6 +545,8 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
                 constants.insert(key, value);
             }
         }
+        Ok(())
+        })().map_err(|error|crate::source_diagnostics::at(error,declaration_offset))?;
     }
     body.retain(|s| !matches!(s, Stmt::InitializedDecl { .. }));
     rewrite_body(body, &constants, modules, if assumed_dummies {arguments} else {&[]}, template)?;
@@ -1058,7 +1063,10 @@ fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules, ass
             _ => {},
         }
     }
+    let mut source_offset=None;
     for stmt in body {
+        if let Stmt::SourceLocation(offset)=stmt {source_offset=Some(*offset);}
+        (|| -> Result<()> {
         let constants = &scoped;
         match stmt {
             Stmt::Print { items } => {
@@ -1184,6 +1192,7 @@ fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules, ass
                 }
             }
             Stmt::Function { name,elemental,params, body, return_type, .. } => {
+                source_offset=body.iter().find_map(|s|if let Stmt::SourceLocation(pos)=s {Some(*pos)}else{None});
                 let inline=crate::elemental::inline_character(*elemental,name,params,return_type,body);
                 let local = resolve_scope(body, constants, params, modules, inline, false, inline)?;
                 if let Some(kind) = return_type { resolve_template_kind(kind, &local, inline)?; }
@@ -1201,6 +1210,8 @@ fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules, ass
             }
             _ => {}
         }
+        Ok(())
+        })().map_err(|error|crate::source_diagnostics::at(error,source_offset))?;
     }
     Ok(())
 }

@@ -42,7 +42,7 @@ fn protect_output(output: &Path, inputs: &[PathBuf]) -> Result<()> {
     Ok(())
 }
 
-fn combine(sources: &[PathBuf], output: &Path, inputs: &[PathBuf]) -> Result<()> {
+fn combine(sources: &[PathBuf], output: &Path, inputs: &[PathBuf]) -> Result<Vec<crate::source_diagnostics::SourceOrigin>> {
     protect_output(output, inputs)?;
     if output.exists() {
         let old = utils::read_file_to_string(output)?;
@@ -54,14 +54,17 @@ fn combine(sources: &[PathBuf], output: &Path, inputs: &[PathBuf]) -> Result<()>
         }
     }
     let mut text = format!("{MARKER}\n");
+    let mut origins=vec![];
     for source in sources {
         let source = source.canonicalize()?;
         text.push_str(&format!("! Source: {}\n", source.display()));
+        let start=text.len();
         text.push_str(&utils::read_file_to_string(&source)?);
+        origins.push(crate::source_diagnostics::SourceOrigin{name:source.display().to_string(),range:start..text.len()});
         text.push('\n');
     }
     fs::write(output, text).with_context(|| format!("writing {}", output.display()))?;
-    Ok(())
+    Ok(origins)
 }
 
 pub fn build(
@@ -121,8 +124,8 @@ pub fn build(
     }
     let mut has_program = false;
     if !sources.is_empty() {
-        let input = if sources.len() == 1 {
-            sources[0].clone()
+        let (input,origins) = if sources.len() == 1 {
+            (sources[0].clone(),None)
         } else {
             let combined = base.with_extension("f90c-sources.f90");
             if identity(&combined)? == identity(&exe)? || identity(&combined)? == identity(&object)?
@@ -132,8 +135,8 @@ pub fn build(
                     combined.display()
                 );
             }
-            combine(&sources, &combined, inputs)?;
-            combined
+            let origins=combine(&sources, &combined, inputs)?;
+            (combined,Some(origins))
         };
         if !cli.quiet {
             eprintln!("Compiling {} -> {}", input.display(), object.display());
@@ -145,6 +148,7 @@ pub fn build(
             cli.werror,
             cli,
             !objects.is_empty(),
+            origins.as_deref(),
         )?;
         has_program = artifact.has_program;
         objects.insert(0, artifact.object);

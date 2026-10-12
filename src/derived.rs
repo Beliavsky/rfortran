@@ -139,6 +139,7 @@ impl Lowerer {
                     let mut fields = vec![];
                     for c in components {
                         match c {
+                            Stmt::SourceLocation(_) => {},
                             Stmt::VarDecl { kind, names } => {
                                 for n in names {
                                     fields.push(Component {

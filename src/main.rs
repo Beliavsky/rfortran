@@ -8,6 +8,7 @@ mod cli;
 mod driver;
 mod codegen;
 mod errors;
+mod source_diagnostics;
 mod ir;
 mod intrinsics;
 mod bit_intrinsics;
@@ -163,7 +164,7 @@ fn main() -> Result<()> {
                     }
                 }
             };
-            let program = sections::resolve(reductions::resolve(array_calls::resolve(parameters::resolve(derived::resolve(program)?)?)?)?)?;
+            let program = lower_program(program, &src, &tokens, input.to_str().unwrap_or("<unknown>"), None)?;
             let empty_obj_exports = std::collections::HashSet::new();
             let sema_errs = sema::analyze_with_src(
                 &program,
@@ -196,7 +197,7 @@ fn main() -> Result<()> {
             driver::build(&inputs, out.or_else(|| args.out.clone()), run || args.run, false, &args)?;
         }
         cli::Command::EmitObj { input, out } => {
-            let art = compile_to_object(&input, &out, args.wall, args.werror, &args, false)?;
+            let art = compile_to_object(&input, &out, args.wall, args.werror, &args, false, None)?;
             if !args.quiet {
                 println!("Wrote object: {}", art.object.display());
             }
@@ -221,7 +222,7 @@ fn main() -> Result<()> {
                     anyhow::bail!("parse failed");
                 }
             };
-            let program = sections::resolve(reductions::resolve(array_calls::resolve(parameters::resolve(derived::resolve(program)?)?)?)?)?;
+            let program = lower_program(program, &src, &tokens, input.to_str().unwrap_or("<unknown>"), None)?;
             let empty_obj_exports = std::collections::HashSet::new();
             let sema_errs = sema::analyze_with_src(
                 &program,
@@ -253,6 +254,21 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+fn lower_program(
+    program: ast::Program,
+    src: &str,
+    tokens: &[lexer::Token],
+    filename: &str,
+    origins: Option<&[source_diagnostics::SourceOrigin]>,
+) -> Result<ast::Program> {
+    (|| {
+        sections::resolve(reductions::resolve(array_calls::resolve(
+            parameters::resolve(derived::resolve(program)?)?,
+        )?)?)
+    })()
+    .map_err(|error| source_diagnostics::report(error, src, tokens, filename, origins))
+}
+
 fn compile_to_object(
     input: &std::path::Path,
     out: &std::path::Path,
@@ -260,6 +276,7 @@ fn compile_to_object(
     werror: bool,
     args: &cli::Cli,
     allow_undefined: bool,
+    origins: Option<&[source_diagnostics::SourceOrigin]>,
 ) -> Result<BuildArtifact> {
     let src = utils::read_file_to_string(input)?;
     let tokens = lexer::lex(&src);
@@ -277,7 +294,7 @@ fn compile_to_object(
             return Err(anyhow::anyhow!("parse failed"));
         }
     };
-    let program = sections::resolve(reductions::resolve(array_calls::resolve(parameters::resolve(derived::resolve(program)?)?)?)?)?;
+    let program = lower_program(program, &src, &tokens, input.to_str().unwrap_or("<unknown>"), origins)?;
     let empty_obj_exports = std::collections::HashSet::new();
     let sema_errs = sema::analyze_with_src(
         &program,
