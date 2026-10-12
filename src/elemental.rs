@@ -17,7 +17,7 @@ pub fn result_kind(name: &str, declared: &Option<TypeSpec>, body: &[Stmt]) -> Op
     };
     body.iter().find_map(|s| match s {
         Stmt::VarDecl { kind, names } if names.iter().any(|n| n == result) => Some(kind.clone()),
-        Stmt::ArrayDecl {kind,name,..} if name==result && matches!(kind,TypeSpec::Character(_)|TypeSpec::CharacterLength(_)|TypeSpec::CharacterAssumed)=>Some(kind.clone()),
+        Stmt::ArrayDecl {kind,name,..} if name==result=>Some(kind.clone()),
         _ => None,
     })
 }
@@ -54,8 +54,19 @@ pub(crate) fn inline_character(
             TypeSpec::Character(_) | TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed
         )
     };
+    let result = match body.last() {
+        Some(Stmt::Return(Some(Expr::Ident(n)))) => n.as_str(),
+        _ => name,
+    };
+    // Array results with CHARACTER inputs also need call-site specialization:
+    // the numeric scalar ABI cannot carry the string or its assumed length.
+    let array_result = body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,..} if name==result));
     result_kind(name,declared,body).as_ref().is_some_and(character)
-        || (elemental && body.iter().any(|s|matches!(s,Stmt::VarDecl{kind,names} if character(kind)&&names.iter().any(|n|params.contains(n)))))
+        || ((elemental || array_result) && body.iter().any(|s| match s {
+            Stmt::VarDecl {kind,names} => character(kind)&&names.iter().any(|n|params.contains(n)),
+            Stmt::ArrayDecl {kind,name,..} => character(kind)&&params.contains(name),
+            _ => false,
+        }))
 }
 
 pub fn validate_subroutine(name: &str, params: &[String], body: &[Stmt]) -> Result<()> {

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Beliavsky
 // See LICENSE-MIT in the repository root.
 
-//! Specialize scalar CHARACTER function calls and CHARACTER elemental calls. Results
+//! Specialize functions with CHARACTER results or array results and CHARACTER inputs. Results
 //! use caller-owned local buffers, keeping the numeric object ABI unchanged.
 use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Context, Result};
@@ -412,9 +412,9 @@ impl Lower {
         let result_dims=specialized.iter().find_map(|s|if let Stmt::ArrayDecl{name,dims,..}=s {if name==&routine.result {Some(dims.clone())} else {None}} else {None});
         if let Some(dims)=&result_dims {
             if routine.elemental {bail!("ELEMENTAL function requires a scalar result");}
-            if dims.len()!=1 {bail!("CHARACTER function array results currently require rank one");}
-            let count=crate::parameters::integer_constant(&dims[0]).context("CHARACTER function result extent must resolve to a call-site constant")?;
-            if !(0..=1024).contains(&count) {bail!("CHARACTER function array results support at most 1024 elements");}
+            if dims.len()!=1 {bail!("specialized function array results currently require rank one");}
+            let count=crate::parameters::integer_constant(&dims[0]).context("specialized function result extent must resolve to a call-site constant")?;
+            if !(0..=1024).contains(&count) {bail!("specialized function array results support at most 1024 elements");}
         }
         let result_kind = self.call_kind(&routine, &views, &constants)?;
         for i in 0..count.unwrap_or(1) {

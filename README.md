@@ -195,6 +195,18 @@ formatted output, LEN/SIZE inquiries, nested calls, and early RETURN.
 for interpreter/native O0/O2 checks and gfortran comparisons, including empty
 arrays, zero element lengths, input sections, and overlapping FORALL assignment.
 
+Functions returning numeric or LOGICAL rank-one arrays can use the same
+specialization when they have CHARACTER input dummies. Assumed CHARACTER
+lengths bind to each actual argument, including strings read at runtime;
+the result extent must still be known at the call site. Read-only rank-one
+array inputs, named and nested calls, empty arrays, and early RETURN are
+supported with the limits above. This does not add a separate-object CHARACTER
+argument ABI or multidimensional array results.
+`tests/149_numeric_array_character_arg.f90` reproduces the `position` argument
+blocker from `util.f90:combine_vec_mat_real` with a rank-one result.
+Run `python tests/test_numeric_array_character_arg.py` for interpreter/native
+O0/O2 checks and gfortran comparisons.
+
 ## Elemental function results
 
 ELEMENTAL functions support explicitly declared numeric, LOGICAL, and CHARACTER

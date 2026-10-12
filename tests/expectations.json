@@ -1035,6 +1035,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 'a-1' 'b-1' 'a-2' 'b-2'\n"
+    },
+    "149_numeric_array_character_arg": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "   1.0   2.0\n  -1.0  -2.0\n"
     }
   }
 }
