@@ -363,11 +363,13 @@ Stmt: Stmt = {
     KW_ALLOCATE LPAREN <args: CallArgList> RPAREN => Stmt::CallSub { name: "@allocate".into(), args },
     KW_DEALLOCATE LPAREN <args: CallArgList> RPAREN => Stmt::CallSub { name: "@deallocate".into(), args },
     KW_NULLIFY LPAREN <args:CallArgList> RPAREN => Stmt::CallSub{name:"@nullify".into(),args},
-    KW_WRITE LPAREN <unit:WriteUnit> COMMA <fmt:WriteFormat> <options:(COMMA <WriteOption>)*> RPAREN <items:ExprList> => {
-        let mut args=vec![unit,fmt];args.extend(options);args.extend(items);Stmt::CallSub{name:"@write".into(),args}
+    KW_WRITE LPAREN <controls:WriteControls> RPAREN <items:ExprList> =>? {
+        crate::output::write_controls(controls,items)
+            .map_err(|error|lalrpop_util::ParseError::User {error})
     },
-    KW_WRITE_EMPTY LPAREN <unit:WriteUnit> COMMA <fmt:WriteFormat> <options:(COMMA <WriteOption>)*> RPAREN =>
-        { let mut args=vec![unit,fmt];args.extend(options);Stmt::CallSub{name:"@write".into(),args} },
+    KW_WRITE_EMPTY LPAREN <controls:WriteControls> RPAREN =>?
+        crate::output::write_controls(controls,vec![])
+            .map_err(|error|lalrpop_util::ParseError::User {error}),
     KW_PRINT <fmt: RhsExpr> COMMA <items: ExprList> => { let mut args = vec![fmt]; args.extend(items); Stmt::CallSub { name: "@formatted_print".into(), args } },
     KW_PUBLIC => Stmt::Accessibility { public: true, names: vec![] },
     KW_PRIVATE => Stmt::Accessibility { public: false, names: vec![] },
@@ -628,9 +630,14 @@ Primary: Expr = {
     },
 };
 
-WriteUnit: Expr = { STAR => Expr::IntLit("6".into()), <unit:RhsExpr> => unit };
-WriteOption: Expr = { <name:Ident> EQ <value:RhsExpr> => Expr::Call(format!("@write_option:{name}"), vec![value]) };
-WriteFormat: Expr = { STAR => Expr::Call("@list_directed".into(), vec![]), <fmt:RhsExpr> => fmt };
+WriteControls: Vec<Expr> = { <first:WriteControl> <rest:(COMMA <WriteControl>)*> => {
+    let mut args=vec![first];args.extend(rest);args
+} };
+WriteControl: Expr = {
+    <name:Ident> EQ <value:WriteValue> => Expr::Call(format!("@write_control:{name}"),vec![value]),
+    <value:WriteValue> => value,
+};
+WriteValue: Expr = { STAR => Expr::Call("@write_star".into(),vec![]), <value:RhsExpr> => value };
 
 ForallControls: Vec<Expr> = {
     <first:ForallControl> <rest:(COMMA <ForallControl>)*> => {

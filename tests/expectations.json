@@ -958,6 +958,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 4 1 1 28\n -1 3 5\n"
+    },
+    "138_write_controls": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "value 7\nnext 8\njoinedend\n 9\n\n"
     }
   }
 }

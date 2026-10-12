@@ -7,6 +7,89 @@ use crate::ast::{BinOp, Expr, Stmt, TypeSpec, UnOp};
 use anyhow::{bail, Result};
 use std::collections::HashMap;
 
+/// Normalize positional/named controls once, so all later passes see the
+/// existing UNIT, FMT, options, items layout (including reordered keywords).
+pub(crate) fn write_controls(
+    controls: Vec<Expr>,
+    items: Vec<Expr>,
+) -> std::result::Result<Stmt, &'static str> {
+    let mut unit = None;
+    let mut format = None;
+    let mut options = vec![];
+    let mut keywords = std::collections::HashSet::new();
+    let mut named = false;
+    for (position, control) in controls.into_iter().enumerate() {
+        let (key, value) = if let Expr::Call(name, args) = &control {
+            if let Some(key) = name.strip_prefix("@write_control:") {
+                named = true;
+                (key.to_ascii_lowercase(), args[0].clone())
+            } else {
+                if named {
+                    return Err("positional WRITE controls must precede named controls");
+                }
+                (
+                    match position {
+                        0 => "unit",
+                        1 => "fmt",
+                        _ => return Err("only UNIT and FMT may be positional in WRITE"),
+                    }
+                    .into(),
+                    control,
+                )
+            }
+        } else {
+            if named {
+                return Err("positional WRITE controls must precede named controls");
+            }
+            (
+                match position {
+                    0 => "unit",
+                    1 => "fmt",
+                    _ => return Err("only UNIT and FMT may be positional in WRITE"),
+                }
+                .into(),
+                control,
+            )
+        };
+        if !keywords.insert(key.clone()) {
+            return Err("duplicate WRITE control specifier");
+        }
+        let star = matches!(&value,Expr::Call(n,_) if n=="@write_star");
+        match key.as_str() {
+            "unit" => {
+                unit = Some(if star {
+                    Expr::IntLit("6".into())
+                } else {
+                    value
+                })
+            }
+            "fmt" => {
+                format = Some(if star {
+                    Expr::Call("@list_directed".into(), vec![])
+                } else {
+                    value
+                })
+            }
+            _ => {
+                if star {
+                    return Err("only WRITE UNIT and FMT may use '*'");
+                }
+                options.push(Expr::Call(format!("@write_option:{key}"), vec![value]));
+            }
+        }
+    }
+    let mut args = vec![
+        unit.ok_or("WRITE requires UNIT")?,
+        format.ok_or("WRITE currently requires FMT")?,
+    ];
+    args.extend(options);
+    args.extend(items);
+    Ok(Stmt::CallSub {
+        name: "@write".into(),
+        args,
+    })
+}
+
 type Symbols = HashMap<String, (TypeSpec, Vec<Expr>)>;
 fn int(n: i64) -> Expr {
     Expr::IntLit(n.to_string())

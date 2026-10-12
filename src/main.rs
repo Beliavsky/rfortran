@@ -215,10 +215,7 @@ fn main() -> Result<()> {
                     for e in &errs {
                         eprintln!("{}", e);
                     }
-                    crate::ast::Program {
-                        name: "<error>".into(),
-                        body: vec![],
-                    }
+                    anyhow::bail!("parse failed");
                 }
             };
             let program = sections::resolve(reductions::resolve(array_calls::resolve(parameters::resolve(derived::resolve(program)?)?)?)?)?;

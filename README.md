@@ -246,6 +246,15 @@ quoted literals, `nX` spacing, and `/` record breaks. Runtime formats are checke
 for syntax, descriptor counts, and item types before the statement prints.
 Uninitialized format variables use the usual initialization checks.
 
+WRITE controls may be positional or named: `WRITE(*,FMT=fmt)` and
+`WRITE(UNIT=6,FMT=fmt)` use the same format path. Named UNIT, FMT, and ADVANCE
+controls may be reordered; positional controls must precede named controls.
+Duplicate controls and missing UNIT/FMT are rejected. This also covers empty
+output lists, list-directed output implied-DOs, and the supported scratch-file
+output subset. Formatted implied-DO output remains unsupported.
+Run `python tests/test_write_controls.py` for interpreter/native O0/O2 checks
+with gfortran comparisons; `tests/138_write_controls.f90` is in the Cargo suite.
+
 Formatted WRITE accepts `ADVANCE='no'` to continue on the same output line and
 `ADVANCE='yes'` for the default behavior. ADVANCE must be a constant CHARACTER
 expression (named parameters and concatenation are accepted). Nonadvancing
@@ -949,6 +958,7 @@ python tests/test_driver.py
 python tests/test_record_read.py
 python tests/test_runtime_read_format.py
 python tests/test_named_loops.py
+python tests/test_write_controls.py
 python tests/test_empty_read.py
 python tests/test_statement_labels.py
 python tests/test_unnamed_procedure_ends.py
