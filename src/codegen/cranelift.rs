@@ -2451,6 +2451,40 @@ fn gen_stmts(
                     read_record(module,b,ptr_ty,dc,pointer,length,file)?;
                     continue;
                 }
+                if name=="@format_begin" {
+                    let IExpr::Ident(dest)=&args[0] else {anyhow::bail!("invalid formatted output list");};
+                    let format=characters::view(module,b,ptr_ty,dc,chars,ints,&args[1])?;
+                    let advance=eval_expr(b,ex,ptr_ty,&args[2],ints,reals,bools,func_meta);
+                    let advance=to_i64(b,advance);let advance=b.ins().ireduce(types::I32,advance);
+                    let handle=file_io::call(module,b,"rfort_format_begin",&[format.address,format.length,advance],ptr_ty)?;
+                    let handle=if ptr_ty==types::I64 {handle} else {b.ins().uextend(types::I64,handle)};
+                    let storage=ints.get(dest).ok_or_else(||anyhow::anyhow!("formatted output list requires INTEGER storage"))?;
+                    let address=storage_addr(b,ptr_ty,*storage);b.ins().store(MemFlags::new(),handle,address,0);
+                    continue;
+                }
+                if name=="@format_item" || name=="@format_end" {
+                    let handle=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);
+                    let handle=to_i64(b,handle);let handle=if ptr_ty==types::I64 {handle} else {b.ins().ireduce(ptr_ty,handle)};
+                    if name=="@format_end" {file_io::call(module,b,"rfort_format_end",&[handle],types::I32)?;}
+                    else {
+                        let (tag,bits,length)=if let Ok(view)=characters::view(module,b,ptr_ty,dc,chars,ints,&args[1]) {
+                            let bits=if ptr_ty==types::I64 {view.address} else {b.ins().uextend(types::I64,view.address)};
+                            let length=if ptr_ty==types::I64 {view.length} else {b.ins().uextend(types::I64,view.length)};
+                            (4,bits,length)
+                        } else {
+                            let value=eval_expr(b,ex,ptr_ty,&args[1],ints,reals,bools,func_meta);
+                            let (tag,bits)=match value {
+                                CgVal::I64(v)=>(1,v),
+                                CgVal::F64(v)=>(2,b.ins().bitcast(types::I64,MemFlags::new(),v)),
+                                CgVal::Bool(v)=>(3,b.ins().uextend(types::I64,v)),
+                            };
+                            (tag,bits,b.ins().iconst(types::I64,0))
+                        };
+                        let tag=b.ins().iconst(types::I64,tag);
+                        file_io::call(module,b,"rfort_format_push",&[handle,tag,bits,length],types::I32)?;
+                    }
+                    continue;
+                }
                 if name == "@formatted_print" || name == "@formatted_write_noadvance" {
                     let format = characters::view(module,b,ptr_ty,dc,chars,ints,&args[0])?;
                     let count = args.len()-1;

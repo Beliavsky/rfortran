@@ -7,9 +7,12 @@
 mod format_spec;
 mod record_input;
 mod character_input;
-use format_spec::Parser;
+use format_spec::GroupParser;
 
 extern "C" {
+    fn malloc(size:usize)->*mut core::ffi::c_void;
+    fn realloc(pointer:*mut core::ffi::c_void,size:usize)->*mut core::ffi::c_void;
+    fn free(pointer:*mut core::ffi::c_void);
     fn fgetc(stream: *mut core::ffi::c_void) -> i32;
     fn ferror(stream: *mut core::ffi::c_void) -> i32;
     fn tmpfile() -> *mut core::ffi::c_void;
@@ -129,10 +132,55 @@ fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
 
 // Fixed 24-byte layout also used by the Cranelift call site.
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct Item {
     tag: u64,
     bits: u64,
     length: u64,
+}
+struct OutputList {format:*mut u8,length:usize,items:*mut Item,count:usize,capacity:usize,advance:i32}
+unsafe fn allocate(size:usize)->*mut u8 {
+    let pointer=malloc(size.max(1)) as *mut u8;
+    if pointer.is_null() {fail("cannot allocate formatted output list");}
+    pointer
+}
+#[no_mangle]
+pub unsafe extern "C" fn rfort_format_begin(format:*const u8,length:usize,advance:i32)->*mut core::ffi::c_void {
+    let copy=allocate(length);core::ptr::copy_nonoverlapping(format,copy,length);
+    let items=allocate(core::mem::size_of::<Item>()) as *mut Item;
+    let list=allocate(core::mem::size_of::<OutputList>()) as *mut OutputList;
+    list.write(OutputList {format:copy,length,items,count:0,capacity:1,advance});
+    list.cast()
+}
+#[no_mangle]
+pub unsafe extern "C" fn rfort_format_push(list:*mut core::ffi::c_void,tag:u64,mut bits:u64,length:u64)->i32 {
+    let list=&mut *list.cast::<OutputList>();
+    if list.count==list.capacity {
+        let capacity=list.capacity.checked_mul(2).unwrap_or_else(||fail("formatted output list is too large"));
+        let size=capacity.checked_mul(core::mem::size_of::<Item>()).unwrap_or_else(||fail("formatted output list is too large"));
+        let items=realloc(list.items.cast(),size) as *mut Item;
+        if items.is_null() {fail("cannot allocate formatted output list");}
+        list.items=items;list.capacity=capacity;
+    }
+    if tag==4 {
+        let length=usize::try_from(length).unwrap_or_else(|_|fail("formatted output item is too large"));
+        let copy=allocate(length.checked_add(1).unwrap_or_else(||fail("formatted output item is too large")));
+        core::ptr::copy_nonoverlapping(bits as usize as *const u8,copy,length);
+        *copy.add(length)=0;bits=copy as usize as u64;
+    }
+    list.items.add(list.count).write(Item {tag,bits,length});list.count+=1;
+    0
+}
+#[no_mangle]
+pub unsafe extern "C" fn rfort_format_end(pointer:*mut core::ffi::c_void)->i32 {
+    let list=&*pointer.cast::<OutputList>();
+    rfort_formatted_write(list.format,list.length,list.items,list.count,list.advance);
+    for i in 0..list.count {
+        let item=&*list.items.add(i);
+        if item.tag==4 {free(item.bits as usize as *mut core::ffi::c_void);}
+    }
+    free(list.items.cast());free(list.format.cast());free(pointer);
+    0
 }
 fn checked<T>(result: Result<T, &'static str>) -> T {
     match result {
@@ -154,7 +202,7 @@ pub unsafe extern "C" fn rfort_formatted_write(
     let bytes = core::slice::from_raw_parts(format, length);
     let items = core::slice::from_raw_parts(items, count);
     // Validate the entire statement before writing any output.
-    let mut parser = checked(Parser::new(bytes));
+    let mut parser = checked(GroupParser::new(bytes,count));
     let mut index = 0;
     while let Some(d) = checked(parser.next()) {
         if matches!(d.code, b'a' | b'i' | b'f' | b'l') {
@@ -172,7 +220,7 @@ pub unsafe extern "C" fn rfort_formatted_write(
     if index != count {
         fail("format descriptor count must match the output list; format reversion is not yet supported");
     }
-    let mut parser = checked(Parser::new(bytes));
+    let mut parser = checked(GroupParser::new(bytes,count));
     index = 0;
     while let Some(d) = checked(parser.next()) {
         for _ in 0..d.repeat {

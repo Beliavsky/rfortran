@@ -59,7 +59,7 @@ end program main
                     ("(999999999999999999999999i1)", "supported limits"),
                     ("('unterminated)", "unterminated literal"),
                     ("(i3,f6,l2,a4)", "precision"),
-                    ("(2(i3))", "unsupported output descriptor"),
+                    ("(2(i3)", "unterminated output format group"),
                     ("(i3,f6.2,l2,a4) trailing", "parenthesized"),
                 ]:
                     with self.subTest(command=command, fmt=fmt):

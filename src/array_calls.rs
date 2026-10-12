@@ -1340,6 +1340,7 @@ fn expand(
     Ok(())
 }
 pub fn resolve(mut p: Program) -> Result<Program> {
+    p=crate::output::prepare_formatted(p)?;
     p = crate::optional::resolve(p)?;
     p = crate::pointers::prepare(p)?;
     p = crate::allocatables::prepare(p)?;

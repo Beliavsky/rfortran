@@ -172,6 +172,7 @@ pub fn lower(items: &[Expr], symbols: &Symbols, serial: &mut usize) -> Result<St
         &previous,
         &mut Vec::new(),
         &mut body,
+        None,
     )?;
     body.push(Stmt::Print { items: vec![] });
     Ok(Stmt::Block { body })
@@ -184,6 +185,7 @@ fn emit(
     previous: &str,
     active: &mut Vec<String>,
     body: &mut Vec<Stmt>,
+    session: Option<&str>,
 ) -> Result<()> {
     for item in items {
         if let Expr::Call(tag, args) = item {
@@ -228,7 +230,15 @@ fn emit(
                 body.push(assign(var, id(&first)));
                 active.push(var.clone());
                 let mut inner = Vec::new();
-                emit(&args[4..], symbols, serial, previous, active, &mut inner)?;
+                emit(
+                    &args[4..],
+                    symbols,
+                    serial,
+                    previous,
+                    active,
+                    &mut inner,
+                    session,
+                )?;
                 active.pop();
                 // Avoid wrapping the final increment into an infinite loop at i64 limits.
                 let overflow = vec![Stmt::CallSub {
@@ -287,7 +297,12 @@ fn emit(
             .map(|(n, (_, dims))| (n.clone(), dims.clone()))
             .collect();
         let mut expanded = Vec::new();
-        crate::sections::expand(item.clone(), &arrays, &mut expanded)?;
+        if matches!(item,Expr::Section {name,..} if matches!(symbols.get(name),Some((TypeSpec::Character(_),dims)) if dims.is_empty()))
+        {
+            expanded.push(item.clone());
+        } else {
+            crate::sections::expand(item.clone(), &arrays, &mut expanded)?;
+        }
         // Whole arrays and sections keep their existing element order.
         let mut scalars = Vec::new();
         for e in expanded {
@@ -306,6 +321,13 @@ fn emit(
             scalars.push(e);
         }
         for e in scalars {
+            if let Some(session) = session {
+                body.push(Stmt::CallSub {
+                    name: "@format_item".into(),
+                    args: vec![id(session), e],
+                });
+                continue;
+            }
             let is_character = character(&e, symbols);
             let space = fragment(Expr::Str(" ".into()));
             body.push(if is_character {
@@ -322,4 +344,126 @@ fn emit(
         }
     }
     Ok(())
+}
+
+/// Expand formatted implied-DOs before CHARACTER arrays become scalar slots.
+/// Each value is copied into a statement-local list, then formatted together.
+pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> Result<crate::ast::Program> {
+    fn scope(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> Result<()> {
+        let mut symbols = inherited.clone();
+        for stmt in body.iter() {
+            match stmt {
+                Stmt::VarDecl { kind, names } => {
+                    for n in names {
+                        symbols.insert(n.clone(), (kind.clone(), vec![]));
+                    }
+                }
+                Stmt::ArrayDecl { kind, name, dims } => {
+                    symbols.insert(name.clone(), (kind.clone(), dims.clone()));
+                }
+                _ => {}
+            }
+        }
+        for stmt in body.iter_mut() {
+            let selected = if let Stmt::CallSub { name, args } = stmt {
+                if matches!(
+                    name.as_str(),
+                    "@formatted_print" | "@formatted_write_noadvance"
+                ) && args[1..].iter().any(contains_implied_do)
+                {
+                    Some((
+                        args[0].clone(),
+                        args[1..].to_vec(),
+                        name == "@formatted_print",
+                    ))
+                } else if name == "@write"
+                    && crate::parameters::integer_constant(&args[0]).ok() == Some(6)
+                    && args[2..].iter().any(contains_implied_do)
+                    && !matches!(&args[1],Expr::Call(n,_) if n=="@list_directed")
+                {
+                    let mut first = 2;
+                    let mut advance = true;
+                    while let Some(Expr::Call(n, a)) = args.get(first) {
+                        let Some(option) = n.strip_prefix("@write_option:") else {
+                            break;
+                        };
+                        if option != "advance" {
+                            bail!("unsupported WRITE control `{option}`");
+                        }
+                        let value = crate::parameters::character_constant(&a[0])?;
+                        advance = match value.trim_end().to_ascii_lowercase().as_str() {
+                            "yes" => true,
+                            "no" => false,
+                            _ => bail!("ADVANCE must be 'yes' or 'no'"),
+                        };
+                        first += 1;
+                    }
+                    Some((args[1].clone(), args[first..].to_vec(), advance))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            if let Some((format, items, advance)) = selected {
+                *serial += 1;
+                let handle = format!("@formatted_list_{serial}");
+                let mut inner = vec![
+                    Stmt::VarDecl {
+                        kind: TypeSpec::Integer(Some(8)),
+                        names: vec![handle.clone()],
+                    },
+                    Stmt::CallSub {
+                        name: "@format_begin".into(),
+                        args: vec![id(&handle), format, int(i64::from(advance))],
+                    },
+                ];
+                emit(
+                    &items,
+                    &symbols,
+                    serial,
+                    "",
+                    &mut Vec::new(),
+                    &mut inner,
+                    Some(&handle),
+                )?;
+                inner.push(Stmt::CallSub {
+                    name: "@format_end".into(),
+                    args: vec![id(&handle)],
+                });
+                *stmt = Stmt::Block { body: inner };
+                continue;
+            }
+            match stmt {
+                Stmt::Do { body, .. }
+                | Stmt::DoWhile { body, .. }
+                | Stmt::Block { body }
+                | Stmt::Function { body, .. }
+                | Stmt::Subroutine { body, .. }
+                | Stmt::Module { body, .. } => scope(body, &symbols, serial)?,
+                Stmt::If {
+                    then_body,
+                    else_body,
+                    ..
+                } => {
+                    scope(then_body, &symbols, serial)?;
+                    if let Some(b) = else_body {
+                        scope(b, &symbols, serial)?;
+                    }
+                }
+                Stmt::SelectCase { cases, default, .. } => {
+                    for c in cases {
+                        scope(&mut c.body, &symbols, serial)?;
+                    }
+                    if let Some(b) = default {
+                        scope(b, &symbols, serial)?;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+    scope(&mut program.body, &Symbols::new(), &mut 0)?;
+    Ok(program)
 }

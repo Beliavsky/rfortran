@@ -965,6 +965,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": "value 7\nnext 8\njoinedend\n 9\n\n"
+    },
+    "139_formatted_implied_do": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " alice bob cathy\n alice bob cathy\n"
     }
   }
 }

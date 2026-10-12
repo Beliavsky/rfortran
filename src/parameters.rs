@@ -645,6 +645,17 @@ fn constructor_items(items: &[Expr], constants: &Constants, output: &mut Vec<Exp
 }
 
 fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
+    if let Expr::Call(name,args)=expr {
+        if name=="@typed_character_constructor" {
+            let mut length=args[0].clone();rewrite_expr(&mut length,constants)?;
+            let length=usize::try_from(integer_constant(&length)?.max(0)).context("CHARACTER constructor length exceeds supported limits")?;
+            let mut items=Vec::new();constructor_items(&args[1..],constants,&mut items,&mut 4096)?;
+            let items=items.iter().map(|e|character_parameter(e,&TypeSpec::Character(Some(length))))
+                .collect::<Result<Vec<_>>>().context("typed CHARACTER constructor currently requires constant CHARACTER elements")?;
+            *expr=Expr::Call("@array_constructor".into(),items);
+            return Ok(());
+        }
+    }
     if let Expr::Call(name, args) = expr {
         if matches!(name.as_str(),"minloc" | "maxloc" | "findloc") {
             let find = name == "findloc";

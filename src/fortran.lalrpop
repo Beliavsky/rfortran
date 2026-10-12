@@ -609,6 +609,9 @@ UnaryExpr: Expr = {
 
 Primary: Expr = {
     LBRACKET <items: ExprList> RBRACKET => Expr::Call("@array_constructor".into(), items),
+    LBRACKET KW_CHARACTER LPAREN <length:CharacterConstructorLength> RPAREN DCOLON <items:ExprList> RBRACKET => {
+        let mut args=vec![length];args.extend(items);Expr::Call("@typed_character_constructor".into(),args)
+    },
     <n: INT> => Expr::IntLit(n),
     <f: FLOAT> => Expr::RealLit(f),
     <s: STR> => Expr::Str(s),
@@ -834,3 +837,4 @@ DoLoop: Stmt = {
 };
 
 LoopEnd: () = { KW_END KW_DO => (), KW_ENDDO => () };
+CharacterConstructorLength: Expr = { KW_LEN EQ <e:RhsExpr> => e, <e:RhsExpr> => e };

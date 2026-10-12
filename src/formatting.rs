@@ -12,7 +12,7 @@ pub struct Field {
     pub literal: Option<String>,
 }
 pub fn parse(format: &str, count: usize) -> Result<Vec<Field>> {
-    let mut parser = crate::format_spec::Parser::new(format.as_bytes()).map_err(anyhow::Error::msg)?;
+    let mut parser = crate::format_spec::GroupParser::new(format.as_bytes(),count).map_err(anyhow::Error::msg)?;
     let mut fields = Vec::new();
     while let Some(d) = parser.next().map_err(anyhow::Error::msg)? {
         let literal = match d.code {

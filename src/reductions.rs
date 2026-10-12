@@ -1015,6 +1015,14 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
             }
         }
         if let Stmt::CallSub {name,args}=&stmt {
+            if name=="@format_begin" {
+                if !matches!(crate::array_calls::scalar_actual_kind(&args[1],&symbols.variables)?,TypeSpec::Character(_)) {
+                    bail!("WRITE/PRINT format must be scalar CHARACTER");
+                }
+                if let Ok(format)=crate::parameters::character_constant(&args[1]) {
+                    crate::format_spec::GroupParser::new(format.as_bytes(),0).map_err(anyhow::Error::msg)?;
+                }
+            }
             if name=="@write" {
                 if crate::parameters::integer_constant(&args[0]).ok()!=Some(6) {
                     crate::file_io::unit(&args[0], &symbols.variables)?;

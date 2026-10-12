@@ -241,7 +241,7 @@ scalar assignment is described below.
 WRITE and PRINT accept scalar CHARACTER format expressions: literals, named
 PARAMETERs, variables (including formats read from input), concatenation, and
 TRIM. WRITE supports standard output (`*` or constant unit 6), with or without
-an output list. Supported flat formats use A, I, F, L descriptors, repeat counts,
+an output list. Supported formats use A, I, F, L descriptors, repeat counts,
 quoted literals, `nX` spacing, and `/` record breaks. Runtime formats are checked
 for syntax, descriptor counts, and item types before the statement prints.
 Uninitialized format variables use the usual initialization checks.
@@ -251,7 +251,7 @@ WRITE controls may be positional or named: `WRITE(*,FMT=fmt)` and
 controls may be reordered; positional controls must precede named controls.
 Duplicate controls and missing UNIT/FMT are rejected. This also covers empty
 output lists, list-directed output implied-DOs, and the supported scratch-file
-output subset. Formatted implied-DO output remains unsupported.
+output subset.
 Run `python tests/test_write_controls.py` for interpreter/native O0/O2 checks
 with gfortran comparisons; `tests/138_write_controls.f90` is in the Cargo suite.
 
@@ -262,9 +262,23 @@ writes flush stdout, so prompts appear before a following READ. A final
 nonadvancing write leaves stdout without an added newline, including at STOP.
 ADVANCE cannot be used with list-directed (`*`) formats.
 
-Output items must be scalar; existing CHARACTER procedure-argument limitations
-remain. Numeric format labels, nested format groups,
-format reversion, and runtime ADVANCE values are not yet supported. The existing limits of
+Formatted PRINT/WRITE to standard output support nested implied-DO lists with
+runtime INTEGER bounds and positive/negative steps. Controls are evaluated once
+on entry to each implied-DO. Transfer values, including CHARACTER substrings,
+are copied into a statement-local list before formatting. Memory use scales
+with the list's item count and CHARACTER lengths.
+Finite nested format groups and a final unlimited-repeat group such as
+`(*(1x,a))` are supported. Unlimited groups require a data descriptor and repeat
+until the output list ends; finite formats retain the existing exact item-count
+requirement. Run `python tests/test_formatted_implied_do.py` for interpreter/native
+O0/O2 checks with gfortran comparisons. The Cargo suite includes
+`tests/139_formatted_implied_do.f90`.
+
+Transfer items inside implied-DOs must resolve to supported scalar values;
+existing CHARACTER procedure-argument limitations remain. Numeric format labels,
+format reversion, formatted implied-DOs to file/internal units, and runtime
+ADVANCE values are not yet supported. Format nesting is limited to 32 levels;
+the existing limits of
 256 for field width/precision and 10,000 for repeat counts apply.
 The native formatting runtime is written in Rust, built with the compiler,
 and embedded in `rfort`; no separate runtime installation is needed. Use
@@ -539,8 +553,8 @@ results are compared with gfortran when installed.
 Numeric/LOGICAL array constructors can be used in expressions and can contain
 fixed-shape array or section items, which are appended in array element order.
 Items must have matching element type and kind. Constructor temporaries preserve
-overlapping assignment semantics. CHARACTER and explicitly typed constructors
-remain outside this subset.
+overlapping assignment semantics. Explicitly typed numeric/LOGICAL constructors
+remain outside this subset; CHARACTER constructors use the subset described below.
 
 `RESHAPE(SOURCE, SHAPE, PAD, ORDER)` accepts numeric/LOGICAL array expressions
 and a constant SHAPE constructor, including zero extents. Optional PAD supplies
@@ -850,8 +864,10 @@ Local CHARACTER array subroutines can specialize fixed/assumed-length dummies
 to caller storage, including bounded allocatable outputs.
 Higher ranks, module CHARACTER array storage, CHARACTER
 array PARAMETERs and the other array transformational intrinsics remain outside
-this subset. Array constructors currently require equal-length CHARACTER
-literals (including substituted constants). Run
+this subset. Untyped constructors require equal-length CHARACTER literals
+(including substituted constants). Typed `[CHARACTER(LEN=n) :: ...]` constructors
+accept constant CHARACTER elements of different lengths and a constant length;
+elements are padded or truncated to that length before assignment. Run
 `python tests/test_character_arrays.py`.
 
 ## Vector subscripts
@@ -959,6 +975,7 @@ python tests/test_record_read.py
 python tests/test_runtime_read_format.py
 python tests/test_named_loops.py
 python tests/test_write_controls.py
+python tests/test_formatted_implied_do.py
 python tests/test_empty_read.py
 python tests/test_statement_labels.py
 python tests/test_unnamed_procedure_ends.py

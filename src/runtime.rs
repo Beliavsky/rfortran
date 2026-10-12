@@ -13,6 +13,12 @@ pub fn interpret(program: &Program) {
     RANDOM_STATE.with(|state| state.set(1));
     thread_local! { static FILES: std::cell::RefCell<crate::file_io::Files> = std::cell::RefCell::new(crate::file_io::Files::default()); }
     FILES.with(|files| *files.borrow_mut() = crate::file_io::Files::default());
+    thread_local! {
+        static OUTPUT_LISTS: std::cell::RefCell<HashMap<i64,(String,bool,Vec<Expr>)>> = std::cell::RefCell::new(HashMap::new());
+        static OUTPUT_SERIAL: std::cell::Cell<i64> = const {std::cell::Cell::new(0)};
+    }
+    OUTPUT_LISTS.with(|lists|lists.borrow_mut().clear());
+    OUTPUT_SERIAL.with(|serial|serial.set(0));
     fn io_result<T>(result: anyhow::Result<T>) -> T {
         match result { Ok(value)=>value, Err(error)=>{eprintln!("Runtime error: {error:#}");std::process::exit(1);} }
     }
@@ -1175,6 +1181,31 @@ pub fn interpret(program: &Program) {
                         input.truncate(length);
                         input.push_str(&" ".repeat(length-input.len()));
                         call_stack.last_mut().unwrap().env_str.insert(dest.clone(),input);
+                        idx+=1;continue;
+                    }
+                    if name=="@format_begin" {
+                        let Expr::Ident(dest)=&args[0] else {unreachable!()};
+                        let fr=call_stack.last().unwrap().clone();
+                        let format=eval_expr(&args[1],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).3.unwrap();
+                        let advance=eval_expr(&args[2],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap()!=0;
+                        let handle=OUTPUT_SERIAL.with(|serial|{let value=serial.get()+1;serial.set(value);value});
+                        OUTPUT_LISTS.with(|lists|lists.borrow_mut().insert(handle,(format,advance,vec![])));
+                        call_stack.last_mut().unwrap().env_int.insert(dest.clone(),handle);
+                        idx+=1;continue;
+                    }
+                    if name=="@format_item" || name=="@format_end" {
+                        let fr=call_stack.last().unwrap().clone();
+                        let handle=eval_expr(&args[0],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
+                        if name=="@format_item" {
+                            let value=eval_expr(&args[1],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack);
+                            let value=if let Some(s)=value.3 {Expr::Str(s)} else if let Some(b)=value.2 {Expr::Logical(b)}
+                                else if let Some(f)=value.1 {Expr::RealLit(format!("{f:.17e}"))} else {Expr::IntLit(value.0.unwrap().to_string())};
+                            OUTPUT_LISTS.with(|lists|lists.borrow_mut().get_mut(&handle).unwrap().2.push(value));
+                        } else {
+                            let (format,advance,items)=OUTPUT_LISTS.with(|lists|lists.borrow_mut().remove(&handle).unwrap());
+                            let mut args=vec![Expr::Str(format)];args.extend(items);
+                            exec_stmts(&[Stmt::CallSub {name:if advance {"@formatted_print"} else {"@formatted_write_noadvance"}.into(),args}],funcs,call_stack);
+                        }
                         idx+=1;continue;
                     }
                     if name == "@formatted_print" || name == "@formatted_write_noadvance" {

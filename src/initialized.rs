@@ -147,6 +147,11 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
         let mut before = Vec::new();
         let mut after = Vec::new();
         match &mut stmt {
+            Stmt::CallSub {name,args} if name=="@format_begin" => {
+                for arg in &args[1..] {read(arg,env,&mut before,serial)?;}
+                let Expr::Ident(dest)=&args[0] else {unreachable!()};
+                write(dest,None,env,&mut after,serial);
+            }
             Stmt::CallSub { name, args } if name == "@ptr_bind" => {
                 let Expr::Ident(target) = &args[3] else { bail!("invalid pointer storage binding"); };
                 let target=target.clone();

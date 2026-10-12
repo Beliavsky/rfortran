@@ -15,6 +15,9 @@ fn input_destinations(stmts: &[IStmt]) -> std::collections::HashSet<String> {
     let mut names = std::collections::HashSet::new();
     for stmt in stmts {
         match stmt {
+            IStmt::Call(name, args) if name == "@format_begin" => {
+                if let Some(IExpr::Ident(id))=args.first() {names.insert(id.clone());}
+            }
             IStmt::Call(name, args) if name == "@read_record_status" => {
                 for arg in &args[..2] { if let IExpr::Ident(id) = arg { names.insert(id.clone()); } }
             }
@@ -1581,7 +1584,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                 vec![IStmt::Read(optimized_vars)]
             }
             IStmt::Call(name, args) => {
-                if name.eq_ignore_ascii_case("random_number") || name == "@read_record" || name == "@read_record_status" || name == "@internal_read_byte" || name == "@character_assign" || name == "@character_length" {
+                if name.eq_ignore_ascii_case("random_number") || name == "@format_begin" || name == "@read_record" || name == "@read_record_status" || name == "@internal_read_byte" || name == "@character_assign" || name == "@character_length" {
                     return vec![IStmt::Call(name, args)];
                 }
                 let optimized_args = args
