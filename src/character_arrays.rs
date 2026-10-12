@@ -540,6 +540,19 @@ fn body(
                 }
                 *value = expanded(value.clone(), &arrays, serial, &mut output)?.expr();
             }
+            Stmt::CallSub { name, args } if matches!(name.as_str(),"@formatted_print"|"@formatted_write_noadvance"|"@write") => {
+                let mut first=if name=="@write" {2} else {1};
+                if name=="@write" {while matches!(args.get(first),Some(Expr::Call(n,_)) if n.starts_with("@write_option:")) {first+=1;}}
+                let mut values=vec![];
+                for (i,e) in std::mem::take(args).into_iter().enumerate() {
+                    match expanded(e,&arrays,serial,&mut output)? {
+                        Value::Scalar(e)=>values.push(e),
+                        Value::Array(items) if i>=first=>values.extend(items),
+                        Value::Array(_)=>bail!("formatted I/O controls require scalar values"),
+                    }
+                }
+                *args=values;
+            }
             Stmt::CallSub { name, args } => {
                 if name=="@internal_read" && matches!(args.get(3),Some(Expr::Call(n,_)|Expr::Index(n,_)) if arrays.contains_key(n)) {
                     bail!("internal READ currently requires a scalar CHARACTER destination, not an array element");

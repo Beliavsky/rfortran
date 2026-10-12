@@ -36,7 +36,7 @@ These are bounded implementations, not claims of full language support. Many
 array operations require statically known shapes, and procedure calls use
 specialization rather than a general Fortran descriptor ABI. Important gaps
 include runtime-dependent declaration bounds and explicit CHARACTER lengths, general
-allocatable/pointer and polymorphic behavior, CHARACTER-valued functions,
+allocatable/pointer and polymorphic behavior, general CHARACTER-valued functions,
 separately compiled module interfaces, and broad file I/O support. The feature
 notes below describe the supported forms and their restrictions.
 
@@ -109,6 +109,34 @@ wrapper-generated files are recognized and refreshed, while handwritten files
 and source inputs are protected from overwrite. A single source is compiled
 directly. The old `f90c-sources.ps1` helper is retained for legacy use; the
 native driver does not invoke it.
+
+## Elemental function results
+
+ELEMENTAL functions support explicitly declared numeric, LOGICAL, and CHARACTER
+scalar results and input dummies. CHARACTER results and CHARACTER input dummies
+are specialized into local buffers for each call. Assumed lengths follow the
+actual argument, and result lengths such as `len(a)+len(b)` resolve using those
+lengths. Fixed-length input dummies may consume the leading part of a longer
+actual. Assignments retain normal padding and truncation.
+
+Scalar calls, rank-one array constructors/variables/constant sections, scalar
+broadcasting, nested calls, named arguments, early RETURN, empty arrays, and
+formatted PRINT/WRITE are supported for CHARACTER elemental functions.
+Scalar actual expressions are evaluated once per array call; IMPURE element
+calls run in array element order. LOGICAL results also work with the existing
+numeric array expansion. Purity, INTENT(IN), shape compatibility, argument
+kinds, and uninitialized reads remain checked.
+
+CHARACTER lengths must be constant after specialization, and locals must be
+explicitly declared. Runtime-length actuals
+such as TRIM of a variable, higher-rank arrays in CHARACTER calls, optional
+function dummies, recursive CHARACTER calls, host-variable captures, internal
+procedures inside these functions, and CHARACTER calls in WHERE/FORALL remain
+unsupported and are diagnosed. This uses the compiler's existing fixed-size
+local CHARACTER storage, not a general CHARACTER function-result ABI.
+Run `python tests/test_character_elemental.py` for interpreter/native O0/O2
+checks with gfortran comparisons. The main suite includes
+`tests/143_character_elemental.f90`, matching `xchar_plus_char.f90`.
 
 ## Elemental subroutine setters
 
@@ -232,7 +260,8 @@ zero. LEN of a fixed-length scalar variable does not require it to be initialize
 Assignments pad with spaces or truncate to the declared length, including
 variable copies, concatenation, TRIM, and overlapping source/destination storage.
 This subset uses non-NUL ASCII. Fixed rank-one CHARACTER arrays are supported
-as described below. Runtime-dependent explicit lengths and CHARACTER-valued
+as described below. CHARACTER elemental functions use the specialization
+described above. Runtime-dependent explicit lengths and other CHARACTER-valued
 functions remain unsupported and produce diagnostics. Bounded deferred-length
 scalar assignment is described below.
 
@@ -1056,6 +1085,7 @@ python tests/test_runtime_formats.py
 python tests/test_nonadvancing_output.py
 python tests/test_elemental_setters.py
 python tests/test_impure_elemental.py
+python tests/test_character_elemental.py
 python tests/test_do_steps.py
 python tests/test_where.py
 python tests/test_explicit_bounds.py

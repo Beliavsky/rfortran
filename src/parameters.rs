@@ -276,11 +276,11 @@ pub(crate) fn resolve_constants(mut program: Program) -> Result<Program> {
             for s in body.iter() {
                 if let Stmt::Accessibility { public, names } = s { for n in names { exports.insert(n.to_ascii_lowercase(), *public); } }
             }
-            let constants = resolve_scope(body, &Constants::new(), &[], &modules, false, false)?;
+            let constants = resolve_scope(body, &Constants::new(), &[], &modules, false, false, false)?;
             modules.insert(name.to_ascii_lowercase(), constants.into_iter().filter(|(n, _)| exports.get(model_metadata_name(n)).copied().unwrap_or(default_public)).collect());
         }
     }
-    resolve_scope(&mut program.body, &Constants::new(), &[], &modules, false, true)?;
+    resolve_scope(&mut program.body, &Constants::new(), &[], &modules, false, true, false)?;
     Ok(program)
 }
 
@@ -406,7 +406,7 @@ fn initial_value(kind: &TypeSpec, value: &Expr) -> Result<Expr> {
     }
 }
 
-fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[String], modules: &Modules, assumed_dummies: bool, main_scope: bool) -> Result<Constants> {
+fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[String], modules: &Modules, assumed_dummies: bool, main_scope: bool, template: bool) -> Result<Constants> {
     separate_parameters(body, arguments)?;
     validate_constructor_indices(body)?;
     let mut constants = inherited.clone();
@@ -544,7 +544,7 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
         }
     }
     body.retain(|s| !matches!(s, Stmt::InitializedDecl { .. }));
-    rewrite_body(body, &constants, modules, if assumed_dummies {arguments} else {&[]})?;
+    rewrite_body(body, &constants, modules, if assumed_dummies {arguments} else {&[]}, template)?;
     let mut output = Vec::new();
     for stmt in std::mem::take(body) {
         let init = if let Stmt::ArrayDecl { name, dims, .. } = &stmt {
@@ -1030,7 +1030,25 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
     Ok(())
 }
 
-fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules, assumed: &[String]) -> Result<()> {
+fn resolve_template_kind(kind: &mut TypeSpec, constants: &Constants, template: bool) -> Result<()> {
+    if template {
+        if let TypeSpec::CharacterLength(length) = kind {
+            rewrite_expr(length, constants)?;
+            let mut concrete = kind.clone();
+            if resolve_kind(&mut concrete, constants).is_ok() {
+                *kind = concrete;
+            }
+            return Ok(());
+        }
+    }
+    resolve_kind(kind, constants)
+}
+pub(crate) fn concrete_kind(mut kind: TypeSpec) -> Result<TypeSpec> {
+    resolve_kind(&mut kind, &Constants::new())?;
+    Ok(kind)
+}
+
+fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules, assumed: &[String], template: bool) -> Result<()> {
     let mut scoped = constants.clone();
     // A local declaration hides host type information as well as its value.
     for stmt in body.iter() {
@@ -1065,7 +1083,7 @@ fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules, ass
             }
             Stmt::VarDecl { kind: TypeSpec::CharacterAssumed, names } if names.iter().all(|n| assumed.contains(n)) => {},
             Stmt::VarDecl { kind, names } => {
-                resolve_kind(kind, constants)?;
+                resolve_template_kind(kind, constants, template)?;
                 if let TypeSpec::Character(length) = kind {
                     for name in names { scoped.insert(format!("@character_length:{name}"),Expr::IntLit(length.unwrap_or(1).to_string())); }
                 }
@@ -1123,9 +1141,9 @@ fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules, ass
                 else_body,
             } => {
                 rewrite_expr(cond, constants)?;
-                rewrite_body(then_body, constants, modules, assumed)?;
+                rewrite_body(then_body, constants, modules, assumed, template)?;
                 if let Some(body) = else_body {
-                    rewrite_body(body, constants, modules, assumed)?;
+                    rewrite_body(body, constants, modules, assumed, template)?;
                 }
             }
             Stmt::Do {
@@ -1137,11 +1155,11 @@ fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules, ass
                 variable(var, constants)?;
                 rewrite_expr(start, constants)?;
                 rewrite_expr(end, constants)?;
-                rewrite_body(body, constants, modules, assumed)?;
+                rewrite_body(body, constants, modules, assumed, template)?;
             }
             Stmt::DoWhile { cond, body } => {
                 rewrite_expr(cond, constants)?;
-                rewrite_body(body, constants, modules, assumed)?;
+                rewrite_body(body, constants, modules, assumed, template)?;
             }
             Stmt::SelectCase {
                 expr,
@@ -1159,23 +1177,24 @@ fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules, ass
                             }
                         }
                     }
-                    rewrite_body(&mut case.body, constants, modules, assumed)?;
+                    rewrite_body(&mut case.body, constants, modules, assumed, template)?;
                 }
                 if let Some(body) = default {
-                    rewrite_body(body, constants, modules, assumed)?;
+                    rewrite_body(body, constants, modules, assumed, template)?;
                 }
             }
-            Stmt::Function { params, body, return_type, .. } => {
-                let local = resolve_scope(body, constants, params, modules, false, false)?;
-                if let Some(kind) = return_type { resolve_kind(kind, &local)?; }
+            Stmt::Function { name,elemental,params, body, return_type, .. } => {
+                let inline=crate::elemental::inline_character(*elemental,name,params,return_type,body);
+                let local = resolve_scope(body, constants, params, modules, inline, false, inline)?;
+                if let Some(kind) = return_type { resolve_template_kind(kind, &local, inline)?; }
                 let result_name = match body.last() { Some(Stmt::Return(Some(Expr::Ident(n)))) => Some(n), _ => None };
-                if matches!(return_type, Some(TypeSpec::Character(_))) || body.iter().any(|s| matches!(s,
-                    Stmt::VarDecl { kind: TypeSpec::Character(_), names } if result_name.is_some_and(|n| names.contains(n)))) {
+                if !inline && (matches!(return_type, Some(TypeSpec::Character(_))) || body.iter().any(|s| matches!(s,
+                    Stmt::VarDecl { kind: TypeSpec::Character(_), names } if result_name.is_some_and(|n| names.contains(n))))) {
                     bail!("CHARACTER-valued functions are not yet supported by native function-result storage");
                 }
             }
-            Stmt::Subroutine { params, body, .. } => { resolve_scope(body, constants, params, modules, true, false)?; }
-            Stmt::Block { body } => { resolve_scope(body, constants, &[], modules, false, false)?; },
+            Stmt::Subroutine { params, body, .. } => { resolve_scope(body, constants, params, modules, true, false, false)?; }
+            Stmt::Block { body } => { resolve_scope(body, constants, &[], modules, false, false, template)?; },
             Stmt::Module { .. } => {},
             Stmt::InitializedDecl { .. } => {
                 bail!("PARAMETER declaration must be in a specification part")

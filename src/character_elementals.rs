@@ -1,0 +1,985 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Beliavsky
+// See LICENSE-MIT in the repository root.
+
+//! Specialize scalar/array elemental calls involving CHARACTER storage. Results
+//! use caller-owned local buffers, keeping the numeric object ABI unchanged.
+use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec};
+use anyhow::{bail, Context, Result};
+use std::collections::HashMap;
+type Symbols = HashMap<String, (TypeSpec, Vec<Expr>)>;
+#[derive(Clone)]
+struct Routine {
+    params: Vec<String>,
+    body: Vec<Stmt>,
+    result: String,
+    kind: TypeSpec,
+}
+#[derive(Clone)]
+struct Value {
+    kind: TypeSpec,
+    items: Option<Vec<Expr>>,
+}
+fn int(n: i64) -> Expr {
+    Expr::IntLit(n.to_string())
+}
+fn length(kind: &TypeSpec) -> Result<usize> {
+    if let TypeSpec::Character(n) = kind {
+        Ok(n.unwrap_or(1))
+    } else {
+        bail!("CHARACTER actual argument requires a fixed length")
+    }
+}
+fn same(a: &TypeSpec, b: &TypeSpec) -> bool {
+    matches!((a,b),(TypeSpec::Integer(a),TypeSpec::Integer(b)) if a.unwrap_or(4)==b.unwrap_or(4))
+        || a == b
+}
+struct Lower {
+    routines: HashMap<String, Routine>,
+    returns: HashMap<String, (bool, TypeSpec)>,
+    serial: usize,
+    active: Vec<String>,
+}
+impl Lower {
+    fn view(&self, e: &Expr, symbols: &Symbols) -> Result<Value> {
+        let scalar = |kind| Ok(Value { kind, items: None });
+        match e {
+            Expr::Str(s) => scalar(TypeSpec::Character(Some(s.len()))),
+            Expr::Ident(n) => {
+                let (kind, dims) = symbols
+                    .get(n)
+                    .with_context(|| format!("undeclared elemental actual `{n}`"))?;
+                if dims.is_empty() {
+                    return scalar(kind.clone());
+                }
+                if dims.len() != 1 {
+                    bail!("elemental calls involving CHARACTER currently require rank-one array actuals");
+                }
+                let count = crate::parameters::integer_constant(&dims[0])?;
+                if !(0..=1024).contains(&count) {
+                    bail!("CHARACTER elemental expansion supports at most 1024 elements");
+                }
+                Ok(Value {
+                    kind: kind.clone(),
+                    items: Some(
+                        (1..=count)
+                            .map(|i| Expr::Call(n.clone(), vec![int(i)]))
+                            .collect(),
+                    ),
+                })
+            }
+            Expr::Section {
+                name,
+                lower,
+                upper,
+                stride,
+            } => {
+                if let Some((kind, dims)) = symbols.get(name) {
+                    if dims.is_empty() && matches!(kind, TypeSpec::Character(_)) {
+                        if stride.is_some() {
+                            bail!("CHARACTER substring cannot have a stride");
+                        }
+                        let first = lower
+                            .as_deref()
+                            .map(crate::parameters::integer_constant)
+                            .transpose()?
+                            .unwrap_or(1);
+                        let last = upper
+                            .as_deref()
+                            .map(crate::parameters::integer_constant)
+                            .transpose()?
+                            .unwrap_or(length(kind)? as i64);
+                        return scalar(TypeSpec::Character(Some(usize::try_from(
+                            (last - first + 1).max(0),
+                        )?)));
+                    }
+                }
+                let base = self.view(&Expr::Ident(name.clone()), symbols)?;
+                let items = base
+                    .items
+                    .context("elemental array section requires an array")?;
+                let first = lower
+                    .as_deref()
+                    .map(crate::parameters::integer_constant)
+                    .transpose()?
+                    .unwrap_or(1);
+                let last = upper
+                    .as_deref()
+                    .map(crate::parameters::integer_constant)
+                    .transpose()?
+                    .unwrap_or(items.len() as i64);
+                let step = stride
+                    .as_deref()
+                    .map(crate::parameters::integer_constant)
+                    .transpose()?
+                    .unwrap_or(1);
+                if step == 0 {
+                    bail!("array section stride must not be zero");
+                }
+                let mut output = vec![];
+                let mut i = first;
+                while if step > 0 { i <= last } else { i >= last } {
+                    if output.len() >= 1024 {
+                        bail!("CHARACTER elemental expansion supports at most 1024 elements");
+                    }
+                    output.push(
+                        items
+                            .get(
+                                usize::try_from(i - 1)
+                                    .context("invalid elemental section index")?,
+                            )
+                            .context("elemental section index is outside the array")?
+                            .clone(),
+                    );
+                    i = i
+                        .checked_add(step)
+                        .context("elemental section index overflow")?;
+                }
+                Ok(Value {
+                    kind: base.kind,
+                    items: Some(output),
+                })
+            }
+            Expr::Call(n, args) if n == "@array_constructor" => {
+                let mut kind = None;
+                let mut items = vec![];
+                for item in args {
+                    let view = self.view(item, symbols)?;
+                    if kind.as_ref().is_some_and(|k| !same(k, &view.kind)) {
+                        bail!("array constructor elements must have matching type and CHARACTER length");
+                    }
+                    kind = Some(view.kind);
+                    items.extend(view.items.unwrap_or_else(|| vec![item.clone()]));
+                }
+                if items.len() > 1024 {
+                    bail!("CHARACTER elemental expansion supports at most 1024 elements");
+                }
+                Ok(Value {
+                    kind: kind.context("empty untyped elemental constructor")?,
+                    items: Some(items),
+                })
+            }
+            Expr::Call(n, _) | Expr::Index(n, _) if symbols.contains_key(n) => {
+                scalar(symbols[n].0.clone())
+            }
+            Expr::Bin(op, a, b) => {
+                let aview = self.view(a, symbols)?;
+                let bview = self.view(b, symbols)?;
+                let count = match (&aview.items, &bview.items) {
+                    (Some(a), Some(b)) if a.len() != b.len() => {
+                        bail!("nonconforming elemental array argument shapes")
+                    }
+                    (Some(a), _) => Some(a.len()),
+                    (_, Some(b)) => Some(b.len()),
+                    _ => None,
+                };
+                let kind = if matches!(op, BinOp::Concat) {
+                    TypeSpec::Character(Some(
+                        length(&aview.kind)?
+                            .checked_add(length(&bview.kind)?)
+                            .context("CHARACTER length overflow")?,
+                    ))
+                } else {
+                    let mut scalar_symbols = Symbols::new();
+                    scalar_symbols.insert("@a".into(), (aview.kind.clone(), vec![]));
+                    scalar_symbols.insert("@b".into(), (bview.kind.clone(), vec![]));
+                    crate::array_calls::scalar_actual_kind(
+                        &Expr::Bin(
+                            op.clone(),
+                            Box::new(Expr::Ident("@a".into())),
+                            Box::new(Expr::Ident("@b".into())),
+                        ),
+                        &scalar_symbols,
+                    )?
+                };
+                let items = count.map(|count| {
+                    (0..count)
+                        .map(|i| {
+                            Expr::Bin(
+                                op.clone(),
+                                Box::new(
+                                    aview
+                                        .items
+                                        .as_ref()
+                                        .map_or_else(|| (**a).clone(), |v| v[i].clone()),
+                                ),
+                                Box::new(
+                                    bview
+                                        .items
+                                        .as_ref()
+                                        .map_or_else(|| (**b).clone(), |v| v[i].clone()),
+                                ),
+                            )
+                        })
+                        .collect()
+                });
+                Ok(Value { kind, items })
+            }
+            Expr::Call(n, args) if n == "@array_substring" => {
+                let [base, Expr::Section {
+                    lower,
+                    upper,
+                    stride,
+                    ..
+                }] = args.as_slice()
+                else {
+                    bail!("invalid CHARACTER substring actual");
+                };
+                if stride.is_some() {
+                    bail!("CHARACTER substring cannot have a stride");
+                }
+                let view = self.view(base, symbols)?;
+                if view.items.is_some() {
+                    bail!("CHARACTER elemental substring actual currently requires one element");
+                }
+                let first = lower
+                    .as_deref()
+                    .map(crate::parameters::integer_constant)
+                    .transpose()?
+                    .unwrap_or(1);
+                let last = upper
+                    .as_deref()
+                    .map(crate::parameters::integer_constant)
+                    .transpose()?
+                    .unwrap_or(length(&view.kind)? as i64);
+                scalar(TypeSpec::Character(Some(usize::try_from(
+                    (last - first + 1).max(0),
+                )?)))
+            }
+            Expr::Call(n, args) if self.returns.contains_key(n) => {
+                let (elemental, kind) = &self.returns[n];
+                if !elemental {
+                    return scalar(kind.clone());
+                }
+                let views = args
+                    .iter()
+                    .map(|arg| self.view(arg, symbols))
+                    .collect::<Result<Vec<_>>>()?;
+                let mut count = None;
+                for view in &views {
+                    if let Some(items) = &view.items {
+                        if count.is_some_and(|c| c != items.len()) {
+                            bail!("nonconforming elemental array argument shapes");
+                        }
+                        count = Some(items.len());
+                    }
+                }
+                Ok(Value {
+                    kind: kind.clone(),
+                    items: count.map(|count| {
+                        (0..count)
+                            .map(|i| {
+                                Expr::Call(
+                                    n.clone(),
+                                    args.iter()
+                                        .zip(&views)
+                                        .map(|(arg, v)| {
+                                            v.items.as_ref().map_or_else(
+                                                || arg.clone(),
+                                                |items| items[i].clone(),
+                                            )
+                                        })
+                                        .collect(),
+                                )
+                            })
+                            .collect()
+                    }),
+                })
+            }
+            // TRIM has a runtime length unless its argument is constant. Fixed
+            // buffer capacity must not be mistaken for an assumed-length actual.
+            Expr::Call(n, _) if n == "trim" => {
+                let value=crate::parameters::character_constant(e).context("CHARACTER elemental actual length must be constant; runtime TRIM actuals are not yet supported")?;
+                scalar(TypeSpec::Character(Some(value.len())))
+            }
+            _ => {
+                if let Ok((_, Some(count), kind)) =
+                    crate::reductions::elemental_element(e, &int(1), symbols)
+                {
+                    if !(0..=1024).contains(&count) {
+                        bail!("CHARACTER elemental expansion supports at most 1024 elements");
+                    }
+                    let items = (1..=count)
+                        .map(|i| {
+                            crate::reductions::elemental_element(e, &int(i), symbols).map(|v| v.0)
+                        })
+                        .collect::<Result<_>>()?;
+                    return Ok(Value {
+                        kind,
+                        items: Some(items),
+                    });
+                }
+                if let Some(kind) = crate::inquiries::model_type(e, &|n| {
+                    symbols.get(n).map(|(k, d)| (k.clone(), d.len()))
+                })? {
+                    return scalar(kind);
+                }
+                if matches!(e,Expr::Call(n,_) if matches!(n.as_str(),"len"|"len_trim"|"size"|"kind"|"index"|"scan"|"verify"))
+                {
+                    return scalar(TypeSpec::Integer(None));
+                }
+                scalar(crate::array_calls::scalar_actual_kind(e, symbols)?)
+            }
+        }
+    }
+    fn expression(
+        &mut self,
+        e: &mut Expr,
+        symbols: &mut Symbols,
+        prefix: &mut Vec<Stmt>,
+    ) -> Result<()> {
+        match e {
+            Expr::Call(_, args) | Expr::Index(_, args) => {
+                for arg in args {
+                    self.expression(arg, symbols, prefix)?;
+                }
+            }
+            Expr::Bin(_, a, b) => {
+                self.expression(a, symbols, prefix)?;
+                self.expression(b, symbols, prefix)?;
+            }
+            Expr::Un(_, a) => self.expression(a, symbols, prefix)?,
+            _ => {}
+        }
+        let Expr::Call(name, args) = e else {
+            return Ok(());
+        };
+        let Some(routine) = self.routines.get(name).cloned() else {
+            return Ok(());
+        };
+        if self.active.contains(name) {
+            bail!("recursive CHARACTER elemental function `{name}` is not yet supported");
+        }
+        if args.len() != routine.params.len() {
+            bail!("wrong argument count for elemental function `{name}`");
+        }
+        let views = args
+            .iter()
+            .map(|arg| self.view(arg, symbols))
+            .collect::<Result<Vec<_>>>()?;
+        let mut count = None;
+        for view in &views {
+            if let Some(items) = &view.items {
+                if count.is_some_and(|c| c != items.len()) {
+                    bail!("nonconforming elemental array argument shapes");
+                }
+                count = Some(items.len());
+            }
+        }
+        let mut actuals = args.clone();
+        // Evaluate scalar actual expressions once for the whole elemental call.
+        for (arg, view) in actuals.iter_mut().zip(&views) {
+            if view.items.is_none() {
+                self.serial += 1;
+                let temp = format!("@character_elemental_actual_{}", self.serial);
+                prefix.push(Stmt::VarDecl {
+                    kind: view.kind.clone(),
+                    names: vec![temp.clone()],
+                });
+                prefix.push(Stmt::Assign {
+                    name: temp.clone(),
+                    value: arg.clone(),
+                });
+                symbols.insert(temp.clone(), (view.kind.clone(), vec![]));
+                *arg = Expr::Ident(temp);
+            }
+        }
+        self.active.push(name.clone());
+        let mut results = vec![];
+        // Check declarations and result length even when the result has zero size.
+        let bound_types = self.types(&routine, &views)?;
+        let result_kind = self.call_kind(&routine, &views)?;
+        for i in 0..count.unwrap_or(1) {
+            let args = actuals
+                .iter()
+                .zip(&views)
+                .map(|(arg, v)| {
+                    v.items
+                        .as_ref()
+                        .map_or_else(|| arg.clone(), |items| items[i].clone())
+                })
+                .collect::<Vec<_>>();
+            self.serial += 1;
+            let result = format!("@character_elemental_result_{}", self.serial);
+            prefix.push(Stmt::VarDecl {
+                kind: result_kind.clone(),
+                names: vec![result.clone()],
+            });
+            symbols.insert(result.clone(), (result_kind.clone(), vec![]));
+            let mut names = HashMap::new();
+            names.insert(routine.result.clone(), result.clone());
+            let mut expanded = vec![];
+            for (param, arg) in routine.params.iter().zip(args) {
+                self.serial += 1;
+                let temp = format!("@character_elemental_dummy_{}", self.serial);
+                expanded.push(Stmt::VarDecl {
+                    kind: bound_types[param].clone(),
+                    names: vec![temp.clone()],
+                });
+                expanded.push(Stmt::Assign {
+                    name: temp.clone(),
+                    value: arg,
+                });
+                names.insert(param.clone(), temp);
+            }
+            let mut body = routine.body.clone();
+            self.specialize_types(&mut body, &routine, &views)?;
+            if matches!(body.last(),Some(Stmt::Return(Some(Expr::Ident(n)))) if n==&routine.result)
+            {
+                body.pop();
+            }
+            fn returns(body: &mut [Stmt]) {
+                for s in body {
+                    match s {
+                        Stmt::Return(value) => *value = None,
+                        Stmt::If {
+                            then_body,
+                            else_body,
+                            ..
+                        } => {
+                            returns(then_body);
+                            if let Some(body) = else_body {
+                                returns(body);
+                            }
+                        }
+                        Stmt::Do { body, .. }
+                        | Stmt::DoWhile { body, .. }
+                        | Stmt::Block { body } => returns(body),
+                        Stmt::SelectCase { cases, default, .. } => {
+                            for c in cases {
+                                returns(&mut c.body);
+                            }
+                            if let Some(body) = default {
+                                returns(body);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            returns(&mut body);
+            let mut bound = routine.params.clone();
+            bound.push(routine.result.clone());
+            crate::subroutines::rename(&mut body, &names, &bound, &mut self.serial)?;
+            body.retain(|s| {
+                !matches!(s, Stmt::DummyIntent { .. } | Stmt::Implicit(_))
+                    && !matches!(s,Stmt::VarDecl{names,..} if names.is_empty())
+            });
+            crate::subroutines::inline_returns(&mut body, &mut self.serial)?;
+            expanded.extend(body);
+            self.body(&mut expanded, symbols)?;
+            prefix.push(Stmt::Block { body: expanded });
+            results.push(Expr::Ident(result));
+        }
+        self.active.pop();
+        *e = if count.is_some() {
+            if results.is_empty() {
+                self.serial += 1;
+                let temp = format!("@character_elemental_empty_{}", self.serial);
+                prefix.push(Stmt::ArrayDecl {
+                    kind: result_kind.clone(),
+                    name: temp.clone(),
+                    dims: vec![int(0)],
+                });
+                symbols.insert(temp.clone(), (result_kind, vec![int(0)]));
+                Expr::Ident(temp)
+            } else if matches!(result_kind, TypeSpec::Character(_)) {
+                self.serial += 1;
+                let temp = format!("@character_elemental_array_{}", self.serial);
+                prefix.push(Stmt::ArrayDecl {
+                    kind: result_kind.clone(),
+                    name: temp.clone(),
+                    dims: vec![int(results.len() as i64)],
+                });
+                for (i, value) in results.into_iter().enumerate() {
+                    prefix.push(Stmt::AssignIndex {
+                        name: temp.clone(),
+                        indices: vec![int(i as i64 + 1)],
+                        value,
+                    });
+                }
+                symbols.insert(
+                    temp.clone(),
+                    (result_kind, vec![int(count.unwrap() as i64)]),
+                );
+                Expr::Ident(temp)
+            } else {
+                Expr::Call("@array_constructor".into(), results)
+            }
+        } else {
+            results.remove(0)
+        };
+        Ok(())
+    }
+    fn types(&self, routine: &Routine, views: &[Value]) -> Result<HashMap<String, TypeSpec>> {
+        let mut types = HashMap::new();
+        for (param, actual) in routine.params.iter().zip(views) {
+            let declared = routine
+                .body
+                .iter()
+                .find_map(|s| match s {
+                    Stmt::VarDecl { kind, names } if names.contains(param) => Some(kind),
+                    _ => None,
+                })
+                .context("elemental dummy must be declared")?;
+            let kind = match declared {
+                TypeSpec::CharacterAssumed => {
+                    length(&actual.kind)?;
+                    actual.kind.clone()
+                }
+                TypeSpec::Character(_) => {
+                    if length(&actual.kind)? < length(declared)? {
+                        bail!("actual CHARACTER length is shorter than elemental dummy `{param}`");
+                    }
+                    declared.clone()
+                }
+                _ => {
+                    if !same(declared, &actual.kind) {
+                        bail!("type or CHARACTER length mismatch for elemental dummy `{param}`");
+                    }
+                    declared.clone()
+                }
+            };
+            types.insert(param.clone(), kind);
+        }
+        Ok(types)
+    }
+    fn fold_lengths(e: &mut Expr, types: &HashMap<String, TypeSpec>) {
+        match e {
+            Expr::Call(_, args) | Expr::Index(_, args) => {
+                for arg in args {
+                    Self::fold_lengths(arg, types);
+                }
+            }
+            Expr::Bin(_, a, b) => {
+                Self::fold_lengths(a, types);
+                Self::fold_lengths(b, types);
+            }
+            Expr::Un(_, a) => Self::fold_lengths(a, types),
+            _ => {}
+        }
+        if let Expr::Call(name, args) = e {
+            if name == "len" {
+                if let [Expr::Ident(n)] = args.as_slice() {
+                    if let Some(TypeSpec::Character(length)) = types.get(n) {
+                        *e = int(length.unwrap_or(1) as i64);
+                    }
+                }
+            }
+        }
+    }
+    fn specialize_kind(kind: &TypeSpec, types: &HashMap<String, TypeSpec>) -> Result<TypeSpec> {
+        let mut kind = kind.clone();
+        if let TypeSpec::CharacterLength(length) = &mut kind {
+            Self::fold_lengths(length, types);
+        }
+        let kind=crate::parameters::concrete_kind(kind).context("elemental CHARACTER result/local length must resolve to a compile-time constant for these actuals")?;
+        if crate::substrings::deferred(&kind) || matches!(kind, TypeSpec::CharacterAssumed) {
+            bail!("elemental result requires an explicit fixed CHARACTER length");
+        }
+        Ok(kind)
+    }
+    fn call_kind(&self, routine: &Routine, views: &[Value]) -> Result<TypeSpec> {
+        Self::specialize_kind(&routine.kind, &self.types(routine, views)?)
+    }
+    fn specialize_types(
+        &self,
+        body: &mut [Stmt],
+        routine: &Routine,
+        views: &[Value],
+    ) -> Result<()> {
+        let mut types = self.types(routine, views)?;
+        for s in body {
+            if let Stmt::VarDecl { kind, names } = s {
+                if names.iter().all(|n| routine.params.contains(n)) {
+                    continue;
+                }
+                *kind = Self::specialize_kind(kind, &types)?;
+                for n in names {
+                    types.insert(n.clone(), kind.clone());
+                }
+            }
+        }
+        Ok(())
+    }
+    fn contains_calls(&self, body: &[Stmt]) -> bool {
+        fn expr(e: &Expr, routines: &HashMap<String, Routine>) -> bool {
+            match e {
+                Expr::Call(n, args) => {
+                    routines.contains_key(n) || args.iter().any(|a| expr(a, routines))
+                }
+                Expr::Index(_, args) => args.iter().any(|a| expr(a, routines)),
+                Expr::Bin(_, a, b) => expr(a, routines) || expr(b, routines),
+                Expr::Un(_, a) => expr(a, routines),
+                _ => false,
+            }
+        }
+        body.iter().any(|s| match s {
+            Stmt::Assign { value, .. }
+            | Stmt::AssignIndex { value, .. }
+            | Stmt::Return(Some(value)) => expr(value, &self.routines),
+            Stmt::Print { items } | Stmt::CallSub { args: items, .. } => {
+                items.iter().any(|e| expr(e, &self.routines))
+            }
+            Stmt::If {
+                cond,
+                then_body,
+                else_body,
+            } => {
+                expr(cond, &self.routines)
+                    || self.contains_calls(then_body)
+                    || else_body.as_ref().is_some_and(|b| self.contains_calls(b))
+            }
+            Stmt::Block { body } | Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } => {
+                self.contains_calls(body)
+            }
+            _ => false,
+        })
+    }
+    fn body(&mut self, body: &mut Vec<Stmt>, inherited: &Symbols) -> Result<()> {
+        let mut symbols = inherited.clone();
+        for s in body.iter() {
+            match s {
+                Stmt::VarDecl { kind, names } => {
+                    for n in names {
+                        symbols.insert(n.clone(), (kind.clone(), vec![]));
+                    }
+                }
+                Stmt::ArrayDecl { kind, name, dims } => {
+                    symbols.insert(name.clone(), (kind.clone(), dims.clone()));
+                }
+                _ => {}
+            }
+        }
+        let mut out = vec![];
+        for mut stmt in std::mem::take(body) {
+            if let Stmt::Block { body } = &stmt {
+                if matches!(body.first(),Some(Stmt::CallSub{name,..}) if matches!(name.as_str(),"@where"|"@forall"))
+                    && self.contains_calls(body)
+                {
+                    bail!("CHARACTER elemental calls inside WHERE/FORALL are not yet supported");
+                }
+            }
+            let mut prefix = vec![];
+            match &mut stmt {
+                Stmt::Assign { value, .. } | Stmt::Return(Some(value)) => {
+                    self.expression(value, &mut symbols, &mut prefix)?
+                }
+                Stmt::AssignIndex { indices, value, .. } => {
+                    for e in indices {
+                        self.expression(e, &mut symbols, &mut prefix)?;
+                    }
+                    self.expression(value, &mut symbols, &mut prefix)?;
+                }
+                Stmt::Print { items }
+                | Stmt::CallSub { args: items, .. }
+                | Stmt::Read { args: items } => {
+                    for e in items {
+                        self.expression(e, &mut symbols, &mut prefix)?;
+                    }
+                }
+                Stmt::If {
+                    cond,
+                    then_body,
+                    else_body,
+                } => {
+                    self.expression(cond, &mut symbols, &mut prefix)?;
+                    self.body(then_body, &symbols)?;
+                    if let Some(body) = else_body {
+                        self.body(body, &symbols)?;
+                    }
+                }
+                Stmt::Do {
+                    start, end, body, ..
+                } => {
+                    self.expression(start, &mut symbols, &mut prefix)?;
+                    self.expression(end, &mut symbols, &mut prefix)?;
+                    self.body(body, &symbols)?;
+                }
+                Stmt::DoWhile { cond, body } => {
+                    self.expression(cond, &mut symbols, &mut prefix)?;
+                    self.body(body, &symbols)?;
+                    if !prefix.is_empty() {
+                        let condition = cond.clone();
+                        *cond = Expr::Logical(true);
+                        prefix.push(Stmt::If {
+                            cond: Expr::not(condition),
+                            then_body: vec![Stmt::Exit],
+                            else_body: None,
+                        });
+                        prefix.append(body);
+                        *body = std::mem::take(&mut prefix);
+                    }
+                }
+                Stmt::Module { body, .. }
+                | Stmt::Function { body, .. }
+                | Stmt::Subroutine { body, .. }
+                | Stmt::Block { body } => self.body(body, &symbols)?,
+                Stmt::SelectCase {
+                    expr,
+                    cases,
+                    default,
+                } => {
+                    self.expression(expr, &mut symbols, &mut prefix)?;
+                    for c in cases {
+                        self.body(&mut c.body, &symbols)?;
+                    }
+                    if let Some(body) = default {
+                        self.body(body, &symbols)?;
+                    }
+                }
+                _ => {}
+            }
+            out.extend(prefix);
+            out.push(stmt);
+        }
+        *body = out;
+        Ok(())
+    }
+}
+// Expansion may not accidentally bind a defining-scope variable to a same-named
+// caller local. Constants have already been substituted by parameter resolution.
+fn validate_locals(
+    name: &str,
+    params: &[String],
+    result: &str,
+    body: &[Stmt],
+    host: &std::collections::HashSet<String>,
+) -> Result<()> {
+    let mut locals: std::collections::HashSet<String> = params.iter().cloned().collect();
+    locals.insert(result.into());
+    fn declarations(body: &[Stmt], locals: &mut std::collections::HashSet<String>) {
+        for stmt in body {
+            match stmt {
+                Stmt::VarDecl { names, .. } => locals.extend(names.iter().cloned()),
+                Stmt::ArrayDecl { name, .. } => {
+                    locals.insert(name.clone());
+                }
+                Stmt::If {
+                    then_body,
+                    else_body,
+                    ..
+                } => {
+                    declarations(then_body, locals);
+                    if let Some(body) = else_body {
+                        declarations(body, locals);
+                    }
+                }
+                Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } | Stmt::Block { body } => {
+                    declarations(body, locals)
+                }
+                _ => {}
+            }
+        }
+    }
+    declarations(body, &mut locals);
+    let forbidden = host
+        .difference(&locals)
+        .cloned()
+        .collect::<std::collections::HashSet<_>>();
+    let variable = |n: &str| -> Result<()> {
+        if !locals.contains(n) {
+            bail!("CHARACTER elemental function `{name}` requires explicitly declared locals; host variable `{n}` is not yet supported");
+        }
+        Ok(())
+    };
+    fn expression(
+        e: &Expr,
+        variable: &impl Fn(&str) -> Result<()>,
+        forbidden: &std::collections::HashSet<String>,
+    ) -> Result<()> {
+        match e {
+            Expr::Ident(n) => variable(n)?,
+            Expr::Call(name, args) => {
+                if forbidden.contains(name) {
+                    variable(name)?;
+                }
+                for arg in args {
+                    expression(arg, variable, forbidden)?;
+                }
+            }
+            Expr::Index(n, args) => {
+                variable(n)?;
+                for arg in args {
+                    expression(arg, variable, forbidden)?;
+                }
+            }
+            Expr::Section {
+                name,
+                lower,
+                upper,
+                stride,
+            } => {
+                if !name.starts_with('@') {
+                    variable(name)?;
+                }
+                for bound in [lower, upper, stride].into_iter().flatten() {
+                    expression(bound, variable, forbidden)?;
+                }
+            }
+            Expr::Bin(_, a, b) => {
+                expression(a, variable, forbidden)?;
+                expression(b, variable, forbidden)?;
+            }
+            Expr::Un(_, e) => expression(e, variable, forbidden)?,
+            _ => {}
+        }
+        Ok(())
+    }
+    fn statements(
+        body: &[Stmt],
+        variable: &impl Fn(&str) -> Result<()>,
+        forbidden: &std::collections::HashSet<String>,
+    ) -> Result<()> {
+        for stmt in body {
+            match stmt {
+                Stmt::Assign { name, value } => {
+                    variable(name)?;
+                    expression(value, variable, forbidden)?;
+                }
+                Stmt::AssignIndex {
+                    name,
+                    indices,
+                    value,
+                } => {
+                    variable(name)?;
+                    for index in indices {
+                        expression(index, variable, forbidden)?;
+                    }
+                    expression(value, variable, forbidden)?;
+                }
+                Stmt::Print { items }
+                | Stmt::CallSub { args: items, .. }
+                | Stmt::Read { args: items } => {
+                    for item in items {
+                        expression(item, variable, forbidden)?;
+                    }
+                }
+                Stmt::Return(Some(e)) => expression(e, variable, forbidden)?,
+                Stmt::If {
+                    cond,
+                    then_body,
+                    else_body,
+                } => {
+                    expression(cond, variable, forbidden)?;
+                    statements(then_body, variable, forbidden)?;
+                    if let Some(body) = else_body {
+                        statements(body, variable, forbidden)?;
+                    }
+                }
+                Stmt::Do {
+                    var,
+                    start,
+                    end,
+                    body,
+                } => {
+                    variable(var)?;
+                    expression(start, variable, forbidden)?;
+                    expression(end, variable, forbidden)?;
+                    statements(body, variable, forbidden)?;
+                }
+                Stmt::DoWhile { cond, body } => {
+                    expression(cond, variable, forbidden)?;
+                    statements(body, variable, forbidden)?;
+                }
+                Stmt::Block { body } => statements(body, variable, forbidden)?,
+                Stmt::SelectCase {
+                    expr,
+                    cases,
+                    default,
+                } => {
+                    expression(expr, variable, forbidden)?;
+                    for c in cases {
+                        statements(&c.body, variable, forbidden)?;
+                    }
+                    if let Some(body) = default {
+                        statements(body, variable, forbidden)?;
+                    }
+                }
+                Stmt::Function { .. } | Stmt::Subroutine { .. } => bail!(
+                    "internal procedures in CHARACTER elemental functions are not yet supported"
+                ),
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+    statements(body, &variable, &forbidden)
+}
+
+pub(crate) fn resolve(mut p: Program) -> Result<Program> {
+    crate::elemental::validate_program(&p)?;
+    let mut lower = Lower {
+        routines: HashMap::new(),
+        returns: HashMap::new(),
+        serial: 0,
+        active: vec![],
+    };
+    fn collect(body: &mut Vec<Stmt>, lower: &mut Lower) -> Result<()> {
+        let mut host = std::collections::HashSet::new();
+        for s in body.iter() {
+            match s {
+                Stmt::VarDecl { names, .. } => host.extend(names.iter().cloned()),
+                Stmt::ArrayDecl { name, .. } => {
+                    host.insert(name.clone());
+                }
+                _ => {}
+            }
+        }
+        let mut out = vec![];
+        for mut stmt in std::mem::take(body) {
+            if let Stmt::Function {
+                name,
+                params,
+                return_type,
+                body,
+                elemental,
+                ..
+            } = &stmt
+            {
+                if let Some(kind) = crate::elemental::result_kind(name, return_type, body) {
+                    lower
+                        .returns
+                        .insert(name.clone(), (*elemental, kind.clone()));
+                    if crate::elemental::inline_character(
+                        *elemental,
+                        name,
+                        params,
+                        return_type,
+                        body,
+                    ) {
+                        let result = match body.last() {
+                            Some(Stmt::Return(Some(Expr::Ident(n)))) => n.clone(),
+                            _ => name.clone(),
+                        };
+                        validate_locals(name, params, &result, body, &host)?;
+                        if lower.routines.contains_key(name) {
+                            bail!("same-named CHARACTER elemental functions from different scopes are not yet supported: `{name}`");
+                        }
+                        lower.routines.insert(
+                            name.clone(),
+                            Routine {
+                                params: params.clone(),
+                                body: body.clone(),
+                                result,
+                                kind,
+                            },
+                        );
+                        continue;
+                    }
+                }
+            }
+            if let Stmt::Module { body, .. } = &mut stmt {
+                collect(body, lower)?;
+            }
+            out.push(stmt);
+        }
+        *body = out;
+        Ok(())
+    }
+    collect(&mut p.body, &mut lower)?;
+    if !lower.routines.is_empty() {
+        lower.body(&mut p.body, &Symbols::new())?;
+    }
+    Ok(p)
+}

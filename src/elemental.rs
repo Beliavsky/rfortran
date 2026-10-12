@@ -30,6 +30,33 @@ fn numeric(kind: &TypeSpec) -> bool {
             | TypeSpec::DoublePrecision
     )
 }
+fn scalar(kind: &TypeSpec) -> bool {
+    numeric(kind)
+        || matches!(
+            kind,
+            TypeSpec::Logical
+                | TypeSpec::Character(_)
+                | TypeSpec::CharacterLength(_)
+                | TypeSpec::CharacterAssumed
+        )
+}
+pub(crate) fn inline_character(
+    elemental: bool,
+    name: &str,
+    params: &[String],
+    declared: &Option<TypeSpec>,
+    body: &[Stmt],
+) -> bool {
+    let character = |kind: &TypeSpec| {
+        matches!(
+            kind,
+            TypeSpec::Character(_) | TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed
+        )
+    };
+    elemental && (result_kind(name,declared,body).as_ref().is_some_and(character)
+        || body.iter().any(|s|matches!(s,Stmt::VarDecl{kind,names} if character(kind)&&names.iter().any(|n|params.contains(n)))))
+}
+
 pub fn validate_subroutine(name: &str, params: &[String], body: &[Stmt]) -> Result<()> {
     for param in params {
         if body.iter().any(|s| matches!(s, Stmt::ArrayDecl { name, .. } if name == param)) {
@@ -138,15 +165,15 @@ pub fn validate(
     }
     if !result_kind(name, declared, body)
         .as_ref()
-        .is_some_and(numeric)
+        .is_some_and(scalar)
     {
-        bail!("ELEMENTAL function `{name}` currently requires an explicitly declared numeric scalar result");
+        bail!("ELEMENTAL function `{name}` requires an explicitly declared supported scalar result");
     }
     for param in params {
         if !body.iter().any(
-            |s| matches!(s,Stmt::VarDecl{kind,names} if names.contains(param) && numeric(kind)),
+            |s| matches!(s,Stmt::VarDecl{kind,names} if names.contains(param) && scalar(kind)),
         ) {
-            bail!("ELEMENTAL dummy argument `{param}` currently requires an explicitly declared numeric scalar type");
+            bail!("ELEMENTAL dummy argument `{param}` requires an explicitly declared supported scalar type");
         }
         if !body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name == param && intent == "intent(in)")) {
             bail!("ELEMENTAL function dummy argument `{param}` requires INTENT(IN)");
@@ -235,9 +262,9 @@ mod tests {
                 "impure or unknown",
             ),
             (
-                "integer,intent(in)::i\nlogical::j",
+                "integer,intent(in)::i",
                 "j=.true.",
-                "numeric scalar result",
+                "supported scalar result",
             ),
         ] {
             let p = parse(&format!(
@@ -263,7 +290,7 @@ mod tests {
     fn rejects_resolved_unsupported_elemental_kinds() {
         let p=parse("integer,parameter::k=16\ncontains\nelemental function f(i) result(j)\ninteger(kind=k),intent(in)::i\ninteger(kind=k)::j\nj=i\nend function f\nend");
         let result=crate::derived::resolve(p).and_then(crate::parameters::resolve).and_then(crate::array_calls::resolve);
-        assert!(result.unwrap_err().to_string().contains("numeric scalar result"));
+        assert!(result.unwrap_err().to_string().contains("supported scalar result"));
     }
 
     #[test]
