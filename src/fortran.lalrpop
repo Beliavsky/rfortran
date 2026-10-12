@@ -700,6 +700,7 @@ DimList: Vec<Expr> = {
     <mut v:DimList> COMMA <d:DeclaredDimension> => { v.push(d); v },
 };
 DeclaredDimension: Expr = {
+    STAR => Expr::Ident("@assumed_extent".into()),
     COLON => Expr::Ident("@deferred_extent".into()),
     <e:RhsExpr> => e,
     <lower:RhsExpr> COLON <upper:RhsExpr> => Expr::Call("@declared_bounds".into(),vec![lower,upper]),

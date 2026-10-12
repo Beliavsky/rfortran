@@ -1803,6 +1803,7 @@ pub fn analyze_with_src(
                 }
             }
         }
+        for stmt in body {if let Stmt::DummyIntent{name,intent}=stmt {if intent=="@optional_source_read" {read_vars.insert(name.to_ascii_lowercase());}}}
         for p in params.iter() {
             let lname = p.to_ascii_lowercase();
             if local_param_intent.get(&lname) == Some(&ParamIntent::Out) && assigned.contains(&lname) { continue; }

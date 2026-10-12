@@ -12,7 +12,7 @@ contains
 elemental function sgn_real(xx,thresh) result(yy)
 ! Return the sign.
 real(kind=dp), intent(in) :: xx
-real(kind=dp), intent(in), optional :: thresh
+real(kind=dp), intent(in), pointer :: thresh
 real(kind=dp) :: yy
 yy=xx
 end function sgn_real
@@ -28,27 +28,27 @@ class SourceDiagnostics(unittest.TestCase):
         return subprocess.run([COMPILER,*map(str,args)],cwd=directory,capture_output=True,
                               text=True,encoding='utf-8',timeout=30)
 
-    def assert_optional(self,result,path,line,column):
+    def assert_attribute(self,result,path,line,column):
         self.assertNotEqual(result.returncode,0)
         self.assertIn(f'{path.name}:{line}:{column}',result.stderr)
-        self.assertIn('OPTIONAL dummy argument `thresh`',result.stderr)
+        self.assertIn('attribute `pointer` on dummy argument `thresh`',result.stderr)
         self.assertIn('ELEMENTAL function `sgn_real`',result.stderr)
-        self.assertIn('^^^^^^^^',result.stderr)
-        self.assertEqual(result.stderr.count('OPTIONAL dummy argument'),1,result.stderr)
+        self.assertIn('^^^^^^^',result.stderr)
+        self.assertEqual(result.stderr.count('attribute `pointer`'),1,result.stderr)
 
     def test_build_check_run_and_emit_obj(self):
         with tempfile.TemporaryDirectory(prefix='source-diagnostics-') as tmp:
             directory=Path(tmp);source=directory/'example.f90';source.write_text(SOURCE,encoding='utf-8')
             for args in ([source],['check',source],['run',source],['emit-obj',source,directory/'example.obj']):
                 with self.subTest(args=args):
-                    self.assert_optional(self.invoke(args,directory),source,8,28)
+                    self.assert_attribute(self.invoke(args,directory),source,8,28)
 
     def test_continuation_and_misleading_comments(self):
-        text=SOURCE.replace('real(kind=dp), intent(in), optional :: thresh',
-                            'real(kind=dp), intent(in), &\n! optional in a comment is not the attribute\n  & OPTIONAL :: thresh')
+        text=SOURCE.replace('real(kind=dp), intent(in), pointer :: thresh',
+                            'real(kind=dp), intent(in), &\n! pointer in a comment is not the attribute\n  & POINTER :: thresh')
         with tempfile.TemporaryDirectory(prefix='source-diagnostics-') as tmp:
             directory=Path(tmp);source=directory/'continued.f90';source.write_text(text,encoding='utf-8')
-            self.assert_optional(self.invoke([source],directory),source,10,5)
+            self.assert_attribute(self.invoke([source],directory),source,10,5)
 
     def test_same_dummy_name_in_another_procedure(self):
         good="""elemental function good(xx,thresh) result(yy)
@@ -60,7 +60,7 @@ end function good
         text=SOURCE.replace('contains\n','contains\n'+good,1)
         with tempfile.TemporaryDirectory(prefix='source-diagnostics-') as tmp:
             directory=Path(tmp);source=directory/'procedures.f90';source.write_text(text,encoding='utf-8')
-            self.assert_optional(self.invoke([source],directory),source,13,28)
+            self.assert_attribute(self.invoke([source],directory),source,13,28)
 
     def test_combined_build_reports_original_file_and_line(self):
         with tempfile.TemporaryDirectory(prefix='source diagnostics ') as tmp:
@@ -69,7 +69,7 @@ end function good
             bad=directory/'bad functions.f90';bad.write_text(SOURCE.split('program main')[0],encoding='utf-8')
             main=directory/'main.f90';main.write_text('program main\nend program main\n',encoding='utf-8')
             result=self.invoke([first,bad,main],directory)
-            self.assert_optional(result,bad,8,28)
+            self.assert_attribute(result,bad,8,28)
             self.assertNotIn('f90c-sources',result.stderr)
             self.assertNotIn('first.f90:',result.stderr)
 
@@ -79,7 +79,7 @@ end function good
             bad.write_text('! Source: invented.f90\n'+SOURCE.split('program main')[0],encoding='utf-8')
             main.write_text('program main\nend program main\n',encoding='utf-8')
             result=self.invoke([bad,main],directory)
-            self.assert_optional(result,bad,9,28)
+            self.assert_attribute(result,bad,9,28)
             self.assertNotIn('invented.f90:',result.stderr)
 
     def test_kind_initializer_and_nested_storage_errors(self):

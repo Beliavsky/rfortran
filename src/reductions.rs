@@ -175,8 +175,12 @@ pub(crate) fn elemental_element(e: &Expr, index: &Expr, shapes: &HashMap<String,
 /// Materialize an array expression before a specialized procedure call, using
 /// the same constructor/PACK lowering as ordinary expressions.
 pub(crate) fn argument(e: &mut Expr, shapes: &HashMap<String,(TypeSpec,Vec<Expr>)>, prefix: &mut Vec<Stmt>, serial: &mut usize) -> Result<(TypeSpec,i64,Expr)> {
+    argument_with_elementals(e,shapes,prefix,serial,&HashMap::new())
+}
+pub(crate) fn argument_with_elementals(e: &mut Expr, shapes: &HashMap<String,(TypeSpec,Vec<Expr>)>, prefix: &mut Vec<Stmt>, serial: &mut usize, functions:&HashMap<String,TypeSpec>) -> Result<(TypeSpec,i64,Expr)> {
     let mut symbols = Symbols::new();
     symbols.variables = shapes.clone();
+    symbols.elementals=functions.clone();
     if matches!(e,Expr::Section {..}) { *e=Expr::Call("@array_constructor".into(),vec![e.clone()]); }
     lower_expr(e,&mut symbols,prefix,serial)?;
     let backing = if let Expr::Call(n,a)=e { if n=="@packed_view" {&a[0]} else {&*e} } else {&*e};
@@ -1136,7 +1140,12 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                     }
                 }
             }
-            if name=="@error_stop" && !matches!(args.as_slice(),[Expr::Str(_)]) {bail!("ERROR STOP currently requires a character constant");}
+            if name=="@error_stop" && !matches!(args.as_slice(),[Expr::Str(_)]) {
+                let [code]=args.as_slice() else {bail!("ERROR STOP requires one stop code");};
+                let code=crate::parameters::integer_constant(code).context("ERROR STOP currently requires a CHARACTER or default INTEGER constant")?;
+                let code=i32::try_from(code).context("ERROR STOP integer code must fit default INTEGER")?;
+                *args=vec![int(code as i64)];
+            }
         }
         if let Stmt::Read {args} = &stmt {
             fn has_elemental(e: &Expr, symbols: &Symbols) -> bool {

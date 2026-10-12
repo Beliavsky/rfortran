@@ -99,7 +99,7 @@ fn kind_number(name: &str, constants: &Constants) -> Result<i64> {
 }
 fn resolve_kind(kind: &mut TypeSpec, constants: &Constants) -> Result<()> {
     if crate::substrings::deferred(kind) { return Ok(()); }
-    if matches!(kind, TypeSpec::CharacterAssumed) { bail!("assumed CHARACTER length is currently supported only for scalar PARAMETER declarations"); }
+    if matches!(kind, TypeSpec::CharacterAssumed) { bail!("assumed CHARACTER length requires a PARAMETER declaration or a supported dummy argument"); }
     if let TypeSpec::CharacterLength(length) = kind {
         if matches!(length.as_ref(),Expr::Call(tag,_) if tag == "@invalid_entity_length") { bail!("per-entity character length requires a CHARACTER declaration"); }
         let mut length = (**length).clone();
@@ -165,7 +165,7 @@ fn real_literal(value: f64, double: bool) -> Expr {
 
 fn model_type_key(name: &str) -> String { format!("@model_type:{name}") }
 fn model_metadata_name(name: &str) -> &str {
-    name.strip_prefix("@model_type:").or_else(||name.strip_prefix("@model_procedure:")).unwrap_or(name)
+    name.strip_prefix("@model_type:").or_else(||name.strip_prefix("@model_procedure:")).or_else(||name.strip_prefix("@parameter_lower:")).or_else(||name.strip_prefix("@character_length:")).unwrap_or(name)
 }
 fn record_model_type(constants: &mut Constants, name: &str, kind: &TypeSpec, rank: usize) {
     let code = match kind {
@@ -418,6 +418,7 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
             }
         }
     }
+    let array_dimensions: HashMap<String,Vec<Expr>> = body.iter().filter_map(|s|if let Stmt::ArrayDecl{name,dims,..}=s {Some((name.clone(),dims.clone()))} else {None}).collect();
     let arrays: HashSet<String> = body.iter().filter_map(|s| if let Stmt::ArrayDecl { name, .. } = s { Some(name.to_ascii_lowercase()) } else { None }).collect();
     let mut array_values = HashMap::new();
     let mut variable_values = HashMap::new();
@@ -525,11 +526,34 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
                 let mut initializer = initializer.clone();
                 rewrite_expr(&mut initializer, &constants)?;
                 if arrays.contains(&key) {
-                    if matches!(kind, TypeSpec::Character(_) | TypeSpec::CharacterAssumed) { bail!("CHARACTER array PARAMETER declarations are not yet supported"); }
+                    if let Expr::Ident(source) = &initializer {
+                        if let Some(Expr::Call(tag,items)) = constants.get(source) {
+                            if tag == "@array_constant" { initializer=Expr::Call("@array_constructor".into(),items.clone()); }
+                        }
+                    }
                     let initializer=if crate::empty_constructors::kind(&initializer)?.is_some() {initial_value(kind,&initializer)?} else {initializer};
                     let Expr::Call(tag, items) = initializer else { bail!("array PARAMETER requires an array constructor"); };
                     if tag != "@array_constructor" { bail!("array PARAMETER requires an array constructor"); }
-                    let values: Vec<Expr> = items.iter().map(|e| -> Result<Expr> { Ok(if matches!(kind, TypeSpec::Integer(_)) { Expr::IntLit(evaluate(e, &constants)?.to_string()) } else { real_literal(if matches!(kind, TypeSpec::Real) { real_constant(e)? as f32 as f64 } else { real_constant(e)? }, matches!(kind, TypeSpec::DoublePrecision)) }) }).collect::<Result<_>>()?;
+                    let mut dims=array_dimensions[&key].clone();
+                    if dims.len()!=1 {bail!("array PARAMETER `{name}` currently requires rank one");}
+                    rewrite_expr(&mut dims[0],&constants)?;
+                    let lower=match &dims[0] {
+                        Expr::Call(tag,bounds) if tag=="@declared_bounds"=>integer_constant(&bounds[0])?,
+                        _=>1,
+                    };
+                    constants.insert(format!("@parameter_lower:{name}"),Expr::IntLit(lower.to_string()));
+                    if matches!(kind,TypeSpec::Character(_)|TypeSpec::CharacterAssumed) {
+                        let lengths=items.iter().map(|e|character_constant(e).map(|s|s.len())).collect::<Result<Vec<_>>>()?;
+                        if lengths.windows(2).any(|pair|pair[0]!=pair[1]) {bail!("untyped CHARACTER array constructor elements must have equal lengths");}
+                    }
+                    let element_kind = if matches!(kind,TypeSpec::CharacterAssumed) {
+                        let lengths=items.iter().map(|e|character_constant(e).map(|s|s.len())).collect::<Result<Vec<_>>>()?;
+                        let length=lengths.first().copied().context("assumed CHARACTER length cannot be inferred from an empty array constructor")?;
+                        if lengths.iter().any(|n|*n!=length) {bail!("untyped CHARACTER array constructor elements must have equal lengths");}
+                        TypeSpec::Character(Some(length))
+                    } else {kind.clone()};
+                    if let TypeSpec::Character(length)=&element_kind {constants.insert(format!("@character_length:{name}"),Expr::IntLit(length.unwrap_or(1).to_string()));}
+                    let values: Vec<Expr> = items.iter().map(|e| -> Result<Expr> { Ok(if matches!(element_kind,TypeSpec::Character(_)) {character_parameter(e,&element_kind)?} else if matches!(kind, TypeSpec::Integer(_)) { Expr::IntLit(evaluate(e, &constants)?.to_string()) } else { real_literal(if matches!(kind, TypeSpec::Real) { real_constant(e)? as f32 as f64 } else { real_constant(e)? }, matches!(kind, TypeSpec::DoublePrecision)) }) }).collect::<Result<_>>()?;
                     constants.insert(key.clone(), Expr::Call("@array_constant".into(), values.clone()));
                     array_values.insert(key, values);
                     continue;
@@ -548,14 +572,36 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
         Ok(())
         })().map_err(|error|crate::source_diagnostics::at(error,declaration_offset))?;
     }
+    // Resolve implied extents before ordinary bounds and CHARACTER length lowering.
+    for stmt in body.iter_mut() {
+        if let Stmt::ArrayDecl {kind,name,dims}=stmt {
+            if dims.iter().any(|e|matches!(e,Expr::Ident(tag) if tag=="@assumed_extent")) {
+                let values=array_values.get(name).with_context(||format!("array `{name}`: (*) currently requires a PARAMETER array constructor initializer"))?;
+                if dims.len()!=1 {bail!("implied-shape PARAMETER arrays currently require rank one");}
+                dims[0]=Expr::IntLit(values.len().to_string());
+            }
+            if matches!(kind,TypeSpec::CharacterAssumed) && array_values.contains_key(name) {
+                let length=constants.get(&format!("@character_length:{name}")).context("missing CHARACTER array PARAMETER length")?;
+                *kind=TypeSpec::Character(Some(usize::try_from(integer_constant(length)?)?));
+            }
+        }
+    }
     body.retain(|s| !matches!(s, Stmt::InitializedDecl { .. }));
     rewrite_body(body, &constants, modules, if assumed_dummies {arguments} else {&[]}, template)?;
     let mut output = Vec::new();
     for stmt in std::mem::take(body) {
         let init = if let Stmt::ArrayDecl { name, dims, .. } = &stmt {
             if let Some(values) = array_values.get(name) {
-                if dims.len() != 1 || integer_constant(&dims[0])? != values.len() as i64 { bail!("array PARAMETER `{name}` initializer shape mismatch"); }
-                values.iter().enumerate().map(|(i,v)| Stmt::AssignIndex { name: name.clone(), indices: vec![Expr::IntLit((i+1).to_string())], value: v.clone() }).collect()
+                let (lower,extent)=match dims.as_slice() {
+                    [Expr::Call(tag,bounds)] if tag=="@declared_bounds"=>{
+                        let lower=integer_constant(&bounds[0])?;let upper=integer_constant(&bounds[1])?;
+                        (lower,(i128::from(upper)-i128::from(lower)+1).max(0))
+                    },
+                    [dim]=>(1,i128::from(integer_constant(dim)?).max(0)),
+                    _=>bail!("array PARAMETER `{name}` currently requires rank one"),
+                };
+                if extent != values.len() as i128 { bail!("array PARAMETER `{name}` initializer shape mismatch"); }
+                values.iter().enumerate().map(|(i,v)| Stmt::AssignIndex { name: name.clone(), indices: vec![Expr::IntLit((lower+i as i64).to_string())], value: v.clone() }).collect()
             } else { vec![] }
         } else { vec![] };
         let variable_init: Vec<Stmt> = match &stmt {
@@ -653,6 +699,10 @@ fn constructor_items(items: &[Expr], constants: &Constants, output: &mut Vec<Exp
                 }
             }
             Expr::Call(n, args) if n == "@array_constructor" => constructor_items(args, constants, output, budget)?,
+            Expr::Ident(n) if matches!(constants.get(n),Some(Expr::Call(tag,_)) if tag=="@array_constant") => {
+                let Some(Expr::Call(_,items))=constants.get(n) else {unreachable!()};
+                constructor_items(items,constants,output,budget)?;
+            }
             _ => { *budget = budget.checked_sub(1).context("array constructor exceeds the supported compile-time expansion limit")?; let mut item = item.clone(); rewrite_expr(&mut item, constants)?; output.push(item); }
         }
     }
@@ -915,6 +965,17 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
         }
         Expr::Un(_, inner) => rewrite_expr(inner, constants)?,
         Expr::Call(name, args) | Expr::Index(name, args) => {
+            if let Some(Expr::Call(tag,values))=constants.get(name) {
+                if tag=="@array_constant" && args.len()==1 {
+                    let mut index=args[0].clone();rewrite_expr(&mut index,constants)?;
+                    if let Ok(index)=integer_constant(&index) {
+                        let lower=constants.get(&format!("@parameter_lower:{name}")).map(integer_constant).transpose()?.unwrap_or(1);
+                        let index=usize::try_from(i128::from(index)-i128::from(lower)).context("PARAMETER array subscript is out of bounds")?;
+                        *expr=values.get(index).context("PARAMETER array subscript is out of bounds")?.clone();
+                        return Ok(());
+                    }
+                }
+            }
             if constants.get(&name.to_ascii_lowercase()).is_some_and(|v| !matches!(v, Expr::Call(n, _) if n == "@array_constant")) {
                 bail!("scalar PARAMETER `{name}` cannot be called or indexed");
             }
@@ -1363,8 +1424,8 @@ mod tests {
             ("character(len=*), parameter :: a=char(-1)", "", "codes 1 through 127"),
             ("character(len=*), parameter :: a=char(1,1)", "", "character constant expression"),
             ("character(len=*), parameter :: a='x'", "a='y'", "cannot modify PARAMETER"),
-            ("character(len=2), parameter :: a(2)=['ab','cd']", "", "CHARACTER array PARAMETER"),
-            ("character(len=*) :: a", "", "only for scalar PARAMETER"),
+            ("character(len=2), parameter :: a(2)=['ab','cd']", "a(1)='ef'", "cannot modify PARAMETER"),
+            ("character(len=*) :: a", "", "requires a PARAMETER"),
         ] {
             let error = format!("{:#}", resolve_source(declarations, statements).unwrap_err());
             assert!(error.contains(expected), "{error}");

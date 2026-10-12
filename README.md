@@ -114,8 +114,8 @@ native driver does not invoke it.
 
 Unsupported ELEMENTAL declarations and errors while resolving types or
 constant initializers now report the source filename, line, and column and
-underline the relevant attribute, name, or statement. For example, an OPTIONAL
-ELEMENTAL function dummy is diagnosed at its declaration, naming the argument
+underline the relevant attribute, name, or statement. For example, an unsupported
+POINTER ELEMENTAL function dummy is diagnosed at its declaration, naming the argument
 and procedure. The same reporting is used by native builds, `check`, and `run`.
 
 Native multi-source builds retain explicit source ranges so these diagnostics
@@ -124,6 +124,20 @@ Declaration source offsets remain available through AST transformations;
 passes that have not yet attached source locations retain their existing text
 errors. Run `python tests/test_source_diagnostics.py` to check CLI modes,
 continuations, repeated names, type errors, and original-file mapping.
+
+## CHARACTER array parameters
+
+Local rank-one CHARACTER PARAMETER arrays support explicit extents and `(*)`
+extents inferred from their constant constructor. For example,
+`character(len=2), parameter :: s(*) = ["aa", "bb", "cc"]` declares three
+constant elements. Each element is padded or truncated to the declared length;
+`len=*` can infer a common element length from a nonempty constructor.
+Constant element references, copies of named array parameters, constructor
+implied-DOs, and fixed nonunit lower bounds are supported. Writes and initializer
+shape mismatches are rejected. Storage retains the existing local rank-one
+CHARACTER array limit of 1024 elements; this does not add general assumed-size
+dummy arrays. Run `python tests/test_character_array_parameters.py` for
+interpreter/native O0/O2 checks and gfortran comparisons.
 
 ## Elemental function results
 
@@ -144,8 +158,8 @@ kinds, and uninitialized reads remain checked.
 
 CHARACTER lengths must be constant after specialization, and locals must be
 explicitly declared. Runtime-length actuals
-such as TRIM of a variable, higher-rank arrays in CHARACTER calls, optional
-function dummies, recursive CHARACTER calls, host-variable captures, internal
+such as TRIM of a variable, higher-rank arrays in CHARACTER calls,
+recursive CHARACTER calls, host-variable captures, internal
 procedures inside these functions, and CHARACTER calls in WHERE/FORALL remain
 unsupported and are diagnosed. This uses the compiler's existing fixed-size
 local CHARACTER storage, not a general CHARACTER function-result ABI.
@@ -615,7 +629,7 @@ Empty typed bracket constructors preserve the declared element type and kind:
 `[character(len=3)::]`, and `[double precision::]` all have size zero.
 Named kind and length parameters, including imported parameters, are resolved
 before array lowering. These constructors support type/size inquiries,
-reductions, zero-length assignments, numeric array PARAMETER initializers,
+reductions, zero-length assignments, numeric and CHARACTER array PARAMETER initializers,
 and procedure arguments under the compiler's existing array-shape rules.
 Nonempty explicitly typed constructors currently require constant elements.
 Untyped empty constructors remain invalid. Run
@@ -777,6 +791,16 @@ Recursive calls reuse the specialization for each argument-presence combination.
 A separate-object optional-argument ABI remains unsupported. Named calls require
 a definition in the source group.
 
+ELEMENTAL functions also support OPTIONAL numeric, LOGICAL, and CHARACTER
+inputs, scalar broadcasting, conforming array actuals, and absent-argument
+forwarding. Numeric elemental array results can be passed to array dummies.
+Specialized presence branches retain source-level parameter-use information
+for unused-argument warnings. `tests/144_optional_elemental.f90` tests the
+`sgn_real` example with scalar and array calls. INTEGER constant ERROR STOP
+codes are supported in native programs and the interpreter, with the code
+used as the process exit status. Run `python tests/test_optional_elemental.py`
+for these checks and gfortran comparisons.
+
 Scalar CHARACTER subroutine arguments support fixed and assumed lengths,
 including OPTIONAL inputs and writable variables. Assumed lengths follow each
 actual argument; LEN, empty strings and literal/concatenated inputs work. Fixed
@@ -784,8 +808,8 @@ lengths currently require an exact match. Expressions require INTENT(IN), while
 writable arguments must be variables. Explicit RETURN leaves an expanded
 subroutine, including from nested loops, and execution resumes in its caller.
 Fixed-length rank-one CHARACTER array subroutine arguments also use call-site
-specialization, including assumed-length dummies. Assumed-length function
-dummies remain outside this subset.
+specialization, including assumed-length dummies. Non-elemental assumed-length
+CHARACTER function dummies remain outside this subset.
 Run `python tests/test_optional_procedures.py`.
 
 ## Internal procedures and host association
@@ -957,9 +981,9 @@ Dynamic accesses check bounds and initialize only the selected element; DO WHILE
 conditions with dynamic CHARACTER indexing are evaluated on every iteration.
 Local CHARACTER array subroutines can specialize fixed/assumed-length dummies
 to caller storage, including bounded allocatable outputs.
-Higher ranks, module CHARACTER array storage, CHARACTER
-array PARAMETERs and the other array transformational intrinsics remain outside
-this subset. Untyped constructors require equal-length CHARACTER literals
+Higher ranks, module CHARACTER array storage, and the other array
+transformational intrinsics remain outside this subset. Local CHARACTER
+array PARAMETERs support explicit or inferred rank-one extents. Untyped constructors require equal-length CHARACTER literals
 (including substituted constants). Typed `[CHARACTER(LEN=n) :: ...]` constructors
 accept constant CHARACTER elements of different lengths and a constant length;
 elements are padded or truncated to that length before assignment. Run
@@ -1109,7 +1133,9 @@ python tests/test_nested_where.py
 python tests/test_masked_reductions.py
 python tests/test_dim_reductions.py
 python tests/test_optional_procedures.py
+python tests/test_optional_elemental.py
 python tests/test_character_arrays.py
+python tests/test_character_array_parameters.py
 python tests/test_scalar_substrings.py
 python tests/test_vector_subscripts.py
 python tests/test_named_arguments.py

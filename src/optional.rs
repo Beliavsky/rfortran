@@ -17,6 +17,27 @@ fn optionals(body: &[Stmt]) -> Names {
         })
         .collect()
 }
+// Preserve source-level use information when a presence variant discards the
+// only branch which reads a parameter. This metadata affects warnings only.
+fn parameter_used(body: &[Stmt],param:&str)->bool {
+    fn expr(e:&Expr,param:&str)->bool {match e {
+        Expr::Ident(n)=>n==param,
+        Expr::Call(n,args)|Expr::Index(n,args)=>n==param||args.iter().any(|e|expr(e,param)),
+        Expr::Section{name,lower,upper,stride}=>name==param||[lower,upper,stride].into_iter().flatten().any(|e|expr(e,param)),
+        Expr::Bin(_,a,b)=>expr(a,param)||expr(b,param),Expr::Un(_,a)=>expr(a,param),_=>false
+    }}
+    body.iter().any(|s|match s {
+        Stmt::Assign{value,..}|Stmt::Return(Some(value))=>expr(value,param),
+        Stmt::AssignIndex{indices,value,..}=>expr(value,param)||indices.iter().any(|e|expr(e,param)),
+        Stmt::Print{items}|Stmt::CallSub{args:items,..}=>items.iter().any(|e|expr(e,param)),
+        Stmt::If{cond,then_body,else_body}=>expr(cond,param)||parameter_used(then_body,param)||else_body.as_ref().is_some_and(|b|parameter_used(b,param)),
+        Stmt::Do{start,end,body,..}=>expr(start,param)||expr(end,param)||parameter_used(body,param),
+        Stmt::DoWhile{cond,body}=>expr(cond,param)||parameter_used(body,param),
+        Stmt::Block{body}=>parameter_used(body,param),
+        Stmt::SelectCase{expr:e,cases,default}=>expr(e,param)||cases.iter().any(|c|parameter_used(&c.body,param))||default.as_ref().is_some_and(|b|parameter_used(b,param)),
+        _=>false
+    })
+}
 fn collect(body: &mut Vec<Stmt>, templates: &mut HashMap<String, Stmt>) {
     body.retain_mut(|s| match s {
         Stmt::Function { name, body, .. } | Stmt::Subroutine { name, body, .. }
@@ -101,6 +122,7 @@ impl Specializer {
         // Register before visiting calls: recursive presence variants form a
         // finite graph and reuse this entry rather than expanding indefinitely.
         self.cache.insert(key, variant.clone());
+        let original_reads:Vec<_>=params.iter().filter(|p|!missing.contains(*p)&&parameter_used(body,p)).cloned().collect();
         params.retain(|n| !missing.contains(n));
         for stmt in body.iter_mut() {
             if let Stmt::VarDecl { names, .. } = stmt {
@@ -110,6 +132,7 @@ impl Specializer {
         body.retain(|s| !matches!(s,Stmt::VarDecl {names,..} if names.is_empty())
             && !matches!(s,Stmt::ArrayDecl {name,..} if missing.contains(name))
             && !matches!(s,Stmt::DummyIntent {name,intent} if missing.contains(name) || intent == "optional"));
+        if function {for param in original_reads {body.insert(0,Stmt::DummyIntent{name:param,intent:"@optional_source_read".into()});}}
         let result = match &template {
             Stmt::Function { body, .. } => Some(match body.last() {
                 Some(Stmt::Return(Some(e))) => e.clone(),

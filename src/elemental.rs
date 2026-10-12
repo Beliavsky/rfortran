@@ -179,10 +179,9 @@ pub fn validate(
         if !body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name == param && intent == "intent(in)")) {
             return Err(crate::source_diagnostics::declaration(body,param,None,format!("ELEMENTAL function dummy argument `{param}` requires INTENT(IN)")));
         }
-        if body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name == param && intent != "intent(in)")) {
-            let attribute=body.iter().find_map(|s|match s {Stmt::DummyIntent{name,intent} if name==param&&intent!="intent(in)"=>Some(intent.as_str()),_=>None}).unwrap();
-            let message=if attribute=="optional" {format!("OPTIONAL dummy argument `{param}` is not yet supported in ELEMENTAL function `{name}`")}
-                else {format!("additional attributes on ELEMENTAL dummy argument `{param}` are not yet supported")};
+        if body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name == param && intent != "intent(in)" && intent != "optional" && !intent.starts_with('@'))) {
+            let attribute=body.iter().find_map(|s|match s {Stmt::DummyIntent{name,intent} if name==param&&intent!="intent(in)"&&intent!="optional"&&!intent.starts_with('@')=>Some(intent.as_str()),_=>None}).unwrap();
+            let message=format!("attribute `{attribute}` on dummy argument `{param}` is not yet supported in ELEMENTAL function `{name}`");
             return Err(crate::source_diagnostics::declaration(body,param,Some(attribute),message));
         }
     }
@@ -246,9 +245,9 @@ mod tests {
                 "requires scalar",
             ),
             (
-                "integer,optional,intent(in)::i\ninteger::j",
+                "integer,pointer,intent(in)::i\ninteger::j",
                 "j=i",
-                "OPTIONAL dummy argument",
+                "attribute `pointer`",
             ),
             (
                 "integer,intent(in)::i\ninteger::j",

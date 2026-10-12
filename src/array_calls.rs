@@ -43,7 +43,7 @@ fn runtime_matrix_actual(e: &Expr, shapes: &Shapes) -> bool {
 }
 // Expand array calls before ordinary scalar specialization. Keeping this in a
 // separate function also limits the stack frame of the recursive `expand` pass.
-fn elemental_array_call(name: &str, args: &[Expr], routine: &Routine, shapes: &Shapes, readonly: &HashSet<String>, serial: &mut usize) -> Result<Option<Stmt>> {
+fn elemental_array_call(name: &str, args: &[Expr], routine: &Routine, shapes: &Shapes, readonly: &HashSet<String>, serial: &mut usize, functions: &HashMap<String,TypeSpec>) -> Result<Option<Stmt>> {
     if !args.iter().any(|a|array_actual(a,shapes)) {return Ok(None);}
     if args.len()>routine.params.len() {bail!("too many arguments to `{name}`");}
     *serial+=1;
@@ -71,7 +71,7 @@ fn elemental_array_call(name: &str, args: &[Expr], routine: &Routine, shapes: &S
             }
             let (value,count,kind)=if intent=="intent(in)" {
                 let mut captured=actual.clone();
-                let (kind,capacity,length)=crate::reductions::argument(&mut captured,&local,&mut prefix,serial)?;
+                let (kind,capacity,length)=crate::reductions::argument_with_elementals(&mut captured,&local,&mut prefix,serial,functions)?;
                 let count=crate::parameters::integer_constant(&length).context("ELEMENTAL array calls currently require constant rank-one extents")?;
                 if count!=capacity {bail!("ELEMENTAL array calls currently require constant rank-one extents");}
                 for s in &prefix {match s {
@@ -1023,6 +1023,7 @@ fn expand(
     body: &mut Vec<Stmt>,
     inherited: &Shapes,
     routines: &HashMap<String, Routine>,
+    functions: &HashMap<String,TypeSpec>,
     active: &mut Vec<String>,
     serial: &mut usize,
 ) -> Result<()> {
@@ -1081,9 +1082,9 @@ fn expand(
                     bail!("recursive specialized subroutine calls are not yet supported");
                 }
                 if r.elemental {
-                    if let Some(mut expanded)=elemental_array_call(name,args,r,&shapes,&readonly,serial)? {
+                    if let Some(mut expanded)=elemental_array_call(name,args,r,&shapes,&readonly,serial,functions)? {
                         let Stmt::Block {body}=&mut expanded else {unreachable!()};
-                        expand(body,&shapes,routines,active,serial)?;
+                        expand(body,&shapes,routines,functions,active,serial)?;
                         *s=expanded;
                         continue;
                     }
@@ -1197,12 +1198,14 @@ fn expand(
                         } else {
                             if intent!="intent(in)" {bail!("writable array dummy `{p}` requires a whole-array actual argument");}
                             let start=prefix.len();
-                            let (k,capacity,length)=crate::reductions::argument(&mut captured,&shapes,&mut prefix,serial)?;
+                            let (k,capacity,length)=crate::reductions::argument_with_elementals(&mut captured,&shapes,&mut prefix,serial,functions)?;
                             for s in &prefix[start..] {match s {
                                 Stmt::ArrayDecl {kind,name,dims}=>{shapes.insert(name.clone(),(kind.clone(),dims.clone()));},
                                 Stmt::VarDecl {kind,names}=>for n in names {shapes.insert(n.clone(),(kind.clone(),vec![]));},_=>{}
                             }}
-                            (k,vec![Expr::IntLit(capacity.to_string())],Some(length))
+                            // Statically sized expressions need no runtime view descriptor.
+                            let length=if crate::parameters::integer_constant(&length).ok()==Some(capacity) {None} else {Some(length)};
+                            (k,vec![Expr::IntLit(capacity.to_string())],length)
                         };
                         let a=match &captured {Expr::Ident(a)=>a.clone(),Expr::Call(n,v) if n=="@packed_view"=>if let Expr::Ident(a)=&v[0] {a.clone()} else {bail!("array view requires materialized storage");},_=>bail!("array dummy `{p}` requires a materialized array argument")};
                         if crate::allocatables::axes(&a,&shapes).is_some() {bail!("runtime-sized multidimensional procedure arguments are not yet supported");}
@@ -1309,7 +1312,7 @@ fn expand(
                     }
                 }
                 active.push(name.clone());
-                expand(&mut cloned, &call_shapes, routines, active, serial)?;
+                expand(&mut cloned, &call_shapes, routines, functions, active, serial)?;
                 active.pop();
                 crate::subroutines::inline_returns(&mut cloned,serial)?;
                 prefix.extend(cloned);
@@ -1323,15 +1326,15 @@ fn expand(
             | Stmt::Subroutine { body, .. }
             | Stmt::Block { body }
             | Stmt::Do { body, .. }
-            | Stmt::DoWhile { body, .. } => expand(body, &shapes, routines, active, serial)?,
+            | Stmt::DoWhile { body, .. } => expand(body, &shapes, routines, functions, active, serial)?,
             Stmt::If {
                 then_body,
                 else_body,
                 ..
             } => {
-                expand(then_body, &shapes, routines, active, serial)?;
+                expand(then_body, &shapes, routines, functions, active, serial)?;
                 if let Some(b) = else_body {
-                    expand(b, &shapes, routines, active, serial)?;
+                    expand(b, &shapes, routines, functions, active, serial)?;
                 }
             }
             _ => {}
@@ -1340,10 +1343,10 @@ fn expand(
     Ok(())
 }
 pub fn resolve(mut p: Program) -> Result<Program> {
-    p=crate::character_elementals::resolve(p)?;
     p=crate::internal_procedures::resolve(p)?;
+    p=crate::optional::resolve(p)?;
+    p=crate::character_elementals::resolve(p)?;
     p=crate::output::prepare_formatted(p)?;
-    p = crate::optional::resolve(p)?;
     p = crate::pointers::prepare(p)?;
     p = crate::allocatables::prepare(p)?;
     p = crate::vector_subscripts::resolve(p)?;
@@ -1375,9 +1378,10 @@ pub fn resolve(mut p: Program) -> Result<Program> {
             _ => true,
         });
     }
+    let functions=crate::elemental::functions(&p);
     let mut routines = HashMap::new();
     collect(&mut p.body, &mut routines);
-    expand(&mut p.body, &Shapes::new(), &routines, &mut vec![], &mut 0)?;
+    expand(&mut p.body, &Shapes::new(), &routines, &functions, &mut vec![], &mut 0)?;
     p = crate::pointers::resolve(p)?;
     p = crate::allocatables::finish(p)?;
     let p = crate::character_arrays::resolve(p)?;

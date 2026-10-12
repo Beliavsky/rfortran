@@ -1088,7 +1088,14 @@ pub fn interpret(program: &Program) {
                         if let Some(a)=frame.env_int_arrays.get_mut(&flag){a[offset]=1;}else{assert_eq!(offset,0);frame.env_int.insert(flag,1);}idx+=1;continue;
                     }
                     if name == "@stop" { std::process::exit(0); }
-                    if name == "@error_stop" { let Expr::Str(message)=&args[0] else {unreachable!()}; eprintln!("ERROR STOP {message}");std::process::exit(1); }
+                    if name == "@error_stop" {
+                        let (message,code)=match args.as_slice() {
+                            [Expr::Str(message)]=>(message.clone(),1),
+                            [Expr::IntLit(value)]=>{let code=value.parse::<i32>().unwrap_or_else(|_|{eprintln!("Runtime error: ERROR STOP integer code must fit default INTEGER");std::process::exit(1)});(code.to_string(),code)},
+                            _=>{eprintln!("Runtime error: ERROR STOP currently requires a CHARACTER or default INTEGER constant");std::process::exit(1)},
+                        };
+                        eprintln!("ERROR STOP {message}");std::process::exit(code);
+                    }
                     if name == "@character_assign" || name=="@character_element_read" {
                         let [Expr::Ident(dest), source, Expr::IntLit(length)] = args.as_slice() else { unreachable!() };
                         let fr = call_stack.last().unwrap().clone();

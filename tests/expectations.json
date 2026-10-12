@@ -1000,6 +1000,20 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": "        ab@        cd@        ef@\n"
+    },
+    "144_optional_elemental": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " All sgn_real tests passed.\n"
+    },
+    "145_character_array_parameters": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " aa bb cc\n aa bb cc\n"
     }
   }
 }

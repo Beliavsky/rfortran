@@ -2529,11 +2529,18 @@ fn gen_stmts(
                     b.ins().trap(ir::TrapCode::unwrap_user(1));return Ok(true);
                 }
                 if name == "@error_stop" {
-                    let [IExpr::Str(message)]=args.as_slice() else {anyhow::bail!("ERROR STOP currently requires a character constant");};
+                    let (message,exit_code)=match args.as_slice() {
+                        [IExpr::Str(message)]=>(message.clone(),1),
+                        [IExpr::IntLit(code)]=>{
+                            let code=code.parse::<i32>().map_err(|_|anyhow::anyhow!("ERROR STOP integer code must fit default INTEGER"))?;
+                            (code.to_string(),code)
+                        },
+                        _=>anyhow::bail!("ERROR STOP currently requires a CHARACTER or default INTEGER constant"),
+                    };
                     let message=format!("ERROR STOP {message}\n");let pointer=make_data(module,b,ptr_ty,dc,message.as_bytes())?;
                     let mut sig=module.make_signature();sig.params.extend([ir::AbiParam::new(types::I32),ir::AbiParam::new(ptr_ty),ir::AbiParam::new(types::I32)]);sig.returns.push(ir::AbiParam::new(types::I32));
                     let id=module.declare_function(if cfg!(windows) { "_write" } else { "rfort_write" },Linkage::Import,&sig)?;let function=module.declare_func_in_func(id,b.func);let fd=b.ins().iconst(types::I32,2);let len=b.ins().iconst(types::I32,message.len() as i64);b.ins().call(function,&[fd,pointer,len]);
-                    let mut sig=module.make_signature();sig.params.push(ir::AbiParam::new(types::I32));let id=module.declare_function("exit",Linkage::Import,&sig)?;let function=module.declare_func_in_func(id,b.func);let code=b.ins().iconst(types::I32,1);b.ins().call(function,&[code]);b.ins().trap(ir::TrapCode::unwrap_user(1));return Ok(true);
+                    let mut sig=module.make_signature();sig.params.push(ir::AbiParam::new(types::I32));let id=module.declare_function("exit",Linkage::Import,&sig)?;let function=module.declare_func_in_func(id,b.func);let code=b.ins().iconst(types::I32,exit_code as i64);b.ins().call(function,&[code]);b.ins().trap(ir::TrapCode::unwrap_user(1));return Ok(true);
                 }
                 if name.eq_ignore_ascii_case("random_seed") && !func_meta.contains_key(name) {
                     let id = module.declare_data(".f90c.random_state", Linkage::Local, true, false)?;
