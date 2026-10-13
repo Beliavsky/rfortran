@@ -1070,6 +1070,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " jimbob\n"
+    },
+    "154_dummy_character_lengths": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "1,2,3\n4,5\n"
     }
   }
 }

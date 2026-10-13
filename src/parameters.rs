@@ -1153,6 +1153,35 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
     Ok(())
 }
 
+fn validate_optional_character_lengths(body:&[Stmt],optional:&HashSet<String>)->Result<()> {
+    fn expression(e:&Expr,optional:&HashSet<String>)->Result<()> {
+        match e {
+            Expr::Ident(n) if optional.contains(n)=>bail!("CHARACTER length cannot depend on OPTIONAL dummy `{n}`"),
+            Expr::Call(_,args)|Expr::Index(_,args)=>for e in args {expression(e,optional)?;},
+            Expr::Bin(_,a,b)=>{expression(a,optional)?;expression(b,optional)?;},
+            Expr::Un(_,e)=>expression(e,optional)?,_=>{},
+        }
+        Ok(())
+    }
+    let mut offset=None;
+    for statement in body {
+        if let Stmt::SourceLocation(value)=statement {offset=Some(*value);}
+        match statement {
+            Stmt::VarDecl {kind:TypeSpec::CharacterLength(length),..}|Stmt::ArrayDecl {kind:TypeSpec::CharacterLength(length),..}=>
+                expression(length,optional).map_err(|error|crate::source_diagnostics::at(error,offset))?,
+            Stmt::Block {body}=>{
+                let mut local=optional.clone();
+                for declaration in body {match declaration {
+                    Stmt::VarDecl {names,..}=>for name in names {local.remove(name);},
+                    Stmt::ArrayDecl {name,..}=>{local.remove(name);},_=>{},
+                }}
+                validate_optional_character_lengths(body,&local)?;
+            }
+            _=>{},
+        }
+    }
+    Ok(())
+}
 fn resolve_template_kind(kind: &mut TypeSpec, constants: &Constants, template: bool) -> Result<()> {
     if template {
         if let TypeSpec::CharacterLength(length) = kind {
@@ -1320,7 +1349,16 @@ fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules, ass
                     bail!("CHARACTER-valued functions are not yet supported by native function-result storage");
                 }
             }
-            Stmt::Subroutine { params, body, .. } => { resolve_scope(body, constants, params, modules, true, false, false)?; }
+            Stmt::Subroutine { params, body, elemental, .. } => {
+                let optional=body.iter().filter_map(|s|if let Stmt::DummyIntent{name,intent}=s {if intent=="optional" {Some(name.clone())}else{None}}else{None}).collect();
+                validate_optional_character_lengths(body,&optional)?;
+                let specialized=*elemental || body.iter().any(|s|match s {
+                    Stmt::ArrayDecl {name,..}=>params.contains(name),
+                    Stmt::VarDecl {kind,names}=>matches!(kind,TypeSpec::Character(_)|TypeSpec::CharacterAssumed|TypeSpec::CharacterLength(_)) && names.iter().any(|n|params.contains(n)),
+                    _=>false,
+                });
+                resolve_scope(body, constants, params, modules, true, false, specialized)?;
+            }
             Stmt::Block { body } => { resolve_scope(body, constants, &[], modules, false, false, template)?; },
             Stmt::Module { .. } => {},
             Stmt::InitializedDecl { .. } => {

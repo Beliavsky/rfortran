@@ -924,8 +924,20 @@ writable arguments must be variables. Explicit RETURN leaves an expanded
 subroutine, including from nested loops, and execution resumes in its caller.
 Fixed-length rank-one CHARACTER array subroutine arguments also use call-site
 specialization, including assumed-length dummies. Non-elemental assumed-length
-CHARACTER function dummies remain outside this subset.
+CHARACTER inputs to numeric scalar functions remain outside this subset when
+all the dummies are scalar.
 Run `python tests/test_optional_procedures.py`.
+
+Local CHARACTER scalar and rank-one array declarations in specialized subroutines
+can use `LEN(text)` of a CHARACTER dummy, including supported constant arithmetic
+such as `LEN(text)+2` or `MAX(1,LEN(text))`. Each call binds the length from the
+actual argument's declared scalar or element length; the contents can be read
+at runtime. Nested calls and BLOCK declarations keep their own lengths.
+Specification expressions cannot depend on OPTIONAL dummies. Runtime-dependent
+`LEN_TRIM(text)` lengths remain unsupported. `tests/154_dummy_character_lengths.f90`
+isolates the local `mod_text` declaration from `util.f90:read_vec_real`.
+Run `python tests/test_dummy_character_lengths.py` for interpreter/native O0/O2
+checks and gfortran comparisons.
 
 ## Internal procedures and host association
 

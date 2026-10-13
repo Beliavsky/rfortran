@@ -66,7 +66,7 @@ end program main
             ("character(len=1.5) :: x", "constant INTEGER"),
             ("character(len=2147483647) :: x", "too large"),
             ("character(len=1/0) :: x", "division by zero"),
-            ("character(len=2) :: x(2)", "CHARACTER array storage"),
+            ("character(len=2) :: x(2,2)", "rank one"),
         ]
         with tempfile.TemporaryDirectory(prefix="bad-character-length-") as tmp:
             path=Path(tmp)/"main.f90"

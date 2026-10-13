@@ -189,6 +189,14 @@ fn rewrite(
             if !shapes.contains_key(&format!("@optional:{param}")) { bail!("PRESENT requires an OPTIONAL dummy argument"); }
             *e = Expr::Logical(!absent.contains(param));
         }
+        Expr::Call(n, args) if n == "len" && args.len()==1 => {
+            if let Expr::Ident(name)=&args[0] {
+                if absent.contains(name) {bail!("reference to absent OPTIONAL dummy `{name}`");}
+                if let Some((TypeSpec::Character(length),_))=shapes.get(name) {
+                    *e=Expr::IntLit(length.unwrap_or(1).to_string());
+                }
+            }
+        }
         Expr::Call(n, args) if n == "size" => {
             if let Some(Expr::Call(tag,a))=args.first() {if tag=="@packed_view" {
                 if args.len()>2 || args.get(1).is_some_and(|d|crate::parameters::integer_constant(d).ok()!=Some(1)) {bail!("SIZE dimension must be 1 for a rank-one array");}
@@ -589,6 +597,13 @@ fn prepare_deallocated_locals(
     crate::allocatables::metadata(body, shapes);
     Ok(())
 }
+fn specialize_character_kind(kind:&mut TypeSpec,shapes:&Shapes,constants:&HashMap<String,Expr>,absent:&HashSet<String>)->Result<()> {
+    if let TypeSpec::CharacterLength(length)=kind {
+        rewrite(length,shapes,constants,absent)?;
+        *kind=crate::parameters::concrete_kind(kind.clone())?;
+    }
+    Ok(())
+}
 fn specialize(
     body: &mut Vec<Stmt>,
     shapes: &mut Shapes,
@@ -637,12 +652,14 @@ fn specialize(
         check_allocated(&s, &pending)?;
         match &mut s {
             Stmt::ArrayDecl { name, kind, dims } => {
+                specialize_character_kind(kind,shapes,constants,absent)?;
                 for d in dims.iter_mut() {
                     rewrite(d, shapes, constants, absent)?;
                 }
                 shapes.insert(name.clone(), (kind.clone(), dims.clone()));
             }
             Stmt::VarDecl { names, kind } => {
+                specialize_character_kind(kind,shapes,constants,absent)?;
                 for n in names {
                     shapes.insert(n.clone(), (kind.clone(), vec![]));
                 }
@@ -803,6 +820,7 @@ fn specialize(
                         local.remove(&format!("@extent:{name}"));
                         local.remove(&format!("@axes:{name}"));
                         local.remove(&format!("@axis_limits:{name}"));
+                        local.remove(&format!("@optional:{name}"));
                         values.remove(&name);
                     }
                 }
@@ -1025,7 +1043,15 @@ fn validate_input_writes(body: &[Stmt], inputs: &HashSet<String>) -> Result<()> 
                     validate_input_writes(b, inputs)?;
                 }
             }
-            Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } | Stmt::Block { body } => {
+            Stmt::Block {body}=>{
+                let mut local=inputs.clone();
+                for declaration in body {match declaration {
+                    Stmt::VarDecl {names,..}=>for name in names {local.remove(name);},
+                    Stmt::ArrayDecl {name,..}=>{local.remove(name);},_=>{},
+                }}
+                validate_input_writes(body,&local)?;
+            }
+            Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } => {
                 validate_input_writes(body, inputs)?
             }
             _ => {}
