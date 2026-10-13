@@ -29,7 +29,23 @@ struct Procedure {
     inputs: HashSet<String>,
     used_fields: HashMap<String, Vec<String>>,
 }
-type Objects = HashMap<String, String>;
+// Track data objects separately from globally collected procedure signatures.
+// Parent scopes are inherited; local declarations and dummies shadow them.
+#[derive(Clone, Default)]
+struct Objects {
+    derived: HashMap<String, String>,
+    arrays: HashSet<String>,
+}
+impl Objects {
+    fn new() -> Self { Self::default() }
+}
+impl std::ops::Deref for Objects {
+    type Target = HashMap<String, String>;
+    fn deref(&self) -> &Self::Target { &self.derived }
+}
+impl std::ops::DerefMut for Objects {
+    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.derived }
+}
 struct Lowerer {
     types: HashMap<String, Definition>,
     procedures: HashMap<String, Procedure>,
@@ -213,10 +229,18 @@ impl Lowerer {
                 Stmt::VarDecl { names, .. } => {
                     for n in names {
                         objects.remove(n);
+                        objects.arrays.remove(n);
+                    }
+                }
+                Stmt::InitializedDecl { entities, .. } => {
+                    for (n, _) in entities {
+                        objects.remove(n);
+                        objects.arrays.remove(n);
                     }
                 }
                 Stmt::ArrayDecl { name, .. } => {
                     objects.remove(name);
+                    objects.arrays.insert(name.clone());
                 }
                 _ => {}
             }
@@ -236,6 +260,7 @@ impl Lowerer {
                     bail!("derived objects currently support INTENT attributes only");
                 }
                 for n in names {
+                    objects.arrays.remove(n);
                     objects.insert(n.clone(), type_name.clone());
                 }
             }
@@ -311,6 +336,7 @@ impl Lowerer {
                             used_fields,
                         },
                     );
+                    self.collect_procedures(body)?;
                 }
                 Stmt::Module { body, .. } => {
                     self.objects(body, &Objects::new())?;
@@ -366,7 +392,14 @@ impl Lowerer {
         objects: &Objects,
         prefix: &mut Vec<Stmt>,
     ) -> Result<Vec<Expr>> {
-        let Some(proc) = self.procedures.get(name).cloned() else {
+        // Intrinsic data expressions and ordinary procedure calls need no derived
+        // argument association. In particular, array subscripts must never be
+        // checked against an unrelated procedure's globally collected signature.
+        let proc = self.procedures.get(name).filter(|p| {
+            !objects.arrays.contains(name)
+                && (p.result.is_some() || p.params.iter().any(|(_, ty)| ty.is_some()))
+        }).cloned();
+        let Some(proc) = proc else {
             let mut args = args;
             for a in &mut args {
                 self.expression(a, objects, prefix)?;
@@ -431,8 +464,8 @@ impl Lowerer {
             }
             Expr::Call(n, args) => {
                 self.bound_call(n, args, objects)?;
-                if self.types.contains_key(n)
-                    || self.procedures.get(n).is_some_and(|p| p.result.is_some())
+                if !objects.arrays.contains(n) && (self.types.contains_key(n)
+                    || self.procedures.get(n).is_some_and(|p| p.result.is_some()))
                 {
                     bail!(
                         "derived-valued expression `{n}` requires a derived assignment or argument"
@@ -503,7 +536,7 @@ impl Lowerer {
                 .procedures
                 .get(n)
                 .cloned()
-                .filter(|p| p.result.is_some())
+                .filter(|p| !objects.arrays.contains(n) && p.result.is_some())
             {
                 if proc.result.as_ref().unwrap().1 != ty {
                     bail!("derived result type mismatch assigning `{target}`");
@@ -560,7 +593,12 @@ impl Lowerer {
         Ok(())
     }
     fn body(&mut self, body: &mut Vec<Stmt>, inherited: &Objects, params: &[String]) -> Result<()> {
-        let objects = self.objects(body, inherited)?;
+        let mut inherited = inherited.clone();
+        for n in params {
+            inherited.remove(n);
+            inherited.arrays.remove(n);
+        }
+        let objects = self.objects(body, &inherited)?;
         let mut output = vec![];
         for mut s in std::mem::take(body) {
             let mut prefix = vec![];
@@ -663,7 +701,9 @@ impl Lowerer {
                     pure,
                     ..
                 } => {
-                    let proc = self.procedures[name].clone();
+                    let proc = self.procedures.get(name)
+                        .with_context(|| format!("missing derived-lowering signature for procedure `{name}`"))?
+                        .clone();
                     let old_params = params.clone();
                     let mut new_params = vec![];
                     for (n, ty) in &proc.params {

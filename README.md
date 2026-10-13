@@ -986,6 +986,12 @@ makes omitted arguments required. `xstr_int.f90` and
 `tests/test_derived_optional.py` cover omitted and reordered arguments, forwarding
 absent dummies, and component expansion around optional arguments.
 
+Derived-type lowering respects local array declarations and host association:
+array subscripts are not associated with a same-named procedure's arguments.
+Calls that do not use derived arguments or results pass through without argument
+rewriting. `xivec_shadow.f90` and `tests/test_derived_shadowing.py` cover this
+behavior, including comparisons with and without an unrelated derived type.
+
 Local OPTIONAL functions and subroutines can be specialized for positional and
 named calls, including omitted arguments before later named arguments and
 forwarding an absent optional dummy to another optional dummy. PRESENT
