@@ -1008,8 +1008,21 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
             else if kind.is_some() { *expr = real_literal((value as f32) as f64, false); }
         }
         Expr::Section { name, lower, upper, stride } => {
-            if constants.get(&name.to_ascii_lowercase()).is_some_and(|v|!matches!(v,Expr::Call(n,_) if n=="@array_constant")) { bail!("PARAMETER `{name}` is not an array"); }
-            for bound in [lower, upper, stride].into_iter().flatten() { rewrite_expr(bound, constants)?; }
+            for bound in [&mut *lower, &mut *upper, &mut *stride].into_iter().flatten() { rewrite_expr(bound, constants)?; }
+            if let Some(value)=constants.get(&name.to_ascii_lowercase()) {
+                if let Expr::Str(text)=value {
+                    let range=Expr::Section {name:String::new(),lower:lower.clone(),upper:upper.clone(),stride:stride.clone()};
+                    if stride.is_some() {bail!("CHARACTER substrings do not allow a stride");}
+                    if [lower.as_deref(),upper.as_deref()].into_iter().flatten().all(|e|integer_constant(e).is_ok()) {
+                        let (start,length)=crate::substrings::bounds(&range,text.len())?;
+                        *expr=Expr::Str(text[start..start+length].into());
+                    } else {
+                        *expr=Expr::Call("@literal_substring".into(),vec![value.clone(),range]);
+                    }
+                } else if !matches!(value,Expr::Call(n,_) if n=="@array_constant") {
+                    bail!("PARAMETER `{name}` is not an array");
+                }
+            }
         }
         Expr::Ident(name) => {
             if let Some(value) = constants.get(&name.to_ascii_lowercase()) {
@@ -1072,6 +1085,8 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
             "len" if args.len() == 1 => {
                 if let Expr::Ident(n) = &args[0] {
                     if let Some(length) = constants.get(&format!("@character_length:{n}")) { *expr = length.clone(); }
+                } else if let Ok(text)=character_constant(&args[0]) {
+                    *expr=Expr::IntLit(text.len().to_string());
                 }
             }
             "selected_real_kind" => {

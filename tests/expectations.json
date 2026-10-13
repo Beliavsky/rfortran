@@ -1091,6 +1091,13 @@
       "program_exit_code": 7,
       "program_stderr": "STOP 7\n",
       "program_stdout": "before\n"
+    },
+    "157_parameter_substrings": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "JIMBOB 09!\n"
     }
   }
 }

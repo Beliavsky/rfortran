@@ -391,6 +391,47 @@ fn dynamic_expression(e: &mut Expr, scope: &mut DynamicScope, output: &mut Vec<S
             *e = dynamic_slice(source.clone(), range, scope, output, serial)?;
         }
         Expr::Call(n, _) if n == "@dynamic_substring" => {},
+        Expr::Call(n,args) if n=="index" && !scope.procedures.contains(n) && !scope.symbols.contains_key(n) => {
+            if args.len()!=2 {bail!("INDEX currently requires STRING and SUBSTRING; BACK and KIND are not yet supported");}
+            let mut sources=args.clone();
+            let mut buffers=vec![];let mut lengths=vec![];let mut caps=vec![];
+            for source in &mut sources {
+                dynamic_expression(source,scope,output,serial)?;
+                let cap=capacity(source,scope).context("INDEX requires scalar CHARACTER arguments")?;
+                let size=logical_length(source,scope,output,serial)?;
+                lengths.push(capture(size,scope,output,serial));caps.push(cap);
+                *serial+=1;let buffer=format!("@substring_search_text_{serial}");
+                scope.characters.insert(buffer.clone(),cap);
+                scope.symbols.insert(buffer.clone(),(TypeSpec::Character(Some(cap)),vec![]));
+                output.push(Stmt::VarDecl {kind:TypeSpec::Character(Some(cap)),names:vec![buffer.clone()]});
+                output.push(Stmt::CallSub {name:"@character_assign".into(),args:vec![ident(&buffer),source.clone(),int(cap)]});
+                buffers.push(buffer);
+            }
+            *serial+=1;let stem=format!("@substring_search_{serial}");
+            let result=format!("{stem}_result");let i=format!("{stem}_i");let j=format!("{stem}_j");
+            let offset=format!("{stem}_offset");let a=format!("{stem}_a");let b=format!("{stem}_b");let matched=format!("{stem}_matched");
+            for (kind,names) in [(TypeSpec::Integer(None),vec![result.clone()]),
+                (TypeSpec::Integer(Some(8)),vec![i.clone(),j.clone(),offset.clone(),a.clone(),b.clone()]),
+                (TypeSpec::Logical,vec![matched.clone()])] {
+                for name in &names {scope.symbols.insert(name.clone(),(kind.clone(),vec![]));}
+                output.push(Stmt::VarDecl {kind,names});
+            }
+            let assign=|name:&str,value:Expr|Stmt::Assign {name:name.into(),value};
+            output.push(assign(&result,int(0)));
+            let comparisons=vec![
+                assign(&offset,binary(BinOp::Add,binary(BinOp::Sub,ident(&i),int(1)),ident(&j))),
+                Stmt::CallSub {name:"@internal_read_byte".into(),args:vec![ident(&a),ident(&buffers[0]),ident(&offset),int(caps[0])]},
+                Stmt::CallSub {name:"@internal_read_byte".into(),args:vec![ident(&b),ident(&buffers[1]),ident(&j),int(caps[1])]},
+                Stmt::If {cond:binary(BinOp::Ne,ident(&a),ident(&b)),then_body:vec![assign(&matched,Expr::Logical(false)),Stmt::Exit],else_body:None},
+            ];
+            let search=Stmt::Do {var:i.clone(),start:int(1),end:binary(BinOp::Add,binary(BinOp::Sub,lengths[0].clone(),lengths[1].clone()),int(1)),body:vec![
+                assign(&matched,Expr::Logical(true)),
+                Stmt::Do {var:j,start:int(0),end:binary(BinOp::Sub,lengths[1].clone(),int(1)),body:comparisons},
+                Stmt::If {cond:ident(&matched),then_body:vec![assign(&result,Expr::Call("int".into(),vec![ident(&i)])),Stmt::Exit],else_body:None},
+            ]};
+            output.push(Stmt::If {cond:binary(BinOp::Eq,lengths[1].clone(),int(0)),then_body:vec![assign(&result,int(1))],else_body:Some(vec![search])});
+            *e=ident(&result);
+        }
         Expr::Call(n, args) if matches!(n.as_str(), "ichar" | "iachar" | "char" | "achar") && !scope.procedures.contains(n) && !scope.symbols.contains_key(n) => {
             if args.len()!=1 {bail!("{n} currently requires one argument; KIND is not yet supported");}
             let mut argument=args[0].clone();

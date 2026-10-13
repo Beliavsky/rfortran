@@ -125,6 +125,23 @@ passes that have not yet attached source locations retain their existing text
 errors. Run `python tests/test_source_diagnostics.py` to check CLI modes,
 continuations, repeated names, type errors, and original-file mapping.
 
+## CHARACTER named-constant substrings
+
+Scalar CHARACTER PARAMETER values support substring ranges such as
+`upper_case(n:n)`. Constant bounds fold to CHARACTER literals, including in
+PARAMETER initializers and LEN inquiries. Runtime bounds use the same checks
+as scalar variable substrings. Omitted bounds, padded declared lengths and
+empty ranges are supported; scalar substring strides and writes to PARAMETER
+values are rejected. CHARACTER array PARAMETER sections remain array sections.
+
+Two-argument scalar `INDEX(string,substring)` works with fixed strings, runtime
+contents, TRIM and runtime substrings, including in PURE/ELEMENTAL procedures.
+It returns the first match, zero for a missing match, and one for an empty
+substring. BACK, KIND and array arguments are not implemented. Run
+`python tests/test_parameter_substrings.py` for interpreter/native O0/O2 checks
+and gfortran comparisons. `tests/157_parameter_substrings.f90` reproduces the
+`upper_case_str` blocker in `util.f90`.
+
 ## CHARACTER array parameters
 
 Local rank-one CHARACTER PARAMETER arrays support explicit extents and `(*)`

@@ -903,7 +903,7 @@ fn validate_locals(
                 upper,
                 stride,
             } => {
-                if !name.starts_with('@') {
+                if !name.is_empty() && !name.starts_with('@') {
                     variable(name)?;
                 }
                 for bound in [lower, upper, stride].into_iter().flatten() {
