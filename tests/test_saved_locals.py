@@ -1,0 +1,150 @@
+"""Persistent scalar procedure locals, including implicit SAVE and recursion."""
+import unittest
+import test_deallocate
+from test_record_read import ROOT
+
+class SavedLocals(unittest.TestCase):
+    check = test_deallocate.Deallocate.check
+    reject = test_deallocate.Deallocate.reject
+
+    def test_counter_and_optional_variants(self):
+        self.check((ROOT/'tests/158_saved_locals.f90').read_text(encoding='utf-8'),'1\n2\n1\n2\n')
+
+    def test_implicit_save_and_independent_procedures(self):
+        self.check("""print *,first(),second()
+print *,first(),second()
+contains
+integer function first()
+integer::n=10
+n=n+1
+first=n
+end function first
+integer function second()
+integer::n=100
+n=n+1
+second=n
+end function second
+end
+""",'11 101\n12 102\n')
+
+    def test_recursive_activations_share_current_value(self):
+        self.check("""print *,visit_count(2)
+print *,visit_count(0)
+contains
+recursive function visit_count(depth) result(out)
+integer,intent(in)::depth
+integer,save::visits=0
+integer::out
+visits=visits+1
+out=0
+if(depth>0)out=visit_count(depth-1)
+out=out+visits
+end function visit_count
+end
+""",'9\n4\n')
+
+    def test_numeric_kinds_and_logical_state(self):
+        self.check("""call step()
+call step()
+contains
+subroutine step()
+real,save::r=0.5
+double precision,save::d=1.0d0
+logical,save::flag=.false.
+integer(kind=8),save::wide=10000000000_8
+r=r+1.0
+d=d+2.0d0
+flag=.not.flag
+wide=wide+1_8
+print *,r,d,flag,wide
+end subroutine step
+end
+""",'1.5 3 T 10000000001\n2.5 5 F 10000000002\n')
+
+    def test_integer_kinds_and_constant_initializers(self):
+        self.check("""call step()
+call step()
+contains
+subroutine step()
+integer,parameter::base=3
+integer(1),save::small=-2
+integer(2)::medium=base**2
+integer(4)::normal=-10
+small=small+1
+medium=medium+2
+normal=normal+3
+print *,small,medium,normal
+end subroutine step
+end
+""",'-1 11 -7\n0 13 -4\n')
+
+    def test_expanded_character_functions_share_one_saved_cell(self):
+        self.check("""print *,number('abc')
+print *,number('x')
+contains
+integer function number(tag)
+character(len=*),intent(in)::tag
+integer,save::calls=0
+calls=calls+1
+number=calls+len(tag)
+end function number
+end
+""",'4\n3\n')
+
+    def test_read_into_saved_state(self):
+        self.check("""call work(.true.)
+call work(.false.)
+contains
+subroutine work(read_value)
+logical,intent(in)::read_value
+integer,save::n=0
+if(read_value)then
+read(*,*)n
+else
+n=n+1
+end if
+print *,n
+end subroutine work
+end
+""",'4\n5\n',data='4\n')
+
+    def test_block_state_and_fresh_automatic_local(self):
+        self.check("""call work()
+call work()
+contains
+subroutine work()
+integer::local
+local=0
+block
+integer::n=0
+n=n+1
+local=local+1
+print *,n,local
+end block
+end subroutine work
+end
+""",'1 1\n2 1\n')
+
+    def test_invalid_or_unsupported_saved_storage(self):
+        for declaration,message in [
+            ('character(2)::n="ab"','numeric or LOGICAL scalars'),
+            ('integer,save::n(2)=[1,2]','local arrays'),
+            ('integer,save,target::n=0','TARGET persistent'),
+            ('integer,save::n','requires a value'),
+        ]:
+            with self.subTest(declaration=declaration):
+                self.reject('call work()\ncontains\nsubroutine work()\n'+declaration+'\nend subroutine work\nend\n',message)
+        self.reject("""print *,bad()
+contains
+pure integer function bad()
+integer::n=0
+n=n+1
+bad=n
+end function bad
+end
+""",'saved or declaration-initialized')
+        self.reject('print *,bad()\ncontains\ninteger function bad()\ninteger::bad=1\nend function bad\nend\n','function result')
+        self.reject('print *,bad()\ncontains\nfunction bad() result(out)\ninteger::out=1\nend function bad\nend\n','function result')
+
+if __name__ == '__main__':
+    unittest.main()

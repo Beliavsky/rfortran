@@ -1098,6 +1098,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": "JIMBOB 09!\n"
+    },
+    "158_saved_locals": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 1\n 2\n 1\n 2\n"
     }
   }
 }

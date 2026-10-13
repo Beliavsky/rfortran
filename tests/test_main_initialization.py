@@ -58,10 +58,8 @@ end
             ("integer(1)::x=128\nprint *,x\nend", "invalid declaration initializer"),
             ("integer::x=[1,2]\nprint *,x\nend", "scalar declaration initializer cannot be an array"),
             ("integer::x(2)=[1,2,3]\nprint *,x\nend", "nonconforming array assignment"),
-            ("module m\ninteger::x=1\nend module m\nend", "persistent SAVE storage"),
-            ("program main\nprint *,counter()\ncontains\ninteger function counter()\ninteger::x=0\nx=x+1\ncounter=x\nend function counter\nend program main", "persistent SAVE storage"),
-            ("program main\ncall s()\ncontains\nsubroutine s()\ninteger::x=0\nprint *,x\nend subroutine s\nend program main", "persistent SAVE storage"),
-            ("block\ninteger::x=0\nprint *,x\nend block\nend", "persistent SAVE storage"),
+            ("module m\ninteger::x=1\nend module m\nend", "module storage"),
+            ("block\ninteger::x=0\nprint *,x\nend block\nend", "module storage"),
         ]
         with tempfile.TemporaryDirectory(prefix="main-init-errors-") as tmp:
             source=Path(tmp)/"main.f90"
