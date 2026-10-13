@@ -43,6 +43,7 @@ the author recorded in this repository's Git history.
 - `src/reductions.rs`
 - `src/sections.rs`
 - `src/subroutines.rs`
+- `src/calendar.rs`
 - `src/timing.rs`
 - `src/timing_intrinsics.rs`
 

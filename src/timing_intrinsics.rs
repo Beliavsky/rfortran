@@ -100,7 +100,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
             }
             let result = match &mut s {
                 Stmt::CallSub { name, args }
-                    if matches!(name.as_str(), "cpu_time" | "system_clock")
+                    if matches!(name.as_str(), "cpu_time" | "system_clock" | "date_and_time")
                         && !procedures.contains(name) =>
                 {
                     lower_call(name, args, &vars, &readonly, pure, serial).map(|statements| {
@@ -172,6 +172,9 @@ fn lower_call(
     crate::named_arguments::intrinsic(name)
         .unwrap()
         .reorder(name, args)?;
+    if name == "date_and_time" {
+        return lower_date(args, vars, readonly, serial);
+    }
     let mut kinds = vec![];
     for (slot, arg) in args.iter().enumerate() {
         if crate::named_arguments::omitted(arg) {
@@ -342,4 +345,238 @@ fn scalar_index(expr: &Expr, vars: &HashMap<String, (TypeSpec, usize)>) -> bool 
         Expr::Call(_, args) => args.iter().all(|a| scalar_index(a, vars)),
         _ => true,
     }
+}
+
+fn lower_date(
+    args: &[Expr],
+    vars: &HashMap<String, (TypeSpec, usize)>,
+    readonly: &HashSet<String>,
+    serial: &mut usize,
+) -> Result<Vec<Stmt>> {
+    use crate::ast::BinOp;
+    let mut out = vec![];
+    for (slot, arg) in args.iter().enumerate() {
+        if crate::named_arguments::omitted(arg) {
+            continue;
+        }
+        let variable = match arg {
+            Expr::Ident(n) | Expr::Index(n, _) | Expr::Call(n, _) => n,
+            _ => bail!("DATE_AND_TIME requires a writable variable"),
+        };
+        let (kind, rank) = vars
+            .get(variable)
+            .context("DATE_AND_TIME requires a declared writable variable")?;
+        if readonly.contains(variable) {
+            bail!("DATE_AND_TIME requires a writable variable");
+        }
+        if slot == 3 {
+            if !matches!(arg, Expr::Ident(_))
+                || *rank != 1
+                || !matches!(kind, TypeSpec::Integer(None | Some(2 | 4 | 8)))
+            {
+                bail!("DATE_AND_TIME VALUES requires a rank-one INTEGER array of kind 2, 4 or 8");
+            }
+            out.push(Stmt::If {
+                cond: Expr::Bin(
+                    BinOp::Lt,
+                    Box::new(Expr::Call("size".into(), vec![arg.clone()])),
+                    Box::new(Expr::IntLit("8".into())),
+                ),
+                then_body: vec![Stmt::CallSub {
+                    name: "@error_stop".into(),
+                    args: vec![Expr::Str(
+                        "DATE_AND_TIME VALUES requires at least 8 elements".into(),
+                    )],
+                }],
+                else_body: None,
+            });
+        } else {
+            let scalar = match arg {
+                Expr::Ident(_) => *rank == 0,
+                Expr::Index(_, indices) | Expr::Call(_, indices) => {
+                    *rank > 0
+                        && indices.len() == *rank
+                        && indices.iter().all(|i| scalar_index(i, vars))
+                }
+                _ => false,
+            };
+            if !scalar
+                || !matches!(
+                    kind,
+                    TypeSpec::Character(_)
+                        | TypeSpec::CharacterAssumed
+                        | TypeSpec::CharacterLength(_)
+                )
+            {
+                bail!(
+                    "DATE_AND_TIME {} requires a scalar CHARACTER variable",
+                    ["DATE", "TIME", "ZONE"][slot]
+                );
+            }
+        }
+    }
+    if args.is_empty() {
+        return Ok(out);
+    }
+    let mut targets = args.to_vec();
+    for arg in targets.iter_mut().take(3) {
+        if crate::named_arguments::omitted(arg) {
+            continue;
+        }
+        if let Expr::Index(_, indices) | Expr::Call(_, indices) = arg {
+            for index in indices {
+                let temp = temporary(serial, "subscript");
+                out.push(Stmt::VarDecl {
+                    kind: TypeSpec::Integer(Some(8)),
+                    names: vec![temp.clone()],
+                });
+                out.push(Stmt::Assign {
+                    name: temp.clone(),
+                    value: index.clone(),
+                });
+                *index = Expr::Ident(temp);
+            }
+        }
+    }
+    let buffer = temporary(serial, "calendar");
+    out.push(Stmt::ArrayDecl {
+        kind: TypeSpec::Integer(Some(8)),
+        name: buffer.clone(),
+        dims: vec![Expr::IntLit("8".into())],
+    });
+    let field = |index: usize| Expr::Index(buffer.clone(), vec![Expr::IntLit(index.to_string())]);
+    out.push(Stmt::CallSub {
+        name: "@date_snapshot".into(),
+        args: (1..=8).map(field).collect(),
+    });
+    let mut success = vec![];
+    let mut failure = vec![];
+    for (slot, arg) in targets.iter().enumerate() {
+        if crate::named_arguments::omitted(arg) {
+            continue;
+        }
+        if slot == 3 {
+            let Expr::Ident(array) = arg else {
+                unreachable!()
+            };
+            let first = Expr::Call("lbound".into(), vec![arg.clone(), Expr::IntLit("1".into())]);
+            let (kind, _) = &vars[array];
+            let max = match kind {
+                TypeSpec::Integer(Some(2)) => i64::from(i16::MAX),
+                TypeSpec::Integer(Some(8)) => i64::MAX,
+                _ => i64::from(i32::MAX),
+            };
+            for index in 0..8 {
+                let target = Expr::Index(
+                    array.clone(),
+                    vec![Expr::Bin(
+                        BinOp::Add,
+                        Box::new(first.clone()),
+                        Box::new(Expr::IntLit(index.to_string())),
+                    )],
+                );
+                success.push(assign(&target, field(index + 1)));
+                failure.push(assign(&target, Expr::IntLit((-max).to_string())));
+            }
+        } else {
+            let value = match slot {
+                0 => concat(vec![
+                    digits(field(1), 4),
+                    digits(field(2), 2),
+                    digits(field(3), 2),
+                ]),
+                1 => concat(vec![
+                    digits(field(5), 2),
+                    digits(field(6), 2),
+                    digits(field(7), 2),
+                    Expr::Str(".".into()),
+                    digits(field(8), 3),
+                ]),
+                _ => {
+                    let offset = Expr::Call("abs".into(), vec![field(4)]);
+                    let suffix = concat(vec![
+                        digits(
+                            Expr::Bin(
+                                BinOp::Div,
+                                Box::new(offset.clone()),
+                                Box::new(Expr::IntLit("60".into())),
+                            ),
+                            2,
+                        ),
+                        digits(
+                            Expr::Call("mod".into(), vec![offset, Expr::IntLit("60".into())]),
+                            2,
+                        ),
+                    ]);
+                    success.push(Stmt::If {
+                        cond: Expr::Bin(
+                            BinOp::Lt,
+                            Box::new(field(4)),
+                            Box::new(Expr::IntLit("0".into())),
+                        ),
+                        then_body: vec![assign(
+                            arg,
+                            concat(vec![Expr::Str("-".into()), suffix.clone()]),
+                        )],
+                        else_body: Some(vec![assign(
+                            arg,
+                            concat(vec![Expr::Str("+".into()), suffix]),
+                        )]),
+                    });
+                    failure.push(assign(arg, Expr::Str(" ".into())));
+                    continue;
+                }
+            };
+            success.push(assign(arg, value));
+            failure.push(assign(arg, Expr::Str(" ".into())));
+        }
+    }
+    out.push(Stmt::If {
+        cond: Expr::Bin(
+            BinOp::Ge,
+            Box::new(field(1)),
+            Box::new(Expr::IntLit("0".into())),
+        ),
+        then_body: success,
+        else_body: Some(failure),
+    });
+    Ok(out)
+}
+fn concat(parts: Vec<Expr>) -> Expr {
+    parts
+        .into_iter()
+        .reduce(|a, b| Expr::Bin(crate::ast::BinOp::Concat, Box::new(a), Box::new(b)))
+        .unwrap()
+}
+fn digits(value: Expr, width: u32) -> Expr {
+    use crate::ast::BinOp;
+    concat(
+        (0..width)
+            .rev()
+            .map(|position| {
+                let digit = Expr::Call(
+                    "mod".into(),
+                    vec![
+                        Expr::Bin(
+                            BinOp::Div,
+                            Box::new(value.clone()),
+                            Box::new(Expr::IntLit(10i64.pow(position).to_string())),
+                        ),
+                        Expr::IntLit("10".into()),
+                    ],
+                );
+                Expr::Call(
+                    "achar".into(),
+                    vec![Expr::Call(
+                        "int".into(),
+                        vec![Expr::Bin(
+                            BinOp::Add,
+                            Box::new(Expr::IntLit("48".into())),
+                            Box::new(digit),
+                        )],
+                    )],
+                )
+            })
+            .collect(),
+    )
 }

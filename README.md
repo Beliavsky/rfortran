@@ -1445,7 +1445,7 @@ ranks through 15 and the rank-three `select_tensor_real` calls in `util.f90`;
 `RESHAPE` also retains its source element type and derives result rank from a
 scalar-integer shape constructor, independently of runtime extent values.
 The full build now passes both `set_alloc` type/rank blockers and currently
-stops at keyword arguments to the currently unimplemented `date_and_time`.
+stops at a wrong-argument-count error for `str_int`.
 Intrinsic keyword interfaces are centralized in `src/named_arguments.rs`, with
 coverage checks for the intrinsic catalog. Added interfaces cover scalar
 conversions, CHARACTER inquiries, numeric-model/kind inquiries, array operations,
@@ -1471,6 +1471,18 @@ OS clock is unavailable, CPU_TIME returns -1, and SYSTEM_CLOCK returns
 procedures. The OS adapters cover Windows, Linux and macOS; this change was tested
 on Windows. `xtiming.f90` demonstrates both calls, and `tests/test_timing.py`
 checks the interpreter, native code at O0/O2, and gfortran when available.
+`DATE_AND_TIME` supports all four optional keywords (`DATE`, `TIME`, `ZONE`,
+`VALUES`) in the interpreter and native code. One snapshot produces local date
+`yyyymmdd`, time `hhmmss.sss`, UTC offset `+hhmm`/`-hhmm` and the eight integer
+fields. CHARACTER outputs are truncated or padded to their declared lengths,
+and scalar elements of supported CHARACTER arrays are accepted. VALUES accepts
+a writable whole rank-one INTEGER array of kind 2, 4 or 8 with at least eight elements;
+non-default lower bounds work, and only the first eight elements are written.
+Unavailable clocks produce blank strings and negative HUGE values. PURE calls,
+read-only outputs and invalid types/ranks are diagnosed. Windows, Linux and macOS
+have OS adapters; validation here ran on Windows. `xdate_and_time.f90` is a small
+example, and `tests/test_date_and_time.py` checks consistency and argument rules
+against the interpreter, native O0/O2 and gfortran when available.
 Full `xutil.f90` execution remains a separate acceptance test.
 
 ## License

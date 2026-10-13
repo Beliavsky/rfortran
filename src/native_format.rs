@@ -5,6 +5,7 @@
 //! Built once with the compiler and embedded as a native static library.
 #![no_std]
 mod timing;
+mod calendar;
 mod format_spec;
 mod record_input;
 mod character_input;

@@ -13,6 +13,7 @@ mod ir;
 mod intrinsics;
 mod random_seed;
 mod timing;
+mod calendar;
 mod timing_intrinsics;
 mod bit_intrinsics;
 mod inquiries;

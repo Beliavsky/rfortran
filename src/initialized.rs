@@ -192,7 +192,7 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                 if name == "@read_record" { for arg in &args[1..] { read(arg, env, &mut before, serial)?; } }
                 if let Some((name, index)) = args.first().and_then(key) { if let Some(i) = index { read(i, env, &mut before, serial)?; } write(name, index, env, &mut after, serial); }
             }
-            Stmt::CallSub {name,args} if name=="@random_seed_get" => {
+            Stmt::CallSub {name,args} if name=="@random_seed_get" || name=="@date_snapshot" => {
                 for arg in args {
                     if let Some((name,index))=key(arg) {if let Some(i)=index {read(i,env,&mut before,serial)?;}write(name,index,env,&mut after,serial);}
                 }

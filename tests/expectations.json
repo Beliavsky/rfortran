@@ -1182,6 +1182,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " T T\n T T T\n T T T\n"
+    },
+    "170_date_and_time": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " T T T T\n T T T T\n T T T\n"
     }
   }
 }

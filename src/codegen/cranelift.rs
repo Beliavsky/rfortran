@@ -2615,6 +2615,12 @@ fn gen_stmts(
                     b.ins().store(MemFlags::new(), seed, address, 0);
                     continue;
                 }
+                if name == "@date_snapshot" {
+                    let IExpr::Index(array, _) = &args[0] else {anyhow::bail!("invalid calendar snapshot buffer")};
+                    let pointer = storage_addr(b, ptr_ty, ints[array]);
+                    file_io::call(module, b, "rfort_date_snapshot", &[pointer], types::I64)?;
+                    continue;
+                }
                 if name=="@random_seed_put" || name=="@random_seed_get" {
                     let id=module.declare_data(".f90c.random_state",Linkage::Local,true,false)?;
                     let global=module.declare_data_in_func(id,b.func);

@@ -1336,6 +1336,13 @@ pub fn interpret(program: &Program) {
                         idx+=1;continue;
                     }
                     if name.eq_ignore_ascii_case("random_seed") && !funcs.contains_key(name) { RANDOM_STATE.with(|s| s.set(1)); idx += 1; continue; }
+                    if name == "@date_snapshot" {
+                        let values = crate::calendar::snapshot();
+                        let Expr::Index(array, _) = &args[0] else {panic!("invalid calendar snapshot buffer")};
+                        call_stack.last_mut().unwrap().env_int_arrays.get_mut(array).unwrap()[..8].copy_from_slice(&values);
+                        idx += 1;
+                        continue;
+                    }
                     if name=="@random_seed_put" || name=="@random_seed_get" {
                         let fr=call_stack.last().unwrap();
                         let (strings,ints,r32,r64,logs)=(fr.env_str.clone(),fr.env_int.clone(),fr.env_real32.clone(),fr.env_real64.clone(),fr.env_log.clone());
