@@ -1217,6 +1217,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 2\n"
+    },
+    "175_heap_allocations": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 6 2 12\n"
     }
   }
 }

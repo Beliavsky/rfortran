@@ -192,7 +192,7 @@ pub(crate) fn argument_with_elementals(e: &mut Expr, shapes: &HashMap<String,(Ty
         *serial+=1;
         let temp=format!("@call_array_{serial}"); let index=format!("@call_array_index_{serial}");
         let value=element(e,&Expr::Ident(index.clone()),&symbols)?.0;
-        prefix.push(Stmt::ArrayDecl {kind:kind.clone(),name:temp.clone(),dims:vec![int(count)]});
+        if runtime_extent(e).is_some() {crate::heap::temporary(kind.clone(),temp.clone(),length.clone(),prefix);}else{prefix.push(Stmt::ArrayDecl {kind:kind.clone(),name:temp.clone(),dims:vec![int(count)]});}
         prefix.push(Stmt::VarDecl {kind:TypeSpec::Integer(None),names:vec![index.clone()]});
         prefix.push(Stmt::Do {var:index.clone(),start:int(1),end:length.clone(),body:vec![Stmt::AssignIndex {name:temp.clone(),indices:vec![Expr::Ident(index)],value}]});
         *e=if runtime_extent(e).is_some() {Expr::Call("@packed_view".into(),vec![Expr::Ident(temp),length.clone()])} else {Expr::Ident(temp)};

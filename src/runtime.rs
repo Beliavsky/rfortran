@@ -298,6 +298,7 @@ pub fn interpret(program: &Program) {
                 }
             }
             Expr::Call(name, args) => {
+
                 if name == "@cpu_seconds" {
                     return ValueTuple::from_real(crate::timing::rfort_cpu_seconds());
                 }
@@ -1174,11 +1175,37 @@ pub fn interpret(program: &Program) {
                         else {let v=if kind=="l"{i64::from(value.2.unwrap_or(false))}else{value.0.unwrap_or_else(||value.1.unwrap_or(0.0) as i64)};if let Some(a)=frame.env_int_arrays.get_mut(&target){a[offset]=v;}else if kind=="l"{assert_eq!(offset,0);frame.env_log.insert(target,v!=0);}else{assert_eq!(offset,0);frame.env_int.insert(target,v);}}
                         if let Some(a)=frame.env_int_arrays.get_mut(&flag){a[offset]=1;}else{assert_eq!(offset,0);frame.env_int.insert(flag,1);}idx+=1;continue;
                     }
+                    if name=="@heap_bounds" {
+                        let fr=call_stack.last().unwrap().clone();
+                        let lower=eval_expr(&args[2],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
+                        let upper=eval_expr(&args[3],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
+                        let extent=i64::try_from((i128::from(upper)-i128::from(lower)+1).max(0)).unwrap_or_else(|_|{eprintln!("Runtime error: allocation extent overflow");std::process::exit(1)});
+                        let fr=call_stack.last_mut().unwrap();for (arg,value) in args[..2].iter().zip([lower,extent]){let Expr::Ident(n)=arg else{unreachable!()};fr.env_int.insert(n.clone(),value);}idx+=1;continue;
+                    }
+                    if name=="@heap_bind" {idx+=1;continue;}
+                    if name=="@heap_allocate" || name=="@heap_free" || name=="@heap_drop" {
+                        let Expr::Ident(local)=&args[0] else{unreachable!()};
+                        let Expr::Ident(mask)=&args[if name=="@heap_allocate" {2}else{1}] else{unreachable!()};
+                        let mut length=0usize;
+                        if name=="@heap_allocate" {
+                            let fr=call_stack.last().unwrap().clone();
+                            let dimensions=args[3..].iter().map(|e|eval_expr(e,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap()).collect::<Vec<_>>();
+                            if !dimensions.contains(&0) {length=dimensions.iter().try_fold(1usize,|total,&extent|total.checked_mul(usize::try_from(extent).ok()?)).filter(|n|*n<=isize::MAX as usize/8).unwrap_or_else(||{eprintln!("Runtime error: allocation size overflow");std::process::exit(1)});}
+                            let Expr::Ident(n)=&args[1] else{unreachable!()};call_stack.last_mut().unwrap().env_int.insert(n.clone(),length as i64);
+                        }
+                        let fr=call_stack.last_mut().unwrap();
+                        if let Some(array)=fr.env_real_arrays.get_mut(local) {
+                            array.clear();if name!="@heap_allocate" {*array=Vec::new();}array.try_reserve_exact(length).unwrap_or_else(|_|{eprintln!("Runtime error: array allocation failed");std::process::exit(1)});array.resize(length,0.0);
+                        }else{let array=fr.env_int_arrays.get_mut(local).unwrap();array.clear();if name!="@heap_allocate" {*array=Vec::new();}array.try_reserve_exact(length).unwrap_or_else(|_|{eprintln!("Runtime error: array allocation failed");std::process::exit(1)});array.resize(length,0);}
+                        let flags=fr.env_int_arrays.get_mut(mask).unwrap();flags.clear();if name!="@heap_allocate" {*flags=Vec::new();}flags.try_reserve_exact(length).unwrap_or_else(|_|{eprintln!("Runtime error: initialization mask allocation failed");std::process::exit(1)});flags.resize(length,0);
+                        fr.commit_saved();idx+=1;continue;
+                    }
                     if name=="@module_bind" {
                         let [Expr::Ident(local),Expr::Str(key),Expr::Str(initializer)]=args.as_slice() else {unreachable!()};
                         let initial:crate::modules::Storage=serde_json::from_str(initializer).unwrap();
                         let fr=call_stack.last().unwrap().clone();
-                        let values=initial.values.iter().map(|e|eval_expr(e,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack)).collect::<Vec<_>>();
+                        let source=if initial.deferred {vec![]}else{initial.values.clone()};
+                        let values=source.iter().map(|e|eval_expr(e,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack)).collect::<Vec<_>>();
                         if initial.rank!=0 {
                             let array=if matches!(initial.kind,TypeSpec::Real|TypeSpec::DoublePrecision) {ModuleArray::Real(values.iter().map(|v|v.1.unwrap_or(v.0.unwrap_or(0) as f64)).collect())}
                                 else {ModuleArray::Integer(values.iter().map(|v|v.0.unwrap_or(i64::from(v.2.unwrap_or(false)))).collect())};

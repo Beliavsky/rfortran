@@ -2,9 +2,8 @@
 // Copyright (c) 2026 Beliavsky
 // See LICENSE-MIT in the repository root.
 
-//! Bounded allocatable outputs and runtime-sized local multidimensional storage.
-//! Storage is sized from call-site array inputs or fixed local arrays; allocation state and extent
-//! remain runtime values. An allocation exceeding that bound is diagnosed.
+//! Bounded output specializations and descriptors for runtime-allocated numeric storage.
+//! Heap storage uses runtime extents; bounded specializations retain capacity checks.
 use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec, UnOp};
 use anyhow::{bail, Context, Result};
 use std::collections::{HashMap, HashSet};
@@ -37,6 +36,8 @@ fn fail(cond: Expr, message: &str) -> Stmt {
 pub(crate) fn metadata(body: &[Stmt], shapes: &mut Shapes) {
     for s in body {
         if let Stmt::DummyIntent { name, intent } = s {
+            if intent=="@heap" {shapes.insert(format!("@heap:{name}"),(TypeSpec::Logical,vec![]));}
+            if let Some(rest)=intent.strip_prefix("@bounded_lower:") {shapes.insert(format!("@lowers:{name}"),(TypeSpec::Integer(Some(8)),rest.split(':').map(id).collect()));}
             if let Some(rest) = intent.strip_prefix("@bounded_shape:") {
                 shapes.insert(
                     format!("@axes:{name}"),
@@ -70,6 +71,7 @@ pub(crate) fn metadata(body: &[Stmt], shapes: &mut Shapes) {
 pub(crate) fn axes(name: &str, shapes: &Shapes) -> Option<Vec<Expr>> {
     shapes.get(&format!("@axes:{name}")).map(|v| v.1.clone())
 }
+pub(crate) fn lowers(name:&str,shapes:&Shapes)->Option<Vec<Expr>> {shapes.get(&format!("@lowers:{name}")).map(|v|v.1.clone())}
 pub(crate) fn inquiry(name: &str, args: &[Expr], shapes: &Shapes) -> Result<Option<Expr>> {
     let Some(Expr::Ident(array)) = args.first() else {
         return Ok(None);
@@ -78,12 +80,9 @@ pub(crate) fn inquiry(name: &str, args: &[Expr], shapes: &Shapes) -> Result<Opti
         return Ok(None);
     };
     let dimensions = axes(array, shapes).unwrap_or_else(|| vec![length.clone()]);
-    if name == "allocated" {
-        if args.len() != 1 {
-            bail!("ALLOCATED expects one array");
-        }
-        return Ok(allocated(array, shapes));
-    }
+    let lower=lowers(array,shapes).unwrap_or_else(||vec![int(1);dimensions.len()]);
+    let bound=|axis:usize,extent:Expr| Expr::Call("@heap_bound".into(),vec![lower[axis].clone(),extent,Expr::Logical(name=="ubound")]);
+    if name=="allocated" {if args.len()!=1{bail!("ALLOCATED expects one array");}return Ok(allocated(array,shapes));}
     let guard = |value: Expr| {
         allocated(array, shapes)
             .map(|flag| {
@@ -122,30 +121,26 @@ pub(crate) fn inquiry(name: &str, args: &[Expr], shapes: &Shapes) -> Result<Opti
     let result = if name == "size" {
         guard(axis.map(|d| dimensions[d].clone()).unwrap_or(length))
     } else if let Some(axis) = axis {
-        guard(if name == "lbound" {
-            int(1)
-        } else {
-            dimensions[axis].clone()
-        })
+        guard(bound(axis,dimensions[axis].clone()))
     } else {
         Expr::Call(
             "@array_constructor".into(),
             dimensions
                 .into_iter()
-                .map(|extent| guard(if name == "lbound" { int(1) } else { extent }))
+                .enumerate().map(|(axis,extent)| guard(bound(axis,extent)))
                 .collect(),
         )
     };
     Ok(Some(result))
 }
 
-// Runtime local matrices retain a bounded flat buffer and separate active axes.
+// Runtime arrays retain a flat buffer or heap pointer and separate active axes.
 pub(crate) fn prepare_matrices(
     body: &mut Vec<Stmt>,
     inherited: &mut Shapes,
     constants: &HashMap<String, Expr>,
 ) -> Result<()> {
-    let globals=body.iter().filter_map(|s|if let Stmt::CallSub {name,args}=s {if name=="@module_bind" {if let Some(Expr::Ident(n))=args.first() {return Some(n.clone());}}None}else{None}).collect::<HashSet<_>>();
+    let globals=body.iter().filter_map(|s|if let Stmt::CallSub {name,args}=s {if name=="@module_bind" || name=="@heap_bind" {if let Some(Expr::Ident(n))=args.first() {return Some(n.clone());}}None}else{None}).collect::<HashSet<_>>();
     for s in body.iter() {
         if let Stmt::ArrayDecl { name, dims, .. } = s {
             if (dims.len() > 1 || globals.contains(name))
@@ -221,9 +216,10 @@ pub(crate) fn prepare_matrices(
     used(body, &candidates, &mut wanted);
     wanted.extend(globals.iter().filter(|n|candidates.contains_key(*n)).cloned());
     if wanted.is_empty() {
+        metadata(body,inherited);
         return Ok(());
     }
-    let targets = candidates
+    let targets:HashMap<String,usize> = candidates
         .into_iter()
         .filter(|(n, _)| wanted.contains(n))
         .collect();
@@ -235,7 +231,9 @@ pub(crate) fn prepare_matrices(
                 .or_insert((kind.clone(), dims.clone()));
         }
     }
-    let bounds = crate::allocation_bounds::infer(body, &targets, &shapes, constants)?;
+    let heap:HashSet<_>=body.iter().filter_map(|s|if let Stmt::DummyIntent{name,intent}=s {(intent=="@heap").then_some(name.clone())}else{None}).collect();
+    let bounded_targets=targets.into_iter().filter(|(n,_)|!heap.contains(n)).collect();
+    let bounds = crate::allocation_bounds::infer(body, &bounded_targets, &shapes, constants)?;
     let mut prefix = vec![];
     for s in body.iter_mut() {
         if let Stmt::ArrayDecl { name, kind, dims } = s {
@@ -256,11 +254,11 @@ pub(crate) fn prepare_matrices(
                 if upper.iter().any(|n| *n > i64::from(i32::MAX)) {
                     bail!("bounded allocation dimension exceeds default INTEGER range");
                 }
-                let capacity = upper.iter().try_fold(1i64, |total, d| {
+                let capacity = if heap.contains(name) {1} else {upper.iter().try_fold(1i64, |total, d| {
                     total
                         .checked_mul(*d)
                         .context("allocation storage bound overflows INTEGER(8)")
-                })?;
+                })?};
                 if capacity > i64::from(i32::MAX) {
                     bail!("bounded allocation capacity exceeds default INTEGER range");
                 }
@@ -277,8 +275,14 @@ pub(crate) fn prepare_matrices(
                 let axis_names = (0..dims.len())
                     .map(|d| format!("{base}_axis_{d}"))
                     .collect::<Vec<_>>();
+                if heap.contains(name) {
+                    let lower_names=(0..dims.len()).map(|d|format!("{base}_lower_{d}")).collect::<Vec<_>>();
+                    prefix.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:lower_names.clone()});
+                    for n in &lower_names {prefix.push(assign(n,int(1)));}
+                    prefix.push(Stmt::DummyIntent{name:name.clone(),intent:format!("@bounded_lower:{}",lower_names.join(":"))});
+                }
                 prefix.push(Stmt::VarDecl {
-                    kind: TypeSpec::Integer(None),
+                    kind: TypeSpec::Integer(Some(8)),
                     names: axis_names.clone(),
                 });
                 for axis in &axis_names {
@@ -286,7 +290,7 @@ pub(crate) fn prepare_matrices(
                 }
                 prefix.extend([
                     Stmt::VarDecl {
-                        kind: TypeSpec::Integer(None),
+                        kind: TypeSpec::Integer(Some(8)),
                         names: vec![length.clone()],
                     },
                     Stmt::VarDecl {
@@ -377,6 +381,7 @@ fn logical_shape(
             Ok(a.or(b))
         }
         Expr::Un(_, a) => logical_shape(a, shapes, guards),
+        Expr::Call(n, _) if matches!(n.as_str(),"size"|"shape"|"lbound"|"ubound"|"allocated")=>Ok(None),
         Expr::Call(n, args) if !shapes.contains_key(n) => {
             let mut result: Option<(Vec<Expr>, bool)> = None;
             for arg in args {
@@ -497,7 +502,8 @@ fn linear_index(
                 Stmt::Return(Some(id(&position))),
             ],
         });
-        let checked = Expr::Call(function, vec![index.clone(), extent.clone()]);
+        let position=if let Some(lower)=lowers(name,shapes) {bin(BinOp::Add,bin(BinOp::Sub,index.clone(),lower[axis].clone()),int(1))}else{index.clone()};
+        let checked = Expr::Call(function, vec![position, extent.clone()]);
         offset = bin(
             BinOp::Add,
             offset,
@@ -820,6 +826,16 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                 }
             }
         }
+        if let Expr::Call(tag,args)=e {if tag=="@heap_bound" {
+            for arg in &mut args[..2]{expression(arg,shapes,guards,checks,serial)?;}
+            let upper=matches!(args[2],Expr::Logical(true));let name=if upper{"@heap_upper_bound"}else{"@heap_lower_bound"};
+            if !checks.iter().any(|s|matches!(s,Stmt::Function{name:n,..} if n==name)) {
+                let lower="@heap_bound_lower";let extent="@heap_bound_extent";
+                let value=if upper{bin(BinOp::Sub,bin(BinOp::Add,id(lower),id(extent)),int(1))}else{id(lower)};
+                checks.push(Stmt::Function{name:name.into(),params:vec![lower.into(),extent.into()],return_type:Some(TypeSpec::Integer(Some(8))),pure:true,elemental:true,body:vec![Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![lower.into(),extent.into()]},Stmt::DummyIntent{name:lower.into(),intent:"intent(in)".into()},Stmt::DummyIntent{name:extent.into(),intent:"intent(in)".into()},Stmt::If{cond:bin(BinOp::Eq,id(extent),int(0)),then_body:vec![Stmt::Return(Some(int(if upper{0}else{1})))],else_body:None},Stmt::Return(Some(value))]});
+            }
+            *e=Expr::Call(name.into(),args[..2].to_vec());return Ok(());
+        }}
         if matches!(e, Expr::Bin(..) | Expr::Call(..)) {
             logical_shape(e, shapes, guards)?;
         }
@@ -850,6 +866,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                     &format!("read of unallocated array `{name}`"),
                 ));
                 *e = a[1].clone();
+                return expression(e,shapes,guards,checks,serial);
             }
             Expr::Call(n, a) if n == "@packed_view" => {
                 if let Expr::Ident(n) = &a[0] {
@@ -970,6 +987,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                                     }
                                 }
                             }
+                            if shapes.contains_key(&format!("@heap:{n}")) {out.push(Stmt::CallSub{name:"@heap_free".into(),args:vec![id(&n)]});}
                             out.push(Stmt::CallSub {
                                 name: "@undefine".into(),
                                 args: vec![id(&n)],
@@ -984,7 +1002,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                     }
                     continue;
                 }
-                Stmt::CallSub {name,..} if name=="@module_bind" => {out.push(s);continue;}
+                Stmt::CallSub {name,..} if name=="@module_bind" || name=="@heap_bind" => {out.push(s);continue;}
                 Stmt::CallSub { name, args } if name == "@allocate" => {
                     let mut handled = true;
                     for arg in args.iter() {
@@ -1017,19 +1035,27 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                                     unreachable!()
                                 };
                                 let mut extent = extent.clone();
-                                expression(&mut extent, &shapes, &mut out, checks, serial)?;
-                                out.push(assign(
-                                    state,
-                                    Expr::Call("max".into(), vec![int(0), extent]),
-                                ));
-                                out.push(fail(bin(BinOp::Gt,id(state),limit.clone()),&format!("allocation of `{n}` dimension {} exceeds its bounded capacity",axis+1)));
+                                if let Expr::Call(tag,bounds)=&mut extent {if tag=="@heap_bounds" {
+                                    let lower=lowers(n,&shapes).context("explicit allocation bounds require runtime storage")?[axis].clone();
+                                    for value in bounds.iter_mut(){expression(value,&shapes,&mut out,checks,serial)?;}
+                                    out.push(Stmt::CallSub{name:"@heap_bounds".into(),args:vec![lower,id(state),bounds[0].clone(),bounds[1].clone()]});
+                                }else{expression(&mut extent,&shapes,&mut out,checks,serial)?;out.push(assign(state,Expr::Call("max".into(),vec![int(0),extent])));}}
+                                else{
+                                    expression(&mut extent, &shapes, &mut out, checks, serial)?;
+                                    out.push(assign(state,Expr::Call("max".into(), vec![int(0), extent])));
+                                    if let Some(lower)=lowers(n,&shapes) {if let Expr::Ident(lower)=&lower[axis]{out.push(assign(lower,int(1)));}}
+                                }
+                                if !shapes.contains_key(&format!("@heap:{n}")) {out.push(fail(bin(BinOp::Gt,id(state),limit.clone()),&format!("allocation of `{n}` dimension {} exceeds its bounded capacity",axis+1)));}
                             }
-                            out.push(assign(
+                            if shapes.contains_key(&format!("@heap:{n}")) {
+                                let mut args=vec![id(n),id(&len)];args.extend(axes);
+                                out.push(Stmt::CallSub{name:"@heap_allocate".into(),args});
+                            } else {out.push(assign(
                                 &len,
                                 axes.into_iter()
                                     .reduce(|a, b| bin(BinOp::Mul, a, b))
                                     .unwrap(),
-                            ));
+                            ));}
                             out.push(assign(&flag, Expr::Logical(true)));
                             out.push(Stmt::CallSub {
                                 name: "@undefine".into(),
@@ -1129,11 +1155,11 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                     let index = format!("@alloc_copy_index_{serial}");
                     let temp = format!("@alloc_copy_{serial}");
                     let (kind, dims) = shapes[name].clone();
-                    out.push(Stmt::ArrayDecl {
+                    if shapes.contains_key(&format!("@heap:{name}")) {crate::heap::temporary(kind,temp.clone(),len.clone(),&mut out);}else{out.push(Stmt::ArrayDecl {
                         kind,
                         name: temp.clone(),
                         dims,
-                    });
+                    });}
                     out.push(Stmt::VarDecl {
                         kind: TypeSpec::Integer(None),
                         names: vec![index.clone()],

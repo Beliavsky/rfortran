@@ -712,7 +712,8 @@ associations to storage in a narrower BLOCK or call scope are rejected.
 
 The native descriptor is currently lowered to scalar local fields. Procedure
 calls still use specialization; a general descriptor calling convention and
-heap-backed allocation remain future work. Early IR transformations that assume
+pointer ALLOCATE remain future work. Numeric ALLOCATABLE heap storage is
+described below. Early IR transformations that assume
 direct variable access are disabled for procedures that access pointer storage;
 Cranelift still applies the requested native optimization level.
 
@@ -1128,8 +1129,8 @@ conformable whole-array or constant-stride section copying, including padding
 and truncation when element lengths differ. CHARACTER reductions and whole-array
 output of runtime-sized CHARACTER arrays remain unsupported.
 
-This does not provide general heap allocation, automatic reallocation on array
-assignment, dynamic input declaration bounds, multidimensional allocatable outputs,
+These output specializations remain bounded. They do not provide automatic
+reallocation on array assignment, dynamic input declaration bounds, multidimensional allocatable outputs,
 sections of runtime-sized dummies/allocatable arrays, or a descriptor ABI.
 Growing array call cycles cannot supply a finite storage
 bound and are diagnosed. Run `python tests/test_recursive_allocatables.py` for
@@ -1139,34 +1140,45 @@ DEALLOCATE accepts lists of whole bounded allocatable arrays and
 deferred-length scalar CHARACTER locals, including in single-line IF statements.
 It clears ALLOCATED and initialization state, permits subsequent allocation or
 CHARACTER assignment, and reports an error when an object is already unallocated.
-Local rank-one arrays explicitly deallocated in the source reserve bounded storage
-from their ALLOCATE shapes, which must be known during call-site specialization;
-different extents and zero-sized allocations are supported within that capacity.
+Numeric locals with runtime allocation dimensions use heap storage; existing
+fixed-size and output specializations may retain bounded storage. Different extents
+and zero-sized allocations are supported.
 Supported allocatable INTENT(INOUT) dummies share allocation state with the caller;
 INTENT(IN) objects and nonlocal objects in PURE procedures cannot be deallocated.
 Pointers, derived-type objects, and STAT/ERRMSG options
 remain outside this DEALLOCATE subset. Run `python tests/test_deallocate.py` for
 interpreter/native O0/O2 checks and comparison with gfortran.
 
-Local numeric/LOGICAL multidimensional allocatables explicitly deallocated in
-the source can also use runtime allocation dimensions with proven finite bounds.
-For example, choosing `(3,4)` or `(10,20)` in an IF/ELSE reserves capacity for 200
-elements while each ALLOCATE sets the active dimensions and element count.
-SIZE (including constant DIM), SHAPE, LBOUND, UBOUND, ALLOCATED, whole-array filling,
-arithmetic, list-directed output, full-array reductions, and RANDOM_NUMBER use the
-current allocation. Element indexing uses the current column-major strides and
-checks each subscript against its dimension. Array operations check each logical
-dimension, including when different shapes have the same total element count.
-Deallocation and reallocation reset element initialization state; empty allocations
-can be queried and reduced without reading storage.
+Numeric and LOGICAL allocatable locals and module variables now support heap
+allocation with runtime dimensions, including dimensions read from input or
+computed by a procedure. The shared descriptor tracks allocation status, active
+extents and lower bounds; contiguous column-major strides follow those extents.
+Ranks 1 through 15 and INTEGER kinds 1/2/4/8 are supported. REAL and DOUBLE
+PRECISION arrays also use this path. Fixed-size specializations may still reserve
+bounded buffers.
 
-This continues to use bounded local storage. Input-dependent bounds and
-loop-carried growth without a finite proof are diagnosed; general heap allocation
-is not implemented. Runtime-sized multidimensional sections, procedure arguments,
-array transformations, masked/DIM reductions, mixing fixed and runtime-sized
-multidimensional array expressions, and explicit non-unit allocation lower bounds
-remain unsupported. Run `python tests/test_runtime_allocatables.py` for
-interpreter/native O0/O2 checks and comparisons with gfortran for deterministic cases.
+SIZE (including constant DIM), SHAPE, LBOUND, UBOUND, ALLOCATED, scalar filling,
+conformable array arithmetic, list-directed output, full-array reductions and
+RANDOM_NUMBER use the current allocation. Explicit `lower:upper` allocation
+bounds can depend on runtime values. Assumed-shape numeric dummies support
+reading and writing these arrays, with dummy lower bounds rebased to one.
+Each subscript is checked against its dimension. Allocation-size arithmetic is
+checked for overflow, and allocation failure is reported at runtime.
+
+DEALLOCATE releases the data and its initialization mask. Reallocation starts
+with unset elements; reads remain checked per element. Module allocations persist
+across procedure calls. Heap-backed procedure/BLOCK locals and expression buffers
+are released on normal scope exit, including RETURN, EXIT and CYCLE.
+
+Runtime-sized multidimensional sections, general multidimensional ALLOCATABLE
+dummy association, array transformations, masked/DIM reductions, automatic
+reallocation on assignment, and mixing fixed and runtime-sized multidimensional
+expressions remain unsupported. CHARACTER and derived-type heap allocation and
+STAT/ERRMSG are separate remaining work. No public descriptor ABI is provided
+for separate-object module interfaces.
+Run `python tests/test_heap_allocations.py` and
+`python tests/test_runtime_allocatables.py` for interpreter/native O0/O2 checks
+and gfortran comparisons.
 
 ## CHARACTER comparisons and function arguments
 
@@ -1317,12 +1329,12 @@ PUBLIC/PRIVATE access and local shadowing are checked. Procedures with the same
 name in different modules retain distinct identities.
 
 INTEGER, REAL, LOGICAL and fixed-length CHARACTER data use shared storage across
-calls, including supported fixed arrays and bounded allocatable numeric arrays.
+calls, including supported fixed arrays and runtime-allocated numeric arrays.
 Allocation status, shape and initialization checks persist across procedures.
 PURE procedures can read module data but cannot modify nonlocal variables.
-Existing type, rank and allocation limits still apply; allocatable backing
-storage requires a provable finite bound. This does not add a general module
-pointer or derived-type storage ABI.
+Existing type and rank limits still apply. Numeric module arrays use heap storage;
+CHARACTER allocation retains its existing bounds. This does not add a general
+module pointer or derived-type storage ABI.
 
 Supply module sources before their consumers in the same invocation, for example
 `rfort m1.f90 m2.f90 main.f90 --run`. Compiled `.mod` interface files are not
@@ -1407,6 +1419,7 @@ python tests/test_pointer_descriptors.py
 python tests/test_recursive_allocatables.py
 python tests/test_deallocate.py
 python tests/test_runtime_allocatables.py
+python tests/test_heap_allocations.py
 python tests/test_dimension_attribute.py
 python tests/test_internal_read.py
 python tests/test_write.py

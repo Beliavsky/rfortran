@@ -1271,10 +1271,7 @@ mod tests {
                 "integer,allocatable::a(:,:)\nallocate(a(2,0))\nend",
                 "positive extent",
             ),
-            (
-                "integer,allocatable::a(:,:)\ninteger::n\nread(*,*) n\nallocate(a(n,2))\nend",
-                "shape known",
-            ),
+
             (
                 "integer,allocatable::a(2,:)\nallocate(a(2,2))\nend",
                 "all dimensions",

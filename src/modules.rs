@@ -975,6 +975,7 @@ pub(crate) fn bind_scope(body: &mut Vec<Stmt>) -> Result<()> {
                         .map(|(i, e)| (format!("axis{i}"), e)),
                 );
             }
+            if let Some(lower)=crate::allocatables::lowers(local,&shapes){fields.extend(lower.into_iter().enumerate().map(|(i,e)|(format!("lower{i}"),e)));}
             for (field, value) in fields {
                 if let Expr::Ident(n) = value {
                     let kind = shapes
@@ -1009,7 +1010,7 @@ pub(crate) fn bind_scope(body: &mut Vec<Stmt>) -> Result<()> {
     }
     let mut out = vec![];
     for statement in std::mem::take(body) {
-        if matches!(&statement,Stmt::Assign {name,value} if auxiliaries.contains_key(name)&&(matches!(value,Expr::Logical(false))||crate::parameters::integer_constant(value).ok()==Some(0)))
+        if matches!(&statement,Stmt::Assign {name,value} if auxiliaries.contains_key(name)&&(matches!(value,Expr::Logical(false))||matches!(crate::parameters::integer_constant(value).ok(),Some(0|1))))
         {
             // Only descriptor setup occurs at this scope's declaration prefix;
             // deallocation and allocation changes live in the executable blocks.
@@ -1114,7 +1115,7 @@ pub(crate) fn finish_bounds(mut program: Program) -> Result<Program> {
                         continue;
                     };
                     let mut data: Storage = serde_json::from_str(encoded)?;
-                    if data.deferred {
+                    if data.deferred && !matches!(data.kind,TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision|TypeSpec::Logical) {
                         let count = capacities[key];
                         let default = match data.kind {
                             TypeSpec::Real | TypeSpec::DoublePrecision => {

@@ -188,22 +188,26 @@ deallocate(a)
 end
 """, error="uninitialized")
 
-    def test_unproven_bounds_rejected(self):
-        for setup in ("read (*,*) n", "n=2\ncall change(n)"):
-            self.reject("program main\ninteger::n\ninteger,allocatable::a(:,:)\n" +
-                        setup + "\nallocate(a(n,2))\ndeallocate(a)\ncontains\n"
-                        "subroutine change(n)\ninteger,intent(inout)::n\nn=10\n"
-                        "end subroutine change\nend program main\n", "proven bounds")
-        self.reject("""integer::n,i
+    def test_input_and_call_dependent_sizes(self):
+        for setup,data,expected in (("read (*,*) n","7\n","7 2 14\n"),
+                                     ("n=2\ncall change(n)","","10 2 20\n")):
+            self.check("program main\ninteger::n\ninteger,allocatable::a(:,:)\n" +
+                       setup + "\nallocate(a(n,2))\na=1\nprint *,shape(a),sum(a)\n"
+                       "deallocate(a)\ncontains\nsubroutine change(n)\n"
+                       "integer,intent(inout)::n\nn=10\nend subroutine change\n"
+                       "end program main\n",expected,data=data)
+        self.check("""integer::n,i
 integer,allocatable::a(:,:)
 n=2
 do i=1,3
   n=n+1
   allocate(a(n,2))
+  a=1
+  print *,size(a),sum(a)
   deallocate(a)
 end do
 end
-""", "proven bounds")
+""","6 6\n8 8\n10 10\n")
 
     def test_unsupported_consumers_rejected(self):
         for operation in ("print *,transpose(a)", "print *,sum(a,dim=1)",
@@ -274,14 +278,25 @@ end
         self.check(program,"4 8 32 32\n",data="1\n")
 
     def test_procedure_arguments_preserve_rank(self):
-        for dummy, actual in (("(:)","a"),("(:,:)","a"),("(:)","a+1")):
-            with self.subTest(dummy=dummy,actual=actual):
-                self.reject("program main\ninteger,allocatable::a(:,:)\n"
-                            "allocate(a(2,3))\na=2\ncall show("+actual+")\n"
-                            "deallocate(a)\ncontains\nsubroutine show(b)\n"
-                            "integer,intent(in)::b"+dummy+"\nprint *,sum(b)\n"
-                            "end subroutine show\nend program main\n",
-                            "multidimensional procedure arguments")
+        for actual in ("a","a+1"):
+            self.reject("program main\ninteger,allocatable::a(:,:)\n"
+                        "allocate(a(2,3))\na=2\ncall show("+actual+")\n"
+                        "deallocate(a)\ncontains\nsubroutine show(b)\n"
+                        "integer,intent(in)::b(:)\nprint *,sum(b)\n"
+                        "end subroutine show\nend program main\n","type or rank mismatch")
+        self.check("""program main
+integer,allocatable::a(:,:)
+allocate(a(2,3))
+a=2
+call show(a)
+deallocate(a)
+contains
+subroutine show(b)
+integer,intent(in)::b(:,:)
+print *,size(b,1),size(b,2),sum(b)
+end subroutine show
+end program main
+""","2 3 12\n")
 
 
 if __name__ == "__main__":

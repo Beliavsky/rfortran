@@ -17,6 +17,7 @@ struct Variable {
     state: State,
     elements: BTreeMap<i64, State>,
     runtime_sized: bool,
+    heap_length: Option<Expr>,
 }
 type Env = BTreeMap<String, Variable>;
 fn int(n: i64) -> Expr { Expr::IntLit(n.to_string()) }
@@ -42,10 +43,11 @@ fn constant(e: &Expr) -> Option<i64> { crate::parameters::integer_constant(e).ok
 
 fn check(name: &str, index: Option<&Expr>, env: &Env, out: &mut Vec<Stmt>, serial: &mut usize) -> Result<()> {
     let Some(v) = env.get(name) else { return Ok(()) };
-    if let (Some(n), None) = (v.extent, index) {
+    if v.heap_length.is_none() {if let (Some(n), None) = (v.extent, index) {
         if let Some(i) = (1..=n).find(|i| *v.elements.get(i).unwrap_or(&v.state) == State::No) {
             bail!("read of uninitialized variable `{name}`: element {i} before assignment");
         }
+    }
     }
     let state = if v.extent.is_some() {
         if v.extent == Some(0) { return Ok(()); }
@@ -66,7 +68,7 @@ fn check(name: &str, index: Option<&Expr>, env: &Env, out: &mut Vec<Stmt>, seria
                 let idx = format!("@init_scan_{serial}");
                 out.push(Stmt::VarDecl { kind: TypeSpec::Integer(None), names: vec![idx.clone()] });
                 let index = Expr::Ident(idx.clone());
-                out.push(Stmt::Do { var: idx, start: int(1), end: int(n), body: vec![guard(flag(v, Some(index.clone())), name, Some(index))] });
+                out.push(Stmt::Do { var: idx, start: int(1), end: v.heap_length.clone().unwrap_or_else(||int(n)), body: vec![guard(flag(v, Some(index.clone())), name, Some(index))] });
             } else { out.push(guard(flag(v, index.cloned()), name, index.cloned())); }
         }
     }
@@ -93,7 +95,7 @@ fn write(name: &str, index: Option<&Expr>, env: &mut Env, out: &mut Vec<Stmt>, s
         if let Some(index) = index {
             if let Some(i) = constant(index) {
                 v.elements.insert(i, State::Yes);
-                if (1..=n).all(|i| v.elements.get(&i) == Some(&State::Yes)) { v.state = State::Yes; v.elements.clear(); }
+                if v.heap_length.is_none() && (1..=n).all(|i| v.elements.get(&i) == Some(&State::Yes)) { v.state = State::Yes; v.elements.clear(); }
             } else if v.state != State::Yes { v.state = State::Maybe; }
             out.push(Stmt::AssignIndex { name: v.flag.clone(), indices: vec![index.clone()], value: int(1) });
         } else {
@@ -101,7 +103,7 @@ fn write(name: &str, index: Option<&Expr>, env: &mut Env, out: &mut Vec<Stmt>, s
             *serial += 1;
             let idx = format!("@init_fill_{serial}");
             out.push(Stmt::VarDecl { kind: TypeSpec::Integer(None), names: vec![idx.clone()] });
-            out.push(Stmt::Do { var: idx.clone(), start: int(1), end: int(n), body: vec![Stmt::AssignIndex { name: v.flag.clone(), indices: vec![Expr::Ident(idx)], value: int(1) }] });
+            out.push(Stmt::Do { var: idx.clone(), start: int(1), end: v.heap_length.clone().unwrap_or_else(||int(n)), body: vec![Stmt::AssignIndex { name: v.flag.clone(), indices: vec![Expr::Ident(idx)], value: int(1) }] });
         }
     } else {
         v.state = State::Yes;
@@ -151,9 +153,27 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                 let [Expr::Ident(local),Expr::Str(key),Expr::Str(initializer)]=args.as_slice() else {unreachable!()};
                 let initial:crate::modules::Storage=serde_json::from_str(initializer)?;
                 let variable=env.get_mut(local).context("missing module variable initialization state")?;
-                let flags=crate::modules::Storage {kind:TypeSpec::Integer(None),values:vec![int(i64::from(initial.initialized));variable.extent.unwrap_or(1) as usize],initialized:true,rank:usize::from(variable.extent.is_some()),deferred:false};
+                let flags=crate::modules::Storage {kind:TypeSpec::Integer(None),values:vec![int(i64::from(initial.initialized));variable.extent.unwrap_or(1) as usize],initialized:true,rank:usize::from(variable.extent.is_some()),deferred:variable.heap_length.is_some()};
                 before.push(Stmt::CallSub {name:"@module_bind".into(),args:vec![Expr::Ident(variable.flag.clone()),Expr::Str(format!("{key}.initialized")),Expr::Str(serde_json::to_string(&flags)?)]});
                 variable.state=State::Maybe;variable.elements.clear();
+            }
+            Stmt::CallSub {name,args} if name=="@heap_bind" => {
+                let Expr::Ident(local)=&args[0] else{unreachable!()};
+                let v=&env[local];before.push(Stmt::CallSub{name:"@heap_bind".into(),args:vec![Expr::Ident(v.flag.clone())]});
+            }
+            Stmt::CallSub {name,args} if name=="@heap_bounds" => {
+                for value in &args[2..]{read(value,env,&mut before,serial)?;}
+                for target in &args[..2]{let Expr::Ident(n)=target else{unreachable!()};write(n,None,env,&mut after,serial);}
+            }
+            Stmt::CallSub {name,args} if name=="@heap_allocate" => {
+                for arg in &args[2..] {read(arg,env,&mut before,serial)?;}
+                let Expr::Ident(local)=&args[0] else{unreachable!()};
+                let flag=env[local].flag.clone();args.insert(2,Expr::Ident(flag));
+                let Expr::Ident(length)=&args[1] else{unreachable!()};write(length,None,env,&mut after,serial);
+            }
+            Stmt::CallSub {name,args} if name=="@heap_free" || name=="@heap_drop" => {
+                let Expr::Ident(local)=&args[0] else{unreachable!()};
+                args.push(Expr::Ident(env[local].flag.clone()));
             }
             Stmt::CallSub {name,args} if name=="@format_begin" => {
                 for arg in &args[1..] {read(arg,env,&mut before,serial)?;}
@@ -217,7 +237,7 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                 let v = env.get_mut(name).ok_or_else(|| anyhow::anyhow!("undefined output argument `{name}`"))?;
 
                 v.state = State::No; v.elements.clear();
-                stmt = if let Some(extent)=v.extent {
+                stmt = if v.heap_length.is_some() {Stmt::Block{body:vec![]}} else if let Some(extent)=v.extent {
                     *serial+=1;let index=format!("@undefine_index_{serial}");
                     Stmt::Block{body:vec![Stmt::VarDecl{kind:TypeSpec::Integer(None),names:vec![index.clone()]},Stmt::Do{var:index.clone(),start:int(1),end:int(extent),body:vec![Stmt::AssignIndex{name:v.flag.clone(),indices:vec![Expr::Ident(index)],value:int(0)}]}]}
                 } else { Stmt::Assign { name: v.flag.clone(), value: int(0) } };
@@ -337,6 +357,7 @@ fn scope(body: &mut Vec<Stmt>, inherited: &mut Env, params: &[String], result: O
         _ => vec![],
     }).collect();
     if let Some(name) = result { names.entry(name.into()).or_insert(None); }
+    let mut heap_shapes=crate::allocatables::Shapes::new();crate::allocatables::metadata(body,&mut heap_shapes);
     let mut env = inherited.clone();
     let mut prefix = Vec::new();
     for (name, extent) in names {
@@ -345,7 +366,7 @@ fn scope(body: &mut Vec<Stmt>, inherited: &mut Env, params: &[String], result: O
         let flag = format!("@initialized_{serial}");
         let assigned = params.contains(&name) && !body.iter().any(|s| matches!(s, Stmt::DummyIntent { name: n, intent } if n == &name && intent == "intent(out)"));
         let runtime_sized=name.starts_with("@pointer_") || body.iter().any(|s|matches!(s,Stmt::DummyIntent {name:n,intent} if n==&name && intent.starts_with("@bounded:")));
-        let v = Variable { flag: flag.clone(), extent, state: if assigned { State::Yes } else { State::No }, elements: BTreeMap::new(), runtime_sized };
+        let v = Variable { flag: flag.clone(), extent, state: if assigned { State::Yes } else { State::No }, elements: BTreeMap::new(), runtime_sized, heap_length: heap_shapes.contains_key(&format!("@heap:{name}")).then(||crate::allocatables::length(&name,&heap_shapes).unwrap()) };
         if let Some(n) = extent {
             prefix.push(Stmt::ArrayDecl { kind: TypeSpec::Integer(None), name: flag.clone(), dims: vec![int(n)] });
             let index = format!("@init_clear_{serial}");
@@ -365,6 +386,7 @@ fn scope(body: &mut Vec<Stmt>, inherited: &mut Env, params: &[String], result: O
 }
 pub fn instrument(mut program: Program) -> Result<Program> {
     program = crate::subroutines::resolve(program)?;
+    program = crate::heap::cleanup(program);
     scope(&mut program.body, &mut Env::new(), &[], None, &mut 0)?;
     crate::modules::unify_storage(program)
 }

@@ -50,6 +50,8 @@ enum CgVal {
 enum Storage {
     Stack(ir::StackSlot),
     Static(ir::GlobalValue),
+    HeapStack(ir::StackSlot),
+    HeapStatic(ir::GlobalValue),
 }
 impl From<ir::StackSlot> for Storage {
     fn from(slot: ir::StackSlot) -> Self { Self::Stack(slot) }
@@ -58,7 +60,12 @@ fn storage_addr(b: &mut FunctionBuilder, ptr_ty: ir::Type, storage: impl Into<St
     match storage.into() {
         Storage::Stack(slot) => b.ins().stack_addr(ptr_ty, slot, 0),
         Storage::Static(global) => b.ins().global_value(ptr_ty, global),
+        Storage::HeapStack(slot)=>{let cell=b.ins().stack_addr(ptr_ty,slot,0);b.ins().load(ptr_ty,ir::MemFlags::new(),cell,0)},
+        Storage::HeapStatic(global)=>{let cell=b.ins().global_value(ptr_ty,global);b.ins().load(ptr_ty,ir::MemFlags::new(),cell,0)},
     }
+}
+fn heap_cell(b:&mut FunctionBuilder,ptr:ir::Type,storage:Storage)->Result<ir::Value> {
+    Ok(match storage {Storage::HeapStack(slot)=>b.ins().stack_addr(ptr,slot,0),Storage::HeapStatic(global)=>b.ins().global_value(ptr,global),_=>bail!("array is missing its runtime allocation descriptor")})
 }
 fn array_storage(b: &mut FunctionBuilder, module: &mut ObjectModule, len: usize, main: bool) -> Result<Storage> {
     let size = len.checked_mul(8).ok_or_else(|| anyhow::anyhow!("array size overflow"))?;
@@ -769,6 +776,7 @@ fn eval_expr(
         }
         IExpr::Str(_) => CgVal::I64(b.ins().iconst(ir::types::I64, 0)),
         IExpr::Call(name, args) => {
+
             let lname = name.to_ascii_lowercase();
             if lname == "@cpu_seconds" {
                 let call = b.ins().call(ex.cpu_seconds, &[]);
@@ -2562,22 +2570,68 @@ fn gen_stmts(
                     let code=b.ins().iconst(types::I32,0);b.ins().call(function,&[code]);
                     b.ins().trap(ir::TrapCode::unwrap_user(1));return Ok(true);
                 }
+                if name=="@heap_bounds" {
+                    let lower=eval_expr(b,ex,ptr_ty,&args[2],ints,reals,bools,func_meta);let lower=to_i64(b,lower);
+                    let upper=eval_expr(b,ex,ptr_ty,&args[3],ints,reals,bools,func_meta);let upper=to_i64(b,upper);
+                    let empty=b.ins().icmp(ir::condcodes::IntCC::SignedLessThan,upper,lower);let upper=b.ins().select(empty,lower,upper);
+                    let (difference,overflow)=b.ins().ssub_overflow(upper,lower);let okay=b.ins().bnot(overflow);file_io::require(module,b,ptr_ty,dc,okay,"allocation extent overflow")?;
+                    let one=b.ins().iconst(types::I64,1);let (extent,overflow)=b.ins().sadd_overflow(difference,one);let okay=b.ins().bnot(overflow);file_io::require(module,b,ptr_ty,dc,okay,"allocation extent overflow")?;
+                    let zero=b.ins().iconst(types::I64,0);let extent=b.ins().select(empty,zero,extent);
+                    for (target,value) in args[..2].iter().zip([lower,extent]) {let IExpr::Ident(n)=target else{bail!("allocation bounds require descriptor fields")};let address=storage_addr(b,ptr_ty,ints[n]);b.ins().store(MemFlags::new(),value,address,0);}
+                    continue;
+                }
+                if name=="@heap_bind" {
+                    let IExpr::Ident(local)=&args[0] else{bail!("invalid heap binding")};
+                    let cell=b.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,8,0));
+                    let zero=b.ins().iconst(ptr_ty,0);b.ins().stack_store(zero,cell,0);
+                    let storage=Storage::HeapStack(cell);
+                    if let Some(slot)=ints.get_mut(local){*slot=storage;}else if let Some(slot)=reals.get_mut(local){*slot=storage;}else if let Some(slot)=bools.get_mut(local){*slot=storage;}else{bail!("unknown heap array `{local}`");}
+                    arrays.insert(local.clone(),1);continue;
+                }
+                if name=="@heap_allocate" || name=="@heap_free" || name=="@heap_drop" {
+                    let storage=|n:&str|ints.get(n).or_else(||reals.get(n)).or_else(||bools.get(n)).copied();
+                    let IExpr::Ident(local)=&args[0] else{bail!("invalid heap allocation")};
+                    let cell=heap_cell(b,ptr_ty,storage(local).context("missing array storage")?)?;
+                    let IExpr::Ident(mask)=&args[if name=="@heap_allocate"{2}else{1}] else{bail!("missing allocation initialization mask")};
+                    let mask_cell=heap_cell(b,ptr_ty,storage(mask).context("missing initialization storage")?)?;
+                    if name!="@heap_allocate" {
+                        let mut signature=module.make_signature();signature.params.push(ir::AbiParam::new(ptr_ty));
+                        let id=module.declare_function("free",Linkage::Import,&signature)?;let f=module.declare_func_in_func(id,b.func);
+                        for cell in [cell,mask_cell] {let pointer=b.ins().load(ptr_ty,MemFlags::new(),cell,0);b.ins().call(f,&[pointer]);let zero=b.ins().iconst(ptr_ty,0);b.ins().store(MemFlags::new(),zero,cell,0);}
+                    }else{
+                        let mut count=b.ins().iconst(types::I64,1);
+                        // First collect all extents so a zero-sized shape never overflows.
+                        let mut extents=vec![];let mut empty=b.ins().iconst(types::I8,0);
+                        for arg in &args[3..] {let value=eval_expr(b,ex,ptr_ty,arg,ints,reals,bools,func_meta);let extent=to_i64(b,value);let zero=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,extent,0);empty=b.ins().bor(empty,zero);extents.push(extent);}
+                        for extent in extents {let zero=b.ins().iconst(types::I64,0);let extent=b.ins().select(empty,zero,extent);let (product,overflow)=b.ins().umul_overflow(count,extent);let okay=b.ins().bnot(overflow);file_io::require(module,b,ptr_ty,dc,okay,"allocation size overflow")?;count=product;}
+                        let maximum=b.ins().iconst(types::I64,i64::MAX/8);let okay=b.ins().icmp(ir::condcodes::IntCC::UnsignedLessThanOrEqual,count,maximum);file_io::require(module,b,ptr_ty,dc,okay,"allocation size overflow")?;
+                        let IExpr::Ident(length)=&args[1] else{bail!("invalid allocation length")};let length_address=storage_addr(b,ptr_ty,ints[length]);b.ins().store(MemFlags::new(),count,length_address,0);
+                        let one=b.ins().iconst(types::I64,1);let empty=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,count,0);let count=b.ins().select(empty,one,count);
+                        let count=if ptr_ty==types::I64 {count}else{let limit=b.ins().iconst(types::I64,(u32::MAX/8) as i64);let okay=b.ins().icmp(ir::condcodes::IntCC::UnsignedLessThanOrEqual,count,limit);file_io::require(module,b,ptr_ty,dc,okay,"allocation size overflow")?;b.ins().ireduce(ptr_ty,count)};
+                        let width=b.ins().iconst(ptr_ty,8);
+                        let data=file_io::call(module,b,"calloc",&[count,width],ptr_ty)?;let okay=b.ins().icmp_imm(ir::condcodes::IntCC::NotEqual,data,0);file_io::require(module,b,ptr_ty,dc,okay,"array allocation failed")?;
+                        let mask=file_io::call(module,b,"calloc",&[count,width],ptr_ty)?;let okay=b.ins().icmp_imm(ir::condcodes::IntCC::NotEqual,mask,0);file_io::require(module,b,ptr_ty,dc,okay,"initialization mask allocation failed")?;
+                        b.ins().store(MemFlags::new(),data,cell,0);b.ins().store(MemFlags::new(),mask,mask_cell,0);
+                    }
+                    continue;
+                }
                 if name=="@module_bind" {
                     let [IExpr::Ident(local),IExpr::Str(key),IExpr::Str(initializer)]=args.as_slice() else {bail!("invalid module storage binding");};
                     let initial:crate::modules::Storage=serde_json::from_str(initializer)?;
                     let symbol=format!(".rfort.module.{key}");
                     let id=if let Some(cranelift_module::FuncOrDataId::Data(id))=module.get_name(&symbol) {id} else {
                         let mut bytes=vec![];
-                        for value in &initial.values {
+                        let initial_values=if initial.deferred {vec![crate::ast::Expr::IntLit("0".into())]}else{initial.values.clone()};
+                        for value in &initial_values {
                             if let TypeSpec::Character(length)=&initial.kind {
                                 let mut text=crate::parameters::character_constant(value)?.into_bytes();
                                 let length=length.unwrap_or(1);text.resize(length,b' ');text.truncate(length);text.push(0);bytes.extend(text);
                             } else {
-                                let bits=match &initial.kind {
+                                let bits=if initial.deferred {0} else {match &initial.kind {
                                     TypeSpec::Real|TypeSpec::DoublePrecision=>crate::parameters::real_constant(value)?.to_bits(),
                                     TypeSpec::Logical=>if let crate::ast::Expr::Logical(v)=value {u64::from(*v)}else{bail!("invalid LOGICAL module initializer")},
                                     _=>crate::parameters::integer_constant(value)? as u64,
-                                };
+                                }};
                                 if bools.contains_key(local)&&!arrays.contains_key(local) {bytes.push(bits as u8);}
                                 else if module.isa().endianness()==ir::Endianness::Little {bytes.extend(bits.to_le_bytes());}else{bytes.extend(bits.to_be_bytes());}
                             }
@@ -2586,7 +2640,8 @@ fn gen_stmts(
                         let id=module.declare_data(&symbol,Linkage::Local,true,false)?;
                         let mut data=DataDescription::new();data.define(bytes.into_boxed_slice());data.set_align(8);module.define_data(id,&data)?;id
                     };
-                    let storage=Storage::Static(module.declare_data_in_func(id,b.func));
+                    let global=module.declare_data_in_func(id,b.func);
+                    let storage=if initial.deferred {arrays.insert(local.clone(),1);Storage::HeapStatic(global)}else{Storage::Static(global)};
                     if let Some((slot,_))=chars.get_mut(local) {
                         *slot=storage;let address=storage_addr(b,ptr_ty,storage);
                         let value=if ptr_ty==types::I64 {address}else{b.ins().uextend(types::I64,address)};

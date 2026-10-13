@@ -58,8 +58,9 @@ pub(crate) fn rename_with_prefix(
     }
     for s in body.iter_mut() {
         match s {
-            Stmt::DummyIntent { name: n, intent } if intent.starts_with("@bounded_shape:") => {
-                let rest = intent.trim_start_matches("@bounded_shape:");
+            Stmt::DummyIntent { name: n, intent } if intent.starts_with("@bounded_shape:") || intent.starts_with("@bounded_lower:") => {
+                let tag=if intent.starts_with("@bounded_lower:"){"@bounded_lower:"}else{"@bounded_shape:"};
+                let rest = intent.trim_start_matches(tag);
                 let axes = rest
                     .split(':')
                     .map(|n| {
@@ -69,7 +70,7 @@ pub(crate) fn rename_with_prefix(
                     })
                     .collect::<Vec<_>>();
                 name(n, &names);
-                *intent = format!("@bounded_shape:{}", axes.join(":"));
+                *intent = format!("{tag}{}", axes.join(":"));
             }
             Stmt::DummyIntent { name: n, intent } if intent.starts_with("@bounded_limits:") => {
                 name(n, &names)
@@ -85,7 +86,7 @@ pub(crate) fn rename_with_prefix(
                     *intent = format!("@bounded:{length}:{flag}");
                 }
             }
-            Stmt::DummyIntent { name: n, intent } if prefix == "@alloc_block" || intent=="@module_host" || (matches!(intent.as_str(),"pointer"|"target"|"@pointer_readonly_target") || intent.starts_with("@pointer_bounds:")) => name(n, &names),
+            Stmt::DummyIntent { name: n, intent } if prefix == "@alloc_block" || intent=="@module_host" || intent=="@heap" || (matches!(intent.as_str(),"pointer"|"target"|"@pointer_readonly_target") || intent.starts_with("@pointer_bounds:")) => name(n, &names),
             Stmt::VarDecl {
                 names: declared, ..
             } => {
@@ -168,7 +169,7 @@ pub(crate) fn rename_with_prefix(
             _ => {}
         }
     }
-    body.retain(|s| !matches!(s, Stmt::ArrayDecl { name, .. } if params.contains(name)) && !matches!(s, Stmt::DummyIntent { intent,.. } if prefix!="@alloc_block" && !(matches!(intent.as_str(),"pointer"|"target"|"@pointer_readonly_target") || intent.starts_with("@pointer_bounds:")) && !intent.starts_with("@bounded:") && !intent.starts_with("@bounded_shape:") && !intent.starts_with("@bounded_limits:")) && !matches!(s, Stmt::VarDecl { names, .. } if names.is_empty()));
+    body.retain(|s| !matches!(s, Stmt::ArrayDecl { name, .. } if params.contains(name)) && !matches!(s, Stmt::DummyIntent { intent,.. } if prefix!="@alloc_block" && !(matches!(intent.as_str(),"pointer"|"target"|"@pointer_readonly_target") || intent.starts_with("@pointer_bounds:")) && intent!="@heap" && !intent.starts_with("@bounded:") && !intent.starts_with("@bounded_shape:") && !intent.starts_with("@bounded_lower:") && !intent.starts_with("@bounded_limits:")) && !matches!(s, Stmt::VarDecl { names, .. } if names.is_empty()));
     Ok(())
 }
 /// Preserve procedure RETURN when its body is expanded into the caller.
@@ -190,7 +191,9 @@ pub(crate) fn inline_returns_with_prefix(body: &mut Vec<Stmt>, serial: &mut usiz
     let flag = format!("{prefix}_{serial}");
     fn lower(body: &mut Vec<Stmt>, flag: &str) -> Result<()> {
         let mut out = vec![];
+        let mut guarded=false;
         for mut s in std::mem::take(body) {
+            let may_return=contains(std::slice::from_ref(&s));
             match &mut s {
                 Stmt::Return(Some(_)) => bail!("a subroutine RETURN cannot have a value"),
                 Stmt::Return(None) => s = Stmt::Assign {name:flag.into(),value:Expr::Logical(true)},
@@ -203,8 +206,9 @@ pub(crate) fn inline_returns_with_prefix(body: &mut Vec<Stmt>, serial: &mut usiz
                 Stmt::SelectCase {cases,default,..} => { for c in cases {lower(&mut c.body,flag)?;} if let Some(b)=default {lower(b,flag)?;} }
                 _ => {}
             }
-            if matches!(s,Stmt::VarDecl {..} | Stmt::ArrayDecl {..} | Stmt::SourceLocation(_) | Stmt::Implicit(_) | Stmt::DummyIntent {..}) { out.push(s); }
+            if !guarded || matches!(s,Stmt::VarDecl {..} | Stmt::ArrayDecl {..} | Stmt::SourceLocation(_) | Stmt::Implicit(_) | Stmt::DummyIntent {..}) || matches!(&s,Stmt::CallSub{name,..} if name=="@heap_bind") { out.push(s); }
             else { out.push(Stmt::If {cond:Expr::Un(crate::ast::UnOp::Not,Box::new(Expr::Ident(flag.into()))),then_body:vec![s],else_body:None}); }
+            guarded |= may_return;
         }
         *body=out; Ok(())
     }
