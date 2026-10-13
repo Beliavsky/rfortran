@@ -1161,6 +1161,20 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 108\n 104\n 102\n 108\n"
+    },
+    "167_random_seed": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " T T T\n"
+    },
+    "168_intrinsic_keywords": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 2 3.0 4.0\n 2.0 0.0\n 2 9 3\n 3 3 3\n 8 8 4 4 31 2\n 4 1\n 2 2\n 65 66\n AB\n 10 7\n"
     }
   }
 }

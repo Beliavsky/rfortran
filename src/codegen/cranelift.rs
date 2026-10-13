@@ -2592,6 +2592,30 @@ fn gen_stmts(
                     b.ins().store(MemFlags::new(), seed, address, 0);
                     continue;
                 }
+                if name=="@random_seed_put" || name=="@random_seed_get" {
+                    let id=module.declare_data(".f90c.random_state",Linkage::Local,true,false)?;
+                    let global=module.declare_data_in_func(id,b.func);
+                    let address=b.ins().global_value(ptr_ty,global);
+                    if name=="@random_seed_put" {
+                        let low=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);let low=to_i64(b,low);
+                        let high=eval_expr(b,ex,ptr_ty,&args[1],ints,reals,bools,func_meta);let high=to_i64(b,high);
+                        let low=b.ins().band_imm(low,0xffff_ffff);let high=b.ins().ishl_imm(high,32);
+                        let value=b.ins().bor(low,high);let zero=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,value,0);
+                        let one=b.ins().iconst(types::I64,1);let value=b.ins().select(zero,one,value);
+                        b.ins().store(MemFlags::new(),value,address,0);
+                    } else {
+                        let state=b.ins().load(types::I64,MemFlags::new(),address,0);
+                        for (word,arg) in args.iter().enumerate() {
+                            let IExpr::Index(array,indices)=arg else {anyhow::bail!("invalid RANDOM_SEED GET target")};
+                            let index=eval_expr(b,ex,ptr_ty,&indices[0],ints,reals,bools,func_meta);let index=to_i64(b,index);
+                            let index=b.ins().iadd_imm(index,-1);let offset=b.ins().imul_imm(index,8);
+                            let base=storage_addr(b,ptr_ty,ints[array]);let dest=b.ins().iadd(base,offset);
+                            let bits=b.ins().ushr_imm(state,(word*32) as i64);let bits=b.ins().ireduce(types::I32,bits);let bits=b.ins().sextend(types::I64,bits);
+                            b.ins().store(MemFlags::new(),bits,dest,0);
+                        }
+                    }
+                    continue;
+                }
                 if name == "@ptr_bind" {
                     let [IExpr::Ident(data),IExpr::Ident(flags),IExpr::Ident(label),IExpr::Ident(target),IExpr::Ident(flag)] = args.as_slice() else {anyhow::bail!("invalid pointer storage binding");};
                     let slot=ints.get(target).or_else(||reals.get(target)).or_else(||bools.get(target)).ok_or_else(||anyhow::anyhow!("unknown pointer target `{target}`"))?;

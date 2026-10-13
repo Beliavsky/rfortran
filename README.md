@@ -1445,8 +1445,20 @@ ranks through 15 and the rank-three `select_tensor_real` calls in `util.f90`;
 `RESHAPE` also retains its source element type and derives result rank from a
 scalar-integer shape constructor, independently of runtime extent values.
 The full build now passes both `set_alloc` type/rank blockers and currently
-stops at keyword arguments to `random_seed`, which lack a known explicit
-procedure interface.
+stops at keyword arguments to the currently unimplemented `system_clock`.
+Intrinsic keyword interfaces are centralized in `src/named_arguments.rs`, with
+coverage checks for the intrinsic catalog. Added interfaces cover scalar
+conversions, CHARACTER inquiries, numeric-model/kind inquiries, array operations,
+and variadic `MIN`/`MAX`, including reordered keywords and omitted optional
+arguments. `KIND` uses its standard argument name `X`.
+`RANDOM_SEED(SIZE=...)`, `RANDOM_SEED(PUT=...)` and `RANDOM_SEED(GET=...)` now work
+in the interpreter and native code. The seed representation uses two default
+INTEGER words for the existing 64-bit generator state. SIZE defines a scalar
+or an array element; PUT/GET require a rank-one default INTEGER array of at least
+two elements. GET can save the current stream for restoration with PUT.
+The no-argument form retains its deterministic reset. `xrandom_seed.f90` checks
+stream restoration and output range; `tests/test_intrinsic_keywords.py` checks
+keyword association and seed argument/intent diagnostics.
 Full `xutil.f90` execution remains a separate acceptance test.
 
 ## License

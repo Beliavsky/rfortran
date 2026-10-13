@@ -1328,6 +1328,23 @@ pub fn interpret(program: &Program) {
                         idx+=1;continue;
                     }
                     if name.eq_ignore_ascii_case("random_seed") && !funcs.contains_key(name) { RANDOM_STATE.with(|s| s.set(1)); idx += 1; continue; }
+                    if name=="@random_seed_put" || name=="@random_seed_get" {
+                        let fr=call_stack.last().unwrap();
+                        let (strings,ints,r32,r64,logs)=(fr.env_str.clone(),fr.env_int.clone(),fr.env_real32.clone(),fr.env_real64.clone(),fr.env_log.clone());
+                        if name=="@random_seed_put" {
+                            let low=eval_expr(&args[0],&strings,&ints,&r32,&r64,&logs,funcs,call_stack).0.unwrap() as u32 as u64;
+                            let high=eval_expr(&args[1],&strings,&ints,&r32,&r64,&logs,funcs,call_stack).0.unwrap() as u32 as u64;
+                            let state=low | (high<<32);RANDOM_STATE.with(|s|s.set(if state==0 {1} else {state}));
+                        } else {
+                            let state=RANDOM_STATE.with(|s|s.get());
+                            for (word,arg) in args.iter().enumerate() {
+                                let Expr::Index(array,indices)=arg else {panic!("invalid RANDOM_SEED GET target")};
+                                let index=eval_expr(&indices[0],&strings,&ints,&r32,&r64,&logs,funcs,call_stack).0.unwrap();
+                                call_stack.last_mut().unwrap().env_int_arrays.get_mut(array).unwrap()[index as usize-1]=(state>>(word*32)) as u32 as i32 as i64;
+                            }
+                        }
+                        idx+=1;continue;
+                    }
                     if name == "@check_initialized" {
                         let fr = call_stack.last().unwrap();
                         let (strings, ints, real32, real64, logs) = (fr.env_str.clone(), fr.env_int.clone(), fr.env_real32.clone(), fr.env_real64.clone(), fr.env_log.clone());

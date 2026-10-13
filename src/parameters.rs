@@ -831,6 +831,20 @@ pub(crate) fn expand_constructor(expr:&mut Expr)->Result<()> {
 }
 
 fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
+    if let Expr::Call(name,args)=expr {
+        if matches!(name.as_str(),"len"|"len_trim"|"ichar"|"iachar"|"char"|"achar") && args.len()==2
+            && !constants.contains_key(&format!("@model_procedure:{name}")) {
+            let mut kind=args[1].clone();rewrite_expr(&mut kind,constants)?;
+            let bytes=integer_constant(&kind).context("intrinsic KIND must be a constant INTEGER")?;
+            let character=matches!(name.as_str(),"char"|"achar");
+            if character && bytes!=1 {bail!("{name}: only default CHARACTER KIND=1 is currently supported");}
+            if !character && !matches!(bytes,1|2|4|8) {bail!("{name}: INTEGER KIND must be 1, 2, 4 or 8");}
+            let mut value=Expr::Call(name.clone(),vec![args[0].clone()]);rewrite_expr(&mut value,constants)?;
+            *expr=if character || bytes==4 {value} else if let Ok(n)=integer_constant(&value) {typed_integer(n,bytes as u8)?}
+                else {Expr::Call("int".into(),vec![value,Expr::IntLit(bytes.to_string())])};
+            return Ok(());
+        }
+    }
     if let Some(mut kind)=crate::empty_constructors::kind(expr)? {
         resolve_kind(&mut kind,constants)?;
         if crate::substrings::deferred(&kind) {bail!("typed CHARACTER constructor requires an explicit constant length");}
@@ -1155,7 +1169,7 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
             }
             "selected_real_kind" => {
                 if !(1..=3).contains(&args.len()) { bail!("SELECTED_REAL_KIND expects 1 to 3 constant integer arguments"); }
-                let values = args.iter().map(|e| evaluate(e, constants)).collect::<Result<Vec<_>>>()
+                let values = args.iter().enumerate().map(|(i,e)| if crate::named_arguments::omitted(e) {Ok(if i==2 {2} else {0})} else {evaluate(e, constants)}).collect::<Result<Vec<_>>>()
                     .context("SELECTED_REAL_KIND currently requires constant integer arguments")?;
                 let p = values[0];
                 let r = values.get(1).copied().unwrap_or(0);
@@ -1606,7 +1620,7 @@ mod tests {
             ("character(len=*), parameter :: a=char(0)", "", "codes 1 through 127"),
             ("character(len=*), parameter :: a=achar(128)", "", "codes 1 through 127"),
             ("character(len=*), parameter :: a=char(-1)", "", "codes 1 through 127"),
-            ("character(len=*), parameter :: a=char(1,1)", "", "character constant expression"),
+            ("character(len=*), parameter :: a=char(1,4)", "", "CHARACTER KIND=1"),
             ("character(len=*), parameter :: a='x'", "a='y'", "cannot modify PARAMETER"),
             ("character(len=2), parameter :: a(2)=['ab','cd']", "a(1)='ef'", "cannot modify PARAMETER"),
             ("character(len=*) :: a", "", "requires a PARAMETER"),

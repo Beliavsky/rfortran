@@ -115,7 +115,8 @@ pub(crate) fn intrinsic(name: &str) -> Option<Signature> {
         "atan2" => &["y", "x"],
         "sqrt" | "exp" | "log" | "log10" | "sin" | "cos" | "tan" | "asin" | "acos" | "atan"
         | "sinh" | "cosh" | "tanh" => &["x"],
-        "abs" | "dble" | "kind" => &["a"],
+        "abs" | "dble" => &["a"],
+        "kind" => &["x"],
         "mod" | "modulo" => &["a", "p"],
         "new_line" => &["a"],
         "adjustl"|"adjustr"|"trim" => &["string"],
@@ -123,14 +124,37 @@ pub(crate) fn intrinsic(name: &str) -> Option<Signature> {
         "index" => &["string", "substring", "back", "kind"],
         "scan" | "verify" => &["string", "set", "back", "kind"],
         "random_number" => &["harvest"],
-        "real" | "int" => &["a", "kind"],
+        "random_seed" => &["size", "put", "get"],
+        "real" | "int" | "nint" | "aint" | "anint" | "floor" | "ceiling" => &["a", "kind"],
+        "char" | "achar" => &["i", "kind"],
+        "ichar" | "iachar" => &["c", "kind"],
+        "len" | "len_trim" => &["string", "kind"],
+        "sign" | "dim" => &["a", "b"],
+        "dprod" => &["x", "y"],
+        "dot_product" => &["vector_a", "vector_b"],
+        "matmul" => &["matrix_a", "matrix_b"],
+        "transpose" => &["matrix"],
+        "merge" => &["tsource", "fsource", "mask"],
+        "lge" | "lgt" | "lle" | "llt" => &["string_a", "string_b"],
+        "tiny" | "huge" => &["x"],
+        "allocated" => &["array"],
+        "present" => &["a"],
+        "selected_int_kind" => &["r"],
+        "selected_real_kind" => &["p", "r", "radix"],
+        "max" | "min" => &["a1", "a2"],
+        "ishftc" => &["i", "shift", "size"],
         _ => return None,
     };
     Some(Signature {
         params: keys.iter().map(|s| (*s).into()).collect(),
         optional: if matches!(name,"index"|"scan"|"verify") {
             HashSet::from(["back".into(),"kind".into()])
-        } else if matches!(name, "real" | "int") {
+        } else if name=="random_seed" {
+            HashSet::from(["size".into(),"put".into(),"get".into()])
+        } else if name=="selected_real_kind" {
+            HashSet::from(["p".into(),"r".into(),"radix".into()])
+        } else if name=="ishftc" {HashSet::from(["size".into()])
+        } else if matches!(name, "real" | "int" | "nint" | "aint" | "anint" | "floor" | "ceiling" | "char" | "achar" | "ichar" | "iachar" | "len" | "len_trim") {
             HashSet::from(["kind".into()])
         } else {
             HashSet::new()
@@ -205,7 +229,7 @@ impl Resolver {
             if self.duplicates.contains(name) {
                 bail!("keyword call to `{name}` requires a unique procedure name within this compilation");
             }
-            if let Some(signature) = self
+            if let Some(mut signature) = self
                 .signatures
                 .get(name)
                 .cloned()
@@ -213,7 +237,20 @@ impl Resolver {
                 // before falling back to an intrinsic signature.
                 .or_else(|| if !self.final_pass && self.generics.contains(name) {None} else {intrinsic(name)})
             {
+                if matches!(name,"min"|"max") && !self.signatures.contains_key(name) {
+                    let mut count=args.len().max(2);
+                    for arg in args.iter() {
+                        if let Some((key,_))=keyword(arg) {
+                            if let Some(n)=key.strip_prefix('a').and_then(|s|s.parse::<usize>().ok()).filter(|n|*n>=1 && *n<=1024) {count=count.max(n);}
+                        }
+                    }
+                    signature.params=(1..=count).map(|n|format!("a{n}")).collect();
+                    signature.optional=signature.params.iter().skip(2).cloned().collect();
+                }
                 signature.reorder(name, args)?;
+                if matches!(name,"min"|"max") && !self.signatures.contains_key(name) {
+                    args.retain(|e|!omitted(e));
+                }
             } else if self.final_pass && !name.contains('%') && !intrinsic_keywords(name) {
                 bail!("keyword arguments to `{name}` require a known explicit procedure interface");
             }
@@ -356,6 +393,25 @@ pub fn resolve(mut program: Program, final_pass: bool) -> Result<Program> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn implemented_intrinsics_have_keyword_association() {
+        for name in crate::intrinsics::REAL_MATH.iter().map(|(n,_)|*n)
+            .chain(crate::bit_intrinsics::NAMES.iter().copied())
+            .chain(["random_number","random_seed","abs","dble","kind","mod","modulo","new_line",
+                "adjustl","adjustr","trim","repeat","index","scan","verify","real","int","nint","aint","anint",
+                "floor","ceiling","char","achar","ichar","iachar","len","len_trim","sign","dim","dprod",
+                "dot_product","matmul","merge","lge","lgt","lle","llt","tiny","huge","allocated","present",
+                "selected_int_kind","selected_real_kind","max","min","transpose","epsilon","digits","radix",
+                "precision","range","minexponent","maxexponent","size","lbound","ubound","shape","sum","product",
+                "minval","maxval","count","any","all","minloc","maxloc","findloc","reshape","cshift","eoshift","spread","pack","unpack"]) {
+            assert!(intrinsic(name).is_some() || intrinsic_keywords(name),"missing keyword interface for {name}");
+            if let Some(signature)=intrinsic(name) {
+                let mut args=signature.params.iter().enumerate().rev().map(|(i,p)|Expr::Call(format!("@keyword:{p}"),vec![Expr::IntLit(i.to_string())])).collect();
+                signature.reorder(name,&mut args).unwrap();
+                for (i,arg) in args.iter().enumerate() {assert_eq!(arg,&Expr::IntLit(i.to_string()),"{name}");}
+            }
+        }
+    }
     fn actual(key: &str) -> Expr {
         Expr::Call(format!("@keyword:{key}"), vec![Expr::IntLit("1".into())])
     }
