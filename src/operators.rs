@@ -140,6 +140,7 @@ struct Procedure {
     result: Ty,
     inputs: bool,
     subroutine: bool,
+    array_specialization: bool,
 }
 #[derive(Default)]
 struct Resolver {
@@ -206,19 +207,16 @@ impl Resolver {
                     params,
                     return_type,
                     body,
+                    pure,
+                    elemental,
                     ..
                 } => {
                     let vars = declarations(body, &Vars::new());
-                    let result = {
-                        let result_name = match body.last() {
-                            Some(Stmt::Return(Some(Expr::Ident(n)))) => n,
-                            _ => name,
-                        };
-                        vars.get(result_name)
-                            .cloned()
-                            .or_else(|| return_type.as_ref().map(scalar))
-                            .unwrap_or(Ty::Unknown)
-                    };
+                    let result_name=match body.last() {Some(Stmt::Return(Some(Expr::Ident(n))))=>n,_=>name};
+                    let array_specialization=crate::character_elementals::inline_array(*pure,params,result_name,body)
+                        || crate::elemental::inline_character(*elemental,name,params,return_type,body);
+                    let result=vars.get(result_name).cloned()
+                        .or_else(||return_type.as_ref().map(scalar)).unwrap_or(Ty::Unknown);
                     let mut inputs = HashSet::new();
                     for s in body {
                         match s {
@@ -253,6 +251,7 @@ impl Resolver {
                                         _ => false,
                                     }),
                                 subroutine: false,
+                                array_specialization,
                             },
                         )
                         .is_some()
@@ -278,6 +277,7 @@ impl Resolver {
                                 result: Ty::Unknown,
                                 inputs: false,
                                 subroutine: true,
+                                array_specialization:false,
                             },
                         )
                         .is_some()
@@ -500,6 +500,9 @@ impl Resolver {
         vars.get(name).cloned().unwrap_or(Ty::Unknown)
     }
     fn expression(&self, e: &mut Expr, vars: &Vars, visible: &Bindings) -> Result<Ty> {
+        if let Some(kind)=crate::empty_constructors::kind(e)? {
+            return Ok(Ty::Array(Box::new(scalar(&kind)),1));
+        }
         if let Expr::Call(name, args) = e {
             if name.starts_with("@keyword:") && args.len() == 1 {
                 return self.expression(&mut args[0], vars, visible);
@@ -508,11 +511,11 @@ impl Resolver {
                 let op = op.to_owned();
                 let types = args.iter_mut().map(|a| self.expression(a, vars, visible)).collect::<Result<Vec<_>>>()?;
                 let target = self.select(&op, &types, visible)?.expect("defined operators always resolve or fail");
-                // Ordinary function lowering does not yet pass array descriptors.
-                // Do not silently treat array operands as scalar values.
-                if types.iter().any(|t| matches!(t, Ty::Array(..))) || matches!(self.procedures[&target].result, Ty::Array(..)) {
-                    bail!("operator({op}) resolves to `{target}`, but array operands/results in defined operator calls are not yet supported");
+                if matches!(self.procedures[&target].result,Ty::Array(..)) && !self.procedures[&target].array_specialization {
+                    bail!("operator({op}) resolves to `{target}`, but its array result requires a supported function specialization");
                 }
+                // Preserve the array actuals: ordinary function lowering selects
+                // the supported ABI or specializes read-only array arguments.
                 *name = target.clone();
                 return Ok(self.procedures[&target].result.clone());
             }
@@ -572,6 +575,7 @@ impl Resolver {
                                 let element = match &arg_types[0] { Ty::Array(t, _) => (**t).clone(), t => t.clone() };
                                 Ty::Array(Box::new(element), 1)
                             }
+                            "@integer_literal" if args.len()==2 => scalar(&TypeSpec::Integer(Some(crate::parameters::integer_constant(&args[1])? as u8))),
                             "size" | "len" => scalar(&TypeSpec::Integer(None)),
                             "int" | "nint" | "floor" | "ceiling" | "real" | "dble" => {
                                 let kind = match args.get(1) {
@@ -836,11 +840,14 @@ mod tests {
     }
 
     #[test]
-    fn defined_array_operators_fail_before_incorrect_scalar_lowering() {
+    fn defined_array_operators_preserve_operands_and_check_rank() {
         let source = "module m\ninterface operator(.in.)\nmodule procedure member\nend interface\ncontains\nlogical function member(x,a) result(found)\ninteger,intent(in)::x,a(3)\nfound=any(a==x)\nend function member\nend module m\nuse m\ninteger::a(3)\na=[1,3,5]\nprint *,3 .in. a\nend";
-        for operand in ["a", "[1,3,5]", "a(:)"] {
-            let error = lower(&source.replace("3 .in. a", &format!("3 .in. {operand}"))).unwrap_err().to_string();
-            assert!(error.contains("array operands/results"), "{error}");
+        for operand in ["a", "[1,3,5]", "a(:)", "[integer::]"] {
+            let program=lower(&source.replace("3 .in. a",&format!("3 .in. {operand}"))).unwrap();
+            let items=program.body.iter().find_map(|s|if let crate::ast::Stmt::Print{items}=s {Some(items)} else {None}).unwrap();
+            let crate::ast::Expr::Call(name,args)=&items[0] else {panic!("operator must lower to a function call")};
+            assert_eq!(name,"member");assert_eq!(args.len(),2);
+            assert!(!matches!(&args[1],crate::ast::Expr::IntLit(_)|crate::ast::Expr::Index(..)),"array operand must remain an array: {args:?}");
         }
         let error = lower(&source.replace("3 .in. a", "3 .in. a(1)")).unwrap_err().to_string();
         assert!(error.contains("no matching operator(.in.)"), "{error}");

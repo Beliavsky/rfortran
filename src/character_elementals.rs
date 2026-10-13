@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Beliavsky
 // See LICENSE-MIT in the repository root.
 
-//! Specialize functions with CHARACTER results or inputs. Results
-//! use caller-owned local buffers, keeping the numeric object ABI unchanged.
+//! Specialize functions with CHARACTER inputs/results or read-only rank-one
+//! array inputs. Results use caller-owned locals, preserving the scalar ABI.
 use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
@@ -1011,6 +1011,14 @@ fn validate_locals(
     statements(body, &variable, &writable, &forbidden)
 }
 
+pub(crate) fn inline_array(pure: bool, params: &[String], result: &str, body: &[Stmt]) -> bool {
+    let array_result=body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,..} if name==result));
+    pure && body.iter().any(|s|matches!(s,Stmt::ArrayDecl{kind,name,dims}
+        if params.contains(name) && dims.len()==1
+            && matches!(kind,TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision|TypeSpec::Logical)
+            && (array_result || matches!(&dims[0],Expr::Ident(n) if n=="@deferred_extent"))))
+}
+
 pub(crate) fn resolve(mut p: Program) -> Result<Program> {
     crate::elemental::validate_program(&p)?;
     let mut lower = Lower {
@@ -1038,6 +1046,7 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
                 return_type,
                 body,
                 elemental,
+                pure,
                 ..
             } = &stmt
             {
@@ -1045,17 +1054,17 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
                     lower
                         .returns
                         .insert(name.clone(), (*elemental, kind.clone()));
-                    if crate::elemental::inline_character(
+                    let result = match body.last() {
+                        Some(Stmt::Return(Some(Expr::Ident(n)))) => n.clone(),
+                        _ => name.clone(),
+                    };
+                    if inline_array(*pure,params,&result,body) || crate::elemental::inline_character(
                         *elemental,
                         name,
                         params,
                         return_type,
                         body,
                     ) {
-                        let result = match body.last() {
-                            Some(Stmt::Return(Some(Expr::Ident(n)))) => n.clone(),
-                            _ => name.clone(),
-                        };
                         validate_locals(name, params, &result, body, &host)?;
                         if lower.routines.contains_key(name) {
                             bail!("same-named CHARACTER functions from different scopes are not yet supported: `{name}`");

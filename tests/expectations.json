@@ -1119,6 +1119,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 1 4 1\n 1 0 1\n 9 6 7\n 10 0 9\n 1 0 0 0\n 0 0\n"
+    },
+    "161_array_operators": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " F T\n"
     }
   }
 }

@@ -194,6 +194,23 @@ function definitions are removed before native result-storage validation;
 this allows the `exe_name` definition in `util.f90` to pass that blocker.
 GETCWD and GET_COMMAND_ARGUMENT themselves remain unsupported when called.
 
+## Defined operators with array operands
+
+Defined dotted operators such as `.notin.` can select functions with array
+operands. PURE functions with read-only rank-one INTEGER, REAL, DOUBLE PRECISION
+or LOGICAL array dummies specialize for statically known actual extents, including
+assumed-shape dummies, fixed sections, constructors, supported array expressions
+and empty arrays. The same specialization works for direct function calls and
+supported rank-one numeric/LOGICAL results whose extents resolve at the call site.
+Input type, rank, extent and initialization checks remain active. Ordinary fixed
+array function arguments continue to use the existing scalar ABI.
+
+This subset copies array inputs and supports at most 1024 elements per dummy.
+Runtime-sized arrays, recursive specialization and unrestricted array-result
+ABIs remain unsupported. `xnotin.f90` now prints `F T`. Run
+`python tests/test_array_operators.py` for interpreter/native O0/O2 checks and
+gfortran comparisons.
+
 ## CHARACTER array functions
 
 CHARACTER functions can accept read-only rank-one arrays and return fixed
@@ -1386,7 +1403,7 @@ python tests/run_ofort_compat.py --ofort-root C:\c\ofort --selection tests/ofort
 The [checkpoint](tests/ofort/character-checkpoint.json) records source hashes,
 CHARACTER declaration locations in `util.f90`/`xutil.f90`, and per-case outcomes.
 The first CHARACTER batch increased the focused 37-case sample from 6 to 11
-passes. The broader selection has 16 passes, 63 compiler failures and five
+passes. At that checkpoint the broader selection had 16 passes, 63 compiler failures and five
 reference failures. These broader cases also exercise unsupported derived types,
 procedure pointers and I/O; their failures are not all CHARACTER bugs. Major
 remaining CHARACTER work includes runtime-dependent automatic string lengths
@@ -1394,8 +1411,9 @@ remaining CHARACTER work includes runtime-dependent automatic string lengths
 explicit allocation selectors/SOURCE/MOLD, allocatable CHARACTER components,
 and internal array files.
 The full `kind.f90 util.f90 xutil.f90` build now gets past the initialized CHARACTER
-local and CHARACTER operator interface; it stops at a numeric array-valued defined
-operator (`.notin.`). Full `xutil.f90` execution remains a separate acceptance test.
+local, CHARACTER operator interface and numeric `.notin.` operator. It currently
+stops at generic `exclude` resolution with an unknown actual argument type.
+Full `xutil.f90` execution remains a separate acceptance test.
 
 ## License
 

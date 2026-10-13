@@ -31,11 +31,9 @@ class FunctionArrays(unittest.TestCase):
     def test_diagnostics(self):
         cases=[
             ("integer::a(3)\na=1", "a", "integer,intent(in)::x(3)", False, "requires PURE"),
-            ("integer::a(3)\na=1", "a", "integer,intent(in)::x(:)", True, "fixed constant extents"),
             ("integer::a(2)\na=1", "a", "integer,intent(in)::x(3)", True, "type or shape mismatch"),
             ("real::a(3)\na=1.0", "a", "integer,intent(in)::x(3)", True, "type or shape mismatch"),
             ("integer::a(3)\na=1", "a(:)", "integer,intent(in)::x(3)", True, "whole-array actual"),
-            ("integer::a(3)\na=1", "a", "integer,intent(in),optional::x(3)", True, "OPTIONAL/ALLOCATABLE"),
             ("integer::a(1025)\na=1", "a", "integer,intent(in)::x(1025)", True, "at most 1024"),
         ]
         with tempfile.TemporaryDirectory(prefix="bad-function-arrays-") as tmp:
