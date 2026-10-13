@@ -1087,14 +1087,15 @@ pub fn interpret(program: &Program) {
                         else {let v=if kind=="l"{i64::from(value.2.unwrap_or(false))}else{value.0.unwrap_or_else(||value.1.unwrap_or(0.0) as i64)};if let Some(a)=frame.env_int_arrays.get_mut(&target){a[offset]=v;}else if kind=="l"{assert_eq!(offset,0);frame.env_log.insert(target,v!=0);}else{assert_eq!(offset,0);frame.env_int.insert(target,v);}}
                         if let Some(a)=frame.env_int_arrays.get_mut(&flag){a[offset]=1;}else{assert_eq!(offset,0);frame.env_int.insert(flag,1);}idx+=1;continue;
                     }
-                    if name == "@stop" { std::process::exit(0); }
-                    if name == "@error_stop" {
+                    if name == "@stop" && args.is_empty() { std::process::exit(0); }
+                    if name == "@error_stop" || name == "@stop" {
+                        let keyword=if name=="@stop" {"STOP"} else {"ERROR STOP"};
                         let (message,code)=match args.as_slice() {
-                            [Expr::Str(message)]=>(message.clone(),1),
-                            [Expr::IntLit(value)]=>{let code=value.parse::<i32>().unwrap_or_else(|_|{eprintln!("Runtime error: ERROR STOP integer code must fit default INTEGER");std::process::exit(1)});(code.to_string(),code)},
-                            _=>{eprintln!("Runtime error: ERROR STOP currently requires a CHARACTER or default INTEGER constant");std::process::exit(1)},
+                            [Expr::Str(message)]=>(message.clone(),i32::from(name=="@error_stop")),
+                            [Expr::IntLit(value)]=>{let code=value.parse::<i32>().unwrap_or_else(|_|{eprintln!("Runtime error: {keyword} integer code must fit default INTEGER");std::process::exit(1)});(code.to_string(),code)},
+                            _=>{eprintln!("Runtime error: {keyword} currently requires a CHARACTER or default INTEGER constant");std::process::exit(1)},
                         };
-                        eprintln!("ERROR STOP {message}");std::process::exit(code);
+                        eprintln!("{keyword} {message}");std::process::exit(code);
                     }
                     if name == "@character_assign" || name=="@character_element_read" {
                         let [Expr::Ident(dest), source, Expr::IntLit(length)] = args.as_slice() else { unreachable!() };

@@ -923,10 +923,22 @@ lengths currently require an exact match. Expressions require INTENT(IN), while
 writable arguments must be variables. Explicit RETURN leaves an expanded
 subroutine, including from nested loops, and execution resumes in its caller.
 Fixed-length rank-one CHARACTER array subroutine arguments also use call-site
-specialization, including assumed-length dummies. Non-elemental assumed-length
-CHARACTER inputs to numeric scalar functions remain outside this subset when
-all the dummies are scalar.
+specialization, including assumed-length dummies.
 Run `python tests/test_optional_procedures.py`.
+
+Ordinary functions returning numeric or LOGICAL scalars also specialize
+read-only CHARACTER scalar inputs, binding fixed or assumed lengths at the
+call site. Known definitions in the source group, named and nested calls,
+OPTIONAL inputs, empty strings, runtime string contents and early RETURN
+are supported with the existing CHARACTER function limits. This covers
+`util.f90:assert_eq2`, reproduced by `tests/155_scalar_character_arguments.f90`.
+STOP with a CHARACTER literal or named constant prints its message to stderr
+and terminates normally with status zero; a default INTEGER literal or named
+constant prints its code and uses it as the process exit status. Bare STOP
+remains silent, and PURE procedures reject STOP. `tests/156_stop_code.f90`
+checks termination with an INTEGER code. Run
+`python tests/test_scalar_character_arguments.py` for interpreter/native O0/O2
+checks and gfortran comparisons of function results.
 
 Local CHARACTER scalar and rank-one array declarations in specialized subroutines
 can use `LEN(text)` of a CHARACTER dummy, including supported constant arithmetic

@@ -1077,6 +1077,20 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": "1,2,3\n4,5\n"
+    },
+    "155_scalar_character_arguments": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 3\n 4\n"
+    },
+    "156_stop_code": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 7,
+      "program_stderr": "STOP 7\n",
+      "program_stdout": "before\n"
     }
   }
 }

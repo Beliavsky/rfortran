@@ -54,18 +54,16 @@ pub(crate) fn inline_character(
             TypeSpec::Character(_) | TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed
         )
     };
-    let result = match body.last() {
-        Some(Stmt::Return(Some(Expr::Ident(n)))) => n.as_str(),
-        _ => name,
-    };
-    // Array results or CHARACTER array inputs need call-site specialization:
-    // the numeric scalar ABI cannot carry the string or its assumed length.
-    let array_result = body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,..} if name==result));
-    let character_array_input = body.iter().any(|s|matches!(s,
-        Stmt::ArrayDecl {kind,name,..} if character(kind)&&params.contains(name)));
+    // CHARACTER inputs need call-site specialization even for numeric scalar
+    // results: the numeric scalar ABI cannot carry strings and their lengths.
+    let result=match body.last() {Some(Stmt::Return(Some(Expr::Ident(n))))=>n.as_str(),_=>name};
+    let array_result=body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,..} if name==result));
+    let character_array_input=body.iter().any(|s|matches!(s,Stmt::ArrayDecl{kind,name,..} if character(kind)&&params.contains(name)));
+    // Keep existing scalar fixed-length procedures without INTENT on the
+    // numeric ABI path; this expansion requires explicitly read-only inputs.
+    let readonly=params.iter().all(|p|body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==p&&intent=="intent(in)")));
     result_kind(name,declared,body).as_ref().is_some_and(character)
-        || character_array_input
-        || ((elemental || array_result) && body.iter().any(|s| match s {
+        || ((elemental || array_result || character_array_input || readonly) && body.iter().any(|s| match s {
             Stmt::VarDecl {kind,names} => character(kind)&&names.iter().any(|n|params.contains(n)),
             Stmt::ArrayDecl {kind,name,..} => character(kind)&&params.contains(name),
             _ => false,

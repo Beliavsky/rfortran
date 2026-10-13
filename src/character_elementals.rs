@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Beliavsky
 // See LICENSE-MIT in the repository root.
 
-//! Specialize functions with CHARACTER results/array inputs or array results and CHARACTER inputs. Results
+//! Specialize functions with CHARACTER results or inputs. Results
 //! use caller-owned local buffers, keeping the numeric object ABI unchanged.
 use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Context, Result};

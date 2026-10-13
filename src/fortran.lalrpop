@@ -453,7 +453,7 @@ Stmt: Stmt = {
     KW_CYCLE => Stmt::Cycle,
     KW_CONTINUE => Stmt::CallSub{name:"@continue".into(),args:vec![]},
     KW_STOP_EMPTY => Stmt::CallSub { name: "@stop".into(), args: vec![] },
-    KW_STOP <arg: RhsExpr> => Stmt::CallSub { name: "__f90c_stop".to_string(), args: vec![arg] },
+    KW_STOP <arg: RhsExpr> => Stmt::CallSub { name: "@stop".into(), args: vec![arg] },
 };
 
 ParamList: Vec<String> = {
