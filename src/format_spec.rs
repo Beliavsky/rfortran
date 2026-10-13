@@ -98,10 +98,10 @@ impl<'a> Parser<'a> {
             };
             d.code = code.to_ascii_lowercase();
             self.pos += 1;
-            if !matches!(d.code, b'a' | b'i' | b'f' | b'l' | b'x' | b'/') {
+            if !matches!(d.code, b'a' | b'i' | b'f' | b'l' | b'x' | b'/' | b':') {
                 return Err("unsupported output descriptor");
             }
-            if !matches!(d.code, b'x' | b'/') {
+            if !matches!(d.code, b'x' | b'/' | b':') {
                 let width = self.number()?;
                 if width.is_none() && d.code != b'a' {
                     return Err("output descriptor requires a width");
@@ -317,6 +317,11 @@ impl<'a> GroupParser<'a> {
                 self.operations = self.operations.saturating_add(d.repeat);
                 if self.operations > self.count.saturating_mul(256).saturating_add(100000) {
                     return Err("output format expansion exceeds supported limits");
+                }
+                if d.code==b':' {
+                    if d.repeat!=1 {return Err("colon edit descriptor cannot have a repeat count");}
+                    if self.consumed>=self.count {self.depth=0;return Ok(None);}
+                    continue;
                 }
                 if matches!(d.code, b'a' | b'i' | b'f' | b'l') {
                     if self.frames[..self.depth].iter().any(|f| f.unlimited) {

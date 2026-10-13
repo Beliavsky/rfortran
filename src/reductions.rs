@@ -311,7 +311,7 @@ fn character_capacity(e: &Expr, symbols: &Symbols) -> Result<Option<usize>> {
             (Some(a),Some(b)) => Some(a.checked_add(b).context("CHARACTER comparison is too large")?),
             _ => None,
         },
-        Expr::Call(n,args) if n.eq_ignore_ascii_case("trim") && args.len()==1 => character_capacity(&args[0],symbols)?,
+        Expr::Call(n,args) if matches!(n.as_str(),"trim"|"adjustl"|"adjustr") && args.len()==1 => character_capacity(&args[0],symbols)?,
         Expr::Call(n,args) if n == "@dynamic_substring" && args.len() == 4 => Some(constant(&args[3])? as usize),
         _ => None,
     })
@@ -1007,10 +1007,10 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                             Expr::Str(s) if s.is_ascii() && !s.contains('\0') => Ok(()),
                             Expr::Ident(n) if matches!(symbols.get(n), Some((TypeSpec::Character(_), d)) if d.is_empty()) => Ok(()),
                             Expr::Bin(BinOp::Concat, a, b) => { check(a, symbols)?; check(b, symbols) },
-                            Expr::Call(n, a) if n.eq_ignore_ascii_case("trim") && a.len() == 1 => check(&a[0], symbols),
+                            Expr::Call(n, a) if matches!(n.as_str(),"trim"|"adjustl"|"adjustr") && a.len() == 1 => check(&a[0], symbols),
                             Expr::Call(n, a) if n == "@substring" && a.len() == 3 => check(&a[0], symbols),
                             Expr::Call(n, a) if n == "@dynamic_substring" && a.len() == 4 => check(&a[0], symbols),
-                            _ => bail!("CHARACTER assignment requires a non-NUL ASCII literal, scalar CHARACTER variable, concatenation, or TRIM"),
+                            _ => bail!("CHARACTER assignment requires a non-NUL ASCII literal, scalar CHARACTER variable, concatenation, or a supported CHARACTER intrinsic"),
                         }
                     }
                     check(value, &symbols)?;

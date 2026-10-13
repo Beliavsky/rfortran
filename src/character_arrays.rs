@@ -229,10 +229,17 @@ fn expression(e: Expr, arrays: &Arrays) -> Result<Value> {
                     Value::Scalar(Expr::Call(n, values.into_iter().map(Value::expr).collect()))
                 }
             } else {
-                if values.iter().any(|v| matches!(v, Value::Array(_))) {
-                    bail!("CHARACTER array arguments to `{n}` are not yet supported");
+                if let Some(count)=values.iter().find_map(|v|if let Value::Array(v)=v {Some(v.len())} else {None}) {
+                    if !matches!(n.as_str(),"index"|"scan"|"verify"|"len_trim"|"ichar"|"iachar"|"adjustl"|"adjustr") {
+                        bail!("CHARACTER array arguments to `{n}` are not yet supported");
+                    }
+                    if values.iter().any(|v|matches!(v,Value::Array(v) if v.len()!=count)) {bail!("nonconforming CHARACTER intrinsic arguments to `{n}`");}
+                    Value::Array((0..count).map(|i|Expr::Call(n.clone(),values.iter().map(|v|match v {
+                        Value::Array(v)=>v[i].clone(),Value::Scalar(e)=>e.clone(),
+                    }).collect())).collect())
+                } else {
+                    Value::Scalar(Expr::Call(n, values.into_iter().map(Value::expr).collect()))
                 }
-                Value::Scalar(Expr::Call(n, values.into_iter().map(Value::expr).collect()))
             }
         }
         Expr::Bin(op, a, b) => {

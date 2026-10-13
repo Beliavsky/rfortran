@@ -183,7 +183,7 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                 let Expr::Ident(dest)=&args[0] else {unreachable!()};
                 write(dest,None,env,&mut after,serial);
             }
-            Stmt::CallSub { name, args } if name == "@internal_read_byte" || name == "@character_assign" || name == "@character_length" || name=="@file_name" || name=="@file_newunit" => {
+            Stmt::CallSub { name, args } if name == "@saved_bind" || name == "@internal_read_byte" || name == "@character_assign" || name == "@character_length" || name=="@file_name" || name=="@file_newunit" => {
                 for arg in &args[1..] { read(arg, env, &mut before, serial)?; }
                 let Expr::Ident(dest)=&args[0] else {unreachable!()};
                 write(dest,None,env,&mut after,serial);

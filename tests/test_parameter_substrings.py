@@ -75,7 +75,7 @@ end program main
         self.reject("character(*),parameter::text='abc'\ntext(1:1)='x'\nend\n",'cannot modify PARAMETER')
         self.reject("integer,parameter::n=3\nprint *,n(1:2)\nend\n",'not an array')
         self.reject("print *,index(1,'a')\nend\n",'scalar CHARACTER')
-        self.reject("print *,index('abc','a',.true.)\nend\n",'BACK and KIND')
+        self.reject("print *,index('abc','a',1)\nend\n",'scalar LOGICAL')
         self.check("""character(*),parameter::text='abc'
 integer::lo
 read(*,*)lo

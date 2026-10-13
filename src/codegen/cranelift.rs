@@ -980,7 +980,7 @@ fn eval_expr(
     }
 }
 
-fn is_character_output(e: &IExpr, chars: &HashMap<String, (ir::StackSlot, usize)>) -> bool {
+fn is_character_output(e: &IExpr, chars: &HashMap<String, (Storage, usize)>) -> bool {
     match e {
         IExpr::Str(_) => true,
         IExpr::Ident(name) => chars.contains_key(name),
@@ -1053,7 +1053,7 @@ fn print_expr(
     ints: &HashMap<String, Storage>,
     reals: &HashMap<String, Storage>,
     bools: &HashMap<String, Storage>,
-    chars: &HashMap<String, (ir::StackSlot, usize)>,
+    chars: &HashMap<String, (Storage, usize)>,
     real_kind: &HashMap<String, bool>,
     i128_last: &HashMap<String, String>,
     func_meta: &HashMap<String, FuncMeta>,
@@ -1762,7 +1762,7 @@ fn gen_stmts(
     ints: &mut HashMap<String, Storage>,
     reals: &mut HashMap<String, Storage>,
     bools: &mut HashMap<String, Storage>,
-    chars: &mut HashMap<String, (ir::StackSlot, usize)>,
+    chars: &mut HashMap<String, (Storage, usize)>,
     real_kind: &mut HashMap<String, bool>,
     i128_vars: &mut HashSet<String>,
     i128_last: &mut HashMap<String, String>,
@@ -1893,7 +1893,7 @@ fn gen_stmts(
                             (len + 1) as u32,
                             0,
                         ));
-                        chars.insert(name.clone(), (ss, len));
+                        chars.insert(name.clone(), (ss.into(), len));
                         let address=b.ins().stack_addr(ptr_ty,ss,0);
                         let pointer=b.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,8,0));
                         let value=if ptr_ty==types::I64 {address} else {b.ins().uextend(types::I64,address)};
@@ -2345,7 +2345,7 @@ fn gen_stmts(
                         IExpr::Str(text)=>make_data(module,b,ptr_ty,dc,text.as_bytes())?,
                         IExpr::Ident(n)=> {
                             let (slot,_)=chars.get(n).ok_or_else(||anyhow::anyhow!("internal READ requires CHARACTER storage"))?;
-                            b.ins().stack_addr(ptr_ty,*slot,0)
+                            storage_addr(b,ptr_ty,*slot)
                         }
                         _=>anyhow::bail!("unsupported internal READ source"),
                     };
@@ -2412,7 +2412,7 @@ fn gen_stmts(
                     let (slot,capacity)=chars.get(dest).ok_or_else(||anyhow::anyhow!("record READ requires CHARACTER storage"))?;
                     let length:usize=length.parse()?;
                     anyhow::ensure!(length<=*capacity,"record READ exceeds CHARACTER storage");
-                    let pointer=b.ins().stack_addr(ptr_ty,*slot,0);
+                    let pointer=storage_addr(b,ptr_ty,*slot);
                     let (file,code)=if matches!(unit,IExpr::IntLit(n) if n == "5") {
                         (b.ins().iconst(ptr_ty,0),b.ins().iconst(types::I64,0))
                     } else {
@@ -2442,7 +2442,7 @@ fn gen_stmts(
                     let (slot,capacity)=chars.get(dest).ok_or_else(|| anyhow::anyhow!("record READ requires CHARACTER storage"))?;
                     let length:usize=length.parse()?;
                     anyhow::ensure!(length<=*capacity,"record READ exceeds CHARACTER storage");
-                    let pointer=b.ins().stack_addr(ptr_ty,*slot,0);
+                    let pointer=storage_addr(b,ptr_ty,*slot);
                     let file=if let Some(unit)=args.get(2) {
                         let value=eval_expr(b,ex,ptr_ty,unit,ints,reals,bools,func_meta);
                         let unit=to_i64(b,value);
@@ -2527,6 +2527,46 @@ fn gen_stmts(
                     let function=module.declare_func_in_func(id,b.func);
                     let code=b.ins().iconst(types::I32,0);b.ins().call(function,&[code]);
                     b.ins().trap(ir::TrapCode::unwrap_user(1));return Ok(true);
+                }
+                if name == "@saved_bind" {
+                    let [IExpr::Ident(local),IExpr::Str(key),value]=args.as_slice() else {bail!("invalid saved-storage binding");};
+                    let symbol=format!(".rfort.saved.{key}");
+                    let id=if let Some(cranelift_module::FuncOrDataId::Data(id))=module.get_name(&symbol) {id} else {
+                        fn bits(value:&IExpr)->Result<u64> {
+                            Ok(match value {
+                                IExpr::IntLit(v)=>v.parse::<i64>()? as u64,
+                                IExpr::RealLit(v)=>v.parse::<f64>()?.to_bits(),
+                                IExpr::Logical(v)=>u64::from(*v),
+                                IExpr::Call(n,args) if matches!(n.as_str(),"dble"|"@integer_literal")=>bits(&args[0])?,
+                                _=>bail!("saved initializer must be a resolved scalar constant"),
+                            })
+                        }
+                        let bytes=if let Some((_,length))=chars.get(local) {
+                            let IExpr::Str(text)=value else {bail!("saved CHARACTER initializer must be a resolved string constant");};
+                            let mut bytes=text.as_bytes().to_vec();bytes.resize(*length,b' ');bytes.truncate(*length);bytes.push(0);bytes
+                        } else {
+                            let value=bits(value)?;
+                            if bools.contains_key(local) {vec![value as u8;1]}
+                            else if module.isa().endianness()==ir::Endianness::Little {value.to_le_bytes().to_vec()} else {value.to_be_bytes().to_vec()}
+                        };
+                        let id=module.declare_data(&symbol,Linkage::Local,true,false)?;
+                        let mut data=DataDescription::new();data.define(bytes.into_boxed_slice());data.set_align(8);
+                        module.define_data(id,&data)?;id
+                    };
+                    let storage=Storage::Static(module.declare_data_in_func(id,b.func));
+                    if let Some((slot,_))=chars.get_mut(local) {
+                        *slot=storage;
+                        // String intrinsics and comparisons also use this pointer cell.
+                        let address=storage_addr(b,ptr_ty,storage);
+                        let value=if ptr_ty==types::I64 {address} else {b.ins().uextend(types::I64,address)};
+                        let pointer=storage_addr(b,ptr_ty,ints[&format!("@character_pointer:{local}")]);
+                        b.ins().store(MemFlags::new(),value,pointer,0);
+                    }
+                    else if let Some(slot)=ints.get_mut(local) {*slot=storage;}
+                    else if let Some(slot)=reals.get_mut(local) {*slot=storage;}
+                    else if let Some(slot)=bools.get_mut(local) {*slot=storage;}
+                    else {bail!("saved storage requires a declared numeric, LOGICAL or CHARACTER scalar");}
+                    continue;
                 }
                 if name == "@error_stop" || name == "@stop" {
                     let keyword=if name=="@stop" {"STOP"} else {"ERROR STOP"};
@@ -3447,7 +3487,7 @@ impl Backend for CraneliftBackend {
                         file_io::call(&mut obj,&mut b,"memcpy",&[address,source,count],ptr_ty)?;
                         let zero=b.ins().iconst(types::I8,0);
                         b.ins().store(ir::MemFlags::new(),zero,address,length as i32);
-                        chars.insert(pname.clone(),(slot,length));
+                        chars.insert(pname.clone(),(slot.into(),length));
                         let pointer=b.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,8,0));
                         let value=if ptr_ty==types::I64 {address} else {b.ins().uextend(types::I64,address)};
                         b.ins().stack_store(value,pointer,0);

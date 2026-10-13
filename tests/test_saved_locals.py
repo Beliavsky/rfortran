@@ -127,7 +127,6 @@ end
 
     def test_invalid_or_unsupported_saved_storage(self):
         for declaration,message in [
-            ('character(2)::n="ab"','numeric or LOGICAL scalars'),
             ('integer,save::n(2)=[1,2]','local arrays'),
             ('integer,save,target::n=0','TARGET persistent'),
             ('integer,save::n','requires a value'),

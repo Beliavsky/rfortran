@@ -205,13 +205,17 @@ fn body(statements: &mut Vec<Stmt>, inherited: &Characters, serial: &mut usize) 
     Ok(())
 }
 pub fn resolve(mut program: Program) -> Result<Program> {
-    fn procedures(body:&[Stmt],names:&mut std::collections::HashSet<String>) {
+    fn procedures(body:&[Stmt],names:&mut std::collections::HashSet<String>,returns:&mut HashMap<String,TypeSpec>) {
         for statement in body {match statement {
-            Stmt::Function {name,body,..} | Stmt::Subroutine {name,body,..} => {names.insert(name.clone());procedures(body,names);},
-            Stmt::Module {body,..}=>procedures(body,names),_=>{},
+            Stmt::Function {name,return_type,body,..} => {
+                names.insert(name.clone());if let Some(kind)=return_type {returns.insert(name.clone(),kind.clone());}
+                procedures(body,names,returns);
+            },
+            Stmt::Subroutine {name,body,..}=>{names.insert(name.clone());procedures(body,names,returns);},
+            Stmt::Module {body,..}=>procedures(body,names,returns),_=>{},
         }}
     }
-    let mut scope=DynamicScope::default();procedures(&program.body,&mut scope.procedures);
+    let mut scope=DynamicScope::default();procedures(&program.body,&mut scope.procedures,&mut scope.function_results);
     dynamic_body(&mut program.body, &scope, true, &mut 0)?;
     body(&mut program.body, &Characters::new(), &mut 0)?;
     Ok(program)
@@ -227,6 +231,7 @@ struct DynamicScope {
     lengths: HashMap<String, String>,
     symbols: HashMap<String, (TypeSpec, Vec<Expr>)>,
     procedures: std::collections::HashSet<String>,
+    function_results: HashMap<String,TypeSpec>,
     procedure: bool,
 }
 fn allocation_flag(length: &str) -> String { format!("{length}_allocated") }
@@ -248,7 +253,7 @@ fn capacity(e: &Expr, scope: &DynamicScope) -> Option<usize> {
         Expr::Str(s) => Some(s.len()),
         Expr::Ident(n) | Expr::Section { name: n, .. } => scope.characters.get(n).copied(),
         Expr::Bin(BinOp::Concat, a, b) => capacity(a, scope)?.checked_add(capacity(b, scope)?),
-        Expr::Call(n, args) if n == "trim" && args.len() == 1 => capacity(&args[0], scope),
+        Expr::Call(n, args) if matches!(n.as_str(),"trim"|"adjustl"|"adjustr") && args.len() == 1 => capacity(&args[0], scope),
         Expr::Call(n, args) if matches!(n.as_str(), "char" | "achar") && args.len()==1 => Some(1),
         Expr::Call(n, args) if n == "@literal_substring" => capacity(&args[0], scope),
         Expr::Call(n, args) if n == "@dynamic_substring" => crate::parameters::integer_constant(&args[3]).ok()?.try_into().ok(),
@@ -310,6 +315,7 @@ fn logical_length(e: &Expr, scope: &mut DynamicScope, output: &mut Vec<Stmt>, se
             else { int(*scope.characters.get(n).context("expected scalar CHARACTER expression")?) },
         Expr::Call(n, a) if n == "@dynamic_substring" || n == "@substring" => a[2].clone(),
         Expr::Call(n, a) if matches!(n.as_str(), "char" | "achar") && a.len()==1 => int(1),
+        Expr::Call(n,a) if matches!(n.as_str(),"adjustl"|"adjustr") && a.len()==1 => logical_length(&a[0],scope,output,serial)?,
         Expr::Bin(BinOp::Concat, a, b) => binary(BinOp::Add, logical_length(a, scope, output, serial)?, logical_length(b, scope, output, serial)?),
         Expr::Call(n, a) if n == "trim" && a.len() == 1 => {
             *serial += 1;
@@ -391,13 +397,40 @@ fn dynamic_expression(e: &mut Expr, scope: &mut DynamicScope, output: &mut Vec<S
             *e = dynamic_slice(source.clone(), range, scope, output, serial)?;
         }
         Expr::Call(n, _) if n == "@dynamic_substring" => {},
-        Expr::Call(n,args) if n=="index" && !scope.procedures.contains(n) && !scope.symbols.contains_key(n) => {
-            if args.len()!=2 {bail!("INDEX currently requires STRING and SUBSTRING; BACK and KIND are not yet supported");}
-            let mut sources=args.clone();
+        Expr::Call(n,args) if n=="new_line" && !scope.procedures.contains(n) && !scope.symbols.contains_key(n) => {
+            if args.len()!=1 {bail!("NEW_LINE requires one CHARACTER argument");}
+            if capacity(&args[0],scope).is_none() {bail!("NEW_LINE requires a scalar CHARACTER argument");}
+            *e=Expr::Str("\n".into());
+        }
+        Expr::Call(n,args) if matches!(n.as_str(),"index"|"scan"|"verify") && !scope.procedures.contains(n) && !scope.symbols.contains_key(n) => {
+            let operation=n.clone();
+            if !(2..=4).contains(&args.len()) {bail!("{operation} requires two CHARACTER arguments and optional BACK and KIND");}
+            let mut back=args.get(2).filter(|e|!crate::named_arguments::omitted(e)).cloned().unwrap_or(Expr::Logical(false));
+            dynamic_expression(&mut back,scope,output,serial)?;
+            fn logical(e:&Expr,scope:&DynamicScope)->bool {match e {
+                Expr::Logical(_)=>true,
+                Expr::Ident(n)=>matches!(scope.symbols.get(n),Some((TypeSpec::Logical,dims)) if dims.is_empty()),
+                Expr::Call(n,_)=>scope.function_results.get(n)==Some(&TypeSpec::Logical)
+                    || (!scope.procedures.contains(n) && matches!(n.as_str(),"all"|"any"|"@all_reduction"|"@any_reduction")),
+                Expr::Un(crate::ast::UnOp::Not,e)=>logical(e,scope),
+                Expr::Bin(BinOp::And|BinOp::Or|BinOp::Eqv|BinOp::Neqv,a,b)=>logical(a,scope)&&logical(b,scope),
+                Expr::Bin(BinOp::Eq|BinOp::Ne|BinOp::Lt|BinOp::Le|BinOp::Gt|BinOp::Ge,_,_)=>true,
+                _=>false,
+            }}
+            if !logical(&back,scope) {bail!("{operation} BACK must be a scalar LOGICAL expression");}
+            let kind=args.get(3).filter(|e|!crate::named_arguments::omitted(e)).map(crate::parameters::integer_constant).transpose()
+                .context("CHARACTER search KIND must be a constant INTEGER")?.unwrap_or(4);
+            if !matches!(kind,1|2|4|8) {bail!("{operation} KIND must be a supported INTEGER kind (1, 2, 4 or 8)");}
+            *serial+=1;let back_name=format!("@substring_search_back_{serial}");
+            scope.symbols.insert(back_name.clone(),(TypeSpec::Logical,vec![]));
+            output.push(Stmt::VarDecl{kind:TypeSpec::Logical,names:vec![back_name.clone()]});
+            output.push(Stmt::Assign{name:back_name.clone(),value:back});
+            let back=ident(&back_name);
+            let mut sources=args[..2].to_vec();
             let mut buffers=vec![];let mut lengths=vec![];let mut caps=vec![];
             for source in &mut sources {
                 dynamic_expression(source,scope,output,serial)?;
-                let cap=capacity(source,scope).context("INDEX requires scalar CHARACTER arguments")?;
+                let cap=capacity(source,scope).with_context(||format!("{operation} requires scalar CHARACTER arguments"))?;
                 let size=logical_length(source,scope,output,serial)?;
                 lengths.push(capture(size,scope,output,serial));caps.push(cap);
                 *serial+=1;let buffer=format!("@substring_search_text_{serial}");
@@ -410,7 +443,7 @@ fn dynamic_expression(e: &mut Expr, scope: &mut DynamicScope, output: &mut Vec<S
             *serial+=1;let stem=format!("@substring_search_{serial}");
             let result=format!("{stem}_result");let i=format!("{stem}_i");let j=format!("{stem}_j");
             let offset=format!("{stem}_offset");let a=format!("{stem}_a");let b=format!("{stem}_b");let matched=format!("{stem}_matched");
-            for (kind,names) in [(TypeSpec::Integer(None),vec![result.clone()]),
+            for (kind,names) in [(TypeSpec::Integer(Some(kind as u8)),vec![result.clone()]),
                 (TypeSpec::Integer(Some(8)),vec![i.clone(),j.clone(),offset.clone(),a.clone(),b.clone()]),
                 (TypeSpec::Logical,vec![matched.clone()])] {
                 for name in &names {scope.symbols.insert(name.clone(),(kind.clone(),vec![]));}
@@ -418,18 +451,35 @@ fn dynamic_expression(e: &mut Expr, scope: &mut DynamicScope, output: &mut Vec<S
             }
             let assign=|name:&str,value:Expr|Stmt::Assign {name:name.into(),value};
             output.push(assign(&result,int(0)));
-            let comparisons=vec![
-                assign(&offset,binary(BinOp::Add,binary(BinOp::Sub,ident(&i),int(1)),ident(&j))),
-                Stmt::CallSub {name:"@internal_read_byte".into(),args:vec![ident(&a),ident(&buffers[0]),ident(&offset),int(caps[0])]},
-                Stmt::CallSub {name:"@internal_read_byte".into(),args:vec![ident(&b),ident(&buffers[1]),ident(&j),int(caps[1])]},
-                Stmt::If {cond:binary(BinOp::Ne,ident(&a),ident(&b)),then_body:vec![assign(&matched,Expr::Logical(false)),Stmt::Exit],else_body:None},
-            ];
-            let search=Stmt::Do {var:i.clone(),start:int(1),end:binary(BinOp::Add,binary(BinOp::Sub,lengths[0].clone(),lengths[1].clone()),int(1)),body:vec![
-                assign(&matched,Expr::Logical(true)),
-                Stmt::Do {var:j,start:int(0),end:binary(BinOp::Sub,lengths[1].clone(),int(1)),body:comparisons},
-                Stmt::If {cond:ident(&matched),then_body:vec![assign(&result,Expr::Call("int".into(),vec![ident(&i)])),Stmt::Exit],else_body:None},
-            ]};
-            output.push(Stmt::If {cond:binary(BinOp::Eq,lengths[1].clone(),int(0)),then_body:vec![assign(&result,int(1))],else_body:Some(vec![search])});
+            let found=vec![assign(&result,ident(&i)),Stmt::If {cond:Expr::Un(crate::ast::UnOp::Not,Box::new(back.clone())),then_body:vec![Stmt::Exit],else_body:None}];
+            if operation=="index" {
+                let comparisons=vec![
+                    assign(&offset,binary(BinOp::Add,binary(BinOp::Sub,ident(&i),int(1)),ident(&j))),
+                    Stmt::CallSub {name:"@internal_read_byte".into(),args:vec![ident(&a),ident(&buffers[0]),ident(&offset),int(caps[0])]},
+                    Stmt::CallSub {name:"@internal_read_byte".into(),args:vec![ident(&b),ident(&buffers[1]),ident(&j),int(caps[1])]},
+                    Stmt::If {cond:binary(BinOp::Ne,ident(&a),ident(&b)),then_body:vec![assign(&matched,Expr::Logical(false)),Stmt::Exit],else_body:None},
+                ];
+                let search=Stmt::Do {var:i.clone(),start:int(1),end:binary(BinOp::Add,binary(BinOp::Sub,lengths[0].clone(),lengths[1].clone()),int(1)),body:vec![
+                    assign(&matched,Expr::Logical(true)),
+                    Stmt::Do {var:j,start:int(0),end:binary(BinOp::Sub,lengths[1].clone(),int(1)),body:comparisons},
+                    Stmt::If {cond:ident(&matched),then_body:found,else_body:None},
+                ]};
+                output.push(Stmt::If {cond:binary(BinOp::Eq,lengths[1].clone(),int(0)),then_body:vec![Stmt::If {
+                    cond:back,then_body:vec![assign(&result,binary(BinOp::Add,lengths[0].clone(),int(1)))],else_body:Some(vec![assign(&result,int(1))])
+                }],else_body:Some(vec![search])});
+            } else {
+                let condition=if operation=="scan" {ident(&matched)} else {Expr::Un(crate::ast::UnOp::Not,Box::new(ident(&matched)))};
+                output.push(Stmt::Do {var:i.clone(),start:int(1),end:lengths[0].clone(),body:vec![
+                    assign(&offset,binary(BinOp::Sub,ident(&i),int(1))),
+                    Stmt::CallSub {name:"@internal_read_byte".into(),args:vec![ident(&a),ident(&buffers[0]),ident(&offset),int(caps[0])]},
+                    assign(&matched,Expr::Logical(false)),
+                    Stmt::Do {var:j.clone(),start:int(0),end:binary(BinOp::Sub,lengths[1].clone(),int(1)),body:vec![
+                        Stmt::CallSub {name:"@internal_read_byte".into(),args:vec![ident(&b),ident(&buffers[1]),ident(&j),int(caps[1])]},
+                        Stmt::If {cond:binary(BinOp::Eq,ident(&a),ident(&b)),then_body:vec![assign(&matched,Expr::Logical(true)),Stmt::Exit],else_body:None},
+                    ]},
+                    Stmt::If {cond:condition,then_body:found,else_body:None},
+                ]});
+            }
             *e=ident(&result);
         }
         Expr::Call(n, args) if matches!(n.as_str(), "ichar" | "iachar" | "char" | "achar") && !scope.procedures.contains(n) && !scope.symbols.contains_key(n) => {

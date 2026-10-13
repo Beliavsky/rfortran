@@ -117,13 +117,19 @@ fn intrinsic(name: &str) -> Option<Signature> {
         | "sinh" | "cosh" | "tanh" => &["x"],
         "abs" | "dble" | "kind" => &["a"],
         "mod" | "modulo" => &["a", "p"],
+        "new_line" => &["a"],
+        "adjustl"|"adjustr"|"trim" => &["string"],
+        "index" => &["string", "substring", "back", "kind"],
+        "scan" | "verify" => &["string", "set", "back", "kind"],
         "random_number" => &["harvest"],
         "real" | "int" => &["a", "kind"],
         _ => return None,
     };
     Some(Signature {
         params: keys.iter().map(|s| (*s).into()).collect(),
-        optional: if matches!(name, "real" | "int") {
+        optional: if matches!(name,"index"|"scan"|"verify") {
+            HashSet::from(["back".into(),"kind".into()])
+        } else if matches!(name, "real" | "int") {
             HashSet::from(["kind".into()])
         } else {
             HashSet::new()

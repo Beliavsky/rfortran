@@ -134,13 +134,25 @@ as scalar variable substrings. Omitted bounds, padded declared lengths and
 empty ranges are supported; scalar substring strides and writes to PARAMETER
 values are rejected. CHARACTER array PARAMETER sections remain array sections.
 
-Two-argument scalar `INDEX(string,substring)` works with fixed strings, runtime
-contents, TRIM and runtime substrings, including in PURE/ELEMENTAL procedures.
-It returns the first match, zero for a missing match, and one for an empty
-substring. BACK, KIND and array arguments are not implemented. Run
-`python tests/test_parameter_substrings.py` for interpreter/native O0/O2 checks
-and gfortran comparisons. `tests/157_parameter_substrings.f90` reproduces the
-`upper_case_str` blocker in `util.f90`.
+`INDEX`, `SCAN` and `VERIFY` support scalar CHARACTER arguments, optional BACK
+and constant KIND (1, 2, 4 or 8), positional and named arguments, PARAMETER
+initializers and PURE procedures. They search the full string, including trailing
+blanks. INDEX returns one for an empty substring, or LEN(STRING)+1 with BACK true.
+Rank-one CHARACTER array arguments are expanded elementally with shape checks;
+BACK currently must be scalar. LEN_TRIM and character-code conversions also work
+on fixed rank-one CHARACTER arrays. Run `python tests/test_character_intrinsics.py`
+and `python tests/test_parameter_substrings.py` for interpreter/native O0/O2
+checks and gfortran comparisons. `tests/157_parameter_substrings.f90` reproduces
+the `upper_case_str` blocker in `util.f90`.
+
+ADJUSTL/ADJUSTR work in assignments, concatenations, comparisons and fixed
+rank-one array expressions; results keep the input length. Old-style
+`character*5` and `character*(expression)` declarations are accepted. NEW_LINE
+supports scalar CHARACTER arguments. Formatted PRINT may omit its output list,
+and the colon format descriptor ends processing when the output list is exhausted.
+Intrinsic operators may be extended for unsupported operand combinations such as
+CHARACTER + CHARACTER; intrinsic arithmetic cannot be replaced. Run
+`python tests/test_character_operators.py` for the CHARACTER operator subset.
 
 ## CHARACTER array parameters
 
@@ -905,11 +917,20 @@ expressions. Numeric scalars, rank-one array constructors (including constant
 implied-DOs), scalar array fills, supported LOGICAL constant expressions and fixed-length CHARACTER
 scalars are supported. Values remain mutable; initialization runs once before
 normal use, including declarations with an explicit SAVE attribute. INTEGER
-initializers currently require integer constant expressions. LOGICAL expressions
-beyond literals and additional constant array transformations
-remain outside this subset. Initialized locals in procedures, modules and BLOCK
-scopes are rejected until persistent storage is implemented. Run
-`python tests/test_main_initialization.py`.
+initializers currently require integer constant expressions. Additional constant
+array transformations remain outside this subset. Run `python tests/test_main_initialization.py`.
+
+Initialized INTEGER, REAL, DOUBLE PRECISION, LOGICAL and fixed-length CHARACTER
+scalar locals in functions
+and subroutines now have persistent SAVE storage, including locals declared inside
+procedure BLOCK scopes. Declaration initialization implies SAVE even when the
+attribute is omitted. Values survive repeated calls, OPTIONAL specializations and
+recursive activations; each declaration has independent storage. Ordinary locals
+without initialization retain their existing behavior. PURE procedures reject
+saved initialized locals. Saved arrays, TARGET locals, module
+initialization and SAVE declarations without initializers remain unsupported.
+Run `python tests/test_saved_locals.py` and `python tests/test_saved_characters.py`;
+`xsave_counter.f90` is a small numeric example.
 
 ## OPTIONAL procedures
 
@@ -1351,6 +1372,30 @@ modify its checkout. Reports distinguish compilation failures, runtime failures,
 wrong output and reference failures. Add `--strict` to return a failing status
 when a comparison fails. See [tests/ofort/README.md](tests/ofort/README.md) for
 selection files, discovery exclusions and reproducible checkpoints.
+
+### CHARACTER compatibility inventory
+
+[character-selection.json](tests/ofort/character-selection.json) selects 84
+standalone ofort cases containing CHARACTER declarations or focused string
+intrinsics. Run:
+
+```bat
+python tests/run_ofort_compat.py --ofort-root C:\c\ofort --selection tests/ofort/character-selection.json --jobs 4 --report target/character-compat.json
+```
+
+The [checkpoint](tests/ofort/character-checkpoint.json) records source hashes,
+CHARACTER declaration locations in `util.f90`/`xutil.f90`, and per-case outcomes.
+The first CHARACTER batch increased the focused 37-case sample from 6 to 11
+passes. The broader selection has 16 passes, 63 compiler failures and five
+reference failures. These broader cases also exercise unsupported derived types,
+procedure pointers and I/O; their failures are not all CHARACTER bugs. Major
+remaining CHARACTER work includes runtime-dependent automatic string lengths
+(such as `sum(len_trim(words))` in a function result), deferred-length arrays,
+explicit allocation selectors/SOURCE/MOLD, allocatable CHARACTER components,
+and internal array files.
+The full `kind.f90 util.f90 xutil.f90` build now gets past the initialized CHARACTER
+local and CHARACTER operator interface; it stops at a numeric array-valued defined
+operator (`.notin.`). Full `xutil.f90` execution remains a separate acceptance test.
 
 ## License
 

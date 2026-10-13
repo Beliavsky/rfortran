@@ -21,6 +21,8 @@ pub fn interpret(program: &Program) {
     }
     OUTPUT_LISTS.with(|lists|lists.borrow_mut().clear());
     OUTPUT_SERIAL.with(|serial|serial.set(0));
+    thread_local! { static SAVED: std::cell::RefCell<HashMap<String,ValueTuple>> = std::cell::RefCell::new(HashMap::new()); }
+    SAVED.with(|values|values.borrow_mut().clear());
     fn io_result<T>(result: anyhow::Result<T>) -> T {
         match result { Ok(value)=>value, Err(error)=>{eprintln!("Runtime error: {error:#}");std::process::exit(1);} }
     }
@@ -84,7 +86,7 @@ pub fn interpret(program: &Program) {
         s.parse::<f64>().unwrap_or(0.0)
     }
 
-    #[derive(Clone, Debug, Default)]
+    #[derive(Clone, Debug, Default, PartialEq)]
     struct ValueTuple(
         pub Option<i64>,
         pub Option<f64>,
@@ -124,6 +126,9 @@ pub fn interpret(program: &Program) {
             Expr::Logical(b) => ValueTuple::from_bool(*b),
             Expr::Str(s) => ValueTuple::from_str(s.clone()),
             Expr::Ident(id) => {
+                if let Some((key,_))=call_stack.last().and_then(|frame|frame.saved.get(id)) {
+                    return SAVED.with(|values|values.borrow()[key].clone());
+                }
                 if let Some(v) = env_int.get(id) {
                     return ValueTuple::from_int(*v);
                 } else if let Some(v) = env_real64.get(id) {
@@ -554,6 +559,15 @@ pub fn interpret(program: &Program) {
                 v.3.as_ref()
                     .map(|s| ValueTuple::from_str(s.trim_end_matches(' ').to_string()))
             }),
+            "adjustl" | "adjustr" => {
+                let text=args.first()?.3.as_ref()?;
+                let adjusted=if name=="adjustl" {
+                    let content=text.trim_start_matches(' ');format!("{}{}",content," ".repeat(text.len()-content.len()))
+                } else {
+                    let content=text.trim_end_matches(' ');format!("{}{}"," ".repeat(text.len()-content.len()),content)
+                };
+                Some(ValueTuple::from_str(adjusted))
+            }
             "repeat" => {
                 if let Some(s) = args.get(0).and_then(|v| v.3.clone()) {
                     let n = to_int(args.get(1)?)?;
@@ -686,6 +700,8 @@ pub fn interpret(program: &Program) {
 
     #[derive(Clone, Debug)]
     struct CallFrame {
+        saved: HashMap<String,(String,TypeSpec)>,
+        saved_seen: HashMap<String,ValueTuple>,
         env_str: HashMap<String, String>,
         env_int: HashMap<String, i64>,
         env_real32: HashMap<String, f32>,
@@ -700,6 +716,36 @@ pub fn interpret(program: &Program) {
         is_function: bool,
     }
     impl CallFrame {
+        fn apply_saved(&mut self,name:&str,kind:&TypeSpec,value:&ValueTuple) {
+            let number=value.1.unwrap_or(value.0.unwrap_or(0) as f64);
+            self.env_int.remove(name);self.env_real32.remove(name);self.env_real64.remove(name);self.env_log.remove(name);
+            match kind {
+                TypeSpec::Integer(_)=>{self.env_int.insert(name.into(),value.0.unwrap_or(number as i64));},
+                TypeSpec::Real=>{self.env_real32.insert(name.into(),number as f32);},
+                TypeSpec::DoublePrecision=>{self.env_real64.insert(name.into(),number);},
+                TypeSpec::Logical=>{self.env_log.insert(name.into(),value.2.unwrap_or(number!=0.0));},
+                TypeSpec::Character(length)=>{
+                    let length=length.unwrap_or(1);let mut text=value.3.clone().unwrap_or_default();
+                    text.truncate(length);text.extend(std::iter::repeat(' ').take(length-text.len()));
+                    self.env_str.insert(name.into(),text);
+                },_=>unreachable!(),
+            }
+        }
+        fn sync_saved(&mut self) {
+            for (name,(key,kind)) in self.saved.clone() {
+                let value=SAVED.with(|values|values.borrow()[&key].clone());
+                self.apply_saved(&name,&kind,&value);self.saved_seen.insert(name,value);
+            }
+        }
+        fn commit_saved(&mut self) {
+            for (name,(key,_)) in self.saved.clone() {
+                let value=self.result_value(&name);
+                if self.saved_seen.get(&name)!=Some(&value) {
+                    SAVED.with(|values|{values.borrow_mut().insert(key,value.clone());});
+                    self.saved_seen.insert(name,value);
+                }
+            }
+        }
         fn result_value(&self, name: &str) -> ValueTuple {
             if let Some(v) = self.env_int.get(name) { ValueTuple::from_int(*v) }
             else if let Some(v) = self.env_real32.get(name) { ValueTuple::from_real(*v as f64) }
@@ -710,6 +756,7 @@ pub fn interpret(program: &Program) {
         }
         fn new(fd: &FuncDef, func_name: Option<String>) -> Self {
             Self {
+                saved:HashMap::new(),saved_seen:HashMap::new(),
                 env_str: HashMap::new(),
                 env_int: HashMap::new(),
                 env_real32: HashMap::new(),
@@ -732,6 +779,8 @@ pub fn interpret(program: &Program) {
     ) -> Option<ValueTuple> {
         let mut idx: usize = 0;
         while idx < stmts.len() {
+            call_stack.last_mut().unwrap().commit_saved();
+            call_stack.last_mut().unwrap().sync_saved();
             let stmt = &stmts[idx];
             let fragment = matches!(stmt, Stmt::CallSub { name, .. } if name == "@print_fragment");
             let fragment_print;
@@ -848,7 +897,7 @@ pub fn interpret(program: &Program) {
                     };
                     let vt = eval_expr(value, &strs, &ints, &r32, &r64, &logs, funcs, call_stack);
                     let frame = call_stack.last_mut().unwrap();
-                    if let Some(s) = vt.3 {
+                    if let Some(s) = vt.3.clone() {
                         frame.env_str.insert(name.clone(), s);
                         frame.env_int.remove(name);
                     } else if let Some(i) = vt.0 {
@@ -865,6 +914,12 @@ pub fn interpret(program: &Program) {
                         }
                     } else if let Some(b) = vt.2 {
                         frame.env_log.insert(name.clone(), b);
+                    }
+                    if let Some((key,kind))=frame.saved.get(name).cloned() {
+                        frame.apply_saved(name,&kind,&vt);
+                        let value=frame.result_value(name);
+                        SAVED.with(|values|{values.borrow_mut().insert(key,value.clone());});
+                        frame.saved_seen.insert(name.clone(),value);
                     }
                 }
                 Stmt::Print { items } => {
@@ -1086,6 +1141,15 @@ pub fn interpret(program: &Program) {
                         if matches!(kind,"r4"|"r8") {let v=value.1.unwrap_or_else(||value.0.unwrap_or(0) as f64);let v=if kind=="r4"{v as f32 as f64}else{v};if let Some(a)=frame.env_real_arrays.get_mut(&target){a[offset]=v;}else if frame.env_real32.contains_key(&target){assert_eq!(offset,0);frame.env_real32.insert(target,v as f32);}else{assert_eq!(offset,0);frame.env_real64.insert(target,v);}}
                         else {let v=if kind=="l"{i64::from(value.2.unwrap_or(false))}else{value.0.unwrap_or_else(||value.1.unwrap_or(0.0) as i64)};if let Some(a)=frame.env_int_arrays.get_mut(&target){a[offset]=v;}else if kind=="l"{assert_eq!(offset,0);frame.env_log.insert(target,v!=0);}else{assert_eq!(offset,0);frame.env_int.insert(target,v);}}
                         if let Some(a)=frame.env_int_arrays.get_mut(&flag){a[offset]=1;}else{assert_eq!(offset,0);frame.env_int.insert(flag,1);}idx+=1;continue;
+                    }
+                    if name == "@saved_bind" {
+                        let [Expr::Ident(local),Expr::Str(key),initializer]=args.as_slice() else {unreachable!()};
+                        let fr=call_stack.last().unwrap().clone();
+                        let initial=eval_expr(initializer,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack);
+                        let kind=if fr.env_str.contains_key(local) {TypeSpec::Character(Some(initial.3.as_ref().unwrap().len()))} else if fr.env_real64.contains_key(local) {TypeSpec::DoublePrecision} else if fr.env_real32.contains_key(local) {TypeSpec::Real} else if fr.env_log.contains_key(local) {TypeSpec::Logical} else {TypeSpec::Integer(None)};
+                        SAVED.with(|values|{values.borrow_mut().entry(key.clone()).or_insert(initial);});
+                        let frame=call_stack.last_mut().unwrap();frame.saved.insert(local.clone(),(key.clone(),kind));frame.sync_saved();
+                        idx+=1;continue;
                     }
                     if name == "@stop" && args.is_empty() { std::process::exit(0); }
                     if name == "@error_stop" || name == "@stop" {
@@ -1556,11 +1620,15 @@ pub fn interpret(program: &Program) {
                     }
                 }
             }
+
+            call_stack.last_mut().unwrap().commit_saved();
             idx += 1;
         }
+        call_stack.last_mut().unwrap().commit_saved();
         None
     }
     let top_frame = CallFrame {
+        saved:HashMap::new(),saved_seen:HashMap::new(),
         env_str,
         env_int,
         env_real32,

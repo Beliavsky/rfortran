@@ -260,6 +260,7 @@ fn real_constant(e: &Expr) -> Result<f64> {
 pub(crate) fn character_constant(expr: &Expr) -> Result<String> {
     match expr {
         Expr::Str(value) => Ok(value.clone()),
+        Expr::Call(name,args) if name=="new_line" && args.len()==1 => {character_constant(&args[0])?;Ok("\n".into())},
         Expr::Bin(BinOp::Concat, left, right) => {
             Ok(character_constant(left)? + &character_constant(right)?)
         }
@@ -301,6 +302,33 @@ pub fn resolve(program: Program) -> Result<Program> {
 // Operator selection needs kinds before calls and derived components have
 // been lowered. Purity is checked by resolve() after that lowering.
 pub(crate) fn resolve_constants(mut program: Program) -> Result<Program> {
+    fn mark_saved(body:&mut [Stmt],procedure:bool,serial:&mut usize) {
+        for statement in body {match statement {
+            Stmt::Function {name,body,..}=>{
+                let result=body.last().and_then(|s|if let Stmt::Return(Some(Expr::Ident(n)))=s {Some(n.clone())}else{None}).unwrap_or_else(||name.clone());
+                for stmt in body.iter_mut() {
+                    if let Stmt::InitializedDecl {attributes,entities,..}=stmt {
+                        if entities.iter().any(|(n,_)|n==&result) && !attributes.iter().any(|a|a=="parameter") {attributes.push("@save_result".into());}
+                    }
+                }
+                mark_saved(body,true,serial);
+            },
+            Stmt::Subroutine {body,..}=>mark_saved(body,true,serial),
+            Stmt::Module {body,..}=>mark_saved(body,false,serial),
+            Stmt::Block {body}=>mark_saved(body,procedure,serial),
+            Stmt::InitializedDecl {attributes,..} if procedure && !attributes.iter().any(|a|a=="parameter") && !attributes.iter().any(|a|a.starts_with("@save_key:"))=>{
+                *serial+=1;attributes.push(format!("@save_key:{serial}"));
+            },_=>{},
+        }}
+    }
+    // The key belongs to the declaration, rather than an expanded call site.
+    fn reserve(body:&[Stmt],serial:&mut usize) {
+        for stmt in body {match stmt {
+            Stmt::CallSub{name,args} if name=="@saved_bind"=>{if let Some(Expr::Str(key))=args.get(1) {if let Some(n)=key.split('_').next().and_then(|s|s.parse::<usize>().ok()) {*serial=(*serial).max(n);}}},
+            Stmt::Function{body,..}|Stmt::Subroutine{body,..}|Stmt::Module{body,..}|Stmt::Block{body}=>reserve(body,serial),_=>{},
+        }}
+    }
+    let mut serial=0;reserve(&program.body,&mut serial);mark_saved(&mut program.body,false,&mut serial);
     let mut modules = Modules::new();
     for stmt in &mut program.body {
         if let Stmt::Module { name, body } = stmt {
@@ -335,6 +363,19 @@ fn evaluate(expr: &Expr, constants: &Constants) -> Result<i64> {
                 .with_context(|| {
                     format!("`{name}` is not a previously defined integer PARAMETER")
                 }).and_then(|e| evaluate(e, &Constants::new()));
+        }
+        Expr::Call(name,args) if matches!(name.as_str(),"index"|"scan"|"verify") => {
+            if !(2..=4).contains(&args.len()) {bail!("{name} requires two CHARACTER arguments and optional BACK and KIND");}
+            let text=character_constant(&args[0])?;let pattern=character_constant(&args[1])?;
+            let back=args.get(2).filter(|e|!crate::named_arguments::omitted(e)).map(|e|logical_constant(e,constants)).transpose()?.unwrap_or(false);
+            let kind=args.get(3).filter(|e|!crate::named_arguments::omitted(e)).map(|e|evaluate(e,constants)).transpose()?.unwrap_or(4);
+            if !matches!(kind,1|2|4|8) {bail!("{name} KIND must be a supported INTEGER kind (1, 2, 4 or 8)");}
+            let position=if name=="index" {if back {text.rfind(&pattern)} else {text.find(&pattern)}}
+                else {
+                    let matched=|(i,c):(usize,u8)|if pattern.as_bytes().contains(&c)==(name=="scan") {Some(i)} else {None};
+                    if back {text.bytes().enumerate().rev().find_map(matched)} else {text.bytes().enumerate().find_map(matched)}
+                };
+            Some(position.map_or(0,|i|i as i64+1))
         }
         Expr::Un(UnOp::Neg, e) => evaluate(e, constants)?.checked_neg(),
         Expr::Bin(op, left, right) => {
@@ -414,8 +455,8 @@ fn separate_parameters(body: &mut Vec<Stmt>, arguments: &[String]) -> Result<()>
     Ok(())
 }
 
-// Main-program storage exists for the whole execution. Other scopes need a
-// separate persistent-storage implementation before initialized locals are safe.
+// Resolve declaration initializers to constants before choosing automatic or
+// persistent storage. Procedure declaration initialization implies SAVE.
 fn initial_value(kind: &TypeSpec, value: &Expr) -> Result<Expr> {
     if let Some(source)=crate::empty_constructors::kind(value)? {
         let numeric=|kind:&TypeSpec|matches!(kind,TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision);
@@ -462,6 +503,7 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
     let arrays: HashSet<String> = body.iter().filter_map(|s| if let Stmt::ArrayDecl { name, .. } = s { Some(name.to_ascii_lowercase()) } else { None }).collect();
     let mut array_values = HashMap::new();
     let mut variable_values = HashMap::new();
+    let mut saved_keys = HashMap::new();
     let mut locals: HashSet<String> = arguments.iter().map(|s| s.to_ascii_lowercase()).collect();
     for stmt in body.iter() {
         match stmt {
@@ -519,13 +561,24 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
                 .iter()
                 .any(|a| a.eq_ignore_ascii_case("parameter"))
             {
-                if !main_scope { bail!("declaration initialization without PARAMETER is currently supported only in the main program; persistent SAVE storage in other scopes is not yet implemented"); }
-                if attributes.iter().any(|a| !a.eq_ignore_ascii_case("save") && !a.eq_ignore_ascii_case("target")) {
-                    bail!("unsupported attribute on initialized main-program variable");
+                let save_key=attributes.iter().find_map(|a|a.strip_prefix("@save_key:").map(str::to_owned));
+                if attributes.iter().any(|a|a=="@save_result") {bail!("a function result cannot have declaration initialization or SAVE storage");}
+                if save_key.is_some() && attributes.iter().any(|a|a=="target") {bail!("TARGET persistent locals are not yet supported");}
+                if !main_scope && save_key.is_none() { bail!("declaration initialization in module storage or main-program BLOCK scopes is not yet supported"); }
+                if attributes.iter().any(|a| !a.eq_ignore_ascii_case("save") && !a.eq_ignore_ascii_case("target") && !a.starts_with("@save_key:")) {
+                    bail!("unsupported attribute on initialized variable");
                 }
                 resolve_kind(kind,&constants)?;
+                if save_key.is_some() && !matches!(kind,TypeSpec::Integer(None|Some(1|2|4|8))|TypeSpec::Real|TypeSpec::DoublePrecision|TypeSpec::Logical|TypeSpec::Character(_)) {
+                    bail!("persistent initialized locals currently require numeric, LOGICAL or fixed-length CHARACTER scalars");
+                }
                 let mut scalars = vec![];
                 for (name,initializer) in entities.iter() {
+                    if let Some(id)=&save_key {
+                        if arrays.contains(name) {bail!("persistent initialized local arrays are not yet supported");}
+                        if arguments.contains(name) {bail!("a dummy argument cannot have a saved initializer");}
+                        saved_keys.insert(name.clone(),format!("{id}_{name}"));
+                    }
                     if !arrays.contains(name) { record_model_type(&mut constants,name,kind,0); }
                     let key = name.to_ascii_lowercase();
                     if !locals.insert(key.clone()) && !arrays.contains(&key) { bail!("duplicate declaration of initialized variable `{name}`"); }
@@ -644,7 +697,18 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
             } else { vec![] }
         } else { vec![] };
         let variable_init: Vec<Stmt> = match &stmt {
-            Stmt::VarDecl {names,..} => names.iter().filter_map(|name| variable_values.remove(&name.to_ascii_lowercase()).map(|value| Stmt::Assign{name:name.clone(),value})).collect(),
+            Stmt::VarDecl {names,..} => names.iter().filter_map(|name| variable_values.remove(&name.to_ascii_lowercase()).map(|value|
+                if let Some(key)=saved_keys.get(name) {
+                    // The destination declaration already records the INTEGER kind.
+                    // Keep its initializer literal here, rather than expanding it to
+                    // a temporary variable that cannot initialize object-file data.
+                    let value=match value {
+                        Expr::Call(tag,args) if tag=="@integer_literal"=>args[0].clone(),
+                        other=>other,
+                    };
+                    Stmt::CallSub {name:"@saved_bind".into(),args:vec![Expr::Ident(name.clone()),Expr::Str(key.clone()),value]}
+                }
+                else {Stmt::Assign{name:name.clone(),value}})).collect(),
             Stmt::ArrayDecl {name,..} => variable_values.remove(&name.to_ascii_lowercase()).map(|value| vec![Stmt::Assign{name:name.clone(),value}]).unwrap_or_default(),
             _ => vec![],
         };

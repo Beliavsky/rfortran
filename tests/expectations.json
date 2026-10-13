@@ -30,7 +30,7 @@
     },
     "05_type_mismatch_in_function_result": {
       "compiler_exit_code": 1,
-      "compiler_stderr": "\u001b[0m\u001b[1m\u001b[38;5;9merror\u001b[0m\u001b[1m: type mismatch in assignment to `bad`\u001b[0m\n  \u001b[0m\u001b[34m┌─\u001b[0m tests/05_type_mismatch_in_function_result.f90:1:1\n  \u001b[0m\u001b[34m│\u001b[0m\n\u001b[0m\u001b[34m1\u001b[0m \u001b[0m\u001b[34m│\u001b[0m \u001b[0m\u001b[31minteger\u001b[0m :: bad\n  \u001b[0m\u001b[34m│\u001b[0m \u001b[0m\u001b[31m^^^^^^^\u001b[0m\n\n\u001b[0m\u001b[1m\u001b[38;5;11mwarning\u001b[0m\u001b[1m: function or subroutine `bad` is never called\u001b[0m\n  \u001b[0m\u001b[34m┌─\u001b[0m tests/05_type_mismatch_in_function_result.f90:1:12\n  \u001b[0m\u001b[34m│\u001b[0m\n\u001b[0m\u001b[34m1\u001b[0m \u001b[0m\u001b[34m│\u001b[0m integer :: \u001b[0m\u001b[33mbad\u001b[0m\n  \u001b[0m\u001b[34m│\u001b[0m            \u001b[0m\u001b[33m^^^\u001b[0m\n\nSemantic: type mismatch in assignment to `bad`\nWarning: function or subroutine `bad` is never called\nError: compile failed\n",
+      "compiler_stderr": "\u001b[0m\u001b[1m\u001b[38;5;9merror\u001b[0m\u001b[1m: type mismatch in assignment to `bad`\u001b[0m\n  \u001b[0m\u001b[34m\u250c\u2500\u001b[0m tests/05_type_mismatch_in_function_result.f90:1:1\n  \u001b[0m\u001b[34m\u2502\u001b[0m\n\u001b[0m\u001b[34m1\u001b[0m \u001b[0m\u001b[34m\u2502\u001b[0m \u001b[0m\u001b[31minteger\u001b[0m :: bad\n  \u001b[0m\u001b[34m\u2502\u001b[0m \u001b[0m\u001b[31m^^^^^^^\u001b[0m\n\n\u001b[0m\u001b[1m\u001b[38;5;11mwarning\u001b[0m\u001b[1m: function or subroutine `bad` is never called\u001b[0m\n  \u001b[0m\u001b[34m\u250c\u2500\u001b[0m tests/05_type_mismatch_in_function_result.f90:1:12\n  \u001b[0m\u001b[34m\u2502\u001b[0m\n\u001b[0m\u001b[34m1\u001b[0m \u001b[0m\u001b[34m\u2502\u001b[0m integer :: \u001b[0m\u001b[33mbad\u001b[0m\n  \u001b[0m\u001b[34m\u2502\u001b[0m            \u001b[0m\u001b[33m^^^\u001b[0m\n\nSemantic: type mismatch in assignment to `bad`\nWarning: function or subroutine `bad` is never called\nError: compile failed\n",
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": ""
@@ -282,7 +282,7 @@
     },
     "41_subroutine_outputs": {
       "compiler_exit_code": 0,
-      "compiler_stderr": "warning: parameter `i` is never read\n  ┌─ tests/41_subroutine_outputs.f90:4:16\n  │\n4 │ subroutine sub(i, i2, i3)\n  │                ^\n\nWarning: parameter `i` is never read\n",
+      "compiler_stderr": "warning: parameter `i` is never read\n  \u250c\u2500 tests/41_subroutine_outputs.f90:4:16\n  \u2502\n4 \u2502 subroutine sub(i, i2, i3)\n  \u2502                ^\n\nWarning: parameter `i` is never read\n",
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 10 20 30\n 9 12\n 3.0\n 15 99\n"
@@ -296,7 +296,7 @@
     },
     "43_pure_subroutine": {
       "compiler_exit_code": 0,
-      "compiler_stderr": "warning: parameter `i` is never read\n  ┌─ tests/43_pure_subroutine.f90:4:21\n  │\n4 │ pure subroutine sub(i, i2, i3)\n  │                     ^\n\nWarning: parameter `i` is never read\n",
+      "compiler_stderr": "warning: parameter `i` is never read\n  \u250c\u2500 tests/43_pure_subroutine.f90:4:21\n  \u2502\n4 \u2502 pure subroutine sub(i, i2, i3)\n  \u2502                     ^\n\nWarning: parameter `i` is never read\n",
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 10 20 30\n 9 12\n 3.0\n 15 99\n"
@@ -1105,6 +1105,20 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 1\n 2\n 1\n 2\n"
+    },
+    "159_saved_characters": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " [a   ][lo] 4 1 1\n [ab  ][lx] 4 2 1\n"
+    },
+    "160_character_intrinsics": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 1 4 1\n 1 0 1\n 9 6 7\n 10 0 9\n 1 0 0 0\n 0 0\n"
     }
   }
 }

@@ -101,6 +101,14 @@ pub fn model_type(e: &Expr, lookup: &impl Fn(&str) -> Option<(TypeSpec,usize)>) 
                 }
             }
         },
+        Expr::Call(n,a) if matches!(n.as_str(),"index"|"scan"|"verify") && (2..=4).contains(&a.len()) => {
+            for arg in &a[..2] {
+                if model_type(arg,lookup)?.is_some_and(|k|!matches!(k,TypeSpec::Character(_)|TypeSpec::CharacterLength(_)|TypeSpec::CharacterAssumed)) {bail!("{n} requires CHARACTER arguments");}
+            }
+            let kind=a.get(3).filter(|e|!crate::named_arguments::omitted(e)).map(crate::parameters::integer_constant).transpose()?.unwrap_or(4);
+            if !matches!(kind,1|2|4|8) {bail!("{n} KIND must be a supported INTEGER kind (1, 2, 4 or 8)");}
+            Some(TypeSpec::Integer(Some(kind as u8)))
+        },
         Expr::Call(n,a) if n=="@integer_literal" && a.len()==2 => Some(TypeSpec::Integer(Some(crate::parameters::integer_constant(&a[1])? as u8))),
         Expr::Call(n,a) if matches!(n.as_str(),"dble"|"real"|"int"|"abs"|"@unary_plus") && a.len()==1 => {
             let input=model_type(&a[0],lookup)?;

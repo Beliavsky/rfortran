@@ -1,0 +1,2430 @@
+{
+  "date": "2026-10-12",
+  "description": "CHARACTER inventory and compatibility checkpoint; the 84-case selection also includes broader features using CHARACTER. Five reference failures are not classified as rfort failures. This is a snapshot, not a claim of complete CHARACTER support.",
+  "compiler_sha256": "b182afe253c9cb2885dfff4f78fcfe38a9e10f4bcc4bcf57243223160837a6a4",
+  "summary": {
+    "fail": 63,
+    "pass": 16,
+    "reference_compile_error": 4,
+    "reference_run_error": 1
+  },
+  "focused_37_before": {
+    "pass": 6,
+    "fail": 31
+  },
+  "focused_37_after": {
+    "pass": 11,
+    "fail": 26
+  },
+  "source_usage": {
+    "util.f90": {
+      "sha256": "5c478005438dcfd4d448cad18fe37fd3a97bb9e52a2489829b36f01180d69433",
+      "character_declaration_lines": 465,
+      "feature_locations": {
+        "assumed_length": [
+          488,
+          584,
+          586,
+          666,
+          667,
+          690,
+          691,
+          714,
+          715,
+          720,
+          783,
+          786,
+          820,
+          836,
+          855,
+          876,
+          890,
+          891,
+          906,
+          907,
+          918,
+          919,
+          934,
+          935,
+          936,
+          953,
+          960,
+          962,
+          1007,
+          1014,
+          1033,
+          1081,
+          1187,
+          1234,
+          1281,
+          1282,
+          1329,
+          1330,
+          1331,
+          1379,
+          1380,
+          1381,
+          1799,
+          1936,
+          1939,
+          1975,
+          1978,
+          2028,
+          2070,
+          2071,
+          2089,
+          2204,
+          2216,
+          2348,
+          2358,
+          2458,
+          2474,
+          2475,
+          2487,
+          2488,
+          2508,
+          2509,
+          2617,
+          2618,
+          2627,
+          2628,
+          2650,
+          2675,
+          2769,
+          2778,
+          2779,
+          2890,
+          2891,
+          2912,
+          2972,
+          2973,
+          3007,
+          3024,
+          3025,
+          3039,
+          3041,
+          3047,
+          3095,
+          3097,
+          3103,
+          3151,
+          3153,
+          3154,
+          3159,
+          3208,
+          3436,
+          3438,
+          3439,
+          3576,
+          3577,
+          3578,
+          3579,
+          3618,
+          3625,
+          3651,
+          3714,
+          3715,
+          3727,
+          3728,
+          3739,
+          3740,
+          3741,
+          3751,
+          3752,
+          3758,
+          3770,
+          3782,
+          3794,
+          3806,
+          3832,
+          3834,
+          3845,
+          3857,
+          3858,
+          3874,
+          3889,
+          3900,
+          3901,
+          3914,
+          3931,
+          3964,
+          3965,
+          4058,
+          4060,
+          4061,
+          4062,
+          4063,
+          4064,
+          4065,
+          4094,
+          4096,
+          4097,
+          4098,
+          4099,
+          4100,
+          4131,
+          4165,
+          4177,
+          4188,
+          4191,
+          4209,
+          4212,
+          4252,
+          4294,
+          4297,
+          4312,
+          4313,
+          4329,
+          4330,
+          4331,
+          4342,
+          4344,
+          4358,
+          4359,
+          4376,
+          4377,
+          4388,
+          4418,
+          4442,
+          4444,
+          4449,
+          4506,
+          4507,
+          4534,
+          4541,
+          4559,
+          4574,
+          4575,
+          4600,
+          4666,
+          4667,
+          4677,
+          4704,
+          4755,
+          4769,
+          4812,
+          4814,
+          4878,
+          4917,
+          4918,
+          4919,
+          4937,
+          4938,
+          4953,
+          4955,
+          4957,
+          4960,
+          4961,
+          4987,
+          4989,
+          4990,
+          4992,
+          4995,
+          4996,
+          5111,
+          5132,
+          5145,
+          5173,
+          5174,
+          5175,
+          5197,
+          5198,
+          5199,
+          5234,
+          5248,
+          5258,
+          5265,
+          5288,
+          5289,
+          5529,
+          5533,
+          5679,
+          5680,
+          5860,
+          5912,
+          5997,
+          6086,
+          6088,
+          6249,
+          6266,
+          6313,
+          6327,
+          6346,
+          6391,
+          6413,
+          6421,
+          6427,
+          6473,
+          6484,
+          6532,
+          6534,
+          6559,
+          6562,
+          6688,
+          6698,
+          6699,
+          6761,
+          6786,
+          6865,
+          6905,
+          6953,
+          7003,
+          7004,
+          7017,
+          7018,
+          7019,
+          7037,
+          7038,
+          7054,
+          7055,
+          7073,
+          7074,
+          7105,
+          7121,
+          7122,
+          7167,
+          7168,
+          7212,
+          7229,
+          7239,
+          7240,
+          7241,
+          7264,
+          7265,
+          7266,
+          7287,
+          7288,
+          7289,
+          7310,
+          7356,
+          7397,
+          7488,
+          7489,
+          7507,
+          7512,
+          7581,
+          7618,
+          7648,
+          7719,
+          7768,
+          7808,
+          7816,
+          7844,
+          8039,
+          8041,
+          8109,
+          8118,
+          8128,
+          8140,
+          8158,
+          8168,
+          8179,
+          8180,
+          8191,
+          8192,
+          8203,
+          8204,
+          8215,
+          8216,
+          8226,
+          8235,
+          8244,
+          8252,
+          8413,
+          8443,
+          8444,
+          8469,
+          8489,
+          8490,
+          8492,
+          8495,
+          8568,
+          8590,
+          8633,
+          8674,
+          8779,
+          8803,
+          8804,
+          8814,
+          8815,
+          8838,
+          8839,
+          8840,
+          8952,
+          9036,
+          9079,
+          9156,
+          9157,
+          9165,
+          9166,
+          9168,
+          9180,
+          9342,
+          9532,
+          9638
+        ],
+        "dependent_length": [
+          954,
+          963,
+          1008,
+          1015,
+          1034,
+          1083,
+          1283,
+          2676,
+          2770,
+          3046,
+          3102,
+          3158,
+          3716,
+          3729,
+          3902,
+          4360,
+          6328,
+          6689,
+          6762,
+          6788,
+          7079,
+          7213,
+          7242,
+          7267,
+          7290,
+          7817,
+          7846,
+          8110,
+          8119,
+          8447,
+          9640
+        ],
+        "allocatable": [
+          584,
+          783,
+          1329,
+          2204,
+          2474,
+          2509,
+          2618,
+          2628,
+          2676,
+          2770,
+          2779,
+          2891,
+          2973,
+          3154,
+          3157,
+          3577,
+          3741,
+          3752,
+          3965,
+          4667,
+          4704,
+          6532,
+          6562,
+          6613,
+          6626,
+          6700,
+          7398,
+          7507,
+          7817,
+          8110,
+          8633,
+          8780,
+          8781,
+          8817,
+          8840,
+          9157,
+          9168,
+          9640
+        ],
+        "optional": [
+          586,
+          667,
+          691,
+          715,
+          786,
+          857,
+          919,
+          1187,
+          1234,
+          1282,
+          1331,
+          1381,
+          1975,
+          2070,
+          2071,
+          2089,
+          2348,
+          2358,
+          2973,
+          3008,
+          3041,
+          3097,
+          3153,
+          3154,
+          3438,
+          3439,
+          3578,
+          3579,
+          3715,
+          3728,
+          3740,
+          3845,
+          3857,
+          3858,
+          4058,
+          4060,
+          4061,
+          4062,
+          4063,
+          4064,
+          4065,
+          4094,
+          4096,
+          4097,
+          4098,
+          4099,
+          4100,
+          4131,
+          4165,
+          4177,
+          4252,
+          4294,
+          4297,
+          4312,
+          4313,
+          4329,
+          4330,
+          4331,
+          4342,
+          4344,
+          4359,
+          4377,
+          4418,
+          4507,
+          4575,
+          4812,
+          4814,
+          4917,
+          4918,
+          4919,
+          4937,
+          4938,
+          4957,
+          4960,
+          4961,
+          4992,
+          4995,
+          4996,
+          5680,
+          5997,
+          6391,
+          6421,
+          6428,
+          6473,
+          6534,
+          6562,
+          6699,
+          7004,
+          7019,
+          7241,
+          7266,
+          7289,
+          7356,
+          7397,
+          7489,
+          7507,
+          7581,
+          8041,
+          8492,
+          8568,
+          8590,
+          8779,
+          8952,
+          9342
+        ],
+        "writable_dummy": [
+          584,
+          783,
+          1329,
+          1379,
+          2204,
+          2216,
+          2474,
+          2509,
+          2618,
+          2628,
+          2779,
+          2891,
+          2973,
+          3154,
+          3577,
+          3741,
+          3752,
+          3832,
+          3965,
+          4667,
+          4704,
+          5997,
+          6427,
+          6532,
+          6562,
+          7507,
+          8633,
+          8840,
+          9157,
+          9168,
+          9640
+        ],
+        "initialized_nonparameter": [
+          9423
+        ]
+      },
+      "procedures_or_scopes_with_character_declarations": {
+        "module specification": [
+          488,
+          492
+        ],
+        "exe_name": [
+          540,
+          541
+        ],
+        "read_words_line": [
+          584,
+          586,
+          588
+        ],
+        "compare_vec_strings": [
+          666,
+          667,
+          668
+        ],
+        "compare_vec_strings_": [
+          690,
+          691,
+          692
+        ],
+        "check_equal_strings": [
+          714,
+          715,
+          718,
+          720
+        ],
+        "read_alloc_char": [
+          783,
+          786
+        ],
+        "check_included_vec_char": [
+          820
+        ],
+        "join": [
+          836,
+          837
+        ],
+        "join_quote": [
+          855,
+          856,
+          857,
+          859
+        ],
+        "join_csv": [
+          876,
+          877
+        ],
+        "join_csv_suffix": [
+          890,
+          891,
+          893
+        ],
+        "join_suffix": [
+          906,
+          907,
+          908
+        ],
+        "concat": [
+          918,
+          919,
+          920
+        ],
+        "join_": [
+          934,
+          935,
+          936,
+          937
+        ],
+        "char_plus_char": [
+          953,
+          954
+        ],
+        "char_plus_int": [
+          960,
+          962,
+          963
+        ],
+        "trim_append": [
+          1007,
+          1008
+        ],
+        "munge": [
+          1014,
+          1015
+        ],
+        "repeat_char": [
+          1033,
+          1034
+        ],
+        "repeat_char_vec": [
+          1081,
+          1083
+        ],
+        "print_wall_time_elapsed": [
+          1187,
+          1192
+        ],
+        "print_time_elapsed": [
+          1234,
+          1237
+        ],
+        "optional_value_character": [
+          1281,
+          1282,
+          1283
+        ],
+        "set_optional_alloc_character": [
+          1329,
+          1330,
+          1331
+        ],
+        "set_optional_character": [
+          1379,
+          1380,
+          1381
+        ],
+        "matrix_reshape": [
+          1799
+        ],
+        "combine_vec_mat_real": [
+          1936,
+          1939
+        ],
+        "combine_mat_tensor_real": [
+          1975,
+          1978,
+          1979
+        ],
+        "combine_tensors_real": [
+          2028
+        ],
+        "variable_names": [
+          2070,
+          2071,
+          2073
+        ],
+        "str_int": [
+          2089,
+          2090
+        ],
+        "str_logical": [
+          2112
+        ],
+        "get_words_alloc": [
+          2203,
+          2204
+        ],
+        "get_text_int": [
+          2216
+        ],
+        "integer_label": [
+          2348,
+          2349,
+          2350
+        ],
+        "integer_labels": [
+          2358,
+          2359,
+          2360
+        ],
+        "select_tensor_real": [
+          2458
+        ],
+        "select_vec_character": [
+          2474,
+          2475
+        ],
+        "match_char": [
+          2487,
+          2488
+        ],
+        "select_match_vec_char": [
+          2508,
+          2509
+        ],
+        "set_alloc_character_vec": [
+          2617,
+          2618
+        ],
+        "set_alloc_character_mat": [
+          2627,
+          2628
+        ],
+        "num_unique_char": [
+          2650
+        ],
+        "unique_char_int": [
+          2675,
+          2676
+        ],
+        "uniq_char": [
+          2769,
+          2770
+        ],
+        "unique_values_char": [
+          2778,
+          2779
+        ],
+        "unique_values_positions_char": [
+          2890,
+          2891
+        ],
+        "unique_char": [
+          2912
+        ],
+        "read_comments": [
+          2972,
+          2973,
+          2976
+        ],
+        "num_fields": [
+          3007,
+          3008,
+          3010
+        ],
+        "num_matching_char": [
+          3024,
+          3025
+        ],
+        "read_vec_real": [
+          3039,
+          3041,
+          3046,
+          3047
+        ],
+        "read_vec_int": [
+          3095,
+          3097,
+          3102,
+          3103
+        ],
+        "read_vec_char": [
+          3151,
+          3153,
+          3154,
+          3157,
+          3158,
+          3159
+        ],
+        "quote": [
+          3208,
+          3209
+        ],
+        "good_pos_char": [
+          3436,
+          3438,
+          3439
+        ],
+        "copy_alloc_vec_char": [
+          3576,
+          3577,
+          3578,
+          3579
+        ],
+        "char_in_vec": [
+          3618
+        ],
+        "char_vec_in_vec": [
+          3625
+        ],
+        "char_not_in_vec": [
+          3651
+        ],
+        "default_character": [
+          3714,
+          3715,
+          3716
+        ],
+        "default_character_nlen": [
+          3727,
+          3728,
+          3729
+        ],
+        "copy_alloc_opt_char_vec": [
+          3739,
+          3740,
+          3741
+        ],
+        "copy_alloc_char_vec": [
+          3751,
+          3752
+        ],
+        "assert_eq2": [
+          3758
+        ],
+        "assert_eq3": [
+          3770
+        ],
+        "assert_eq4": [
+          3782
+        ],
+        "assert_eqn": [
+          3794
+        ],
+        "nrerror": [
+          3806
+        ],
+        "merge_sub_character": [
+          3832,
+          3834
+        ],
+        "merge_char": [
+          3845,
+          3846
+        ],
+        "element_char": [
+          3857,
+          3858,
+          3859
+        ],
+        "rebase_vec": [
+          3874
+        ],
+        "rebase_mat": [
+          3889
+        ],
+        "prepend_char": [
+          3900,
+          3901,
+          3902
+        ],
+        "assert_vec": [
+          3914
+        ],
+        "assert_scalar": [
+          3931
+        ],
+        "spread_alloc_char": [
+          3964,
+          3965
+        ],
+        "print_matrix_real_row_num": [
+          4058,
+          4060,
+          4061,
+          4062,
+          4063,
+          4064,
+          4065,
+          4068
+        ],
+        "print_matrix_int_row_num": [
+          4094,
+          4096,
+          4097,
+          4098,
+          4099,
+          4100,
+          4103
+        ],
+        "size_optional_char_vec": [
+          4131
+        ],
+        "read_unit_int_vec_alloc": [
+          4165,
+          4166
+        ],
+        "read_unit_real_vec_alloc": [
+          4177,
+          4179
+        ],
+        "read_int_vec_alloc": [
+          4188,
+          4191
+        ],
+        "read_real_vec_alloc": [
+          4209,
+          4212
+        ],
+        "label_obs_bins": [
+          4251,
+          4252,
+          4253
+        ],
+        "write_xname_yname": [
+          4294,
+          4297,
+          4299
+        ],
+        "write_lines": [
+          4312,
+          4313
+        ],
+        "write_lines_file": [
+          4329,
+          4330,
+          4331
+        ],
+        "write_format": [
+          4342,
+          4344
+        ],
+        "remove_char": [
+          4358,
+          4359,
+          4360
+        ],
+        "append_file": [
+          4376,
+          4377
+        ],
+        "copy_file": [
+          4388,
+          4391
+        ],
+        "get_unit": [
+          4418
+        ],
+        "get_unit_open_file": [
+          4442,
+          4444,
+          4448,
+          4449
+        ],
+        "check_tickers_exist": [
+          4506,
+          4507,
+          4508,
+          4509
+        ],
+        "file_exists": [
+          4534
+        ],
+        "directory_exists": [
+          4541,
+          4544
+        ],
+        "checkdir": [
+          4559
+        ],
+        "files_exist": [
+          4574,
+          4575,
+          4577
+        ],
+        "vector_to_matrix_alloc_real": [
+          4600
+        ],
+        "append_str": [
+          4666,
+          4667
+        ],
+        "combine_str": [
+          4677,
+          4678
+        ],
+        "dealloc_char_vec": [
+          4704
+        ],
+        "upper_case_str": [
+          4755,
+          4756
+        ],
+        "lower_case_str": [
+          4769,
+          4770
+        ],
+        "write_tensor": [
+          4812,
+          4814,
+          4816
+        ],
+        "combine_matrices": [
+          4878
+        ],
+        "print_matrix_simple": [
+          4917,
+          4918,
+          4919,
+          4921
+        ],
+        "print_vector": [
+          4937,
+          4938,
+          4940
+        ],
+        "print_labeled_vec": [
+          4953,
+          4955,
+          4957,
+          4960,
+          4961,
+          4964
+        ],
+        "print_labeled_mat": [
+          4987,
+          4989,
+          4990,
+          4992,
+          4995,
+          4996,
+          4999
+        ],
+        "skip_lines": [
+          5111
+        ],
+        "short_file_name": [
+          5132,
+          5133
+        ],
+        "base_file_name": [
+          5145,
+          5146
+        ],
+        "match_category_string_scalar": [
+          5173,
+          5174,
+          5175
+        ],
+        "match_category_string_vec": [
+          5197,
+          5198,
+          5199
+        ],
+        "match_string_scalar": [
+          5234
+        ],
+        "matching_pos_string": [
+          5248
+        ],
+        "match_string_vec": [
+          5258
+        ],
+        "match_integer_matrix": [
+          5265
+        ],
+        "write_words": [
+          5288,
+          5289
+        ],
+        "ts_transform_matrix": [
+          5529,
+          5533
+        ],
+        "interpolate_matrix_summarize": [
+          5679,
+          5680
+        ],
+        "fill_panel": [
+          5860
+        ],
+        "all_columns_equal_char": [
+          5912
+        ],
+        "timestamp": [
+          5997,
+          6022,
+          6024,
+          6028,
+          6034,
+          6037
+        ],
+        "timestring": [
+          6080
+        ],
+        "get_var": [
+          6086,
+          6088
+        ],
+        "empty_char_vec": [
+          6107
+        ],
+        "default_variable_names": [
+          6249,
+          6250
+        ],
+        "current_time": [
+          6266,
+          6268,
+          6269
+        ],
+        "now": [
+          6305
+        ],
+        "get_data": [
+          6313
+        ],
+        "replace_char": [
+          6327,
+          6328
+        ],
+        "unix": [
+          6340
+        ],
+        "unix_dir": [
+          6346,
+          6347
+        ],
+        "clip_transform": [
+          6391,
+          6393
+        ],
+        "close_file": [
+          6413
+        ],
+        "write_optional": [
+          6421
+        ],
+        "pad_directory_name": [
+          6427,
+          6428,
+          6430
+        ],
+        "directory_sep": [
+          6467
+        ],
+        "str_real": [
+          6473,
+          6474
+        ],
+        "str_concat": [
+          6484,
+          6486
+        ],
+        "read_strings_vec": [
+          6532,
+          6534
+        ],
+        "read_matrix_alloc": [
+          6559,
+          6562
+        ],
+        "read_matrix": [
+          6613
+        ],
+        "read_3d": [
+          6626
+        ],
+        "first_char": [
+          6688,
+          6689
+        ],
+        "default_alloc_char": [
+          6698,
+          6699,
+          6700
+        ],
+        "text_after_char": [
+          6761,
+          6762
+        ],
+        "join_fixed": [
+          6786,
+          6788,
+          6790
+        ],
+        "get_sub_vec_real": [
+          6865
+        ],
+        "get_sub_matrix_real": [
+          6905
+        ],
+        "get_sub_array_3d_real": [
+          6953
+        ],
+        "write_trim_vec": [
+          7003,
+          7004,
+          7007
+        ],
+        "write_vec": [
+          7017,
+          7018,
+          7019,
+          7023
+        ],
+        "all_strings_in_lines": [
+          7037,
+          7038
+        ],
+        "any_strings_in_lines": [
+          7054,
+          7055
+        ],
+        "text_in_lines": [
+          7073,
+          7074,
+          7079
+        ],
+        "index_case": [
+          7105
+        ],
+        "print_matching_paragraphs": [
+          7121,
+          7122
+        ],
+        "search_paragraphs_strings": [
+          7167,
+          7168
+        ],
+        "rename_strings": [
+          7212,
+          7213
+        ],
+        "pos_keep_char": [
+          7229
+        ],
+        "lookup_char_scalar": [
+          7239,
+          7240,
+          7241,
+          7242
+        ],
+        "lookup_char_vec": [
+          7264,
+          7265,
+          7266,
+          7267
+        ],
+        "lookup_char_matrix": [
+          7287,
+          7288,
+          7289,
+          7290
+        ],
+        "pos": [
+          7310
+        ],
+        "returns": [
+          7356,
+          7360
+        ],
+        "vec": [
+          7397,
+          7398
+        ],
+        "print_comment_lines": [
+          7488,
+          7489,
+          7492
+        ],
+        "alloc_char_vec": [
+          7507
+        ],
+        "ends_with": [
+          7512
+        ],
+        "madev_good": [
+          7581,
+          7585
+        ],
+        "madev_good_matrix": [
+          7618
+        ],
+        "moving_average_data_good_matrix": [
+          7648
+        ],
+        "moving_average_min_obs_matrix": [
+          7719
+        ],
+        "moving_average_data_full_matrix": [
+          7768
+        ],
+        "check_all_equal": [
+          7808
+        ],
+        "intersection_char": [
+          7816,
+          7817
+        ],
+        "strip": [
+          7844,
+          7845,
+          7846
+        ],
+        "write_int": [
+          8039,
+          8041,
+          8042
+        ],
+        "diff_vec_char": [
+          8109,
+          8110
+        ],
+        "concat_char_vec": [
+          8118,
+          8119
+        ],
+        "assert_int_range": [
+          8128
+        ],
+        "assert_int_vec_range": [
+          8140
+        ],
+        "assert_positive_int": [
+          8158
+        ],
+        "assert_equal_2": [
+          8168
+        ],
+        "assert_le": [
+          8179,
+          8180
+        ],
+        "assert_equal_2__": [
+          8191,
+          8192
+        ],
+        "assert_equal_3__": [
+          8203,
+          8204
+        ],
+        "assert_equal_4__": [
+          8215,
+          8216
+        ],
+        "assert_less": [
+          8226
+        ],
+        "assert_equal_3": [
+          8235
+        ],
+        "assert_equal_4": [
+          8244
+        ],
+        "stop_if_missing": [
+          8252
+        ],
+        "maxloc_match_2": [
+          8413
+        ],
+        "num_lines_string_first_field": [
+          8443,
+          8444,
+          8447
+        ],
+        "num_lines_file": [
+          8469
+        ],
+        "lookup_data": [
+          8489,
+          8490,
+          8492,
+          8495
+        ],
+        "print_absolute_threshold_counts": [
+          8568
+        ],
+        "print_threshold_counts": [
+          8590
+        ],
+        "read_words": [
+          8633
+        ],
+        "nearby_pos": [
+          8674
+        ],
+        "c": [
+          8779,
+          8780,
+          8781
+        ],
+        "positions_char_string": [
+          8803,
+          8804
+        ],
+        "split": [
+          8814,
+          8815,
+          8817
+        ],
+        "split_string": [
+          8838,
+          8839,
+          8840
+        ],
+        "indexx_order_real": [
+          8952,
+          8955
+        ],
+        "piecewise_func_unit": [
+          9036
+        ],
+        "piecewise_func": [
+          9079
+        ],
+        "subset_char": [
+          9156,
+          9157
+        ],
+        "subset_vec_mat": [
+          9165,
+          9166,
+          9168
+        ],
+        "assert_zero": [
+          9180
+        ],
+        "assert_conform": [
+          9342
+        ],
+        "get_numbers": [
+          9423,
+          9424
+        ],
+        "num_records": [
+          9532
+        ],
+        "compress": [
+          9638,
+          9640
+        ]
+      }
+    },
+    "xutil.f90": {
+      "sha256": "86ea10175e647b2c70f5e11c93b4fec94df0748597a91304178913b4522d4bf0",
+      "character_declaration_lines": 4,
+      "feature_locations": {
+        "assumed_length": [
+          17
+        ],
+        "dependent_length": [],
+        "allocatable": [
+          22
+        ],
+        "optional": [],
+        "writable_dummy": [],
+        "initialized_nonparameter": []
+      }
+    }
+  },
+  "cases": [
+    {
+      "source": "0114_0020.f90",
+      "sha256": "0fe807de25857df51ea38f4d16489cc45af64026f1bb7f877d737039d6baffd5",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: unexpected keyword end"
+    },
+    {
+      "source": "xalloc_char_assign_reallocate.f90",
+      "sha256": "be65d8d765cae076e2cd9b3502c4524e5d2adf92f9b9e0e68ec58b1c1cd63699",
+      "status": "pass",
+      "optimization_status": {
+        "O0": "pass",
+        "O2": "pass"
+      }
+    },
+    {
+      "source": "xalloc_char_component_array_elem_as_dummy.f90",
+      "sha256": "5dd2c35ee17187773cf9f6ff782bd05d563e5042e9e330a494336a5362fbd6dd",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: unexpected '('"
+    },
+    {
+      "source": "xalloc_char_component_as_dummy_allocate.f90",
+      "sha256": "c5d4c2517b76da3f340c87aa0733789779ed3f18cdd318e5c2fbb45ace351087",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: unexpected keyword character"
+    },
+    {
+      "source": "xalloc_char_component_as_dummy_deallocate.f90",
+      "sha256": "2aa8b290500962e6fd84dc24c6e723a713cac0e327006a654d300af1e0c725dd",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: unexpected keyword character"
+    },
+    {
+      "source": "xalloc_char_component_as_dummy_move_alloc.f90",
+      "sha256": "43eef69f1f91cd6f2bed98e71e29a124ee88868f83ddae407f85f31eaf07509b",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: unexpected keyword character"
+    },
+    {
+      "source": "xalloc_char_component_as_dummy_realloc.f90",
+      "sha256": "c2b4d7f6517517d90303c5874ee349bf43c6aa9bc75c172a72cf96784f0ebee9",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: unexpected keyword character"
+    },
+    {
+      "source": "xalloc_char_component_assign_deepcopy.f90",
+      "sha256": "d6ca0e365723afa0c0c35462fa5e7c61034a630c4c523af74f185ff78f894cc1",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: unexpected keyword character"
+    },
+    {
+      "source": "xalloc_char_component_assign_realloc_len.f90",
+      "sha256": "0a188c55614d962ec6fbf733b5900d2f0e33765dac19f15c8e680013f4c34008",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: unexpected keyword character"
+    },
+    {
+      "source": "xalloc_char_component_dummy_len.f90",
+      "sha256": "cd415171bfb6576dfc154d191e8a341c371ebd8c2228033a79daebab299cb0b8",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: unexpected keyword character"
+    },
+    {
+      "source": "xalloc_char_component_source_scalar.f90",
+      "sha256": "91bd638148b51b5720a45c2947c6bb6cd22855e1cd428360ea8a4ea82f99bc47",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "other compile error",
+      "diagnostic": "Error: derived types currently support scalar intrinsic components only"
+    },
+    {
+      "source": "xalloc_char_deferred_array.f90",
+      "sha256": "c433a39098be9762fd1f476cea65e402e2aabf45d433c42966cbb91bbe294102",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: unexpected keyword character"
+    },
+    {
+      "source": "xalloc_char_deferred_scalar.f90",
+      "sha256": "38279cdb92653b651ce271605cf9539ffc4666ed299edfe9f3a9fff8f77684a7",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: unexpected keyword character"
+    },
+    {
+      "source": "xalloc_char_mold_array.f90",
+      "sha256": "b2a7b3c9c7d54f3c4db749ed2cead2f6a902b8fb0da71f6e9390237df45dec8d",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: unexpected keyword character"
+    },
+    {
+      "source": "xalloc_char_mold_scalar.f90",
+      "sha256": "03cd93c3f1ce2a44c53d0c3b1ed3d55b994ca137c85534d8e684a2eec60b4deb",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: unexpected keyword character"
+    },
+    {
+      "source": "xalloc_char_source_array.f90",
+      "sha256": "3634e83e57a722bdd1d3b361f675f3570ca4d797b7b79e4349d5f5481ba39e79",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "unsupported feature",
+      "diagnostic": "error: deferred CHARACTER arrays are not yet supported"
+    },
+    {
+      "source": "xalloc_char_source_scalar.f90",
+      "sha256": "56301f53a6c2876dc609cf2c43a2d619a9d182920d602d0eab94c0f85eb42b18",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "other compile error",
+      "diagnostic": "Error: ALLOCATE expects array bounds"
+    },
+    {
+      "source": "xalloc_component_already_allocated_stat.f90",
+      "sha256": "3c32a6c77d1da2458f95cb55801afcbbbdd91d2df5b316a069ad28093f7a11a0",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "other compile error",
+      "diagnostic": "Error: derived types currently support scalar intrinsic components only"
+    },
+    {
+      "source": "xalloc_component_char_assign_reallocate.f90",
+      "sha256": "16786cf1cfac7b172a4bbcf24a2d5ab43eb03377f652758c9718f027a12dac4d",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "other compile error",
+      "diagnostic": "Error: derived types currently support scalar intrinsic components only"
+    },
+    {
+      "source": "xalloc_component_char_deferred.f90",
+      "sha256": "8cb76ec4505f7a552d8874cf824ac9ca4b477a2e33937c73a34ab4e9e23bf17c",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: unexpected keyword character"
+    },
+    {
+      "source": "xalloc_component_char_source.f90",
+      "sha256": "7143934d526ad4d0ebfb25b57d84cf531075b6cbfb4f730c0ef2f49f2dfd2791",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "other compile error",
+      "diagnostic": "Error: derived types currently support scalar intrinsic components only"
+    },
+    {
+      "source": "xalloc_component_lower_bounds.f90",
+      "sha256": "3134fc1c746376520ec865fe1dc957e05be3925c1bd1fa10b735ed6e96fdf7ca",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "other compile error",
+      "diagnostic": "Error: derived types currently support scalar intrinsic components only"
+    },
+    {
+      "source": "xalloc_component_stat.f90",
+      "sha256": "8f7caf909e324c99b587abb1a13802a4848e72c237e454b921e600e69357b876",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "other compile error",
+      "diagnostic": "Error: derived types currently support scalar intrinsic components only"
+    },
+    {
+      "source": "xalloc_component_stat_errmsg.f90",
+      "sha256": "db7e7240f57e1c8cb7c2136e7e38e0a57873acf954bacc831f4f300630b87a06",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "other compile error",
+      "diagnostic": "Error: derived types currently support scalar intrinsic components only"
+    },
+    {
+      "source": "xalloc_deferred_character.f90",
+      "sha256": "d00b5141e89f2ee7b2fb9bbeaede92f1c2a2e4bb959a13fee62003a715f5f4c1",
+      "status": "pass",
+      "optimization_status": {
+        "O0": "pass",
+        "O2": "pass"
+      }
+    },
+    {
+      "source": "xalloc_nested_array_copy_pending.f90",
+      "sha256": "661dfaf06563725e35423fe48d652f291f9b37d499e052055dfa01b89c9f3e54",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: unexpected '('"
+    },
+    {
+      "source": "xalloc_self_reallocation_pending.f90",
+      "sha256": "6bb27108c441f5885d5c066ab207c9aff42e2c42973658dd8fd4df60d11d8384",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "other compile error",
+      "diagnostic": "Error: ALLOCATE expects array bounds"
+    },
+    {
+      "source": "xallocatable_len.f90",
+      "sha256": "6493f277945ad46b8f1513ed1adb2871e459f81564e63c57179226ec5a57dc76",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: unexpected keyword character"
+    },
+    {
+      "source": "xallocate_character_expr_selector.f90",
+      "sha256": "412d44da8b1803b7123d8ba842a5d9e2f3fe2b72fc14a9e8a220262eaa7061cd",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: unexpected keyword character"
+    },
+    {
+      "source": "xallocate_character_selectors.f90",
+      "sha256": "2205e22fbc28a5dc44deb7ad3b8f990ece4f0d19b3b7a4f7ae9a20a25f4fb81e",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: unexpected keyword kind"
+    },
+    {
+      "source": "xcharacter_array.f90",
+      "sha256": "ba161dc2f4fdb87384386ddbe2e95fd7859eb40087960efc5ec4eaca1853635c",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "unsupported feature",
+      "diagnostic": "error: deferred CHARACTER arrays are not yet supported"
+    },
+    {
+      "source": "xcharacter_deferred_assignment_pending.f90",
+      "sha256": "3d623b53c2d17c1c2da274f10a892b94c4dfaffebccf6064177cd5978788ef48",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "unsupported feature",
+      "diagnostic": "error: deferred CHARACTER arrays are not yet supported"
+    },
+    {
+      "source": "xcharacter_len_expr.f90",
+      "sha256": "8509d4a1323e01c1af85cf941531c8f112c20d1a461b518bfebe77cf16b008a6",
+      "status": "pass",
+      "optimization_status": {
+        "O0": "pass",
+        "O2": "pass"
+      }
+    },
+    {
+      "source": "xcharacter_len_star_parameter_concat.f90",
+      "sha256": "11fbb04ebab7b90031bdaf00d76766232002f12e1afc79c344fe2e8aa81ad004",
+      "status": "pass",
+      "optimization_status": {
+        "O0": "pass",
+        "O2": "pass"
+      }
+    },
+    {
+      "source": "xcharacter_overlap_assignment_pending.f90",
+      "sha256": "efbd4c057051ab2601e4788813694434a5d847bfc728092a3e8e454904b95eee",
+      "status": "pass",
+      "optimization_status": {
+        "O0": "pass",
+        "O2": "pass"
+      }
+    },
+    {
+      "source": "xcharacter_result_length_pending.f90",
+      "sha256": "ab079baf98af4c5673294d49eef314712cfac3575a6ae4d525fdb1af7fbeac0a",
+      "status": "pass",
+      "optimization_status": {
+        "O0": "pass",
+        "O2": "pass"
+      }
+    },
+    {
+      "source": "xcharacter_star_len.f90",
+      "sha256": "6631c01a3947a08aaa788e3071282e6f2fd403a7446dfd999330778e8a210714",
+      "status": "pass",
+      "optimization_status": {
+        "O0": "pass",
+        "O2": "pass"
+      }
+    },
+    {
+      "source": "xcomplex_roots.f90",
+      "sha256": "60a63560dbed3f930af4a439f17546b7f96062310d16bf765c214326b23d8b54",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: unexpected '::'"
+    },
+    {
+      "source": "xdate_pure_internal_write.f90",
+      "sha256": "d106bdbd45c9646a2137e011655b58d8ddc816f882226564af195b5c8f6d5018",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: unexpected '('"
+    },
+    {
+      "source": "xdealloc_component_stat_errmsg.f90",
+      "sha256": "049136d0060d1da8ed0f1f5a3e7ffb47983d0fe63cc3fd914c5ecf3d2eee2437",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "other compile error",
+      "diagnostic": "Error: derived types currently support scalar intrinsic components only"
+    },
+    {
+      "source": "xderived_copy_allocatable_pending.f90",
+      "sha256": "20b4c493c7c0676b595e91c5bf22176297fdc7823dea6252fec42dcf502cbd1e",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "other compile error",
+      "diagnostic": "Error: derived types currently support scalar intrinsic components only"
+    },
+    {
+      "source": "xdirect_access.f90",
+      "sha256": "b7862753ccdba623e19e9ae7ddc5258f1892f638ec944a4257ab2642fe898270",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: READ currently supports one status or branch control"
+    },
+    {
+      "source": "xdt_stream.f90",
+      "sha256": "d9732379274def956b3492af31eaf583705d15a6390b2c80be75b0bb40987999",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: WRITE currently requires FMT"
+    },
+    {
+      "source": "xfindloc_dim_rank1.f90",
+      "sha256": "bbbce8cca9810ee74917df21f8b951541e42c073b48bd782a4902ac915dbefef",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "unsupported feature",
+      "diagnostic": "Error: CHARACTER array arguments to `@findloc` are not yet supported"
+    },
+    {
+      "source": "xformat_at.f90",
+      "sha256": "b7b9833077a3ce25be8e563b02c1e466879a2d33f8a666ead6dc61644fa36b9c",
+      "status": "reference_compile_error",
+      "optimization_status": {},
+      "reference_diagnostic": "Error: Positive width required with T descriptor in format string at (1)"
+    },
+    {
+      "source": "xformat_variable_assignment.f90",
+      "sha256": "74fb295d439626d32fdb611eca2b9349427ef576c391d513af12792b9b067601",
+      "status": "pass",
+      "optimization_status": {
+        "O0": "pass",
+        "O2": "pass"
+      }
+    },
+    {
+      "source": "xgeneric_named_optional.f90",
+      "sha256": "c442d555502dfe336b45c90caecc1380d17cbe7e6a7ca44a2bbb384ca8c36c85",
+      "status": "pass",
+      "optimization_status": {
+        "O0": "pass",
+        "O2": "pass"
+      }
+    },
+    {
+      "source": "ximplicit_variants.f90",
+      "sha256": "62da75b7ddb6034ed85cf10e4cd9149b97d38e8fc261b06c5c90aed3586deae8",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: unexpected keyword call"
+    },
+    {
+      "source": "xin.f90",
+      "sha256": "b982a7644cd42c6ec62c75a69d848ece5d1bf59768f6982c854a5253e6de0822",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "unsupported feature",
+      "diagnostic": "Error: operator(.in.) resolves to `int_in_array`, but array operands/results in defined operator calls are not yet supported"
+    },
+    {
+      "source": "xinquire.f90",
+      "sha256": "a05b3f91562a368c9957ec2a0a68e4e6ce92072666903db4807de527e21a2644",
+      "status": "reference_run_error",
+      "optimization_status": {},
+      "reference_diagnostic": "Fortran runtime error: Format present for UNFORMATTED data transfer"
+    },
+    {
+      "source": "xinternal_write_component.f90",
+      "sha256": "711a5ff08ef9d25ae42bf09cbf07a055c7c246035367fbc949ce3dcba4c611f7",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: unexpected keyword type"
+    },
+    {
+      "source": "xinternal_write_strings.f90",
+      "sha256": "08fe7a17581166dab65d7a7bf484b2e07b864d90387547fcc7743d91477d626a",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "other compile error",
+      "diagnostic": "Error: formatted I/O controls require scalar values"
+    },
+    {
+      "source": "xio_internal_records_pending.f90",
+      "sha256": "67a687aa981f0cf582397c796f6a92aba2158dcd9cae0f226344ee9e4e831c34",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "other compile error",
+      "diagnostic": "Error: formatted I/O controls require scalar values"
+    },
+    {
+      "source": "xio_list_directed_fields_pending.f90",
+      "sha256": "72dca5bb08ccdadf5c9631386a916de8448a678ef9646ccc1fbe4b2a006863ad",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: unexpected '::'"
+    },
+    {
+      "source": "xio_nonadvancing_status_pending.f90",
+      "sha256": "cd432592b9de9f61501e5e71ffd5458e05b4d02bfd4507361c436d9c32857c82",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: READ currently supports one status or branch control"
+    },
+    {
+      "source": "xlist_directed_section_read.f90",
+      "sha256": "5bfa17151fe8464c1700ccd66083f2366cb401ebab212362e1fc2df847899634",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "other compile error",
+      "diagnostic": "Error: NEWUNIT currently requires STATUS='scratch'"
+    },
+    {
+      "source": "xmodule_duplicate_elemental.f90",
+      "sha256": "8d08385c972d651f95a402da5890853127bd20fadf6ecc9076d85935c00c7cee",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "unsupported feature",
+      "diagnostic": "Error: same-named CHARACTER functions from different scopes are not yet supported: `uppercase`"
+    },
+    {
+      "source": "xmove_alloc_char_component.f90",
+      "sha256": "85bbaf9c27eaba65b6f5bc1be5ab15fadbd34893338de952d67af4406dd38455",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: unexpected keyword character"
+    },
+    {
+      "source": "xnew_line.f90",
+      "sha256": "63f2a9f4f336689ed1b5179435e399bfc458aebaf037e3a9f6afc645fc1c0749",
+      "status": "pass",
+      "optimization_status": {
+        "O0": "pass",
+        "O2": "pass"
+      }
+    },
+    {
+      "source": "xoptional.f90",
+      "sha256": "645ccd20cd7138563178a31a7a3037e70aa3f9b09f7266092a32042fbb4a7542",
+      "status": "pass",
+      "optimization_status": {
+        "O0": "pass",
+        "O2": "pass"
+      }
+    },
+    {
+      "source": "xoutput_unit_redirect_pending.f90",
+      "sha256": "8b2bcf2a0a717a3443cc18c38e7d5001327859727bcedde89ec714d7385480f7",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "other compile error",
+      "diagnostic": "Error: `output_unit` is not a public entity of module `@intrinsic_iso_fortran_env` in USE ONLY"
+    },
+    {
+      "source": "xpdt_matrix_assumed_params.f90",
+      "sha256": "318fbc5570141ae156fdd844daa68ca0c684a1cea648e6075b0e1dd5e4eb757c",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: unexpected '('"
+    },
+    {
+      "source": "xpdt_stream_alloc_dummy.f90",
+      "sha256": "f9bbe5ad87c710bcfa1f89875638f0c0e1a9abcb34c0f438e2998580c79484c5",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: unexpected '('"
+    },
+    {
+      "source": "xpointer_generic_rank_reduce.f90",
+      "sha256": "26b24eb1adfbfb250c6d5247f80bbea393449aeb10c1b74b90859046740594f6",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "other compile error",
+      "diagnostic": "Error: `@deferred_extent` is not a previously defined integer PARAMETER"
+    },
+    {
+      "source": "xpolymorphic_intrinsic_assignment_pending.f90",
+      "sha256": "a6572408fd23791c1eb6971307616252da0d036103e4d60bb67a2a80d82f5547",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: unexpected '*'"
+    },
+    {
+      "source": "xprint_format_variable.f90",
+      "sha256": "a65958b0d413ac3ddf82e74c46844f18d9b502ed5e4925e9bb2ea9918cd1e035",
+      "status": "pass",
+      "optimization_status": {
+        "O0": "pass",
+        "O2": "pass"
+      }
+    },
+    {
+      "source": "xprocedure_pointer_char_result_len_match.f90",
+      "sha256": "c8b8306e000e684a5b748e8c7d58ef4c4c161bbd9b828cf3aac254d807b80223",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: unexpected identifier interface"
+    },
+    {
+      "source": "xprotected_module_set.f90",
+      "sha256": "3c0be9eef83d84d82041454eb942e5d8f15557a96753d845f9602f8f27fd9ae7",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "name resolution error",
+      "diagnostic": "error: undefined variable `i`"
+    },
+    {
+      "source": "xpure_internal_write_component.f90",
+      "sha256": "f4fcd6f571bdb55fd35a6655560bd50a968468cf7b169b5b6f1ff46b47a6eca5",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: unexpected keyword contains"
+    },
+    {
+      "source": "xread_end_keyword.f90",
+      "sha256": "6f9a3197589a683520f6c67fa0fd46aad6ca5ac3385e32e137e93d49d72036da",
+      "status": "reference_compile_error",
+      "optimization_status": {},
+      "reference_diagnostic": "Error: END tag label 99 at (1) not defined"
+    },
+    {
+      "source": "xread_iostat_iomsg.f90",
+      "sha256": "c0b86c41191155c507e2df5b38ef3b1c48dfdf1fb9a789ca89c70f5c7d6d3666",
+      "status": "reference_compile_error",
+      "optimization_status": {},
+      "reference_diagnostic": "Error: UNIT specification at (1) must be an INTEGER expression or a CHARACTER variable"
+    },
+    {
+      "source": "xread_param_record.f90",
+      "sha256": "8cb9d03e71f46bb754ff16a5229723d9075c9f35b4d1c46904bc10d7bf7213cc",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "other compile error",
+      "diagnostic": "Error: NEWUNIT currently requires STATUS='scratch'"
+    },
+    {
+      "source": "xreshape.f90",
+      "sha256": "8b7835ac8ea7663ee5b5549daddcb8101da1f5ebdea27a53ced43e34afd27188",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "unsupported feature",
+      "diagnostic": "Error: this vector subscript expression is not yet supported"
+    },
+    {
+      "source": "xscan.f90",
+      "sha256": "785a6f373a51f2810c22033ad6b6e1bcc04a7dc128411c800731597d5442226d",
+      "status": "pass",
+      "optimization_status": {
+        "O0": "pass",
+        "O2": "pass"
+      }
+    },
+    {
+      "source": "xsplit_intrinsic.f90",
+      "sha256": "6c5b12abf192b6c9e426997ede199ab6efe21aabfb2dbee135f019b4872ba9f7",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "other compile error",
+      "diagnostic": "Error: keyword arguments to `split` require a known explicit procedure interface"
+    },
+    {
+      "source": "xstring_elemental.f90",
+      "sha256": "6130157e59deee9a7cfe7e045782386bdb4b09c88ae211150c298d99c35f4560",
+      "status": "pass",
+      "optimization_status": {
+        "O0": "pass",
+        "O2": "pass"
+      }
+    },
+    {
+      "source": "xtransfer.f90",
+      "sha256": "a9e39d53b790ff7c442a32c7dcf45c8e8113f9cc5851eb0fff010bb5b13714da",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "other compile error",
+      "diagnostic": "Error: keyword arguments to `transfer` require a known explicit procedure interface"
+    },
+    {
+      "source": "xtransfer_derived.f90",
+      "sha256": "a3af654079303b175e4b8021868557006a28cf478f32d51a16608b70a3ec8672",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: unexpected '::'"
+    },
+    {
+      "source": "xtypeof_classof.f90",
+      "sha256": "f6906416003abaf0cf463a0ebb1175083ac0e0a2400552307cb2e551c4fb672a",
+      "status": "reference_compile_error",
+      "optimization_status": {},
+      "reference_diagnostic": "Error: Mangled derived type definition at (1)"
+    },
+    {
+      "source": "xuse_rename_procedure.f90",
+      "sha256": "c2fc258615868e111df25a9ba8c245ad38d99494262bcf9b882ea98554af6575",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "parse error",
+      "diagnostic": "error: unexpected identifier date"
+    },
+    {
+      "source": "xutil_regressions.f90",
+      "sha256": "494e47e172d5bccf6efeabab42a7e5cfd71f070ebf31040ff04334b2d4f60b1c",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "other compile error",
+      "diagnostic": "Error: CHARACTER function result/local length must resolve to a compile-time constant for these actuals"
+    },
+    {
+      "source": "xverify.f90",
+      "sha256": "21e3f29a188cc5dbc12b06809e2fcb9381e979f2d840068c36fb7fae1f7e4120",
+      "status": "pass",
+      "optimization_status": {
+        "O0": "pass",
+        "O2": "pass"
+      }
+    },
+    {
+      "source": "xwrite_advance_no_trailing_x.f90",
+      "sha256": "358ca77f630fbf4138c469d2ac02201d898f7f4b3eefa98468bd91d3022c91cc",
+      "status": "pass",
+      "optimization_status": {
+        "O0": "pass",
+        "O2": "pass"
+      }
+    },
+    {
+      "source": "xwrite_char_iostat.f90",
+      "sha256": "41752a52fea95036c6340b0e45048eacc0269332a892084b9e4ba75de4356d4b",
+      "status": "fail",
+      "optimization_status": {
+        "O0": "compile_error",
+        "O2": "compile_error"
+      },
+      "failure_group": "other compile error",
+      "diagnostic": "Error: `iostat_eor` is not a public entity of module `@intrinsic_iso_fortran_env` in USE ONLY"
+    }
+  ],
+  "remaining_feature_groups": [
+    {
+      "feature": "Runtime-dependent automatic CHARACTER locals/results",
+      "example": "xutil_regressions.f90: join result uses sum(len_trim(words))"
+    },
+    {
+      "feature": "Deferred-length CHARACTER arrays and length reallocation",
+      "examples": [
+        "xcharacter_array.f90",
+        "xcharacter_deferred_assignment_pending.f90"
+      ]
+    },
+    {
+      "feature": "Explicit allocation type selectors, SOURCE and MOLD",
+      "examples": [
+        "xallocate_character_selectors.f90",
+        "xalloc_char_source_scalar.f90",
+        "xalloc_char_mold_array.f90"
+      ]
+    },
+    {
+      "feature": "Allocatable CHARACTER derived-type components",
+      "examples": [
+        "xalloc_component_char_source.f90",
+        "xalloc_char_component_assign_deepcopy.f90"
+      ]
+    },
+    {
+      "feature": "Internal CHARACTER array files and formatted implied-DO records",
+      "examples": [
+        "xinternal_write_strings.f90",
+        "xio_internal_records_pending.f90"
+      ]
+    },
+    {
+      "feature": "Procedure pointers with CHARACTER results",
+      "example": "xprocedure_pointer_char_result_len_match.f90"
+    }
+  ],
+  "compiler_build": "release",
+  "reference_version": "GNU Fortran (GCC) 17.0.0 20260510 (experimental)",
+  "verification_notes": [
+    {
+      "source": "xpolymorphic_intrinsic_assignment_pending.f90",
+      "original_status": "reference_run_timeout",
+      "timeout_seconds": 30,
+      "report": "target/character-reference-recheck.json"
+    }
+  ]
+}

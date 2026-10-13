@@ -35,9 +35,24 @@ fn scalar(kind: &TypeSpec) -> Ty {
         TypeSpec::Integer(None) => TypeSpec::Integer(Some(4)),
         TypeSpec::RealKind(k) if k == "4" => TypeSpec::Real,
         TypeSpec::RealKind(k) if k == "8" => TypeSpec::DoublePrecision,
-        TypeSpec::Character(_) => TypeSpec::Character(None),
+        TypeSpec::Character(_) | TypeSpec::CharacterAssumed | TypeSpec::CharacterLength(_) => TypeSpec::Character(None),
         _ => kind.clone(),
     })
+}
+// An intrinsic operator may be extended for operand types for which the
+// language has no intrinsic operation (for example CHARACTER + CHARACTER).
+fn intrinsic_operator(op: &str, args: &[Ty]) -> bool {
+    fn element(ty:&Ty)->&Ty {match ty {Ty::Array(ty,_)=>element(ty),ty=>ty}}
+    let numeric=|ty:&Ty|matches!(element(ty),Ty::Scalar(TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision));
+    let character=|ty:&Ty|matches!(element(ty),Ty::Scalar(TypeSpec::Character(_)));
+    let logical=|ty:&Ty|matches!(element(ty),Ty::Scalar(TypeSpec::Logical));
+    match op {
+        "+"|"-"|"*"|"/"|"**"=>args.iter().all(numeric),
+        "//"=>args.iter().all(character),
+        "=="|"/="|"<"|"<="|">"|">="=>args.iter().all(numeric)||args.iter().all(character),
+        ".and."|".or."|".not."|".eqv."|".neqv."=>args.iter().all(logical),
+        _=>false,
+    }
 }
 fn binary_type(op: &BinOp, left: Ty, right: Ty) -> Ty {
     let (left, lr) = match left {
@@ -364,8 +379,8 @@ impl Resolver {
                             .any(|a| matches!(a, Ty::Array(..)))) {
                         bail!("operator({operator}) function `{name}` requires explicitly typed scalar arguments and result");
                     }
-                    if !defined_operator(operator) && !p.args.iter().any(|a| matches!(a, Ty::Derived(_))) {
-                        bail!("operator({operator}) overload `{name}` currently requires a derived-type operand");
+                    if !defined_operator(operator) && intrinsic_operator(operator,&p.args) {
+                        bail!("operator({operator}) overload `{name}` cannot replace an intrinsic operation for these operand types");
                     }
                     let names = bindings.entry(operator.clone()).or_insert_with(Vec::new);
                     if names.iter().any(|n| self.procedures[n].args == p.args) {
@@ -416,7 +431,9 @@ impl Resolver {
         Ok(visible)
     }
     fn select(&self, op: &str, args: &[Ty], visible: &Bindings) -> Result<Option<String>> {
-        if !defined_operator(op) && !args.iter().any(|a| matches!(a, Ty::Derived(_))) {
+        if !defined_operator(op) && (intrinsic_operator(op,args)
+            || (!visible.contains_key(op) && !args.iter().any(|a|matches!(a,Ty::Derived(_))))
+            || args.iter().any(|a|!known_type(a))) {
             return Ok(None);
         }
         let matches: Vec<_> = visible

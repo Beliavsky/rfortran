@@ -11,7 +11,7 @@ use cranelift_frontend::FunctionBuilder;
 use cranelift_object::ObjectModule;
 use std::collections::HashMap;
 
-type Characters = HashMap<String, (ir::StackSlot, usize)>;
+type Characters = HashMap<String, (super::Storage, usize)>;
 type Integers = HashMap<String, super::Storage>;
 pub(super) struct View {
     pub(super) address: ir::Value,
@@ -92,7 +92,7 @@ pub(super) fn view(
                 .get(name)
                 .context("missing CHARACTER source storage")?;
             Ok(View {
-                address: b.ins().stack_addr(ptr, *slot, 0),
+                address: super::storage_addr(b, ptr, *slot),
                 length: b.ins().iconst(ptr, *length as i64),
                 capacity: *length,
             })
@@ -131,6 +131,40 @@ pub(super) fn view(
                 length: b.ins().iadd(left.length, right.length),
                 capacity,
             })
+        }
+        IExpr::Call(name,args) if matches!(name.as_str(),"adjustl"|"adjustr") && args.len()==1 => {
+            let source=view(module,b,ptr,dc,chars,ints,&args[0])?;
+            let left=name=="adjustl";
+            let head=b.create_block();let inspect=b.create_block();let done=b.create_block();
+            b.append_block_param(head,ptr);b.append_block_param(done,ptr);
+            let zero=b.ins().iconst(ptr,0);
+            b.ins().jump(head,&[if left {zero} else {source.length}.into()]);
+            b.switch_to_block(head);
+            let offset=b.block_params(head)[0];
+            let finished=b.ins().icmp(IntCC::Equal,offset,if left {source.length} else {zero});
+            b.ins().brif(finished,done,&[offset.into()],inspect,&[]);
+            b.switch_to_block(inspect);b.seal_block(inspect);
+            let index=if left {offset} else {b.ins().iadd_imm(offset,-1)};
+            let pointer=b.ins().iadd(source.address,index);
+            let byte=b.ins().load(types::I8,MemFlags::new(),pointer,0);
+            let space=b.ins().icmp_imm(IntCC::Equal,byte,32);
+            let next=b.ins().iadd_imm(offset,if left {1} else {-1});
+            b.ins().brif(space,head,&[next.into()],done,&[offset.into()]);
+            b.seal_block(head);b.switch_to_block(done);b.seal_block(done);
+            let offset=b.block_params(done)[0];
+            let slot=b.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,source.capacity.max(1) as u32,0));
+            let address=b.ins().stack_addr(ptr,slot,0);
+            let (from,to,count,padding,tail)=if left {
+                let count=b.ins().isub(source.length,offset);
+                let from=b.ins().iadd(source.address,offset);let tail=b.ins().iadd(address,count);
+                (from,address,count,offset,tail)
+            } else {
+                let padding=b.ins().isub(source.length,offset);let to=b.ins().iadd(address,padding);
+                (source.address,to,offset,padding,address)
+            };
+            call(module,b,"memcpy",&[to,from,count],ptr)?;
+            let space=b.ins().iconst(types::I32,32);call(module,b,"memset",&[tail,space,padding],ptr)?;
+            Ok(View {address,length:source.length,capacity:source.capacity})
         }
         IExpr::Call(name, args) if name.eq_ignore_ascii_case("trim") && args.len() == 1 => {
             let source = view(module, b, ptr, dc, chars, ints, &args[0])?;
@@ -178,7 +212,7 @@ pub(super) fn assign(
     let (slot, length) = chars
         .get(dest)
         .context("missing CHARACTER destination storage")?;
-    let address = b.ins().stack_addr(ptr, *slot, 0);
+    let address = super::storage_addr(b, ptr, *slot);
     let length_value = b.ins().iconst(ptr, *length as i64);
     let shorter = b
         .ins()

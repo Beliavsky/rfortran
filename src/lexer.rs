@@ -806,6 +806,27 @@ pub fn lex(input: &str) -> Vec<Token> {
             && tokens.get(index+2).is_none_or(|next| !same_statement(&input[tokens[index+1].span.end..next.span.start])) {
             tokens[index].kind = TokenKind::KwPrintEmpty;
         }
+        // PRINT remains a valid procedure/variable name. Only classify an
+        // empty formatted transfer at a statement start or after a complete IF.
+        let mut print_start=index;
+        while print_start>0 && same_statement(&input[tokens[print_start-1].span.end..tokens[print_start].span.start]) {print_start-=1;}
+        if matches!(tokens[print_start].kind,TokenKind::StatementLabel(_)) {print_start+=1;}
+        let print_statement=print_start==index || (print_start<index
+            && matches!(tokens[print_start].kind,TokenKind::KwIf)
+            && matches!(tokens[index-1].kind,TokenKind::RParen)
+            && tokens[print_start..index].iter().fold(0i32,|depth,t|depth+match t.kind {TokenKind::LParen=>1,TokenKind::RParen=>-1,_=>0})==0);
+        if print_statement && matches!(tokens[index].kind,TokenKind::KwPrint)
+            && tokens.get(index+1).is_some_and(|next|!matches!(next.kind,TokenKind::Star|TokenKind::Eq|TokenKind::Arrow|TokenKind::Percent)
+                && same_statement(&input[tokens[index].span.end..next.span.start])) {
+            let mut depth=0;let mut comma=false;
+            for next in tokens.iter().skip(index+1).take_while(|next|same_statement(&input[tokens[index].span.end..next.span.start])) {
+                match next.kind {
+                    TokenKind::LParen=>depth+=1,TokenKind::RParen=>depth-=1,
+                    TokenKind::Comma|TokenKind::Eq|TokenKind::Arrow if depth==0=>{comma=true;break;},_=>{},
+                }
+            }
+            if !comma {tokens[index].kind=TokenKind::KwPrintEmpty;}
+        }
         // Bare DO has no control clause. The grammar otherwise consumes the
         // following assignment as a counted DO header because newlines are skipped.
         // Require a statement start so END DO retains its closing DO token.
