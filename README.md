@@ -1445,7 +1445,7 @@ ranks through 15 and the rank-three `select_tensor_real` calls in `util.f90`;
 `RESHAPE` also retains its source element type and derives result rank from a
 scalar-integer shape constructor, independently of runtime extent values.
 The full build now passes both `set_alloc` type/rank blockers and currently
-stops at keyword arguments to the currently unimplemented `system_clock`.
+stops at keyword arguments to the currently unimplemented `date_and_time`.
 Intrinsic keyword interfaces are centralized in `src/named_arguments.rs`, with
 coverage checks for the intrinsic catalog. Added interfaces cover scalar
 conversions, CHARACTER inquiries, numeric-model/kind inquiries, array operations,
@@ -1459,6 +1459,18 @@ two elements. GET can save the current stream for restoration with PUT.
 The no-argument form retains its deterministic reset. `xrandom_seed.f90` checks
 stream restoration and output range; `tests/test_intrinsic_keywords.py` checks
 keyword association and seed argument/intent diagnostics.
+`CPU_TIME(TIME=...)` and `SYSTEM_CLOCK(COUNT=..., COUNT_RATE=..., COUNT_MAX=...)`
+work in the interpreter and native code, including reordered keywords, omitted
+clock outputs, scalar array elements and output dummy arguments. CPU_TIME returns
+process CPU seconds in REAL kind 4 or 8; SYSTEM_CLOCK uses a monotonic clock.
+INTEGER kind 4 counts use 1,000 ticks per second; kind 8 counts use 1,000,000,000.
+COUNT_MAX is the largest positive integer of the selected kind, and counts wrap
+to zero. Integer outputs must share a kind; COUNT_RATE can also be REAL. If the
+OS clock is unavailable, CPU_TIME returns -1, and SYSTEM_CLOCK returns
+-HUGE(COUNT) with zero rate and maximum. Both intrinsics are rejected in PURE
+procedures. The OS adapters cover Windows, Linux and macOS; this change was tested
+on Windows. `xtiming.f90` demonstrates both calls, and `tests/test_timing.py`
+checks the interpreter, native code at O0/O2, and gfortran when available.
 Full `xutil.f90` execution remains a separate acceptance test.
 
 ## License

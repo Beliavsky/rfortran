@@ -125,6 +125,8 @@ pub(crate) fn intrinsic(name: &str) -> Option<Signature> {
         "scan" | "verify" => &["string", "set", "back", "kind"],
         "random_number" => &["harvest"],
         "random_seed" => &["size", "put", "get"],
+        "cpu_time" => &["time"],
+        "system_clock" => &["count", "count_rate", "count_max"],
         "real" | "int" | "nint" | "aint" | "anint" | "floor" | "ceiling" => &["a", "kind"],
         "char" | "achar" => &["i", "kind"],
         "ichar" | "iachar" => &["c", "kind"],
@@ -149,6 +151,8 @@ pub(crate) fn intrinsic(name: &str) -> Option<Signature> {
         params: keys.iter().map(|s| (*s).into()).collect(),
         optional: if matches!(name,"index"|"scan"|"verify") {
             HashSet::from(["back".into(),"kind".into()])
+        } else if name=="system_clock" {
+            HashSet::from(["count".into(),"count_rate".into(),"count_max".into()])
         } else if name=="random_seed" {
             HashSet::from(["size".into(),"put".into(),"get".into()])
         } else if name=="selected_real_kind" {
@@ -397,7 +401,7 @@ mod tests {
     fn implemented_intrinsics_have_keyword_association() {
         for name in crate::intrinsics::REAL_MATH.iter().map(|(n,_)|*n)
             .chain(crate::bit_intrinsics::NAMES.iter().copied())
-            .chain(["random_number","random_seed","abs","dble","kind","mod","modulo","new_line",
+            .chain(["random_number","random_seed","cpu_time","system_clock","abs","dble","kind","mod","modulo","new_line",
                 "adjustl","adjustr","trim","repeat","index","scan","verify","real","int","nint","aint","anint",
                 "floor","ceiling","char","achar","ichar","iachar","len","len_trim","sign","dim","dprod",
                 "dot_product","matmul","merge","lge","lgt","lle","llt","tiny","huge","allocated","present",

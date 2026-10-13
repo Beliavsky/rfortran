@@ -43,6 +43,8 @@ the author recorded in this repository's Git history.
 - `src/reductions.rs`
 - `src/sections.rs`
 - `src/subroutines.rs`
+- `src/timing.rs`
+- `src/timing_intrinsics.rs`
 
 The MIT permission applies to these listed modules individually. It does not
 relicense upstream code, the upstream portions of modified files, or the

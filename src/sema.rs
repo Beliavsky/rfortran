@@ -628,6 +628,8 @@ pub fn analyze_with_src(
     known_intrinsics.insert("@ptr_load_r8".into(), TypeSpec::DoublePrecision);
     known_intrinsics.insert("@ptr_load_l".into(), TypeSpec::Logical);
     known_intrinsics.insert("@ptr_name".into(), TypeSpec::Character(None));
+    known_intrinsics.insert("@cpu_seconds".into(), TypeSpec::DoublePrecision);
+    known_intrinsics.insert("@clock_count".into(), TypeSpec::Integer(Some(8)));
     let mut external_fn_ret: HashMap<String, TypeSpec> = HashMap::new();
     for name in [
         "int", "nint", "ichar", "iachar", "len", "len_trim", "count", "size", "lbound", "ubound",

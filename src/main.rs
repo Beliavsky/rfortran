@@ -12,6 +12,8 @@ mod source_diagnostics;
 mod ir;
 mod intrinsics;
 mod random_seed;
+mod timing;
+mod timing_intrinsics;
 mod bit_intrinsics;
 mod inquiries;
 mod lexer;
@@ -265,7 +267,7 @@ fn lower_program(
 ) -> Result<ast::Program> {
     (|| {
         sections::resolve(reductions::resolve(array_calls::resolve(
-            parameters::resolve(random_seed::resolve(derived::resolve(program)?)?)?,
+            timing_intrinsics::resolve(parameters::resolve(random_seed::resolve(derived::resolve(program)?)?)?)?,
         )?)?)
     })()
     .map_err(|error| source_diagnostics::report(error, src, tokens, filename, origins))

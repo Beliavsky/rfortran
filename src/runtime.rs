@@ -288,6 +288,14 @@ pub fn interpret(program: &Program) {
                 }
             }
             Expr::Call(name, args) => {
+                if name == "@cpu_seconds" {
+                    return ValueTuple::from_real(crate::timing::rfort_cpu_seconds());
+                }
+                if name == "@clock_count" {
+                    let kind = eval_expr(&args[0], env_str, env_int, env_real32,
+                        env_real64, env_log, funcs, call_stack).0.unwrap();
+                    return ValueTuple::from_int(crate::timing::rfort_clock_count(kind));
+                }
                 if name=="@ptr_name" || name.starts_with("@ptr_load_") {
                     let handle=eval_expr(&args[0],env_str,env_int,env_real32,env_real64,env_log,funcs,call_stack).0.unwrap();
                     let offset=if name=="@ptr_name" {0}else{eval_expr(&args[1],env_str,env_int,env_real32,env_real64,env_log,funcs,call_stack).0.unwrap()};

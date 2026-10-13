@@ -254,6 +254,8 @@ fn read_record(
 }
 
 struct Externs {
+    cpu_seconds: ir::FuncRef,
+    clock_count: ir::FuncRef,
     printf: ir::FuncRef,
     sprintf: ir::FuncRef,
     gcvt: ir::FuncRef,
@@ -363,7 +365,18 @@ fn declare_externs(
     let p_false = make_data(module, b, ptr_ty, &mut c, b"F")?;
     let p_nl = make_data(module, b, ptr_ty, &mut c, b"\n")?;
 
+    let mut sig = module.make_signature();
+    sig.returns.push(AbiParam::new(types::F64));
+    let id = module.declare_function("rfort_cpu_seconds", Linkage::Import, &sig)?;
+    let cpu_seconds = module.declare_func_in_func(id, b.func);
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(types::I64));
+    sig.returns.push(AbiParam::new(types::I64));
+    let id = module.declare_function("rfort_clock_count", Linkage::Import, &sig)?;
+    let clock_count = module.declare_func_in_func(id, b.func);
     Ok(Externs {
+        cpu_seconds,
+        clock_count,
         printf: printf_ref,
         sprintf: sprintf_ref,
         gcvt: gcvt_ref,
@@ -756,6 +769,16 @@ fn eval_expr(
         IExpr::Str(_) => CgVal::I64(b.ins().iconst(ir::types::I64, 0)),
         IExpr::Call(name, args) => {
             let lname = name.to_ascii_lowercase();
+            if lname == "@cpu_seconds" {
+                let call = b.ins().call(ex.cpu_seconds, &[]);
+                return CgVal::F64(b.inst_results(call)[0]);
+            }
+            if lname == "@clock_count" {
+                let kind = eval_expr(b, ex, ptr_ty, &args[0], ints, reals, bools, func_meta);
+                let kind = to_i64(b, kind);
+                let call = b.ins().call(ex.clock_count, &[kind]);
+                return CgVal::I64(b.inst_results(call)[0]);
+            }
             if let Some(kind) = lname.strip_prefix("@ptr_load_") {
                 let base=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);
                 let base=to_i64(b,base);
