@@ -1063,6 +1063,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " F\nF\n T F\n T F\n F F T\n T F\nTF\n .TRUE..FALSE.\n"
+    },
+    "153_to_lower": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " jimbob\n"
     }
   }
 }

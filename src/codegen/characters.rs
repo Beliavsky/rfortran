@@ -71,6 +71,22 @@ pub(super) fn view(
             length: b.ins().iconst(ptr, text.len() as i64),
             capacity: text.len(),
         }),
+        IExpr::Call(name, args) if matches!(name.as_str(), "char" | "achar") && args.len()==1 => {
+            let code=match &args[0] {
+                IExpr::IntLit(value)=>b.ins().iconst(types::I64,value.parse::<i64>()?),
+                IExpr::Ident(code)=>{
+                    let slot=ints.get(code).context("missing character code storage")?;
+                    let address=super::storage_addr(b,ptr,*slot);
+                    b.ins().load(types::I64,MemFlags::new(),address,0)
+                },
+                _=>bail!("character code must be a captured integer"),
+            };
+            let byte=b.ins().ireduce(types::I8,code);
+            let slot=b.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,1,0));
+            let address=b.ins().stack_addr(ptr,slot,0);
+            b.ins().store(MemFlags::new(),byte,address,0);
+            Ok(View {address,length:b.ins().iconst(ptr,1),capacity:1})
+        }
         IExpr::Ident(name) => {
             let (slot, length) = chars
                 .get(name)

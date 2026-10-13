@@ -194,7 +194,6 @@ end program
             ("s='abcd'\nprint *,s(0:2)", "outside CHARACTER length"),
             ("s='abcd'\ns(2:5)='x'", "outside CHARACTER length"),
             ("s='abcd'\nprint *,s(::2)", "do not allow a stride"),
-            ("s='abcd'\ni=2\ns(i:3)='x'", "bounds must currently be constant"),
             ("s(2:3)='ab'", "uninitialized variable `s`"),
             ("print *,s(2:3)", "uninitialized variable `s`"),
         ]

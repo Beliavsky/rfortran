@@ -543,7 +543,7 @@ pub fn interpret(program: &Program) {
                 v.3.as_ref()
                     .map(|s| ValueTuple::from_int(s.trim_end_matches(' ').len() as i64))
             }),
-            "achar" => args.get(0).and_then(|v| {
+            "char" | "achar" => args.get(0).and_then(|v| {
                 to_int(v).map(|i| ValueTuple::from_str((i as u8 as char).to_string()))
             }),
             "ichar" | "iachar" => args.get(0).and_then(|v| {

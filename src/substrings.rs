@@ -205,7 +205,14 @@ fn body(statements: &mut Vec<Stmt>, inherited: &Characters, serial: &mut usize) 
     Ok(())
 }
 pub fn resolve(mut program: Program) -> Result<Program> {
-    dynamic_body(&mut program.body, &DynamicScope::default(), true, &mut 0)?;
+    fn procedures(body:&[Stmt],names:&mut std::collections::HashSet<String>) {
+        for statement in body {match statement {
+            Stmt::Function {name,body,..} | Stmt::Subroutine {name,body,..} => {names.insert(name.clone());procedures(body,names);},
+            Stmt::Module {body,..}=>procedures(body,names),_=>{},
+        }}
+    }
+    let mut scope=DynamicScope::default();procedures(&program.body,&mut scope.procedures);
+    dynamic_body(&mut program.body, &scope, true, &mut 0)?;
     body(&mut program.body, &Characters::new(), &mut 0)?;
     Ok(program)
 }
@@ -219,6 +226,7 @@ struct DynamicScope {
     characters: Characters,
     lengths: HashMap<String, String>,
     symbols: HashMap<String, (TypeSpec, Vec<Expr>)>,
+    procedures: std::collections::HashSet<String>,
     procedure: bool,
 }
 fn allocation_flag(length: &str) -> String { format!("{length}_allocated") }
@@ -241,6 +249,7 @@ fn capacity(e: &Expr, scope: &DynamicScope) -> Option<usize> {
         Expr::Ident(n) | Expr::Section { name: n, .. } => scope.characters.get(n).copied(),
         Expr::Bin(BinOp::Concat, a, b) => capacity(a, scope)?.checked_add(capacity(b, scope)?),
         Expr::Call(n, args) if n == "trim" && args.len() == 1 => capacity(&args[0], scope),
+        Expr::Call(n, args) if matches!(n.as_str(), "char" | "achar") && args.len()==1 => Some(1),
         Expr::Call(n, args) if n == "@literal_substring" => capacity(&args[0], scope),
         Expr::Call(n, args) if n == "@dynamic_substring" => crate::parameters::integer_constant(&args[3]).ok()?.try_into().ok(),
         Expr::Call(n, args) if n == "@substring" => crate::parameters::integer_constant(&args[2]).ok()?.try_into().ok(),
@@ -300,6 +309,7 @@ fn logical_length(e: &Expr, scope: &mut DynamicScope, output: &mut Vec<Stmt>, se
         Expr::Ident(n) => if let Some(n) = scope.lengths.get(n) { ident(n) }
             else { int(*scope.characters.get(n).context("expected scalar CHARACTER expression")?) },
         Expr::Call(n, a) if n == "@dynamic_substring" || n == "@substring" => a[2].clone(),
+        Expr::Call(n, a) if matches!(n.as_str(), "char" | "achar") && a.len()==1 => int(1),
         Expr::Bin(BinOp::Concat, a, b) => binary(BinOp::Add, logical_length(a, scope, output, serial)?, logical_length(b, scope, output, serial)?),
         Expr::Call(n, a) if n == "trim" && a.len() == 1 => {
             *serial += 1;
@@ -381,6 +391,46 @@ fn dynamic_expression(e: &mut Expr, scope: &mut DynamicScope, output: &mut Vec<S
             *e = dynamic_slice(source.clone(), range, scope, output, serial)?;
         }
         Expr::Call(n, _) if n == "@dynamic_substring" => {},
+        Expr::Call(n, args) if matches!(n.as_str(), "ichar" | "iachar" | "char" | "achar") && !scope.procedures.contains(n) && !scope.symbols.contains_key(n) => {
+            if args.len()!=1 {bail!("{n} currently requires one argument; KIND is not yet supported");}
+            let mut argument=args[0].clone();
+            dynamic_expression(&mut argument, scope, output, serial)?;
+            if matches!(n.as_str(), "ichar" | "iachar") {
+                let size=logical_length(&argument,scope,output,serial)
+                    .with_context(||format!("{n} requires a scalar CHARACTER argument"))?;
+                if let Ok(size)=crate::parameters::integer_constant(&size) {
+                    if size!=1 {bail!("{n} argument must have length one");}
+                } else {
+                    output.push(Stmt::If {cond:binary(BinOp::Ne,size,int(1)),then_body:vec![Stmt::CallSub {
+                        name:"@error_stop".into(),args:vec![Expr::Str(format!("{n} argument must have length one"))],
+                    }],else_body:None});
+                }
+                *serial+=1;
+                let buffer=format!("@character_code_buffer_{serial}");
+                scope.characters.insert(buffer.clone(),1);
+                scope.symbols.insert(buffer.clone(),(TypeSpec::Character(Some(1)),vec![]));
+                output.push(Stmt::VarDecl {kind:TypeSpec::Character(Some(1)),names:vec![buffer.clone()]});
+                output.push(Stmt::CallSub {name:"@character_assign".into(),args:vec![ident(&buffer),argument,int(1)]});
+                let offset=capture(int(0),scope,output,serial);
+                let result=capture(int(0),scope,output,serial);
+                output.push(Stmt::CallSub {name:"@internal_read_byte".into(),args:vec![result.clone(),ident(&buffer),offset,int(1)]});
+                *e=Expr::Call("int".into(),vec![result]);
+            } else {
+                let mut symbols=scope.symbols.clone();
+                for (kind,_) in symbols.values_mut() {if matches!(kind,TypeSpec::Integer(Some(1 | 2))) {*kind=TypeSpec::Integer(Some(8));}}
+                if !crate::output::integer(&argument,&symbols) {bail!("{n} requires a scalar INTEGER argument");}
+                let value=capture(argument,scope,output,serial);
+                output.push(Stmt::If {cond:binary(BinOp::Or,binary(BinOp::Lt,value.clone(),int(1)),binary(BinOp::Gt,value.clone(),int(127))),
+                    then_body:vec![Stmt::CallSub {name:"@error_stop".into(),args:vec![Expr::Str(format!("{n} currently supports character codes 1 through 127"))]}],else_body:None});
+                *serial+=1;
+                let buffer=format!("@character_code_buffer_{serial}");
+                scope.characters.insert(buffer.clone(),1);
+                scope.symbols.insert(buffer.clone(),(TypeSpec::Character(Some(1)),vec![]));
+                output.push(Stmt::VarDecl {kind:TypeSpec::Character(Some(1)),names:vec![buffer.clone()]});
+                output.push(Stmt::CallSub {name:"@character_assign".into(),args:vec![ident(&buffer),Expr::Call(n.clone(),vec![value]),int(1)]});
+                *e=ident(&buffer);
+            }
+        }
         Expr::Call(n, args) => {
             for e in args.iter_mut() { dynamic_expression(e, scope, output, serial)?; }
             if !matches!(n.as_str(), "trim" | "@substring") && args.iter().any(runtime_character) {
@@ -476,8 +526,37 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
                     continue;
                 }
             }
-            Stmt::AssignIndex { indices, value, .. } => {
+            Stmt::AssignIndex { name, indices, value } => {
                 dynamic_expression(value, &mut scope, &mut prefix, serial)?;
+                if let Some(&cap)=scope.characters.get(name) {
+                    let [range]=indices.as_slice() else {bail!("scalar CHARACTER assignment requires one substring range");};
+                    let variable_bounds=scope.lengths.contains_key(name) || matches!(range,Expr::Section {lower,upper,..}
+                        if lower.as_deref().is_some_and(|e|crate::parameters::integer_constant(e).is_err())
+                        || upper.as_deref().is_some_and(|e|crate::parameters::integer_constant(e).is_err()));
+                    if variable_bounds {
+                        let source=if let Some(length)=scope.lengths.get(name) {
+                            Expr::Call("@dynamic_substring".into(),vec![ident(name),int(0),ident(length),int(cap)])
+                        } else {ident(name)};
+                        let dest=dynamic_slice(source.clone(),range,&mut scope,&mut prefix,serial)?;
+                        let Expr::Call(_,parts)=dest else {unreachable!()};
+                        let start=parts[1].clone();let size=parts[2].clone();
+                        // Snapshot and pad the RHS before modifying any destination bytes.
+                        // A bounded buffer then supplies exactly the selected runtime width.
+                        *serial+=1;let temp=format!("@dynamic_substring_value_{serial}");
+                        prefix.push(Stmt::VarDecl {kind:TypeSpec::Character(Some(cap)),names:vec![temp.clone()]});
+                        prefix.push(Stmt::CallSub {name:"@character_assign".into(),args:vec![ident(&temp),value.clone(),int(cap)]});
+                        let end=capture(binary(BinOp::Add,start.clone(),size.clone()),&mut scope,&mut prefix,serial);
+                        let length=logical_length(&source,&mut scope,&mut prefix,serial)?;
+                        let tail=capture(binary(BinOp::Sub,length,end.clone()),&mut scope,&mut prefix,serial);
+                        let slice=|source:Expr,start:Expr,size:Expr|Expr::Call("@dynamic_substring".into(),vec![source,start,size,int(cap)]);
+                        let replacement=binary(BinOp::Concat,
+                            binary(BinOp::Concat,slice(source.clone(),int(0),start),slice(ident(&temp),int(0),size.clone())),
+                            slice(source,end,tail));
+                        prefix.push(Stmt::If {cond:binary(BinOp::Gt,size,int(0)),then_body:vec![Stmt::Assign {name:name.clone(),value:replacement}],else_body:None});
+                        result.extend(prefix);
+                        continue;
+                    }
+                }
                 for e in indices {
                     if !matches!(e, Expr::Section { .. }) { dynamic_expression(e, &mut scope, &mut prefix, serial)?; }
                 }

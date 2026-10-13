@@ -1081,6 +1081,20 @@ Runtime substring conditions are reevaluated on each loop iteration,
 including after CYCLE. The scalar substring tests compare interpreter and native
 O0/O2 results with gfortran when available.
 
+Scalar `ICHAR`/`IACHAR` and `CHAR`/`ACHAR` are accepted in PURE procedures.
+Character-code conversions work with runtime one-character substrings;
+`ICHAR`/`IACHAR` require length one and return a default INTEGER. `CHAR`/`ACHAR`
+accept scalar INTEGER arguments and currently support codes 1 through 127,
+consistent with the non-NUL ASCII storage subset. Optional KIND arguments are
+not implemented. Variable-bound scalar substring assignments snapshot the RHS,
+truncate or pad it to the selected width, preserve the remaining characters,
+and check bounds at runtime. Empty destination ranges perform no write.
+Runtime partial updates require an initialized destination; bounded
+deferred-length strings retain their allocation and length after such updates.
+`tests/153_to_lower.f90` reproduces `xto_lower.f90`; run
+`python tests/test_character_codes.py` for interpreter/native O0/O2 checks and
+gfortran comparisons.
+
 ## CHARACTER arrays
 
 Fixed-size rank-one CHARACTER arrays support up to 1024 elements in local
