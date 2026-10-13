@@ -1,7 +1,6 @@
 use crate::codegen::Backend;
 use anyhow::Result;
 use cranelift_codegen::settings::{self, Configurable, Flags};
-use structopt::StructOpt;
 
 mod ast;
 mod cli;
@@ -58,6 +57,7 @@ mod operators;
 mod imports;
 mod runtime;
 mod sema;
+mod unused;
 mod utils;
 
 #[cfg(target_os = "windows")]
@@ -73,7 +73,9 @@ struct BuildArtifact {
 
 fn main() -> Result<()> {
     env_logger::init();
-    let args = cli::Cli::from_args().normalize();
+    let args = cli::Cli::from_command_line().normalize();
+
+    unused::validate_options(&args.warnings)?;
 
     if args.help {
         utils::print_help();
@@ -169,7 +171,8 @@ fn main() -> Result<()> {
                     }
                 }
             };
-            let program = lower_program(program, &src, &tokens, input.to_str().unwrap_or("<unknown>"), None)?;
+            let program = lower_program(program, &src, &tokens, input.to_str().unwrap_or("<unknown>"), None, &settings, &args.warnings)?;
+            suppress_legacy_unused(&mut settings);
             let empty_obj_exports = std::collections::HashSet::new();
             let sema_errs = sema::analyze_with_src(
                 &program,
@@ -227,7 +230,8 @@ fn main() -> Result<()> {
                     anyhow::bail!("parse failed");
                 }
             };
-            let program = lower_program(program, &src, &tokens, input.to_str().unwrap_or("<unknown>"), None)?;
+            let program = lower_program(program, &src, &tokens, input.to_str().unwrap_or("<unknown>"), None, &settings, &args.warnings)?;
+            suppress_legacy_unused(&mut settings);
             let empty_obj_exports = std::collections::HashSet::new();
             let sema_errs = sema::analyze_with_src(
                 &program,
@@ -265,7 +269,10 @@ fn lower_program(
     tokens: &[lexer::Token],
     filename: &str,
     origins: Option<&[source_diagnostics::SourceOrigin]>,
+    settings: &sema::SemaSettings,
+    warning_options: &[String],
 ) -> Result<ast::Program> {
+    unused::check(&program, src, tokens, filename, origins, settings, warning_options)?;
     (|| {
         sections::resolve(reductions::resolve(array_calls::resolve(
             timing_intrinsics::resolve(parameters::resolve(random_seed::resolve(derived::resolve(program)?)?)?)?,
@@ -299,7 +306,8 @@ fn compile_to_object(
             return Err(anyhow::anyhow!("parse failed"));
         }
     };
-    let program = lower_program(program, &src, &tokens, input.to_str().unwrap_or("<unknown>"), origins)?;
+    let program = lower_program(program, &src, &tokens, input.to_str().unwrap_or("<unknown>"), origins, &settings, &args.warnings)?;
+    suppress_legacy_unused(&mut settings);
     let empty_obj_exports = std::collections::HashSet::new();
     let sema_errs = sema::analyze_with_src(
         &program,
@@ -511,4 +519,10 @@ fn compile_to_object(
         object: out.to_path_buf(),
         has_program,
     })
+}
+
+fn suppress_legacy_unused(settings: &mut sema::SemaSettings) {
+    for category in ["unused_param", "unused_local", "unused_program_var", "unused_function"] {
+        settings.allow.insert(category.into());
+    }
 }

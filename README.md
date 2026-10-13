@@ -87,6 +87,34 @@ rfort --verbose main.f90
 
 On Linux/macOS, choose names such as `myprogram` and `main.o` instead.
 Successful builds are silent by default; warnings and errors remain visible.
+Unused-declaration warnings are opt-in and run before lowering. Enable them with
+`-Wall` (also `--Wall`/`--wall`) or `-Wunused`, or select categories individually:
+`-Wunused-type`, `-Wunused-variable`, `-Wunused-but-set-variable`,
+`-Wunused-parameter` (named constants), `-Wunused-dummy-argument`, and
+`-Wunused-function` (functions and subroutines). `-Wunused-constant` and
+`-Wunused-procedure` are aliases. The variable category also enables warnings
+for assigned-but-never-read variables. Prefix an option with `-Wno-` to disable
+it, for example `-Wall -Wno-unused-type`; matching options apply in command-line
+order. `-Wunused-private` selects private module entities, and
+`-Wno-unused-private` suppresses those warnings. `-Werror` promotes enabled
+warnings to errors; `-Werror=unused-type` enables and promotes one category.
+`-Werror` alone does not enable unused warnings.
+
+Public module exports and public external procedures in library-only sources
+are exempt. Private module entities are checked through references from public
+exports and live source statements, including generic/operator interfaces,
+bindings, and procedure-address references. Named constants used in kinds,
+lengths, bounds, initializers or literal kind suffixes count as referenced.
+Assigned dummy arguments and function results are useful outputs, and loop
+control variables count as used. Diagnostics name the category and point to the
+original declaration, including original files in a multi-source build.
+`!#allow(unused-type)` suppresses a category in a source file;
+`!#deny(unused-type)` enables it as an error. The older post-lowering unused
+warnings have been replaced, so unused dummy arguments no longer produce
+messages saying "parameter" or duplicate local-variable warnings.
+`xunused.f90` demonstrates these diagnostics; run `rfort -Wall xunused.f90` or
+`python tests/test_unused_warnings.py` for the regression checks.
+
 The default optimization level is `-O2`. `--verbose` shows compilation progress
 and tool commands; `--quiet` suppresses that progress. `--run` executes the
 linked program and propagates its failure status.
@@ -951,6 +979,13 @@ Run `python tests/test_saved_locals.py` and `python tests/test_saved_characters.
 
 ## OPTIONAL procedures
 
+Scalar OPTIONAL arguments retain their positions during derived-type lowering,
+including calls to ordinary procedures, bound procedures and functions returning
+a derived value. An unrelated derived type in the same source group no longer
+makes omitted arguments required. `xstr_int.f90` and
+`tests/test_derived_optional.py` cover omitted and reordered arguments, forwarding
+absent dummies, and component expansion around optional arguments.
+
 Local OPTIONAL functions and subroutines can be specialized for positional and
 named calls, including omitted arguments before later named arguments and
 forwarding an absent optional dummy to another optional dummy. PRESENT
@@ -1445,7 +1480,7 @@ ranks through 15 and the rank-three `select_tensor_real` calls in `util.f90`;
 `RESHAPE` also retains its source element type and derives result rank from a
 scalar-integer shape constructor, independently of runtime extent values.
 The full build now passes both `set_alloc` type/rank blockers and currently
-stops at a wrong-argument-count error for `str_int`.
+stops at a too-many-arguments error for `ivec`.
 Intrinsic keyword interfaces are centralized in `src/named_arguments.rs`, with
 coverage checks for the intrinsic catalog. Added interfaces cover scalar
 conversions, CHARACTER inquiries, numeric-model/kind inquiries, array operations,

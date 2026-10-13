@@ -759,6 +759,9 @@ PreFuncDeclData: Vec<Stmt> = {
             };
             let mut declarations = Vec::new();
             for attr in &attrs {
+                if matches!(attr.to_ascii_lowercase().as_str(), "public" | "private") {
+                    declarations.push(Stmt::Accessibility {public: attr.eq_ignore_ascii_case("public"), names:vec![name.clone()]});
+                }
                 if attr.to_ascii_lowercase().starts_with("intent(") || matches!(attr.to_ascii_lowercase().as_str(), "optional" | "allocatable" | "parameter" | "pointer" | "target") {
                     declarations.push(Stmt::DummyIntent { name: name.clone(), intent: attr.to_ascii_lowercase() });
                 }

@@ -58,8 +58,11 @@ pub fn print_help() {
     println!("\nOptions:");
     println!("  --verbose            Show build progress and toolchain commands");
     println!("  -c, --compile-only   Emit an object without linking");
-    println!("  --wall               Enable all warnings");
-    println!("  --werror             Treat warnings as errors");
+    println!("  -Wall, --Wall        Enable all warnings");
+    println!("  -Wunused             Enable all unused-declaration warnings");
+    println!("  -Wunused-<category>  Enable type, variable, parameter, dummy-argument or function warnings");
+    println!("  -Wno-unused-<category> Disable an unused-declaration warning");
+    println!("  -Werror, --Werror    Treat enabled warnings as errors");
     println!("  --lto                Enable link-time optimization");
     println!("  --opt-level <level>  Set optimization level (0, 1, 2, 3, s, z, S, Z)");
     println!("  --quiet              Suppress build progress (warnings remain visible)");

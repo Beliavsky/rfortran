@@ -22,6 +22,7 @@ struct Definition {
 }
 #[derive(Clone)]
 struct Procedure {
+    signature: crate::named_arguments::Signature,
     params: Vec<(String, Option<String>)>,
     result: Option<(String, String)>,
     function: bool,
@@ -299,6 +300,7 @@ impl Lowerer {
                     self.procedures.insert(
                         name.clone(),
                         Procedure {
+                            signature: crate::named_arguments::Signature::new(params, body),
                             params: params
                                 .iter()
                                 .map(|n| (n.clone(), objects.get(n).cloned()))
@@ -371,16 +373,12 @@ impl Lowerer {
             }
             return Ok(args);
         };
-        if crate::named_arguments::has_keywords(&args) {
-            let signature = crate::named_arguments::Signature {
-                params: proc.params.iter().map(|(name, _)| name.clone()).collect(),
-                optional: HashSet::new(),
-            };
-            signature.reorder(name, &mut args)?;
-        }
-        if args.len() != proc.params.len() {
-            bail!("wrong argument count for procedure `{name}`");
-        }
+        proc.signature.reorder(name, &mut args)?;
+        // Keep omitted slots when flattening derived inputs or appending result
+        // components. Later OPTIONAL specialization removes the absent dummies.
+        args.resize_with(proc.params.len(), || {
+            Expr::Call(crate::named_arguments::OMITTED.into(), vec![])
+        });
         let mut result = vec![];
         for (mut arg, (param, ty)) in args.into_iter().zip(&proc.params) {
             if let Some(ty) = ty {

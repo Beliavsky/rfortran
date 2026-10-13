@@ -22,6 +22,9 @@ pub struct Cli {
     #[structopt(long = "Werror", help = "Treat warnings as errors")]
     pub werror: bool,
 
+    #[structopt(long = "warning", number_of_values = 1, help = "Control an unused warning (e.g. unused-type or no-unused-type)")]
+    pub warnings: Vec<String>,
+
     #[structopt(
         long = "lto",
         help = "Enable Link Time Optimization (LTO) for better performance"
@@ -127,6 +130,23 @@ pub enum Command {
 }
 
 impl Cli {
+    pub fn from_command_line() -> Self {
+        let mut args = Vec::<std::ffi::OsString>::new();
+        for arg in std::env::args_os() {
+            let text = arg.to_string_lossy();
+            match text.as_ref() {
+                "-Wall" | "--wall" => args.push("--Wall".into()),
+                "-Werror" | "--werror" => args.push("--Werror".into()),
+                flag if flag.starts_with("-W") => {
+                    args.push("--warning".into());
+                    args.push(flag[2..].into());
+                }
+                _ => args.push(arg),
+            }
+        }
+        Self::from_iter(args)
+    }
+
     pub fn normalize(mut self) -> Self {
         self.quiet = self.quiet || !self.verbose;
         if self.cmd.is_none() && !self.inputs.is_empty() {
