@@ -84,6 +84,16 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
             let kind=crate::bit_intrinsics::result_kind(public,&kinds)?;
             Ok((Expr::Call(name.clone(),values),shape,kind))
         },
+        Expr::Call(n,args) if n=="@fixed_packed_view" => {
+            let Expr::Ident(array)=&args[0] else{unreachable!()};
+            let (kind,dims)=symbols.get(array).context("unknown fixed matrix source")?;
+            let dims=dims.iter().map(constant).collect::<Result<Vec<_>>>()?;
+            let count=dims.iter().try_fold(1i64,|n,d|n.checked_mul(*d).context("matrix element count overflow"))?;
+            if count==0 {return Ok((match kind {TypeSpec::Real|TypeSpec::DoublePrecision=>Expr::RealLit("0.0".into()),TypeSpec::Logical=>Expr::Logical(false),_=>int(0)},Some(0),kind.clone()));}
+            let mut ordinal=bin(BinOp::Sub,index.clone(),int(1));let mut indices=vec![];
+            for extent in dims {indices.push(bin(BinOp::Add,Expr::Call("mod".into(),vec![ordinal.clone(),int(extent)]),int(1)));ordinal=bin(BinOp::Div,ordinal,int(extent));}
+            Ok((Expr::Index(array.clone(),indices),Some(count),kind.clone()))
+        },
         Expr::Call(n,args) if n == "@packed_view" => {
             let (value,_,kind) = element(&args[0],index,symbols)?;
             Ok((value,Some(-1),kind))
@@ -393,11 +403,9 @@ fn lower_bit(e:&mut Expr,symbols:&mut Symbols,prefix:&mut Vec<Stmt>,serial:&mut 
     Ok(())
 }
 
-fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, serial: &mut usize, expand_elementals: bool) -> Result<()> {
+// Keep PACK allocation/materialization outside the recursive expression frame.
+fn lower_pack(e:&mut Expr,symbols:&mut Symbols,prefix:&mut Vec<Stmt>,serial:&mut usize)->Result<()> {
     match e {
-        Expr::Call(name,args) if crate::bit_intrinsics::keys(name).is_some() && !symbols.contains_key(name) && !symbols.procedures.contains(name) => lower_bit(e,symbols,prefix,serial,expand_elementals)?,
-        // Call specialization precedes multidimensional normalization. Its
-        // rank-one PACK actuals can use the same bounded lowering directly.
         Expr::Call(name,args) if name=="pack" => {
             if args.len()!=3 {bail!("PACK requires normalized ARRAY, MASK and VECTOR arguments");}
             for arg in &mut args[..2] {lower_expr(arg,symbols,prefix,serial)?;}
@@ -408,8 +416,67 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             };
             *name="@pack".into();
             args.push(Expr::Call("@packing_shape".into(),vec![int(count)]));
-            lower_expr_impl(e,symbols,prefix,serial,expand_elementals)?;
+            lower_pack(e,symbols,prefix,serial)?;
         }
+        Expr::Call(name,args) if matches!(name.as_str(),"@pack" | "@unpack") => {
+            let unpack = name == "@unpack";
+            let has_vector = unpack || !matches!(&args[2],Expr::Call(tag,_) if tag == "@no_vector");
+            for arg in &mut args[..3] { lower_expr(arg,symbols,prefix,serial)?; }
+            let Expr::Call(_,dims) = &args[3] else { unreachable!() };
+            let dynamic = !unpack && dims.len()==1 && constant(&dims[0])? == -1;
+            let count = if dynamic { storage_extent(&args[0],symbols)? } else { dims.iter().try_fold(1i64,|n,d| n.checked_mul(constant(d)?).context("PACK/UNPACK result extent overflow"))? };
+            if count < 0 { bail!("nested runtime PACK results are not yet supported"); }
+            *serial += 1;
+            let temp = format!("@packing_array_{serial}");
+            let index = format!("@packing_index_{serial}");
+            let cursor = format!("@packing_cursor_{serial}");
+            let id = |n: &str| Expr::Ident(n.into());
+            let (mask,mask_len,mask_kind) = element(&args[1],&id(&index),symbols)?;
+            if mask_kind != TypeSpec::Logical { bail!("PACK/UNPACK MASK must be LOGICAL"); }
+            let (source,source_len,kind) = element(&args[0],&id(if unpack {&cursor} else {&index}),symbols)?;
+            let source_len = source_len.context("PACK ARRAY / UNPACK VECTOR must be an array")?;
+            if !unpack && mask_len.is_some_and(|n| n>=0 && source_len>=0 && n!=source_len) { bail!("PACK MASK shape must conform to ARRAY"); }
+            let source_extent=runtime_extent(&args[0]).unwrap_or(int(source_len));
+            if !unpack && mask_len.is_some() {
+                let mask_extent=runtime_extent(&args[1]).unwrap_or(int(mask_len.unwrap()));
+                if mask_extent!=source_extent {prefix.push(shape_guard(source_extent.clone(),mask_extent));}
+            }
+            let set = |index,value| Stmt::AssignIndex { name:temp.clone(),indices:vec![index],value };
+            let next = Stmt::Assign { name:cursor.clone(),value:bin(BinOp::Add,id(&cursor),int(1)) };
+            let guard = |limit| Stmt::If { cond:bin(BinOp::Gt,id(&cursor),limit),then_body:vec![Stmt::CallSub { name:"@error_stop".into(),args:vec![Expr::Str(format!("{} VECTOR has too few elements for MASK",if unpack {"UNPACK"} else {"PACK"}))] }],else_body:None };
+            let mut body;
+            if unpack {
+                let (field,field_len,field_kind) = element(&args[2],&id(&index),symbols)?;
+                if !same_kind(&kind,&field_kind) { bail!("UNPACK VECTOR and FIELD must have the same type and kind"); }
+                if field_len.is_some_and(|n| n!=count) { bail!("UNPACK FIELD shape must conform to MASK"); }
+                body = vec![Stmt::If { cond:mask,then_body:vec![next,guard(int(source_len)),set(id(&index),source)],else_body:Some(vec![set(id(&index),field)]) }];
+            } else {
+                body = vec![Stmt::If { cond:mask,then_body:vec![next,guard(if dynamic && !has_vector {source_extent.clone()}else{int(count)}),set(id(&cursor),source)],else_body:None }];
+            }
+            if dynamic && !has_vector {crate::heap::temporary(kind.clone(),temp.clone(),source_extent.clone(),prefix);}else{prefix.push(Stmt::ArrayDecl { kind:kind.clone(),name:temp.clone(),dims:vec![int(count)] });}
+            prefix.push(Stmt::VarDecl { kind:TypeSpec::Integer(Some(8)),names:vec![index.clone(),cursor.clone()] });
+            prefix.push(Stmt::Assign { name:cursor.clone(),value:int(0) });
+            prefix.push(Stmt::Do { var:index.clone(),start:int(1),end:if unpack {int(count)} else {source_extent},body:std::mem::take(&mut body) });
+            if !unpack && has_vector {
+                let (vector,_,vector_kind) = element(&args[2],&id(&index),symbols)?;
+                if !same_kind(&kind,&vector_kind) { bail!("PACK ARRAY and VECTOR must have the same type and kind"); }
+                prefix.push(Stmt::Do { var:index.clone(),start:bin(BinOp::Add,id(&cursor),int(1)),end:int(count),body:vec![set(id(&index),vector)] });
+            }
+            symbols.insert(temp.clone(),(kind,vec![int(count)]));
+            symbols.insert(cursor.clone(),(TypeSpec::Integer(Some(8)),vec![]));
+            *e = if dynamic { Expr::Call("@packed_view".into(),vec![Expr::Ident(temp),Expr::Ident(cursor)]) } else { Expr::Ident(temp) };
+        }
+        _=>unreachable!(),
+    }
+    Ok(())
+}
+
+fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, serial: &mut usize, expand_elementals: bool) -> Result<()> {
+
+    match e {
+        Expr::Call(name,args) if crate::bit_intrinsics::keys(name).is_some() && !symbols.contains_key(name) && !symbols.procedures.contains(name) => lower_bit(e,symbols,prefix,serial,expand_elementals)?,
+        // Call specialization precedes multidimensional normalization. Its
+        // rank-one PACK actuals can use the same bounded lowering directly.
         Expr::Call(tag,args) if tag == "@substring" => {
             let length=constant(&args[2])? as usize;
             *serial+=1;
@@ -472,54 +539,7 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             *e = Expr::Ident(temp);
         }
         Expr::Call(name,_) if matches!(name.as_str(),"@minloc" | "@maxloc" | "@findloc") => lower_location(e,symbols,prefix,serial)?,
-        Expr::Call(name,args) if matches!(name.as_str(),"@pack" | "@unpack") => {
-            let unpack = name == "@unpack";
-            let has_vector = unpack || !matches!(&args[2],Expr::Call(tag,_) if tag == "@no_vector");
-            for arg in &mut args[..3] { lower_expr(arg,symbols,prefix,serial)?; }
-            let Expr::Call(_,dims) = &args[3] else { unreachable!() };
-            let dynamic = !unpack && dims.len()==1 && constant(&dims[0])? == -1;
-            let count = if dynamic { storage_extent(&args[0],symbols)? } else { dims.iter().try_fold(1i64,|n,d| n.checked_mul(constant(d)?).context("PACK/UNPACK result extent overflow"))? };
-            if count < 0 { bail!("nested runtime PACK results are not yet supported"); }
-            *serial += 1;
-            let temp = format!("@packing_array_{serial}");
-            let index = format!("@packing_index_{serial}");
-            let cursor = format!("@packing_cursor_{serial}");
-            let id = |n: &str| Expr::Ident(n.into());
-            let (mask,mask_len,mask_kind) = element(&args[1],&id(&index),symbols)?;
-            if mask_kind != TypeSpec::Logical { bail!("PACK/UNPACK MASK must be LOGICAL"); }
-            let (source,source_len,kind) = element(&args[0],&id(if unpack {&cursor} else {&index}),symbols)?;
-            let source_len = source_len.context("PACK ARRAY / UNPACK VECTOR must be an array")?;
-            if !unpack && mask_len.is_some_and(|n| n>=0 && source_len>=0 && n!=source_len) { bail!("PACK MASK shape must conform to ARRAY"); }
-            let source_extent=runtime_extent(&args[0]).unwrap_or(int(source_len));
-            if !unpack && mask_len.is_some() {
-                let mask_extent=runtime_extent(&args[1]).unwrap_or(int(mask_len.unwrap()));
-                if mask_extent!=source_extent {prefix.push(shape_guard(source_extent.clone(),mask_extent));}
-            }
-            let set = |index,value| Stmt::AssignIndex { name:temp.clone(),indices:vec![index],value };
-            let next = Stmt::Assign { name:cursor.clone(),value:bin(BinOp::Add,id(&cursor),int(1)) };
-            let guard = |limit| Stmt::If { cond:bin(BinOp::Gt,id(&cursor),int(limit)),then_body:vec![Stmt::CallSub { name:"@error_stop".into(),args:vec![Expr::Str(format!("{} VECTOR has too few elements for MASK",if unpack {"UNPACK"} else {"PACK"}))] }],else_body:None };
-            let mut body;
-            if unpack {
-                let (field,field_len,field_kind) = element(&args[2],&id(&index),symbols)?;
-                if !same_kind(&kind,&field_kind) { bail!("UNPACK VECTOR and FIELD must have the same type and kind"); }
-                if field_len.is_some_and(|n| n!=count) { bail!("UNPACK FIELD shape must conform to MASK"); }
-                body = vec![Stmt::If { cond:mask,then_body:vec![next,guard(source_len),set(id(&index),source)],else_body:Some(vec![set(id(&index),field)]) }];
-            } else {
-                body = vec![Stmt::If { cond:mask,then_body:vec![next,guard(count),set(id(&cursor),source)],else_body:None }];
-            }
-            prefix.push(Stmt::ArrayDecl { kind:kind.clone(),name:temp.clone(),dims:vec![int(count)] });
-            prefix.push(Stmt::VarDecl { kind:TypeSpec::Integer(Some(8)),names:vec![index.clone(),cursor.clone()] });
-            prefix.push(Stmt::Assign { name:cursor.clone(),value:int(0) });
-            prefix.push(Stmt::Do { var:index.clone(),start:int(1),end:if unpack {int(count)} else {source_extent},body:std::mem::take(&mut body) });
-            if !unpack && has_vector {
-                let (vector,_,vector_kind) = element(&args[2],&id(&index),symbols)?;
-                if !same_kind(&kind,&vector_kind) { bail!("PACK ARRAY and VECTOR must have the same type and kind"); }
-                prefix.push(Stmt::Do { var:index.clone(),start:bin(BinOp::Add,id(&cursor),int(1)),end:int(count),body:vec![set(id(&index),vector)] });
-            }
-            symbols.insert(temp.clone(),(kind,vec![int(count)]));
-            symbols.insert(cursor.clone(),(TypeSpec::Integer(Some(8)),vec![]));
-            *e = if dynamic { Expr::Call("@packed_view".into(),vec![Expr::Ident(temp),Expr::Ident(cursor)]) } else { Expr::Ident(temp) };
-        }
+        Expr::Call(name,_) if matches!(name.as_str(),"pack"|"@pack"|"@unpack")=>lower_pack(e,symbols,prefix,serial)?,
         Expr::Call(name,args) if name == "@spread" => {
             lower_expr(&mut args[0],symbols,prefix,serial)?;
             let stride = constant(&args[1])?.max(1);

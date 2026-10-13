@@ -11,7 +11,10 @@ use std::collections::HashMap;
 #[derive(Clone)]
 struct Routine { params: Vec<String>, body: Vec<Stmt> }
 type Names = HashMap<String, String>;
-fn name(n: &mut String, names: &Names) { if let Some(new) = names.get(n) { *n = new.clone(); } }
+fn name(n: &mut String, names: &Names) {
+    if let Some(original)=n.strip_prefix(crate::heap::BORROWED_FIELD) {*n=original.to_owned();}
+    else if let Some(new) = names.get(n) { *n = new.clone(); }
+}
 fn expr(e: &mut Expr, names: &Names) {
     match e {
         Expr::Ident(n) => name(n, names),
@@ -86,7 +89,7 @@ pub(crate) fn rename_with_prefix(
                     *intent = format!("@bounded:{length}:{flag}");
                 }
             }
-            Stmt::DummyIntent { name: n, intent } if prefix == "@alloc_block" || intent=="@module_host" || intent=="@heap" || (matches!(intent.as_str(),"pointer"|"target"|"@pointer_readonly_target") || intent.starts_with("@pointer_bounds:")) => name(n, &names),
+            Stmt::DummyIntent { name: n, intent } if prefix == "@alloc_block" || intent=="@module_host" || intent=="@heap" || intent=="@heap_readonly" || (matches!(intent.as_str(),"pointer"|"target"|"@pointer_readonly_target") || intent.starts_with("@pointer_bounds:")) => name(n, &names),
             Stmt::VarDecl {
                 names: declared, ..
             } => {
@@ -169,7 +172,7 @@ pub(crate) fn rename_with_prefix(
             _ => {}
         }
     }
-    body.retain(|s| !matches!(s, Stmt::ArrayDecl { name, .. } if params.contains(name)) && !matches!(s, Stmt::DummyIntent { intent,.. } if prefix!="@alloc_block" && !(matches!(intent.as_str(),"pointer"|"target"|"@pointer_readonly_target") || intent.starts_with("@pointer_bounds:")) && intent!="@heap" && !intent.starts_with("@bounded:") && !intent.starts_with("@bounded_shape:") && !intent.starts_with("@bounded_lower:") && !intent.starts_with("@bounded_limits:")) && !matches!(s, Stmt::VarDecl { names, .. } if names.is_empty()));
+    body.retain(|s| !matches!(s, Stmt::ArrayDecl { name, .. } if params.contains(name)) && !matches!(s, Stmt::DummyIntent { intent,.. } if prefix!="@alloc_block" && !(matches!(intent.as_str(),"pointer"|"target"|"@pointer_readonly_target") || intent.starts_with("@pointer_bounds:")) && intent!="@heap" && intent!="@heap_readonly" && !intent.starts_with("@bounded:") && !intent.starts_with("@bounded_shape:") && !intent.starts_with("@bounded_lower:") && !intent.starts_with("@bounded_limits:")) && !matches!(s, Stmt::VarDecl { names, .. } if names.is_empty()));
     Ok(())
 }
 /// Preserve procedure RETURN when its body is expanded into the caller.

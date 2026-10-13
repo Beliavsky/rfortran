@@ -147,7 +147,7 @@ end program main
             ("print *,size(result)\ncall set_alloc_int_vec(a,result)", self.module(), "unallocated array"),
             ("call set_alloc_int_vec(a,result)", self.module().replace("ni = size(ii)", "ni = size(jj)"), "unallocated array"),
             ("call set_alloc_int_vec(a,result)", self.module().replace("allocate (jj(ni))", "allocate (jj(ni))\n   allocate (jj(ni))"), "already allocated"),
-            ("call set_alloc_int_vec(a,result)", self.module().replace("allocate (jj(ni))", "allocate (jj(ni+1))"), "bounded call-site capacity"),
+            ("call set_alloc_int_vec(a,result)", self.module().replace("allocate (jj(ni))", "allocate (jj(ni+1))"), "shapes do not conform"),
             ("call set_alloc_int_vec(a,result)\nprint *,sum(result)", self.module().replace("jj = ii", "jj(1) = ii(1)"), "uninitialized variable"),
         ]:
             with self.subTest(error=error), tempfile.TemporaryDirectory(prefix="recursive-invalid-") as tmp:

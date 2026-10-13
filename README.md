@@ -1114,27 +1114,33 @@ terminate during specialization, as in `xpure_recursive.f90`, whose recursive
 call omits the optional bounds and selects the copy branch. General recursive
 array calls remain unsupported and produce a diagnostic.
 
-Local rank-one numeric/LOGICAL or fixed-length CHARACTER ALLOCATABLE INTENT(OUT) dummies can associate with
-main-program allocatable arrays. Storage capacity is inferred from bounded array
-inputs across the source group's call sites, or from fixed local arrays when
-no array input is available; allocation state and the current
-extent remain runtime values. INTENT(OUT) deallocates the previous output on entry.
-ALLOCATE accepts runtime extents within that capacity, including zero, followed
-by conformable whole-array assignment or scalar filling. ALLOCATED, SIZE, LBOUND,
-UBOUND, reductions and list-directed output use the current allocation and extent.
-Repeated allocation, reads of unallocated arrays and allocations exceeding the
-inferred capacity report runtime errors. Element initialization checks still apply.
-CHARACTER outputs support ALLOCATED, SIZE, element access, scalar filling and
+Numeric and LOGICAL ALLOCATABLE subroutine dummies support ranks 1 through 15
+with INTENT(IN), INTENT(OUT) and INTENT(INOUT). The dummy aliases the caller's
+heap descriptor, including its data, extents, lower bounds, allocation status
+and initialization mask. This works for main-program, procedure/BLOCK and module
+actuals, including forwarding through another subroutine, optional dummies and
+keyword arguments. The actual must be an ALLOCATABLE variable of matching type,
+kind and rank. Unallocated actuals are allowed; reading their data or extents
+still reports an error.
+
+INTENT(OUT) deallocates an allocated actual on entry, including when the callee
+returns without allocating a replacement. ALLOCATE and DEALLOCATE through an
+INTENT(INOUT) or INTENT(OUT) dummy update the caller. INTENT(IN) preserves
+allocation status and lower bounds and cannot be passed to a writable dummy.
+Allocation dimensions can depend on inputs, and outputs can exceed input sizes;
+a compile-time capacity bound is no longer needed for numeric dummy outputs.
+Calls continue to use specialization, with recursive array call cycles diagnosed.
+Run `python tests/test_allocatable_dummies.py`.
+
+Fixed-length rank-one CHARACTER ALLOCATABLE outputs retain bounded
+specialization. Their capacity is inferred from bounded array inputs or fixed
+locals. They support ALLOCATED, SIZE, element access, scalar filling and
 conformable whole-array or constant-stride section copying, including padding
 and truncation when element lengths differ. CHARACTER reductions and whole-array
 output of runtime-sized CHARACTER arrays remain unsupported.
-
-These output specializations remain bounded. They do not provide automatic
-reallocation on array assignment, dynamic input declaration bounds, multidimensional allocatable outputs,
-sections of runtime-sized dummies/allocatable arrays, or a descriptor ABI.
-Growing array call cycles cannot supply a finite storage
-bound and are diagnosed. Run `python tests/test_recursive_allocatables.py` for
-interpreter/native O0/O2 checks and comparison with gfortran.
+Growing CHARACTER output cycles without a finite bound remain diagnosed.
+Run `python tests/test_recursive_allocatables.py` for recursive OPTIONAL call
+coverage and interpreter/native O0/O2 comparisons with gfortran.
 
 DEALLOCATE accepts lists of whole bounded allocatable arrays and
 deferred-length scalar CHARACTER locals, including in single-line IF statements.
@@ -1170,8 +1176,8 @@ with unset elements; reads remain checked per element. Module allocations persis
 across procedure calls. Heap-backed procedure/BLOCK locals and expression buffers
 are released on normal scope exit, including RETURN, EXIT and CYCLE.
 
-Runtime-sized multidimensional sections, general multidimensional ALLOCATABLE
-dummy association, array transformations, masked/DIM reductions, automatic
+Runtime-sized multidimensional sections, ALLOCATABLE array dummies in functions,
+array transformations, masked/DIM reductions, automatic
 reallocation on assignment, and mixing fixed and runtime-sized multidimensional
 expressions remain unsupported. CHARACTER and derived-type heap allocation and
 STAT/ERRMSG are separate remaining work. No public descriptor ABI is provided
@@ -1420,6 +1426,7 @@ python tests/test_recursive_allocatables.py
 python tests/test_deallocate.py
 python tests/test_runtime_allocatables.py
 python tests/test_heap_allocations.py
+python tests/test_allocatable_dummies.py
 python tests/test_dimension_attribute.py
 python tests/test_internal_read.py
 python tests/test_write.py

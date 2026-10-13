@@ -73,6 +73,14 @@ pub(crate) fn axes(name: &str, shapes: &Shapes) -> Option<Vec<Expr>> {
 }
 pub(crate) fn lowers(name:&str,shapes:&Shapes)->Option<Vec<Expr>> {shapes.get(&format!("@lowers:{name}")).map(|v|v.1.clone())}
 pub(crate) fn inquiry(name: &str, args: &[Expr], shapes: &Shapes) -> Result<Option<Expr>> {
+    if name=="kind" && args.len()==1 {
+        let array=match &args[0] {Expr::Ident(n)=>Some(n),Expr::Call(tag,args) if tag=="@packed_view"=>if let Expr::Ident(n)=&args[0]{Some(n)}else{None},_=>None};
+        if let Some((kind,_))=array.and_then(|n|shapes.get(n)) {
+            let bytes=match kind {TypeSpec::Integer(n)=>Some(n.unwrap_or(4)),TypeSpec::Real|TypeSpec::Logical=>Some(4),TypeSpec::DoublePrecision=>Some(8),TypeSpec::Character(_)=>Some(1),_=>None};
+            if let Some(bytes)=bytes {return Ok(Some(int(i64::from(bytes))));}
+        }
+        return Ok(None);
+    }
     let Some(Expr::Ident(array)) = args.first() else {
         return Ok(None);
     };
@@ -157,6 +165,7 @@ pub(crate) fn prepare_matrices(
     let candidates:HashMap<_,_>=body.iter().filter_map(|s|match s {
         Stmt::ArrayDecl {name,dims,..} if (dims.len()>1 || globals.contains(name)) && dims.iter().all(|d|matches!(d,Expr::Ident(n) if n=="@deferred_extent"))
             && allocated(name,inherited).is_none()
+            && !body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name&&intent=="@heap_dummy"))
             && body.iter().any(|s|matches!(s,Stmt::DummyIntent {name:n,intent} if n==name && intent=="allocatable"))=>Some((name.clone(),dims.len())),
         _=>None,
     }).collect();
@@ -366,7 +375,10 @@ fn logical_shape(
                 )
             })
         }),
-        Expr::Call(n, args) if n == "@packed_view" => logical_shape(&args[0], shapes, guards),
+        Expr::Call(n, args) if n == "@packed_view" => {
+            if let Expr::Ident(array)=&args[0] {if let Some(axes)=axes(array,shapes) {if axes.len()>1{return Ok(Some((axes,true)));}}}
+            Ok(Some((vec![args[1].clone()],true)))
+        },
         Expr::Bin(_, a, b) => {
             let a = logical_shape(a, shapes, guards)?;
             let b = logical_shape(b, shapes, guards)?;
@@ -381,7 +393,7 @@ fn logical_shape(
             Ok(a.or(b))
         }
         Expr::Un(_, a) => logical_shape(a, shapes, guards),
-        Expr::Call(n, _) if matches!(n.as_str(),"size"|"shape"|"lbound"|"ubound"|"allocated")=>Ok(None),
+        Expr::Call(n, _) if matches!(n.as_str(),"size"|"shape"|"lbound"|"ubound"|"allocated"|"kind")=>Ok(None),
         Expr::Call(n, args) if !shapes.contains_key(n) => {
             let mut result: Option<(Vec<Expr>, bool)> = None;
             for arg in args {
@@ -480,14 +492,16 @@ fn linear_index(
         checks.push(Stmt::Function {
             name: function.clone(),
             params: vec![position.clone(), limit.clone()],
-            pure: false,
-            elemental: false,
+            pure: true,
+            elemental: true,
             return_type: Some(TypeSpec::Integer(Some(8))),
             body: vec![
                 Stmt::VarDecl {
                     kind: TypeSpec::Integer(Some(8)),
                     names: vec![position.clone(), limit.clone()],
                 },
+                Stmt::DummyIntent{name:position.clone(),intent:"intent(in)".into()},
+                Stmt::DummyIntent{name:limit.clone(),intent:"intent(in)".into()},
                 fail(
                     bin(
                         BinOp::Or,
@@ -613,7 +627,8 @@ pub(crate) fn prepare(mut p: Program) -> Result<Program> {
                 } => {
                     let positions=params.iter().enumerate().filter_map(|(i,p)|{
                     (body.iter().any(|s|matches!(s,Stmt::DummyIntent {name,intent} if name==p && intent=="allocatable"))
-                    && body.iter().any(|s|matches!(s,Stmt::DummyIntent {name,intent} if name==p && intent=="intent(out)"))).then_some(i)
+                    && body.iter().any(|s|matches!(s,Stmt::DummyIntent {name,intent} if name==p && intent=="intent(out)"))
+                    && !body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==p&&intent=="@heap_dummy"))).then_some(i)
                 }).collect::<Vec<_>>();
                     if !positions.is_empty() {
                         let local_bound = body.iter().filter_map(|s| {
@@ -818,7 +833,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
         if let Expr::Call(n, args) = e {
             if matches!(
                 n.as_str(),
-                "allocated" | "size" | "lbound" | "ubound" | "shape"
+                "allocated" | "size" | "lbound" | "ubound" | "shape" | "kind"
             ) {
                 if let Some(value) = inquiry(n, args, shapes)? {
                     *e = value;
@@ -1003,6 +1018,10 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                     continue;
                 }
                 Stmt::CallSub {name,..} if name=="@module_bind" || name=="@heap_bind" => {out.push(s);continue;}
+                Stmt::CallSub{name,args} if name=="@heap_allocate"=>{
+                    for extent in args.iter_mut().skip(2){expression(extent,&shapes,&mut guards,checks,serial)?;}
+                    out.extend(guards);out.push(s);continue;
+                }
                 Stmt::CallSub { name, args } if name == "@allocate" => {
                     let mut handled = true;
                     for arg in args.iter() {
@@ -1129,6 +1148,11 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                             }],
                         });
                         continue;
+                    }
+                    if let Expr::Ident(array)=value {
+                        if shapes.get(array).is_some_and(|(_,dims)|dims.len()>1) {
+                            *value=Expr::Call("@fixed_packed_view".into(),vec![id(array)]);
+                        }
                     }
                     let start = out.len();
                     let (_, _, rhs_len) =

@@ -1224,6 +1224,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 6 2 12\n"
+    },
+    "176_allocatable_dummies": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " T 0 3 0\n T 2 2 4\n T 3 2 6\n"
     }
   }
 }

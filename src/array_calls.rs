@@ -59,7 +59,7 @@ fn elemental_array_call(name: &str, args: &[Expr], routine: &Routine, shapes: &S
         let array=array_actual(actual,&local);
         if intent!="intent(in)" && !array {bail!("ELEMENTAL writable dummy `{param}` requires an array actual when any argument is an array");}
         if intent!="intent(in)" && matches!(actual,Expr::Ident(n)|Expr::Section {name:n,..} if readonly.contains(n)) {
-            bail!("cannot pass PARAMETER as writable argument `{param}`");
+            bail!("cannot pass PARAMETER or INTENT(IN) variable as writable argument `{param}`");
         }
         let (kind,value)=if array {
             if intent!="intent(in)" && !matches!(actual,Expr::Ident(_)|Expr::Section {..}) {
@@ -157,7 +157,7 @@ fn rewrite(
         if matches!(n.as_str(),"size"|"shape"|"lbound"|"ubound"|"associated") && matches!(args.first(),Some(Expr::Ident(p)) if shapes.contains_key(&format!("@pointer:{p}"))) { return Ok(()); }
     }
     if let Expr::Call(n,args)=e {
-        if matches!(n.as_str(),"allocated"|"size"|"lbound"|"ubound"|"shape") {
+        if matches!(n.as_str(),"allocated"|"size"|"lbound"|"ubound"|"shape"|"kind") {
             for dim in args.iter_mut().skip(1) {rewrite(dim,shapes,constants,absent)?;}
             if let Some(value)=crate::allocatables::inquiry(n,args,shapes)? {*e=value;return Ok(());}
         }
@@ -1112,7 +1112,7 @@ fn expand(
     let readonly: HashSet<_> = body
         .iter()
         .filter_map(|s| match s {
-            Stmt::DummyIntent { name, intent } if intent == "parameter" => Some(name.clone()),
+            Stmt::DummyIntent { name, intent } if matches!(intent.as_str(),"parameter"|"intent(in)"|"@heap_readonly") => Some(name.clone()),
             _ => None,
         })
         .collect();
@@ -1183,7 +1183,7 @@ fn expand(
                         .collect(),
                 )?;
                 let mut local = shapes.clone();
-                for p in &r.params {local.remove(&format!("@pointer:{p}"));local.remove(&format!("@target:{p}"));}
+                for p in &r.params {for key in ["@pointer","@target","@heap","@extent","@allocated","@axes","@lowers","@axis_limits"] {local.remove(&format!("{key}:{p}"));}}
                 for d in &r.body {
                     match d {
                         Stmt::VarDecl { kind, names } => {
@@ -1250,10 +1250,11 @@ fn expand(
                     if intent != "intent(in)"
                         && matches!(actual,Expr::Ident(n) if readonly.contains(n))
                     {
-                        bail!("cannot pass PARAMETER as writable argument `{p}`");
+                        bail!("cannot pass PARAMETER or INTENT(IN) variable as writable argument `{p}`");
                     }
                     if !dims.is_empty() {
                         let allocatable=r.body.iter().any(|s|matches!(s,Stmt::DummyIntent {name,intent} if name==p && intent=="allocatable"));
+                        if allocatable && !matches!(actual,Expr::Ident(_)) {bail!("ALLOCATABLE dummy `{p}` requires an ALLOCATABLE variable");}
                         let mut captured=actual.clone();
                         let (actual_kind,actual_dims,length) = if let Expr::Ident(a)=actual {
                             let (k,d)=shapes.get(a).context("undeclared array argument")?;
@@ -1277,11 +1278,11 @@ fn expand(
                         };
                         let a=match &captured {Expr::Ident(a)=>a.clone(),Expr::Call(n,v) if n=="@packed_view"=>if let Expr::Ident(a)=&v[0] {a.clone()} else {bail!("array view requires materialized storage");},_=>bail!("array dummy `{p}` requires a materialized array argument")};
                         let runtime_axes=runtime_actual_axes(actual,&shapes).or_else(||crate::allocatables::axes(&a,&shapes));
-                        if runtime_axes.is_some() && allocatable {bail!("runtime-sized multidimensional ALLOCATABLE procedure arguments are not yet supported");}
+                        if allocatable && runtime_axes.is_some() && !shapes.contains_key(&format!("@heap:{a}")) {bail!("numeric ALLOCATABLE dummy `{p}` requires a heap descriptor");}
                         if matches!(kind, TypeSpec::CharacterAssumed) && matches!(actual_kind, TypeSpec::Character(_)) {
                             kind = actual_kind.clone();
                         }
-                        if actual_kind != kind || runtime_axes.as_ref().map_or(actual_dims.len(),Vec::len) != dims.len() {
+                        if !(if allocatable {crate::pointers::same_kind(&actual_kind,&kind)}else{actual_kind==kind}) || runtime_axes.as_ref().map_or(actual_dims.len(),Vec::len) != dims.len() {
                             bail!("type or rank mismatch for `{p}`");
                         }
                         if !dims
@@ -1303,7 +1304,7 @@ fn expand(
                         }
                         if let Some(axes)=runtime_axes {
                             if !dims.iter().all(|d|matches!(d,Expr::Ident(n) if n=="@deferred_extent")) {for (formal,actual) in dims.iter().zip(&axes) {prefix.push(Stmt::If{cond:Expr::Bin(crate::ast::BinOp::Ne,Box::new(formal.clone()),Box::new(actual.clone())),then_body:vec![Stmt::CallSub{name:"@error_stop".into(),args:vec![Expr::Str(format!("explicit-shape dummy `{p}` requires a matching actual shape"))]}],else_body:None});}}
-                            if let Some(flag)=crate::allocatables::allocated(&a,&shapes) {prefix.push(Stmt::If{cond:Expr::Un(crate::ast::UnOp::Not,Box::new(flag)),then_body:vec![Stmt::CallSub{name:"@error_stop".into(),args:vec![Expr::Str(format!("unallocated actual for `{p}`"))]}],else_body:None});}
+                            if !allocatable {if let Some(flag)=crate::allocatables::allocated(&a,&shapes) {prefix.push(Stmt::If{cond:Expr::Un(crate::ast::UnOp::Not,Box::new(flag)),then_body:vec![Stmt::CallSub{name:"@error_stop".into(),args:vec![Expr::Str(format!("unallocated actual for `{p}`"))]}],else_body:None});}}
                             local.insert(format!("@axes:{p}"),(TypeSpec::Integer(Some(8)),axes));
                         }
                         local.insert(p.clone(), (kind, actual_dims.clone()));
@@ -1311,13 +1312,22 @@ fn expand(
                         if allocatable {
                             let flag=crate::allocatables::allocated(&a,&shapes).context("ALLOCATABLE dummy requires an ALLOCATABLE actual")?;
                             local.insert(format!("@allocated:{p}"),(TypeSpec::Logical,vec![flag.clone()]));
+                            if shapes.contains_key(&format!("@heap:{a}")) {
+                                local.insert(format!("@heap:{p}"),(TypeSpec::Logical,vec![]));
+                                if let Some(lower)=crate::allocatables::lowers(&a,&shapes){local.insert(format!("@lowers:{p}"),(TypeSpec::Integer(Some(8)),lower));}
+                                crate::heap::borrow_fields(p,&mut local);
+                            }
                             if intent=="intent(out)" {
-                                if let Expr::Ident(flag)=flag {undefine.push(Stmt::Assign {name:flag,value:Expr::Logical(false)});}
-                                if let Some(Expr::Ident(len))=crate::allocatables::length(&a,&shapes) {undefine.push(Stmt::Assign {name:len,value:Expr::IntLit("0".into())});}
+                                if shapes.contains_key(&format!("@heap:{a}")) {
+                                    undefine.push(Stmt::If{cond:flag,then_body:vec![Stmt::CallSub{name:"@deallocate".into(),args:vec![Expr::Ident(a.clone())]}],else_body:None});
+                                }else{
+                                    if let Expr::Ident(flag)=flag {undefine.push(Stmt::Assign {name:flag,value:Expr::Logical(false)});}
+                                    if let Some(Expr::Ident(len))=crate::allocatables::length(&a,&shapes) {undefine.push(Stmt::Assign {name:len,value:Expr::IntLit("0".into())});}
+                                }
                             }
                         }
                         names.insert(p.clone(), a.clone());
-                        if intent!="intent(out)" || !allocatable {
+                        if !allocatable {
                             if let Some(flag)=crate::allocatables::allocated(&a,&shapes) {
                                 prefix.push(Stmt::If {cond:Expr::Un(crate::ast::UnOp::Not,Box::new(flag)),then_body:vec![Stmt::CallSub {name:"@error_stop".into(),args:vec![Expr::Str(format!("unallocated array `{a}` passed as an input argument"))]}],else_body:None});
                             }
@@ -1360,7 +1370,22 @@ fn expand(
                 prefix.extend(undefine);
                 let mut cloned = r.body.clone();
                 for p in &r.params {
-                    if let Some(axes)=crate::allocatables::axes(p,&local) {
+                    if local.contains_key(&format!("@heap:{p}")) {
+                        let field=|e:Expr|->Result<String>{if let Expr::Ident(n)=e{Ok(n)}else{bail!("ALLOCATABLE association requires writable descriptor fields")}};
+                        let length=field(crate::allocatables::length(p,&local).context("missing dummy length")?)?;
+                        let flag=field(crate::allocatables::allocated(p,&local).context("missing dummy status")?)?;
+                        let axes=crate::allocatables::axes(p,&local).context("missing dummy axes")?;
+                        let lower=crate::allocatables::lowers(p,&local).context("missing dummy lower bounds")?;
+                        let count=axes.len();let axes=axes.into_iter().map(field).collect::<Result<Vec<_>>>()?;let lower=lower.into_iter().map(field).collect::<Result<Vec<_>>>()?;
+                        if intents.get(p).is_some_and(|i|i=="intent(in)"){cloned.push(Stmt::DummyIntent{name:p.clone(),intent:"@heap_readonly".into()});}
+                        cloned.extend([
+                            Stmt::DummyIntent{name:p.clone(),intent:"@heap".into()},
+                            Stmt::DummyIntent{name:p.clone(),intent:format!("@bounded:{length}:{flag}")},
+                            Stmt::DummyIntent{name:p.clone(),intent:format!("@bounded_shape:{}",axes.join(":"))},
+                            Stmt::DummyIntent{name:p.clone(),intent:format!("@bounded_lower:{}",lower.join(":"))},
+                            Stmt::DummyIntent{name:p.clone(),intent:format!("@bounded_limits:{}",vec!["0";count].join(":"))},
+                        ]);
+                    }else if let Some(axes)=crate::allocatables::axes(p,&local) {
                         let axes=axes.iter().map(|e|if let Expr::Ident(n)=e {Ok(n.clone())}else{bail!("runtime dummy axes require descriptor fields")}).collect::<Result<Vec<_>>>()?;
                         cloned.push(Stmt::DummyIntent{name:p.clone(),intent:format!("@bounded_shape:{}",axes.join(":"))});
                         let mut lowers=vec![];for _ in &axes {*serial+=1;let n=format!("@dummy_lower_{serial}");cloned.splice(0..0,vec![Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![n.clone()]},Stmt::Assign{name:n.clone(),value:Expr::IntLit("1".into())}]);lowers.push(n);}

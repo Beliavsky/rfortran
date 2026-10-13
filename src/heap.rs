@@ -7,8 +7,117 @@ use crate::ast::{Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Result};
 use std::collections::{HashMap, HashSet};
 
+// Caller fields can have the same generated spelling as callee local fields.
+// Protect their identity during callee alpha-renaming; rename removes this tag.
+pub(crate) const BORROWED_FIELD: &str = "@borrowed_field$";
+pub(crate) fn borrow_fields(name: &str, shapes: &mut crate::allocatables::Shapes) {
+    let mut fields = vec![];
+    for key in ["@allocated", "@extent", "@axes", "@lowers"] {
+        if let Some((_, values)) = shapes.get_mut(&format!("{key}:{name}")) {
+            for value in values {
+                if let Expr::Ident(n) = value {
+                    let kind = if key == "@allocated" {
+                        TypeSpec::Logical
+                    } else {
+                        TypeSpec::Integer(Some(8))
+                    };
+                    *n = format!("{BORROWED_FIELD}{n}");
+                    fields.push((n.clone(), kind));
+                }
+            }
+        }
+    }
+    for (n, kind) in fields {
+        shapes.insert(n, (kind, vec![]));
+    }
+}
+
 pub(crate) fn prepare(mut program: Program) -> Result<Program> {
-    fn visit(body: &mut Vec<Stmt>, params: &[String]) -> Result<()> {
+    fn numeric(kind: &TypeSpec) -> bool {
+        matches!(
+            kind,
+            TypeSpec::Integer(None | Some(1 | 2 | 4 | 8))
+                | TypeSpec::Real
+                | TypeSpec::DoublePrecision
+                | TypeSpec::Logical
+        )
+    }
+    fn signatures(body: &mut [Stmt], result: &mut HashMap<String, Vec<usize>>) {
+        for statement in body {
+            match statement {
+                Stmt::Subroutine {
+                    name, params, body, ..
+                } => {
+                    let positions=params.iter().enumerate().filter_map(|(i,p)|
+                    (body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,kind,..} if name==p&&numeric(kind)))
+                     &&body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==p&&intent=="allocatable"))).then_some(i)).collect::<Vec<_>>();
+                    for &i in &positions {
+                        body.insert(
+                            0,
+                            Stmt::DummyIntent {
+                                name: params[i].clone(),
+                                intent: "@heap_dummy".into(),
+                            },
+                        );
+                    }
+                    result.insert(name.clone(), positions);
+                    signatures(body, result);
+                }
+                Stmt::Module { body, .. } | Stmt::Function { body, .. } => signatures(body, result),
+                _ => {}
+            }
+        }
+    }
+    fn actuals(
+        body: &[Stmt],
+        signatures: &HashMap<String, Vec<usize>>,
+        wanted: &mut HashSet<String>,
+    ) {
+        for statement in body {
+            match statement {
+                Stmt::CallSub { name, args } => {
+                    if let Some(positions) = signatures.get(name) {
+                        for &i in positions {
+                            if let Some(Expr::Ident(n)) = args.get(i) {
+                                wanted.insert(n.clone());
+                            }
+                        }
+                    }
+                }
+                Stmt::Block { body } | Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } => {
+                    actuals(body, signatures, wanted)
+                }
+                Stmt::If {
+                    then_body,
+                    else_body,
+                    ..
+                } => {
+                    actuals(then_body, signatures, wanted);
+                    if let Some(b) = else_body {
+                        actuals(b, signatures, wanted);
+                    }
+                }
+                Stmt::SelectCase { cases, default, .. } => {
+                    for c in cases {
+                        actuals(&c.body, signatures, wanted);
+                    }
+                    if let Some(b) = default {
+                        actuals(b, signatures, wanted);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut interfaces = HashMap::new();
+    signatures(&mut program.body, &mut interfaces);
+    fn visit(
+        body: &mut Vec<Stmt>,
+        params: &[String],
+        interfaces: &HashMap<String, Vec<usize>>,
+    ) -> Result<()> {
+        let mut passed = HashSet::new();
+        actuals(body, interfaces, &mut passed);
         fn allocation(body: &[Stmt], array: &str) -> bool {
             body.iter().any(|s|match s {
                 Stmt::CallSub{name,args} if name=="@allocate"=>args.iter().any(|e|matches!(e,Expr::Call(n,dims) if n==array&&dims.iter().any(|e|crate::parameters::integer_constant(e).is_err())) || matches!(e,Expr::Section{name:n,..} if n==array)),
@@ -22,7 +131,7 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
         let arrays=body.iter().filter_map(|s|if let Stmt::ArrayDecl{kind,name,dims}=s {
             (dims.iter().all(|e|matches!(e,Expr::Ident(n) if n=="@deferred_extent"))
               && !params.contains(name)
-              && (name.starts_with("@module$") || ((dims.len()>1 || !array_dummies) && allocation(body,name)) || dims.len()>1 && body.iter().any(|s|matches!(s,Stmt::CallSub{name:call,args} if call=="@deallocate"&&args.iter().any(|e|matches!(e,Expr::Ident(n) if n==name)))))
+              && (passed.contains(name) || name.starts_with("@module$") || ((dims.len()>1 || !array_dummies) && allocation(body,name)) || dims.len()>1 && body.iter().any(|s|matches!(s,Stmt::CallSub{name:call,args} if call=="@deallocate"&&args.iter().any(|e|matches!(e,Expr::Ident(n) if n==name)))))
               && matches!(kind,TypeSpec::Integer(None|Some(1|2|4|8))|TypeSpec::Real|TypeSpec::DoublePrecision|TypeSpec::Logical)
               && body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name&&intent=="allocatable")))
                 .then_some((name.clone(),dims.len()))
@@ -61,20 +170,49 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
             }
         }
         for statement in body.iter_mut() {
-            if let Stmt::CallSub{name,args}=statement {if name=="@allocate" {
-                fn bound(e:&mut Expr)->Result<()> {
-                    if let Expr::Call(tag,args)=e {if tag=="@section_subscript" {let mut inner=args.remove(0);bound(&mut inner)?;*e=inner;return Ok(());}}
-                    if let Expr::Section{lower,upper,stride,..}=e {
-                        if stride.is_some() || lower.is_none() || upper.is_none(){bail!("ALLOCATE bounds require lower:upper without a stride");}
-                        *e=Expr::Call("@heap_bounds".into(),vec![*lower.take().unwrap(),*upper.take().unwrap()]);
+            if let Stmt::CallSub { name, args } = statement {
+                if name == "@allocate" {
+                    fn bound(e: &mut Expr) -> Result<()> {
+                        if let Expr::Call(tag, args) = e {
+                            if tag == "@section_subscript" {
+                                let mut inner = args.remove(0);
+                                bound(&mut inner)?;
+                                *e = inner;
+                                return Ok(());
+                            }
+                        }
+                        if let Expr::Section {
+                            lower,
+                            upper,
+                            stride,
+                            ..
+                        } = e
+                        {
+                            if stride.is_some() || lower.is_none() || upper.is_none() {
+                                bail!("ALLOCATE bounds require lower:upper without a stride");
+                            }
+                            *e = Expr::Call(
+                                "@heap_bounds".into(),
+                                vec![*lower.take().unwrap(), *upper.take().unwrap()],
+                            );
+                        }
+                        Ok(())
                     }
-                    Ok(())
+                    for arg in args {
+                        if let Expr::Section { name, .. } = arg {
+                            let n = name.clone();
+                            let mut range = arg.clone();
+                            bound(&mut range)?;
+                            *arg = Expr::Call(n, vec![range]);
+                        }
+                        if let Expr::Call(_, dims) = arg {
+                            for dim in dims {
+                                bound(dim)?;
+                            }
+                        }
+                    }
                 }
-                for arg in args {
-                    if let Expr::Section{name,..}=arg {let n=name.clone();let mut range=arg.clone();bound(&mut range)?;*arg=Expr::Call(n,vec![range]);}
-                    if let Expr::Call(_,dims)=arg {for dim in dims{bound(dim)?;}}
-                }
-            }}
+            }
         }
         crate::allocatables::prepare_matrices(body, &mut HashMap::new(), &HashMap::new())?;
         // Bind local pointers after declarations, before executable statements.
@@ -95,28 +233,28 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
         for s in body.iter_mut() {
             match s {
                 Stmt::Function { body, params, .. } | Stmt::Subroutine { body, params, .. } => {
-                    visit(body, params)?
+                    visit(body, params, interfaces)?
                 }
                 Stmt::Module { body, .. }
                 | Stmt::Block { body }
                 | Stmt::Do { body, .. }
-                | Stmt::DoWhile { body, .. } => visit(body, &[])?,
+                | Stmt::DoWhile { body, .. } => visit(body, &[], interfaces)?,
                 Stmt::If {
                     then_body,
                     else_body,
                     ..
                 } => {
-                    visit(then_body, &[])?;
+                    visit(then_body, &[], interfaces)?;
                     if let Some(b) = else_body {
-                        visit(b, &[])?;
+                        visit(b, &[], interfaces)?;
                     }
                 }
                 Stmt::SelectCase { cases, default, .. } => {
                     for c in cases {
-                        visit(&mut c.body, &[])?;
+                        visit(&mut c.body, &[], interfaces)?;
                     }
                     if let Some(b) = default {
-                        visit(b, &[])?;
+                        visit(b, &[], interfaces)?;
                     }
                 }
                 _ => {}
@@ -124,7 +262,7 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
         }
         Ok(())
     }
-    visit(&mut program.body, &[])?;
+    visit(&mut program.body, &[], &interfaces)?;
     Ok(program)
 }
 
