@@ -1154,6 +1154,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 1 2 3\n"
+    },
+    "166_generic_sections": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 108\n 104\n 102\n 108\n"
     }
   }
 }

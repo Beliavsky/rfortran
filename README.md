@@ -1437,8 +1437,16 @@ storage. Nested implied-DOs, constant positive/negative strides and empty result
 are supported; input-dependent or invalidated bounds still require further
 capacity analysis. `xset_alloc_implied_do.f90` now compiles and prints `1 2 3`;
 `tests/test_constructor_arguments.py` covers this path in the interpreter and
-native code at `-O0` and `-O2`. The full build currently stops at a different `set_alloc` call
-with scalar DOUBLE PRECISION and rank-three DOUBLE PRECISION actuals.
+native code at `-O0` and `-O2`. Generic dispatch now preserves array-section
+rank: scalar subscripts remove
+axes, while triplets and vector subscripts retain them. Resolver tests cover
+ranks through 15 and the rank-three `select_tensor_real` calls in `util.f90`;
+`xgeneric_sections.f90` checks generic dispatch after reductions of sections.
+`RESHAPE` also retains its source element type and derives result rank from a
+scalar-integer shape constructor, independently of runtime extent values.
+The full build now passes both `set_alloc` type/rank blockers and currently
+stops at keyword arguments to `random_seed`, which lack a known explicit
+procedure interface.
 Full `xutil.f90` execution remains a separate acceptance test.
 
 ## License

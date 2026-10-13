@@ -588,7 +588,13 @@ impl Resolver {
                 }
                 // A local array can hide a host-associated generic of the same name.
                 if let Ty::Array(element, _) = self.name_type(n, vars) {
-                    return Ok(*element);
+                    // A triplet or vector subscript preserves its axis; a scalar
+                    // subscript removes one. The element type itself is unchanged.
+                    let rank = args.iter().zip(&arg_types).filter(|(arg,ty)| {
+                        matches!(arg,Expr::Call(tag,_) if tag=="@section_subscript")
+                            || matches!(ty,Ty::Array(_,1))
+                    }).count();
+                    return Ok(if rank==0 {*element} else {Ty::Array(element,rank)});
                 }
                 if let Some(target) = self.select_generic(n, args, &arg_types, false, visible)? {
                     *n = target;
@@ -627,6 +633,18 @@ impl Resolver {
                             }
                             "size" | "len" => scalar(&TypeSpec::Integer(None)),
                             "repeat" | "trim" | "adjustl" | "adjustr" => scalar(&TypeSpec::Character(None)),
+                            "reshape" => match (arg_types.first(),args.get(1)) {
+                                (Some(Ty::Array(element,_)),Some(Expr::Call(tag,shape)))
+                                    if tag=="@array_constructor" && !shape.is_empty() && shape.len()<=15 => {
+                                        let mut scalar_shape=true;
+                                        for axis in shape {
+                                            let mut axis=axis.clone();
+                                            scalar_shape &= matches!(self.expression(&mut axis,vars,visible)?,Ty::Scalar(TypeSpec::Integer(_)));
+                                        }
+                                        if scalar_shape {Ty::Array(element.clone(),shape.len())} else {Ty::Unknown}
+                                    },
+                                _=>Ty::Unknown,
+                            },
                             "pack" => match arg_types.first() {
                                 Some(Ty::Array(element, _)) => Ty::Array(element.clone(), 1),
                                 _ => Ty::Unknown,
@@ -873,6 +891,49 @@ pub fn resolve(mut program: Program) -> Result<Program> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn generic_subscript_rank_counts_triplets_and_vectors_up_to_fifteen() {
+        use crate::ast::Stmt;
+        let names=(0..=15).map(|rank|format!("rank{rank}")).collect::<Vec<_>>();
+        let mut source=format!("module m\ninterface g\nmodule procedure {}\nend interface\ncontains\n",names.join(","));
+        for rank in 0..=15 {
+            let dims=if rank==0 {String::new()} else {format!("({})",vec![":";rank].join(","))};
+            source.push_str(&format!("subroutine rank{rank}(x)\ninteger::x{dims}\nend subroutine\n"));
+        }
+        source.push_str("end module\nuse m\ninteger::idx(2),n\n");
+        for rank in 1..=15 {source.push_str(&format!("integer::a{rank}({})\n",vec!["2";rank].join(",")));}
+        let mut expected=vec![];
+        for rank in 1..=15 {
+            for kept in [0,1,rank] {
+                let args=(0..rank).map(|axis|if axis<kept {":"} else {"1"}).collect::<Vec<_>>();
+                source.push_str(&format!("call g(a{rank}({}))\n",args.join(",")));
+                expected.push(format!("rank{kept}"));
+            }
+            let mut args=vec!["1";rank];args[0]="idx";
+            source.push_str(&format!("call g(a{rank}({}))\n",args.join(",")));
+            expected.push("rank1".into());
+            let mut args=vec![":";rank];args[rank-1]="[2,1]";
+            source.push_str(&format!("call g(a{rank}({}))\n",args.join(",")));
+            expected.push(format!("rank{rank}"));
+            source.push_str(&format!("call g(reshape(a{rank},[{}]))\n",vec!["2";rank].join(",")));
+            expected.push(format!("rank{rank}"));
+            source.push_str(&format!("call g(reshape(a{rank},[{}]))\n",vec!["n";rank].join(",")));
+            expected.push(format!("rank{rank}"));
+        }
+        source.push_str("end\n");
+        let p=lower(&source).unwrap();
+        let actual=p.body.iter().filter_map(|s|if let Stmt::CallSub{name,..}=s {Some(name.clone())} else {None}).collect::<Vec<_>>();
+        assert_eq!(actual,expected);
+    }
+
+    #[test]
+    fn tensor_vector_section_selects_tensor_set_alloc() {
+        let source="module m\ninterface set_alloc\nmodule procedure tensor\nend interface\ncontains\nsubroutine tensor(x,y)\nreal(8),intent(in)::x(:,:,:)\nreal(8),allocatable,intent(out)::y(:,:,:)\nend subroutine\nend module\nuse m\ninteger::iuse(2)\nreal(8),allocatable::xx(:,:,:)\ncall set_alloc(xx(iuse,:,:),xx)\ncall set_alloc(xx(:,iuse,:),xx)\ncall set_alloc(xx(:,:,iuse),xx)\nend";
+        let p=lower(source).unwrap();
+        let calls=p.body.iter().filter_map(|s|if let crate::ast::Stmt::CallSub{name,..}=s {Some(name.as_str())} else {None}).collect::<Vec<_>>();
+        assert_eq!(calls,["tensor","tensor","tensor"]);
+    }
+
     #[test]
     fn constructor_types_ignore_implied_do_controls_and_flatten_arrays() {
         use super::*;
