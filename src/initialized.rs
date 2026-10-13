@@ -214,7 +214,10 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                     Stmt::Block{body:vec![Stmt::VarDecl{kind:TypeSpec::Integer(None),names:vec![index.clone()]},Stmt::Do{var:index.clone(),start:int(1),end:int(extent),body:vec![Stmt::AssignIndex{name:v.flag.clone(),indices:vec![Expr::Ident(index)],value:int(0)}]}]}
                 } else { Stmt::Assign { name: v.flag.clone(), value: int(0) } };
             }
-            Stmt::CallSub { name,.. } if name=="@stop" => {terminated=true;}
+            Stmt::CallSub { name,args } if name=="@stop" || name=="@error_stop" => {
+                for argument in args {read(argument,env,&mut before,serial)?;}
+                terminated=true;
+            }
             Stmt::CallSub { args, .. } => for arg in args { read(arg, env, &mut before, serial)?; },
             Stmt::If { cond, then_body, else_body } => {
                 read(cond, env, &mut before, serial)?;

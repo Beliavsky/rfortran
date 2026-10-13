@@ -1203,6 +1203,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": "1.2500\n1.25\n"
+    },
+    "173_pure_error_stop": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 1 1\n"
     }
   }
 }

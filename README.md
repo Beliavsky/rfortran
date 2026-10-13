@@ -333,6 +333,14 @@ names. Classification tests cover all registered intrinsic interfaces, while
 of impure calls. Some classified intrinsics still have incomplete semantic or
 execution support; the purity catalog records their language classification.
 
+ERROR STOP is permitted in PURE and implicitly pure ELEMENTAL procedures,
+as in Fortran 2018. Its code expression is checked for impure calls, and
+unconditional error termination ends definite-assignment analysis for that path.
+Plain STOP remains forbidden in pure procedures. The existing stop-code support
+accepts CHARACTER and default INTEGER constants. `xpure_error_stop.f90`,
+`tests/173_pure_error_stop.f90`, and `python tests/test_pure_error_stop.py`
+cover successful guards, error termination and integer exit statuses.
+
 ELEMENTAL implies PURE unless IMPURE is specified; PURE restrictions are checked.
 IMPURE ELEMENTAL functions and subroutines may perform external I/O and other
 supported side effects. Either prefix order (`impure elemental` or `elemental

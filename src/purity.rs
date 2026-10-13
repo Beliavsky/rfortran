@@ -81,6 +81,11 @@ pub fn validate(program: &Program) -> Result<()> {
                 Stmt::Print { .. } | Stmt::Read { .. } => bail!("PURE procedure cannot perform external I/O"),
                 Stmt::CallSub {name,..} if name == "@empty_read" => bail!("PURE procedure cannot perform external I/O"),
                 Stmt::CallSub {name,..} if name=="@stop" => bail!("PURE procedure cannot execute STOP"),
+                // ERROR STOP is permitted in PURE procedures since Fortran 2018.
+                // Its code expression still obeys ordinary purity restrictions.
+                Stmt::CallSub {name,args} if name=="@error_stop" => {
+                    for argument in args {expression(argument,&locals,known)?;}
+                }
                 Stmt::CallSub {name,args} if name == "@internal_read" => {
                     expression(&args[0],&locals,known)?;
                     let has_status=matches!(&args[1],Expr::Str(key) if !key.is_empty());
