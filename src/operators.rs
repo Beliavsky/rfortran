@@ -576,6 +576,17 @@ impl Resolver {
                                 Ty::Array(Box::new(element), 1)
                             }
                             "@integer_literal" if args.len()==2 => scalar(&TypeSpec::Integer(Some(crate::parameters::integer_constant(&args[1])? as u8))),
+                            "shape" | "lbound" | "ubound" => {
+                                let (_, dim, kind) = crate::inquiries::arguments(n, args)?;
+                                if let Some(kind) = kind {
+                                    if crate::parameters::integer_constant(&kind)? != 4 {
+                                        bail!("{n}: only default INTEGER KIND=4 is currently supported");
+                                    }
+                                }
+                                let element = scalar(&TypeSpec::Integer(None));
+                                if dim.is_some() { element }
+                                else { Ty::Array(Box::new(element), 1) }
+                            }
                             "size" | "len" => scalar(&TypeSpec::Integer(None)),
                             "int" | "nint" | "floor" | "ceiling" | "real" | "dble" => {
                                 let kind = match args.get(1) {
@@ -819,6 +830,16 @@ pub fn resolve(mut program: Program) -> Result<Program> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn shape_inference_preserves_user_procedure_shadowing() {
+        let source = "module m\ninterface g\nmodule procedure one,two\nend interface\ncontains\nsubroutine one(x)\ninteger::x\nend subroutine\nsubroutine two(x)\ninteger::x(:)\nend subroutine\ninteger function shape(x)\ninteger::x\nshape=x+7\nend function\nend module\nuse m\ncall g(shape(2))\nend";
+        let program = lower(source).unwrap();
+        let calls: Vec<_> = program.body.iter().filter_map(|s| {
+            if let crate::ast::Stmt::CallSub {name,..} = s {Some(name.as_str())} else {None}
+        }).collect();
+        assert_eq!(calls, ["one"]);
+    }
+
     #[test]
     fn defined_operator_diagnostics_and_visibility() {
         let original = include_str!("../tests/76_defined_operators.f90");

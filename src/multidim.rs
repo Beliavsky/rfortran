@@ -1143,6 +1143,21 @@ impl Lowerer {
         Ok(())
     }
 }
+// Function specialization precedes the main multidimensional pass. Reuse its
+// inquiry lowering while the original ranks and extents are still available.
+pub(crate) fn fixed_inquiry(e: &Expr, symbols: &HashMap<String,(TypeSpec,Vec<Expr>)>) -> Result<Expr> {
+    let mut lower = Lowerer::default();
+    lower.types = symbols.iter().map(|(n,(kind,_))| (n.clone(),kind.clone())).collect();
+    let shapes = symbols.iter().filter_map(|(n,(_,dims))| {
+        if dims.is_empty() { return None; }
+        dims.iter().map(crate::parameters::integer_constant).collect::<Result<Vec<_>>>()
+            .ok().map(|dims| (n.clone(),dims))
+    }).collect();
+    let mut value = e.clone();
+    lower.expression(&mut value, &shapes)?;
+    Ok(value)
+}
+
 // CHARACTER arrays become scalar slots before the main multidimensional pass.
 // Expand only their FORALL statements here, using the same snapshot rules.
 pub(crate) fn character_foralls(body:&mut Vec<Stmt>,symbols:&HashMap<String,(TypeSpec,Vec<Expr>)>,serial:&mut usize)->Result<()> {

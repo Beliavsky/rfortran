@@ -1411,8 +1411,13 @@ remaining CHARACTER work includes runtime-dependent automatic string lengths
 explicit allocation selectors/SOURCE/MOLD, allocatable CHARACTER components,
 and internal array files.
 The full `kind.f90 util.f90 xutil.f90` build now gets past the initialized CHARACTER
-local, CHARACTER operator interface and numeric `.notin.` operator. It currently
-stops at generic `exclude` resolution with an unknown actual argument type.
+local, CHARACTER operator interface, numeric `.notin.` operator and generic
+`exclude(shape(...), ...)` call. `SHAPE`, `LBOUND` and `UBOUND` now retain their
+INTEGER scalar or rank-one vector types during generic dispatch, and fixed-shape
+inquiry vectors can be passed to specialized read-only array functions.
+`xexclude.f90` prints `2 4`; `tests/test_generic_inquiries.py` checks dispatch,
+keywords, sections, empty extents and initialization diagnostics. The full build
+currently stops at generic `repeat` resolution for CHARACTER and INTEGER actuals.
 Full `xutil.f90` execution remains a separate acceptance test.
 
 ## License

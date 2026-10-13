@@ -1126,6 +1126,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " F T\n"
+    },
+    "162_generic_shape": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 2 4\n"
     }
   }
 }

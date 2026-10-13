@@ -46,6 +46,16 @@ impl Lower {
         if let Some(kind)=crate::empty_constructors::kind(e)? {return Ok(Value {kind,items:Some(vec![])});}
         let scalar = |kind| Ok(Value { kind, items: None });
         match e {
+            Expr::Call(n, _) if matches!(n.as_str(), "shape" | "lbound" | "ubound")
+                && !symbols.contains_key(n) && !self.returns.contains_key(n) => {
+                let value = crate::multidim::fixed_inquiry(e, symbols)?;
+                if let Expr::Call(tag, items) = value {
+                    if tag == "@bounds_vector" {
+                        return Ok(Value { kind: TypeSpec::Integer(None), items: Some(items) });
+                    }
+                }
+                scalar(TypeSpec::Integer(None))
+            }
             Expr::Str(s) => scalar(TypeSpec::Character(Some(s.len()))),
             Expr::Ident(n) => {
                 let (kind, dims) = symbols
