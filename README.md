@@ -1429,9 +1429,15 @@ inference flattens scalar and array-valued elements to a rank-one type, checks
 type/kind consistency, and infers implied-DO items independently of their bounds.
 `tests/test_constructor_inference.py` covers numeric, LOGICAL and CHARACTER items,
 nested implied-DOs, typed empty constructors and mixed scalar/array elements.
-Runtime-bound constructor actual arguments still require further array lowering;
-`xset_alloc_implied_do.f90` now reports that limitation after selecting the correct
-generic specific. The full build currently stops at a different `set_alloc` call
+Read-only numeric/LOGICAL runtime-bound constructor actual arguments are now
+materialized when a finite capacity can be proven from preceding integer
+assignments or fixed array sizes. The constructor retains runtime controls and an
+active length, preserves implied-DO index scope, and uses checked temporary
+storage. Nested implied-DOs, constant positive/negative strides and empty results
+are supported; input-dependent or invalidated bounds still require further
+capacity analysis. `xset_alloc_implied_do.f90` now compiles and prints `1 2 3`;
+`tests/test_constructor_arguments.py` covers this path in the interpreter and
+native code at `-O0` and `-O2`. The full build currently stops at a different `set_alloc` call
 with scalar DOUBLE PRECISION and rank-three DOUBLE PRECISION actuals.
 Full `xutil.f90` execution remains a separate acceptance test.
 

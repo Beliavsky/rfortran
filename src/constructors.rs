@@ -42,6 +42,137 @@ pub(crate) fn delayed(e: &Expr) -> bool {
         _ => false,
     }
 }
+
+// The current array ABI uses bounded backing storage plus an active length.
+// Prove a finite constructor capacity without replacing its runtime controls.
+type Ranges = HashMap<String, (i64, i64)>;
+fn range(e: &Expr, values: &Ranges, shapes: &Shapes) -> Option<(i64,i64)> {
+    if let Ok(n)=crate::parameters::integer_constant(e) {return Some((n,n));}
+    match e {
+        Expr::Ident(n)=>values.get(n).copied(),
+        Expr::Call(n,a) if n=="size" && a.len()==1 && !shapes.contains_key("@constructor_procedure:size") => {
+            let Expr::Ident(n)=&a[0] else {return None};
+            let dims=&shapes.get(n)?.1;
+            if dims.is_empty() {return None;}
+            let size=dims.iter().try_fold(1i64,|n,d|n.checked_mul(crate::parameters::integer_constant(d).ok()?.max(0)))?;
+            Some((size,size))
+        },
+        Expr::Bin(op,a,b)=>{
+            let (alo,ahi)=range(a,values,shapes)?;
+            let (blo,bhi)=range(b,values,shapes)?;
+            let pairs=[(alo,blo),(alo,bhi),(ahi,blo),(ahi,bhi)];
+            let products=pairs.map(|(a,b)|match op {
+                BinOp::Add=>a.checked_add(b),BinOp::Sub=>a.checked_sub(b),BinOp::Mul=>a.checked_mul(b),_=>None,
+            });
+            let products=products.into_iter().collect::<Option<Vec<_>>>()?;
+            Some((*products.iter().min()?,*products.iter().max()?))
+        },
+        _=>None,
+    }
+}
+fn capacity(items: &[Expr], values: &Ranges, shapes: &Shapes) -> Option<i64> {
+    items.iter().try_fold(0i64,|sum,item|{
+        let count=match item {
+            Expr::Call(n,a) if n=="@array_constructor"=>capacity(a,values,shapes)?,
+            Expr::Call(n,a) if n=="@output_implied_do" && a.len()>=5=>{
+                let Expr::Ident(index)=&a[0] else {return None};
+                let (lo_min,lo_max)=range(&a[1],values,shapes)?;
+                let (hi_min,hi_max)=range(&a[2],values,shapes)?;
+                let step=crate::parameters::integer_constant(&a[3]).ok()?;
+                if step==0 {return None;}
+                let distance=if step>0 {i128::from(hi_max)-i128::from(lo_min)} else {i128::from(lo_max)-i128::from(hi_min)};
+                let iterations=if distance<0 {0} else {i64::try_from(distance/i128::from(step).abs()+1).ok()?};
+                let mut local=values.clone();local.insert(index.clone(),(lo_min.min(hi_min),lo_max.max(hi_max)));
+                iterations.checked_mul(capacity(&a[4..],&local,shapes)?)?
+            },
+            _ if array_item(item,shapes)=>return None,
+            _=>1,
+        };
+        sum.checked_add(count)
+    })
+}
+fn item_kind(items: &[Expr], shapes: &Shapes) -> Result<TypeSpec> {
+    let mut result=None;
+    for item in items {
+        let kind=match item {
+            Expr::Call(n,a) if n=="@array_constructor"=>item_kind(a,shapes)?,
+            Expr::Call(n,a) if n=="@output_implied_do"=>item_kind(&a[4..],shapes)?,
+            _=>crate::reductions::elemental_element(item,&int(1),shapes)?.2,
+        };
+        let kind=if kind==TypeSpec::Integer(Some(4)) {TypeSpec::Integer(None)} else {kind};
+        if result.as_ref().is_some_and(|old|old!=&kind) {bail!("array constructor elements must have the same type and kind");}
+        result=Some(kind);
+    }
+    result.context("runtime constructor requires typed elements")
+}
+pub(crate) fn prepare_arguments(mut p: Program) -> Result<Program> {
+    fn procedures(body:&[Stmt], shapes:&mut Shapes) {for s in body {match s {
+        Stmt::Function {name,body,..}|Stmt::Subroutine {name,body,..}=>{
+            shapes.insert(format!("@constructor_procedure:{name}"),(TypeSpec::Logical,vec![]));procedures(body,shapes);
+        },
+        Stmt::Module {body,..}|Stmt::Block {body}|Stmt::Do {body,..}|Stmt::DoWhile {body,..}=>procedures(body,shapes),
+        Stmt::If {then_body,else_body,..}=>{procedures(then_body,shapes);if let Some(body)=else_body {procedures(body,shapes);}},_=>{}
+    }}}
+    fn scope(body: &mut Vec<Stmt>, inherited: &Shapes, serial: &mut usize) -> Result<()> {
+        let mut shapes=inherited.clone();
+        for s in body.iter() {match s {
+            Stmt::ArrayDecl {kind,name,dims}=>{shapes.insert(name.clone(),(kind.clone(),dims.clone()));},
+            Stmt::VarDecl {kind,names}=>for n in names {shapes.insert(n.clone(),(kind.clone(),vec![]));},_=>{}
+        }}
+        // Pointer aliases can invalidate an otherwise known scalar value.
+        let aliases=inherited.contains_key("@constructor_aliases") || body.iter().any(|s|matches!(s,Stmt::DummyIntent{intent,..} if matches!(intent.as_str(),"pointer"|"target")));
+        if aliases {shapes.insert("@constructor_aliases".into(),(TypeSpec::Logical,vec![]));}
+        let mut values=Ranges::new();let mut out=vec![];
+        for mut s in std::mem::take(body) {
+            match &mut s {
+                Stmt::Assign {name,value} if !aliases=>{
+                    let known=range(value,&values,&shapes);
+                    // Unknown expressions may contain calls with side effects.
+                    if let Some(known)=known {values.insert(name.clone(),known);} else {values.clear();}
+                },
+                Stmt::CallSub {args,..}=>{
+                    // A call in another actual could change a control variable.
+                    fn calls(e:&Expr,shapes:&Shapes)->bool {match e {
+                        Expr::Call(n,a) if matches!(n.as_str(),"@array_constructor"|"@output_implied_do"|"@integer_literal")
+                            || (!shapes.contains_key(&format!("@constructor_procedure:{n}"))
+                                && (matches!(n.as_str(),"real"|"dble"|"int"|"size") || crate::intrinsics::math_arity(n).is_some()))
+                            =>a.iter().any(|e|calls(e,shapes)),
+                        Expr::Call(..)=>true,Expr::Bin(_,a,b)=>calls(a,shapes)||calls(b,shapes),Expr::Un(_,a)=>calls(a,shapes),_=>false,
+                    }}
+                    if args.iter().any(|e|calls(e,&shapes)) {values.clear();}
+                    for arg in args {
+                        if !matches!(arg,Expr::Call(n,_) if n=="@array_constructor") || !delayed(arg) {continue;}
+                        let Expr::Call(_,items)=arg else {unreachable!()};
+                        let Some(bound)=capacity(items,&values,&shapes) else {continue;};
+                        let kind=item_kind(items,&shapes)?;
+                        if !matches!(kind,TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision|TypeSpec::Logical) {continue;}
+                        *serial+=1;let temp=format!("@constructor_actual_{serial}");let cursor=format!("@constructor_actual_length_{serial}");
+                        out.push(Stmt::ArrayDecl {kind:kind.clone(),name:temp.clone(),dims:vec![int(bound)]});
+                        out.push(Stmt::VarDecl {kind:TypeSpec::Integer(Some(8)),names:vec![cursor.clone()]});
+                        out.push(assign(&cursor,int(0)));
+                        out.extend(Builder {shapes:&shapes,temp:temp.clone(),cursor:cursor.clone(),capacity:bound,serial}.items(items,&HashMap::new())?);
+                        shapes.insert(temp.clone(),(kind,vec![int(bound)]));
+                        *arg=Expr::Call("@packed_view".into(),vec![id(&temp),id(&cursor)]);
+                    }
+                    values.clear();
+                },
+                Stmt::Module {body,..}|Stmt::Function {body,..}|Stmt::Subroutine {body,..}|Stmt::Block {body}|Stmt::Do {body,..}|Stmt::DoWhile {body,..}=>{
+                    scope(body,&shapes,serial)?;values.clear();
+                },
+                Stmt::If {then_body,else_body,..}=>{
+                    scope(then_body,&shapes,serial)?;if let Some(body)=else_body {scope(body,&shapes,serial)?;}values.clear();
+                },
+                Stmt::VarDecl {..}|Stmt::ArrayDecl {..}|Stmt::DummyIntent {..}|Stmt::SourceLocation(_)=>{},
+                _=>values.clear(),
+            }
+            out.push(s);
+        }
+        *body=out;Ok(())
+    }
+    let mut inherited=Shapes::new();
+    procedures(&p.body,&mut inherited);
+    scope(&mut p.body,&inherited,&mut 0)?;Ok(p)
+}
 fn rename(e: &mut Expr, names: &HashMap<String, String>) {
     match e {
         Expr::Ident(n) => {

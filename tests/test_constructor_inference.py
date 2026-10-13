@@ -67,8 +67,7 @@ end
         self.reject(MODULE+"use kinds_mod\nprint *,identify(['a','bb'])\nend\n", 'CHARACTER length')
 
     def test_runtime_constructor_reaches_array_argument_lowering(self):
-        self.reject((ROOT/'xset_alloc_implied_do.f90').read_text(encoding='utf-8'),
-                    'runtime-bound array constructor arguments are not yet supported')
+        self.check((ROOT/'xset_alloc_implied_do.f90').read_text(encoding='utf-8'), '1 2 3\n')
 
     def test_set_alloc_with_constant_bound(self):
         source=(ROOT/'xset_alloc_implied_do.f90').read_text(encoding='utf-8')

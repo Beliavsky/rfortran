@@ -1416,6 +1416,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
     p=crate::character_elementals::resolve(p)?;
     p=crate::output::prepare_formatted(p)?;
     p = crate::pointers::prepare(p)?;
+    p = crate::constructors::prepare_arguments(p)?;
     p = crate::allocatables::prepare(p)?;
     p = crate::vector_subscripts::resolve(p)?;
     p = crate::array_bounds::resolve(p)?;

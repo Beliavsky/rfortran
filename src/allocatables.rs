@@ -540,6 +540,7 @@ pub(crate) fn deallocation_targets(args: &[Expr]) -> Result<Vec<String>> {
 fn capacity(e: &Expr, arrays: &HashMap<String, i64>) -> Option<i64> {
     match e {
         Expr::Ident(n) => arrays.get(n).copied(),
+        Expr::Call(n,a) if n=="@packed_view" => a.first().and_then(|e|capacity(e,arrays)),
         Expr::Call(n, a) if n == "@array_constructor" => a.iter().try_fold(0i64, |sum, e| {
             sum.checked_add(capacity(e, arrays).unwrap_or(1))
         }),
@@ -652,6 +653,19 @@ pub(crate) fn prepare(mut p: Program) -> Result<Program> {
             }
         }
     }
+    // Constructor temporaries have globally unique names, including those
+    // materialized inside a branch or loop rather than at program scope.
+    fn constructor_arrays(body:&[Stmt], arrays:&mut HashMap<String,i64>)->Result<()> {
+        for s in body {match s {
+            Stmt::ArrayDecl {name,dims,..} if name.starts_with("@constructor_actual_")=>{
+                if let [dim]=dims.as_slice() {arrays.insert(name.clone(),crate::parameters::integer_constant(dim)?);}
+            },
+            Stmt::Block {body}|Stmt::Do {body,..}|Stmt::DoWhile {body,..}=>constructor_arrays(body,arrays)?,
+            Stmt::If {then_body,else_body,..}=>{constructor_arrays(then_body,arrays)?;if let Some(body)=else_body {constructor_arrays(body,arrays)?;}},_=>{}
+        }}
+        Ok(())
+    }
+    constructor_arrays(&p.body,&mut arrays)?;
     let mut bounds = HashMap::<String, i64>::new();
     fn calls(
         body: &[Stmt],

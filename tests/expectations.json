@@ -1147,6 +1147,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 14 14\n 16\n 23 53\n 30 50\n"
+    },
+    "165_constructor_arguments": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 1 2 3\n"
     }
   }
 }
