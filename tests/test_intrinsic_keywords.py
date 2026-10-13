@@ -10,6 +10,42 @@ class IntrinsicKeywords(unittest.TestCase):
     def test_random_seed_reproducer(self):
         self.check((ROOT/'xrandom_seed.f90').read_text(encoding='utf-8'),'T T T\n')
 
+    def test_seed_array_expression(self):
+        self.check((ROOT/'xrandom_seed_expression.f90').read_text(encoding='utf-8'),'T\n')
+
+    def test_seed_runtime_pack_expression(self):
+        source=(ROOT/'xrandom_seed_expression.f90').read_text(encoding='utf-8')
+        self.check(source.replace('put=seed+37','put=pack(seed+37,seed>0)'),'T\n')
+
+    def test_seed_constructor_section_and_elemental_expression(self):
+        self.check("""implicit none
+integer::seed(8),i
+real::a(3),b(3)
+seed=123
+call random_seed(put=[(160,i=1,8)])
+call random_number(a)
+call random_seed(put=abs(-seed)+37)
+call random_number(b)
+print *,all(a==b)
+call random_seed(put=seed(8:1:-1)+37)
+call random_number(b)
+print *,all(a==b)
+end
+""",'T\nT\n')
+
+    def test_seed_expression_types_and_output_definability(self):
+        for declaration,actual in [
+            ('integer::s(8)','1'),
+            ('real::s(8)','s+1.0'),
+            ('integer(8)::s(8)','s+1'),
+            ('integer::s(2,2)','s+1'),
+            ('logical::s(8)','s'),
+        ]:
+            with self.subTest(actual=actual,declaration=declaration):
+                self.reject('implicit none\n'+declaration+'\ncall random_seed(put='+actual+')\nend\n','default INTEGER rank-one')
+        self.reject('integer::s(8)\ncall random_seed(get=s+1)\nend\n','GET requires')
+        self.reject('call random_seed(put=[1])\nend\n','at least 2 elements')
+
     def test_seed_get_saves_current_state(self):
         self.check("""implicit none
 integer::n

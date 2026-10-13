@@ -1496,7 +1496,11 @@ arguments. `KIND` uses its standard argument name `X`.
 in the interpreter and native code. The seed representation uses two default
 INTEGER words for the existing 64-bit generator state. SIZE defines a scalar
 or an array element; PUT/GET require a rank-one default INTEGER array of at least
-two elements. GET can save the current stream for restoration with PUT.
+two elements. PUT is an input argument and accepts compatible array expressions,
+including arithmetic, constructors, sections and PACK; GET requires writable
+storage. Expressions use the same array materialization as other procedure
+inputs. `xrandom_seed_expression.f90` compares expression and variable inputs.
+GET can save the current stream for restoration with PUT.
 The no-argument form retains its deterministic reset. `xrandom_seed.f90` checks
 stream restoration and output range; `tests/test_intrinsic_keywords.py` checks
 keyword association and seed argument/intent diagnostics.

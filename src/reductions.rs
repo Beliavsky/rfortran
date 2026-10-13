@@ -1027,6 +1027,27 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
             }
         }
         if let Stmt::CallSub {name,args}=&stmt {
+            if name=="@random_seed_put_array" {
+                let mut actual=args[0].clone();
+                let (kind,_,length)=argument_with_elementals(&mut actual,&symbols.variables,&mut prefix,serial,&symbols.elementals)?;
+                if !matches!(kind,TypeSpec::Integer(None|Some(4))) {
+                    bail!("RANDOM_SEED PUT requires a default INTEGER rank-one array expression");
+                }
+                // Generated arrays must be visible when selecting their elements.
+                let mut captured=symbols.variables.clone();
+                for declaration in &prefix {
+                    if let Stmt::ArrayDecl {kind,name,dims}=declaration {
+                        captured.insert(name.clone(),(kind.clone(),dims.clone()));
+                    }
+                }
+                prefix.push(Stmt::If {cond:bin(BinOp::Lt,length,int(2)),then_body:vec![Stmt::CallSub {name:"@error_stop".into(),args:vec![Expr::Str("RANDOM_SEED PUT array must have at least 2 elements".into())]}],else_body:None});
+                let words=[1,2].into_iter().map(|i|argument_element(&actual,&int(i),&captured)).collect::<Result<Vec<_>>>()?;
+                prefix.push(Stmt::CallSub {name:"@random_seed_put".into(),args:words});
+                output.push(Stmt::Block {body:prefix});
+                continue;
+            }
+        }
+        if let Stmt::CallSub {name,args}=&stmt {
             if name=="@format_begin" {
                 if !matches!(crate::array_calls::scalar_actual_kind(&args[1],&symbols.variables)?,TypeSpec::Character(_)) {
                     bail!("WRITE/PRINT format must be scalar CHARACTER");

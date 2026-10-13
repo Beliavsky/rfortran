@@ -25,6 +25,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
         inherited_readonly: &HashSet<String>,
         procedures: &HashSet<String>,
         pure: bool,
+        types: &crate::operators::ExpressionTypes,
     ) -> Result<()> {
         let mut vars = inherited.clone();
         let mut readonly = inherited_readonly.clone();
@@ -92,6 +93,15 @@ pub fn resolve(mut p: Program) -> Result<Program> {
                     if present.len()>1 {bail!("RANDOM_SEED permits at most one of SIZE, PUT and GET");}
                     if let Some((slot,arg))=present.first() {
                         let keyword=["SIZE","PUT","GET"][*slot];
+                        if *slot==1 {
+                            if !matches!(types.kind_rank(arg,&vars)?,Some((TypeSpec::Integer(None|Some(4)),1))) {
+                                bail!("RANDOM_SEED PUT requires a default INTEGER rank-one array expression");
+                            }
+                            // Defer materialization until array specialization has supplied
+                            // bounded storage and runtime extents for allocatable inputs.
+                            s=Stmt::CallSub {name:"@random_seed_put_array".into(),args:vec![(*arg).clone()]};
+                            return Ok(());
+                        }
                         if *slot==0 {
                             if let Expr::Index(variable,indices)|Expr::Call(variable,indices)=arg {
                                 let (kind,rank)=vars.get(variable).context("RANDOM_SEED SIZE requires a scalar default INTEGER variable")?;
@@ -119,10 +129,10 @@ pub fn resolve(mut p: Program) -> Result<Program> {
                         }
                     }
                 },
-                Stmt::Function {body,pure,..}|Stmt::Subroutine {body,pure,..}=>scope(body,&vars,&readonly,procedures,*pure)?,
-                Stmt::Module {body,..}|Stmt::Block {body}|Stmt::Do {body,..}|Stmt::DoWhile {body,..}=>scope(body,&vars,&readonly,procedures,pure)?,
-                Stmt::If {then_body,else_body,..}=>{scope(then_body,&vars,&readonly,procedures,pure)?;if let Some(body)=else_body {scope(body,&vars,&readonly,procedures,pure)?;}},
-                Stmt::SelectCase {cases,default,..}=>{for c in cases {scope(&mut c.body,&vars,&readonly,procedures,pure)?;}if let Some(body)=default {scope(body,&vars,&readonly,procedures,pure)?;}},_=>{}
+                Stmt::Function {body,pure,..}|Stmt::Subroutine {body,pure,..}=>scope(body,&vars,&readonly,procedures,*pure,types)?,
+                Stmt::Module {body,..}|Stmt::Block {body}|Stmt::Do {body,..}|Stmt::DoWhile {body,..}=>scope(body,&vars,&readonly,procedures,pure,types)?,
+                Stmt::If {then_body,else_body,..}=>{scope(then_body,&vars,&readonly,procedures,pure,types)?;if let Some(body)=else_body {scope(body,&vars,&readonly,procedures,pure,types)?;}},
+                Stmt::SelectCase {cases,default,..}=>{for c in cases {scope(&mut c.body,&vars,&readonly,procedures,pure,types)?;}if let Some(body)=default {scope(body,&vars,&readonly,procedures,pure,types)?;}},_=>{}
             }Ok(())})().map_err(|error|crate::source_diagnostics::at(error,location))?;
             out.push(s);
         }
@@ -131,12 +141,14 @@ pub fn resolve(mut p: Program) -> Result<Program> {
     }
     let mut procedures = HashSet::new();
     collect(&p.body, &mut procedures);
+    let types = crate::operators::ExpressionTypes::new(&p)?;
     scope(
         &mut p.body,
         &HashMap::new(),
         &HashSet::new(),
         &procedures,
         false,
+        &types,
     )?;
     Ok(p)
 }

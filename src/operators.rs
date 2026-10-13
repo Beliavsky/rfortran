@@ -152,6 +152,31 @@ struct Resolver {
     exports: HashMap<String, Bindings>,
 }
 
+/// Reuse generic-resolution type inference for intrinsic input validation.
+pub(crate) struct ExpressionTypes(Resolver);
+impl ExpressionTypes {
+    pub(crate) fn new(program: &Program) -> Result<Self> {
+        let mut resolver = Resolver::default();
+        resolver.collect(&program.body)?;
+        Ok(Self(resolver))
+    }
+    pub(crate) fn kind_rank(&self, expression: &Expr, declarations: &HashMap<String, (TypeSpec, usize)>) -> Result<Option<(TypeSpec, usize)>> {
+        let vars = declarations.iter().map(|(name, (kind, rank))| {
+            let element = scalar(kind);
+            (name.clone(), if *rank == 0 { element } else { Ty::Array(Box::new(element), *rank) })
+        }).collect();
+        let ty = self.0.expression(&mut expression.clone(), &vars, &Bindings::new())?;
+        Ok(match ty {
+            Ty::Scalar(kind) => Some((kind, 0)),
+            Ty::Array(element, rank) => match *element {
+                Ty::Scalar(kind) => Some((kind, rank)),
+                _ => None,
+            },
+            _ => None,
+        })
+    }
+}
+
 fn merge(target: &mut Bindings, source: &Bindings) {
     for (op, names) in source {
         let out = target.entry(op.clone()).or_default();
