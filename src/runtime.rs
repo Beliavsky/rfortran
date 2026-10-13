@@ -1289,9 +1289,9 @@ pub fn interpret(program: &Program) {
                         call_stack.last_mut().unwrap().env_int.insert(dest.clone(),handle);
                         idx+=1;continue;
                     }
-                    if name=="@format_item" || name=="@format_end" {
+                    if name=="@format_item" || name=="@format_end" || name=="@internal_format_end" {
                         let fr=call_stack.last().unwrap().clone();
-                        let handle=eval_expr(&args[0],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
+                        let handle=eval_expr(&args[usize::from(name=="@internal_format_end")],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
                         if name=="@format_item" {
                             let value=eval_expr(&args[1],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack);
                             let value=if let Some(s)=value.3 {Expr::Str(s)} else if let Some(b)=value.2 {Expr::Logical(b)}
@@ -1299,18 +1299,23 @@ pub fn interpret(program: &Program) {
                             OUTPUT_LISTS.with(|lists|lists.borrow_mut().get_mut(&handle).unwrap().2.push(value));
                         } else {
                             let (format,advance,items)=OUTPUT_LISTS.with(|lists|lists.borrow_mut().remove(&handle).unwrap());
+                            let internal=name=="@internal_format_end";
+                            let destination=if internal {Some((args[0].clone(),args[2].clone()))} else {None};
                             let mut args=vec![Expr::Str(format)];args.extend(items);
-                            exec_stmts(&[Stmt::CallSub {name:if advance {"@formatted_print"} else {"@formatted_write_noadvance"}.into(),args}],funcs,call_stack);
+                            if let Some((target,length))=destination {args.extend([target,length]);}
+                            exec_stmts(&[Stmt::CallSub {name:if internal {"@internal_formatted_record"} else if advance {"@formatted_print"} else {"@formatted_write_noadvance"}.into(),args}],funcs,call_stack);
                         }
                         idx+=1;continue;
                     }
-                    if name == "@formatted_print" || name == "@formatted_write_noadvance" {
+                    if name == "@formatted_print" || name == "@formatted_write_noadvance" || name=="@internal_formatted_record" {
+                        let internal=name=="@internal_formatted_record";
+                        let end=args.len()-if internal {2} else {0};
                         let fr=call_stack.last().unwrap().clone();
                         let format=eval_expr(&args[0],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).3.unwrap();
-                        let fields=crate::formatting::parse(&format,args.len()-1).unwrap_or_else(|e| {
+                        let fields=crate::formatting::parse(&format,end-1).unwrap_or_else(|e| {
                             eprintln!("Runtime error: invalid output format: {e}"); std::process::exit(1)
                         });
-                        let values:Vec<_>=args[1..].iter().map(|e| {
+                        let values:Vec<_>=args[1..end].iter().map(|e| {
                             let fr=call_stack.last().unwrap().clone();
                             eval_expr(e,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack)
                         }).collect();
@@ -1321,12 +1326,25 @@ pub fn interpret(program: &Program) {
                             }
                         }
                         let mut items=values.into_iter();
+                        let mut output=String::new();
                         for field in &fields {
-                            if let Some(text)=&field.literal {print!("{text}");continue;}
+                            if let Some(text)=&field.literal {output.push_str(text);continue;}
                             let v=items.next().unwrap();
-                            let text=match field.code {'a'=>v.3.unwrap(),  'i'=>{let i=v.0.unwrap();if i==0 && field.precision==0 {String::new()}else{format!("{}{:0width$}",if i<0 {"-"} else {""},i.unsigned_abs(),width=field.precision)}}, 'l'=>if v.2.unwrap_or(v.0==Some(1)) {"T".into()}else{"F".into()},_=>format!("{:.*}",field.precision,v.1.unwrap_or(v.0.unwrap_or(0) as f64))};
-                            if field.width==0 {if field.code=='i' && text.is_empty() {print!(" ");}else{print!("{text}");}} else if text.len()>field.width {if field.code=='a' {print!("{}",text.chars().take(field.width).collect::<String>());}else{print!("{}","*".repeat(field.width));}}else{print!("{:>width$}",text,width=field.width);}
+                            let text=match field.code {'a'=>v.3.unwrap(), 'i'=>{let i=v.0.unwrap();if i==0 && field.precision==0 {String::new()}else{format!("{}{:0width$}",if i<0 {"-"} else {""},i.unsigned_abs(),width=field.precision)}}, 'l'=>if v.2.unwrap_or(v.0==Some(1)) {"T".into()}else{"F".into()},_=>format!("{:.*}",field.precision,v.1.unwrap_or(v.0.unwrap_or(0) as f64))};
+                            if field.width==0 {if field.code=='i' && text.is_empty() {output.push(' ');}else{output.push_str(&text);}}
+                            else if text.len()>field.width {if field.code=='a' {output.extend(text.chars().take(field.width));}else{output.push_str(&"*".repeat(field.width));}}
+                            else {output.push_str(&format!("{:>width$}",text,width=field.width));}
                         }
+                        if internal {
+                            let Expr::Ident(destination)=&args[end] else {unreachable!()};
+                            let length=eval_expr(&args[end+1],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap() as usize;
+                            if fields.iter().any(|field|field.code=='/') {io_result::<()>(Err(anyhow::anyhow!("internal WRITE requires a single record; multiple records are not yet supported")));}
+                            if output.len()>length {io_result::<()>(Err(anyhow::anyhow!("internal WRITE record exceeds CHARACTER destination length")));}
+                            output.extend(std::iter::repeat_n(' ',length-output.len()));
+                            call_stack.last_mut().unwrap().env_str.insert(destination.clone(),output);
+                            idx+=1;continue;
+                        }
+                        print!("{output}");
                         if name == "@formatted_write_noadvance" {
                             use std::io::Write;
                             io_result(std::io::stdout().flush().map_err(Into::into));

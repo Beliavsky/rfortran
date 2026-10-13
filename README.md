@@ -482,6 +482,18 @@ writes flush stdout, so prompts appear before a following READ. A final
 nonadvancing write leaves stdout without an added newline, including at STOP.
 ADVANCE cannot be used with list-directed (`*`) formats.
 
+Formatted internal WRITE to a scalar CHARACTER buffer supports literal or runtime
+format strings, INTEGER/REAL/LOGICAL/CHARACTER items, arrays and implied-DO lists.
+The same parser and descriptors are used for standard output. Each statement
+captures its inputs before replacing the destination, pads unused characters
+with blanks, and reports record overflow. PURE and ELEMENTAL procedures may
+write local CHARACTER variables and writable dummy arguments; INTENT(IN),
+nonlocal destinations and external I/O remain protected. This subset supports
+one record and explicit formats; internal file arrays, list-directed output,
+IOSTAT and other WRITE control options remain unsupported.
+`xstr_real.f90`, `tests/172_internal_write.f90`, and
+`python tests/test_internal_write.py` cover this behavior.
+
 Formatted PRINT/WRITE to standard output support nested implied-DO lists with
 runtime INTEGER bounds and positive/negative steps. Controls are evaluated once
 on entry to each implied-DO. Transfer values, including CHARACTER substrings,
@@ -496,7 +508,7 @@ O0/O2 checks with gfortran comparisons. The Cargo suite includes
 
 Transfer items inside implied-DOs must resolve to supported scalar values;
 existing CHARACTER procedure-argument limitations remain. Numeric format labels,
-format reversion, formatted implied-DOs to file/internal units, and runtime
+format reversion, formatted implied-DOs to external file units, and runtime
 ADVANCE values are not yet supported. Format nesting is limited to 32 levels;
 the existing limits of
 256 for field width/precision and 10,000 for repeat counts apply.

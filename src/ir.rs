@@ -36,7 +36,7 @@ fn input_destinations(stmts: &[IStmt]) -> std::collections::HashSet<String> {
             IStmt::Call(name, args) if name == "@read_record_status" => {
                 for arg in &args[..2] { if let IExpr::Ident(id) = arg { names.insert(id.clone()); } }
             }
-            IStmt::Call(name, args) if name.eq_ignore_ascii_case("random_number") || name == "@random_seed_get" || name == "@date_snapshot" || name == "@read_record" || name == "@internal_read_byte" || name == "@character_assign" || name == "@character_length" => {
+            IStmt::Call(name, args) if name.eq_ignore_ascii_case("random_number") || name == "@random_seed_get" || name == "@date_snapshot" || name == "@read_record" || name == "@internal_read_byte" || name == "@internal_format_end" || name == "@character_assign" || name == "@character_length" => {
                 if let Some(IExpr::Ident(id) | IExpr::Index(id, _)) = args.first() { names.insert(id.clone()); }
             }
             IStmt::Do { body, .. } | IStmt::DoWhile { body, .. } | IStmt::Block { body } => names.extend(input_destinations(body)),
@@ -1594,7 +1594,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
             // READ operands designate writable storage, not values to substitute.
             IStmt::Read(vars) => vec![IStmt::Read(vars)],
             IStmt::Call(name, args) => {
-                if name.eq_ignore_ascii_case("random_number") || name == "@random_seed_get" || name == "@date_snapshot" || name == "@format_begin" || name == "@read_record" || name == "@read_record_status" || name == "@internal_read_byte" || name == "@character_assign" || name == "@character_length" {
+                if name.eq_ignore_ascii_case("random_number") || name == "@random_seed_get" || name == "@date_snapshot" || name == "@format_begin" || name == "@read_record" || name == "@read_record_status" || name == "@internal_read_byte" || name == "@internal_format_end" || name == "@character_assign" || name == "@character_length" {
                     return vec![IStmt::Call(name, args)];
                 }
                 let optimized_args = args

@@ -173,17 +173,41 @@ pub unsafe extern "C" fn rfort_format_push(list:*mut core::ffi::c_void,tag:u64,m
     list.items.add(list.count).write(Item {tag,bits,length});list.count+=1;
     0
 }
-#[no_mangle]
-pub unsafe extern "C" fn rfort_format_end(pointer:*mut core::ffi::c_void)->i32 {
+unsafe fn free_output_list(pointer:*mut core::ffi::c_void) {
     let list=&*pointer.cast::<OutputList>();
-    rfort_formatted_write(list.format,list.length,list.items,list.count,list.advance);
     for i in 0..list.count {
         let item=&*list.items.add(i);
         if item.tag==4 {free(item.bits as usize as *mut core::ffi::c_void);}
     }
     free(list.items.cast());free(list.format.cast());free(pointer);
+}
+#[no_mangle]
+pub unsafe extern "C" fn rfort_format_end(pointer:*mut core::ffi::c_void)->i32 {
+    let list=&*pointer.cast::<OutputList>();
+    rfort_formatted_write(list.format,list.length,list.items,list.count,list.advance);
+    free_output_list(pointer);
     0
 }
+#[no_mangle]
+pub unsafe extern "C" fn rfort_internal_format_end(pointer:*mut core::ffi::c_void,destination:*mut u8,length:usize)->i32 {
+    let list=&*pointer.cast::<OutputList>();
+    let format=core::slice::from_raw_parts(list.format,list.length);
+    let mut parser=checked(GroupParser::new(format,list.count));
+    while let Some(descriptor)=checked(parser.next()) {
+        if descriptor.code==b'/' {fail("internal WRITE requires a single record; multiple records are not yet supported");}
+    }
+    core::ptr::write_bytes(destination,b' ',length);
+    let mut cursor=0;
+    render_format(list.format,list.length,list.items,list.count,&mut |byte| {
+        if cursor==length {fail("internal WRITE record exceeds CHARACTER destination length");}
+        *destination.add(cursor)=byte;
+        cursor+=1;
+    });
+    *destination.add(length)=0;
+    free_output_list(pointer);
+    0
+}
+
 fn checked<T>(result: Result<T, &'static str>) -> T {
     match result {
         Ok(v) => v,
@@ -193,13 +217,12 @@ fn checked<T>(result: Result<T, &'static str>) -> T {
 /// The compiler supplies valid format bytes and an aligned array of `count`
 /// Items. CHARACTER items contain a valid pointer and length; other items hold
 /// INTEGER, REAL, or LOGICAL bits. All storage remains live for this call.
-#[no_mangle]
-pub unsafe extern "C" fn rfort_formatted_write(
+unsafe fn render_format(
     format: *const u8,
     length: usize,
     items: *const Item,
     count: usize,
-    advance: i32,
+    emit: &mut impl FnMut(u8),
 ) {
     let bytes = core::slice::from_raw_parts(format, length);
     let items = core::slice::from_raw_parts(items, count);
@@ -231,7 +254,7 @@ pub unsafe extern "C" fn rfort_formatted_write(
                     let mut i = 0;
                     while i < d.literal.len() {
                         let c = d.literal[i];
-                        putchar(c as i32);
+                        emit(c);
                         i += 1;
                         if c == d.code && d.literal.get(i) == Some(&c) {
                             i += 1;
@@ -239,10 +262,10 @@ pub unsafe extern "C" fn rfort_formatted_write(
                     }
                 }
                 b'x' => {
-                    putchar(32);
+                    emit(32);
                 }
                 b'/' => {
-                    putchar(10);
+                    emit(10);
                 }
                 _ => {
                     let item = &items[index];
@@ -254,13 +277,10 @@ pub unsafe extern "C" fn rfort_formatted_write(
                             (item.length as usize).min(d.width)
                         };
                         for _ in n..d.width {
-                            putchar(32);
+                            emit(32);
                         }
-                        printf(
-                            b"%.*s\0".as_ptr(),
-                            n as i32,
-                            item.bits as usize as *const u8,
-                        );
+                        let text=core::slice::from_raw_parts(item.bits as usize as *const u8,n);
+                        for byte in text {emit(*byte);}
                     } else {
                         // Maximum F precision is 256; even DBL_MAX needs fewer than 600 bytes.
                         let mut buffer = [0u8; 1024];
@@ -288,27 +308,28 @@ pub unsafe extern "C" fn rfort_formatted_write(
                         let n = n as usize;
                         if d.width != 0 && n > d.width {
                             for _ in 0..d.width {
-                                putchar(b'*' as i32);
+                                emit(b'*');
                             }
                         } else {
                             for _ in n..d.width {
-                                putchar(32);
+                                emit(32);
                             }
                             if d.width == 0 && n == 0 && d.code == b'i' {
-                                putchar(32);
+                                emit(32);
                             }
-                            printf(b"%s\0".as_ptr(), buffer.as_ptr());
+                            for byte in &buffer[..n] {emit(*byte);}
                         }
                     }
                 }
             }
         }
     }
-    if advance != 0 {
-        putchar(10);
-    } else {
-        fflush(core::ptr::null_mut());
-    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rfort_formatted_write(format:*const u8,length:usize,items:*const Item,count:usize,advance:i32) {
+    render_format(format,length,items,count,&mut |byte| {putchar(byte as i32);});
+    if advance!=0 {putchar(10);} else {fflush(core::ptr::null_mut());}
 }
 
 // Preserve the advancing-only ABI used by previously emitted objects.

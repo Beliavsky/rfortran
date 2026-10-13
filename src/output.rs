@@ -365,8 +365,20 @@ pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> Result<crat
             }
         }
         for stmt in body.iter_mut() {
+            let mut internal = None;
             let selected = if let Stmt::CallSub { name, args } = stmt {
-                if matches!(
+                if name=="@write" && matches!(&args[0],Expr::Ident(n) if matches!(symbols.get(n),Some((TypeSpec::Character(_),dims)) if dims.is_empty())) {
+                    let Expr::Ident(target)=&args[0] else {unreachable!()};
+                    let (TypeSpec::Character(length),_)=&symbols[target] else {unreachable!()};
+                    if args[2..].iter().any(|e|matches!(e,Expr::Call(n,_) if n.starts_with("@write_option:"))) {
+                        bail!("internal WRITE control options are not yet supported");
+                    }
+                    if matches!(&args[1],Expr::Call(n,_) if n=="@list_directed") {
+                        bail!("list-directed internal WRITE is not yet supported");
+                    }
+                    internal=Some((target.clone(),length.unwrap_or(1)));
+                    Some((args[1].clone(),args[2..].to_vec(),false))
+                } else if matches!(
                     name.as_str(),
                     "@formatted_print" | "@formatted_write_noadvance"
                 ) && args[1..].iter().any(contains_implied_do)
@@ -427,9 +439,10 @@ pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> Result<crat
                     &mut inner,
                     Some(&handle),
                 )?;
-                inner.push(Stmt::CallSub {
-                    name: "@format_end".into(),
-                    args: vec![id(&handle)],
+                inner.push(if let Some((target,length))=internal {
+                    Stmt::CallSub {name:"@internal_format_end".into(),args:vec![id(&target),id(&handle),int(length as i64)]}
+                } else {
+                    Stmt::CallSub {name:"@format_end".into(),args:vec![id(&handle)]}
                 });
                 *stmt = Stmt::Block { body: inner };
                 continue;

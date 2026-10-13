@@ -1451,6 +1451,9 @@ pub fn resolve(mut p: Program) -> Result<Program> {
     let mut routines = HashMap::new();
     collect(&mut p.body, &mut routines);
     expand(&mut p.body, &Shapes::new(), &routines, &functions, &mut vec![], &mut 0)?;
+    // Writable assumed-length CHARACTER dummies have concrete storage only
+    // after call-site specialization. Capture their internal output lists now.
+    p = crate::output::prepare_formatted(p)?;
     p = crate::pointers::resolve(p)?;
     p = crate::allocatables::finish(p)?;
     p = crate::constructors::resolve(p)?;

@@ -47,9 +47,16 @@ pub fn validate(program: &Program) -> Result<()> {
         }
         Ok(())
     }
-    fn check(body: &[Stmt], inherited: &HashSet<String>, readonly: &HashSet<String>, known: &HashMap<String, Procedure>) -> Result<()> {
+    fn check(body: &[Stmt], inherited: &HashSet<String>, readonly: &HashSet<String>, known: &HashMap<String, Procedure>, inherited_characters: &HashSet<String>) -> Result<()> {
         let mut locals = inherited.clone();
+        let mut characters = inherited_characters.clone();
         for stmt in body {
+            let character = |kind: &crate::ast::TypeSpec| matches!(kind, crate::ast::TypeSpec::Character(_) | crate::ast::TypeSpec::CharacterLength(_) | crate::ast::TypeSpec::CharacterAssumed);
+            match stmt {
+                Stmt::VarDecl {kind,names} => for name in names {if character(kind) {characters.insert(name.clone());} else {characters.remove(name);}},
+                Stmt::ArrayDecl {kind,name,..} => {if character(kind) {characters.insert(name.clone());} else {characters.remove(name);}},
+                _ => {},
+            }
             match stmt {
                 Stmt::CallSub {name,..} if name=="@pointer_associate" || name=="@nullify" => bail!("pointer association in PURE procedures is not yet supported"),
                 Stmt::VarDecl { names, .. } => locals.extend(names.iter().cloned()),
@@ -82,7 +89,18 @@ pub fn validate(program: &Program) -> Result<()> {
                         writable(dest)?;
                     }
                 }
-                Stmt::CallSub {name,..} if matches!(name.as_str(), "@formatted_read" | "@formatted_read_status" | "@read_record" | "@read_record_status" | "@write") || name.starts_with("@io_") || name.starts_with("@file_") => bail!("PURE procedure cannot perform external I/O"),
+                Stmt::CallSub {name,args} if name=="@write" => {
+                    let target=match &args[0] {
+                        Expr::Ident(n) | Expr::Index(n,_) | Expr::Call(n,_) if characters.contains(n) => n,
+                        _ => bail!("PURE procedure cannot perform external I/O"),
+                    };
+                    writable(target)?;
+                    if let Expr::Index(_,indices) | Expr::Call(_,indices)=&args[0] {
+                        for index in indices {expression(index,&locals,known)?;}
+                    }
+                    for arg in &args[1..] {expression(arg,&locals,known)?;}
+                }
+                Stmt::CallSub {name,..} if matches!(name.as_str(), "@formatted_read" | "@formatted_read_status" | "@read_record" | "@read_record_status") || name.starts_with("@io_") || name.starts_with("@file_") => bail!("PURE procedure cannot perform external I/O"),
                 Stmt::CallSub {name,args} if name == "@where" || name == "@elsewhere" => {
                     for e in args { expression(e,&locals,known)?; }
                 }
@@ -132,33 +150,41 @@ pub fn validate(program: &Program) -> Result<()> {
                 }
                 Stmt::Return(Some(e)) => expression(e, &locals, known)?,
                 Stmt::If { cond, then_body, else_body } => {
-                    expression(cond, &locals, known)?; check(then_body, &locals, readonly, known)?;
-                    if let Some(body) = else_body { check(body, &locals, readonly, known)?; }
+                    expression(cond, &locals, known)?; check(then_body, &locals, readonly, known, &characters)?;
+                    if let Some(body) = else_body { check(body, &locals, readonly, known, &characters)?; }
                 }
                 Stmt::Do { var, start, end, body } => {
                     writable(var)?; expression(start, &locals, known)?; expression(end, &locals, known)?;
-                    check(body, &locals, readonly, known)?;
+                    check(body, &locals, readonly, known, &characters)?;
                 }
-                Stmt::DoWhile { cond, body } => { expression(cond, &locals, known)?; check(body, &locals, readonly, known)?; }
-                Stmt::Block { body } => check(body, &locals, readonly, known)?,
+                Stmt::DoWhile { cond, body } => { expression(cond, &locals, known)?; check(body, &locals, readonly, known, &characters)?; }
+                Stmt::Block { body } => check(body, &locals, readonly, known, &characters)?,
                 Stmt::SelectCase { expr, cases, default } => {
                     expression(expr, &locals, known)?;
-                    for case in cases { check(&case.body, &locals, readonly, known)?; }
-                    if let Some(body) = default { check(body, &locals, readonly, known)?; }
+                    for case in cases { check(&case.body, &locals, readonly, known, &characters)?; }
+                    if let Some(body) = default { check(body, &locals, readonly, known, &characters)?; }
                 }
                 _ => {}
             }
         }
         Ok(())
     }
-    fn walk(body: &[Stmt], known: &HashMap<String, Procedure>) -> Result<()> {
+    fn walk(body: &[Stmt], known: &HashMap<String, Procedure>, inherited_characters: &HashSet<String>) -> Result<()> {
+        let mut characters=inherited_characters.clone();
+        for stmt in body {
+            match stmt {
+                Stmt::VarDecl {kind,names} if matches!(kind,crate::ast::TypeSpec::Character(_) | crate::ast::TypeSpec::CharacterAssumed | crate::ast::TypeSpec::CharacterLength(_)) => characters.extend(names.iter().cloned()),
+                Stmt::ArrayDecl {kind,name,..} if matches!(kind,crate::ast::TypeSpec::Character(_) | crate::ast::TypeSpec::CharacterAssumed | crate::ast::TypeSpec::CharacterLength(_)) => {characters.insert(name.clone());},
+                _=>{},
+            }
+        }
         for stmt in body {
             match stmt {
                 Stmt::Function { name, pure: true, elemental, return_type, params, body, .. } => {
                     if *elemental { crate::elemental::validate(name,params,return_type,body)?; }
                     let mut locals: HashSet<String> = params.iter().cloned().collect();
                     locals.insert(name.clone());
-                    check(body, &locals, &params.iter().cloned().collect(), known)?;
+                    check(body, &locals, &params.iter().cloned().collect(), known, &characters)?;
                 }
                 Stmt::Subroutine { name, pure: true, elemental, params, body, .. } => {
                     if *elemental { crate::elemental::validate_subroutine(name,params,body)?; }
@@ -167,9 +193,9 @@ pub fn validate(program: &Program) -> Result<()> {
                         bail!("PURE subroutine dummy arguments require an explicit INTENT");
                     }
                     let readonly = params.iter().zip(&declared).filter(|(_, i)| i.as_str() == "intent(in)").map(|(p, _)| p.clone()).collect();
-                    check(body, &params.iter().cloned().collect(), &readonly, known)?;
+                    check(body, &params.iter().cloned().collect(), &readonly, known, &characters)?;
                 }
-                Stmt::Module { body, .. } => walk(body, known)?,
+                Stmt::Module { body, .. } => walk(body, known, &characters)?,
                 _ => {}
             }
         }
@@ -177,7 +203,7 @@ pub fn validate(program: &Program) -> Result<()> {
     }
     let mut known = HashMap::new();
     procedures(&program.body, &mut known);
-    walk(&program.body, &known)
+    walk(&program.body, &known, &HashSet::new())
 }
 
 #[cfg(test)]
