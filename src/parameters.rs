@@ -21,7 +21,7 @@ pub(crate) fn resolve_intrinsic_modules(program: &mut Program) -> Result<()> {
     fn visit(body: &mut [Stmt], modules: &HashSet<String>, needed: &mut bool) -> Result<()> {
         for stmt in body {
             match stmt {
-                Stmt::Use { module, nature, only } => {
+                Stmt::Use { module, nature, only, .. } => {
                     let intrinsic = match nature.take().map(|n| n.to_ascii_lowercase()).as_deref() {
                         Some("intrinsic") => true,
                         Some("non_intrinsic") => {
@@ -227,7 +227,7 @@ fn logical_constant(e: &Expr, constants: &Constants) -> Result<bool> {
         _ => bail!("LOGICAL PARAMETER initializer must be a supported logical constant expression"),
     })
 }
-fn real_constant(e: &Expr) -> Result<f64> {
+pub(crate) fn real_constant(e: &Expr) -> Result<f64> {
     fn integral(e: &Expr) -> bool {
         match e { Expr::Call(tag,_) if tag == "@integer_literal" => true, Expr::IntLit(_) => true, Expr::Un(_, a) => integral(a), Expr::Bin(_, a,b) => integral(a) && integral(b), _ => false }
     }
@@ -457,7 +457,7 @@ fn separate_parameters(body: &mut Vec<Stmt>, arguments: &[String]) -> Result<()>
 
 // Resolve declaration initializers to constants before choosing automatic or
 // persistent storage. Procedure declaration initialization implies SAVE.
-fn initial_value(kind: &TypeSpec, value: &Expr) -> Result<Expr> {
+pub(crate) fn initial_value(kind: &TypeSpec, value: &Expr) -> Result<Expr> {
     if let Some(source)=crate::empty_constructors::kind(value)? {
         let numeric=|kind:&TypeSpec|matches!(kind,TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision);
         if !(numeric(kind)&&numeric(&source)
@@ -564,8 +564,8 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
                 let save_key=attributes.iter().find_map(|a|a.strip_prefix("@save_key:").map(str::to_owned));
                 if attributes.iter().any(|a|a=="@save_result") {bail!("a function result cannot have declaration initialization or SAVE storage");}
                 if save_key.is_some() && attributes.iter().any(|a|a=="target") {bail!("TARGET persistent locals are not yet supported");}
-                if !main_scope && save_key.is_none() { bail!("declaration initialization in module storage or main-program BLOCK scopes is not yet supported"); }
-                if attributes.iter().any(|a| !a.eq_ignore_ascii_case("save") && !a.eq_ignore_ascii_case("target") && !a.starts_with("@save_key:")) {
+                if !main_scope && save_key.is_none() && !attributes.iter().any(|a|a=="@module_initializer") { bail!("declaration initialization in module storage or main-program BLOCK scopes is not yet supported"); }
+                if attributes.iter().any(|a| !a.eq_ignore_ascii_case("save") && !a.eq_ignore_ascii_case("target") && !a.starts_with("@save_key:") && !matches!(a.as_str(),"@module_initializer"|"public"|"private")) {
                     bail!("unsupported attribute on initialized variable");
                 }
                 resolve_kind(kind,&constants)?;

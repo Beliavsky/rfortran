@@ -440,6 +440,15 @@ fn body(
     let mut output = Vec::new();
     for mut s in std::mem::take(stmts) {
         match &mut s {
+            Stmt::CallSub {name,args} if name=="@module_bind" && matches!(&args[0],Expr::Ident(n) if arrays.contains_key(n)) => {
+                let [Expr::Ident(local),Expr::Str(key),Expr::Str(initializer)]=args.as_slice() else {unreachable!()};
+                let initial:crate::modules::Storage=serde_json::from_str(initializer)?;
+                for (i,slot) in arrays[local].elements.iter().enumerate() {
+                    let cell=crate::modules::Storage {kind:TypeSpec::Character(Some(arrays[local].length)),values:vec![initial.values[i].clone()],initialized:initial.initialized,rank:0,deferred:false};
+                    output.push(Stmt::CallSub {name:name.clone(),args:vec![Expr::Ident(slot.clone()),Expr::Str(format!("{key}.element{}",i+1)),Expr::Str(serde_json::to_string(&cell)?)]});
+                }
+                continue;
+            }
             Stmt::CallSub {name,args} if name=="@undefine" && args.len()==1 && matches!(&args[0],Expr::Ident(n) if arrays.contains_key(n)) => {
                 let Expr::Ident(n)=&args[0] else {unreachable!()};
                 output.extend(arrays[n].elements.iter().map(|n|Stmt::CallSub {name:"@undefine".into(),args:vec![Expr::Ident(n.clone())]}));

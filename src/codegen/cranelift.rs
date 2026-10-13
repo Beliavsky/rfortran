@@ -9,6 +9,7 @@ use target_lexicon::Triple;
 
 use super::Backend;
 use crate::ir::{IExpr, IStmt, IcCaseItem, Module};
+use crate::ast::TypeSpec;
 
 use cranelift_codegen::ir;
 use cranelift_codegen::ir::InstBuilder;
@@ -2560,6 +2561,41 @@ fn gen_stmts(
                     let function=module.declare_func_in_func(id,b.func);
                     let code=b.ins().iconst(types::I32,0);b.ins().call(function,&[code]);
                     b.ins().trap(ir::TrapCode::unwrap_user(1));return Ok(true);
+                }
+                if name=="@module_bind" {
+                    let [IExpr::Ident(local),IExpr::Str(key),IExpr::Str(initializer)]=args.as_slice() else {bail!("invalid module storage binding");};
+                    let initial:crate::modules::Storage=serde_json::from_str(initializer)?;
+                    let symbol=format!(".rfort.module.{key}");
+                    let id=if let Some(cranelift_module::FuncOrDataId::Data(id))=module.get_name(&symbol) {id} else {
+                        let mut bytes=vec![];
+                        for value in &initial.values {
+                            if let TypeSpec::Character(length)=&initial.kind {
+                                let mut text=crate::parameters::character_constant(value)?.into_bytes();
+                                let length=length.unwrap_or(1);text.resize(length,b' ');text.truncate(length);text.push(0);bytes.extend(text);
+                            } else {
+                                let bits=match &initial.kind {
+                                    TypeSpec::Real|TypeSpec::DoublePrecision=>crate::parameters::real_constant(value)?.to_bits(),
+                                    TypeSpec::Logical=>if let crate::ast::Expr::Logical(v)=value {u64::from(*v)}else{bail!("invalid LOGICAL module initializer")},
+                                    _=>crate::parameters::integer_constant(value)? as u64,
+                                };
+                                if bools.contains_key(local)&&!arrays.contains_key(local) {bytes.push(bits as u8);}
+                                else if module.isa().endianness()==ir::Endianness::Little {bytes.extend(bits.to_le_bytes());}else{bytes.extend(bits.to_be_bytes());}
+                            }
+                        }
+                        if bytes.is_empty() {bytes.resize(8,0);}
+                        let id=module.declare_data(&symbol,Linkage::Local,true,false)?;
+                        let mut data=DataDescription::new();data.define(bytes.into_boxed_slice());data.set_align(8);module.define_data(id,&data)?;id
+                    };
+                    let storage=Storage::Static(module.declare_data_in_func(id,b.func));
+                    if let Some((slot,_))=chars.get_mut(local) {
+                        *slot=storage;let address=storage_addr(b,ptr_ty,storage);
+                        let value=if ptr_ty==types::I64 {address}else{b.ins().uextend(types::I64,address)};
+                        let pointer=storage_addr(b,ptr_ty,ints[&format!("@character_pointer:{local}")]);b.ins().store(MemFlags::new(),value,pointer,0);
+                    } else if let Some(slot)=ints.get_mut(local) {*slot=storage;}
+                    else if let Some(slot)=reals.get_mut(local) {*slot=storage;}
+                    else if let Some(slot)=bools.get_mut(local) {*slot=storage;}
+                    else {bail!("module storage requires a declared intrinsic variable");}
+                    continue;
                 }
                 if name == "@saved_bind" {
                     let [IExpr::Ident(local),IExpr::Str(key),value]=args.as_slice() else {bail!("invalid saved-storage binding");};

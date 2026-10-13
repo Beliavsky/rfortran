@@ -948,7 +948,7 @@ mod tests {
         source.push_str("end\n");
         let p=lower(&source).unwrap();
         let actual=p.body.iter().filter_map(|s|if let Stmt::CallSub{name,..}=s {Some(name.clone())} else {None}).collect::<Vec<_>>();
-        assert_eq!(actual,expected);
+        assert_eq!(actual,expected.iter().map(|n|format!("@module$m${n}")).collect::<Vec<_>>());
     }
 
     #[test]
@@ -956,7 +956,7 @@ mod tests {
         let source="module m\ninterface set_alloc\nmodule procedure tensor\nend interface\ncontains\nsubroutine tensor(x,y)\nreal(8),intent(in)::x(:,:,:)\nreal(8),allocatable,intent(out)::y(:,:,:)\nend subroutine\nend module\nuse m\ninteger::iuse(2)\nreal(8),allocatable::xx(:,:,:)\ncall set_alloc(xx(iuse,:,:),xx)\ncall set_alloc(xx(:,iuse,:),xx)\ncall set_alloc(xx(:,:,iuse),xx)\nend";
         let p=lower(source).unwrap();
         let calls=p.body.iter().filter_map(|s|if let crate::ast::Stmt::CallSub{name,..}=s {Some(name.as_str())} else {None}).collect::<Vec<_>>();
-        assert_eq!(calls,["tensor","tensor","tensor"]);
+        assert_eq!(calls,["@module$m$tensor","@module$m$tensor","@module$m$tensor"]);
     }
 
     #[test]
@@ -990,7 +990,7 @@ mod tests {
     #[test]
     fn resolves_runtime_constructor_generic_before_lowering() {
         let p=lower(include_str!("../xset_alloc_implied_do.f90")).unwrap();
-        assert!(p.body.iter().any(|s|matches!(s,crate::ast::Stmt::CallSub{name,..} if name=="set_alloc_int_vec")));
+        assert!(p.body.iter().any(|s|matches!(s,crate::ast::Stmt::CallSub{name,..} if name=="@module$set_alloc_mod$set_alloc_int_vec")));
     }
 
     #[test]
@@ -1000,7 +1000,7 @@ mod tests {
         let calls: Vec<_> = program.body.iter().filter_map(|s| {
             if let crate::ast::Stmt::CallSub {name,..} = s {Some(name.as_str())} else {None}
         }).collect();
-        assert_eq!(calls, ["one"]);
+        assert_eq!(calls, ["@module$m$one"]);
     }
 
     #[test]
@@ -1030,7 +1030,7 @@ mod tests {
             let program=lower(&source.replace("3 .in. a",&format!("3 .in. {operand}"))).unwrap();
             let items=program.body.iter().find_map(|s|if let crate::ast::Stmt::Print{items}=s {Some(items)} else {None}).unwrap();
             let crate::ast::Expr::Call(name,args)=&items[0] else {panic!("operator must lower to a function call")};
-            assert_eq!(name,"member");assert_eq!(args.len(),2);
+            assert_eq!(name,"@module$m$member");assert_eq!(args.len(),2);
             assert!(!matches!(&args[1],crate::ast::Expr::IntLit(_)|crate::ast::Expr::Index(..)),"array operand must remain an array: {args:?}");
         }
         let error = lower(&source.replace("3 .in. a", "3 .in. a(1)")).unwrap_err().to_string();
@@ -1052,7 +1052,7 @@ mod tests {
                 }
             })
             .collect();
-        assert_eq!(calls, ["one", "two"]);
+        assert_eq!(calls, ["@module$m$one", "@module$m$two"]);
     }
 
     #[test]

@@ -1260,7 +1260,6 @@ mod tests {
     #[test]
     fn rejects_invalid_matrix_shapes_and_subscripts() {
         for (source, expected) in [
-            ("module m\ninteger::a(2,3)\nend module m\nuse m, only:a\nprint *,a\nend", "USE-associated multidimensional array"),
             ("integer,allocatable::a(:,:)\na=1\nallocate(a(2,2))\nend", "used before ALLOCATE"),
             ("integer::a(2,3)\ninteger(16)::i\ni=1\na=0\nprint *,a(i,1)\nend", "scalar INTEGER"),
             ("integer::a(2,3)\na=0\nprint *,a(f(),1)\ncontains\ninteger function f()\nf=1\nend function f\nend", "procedure calls"),

@@ -612,6 +612,7 @@ fn specialize(
     stable: &HashSet<String>,
 ) -> Result<()> {
     crate::allocatables::prepare_matrices(body, shapes, constants)?;
+    crate::modules::bind_scope(body)?;
     prepare_deallocated_locals(body, shapes, constants, absent, stable)?;
     if let Some(Stmt::CallSub { name, args }) = body.first() {
         if name == "@forall" || name == "@do_step" {
@@ -1411,6 +1412,8 @@ fn expand(
     Ok(())
 }
 pub fn resolve(mut p: Program) -> Result<Program> {
+    p=crate::modules::capture(p)?;
+    p=crate::modules::prepare_globals(p)?;
     p=crate::internal_procedures::resolve(p)?;
     p=crate::optional::resolve(p)?;
     p=crate::character_elementals::resolve(p)?;
@@ -1418,6 +1421,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
     p = crate::pointers::prepare(p)?;
     p = crate::constructors::prepare_arguments(p)?;
     p = crate::allocatables::prepare(p)?;
+    p = crate::modules::bind_descriptors(p)?;
     p = crate::vector_subscripts::resolve(p)?;
     p = crate::array_bounds::resolve(p)?;
     crate::elemental::validate_program(&p)?;
@@ -1455,6 +1459,8 @@ pub fn resolve(mut p: Program) -> Result<Program> {
     // after call-site specialization. Capture their internal output lists now.
     p = crate::output::prepare_formatted(p)?;
     p = crate::pointers::resolve(p)?;
+    p = crate::modules::bind_descriptors(p)?;
+    p = crate::modules::finish_bounds(p)?;
     p = crate::allocatables::finish(p)?;
     p = crate::constructors::resolve(p)?;
     let p = crate::character_arrays::resolve(p)?;

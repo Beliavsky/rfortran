@@ -1210,6 +1210,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 1 1\n"
+    },
+    "174_module_scope": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 2\n"
     }
   }
 }

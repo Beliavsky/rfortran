@@ -252,8 +252,7 @@ currently require the actual element length to match; explicit-shape dummies
 require matching extents. Scalar INTEGER constant actuals can supply result
 extents. Runtime-dependent result extents, nonunit declaration bounds in these calls,
 higher ranks, POINTER/ALLOCATABLE
-array dummies, deferred-length array results, and module CHARACTER array storage
-remain unsupported. Array actuals are copied and must be initialized.
+array dummies and deferred-length array results remain unsupported. Array actuals are copied and must be initialized.
 
 CHARACTER FORALL assignments to fixed rank-one arrays with lower bound one
 now use the existing
@@ -311,7 +310,7 @@ kinds, and uninitialized reads remain checked.
 CHARACTER lengths must be constant after specialization, and locals must be
 explicitly declared. Runtime-length actuals
 such as TRIM of a variable, higher-rank arrays in CHARACTER calls,
-recursive CHARACTER calls, host-variable captures, internal
+recursive CHARACTER calls, enclosing-procedure variable captures, internal
 procedures inside these functions, and CHARACTER calls in WHERE/FORALL remain
 unsupported and are diagnosed. This uses the compiler's existing fixed-size
 local CHARACTER storage, not a general CHARACTER function-result ABI.
@@ -1262,7 +1261,7 @@ Dynamic accesses check bounds and initialize only the selected element; DO WHILE
 conditions with dynamic CHARACTER indexing are evaluated on every iteration.
 Local CHARACTER array subroutines can specialize fixed/assumed-length dummies
 to caller storage, including bounded allocatable outputs.
-Higher ranks, module CHARACTER array storage, and the other array
+Higher ranks and the other array
 transformational intrinsics remain outside this subset. Local CHARACTER
 array PARAMETERs support explicit or inferred rank-one extents. Untyped constructors require equal-length CHARACTER literals
 (including substituted constants). Typed `[CHARACTER(LEN=n) :: ...]` constructors
@@ -1306,9 +1305,29 @@ existing intrinsic keyword support remains available.
 
 Unknown keywords, duplicate arguments, positional arguments after keywords and
 missing required arguments are compile errors. Named procedure calls currently
-require a known definition in the source group and unique procedure names within
-the compilation; external interface-only declarations and procedure pointers
+require a known definition in the source group; external interface-only declarations and procedure pointers
 remain unsupported. Run `python tests/test_named_arguments.py`.
+
+## Module data and procedure association
+
+Procedures can read module named constants and share mutable module variables.
+USE association supports variables, constants, procedures and derived types,
+including ONLY lists, renaming, reexports and generic interface extensions.
+PUBLIC/PRIVATE access and local shadowing are checked. Procedures with the same
+name in different modules retain distinct identities.
+
+INTEGER, REAL, LOGICAL and fixed-length CHARACTER data use shared storage across
+calls, including supported fixed arrays and bounded allocatable numeric arrays.
+Allocation status, shape and initialization checks persist across procedures.
+PURE procedures can read module data but cannot modify nonlocal variables.
+Existing type, rank and allocation limits still apply; allocatable backing
+storage requires a provable finite bound. This does not add a general module
+pointer or derived-type storage ABI.
+
+Supply module sources before their consumers in the same invocation, for example
+`rfort m1.f90 m2.f90 main.f90 --run`. Compiled `.mod` interface files are not
+produced or consumed. Run `python tests/test_module_scope.py` for interpreter,
+native O0/O2 and gfortran comparisons.
 
 ## Toolchains
 

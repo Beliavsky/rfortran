@@ -71,9 +71,13 @@ pub fn validate(program: &Program) -> Result<()> {
                 _ => {}
             }
         }
+        let writable_locals=locals.clone();
+        for statement in body {if let Stmt::DummyIntent {name,intent}=statement {
+            if intent=="@module_host" {locals.insert(name.clone());}
+        }}
         let writable = |name: &str| -> Result<()> {
             if readonly.contains(name) { bail!("PURE procedure cannot modify dummy argument `{name}`"); }
-            if !locals.contains(name) { bail!("PURE procedure cannot modify nonlocal variable `{name}`; declare local variables explicitly"); }
+            if !writable_locals.contains(name) { bail!("PURE procedure cannot modify nonlocal variable `{name}`; declare local variables explicitly"); }
             Ok(())
         };
         for stmt in body {

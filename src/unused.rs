@@ -118,7 +118,7 @@ struct Scope {
     owner: Option<usize>,
     module: bool,
     names: HashMap<String, usize>,
-    uses: Vec<(String, Option<Vec<String>>)>,
+    uses: Vec<(String, Option<Vec<String>>, Vec<(String,String)>)>,
 }
 struct Analysis<'a> {
     tokens: &'a [Token],
@@ -291,8 +291,8 @@ impl<'a> Analysis<'a> {
                         self.gather(body, scope);
                     }
                 }
-                Stmt::Use { module, only, .. } => {
-                    self.scopes[scope].uses.push((module.clone(), only.clone()))
+                Stmt::Use { module, only, renames, .. } => {
+                    self.scopes[scope].uses.push((module.clone(), only.clone(), renames.clone()))
                 }
                 Stmt::DummyIntent { name, intent } => {
                     if let Some(&id) = self.scopes[scope].names.get(name) {
@@ -354,15 +354,18 @@ impl<'a> Analysis<'a> {
         if let Some(&id) = self.scopes[scope].names.get(name) {
             return Some(id);
         }
-        for (module, only) in &self.scopes[scope].uses {
+        for (module, only, renames) in &self.scopes[scope].uses {
+            let remote=renames.iter().find_map(|(local,remote)|if local==name {Some(remote.as_str())}else{None}).unwrap_or(name);
+            if remote==name && renames.iter().any(|(local,remote)|remote==name&&local!=name)
+                && !only.as_ref().is_some_and(|names|names.iter().filter(|n|n.as_str()==name).count()>renames.iter().filter(|(_,remote)|remote==name).count()) {continue;}
             if only
                 .as_ref()
-                .is_some_and(|names| !names.iter().any(|n| n == name))
+                .is_some_and(|names| !names.iter().any(|n| n == remote))
             {
                 continue;
             }
             if let Some(&m) = self.modules.get(module) {
-                if let Some(&id) = self.scopes[m].names.get(name) {
+                if let Some(&id) = self.scopes[m].names.get(remote) {
                     if self.decls[id].public {
                         return Some(id);
                     }

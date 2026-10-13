@@ -29,6 +29,7 @@ the author recorded in this repository's Git history.
 - `src/intrinsics.rs`
 - `src/inquiries.rs`
 - `src/libs/portable_runtime.c`
+- `src/modules.rs`
 - `src/multidim.rs`
 - `src/operators.rs`
 - `src/optional.rs`

@@ -4,7 +4,7 @@
 
 //! Definite-unassignment errors plus runtime flags for path-dependent reads.
 use crate::ast::{Expr, Program, Stmt, TypeSpec};
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -147,6 +147,14 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
         let mut before = Vec::new();
         let mut after = Vec::new();
         match &mut stmt {
+            Stmt::CallSub {name,args} if name=="@module_bind" => {
+                let [Expr::Ident(local),Expr::Str(key),Expr::Str(initializer)]=args.as_slice() else {unreachable!()};
+                let initial:crate::modules::Storage=serde_json::from_str(initializer)?;
+                let variable=env.get_mut(local).context("missing module variable initialization state")?;
+                let flags=crate::modules::Storage {kind:TypeSpec::Integer(None),values:vec![int(i64::from(initial.initialized));variable.extent.unwrap_or(1) as usize],initialized:true,rank:usize::from(variable.extent.is_some()),deferred:false};
+                before.push(Stmt::CallSub {name:"@module_bind".into(),args:vec![Expr::Ident(variable.flag.clone()),Expr::Str(format!("{key}.initialized")),Expr::Str(serde_json::to_string(&flags)?)]});
+                variable.state=State::Maybe;variable.elements.clear();
+            }
             Stmt::CallSub {name,args} if name=="@format_begin" => {
                 for arg in &args[1..] {read(arg,env,&mut before,serial)?;}
                 let Expr::Ident(dest)=&args[0] else {unreachable!()};
@@ -358,7 +366,7 @@ fn scope(body: &mut Vec<Stmt>, inherited: &mut Env, params: &[String], result: O
 pub fn instrument(mut program: Program) -> Result<Program> {
     program = crate::subroutines::resolve(program)?;
     scope(&mut program.body, &mut Env::new(), &[], None, &mut 0)?;
-    Ok(program)
+    crate::modules::unify_storage(program)
 }
 
 pub fn instrument_with_source(program: Program, source: &str, filename: &str) -> Result<Program> {

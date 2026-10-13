@@ -92,6 +92,8 @@ pub enum Stmt {
         nature: Option<String>,
         #[serde(default)]
         only: Option<Vec<String>>,
+        #[serde(default)]
+        renames: Vec<(String,String)>,
     },
     Module {
         name: String,

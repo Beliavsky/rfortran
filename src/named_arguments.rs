@@ -229,7 +229,7 @@ impl Resolver {
         }
     }
     fn call(&self, name: &str, args: &mut Vec<Expr>, arrays: &HashSet<String>) -> Result<()> {
-        if has_keywords(args) && !name.starts_with('@') {
+        if has_keywords(args) && (!name.starts_with('@') || self.signatures.contains_key(name) || name.starts_with("@module$")) {
             if arrays.contains(name) {
                 bail!("keyword arguments cannot be used in array subscripts of `{name}`");
             }

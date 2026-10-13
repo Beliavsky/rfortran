@@ -23,6 +23,10 @@ pub fn interpret(program: &Program) {
     OUTPUT_SERIAL.with(|serial|serial.set(0));
     thread_local! { static SAVED: std::cell::RefCell<HashMap<String,ValueTuple>> = std::cell::RefCell::new(HashMap::new()); }
     SAVED.with(|values|values.borrow_mut().clear());
+    #[derive(Clone,Debug,PartialEq)]
+    enum ModuleArray {Integer(Vec<i64>),Real(Vec<f64>)}
+    thread_local! {static MODULE_ARRAYS:std::cell::RefCell<HashMap<String,ModuleArray>>=std::cell::RefCell::new(HashMap::new());}
+    MODULE_ARRAYS.with(|values|values.borrow_mut().clear());
     fn io_result<T>(result: anyhow::Result<T>) -> T {
         match result { Ok(value)=>value, Err(error)=>{eprintln!("Runtime error: {error:#}");std::process::exit(1);} }
     }
@@ -155,6 +159,12 @@ pub fn interpret(program: &Program) {
                 }
 
                 if let Some(fr) = call_stack.last() {
+                    if let Some(key)=fr.module_arrays.get(name) {
+                        return MODULE_ARRAYS.with(|arrays|match &arrays.borrow()[key] {
+                            ModuleArray::Integer(values)=>if fr.logical_arrays.contains(name) {ValueTuple::from_bool(values[idx]!=0)}else{ValueTuple::from_int(values[idx])},
+                            ModuleArray::Real(values)=>ValueTuple::from_real(values[idx]),
+                        });
+                    }
                     if let Some(vec) = fr.env_int_arrays.get(name) {
                         if idx < vec.len() {
                             return if fr.logical_arrays.contains(name) { ValueTuple::from_bool(vec[idx] != 0) } else { ValueTuple::from_int(vec[idx]) };
@@ -710,6 +720,8 @@ pub fn interpret(program: &Program) {
     struct CallFrame {
         saved: HashMap<String,(String,TypeSpec)>,
         saved_seen: HashMap<String,ValueTuple>,
+        module_arrays:HashMap<String,String>,
+        module_seen:HashMap<String,ModuleArray>,
         env_str: HashMap<String, String>,
         env_int: HashMap<String, i64>,
         env_real32: HashMap<String, f32>,
@@ -740,12 +752,24 @@ pub fn interpret(program: &Program) {
             }
         }
         fn sync_saved(&mut self) {
+            for (name,key) in self.module_arrays.clone() {
+                let value=MODULE_ARRAYS.with(|values|values.borrow()[&key].clone());
+                match &value {ModuleArray::Integer(v)=>{self.env_int_arrays.insert(name.clone(),v.clone());},ModuleArray::Real(v)=>{self.env_real_arrays.insert(name.clone(),v.clone());}}
+                self.module_seen.insert(name,value);
+            }
             for (name,(key,kind)) in self.saved.clone() {
                 let value=SAVED.with(|values|values.borrow()[&key].clone());
                 self.apply_saved(&name,&kind,&value);self.saved_seen.insert(name,value);
             }
         }
         fn commit_saved(&mut self) {
+            for (name,key) in self.module_arrays.clone() {
+                let value=if let Some(v)=self.env_int_arrays.get(&name) {ModuleArray::Integer(v.clone())}else{ModuleArray::Real(self.env_real_arrays[&name].clone())};
+                if self.module_seen.get(&name)!=Some(&value) {
+                    MODULE_ARRAYS.with(|values|values.borrow_mut().insert(key,value.clone()));
+                    self.module_seen.insert(name,value);
+                }
+            }
             for (name,(key,_)) in self.saved.clone() {
                 let value=self.result_value(&name);
                 if self.saved_seen.get(&name)!=Some(&value) {
@@ -764,7 +788,7 @@ pub fn interpret(program: &Program) {
         }
         fn new(fd: &FuncDef, func_name: Option<String>) -> Self {
             Self {
-                saved:HashMap::new(),saved_seen:HashMap::new(),
+                saved:HashMap::new(),saved_seen:HashMap::new(),module_arrays:HashMap::new(),module_seen:HashMap::new(),
                 env_str: HashMap::new(),
                 env_int: HashMap::new(),
                 env_real32: HashMap::new(),
@@ -1149,6 +1173,25 @@ pub fn interpret(program: &Program) {
                         if matches!(kind,"r4"|"r8") {let v=value.1.unwrap_or_else(||value.0.unwrap_or(0) as f64);let v=if kind=="r4"{v as f32 as f64}else{v};if let Some(a)=frame.env_real_arrays.get_mut(&target){a[offset]=v;}else if frame.env_real32.contains_key(&target){assert_eq!(offset,0);frame.env_real32.insert(target,v as f32);}else{assert_eq!(offset,0);frame.env_real64.insert(target,v);}}
                         else {let v=if kind=="l"{i64::from(value.2.unwrap_or(false))}else{value.0.unwrap_or_else(||value.1.unwrap_or(0.0) as i64)};if let Some(a)=frame.env_int_arrays.get_mut(&target){a[offset]=v;}else if kind=="l"{assert_eq!(offset,0);frame.env_log.insert(target,v!=0);}else{assert_eq!(offset,0);frame.env_int.insert(target,v);}}
                         if let Some(a)=frame.env_int_arrays.get_mut(&flag){a[offset]=1;}else{assert_eq!(offset,0);frame.env_int.insert(flag,1);}idx+=1;continue;
+                    }
+                    if name=="@module_bind" {
+                        let [Expr::Ident(local),Expr::Str(key),Expr::Str(initializer)]=args.as_slice() else {unreachable!()};
+                        let initial:crate::modules::Storage=serde_json::from_str(initializer).unwrap();
+                        let fr=call_stack.last().unwrap().clone();
+                        let values=initial.values.iter().map(|e|eval_expr(e,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack)).collect::<Vec<_>>();
+                        if initial.rank!=0 {
+                            let array=if matches!(initial.kind,TypeSpec::Real|TypeSpec::DoublePrecision) {ModuleArray::Real(values.iter().map(|v|v.1.unwrap_or(v.0.unwrap_or(0) as f64)).collect())}
+                                else {ModuleArray::Integer(values.iter().map(|v|v.0.unwrap_or(i64::from(v.2.unwrap_or(false)))).collect())};
+                            MODULE_ARRAYS.with(|arrays|{arrays.borrow_mut().entry(key.clone()).or_insert(array);});
+                            let frame=call_stack.last_mut().unwrap();frame.module_arrays.insert(local.clone(),key.clone());
+                            if matches!(initial.kind,TypeSpec::DoublePrecision) {frame.double_arrays.insert(local.clone());}
+                            if matches!(initial.kind,TypeSpec::Logical) {frame.logical_arrays.insert(local.clone());}
+                            frame.sync_saved();
+                        } else {
+                            SAVED.with(|values_map|{values_map.borrow_mut().entry(key.clone()).or_insert(values[0].clone());});
+                            let frame=call_stack.last_mut().unwrap();frame.saved.insert(local.clone(),(key.clone(),initial.kind));frame.sync_saved();
+                        }
+                        idx+=1;continue;
                     }
                     if name == "@saved_bind" {
                         let [Expr::Ident(local),Expr::Str(key),initializer]=args.as_slice() else {unreachable!()};
@@ -1649,6 +1692,7 @@ pub fn interpret(program: &Program) {
                         }
                     }
                     let frame = call_stack.last_mut().unwrap();
+                    frame.sync_saved();
                     if let Some(i) = vt.0.or(vt.2.map(i64::from)) {
                         let vec = frame
                             .env_int_arrays
@@ -1678,7 +1722,7 @@ pub fn interpret(program: &Program) {
         None
     }
     let top_frame = CallFrame {
-        saved:HashMap::new(),saved_seen:HashMap::new(),
+        saved:HashMap::new(),saved_seen:HashMap::new(),module_arrays:HashMap::new(),module_seen:HashMap::new(),
         env_str,
         env_int,
         env_real32,

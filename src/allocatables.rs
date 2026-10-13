@@ -145,9 +145,10 @@ pub(crate) fn prepare_matrices(
     inherited: &mut Shapes,
     constants: &HashMap<String, Expr>,
 ) -> Result<()> {
+    let globals=body.iter().filter_map(|s|if let Stmt::CallSub {name,args}=s {if name=="@module_bind" {if let Some(Expr::Ident(n))=args.first() {return Some(n.clone());}}None}else{None}).collect::<HashSet<_>>();
     for s in body.iter() {
         if let Stmt::ArrayDecl { name, dims, .. } = s {
-            if dims.len() > 1
+            if (dims.len() > 1 || globals.contains(name))
                 && dims
                     .iter()
                     .all(|d| matches!(d,Expr::Ident(n) if n=="@deferred_extent"))
@@ -159,7 +160,7 @@ pub(crate) fn prepare_matrices(
         }
     }
     let candidates:HashMap<_,_>=body.iter().filter_map(|s|match s {
-        Stmt::ArrayDecl {name,dims,..} if dims.len()>1 && dims.iter().all(|d|matches!(d,Expr::Ident(n) if n=="@deferred_extent"))
+        Stmt::ArrayDecl {name,dims,..} if (dims.len()>1 || globals.contains(name)) && dims.iter().all(|d|matches!(d,Expr::Ident(n) if n=="@deferred_extent"))
             && allocated(name,inherited).is_none()
             && body.iter().any(|s|matches!(s,Stmt::DummyIntent {name:n,intent} if n==name && intent=="allocatable"))=>Some((name.clone(),dims.len())),
         _=>None,
@@ -218,6 +219,7 @@ pub(crate) fn prepare_matrices(
     }
     let mut wanted = HashSet::new();
     used(body, &candidates, &mut wanted);
+    wanted.extend(globals.iter().filter(|n|candidates.contains_key(*n)).cloned());
     if wanted.is_empty() {
         return Ok(());
     }
@@ -982,6 +984,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                     }
                     continue;
                 }
+                Stmt::CallSub {name,..} if name=="@module_bind" => {out.push(s);continue;}
                 Stmt::CallSub { name, args } if name == "@allocate" => {
                     let mut handled = true;
                     for arg in args.iter() {

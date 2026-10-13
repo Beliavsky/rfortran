@@ -10,6 +10,7 @@ mod errors;
 mod source_diagnostics;
 mod ir;
 mod intrinsics;
+mod modules;
 mod random_seed;
 mod timing;
 mod calendar;

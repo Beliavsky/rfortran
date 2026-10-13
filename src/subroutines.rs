@@ -85,7 +85,7 @@ pub(crate) fn rename_with_prefix(
                     *intent = format!("@bounded:{length}:{flag}");
                 }
             }
-            Stmt::DummyIntent { name: n, intent } if prefix == "@alloc_block" || (matches!(intent.as_str(),"pointer"|"target"|"@pointer_readonly_target") || intent.starts_with("@pointer_bounds:")) => name(n, &names),
+            Stmt::DummyIntent { name: n, intent } if prefix == "@alloc_block" || intent=="@module_host" || (matches!(intent.as_str(),"pointer"|"target"|"@pointer_readonly_target") || intent.starts_with("@pointer_bounds:")) => name(n, &names),
             Stmt::VarDecl {
                 names: declared, ..
             } => {

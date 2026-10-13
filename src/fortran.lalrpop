@@ -423,7 +423,7 @@ Stmt: Stmt = {
         let indices = match expr { Expr::Section { .. } => vec![expr], Expr::Call(_, args) => args.into_iter().map(|e| if matches!(e,Expr::Section {..}) { Expr::Call("@vector_subscript".into(),vec![e]) } else {e}).collect(), _ => unreachable!() };
         Stmt::AssignIndex { name: id, indices, value: rhs }
     },
-    KW_USE <head:UseHead> <only:UseOnly> => Stmt::Use { module:head.0, nature:head.1, only },
+    KW_USE <head:UseHead> <tail:UseOnly> => Stmt::Use { module:head.0, nature:head.1, only:tail.0, renames:tail.1 },
     KW_IMPLICIT KW_NONE => Stmt::Implicit(Implicit::None),
     KW_IMPLICIT <rules: ImplicitRuleList> => {
         if rules.len() == 1 {
@@ -832,9 +832,26 @@ UseHead: (String, Option<String>) = {
     DCOLON <m:Ident> => (m,None),
     COMMA <nature:Ident> DCOLON <m:Ident> => (m,Some(nature)),
 };
-UseOnly: Option<Vec<String>> = {
-    => None,
-    COMMA KW_ONLY COLON <names:GenericNames> => Some(names),
+UseOnly: (Option<Vec<String>>, Vec<(String,String)>) = {
+    => (None,vec![]),
+    COMMA KW_ONLY COLON <items:UseItems> => {
+        let only=items.iter().map(|(_,remote)|remote.clone()).collect();
+        let renames=items.into_iter().filter(|(local,remote)|local!=remote).collect();
+        (Some(only),renames)
+    },
+    COMMA <renames:UseRenameList> => (None,renames),
+};
+UseItems: Vec<(String,String)> = {
+    <item:UseItem> => vec![item],
+    <mut items:UseItems> COMMA <item:UseItem> => {items.push(item);items},
+};
+UseItem: (String,String) = {
+    <local:GenericName> ARROW <remote:GenericName> => (local,remote),
+    <name:GenericName> => (name.clone(),name),
+};
+UseRenameList: Vec<(String,String)> = {
+    <local:GenericName> ARROW <remote:GenericName> => vec![(local,remote)],
+    <mut renames:UseRenameList> COMMA <local:GenericName> ARROW <remote:GenericName> => {renames.push((local,remote));renames},
 };
 
 LoopName: String = { <name:CONSTRUCT_NAME> COLON => name };

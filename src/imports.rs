@@ -3,7 +3,7 @@
 // See LICENSE-MIT in the repository root.
 
 //! Check ONLY association before lowering erases module/type declarations.
-//! Backends still require unique procedure/type names within a compilation.
+//! Module association subsequently assigns each defining entity a scoped identity.
 use crate::ast::{CaseItem, Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Result};
 use std::collections::{HashMap, HashSet};
@@ -42,7 +42,7 @@ fn declared(body: &[Stmt]) -> HashSet<String> {
 fn imported(body: &[Stmt], modules: &Modules) -> Result<Symbols> {
     let mut selected = Symbols::new();
     for s in body {
-        if let Stmt::Use { module, only, .. } = s {
+        if let Stmt::Use { module, only, renames, .. } = s {
             let Some(exports) = modules.get(module) else {
                 if only.is_some() {
                     bail!("USE ONLY requires module `{module}` earlier in the same source group");
@@ -56,10 +56,14 @@ fn imported(body: &[Stmt], modules: &Modules) -> Result<Symbols> {
                     }
                 }
             }
-            for (name, origin) in exports {
-                if only.as_ref().is_some_and(|names| !names.contains(name)) {
+            for (_,remote) in renames {if !exports.contains_key(remote) {bail!("`{remote}` is not a public entity of module `{module}` in USE");}}
+            for (remote, origin) in exports {
+                if only.as_ref().is_some_and(|names| !names.contains(remote)) {
                     continue;
                 }
+                let mut aliases=renames.iter().filter_map(|(local,n)|(n==remote).then_some(local)).collect::<Vec<_>>();
+                if aliases.is_empty() || only.as_ref().is_some_and(|names|names.iter().filter(|n|*n==remote).count()>aliases.len()) {aliases.push(remote);}
+                for name in aliases {
                 if let Some(previous) = selected.insert(name.clone(), origin.clone()) {
                     if previous != *origin
                         && !name.starts_with("operator(")
@@ -67,7 +71,7 @@ fn imported(body: &[Stmt], modules: &Modules) -> Result<Symbols> {
                     {
                         bail!("ambiguous imported name `{name}` from `{previous}` and `{origin}`");
                     }
-                }
+                }}
             }
         }
     }
