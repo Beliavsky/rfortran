@@ -108,7 +108,7 @@ impl Signature {
     }
 }
 
-fn intrinsic(name: &str) -> Option<Signature> {
+pub(crate) fn intrinsic(name: &str) -> Option<Signature> {
     let keys: &[&str] = match name {
         name if crate::bit_intrinsics::keys(name).is_some() => crate::bit_intrinsics::keys(name).unwrap(),
         name if crate::inquiries::numeric_model(name) => &["x"],
@@ -119,6 +119,7 @@ fn intrinsic(name: &str) -> Option<Signature> {
         "mod" | "modulo" => &["a", "p"],
         "new_line" => &["a"],
         "adjustl"|"adjustr"|"trim" => &["string"],
+        "repeat" => &["string", "ncopies"],
         "index" => &["string", "substring", "back", "kind"],
         "scan" | "verify" => &["string", "set", "back", "kind"],
         "random_number" => &["harvest"],
@@ -167,6 +168,7 @@ fn intrinsic_keywords(name: &str) -> bool {
 }
 struct Resolver {
     signatures: HashMap<String, Signature>,
+    generics: HashSet<String>,
     duplicates: HashSet<String>,
     final_pass: bool,
 }
@@ -174,6 +176,7 @@ impl Resolver {
     fn collect(&mut self, body: &[Stmt]) {
         for s in body {
             match s {
+                Stmt::GenericInterface {name,..} => { self.generics.insert(name.clone()); },
                 Stmt::Function {
                     name, params, body, ..
                 }
@@ -206,7 +209,9 @@ impl Resolver {
                 .signatures
                 .get(name)
                 .cloned()
-                .or_else(|| intrinsic(name))
+                // Generic selection must associate each candidate's own keywords
+                // before falling back to an intrinsic signature.
+                .or_else(|| if !self.final_pass && self.generics.contains(name) {None} else {intrinsic(name)})
             {
                 signature.reorder(name, args)?;
             } else if self.final_pass && !name.contains('%') && !intrinsic_keywords(name) {
@@ -339,6 +344,7 @@ impl Resolver {
 pub fn resolve(mut program: Program, final_pass: bool) -> Result<Program> {
     let mut resolver = Resolver {
         signatures: HashMap::new(),
+        generics: HashSet::new(),
         duplicates: HashSet::new(),
         final_pass,
     };

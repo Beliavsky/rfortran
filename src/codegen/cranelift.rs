@@ -1793,7 +1793,8 @@ fn gen_stmts(
                     if !fragment && !crate::utils::list_directed_separator(previous_character, character).is_empty() {
                         ex.call_printf(b, &[ex.fmt_s, space]);
                     }
-                    if let Ok(source) = characters::view(module, b, ptr_ty, dc, chars, ints, e) {
+                    if character {
+                        let source = characters::view(module, b, ptr_ty, dc, chars, ints, e)?;
                         let text = characters::terminated(module, b, ptr_ty, source)?;
                         ex.call_printf(b, &[ex.fmt_s, text]);
                     } else { print_expr(

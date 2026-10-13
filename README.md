@@ -1417,7 +1417,22 @@ INTEGER scalar or rank-one vector types during generic dispatch, and fixed-shape
 inquiry vectors can be passed to specialized read-only array functions.
 `xexclude.f90` prints `2 4`; `tests/test_generic_inquiries.py` checks dispatch,
 keywords, sections, empty extents and initialization diagnostics. The full build
-currently stops at generic `repeat` resolution for CHARACTER and INTEGER actuals.
+now gets past generic `repeat` resolution: a user generic can fall back to
+intrinsic `REPEAT` for scalar CHARACTER/INTEGER arguments, including the intrinsic
+keywords `STRING` and `NCOPIES`. Matching user specifics take precedence.
+Native `REPEAT` supports constant copy counts, CHARACTER sources and concatenation;
+runtime-dependent copy counts currently produce a native compilation error.
+`xrepeat_intrinsic.f90` prints `[000]`, and `tests/test_repeat_generic.py` checks
+the fallback, keyword association, user overloads and CHARACTER output. The full
+build now gets past the constructor-related `set_alloc` dispatch. Constructor
+inference flattens scalar and array-valued elements to a rank-one type, checks
+type/kind consistency, and infers implied-DO items independently of their bounds.
+`tests/test_constructor_inference.py` covers numeric, LOGICAL and CHARACTER items,
+nested implied-DOs, typed empty constructors and mixed scalar/array elements.
+Runtime-bound constructor actual arguments still require further array lowering;
+`xset_alloc_implied_do.f90` now reports that limitation after selecting the correct
+generic specific. The full build currently stops at a different `set_alloc` call
+with scalar DOUBLE PRECISION and rank-three DOUBLE PRECISION actuals.
 Full `xutil.f90` execution remains a separate acceptance test.
 
 ## License

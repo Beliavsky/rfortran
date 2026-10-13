@@ -1008,6 +1008,14 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                             Expr::Ident(n) if matches!(symbols.get(n), Some((TypeSpec::Character(_), d)) if d.is_empty()) => Ok(()),
                             Expr::Bin(BinOp::Concat, a, b) => { check(a, symbols)?; check(b, symbols) },
                             Expr::Call(n, a) if matches!(n.as_str(),"trim"|"adjustl"|"adjustr") && a.len() == 1 => check(&a[0], symbols),
+                            Expr::Call(n, a) if n == "repeat" && a.len() == 2 => {
+                                check(&a[0], symbols)?;
+                                let (_, rank, kind) = element(&a[1], &int(1), symbols)?;
+                                if rank.is_some() || !matches!(kind, TypeSpec::Integer(_)) {
+                                    bail!("REPEAT NCOPIES must be a scalar INTEGER");
+                                }
+                                Ok(())
+                            },
                             Expr::Call(n, a) if n == "@substring" && a.len() == 3 => check(&a[0], symbols),
                             Expr::Call(n, a) if n == "@dynamic_substring" && a.len() == 4 => check(&a[0], symbols),
                             _ => bail!("CHARACTER assignment requires a non-NUL ASCII literal, scalar CHARACTER variable, concatenation, or a supported CHARACTER intrinsic"),

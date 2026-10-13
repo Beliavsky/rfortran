@@ -1260,6 +1260,9 @@ fn expand(
                             (k.clone(),d.clone(),crate::allocatables::length(a,&shapes))
                         } else {
                             if intent!="intent(in)" {bail!("writable array dummy `{p}` requires a whole-array actual argument");}
+                            if crate::constructors::delayed(&captured) {
+                                bail!("runtime-bound array constructor arguments are not yet supported for `{p}`");
+                            }
                             let start=prefix.len();
                             let (k,capacity,length)=if matches!(kind,TypeSpec::Character(_)|TypeSpec::CharacterAssumed) {
                                 character_constructor(&mut captured,&shapes,&mut prefix,serial)?.context("CHARACTER array dummy currently requires a whole array or scalar-element constructor")?

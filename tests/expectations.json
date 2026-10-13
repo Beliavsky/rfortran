@@ -1133,6 +1133,20 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " 2 4\n"
+    },
+    "163_generic_repeat": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " [000]\n"
+    },
+    "164_constructor_inference": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 14 14\n 16\n 23 53\n 30 50\n"
     }
   }
 }

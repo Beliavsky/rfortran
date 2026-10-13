@@ -475,6 +475,19 @@ impl Resolver {
                 self.procedures[*target].signature.reorder(name, actuals)?;
                 Ok(Some((*target).clone()))
             },
+            // REPEAT may be extended by a user generic. Only a valid intrinsic
+            // signature can fall back; unrelated type/rank errors remain errors.
+            [] if !subroutine && name == "repeat" => {
+                let signature = crate::named_arguments::intrinsic(name).unwrap();
+                let slots = signature.associate(name, actuals)?;
+                if matches!(&args[slots[0].unwrap()], Ty::Scalar(TypeSpec::Character(_)))
+                    && matches!(&args[slots[1].unwrap()], Ty::Scalar(TypeSpec::Integer(_))) {
+                    signature.reorder(name, actuals)?;
+                    Ok(None)
+                } else {
+                    bail!("no matching specific procedure for generic `{name}` with argument types {args:?}")
+                }
+            },
             [] if crate::named_arguments::has_keywords(actuals)
                 && association_errors.len() == candidates.len()
                 && !association_errors.is_empty()
@@ -506,6 +519,35 @@ impl Resolver {
         if let Expr::Call(name, args) = e {
             if name.starts_with("@keyword:") && args.len() == 1 {
                 return self.expression(&mut args[0], vars, visible);
+            }
+            if name == "@array_constructor" || name == "@output_implied_do" {
+                let items = if name == "@output_implied_do" {
+                    if args.len() < 5 { bail!("invalid constructor implied-DO"); }
+                    let Expr::Ident(index) = &args[0] else { bail!("invalid constructor implied-DO index"); };
+                    if !matches!(self.name_type(index, vars), Ty::Scalar(TypeSpec::Integer(_))) {
+                        bail!("constructor implied-DO index `{index}` requires a locally declared scalar INTEGER variable");
+                    }
+                    for bound in &mut args[1..4] {
+                        if !matches!(self.expression(bound, vars, visible)?, Ty::Scalar(TypeSpec::Integer(_))) {
+                            bail!("constructor implied-DO bounds must be scalar INTEGER expressions, as must the stride");
+                        }
+                    }
+                    &mut args[4..]
+                } else { args.as_mut_slice() };
+                let mut element = None;
+                let mut unknown = false;
+                for item in items {
+                    let ty = match self.expression(item, vars, visible)? {
+                        Ty::Array(element, _) => *element,
+                        ty => ty,
+                    };
+                    if ty == Ty::Unknown { unknown = true; continue; }
+                    if element.as_ref().is_some_and(|previous| *previous != ty) {
+                        bail!("array constructor elements must have the same type and kind");
+                    }
+                    element = Some(ty);
+                }
+                return Ok(Ty::Array(Box::new(if unknown {Ty::Unknown} else {element.unwrap_or(Ty::Unknown)}), 1));
             }
             if let Some(op) = name.strip_prefix("@defined_operator:") {
                 let op = op.to_owned();
@@ -571,10 +613,6 @@ impl Resolver {
                     match self.name_type(n, vars) {
                         Ty::Array(t, _) => *t,
                         _ => match n.as_str() {
-                            "@array_constructor" if !arg_types.is_empty() && arg_types.iter().all(|t| t == &arg_types[0]) => {
-                                let element = match &arg_types[0] { Ty::Array(t, _) => (**t).clone(), t => t.clone() };
-                                Ty::Array(Box::new(element), 1)
-                            }
                             "@integer_literal" if args.len()==2 => scalar(&TypeSpec::Integer(Some(crate::parameters::integer_constant(&args[1])? as u8))),
                             "shape" | "lbound" | "ubound" => {
                                 let (_, dim, kind) = crate::inquiries::arguments(n, args)?;
@@ -588,6 +626,11 @@ impl Resolver {
                                 else { Ty::Array(Box::new(element), 1) }
                             }
                             "size" | "len" => scalar(&TypeSpec::Integer(None)),
+                            "repeat" | "trim" | "adjustl" | "adjustr" => scalar(&TypeSpec::Character(None)),
+                            "pack" => match arg_types.first() {
+                                Some(Ty::Array(element, _)) => Ty::Array(element.clone(), 1),
+                                _ => Ty::Unknown,
+                            },
                             "int" | "nint" | "floor" | "ceiling" | "real" | "dble" => {
                                 let kind = match args.get(1) {
                                     None => Some(4),
@@ -766,15 +809,15 @@ pub fn resolve(mut program: Program) -> Result<Program> {
         body.iter().any(|s| match s {
             Stmt::GenericInterface { .. } | Stmt::OperatorInterface { .. } => true,
             Stmt::VarDecl {
-                kind: TypeSpec::IntegerKind(_) | TypeSpec::CharacterLength(_),
+                kind: TypeSpec::IntegerKind(_) | TypeSpec::RealKind(_) | TypeSpec::CharacterLength(_),
                 ..
             }
             | Stmt::ArrayDecl {
-                kind: TypeSpec::IntegerKind(_) | TypeSpec::CharacterLength(_),
+                kind: TypeSpec::IntegerKind(_) | TypeSpec::RealKind(_) | TypeSpec::CharacterLength(_),
                 ..
             }
             | Stmt::InitializedDecl {
-                kind: TypeSpec::IntegerKind(_) | TypeSpec::CharacterLength(_),
+                kind: TypeSpec::IntegerKind(_) | TypeSpec::RealKind(_) | TypeSpec::CharacterLength(_),
                 ..
             } => true,
             Stmt::DerivedType { components, .. } => needs_constants(components),
@@ -830,6 +873,40 @@ pub fn resolve(mut program: Program) -> Result<Program> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn constructor_types_ignore_implied_do_controls_and_flatten_arrays() {
+        use super::*;
+        let resolver = Resolver::default();
+        let mut vars = Vars::new();
+        for (name, ty) in [("i",scalar(&TypeSpec::Integer(None))),
+            ("j",scalar(&TypeSpec::Integer(None))), ("n",scalar(&TypeSpec::Integer(None))),
+            ("wide",scalar(&TypeSpec::Integer(Some(8))))] {vars.insert(name.into(),ty);}
+        vars.insert("v".into(),Ty::Array(Box::new(scalar(&TypeSpec::Integer(None))),2));
+        let index = || Expr::Ident("i".into());
+        let implied = |item| Expr::Call("@output_implied_do".into(),vec![index(),Expr::IntLit("1".into()),Expr::Ident("n".into()),Expr::IntLit("1".into()),item]);
+        for (item,kind) in [(index(),TypeSpec::Integer(None)),
+            (Expr::Ident("wide".into()),TypeSpec::Integer(Some(8))),
+            (Expr::RealLit("1.5".into()),TypeSpec::Real),
+            (Expr::RealLit("1.5d0".into()),TypeSpec::DoublePrecision),
+            (Expr::Logical(true),TypeSpec::Logical),
+            (Expr::Str("ab".into()),TypeSpec::Character(Some(2))),
+            (Expr::Ident("v".into()),TypeSpec::Integer(None)),
+            (Expr::Call("@output_implied_do".into(),vec![Expr::Ident("j".into()),Expr::IntLit("1".into()),index(),Expr::IntLit("1".into()),Expr::Ident("j".into())]),TypeSpec::Integer(None))] {
+            let mut e=Expr::Call("@array_constructor".into(),vec![implied(item)]);
+            assert_eq!(resolver.expression(&mut e,&vars,&Bindings::new()).unwrap(),Ty::Array(Box::new(scalar(&kind)),1));
+        }
+        let mut e=Expr::Call("@array_constructor".into(),vec![index(),Expr::Ident("v".into())]);
+        assert_eq!(resolver.expression(&mut e,&vars,&Bindings::new()).unwrap(),Ty::Array(Box::new(scalar(&TypeSpec::Integer(None))),1));
+        let mut e=Expr::Call("@array_constructor".into(),vec![index(),Expr::RealLit("1.0".into())]);
+        assert!(resolver.expression(&mut e,&vars,&Bindings::new()).unwrap_err().to_string().contains("same type and kind"));
+    }
+
+    #[test]
+    fn resolves_runtime_constructor_generic_before_lowering() {
+        let p=lower(include_str!("../xset_alloc_implied_do.f90")).unwrap();
+        assert!(p.body.iter().any(|s|matches!(s,crate::ast::Stmt::CallSub{name,..} if name=="set_alloc_int_vec")));
+    }
+
     #[test]
     fn shape_inference_preserves_user_procedure_shadowing() {
         let source = "module m\ninterface g\nmodule procedure one,two\nend interface\ncontains\nsubroutine one(x)\ninteger::x\nend subroutine\nsubroutine two(x)\ninteger::x(:)\nend subroutine\ninteger function shape(x)\ninteger::x\nshape=x+7\nend function\nend module\nuse m\ncall g(shape(2))\nend";

@@ -29,6 +29,42 @@ pub(super) fn view(
     expr: &IExpr,
 ) -> Result<View> {
     match expr {
+        IExpr::Call(name, args) if name == "repeat" && args.len() == 2 => {
+            let IExpr::IntLit(count) = &args[1] else {
+                bail!("native REPEAT currently requires a constant INTEGER NCOPIES");
+            };
+            let count: i64 = count.parse()?;
+            if count < 0 { bail!("REPEAT NCOPIES must be nonnegative"); }
+            let count = usize::try_from(count).context("REPEAT NCOPIES is too large")?;
+            let source = view(module, b, ptr, dc, chars, ints, &args[0])?;
+            let capacity = source.capacity.checked_mul(count)
+                .filter(|n| *n < i32::MAX as usize)
+                .context("REPEAT result is too large")?;
+            let slot = b.create_sized_stack_slot(ir::StackSlotData::new(
+                ir::StackSlotKind::ExplicitSlot, capacity.max(1) as u32, 0));
+            let address = b.ins().stack_addr(ptr, slot, 0);
+            let head = b.create_block();
+            let copy = b.create_block();
+            let done = b.create_block();
+            b.append_block_param(head, ptr);
+            let zero = b.ins().iconst(ptr, 0);
+            b.ins().jump(head, &[zero.into()]);
+            b.switch_to_block(head);
+            let index = b.block_params(head)[0];
+            let finished = b.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, index, count as i64);
+            b.ins().brif(finished, done, &[], copy, &[]);
+            b.switch_to_block(copy);
+            b.seal_block(copy);
+            let offset = b.ins().imul(index, source.length);
+            let dest = b.ins().iadd(address, offset);
+            call(module, b, "memcpy", &[dest, source.address, source.length], ptr)?;
+            let next = b.ins().iadd_imm(index, 1);
+            b.ins().jump(head, &[next.into()]);
+            b.seal_block(head);
+            b.switch_to_block(done);
+            b.seal_block(done);
+            Ok(View { address, length: b.ins().imul_imm(source.length, count as i64), capacity })
+        }
         IExpr::Call(name, args) if name == "@substring" => {
             let [source, IExpr::IntLit(start), IExpr::IntLit(length)] = args.as_slice() else {
                 bail!("invalid substring view");
