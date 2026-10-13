@@ -14,8 +14,60 @@ pub fn math_arity(name: &str) -> Option<usize> {
     REAL_MATH.iter().find(|(n, _)| name.eq_ignore_ascii_case(n)).map(|(_, arity)| *arity)
 }
 
+/// Language purity for public intrinsic interfaces known to the compiler. Keep compiler
+/// internal expression markers in their owning lowering pass, not this catalog.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Purity { Pure, Impure }
+
+pub const PURE_FUNCTIONS: &[&str] = &[
+    "abs", "achar", "adjustl", "adjustr", "aint", "all", "allocated",
+    "anint", "any", "associated", "ceiling", "char", "count", "cshift",
+    "dble", "dim", "dot_product", "dprod", "eoshift", "findloc", "floor",
+    "huge", "iachar", "ichar", "index", "int", "ishftc", "kind",
+    "lbound", "len", "len_trim", "lge", "lgt", "lle", "llt",
+    "matmul", "max", "maxloc", "maxval", "merge", "min", "minloc",
+    "minval", "mod", "modulo", "new_line", "nint", "pack", "present",
+    "product", "real", "repeat", "reshape", "scan", "selected_int_kind", "selected_real_kind",
+    "shape", "sign", "size", "spread", "sum", "tiny", "transpose",
+    "trim", "ubound", "unpack", "verify",
+];
+
+pub const IMPURE_PROCEDURES: &[&str] = &[
+    "random_number", "random_seed", "cpu_time", "system_clock", "date_and_time",
+];
+
+pub fn purity(name: &str) -> Option<Purity> {
+    let name=name.to_ascii_lowercase();
+    if IMPURE_PROCEDURES.contains(&name.as_str()) {
+        Some(Purity::Impure)
+    } else if PURE_FUNCTIONS.contains(&name.as_str()) || math_arity(&name).is_some()
+        || crate::inquiries::numeric_model(&name) || crate::bit_intrinsics::keys(&name).is_some()
+    {
+        Some(Purity::Pure)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn classifies_pure_impure_and_unknown_intrinsics() {
+        for name in super::PURE_FUNCTIONS.iter().copied()
+            .chain(super::REAL_MATH.iter().map(|(name,_)|*name))
+            .chain(crate::bit_intrinsics::NAMES.iter().copied())
+        {
+            assert_eq!(super::purity(name),Some(super::Purity::Pure),"{name}");
+            assert_eq!(super::purity(&name.to_uppercase()),Some(super::Purity::Pure),"{name}");
+        }
+        for name in super::IMPURE_PROCEDURES {
+            assert_eq!(super::purity(name),Some(super::Purity::Impure),"{name}");
+        }
+        for name in ["user_function","@cpu_seconds","@random_seed_put","@unknown"] {
+            assert_eq!(super::purity(name),None,"{name}");
+        }
+    }
+
     #[test]
     fn validates_random_number_and_loop_index_usage() {
         for (declarations, statement, valid) in [

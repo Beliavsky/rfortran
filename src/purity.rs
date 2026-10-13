@@ -29,8 +29,9 @@ pub fn validate(program: &Program) -> Result<()> {
         match e {
             Expr::Call(_, _) if crate::named_arguments::omitted(e) => {},
             Expr::Call(name, args) => {
-                let intrinsic = matches!(name.as_str(), "allocated" | "shape") || name.starts_with("@keyword:") || crate::intrinsics::math_arity(name).is_some() || crate::inquiries::numeric_model(name) || crate::bit_intrinsics::keys(name).is_some()
-                    || matches!(name.to_ascii_lowercase().as_str(), "@integer_literal" | "minloc" | "maxloc" | "findloc" | "@minloc" | "@maxloc" | "@findloc" | "pack" | "unpack" | "spread" | "eoshift" | "transpose" | "cshift" | "reshape" | "mod" | "modulo" | "abs" | "int" | "real" | "dble" | "sum" | "product" | "minval" | "maxval" | "max" | "min" | "kind" | "selected_real_kind" | "selected_int_kind" | "tiny" | "huge" | "size" | "lbound" | "ubound" | "len" | "len_trim" | "ichar" | "iachar" | "char" | "achar" | "index" | "scan" | "verify" | "new_line" | "trim" | "adjustl" | "adjustr" | "repeat" | "present" | "any" | "all" | "count" | "@count_i8" | "@count_default" | "@any_reduction" | "@all_reduction" | "@array_constructor" | "@literal_substring" | "@output_implied_do" | "@section_subscript");
+                let intrinsic = crate::intrinsics::purity(name)==Some(crate::intrinsics::Purity::Pure)
+                    || name.starts_with("@keyword:")
+                    || matches!(name.as_str(), "@integer_literal" | "@minloc" | "@maxloc" | "@findloc" | "@count_i8" | "@count_default" | "@any_reduction" | "@all_reduction" | "@array_constructor" | "@literal_substring" | "@output_implied_do" | "@section_subscript" | "@no_value" | "@no_dim" | "@no_vector" | "@no_boundary" | "@no_pad" | "@no_order");
                 if !locals.contains(name) && !known.get(name).map(|p| p.pure).unwrap_or(intrinsic) {
                     bail!("PURE procedure cannot call impure or unknown procedure `{name}`");
                 }
@@ -181,6 +182,51 @@ pub fn validate(program: &Program) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn accepts_intrinsic_functions_missing_from_the_old_allowlist() {
+        for (kind,expression,declaration) in [
+            ("integer","merge(1,2,.true.)",""),
+            ("integer","nint(1.2)",""),
+            ("integer","floor(1.2)",""),
+            ("integer","ceiling(1.2)",""),
+            ("real","aint(1.2)",""),
+            ("real","anint(1.2)",""),
+            ("real","sign(1.0,-2.0)",""),
+            ("real","dim(2.0,1.0)",""),
+            ("double precision","dprod(2.0,3.0)",""),
+            ("real","dot_product(a,a)","real,intent(in)::a(2)"),
+            ("real","sum(matmul(a,a))","real,intent(in)::a(2,2)"),
+            ("logical","lge('a','b')",""),
+            ("logical","lgt('a','b')",""),
+            ("logical","lle('a','b')",""),
+            ("logical","llt('a','b')",""),
+            ("logical","associated(a)","integer,pointer,intent(in)::a(:)"),
+        ] {
+            let parameter=if declaration.is_empty() {""} else {"a"};
+            let source=format!("pure function f({parameter}) result(j)\n{declaration}\n{kind}::j\nj={expression}\nend function\n");
+            let program=crate::parser::parse_with_src(&source,&crate::lexer::lex(&source),"pure.f90").unwrap();
+            super::validate(&program).unwrap_or_else(|error|panic!("{expression}: {error}"));
+        }
+    }
+
+    #[test]
+    fn pure_intrinsic_markers_do_not_allow_arbitrary_internal_calls() {
+        for name in ["@no_value","@no_dim","@no_vector","@no_boundary","@no_pad","@no_order","@count_i8"] {
+            let source="pure integer function f() result(j)\nj=1\nend function";
+            let mut program=crate::parser::parse_with_src(source,&crate::lexer::lex(source),"pure.f90").unwrap();
+            let crate::ast::Stmt::Function {body,..}=program.body.iter_mut().find(|s|matches!(s,crate::ast::Stmt::Function {..})).unwrap() else {panic!("function")};
+            let statement=body.iter_mut().find(|s|matches!(s,crate::ast::Stmt::Assign {..})).unwrap();
+            let crate::ast::Stmt::Assign {value,..}=statement else {unreachable!()};
+            *value=crate::ast::Expr::Call(name.into(),vec![]);
+            super::validate(&program).unwrap();
+            let crate::ast::Stmt::Function {body,..}=program.body.iter_mut().find(|s|matches!(s,crate::ast::Stmt::Function {..})).unwrap() else {unreachable!()};
+            let statement=body.iter_mut().find(|s|matches!(s,crate::ast::Stmt::Assign {..})).unwrap();
+            let crate::ast::Stmt::Assign {value,..}=statement else {unreachable!()};
+            *value=crate::ast::Expr::Call("@cpu_seconds".into(),vec![]);
+            assert!(super::validate(&program).unwrap_err().to_string().contains("impure or unknown"));
+        }
+    }
+
     #[test]
     fn pure_allocation_protects_inputs_and_host_storage() {
         for (declarations,expected) in [

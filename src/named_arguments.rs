@@ -412,6 +412,7 @@ mod tests {
                 "precision","range","minexponent","maxexponent","size","lbound","ubound","shape","sum","product",
                 "minval","maxval","count","any","all","minloc","maxloc","findloc","reshape","cshift","eoshift","spread","pack","unpack"]) {
             assert!(intrinsic(name).is_some() || intrinsic_keywords(name),"missing keyword interface for {name}");
+            assert!(crate::intrinsics::purity(name).is_some(), "missing intrinsic purity classification for {name}");
             if let Some(signature)=intrinsic(name) {
                 let mut args=signature.params.iter().enumerate().rev().map(|(i,p)|Expr::Call(format!("@keyword:{p}"),vec![Expr::IntLit(i.to_string())])).collect();
                 signature.reorder(name,&mut args).unwrap();

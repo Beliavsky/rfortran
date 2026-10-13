@@ -323,6 +323,16 @@ checks with gfortran comparisons. The main suite includes
 
 Scalar calls to ELEMENTAL subroutines support explicit INTENT(IN), INTENT(OUT),
 and INTENT(INOUT), omitted OPTIONAL arguments, named arguments, and PRESENT tests.
+Intrinsic purity classifications are shared through `src/intrinsics.rs`. PURE
+procedures recognize rounding intrinsics, SIGN/DIM/DPROD, MERGE, array products,
+lexical CHARACTER comparisons and ASSOCIATED, plus the existing intrinsic
+families. RANDOM_NUMBER, RANDOM_SEED, CPU_TIME, SYSTEM_CLOCK and DATE_AND_TIME
+remain impure. User-defined procedure declarations take precedence over intrinsic
+names. Classification tests cover all registered intrinsic interfaces, while
+`python tests/test_pure_intrinsics.py` checks supported execution and rejection
+of impure calls. Some classified intrinsics still have incomplete semantic or
+execution support; the purity catalog records their language classification.
+
 ELEMENTAL implies PURE unless IMPURE is specified; PURE restrictions are checked.
 IMPURE ELEMENTAL functions and subroutines may perform external I/O and other
 supported side effects. Either prefix order (`impure elemental` or `elemental
