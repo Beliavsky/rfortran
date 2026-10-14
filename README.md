@@ -234,7 +234,12 @@ sections are covered by `python tests/test_forward_array_results.py`.
 Existing bounded array-function limits remain: rank-one inputs/results in this
 specialization, at most 1024 elements per array, and extents and CHARACTER lengths
 known after association. Source array elements copied into the function must be
-initialized. ALLOCATABLE array-valued results require separate support.
+initialized. Rank-one fixed-length CHARACTER ALLOCATABLE results can use bounded
+ALLOCATABLE output helpers; their active length is tracked separately from
+storage capacity. This supports filtered `.exclude.` results, including empty
+results, assignment, argument passing and list-directed/formatted output.
+`python tests/test_character_allocatable_results.py` checks these paths against
+the interpreter, native code at `-O0`/`-O2`, and gfortran when available.
 
 ## PURE functions inside FORALL
 
@@ -1481,6 +1486,7 @@ python tests/test_else_if.py
 python tests/test_multi_forall.py
 python tests/test_forall_functions.py
 python tests/test_forward_array_results.py
+python tests/test_character_allocatable_results.py
 python tests/test_array_constructors.py
 python tests/test_runtime_constructors.py
 python tests/test_bound_inquiries.py

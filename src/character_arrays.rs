@@ -287,7 +287,18 @@ fn assign(
     } else {
         length
     };
-    let values = match expression(value, arrays)? {
+    let values=if let Expr::Call(tag,args)=&value {
+        if tag=="@packed_view" && args.len()==2 {
+            if let Expr::Ident(source)=&args[0] {
+                if let Some(array)=arrays.get(source) {
+                    output.push(Stmt::If{cond:Expr::Bin(BinOp::Ne,Box::new(args[1].clone()),Box::new(Expr::IntLit(targets.len().to_string()))),then_body:vec![Stmt::CallSub{name:"@error_stop".into(),args:vec![Expr::Str("CHARACTER array assignment shapes do not conform".into())]}],else_body:None});
+                    if targets.len()>array.elements.len() {bail!("CHARACTER array assignment shapes do not conform");}
+                    Value::Array(array.elements[..targets.len()].iter().cloned().map(Expr::Ident).collect())
+                } else {expression(value,arrays)?}
+            } else {expression(value,arrays)?}
+        } else {expression(value,arrays)?}
+    } else {expression(value,arrays)?};
+    let values = match values {
         Value::Array(v) => {
             if v.len() != targets.len() {
                 bail!("nonconforming CHARACTER array assignment");

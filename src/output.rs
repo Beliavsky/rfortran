@@ -480,3 +480,53 @@ pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> Result<crat
     scope(&mut program.body, &Symbols::new(), &mut 0)?;
     Ok(program)
 }
+
+/// Turn active CHARACTER array views into I/O implied-DOs before scalarizing
+/// their bounded backing storage. Unselected capacity slots are never read.
+pub(crate) fn prepare_character_views(mut program:crate::ast::Program)->Result<crate::ast::Program> {
+    fn scope(body:&mut Vec<Stmt>,inherited:&Symbols,serial:&mut usize)->Result<()> {
+        let mut symbols=inherited.clone();
+        for s in body.iter() {match s {
+            Stmt::ArrayDecl{kind,name,dims}=>{symbols.insert(name.clone(),(kind.clone(),dims.clone()));},
+            Stmt::VarDecl{kind,names}=>for n in names {symbols.insert(n.clone(),(kind.clone(),vec![]));},_=>{}
+        }}
+        let mut out=vec![];
+        for mut s in std::mem::take(body) {
+            let items=match &mut s {
+                Stmt::Print{items}=>Some(items.as_mut_slice()),
+                Stmt::CallSub{name,args} if matches!(name.as_str(),"@formatted_print"|"@formatted_write_noadvance")=>Some(&mut args[1..]),
+                Stmt::CallSub{name,args} if name=="@write"=>Some(&mut args[2..]),_=>None,
+            };
+            if let Some(items)=items {
+                for item in items {
+                    if let Expr::Call(tag,args)=item {
+                        if tag=="@packed_view" && args.len()==2 {
+                            if let Expr::Ident(array)=&args[0] {
+                                if matches!(symbols.get(array),Some((TypeSpec::Character(_),dims)) if dims.len()==1) {
+                                    *serial+=1;
+                                    let index=format!("@character_view_output_{serial}");
+                                    let kind=TypeSpec::Integer(Some(8));
+                                    out.push(Stmt::VarDecl{kind:kind.clone(),names:vec![index.clone()]});
+                                    symbols.insert(index.clone(),(kind,vec![]));
+                                    *item=Expr::Call("@output_implied_do".into(),vec![Expr::Ident(index.clone()),Expr::IntLit("1".into()),args[1].clone(),Expr::IntLit("1".into()),Expr::Index(array.clone(),vec![Expr::Ident(index)])]);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            match &mut s {
+                Stmt::Print{items} if items.iter().any(contains_implied_do)=>s=lower(items,&symbols,serial)?,
+                Stmt::Block{body}|Stmt::Do{body,..}|Stmt::DoWhile{body,..}=>scope(body,&symbols,serial)?,
+                Stmt::If{then_body,else_body,..}=>{scope(then_body,&symbols,serial)?;if let Some(body)=else_body {scope(body,&symbols,serial)?;}},
+                Stmt::Subroutine{body,..}|Stmt::Function{body,..}|Stmt::Module{body,..}=>scope(body,&symbols,serial)?,
+                Stmt::SelectCase{cases,default,..}=>{for c in cases {scope(&mut c.body,&symbols,serial)?;}if let Some(body)=default {scope(body,&symbols,serial)?;}},_=>{}
+            }
+            out.push(s);
+        }
+        *body=out;
+        Ok(())
+    }
+    scope(&mut program.body,&Symbols::new(),&mut 0)?;
+    prepare_formatted(program)
+}

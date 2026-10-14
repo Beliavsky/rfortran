@@ -233,7 +233,7 @@ unsafe fn render_format(
         if matches!(d.code, b'a' | b'i' | b'f' | b'l') {
             for _ in 0..d.repeat {
                 let Some(item) = items.get(index) else {
-                    fail("format descriptor count must match the output list; format reversion is not yet supported");
+                    break;
                 };
                 if !format_spec::matches_type(d.code, item.tag) {
                     fail("descriptor does not match output item type");
@@ -247,8 +247,9 @@ unsafe fn render_format(
     }
     let mut parser = checked(GroupParser::new(bytes,count));
     index = 0;
-    while let Some(d) = checked(parser.next()) {
+    'descriptors: while let Some(d) = checked(parser.next()) {
         for _ in 0..d.repeat {
+            if matches!(d.code,b'a'|b'i'|b'f'|b'l') && index==count {break 'descriptors;}
             match d.code {
                 b'\'' | b'"' => {
                     let mut i = 0;

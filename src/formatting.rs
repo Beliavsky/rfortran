@@ -14,6 +14,8 @@ pub struct Field {
 pub fn parse(format: &str, count: usize) -> Result<Vec<Field>> {
     let mut parser = crate::format_spec::GroupParser::new(format.as_bytes(),count).map_err(anyhow::Error::msg)?;
     let mut fields = Vec::new();
+    let mut items=0;
+    let mut finished=false;
     while let Some(d) = parser.next().map_err(anyhow::Error::msg)? {
         let literal = match d.code {
             b'\'' | b'"' => {
@@ -24,7 +26,14 @@ pub fn parse(format: &str, count: usize) -> Result<Vec<Field>> {
             b'/' => Some("\n".into()),
             _ => None,
         };
-        fields.extend((0..d.repeat).map(|_| Field { code: d.code as char, width: d.width, precision: d.precision, literal: literal.clone() }));
+        for _ in 0..d.repeat {
+            if finished {continue;}
+            if literal.is_none() {
+                if items==count {finished=true;continue;}
+                items+=1;
+            }
+            fields.push(Field { code: d.code as char, width: d.width, precision: d.precision, literal: literal.clone() });
+        }
     }
     if fields.iter().filter(|f| f.literal.is_none()).count() != count {
         bail!("format descriptor count must match the output list; format reversion is not yet supported");
@@ -34,6 +43,16 @@ pub fn parse(format: &str, count: usize) -> Result<Vec<Field>> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn stops_at_next_data_descriptor_after_last_item() {
+        let fields=super::parse("(100(a,1x))",2).unwrap();
+        assert_eq!(fields.len(),4);
+        assert_eq!(super::parse("(100(a,1x))",0).unwrap().len(),0);
+        let fields=super::parse("(i0,'!',i0)",1).unwrap();
+        assert_eq!(fields.len(),2);
+        assert_eq!(fields[1].literal.as_deref(),Some("!"));
+        assert!(super::parse("(2a)",3).is_err());
+    }
     #[test]
     fn validates_explicit_formats() {
         let fields = super::parse("(i3,6f11.4)", 7).unwrap();

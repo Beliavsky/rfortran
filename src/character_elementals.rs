@@ -43,6 +43,7 @@ pub(crate) struct Lower {
     active: Vec<String>,
     pure_functions: HashMap<String, bool>,
     defer_calls: bool,
+    allocation_helpers: Vec<Stmt>,
 }
 impl Lower {
     pub(crate) fn finish(&mut self, mut p: Program) -> Result<Program> {
@@ -475,6 +476,17 @@ impl Lower {
         }
         let mut specialized=routine.body.clone();
         self.specialize_types(&mut specialized,&routine,&views,&constants)?;
+        // ALLOCATABLE results carry an active length independently of the
+        // conservative storage bound inferred from their allocation helpers.
+        let alloc_result=specialized.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==&routine.result && intent=="allocatable"))
+            && specialized.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,..} if name==&routine.result));
+        if alloc_result {
+            let helper_count=self.allocation_helpers.len();
+            specialized.extend(self.allocation_helpers.clone());
+            let mut prepared=crate::allocatables::prepare(Program{name:String::new(),body:specialized})?;
+            prepared.body.truncate(prepared.body.len()-helper_count);
+            specialized=prepared.body;
+        }
         let result_dims=specialized.iter().find_map(|s|if let Stmt::ArrayDecl{name,dims,..}=s {if name==&routine.result {Some(dims.clone())} else {None}} else {None});
         if let Some(dims)=&result_dims {
             if routine.elemental {bail!("ELEMENTAL function requires a scalar result");}
@@ -567,8 +579,32 @@ impl Lower {
             // Function and subroutine expansion have independent counters.
             // Keep their locals distinct when an expanded function calls a helper.
             crate::subroutines::rename_with_prefix(&mut body, &names, &bound, &mut self.serial, "@character_function_local")?;
+            if alloc_result {
+                // The caller consumes the result after the inlined function's
+                // BLOCK ends, so its allocation state belongs to caller scope.
+                let mut state=std::collections::HashSet::new();
+                for s in &body {
+                    if let Stmt::DummyIntent{name,intent}=s {
+                        if name==&result {
+                            if let Some(rest)=intent.strip_prefix("@bounded:") {state.extend(rest.split(':').map(str::to_owned));}
+                        }
+                    }
+                }
+                body.retain(|s| {
+                    let hoist=match s {
+                        Stmt::DummyIntent{name,intent}=>name==&result && intent.starts_with("@bounded:"),
+                        Stmt::VarDecl{names,..}=>names.iter().all(|n|state.contains(n)),
+                        Stmt::Assign{name,..}=>state.contains(name),
+                        _=>false,
+                    };
+                    if hoist {prefix.push(s.clone());}
+                    !hoist
+                });
+                crate::allocatables::metadata(prefix,symbols);
+            }
             body.retain(|s| {
-                !matches!(s, Stmt::DummyIntent { .. } | Stmt::Implicit(_))
+                !matches!(s, Stmt::DummyIntent { intent,.. } if !intent.starts_with("@bounded"))
+                    && !matches!(s,Stmt::Implicit(_))
                     && !matches!(s,Stmt::VarDecl{names,..} if names.is_empty())
                     && !matches!(s,Stmt::ArrayDecl{name,..} if bound.contains(name))
             });
@@ -1122,6 +1158,7 @@ pub(crate) fn prepare(mut p: Program) -> Result<(Program, Lower)> {
         active: vec![],
         pure_functions: HashMap::new(),
         defer_calls: true,
+        allocation_helpers: vec![],
     };
     fn pure_functions(body: &[Stmt], known: &mut HashMap<String,bool>) {
         for s in body {match s {
@@ -1130,6 +1167,15 @@ pub(crate) fn prepare(mut p: Program) -> Result<(Program, Lower)> {
         }}
     }
     pure_functions(&p.body,&mut lower.pure_functions);
+    fn allocation_helpers(body:&[Stmt],helpers:&mut Vec<Stmt>) {
+        for s in body {match s {
+            Stmt::Subroutine{params,body,..} if params.iter().any(|p|
+                body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==p && intent=="allocatable"))
+                && body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==p && intent=="intent(out)")))=>helpers.push(s.clone()),
+            Stmt::Module{body,..}=>allocation_helpers(body,helpers),_=>{}
+        }}
+    }
+    allocation_helpers(&p.body,&mut lower.allocation_helpers);
     fn collect(body: &mut Vec<Stmt>, lower: &mut Lower) -> Result<()> {
         let mut host = std::collections::HashSet::new();
         for s in body.iter() {

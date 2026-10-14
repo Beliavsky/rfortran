@@ -1067,6 +1067,80 @@ fn validate_input_writes(body: &[Stmt], inputs: &HashSet<String>) -> Result<()> 
 // CHARACTER constructors need CHARACTER storage before array-dummy specialization;
 // the numeric reduction materializer cannot provide that storage.
 fn character_constructor(actual:&mut Expr, shapes:&Shapes, prefix:&mut Vec<Stmt>, serial:&mut usize)->Result<Option<(TypeSpec,i64,Expr)>> {
+    if let Expr::Call(tag,args)=actual {
+        if tag=="@packed_view" && args.len()==2 {
+            if let Expr::Ident(n)=&args[0] {
+                if let Some((kind,dims))=shapes.get(n) {
+                    if matches!(kind,TypeSpec::Character(_)) && dims.len()==1 {
+                        return Ok(Some((kind.clone(),crate::parameters::integer_constant(&dims[0])?,args[1].clone())));
+                    }
+                }
+            }
+        }
+        if tag=="pack" && args.len()==3 {
+            let mut local=shapes.clone();
+            let mut source=args[0].clone();
+            let (kind,capacity,extent)=if let Expr::Ident(n)=&source {
+                let (kind,dims)=local.get(n).context("undeclared PACK ARRAY")?;
+                if dims.len()!=1 || !matches!(kind,TypeSpec::Character(_)) {return Ok(None);}
+                (kind.clone(),crate::parameters::integer_constant(&dims[0])?,crate::allocatables::length(n,&local).unwrap_or(dims[0].clone()))
+            } else {character_constructor(&mut source,&local,prefix,serial)?.context("CHARACTER PACK ARRAY requires bounded rank-one storage")?};
+            for s in prefix.iter() {if let Stmt::ArrayDecl{kind,name,dims}=s {local.insert(name.clone(),(kind.clone(),dims.clone()));}}
+            let mut mask=args[1].clone();
+            let (mask_value,mask_count,mask_kind)=crate::reductions::elemental_element(&mask,&Expr::IntLit("1".into()),&local)?;
+            if mask_kind!=TypeSpec::Logical {bail!("PACK MASK must be LOGICAL");}
+            let mask_extent=if mask_count.is_some() {
+                let (_,_,length)=crate::reductions::argument(&mut mask,&local,prefix,serial)?;
+                Some(length)
+            } else {mask=mask_value;None};
+            for s in prefix.iter() {match s {
+                Stmt::ArrayDecl{kind,name,dims}=>{local.insert(name.clone(),(kind.clone(),dims.clone()));},
+                Stmt::VarDecl{kind,names}=>for n in names {local.insert(n.clone(),(kind.clone(),vec![]));},_=>{}
+            }}
+            let mut vector=args[2].clone();
+            let has_vector=!matches!(&vector,Expr::Call(n,_) if n=="@no_vector");
+            let vector_info=if has_vector {
+                let info=if let Expr::Ident(n)=&vector {
+                    let (k,d)=local.get(n).context("undeclared PACK VECTOR")?;
+                    if d.len()!=1 {bail!("PACK VECTOR must be rank one");}
+                    (k.clone(),crate::parameters::integer_constant(&d[0])?,crate::allocatables::length(n,&local).unwrap_or(d[0].clone()))
+                } else {character_constructor(&mut vector,&local,prefix,serial)?.context("CHARACTER PACK VECTOR requires bounded storage")?};
+                if info.0!=kind {bail!("PACK VECTOR type and CHARACTER length must match ARRAY");}
+                Some(info)
+            } else {None};
+            *serial+=1;
+            let temp=format!("@call_character_pack_{serial}");
+            let index=format!("@call_character_pack_index_{serial}");
+            let cursor=format!("@call_character_pack_length_{serial}");
+            let id=|n:&str|Expr::Ident(n.into());
+            let int=|n:i64|Expr::IntLit(n.to_string());
+            let bin=|op,a,b|Expr::Bin(op,Box::new(a),Box::new(b));
+            let capacity=vector_info.as_ref().map_or(capacity,|v|v.1);
+            prefix.push(Stmt::ArrayDecl{kind:kind.clone(),name:temp.clone(),dims:vec![int(capacity)]});
+            prefix.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![index.clone(),cursor.clone()]});
+            prefix.push(Stmt::Assign{name:cursor.clone(),value:int(0)});
+            if mask_count.is_none() {
+                let scalar=format!("@call_character_pack_mask_{serial}");
+                prefix.push(Stmt::VarDecl{kind:TypeSpec::Logical,names:vec![scalar.clone()]});
+                prefix.push(Stmt::Assign{name:scalar.clone(),value:mask});
+                mask=id(&scalar);
+            }
+            if let Some(length)=mask_extent {prefix.push(Stmt::If{cond:bin(crate::ast::BinOp::Ne,extent.clone(),length),then_body:vec![Stmt::CallSub{name:"@error_stop".into(),args:vec![Expr::Str("PACK MASK shape must conform to ARRAY".into())]}],else_body:None});}
+            let condition=if mask_count.is_some() {crate::reductions::argument_element(&mask,&id(&index),&local)?} else {mask};
+            let Expr::Ident(source)=source else {bail!("CHARACTER PACK ARRAY must resolve to array storage");};
+            let mut selected=vec![Stmt::Assign{name:cursor.clone(),value:bin(crate::ast::BinOp::Add,id(&cursor),int(1))}];
+            if let Some((_,_,length))=&vector_info {selected.push(Stmt::If{cond:bin(crate::ast::BinOp::Gt,id(&cursor),length.clone()),then_body:vec![Stmt::CallSub{name:"@error_stop".into(),args:vec![Expr::Str("PACK VECTOR has too few elements for MASK".into())]}],else_body:None});}
+            selected.push(Stmt::AssignIndex{name:temp.clone(),indices:vec![id(&cursor)],value:Expr::Index(source,vec![id(&index)])});
+            prefix.push(Stmt::Do{var:index.clone(),start:int(1),end:extent,body:vec![Stmt::If{cond:condition,then_body:selected,else_body:None}]});
+            let length=if let Some((_,_,length))=vector_info {
+                let Expr::Ident(vector)=vector else {bail!("CHARACTER PACK VECTOR must resolve to array storage");};
+                prefix.push(Stmt::Do{var:index.clone(),start:bin(crate::ast::BinOp::Add,id(&cursor),int(1)),end:length.clone(),body:vec![Stmt::AssignIndex{name:temp.clone(),indices:vec![id(&index)],value:Expr::Index(vector,vec![id(&index)])}]});
+                length
+            } else {id(&cursor)};
+            *actual=Expr::Call("@packed_view".into(),vec![id(&temp),length.clone()]);
+            return Ok(Some((kind,capacity,length)));
+        }
+    }
     let empty=crate::empty_constructors::kind(actual)?;
     let mut section_kind=None;
     let values=match actual {
@@ -1549,6 +1623,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
     p = crate::modules::bind_descriptors(p)?;
     p = crate::modules::finish_bounds(p)?;
     p = crate::allocatables::finish(p)?;
+    p = crate::output::prepare_character_views(p)?;
     p = crate::constructors::resolve(p)?;
     let p = crate::character_arrays::resolve(p)?;
     crate::multidim::resolve(crate::function_arrays::resolve(crate::substrings::resolve(p)?)?)

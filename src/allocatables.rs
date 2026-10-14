@@ -690,16 +690,32 @@ pub(crate) fn prepare(mut p: Program) -> Result<Program> {
     }
     constructor_arrays(&p.body,&mut arrays)?;
     let mut bounds = HashMap::<String, i64>::new();
+    fn prepared_outputs(body:&[Stmt],names:&mut HashSet<String>) {
+        for s in body {match s {
+            Stmt::DummyIntent{name,intent} if intent.starts_with("@bounded:")=>{names.insert(name.clone());},
+            _=>{}
+        }}
+    }
+    let mut prepared=HashSet::new();
+    prepared_outputs(&p.body,&mut prepared);
     fn calls(
         body: &[Stmt],
         outputs: &HashMap<String, (Vec<usize>, Option<i64>)>,
         arrays: &HashMap<String, i64>,
         bounds: &mut HashMap<String, i64>,
+        prepared: &HashSet<String>,
     ) -> Result<()> {
+        let mut prepared=prepared.clone();
+        for s in body {match s {
+            Stmt::ArrayDecl{name,..}=>{prepared.remove(name);},
+            Stmt::VarDecl{names,..}=>for n in names {prepared.remove(n);},_=>{}
+        }}
+        prepared_outputs(body,&mut prepared);
         for s in body {
             match s {
                 Stmt::CallSub { name, args } => {
                     if let Some((positions, local_bound)) = outputs.get(name) {
+                        if positions.iter().all(|i|matches!(args.get(*i),Some(Expr::Ident(n)) if prepared.contains(n))) {continue;}
                         let mut available = arrays.clone();
                         available.extend(bounds.iter().map(|(n, v)| (n.clone(), *v)));
                         let bound=args.iter().enumerate().filter(|(i,_)|!positions.contains(i)).filter_map(|(_,e)|capacity(e,&available)).max().or(*local_bound)
@@ -717,16 +733,16 @@ pub(crate) fn prepare(mut p: Program) -> Result<Program> {
                     }
                 }
                 Stmt::Block { body } | Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } => {
-                    calls(body, outputs, arrays, bounds)?
+                    calls(body, outputs, arrays, bounds, &prepared)?
                 }
                 Stmt::If {
                     then_body,
                     else_body,
                     ..
                 } => {
-                    calls(then_body, outputs, arrays, bounds)?;
+                    calls(then_body, outputs, arrays, bounds, &prepared)?;
                     if let Some(b) = else_body {
-                        calls(b, outputs, arrays, bounds)?;
+                        calls(b, outputs, arrays, bounds, &prepared)?;
                     }
                 }
                 _ => {}
@@ -738,7 +754,7 @@ pub(crate) fn prepare(mut p: Program) -> Result<Program> {
     let mut converged = false;
     for _ in 0..=allocatables + 1 {
         let previous = bounds.clone();
-        calls(&p.body, &outputs, &arrays, &mut bounds)?;
+        calls(&p.body, &outputs, &arrays, &mut bounds, &prepared)?;
         if bounds == previous {
             converged = true;
             break;

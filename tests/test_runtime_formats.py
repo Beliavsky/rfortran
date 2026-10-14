@@ -42,6 +42,7 @@ end program main
                 for fmt, expected in [
                     ("(i3,f6.2,l2,a4)", "  7  1.25 T  ab\n"),
                     ("(i0,1x,f5.1,1x,l1,1x,a1)", "7   1.2 T a\n"),
+                    ("(i3,f6.2,l2,a4,i3)", "  7  1.25 T  ab\n"),
                 ]:
                     with self.subTest(command=command, fmt=fmt):
                         result = subprocess.run(command, input=fmt+"\n", capture_output=True, text=True, timeout=15)
@@ -54,7 +55,6 @@ end program main
                     ("(i3,f6.2,l2,i4)", "item type"),
                     ("(a3,f6.2,l2,a4)", "item type"),
                     ("(i3,f6.2,l2)", "descriptor count"),
-                    ("(i3,f6.2,l2,a4,i3)", "descriptor count"),
                     ("(i999999,f6.2,l2,a4)", "supported limits"),
                     ("(999999999999999999999999i1)", "supported limits"),
                     ("('unterminated)", "unterminated literal"),

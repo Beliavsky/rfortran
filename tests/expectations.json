@@ -1246,6 +1246,13 @@
       "program_stderr": "",
       "program_stdout": " 0.0 1.0 3.0 6.0\n 0.0 4.0 9.0 15.0\n"
     },
+    "180_character_allocatable_result": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "dog boy \n"
+    },
     "179_character_membership_forward": {
       "compiler_exit_code": 0,
       "compiler_stderr": "",
