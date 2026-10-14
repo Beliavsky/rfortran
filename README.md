@@ -222,6 +222,20 @@ function definitions are removed before native result-storage validation;
 this allows the `exe_name` definition in `util.f90` to pass that blocker.
 GETCWD and GET_COMMAND_ARGUMENT themselves remain unsupported when called.
 
+## Forwarded array-valued function calls
+
+Supported array-valued functions can be called from procedures with assumed-shape
+arguments. Function expansion waits for procedure association to supply the
+actual extents and CHARACTER lengths. This applies to named and defined-operator
+calls, including `xfind .in. xdata`, and to numeric, LOGICAL and CHARACTER results.
+Nested forwarding, keyword calls, empty arrays and supported constant CHARACTER
+sections are covered by `python tests/test_forward_array_results.py`.
+
+Existing bounded array-function limits remain: rank-one inputs/results in this
+specialization, at most 1024 elements per array, and extents and CHARACTER lengths
+known after association. Source array elements copied into the function must be
+initialized. ALLOCATABLE array-valued results require separate support.
+
 ## PURE functions inside FORALL
 
 FORALL assignments can call supported PURE scalar and array-valued functions,
@@ -1466,6 +1480,7 @@ python tests/test_character_lengths.py
 python tests/test_else_if.py
 python tests/test_multi_forall.py
 python tests/test_forall_functions.py
+python tests/test_forward_array_results.py
 python tests/test_array_constructors.py
 python tests/test_runtime_constructors.py
 python tests/test_bound_inquiries.py

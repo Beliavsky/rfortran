@@ -42,9 +42,11 @@ pub(crate) struct Lower {
     serial: usize,
     active: Vec<String>,
     pure_functions: HashMap<String, bool>,
+    defer_calls: bool,
 }
 impl Lower {
     pub(crate) fn finish(&mut self, mut p: Program) -> Result<Program> {
+        self.defer_calls=false;
         self.body(&mut p.body,&Symbols::new())?;
         Ok(p)
     }
@@ -391,6 +393,24 @@ impl Lower {
             prefix.push(Stmt::CallSub { name: helper.clone(), args: actuals });
             symbols.insert(result.clone(), (routine.kind.clone(), vec![]));
             *e = Expr::Ident(result);
+            return Ok(());
+        }
+        fn unbound(e: &Expr, symbols: &Symbols) -> bool {
+            match e {
+                Expr::Ident(n) => symbols.get(n).is_some_and(|(kind,dims)|
+                    matches!(kind,TypeSpec::CharacterAssumed|TypeSpec::CharacterLength(_))
+                    || dims.iter().any(|d|crate::parameters::integer_constant(d).is_err())),
+                Expr::Call(_,args)|Expr::Index(_,args)=>args.iter().any(|e|unbound(e,symbols)),
+                Expr::Bin(_,a,b)=>unbound(a,symbols)||unbound(b,symbols),
+                Expr::Un(_,a)=>unbound(a,symbols),
+                Expr::Section{name,lower,upper,stride}=>unbound(&Expr::Ident(name.clone()),symbols)
+                    || [lower,upper,stride].into_iter().flatten().any(|e|unbound(e,symbols)),
+                _=>false,
+            }
+        }
+        if self.defer_calls && args.iter().any(|e|unbound(e,symbols)) {
+            // Preserve the original call in the procedure template. Its actual
+            // array extents and CHARACTER lengths are supplied by association.
             return Ok(());
         }
         let views = args
@@ -802,9 +822,19 @@ impl Lower {
                     }
                 }
                 if let Stmt::Block {body}=&mut stmt {
-                    let character=body.iter().any(|s|matches!(s,Stmt::AssignIndex{name,..} if matches!(symbols.get(name),Some((TypeSpec::Character(_),_)))));
                     let marker=body.iter().position(|s|matches!(s,Stmt::CallSub{name,..} if name=="@forall"));
-                    if marker.is_some() && (self.contains_calls(body)||character||marker!=Some(0)) {
+                    fn character(e: &Expr, symbols: &Symbols) -> bool {
+                        let named=|n:&String| symbols.get(n).is_some_and(|(k,_)|matches!(k,TypeSpec::Character(_)|TypeSpec::CharacterAssumed|TypeSpec::CharacterLength(_)));
+                        match e {
+                            Expr::Ident(n)=>named(n),Expr::Str(_)=>true,
+                            Expr::Call(n,args)|Expr::Index(n,args)=>named(n)||args.iter().any(|e|character(e,symbols)),
+                            Expr::Bin(_,a,b)=>character(a,symbols)||character(b,symbols),Expr::Un(_,a)=>character(a,symbols),
+                            Expr::Section{name,..}=>named(name),_=>false
+                        }
+                    }
+                    let characters=body.iter().any(|s|matches!(s,Stmt::AssignIndex{name,value,..}
+                        if character(&Expr::Ident(name.clone()),&symbols)||character(value,&symbols)));
+                    if marker.is_some() && (self.contains_calls(body)||characters||marker!=Some(0)) {
                         if !crate::multidim::specialize_forall(body,&symbols,&self.pure_functions,&mut self.serial)? {
                             // Argument specialization will supply the missing shape.
                             return Ok(());
@@ -1091,6 +1121,7 @@ pub(crate) fn prepare(mut p: Program) -> Result<(Program, Lower)> {
         serial: 0,
         active: vec![],
         pure_functions: HashMap::new(),
+        defer_calls: true,
     };
     fn pure_functions(body: &[Stmt], known: &mut HashMap<String,bool>) {
         for s in body {match s {

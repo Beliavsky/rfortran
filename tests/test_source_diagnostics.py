@@ -98,11 +98,12 @@ end function good
                     self.assertIn(f'{source.name}:{line}:',result.stderr)
                     self.assertIn(message,result.stderr)
 
-    def test_assumed_shape_function_call_location(self):
+    def test_array_function_specialization_location(self):
         text=(Path(__file__).resolve().parent.parent/'xassumed_shape_function_call.f90').read_text(encoding='utf-8')
-        # Scalar-result forwarding is supported. An array-result function still
-        # provides a specialization failure for checking statement locations.
+        # Forwarding is supported. Exceed its array-specialization limit to
+        # retain a source-bearing failure in the called procedure.
         text=text.replace('logical::tf', 'logical::tf(size(values))').replace('tf=.not. any(i==values)', 'tf=i/=values').replace('if (not_in_vector(ii(i),jj))', 'if (any(not_in_vector(ii(i),jj)))')
+        text=text.replace('call check_values([1,2,3],[1,3])', 'integer::input(3),data(1025)\ninput=[1,2,3]\ndata=1\ncall check_values(input,data)')
         with tempfile.TemporaryDirectory(prefix='source-diagnostics-') as tmp:
             directory=Path(tmp);source=directory/'forward.f90';source.write_text(text,encoding='utf-8')
             for args in ([source],['check',source],['run',source],['emit-obj',source,directory/'forward.obj']):
@@ -110,7 +111,7 @@ end function good
                     result=self.invoke(args,directory)
                     self.assertNotEqual(result.returncode,0)
                     self.assertIn('forward.f90:15:4',result.stderr)
-                    self.assertIn('assumed-shape array argument `jj`',result.stderr)
+                    self.assertIn('at most 1024 elements',result.stderr)
                     self.assertIn('if (any(not_in_vector(ii(i),jj)))',result.stderr)
                     self.assertNotIn('@deferred_extent',result.stderr)
             module,main=text.split('program main',1)

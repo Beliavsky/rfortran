@@ -792,7 +792,7 @@ impl Lowerer {
                         || matches!(
                             n.as_str(),
                             "@section_subscript" | "@array_constructor" | "@typed_constructor"
-                                | "@integer_literal" | "@no_dim" | "@no_mask" | "@no_kind"
+                                | "@integer_literal" | "@no_dim" | "@no_mask" | "@no_kind" | "@any_reduction" | "@all_reduction" | "@count_default" | "@count_i8"
                                 | "@unary_plus"
                                 | "abs"
                                 | "min"

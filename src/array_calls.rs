@@ -1068,12 +1068,28 @@ fn validate_input_writes(body: &[Stmt], inputs: &HashSet<String>) -> Result<()> 
 // the numeric reduction materializer cannot provide that storage.
 fn character_constructor(actual:&mut Expr, shapes:&Shapes, prefix:&mut Vec<Stmt>, serial:&mut usize)->Result<Option<(TypeSpec,i64,Expr)>> {
     let empty=crate::empty_constructors::kind(actual)?;
+    let mut section_kind=None;
     let values=match actual {
+        Expr::Section{name,lower,upper,stride}=>{
+            let (kind,dims)=shapes.get(name).context("undeclared CHARACTER section actual")?;
+            if !matches!(kind,TypeSpec::Character(_)) || dims.len()!=1 {return Ok(None);}
+            let extent=crate::parameters::integer_constant(&dims[0])?;
+            let step=stride.as_deref().map(crate::parameters::integer_constant).transpose()?.unwrap_or(1);
+            if step==0 {bail!("CHARACTER section stride must not be zero");}
+            let first=lower.as_deref().map(crate::parameters::integer_constant).transpose()?.unwrap_or(if step>0 {1} else {extent});
+            let last=upper.as_deref().map(crate::parameters::integer_constant).transpose()?.unwrap_or(if step>0 {extent} else {1});
+            let distance=(i128::from(last)-i128::from(first))*i128::from(step.signum());
+            let count=if distance<0 {0} else {distance/i128::from(step).abs()+1};
+            if count>1024 {bail!("CHARACTER section actuals support at most 1024 elements");}
+            if count>0 && (first<1 || first>extent || last<1 || last>extent) {bail!("CHARACTER section actual is outside the array bounds");}
+            section_kind=Some(kind.clone());
+            (0..count).map(|i|Expr::Index(name.clone(),vec![Expr::IntLit((i128::from(first)+i*i128::from(step)).to_string())])).collect()
+        },
         Expr::Call(tag,items) if tag=="@array_constructor"=>items.clone(),
         _ if empty.as_ref().is_some_and(|k|matches!(k,TypeSpec::Character(_)))=>vec![],
         _=>return Ok(None),
     };
-    let kind=if let Some(value)=values.first() {scalar_actual_kind(value,shapes)?} else {empty.context("empty CHARACTER constructor requires an explicit type")?};
+    let kind=if let Some(value)=values.first() {scalar_actual_kind(value,shapes)?} else {empty.or(section_kind).context("empty CHARACTER constructor requires an explicit type")?};
     if !matches!(kind,TypeSpec::Character(_)) {bail!("CHARACTER array actual requires CHARACTER constructor elements");}
     for value in &values {
         if matches!(value,Expr::Ident(n) if shapes.get(n).is_some_and(|(_,dims)|!dims.is_empty())) {bail!("CHARACTER array actual constructor elements must currently be scalar");}
