@@ -20,6 +20,27 @@ class CharacterArrayFunctions(unittest.TestCase):
         self.check((ROOT/'tests/148_character_array_functions.f90').read_text(encoding='utf-8'),
                    "'a-1' 'b-1' 'a-2' 'b-2'\n")
 
+    def test_join_fixed_result_length_from_array_size(self):
+        self.check((ROOT/'tests/182_character_result_size.f90').read_text(encoding='utf-8'),
+                   '[       boy      girl         a      tree]\n')
+
+    def test_size_in_character_result_and_local_lengths(self):
+        self.check("""program main
+integer :: a(2,3)
+a=1
+print '(a)', '['//describe(a,2)//']'
+print '(a)', '['//describe(a(:,1:2),1)//']'
+contains
+pure function describe(a,axis) result(text)
+integer,intent(in)::a(:,:),axis
+character(len=size(a,axis)+len('!'))::text
+character(len=size(a))::scratch
+scratch=repeat('x',size(a))
+text=scratch//'!'
+end function describe
+end program main
+""", '[xxxx]\n[xxx]\n')
+
     def test_variables_sections_unequal_sizes_and_lengths(self):
         self.check("""program main
 character(2)::left(3),right(2)

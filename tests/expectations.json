@@ -1266,6 +1266,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": " F T F\n"
+    },
+    "182_character_result_size": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "[       boy      girl         a      tree]\n"
     }
   }
 }

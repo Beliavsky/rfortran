@@ -125,6 +125,22 @@ end function label
 end program main
 """, "[a ]\n[a!]\n")
 
+    def test_writable_scalar_actual(self):
+        self.check("""program main
+integer::x
+x=1
+print *,change(x)
+print *,x
+contains
+function change(x) result(out)
+integer,intent(inout)::x
+character(1)::out
+x=x+1
+out='a'
+end function change
+end program main
+""", "a\n2\n")
+
     def test_diagnostics(self):
         self.reject("""program main
 print *,copy(['a','b'])
@@ -136,19 +152,6 @@ out=text
 end function copy
 end program main
 """, "non-elemental CHARACTER function `copy` currently requires scalar actuals")
-        self.reject("""program main
-integer::x
-x=1
-print *,change(x)
-contains
-function change(x) result(out)
-integer,intent(inout)::x
-character(1)::out
-x=x+1
-out='a'
-end function change
-end program main
-""", "requires INTENT(IN) scalar dummy `x`")
         self.reject("""program main
 print *,bad('a')
 contains

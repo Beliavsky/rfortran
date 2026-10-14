@@ -203,15 +203,22 @@ calls into caller-owned result buffers. Fixed-length and call-site constant
 result lengths, including `len(a)` and `len_trim(a)` for constant actuals,
 support assignments, concatenation, formatted output, named and nested calls,
 early RETURN, OPTIONAL inputs, and procedures with no arguments. Scalar dummies
-currently require explicit INTENT(IN), and locals must be explicitly declared.
+require explicit INTENT. Writable arguments must be whole variables, and locals
+must be explicitly declared.
 Constant length evaluation respects fixed dummy lengths, including truncation
 of a longer actual argument.
+CHARACTER result and local lengths can use `SIZE(array)` and `SIZE(array,dim)`
+with actual array shapes known during specialization, including sections and
+multidimensional arrays. For example, `join_fixed` can declare its result as
+`character(len=size(words)*nlen)` when `nlen` is a constant actual argument.
+`tests/182_character_result_size.f90` exercises this case with runtime formatted
+internal output.
 
 Deferred-length ALLOCATABLE scalar results use the existing bounded CHARACTER
 storage lowering for calls from the main program. Assignment sets the runtime
 result length, so concatenation, LEN and assignment to a caller's allocatable
 variable preserve that length. Runtime lengths for explicitly sized results,
-recursive CHARACTER calls, writable dummies, host captures, and a
+recursive CHARACTER calls, host captures, and a
 separate-object CHARACTER result ABI remain unsupported. Runtime-length results
 as actual arguments to other procedures remain outside this subset.
 

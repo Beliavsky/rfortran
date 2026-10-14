@@ -590,7 +590,7 @@ impl Lower {
             let count=array_count(&dims)?;
             if !(0..=1024).contains(&count) {bail!("specialized function array results support at most 1024 elements");}
         }
-        let result_kind = self.call_kind(&routine, &views, &constants)?;
+        let result_kind = self.call_kind(&routine, &views, &shapes, &constants)?;
         for i in 0..count.unwrap_or(1) {
             let args = actuals
                 .iter()
@@ -857,11 +857,12 @@ impl Lower {
             Expr::Un(_,e)=>Self::length_constants(e,constants),_=>{}
         }
     }
-    fn specialize_kind(kind: &TypeSpec, types: &HashMap<String, TypeSpec>, constants: &HashMap<String,Expr>) -> Result<TypeSpec> {
+    fn specialize_kind(kind: &TypeSpec, types: &HashMap<String, TypeSpec>, constants: &HashMap<String,Expr>, sizes: &HashMap<String,Vec<i64>>) -> Result<TypeSpec> {
         let mut kind = kind.clone();
         if let TypeSpec::CharacterLength(length) = &mut kind {
             Self::fold_lengths(length, types);
             Self::length_constants(length,constants);
+            Self::fold_sizes(length,sizes);
         }
         let kind=crate::parameters::concrete_kind(kind).context("CHARACTER function result/local length must resolve to a compile-time constant for these actuals")?;
         if crate::substrings::deferred(&kind) || matches!(kind, TypeSpec::CharacterAssumed) {
@@ -869,14 +870,15 @@ impl Lower {
         }
         Ok(kind)
     }
-    fn call_kind(&self, routine: &Routine, views: &[Value], constants:&HashMap<String,Expr>) -> Result<TypeSpec> {
+    fn call_kind(&self, routine: &Routine, views: &[Value], shapes: &[Vec<i64>], constants:&HashMap<String,Expr>) -> Result<TypeSpec> {
         if !routine.elemental && crate::substrings::deferred(&routine.kind) {
             if !routine.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==&routine.result&&intent=="allocatable")) {
                 bail!("deferred CHARACTER function result `{}` requires ALLOCATABLE",routine.result);
             }
             return Ok(routine.kind.clone());
         }
-        Self::specialize_kind(&routine.kind, &self.types(routine, views)?,constants)
+        let sizes:HashMap<_,_>=routine.params.iter().zip(shapes).filter(|(_,d)|!d.is_empty()).map(|(n,d)|(n.clone(),d.clone())).collect();
+        Self::specialize_kind(&routine.kind, &self.types(routine, views)?,constants,&sizes)
     }
     fn specialize_types(
         &self,
@@ -900,7 +902,7 @@ impl Lower {
                     }
                     *kind=types[name].clone();*dims=shape.iter().copied().map(int).collect();
                 } else {
-                    *kind=Self::specialize_kind(kind,&types,constants)?;
+                    *kind=Self::specialize_kind(kind,&types,constants,&sizes)?;
                     for dim in dims {Self::fold_sizes(dim,&sizes);Self::length_constants(dim,constants);}
                     types.insert(name.clone(),kind.clone());
                 }
@@ -910,7 +912,7 @@ impl Lower {
                     continue;
                 }
                 if names.contains(&routine.result) && !routine.elemental && crate::substrings::deferred(kind) {continue;}
-                *kind = Self::specialize_kind(kind, &types,constants)?;
+                *kind = Self::specialize_kind(kind, &types,constants,&sizes)?;
                 for n in names {
                     types.insert(n.clone(), kind.clone());
                 }
