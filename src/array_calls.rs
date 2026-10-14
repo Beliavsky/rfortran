@@ -1625,6 +1625,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
     p = crate::allocatables::finish(p)?;
     p = crate::output::prepare_character_views(p)?;
     p = crate::constructors::resolve(p)?;
+    p = crate::multidim::prepare_character_storage(p)?;
     let p = crate::character_arrays::resolve(p)?;
     crate::multidim::resolve(crate::function_arrays::resolve(crate::substrings::resolve(p)?)?)
 }

@@ -128,12 +128,12 @@ fn section_view(name: &str, args: &[Expr], dims: &[i64]) -> Result<(Vec<i64>, Ex
             if step == 0 {
                 bail!("array section stride must not be zero");
             }
-            let first = lower.as_deref().map(&constant).transpose()?.unwrap_or(1);
+            let first = lower.as_deref().map(&constant).transpose()?.unwrap_or(if step>0 {1} else {*extent});
             let last = upper
                 .as_deref()
                 .map(&constant)
                 .transpose()?
-                .unwrap_or(*extent);
+                .unwrap_or(if step>0 {*extent} else {1});
             let distance = (i128::from(last) - i128::from(first)) * i128::from(step.signum());
             let count = if distance < 0 {
                 0
@@ -974,6 +974,7 @@ impl Lowerer {
                                 | TypeSpec::Real
                                 | TypeSpec::DoublePrecision
                                 | TypeSpec::Logical
+                                | TypeSpec::Character(_)
                         ) {
                             bail!("multidimensional array `{name}` requires a supported numeric or LOGICAL element type");
                         }
@@ -1205,7 +1206,6 @@ pub(crate) fn fixed_section_elements(e: &Expr, symbols: &HashMap<String,(TypeSpe
     if !args.iter().any(|e|triplet(e).is_some()) {return Ok(None);}
     let dims=dims.iter().map(crate::parameters::integer_constant).collect::<Result<Vec<_>>>()?;
     let (shape,view)=section_view(name,args,&dims)?;
-    if shape.len()!=1 {bail!("specialized function array arguments currently require rank-one sections");}
     let count=total(&shape)?;
     if !(0..=1024).contains(&count) {bail!("function section specialization supports at most 1024 elements");}
     let mut items=vec![];
@@ -1216,6 +1216,15 @@ pub(crate) fn fixed_section_elements(e: &Expr, symbols: &HashMap<String,(TypeSpe
         items.push(Expr::Index(name.clone(),indices));
     }
     Ok(Some(items))
+}
+
+pub(crate) fn fixed_actual_shape(e:&Expr,symbols:&HashMap<String,(TypeSpec,Vec<Expr>)>)->Result<Option<Vec<i64>>> {
+    let shapes=symbols.iter().filter_map(|(name,(_,dims))| {
+        if dims.is_empty() {return None;}
+        let dims=dims.iter().map(|d|crate::parameters::integer_constant(d).map(|n|n.max(0))).collect::<Result<Vec<_>>>().ok()?;
+        Some((name.clone(),dims))
+    }).collect();
+    Lowerer::default().shape(e,&shapes)
 }
 
 pub fn resolve(mut p: Program) -> Result<Program> {
@@ -1287,6 +1296,20 @@ pub fn resolve(mut p: Program) -> Result<Program> {
     lower.body(&mut p.body, &Shapes::new())?;
     p.body.extend(lower.guards);
     Ok(p)
+}
+
+// CHARACTER arrays become individual scalar slots. Preserve and validate their
+// original shapes, and flatten multidimensional indices before that storage pass.
+pub(crate) fn prepare_character_storage(p:Program)->Result<Program> {
+    fn needed(body:&[Stmt])->bool {
+        body.iter().any(|s|match s {
+            Stmt::ArrayDecl{kind:TypeSpec::Character(_),dims,..}=>dims.len()>1,
+            Stmt::Block{body}|Stmt::Do{body,..}|Stmt::DoWhile{body,..}|Stmt::Function{body,..}|Stmt::Subroutine{body,..}|Stmt::Module{body,..}=>needed(body),
+            Stmt::If{then_body,else_body,..}=>needed(then_body)||else_body.as_ref().is_some_and(|b|needed(b)),
+            Stmt::SelectCase{cases,default,..}=>cases.iter().any(|c|needed(&c.body))||default.as_ref().is_some_and(|b|needed(b)),_=>false,
+        })
+    }
+    if needed(&p.body) {resolve(p)} else {Ok(p)}
 }
 
 #[cfg(test)]

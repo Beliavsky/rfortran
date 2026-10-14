@@ -231,15 +231,24 @@ calls, including `xfind .in. xdata`, and to numeric, LOGICAL and CHARACTER resul
 Nested forwarding, keyword calls, empty arrays and supported constant CHARACTER
 sections are covered by `python tests/test_forward_array_results.py`.
 
-Existing bounded array-function limits remain: rank-one inputs/results in this
-specialization, at most 1024 elements per array, and extents and CHARACTER lengths
-known after association. Source array elements copied into the function must be
+Bounded function arguments and fixed-shape results support ranks 1 through 15,
+independently of PURE; argument and result ranks may differ. This includes
+numeric, LOGICAL and fixed-length CHARACTER arrays. Each dimension is preserved
+until storage lowering, with Fortran column-major element order. Read-only
+inputs are copied; explicit INTENT(OUT)/INTENT(INOUT) variables retain caller
+storage and side effects. These specializations still require at most 1024
+elements per array, with extents and CHARACTER lengths known after association.
+Source array elements copied into the function must be
 initialized. Rank-one fixed-length CHARACTER ALLOCATABLE results can use bounded
 ALLOCATABLE output helpers; their active length is tracked separately from
 storage capacity. This supports filtered `.exclude.` results, including empty
 results, assignment, argument passing and list-directed/formatted output.
 `python tests/test_character_allocatable_results.py` checks these paths against
 the interpreter, native code at `-O0`/`-O2`, and gfortran when available.
+`python tests/test_multirank_array_functions.py` covers PURE and ordinary
+functions, ranks through 15, differing result ranks, sections, empty results,
+array expressions, writable arguments and module side effects. `xabove_diag.f90`
+prints `4.0 7.0 8.0` with or without PURE.
 
 ## PURE functions inside FORALL
 
@@ -254,20 +263,19 @@ overlapping assignments such as swapping matrix columns. Captures run after
 procedure argument specialization when assumed-shape dummy extents were unknown
 in the original template. Existing limits remain: one assignment per FORALL,
 constant iteration bounds and destination subscripts, statically known destination
-shapes, and bounded rank-one array-result specialization. Calls in WHERE remain
+shapes, and bounded array-result specialization. Calls in WHERE remain
 outside this subset. Numeric, LOGICAL and fixed rank-one CHARACTER destinations
 are supported. Run `python tests/test_forall_functions.py`.
 
 ## Defined operators with array operands
 
 Defined dotted operators such as `.notin.` can select functions with array
-operands. PURE functions with read-only rank-one INTEGER, REAL, DOUBLE PRECISION
+operands. Functions with read-only INTEGER, REAL, DOUBLE PRECISION
 or LOGICAL array dummies specialize for statically known actual extents, including
 assumed-shape dummies, fixed sections, constructors, supported array expressions
 and empty arrays. The same specialization works for direct function calls and
-supported rank-one numeric/LOGICAL results whose extents resolve at the call site.
-Input type, rank, extent and initialization checks remain active. Ordinary fixed
-array function arguments continue to use the existing scalar ABI.
+supported numeric/LOGICAL results of ranks 1 through 15 whose extents resolve at
+the call site. Input type, rank, extent and initialization checks remain active.
 
 Scalar numeric and LOGICAL results can use runtime-sized array operands through
 the descriptor association described below. Array-result specialization still
@@ -278,8 +286,8 @@ gfortran comparisons.
 
 ## CHARACTER array functions
 
-CHARACTER functions can accept read-only rank-one arrays and return fixed
-rank-one arrays. Calls specialize assumed lengths and shapes from actual
+CHARACTER functions can accept read-only arrays and return fixed-shape arrays
+of ranks 1 through 15. Calls specialize assumed lengths and shapes from actual
 arguments; result lengths and extents may use LEN and SIZE of the dummies.
 Inputs and results use local buffers with at most 1024 elements per array.
 Literal constructors, typed empty constructors, fixed arrays, constant sections,
@@ -288,8 +296,8 @@ actuals. The input arrays need not have equal extents. Fixed-length array dummie
 currently require the actual element length to match; explicit-shape dummies
 require matching extents. Scalar INTEGER constant actuals can supply result
 extents. Runtime-dependent result extents, nonunit declaration bounds in these calls,
-higher ranks, POINTER/ALLOCATABLE
-array dummies and deferred-length array results remain unsupported. Array actuals are copied and must be initialized.
+POINTER/ALLOCATABLE array dummies and deferred-length array results remain
+unsupported. Read-only array actuals are copied and must be initialized.
 
 CHARACTER FORALL assignments to fixed rank-one arrays with lower bound one
 now use the existing
@@ -1486,6 +1494,7 @@ python tests/test_else_if.py
 python tests/test_multi_forall.py
 python tests/test_forall_functions.py
 python tests/test_forward_array_results.py
+python tests/test_multirank_array_functions.py
 python tests/test_character_allocatable_results.py
 python tests/test_array_constructors.py
 python tests/test_runtime_constructors.py

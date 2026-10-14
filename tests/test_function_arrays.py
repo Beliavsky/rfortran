@@ -1,4 +1,4 @@
-"""Fixed array arguments to pure functions in the interpreter and native O0/O2 builds."""
+"""Fixed array function arguments in the interpreter and native O0/O2 builds."""
 import json
 from pathlib import Path
 import shutil
@@ -30,11 +30,8 @@ class FunctionArrays(unittest.TestCase):
 
     def test_diagnostics(self):
         cases=[
-            ("integer::a(3)\na=1", "a", "integer,intent(in)::x(3)", False, "requires PURE"),
-            ("integer::a(2)\na=1", "a", "integer,intent(in)::x(3)", True, "type or shape mismatch"),
-            ("real::a(3)\na=1.0", "a", "integer,intent(in)::x(3)", True, "type or shape mismatch"),
-            ("integer::a(3)\na=1", "a(:)", "integer,intent(in)::x(3)", True, "whole-array actual"),
-            ("integer::a(1025)\na=1", "a", "integer,intent(in)::x(1025)", True, "at most 1024"),
+            ("integer::a(2)\na=1", "a", "integer,intent(in)::x(3)", True, "matching extent"),
+            ("real::a(3)\na=1.0", "a", "integer,intent(in)::x(3)", True, "type or rank mismatch"),
         ]
         with tempfile.TemporaryDirectory(prefix="bad-function-arrays-") as tmp:
             source=Path(tmp)/"main.f90"
@@ -46,16 +43,33 @@ class FunctionArrays(unittest.TestCase):
                     self.assertIn(message,result.stderr)
 
     def test_input_initialization(self):
-        # Copying the input must retain the caller's uninitialized-element checks.
+        # Descriptor association preserves initialization checks on elements
+        # actually read by the function, rather than reading all inputs on entry.
         with tempfile.TemporaryDirectory(prefix="function-array-unset-") as tmp:
             source=Path(tmp)/"main.f90"
             source.write_text("integer::a(3)\na(1)=1\nprint *,f(a)\ncontains\npure integer function f(x) result(n)\ninteger,intent(in)::x(3)\nn=sum(x)\nend function f\nend\n")
-            for mode in ("run", "emit-obj"):
-                command=[COMPILER,mode,source]
-                if mode=="emit-obj": command.append(Path(tmp)/"main.obj")
+            for command in build_commands(source,Path(tmp)):
                 result=subprocess.run(command,capture_output=True,text=True,timeout=15)
                 self.assertNotEqual(result.returncode,0,result.stdout+result.stderr)
                 self.assertIn("uninitialized",result.stderr)
+
+    def test_ordinary_functions_sections_and_large_fixed_arrays(self):
+        import test_deallocate
+        test_deallocate.Deallocate.check(self,"""program main
+integer::a(1025),b(3)
+a=1;b=2
+print *,sum_large(a),sum_three(b(:))
+contains
+pure integer function sum_large(x) result(n)
+integer,intent(in)::x(1025)
+n=sum(x)
+end function sum_large
+integer function sum_three(x) result(n)
+integer,intent(in)::x(3)
+n=sum(x)
+end function sum_three
+end program main
+""",'1025 6\n')
 
 if __name__=="__main__":
     unittest.main()

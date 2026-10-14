@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Beliavsky
 // See LICENSE-MIT in the repository root.
 
-//! Specialize functions with CHARACTER inputs/results or read-only rank-one
-//! array inputs. Results use caller-owned locals, preserving the scalar ABI.
+//! Specialize array/CHARACTER functions at argument association, independently
+//! of PURE. Bounded array storage retains ranks and column-major element order.
 use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
@@ -24,6 +24,15 @@ struct Value {
 }
 fn int(n: i64) -> Expr {
     Expr::IntLit(n.to_string())
+}
+fn array_count(dims:&[i64])->Result<i64> {
+    if dims.is_empty() || dims.len()>15 {bail!("function array rank must be between 1 and 15");}
+    dims.iter().try_fold(1i64,|n,d| {
+        n.checked_mul((*d).max(0)).context("function array element count overflow")
+    })
+}
+fn array_indices(mut ordinal:usize,dims:&[i64])->Vec<Expr> {
+    dims.iter().map(|d| {let i=ordinal%(*d as usize);ordinal/=*d as usize;int(i as i64+1)}).collect()
 }
 fn length(kind: &TypeSpec) -> Result<usize> {
     if let TypeSpec::Character(n) = kind {
@@ -77,13 +86,11 @@ impl Lower {
                 if dims.is_empty() {
                     return scalar(kind.clone());
                 }
-                if dims.len() != 1 {
-                    bail!("elemental calls involving CHARACTER currently require rank-one array actuals");
-                }
-                if matches!(&dims[0], Expr::Ident(n) if n == "@deferred_extent") {
+                if dims.iter().any(|d|matches!(d, Expr::Ident(n) if n == "@deferred_extent")) {
                     bail!("cannot specialize assumed-shape array argument `{n}`: its extent is not yet known at this function call");
                 }
-                let count = crate::parameters::integer_constant(&dims[0]).with_context(|| {
+                let dims=dims.iter().map(|d|crate::parameters::integer_constant(d).map(|n|n.max(0))).collect::<Result<Vec<_>>>()?;
+                let count = array_count(&dims).with_context(|| {
                     format!("cannot specialize array argument `{n}`: its extent must be known at this function call")
                 })?;
                 if !(0..=1024).contains(&count) {
@@ -92,8 +99,8 @@ impl Lower {
                 Ok(Value {
                     kind: kind.clone(),
                     items: Some(
-                        (1..=count)
-                            .map(|i| Expr::Call(n.clone(), vec![int(i)]))
+                        (0..count as usize)
+                            .map(|i| Expr::Index(n.clone(), array_indices(i,&dims)))
                             .collect(),
                     ),
                 })
@@ -105,6 +112,7 @@ impl Lower {
                 stride,
             } => {
                 if let Some((kind, dims)) = symbols.get(name) {
+                    if dims.len()>1 {bail!("array section `{name}` requires {} subscripts",dims.len());}
                     if dims.is_empty() && matches!(kind, TypeSpec::Character(_)) {
                         if stride.is_some() {
                             bail!("CHARACTER substring cannot have a stride");
@@ -174,6 +182,35 @@ impl Lower {
                     kind: kind.context("empty untyped elemental constructor")?,
                     items: Some(items),
                 })
+            }
+            Expr::Call(n,args) if n=="reshape" => {
+                let dims=crate::multidim::reshape_shape(args)?;
+                let count=array_count(&dims)?;
+                if count>1024 {bail!("function array expression specialization supports at most 1024 elements");}
+                let order=crate::multidim::reshape_order(args,dims.len())?;
+                let source=self.view(&args[0],symbols)?;
+                let items=source.items.context("RESHAPE SOURCE must be an array")?;
+                let pad=if matches!(&args[2],Expr::Call(n,_) if n=="@no_pad") {vec![]} else {
+                    let pad=self.view(&args[2],symbols)?;
+                    if !same(&source.kind,&pad.kind) {bail!("RESHAPE PAD type must match SOURCE");}
+                    pad.items.context("RESHAPE PAD must be an array")?
+                };
+                if count as usize>items.len() && pad.is_empty() {bail!("RESHAPE SOURCE has too few elements without PAD");}
+                let values=(0..count as usize).map(|i| {
+                    let coords=array_indices(i,&dims);
+                    let mut ordinal=0usize;let mut stride=1usize;
+                    for axis in &order {
+                        ordinal+=(crate::parameters::integer_constant(&coords[*axis]).unwrap() as usize-1)*stride;
+                        stride*=dims[*axis] as usize;
+                    }
+                    if ordinal<items.len() {items[ordinal].clone()} else {pad[(ordinal-items.len())%pad.len()].clone()}
+                }).collect();
+                Ok(Value{kind:source.kind,items:Some(values)})
+            }
+            Expr::Call(n,args) if n=="transpose" && args.len()==1 => {
+                let shape=crate::multidim::fixed_actual_shape(&args[0],symbols)?.context("TRANSPOSE requires a rank-two array")?;
+                if shape.len()!=2 {bail!("TRANSPOSE requires a rank-two array");}
+                self.view(&Expr::Call("reshape".into(),vec![args[0].clone(),Expr::Call("@array_constructor".into(),vec![int(shape[1]),int(shape[0])]),Expr::Call("@no_pad".into(),vec![]),Expr::Call("@array_constructor".into(),vec![int(2),int(1)])]),symbols)
             }
             Expr::Call(n, _) | Expr::Index(n, _) if symbols.contains_key(n) => {
                 scalar(symbols[n].0.clone())
@@ -380,13 +417,36 @@ impl Lower {
             let result = format!("@array_function_result_{}", self.serial);
             prefix.push(Stmt::VarDecl { kind: routine.kind.clone(), names: vec![result.clone()] });
             let mut actuals = args.clone();
-            for actual in &mut actuals {
+            for (param,actual) in routine.params.iter().zip(&mut actuals) {
+                if routine.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==param && matches!(intent.as_str(),"intent(out)"|"intent(inout)"))) {
+                    let Expr::Ident(name)=actual else {bail!("writable function dummy `{param}` requires a whole variable actual");};
+                    if symbols.contains_key(&format!("@function_readonly:{name}")) {bail!("cannot pass INTENT(IN) variable as writable function argument `{param}`");}
+                }
+                if !matches!(actual,Expr::Ident(_)) {
+                    // Uncalled procedure templates can contain unresolved
+                    // bounds/views. Association handles those later; this
+                    // optional capture only consumes known matrix shapes.
+                    if let Some(shape)=crate::multidim::fixed_actual_shape(actual,symbols).ok().flatten() {
+                        if shape.len()>1 {
+                            let view=self.view(actual,symbols)?;
+                            let items=view.items.context("function array expression must have bounded storage")?;
+                            if array_count(&shape)? as usize!=items.len() {bail!("function argument shape does not match its selected elements");}
+                            self.serial+=1;
+                            let temp=format!("@array_function_expression_{}",self.serial);
+                            prefix.push(Stmt::ArrayDecl{kind:view.kind,name:temp.clone(),dims:shape.iter().copied().map(int).collect()});
+                            for (i,value) in items.into_iter().enumerate() {prefix.push(Stmt::AssignIndex{name:temp.clone(),indices:array_indices(i,&shape),value});}
+                            *actual=Expr::Ident(temp);
+                            continue;
+                        }
+                    }
+                }
                 if let Some(items)=crate::multidim::fixed_section_elements(actual,symbols)? {
+                    let shape=crate::multidim::fixed_actual_shape(actual,symbols)?.context("function section must have an array shape")?;
                     let (Expr::Call(source,_)|Expr::Index(source,_))=actual else {unreachable!()};
                     let kind=symbols[source].0.clone();
                     self.serial+=1;let temp=format!("@array_function_section_{}",self.serial);
-                    prefix.push(Stmt::ArrayDecl{kind:kind.clone(),name:temp.clone(),dims:vec![int(items.len() as i64)]});
-                    for (i,value) in items.into_iter().enumerate() {prefix.push(Stmt::AssignIndex{name:temp.clone(),indices:vec![int(i as i64+1)],value});}
+                    prefix.push(Stmt::ArrayDecl{kind:kind.clone(),name:temp.clone(),dims:shape.iter().copied().map(int).collect()});
+                    for (i,value) in items.into_iter().enumerate() {prefix.push(Stmt::AssignIndex{name:temp.clone(),indices:array_indices(i,&shape),value});}
                     *actual=Expr::Ident(temp);
                 }
             }
@@ -414,27 +474,58 @@ impl Lower {
             // array extents and CHARACTER lengths are supplied by association.
             return Ok(());
         }
+        if self.defer_calls && routine.body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,..} if name==&routine.result))
+            && routine.params.iter().zip(args.iter()).any(|(param,arg)|
+                routine.body.iter().any(|s|matches!(s,Stmt::VarDecl{kind:TypeSpec::Integer(_),names} if names.contains(param)))
+                && crate::parameters::integer_constant(arg).is_err()) {
+            return Ok(());
+        }
+        for arg in args.iter_mut() {crate::constructors::fixed_expression(arg,symbols)?;}
         let views = args
             .iter()
             .map(|arg| self.view(arg, symbols))
             .collect::<Result<Vec<_>>>()?;
+        let shapes=args.iter().zip(&views).map(|(arg,view)| {
+            if let Some(items)=&view.items {
+                Ok(crate::multidim::fixed_actual_shape(arg,symbols)?.unwrap_or_else(||vec![items.len() as i64]))
+            } else {Ok(vec![])}
+        }).collect::<Result<Vec<_>>>()?;
+        for (view,shape) in views.iter().zip(&shapes) {
+            if let Some(items)=&view.items {
+                if array_count(shape)? as usize!=items.len() {bail!("function argument shape does not match its selected elements");}
+            }
+        }
+        let bound_types = self.types(&routine, &views)?;
+        let writable=routine.params.iter().filter(|param|routine.body.iter().any(|s|
+            matches!(s,Stmt::DummyIntent{name,intent} if name==*param && matches!(intent.as_str(),"intent(out)"|"intent(inout)"))))
+            .cloned().collect::<std::collections::HashSet<_>>();
         if !routine.elemental {
             for (param,view) in routine.params.iter().zip(&views) {
                 let array=routine.body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,..} if name==param));
-                if array && view.items.is_none() {bail!("CHARACTER function array dummy `{param}` requires a rank-one array actual");}
+                if array && view.items.is_none() {bail!("function array dummy `{param}` requires an array actual");}
                 if !array && view.items.is_some() {bail!("non-elemental CHARACTER function `{name}` currently requires scalar actuals for `{param}`");}
                 if array && routine.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==param&&matches!(intent.as_str(),"pointer"|"allocatable"))) {bail!("POINTER/ALLOCATABLE CHARACTER function array dummies are not yet supported");}
             }
             for param in &routine.params {
-                if !routine.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==param&&intent=="intent(in)")) {
+                if !writable.contains(param) && !routine.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==param&&intent=="intent(in)")) {
                     bail!("CHARACTER function `{name}` currently requires INTENT(IN) scalar dummy `{param}`");
+                }
+            }
+            for ((param,arg),view) in routine.params.iter().zip(args.iter()).zip(&views) {
+                if writable.contains(param) {
+                    if !same(&bound_types[param],&view.kind) {bail!("type or CHARACTER length mismatch for writable function dummy `{param}`");}
+                    let Expr::Ident(actual)=arg else {bail!("writable function dummy `{param}` requires a whole variable actual");};
+                    if symbols.contains_key(&format!("@function_readonly:{actual}")) {bail!("cannot pass INTENT(IN) variable as writable function argument `{param}`");}
                 }
             }
         }
         let mut count = None;
-        for view in &views {
+        let mut elemental_shape=None;
+        for (view,shape) in views.iter().zip(&shapes) {
             if !routine.elemental {break;}
             if let Some(items) = &view.items {
+                if elemental_shape.as_ref().is_some_and(|d|d!=shape) {bail!("nonconforming elemental array argument shapes");}
+                elemental_shape=Some(shape.clone());
                 if count.is_some_and(|c| c != items.len()) {
                     bail!("nonconforming elemental array argument shapes");
                 }
@@ -443,7 +534,8 @@ impl Lower {
         }
         let mut actuals = args.clone();
         // Evaluate scalar actual expressions once for the whole elemental call.
-        for (arg, view) in actuals.iter_mut().zip(&views) {
+        for ((arg, view),param) in actuals.iter_mut().zip(&views).zip(&routine.params) {
+            if writable.contains(param) {continue;}
             if view.items.is_none() {
                 self.serial += 1;
                 let temp = format!("@character_elemental_actual_{}", self.serial);
@@ -462,7 +554,6 @@ impl Lower {
         self.active.push(name.clone());
         let mut results = vec![];
         // Check declarations and result length even when the result has zero size.
-        let bound_types = self.types(&routine, &views)?;
         let mut constants=HashMap::new();
         for (param,arg) in routine.params.iter().zip(args.iter()) {
             if let Ok(mut value)=crate::parameters::character_constant(arg) {
@@ -475,7 +566,12 @@ impl Lower {
             }
         }
         let mut specialized=routine.body.clone();
-        self.specialize_types(&mut specialized,&routine,&views,&constants)?;
+        self.specialize_types(&mut specialized,&routine,&views,&shapes,&constants)?;
+        for s in &mut specialized {
+            if let Stmt::ArrayDecl{dims,..}=s {
+                for d in dims {if crate::parameters::integer_constant(d).is_ok_and(|n|n<0) {*d=int(0);}}
+            }
+        }
         // ALLOCATABLE results carry an active length independently of the
         // conservative storage bound inferred from their allocation helpers.
         let alloc_result=specialized.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==&routine.result && intent=="allocatable"))
@@ -490,8 +586,8 @@ impl Lower {
         let result_dims=specialized.iter().find_map(|s|if let Stmt::ArrayDecl{name,dims,..}=s {if name==&routine.result {Some(dims.clone())} else {None}} else {None});
         if let Some(dims)=&result_dims {
             if routine.elemental {bail!("ELEMENTAL function requires a scalar result");}
-            if dims.len()!=1 {bail!("specialized function array results currently require rank one");}
-            let count=crate::parameters::integer_constant(&dims[0]).context("specialized function result extent must resolve to a call-site constant")?;
+            let dims=dims.iter().map(crate::parameters::integer_constant).collect::<Result<Vec<_>>>().context("specialized function result extents must resolve to call-site constants")?;
+            let count=array_count(&dims)?;
             if !(0..=1024).contains(&count) {bail!("specialized function array results support at most 1024 elements");}
         }
         let result_kind = self.call_kind(&routine, &views, &constants)?;
@@ -518,13 +614,22 @@ impl Lower {
             names.insert(routine.result.clone(), result.clone());
             let mut expanded = vec![];
             for (param, arg) in routine.params.iter().zip(args) {
+                if writable.contains(param) {
+                    let Expr::Ident(actual)=arg else {unreachable!()};
+                    if routine.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==param && intent=="intent(out)")) {
+                        expanded.push(Stmt::CallSub{name:"@undefine".into(),args:vec![Expr::Ident(actual.clone())]});
+                    }
+                    names.insert(param.clone(),actual);
+                    continue;
+                }
                 self.serial += 1;
                 let temp = format!("@character_elemental_dummy_{}", self.serial);
                 let view=&views[routine.params.iter().position(|p|p==param).unwrap()];
                 if !routine.elemental && view.items.is_some() {
                     let items=view.items.as_ref().unwrap();
-                    expanded.push(Stmt::ArrayDecl {kind:bound_types[param].clone(),name:temp.clone(),dims:vec![int(items.len() as i64)]});
-                    for (i,value) in items.iter().enumerate() {expanded.push(Stmt::AssignIndex {name:temp.clone(),indices:vec![int(i as i64+1)],value:value.clone()});}
+                    let shape=&shapes[routine.params.iter().position(|p|p==param).unwrap()];
+                    expanded.push(Stmt::ArrayDecl {kind:bound_types[param].clone(),name:temp.clone(),dims:shape.iter().copied().map(int).collect()});
+                    for (i,value) in items.iter().enumerate() {expanded.push(Stmt::AssignIndex {name:temp.clone(),indices:array_indices(i,shape),value:value.clone()});}
                 } else {
                     expanded.push(Stmt::VarDecl {kind:bound_types[param].clone(),names:vec![temp.clone()]});
                     expanded.push(Stmt::Assign {name:temp.clone(),value:arg});
@@ -615,7 +720,17 @@ impl Lower {
             results.push(Expr::Ident(result));
         }
         self.active.pop();
-        *e = if count.is_some() {
+        *e = if count.is_some() && elemental_shape.as_ref().is_some_and(|d|d.len()>1) {
+            let dims=elemental_shape.unwrap();
+            self.serial+=1;
+            let temp=format!("@elemental_multirank_result_{}",self.serial);
+            prefix.push(Stmt::ArrayDecl{kind:result_kind.clone(),name:temp.clone(),dims:dims.iter().copied().map(int).collect()});
+            for (i,value) in results.into_iter().enumerate() {
+                prefix.push(Stmt::AssignIndex{name:temp.clone(),indices:array_indices(i,&dims),value});
+            }
+            symbols.insert(temp.clone(),(result_kind,dims.into_iter().map(int).collect()));
+            Expr::Ident(temp)
+        } else if count.is_some() {
             if results.is_empty() {
                 self.serial += 1;
                 let temp = format!("@character_elemental_empty_{}", self.serial);
@@ -715,12 +830,17 @@ impl Lower {
             }
         }
     }
-    fn fold_sizes(e:&mut Expr,sizes:&HashMap<String,i64>) {
+    fn fold_sizes(e:&mut Expr,sizes:&HashMap<String,Vec<i64>>) {
         match e {
             Expr::Call(n,args) if n=="size"=>{
                 if let Some(Expr::Ident(name))=args.first() {
-                    if let Some(count)=sizes.get(name) {
-                        if args.len()==1 || args.len()==2&&crate::parameters::integer_constant(&args[1]).ok()==Some(1) {*e=int(*count);return;}
+                    if let Some(dims)=sizes.get(name) {
+                        if args.len()==1 {*e=int(dims.iter().product());return;}
+                        if args.len()==2 {
+                            if let Ok(axis)=crate::parameters::integer_constant(&args[1]) {
+                                if axis>0 && (axis as usize)<=dims.len() {*e=int(dims[axis as usize-1]);return;}
+                            }
+                        }
                     }
                 }
                 for e in args {Self::fold_sizes(e,sizes);}
@@ -763,20 +883,22 @@ impl Lower {
         body: &mut [Stmt],
         routine: &Routine,
         views: &[Value],
+        shapes: &[Vec<i64>],
         constants:&HashMap<String,Expr>,
     ) -> Result<()> {
         let mut types = self.types(routine, views)?;
-        let sizes:HashMap<_,_>=routine.params.iter().zip(views).filter_map(|(n,v)|v.items.as_ref().map(|items|(n.clone(),items.len() as i64))).collect();
+        let sizes:HashMap<_,_>=routine.params.iter().zip(shapes).filter(|(_,d)|!d.is_empty()).map(|(n,d)|(n.clone(),d.clone())).collect();
         for s in body {
             if let Stmt::ArrayDecl {kind,name,dims}=s {
                 if routine.params.contains(name) {
-                    let count=*sizes.get(name).context("array dummy requires a rank-one array actual")?;
-                    if dims.len()!=1 {bail!("CHARACTER function array dummies currently require rank one");}
-                    if !matches!(&dims[0],Expr::Ident(n) if n=="@deferred_extent") {
-                        let mut dim=dims[0].clone();Self::fold_sizes(&mut dim,&sizes);Self::length_constants(&mut dim,constants);
-                        if crate::parameters::integer_constant(&dim)?!=count {bail!("explicit-shape CHARACTER function dummy `{name}` requires a matching extent");}
+                    let shape=sizes.get(name).context("function array dummy requires an array actual")?;
+                    if dims.len()!=shape.len() {bail!("rank mismatch for function dummy `{name}`: expected {}, got {}",dims.len(),shape.len());}
+                    for (dim,extent) in dims.iter().zip(shape) {
+                        if matches!(dim,Expr::Ident(n) if n=="@deferred_extent") {continue;}
+                        let mut dim=dim.clone();Self::fold_sizes(&mut dim,&sizes);Self::length_constants(&mut dim,constants);
+                        if crate::parameters::integer_constant(&dim)?!=*extent {bail!("explicit-shape function dummy `{name}` requires matching extents");}
                     }
-                    *kind=types[name].clone();*dims=vec![int(count)];
+                    *kind=types[name].clone();*dims=shape.iter().copied().map(int).collect();
                 } else {
                     *kind=Self::specialize_kind(kind,&types,constants)?;
                     for dim in dims {Self::fold_sizes(dim,&sizes);Self::length_constants(dim,constants);}
@@ -836,16 +958,23 @@ impl Lower {
             match s {
                 Stmt::VarDecl { kind, names } => {
                     for n in names {
+                        symbols.remove(&format!("@function_readonly:{n}"));
                         symbols.insert(n.clone(), (kind.clone(), vec![]));
                     }
                 }
                 Stmt::ArrayDecl { kind, name, dims } => {
+                    symbols.remove(&format!("@function_readonly:{name}"));
                     symbols.insert(name.clone(), (kind.clone(), dims.clone()));
                 }
                 _ => {}
             }
         }
         crate::allocatables::metadata(body,&mut symbols);
+        for s in body.iter() {
+            if let Stmt::DummyIntent{name,intent}=s {
+                if intent=="intent(in)" {symbols.insert(format!("@function_readonly:{name}"),(TypeSpec::Logical,vec![]));}
+            }
+        }
         let mut out = vec![];
         let mut offset = None;
         for mut stmt in std::mem::take(body) {
@@ -1141,12 +1270,12 @@ fn validate_locals(
     statements(body, &variable, &writable, &forbidden)
 }
 
-pub(crate) fn inline_array(pure: bool, params: &[String], result: &str, body: &[Stmt]) -> bool {
+pub(crate) fn inline_array(_pure: bool, params: &[String], result: &str, body: &[Stmt]) -> bool {
     let array_result=body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,..} if name==result));
-    pure && body.iter().any(|s|matches!(s,Stmt::ArrayDecl{kind,name,dims}
+    array_result || body.iter().any(|s|matches!(s,Stmt::ArrayDecl{kind,name,dims}
         if params.contains(name) && !dims.is_empty()
             && matches!(kind,TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision|TypeSpec::Logical)
-            && (array_result || dims.iter().any(|d|matches!(d,Expr::Ident(n) if n=="@deferred_extent")))))
+            ))
 }
 
 pub(crate) fn prepare(mut p: Program) -> Result<(Program, Lower)> {
@@ -1223,12 +1352,12 @@ pub(crate) fn prepare(mut p: Program) -> Result<(Program, Lower)> {
                         // numeric functions. Calls can be preserved in procedure
                         // templates until their actual array descriptors are bound.
                         let input = |kind: &TypeSpec| numeric(kind) || matches!(kind, TypeSpec::Character(_) | TypeSpec::CharacterAssumed);
-                        let descriptor = *pure && !*elemental && numeric(&kind)
+                        let descriptor = !*elemental && numeric(&kind)
                             && !body.iter().any(|s| matches!(s, Stmt::ArrayDecl {name,..} if name == &result))
                             && params.iter().all(|param| {
                                 body.iter().any(|s| matches!(s, Stmt::VarDecl {kind,names} if names.contains(param) && input(kind))
                                     || matches!(s, Stmt::ArrayDecl {kind,name,..} if name == param && input(kind)))
-                                && body.iter().any(|s| matches!(s, Stmt::DummyIntent {name,intent} if name == param && intent == "intent(in)"))
+                                && body.iter().any(|s| matches!(s, Stmt::DummyIntent {name,intent} if name == param && matches!(intent.as_str(),"intent(in)"|"intent(out)"|"intent(inout)")))
                                 && !body.iter().any(|s| matches!(s, Stmt::DummyIntent {name,intent} if name == param && matches!(intent.as_str(), "optional" | "allocatable" | "pointer")))
                             });
                         let descriptor_call = descriptor.then(|| format!("@array_function${name}"));
@@ -1250,7 +1379,7 @@ pub(crate) fn prepare(mut p: Program) -> Result<(Program, Lower)> {
                             }
                             helper_body.push(Stmt::DummyIntent {name:result.clone(),intent:"intent(out)".into()});
                             let mut helper_params = params.clone(); helper_params.push(result.clone());
-                            out.push(Stmt::Subroutine {name:helper.clone(),params:helper_params,body:helper_body,pure:true,elemental:false});
+                            out.push(Stmt::Subroutine {name:helper.clone(),params:helper_params,body:helper_body,pure:*pure,elemental:false});
                         }
                         lower.routines.insert(
                             name.clone(),

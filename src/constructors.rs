@@ -258,6 +258,7 @@ fn expression(e: &mut Expr, shapes: &Shapes) -> Result<()> {
     }
     crate::parameters::expand_constructor(e)
 }
+pub(crate) fn fixed_expression(e:&mut Expr,shapes:&Shapes)->Result<()> {expression(e,shapes)}
 fn array_item(e: &Expr, shapes: &Shapes) -> bool {
     match e {
         Expr::Ident(n) => shapes.get(n).is_some_and(|(_, dims)| !dims.is_empty()),

@@ -139,8 +139,8 @@ end function total
 end
 """, '6 -1\n')
 
-    def test_unsupported_array_result_is_rejected(self):
-        self.reject("""module arrays
+    def test_array_result_from_scalar_arguments(self):
+        self.check("""module arrays
 interface operator(.pair.)
 module procedure pair
 end interface
@@ -154,7 +154,7 @@ end module arrays
 use arrays
 print *,.pair. 1
 end
-""", 'array result requires a supported function specialization')
+""", '1 1\n')
 
 
 if __name__=='__main__':

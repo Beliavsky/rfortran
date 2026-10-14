@@ -1,6 +1,5 @@
 """Bounded CHARACTER array results, read-only arrays, and FORALL snapshots."""
 import unittest
-from unittest.mock import patch
 import test_deallocate
 from test_record_read import ROOT
 
@@ -38,13 +37,12 @@ contains
     def test_reverse_section_omitted_bounds(self):
         # The installed Windows gfortran reports SIZE(left(::-1)) == 0;
         # explicit bounds are compared with gfortran in the preceding test.
-        with patch('test_deallocate.shutil.which', return_value=None):
-            self.check("""program main
+        self.check("""program main
 character(1)::left(3)
 left=['a','b','c']
 print '(*(1x,a))',munge(left(::-1),['x'],':')
 contains
-"""+MUNGE+"end program main\n",'c:x b:x a:x\n')
+"""+MUNGE+"end program main\n",'c:x b:x a:x\n',reference=False)
 
     def test_nested_array_result_as_actual(self):
         self.check("""program main

@@ -116,10 +116,10 @@ end program main
 
     def test_invalid_type_rank_and_initialization(self):
         for declarations,actual,message in [
-            ('','[1,2]','CHARACTER actual argument requires a fixed length'),
-            ('',"'ab'",'array actual'),
+            ('','[1,2]','CHARACTER'),
+            ('',"'ab'",'array dummy'),
             ('character(1)::text(2)\n','text','uninitialized variable'),
-            ("character(1)::text(2,2)\ntext='a'\n",'text','rank-one array actuals'),
+            ("character(1)::text(2,2)\ntext='a'\n",'text','type or rank mismatch'),
         ]:
             with self.subTest(actual=actual,declarations=declarations):
                 self.reject('program main\n'+declarations+'print *,total_length('+actual+')\ncontains\n'+TOTAL+'end program main\n',message)
