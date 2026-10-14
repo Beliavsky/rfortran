@@ -60,6 +60,7 @@ mod imports;
 mod runtime;
 mod sema;
 mod unused;
+mod optional_warnings;
 mod utils;
 
 #[cfg(target_os = "windows")]
@@ -275,6 +276,7 @@ fn lower_program(
     warning_options: &[String],
 ) -> Result<ast::Program> {
     unused::check(&program, src, tokens, filename, origins, settings, warning_options)?;
+    optional_warnings::check(&program, src, tokens, filename, origins, settings, warning_options)?;
     (|| {
         sections::resolve(reductions::resolve(array_calls::resolve(
             timing_intrinsics::resolve(parameters::resolve(random_seed::resolve(derived::resolve(program)?)?)?)?,

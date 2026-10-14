@@ -17,6 +17,7 @@ const CATEGORIES: &[&str] = &[
     "unused-parameter",
     "unused-dummy-argument",
     "unused-function",
+    "optional-argument",
 ];
 fn canonical(name: &str) -> &str {
     match name {
@@ -38,7 +39,7 @@ pub fn validate_options(options: &[String]) -> Result<()> {
     }
     Ok(())
 }
-fn selected(
+pub(crate) fn selected(
     category: &str,
     private: bool,
     settings: &SemaSettings,
@@ -74,8 +75,8 @@ fn selected(
                 .unwrap_or(option),
         );
         if name == category
-            || name == "unused"
-            || name == "unused-private" && private
+            || name == "unused" && category.starts_with("unused-")
+            || name == "unused-private" && private && category.starts_with("unused-")
             || name == "unused-variable" && category == "unused-but-set-variable"
         {
             enabled = !option.starts_with("no-");

@@ -115,6 +115,22 @@ messages saying "parameter" or duplicate local-variable warnings.
 `xunused.f90` demonstrates these diagnostics; run `rfort -Wall xunused.f90` or
 `python tests/test_unused_warnings.py` for the regression checks.
 
+`-Woptional-argument` warns when an OPTIONAL dummy is referenced without a
+proven `PRESENT` guard. For example, `if (present(s2))` does not prove that `s1`
+is present; the warning points to the source line which uses `s1`. The check
+runs on procedure definitions before presence specialization, even when all
+current calls satisfy a deliberately documented assumption such as `vec`'s
+consecutive arguments. Positive/negated guards, nested branches, early returns
+and whole-argument forwarding to known OPTIONAL dummies are recognized.
+Logical `.and.`/`.or.` expressions are checked without assuming short-circuit
+evaluation. The analysis is conservative and does not infer arbitrary caller
+contracts or logical-variable aliases for `PRESENT`.
+The warning is off by default and enabled by `-Wall`; disable it with
+`-Wno-optional-argument` or promote it with `-Werror=optional-argument`.
+`-Wno-unused` controls only unused-declaration warnings. Source directives
+`!#allow(optional-argument)` and `!#deny(optional-argument)` also work.
+Run `python tests/test_optional_warnings.py` for regression checks.
+
 The default optimization level is `-O2`. `--verbose` shows compilation progress
 and tool commands; `--quiet` suppresses that progress. `--run` executes the
 linked program and propagates its failure status.

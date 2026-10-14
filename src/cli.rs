@@ -22,7 +22,7 @@ pub struct Cli {
     #[structopt(long = "Werror", help = "Treat warnings as errors")]
     pub werror: bool,
 
-    #[structopt(long = "warning", number_of_values = 1, help = "Control an unused warning (e.g. unused-type or no-unused-type)")]
+    #[structopt(long = "warning", number_of_values = 1, help = "Control a warning (e.g. optional-argument or no-unused-type)")]
     pub warnings: Vec<String>,
 
     #[structopt(

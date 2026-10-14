@@ -61,8 +61,10 @@ pub fn print_help() {
     println!("  -Wall, --Wall        Enable all warnings");
     println!("  -Wunused             Enable all unused-declaration warnings");
     println!("  -Wunused-<category>  Enable type, variable, parameter, dummy-argument or function warnings");
-    println!("  -Wno-unused-<category> Disable an unused-declaration warning");
+    println!("  -Woptional-argument Warn about OPTIONAL dummy references without proven presence");
+    println!("  -Wno-<category>      Disable a warning category");
     println!("  -Werror, --Werror    Treat enabled warnings as errors");
+    println!("  -Werror=<category>  Enable a warning category and treat it as an error");
     println!("  --lto                Enable link-time optimization");
     println!("  --opt-level <level>  Set optimization level (0, 1, 2, 3, s, z, S, Z)");
     println!("  --quiet              Suppress build progress (warnings remain visible)");
