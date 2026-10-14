@@ -178,7 +178,7 @@ width=len_trim(a)
 end function width
 end program main"""
         self.reject("program main\ninteger::x(2)\ncharacter(len=1)::text(2)\nx=1\ntext=['a','b']\nwhere(x>0)x=width(text)\n"+routine,
-                    "inside WHERE/FORALL")
+                    "inside WHERE")
         self.reject("program main\ncharacter(len=2)::text\ntext='a'\nprint *,width(trim(text))\n"+routine,
                     "runtime TRIM actuals")
         self.reject("""module data
@@ -198,7 +198,27 @@ program main
 use data
 print *,copy('a')
 end program main
-""", "host variable `host`")
+""", "uninitialized")
+        # Module host association is supported; initialized host storage must
+        # also be visible to the expanded CHARACTER procedure.
+        self.check("""module data
+integer::host(1)=1
+contains
+impure elemental function copy(a) result(b)
+character(len=*),intent(in)::a
+character(len=len(a))::b
+if(host(1)>0)then
+b=a
+else
+b='?'
+end if
+end function copy
+end module data
+program main
+use data
+print *,copy('a')
+end program main
+""", "a\n")
 
     def test_uninitialized_input_and_purity(self):
         self.reject("""program main

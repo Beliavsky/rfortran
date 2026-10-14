@@ -222,6 +222,23 @@ function definitions are removed before native result-storage validation;
 this allows the `exe_name` definition in `util.f90` to pass that blocker.
 GETCWD and GET_COMMAND_ARGUMENT themselves remain unsupported when called.
 
+## PURE functions inside FORALL
+
+FORALL assignments can call supported PURE scalar and array-valued functions,
+including numeric array functions and CHARACTER elemental functions. Constructors
+can combine scalar items and array-valued results, as in
+`[0.0_real64, cumulative_sum(x(:,j))]`. Function arguments can use fixed matrix
+sections and empty arrays. Impure calls remain errors.
+
+Every right-hand side is captured before any destination write, preserving
+overlapping assignments such as swapping matrix columns. Captures run after
+procedure argument specialization when assumed-shape dummy extents were unknown
+in the original template. Existing limits remain: one assignment per FORALL,
+constant iteration bounds and destination subscripts, statically known destination
+shapes, and bounded rank-one array-result specialization. Calls in WHERE remain
+outside this subset. Numeric, LOGICAL and fixed rank-one CHARACTER destinations
+are supported. Run `python tests/test_forall_functions.py`.
+
 ## Defined operators with array operands
 
 Defined dotted operators such as `.notin.` can select functions with array
@@ -233,9 +250,10 @@ supported rank-one numeric/LOGICAL results whose extents resolve at the call sit
 Input type, rank, extent and initialization checks remain active. Ordinary fixed
 array function arguments continue to use the existing scalar ABI.
 
-This subset copies array inputs and supports at most 1024 elements per dummy.
-Runtime-sized arrays, recursive specialization and unrestricted array-result
-ABIs remain unsupported. `xnotin.f90` now prints `F T`. Run
+Scalar numeric and LOGICAL results can use runtime-sized array operands through
+the descriptor association described below. Array-result specialization still
+copies bounded inputs and supports at most 1024 elements per dummy. Recursive
+specialization and unrestricted array-result ABIs remain unsupported. `xnotin.f90` now prints `F T`. Run
 `python tests/test_array_operators.py` for interpreter/native O0/O2 checks and
 gfortran comparisons.
 
@@ -259,8 +277,8 @@ now use the existing
 numeric FORALL snapshot rules: capture all right-hand sides before destination
 writes, check bounds, and reject duplicate destinations. Triplets and destination
 subscripts must resolve to constants; stable local constants can be used in
-subscripts after function specialization. CHARACTER procedure calls inside
-FORALL remain unsupported. Function results support assignment, concatenation,
+subscripts after function specialization. Supported PURE CHARACTER procedure
+calls inside FORALL use the same snapshots. Function results support assignment, concatenation,
 formatted output, LEN/SIZE inquiries, nested calls, and early RETURN.
 
 `tests/148_character_array_functions.f90` reproduces `xmunge.f90` and the
@@ -311,7 +329,7 @@ CHARACTER lengths must be constant after specialization, and locals must be
 explicitly declared. Runtime-length actuals
 such as TRIM of a variable, higher-rank arrays in CHARACTER calls,
 recursive CHARACTER calls, enclosing-procedure variable captures, internal
-procedures inside these functions, and CHARACTER calls in WHERE/FORALL remain
+procedures inside these functions, and CHARACTER calls in WHERE remain
 unsupported and are diagnosed. This uses the compiler's existing fixed-size
 local CHARACTER storage, not a general CHARACTER function-result ABI.
 Run `python tests/test_character_elemental.py` for interpreter/native O0/O2
@@ -616,14 +634,24 @@ native O0/O2, and gfortran comparison checks.
 
 ## Array arguments to functions
 
-PURE functions with fixed-size numeric/LOGICAL `INTENT(IN)` array dummies now
-accept whole-array arguments of matching shape and element kind. The compiler
-copies the input elements through its scalar calling convention, so actual
-arrays must be fully initialized. Different declared lower bounds are supported;
-input storage is private to the function. This subset is limited to 1024 elements
-per dummy and requires all actual arguments. Assumed-shape, optional/allocatable
-array dummies, array expressions/sections as actuals, and non-PURE array-argument
-functions are diagnosed as unsupported. Run `python tests/test_function_arrays.py`.
+PURE functions with scalar INTEGER, REAL, DOUBLE PRECISION or LOGICAL results
+can take read-only numeric/LOGICAL array arguments with fixed or assumed shapes.
+Calls reuse specialized subroutine argument association, so forwarding through
+another procedure and runtime-sized arrays use the actual array descriptors.
+Numeric assumed-shape inputs support ranks 1 through 15, with extents checked
+at runtime as needed. Assumed-shape dummy lower bounds start at 1. Scalar-result
+functions with read-only CHARACTER inputs also use subroutine association;
+existing CHARACTER storage and extent limits apply.
+
+Whole arrays, empty arrays, constructors, supported sections and array
+expressions are accepted. Runtime array expressions are evaluated into temporary
+heap storage before association. Array elements are checked for initialization
+when read; a SIZE inquiry does not require initialized data. Explicit-shape
+numeric function inputs retain the existing fixed-size ABI and its 1024-element
+limit. OPTIONAL, POINTER and ALLOCATABLE dummies and array-valued results retain
+their existing specialization limits. Recursive array calls remain unsupported.
+Run `python tests/test_scalar_array_functions.py` and
+`python tests/test_function_arrays.py`.
 
 ## Integer and real inquiries
 
@@ -1437,6 +1465,7 @@ python tests/test_read_comments.py
 python tests/test_character_lengths.py
 python tests/test_else_if.py
 python tests/test_multi_forall.py
+python tests/test_forall_functions.py
 python tests/test_array_constructors.py
 python tests/test_runtime_constructors.py
 python tests/test_bound_inquiries.py

@@ -15,6 +15,7 @@ struct Routine {
     body: Vec<Stmt>,
     result: String,
     kind: TypeSpec,
+    descriptor_call: Option<String>,
 }
 #[derive(Clone)]
 struct Value {
@@ -35,15 +36,24 @@ fn same(a: &TypeSpec, b: &TypeSpec) -> bool {
     matches!((a,b),(TypeSpec::Integer(a),TypeSpec::Integer(b)) if a.unwrap_or(4)==b.unwrap_or(4))
         || a == b
 }
-struct Lower {
+pub(crate) struct Lower {
     routines: HashMap<String, Routine>,
     returns: HashMap<String, (bool, TypeSpec)>,
     serial: usize,
     active: Vec<String>,
+    pure_functions: HashMap<String, bool>,
 }
 impl Lower {
+    pub(crate) fn finish(&mut self, mut p: Program) -> Result<Program> {
+        self.body(&mut p.body,&Symbols::new())?;
+        Ok(p)
+    }
     fn view(&self, e: &Expr, symbols: &Symbols) -> Result<Value> {
         if let Some(kind)=crate::empty_constructors::kind(e)? {return Ok(Value {kind,items:Some(vec![])});}
+        if let Some(items)=crate::multidim::fixed_section_elements(e,symbols)? {
+            let (Expr::Call(name,_)|Expr::Index(name,_))=e else {unreachable!()};
+            return Ok(Value {kind:symbols[name].0.clone(),items:Some(items)});
+        }
         let scalar = |kind| Ok(Value { kind, items: None });
         match e {
             Expr::Call(n, _) if matches!(n.as_str(), "shape" | "lbound" | "ubound")
@@ -67,7 +77,12 @@ impl Lower {
                 if dims.len() != 1 {
                     bail!("elemental calls involving CHARACTER currently require rank-one array actuals");
                 }
-                let count = crate::parameters::integer_constant(&dims[0])?;
+                if matches!(&dims[0], Expr::Ident(n) if n == "@deferred_extent") {
+                    bail!("cannot specialize assumed-shape array argument `{n}`: its extent is not yet known at this function call");
+                }
+                let count = crate::parameters::integer_constant(&dims[0]).with_context(|| {
+                    format!("cannot specialize array argument `{n}`: its extent must be known at this function call")
+                })?;
                 if !(0..=1024).contains(&count) {
                     bail!("CHARACTER elemental expansion supports at most 1024 elements");
                 }
@@ -356,6 +371,27 @@ impl Lower {
         }
         if args.len() != routine.params.len() {
             bail!("wrong argument count for CHARACTER function `{name}`");
+        }
+        if let Some(helper) = &routine.descriptor_call {
+            self.serial += 1;
+            let result = format!("@array_function_result_{}", self.serial);
+            prefix.push(Stmt::VarDecl { kind: routine.kind.clone(), names: vec![result.clone()] });
+            let mut actuals = args.clone();
+            for actual in &mut actuals {
+                if let Some(items)=crate::multidim::fixed_section_elements(actual,symbols)? {
+                    let (Expr::Call(source,_)|Expr::Index(source,_))=actual else {unreachable!()};
+                    let kind=symbols[source].0.clone();
+                    self.serial+=1;let temp=format!("@array_function_section_{}",self.serial);
+                    prefix.push(Stmt::ArrayDecl{kind:kind.clone(),name:temp.clone(),dims:vec![int(items.len() as i64)]});
+                    for (i,value) in items.into_iter().enumerate() {prefix.push(Stmt::AssignIndex{name:temp.clone(),indices:vec![int(i as i64+1)],value});}
+                    *actual=Expr::Ident(temp);
+                }
+            }
+            actuals.push(Expr::Ident(result.clone()));
+            prefix.push(Stmt::CallSub { name: helper.clone(), args: actuals });
+            symbols.insert(result.clone(), (routine.kind.clone(), vec![]));
+            *e = Expr::Ident(result);
+            return Ok(());
         }
         let views = args
             .iter()
@@ -753,86 +789,104 @@ impl Lower {
                 _ => {}
             }
         }
-        crate::multidim::character_foralls(body,&symbols,&mut self.serial)?;
+        crate::allocatables::metadata(body,&mut symbols);
         let mut out = vec![];
+        let mut offset = None;
         for mut stmt in std::mem::take(body) {
-            if let Stmt::Block { body } = &stmt {
-                if matches!(body.first(),Some(Stmt::CallSub{name,..}) if matches!(name.as_str(),"@where"|"@forall"))
-                    && self.contains_calls(body)
-                {
-                    bail!("CHARACTER elemental calls inside WHERE/FORALL are not yet supported");
-                }
-            }
+            if let Stmt::SourceLocation(pos) = &stmt { offset = Some(*pos); }
             let mut prefix = vec![];
-            match &mut stmt {
-                Stmt::Assign { value, .. } | Stmt::Return(Some(value)) => {
-                    self.expression(value, &mut symbols, &mut prefix)?
-                }
-                Stmt::AssignIndex { indices, value, .. } => {
-                    for e in indices {
-                        self.expression(e, &mut symbols, &mut prefix)?;
-                    }
-                    self.expression(value, &mut symbols, &mut prefix)?;
-                }
-                Stmt::Print { items }
-                | Stmt::CallSub { args: items, .. }
-                | Stmt::Read { args: items } => {
-                    for e in items {
-                        self.expression(e, &mut symbols, &mut prefix)?;
+            (|| -> Result<()> {
+                if let Stmt::Block { body } = &stmt {
+                    if matches!(body.first(),Some(Stmt::CallSub{name,..}) if name=="@where") && self.contains_calls(body) {
+                        bail!("specialized function calls inside WHERE are not yet supported");
                     }
                 }
-                Stmt::If {
-                    cond,
-                    then_body,
-                    else_body,
-                } => {
-                    self.expression(cond, &mut symbols, &mut prefix)?;
-                    self.body(then_body, &symbols)?;
-                    if let Some(body) = else_body {
+                if let Stmt::Block {body}=&mut stmt {
+                    let character=body.iter().any(|s|matches!(s,Stmt::AssignIndex{name,..} if matches!(symbols.get(name),Some((TypeSpec::Character(_),_)))));
+                    let marker=body.iter().position(|s|matches!(s,Stmt::CallSub{name,..} if name=="@forall"));
+                    if marker.is_some() && (self.contains_calls(body)||character||marker!=Some(0)) {
+                        if !crate::multidim::specialize_forall(body,&symbols,&self.pure_functions,&mut self.serial)? {
+                            // Argument specialization will supply the missing shape.
+                            return Ok(());
+                        }
+                    }
+                }
+                match &mut stmt {
+                    Stmt::Assign { value, .. } | Stmt::Return(Some(value)) => {
+                        self.expression(value, &mut symbols, &mut prefix)?
+                    }
+                    Stmt::AssignIndex { indices, value, .. } => {
+                        for e in indices {
+                            self.expression(e, &mut symbols, &mut prefix)?;
+                        }
+                        self.expression(value, &mut symbols, &mut prefix)?;
+                    }
+                    Stmt::Print { items }
+                    | Stmt::CallSub { args: items, .. }
+                    | Stmt::Read { args: items } => {
+                        for e in items {
+                            self.expression(e, &mut symbols, &mut prefix)?;
+                        }
+                    }
+                    Stmt::If {
+                        cond,
+                        then_body,
+                        else_body,
+                    } => {
+                        self.expression(cond, &mut symbols, &mut prefix)?;
+                        self.body(then_body, &symbols)?;
+                        if let Some(body) = else_body {
+                            self.body(body, &symbols)?;
+                        }
+                    }
+                    Stmt::Do {
+                        start, end, body, ..
+                    } => {
+                        self.expression(start, &mut symbols, &mut prefix)?;
+                        self.expression(end, &mut symbols, &mut prefix)?;
                         self.body(body, &symbols)?;
                     }
-                }
-                Stmt::Do {
-                    start, end, body, ..
-                } => {
-                    self.expression(start, &mut symbols, &mut prefix)?;
-                    self.expression(end, &mut symbols, &mut prefix)?;
-                    self.body(body, &symbols)?;
-                }
-                Stmt::DoWhile { cond, body } => {
-                    self.expression(cond, &mut symbols, &mut prefix)?;
-                    self.body(body, &symbols)?;
-                    if !prefix.is_empty() {
-                        let condition = cond.clone();
-                        *cond = Expr::Logical(true);
-                        prefix.push(Stmt::If {
-                            cond: Expr::not(condition),
-                            then_body: vec![Stmt::Exit],
-                            else_body: None,
-                        });
-                        prefix.append(body);
-                        *body = std::mem::take(&mut prefix);
-                    }
-                }
-                Stmt::Module { body, .. }
-                | Stmt::Function { body, .. }
-                | Stmt::Subroutine { body, .. }
-                | Stmt::Block { body } => self.body(body, &symbols)?,
-                Stmt::SelectCase {
-                    expr,
-                    cases,
-                    default,
-                } => {
-                    self.expression(expr, &mut symbols, &mut prefix)?;
-                    for c in cases {
-                        self.body(&mut c.body, &symbols)?;
-                    }
-                    if let Some(body) = default {
+                    Stmt::DoWhile { cond, body } => {
+                        self.expression(cond, &mut symbols, &mut prefix)?;
                         self.body(body, &symbols)?;
+                        if !prefix.is_empty() {
+                            // Declarations live in the enclosing scope; executable
+                            // association and calls must repeat at every loop test.
+                            prefix.retain(|s| {
+                                if matches!(s,Stmt::VarDecl{..}|Stmt::ArrayDecl{..}) {out.push(s.clone());false} else {true}
+                            });
+                            let condition = cond.clone();
+                            *cond = Expr::Logical(true);
+                            prefix.push(Stmt::If {
+                                cond: Expr::not(condition),
+                                then_body: vec![Stmt::Exit],
+                                else_body: None,
+                            });
+                            prefix.append(body);
+                            *body = std::mem::take(&mut prefix);
+                        }
                     }
+                    Stmt::Module { body, .. }
+                    | Stmt::Function { body, .. }
+                    | Stmt::Subroutine { body, .. }
+                    | Stmt::Block { body } => self.body(body, &symbols)?,
+                    Stmt::SelectCase {
+                        expr,
+                        cases,
+                        default,
+                    } => {
+                        self.expression(expr, &mut symbols, &mut prefix)?;
+                        for c in cases {
+                            self.body(&mut c.body, &symbols)?;
+                        }
+                        if let Some(body) = default {
+                            self.body(body, &symbols)?;
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
-            }
+                Ok(())
+            })().map_err(|error| crate::source_diagnostics::at(error, offset))?;
             out.extend(prefix);
             out.push(stmt);
         }
@@ -1024,19 +1078,27 @@ fn validate_locals(
 pub(crate) fn inline_array(pure: bool, params: &[String], result: &str, body: &[Stmt]) -> bool {
     let array_result=body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,..} if name==result));
     pure && body.iter().any(|s|matches!(s,Stmt::ArrayDecl{kind,name,dims}
-        if params.contains(name) && dims.len()==1
+        if params.contains(name) && !dims.is_empty()
             && matches!(kind,TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision|TypeSpec::Logical)
-            && (array_result || matches!(&dims[0],Expr::Ident(n) if n=="@deferred_extent"))))
+            && (array_result || dims.iter().any(|d|matches!(d,Expr::Ident(n) if n=="@deferred_extent")))))
 }
 
-pub(crate) fn resolve(mut p: Program) -> Result<Program> {
+pub(crate) fn prepare(mut p: Program) -> Result<(Program, Lower)> {
     crate::elemental::validate_program(&p)?;
     let mut lower = Lower {
         routines: HashMap::new(),
         returns: HashMap::new(),
         serial: 0,
         active: vec![],
+        pure_functions: HashMap::new(),
     };
+    fn pure_functions(body: &[Stmt], known: &mut HashMap<String,bool>) {
+        for s in body {match s {
+            Stmt::Function{name,pure,body,..}=>{known.insert(name.clone(),*pure);pure_functions(body,known);},
+            Stmt::Module{body,..}|Stmt::Subroutine{body,..}=>pure_functions(body,known),_=>{}
+        }}
+    }
+    pure_functions(&p.body,&mut lower.pure_functions);
     fn collect(body: &mut Vec<Stmt>, lower: &mut Lower) -> Result<()> {
         let mut host = std::collections::HashSet::new();
         for s in body.iter() {
@@ -1079,6 +1141,40 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
                         if lower.routines.contains_key(name) {
                             bail!("same-named CHARACTER functions from different scopes are not yet supported: `{name}`");
                         }
+                        let numeric = |kind: &TypeSpec| matches!(kind, TypeSpec::Integer(_) | TypeSpec::Real | TypeSpec::DoublePrecision | TypeSpec::Logical);
+                        // Reuse subroutine argument association for scalar-valued
+                        // numeric functions. Calls can be preserved in procedure
+                        // templates until their actual array descriptors are bound.
+                        let input = |kind: &TypeSpec| numeric(kind) || matches!(kind, TypeSpec::Character(_) | TypeSpec::CharacterAssumed);
+                        let descriptor = *pure && !*elemental && numeric(&kind)
+                            && !body.iter().any(|s| matches!(s, Stmt::ArrayDecl {name,..} if name == &result))
+                            && params.iter().all(|param| {
+                                body.iter().any(|s| matches!(s, Stmt::VarDecl {kind,names} if names.contains(param) && input(kind))
+                                    || matches!(s, Stmt::ArrayDecl {kind,name,..} if name == param && input(kind)))
+                                && body.iter().any(|s| matches!(s, Stmt::DummyIntent {name,intent} if name == param && intent == "intent(in)"))
+                                && !body.iter().any(|s| matches!(s, Stmt::DummyIntent {name,intent} if name == param && matches!(intent.as_str(), "optional" | "allocatable" | "pointer")))
+                            });
+                        let descriptor_call = descriptor.then(|| format!("@array_function${name}"));
+                        if let Some(helper) = &descriptor_call {
+                            let mut helper_body = body.clone();
+                            if matches!(helper_body.last(), Some(Stmt::Return(Some(Expr::Ident(n)))) if n == &result) { helper_body.pop(); }
+                            fn returns(body: &mut [Stmt]) {
+                                for s in body { match s {
+                                    Stmt::Return(value) => *value = None,
+                                    Stmt::If {then_body,else_body,..} => { returns(then_body); if let Some(body)=else_body {returns(body);} },
+                                    Stmt::Do {body,..} | Stmt::DoWhile {body,..} | Stmt::Block {body} => returns(body),
+                                    Stmt::SelectCase {cases,default,..} => {for c in cases {returns(&mut c.body);} if let Some(body)=default {returns(body);} },
+                                    _ => {}
+                                }}
+                            }
+                            returns(&mut helper_body);
+                            if !helper_body.iter().any(|s| matches!(s, Stmt::VarDecl {names,..} if names.contains(&result))) {
+                                helper_body.insert(0, Stmt::VarDecl {kind:kind.clone(),names:vec![result.clone()]});
+                            }
+                            helper_body.push(Stmt::DummyIntent {name:result.clone(),intent:"intent(out)".into()});
+                            let mut helper_params = params.clone(); helper_params.push(result.clone());
+                            out.push(Stmt::Subroutine {name:helper.clone(),params:helper_params,body:helper_body,pure:true,elemental:false});
+                        }
                         lower.routines.insert(
                             name.clone(),
                             Routine {
@@ -1087,6 +1183,7 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
                                 body: body.clone(),
                                 result,
                                 kind,
+                                descriptor_call,
                             },
                         );
                         continue;
@@ -1103,5 +1200,5 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
     }
     collect(&mut p.body, &mut lower)?;
     lower.body(&mut p.body, &Symbols::new())?;
-    Ok(p)
+    Ok((p,lower))
 }

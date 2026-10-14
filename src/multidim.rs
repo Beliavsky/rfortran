@@ -206,6 +206,7 @@ fn section_view(name: &str, args: &[Expr], dims: &[i64]) -> Result<(Vec<i64>, Ex
 struct Lowerer {
     guards: Vec<Stmt>,
     forall_serial: usize,
+    defer_forall_shapes: bool,
     pure_functions: HashMap<String, bool>,
     elementals: std::collections::HashSet<String>,
     types: HashMap<String, TypeSpec>,
@@ -780,20 +781,18 @@ impl Lowerer {
             kind,
             TypeSpec::Integer(None | Some(1 | 2 | 4 | 8))
                 | TypeSpec::Real
-                | TypeSpec::DoublePrecision | TypeSpec::Character(_)
+                | TypeSpec::DoublePrecision | TypeSpec::Logical | TypeSpec::Character(_)
         ) {
             bail!("FORALL currently requires a supported numeric or CHARACTER destination array");
         }
         fn pure(e: &Expr, shapes: &Shapes, known: &HashMap<String, bool>) -> Result<()> {
             match e {
                 Expr::Call(n, args) | Expr::Index(n, args) => {
-                    if n == "@array_constructor" {
-                        bail!("array constructors in FORALL assignments are not yet supported");
-                    }
-                    let intrinsic = crate::intrinsics::math_arity(n).is_some()
+                    let intrinsic = crate::intrinsics::purity(n) == Some(crate::intrinsics::Purity::Pure)
                         || matches!(
                             n.as_str(),
-                            "@section_subscript"
+                            "@section_subscript" | "@array_constructor" | "@typed_constructor"
+                                | "@integer_literal" | "@no_dim" | "@no_mask" | "@no_kind"
                                 | "@unary_plus"
                                 | "abs"
                                 | "min"
@@ -912,10 +911,11 @@ impl Lowerer {
                 }
                 vec![]
             };
-            if let Some(rhs_shape) = self.shape(&value, shapes)? {
+            if !self.defer_forall_shapes { if let Some(rhs_shape) = self.shape(&value, shapes)? {
                 if rhs_shape != shape {
                     bail!("nonconforming FORALL assignment shapes {shape:?} and {rhs_shape:?}");
                 }
+            }
             }
             if !shape.is_empty() && total(&shape)? == 0 {
                 continue;
@@ -1158,24 +1158,64 @@ pub(crate) fn fixed_inquiry(e: &Expr, symbols: &HashMap<String,(TypeSpec,Vec<Exp
     Ok(value)
 }
 
-// CHARACTER arrays become scalar slots before the main multidimensional pass.
-// Expand only their FORALL statements here, using the same snapshot rules.
-pub(crate) fn character_foralls(body:&mut Vec<Stmt>,symbols:&HashMap<String,(TypeSpec,Vec<Expr>)>,serial:&mut usize)->Result<()> {
-    let mut lower=Lowerer {forall_serial:*serial,..Default::default()};
-    lower.types=symbols.iter().map(|(n,(kind,_))|(n.clone(),kind.clone())).collect();
-    let shapes=symbols.iter().filter_map(|(n,(_,dims))|if dims.is_empty() {None} else {Some((n.clone(),dims.iter().map(crate::parameters::integer_constant).collect::<Result<Vec<_>>>()))}).filter_map(|(n,dims)|dims.ok().map(|d|(n,d))).collect();
-    for stmt in body {
-        if let Stmt::Block {body}=stmt {
-            if matches!(body.first(),Some(Stmt::CallSub{name,..}) if name=="@forall") && matches!(body.get(1),Some(Stmt::AssignIndex{name,..}) if matches!(lower.types.get(name),Some(TypeSpec::Character(_)))) {
-                let Some(Stmt::AssignIndex{name,..})=body.get(1) else {unreachable!()};
-                let (_,dims)=&symbols[name];
-                if dims.len()!=1 || crate::parameters::integer_constant(&dims[0]).is_ok_and(|n|!(0..=1024).contains(&n)) {bail!("CHARACTER FORALL requires a fixed rank-one destination with at most 1024 elements");}
-                lower.expand_forall(body,&shapes)?;
-            }
-        }
+// Expand a FORALL before function specialization only when its destination
+// shape is known. RHS conformance is checked after calls have concrete results.
+pub(crate) fn specialize_forall(body: &mut Vec<Stmt>, symbols: &HashMap<String,(TypeSpec,Vec<Expr>)>, pure: &HashMap<String,bool>, serial: &mut usize) -> Result<bool> {
+    let Some(marker)=body.iter().position(|s|matches!(s,Stmt::CallSub{name,..} if name=="@forall")) else {return Ok(false)};
+    if !body[..marker].iter().all(|s|matches!(s,Stmt::ArrayDecl{..}|Stmt::VarDecl{..}|Stmt::SourceLocation(_))) {return Ok(false);}
+    let Some(Stmt::AssignIndex{name,..})=body.get(marker+1) else {return Ok(false)};
+    let mut symbols=symbols.clone();
+    for s in &body[..marker] {match s {
+        Stmt::ArrayDecl{kind,name,dims}=>{symbols.insert(name.clone(),(kind.clone(),dims.clone()));},
+        Stmt::VarDecl{kind,names}=>for n in names {symbols.insert(n.clone(),(kind.clone(),vec![]));},_=>{}
+    }}
+    if crate::allocatables::length(name,&symbols).is_some_and(|len|crate::parameters::integer_constant(&len).is_err()) {
+        bail!("FORALL currently requires a statically shaped destination; runtime-sized array `{name}` is not yet supported");
     }
+    let mut lower=Lowerer {forall_serial:*serial,defer_forall_shapes:true,..Default::default()};
+    lower.types=symbols.iter().map(|(n,(kind,_))|(n.clone(),kind.clone())).collect();
+    lower.pure_functions=pure.clone();
+    let shapes:Shapes=symbols.iter().filter_map(|(n,(_,dims))| {
+        if dims.is_empty() || crate::allocatables::length(n,&symbols).is_some_and(|len|crate::parameters::integer_constant(&len).is_err()) {None}
+        else {Some((n.clone(),dims.iter().map(crate::parameters::integer_constant).collect::<Result<Vec<_>>>()))}
+    }).filter_map(|(n,dims)|dims.ok().map(|d|(n,d))).collect();
+    if !shapes.contains_key(name) {return Ok(false);}
+    if matches!(lower.types.get(name),Some(TypeSpec::Character(_))) {
+        let dims=&shapes[name];
+        if dims.len()!=1 || !(0..=1024).contains(&dims[0]) {bail!("CHARACTER FORALL requires a fixed rank-one destination with at most 1024 elements");}
+    }
+    if let Stmt::CallSub{args,..}=&body[marker] {
+        for control in args.chunks_exact(4) {for bound in &control[1..] {
+            let mut bound=bound.clone();
+            if lower.expression(&mut bound,&shapes).is_err() || crate::parameters::integer_constant(&bound).is_err() {return Ok(false);}
+        }}
+    }
+    let mut statement=body[marker..].to_vec();
+    lower.expand_forall(&mut statement,&shapes)?;
+    body.truncate(marker);body.extend(statement);
     *serial=lower.forall_serial;
-    Ok(())
+    Ok(true)
+}
+
+// Build original-rank element references for a fixed matrix section. Flattening
+// remains the responsibility of the later multidimensional storage pass.
+pub(crate) fn fixed_section_elements(e: &Expr, symbols: &HashMap<String,(TypeSpec,Vec<Expr>)>) -> Result<Option<Vec<Expr>>> {
+    let (Expr::Call(name,args)|Expr::Index(name,args))=e else {return Ok(None)};
+    let Some((_,dims))=symbols.get(name) else {return Ok(None)};
+    if !args.iter().any(|e|triplet(e).is_some()) {return Ok(None);}
+    let dims=dims.iter().map(crate::parameters::integer_constant).collect::<Result<Vec<_>>>()?;
+    let (shape,view)=section_view(name,args,&dims)?;
+    if shape.len()!=1 {bail!("specialized function array arguments currently require rank-one sections");}
+    let count=total(&shape)?;
+    if !(0..=1024).contains(&count) {bail!("function section specialization supports at most 1024 elements");}
+    let mut items=vec![];
+    for i in 1..=count {
+        let (Expr::Index(_,offset),_)=view_element(&view,&int(i)).unwrap() else {unreachable!()};
+        let mut ordinal=crate::parameters::integer_constant(&offset[0])?-1;
+        let indices=dims.iter().map(|extent| {let index=ordinal%extent+1;ordinal/=extent;int(index)}).collect();
+        items.push(Expr::Index(name.clone(),indices));
+    }
+    Ok(Some(items))
 }
 
 pub fn resolve(mut p: Program) -> Result<Program> {
@@ -1412,16 +1452,14 @@ mod tests {
 
     #[test]
     fn forall_preserves_definite_initialization() {
-        assert!(
-            lower("integer::i\nlogical::a(3)\nforall(i=1:3) a(i)=.true.\nend")
-                .unwrap_err()
-                .to_string()
-                .contains("numeric or CHARACTER destination")
-        );
-        assert!(lower("integer::i,a(3)\nforall(i=1:1) a(:)=[1,2,3]\nend")
-            .unwrap_err()
-            .to_string()
-            .contains("array constructors"));
+        for source in [
+            "integer::i\nlogical::a(3)\nforall(i=1:3) a(i)=.true.\nprint *,a\nend",
+            "integer::i,a(3)\nforall(i=1:1) a(:)=[1,2,3]\nprint *,a\nend",
+        ] {
+            let p=lower(source).unwrap();
+            let p=crate::sections::resolve(crate::reductions::resolve(p).unwrap()).unwrap();
+            assert!(crate::initialized::instrument(p).is_ok(),"{source}");
+        }
         for (statement, output, valid) in [
             ("forall(i=1:3) a(i)=i", "a(1:3)", true),
             ("forall(i=1:3) a(i)=i", "a", false),

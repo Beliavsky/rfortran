@@ -136,8 +136,16 @@ pub(crate) fn report(
         source = &src[origin.range.clone()];
         span = span.start - origin.range.start..span.end.min(origin.range.end) - origin.range.start;
     }
+    // Module lowering gives symbols internal identities; diagnostics use the
+    // entity names the programmer wrote instead of exposing those identities.
+    let message = located.message.split('`').enumerate().map(|(i, part)| {
+        let part = if i % 2 == 1 && part.starts_with("@module$") {
+            part.rsplit('$').next().unwrap_or(part)
+        } else { part };
+        if i == 0 { part.to_owned() } else { format!("`{part}") }
+    }).collect::<String>();
     let diagnostic = Diagnostic::error()
-        .with_message(&located.message)
+        .with_message(message)
         .with_labels(vec![Label::primary((), span)]);
     let file = SimpleFile::new(name, source);
     let mut stderr = StandardStream::stderr(ColorChoice::Auto);

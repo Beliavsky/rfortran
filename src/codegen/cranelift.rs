@@ -2045,39 +2045,21 @@ fn gen_stmts(
                 }
             }
             IStmt::AssignIdent(dst, src) => {
-                if let Some(dss) = ints.get(dst) {
-                    if let Some(ss) = ints.get(src) {
-                        let a = storage_addr(b, ptr_ty, *ss);
-                        let v = b.ins().load(types::I64, MemFlags::new(), a, 0);
-                        let da = storage_addr(b, ptr_ty, *dss);
-                        b.ins().store(MemFlags::new(), v, da, 0);
-                    } else if let Some(ss) = reals.get(src) {
-                        let a = storage_addr(b, ptr_ty, *ss);
-                        let fv = b.ins().load(ir::types::F64, MemFlags::new(), a, 0);
-                        let iv = b.ins().fcvt_to_sint(types::I64, fv);
-                        let da = storage_addr(b, ptr_ty, *dss);
-                        b.ins().store(MemFlags::new(), iv, da, 0);
-                    }
-                } else if let Some(dss) = reals.get(dst) {
-                    if let Some(ss) = reals.get(src) {
-                        let a = storage_addr(b, ptr_ty, *ss);
-                        let fv = b.ins().load(ir::types::F64, MemFlags::new(), a, 0);
-                        let da = storage_addr(b, ptr_ty, *dss);
-                        b.ins().store(MemFlags::new(), fv, da, 0);
-                    } else if let Some(ss) = ints.get(src) {
-                        let a = storage_addr(b, ptr_ty, *ss);
-                        let iv = b.ins().load(types::I64, MemFlags::new(), a, 0);
-                        let fv = b.ins().fcvt_from_sint(ir::types::F64, iv);
-                        let da = storage_addr(b, ptr_ty, *dss);
-                        b.ins().store(MemFlags::new(), fv, da, 0);
-                    }
-                } else if let Some(dss) = bools.get(dst) {
-                    if let Some(ss) = bools.get(src) {
-                        let a = storage_addr(b, ptr_ty, *ss);
-                        let bv = b.ins().load(ir::types::I8, MemFlags::new(), a, 0);
-                        let da = storage_addr(b, ptr_ty, *dss);
-                        b.ins().store(MemFlags::new(), bv, da, 0);
-                    }
+                // LOGICAL dummy arguments use I64 ABI cells, while local
+                // LOGICAL variables use byte cells. Convert the value rather
+                // than requiring source and destination storage maps to match.
+                let value=eval_expr(b,ex,ptr_ty,&IExpr::Ident(src.clone()),ints,reals,bools,func_meta);
+                if let Some(slot)=ints.get(dst) {
+                    let address=storage_addr(b,ptr_ty,*slot);let value=to_i64(b,value);
+                    b.ins().store(MemFlags::new(),value,address,0);
+                } else if let Some(slot)=reals.get(dst) {
+                    let address=storage_addr(b,ptr_ty,*slot);let value=to_f64(b,value);
+                    b.ins().store(MemFlags::new(),value,address,0);
+                } else if let Some(slot)=bools.get(dst) {
+                    let address=storage_addr(b,ptr_ty,*slot);let value=to_bool(b,value);
+                    let one=b.ins().iconst(types::I8,1);let zero=b.ins().iconst(types::I8,0);
+                    let value=b.ins().select(value,one,zero);
+                    b.ins().store(MemFlags::new(),value,address,0);
                 }
             }
             IStmt::Return(expr_opt) => {

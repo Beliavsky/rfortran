@@ -33,6 +33,7 @@ class SourceDiagnostics(unittest.TestCase):
         self.assertIn(f'{path.name}:{line}:{column}',result.stderr)
         self.assertIn('attribute `pointer` on dummy argument `thresh`',result.stderr)
         self.assertIn('ELEMENTAL function `sgn_real`',result.stderr)
+        self.assertNotIn('@module$',result.stderr)
         self.assertIn('^^^^^^^',result.stderr)
         self.assertEqual(result.stderr.count('attribute `pointer`'),1,result.stderr)
 
@@ -96,6 +97,30 @@ end function good
                     self.assertNotEqual(result.returncode,0)
                     self.assertIn(f'{source.name}:{line}:',result.stderr)
                     self.assertIn(message,result.stderr)
+
+    def test_assumed_shape_function_call_location(self):
+        text=(Path(__file__).resolve().parent.parent/'xassumed_shape_function_call.f90').read_text(encoding='utf-8')
+        # Scalar-result forwarding is supported. An array-result function still
+        # provides a specialization failure for checking statement locations.
+        text=text.replace('logical::tf', 'logical::tf(size(values))').replace('tf=.not. any(i==values)', 'tf=i/=values').replace('if (not_in_vector(ii(i),jj))', 'if (any(not_in_vector(ii(i),jj)))')
+        with tempfile.TemporaryDirectory(prefix='source-diagnostics-') as tmp:
+            directory=Path(tmp);source=directory/'forward.f90';source.write_text(text,encoding='utf-8')
+            for args in ([source],['check',source],['run',source],['emit-obj',source,directory/'forward.obj']):
+                with self.subTest(args=args):
+                    result=self.invoke(args,directory)
+                    self.assertNotEqual(result.returncode,0)
+                    self.assertIn('forward.f90:15:4',result.stderr)
+                    self.assertIn('assumed-shape array argument `jj`',result.stderr)
+                    self.assertIn('if (any(not_in_vector(ii(i),jj)))',result.stderr)
+                    self.assertNotIn('@deferred_extent',result.stderr)
+            module,main=text.split('program main',1)
+            first=directory/'first.f90';first.write_text('module first\nend module first\n',encoding='utf-8')
+            source.write_text(module,encoding='utf-8')
+            driver=directory/'main.f90';driver.write_text('program main'+main,encoding='utf-8')
+            result=self.invoke([first,source,driver],directory)
+            self.assertNotEqual(result.returncode,0)
+            self.assertIn('forward.f90:15:4',result.stderr)
+            self.assertNotIn('f90c-sources',result.stderr)
 
     def test_valid_program_stays_quiet(self):
         with tempfile.TemporaryDirectory(prefix='source-diagnostics-') as tmp:

@@ -134,6 +134,11 @@ pub(crate) fn scalar_actual_kind(e: &Expr, shapes: &Shapes) -> Result<TypeSpec> 
                    else if matches!(a, TypeSpec::Real) || matches!(b, TypeSpec::Real) {TypeSpec::Real} else {a})
             } else { Ok(TypeSpec::Logical) }
         }
+        Expr::Index(n, args) | Expr::Call(n, args) if shapes.get(n).is_some_and(|(_,dims)| !dims.is_empty()) => {
+            let (kind,dims)=&shapes[n];
+            if args.len()!=dims.len() {bail!("array element actual `{n}` requires {} subscripts",dims.len());}
+            Ok(kind.clone())
+        }
         Expr::Call(n, args) if matches!(n.as_str(), "dble" | "real" | "int") && args.len() == 1 => {
             scalar_actual_kind(&args[0], shapes)?;
             Ok(match n.as_str() { "dble" => TypeSpec::DoublePrecision, "real" => TypeSpec::Real, _ => TypeSpec::Integer(None) })
@@ -1267,7 +1272,27 @@ fn expand(
                             let start=prefix.len();
                             let (k,capacity,length)=if matches!(kind,TypeSpec::Character(_)|TypeSpec::CharacterAssumed) {
                                 character_constructor(&mut captured,&shapes,&mut prefix,serial)?.context("CHARACTER array dummy currently requires a whole array or scalar-element constructor")?
-                            } else {crate::reductions::argument_with_elementals(&mut captured,&shapes,&mut prefix,serial,functions)?};
+                            } else {
+                                // Expose active runtime extents before materializing
+                                // expressions; heap backing dimensions are placeholders.
+                                fn views(e: &mut Expr, shapes: &Shapes) -> Result<()> {
+                                    if let Expr::Call(n,args)=e {
+                                        if matches!(n.as_str(),"size"|"shape"|"lbound"|"ubound"|"allocated"|"kind") {
+                                            if let Some(value)=crate::allocatables::inquiry(n,args,shapes)? {*e=value;return Ok(());}
+                                        }
+                                    }
+                                    match e {
+                                        Expr::Ident(n) if crate::allocatables::length(n,shapes).is_some()=>*e=crate::allocatables::view(n,shapes),
+                                        Expr::Call(n,_) if n=="@packed_view"=>{},
+                                        Expr::Call(_,args)|Expr::Index(_,args)=>for arg in args {views(arg,shapes)?;},
+                                        Expr::Bin(_,a,b)=>{views(a,shapes)?;views(b,shapes)?;},
+                                        Expr::Un(_,a)=>views(a,shapes)?,_=>{}
+                                    }
+                                    Ok(())
+                                }
+                                views(&mut captured,&shapes)?;
+                                crate::reductions::argument_with_elementals(&mut captured,&shapes,&mut prefix,serial,functions)?
+                            };
                             for s in &prefix[start..] {match s {
                                 Stmt::ArrayDecl {kind,name,dims}=>{shapes.insert(name.clone(),(kind.clone(),dims.clone()));},
                                 Stmt::VarDecl {kind,names}=>for n in names {shapes.insert(n.clone(),(kind.clone(),vec![]));},_=>{}
@@ -1282,7 +1307,7 @@ fn expand(
                         if matches!(kind, TypeSpec::CharacterAssumed) && matches!(actual_kind, TypeSpec::Character(_)) {
                             kind = actual_kind.clone();
                         }
-                        if !(if allocatable {crate::pointers::same_kind(&actual_kind,&kind)}else{actual_kind==kind}) || runtime_axes.as_ref().map_or(actual_dims.len(),Vec::len) != dims.len() {
+                        if !crate::pointers::same_kind(&actual_kind,&kind) || runtime_axes.as_ref().map_or(actual_dims.len(),Vec::len) != dims.len() {
                             bail!("type or rank mismatch for `{p}`");
                         }
                         if !dims
@@ -1421,7 +1446,10 @@ fn expand(
                 expand(&mut cloned, &call_shapes, routines, functions, active, serial)?;
                 active.pop();
                 crate::subroutines::inline_returns(&mut cloned,serial)?;
-                prefix.extend(cloned);
+                // Dummy bounds belong to the callee scope. In particular they
+                // must not rebase array temporaries while their actual values
+                // are still being materialized in the association prefix.
+                prefix.push(Stmt::Block { body: cloned });
                 *s = Stmt::Block { body: prefix };
                 continue;
             }
@@ -1454,7 +1482,8 @@ pub fn resolve(mut p: Program) -> Result<Program> {
     p=crate::modules::prepare_globals(p)?;
     p=crate::internal_procedures::resolve(p)?;
     p=crate::optional::resolve(p)?;
-    p=crate::character_elementals::resolve(p)?;
+    let (prepared,mut function_lower)=crate::character_elementals::prepare(p)?;
+    p=prepared;
     p=crate::output::prepare_formatted(p)?;
     p = crate::pointers::prepare(p)?;
     p = crate::constructors::prepare_arguments(p)?;
@@ -1492,7 +1521,11 @@ pub fn resolve(mut p: Program) -> Result<Program> {
     let functions=crate::elemental::functions(&p);
     let mut routines = HashMap::new();
     collect(&mut p.body, &mut routines);
-    expand(&mut p.body, &Shapes::new(), &routines, &functions, &mut vec![], &mut 0)?;
+    let mut call_serial=0;
+    expand(&mut p.body, &Shapes::new(), &routines, &functions, &mut vec![], &mut call_serial)?;
+    p=function_lower.finish(p)?;
+    p=crate::constructors::prepare_arguments(p)?;
+    expand(&mut p.body, &Shapes::new(), &routines, &functions, &mut vec![], &mut call_serial)?;
     // Writable assumed-length CHARACTER dummies have concrete storage only
     // after call-site specialization. Capture their internal output lists now.
     p = crate::output::prepare_formatted(p)?;
