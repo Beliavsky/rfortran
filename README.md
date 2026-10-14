@@ -247,9 +247,13 @@ storage and side effects. These specializations still require at most 1024
 elements per array, with extents and CHARACTER lengths known after association.
 Source array elements copied into the function must be
 initialized. Rank-one fixed-length CHARACTER ALLOCATABLE results can use bounded
-ALLOCATABLE output helpers; their active length is tracked separately from
-storage capacity. This supports filtered `.exclude.` results, including empty
-results, assignment, argument passing and list-directed/formatted output.
+ALLOCATABLE output helpers or direct `ALLOCATE` statements with proven finite
+bounds; their active length is tracked separately from storage capacity. This
+supports filtered `.exclude.` results and OPTIONAL `vec` calls with zero through
+ten consecutive arguments, including empty results, assignment, argument passing
+and list-directed/formatted output. `tests/183_optional_character_array_result.f90`
+tests the original `util.f90` routine and preserves its consecutive-argument
+assumption.
 `python tests/test_character_allocatable_results.py` checks these paths against
 the interpreter, native code at `-O0`/`-O2`, and gfortran when available.
 `python tests/test_multirank_array_functions.py` covers PURE and ordinary

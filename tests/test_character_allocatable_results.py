@@ -13,6 +13,62 @@ class CharacterAllocatableResults(unittest.TestCase):
     def test_repro(self):
         self.check(REPRO,'dog boy\n')
 
+    def test_original_vec_all_presence_variants(self):
+        source=(Path(__file__).parent/'183_optional_character_array_result.f90').read_text(encoding='utf-8')
+        words='one two three four five six seven eight nine ten'.split()
+        expected=''.join(''.join(w.ljust(10) for w in words[:n])+'\n' for n in range(11))
+        self.check(source,expected)
+
+    def test_direct_allocation_runtime_branch_and_forwarding(self):
+        self.check('''program main
+logical::flag
+integer::i
+character(3)::out(2)
+do i=1,2
+flag=i==1
+print *,size(make(flag))
+write(*,'(100(a,1x))') make(flag)
+call consume(make(flag))
+end do
+out=make(.true.)
+write(*,'(100(a,1x))') out
+contains
+function make(flag) result(out)
+logical,intent(in)::flag
+character(3),allocatable::out(:)
+if(flag)then
+allocate(out(2))
+out(1)='one'
+out(2)='two'
+else
+allocate(out(0))
+end if
+end function make
+subroutine consume(words)
+character(*),intent(in)::words(:)
+print *,size(words)
+write(*,'(100(a,1x))') words
+end subroutine consume
+end program main
+''','2\none two\n2\none two\n0\n\n0\n\none two\n')
+
+    def test_direct_allocate_size_and_deallocate_reallocate(self):
+        self.check('''program main
+print '(100a)',copy(['a','b','c'])
+print *,size(copy([character(1)::]))
+contains
+function copy(words) result(out)
+character(*),intent(in)::words(:)
+character(len=len(words)),allocatable::out(:)
+allocate(out(1))
+out(1)='!'
+deallocate(out)
+allocate(out(size(words)))
+out=words
+end function copy
+end program main
+''','abc\n0\n')
+
     def test_runtime_filters_all_none_some_repeated(self):
         self.check(MODULE+'''program main
 use character_exclude_mod

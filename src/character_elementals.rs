@@ -579,7 +579,7 @@ impl Lower {
         if alloc_result {
             let helper_count=self.allocation_helpers.len();
             specialized.extend(self.allocation_helpers.clone());
-            let mut prepared=crate::allocatables::prepare(Program{name:String::new(),body:specialized})?;
+            let mut prepared=crate::allocatables::prepare_function_result(Program{name:String::new(),body:specialized},&routine.result,&constants)?;
             prepared.body.truncate(prepared.body.len()-helper_count);
             specialized=prepared.body;
         }

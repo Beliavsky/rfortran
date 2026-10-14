@@ -1273,6 +1273,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": "[       boy      girl         a      tree]\n"
+    },
+    "183_optional_character_array_result": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": "\none       \none       two       \none       two       three     \none       two       three     four      \none       two       three     four      five      \none       two       three     four      five      six       \none       two       three     four      five      six       seven     \none       two       three     four      five      six       seven     eight     \none       two       three     four      five      six       seven     eight     nine      \none       two       three     four      five      six       seven     eight     nine      ten       \n"
     }
   }
 }

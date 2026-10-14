@@ -618,7 +618,30 @@ fn character_copy(name: &str, value: &Expr, len: Expr, shapes: &Shapes,
     out.push(Stmt::Do {var:index.clone(),start:int(1),end:len,body:vec![Stmt::AssignIndex {name:name.into(),indices:vec![id(&index)],value:Expr::Index(temp,vec![id(&index)])}]});
     Ok(())
 }
-pub(crate) fn prepare(mut p: Program) -> Result<Program> {
+pub(crate) fn prepare(p: Program) -> Result<Program> {
+    prepare_with_bounds(p, HashMap::new())
+}
+
+// Direct ALLOCATE statements can bound a function result without an output
+// helper. Use the same capacity and active-length metadata as helper results.
+pub(crate) fn prepare_function_result(
+    p: Program, result: &str, constants: &HashMap<String, Expr>,
+) -> Result<Program> {
+    let shapes: Shapes = p.body.iter().filter_map(|s| match s {
+        Stmt::ArrayDecl {kind,name,dims} => Some((name.clone(),(kind.clone(),dims.clone()))),
+        _ => None,
+    }).collect();
+    let mut bounds = HashMap::new();
+    if matches!(shapes.get(result),Some((TypeSpec::Character(_),dims)) if dims.len()==1) {
+        let targets=HashMap::from([(result.to_owned(),1)]);
+        if let Some(dims)=crate::allocation_bounds::infer(&p.body,&targets,&shapes,constants)?.get(result) {
+            bounds.insert(result.to_owned(),dims[0]);
+        }
+    }
+    prepare_with_bounds(p,bounds)
+}
+
+fn prepare_with_bounds(mut p: Program, mut bounds: HashMap<String,i64>) -> Result<Program> {
     fn collect(body: &[Stmt], outputs: &mut HashMap<String, (Vec<usize>, Option<i64>)>) {
         for s in body {
             match s {
@@ -649,7 +672,7 @@ pub(crate) fn prepare(mut p: Program) -> Result<Program> {
     }
     let mut outputs = HashMap::new();
     collect(&p.body, &mut outputs);
-    if outputs.is_empty() {
+    if outputs.is_empty() && bounds.is_empty() {
         return Ok(p);
     }
     let mut arrays = HashMap::new();
@@ -689,7 +712,6 @@ pub(crate) fn prepare(mut p: Program) -> Result<Program> {
         Ok(())
     }
     constructor_arrays(&p.body,&mut arrays)?;
-    let mut bounds = HashMap::<String, i64>::new();
     fn prepared_outputs(body:&[Stmt],names:&mut HashSet<String>) {
         for s in body {match s {
             Stmt::DummyIntent{name,intent} if intent.starts_with("@bounded:")=>{names.insert(name.clone());},
