@@ -106,6 +106,11 @@ fn assign(n: &str, value: Expr) -> Stmt {
         value,
     }
 }
+pub(crate) fn require_stdout(unit: Expr) -> Stmt {
+    Stmt::If {cond:bin(BinOp::Ne,unit,int(6)),then_body:vec![Stmt::CallSub {
+        name:"@error_stop".into(),args:vec![Expr::Str("this WRITE requires standard output unit 6; external file WRITE currently supports only (A) without control options".into())],
+    }],else_body:None}
+}
 fn fragment(e: Expr) -> Stmt {
     Stmt::CallSub {
         name: "@print_fragment".into(),
@@ -229,6 +234,9 @@ fn emit(
                     else_body: None,
                 });
                 body.push(assign(var, id(&first)));
+                if let (Ok(first),Ok(last),Ok(step))=(crate::parameters::integer_constant(&args[1]),crate::parameters::integer_constant(&args[2]),crate::parameters::integer_constant(&args[3])) {
+                    if step>0 && first>last || step<0 && first<last {continue;}
+                }
                 active.push(var.clone());
                 let mut inner = Vec::new();
                 emit(
@@ -350,6 +358,15 @@ fn emit(
 /// Expand formatted implied-DOs before CHARACTER arrays become scalar slots.
 /// Each value is copied into a statement-local list, then formatted together.
 pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> Result<crate::ast::Program> {
+    fn ready(e:&Expr,symbols:&Symbols)->bool {
+        let storage=|n:&String|symbols.get(n).is_none_or(|(_,d)|d.is_empty()||d.iter().all(|d|crate::parameters::integer_constant(d).is_ok())||symbols.contains_key(&format!("@axes:{n}")));
+        match e {
+            Expr::Ident(n)=>storage(n),
+            Expr::Call(n,a)|Expr::Index(n,a)=>storage(n)&&a.iter().all(|e|ready(e,symbols)),
+            Expr::Section{name,lower,upper,stride}=>storage(name)&&[lower,upper,stride].into_iter().flatten().all(|e|ready(e,symbols)),
+            Expr::Bin(_,a,b)=>ready(a,symbols)&&ready(b,symbols),Expr::Un(_,a)=>ready(a,symbols),_=>true,
+        }
+    }
     fn scope(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> Result<()> {
         let mut symbols = inherited.clone();
         for stmt in body.iter() {
@@ -365,8 +382,11 @@ pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> Result<crat
                 _ => {}
             }
         }
+        crate::allocatables::metadata(body,&mut symbols);
         for stmt in body.iter_mut() {
             let mut internal = None;
+            let mut unit_check = None;
+            let mut control_prefix = vec![];
             let selected = if let Stmt::CallSub { name, args } = stmt {
                 if name=="@write" && matches!(&args[0],Expr::Ident(n) if matches!(symbols.get(n),Some((TypeSpec::Character(_),dims)) if dims.is_empty())) {
                     let Expr::Ident(target)=&args[0] else {unreachable!()};
@@ -378,24 +398,28 @@ pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> Result<crat
                         bail!("list-directed internal WRITE is not yet supported");
                     }
                     internal=Some((target.clone(),length.unwrap_or(1)));
-                    Some((args[1].clone(),args[2..].to_vec(),false))
+                    Some((args[1].clone(),args[2..].to_vec(),int(0)))
                 } else if matches!(
                     name.as_str(),
                     "@formatted_print" | "@formatted_write_noadvance"
-                ) && args[1..].iter().any(contains_implied_do)
+                ) && args[1..].iter().any(contains_implied_do) && args[1..].iter().all(|e|ready(e,&symbols))
                 {
                     Some((
                         args[0].clone(),
                         args[1..].to_vec(),
-                        name == "@formatted_print",
+                        int(i64::from(name == "@formatted_print")),
                     ))
                 } else if name == "@write"
-                    && crate::parameters::integer_constant(&args[0]).ok() == Some(6)
+                    && (crate::parameters::integer_constant(&args[0]).ok() == Some(6)
+                        || crate::parameters::integer_constant(&args[0]).is_err() && crate::file_io::unit(&args[0],&symbols).is_ok())
                     && args[2..].iter().any(contains_implied_do)
+                    && args[2..].iter().all(|e|ready(e,&symbols))
                     && !matches!(&args[1],Expr::Call(n,_) if n=="@list_directed")
                 {
+                    if crate::parameters::integer_constant(&args[0]).ok()!=Some(6) {unit_check=Some(args[0].clone());}
                     let mut first = 2;
-                    let mut advance = true;
+                    let mut advance = int(1);
+                    let mut deferred = false;
                     while let Some(Expr::Call(n, a)) = args.get(first) {
                         let Some(option) = n.strip_prefix("@write_option:") else {
                             break;
@@ -403,15 +427,14 @@ pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> Result<crat
                         if option != "advance" {
                             bail!("unsupported WRITE control `{option}`");
                         }
-                        let value = crate::parameters::character_constant(&a[0])?;
-                        advance = match value.trim_end().to_ascii_lowercase().as_str() {
-                            "yes" => true,
-                            "no" => false,
-                            _ => bail!("ADVANCE must be 'yes' or 'no'"),
-                        };
+                        match crate::reductions::advance_control(&a[0],&symbols,&mut control_prefix,serial) {
+                            Ok(value)=>advance=value,
+                            Err(error) if crate::parameters::character_constant(&a[0]).is_ok()=>return Err(error),
+                            Err(_)=>{deferred=true;break;},
+                        }
                         first += 1;
                     }
-                    Some((args[1].clone(), args[first..].to_vec(), advance))
+                    if deferred {None} else {Some((args[1].clone(), args[first..].to_vec(), advance))}
                 } else {
                     None
                 }
@@ -428,9 +451,11 @@ pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> Result<crat
                     },
                     Stmt::CallSub {
                         name: "@format_begin".into(),
-                        args: vec![id(&handle), format, int(i64::from(advance))],
+                        args: vec![id(&handle), format, advance],
                     },
                 ];
+                inner.splice(1..1,control_prefix);
+                if let Some(unit)=unit_check {inner.insert(0,require_stdout(unit));}
                 emit(
                     &items,
                     &symbols,

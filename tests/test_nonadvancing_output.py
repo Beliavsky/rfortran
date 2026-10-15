@@ -73,10 +73,9 @@ end program main
             ("", "write (*,*,advance='no') 1", "explicit format"),
             ("", "write (*,*,advance='yes') 1", "explicit format"),
             ("", "write (*,'(i1)',advance='maybe') 1", "'yes' or 'no'"),
-            ("", "write (*,'(i1)',advance=1) 1", "constant CHARACTER"),
-            ("", "write (*,'(i1)',advance='no',advance='yes') 1", "duplicate ADVANCE"),
+            ("", "write (*,'(i1)',advance=1) 1", "scalar CHARACTER"),
+            ("", "write (*,'(i1)',advance='no',advance='yes') 1", "duplicate WRITE control"),
             ("", "write (*,'(i1)',unknown='no') 1", "unsupported WRITE control"),
-            ("character(3)::mode\nmode='no'", "write (*,'(i1)',advance=mode) 1", "constant CHARACTER"),
         ]
         with tempfile.TemporaryDirectory(prefix="bad-advance-") as tmp:
             source = Path(tmp) / "main.f90"

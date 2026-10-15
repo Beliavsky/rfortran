@@ -38,7 +38,7 @@ class NamedFormats(unittest.TestCase):
             ("integer,parameter::fmt=0", "write (*,fmt) 1", "numeric format labels"),
             ("character(*),parameter::fmt='(e12.4)'", "write (*,fmt) 1.0", "unsupported output descriptor"),
             ("character(*),parameter::fmt='(i3)'", "write (*,fmt) 1,2", "descriptor count"),
-            ("character(*),parameter::fmt='(i3)'", "write (20,fmt) 1", "standard output"),
+            ("character(*),parameter::fmt='(i3)'", "write (20,fmt) 1", "external file WRITE"),
         ]
         with tempfile.TemporaryDirectory(prefix="bad-formats-") as tmp:
             path = Path(tmp) / "main.f90"

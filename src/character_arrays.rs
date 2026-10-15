@@ -379,6 +379,10 @@ fn dynamic(mut e: Expr, arrays: &Arrays, serial: &mut usize, output: &mut Vec<St
             let index=dynamic(a[0].clone(),arrays,serial,output)?;
             if crate::parameters::integer_constant(&index).is_ok() && arrays[n].extent.is_none() { return Ok(e); }
             let index=capture_index(n,index,arrays,serial,output);
+            if arrays[n].elements.is_empty() {
+                output.push(Stmt::CallSub{name:"@error_stop".into(),args:vec![Expr::Str(format!("CHARACTER array `{n}` index out of bounds"))]});
+                return Ok(Expr::Str(String::new()));
+            }
             *serial+=1;
             let temp=format!("@character_element_{serial}");
             output.push(Stmt::VarDecl {kind:TypeSpec::Character(Some(arrays[n].length)),names:vec![temp.clone()]});

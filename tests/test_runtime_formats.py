@@ -75,7 +75,6 @@ end program main
             for body, message in [
                 ("character(8)::fmt\nwrite (*,fmt) 7", "uninitialized variable `fmt`"),
                 ("integer::fmt\nfmt=10\nwrite (*,fmt) 7", "scalar CHARACTER"),
-                ("character(8)::fmt\ninteger::a(2)\nfmt='(2i3)'\na=1\nwrite (*,fmt) a", "scalar output items"),
             ]:
                 with self.subTest(body=body):
                     source.write_text("program main\n"+body+"\nend program main\n")

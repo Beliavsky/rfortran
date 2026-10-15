@@ -14,12 +14,12 @@ outcomes at both O0 and O2:
 
 | Driver outcome | Count |
 | --- | ---: |
-| Pass against gfortran | 20 |
-| Compilation failure | 10 |
+| Pass against gfortran | 21 |
+| Compilation failure | 9 |
 | Incorrect output | 0 |
 
 All gfortran reference drivers compile and run successfully, including their
-repeat executions. The passing drivers target 72 procedures; 44 other targeted
+repeat executions. The passing drivers target 75 procedures; 41 other targeted
 procedures are in blocked groups. `string_fields` and `partitions_and_runs` now
 pass following fixes to early RETURN in explicit-step loops and NINT rounding.
 `matrix_shapes` and `cumulative_sums` now pass after routing runtime selectors
@@ -27,12 +27,14 @@ and triplets on fixed storage through the runtime section path. `diagonals`
 now passes with runtime FORALL bounds and strides. `unique_characters` now passes
 after preserving active CHARACTER array extents and specializing nested search
 functions. Its array-valued search also uses descriptor-backed FORALL snapshots.
-`formatted_output` remains blocked on CHARACTER format handling.
+`formatted_output` now passes after fixes to runtime standard-output units,
+runtime-format array items, ADVANCE expressions and empty CHARACTER lists. Its
+driver also exercises headers, trailers and embedded quotes.
 See [baseline.json](baseline.json)
 for exact input-source and compiler hashes and every procedure's inventory entry.
 
 The `string_matching` driver passes in isolation, while full-module compilation
-currently stops at an unsupported `INQUIRE(...,OPENED=...)`. This demonstrates
+currently stops with `unsupported expression in numeric array reduction`. This demonstrates
 why isolated successes and full-module integration are recorded separately.
 
 ## Running

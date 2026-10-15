@@ -4,20 +4,20 @@
     "kind": "c999f5d305aede589d31ea7585929d41e1fd5b1b86e1774f195b0b1354dec9c3",
     "manifest": "424d255ecf34fda0ed021b70e67db0a04413142298378c884e32708f71251666"
   },
-  "compiler_sha256": "f9dd205b728684bf908baa923fbaa18b8c53c1334df7ca6b524b099655963918",
+  "compiler_sha256": "3685b74016ae5317e86aa3f3b33da50ace9df3fc37ddffd8db1a9d8e70b861a2",
   "mode": "isolated",
   "optimizations": [
     0,
     2
   ],
   "procedure_counts": {
-    "pass": 72,
+    "pass": 75,
     "untested": 435,
-    "blocked": 44
+    "blocked": 41
   },
   "case_outcomes": {
-    "compile_error": 20,
-    "pass": 40
+    "compile_error": 18,
+    "pass": 42
   },
   "cases": [
     {
@@ -290,10 +290,10 @@
         "write_trim_vec",
         "write_words"
       ],
-      "driver_sha256": "18907fc7bcf18921fe4c7395700b10e9fef2a01c63eb72487f5d450031f9ed35",
+      "driver_sha256": "dee1035f0495a2b40d49253759f126bb57ec9fc361380a5637b9151771920ef8",
       "outcomes": {
-        "isolated-O0": "compile_error",
-        "isolated-O2": "compile_error"
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
       }
     },
     {
@@ -2297,7 +2297,7 @@
     {
       "name": "print_matrix_simple",
       "line": 4914,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "formatted_output"
       ]
@@ -2435,7 +2435,7 @@
     {
       "name": "write_words",
       "line": 5287,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "formatted_output"
       ]
@@ -3061,7 +3061,7 @@
     {
       "name": "write_trim_vec",
       "line": 7002,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "formatted_output"
       ]

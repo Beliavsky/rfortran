@@ -1066,6 +1066,56 @@ fn lower_where_mask(body: &mut Vec<Stmt>, symbols: &mut Symbols, serial: &mut us
     Ok(())
 }
 
+fn formatted_capture(format:Expr,items:&[Expr],advance:Expr,symbols:&Symbols,serial:&mut usize)->Result<Vec<Stmt>> {
+    *serial+=1;
+    let handle=format!("@formatted_array_list_{serial}");
+    let mut body=vec![Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![handle.clone()]},
+        Stmt::CallSub{name:"@format_begin".into(),args:vec![Expr::Ident(handle.clone()),format,advance]}];
+    let mut local=symbols.clone();
+    for item in items {
+        if element(item,&int(1),&local).is_ok_and(|(_,shape,_)|shape.is_some()) {
+            let mut captured=item.clone();let start=body.len();
+            let (_,_,length)=argument_with_elementals(&mut captured,&local.variables,&mut body,serial,&local.elementals)?;
+            for s in &body[start..] {match s {
+                Stmt::ArrayDecl{kind,name,dims}=>{local.insert(name.clone(),(kind.clone(),dims.clone()));},
+                Stmt::VarDecl{kind,names}=>for n in names {local.insert(n.clone(),(kind.clone(),vec![]));},_=>{}
+            }}
+            *serial+=1;let index=format!("@formatted_array_index_{serial}");
+            let value=argument_element(&captured,&Expr::Ident(index.clone()),&local.variables)?;
+            body.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![index.clone()]});
+            body.push(Stmt::Do{var:index,start:int(1),end:length,body:vec![Stmt::CallSub{name:"@format_item".into(),args:vec![Expr::Ident(handle.clone()),value]}]});
+        } else {body.push(Stmt::CallSub{name:"@format_item".into(),args:vec![Expr::Ident(handle.clone()),item.clone()]});}
+    }
+    body.push(Stmt::CallSub{name:"@format_end".into(),args:vec![Expr::Ident(handle)]});
+    lower_body(&mut body,symbols,serial)?;
+    Ok(body)
+}
+
+pub(crate) fn advance_control(value:&Expr,variables:&HashMap<String,(TypeSpec,Vec<Expr>)>,prefix:&mut Vec<Stmt>,serial:&mut usize)->Result<Expr> {
+    if let Ok(value)=crate::parameters::character_constant(value) {
+        return match value.trim_end().to_ascii_lowercase().as_str() {
+            "yes"=>Ok(int(1)),"no"=>Ok(int(0)),_=>bail!("ADVANCE must be 'yes' or 'no'"),
+        };
+    }
+    let mut symbols=Symbols::new();symbols.variables=variables.clone();
+    let width=character_capacity(value,&symbols)?.context("ADVANCE must be scalar CHARACTER with a known storage length")?;
+    let start=prefix.len();
+    *serial+=1;let text=format!("@advance_text_{serial}");let flag=format!("@advance_flag_{serial}");
+    prefix.extend([Stmt::VarDecl{kind:TypeSpec::Character(Some(width)),names:vec![text.clone()]},
+        Stmt::VarDecl{kind:TypeSpec::Integer(None),names:vec![flag.clone()]},
+        Stmt::Assign{name:text.clone(),value:value.clone()}]);
+    let cases=|words:&[&str]|words.iter().map(|word|bin(BinOp::Eq,Expr::Call("trim".into(),vec![Expr::Ident(text.clone())]),Expr::Str((*word).into())))
+        .reduce(|a,b|bin(BinOp::Or,a,b)).unwrap();
+    let yes=cases(&["yes","yeS","yEs","yES","Yes","YeS","YEs","YES"]);
+    let no=cases(&["no","nO","No","NO"]);
+    prefix.push(Stmt::If{cond:Expr::Un(UnOp::Not,Box::new(bin(BinOp::Or,yes.clone(),no))),then_body:vec![Stmt::CallSub{name:"@error_stop".into(),args:vec![Expr::Str("ADVANCE must be 'yes' or 'no'".into())]}],else_body:None});
+    prefix.push(Stmt::If{cond:yes,then_body:vec![Stmt::Assign{name:flag.clone(),value:int(1)}],else_body:Some(vec![Stmt::Assign{name:flag.clone(),value:int(0)}])});
+    let mut control=prefix.split_off(start);
+    lower_body(&mut control,&symbols,serial)?;
+    prefix.extend(control);
+    Ok(Expr::Ident(flag))
+}
+
 fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> Result<()> {
     let mut symbols = inherited.clone();
     for stmt in body.iter() {
@@ -1128,7 +1178,7 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
         }
         if let Stmt::CallSub {name,args}=&stmt {
             if name=="@format_begin" {
-                if !matches!(crate::array_calls::scalar_actual_kind(&args[1],&symbols.variables)?,TypeSpec::Character(_)) {
+                if character_capacity(&args[1],&symbols)?.is_none() {
                     bail!("WRITE/PRINT format must be scalar CHARACTER");
                 }
                 if let Ok(format)=crate::parameters::character_constant(&args[1]) {
@@ -1138,41 +1188,51 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
             if name=="@write" {
                 if crate::parameters::integer_constant(&args[0]).ok()!=Some(6) {
                     crate::file_io::unit(&args[0], &symbols.variables)?;
-                    let format=crate::parameters::character_constant(&args[1])?;
-                    if format.chars().filter(|c|!c.is_whitespace()).collect::<String>().to_ascii_lowercase()!="(a)" {
-                        bail!("external file WRITE currently supports only the (A) format");
-                    }
-                    if args[2..].iter().any(|e|matches!(e,Expr::Call(n,_) if n.starts_with("@write_option:"))) {
-                        bail!("external file WRITE control options are not yet supported");
-                    }
+                    let simple=crate::parameters::character_constant(&args[1]).is_ok_and(|f|f.chars().filter(|c|!c.is_whitespace()).collect::<String>().eq_ignore_ascii_case("(a)"))
+                        && !args[2..].iter().any(|e|matches!(e,Expr::Call(n,_) if n.starts_with("@write_option:")));
+                    if simple {
                     let items=if args.len()==2 {vec![Expr::Str(String::new())]} else {args[2..].to_vec()};
                     let mut body=Vec::new();
                     for item in items {
-                        if !matches!(crate::array_calls::scalar_actual_kind(&item,&symbols.variables)?,TypeSpec::Character(_)) {bail!("(A) file WRITE requires CHARACTER items");}
+                        if character_capacity(&item,&symbols)?.is_none() {bail!("(A) file WRITE requires CHARACTER items");}
                         body.push(Stmt::CallSub {name:"@file_write_record".into(),args:vec![args[0].clone(),item]});
                     }
-                    output.push(Stmt::Block {body});continue;
+                    if crate::parameters::integer_constant(&args[0]).is_err() {
+                        // The file (A) subset writes one record per item. Preserve
+                        // those records on stdout without requiring format reversion.
+                        let mut then_body=body.iter().map(|stmt| {
+                            let Stmt::CallSub{args:record,..}=stmt else {unreachable!()};
+                            Stmt::CallSub{name:"@write".into(),args:vec![int(6),args[1].clone(),record[1].clone()]}
+                        }).collect();
+                        lower_body(&mut then_body,&symbols,serial)?;
+                        output.push(Stmt::If{cond:bin(BinOp::Eq,args[0].clone(),int(6)),then_body,else_body:Some(body)});
+                    } else {output.push(Stmt::Block {body});}
+                    continue;
+                    }
+                    if crate::parameters::integer_constant(&args[0]).is_ok() {bail!("external file WRITE currently supports only the (A) format without control options");}
+                    prefix.push(crate::output::require_stdout(args[0].clone()));
                 }
                 let mut first_item = 2;
                 let mut advance = None;
+                let mut dynamic_advance = None;
                 while let Some(Expr::Call(option, values)) = args.get(first_item) {
                     let Some(option) = option.strip_prefix("@write_option:") else { break; };
                     if option != "advance" { bail!("unsupported WRITE control `{option}`"); }
-                    if advance.is_some() { bail!("duplicate ADVANCE in WRITE"); }
-                    let value = crate::parameters::character_constant(&values[0])
-                        .context("ADVANCE currently requires a constant CHARACTER expression")?;
-                    advance = Some(match value.trim_end().to_ascii_lowercase().as_str() {
-                        "yes" => true, "no" => false,
-                        _ => bail!("ADVANCE must be 'yes' or 'no'"),
-                    });
+                    if advance.is_some() || dynamic_advance.is_some() { bail!("duplicate ADVANCE in WRITE"); }
+                    let value=advance_control(&values[0],&symbols.variables,&mut prefix,serial)?;
+                    if let Ok(value)=crate::parameters::integer_constant(&value) {advance=Some(value!=0);} else {dynamic_advance=Some(value);}
                     first_item += 1;
                 }
                 stmt=match &args[1] {
                     Expr::Call(tag, _) if tag=="@list_directed" => {
-                        if advance.is_some() { bail!("ADVANCE requires an explicit format; list-directed WRITE is not allowed"); }
+                        if advance.is_some() || dynamic_advance.is_some() { bail!("ADVANCE requires an explicit format; list-directed WRITE is not allowed"); }
                         Stmt::Print{items:args[first_item..].to_vec()}
                     }
                     _ => {
+                        if let Some(advance)=dynamic_advance {
+                            let body=formatted_capture(args[1].clone(),&args[first_item..],advance,&symbols,serial)?;
+                            output.extend(prefix);output.push(Stmt::Block{body});continue;
+                        }
                         let mut values = vec![args[1].clone()]; values.extend_from_slice(&args[first_item..]);
                         Stmt::CallSub{name:if advance == Some(false) {"@formatted_write_noadvance"} else {"@formatted_print"}.into(),args:values}
                     }
@@ -1220,7 +1280,7 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                     match e {
                         Expr::Ident(n) => symbols.get(n).is_some_and(|(_, dims)| !dims.is_empty()),
                         Expr::Section { .. } => true,
-                        Expr::Call(n, _) if n == "@matrix_view" => true,
+                        Expr::Call(n, _) if matches!(n.as_str(),"@matrix_view"|"@packed_view"|"@array_constructor") => true,
                         Expr::Bin(_, a, b) => array_value(a, symbols) || array_value(b, symbols),
                         Expr::Un(_, a) => array_value(a, symbols),
                         _ => false,
@@ -1244,7 +1304,8 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                     *args=expanded;
                 }
                 if args[1..].iter().any(|e| array_value(e, &symbols)) {
-                    bail!("formatted output currently requires scalar output items");
+                    let body=formatted_capture(args[0].clone(),&args[1..],int(i64::from(name=="@formatted_print")),&symbols,serial)?;
+                    output.extend(prefix);output.push(Stmt::Block{body});continue;
                 }
                 if let Ok(fmt) = crate::parameters::character_constant(&args[0]) {
                     crate::formatting::parse(&fmt,args.len()-1)?;
@@ -1596,7 +1657,7 @@ mod tests {
             ("", "write(*,'(i3)') 42", true),
             ("", "write(*,*)\nx=42", true),
             ("", "write(7,*) 42", false),
-            ("integer :: unit", "unit=6\nwrite(unit,*) 42", false),
+            ("integer :: unit", "unit=6\nwrite(unit,*) 42", true),
             ("character(len=8) :: text", "write(text,*) 42", false),
             ("", "write(*,'*') 42", false),
             ("", "write(*,'(q3)') 42", false),

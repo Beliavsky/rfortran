@@ -605,7 +605,8 @@ diagnostics. Bounded deferred-length scalar assignment is described below.
 
 WRITE and PRINT accept scalar CHARACTER format expressions: literals, named
 PARAMETERs, variables (including formats read from input), concatenation, and
-TRIM. WRITE supports standard output (`*` or constant unit 6), with or without
+TRIM. WRITE supports standard output (`*`, constant unit 6, or an INTEGER
+unit variable containing 6), with or without
 an output list. Supported formats use A, I, F, L descriptors, repeat counts,
 quoted literals, `nX` spacing, and `/` record breaks. Runtime formats are checked
 for syntax, descriptor counts, and item types before the statement prints.
@@ -621,8 +622,10 @@ Run `python tests/test_write_controls.py` for interpreter/native O0/O2 checks
 with gfortran comparisons; `tests/138_write_controls.f90` is in the Cargo suite.
 
 Formatted WRITE accepts `ADVANCE='no'` to continue on the same output line and
-`ADVANCE='yes'` for the default behavior. ADVANCE must be a constant CHARACTER
-expression (named parameters and concatenation are accepted). Nonadvancing
+`ADVANCE='yes'` for the default behavior. ADVANCE also accepts scalar CHARACTER
+variables and supported expressions, including specialized function results.
+Its value is evaluated once and checked for case-insensitive `yes` or `no`,
+allowing trailing blanks. Nonadvancing
 writes flush stdout, so prompts appear before a following READ. A final
 nonadvancing write leaves stdout without an added newline, including at STOP.
 ADVANCE cannot be used with list-directed (`*`) formats.
@@ -647,14 +650,19 @@ with the list's item count and CHARACTER lengths.
 Finite nested format groups and a final unlimited-repeat group such as
 `(*(1x,a))` are supported. Unlimited groups require a data descriptor and repeat
 until the output list ends; finite formats retain the existing exact item-count
-requirement. Run `python tests/test_formatted_implied_do.py` for interpreter/native
+requirement. Runtime formats can also consume numeric and LOGICAL array items
+and sections using their active element counts. Empty CHARACTER array items
+inside zero-iteration implied-DOs are not read. Run
+`python tests/test_output_units.py` and `python tests/test_formatted_implied_do.py` for interpreter/native
 O0/O2 checks with gfortran comparisons. The Cargo suite includes
 `tests/139_formatted_implied_do.f90`.
 
 Transfer items inside implied-DOs must resolve to supported scalar values;
 existing CHARACTER procedure-argument limitations remain. Numeric format labels,
-format reversion, formatted implied-DOs to external file units, and runtime
-ADVANCE values are not yet supported. Format nesting is limited to 32 levels;
+format reversion and formatted implied-DOs to external file units remain
+unsupported. External file WRITE retains its `(A)` subset without control
+options. Other output through a unit variable checks that it contains 6 before
+transferring values. Format nesting is limited to 32 levels;
 the existing limits of
 256 for field width/precision and 10,000 for repeat counts apply.
 The native formatting runtime is written in Rust, built with the compiler,

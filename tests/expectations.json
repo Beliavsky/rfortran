@@ -1337,6 +1337,13 @@
       "program_stderr": "",
       "program_exit_code": 0
     },
+    "195_output_unit": {
+      "compiler_stderr": "",
+      "compiler_exit_code": 0,
+      "program_stdout": " matrix\n    1.00    3.00\n    2.00    4.00\n",
+      "program_stderr": "",
+      "program_exit_code": 0
+    },
     "194_character_active_extent": {
       "compiler_stderr": "",
       "compiler_exit_code": 0,
