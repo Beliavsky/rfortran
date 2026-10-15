@@ -333,15 +333,25 @@ Every right-hand side is captured before any destination write, preserving
 overlapping assignments such as swapping matrix columns. Captures run after
 procedure argument specialization when assumed-shape dummy extents were unknown
 in the original template. Runtime scalar INTEGER bounds and strides, including
-negative strides, are supported for fixed destinations. Controls are evaluated
+negative strides, are supported for fixed destinations and descriptor-backed
+numeric or LOGICAL destinations. Controls are evaluated
 once, and duplicate destination elements cause a runtime error. The enclosing
 index variables keep their original values. Constant triplets retain their
 existing compile-time expansion and destination checks. Existing limits remain:
-one assignment per FORALL, statically known destination shapes, and bounded
-array-result specialization. Calls in WHERE remain
+one assignment per FORALL and bounded array-result specialization. Runtime-sized
+destinations require descriptors; runtime-sized CHARACTER destinations remain
+unsupported. Calls in WHERE remain
 outside this subset. Numeric, LOGICAL and fixed rank-one CHARACTER destinations
 are supported. Run `python tests/test_forall_functions.py` and
 `python tests/test_runtime_forall.py`.
+
+CHARACTER array arguments retain their active lengths when their backing storage
+has greater capacity. Function and subroutine specialization revisits nested
+calls exposed by descriptor association, including scalar search functions inside
+array-valued search functions. This supports the `unique_characters` utility
+driver's unique values, first positions, frequencies and group numbers. Run
+`python tests/test_character_active_extent.py` for nested calls, differing
+CHARACTER lengths, empty arrays and repeated allocation regressions.
 
 ## Defined operators with array operands
 

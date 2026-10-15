@@ -1337,6 +1337,13 @@
       "program_stderr": "",
       "program_exit_code": 0
     },
+    "194_character_active_extent": {
+      "compiler_stderr": "",
+      "compiler_exit_code": 0,
+      "program_stdout": " 1 2 1 0\n",
+      "program_stderr": "",
+      "program_exit_code": 0
+    },
     "193_runtime_forall": {
       "compiler_stderr": "",
       "compiler_exit_code": 0,

@@ -14,18 +14,20 @@ outcomes at both O0 and O2:
 
 | Driver outcome | Count |
 | --- | ---: |
-| Pass against gfortran | 19 |
-| Compilation failure | 11 |
+| Pass against gfortran | 20 |
+| Compilation failure | 10 |
 | Incorrect output | 0 |
 
 All gfortran reference drivers compile and run successfully, including their
-repeat executions. The passing drivers target 70 procedures; 46 other targeted
+repeat executions. The passing drivers target 72 procedures; 44 other targeted
 procedures are in blocked groups. `string_fields` and `partitions_and_runs` now
 pass following fixes to early RETURN in explicit-step loops and NINT rounding.
 `matrix_shapes` and `cumulative_sums` now pass after routing runtime selectors
 and triplets on fixed storage through the runtime section path. `diagonals`
-now passes with runtime FORALL bounds and strides. `unique_characters` stops on `match_string`
-argument specialization, and `formatted_output` on CHARACTER format handling.
+now passes with runtime FORALL bounds and strides. `unique_characters` now passes
+after preserving active CHARACTER array extents and specializing nested search
+functions. Its array-valued search also uses descriptor-backed FORALL snapshots.
+`formatted_output` remains blocked on CHARACTER format handling.
 See [baseline.json](baseline.json)
 for exact input-source and compiler hashes and every procedure's inventory entry.
 

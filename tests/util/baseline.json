@@ -4,20 +4,20 @@
     "kind": "c999f5d305aede589d31ea7585929d41e1fd5b1b86e1774f195b0b1354dec9c3",
     "manifest": "424d255ecf34fda0ed021b70e67db0a04413142298378c884e32708f71251666"
   },
-  "compiler_sha256": "843c9a29367898bed6a43f777907912adab443d8cfbb7ae43284a0b53ad7564e",
+  "compiler_sha256": "f9dd205b728684bf908baa923fbaa18b8c53c1334df7ca6b524b099655963918",
   "mode": "isolated",
   "optimizations": [
     0,
     2
   ],
   "procedure_counts": {
-    "pass": 70,
+    "pass": 72,
     "untested": 435,
-    "blocked": 46
+    "blocked": 44
   },
   "case_outcomes": {
-    "compile_error": 22,
-    "pass": 38
+    "compile_error": 20,
+    "pass": 40
   },
   "cases": [
     {
@@ -203,8 +203,8 @@
       ],
       "driver_sha256": "60fe90dc78b8d774da403ed444411d87248af516cd46340fdeb9865af3bcfe75",
       "outcomes": {
-        "isolated-O0": "compile_error",
-        "isolated-O2": "compile_error"
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
       }
     },
     {
@@ -1523,7 +1523,7 @@
     {
       "name": "unique_values_char",
       "line": 2774,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "unique_characters"
       ]
@@ -1561,7 +1561,7 @@
     {
       "name": "unique_char",
       "line": 2910,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "unique_characters"
       ]

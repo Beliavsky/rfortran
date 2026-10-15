@@ -724,7 +724,7 @@ impl Lowerer {
         }
     }
 
-    fn expand_forall(&mut self, body: &mut Vec<Stmt>, shapes: &Shapes) -> Result<()> {
+    fn expand_forall(&mut self, body: &mut Vec<Stmt>, shapes: &Shapes, symbols: Option<&crate::allocatables::Shapes>) -> Result<()> {
         let Some(Stmt::CallSub { name: tag, args }) = body.first() else {
             return Ok(());
         };
@@ -782,9 +782,9 @@ impl Lowerer {
             bail!("FORALL currently requires one array-element or array-section assignment");
         };
         self.check_association(name)?;
-        let dims = shapes.get(name).with_context(|| {
-            format!("FORALL destination `{name}` requires a statically shaped array")
-        })?;
+        let runtime_axes=symbols.and_then(|s|crate::allocatables::axes(name,s));
+        let dims=shapes.get(name).map(Vec::as_slice).unwrap_or(&[]);
+        if dims.is_empty() && runtime_axes.is_none() {bail!("FORALL destination `{name}` requires a known array shape");}
         let kind = self
             .types
             .get(name)
@@ -805,7 +805,7 @@ impl Lowerer {
                         || crate::intrinsics::purity(n) == Some(crate::intrinsics::Purity::Pure)
                         || matches!(
                             n.as_str(),
-                            "@section_subscript" | "@array_constructor" | "@typed_constructor"
+                            "@section_subscript" | "@array_constructor" | "@typed_constructor" | "@packed_view" | "@allocated_extent"
                                 | "@integer_literal" | "@no_dim" | "@no_mask" | "@no_kind" | "@any_reduction" | "@all_reduction" | "@count_default" | "@count_i8"
                                 | "@unary_plus"
                                 | "abs"
@@ -850,13 +850,16 @@ impl Lowerer {
             }
             Ok(())
         }
-        pure(value, shapes, &self.pure_functions)?;
-        for e in indices {pure(e,shapes,&self.pure_functions)?;}
-        if runtime {
+        let mut arrays=shapes.clone();
+        if let Some(symbols)=symbols {for (n,(_,d)) in symbols {if !d.is_empty() {arrays.entry(n.clone()).or_default();}}}
+        pure(value, &arrays, &self.pure_functions)?;
+        for e in indices {pure(e,&arrays,&self.pure_functions)?;}
+        if runtime || runtime_axes.is_some() {
             for control in resolved_controls.chunks_exact(4) {
-                for e in &control[1..] {pure(e,shapes,&self.pure_functions)?;}
+                for e in &control[1..] {pure(e,&arrays,&self.pure_functions)?;}
             }
-            *body=crate::forall_runtime::expand(&resolved_controls,name,indices,value,&kind,dims,&self.types,&mut self.forall_serial)?;
+            let extents=runtime_axes.unwrap_or_else(||dims.iter().copied().map(int).collect());
+            *body=crate::forall_runtime::expand(&resolved_controls,name,indices,value,&kind,&extents,symbols,&self.types,&mut self.forall_serial)?;
             return Ok(());
         }
         fn replace(e: &mut Expr, index: &str, value: i64) {
@@ -1137,7 +1140,7 @@ impl Lowerer {
                             }
                         }
                     }
-                    self.expand_forall(body, &shapes)?;
+                    self.expand_forall(body, &shapes, None)?;
                     self.body(body, &shapes)?;
                 }
                 Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } => {
@@ -1203,7 +1206,7 @@ pub(crate) fn specialize_forall(body: &mut Vec<Stmt>, symbols: &HashMap<String,(
         Stmt::ArrayDecl{kind,name,dims}=>{symbols.insert(name.clone(),(kind.clone(),dims.clone()));},
         Stmt::VarDecl{kind,names}=>for n in names {symbols.insert(n.clone(),(kind.clone(),vec![]));},_=>{}
     }}
-    if crate::allocatables::length(name,&symbols).is_some_and(|len|crate::parameters::integer_constant(&len).is_err()) {
+    if crate::allocatables::axes(name,&symbols).is_none() && crate::allocatables::length(name,&symbols).is_some_and(|len|crate::parameters::integer_constant(&len).is_err()) {
         bail!("FORALL currently requires a statically shaped destination; runtime-sized array `{name}` is not yet supported");
     }
     let mut lower=Lowerer {forall_serial:*serial,defer_forall_shapes:true,..Default::default()};
@@ -1214,13 +1217,13 @@ pub(crate) fn specialize_forall(body: &mut Vec<Stmt>, symbols: &HashMap<String,(
         if dims.is_empty() || crate::allocatables::length(n,&symbols).is_some_and(|len|crate::parameters::integer_constant(&len).is_err()) {None}
         else {Some((n.clone(),dims.iter().map(crate::parameters::integer_constant).collect::<Result<Vec<_>>>()))}
     }).filter_map(|(n,dims)|dims.ok().map(|d|(n,d))).collect();
-    if !shapes.contains_key(name) {return Ok(false);}
+    if !shapes.contains_key(name) && crate::allocatables::axes(name,&symbols).is_none() {return Ok(false);}
     if matches!(lower.types.get(name),Some(TypeSpec::Character(_))) {
-        let dims=&shapes[name];
+        let dims=shapes.get(name).context("runtime-sized CHARACTER FORALL destinations are not yet supported")?;
         if dims.len()!=1 || !(0..=1024).contains(&dims[0]) {bail!("CHARACTER FORALL requires a fixed rank-one destination with at most 1024 elements");}
     }
     let mut statement=body[marker..].to_vec();
-    lower.expand_forall(&mut statement,&shapes)?;
+    lower.expand_forall(&mut statement,&shapes,Some(&symbols))?;
     body.truncate(marker);body.extend(statement);
     *serial=lower.forall_serial;
     Ok(true)

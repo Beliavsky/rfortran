@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Beliavsky
 // See LICENSE-MIT in the repository root.
 
-//! Runtime FORALL over fixed storage: capture by destination, then commit.
+//! Runtime FORALL over fixed or descriptor-backed storage: capture, then commit.
 use crate::ast::{BinOp, Expr, Stmt, TypeSpec};
 use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
@@ -90,16 +90,18 @@ pub(crate) fn expand(
     indices: &[Expr],
     value: &Expr,
     kind: &TypeSpec,
-    dims: &[i64],
+    dims: &[Expr],
+    symbols: Option<&crate::allocatables::Shapes>,
     types: &HashMap<String, TypeSpec>,
     serial: &mut usize,
 ) -> Result<Vec<Stmt>> {
-    let count = dims
+    let fixed = dims
         .iter()
-        .try_fold(1i64, |n, d| n.checked_mul(*d))
-        .context("FORALL destination size overflow")?;
-    if count < 0 {
-        bail!("runtime FORALL requires a statically shaped destination");
+        .map(crate::parameters::integer_constant)
+        .collect::<Result<Vec<_>>>()
+        .ok();
+    if fixed.as_ref().is_some_and(|d| d.iter().any(|n| *n < 0)) {
+        bail!("FORALL requires nonnegative destination extents");
     }
     *serial += 1;
     let prefix = format!("@forall_runtime_{serial}");
@@ -110,23 +112,86 @@ pub(crate) fn expand(
     };
     let flags = format!("{prefix}_defined");
     let linear = format!("{prefix}_linear");
-    let mut out = vec![
-        Stmt::ArrayDecl {
-            kind: kind.clone(),
-            name: temp.clone(),
-            dims: dims.iter().copied().map(int).collect(),
-        },
-        Stmt::ArrayDecl {
-            kind: TypeSpec::Logical,
-            name: flags.clone(),
-            dims: dims.iter().copied().map(int).collect(),
-        },
+    let mut out = vec![];
+    let mut extents = dims.to_vec();
+    let mut lowers = symbols
+        .filter(|s| crate::allocatables::axes(name, s).is_some())
+        .and_then(|s| crate::allocatables::lowers(name, s))
+        .unwrap_or_else(|| vec![int(1); dims.len()]);
+    if fixed.is_none()
+        || lowers
+            .iter()
+            .any(|e| crate::parameters::integer_constant(e).ok() != Some(1))
+    {
+        if matches!(kind, TypeSpec::Character(_)) {
+            bail!("runtime-sized CHARACTER FORALL destinations are not yet supported");
+        }
+        let mut shapes = symbols
+            .cloned()
+            .context("runtime FORALL destination requires array descriptors")?;
+        for (axis, extent) in extents.iter_mut().enumerate() {
+            let n = format!("{prefix}_extent_{axis}");
+            out.push(Stmt::VarDecl {
+                kind: TypeSpec::Integer(Some(8)),
+                names: vec![n.clone()],
+            });
+            out.push(assign(&n, extent.clone()));
+            *extent = id(&n);
+            let lo = format!("{prefix}_lower_{axis}");
+            out.push(Stmt::VarDecl {
+                kind: TypeSpec::Integer(Some(8)),
+                names: vec![lo.clone()],
+            });
+            out.push(assign(&lo, lowers[axis].clone()));
+            lowers[axis] = id(&lo);
+        }
+        for (name, kind) in [(&temp, kind.clone()), (&flags, TypeSpec::Logical)] {
+            crate::heap::unallocated_result(kind, name.clone(), dims.len(), &mut out, &mut shapes)?;
+            out.push(Stmt::CallSub {
+                name: "@allocate".into(),
+                args: vec![Expr::Call(
+                    name.clone(),
+                    extents
+                        .iter()
+                        .zip(&lowers)
+                        .map(|(extent, lower)| {
+                            Expr::Call(
+                                "@heap_bounds".into(),
+                                vec![
+                                    lower.clone(),
+                                    bin(
+                                        BinOp::Sub,
+                                        bin(BinOp::Add, lower.clone(), extent.clone()),
+                                        int(1),
+                                    ),
+                                ],
+                            )
+                        })
+                        .collect(),
+                )],
+            });
+        }
+    } else {
+        out.extend([
+            Stmt::ArrayDecl {
+                kind: kind.clone(),
+                name: temp.clone(),
+                dims: dims.to_vec(),
+            },
+            Stmt::ArrayDecl {
+                kind: TypeSpec::Logical,
+                name: flags.clone(),
+                dims: dims.to_vec(),
+            },
+        ]);
+    }
+    out.extend([
         Stmt::VarDecl {
             kind: TypeSpec::Integer(Some(8)),
             names: vec![linear.clone()],
         },
         assign(&flags, Expr::Logical(false)),
-    ];
+    ]);
     let mut names = HashMap::new();
     let mut loops = vec![];
     // Evaluate each control once, before any iteration or destination write.
@@ -258,10 +323,10 @@ pub(crate) fn expand(
     out.extend(capture);
     // Commit only the selected elements. Re-evaluating the original selectors
     // here would be wrong when they read the destination being updated.
-    if count > 0 {
-        let mut stride = 1;
+    if !fixed.as_ref().is_some_and(|d| d.contains(&0)) {
+        let mut stride = int(1);
         let mut coordinates = vec![];
-        for extent in dims {
+        for (extent, lower) in extents.iter().zip(&lowers) {
             coordinates.push(bin(
                 BinOp::Add,
                 Expr::Call(
@@ -270,19 +335,19 @@ pub(crate) fn expand(
                         bin(
                             BinOp::Div,
                             bin(BinOp::Sub, id(&linear), int(1)),
-                            int(stride),
+                            stride.clone(),
                         ),
-                        int(*extent),
+                        extent.clone(),
                     ],
                 ),
-                int(1),
+                lower.clone(),
             ));
-            stride *= extent;
+            stride = bin(BinOp::Mul, stride, extent.clone());
         }
         out.push(Stmt::Do {
             var: linear,
             start: int(1),
-            end: int(count),
+            end: stride,
             body: vec![Stmt::If {
                 cond: Expr::Call(flags, coordinates.clone()),
                 then_body: vec![Stmt::AssignIndex {

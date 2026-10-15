@@ -1682,9 +1682,15 @@ pub fn resolve(mut p: Program) -> Result<Program> {
     collect(&mut p.body, &mut routines);
     let mut call_serial=0;
     expand(&mut p.body, &Shapes::new(), &routines, &functions, &mut vec![], &mut call_serial)?;
-    p=function_lower.finish(p)?;
-    p=crate::constructors::prepare_arguments(p)?;
-    expand(&mut p.body, &Shapes::new(), &routines, &functions, &mut vec![], &mut call_serial)?;
+    // Expanding a descriptor-backed function can expose further function calls
+    // in its helper body. Alternate the two passes until those calls are bound.
+    for pass in 0..128 {
+        p=function_lower.finish(p)?;
+        p=crate::constructors::prepare_arguments(p)?;
+        expand(&mut p.body, &Shapes::new(), &routines, &functions, &mut vec![], &mut call_serial)?;
+        if !function_lower.contains_calls(&p.body) {break;}
+        if pass==127 {bail!("array/function call specialization did not converge after 128 passes");}
+    }
     // Writable assumed-length CHARACTER dummies have concrete storage only
     // after call-site specialization. Capture their internal output lists now.
     p = crate::output::prepare_formatted(p)?;

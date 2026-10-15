@@ -126,7 +126,7 @@ contains
 """+IDENTITY+'end program main\n','same destination element')
 
     def test_runtime_bounds_do_not_use_heap_placeholder_shape(self):
-        self.reject("""program main
+        self.check("""program main
 integer,allocatable::a(:)
 integer::n,i
 n=3
@@ -141,7 +141,7 @@ integer::y
 y=sum(x)
 end function total
 end program main
-""",'statically shaped destination')
+""",'3 3 3\n')
 
     def test_impure_function_is_rejected(self):
         self.reject("""program main

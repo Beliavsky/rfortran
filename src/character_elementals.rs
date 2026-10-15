@@ -416,7 +416,10 @@ impl Lower {
         fn runtime(e:&Expr,symbols:&Symbols)->bool {
             match e {
                 Expr::Ident(n)=>symbols.get(n).is_some_and(|(_,dims)|dims.iter().any(|d|crate::parameters::integer_constant(d).is_err()))
-                    || symbols.contains_key(&format!("@axes:{n}")),
+                    || symbols.contains_key(&format!("@axes:{n}"))
+                    || crate::allocatables::length(n,symbols).is_some_and(|e|crate::parameters::integer_constant(&e).is_err()),
+                Expr::Call(n,a) if n=="@packed_view" && a.len()==2=>runtime(&a[0],symbols)
+                    || crate::parameters::integer_constant(&a[1]).is_err(),
                 Expr::Call(_,args)|Expr::Index(_,args)=>args.iter().any(|e|runtime(e,symbols)),
                 Expr::Section{name,lower,upper,stride}=>runtime(&Expr::Ident(name.clone()),symbols)
                     || [lower,upper,stride].into_iter().flatten().any(|e|runtime(e,symbols)),
@@ -964,7 +967,7 @@ impl Lower {
         }
         Ok(())
     }
-    fn contains_calls(&self, body: &[Stmt]) -> bool {
+    pub(crate) fn contains_calls(&self, body: &[Stmt]) -> bool {
         fn expr(e: &Expr, routines: &HashMap<String, Routine>) -> bool {
             match e {
                 Expr::Call(n, args) => {
@@ -977,10 +980,9 @@ impl Lower {
             }
         }
         body.iter().any(|s| match s {
-            Stmt::Assign { value, .. }
-            | Stmt::AssignIndex { value, .. }
-            | Stmt::Return(Some(value)) => expr(value, &self.routines),
-            Stmt::Print { items } | Stmt::CallSub { args: items, .. } => {
+            Stmt::Assign { value, .. } | Stmt::Return(Some(value)) => expr(value, &self.routines),
+            Stmt::AssignIndex { indices,value,.. }=>expr(value,&self.routines)||indices.iter().any(|e|expr(e,&self.routines)),
+            Stmt::Print { items } | Stmt::Read {args:items} | Stmt::CallSub { args: items, .. } => {
                 items.iter().any(|e| expr(e, &self.routines))
             }
             Stmt::If {
@@ -992,9 +994,12 @@ impl Lower {
                     || self.contains_calls(then_body)
                     || else_body.as_ref().is_some_and(|b| self.contains_calls(b))
             }
-            Stmt::Block { body } | Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } => {
+            Stmt::Do{start,end,body,..}=>expr(start,&self.routines)||expr(end,&self.routines)||self.contains_calls(body),
+            Stmt::DoWhile{cond,body}=>expr(cond,&self.routines)||self.contains_calls(body),
+            Stmt::Block { body } | Stmt::Module{body,..} | Stmt::Function{body,..} | Stmt::Subroutine{body,..} => {
                 self.contains_calls(body)
             }
+            Stmt::SelectCase{expr:e,cases,default}=>expr(e,&self.routines)||cases.iter().any(|c|self.contains_calls(&c.body))||default.as_ref().is_some_and(|b|self.contains_calls(b)),
             _ => false,
         })
     }

@@ -180,4 +180,68 @@ print *,a
 end
 ''','1 2 3\n')
 
+    def test_heap_destinations_of_several_ranks(self):
+        self.check('''integer,allocatable::a(:),b(:,:),c(:,:,:)
+integer::n,i,j,k
+n=2
+allocate(a(n),b(n,n),c(n,n,n))
+a=[1,2]
+b=reshape([1,2,3,4],[2,2])
+c=reshape([1,2,3,4,5,6,7,8],[2,2,2])
+forall(i=1:n) a(i)=a(n+1-i)
+forall(i=1:n,j=1:n) b(i,j)=b(n+1-i,n+1-j)
+forall(i=1:n,j=1:n,k=1:n) c(i,j,k)=c(n+1-i,n+1-j,n+1-k)
+print *,a
+print *,b
+print *,c
+end
+''','2 1\n4 3 2 1\n8 7 6 5 4 3 2 1\n')
+
+    def test_heap_real_and_logical_empty_and_repeated(self):
+        self.check('''real,allocatable::a(:)
+logical,allocatable::b(:)
+integer::n,i
+do n=2,0,-1
+  call setup(n,a,b)
+  a=1
+  b=.false.
+  forall(i=1:n) a(i)=a(n+1-i)+i
+  forall(i=1:n) b(i)=.not.b(n+1-i)
+  print *,size(a),sum(a),count(b)
+  deallocate(a)
+  deallocate(b)
+end do
+contains
+subroutine setup(n,a,b)
+integer,intent(in)::n
+real,allocatable,intent(out)::a(:)
+logical,allocatable,intent(out)::b(:)
+allocate(a(n))
+allocate(b(n))
+end subroutine setup
+end
+''','2 5 2\n1 2 1\n0 0 0\n')
+
+    def test_heap_rank_fifteen(self):
+        self.check('''integer,allocatable::a(:,:,:,:,:,:,:,:,:,:,:,:,:,:,:)
+integer::i,n
+n=2
+allocate(a(n,1,1,1,1,1,1,1,1,1,1,1,1,1,1))
+a=0
+forall(i=1:n) a(i,1,1,1,1,1,1,1,1,1,1,1,1,1,1)=i
+print *,a
+end
+''','1 2\n')
+
+    def test_heap_nondefault_bounds(self):
+        self.check('''integer,allocatable::a(:)
+integer::i,n
+n=2
+allocate(a(-1:n-2))
+a=[1,2]
+forall(i=-1:n-2) a(i)=a(n-3-i)
+print *,a
+end
+''','2 1\n')
+
 if __name__=='__main__':unittest.main()
