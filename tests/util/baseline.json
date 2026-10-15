@@ -4,20 +4,20 @@
     "kind": "c999f5d305aede589d31ea7585929d41e1fd5b1b86e1774f195b0b1354dec9c3",
     "manifest": "424d255ecf34fda0ed021b70e67db0a04413142298378c884e32708f71251666"
   },
-  "compiler_sha256": "f971376a269e442324ebeb60799e5a1d587e59c36f12a2b64ba9726738e29841",
+  "compiler_sha256": "843c9a29367898bed6a43f777907912adab443d8cfbb7ae43284a0b53ad7564e",
   "mode": "isolated",
   "optimizations": [
     0,
     2
   ],
   "procedure_counts": {
-    "pass": 65,
+    "pass": 70,
     "untested": 435,
-    "blocked": 51
+    "blocked": 46
   },
   "case_outcomes": {
-    "compile_error": 24,
-    "pass": 36
+    "compile_error": 22,
+    "pass": 38
   },
   "cases": [
     {
@@ -60,8 +60,8 @@
       ],
       "driver_sha256": "e1ff3ff1eb8feb2cd966844441f58815f774c9049d561f10b08fc5486ddede3c",
       "outcomes": {
-        "isolated-O0": "compile_error",
-        "isolated-O2": "compile_error"
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
       }
     },
     {
@@ -1203,7 +1203,7 @@
     {
       "name": "diag_matrix",
       "line": 2130,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "diagonals"
       ]
@@ -1211,7 +1211,7 @@
     {
       "name": "above_diag",
       "line": 2141,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "diagonals"
       ]
@@ -1219,7 +1219,7 @@
     {
       "name": "diag",
       "line": 2158,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "diagonals"
       ]
@@ -1227,7 +1227,7 @@
     {
       "name": "offdiag",
       "line": 2168,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "diagonals"
       ]
@@ -1235,7 +1235,7 @@
     {
       "name": "diag_3d",
       "line": 2186,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "diagonals"
       ]

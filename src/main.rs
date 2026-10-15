@@ -54,6 +54,7 @@ mod vector_subscripts;
 mod function_arrays;
 mod array_bounds;
 mod multidim;
+mod forall_runtime;
 mod formatting;
 mod format_spec;
 mod record_input;

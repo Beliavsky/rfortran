@@ -1052,7 +1052,7 @@ impl Lower {
                 if let Stmt::Block {body}=&mut stmt {
                     let marker=body.iter().position(|s|matches!(s,Stmt::CallSub{name,..} if name=="@forall"));
                     if marker.is_some() {
-                        if !crate::multidim::specialize_forall(body,&symbols,&self.pure_functions,&mut self.serial)? {
+                        if !crate::multidim::specialize_forall(body,&symbols,&self.pure_functions,&self.returns,&mut self.serial)? {
                             // Argument specialization will supply the missing shape.
                             return Ok(());
                         }

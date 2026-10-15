@@ -332,11 +332,16 @@ sections and empty arrays. Impure calls remain errors.
 Every right-hand side is captured before any destination write, preserving
 overlapping assignments such as swapping matrix columns. Captures run after
 procedure argument specialization when assumed-shape dummy extents were unknown
-in the original template. Existing limits remain: one assignment per FORALL,
-constant iteration bounds and destination subscripts, statically known destination
-shapes, and bounded array-result specialization. Calls in WHERE remain
+in the original template. Runtime scalar INTEGER bounds and strides, including
+negative strides, are supported for fixed destinations. Controls are evaluated
+once, and duplicate destination elements cause a runtime error. The enclosing
+index variables keep their original values. Constant triplets retain their
+existing compile-time expansion and destination checks. Existing limits remain:
+one assignment per FORALL, statically known destination shapes, and bounded
+array-result specialization. Calls in WHERE remain
 outside this subset. Numeric, LOGICAL and fixed rank-one CHARACTER destinations
-are supported. Run `python tests/test_forall_functions.py`.
+are supported. Run `python tests/test_forall_functions.py` and
+`python tests/test_runtime_forall.py`.
 
 ## Defined operators with array operands
 

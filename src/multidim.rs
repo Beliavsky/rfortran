@@ -734,11 +734,10 @@ impl Lowerer {
         if args.is_empty() || args.len() % 4 != 0 {
             bail!("FORALL requires index triplets");
         }
-        let constant = |e: &Expr| {
-            crate::parameters::integer_constant(e)
-                .context("FORALL bounds and stride must currently be constant integers")
-        };
+        let constant = crate::parameters::integer_constant;
         let mut controls = Vec::new();
+        let mut runtime = false;
+        let mut resolved_controls = Vec::new();
         let mut names = std::collections::HashSet::new();
         for control in args.chunks_exact(4) {
             let Expr::Ident(index) = &control[0] else { bail!("FORALL index must be an integer variable"); };
@@ -747,14 +746,28 @@ impl Lowerer {
                 bail!("FORALL index `{index}` currently requires an explicitly declared scalar INTEGER of kind 4 or 8");
             }
             let mut bounds = control[1..].to_vec();
-            for bound in &mut bounds { self.expression(bound, shapes)?; }
+            for bound in &mut bounds {
+                let integer=self.integer_expr(bound,shapes);
+                self.expression(bound, shapes)?;
+                if !integer && !self.integer_expr(bound,shapes) {
+                    bail!("FORALL bounds and stride must be scalar INTEGER expressions");
+                }
+            }
+            resolved_controls.push(Expr::Ident(index.clone()));
+            // Keep original-rank references for the later storage pass. The
+            // normalized copies above are only for constant/type inspection.
+            resolved_controls.extend_from_slice(&control[1..]);
+            if bounds.iter().any(|e|constant(e).is_err()) {
+                runtime = true;
+                continue;
+            }
             let (start, end, step) = (i128::from(constant(&bounds[0])?), i128::from(constant(&bounds[1])?), i128::from(constant(&bounds[2])?));
             if step == 0 { bail!("FORALL stride must not be zero"); }
             let distance = if step > 0 { end - start } else { start - end };
             let count = if distance < 0 { 0 } else { distance / step.abs() + 1 };
             controls.push((index.clone(), start, step, count));
         }
-        let iterations = if controls.iter().any(|c| c.3 == 0) { 0 } else {
+        let iterations = if runtime || controls.iter().any(|c| c.3 == 0) { 0 } else {
             controls.iter().try_fold(1usize, |n, c| {
                 usize::try_from(c.3).ok().and_then(|count| n.checked_mul(count))
                     .context("FORALL iteration count is too large")
@@ -788,7 +801,8 @@ impl Lowerer {
         fn pure(e: &Expr, shapes: &Shapes, known: &HashMap<String, bool>) -> Result<()> {
             match e {
                 Expr::Call(n, args) | Expr::Index(n, args) => {
-                    let intrinsic = crate::intrinsics::purity(n) == Some(crate::intrinsics::Purity::Pure)
+                    let intrinsic = n.starts_with("@lower_bound_index_")
+                        || crate::intrinsics::purity(n) == Some(crate::intrinsics::Purity::Pure)
                         || matches!(
                             n.as_str(),
                             "@section_subscript" | "@array_constructor" | "@typed_constructor"
@@ -837,6 +851,14 @@ impl Lowerer {
             Ok(())
         }
         pure(value, shapes, &self.pure_functions)?;
+        for e in indices {pure(e,shapes,&self.pure_functions)?;}
+        if runtime {
+            for control in resolved_controls.chunks_exact(4) {
+                for e in &control[1..] {pure(e,shapes,&self.pure_functions)?;}
+            }
+            *body=crate::forall_runtime::expand(&resolved_controls,name,indices,value,&kind,dims,&self.types,&mut self.forall_serial)?;
+            return Ok(());
+        }
         fn replace(e: &mut Expr, index: &str, value: i64) {
             match e {
                 Expr::Ident(n) if n == index => *e = int(value),
@@ -1172,7 +1194,7 @@ pub(crate) fn fixed_inquiry(e: &Expr, symbols: &HashMap<String,(TypeSpec,Vec<Exp
 
 // Expand a FORALL before function specialization only when its destination
 // shape is known. RHS conformance is checked after calls have concrete results.
-pub(crate) fn specialize_forall(body: &mut Vec<Stmt>, symbols: &HashMap<String,(TypeSpec,Vec<Expr>)>, pure: &HashMap<String,bool>, serial: &mut usize) -> Result<bool> {
+pub(crate) fn specialize_forall(body: &mut Vec<Stmt>, symbols: &HashMap<String,(TypeSpec,Vec<Expr>)>, pure: &HashMap<String,bool>, returns: &HashMap<String,(bool,TypeSpec)>, serial: &mut usize) -> Result<bool> {
     let Some(marker)=body.iter().position(|s|matches!(s,Stmt::CallSub{name,..} if name=="@forall")) else {return Ok(false)};
     if !body[..marker].iter().all(|s|matches!(s,Stmt::ArrayDecl{..}|Stmt::VarDecl{..}|Stmt::SourceLocation(_))) {return Ok(false);}
     let Some(Stmt::AssignIndex{name,..})=body.get(marker+1) else {return Ok(false)};
@@ -1187,6 +1209,7 @@ pub(crate) fn specialize_forall(body: &mut Vec<Stmt>, symbols: &HashMap<String,(
     let mut lower=Lowerer {forall_serial:*serial,defer_forall_shapes:true,..Default::default()};
     lower.types=symbols.iter().map(|(n,(kind,_))|(n.clone(),kind.clone())).collect();
     lower.pure_functions=pure.clone();
+    lower.functions=returns.iter().map(|(n,(_,kind))|(n.clone(),kind.clone())).collect();
     let shapes:Shapes=symbols.iter().filter_map(|(n,(_,dims))| {
         if dims.is_empty() || crate::allocatables::length(n,&symbols).is_some_and(|len|crate::parameters::integer_constant(&len).is_err()) {None}
         else {Some((n.clone(),dims.iter().map(crate::parameters::integer_constant).collect::<Result<Vec<_>>>()))}
@@ -1195,12 +1218,6 @@ pub(crate) fn specialize_forall(body: &mut Vec<Stmt>, symbols: &HashMap<String,(
     if matches!(lower.types.get(name),Some(TypeSpec::Character(_))) {
         let dims=&shapes[name];
         if dims.len()!=1 || !(0..=1024).contains(&dims[0]) {bail!("CHARACTER FORALL requires a fixed rank-one destination with at most 1024 elements");}
-    }
-    if let Stmt::CallSub{args,..}=&body[marker] {
-        for control in args.chunks_exact(4) {for bound in &control[1..] {
-            let mut bound=bound.clone();
-            if lower.expression(&mut bound,&shapes).is_err() || crate::parameters::integer_constant(&bound).is_err() {return Ok(false);}
-        }}
     }
     let mut statement=body[marker..].to_vec();
     lower.expand_forall(&mut statement,&shapes)?;
@@ -1435,7 +1452,7 @@ mod tests {
             ("forall(i=1:3) a(1)=i", "same destination element"),
             ("forall(i=1:3) a(i:i+1)=i", "same destination element"),
             ("forall(i=1:6) a(i)=i", "outside 1:5"),
-            ("forall(i=1:n) a(i)=i", "constant integers"),
+            ("forall(i=1:r) a(i)=i", "scalar INTEGER"),
             ("forall(i=1:3) a(n)=i", "destination subscripts"),
             ("forall(i=1:3) a(i)=a", "nonconforming FORALL"),
             ("forall(i=1:3) a(i)=unknown(i)", "impure or unsupported"),
@@ -1458,8 +1475,7 @@ mod tests {
         for (statement, expected) in [
             ("forall(i=1:2,i=1:2) a(i)=i", "duplicate FORALL index"),
             ("forall(i=1:2,j=1:2) a(i)=j", "same destination element"),
-            ("forall(i=1:2,j=1:i) a(i+j)=j", "constant integers"),
-            ("forall(i=1:2,j=1:n) a(i+j)=j", "constant integers"),
+            ("forall(i=1:2,j=1:i) a(i+j)=j", "must not reference a FORALL index"),
             ("forall(i=2:1,j=1:2:0) a(i+j)=j", "stride must not be zero"),
             ("forall(i=1:2,j=1:2) a(2*i+j)=j", "outside 1:5"),
             ("forall(i=1:4294967296,j=1:4294967296) a(1)=1", "iteration count is too large"),

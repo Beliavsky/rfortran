@@ -1337,6 +1337,13 @@
       "program_stderr": "",
       "program_exit_code": 0
     },
+    "193_runtime_forall": {
+      "compiler_stderr": "",
+      "compiler_exit_code": 0,
+      "program_stdout": " 4 3 2 1 99\n 1.0 4.0\n",
+      "program_stderr": "",
+      "program_exit_code": 0
+    },
     "192_fixed_runtime_sections": {
       "compiler_stderr": "",
       "compiler_exit_code": 0,
