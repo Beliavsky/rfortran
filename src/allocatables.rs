@@ -73,6 +73,11 @@ pub(crate) fn axes(name: &str, shapes: &Shapes) -> Option<Vec<Expr>> {
 }
 pub(crate) fn lowers(name:&str,shapes:&Shapes)->Option<Vec<Expr>> {shapes.get(&format!("@lowers:{name}")).map(|v|v.1.clone())}
 pub(crate) fn inquiry(name: &str, args: &[Expr], shapes: &Shapes) -> Result<Option<Expr>> {
+    if name=="len" && args.len()==1 {
+        if let Some(Expr::Ident(n))=args.first() {
+            if let Some((TypeSpec::Character(width),_))=shapes.get(n) {return Ok(Some(int(width.unwrap_or(1) as i64)));}
+        }
+    }
     if name=="kind" && args.len()==1 {
         let array=match &args[0] {Expr::Ident(n)=>Some(n),Expr::Call(tag,args) if tag=="@packed_view"=>if let Expr::Ident(n)=&args[0]{Some(n)}else{None},_=>None};
         if let Some((kind,_))=array.and_then(|n|shapes.get(n)) {
@@ -253,8 +258,9 @@ pub(crate) fn prepare_matrices(
                         | TypeSpec::Real
                         | TypeSpec::DoublePrecision
                         | TypeSpec::Logical
+                        | TypeSpec::Character(_)
                 ) {
-                    bail!("runtime-sized multidimensional allocation currently requires numeric or LOGICAL elements");
+                    bail!("runtime-sized multidimensional allocation requires supported intrinsic elements");
                 }
                 let upper = bounds
                     .get(name)
@@ -589,7 +595,8 @@ fn character_copy(name: &str, value: &Expr, len: Expr, shapes: &Shapes,
         }
     };
     out.push(fail(bin(BinOp::Ne,len.clone(),rhs_len),"allocatable array assignment shapes do not conform"));
-    out.push(Stmt::ArrayDecl {kind,name:temp.clone(),dims});
+    if shapes.contains_key(&format!("@heap:{name}")) {crate::heap::temporary(kind,temp.clone(),len.clone(),out);}
+    else {out.push(Stmt::ArrayDecl {kind,name:temp.clone(),dims});}
     out.push(Stmt::VarDecl {kind:TypeSpec::Integer(None),names:vec![index.clone()]});
     out.push(Stmt::Do {var:index.clone(),start:int(1),end:len.clone(),body:vec![Stmt::AssignIndex {name:temp.clone(),indices:vec![id(&index)],value:source}]});
     out.push(Stmt::Do {var:index.clone(),start:int(1),end:len,body:vec![Stmt::AssignIndex {name:name.into(),indices:vec![id(&index)],value:Expr::Index(temp,vec![id(&index)])}]});
@@ -848,7 +855,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
         if let Expr::Call(n, args) = e {
             if matches!(
                 n.as_str(),
-                "allocated" | "size" | "lbound" | "ubound" | "shape" | "kind"
+                "allocated" | "size" | "lbound" | "ubound" | "shape" | "kind" | "len"
             ) {
                 if let Some(value) = inquiry(n, args, shapes)? {
                     *e = value;

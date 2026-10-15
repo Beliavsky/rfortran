@@ -2345,6 +2345,17 @@ fn gen_stmts(
                     characters::assign(module, b, ptr_ty, dc, chars, ints, dest, source)?;
                     continue;
                 }
+                if name == "@character_code_store" {
+                    let [IExpr::Ident(dest),index,code]=args.as_slice() else {bail!("invalid CHARACTER code store");};
+                    let (slot,length)=chars.get(dest).context("CHARACTER code store requires scalar storage")?;
+                    let index=eval_expr(b,ex,ptr_ty,index,ints,reals,bools,func_meta);let index=to_i64(b,index);
+                    let inside=b.ins().icmp_imm(ir::condcodes::IntCC::UnsignedLessThan,index,*length as i64);
+                    file_io::require(module,b,ptr_ty,dc,inside,"CHARACTER code store outside bounds")?;
+                    let code=eval_expr(b,ex,ptr_ty,code,ints,reals,bools,func_meta);let code=to_i64(b,code);let byte=b.ins().ireduce(types::I8,code);
+                    let address=storage_addr(b,ptr_ty,*slot);let address=b.ins().iadd(address,index);
+                    b.ins().store(MemFlags::new(),byte,address,0);
+                    continue;
+                }
                 if name == "@character_length" {
                     let [IExpr::Ident(dest), source] = args.as_slice() else { anyhow::bail!("invalid CHARACTER length capture"); };
                     let source = characters::view(module, b, ptr_ty, dc, chars, ints, source)?;

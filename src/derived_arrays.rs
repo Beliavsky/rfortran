@@ -544,9 +544,12 @@ impl Lower {
                 for e in args.iter_mut() {
                     self.expression(e, objects, prefix)?;
                 }
-                if let Some(Expr::Ident(array)) = args.first_mut() {
-                    if let Some(o) = objects.get(array).filter(|o| !o.dims.is_empty()) {
-                        *array = storage(array, &self.fields(&o.ty)?[0].name);
+                if let Some(array) = args.first_mut() {
+                    let owner=match array {Expr::Ident(n)|Expr::Call(n,_)|Expr::Index(n,_)|Expr::Section{name:n,..}=>Some(n),_=>None};
+                    if let Some(owner)=owner {
+                        if let Some(o) = objects.get(owner).filter(|o| !o.dims.is_empty()) {
+                            *owner = storage(owner, &self.fields(&o.ty)?[0].name);
+                        }
                     }
                 }
             }
@@ -788,6 +791,9 @@ impl Lower {
             let mut prefix = vec![];
             (|| -> Result<()> {
                 match &mut s {
+                    Stmt::ArrayDecl{dims,..} => {
+                        for dim in dims {self.expression(dim,&mut objects,&mut prefix)?;}
+                    }
                     Stmt::DerivedDecl {
                         type_name,
                         names,
@@ -956,6 +962,9 @@ impl Lower {
                                     }
                                 }
                             } else {
+                                if let Expr::Call(_,bounds)=&mut e {
+                                    for bound in bounds {self.expression(bound,&mut objects,&mut prefix)?;}
+                                }
                                 flat.push(e);
                             }
                         }

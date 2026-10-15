@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Beliavsky
 // See LICENSE-MIT in the repository root.
 
-//! Specialize local assumed-shape subroutine calls with statically known arrays.
-//! No descriptor ABI is claimed: unsupported dynamic shapes are diagnosed here.
+//! Specialize assumed-shape subroutine calls using fixed or runtime descriptors.
+//! These private descriptors do not define a separate-object procedure ABI.
 use crate::ast::{Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Context, Result};
 use std::collections::{HashMap, HashSet};
@@ -116,6 +116,8 @@ pub(crate) fn scalar_actual_kind(e: &Expr, shapes: &Shapes) -> Result<TypeSpec> 
             Ok(kind.clone())
         }
         Expr::IntLit(_) => Ok(TypeSpec::Integer(None)),
+        Expr::Call(n,args) if n=="@integer_literal" && args.len()==2 =>
+            Ok(TypeSpec::Integer(Some(u8::try_from(crate::parameters::integer_constant(&args[1])?)?))),
         Expr::RealLit(_) => Ok(TypeSpec::Real),
         Expr::Logical(_) => Ok(TypeSpec::Logical),
         Expr::Str(s) => Ok(TypeSpec::Character(Some(s.len()))),
@@ -169,7 +171,7 @@ fn rewrite(
         if matches!(n.as_str(),"size"|"shape"|"lbound"|"ubound"|"associated") && matches!(args.first(),Some(Expr::Ident(p)) if shapes.contains_key(&format!("@pointer:{p}"))) { return Ok(()); }
     }
     if let Expr::Call(n,args)=e {
-        if matches!(n.as_str(),"allocated"|"size"|"lbound"|"ubound"|"shape"|"kind") {
+        if matches!(n.as_str(),"allocated"|"size"|"lbound"|"ubound"|"shape"|"kind"|"len") {
             for dim in args.iter_mut().skip(1) {rewrite(dim,shapes,constants,absent)?;}
             if let Some(value)=crate::allocatables::inquiry(n,args,shapes)? {*e=value;return Ok(());}
         }
@@ -286,13 +288,11 @@ fn rewrite(
         }
         Expr::Un(_, a) => rewrite(a, shapes, constants, absent)?,
         Expr::Section {
-            name,
             lower,
             upper,
             stride,
             ..
         } => {
-            if crate::allocatables::axes(name,shapes).is_some_and(|d|d.len()>1) {bail!("sections of runtime-sized multidimensional array dummies are not yet supported");}
             for e in [lower, upper, stride].into_iter().flatten() {
                 rewrite(e, shapes, constants, absent)?;
             }
@@ -852,6 +852,7 @@ fn specialize(
         output.push(s);
     }
     *body = output;
+    crate::heap::automatic(body,shapes)?;
     Ok(())
 }
 // Resolve a CHARACTER function's fixed declarations and stable local constants
@@ -1235,6 +1236,13 @@ fn expand(
         }
     }
     crate::allocatables::metadata(body,&mut shapes);
+    let procedures=routines.iter().map(|(n,r)| (n.clone(),r.params.iter().map(|p|r.body.iter().find_map(|s|match s {Stmt::DummyIntent{name,intent} if name==p && intent.starts_with("intent(")=>Some(intent.clone()),_=>None}).unwrap_or_default()).collect())).collect();
+    crate::vector_subscripts::specialize(body,&shapes,procedures,serial)?;
+    for s in body.iter() {match s {
+        Stmt::ArrayDecl{kind,name,dims}=>{shapes.insert(name.clone(),(kind.clone(),dims.clone()));},
+        Stmt::VarDecl{kind,names}=>for n in names {shapes.insert(n.clone(),(kind.clone(),vec![]));},_=>{}
+    }}
+    crate::allocatables::metadata(body,&mut shapes);
     for s in body.iter() {
         if let Stmt::DummyIntent {name,intent}=s {
             if matches!(intent.as_str(),"pointer"|"target") {shapes.insert(format!("@{intent}:{name}"),(TypeSpec::Logical,vec![]));}
@@ -1376,7 +1384,7 @@ fn expand(
                                 // expressions; heap backing dimensions are placeholders.
                                 fn views(e: &mut Expr, shapes: &Shapes) -> Result<()> {
                                     if let Expr::Call(n,args)=e {
-                                        if matches!(n.as_str(),"size"|"shape"|"lbound"|"ubound"|"allocated"|"kind") {
+                                        if matches!(n.as_str(),"size"|"shape"|"lbound"|"ubound"|"allocated"|"kind"|"len") {
                                             if let Some(value)=crate::allocatables::inquiry(n,args,shapes)? {*e=value;return Ok(());}
                                         }
                                     }
@@ -1494,6 +1502,9 @@ fn expand(
                 prefix.extend(undefine);
                 let mut cloned = r.body.clone();
                 for p in &r.params {
+                    if intents.get(p).is_some_and(|i|i=="intent(in)") && local.get(p).is_some_and(|(_,d)|!d.is_empty()) {
+                        cloned.push(Stmt::DummyIntent{name:p.clone(),intent:"@heap_readonly".into()});
+                    }
                     if local.contains_key(&format!("@heap:{p}")) {
                         let field=|e:Expr|->Result<String>{if let Expr::Ident(n)=e{Ok(n)}else{bail!("ALLOCATABLE association requires writable descriptor fields")}};
                         let length=field(crate::allocatables::length(p,&local).context("missing dummy length")?)?;
@@ -1636,6 +1647,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
     p = crate::output::prepare_character_views(p)?;
     p = crate::constructors::resolve(p)?;
     p = crate::multidim::prepare_character_storage(p)?;
+    let p = crate::heap_characters::resolve(p)?;
     let p = crate::character_arrays::resolve(p)?;
     crate::multidim::resolve(crate::function_arrays::resolve(crate::substrings::resolve(p)?)?)
 }

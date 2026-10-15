@@ -896,6 +896,23 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             }
         }
         if name != "@packed_view" && args.iter().any(|arg| runtime_extent(arg).is_some()) {
+            if symbols.elementals.contains_key(name) || crate::intrinsics::math_arity(name).is_some()
+                || matches!(name.as_str(), "real" | "dble" | "int" | "abs" | "mod" | "modulo") {
+                let length=args.iter().find_map(runtime_extent).unwrap();
+                for arg in args.iter() {
+                    if let Some(other)=runtime_extent(arg) {prefix.push(shape_guard(length.clone(),other));}
+                }
+                *serial+=1;
+                let index=format!("@runtime_elemental_index_{serial}");
+                let temp=format!("@runtime_elemental_values_{serial}");
+                let (value,_,kind)=element(e,&Expr::Ident(index.clone()),symbols)?;
+                crate::heap::temporary(kind.clone(),temp.clone(),length.clone(),prefix);
+                prefix.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![index.clone()]});
+                prefix.push(Stmt::Do{var:index.clone(),start:int(1),end:length.clone(),body:vec![Stmt::AssignIndex{name:temp.clone(),indices:vec![Expr::Ident(index)],value}]});
+                symbols.insert(temp.clone(),(kind,vec![int(1)]));
+                *e=Expr::Call("@packed_view".into(),vec![Expr::Ident(temp),length]);
+                return Ok(());
+            }
             bail!("runtime PACK results are not yet supported as arguments to `{name}`");
         }
     }

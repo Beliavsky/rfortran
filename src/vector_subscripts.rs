@@ -1271,6 +1271,13 @@ pub fn resolve(program: Program) -> Result<Program> {
 pub(crate) fn finish(program: Program) -> Result<Program> {
     resolve_inner(program, true)
 }
+pub(crate) fn specialize(body:&mut Vec<Stmt>, shapes:&crate::allocatables::Shapes, procedures:HashMap<String,Vec<String>>, serial:&mut usize)->Result<()> {
+    // Fixed selections were handled by the first pass. Revisit a scope when
+    // call specialization or runtime descriptors can expose additional sections.
+    if procedures.is_empty() && !shapes.keys().any(|n|n.starts_with("@axes:")||n.starts_with("@extent:")||n.starts_with("@pointer:")) {return Ok(());}
+    runtime::specialize(body,shapes,procedures,serial)
+}
+
 fn resolve_inner(mut program: Program, after_calls: bool) -> Result<Program> {
     let procedures = procedure_intents(&program.body);
     program = runtime::resolve(program, &procedures)?;

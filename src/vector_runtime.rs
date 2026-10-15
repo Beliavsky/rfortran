@@ -54,6 +54,7 @@ fn declarations(body: &[Stmt], symbols: &mut Shapes) {
                     "@extent",
                     "@allocated",
                     "@axis_limits",
+                    "@readonly",
                 ] {
                     symbols.remove(&format!("{key}:{name}"));
                 }
@@ -68,6 +69,7 @@ fn declarations(body: &[Stmt], symbols: &mut Shapes) {
                         "@extent",
                         "@allocated",
                         "@axis_limits",
+                        "@readonly",
                     ] {
                         symbols.remove(&format!("{key}:{n}"));
                     }
@@ -82,6 +84,9 @@ fn declarations(body: &[Stmt], symbols: &mut Shapes) {
         if let Stmt::DummyIntent { name, intent } = stmt {
             if intent == "pointer" {
                 symbols.insert(format!("@pointer:{name}"), (TypeSpec::Logical, vec![]));
+            }
+            if matches!(intent.as_str(),"parameter"|"intent(in)"|"@heap_readonly") {
+                symbols.insert(format!("@readonly:{name}"),(TypeSpec::Logical,vec![]));
             }
         }
     }
@@ -145,8 +150,14 @@ fn triplet(e: &Expr, axis: &(Expr, Expr)) -> Result<(Expr, Expr, Expr)> {
         bail!("invalid array triplet");
     };
     let step = stride.as_deref().cloned().unwrap_or(int(1));
-    let step_value = constant(&step)
-        .context("vector selection triplet stride must currently be a constant INTEGER")?;
+    let Some(step_value) = constant(&step) else {
+        let last=bin(BinOp::Sub,bin(BinOp::Add,axis.0.clone(),axis.1.clone()),int(1));
+        let choose=|a,b|Expr::Call("@runtime_section_first".into(),vec![a,b,step.clone()]);
+        let first=lower.as_deref().cloned().unwrap_or_else(||choose(axis.0.clone(),last.clone()));
+        let end=upper.as_deref().cloned().unwrap_or_else(||choose(last,axis.0.clone()));
+        let count=Expr::Call("@runtime_section_extent".into(),vec![first.clone(),end,step.clone()]);
+        return Ok((first,count,step));
+    };
     if step_value == 0 {
         bail!("array section stride must not be zero");
     }
@@ -217,6 +228,7 @@ fn shape(e: &Expr, s: &Shapes) -> Result<Option<(TypeSpec, Vec<Expr>)>> {
         Expr::Logical(_) => Ok(Some((TypeSpec::Logical, vec![]))),
         Expr::Str(n) => Ok(Some((TypeSpec::Character(Some(n.len())), vec![]))),
         Expr::Section { name, .. } => {
+            if matches!(s.get(name),Some((TypeSpec::Character(_),d)) if d.is_empty()) {return Ok(Some((s[name].0.clone(),vec![])));}
             let a = axes(name, s)?;
             if a.len() != 1 {
                 bail!("vector expression must be rank one");
@@ -296,7 +308,7 @@ fn shape(e: &Expr, s: &Shapes) -> Result<Option<(TypeSpec, Vec<Expr>)>> {
             Ok(Some((s[n].0.clone(), dims)))
         }
         Expr::Call(n, a)
-            if matches!(
+            if crate::intrinsics::math_arity(n).is_some() || matches!(
                 n.as_str(),
                 "abs" | "int" | "mod" | "modulo" | "real" | "dble"
             ) =>
@@ -304,15 +316,23 @@ fn shape(e: &Expr, s: &Shapes) -> Result<Option<(TypeSpec, Vec<Expr>)>> {
             let Some((mut kind, d)) = shape(&a[0], s)? else {
                 return Ok(None);
             };
-            if n == "int" {
-                kind = TypeSpec::Integer(None);
-            }
+            if n == "int" { kind = TypeSpec::Integer(None); }
+            else if n == "dble" { kind = TypeSpec::DoublePrecision; }
+            else if n == "real" { kind = TypeSpec::Real; }
             Ok(Some((kind, d)))
         }
+        Expr::Call(n, _) if s.contains_key(&format!("@array_function:{n}")) => Ok(None),
         Expr::Call(n, _) => Ok(s
             .get(&format!("@function:{n}"))
             .map(|(k, _)| (k.clone(), vec![]))),
         _ => Ok(None),
+    }
+}
+fn runtime_character(e:&Expr,s:&Shapes)->bool {
+    match e {
+        Expr::Ident(n)|Expr::Section{name:n,..}=>allocatables::length(n,s).is_some(),
+        Expr::Call(n,a)|Expr::Index(n,a)=>n=="@packed_view" || allocatables::length(n,s).is_some() || a.iter().any(|e|runtime_character(e,s)),
+        Expr::Bin(_,a,b)=>runtime_character(a,s)||runtime_character(b,s),Expr::Un(_,a)=>runtime_character(a,s),_=>false,
     }
 }
 fn vector(e: &Expr, s: &Shapes) -> bool {
@@ -321,13 +341,26 @@ fn vector(e: &Expr, s: &Shapes) -> bool {
         .flatten()
         .is_some_and(|(_, d)| !d.is_empty())
 }
+
 fn selection(n: &str, a: &[Expr], s: &Shapes) -> bool {
     if matches!(a,[Expr::Section{name,..}] if name==n) {
         return false;
     }
     s.get(n).is_some_and(|(_, d)| !d.is_empty())
         && a.iter()
-            .any(|e| !matches!(e,Expr::Call(tag,_) if tag=="@section_subscript") && vector(e, s))
+            .any(|e| matches!(e,Expr::Call(tag,_) if tag=="@section_subscript") || vector(e, s))
+}
+fn vector_selection(n: &str, a: &[Expr], s: &Shapes) -> bool {
+    s.get(n).is_some_and(|(_, d)| !d.is_empty()) && a.iter()
+        .any(|e| !matches!(e,Expr::Call(tag,_) if tag=="@section_subscript") && vector(e,s))
+}
+fn contains_vector(e: &Expr, s: &Shapes) -> bool {
+    match e {
+        Expr::Call(n,a) | Expr::Index(n,a) => vector_selection(n,a,s) || a.iter().any(|e|contains_vector(e,s)),
+        Expr::Bin(_,a,b) => contains_vector(a,s) || contains_vector(b,s),
+        Expr::Un(_,a) => contains_vector(a,s),
+        _ => false,
+    }
 }
 fn dynamic(n: &str, a: &[Expr], s: &Shapes) -> bool {
     if !selection(n, a, s) {
@@ -335,7 +368,7 @@ fn dynamic(n: &str, a: &[Expr], s: &Shapes) -> bool {
     }
     allocatables::length(n,s).is_some() || axes(n,s).is_ok_and(|d|d.iter().any(|(l,n)|constant(l).is_none()||constant(n).is_none()))
         || a.iter().any(|e|shape(e,s).ok().flatten().is_some_and(|(_,d)|d.iter().any(|n|constant(n).is_none() || constant(n).is_some_and(|n|n>1024)))
-            || matches!(e,Expr::Call(tag,items) if tag=="@section_subscript" && matches!(&items[0],Expr::Section{lower,upper,..} if lower.as_deref().is_some_and(|e|constant(e).is_none())||upper.as_deref().is_some_and(|e|constant(e).is_none()))))
+            || matches!(e,Expr::Call(tag,items) if tag=="@section_subscript" && matches!(&items[0],Expr::Section{lower,upper,stride,..} if lower.as_deref().is_some_and(|e|constant(e).is_none())||upper.as_deref().is_some_and(|e|constant(e).is_none())||stride.as_deref().is_some_and(|e|constant(e).is_none()))))
 }
 fn contains(e: &Expr, s: &Shapes) -> bool {
     match e {
@@ -435,7 +468,9 @@ impl Lower {
     ) -> Result<String> {
         self.serial += 1;
         let n = format!("@vector_runtime_values_{}", self.serial);
-        if dims.iter().all(|d| constant(d).is_some()) {
+        let character=matches!(kind,TypeSpec::Character(_)|TypeSpec::CharacterAssumed|TypeSpec::CharacterLength(_));
+        let fixed_count=dims.iter().try_fold(1i64,|n,d|n.checked_mul(constant(d)?));
+        if dims.iter().all(|d| constant(d).is_some()) && !(character && fixed_count.is_none_or(|n|n>1024)) {
             out.push(Stmt::ArrayDecl {
                 kind: kind.clone(),
                 name: n.clone(),
@@ -446,7 +481,7 @@ impl Lower {
             if matches!(
                 kind,
                 TypeSpec::Character(_) | TypeSpec::CharacterAssumed | TypeSpec::CharacterLength(_)
-            ) {
+            ) && capacity.as_ref().is_some_and(|d|d.iter().try_fold(1i64,|n,d|n.checked_mul(*d)).is_some_and(|n|n<=1024)) {
                 let capacity = capacity.context(
                     "runtime-sized CHARACTER vector selections require bounded result storage",
                 )?;
@@ -811,6 +846,15 @@ impl Lower {
             })
             .collect()
     }
+    fn character_element(e:&Expr, vars:&[String], s:&Shapes)->Result<Expr> {
+        if let Expr::Ident(n)=e {
+            if s.get(n).is_some_and(|(_,d)|!d.is_empty()) {
+                let indices=axes(n,s)?.into_iter().zip(vars).map(|((lower,_),v)|bin(BinOp::Add,lower,bin(BinOp::Sub,id(v),int(1)))).collect();
+                return Ok(Expr::Index(n.clone(),indices));
+            }
+        }
+        Ok(e.clone())
+    }
     fn expression(&mut self, e: &mut Expr, s: &mut Shapes, out: &mut Vec<Stmt>) -> Result<()> {
         if let Expr::Call(n, a) = e {
             if matches!(
@@ -898,6 +942,42 @@ impl Lower {
             Expr::Un(_, a) => self.expression(a, s, out)?,
             _ => {}
         }
+        // CHARACTER array operations must be scalarized while their element
+        // types are still visible, before the final storage passes flatten them.
+        if let Expr::Bin(op,a,b)=e {
+            if matches!(op,BinOp::Concat|BinOp::Eq|BinOp::Ne|BinOp::Lt|BinOp::Le|BinOp::Gt|BinOp::Ge)
+                && (runtime_character(a,s)||runtime_character(b,s)) {
+                if let (Some((ak,ad)),Some((bk,bd)))=(shape(a,s)?,shape(b,s)?) {
+                    if matches!(ak,TypeSpec::Character(_)) && matches!(bk,TypeSpec::Character(_)) && (!ad.is_empty()||!bd.is_empty())
+                        && (runtime_character(a,s)||runtime_character(b,s)) {
+                        if !ad.is_empty() && !bd.is_empty() {
+                            if ad.len()!=bd.len() {bail!("CHARACTER array expression shapes do not conform");}
+                            for (a,b) in ad.iter().zip(&bd) {out.push(error(bin(BinOp::Ne,a.clone(),b.clone()),"CHARACTER array expression shapes do not conform".into()));}
+                        }
+                        let dims=if ad.is_empty(){bd}else{ad};
+                        let result_capacity=capacity(a,s).or_else(||capacity(b,s));
+                        let kind=if matches!(op,BinOp::Concat){super::concatenation_kind(&ak,&bk)?}else{TypeSpec::Logical};
+                        // Constructors and other non-storage array operands need
+                        // storage before selecting one scalar value per coordinate.
+                        for operand in [&mut **a,&mut **b] {
+                            let (kind,shape)=shape(operand,s)?.context("unknown CHARACTER array operand")?;
+                            if !shape.is_empty() && !matches!(operand,Expr::Ident(n) if s.get(n).is_some_and(|(_,d)|!d.is_empty())) {
+                                let bound=capacity(operand,s);
+                                let values=self.buffer_capacity(kind,&shape,bound,out,s)?;
+                                out.push(assign(&values,operand.clone()));
+                                *operand=id(&values);
+                            }
+                        }
+                        self.freeze(a,s,out)?;self.freeze(b,s,out)?;
+                        let temp=self.buffer_capacity(kind,&dims,result_capacity,out,s)?;
+                        let vars=self.loop_vars(&dims,out,s);
+                        let value=bin(op.clone(),Self::character_element(a,&vars,s)?,Self::character_element(b,&vars,s)?);
+                        out.extend(self.nest(&vars,&dims,vec![Stmt::AssignIndex{name:temp.clone(),indices:vars.iter().map(|v|id(v)).collect(),value}]));
+                        *e=id(&temp);
+                    }
+                }
+            }
+        }
         Ok(())
     }
     fn body(&mut self, body: &mut Vec<Stmt>, inherited: &Shapes, params: &[String]) -> Result<()> {
@@ -932,12 +1012,18 @@ impl Lower {
         let mut result = vec![];
         for mut stmt in std::mem::take(body) {
             let mut prefix = vec![];
+            let mut suffix = vec![];
             match &mut stmt {
                 Stmt::AssignIndex {
                     name,
                     indices,
                     value,
                 } if dynamic(name, indices, &s) => {
+                    if s.contains_key(&format!("@readonly:{name}")) {bail!("cannot assign to a section of PARAMETER or INTENT(IN) array `{name}`");}
+                    // Array-valued calls are materialized by the function pass
+                    // between specialization rounds. Preserve the assignment
+                    // until its RHS type/shape is available instead of guessing.
+                    if shape(value,&s)?.is_none() {result.push(stmt);continue;}
                     let capacity = selection_capacity(name, indices, &s);
                     let (selected, dims) =
                         self.indices(name, indices, &mut s, &mut prefix, true)?;
@@ -991,7 +1077,7 @@ impl Lower {
                 }
                 Stmt::CallSub { name, args } => {
                     for (i, e) in args.iter().enumerate() {
-                        if contains(e, &s) {
+                        if contains_vector(e, &s) {
                             super::validate_actual(name, i, &self.procedures)?;
                         }
                     }
@@ -1001,7 +1087,29 @@ impl Lower {
                     {
                         bail!("READ into vector-subscript selections is not yet supported");
                     }
-                    for e in args {
+                    for (i,e) in args.iter_mut().enumerate() {
+                        let intent=self.procedures.get(name).and_then(|v|v.get(i)).cloned()
+                            .or_else(||(name=="random_number" && i==0).then(||"intent(out)".into()));
+                        if intent.as_deref().is_some_and(|i|i!="intent(in)") {
+                            if let Expr::Call(n,a) | Expr::Index(n,a) = e {
+                                if selection(n,a,&s) && !vector_selection(n,a,&s) {
+                                    if s.contains_key(&format!("@readonly:{n}")) {bail!("cannot pass a section of PARAMETER or INTENT(IN) array `{n}` as a writable argument");}
+                                    let kind=s[n].0.clone();
+                                    let capacity=selection_capacity(n,a,&s);
+                                    let (selected,dims)=self.indices(n,a,&mut s,&mut prefix,true)?;
+                                    let temp=self.buffer_capacity(kind,&dims,capacity,&mut prefix,&mut s)?;
+                                    let vars=self.loop_vars(&dims,&mut prefix,&mut s);
+                                    let source=Expr::Index(n.clone(),self.selected(&selected,&vars));
+                                    let target=Expr::Index(temp.clone(),vars.iter().map(|v|id(v)).collect());
+                                    if intent.as_deref()!=Some("intent(out)") {
+                                        prefix.extend(self.nest(&vars,&dims,vec![Stmt::AssignIndex{name:temp.clone(),indices:vars.iter().map(|v|id(v)).collect(),value:source}]));
+                                    }
+                                    suffix.extend(self.nest(&vars,&dims,vec![Stmt::AssignIndex{name:n.clone(),indices:self.selected(&selected,&vars),value:target}]));
+                                    *e=id(&temp);
+                                    continue;
+                                }
+                            }
+                        }
                         self.expression(e, &mut s, &mut prefix)?;
                     }
                 }
@@ -1075,10 +1183,18 @@ impl Lower {
             declarations(&prefix, &mut s);
             result.extend(prefix);
             result.push(stmt);
+            result.extend(suffix);
         }
         *body = result;
         Ok(())
     }
+}
+pub(super) fn specialize(body:&mut Vec<Stmt>, shapes:&Shapes, procedures:HashMap<String,Vec<String>>, serial:&mut usize)->Result<()> {
+    let inherited_serial=shapes.keys().filter(|n|n.contains("@vector_")).filter_map(|n|n.rsplit('_').next()?.parse::<usize>().ok()).max().unwrap_or(0);
+    let mut lower=Lower{serial:(*serial).max(inherited_serial).max(super::serial_start(body)),procedures,force:false};
+    lower.body(body,shapes,&[])?;
+    *serial=lower.serial;
+    Ok(())
 }
 fn heap_buffer(
     kind: TypeSpec,
@@ -1094,6 +1210,48 @@ fn heap_buffer(
     });
     declarations(out, s);
     Ok(())
+}
+
+// Specification/inquiry expressions and ordinary selections use the same
+// helpers, including when only the section's shape (not its values) is needed.
+fn section_helpers(body: &mut Vec<Stmt>) {
+    fn expression(e:&Expr)->bool {
+        match e {
+            Expr::Call(n,a)|Expr::Index(n,a)=>n=="@runtime_section_first" || n=="@runtime_section_extent" || a.iter().any(expression),
+            Expr::Bin(_,a,b)=>expression(a)||expression(b),Expr::Un(_,a)=>expression(a),
+            Expr::Section{lower,upper,stride,..}=>[lower,upper,stride].into_iter().flatten().any(|e|expression(e)),_=>false,
+        }
+    }
+    fn needed(body:&[Stmt])->bool {
+        body.iter().any(|s|match s {
+            Stmt::Assign{value,..}|Stmt::Return(Some(value))=>expression(value),
+            Stmt::AssignIndex{indices,value,..}=>indices.iter().any(expression)||expression(value),
+            Stmt::Print{items}|Stmt::CallSub{args:items,..}|Stmt::Read{args:items}=>items.iter().any(expression),
+            Stmt::ArrayDecl{dims,..}=>dims.iter().any(expression),
+            Stmt::If{cond,then_body,else_body}=>expression(cond)||needed(then_body)||else_body.as_ref().is_some_and(|b|needed(b)),
+            Stmt::Do{start,end,body,..}=>expression(start)||expression(end)||needed(body),
+            Stmt::DoWhile{cond,body}=>expression(cond)||needed(body),
+            Stmt::Block{body}|Stmt::Module{body,..}|Stmt::Function{body,..}|Stmt::Subroutine{body,..}=>needed(body),
+            Stmt::SelectCase{expr,cases,default}=>expression(expr)||cases.iter().any(|c|needed(&c.body))||default.as_ref().is_some_and(|b|needed(b)),_=>false,
+        })
+    }
+    if !needed(body) || body.iter().any(|s|matches!(s,Stmt::Function{name,..} if name=="@runtime_section_extent")) {return;}
+    let params:Vec<String>=vec!["@section_first_arg".into(),"@section_last_arg".into(),"@section_step_arg".into()];
+    let first=id(&params[0]);let last=id(&params[1]);let step=id(&params[2]);
+    for name in ["@runtime_section_first","@runtime_section_extent"] {
+        let mut statements=vec![Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:params.clone()}];
+        statements.extend(params.iter().map(|n|Stmt::DummyIntent{name:n.clone(),intent:"intent(in)".into()}));
+        statements.push(error(bin(BinOp::Eq,step.clone(),int(0)),"array section stride must not be zero".into()));
+        if name=="@runtime_section_first" {
+            statements.push(Stmt::If{cond:bin(BinOp::Gt,step.clone(),int(0)),then_body:vec![Stmt::Return(Some(first.clone()))],else_body:None});
+            statements.push(Stmt::Return(Some(last.clone())));
+        } else {
+            let empty=bin(BinOp::Or,bin(BinOp::And,bin(BinOp::Gt,step.clone(),int(0)),bin(BinOp::Lt,last.clone(),first.clone())),bin(BinOp::And,bin(BinOp::Lt,step.clone(),int(0)),bin(BinOp::Gt,last.clone(),first.clone())));
+            statements.push(Stmt::If{cond:empty,then_body:vec![Stmt::Return(Some(int(0)))],else_body:None});
+            statements.push(Stmt::Return(Some(bin(BinOp::Add,bin(BinOp::Div,bin(BinOp::Sub,last.clone(),first.clone()),step.clone()),int(1)))));
+        }
+        body.push(Stmt::Function{name:name.into(),params:params.clone(),return_type:Some(TypeSpec::Integer(Some(8))),pure:true,elemental:false,body:statements});
+    }
 }
 pub(super) fn resolve(
     mut p: Program,
@@ -1121,6 +1279,9 @@ pub(super) fn resolve(
                             }
                         })
                     });
+                    if body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,..} if name==result)) {
+                        symbols.insert(format!("@array_function:{name}"),(TypeSpec::Logical,vec![]));
+                    }
                     if let Some(kind) = kind {
                         symbols.insert(format!("@function:{name}"), (kind, vec![]));
                     }
@@ -1141,5 +1302,6 @@ pub(super) fn resolve(
         force: false,
     }
     .body(&mut p.body, &symbols, &[])?;
+    section_helpers(&mut p.body);
     Ok(p)
 }

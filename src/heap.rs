@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Beliavsky
 // See LICENSE-MIT in the repository root.
 
-//! Select numeric allocatable storage backed by runtime allocation.
+//! Select allocatable and automatic storage backed by runtime allocation.
 use crate::ast::{Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Result};
 use std::collections::{HashMap, HashSet};
@@ -40,6 +40,7 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
                 | TypeSpec::Real
                 | TypeSpec::DoublePrecision
                 | TypeSpec::Logical
+                | TypeSpec::Character(_)
         )
     }
     fn signatures(body: &mut [Stmt], result: &mut HashMap<String, Vec<usize>>) {
@@ -49,7 +50,7 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
                     name, params, body, ..
                 } => {
                     let positions=params.iter().enumerate().filter_map(|(i,p)|
-                    (body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,kind,..} if name==p&&numeric(kind)))
+                    (body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,kind,dims} if name==p&&numeric(kind)&&(!matches!(kind,TypeSpec::Character(_))||dims.len()>1)))
                      &&body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==p&&intent=="allocatable"))).then_some(i)).collect::<Vec<_>>();
                     for &i in &positions {
                         body.insert(
@@ -132,7 +133,7 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
             (dims.iter().all(|e|matches!(e,Expr::Ident(n) if n=="@deferred_extent"))
               && !params.contains(name)
               && (passed.contains(name) || name.starts_with("@module$") || ((dims.len()>1 || !array_dummies) && allocation(body,name)) || dims.len()>1 && body.iter().any(|s|matches!(s,Stmt::CallSub{name:call,args} if call=="@deallocate"&&args.iter().any(|e|matches!(e,Expr::Ident(n) if n==name)))))
-              && matches!(kind,TypeSpec::Integer(None|Some(1|2|4|8))|TypeSpec::Real|TypeSpec::DoublePrecision|TypeSpec::Logical)
+              && numeric(kind) && (!matches!(kind,TypeSpec::Character(_)) || dims.len()>1)
               && body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name&&intent=="allocatable")))
                 .then_some((name.clone(),dims.len()))
         } else {None}).collect::<Vec<_>>();
@@ -282,6 +283,29 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
     }
     visit(&mut program.body, &[], &interfaces)?;
     Ok(program)
+}
+
+/// Allocate source locals after call-site bounds have been specialized.
+pub(crate) fn automatic(body:&mut Vec<Stmt>,shapes:&mut crate::allocatables::Shapes)->Result<()> {
+    let dummies=body.iter().filter_map(|s|match s {Stmt::DummyIntent{name,intent} if intent.starts_with("intent(")=>Some(name.clone()),_=>None}).collect::<HashSet<_>>();
+    let mut out=vec![];
+    for stmt in std::mem::take(body) {
+        if let Stmt::ArrayDecl{kind,name,dims}=&stmt {
+            // Generated result storage has its own allocation policy. Source
+            // locals reach here only after their dummy bounds are specialized.
+            if !name.starts_with('@') && !dummies.contains(name) && !dims.is_empty()
+                && !dims.iter().any(|d|matches!(d,Expr::Ident(n) if n=="@deferred_extent"))
+                && dims.iter().any(|d|crate::vector_subscripts::fixed_extent(d).is_none()) {
+                let bounds=dims.iter().map(|d|match d {Expr::Call(tag,a) if tag=="@declared_bounds"=>Expr::Call("@heap_bounds".into(),a.clone()),_=>d.clone()}).collect();
+                unallocated_result(kind.clone(),name.clone(),dims.len(),&mut out,shapes)?;
+                out.push(Stmt::CallSub{name:"@allocate".into(),args:vec![Expr::Call(name.clone(),bounds)]});
+                continue;
+            }
+        }
+        out.push(stmt);
+    }
+    *body=out;
+    Ok(())
 }
 
 /// Caller-owned result storage, allocated by a function's hidden output dummy.

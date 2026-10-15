@@ -1301,6 +1301,13 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": "    14.0    20.0    20.0\n 8 10000000014\n F T\n     0.0\n F\n"
+    },
+    "187_runtime_sections": {
+      "compiler_stderr": "",
+      "compiler_exit_code": 0,
+      "program_stdout": "runtime sections ok\n",
+      "program_stderr": "",
+      "program_exit_code": 0
     }
   }
 }

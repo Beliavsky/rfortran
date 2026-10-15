@@ -18,6 +18,7 @@ struct Variable {
     elements: BTreeMap<i64, State>,
     runtime_sized: bool,
     heap_length: Option<Expr>,
+    element_width: i64,
 }
 type Env = BTreeMap<String, Variable>;
 fn int(n: i64) -> Expr { Expr::IntLit(n.to_string()) }
@@ -31,7 +32,8 @@ fn key(e: &Expr) -> Option<(&str, Option<&Expr>)> {
 fn flag(v: &Variable, index: Option<Expr>) -> Expr {
     match index { Some(i) => Expr::Index(v.flag.clone(), vec![i]), None => Expr::Ident(v.flag.clone()) }
 }
-fn guard(value: Expr, name: &str, index: Option<Expr>) -> Stmt {
+fn guard(value: Expr, name: &str, index: Option<Expr>, width: i64) -> Stmt {
+    let index=index.map(|i|if width==1 {i} else {Expr::Bin(crate::ast::BinOp::Add,Box::new(Expr::Bin(crate::ast::BinOp::Div,Box::new(Expr::Bin(crate::ast::BinOp::Sub,Box::new(i),Box::new(int(1)))),Box::new(int(width)))),Box::new(int(1)))});
     let (name,index)=if let Some((original,element))=crate::character_arrays::original_element(name) {
         (original,Some(int(element)))
     } else {(name,index)};
@@ -68,8 +70,8 @@ fn check(name: &str, index: Option<&Expr>, env: &Env, out: &mut Vec<Stmt>, seria
                 let idx = format!("@init_scan_{serial}");
                 out.push(Stmt::VarDecl { kind: TypeSpec::Integer(None), names: vec![idx.clone()] });
                 let index = Expr::Ident(idx.clone());
-                out.push(Stmt::Do { var: idx, start: int(1), end: v.heap_length.clone().unwrap_or_else(||int(n)), body: vec![guard(flag(v, Some(index.clone())), name, Some(index))] });
-            } else { out.push(guard(flag(v, index.cloned()), name, index.cloned())); }
+                out.push(Stmt::Do { var: idx, start: int(1), end: v.heap_length.clone().unwrap_or_else(||int(n)), body: vec![guard(flag(v, Some(index.clone())), name, Some(index),v.element_width)] });
+            } else { out.push(guard(flag(v, index.cloned()), name, index.cloned(),v.element_width)); }
         }
     }
     Ok(())
@@ -366,7 +368,8 @@ fn scope(body: &mut Vec<Stmt>, inherited: &mut Env, params: &[String], result: O
         let flag = format!("@initialized_{serial}");
         let assigned = params.contains(&name) && !body.iter().any(|s| matches!(s, Stmt::DummyIntent { name: n, intent } if n == &name && intent == "intent(out)"));
         let runtime_sized=name.starts_with("@pointer_") || body.iter().any(|s|matches!(s,Stmt::DummyIntent {name:n,intent} if n==&name && intent.starts_with("@bounded:")));
-        let v = Variable { flag: flag.clone(), extent, state: if assigned { State::Yes } else { State::No }, elements: BTreeMap::new(), runtime_sized, heap_length: heap_shapes.contains_key(&format!("@heap:{name}")).then(||crate::allocatables::length(&name,&heap_shapes).unwrap()) };
+        let element_width=body.iter().find_map(|s|match s {Stmt::DummyIntent{name:n,intent} if n==&name=>intent.strip_prefix("@character_element_width:").and_then(|n|n.parse().ok()),_=>None}).unwrap_or(1);
+        let v = Variable { element_width, flag: flag.clone(), extent, state: if assigned { State::Yes } else { State::No }, elements: BTreeMap::new(), runtime_sized, heap_length: heap_shapes.contains_key(&format!("@heap:{name}")).then(||crate::allocatables::length(&name,&heap_shapes).unwrap()) };
         if let Some(n) = extent {
             prefix.push(Stmt::ArrayDecl { kind: TypeSpec::Integer(None), name: flag.clone(), dims: vec![int(n)] });
             let index = format!("@init_clear_{serial}");

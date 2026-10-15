@@ -12,6 +12,7 @@ mod ir;
 mod intrinsics;
 mod modules;
 mod heap;
+mod heap_characters;
 mod random_seed;
 mod timing;
 mod calendar;

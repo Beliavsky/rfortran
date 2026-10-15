@@ -1384,9 +1384,9 @@ mod tests {
         let p = lower(include_str!("../tests/69_matrix_sections.f90")).unwrap();
         let p = crate::sections::resolve(crate::reductions::resolve(p).unwrap()).unwrap();
         assert!(!format!("{p:?}").contains("@matrix_view"));
-        let source = "integer::a(2,3)\na=1\ncall random_number(a(:,1:2))\nend";
+        let source = "real::a(2,3)\ncall random_number(a(:,1:2))\nend";
         let p = lower(source).unwrap();
-        assert!(crate::sections::resolve(crate::reductions::resolve(p).unwrap()).is_err());
+        assert!(crate::sections::resolve(crate::reductions::resolve(p).unwrap()).is_ok());
     }
 
     #[test]

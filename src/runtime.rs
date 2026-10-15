@@ -1249,6 +1249,17 @@ pub fn interpret(program: &Program) {
                         call_stack.last_mut().unwrap().env_str.insert(dest.clone(), text);
                         idx += 1; continue;
                     }
+                    if name == "@character_code_store" {
+                        let [Expr::Ident(dest),index,code]=args.as_slice() else {unreachable!()};
+                        let fr=call_stack.last().unwrap().clone();
+                        let index=eval_expr(index,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap() as usize;
+                        let code=eval_expr(code,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap() as u8;
+                        let mut text=fr.env_str[dest].as_bytes().to_vec();
+                        if index>=text.len() {eprintln!("Runtime error: CHARACTER code store outside bounds");std::process::exit(1);}
+                        text[index]=code;
+                        call_stack.last_mut().unwrap().env_str.insert(dest.clone(),String::from_utf8(text).expect("CHARACTER storage must contain supported ASCII bytes"));
+                        idx+=1;continue;
+                    }
                     if name == "@character_length" {
                         let [Expr::Ident(dest), source] = args.as_slice() else { unreachable!() };
                         let fr = call_stack.last().unwrap().clone();

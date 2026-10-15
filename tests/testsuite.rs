@@ -73,6 +73,11 @@ struct AllExpectations {
 }
 
 fn build_rfort_exe() -> PathBuf {
+    if let Some(exe) = std::env::var_os("RFORT_TEST_COMPILER") {
+        let exe = PathBuf::from(exe);
+        assert!(exe.is_file(), "RFORT_TEST_COMPILER does not name a compiler");
+        return exe;
+    }
     let exe = if cfg!(windows) {
         "target\\debug\\rfort.exe"
     } else {
@@ -87,11 +92,15 @@ fn build_rfort_exe() -> PathBuf {
 fn compile_and_run(f90c: &Path, src: &Path) -> Expectation {
     use std::io::Write;
 
-    let exe_path = if cfg!(windows) {
-        PathBuf::from("tests/tmp_test.exe")
-    } else {
-        PathBuf::from("tests/tmp_test")
-    };
+    // Keep concurrent test runs from sharing an executable.
+    let stem = src.file_stem().unwrap().to_string_lossy();
+    let extension = if cfg!(windows) { ".exe" } else { "" };
+    let exe_path = std::env::temp_dir().join(format!(
+        "rfort-testsuite-{}-{stem}{extension}", std::process::id()
+    ));
+    if exe_path.exists() {
+        fs::remove_file(&exe_path).expect("failed to remove old fixture executable");
+    }
 
     let mut exp = Expectation::default();
     let content = fs::read_to_string(src).expect("failed to read source file");
@@ -145,6 +154,7 @@ fn compile_and_run(f90c: &Path, src: &Path) -> Expectation {
         exp.program_exit_code = output.status.code().unwrap_or(-1);
     }
 
+    let _ = fs::remove_file(&exe_path);
     exp
 }
 

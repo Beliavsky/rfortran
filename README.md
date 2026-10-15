@@ -1220,8 +1220,10 @@ Fixed-length rank-one CHARACTER ALLOCATABLE outputs retain bounded
 specialization. Their capacity is inferred from bounded array inputs or fixed
 locals. They support ALLOCATED, SIZE, element access, scalar filling and
 conformable whole-array or constant-stride section copying, including padding
-and truncation when element lengths differ. CHARACTER reductions and whole-array
-output of runtime-sized CHARACTER arrays remain unsupported.
+and truncation when element lengths differ. Fixed-length multidimensional
+CHARACTER arrays also have runtime heap storage,
+including section output and copying. General CHARACTER reductions remain
+outside this subset.
 Growing CHARACTER output cycles without a finite bound remain diagnosed.
 Run `python tests/test_recursive_allocatables.py` for recursive OPTIONAL call
 coverage and interpreter/native O0/O2 comparisons with gfortran.
@@ -1260,11 +1262,26 @@ with unset elements; reads remain checked per element. Module allocations persis
 across procedure calls. Heap-backed procedure/BLOCK locals and expression buffers
 are released on normal scope exit, including RETURN, EXIT and CYCLE.
 
-Runtime-sized multidimensional sections, ALLOCATABLE array dummies in functions,
-array transformations, masked/DIM reductions, automatic
-reallocation on assignment, and mixing fixed and runtime-sized multidimensional
-expressions remain unsupported. CHARACTER heap allocation and
-STAT/ERRMSG are separate remaining work. No public descriptor ABI is provided
+Runtime-sized multidimensional sections support scalar and triplet subscripts,
+runtime bounds and strides, omitted bounds, reverse strides and empty sections.
+They work for local allocatables, automatic locals, module variables, numeric
+pointers and assumed-shape dummies, with ranks through 15. Supported element types include
+INTEGER, REAL, DOUBLE PRECISION, LOGICAL, COMPLEX, fixed-length CHARACTER and
+supported derived types (including scalar CHARACTER components). Assignment
+captures overlapping inputs before writing. Section arguments to writable
+subroutine dummies use copy-in/copy-out as required by INTENT; RANDOM_NUMBER
+sections do not read unset destination elements. CHARACTER section comparisons
+and concatenation are lowered element by element. Bounds, shape conformance and
+initialization checks remain active. Existing output restrictions for runtime
+COMPLEX and whole derived-type arrays still apply. READ into runtime sections
+is still outside this subset. Run `python tests/test_runtime_sections.py` for interpreter/native
+O0/O2 checks against gfortran; `tests/187_runtime_sections.f90` covers the basic
+regression.
+
+ALLOCATABLE array dummies in functions, array transformations, masked/DIM
+reductions, automatic reallocation on assignment, and mixing fixed and
+runtime-sized multidimensional expressions retain their existing limitations.
+Deferred-length CHARACTER array elements and STAT/ERRMSG remain unsupported. No public descriptor ABI is provided
 for separate-object module interfaces.
 Zero and negative allocation extents produce allocated empty arrays.
 Numeric/LOGICAL array-valued functions can use runtime-sized inputs and results
@@ -1409,8 +1426,8 @@ lower bounds and INTEGER kinds 1/2/4/8 are supported.
 Numeric and LOGICAL selections use active runtime descriptors for allocated source
 arrays and index vectors, including empty vectors, without the former 1024-element
 selection limit. Numeric POINTER sources and POINTER index vectors use their
-active bounds and strides. CHARACTER selections use existing bounded CHARACTER storage;
-runtime active lengths are supported when their storage capacity is known.
+active bounds and strides. CHARACTER selections use bounded storage when a small
+capacity is available, or heap storage for runtime descriptor-backed sources.
 Vector actual arguments are materialized for known INTENT(IN) subroutine dummies;
 association with writable dummies is rejected.
 
@@ -1423,8 +1440,8 @@ source elements must be initialized. Loop-condition captures are reevaluated on
 every iteration, including after CYCLE. Run `python tests/test_vector_subscripts.py`
 and `python tests/test_vector_ranks.py` for interpreter/native O0/O2 and gfortran checks.
 
-Unbounded runtime-sized CHARACTER result storage, vector READ destinations and
-vector selections in WHERE assignments remain unsupported. Derived selection
+Vector READ destinations and vector selections in WHERE assignments remain
+unsupported. Deferred-length CHARACTER array elements remain unsupported. Derived selection
 output currently requires fixed result extents. Derived types with
 nested or array components are not yet implemented. Other vector expressions are rejected when they
 reach scalar array-index lowering, instead of silently using their first element.
@@ -1641,7 +1658,8 @@ python tests/test_bit_intrinsics.py
 
 The Python tests use `target/debug/rfort` (with `.exe` on Windows).
 `RFORT_TEST_COMPILER` selects another build; the legacy `F90C_TEST_COMPILER`
-variable also works. The Rust integration suite uses the debug executable.
+variable also works. The Rust integration suite defaults to the debug executable
+and also accepts `RFORT_TEST_COMPILER`.
 Tests require the platform linker/toolchain described above. The regression
 runner no longer invokes `git clean`.
 
