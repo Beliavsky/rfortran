@@ -337,6 +337,10 @@ impl Lower {
         self.expression(&mut e, objects, prefix)?;
         let fields = self.fields(ty)?;
         match e {
+            Expr::Call(n, args) if n.starts_with("@complex_array$") && crate::complex::type_kind(ty).is_some() => {
+                if args.len() != 2 { bail!("invalid internal COMPLEX array components"); }
+                Ok((args, true))
+            }
             Expr::Ident(n) if objects.contains_key(&n) => {
                 let o = &objects[&n];
                 if o.ty != ty {
@@ -657,11 +661,7 @@ impl Lower {
                         Expr::Call("size".into(), vec![Expr::Ident(first)]),
                         Expr::IntLit("1".into()),
                     ];
-                    args.extend(
-                        fields
-                            .iter()
-                            .map(|f| Expr::Index(storage(array, &f.name), indices.clone())),
-                    );
+                    args.extend(fields.iter().map(|f| Expr::Index(storage(array, &f.name), indices.clone())));
                     expanded.push(Expr::Call("@output_implied_do".into(), args));
                     continue;
                 }

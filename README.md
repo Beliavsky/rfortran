@@ -16,7 +16,7 @@ but execution on those platforms still needs validation.
 
 Implemented subsets include:
 
-- Scalar INTEGER, REAL, DOUBLE PRECISION, LOGICAL and CHARACTER values;
+- Scalar INTEGER, REAL, DOUBLE PRECISION, COMPLEX, LOGICAL and CHARACTER values;
   named constants, supported kind selectors, arithmetic and common math intrinsics.
 - Counted DO, unbounded DO, and DO WHILE loops, conditionals, SELECT CASE, and array operations
   including sections, explicit bounds, vector subscripts, WHERE and reductions.
@@ -728,7 +728,8 @@ constants or previously declared variables. They determine the type without
 reading variable values or evaluating array subscripts; an unset variable is
 valid here. Supported arguments include variables, whole arrays, array elements,
 rank-one sections, arithmetic expressions and scalar REAL/DBLE/INT conversions.
-General procedure-call arguments and COMPLEX model inquiries are not implemented.
+PRECISION and RANGE also accept COMPLEX kinds 4 and 8. General procedure-call
+arguments for these inquiries are not implemented.
 Variables and user procedures may still use these intrinsic names.
 
 List-directed LOGICAL output uses `T` and `F` for scalar values, array elements,
@@ -1065,8 +1066,8 @@ constructors or named constant arrays (including empty arrays). CHARACTER
 comparisons pad the shorter operand with spaces; INTEGER comparisons retain
 integer precision. Module imports, host association and separate PARAMETER
 statements use the same constant resolution. Constant arrays still have the
-existing rank-one limits; COMPLEX and derived-type named constants are not
-implemented. Run `python tests/test_named_constants.py`.
+existing rank-one limits; COMPLEX constants support the subset described below.
+Derived-type named constants are not implemented. Run `python tests/test_named_constants.py`.
 
 ## Declaration initialization
 
@@ -1424,9 +1425,57 @@ and `python tests/test_vector_ranks.py` for interpreter/native O0/O2 and gfortra
 
 Unbounded runtime-sized CHARACTER result storage, vector READ destinations and
 vector selections in WHERE assignments remain unsupported. Derived selection
-output currently requires fixed result extents. COMPLEX and derived types with
+output currently requires fixed result extents. Derived types with
 nested or array components are not yet implemented. Other vector expressions are rejected when they
 reach scalar array-index lowering, instead of silently using their first element.
+
+## DOT_PRODUCT
+
+`DOT_PRODUCT(VECTOR_A, VECTOR_B)` supports rank-one arrays of the implemented
+INTEGER kinds 1/2/4/8, REAL and COMPLEX kinds 4/8, including mixed numeric
+types/kinds, and pairs
+of LOGICAL arrays. Numeric results use multiplication followed by summation;
+complex results conjugate the first operand. LOGICAL results use `ANY(a .AND. b)`.
+Empty vectors return numeric zero or logical false. Keyword arguments, array
+expressions, supported sections/vector selections, procedure arguments and PURE
+procedures use the same lowering. Result-kind inquiries do not read array values.
+
+The compiler rejects invalid ranks/types and statically unequal lengths before
+flattening arrays. Runtime-sized arrays use the existing conformance checks.
+Array-expression and storage restrictions of the reduction machinery still
+apply. Run `python tests/test_dot_product.py`; the numbered suite includes
+`tests/186_dot_product.f90`.
+
+## COMPLEX
+
+COMPLEX uses REAL component kinds 4 (default) and 8. Supported forms include
+kind selectors, literals `(real,imaginary)`, `CMPLX` (including keywords),
+`%re`/`%im`, scalar and array assignment, constructors and simple implied-DOs,
+arithmetic, equality, integer and real/complex powers, `REAL`, `DBLE`, `AIMAG`,
+`ABS`, `CONJG`, `SUM`, conjugated `DOT_PRODUCT`, and rank-one/rank-two `MATMUL`.
+The implemented complex math functions are `SQRT`, `EXP`, `LOG`, `LOG10`,
+`SIN`, `COS`, `TAN`, `SINH`, `COSH`, and `TANH` (`LOG10` with COMPLEX is an
+extension). Ordinary complex dummy arguments
+and scalar function results use the existing procedure lowering. Complex named
+constants support literals, conversion, conjugation and basic arithmetic.
+
+List-directed output prints compact `(real,imaginary)` pairs, trimming generated
+buffer padding while retaining ordinary CHARACTER padding. Explicit formats consume
+two real descriptors for each complex element. REAL `G0`/`G0.d` output is also
+supported. `CMPLX` without KIND returns default COMPLEX; `REAL(z)` and `AIMAG(z)`
+retain a complex argument's component kind. Initialization checks apply to each
+component. This is an initial subset: complex input, kind 16, complex components
+inside user-defined types, implicit COMPLEX declarations, persistent initialized
+complex locals, and user-defined complex ELEMENTAL procedures are not implemented.
+List-directed array output currently requires fixed extents.
+
+Run `python tests/test_complex.py` after building. The seven external probes in
+`tests/ofort/complex-selection.json` cover constructors, parts, magnitude,
+roots, component kinds, arithmetic, dot products and matrix multiplication:
+
+```bat
+python tests/run_ofort_compat.py --ofort-root C:\c\ofort --compiler target/debug/rfort.exe --selection tests/ofort/complex-selection.json --report target/ofort-complex.json --strict
+```
 
 ## Named arguments
 

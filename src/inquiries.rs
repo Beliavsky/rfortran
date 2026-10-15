@@ -25,6 +25,10 @@ pub fn model_value(name: &str, kind: &TypeSpec) -> Result<Expr> {
             _ => match bytes { 1 => 2, 2 => 4, 4 => 9, 8 => 18, _ => unreachable!() },
         }));
     }
+    if let TypeSpec::Complex(k) = kind {
+        if !matches!(name,"precision"|"range") { bail!("{} does not accept COMPLEX",name.to_ascii_uppercase()); }
+        return model_value(name,&if k=="8" {TypeSpec::DoublePrecision}else{TypeSpec::Real});
+    }
     let double = match kind {
         TypeSpec::Real => false,
         TypeSpec::DoublePrecision => true,
@@ -76,6 +80,12 @@ pub fn model_type(e: &Expr, lookup: &impl Fn(&str) -> Option<(TypeSpec,usize)>) 
             for arg in a {subscript(arg)?;}
             Some(kind)
         },
+        Expr::Call(n,a) if n=="cmplx" || n=="@complex_literal" => {
+            let k=if n=="cmplx" {a.get(2).filter(|e|!crate::named_arguments::omitted(e)).map(crate::parameters::integer_constant).transpose()?.unwrap_or(4)} else {
+                let mut k=4;for e in a {if model_type(e,lookup)?==Some(TypeSpec::DoublePrecision){k=8;}}k
+            };
+            Some(TypeSpec::Complex(k.to_string()))
+        },
         Expr::IntLit(_) => Some(TypeSpec::Integer(None)),
         Expr::RealLit(_) => Some(TypeSpec::Real),
         Expr::Logical(_) => Some(TypeSpec::Logical),
@@ -87,11 +97,15 @@ pub fn model_type(e: &Expr, lookup: &impl Fn(&str) -> Option<(TypeSpec,usize)>) 
             else {
                 match (model_type(a,lookup)?,model_type(b,lookup)?) {
                     (Some(a),Some(b)) => {
-                        if !matches!(a,TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision)
-                            || !matches!(b,TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision) {
+                        if !matches!(a,TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision|TypeSpec::Complex(_))
+                            || !matches!(b,TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision|TypeSpec::Complex(_)) {
                             bail!("numeric inquiry argument has nonnumeric arithmetic operands");
                         }
                         Some(if matches!(op,BinOp::Pow) && matches!(b,TypeSpec::Integer(_)) { a }
+                            else if matches!(&a,TypeSpec::Complex(_)) || matches!(&b,TypeSpec::Complex(_)) {
+                                let component=|t:&TypeSpec|match t {TypeSpec::Complex(k)=>k.parse::<u8>().unwrap_or(4),TypeSpec::DoublePrecision=>8,_=>4};
+                                TypeSpec::Complex(component(&a).max(component(&b)).to_string())
+                            }
                             else if a==TypeSpec::DoublePrecision || b==TypeSpec::DoublePrecision {TypeSpec::DoublePrecision}
                             else if a==TypeSpec::Real || b==TypeSpec::Real {TypeSpec::Real}
                             else if let (TypeSpec::Integer(a),TypeSpec::Integer(b))=(a,b) {TypeSpec::Integer(Some(a.unwrap_or(4).max(b.unwrap_or(4))))}
@@ -110,12 +124,12 @@ pub fn model_type(e: &Expr, lookup: &impl Fn(&str) -> Option<(TypeSpec,usize)>) 
             Some(TypeSpec::Integer(Some(kind as u8)))
         },
         Expr::Call(n,a) if n=="@integer_literal" && a.len()==2 => Some(TypeSpec::Integer(Some(crate::parameters::integer_constant(&a[1])? as u8))),
-        Expr::Call(n,a) if matches!(n.as_str(),"dble"|"real"|"int"|"abs"|"@unary_plus") && a.len()==1 => {
+        Expr::Call(n,a) if matches!(n.as_str(),"dble"|"real"|"int"|"abs"|"aimag"|"conjg"|"@unary_plus") && a.len()==1 => {
             let input=model_type(&a[0],lookup)?;
-            if input.as_ref().is_some_and(|k|!matches!(k,TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision)) {
+            if input.as_ref().is_some_and(|k|!matches!(k,TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision|TypeSpec::Complex(_))) {
                 bail!("{} requires a numeric argument",n.to_ascii_uppercase());
             }
-            input.map(|k| match n.as_str() {"dble"=>TypeSpec::DoublePrecision,"real"=>TypeSpec::Real,"int"=>TypeSpec::Integer(None),_=>k})
+            input.map(|k| match n.as_str() {"dble"=>TypeSpec::DoublePrecision,"real"|"aimag"|"abs" if matches!(&k,TypeSpec::Complex(_)) => if k==TypeSpec::Complex("8".into()){TypeSpec::DoublePrecision}else{TypeSpec::Real},"real"=>TypeSpec::Real,"int"=>TypeSpec::Integer(None),_=>k})
         },
         _ => None,
     };

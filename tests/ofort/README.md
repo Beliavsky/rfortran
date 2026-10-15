@@ -405,3 +405,31 @@ The original `xcharacter_overlap_assignment_pending.f90` now passes at O0/O2
 against gfortran. The rebuilt release report `target/ofort-character-arrays.json`
 records **18/18 selected cases passing**, with no remaining failures in this
 sample. This is the selected compatibility sample, not the entire ofort suite.
+
+## COMPLEX sample
+
+`complex-selection.json` selects seven ofort programs covering literals,
+constructors (including an implied-DO), component access, magnitude, roots,
+component kinds, arithmetic, conjugation, dot products and complex/real matrix
+multiplication. All seven passed with the debug and release compilers at O0 and O2 against
+gfortran on Windows during the COMPLEX implementation. Reports are generated
+locally; they are not the full inventory result.
+
+```bat
+python tests/run_ofort_compat.py --ofort-root C:\c\ofort --compiler target/debug/rfort.exe --selection tests/ofort/complex-selection.json --report target/ofort-complex.json --strict
+```
+
+The output comparator recognizes numeric `(real,imaginary)` pairs with optional
+internal spaces and compares both components using its existing real tolerance.
+
+## DOT_PRODUCT sample
+
+`dot-product-selection.json` selects `xfast_dot_product.f90` (which compares a
+real dot product with `SUM(g*d)`) and `xnumeric_complex_semantics_pending.f90`.
+The compiler uses checked reductions for numeric and logical dot products and
+retains conjugation for complex inputs. Local tests additionally cover type/kind
+promotion, empty vectors, sections, generic dispatch and runtime length errors.
+
+```bat
+python tests/run_ofort_compat.py --ofort-root C:\c\ofort --compiler target/debug/rfort.exe --selection tests/ofort/dot-product-selection.json --report target/ofort-dot-product.json --strict
+```

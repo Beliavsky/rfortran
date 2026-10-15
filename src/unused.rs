@@ -401,7 +401,7 @@ impl<'a> Analysis<'a> {
     }
     fn kind(&mut self, scope: usize, owner: Option<usize>, kind: &TypeSpec) {
         match kind {
-            TypeSpec::IntegerKind(n) | TypeSpec::RealKind(n) => self.words(scope, owner, n),
+            TypeSpec::IntegerKind(n) | TypeSpec::RealKind(n) | TypeSpec::Complex(n) => self.words(scope, owner, n),
             TypeSpec::CharacterLength(e) => self.expr(scope, owner, e),
             _ => {}
         }

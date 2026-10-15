@@ -1,0 +1,12 @@
+{
+  "description": "COMPLEX arithmetic, kind conversion, constructors, components and matrix operations.",
+  "cases": [
+    "xcomplex_constructor.f90",
+    "xcomplex_part.f90",
+    "xcomplex_abs.f90",
+    "xcomplex_roots.f90",
+    "xcmplx_array_kind_repro.f90",
+    "xnumeric_complex_semantics_pending.f90",
+    "xmatmul_complex_repro.f90"
+  ]
+}

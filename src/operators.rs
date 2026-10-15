@@ -43,7 +43,7 @@ fn scalar(kind: &TypeSpec) -> Ty {
 // language has no intrinsic operation (for example CHARACTER + CHARACTER).
 fn intrinsic_operator(op: &str, args: &[Ty]) -> bool {
     fn element(ty:&Ty)->&Ty {match ty {Ty::Array(ty,_)=>element(ty),ty=>ty}}
-    let numeric=|ty:&Ty|matches!(element(ty),Ty::Scalar(TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision));
+    let numeric=|ty:&Ty|matches!(element(ty),Ty::Scalar(TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision|TypeSpec::Complex(_)));
     let character=|ty:&Ty|matches!(element(ty),Ty::Scalar(TypeSpec::Character(_)));
     let logical=|ty:&Ty|matches!(element(ty),Ty::Scalar(TypeSpec::Logical));
     match op {
@@ -82,6 +82,9 @@ fn binary_type(op: &BinOp, left: Ty, right: Ty) -> Ty {
             | BinOp::Neqv
     ) {
         scalar(&TypeSpec::Logical)
+    } else if matches!(&left,Ty::Scalar(TypeSpec::Complex(_))) || matches!(&right,Ty::Scalar(TypeSpec::Complex(_))) {
+        let component = |t: &Ty| match t { Ty::Scalar(TypeSpec::Complex(k)) => k.parse::<u8>().unwrap_or(4), Ty::Scalar(TypeSpec::DoublePrecision) => 8, _=>4 };
+        scalar(&TypeSpec::Complex(component(&left).max(component(&right)).to_string()))
     } else if left == scalar(&TypeSpec::DoublePrecision)
         || right == scalar(&TypeSpec::DoublePrecision)
     {
@@ -528,6 +531,9 @@ impl Resolver {
     }
     fn name_type(&self, name: &str, vars: &Vars) -> Ty {
         if let Some((object, component)) = name.split_once('%') {
+            fn part(t:&Ty)->Ty {match t {Ty::Array(t,r)=>Ty::Array(Box::new(part(t)),*r),Ty::Scalar(TypeSpec::Complex(k))=>scalar(&if k=="8"{TypeSpec::DoublePrecision}else{TypeSpec::Real}),_=>Ty::Unknown}}
+            if matches!(component,"re"|"im") {if let Some(t)=vars.get(object) {let result=part(t);if known_type(&result){return result;}}}
+
             if let Some(Ty::Array(inner,rank))=vars.get(object) {
                 if let Ty::Derived(ty)=inner.as_ref() {
                     return self.components.get(ty).and_then(|c|c.get(component)).cloned().map(|t|Ty::Array(Box::new(t),*rank)).unwrap_or(Ty::Unknown);
@@ -663,6 +669,16 @@ impl Resolver {
                     match self.name_type(n, vars) {
                         Ty::Array(t, _) => *t,
                         _ => match n.as_str() {
+                            "cmplx"|"@complex_literal" => {
+                                let k=if n=="cmplx"{args.get(2).filter(|e|!crate::named_arguments::omitted(e)).map(crate::parameters::integer_constant).transpose()?.unwrap_or(4) as u8}else{if arg_types.iter().any(|t|*t==scalar(&TypeSpec::DoublePrecision)){8}else{4}};
+                                let result=scalar(&TypeSpec::Complex(k.to_string()));
+                                if let Some(rank)=arg_types.iter().find_map(|t|if let Ty::Array(_,r)=t{Some(*r)}else{None}){Ty::Array(Box::new(result),rank)}else{result}
+                            },
+                            "conjg"=>arg_types.first().cloned().unwrap_or(Ty::Unknown),
+                            "aimag"=>{
+                                fn part(t:&Ty)->Ty{match t{Ty::Array(t,r)=>Ty::Array(Box::new(part(t)),*r),Ty::Scalar(TypeSpec::Complex(k))=>scalar(&if k=="8"{TypeSpec::DoublePrecision}else{TypeSpec::Real}),_=>Ty::Unknown}}
+                                arg_types.first().map(part).unwrap_or(Ty::Unknown)
+                            },
                             "@integer_literal" if args.len()==2 => scalar(&TypeSpec::Integer(Some(crate::parameters::integer_constant(&args[1])? as u8))),
                             "shape" | "lbound" | "ubound" => {
                                 let (_, dim, kind) = crate::inquiries::arguments(n, args)?;
@@ -695,7 +711,7 @@ impl Resolver {
                             },
                             "int" | "nint" | "floor" | "ceiling" | "real" | "dble" => {
                                 let kind = match args.get(1) {
-                                    None => Some(4),
+                                    None => Some(if n=="real" && arg_types.first().is_some_and(|t|matches!(t,Ty::Scalar(TypeSpec::Complex(k)) if k=="8")||matches!(t,Ty::Array(t,_) if matches!(t.as_ref(),Ty::Scalar(TypeSpec::Complex(k)) if k=="8"))){8}else{4}),
                                     Some(Expr::IntLit(k)) => k.parse::<u8>().ok(),
                                     _ => None,
                                 };
@@ -713,7 +729,8 @@ impl Resolver {
                                 }
                             }
                             "abs" | "mod" | "modulo" | "min" | "max" => {
-                                arg_types.first().cloned().unwrap_or(Ty::Unknown)
+                                fn abs_type(t:Ty)->Ty{match t{Ty::Array(t,r)=>Ty::Array(Box::new(abs_type(*t)),r),Ty::Scalar(TypeSpec::Complex(k))=>scalar(&if k=="8"{TypeSpec::DoublePrecision}else{TypeSpec::Real}),t=>t}}
+                                let t=arg_types.first().cloned().unwrap_or(Ty::Unknown);if n=="abs"{abs_type(t)}else{t}
                             }
                             "sum" | "product" | "minval" | "maxval" if args.len() == 1 => {
                                 match arg_types.first() {
@@ -721,9 +738,9 @@ impl Resolver {
                                     _ => Ty::Unknown,
                                 }
                             }
-                            "dot_product" if args.len() == 2 => match arg_types.first() {
-                                Some(Ty::Array(t, _)) => (**t).clone(),
-                                _ => Ty::Unknown,
+                            "dot_product" if args.len() == 2 => match arg_types.as_slice() {
+                                [Ty::Array(a,1),Ty::Array(b,1)] => binary_type(&BinOp::Mul,(**a).clone(),(**b).clone()),
+                                _=>Ty::Unknown,
                             },
                             _ if crate::intrinsics::math_arity(n).is_some() => {
                                 arg_types.first().cloned().unwrap_or(Ty::Unknown)
@@ -871,15 +888,15 @@ pub fn resolve(mut program: Program) -> Result<Program> {
         body.iter().any(|s| match s {
             Stmt::GenericInterface { .. } | Stmt::OperatorInterface { .. } => true,
             Stmt::VarDecl {
-                kind: TypeSpec::IntegerKind(_) | TypeSpec::RealKind(_) | TypeSpec::CharacterLength(_),
+                kind: TypeSpec::IntegerKind(_) | TypeSpec::RealKind(_) | TypeSpec::Complex(_) | TypeSpec::CharacterLength(_),
                 ..
             }
             | Stmt::ArrayDecl {
-                kind: TypeSpec::IntegerKind(_) | TypeSpec::RealKind(_) | TypeSpec::CharacterLength(_),
+                kind: TypeSpec::IntegerKind(_) | TypeSpec::RealKind(_) | TypeSpec::Complex(_) | TypeSpec::CharacterLength(_),
                 ..
             }
             | Stmt::InitializedDecl {
-                kind: TypeSpec::IntegerKind(_) | TypeSpec::RealKind(_) | TypeSpec::CharacterLength(_),
+                kind: TypeSpec::IntegerKind(_) | TypeSpec::RealKind(_) | TypeSpec::Complex(_) | TypeSpec::CharacterLength(_),
                 ..
             } => true,
             Stmt::DerivedType { components, .. } => needs_constants(components),
@@ -904,7 +921,7 @@ pub fn resolve(mut program: Program) -> Result<Program> {
         })
     }
     // Overload selection must see resolved kind parameters and literal suffixes.
-    if needs_constants(&program.body) {
+    if needs_constants(&program.body) || crate::complex::uses_complex(&program.body) || crate::complex::uses_dot_product(&program.body) {
         program = crate::parameters::resolve_constants(program)?;
     }
     let mut resolver = Resolver::default();

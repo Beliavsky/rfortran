@@ -775,6 +775,7 @@ pub fn resolve(mut program: Program) -> Result<Program> {
     program = crate::named_arguments::resolve(program, false)?;
     program = crate::operators::resolve(program)?;
     program = crate::named_arguments::resolve(program, true)?;
+    program = crate::complex::resolve(program)?;
     program = crate::derived_arrays::resolve(program)?;
     let mut lower = Lowerer {
         types: HashMap::new(),
@@ -824,6 +825,7 @@ pub fn resolve(mut program: Program) -> Result<Program> {
         return Ok(program);
     }
     lower.body(&mut program.body, &Objects::new(), &[])?;
+    crate::complex::hoist(&mut program.body);
     Ok(program)
 }
 

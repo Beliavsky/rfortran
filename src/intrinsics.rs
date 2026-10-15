@@ -20,7 +20,7 @@ pub fn math_arity(name: &str) -> Option<usize> {
 pub enum Purity { Pure, Impure }
 
 pub const PURE_FUNCTIONS: &[&str] = &[
-    "abs", "achar", "adjustl", "adjustr", "aint", "all", "allocated",
+    "cmplx", "aimag", "conjg", "abs", "achar", "adjustl", "adjustr", "aint", "all", "allocated",
     "anint", "any", "associated", "ceiling", "char", "count", "cshift",
     "dble", "dim", "dot_product", "dprod", "eoshift", "findloc", "floor",
     "huge", "iachar", "ichar", "index", "int", "ishftc", "kind",

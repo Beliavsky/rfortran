@@ -326,6 +326,9 @@ pub enum TokenKind {
     KwInteger,
     #[token("real", ignore(ascii_case))]
     KwReal,
+    #[token("complex", ignore(ascii_case))]
+    KwComplex,
+    ComplexOpen,
     #[token("double", ignore(ascii_case))]
     KwDouble,
     #[token("precision", ignore(ascii_case))]
@@ -511,7 +514,7 @@ pub fn lex(input: &str) -> Vec<Token> {
             while end < tokens.len() && same_statement(&input[tokens[end-1].span.end..tokens[end].span.start]) {
                 end += 1;
             }
-            declaration = matches!(tokens[i].kind, TokenKind::KwInteger | TokenKind::KwReal
+            declaration = matches!(tokens[i].kind, TokenKind::KwInteger | TokenKind::KwReal | TokenKind::KwComplex
                 | TokenKind::KwDouble | TokenKind::KwCharacter | TokenKind::KwLogical)
                 && tokens[i..end].iter().any(|t| matches!(t.kind,TokenKind::DColon));
             depth = 0;
@@ -741,7 +744,7 @@ pub fn lex(input: &str) -> Vec<Token> {
                 while tokens.get(end).is_some_and(|t| matches!(&t.kind,TokenKind::Ident(n) if matches!(n.to_ascii_lowercase().as_str(),"pure" | "impure" | "elemental" | "recursive"))) { end += 1; }
                 let following = tokens.get(end).map(|t| &t.kind);
                 let same_line = tokens.get(end).is_some_and(|next| same_statement(&input[tokens[start].span.end..next.span.start]));
-                if same_line && matches!(following, Some(TokenKind::KwFunction | TokenKind::KwSubroutine | TokenKind::KwLogical | TokenKind::KwInteger | TokenKind::KwReal | TokenKind::KwDouble | TokenKind::KwCharacter)) {
+                if same_line && matches!(following, Some(TokenKind::KwFunction | TokenKind::KwSubroutine | TokenKind::KwLogical | TokenKind::KwInteger | TokenKind::KwReal | TokenKind::KwComplex | TokenKind::KwDouble | TokenKind::KwCharacter)) {
                     tokens[start].kind = match name.to_ascii_lowercase().as_str() { "elemental" => TokenKind::KwElemental, "recursive" => TokenKind::KwRecursive, "impure" => TokenKind::KwImpure, _ => TokenKind::KwPure };
                 }
             }
@@ -918,6 +921,26 @@ pub fn lex(input: &str) -> Vec<Token> {
             _ => {}
         }
         normalized.push(token);
+    }
+    // A complex literal has its own opening token. This distinguishes its
+    // comma from implied-DO controls without making the expression grammar
+    // ambiguous. Function argument and declaration lists keep ordinary '(' .
+    for i in 0..normalized.len() {
+        if !matches!(normalized[i].kind,TokenKind::LParen){continue;}
+        if i>0 && same_statement(&input[normalized[i-1].span.end..normalized[i].span.start])
+            && matches!(normalized[i-1].kind,TokenKind::Ident(_)|TokenKind::RParen|TokenKind::RBracket|TokenKind::KwReal|TokenKind::KwComplex|TokenKind::KwInteger|TokenKind::KwCharacter|TokenKind::KwLogical|TokenKind::KwDimension|TokenKind::KwKind|TokenKind::KwLen|TokenKind::KwIf|TokenKind::KwWhile|TokenKind::KwRead|TokenKind::KwReadEmpty|TokenKind::KwWrite|TokenKind::KwWriteEmpty|TokenKind::KwOperator){continue;}
+        let mut end=i+1;
+        while end<normalized.len() && !matches!(normalized[end].kind,TokenKind::RParen|TokenKind::LParen|TokenKind::Eq|TokenKind::LBracket) {end+=1;}
+        if end>=normalized.len() || !matches!(normalized[end].kind,TokenKind::RParen){continue;}
+        let commas=(i+1..end).filter(|j|matches!(normalized[*j].kind,TokenKind::Comma)).collect::<Vec<_>>();
+        if let [comma]=commas.as_slice() {
+            let part=|tokens:&[Token]| match tokens {
+                [Token{kind:TokenKind::Integer(_)|TokenKind::Float(_)|TokenKind::Ident(_),..}]=>true,
+                [Token{kind:TokenKind::Plus|TokenKind::Minus,..},Token{kind:TokenKind::Integer(_)|TokenKind::Float(_),..}]=>true,
+                _=>false,
+            };
+            if part(&normalized[i+1..*comma])&&part(&normalized[*comma+1..end]){normalized[i].kind=TokenKind::ComplexOpen;}
+        }
     }
     normalized
 }

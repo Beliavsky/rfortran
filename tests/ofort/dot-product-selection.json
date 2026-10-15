@@ -1,0 +1,7 @@
+{
+  "description": "Real DOT_PRODUCT compared with SUM, plus complex conjugation and mixed kinds.",
+  "cases": [
+    "xfast_dot_product.f90",
+    "xnumeric_complex_semantics_pending.f90"
+  ]
+}

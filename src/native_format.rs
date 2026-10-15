@@ -230,7 +230,7 @@ unsafe fn render_format(
     let mut parser = checked(GroupParser::new(bytes,count));
     let mut index = 0;
     while let Some(d) = checked(parser.next()) {
-        if matches!(d.code, b'a' | b'i' | b'f' | b'l') {
+        if matches!(d.code, b'a' | b'i' | b'f' | b'g' | b'l') {
             for _ in 0..d.repeat {
                 let Some(item) = items.get(index) else {
                     break;
@@ -249,7 +249,7 @@ unsafe fn render_format(
     index = 0;
     'descriptors: while let Some(d) = checked(parser.next()) {
         for _ in 0..d.repeat {
-            if matches!(d.code,b'a'|b'i'|b'f'|b'l') && index==count {break 'descriptors;}
+            if matches!(d.code,b'a'|b'i'|b'f'|b'g'|b'l') && index==count {break 'descriptors;}
             match d.code {
                 b'\'' | b'"' => {
                     let mut i = 0;
@@ -292,6 +292,7 @@ unsafe fn render_format(
                                 d.precision as i32,
                                 item.bits as i64,
                             ),
+                            b'g' => sprintf(buffer.as_mut_ptr(), b"%.*g\0".as_ptr(), d.precision as i32, f64::from_bits(item.bits)),
                             b'f' => sprintf(
                                 buffer.as_mut_ptr(),
                                 b"%.*f\0".as_ptr(),

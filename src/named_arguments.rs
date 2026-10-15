@@ -116,6 +116,8 @@ pub(crate) fn intrinsic(name: &str) -> Option<Signature> {
         "sqrt" | "exp" | "log" | "log10" | "sin" | "cos" | "tan" | "asin" | "acos" | "atan"
         | "sinh" | "cosh" | "tanh" => &["x"],
         "abs" | "dble" => &["a"],
+        "cmplx"=> &["x","y","kind"],
+        "aimag"|"conjg"=> &["z"],
         "kind" => &["x"],
         "mod" | "modulo" => &["a", "p"],
         "new_line" => &["a"],
@@ -150,7 +152,7 @@ pub(crate) fn intrinsic(name: &str) -> Option<Signature> {
     };
     Some(Signature {
         params: keys.iter().map(|s| (*s).into()).collect(),
-        optional: if matches!(name,"index"|"scan"|"verify") {
+        optional: if name=="cmplx" {HashSet::from(["y".into(),"kind".into()])}else if matches!(name,"index"|"scan"|"verify") {
             HashSet::from(["back".into(),"kind".into()])
         } else if name=="date_and_time" {
             HashSet::from(["date".into(),"time".into(),"zone".into(),"values".into()])

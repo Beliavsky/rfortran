@@ -655,7 +655,7 @@ pub fn interpret(program: &Program) {
                 }
             }
 
-            "dot_product" | "matmul" => {
+            "matmul" => {
                 if args.len() >= 2 {
                     Some(ValueTuple::from_real(
                         to_real(args.get(0)?)? * to_real(args.get(1)?)?,
@@ -837,7 +837,7 @@ pub fn interpret(program: &Program) {
                             continue;
                         }
                         match kind {
-                            TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed | TypeSpec::RealKind(_) | TypeSpec::IntegerKind(_) => unreachable!("unresolved numeric kind"),
+                            TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed | TypeSpec::RealKind(_) | TypeSpec::IntegerKind(_) | TypeSpec::Complex(_) => unreachable!("unresolved numeric kind"),
                             TypeSpec::Integer(_) => {
                                 frame.env_int.entry(n.clone()).or_insert(0);
                             }
@@ -864,7 +864,7 @@ pub fn interpret(program: &Program) {
                             if let Ok(v128) = i128::from_str_radix(s.as_str(), 10) {
                                 let len = usize::try_from(v128).unwrap_or(0);
                                 match kind {
-                            TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed | TypeSpec::RealKind(_) | TypeSpec::IntegerKind(_) => unreachable!("unresolved numeric kind"),
+                            TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed | TypeSpec::RealKind(_) | TypeSpec::IntegerKind(_) | TypeSpec::Complex(_) => unreachable!("unresolved numeric kind"),
                                     TypeSpec::Integer(_) | TypeSpec::Logical => {
                                         fr.env_int_arrays.insert(name.clone(), vec![0; len]);
                                         if matches!(kind, TypeSpec::Logical) { fr.logical_arrays.insert(name.clone()); }
@@ -1400,7 +1400,7 @@ pub fn interpret(program: &Program) {
                         for field in &fields {
                             if let Some(text)=&field.literal {output.push_str(text);continue;}
                             let v=items.next().unwrap();
-                            let text=match field.code {'a'=>v.3.unwrap(), 'i'=>{let i=v.0.unwrap();if i==0 && field.precision==0 {String::new()}else{format!("{}{:0width$}",if i<0 {"-"} else {""},i.unsigned_abs(),width=field.precision)}}, 'l'=>if v.2.unwrap_or(v.0==Some(1)) {"T".into()}else{"F".into()},_=>format!("{:.*}",field.precision,v.1.unwrap_or(v.0.unwrap_or(0) as f64))};
+                            let text=match field.code {'g'=>format!("{:.*e}",field.precision.saturating_sub(1),v.1.unwrap()),'a'=>v.3.unwrap(), 'i'=>{let i=v.0.unwrap();if i==0 && field.precision==0 {String::new()}else{format!("{}{:0width$}",if i<0 {"-"} else {""},i.unsigned_abs(),width=field.precision)}}, 'l'=>if v.2.unwrap_or(v.0==Some(1)) {"T".into()}else{"F".into()},_=>format!("{:.*}",field.precision,v.1.unwrap_or(v.0.unwrap_or(0) as f64))};
                             if field.width==0 {if field.code=='i' && text.is_empty() {output.push(' ');}else{output.push_str(&text);}}
                             else if text.len()>field.width {if field.code=='a' {output.extend(text.chars().take(field.width));}else{output.push_str(&"*".repeat(field.width));}}
                             else {output.push_str(&format!("{:>width$}",text,width=field.width));}

@@ -67,6 +67,8 @@ extern {
     KW_WHILE => TokenKind::KwWhile,
         KW_INTEGER => TokenKind::KwInteger,
         KW_REAL => TokenKind::KwReal,
+        KW_COMPLEX => TokenKind::KwComplex,
+        COMPLEX_OPEN => TokenKind::ComplexOpen,
         KW_DIMENSION => TokenKind::KwDimension,
         KW_DOUBLE => TokenKind::KwDouble,
         KW_PRECISION => TokenKind::KwPrecision,
@@ -477,6 +479,11 @@ IoControl: Expr = {
 };
 
 TypeSpec: TypeSpec = {
+    KW_COMPLEX => TypeSpec::Complex("4".into()),
+    KW_COMPLEX LPAREN KW_KIND EQ <kind:Ident> RPAREN => TypeSpec::Complex(kind),
+    KW_COMPLEX LPAREN KW_KIND EQ <kind:INT> RPAREN => TypeSpec::Complex(kind),
+    KW_COMPLEX LPAREN <kind:Ident> RPAREN => TypeSpec::Complex(kind),
+    KW_COMPLEX LPAREN <kind:INT> RPAREN => TypeSpec::Complex(kind),
     KW_REAL LPAREN KW_KIND EQ <kind: Ident> RPAREN => TypeSpec::RealKind(kind),
     KW_REAL LPAREN KW_KIND EQ <kind: INT> RPAREN => TypeSpec::RealKind(kind),
     KW_REAL LPAREN <kind: Ident> RPAREN => TypeSpec::RealKind(kind),
@@ -502,6 +509,11 @@ TypeSpec: TypeSpec = {
 };
 
 ConstructorType: TypeSpec = {
+    KW_COMPLEX => TypeSpec::Complex("4".into()),
+    KW_COMPLEX LPAREN KW_KIND EQ <kind:Ident> RPAREN => TypeSpec::Complex(kind),
+    KW_COMPLEX LPAREN KW_KIND EQ <kind:INT> RPAREN => TypeSpec::Complex(kind),
+    KW_COMPLEX LPAREN <kind:Ident> RPAREN => TypeSpec::Complex(kind),
+    KW_COMPLEX LPAREN <kind:INT> RPAREN => TypeSpec::Complex(kind),
     KW_REAL => TypeSpec::Real,
     KW_REAL LPAREN <args:CallArgList> RPAREN =>? crate::empty_constructors::real_kind(args)
         .map_err(|error|lalrpop_util::ParseError::User {error}),
@@ -525,6 +537,7 @@ ConstructorType: TypeSpec = {
 
 // Separate type spec rule for implicit statements to avoid conflicts
 ImplicitTypeSpec: TypeSpec = {
+    KW_COMPLEX => TypeSpec::Complex("4".into()),
     KW_INTEGER => TypeSpec::Integer(None),
     KW_REAL => TypeSpec::Real,
     KW_DOUBLE KW_PRECISION => TypeSpec::DoublePrecision,
@@ -629,7 +642,8 @@ Primary: Expr = {
         Expr::Call("@array_substring".into(),vec![crate::ast::section_or_call(id,args),range]),
     KW_REAL LPAREN <args: CallArgList> RPAREN => Expr::Call("real".to_string(), args),
     <id: Designator> => Expr::Ident(id),
-    LPAREN <e: RhsExpr> RPAREN => e,
+    COMPLEX_OPEN <re:RhsExpr> COMMA <im:RhsExpr> RPAREN => Expr::Call("@complex_literal".into(),vec![re,im]),
+    LPAREN <e:RhsExpr> RPAREN => e,
     LPAREN <items:ExprList> COMMA <var:Ident> EQ <start:RhsExpr> COMMA <end:RhsExpr> <step:ImpliedDoStep?> RPAREN => {
         let mut args=vec![Expr::Ident(var),start,end,step.unwrap_or(Expr::IntLit("1".into()))];
         args.extend(items);Expr::Call("@output_implied_do".into(),args)

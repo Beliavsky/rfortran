@@ -119,6 +119,8 @@ pub enum TypeSpec {
     Real,
     RealKind(String),
     DoublePrecision,
+    /// The kind denotes the REAL component kind, not the total byte size.
+    Complex(String),
     Character(Option<usize>),
     CharacterLength(Box<Expr>),
     CharacterAssumed,

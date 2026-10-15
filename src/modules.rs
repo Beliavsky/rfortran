@@ -149,7 +149,7 @@ fn expression(expr: &mut Expr, names: &Names) {
 }
 fn kind(kind: &mut TypeSpec, names: &Names) {
     match kind {
-        TypeSpec::IntegerKind(n) | TypeSpec::RealKind(n) => rename(n, names),
+        TypeSpec::IntegerKind(n) | TypeSpec::RealKind(n) | TypeSpec::Complex(n) => rename(n, names),
         TypeSpec::CharacterLength(e) => expression(e, names),
         _ => {}
     }

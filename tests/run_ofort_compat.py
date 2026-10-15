@@ -34,7 +34,12 @@ def run(command, cwd, timeout):
 def equivalent(actual, expected):
     # Compare output values, not format layout. Ignore whitespace differences,
     # allow real roundoff, but compare integers exactly (including large kinds).
-    left, right = actual.split(), expected.split()
+    # A list-directed complex value may contain spaces around either component.
+    number = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eEdD][+-]?\d+)?"
+    pair = re.compile(r"\(\s*(" + number + r")\s*,\s*(" + number + r")\s*\)")
+    def tokens(text):
+        return pair.sub(lambda m: " ( " + m[1] + " , " + m[2] + " ) ", text).split()
+    left, right = tokens(actual), tokens(expected)
     if len(left) != len(right):
         return False
     logical = {"T": True, ".TRUE.": True, "F": False, ".FALSE.": False}

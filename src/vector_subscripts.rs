@@ -156,7 +156,7 @@ enum SelectedAxis {
     Vector(String),
     Triplet(i64, i64),
 }
-fn merge(a: TypeSpec, b: TypeSpec) -> TypeSpec {
+pub(crate) fn merge(a: TypeSpec, b: TypeSpec) -> TypeSpec {
     if a == TypeSpec::DoublePrecision || b == TypeSpec::DoublePrecision {
         TypeSpec::DoublePrecision
     } else if a == TypeSpec::Real || b == TypeSpec::Real {

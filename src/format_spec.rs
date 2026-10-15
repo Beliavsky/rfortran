@@ -98,7 +98,7 @@ impl<'a> Parser<'a> {
             };
             d.code = code.to_ascii_lowercase();
             self.pos += 1;
-            if !matches!(d.code, b'a' | b'i' | b'f' | b'l' | b'x' | b'/' | b':') {
+            if !matches!(d.code, b'a' | b'i' | b'f' | b'g' | b'l' | b'x' | b'/' | b':') {
                 return Err("unsupported output descriptor");
             }
             if !matches!(d.code, b'x' | b'/' | b':') {
@@ -107,9 +107,9 @@ impl<'a> Parser<'a> {
                     return Err("output descriptor requires a width");
                 }
                 d.width = width.unwrap_or(0);
-                d.precision = if d.code == b'i' { 1 } else { 0 };
+                d.precision = if d.code == b'i' { 1 } else if d.code==b'g' {17} else { 0 };
                 if self.bytes.get(self.pos) == Some(&b'.') {
-                    if !matches!(d.code, b'i' | b'f') {
+                    if !matches!(d.code, b'i' | b'f' | b'g') {
                         return Err("invalid output descriptor precision");
                     }
                     self.pos += 1;
@@ -119,6 +119,7 @@ impl<'a> Parser<'a> {
                 } else if d.code == b'f' {
                     return Err("F descriptor requires width and precision");
                 }
+                if d.code==b'g' && (d.width!=0 || d.precision==0) {return Err("only REAL G0 and G0.d output are currently supported");}
             }
         }
         if d.repeat == 0 || d.repeat > 10000 || d.width > 256 || d.precision > 256 {
@@ -135,7 +136,7 @@ impl<'a> Parser<'a> {
 }
 
 pub fn matches_type(code: u8, tag: u64) -> bool {
-    matches!((code, tag), (b'i', 1) | (b'f', 2) | (b'l', 3) | (b'a', 4))
+    matches!((code, tag), (b'i', 1) | (b'f', 2) | (b'g', 2) | (b'l', 3) | (b'a', 4))
 }
 
 #[derive(Clone, Copy)]
@@ -247,7 +248,7 @@ fn validate_groups(mut parser: Parser<'_>, depth: usize) -> Result<bool, &'stati
             }
             data |= inner;
         } else if let Some(d) = parser.next()? {
-            data |= matches!(d.code, b'a' | b'i' | b'f' | b'l');
+            data |= matches!(d.code, b'a' | b'i' | b'f' | b'g' | b'l');
         }
     }
 }
@@ -323,7 +324,7 @@ impl<'a> GroupParser<'a> {
                     if self.consumed>=self.count {self.depth=0;return Ok(None);}
                     continue;
                 }
-                if matches!(d.code, b'a' | b'i' | b'f' | b'l') {
+                if matches!(d.code, b'a' | b'i' | b'f' | b'g' | b'l') {
                     if self.frames[..self.depth].iter().any(|f| f.unlimited) {
                         if self.consumed >= self.count {
                             self.depth = 0;

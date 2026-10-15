@@ -965,7 +965,7 @@ fn eval_expr(
                     let r = b.ins().bnot(a);
                     CgVal::I64(r)
                 }
-                "dot_product" | "matmul" => {
+                "matmul" => {
                     let a_v = eval_expr(b, ex, ptr_ty, &args[0], ints, reals, bools, func_meta);
                     let b_v = eval_expr(b, ex, ptr_ty, &args[1], ints, reals, bools, func_meta);
                     let a = to_f64(b, a_v);
@@ -1847,7 +1847,7 @@ fn gen_stmts(
                     continue;
                 }
                 match kind {
-                    crate::ast::TypeSpec::CharacterLength(_) | crate::ast::TypeSpec::CharacterAssumed | crate::ast::TypeSpec::RealKind(_) | crate::ast::TypeSpec::IntegerKind(_) => unreachable!("unresolved numeric kind"),
+                    crate::ast::TypeSpec::CharacterLength(_) | crate::ast::TypeSpec::CharacterAssumed | crate::ast::TypeSpec::RealKind(_) | crate::ast::TypeSpec::IntegerKind(_) | crate::ast::TypeSpec::Complex(_) => unreachable!("unresolved numeric kind"),
                     crate::ast::TypeSpec::Integer(Some(16)) => {
                         i128_vars.insert(name.clone());
                         i128_last.insert(name.clone(), "0".into());
@@ -3388,7 +3388,7 @@ impl Backend for CraneliftBackend {
                 | "cos" | "tan" | "asin" | "acos" | "atan" | "atan2" | "sinh" | "cosh" | "tanh"
                 | "scale" | "set_exponent" | "nearest" | "fraction" | "exponent" | "spacing"
                 | "rrspacing" | "precision" | "radix" | "range" | "tiny" | "epsilon" | "huge"
-                | "max" | "min" | "sum" | "dot_product" | "matmul" | "maxval" | "minval"
+                | "max" | "min" | "sum" | "matmul" | "maxval" | "minval"
                 | "product" => {
                     eff_ret.insert(name.clone(), crate::ast::TypeSpec::Real);
                     let ar = *import_arity.get(&name).unwrap_or(&1usize);
@@ -3458,7 +3458,7 @@ impl Backend for CraneliftBackend {
                 }
             }
             match sig_rt {
-                    crate::ast::TypeSpec::CharacterLength(_) | crate::ast::TypeSpec::CharacterAssumed | crate::ast::TypeSpec::RealKind(_) | crate::ast::TypeSpec::IntegerKind(_) => unreachable!("unresolved numeric kind"),
+                    crate::ast::TypeSpec::CharacterLength(_) | crate::ast::TypeSpec::CharacterAssumed | crate::ast::TypeSpec::RealKind(_) | crate::ast::TypeSpec::IntegerKind(_) | crate::ast::TypeSpec::Complex(_) => unreachable!("unresolved numeric kind"),
                 crate::ast::TypeSpec::Integer(_) | crate::ast::TypeSpec::Logical => ctx
                     .func
                     .signature
@@ -3540,7 +3540,7 @@ impl Backend for CraneliftBackend {
             ret_kinds.insert(
                 name.clone(),
                 match rt {
-                    crate::ast::TypeSpec::CharacterLength(_) | crate::ast::TypeSpec::CharacterAssumed | crate::ast::TypeSpec::RealKind(_) | crate::ast::TypeSpec::IntegerKind(_) => unreachable!("unresolved numeric kind"),
+                    crate::ast::TypeSpec::CharacterLength(_) | crate::ast::TypeSpec::CharacterAssumed | crate::ast::TypeSpec::RealKind(_) | crate::ast::TypeSpec::IntegerKind(_) | crate::ast::TypeSpec::Complex(_) => unreachable!("unresolved numeric kind"),
                     crate::ast::TypeSpec::Logical => RetKind::Bool,
                     crate::ast::TypeSpec::Integer(_) => {
                         RetKind::I64
@@ -3567,7 +3567,7 @@ impl Backend for CraneliftBackend {
                 }
             }
             match rt {
-                    crate::ast::TypeSpec::CharacterLength(_) | crate::ast::TypeSpec::CharacterAssumed | crate::ast::TypeSpec::RealKind(_) | crate::ast::TypeSpec::IntegerKind(_) => unreachable!("unresolved numeric kind"),
+                    crate::ast::TypeSpec::CharacterLength(_) | crate::ast::TypeSpec::CharacterAssumed | crate::ast::TypeSpec::RealKind(_) | crate::ast::TypeSpec::IntegerKind(_) | crate::ast::TypeSpec::Complex(_) => unreachable!("unresolved numeric kind"),
                 TypeSpec::Integer(_) | TypeSpec::Logical => {
                     ctx_f.func.signature.returns.push(AbiParam::new(types::I64))
                 }
@@ -3654,7 +3654,7 @@ impl Backend for CraneliftBackend {
                     F64(ir::StackSlot),
                 }
                 let ret_slot: Option<RetSlot> = match rt {
-                    crate::ast::TypeSpec::CharacterLength(_) | crate::ast::TypeSpec::CharacterAssumed | crate::ast::TypeSpec::RealKind(_) | crate::ast::TypeSpec::IntegerKind(_) => unreachable!("unresolved numeric kind"),
+                    crate::ast::TypeSpec::CharacterLength(_) | crate::ast::TypeSpec::CharacterAssumed | crate::ast::TypeSpec::RealKind(_) | crate::ast::TypeSpec::IntegerKind(_) | crate::ast::TypeSpec::Complex(_) => unreachable!("unresolved numeric kind"),
                     TypeSpec::Integer(_) | TypeSpec::Logical => {
                         let ss = b.create_sized_stack_slot(ir::StackSlotData::new(
                             ir::StackSlotKind::ExplicitSlot,

@@ -121,6 +121,11 @@ fn resolve_kind(kind: &mut TypeSpec, constants: &Constants) -> Result<()> {
         if !matches!(value, 1 | 2 | 4 | 8 | 16) { bail!("unsupported INTEGER kind {value}; supported kinds are 1, 2, 4, 8 and 16"); }
         if *value == 4 { *kind = TypeSpec::Integer(None); }
     }
+    if let TypeSpec::Complex(name) = kind {
+        let number=kind_number(name,constants)?;
+        if !matches!(number,4|8) {bail!("unsupported COMPLEX kind {number}; supported component kinds are 4 and 8");}
+        *name=number.to_string();
+    }
     if let TypeSpec::RealKind(name) = kind {
         *kind = match kind_number(name, constants)? {
             4 => TypeSpec::Real, 8 => TypeSpec::DoublePrecision,
@@ -172,6 +177,7 @@ fn record_model_type(constants: &mut Constants, name: &str, kind: &TypeSpec, ran
         TypeSpec::Integer(bytes) => -i64::from(bytes.unwrap_or(4)),
         TypeSpec::Real => 4,
         TypeSpec::DoublePrecision => 8,
+        TypeSpec::Complex(k) => 100+k.parse::<i64>().unwrap_or(4),
         _ => 0,
     };
     constants.insert(model_type_key(name),Expr::Call("@model_type".into(),vec![Expr::IntLit(code.to_string()),Expr::IntLit(rank.to_string())]));
@@ -183,6 +189,8 @@ fn model_type_lookup(constants: &Constants, name: &str) -> Option<(TypeSpec,usiz
         n if n < 0 => TypeSpec::Integer(Some((-n) as u8)),
         4 => TypeSpec::Real,
         8 => TypeSpec::DoublePrecision,
+        104 => TypeSpec::Complex("4".into()),
+        108 => TypeSpec::Complex("8".into()),
         _ => TypeSpec::Logical,
     },rank.parse().ok()?))
 }
@@ -472,6 +480,7 @@ pub(crate) fn initial_value(kind: &TypeSpec, value: &Expr) -> Result<Expr> {
         }
     }
     match kind {
+        TypeSpec::Complex(k) => crate::complex::constant(value,k),
         TypeSpec::Integer(bytes) => typed_integer(integer_constant(value)
             .context("INTEGER declaration initializer must be a supported integer constant expression")?,bytes.unwrap_or(4)),
         TypeSpec::Real | TypeSpec::DoublePrecision => {
@@ -548,7 +557,7 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
         };
         if let Some(kind) = kind {
             let mut kind=kind.clone();
-            if matches!(kind,TypeSpec::IntegerKind(_) | TypeSpec::RealKind(_)) { resolve_kind(&mut kind,&constants)?; }
+            if matches!(kind,TypeSpec::IntegerKind(_) | TypeSpec::RealKind(_) | TypeSpec::Complex(_)) { resolve_kind(&mut kind,&constants)?; }
             for name in names { record_model_type(&mut constants,&name,&kind,rank); }
         }
         if let Stmt::InitializedDecl {
@@ -595,8 +604,8 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
                 return Ok(());
             }
             if !matches!(kind, TypeSpec::CharacterAssumed) { resolve_kind(kind, &constants)?; }
-            if !matches!(kind, TypeSpec::Integer(None | Some(1 | 2 | 4 | 8)) | TypeSpec::Real | TypeSpec::DoublePrecision | TypeSpec::Logical | TypeSpec::Character(_) | TypeSpec::CharacterAssumed) {
-                bail!("PARAMETER declarations require a supported INTEGER, REAL, LOGICAL, or CHARACTER type");
+            if !matches!(kind, TypeSpec::Integer(None | Some(1 | 2 | 4 | 8)) | TypeSpec::Real | TypeSpec::DoublePrecision | TypeSpec::Complex(_) | TypeSpec::Logical | TypeSpec::Character(_) | TypeSpec::CharacterAssumed) {
+                bail!("PARAMETER declarations require a supported INTEGER, REAL, COMPLEX, LOGICAL, or CHARACTER type");
             }
             if attributes
                 .iter()

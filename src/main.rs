@@ -55,6 +55,7 @@ mod format_spec;
 mod record_input;
 mod character_input;
 mod derived;
+mod complex;
 mod derived_arrays;
 mod operators;
 mod imports;
