@@ -791,6 +791,23 @@ impl Resolver {
             }
         })
     }
+    // Transfer lists may mix types; constructor element lists may not.
+    fn io_item(&self, e:&mut Expr, vars:&Vars, visible:&Bindings)->Result<()> {
+        if let Expr::Call(n,a)=e {
+            if n=="@output_implied_do" {
+                if a.len()<5 {bail!("invalid I/O implied-DO");}
+                for control in &mut a[..4] {
+                    if !matches!(self.expression(control,vars,visible)?,Ty::Scalar(TypeSpec::Integer(_))) {
+                        bail!("I/O implied-DO controls must be scalar INTEGER expressions");
+                    }
+                }
+                for item in &mut a[4..] {self.io_item(item,vars,visible)?;}
+                return Ok(());
+            }
+        }
+        self.expression(e,vars,visible)?;
+        Ok(())
+    }
     fn body(&self, body: &mut Vec<Stmt>, vars: &Vars, visible: &Bindings) -> Result<()> {
         let vars = declarations(body, vars);
         let visible = self.visible(body, visible)?;
@@ -805,6 +822,9 @@ impl Resolver {
                     }
                     self.expression(value, &vars, &visible)?;
                 }
+                Stmt::CallSub { name, args } if matches!(name.as_str(),"@formatted_print"|"@formatted_write_noadvance"|"@write") => {
+                    for item in args {self.io_item(item,&vars,&visible)?;}
+                }
                 Stmt::CallSub { name, args } => {
                     let types = args
                         .iter_mut()
@@ -816,7 +836,7 @@ impl Resolver {
                 }
                 Stmt::Print { items } | Stmt::Read { args: items } => {
                     for e in items {
-                        self.expression(e, &vars, &visible)?;
+                        self.io_item(e, &vars, &visible)?;
                     }
                 }
                 Stmt::InitializedDecl { entities, .. } => {

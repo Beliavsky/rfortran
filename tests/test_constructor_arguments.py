@@ -91,36 +91,43 @@ end
 """,expected)
 
     def test_unknown_or_invalidated_capacity(self):
-        for statements in ['read(*,*)n', 'n=3\nread(*,*)n', 'n=3\ncall change(n)',
-                           'n=3\nif(n>0) n=5']:
+        for statements,n in [('read(*,*)n',4), ('n=3\nread(*,*)n',4),
+                             ('n=3\ncall change(n)',5), ('n=3\nif(n>0) n=5',5)]:
             with self.subTest(statements=statements):
-                self.reject(MODULE+"""use set_alloc_mod
+                self.check(MODULE+"""use set_alloc_mod
 integer::i,n
 integer,allocatable::v(:)
 """+statements+"""
 call set_alloc([(i,i=1,n)],v)
+print *,v
 contains
 subroutine change(x)
-integer::x
+integer,intent(out)::x
 x=5
 end subroutine
 end
-""",'runtime-bound array constructor arguments are not yet supported')
+""", ' '.join(str(i) for i in range(1,n+1))+'\n', data='4\n')
 
-    def test_user_procedure_named_like_intrinsic_invalidates_bound(self):
-        self.reject(MODULE+"""use set_alloc_mod
+    def test_user_procedure_items_are_evaluated_once(self):
+        self.check(MODULE+"""module counter_mod
+integer::calls=0
+contains
+integer function make_value(x) result(y)
+integer,intent(in)::x
+calls=calls+1
+y=x
+end function
+end module
+program main
+use set_alloc_mod
+use counter_mod
 integer::i,n
 integer,allocatable::v(:)
 n=3
-call set_alloc([(dble(i),i=1,n)],v)
-contains
-integer function dble(x) result(y)
-integer,intent(in)::x
-n=5
-y=x
-end function
+call set_alloc([(make_value(i),i=1,n)],v)
+print *,v,calls
 end
-""",'runtime-bound array constructor arguments are not yet supported')
+""",'1 2 3 3\n')
 
 
 if __name__=='__main__':

@@ -1604,6 +1604,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
     let (prepared,mut function_lower)=crate::character_elementals::prepare(p)?;
     p=prepared;
     p=crate::output::prepare_formatted(p)?;
+    p=crate::constructor_expressions::resolve(p)?;
     p = crate::pointers::prepare(p)?;
     p = crate::constructors::prepare_arguments(p)?;
     p = crate::allocatables::prepare(p)?;

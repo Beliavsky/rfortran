@@ -1315,6 +1315,13 @@
       "program_stdout": " 1 2 3\n",
       "program_stderr": "",
       "program_exit_code": 0
+    },
+    "189_constructor_expressions": {
+      "compiler_stderr": "",
+      "compiler_exit_code": 0,
+      "program_stdout": " 100 137 174\n",
+      "program_stderr": "",
+      "program_exit_code": 0
     }
   }
 }

@@ -9,6 +9,7 @@ available under the [MIT license](LICENSE-MIT). Each carries an
 `SPDX-License-Identifier: MIT` header and a copyright notice for Beliavsky,
 the author recorded in this repository's Git history.
 
+- `src/constructor_expressions.rs`
 - `src/array_calls.rs`
 - `src/allocatables.rs`
 - `src/function_arrays.rs`

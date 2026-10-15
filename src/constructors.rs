@@ -173,7 +173,7 @@ pub(crate) fn prepare_arguments(mut p: Program) -> Result<Program> {
     procedures(&p.body,&mut inherited);
     scope(&mut p.body,&inherited,&mut 0)?;Ok(p)
 }
-fn rename(e: &mut Expr, names: &HashMap<String, String>) {
+pub(crate) fn rename(e: &mut Expr, names: &HashMap<String, String>) {
     match e {
         Expr::Ident(n) => {
             if let Some(value) = names.get(n) {

@@ -115,6 +115,7 @@ fn fragment(e: Expr) -> Stmt {
 
 pub fn contains_implied_do(e: &Expr) -> bool {
     match e {
+        Expr::Call(n, _) if n == "@array_constructor" => false,
         Expr::Call(n, _) if n == "@output_implied_do" => true,
         Expr::Call(_, args) | Expr::Index(_, args) => args.iter().any(contains_implied_do),
         Expr::Bin(_, a, b) => contains_implied_do(a) || contains_implied_do(b),

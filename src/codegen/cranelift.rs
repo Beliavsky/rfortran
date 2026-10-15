@@ -2590,13 +2590,14 @@ fn gen_stmts(
                     if let Some(slot)=ints.get_mut(local){*slot=storage;}else if let Some(slot)=reals.get_mut(local){*slot=storage;}else if let Some(slot)=bools.get_mut(local){*slot=storage;}else{bail!("unknown heap array `{local}`");}
                     arrays.insert(local.clone(),1);continue;
                 }
-                if name=="@heap_allocate" || name=="@heap_free" || name=="@heap_drop" {
+                if name=="@heap_allocate" || name=="@heap_resize" || name=="@heap_free" || name=="@heap_drop" {
+                    let resize=name=="@heap_resize";
                     let storage=|n:&str|ints.get(n).or_else(||reals.get(n)).or_else(||bools.get(n)).copied();
                     let IExpr::Ident(local)=&args[0] else{bail!("invalid heap allocation")};
                     let cell=heap_cell(b,ptr_ty,storage(local).context("missing array storage")?)?;
-                    let IExpr::Ident(mask)=&args[if name=="@heap_allocate"{2}else{1}] else{bail!("missing allocation initialization mask")};
+                    let IExpr::Ident(mask)=&args[if name=="@heap_allocate" || resize{2}else{1}] else{bail!("missing allocation initialization mask")};
                     let mask_cell=heap_cell(b,ptr_ty,storage(mask).context("missing initialization storage")?)?;
-                    if name!="@heap_allocate" {
+                    if name!="@heap_allocate" && !resize {
                         let mut signature=module.make_signature();signature.params.push(ir::AbiParam::new(ptr_ty));
                         let id=module.declare_function("free",Linkage::Import,&signature)?;let f=module.declare_func_in_func(id,b.func);
                         for cell in [cell,mask_cell] {let pointer=b.ins().load(ptr_ty,MemFlags::new(),cell,0);b.ins().call(f,&[pointer]);let zero=b.ins().iconst(ptr_ty,0);b.ins().store(MemFlags::new(),zero,cell,0);}
@@ -2607,7 +2608,33 @@ fn gen_stmts(
                         for arg in &args[3..] {let value=eval_expr(b,ex,ptr_ty,arg,ints,reals,bools,func_meta);let extent=to_i64(b,value);let zero=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,extent,0);empty=b.ins().bor(empty,zero);extents.push(extent);}
                         for extent in extents {let zero=b.ins().iconst(types::I64,0);let extent=b.ins().select(empty,zero,extent);let (product,overflow)=b.ins().umul_overflow(count,extent);let okay=b.ins().bnot(overflow);file_io::require(module,b,ptr_ty,dc,okay,"allocation size overflow")?;count=product;}
                         let maximum=b.ins().iconst(types::I64,i64::MAX/8);let okay=b.ins().icmp(ir::condcodes::IntCC::UnsignedLessThanOrEqual,count,maximum);file_io::require(module,b,ptr_ty,dc,okay,"allocation size overflow")?;
-                        let IExpr::Ident(length)=&args[1] else{bail!("invalid allocation length")};let length_address=storage_addr(b,ptr_ty,ints[length]);b.ins().store(MemFlags::new(),count,length_address,0);
+                        let IExpr::Ident(length)=&args[1] else{bail!("invalid allocation length")};let length_address=storage_addr(b,ptr_ty,ints[length]);
+                        let old_count=if resize {b.ins().load(types::I64,MemFlags::new(),length_address,0)} else {b.ins().iconst(types::I64,0)};
+                        b.ins().store(MemFlags::new(),count,length_address,0);
+                        if resize {
+                            let okay=b.ins().icmp(ir::condcodes::IntCC::UnsignedGreaterThanOrEqual,count,old_count);
+                            file_io::require(module,b,ptr_ty,dc,okay,"constructor storage size overflow")?;
+                            let bytes=b.ins().imul_imm(count,8);
+                            let old_bytes=b.ins().imul_imm(old_count,8);
+                            let added=b.ins().isub(bytes,old_bytes);
+                            let (bytes,old_bytes,added)=if ptr_ty==types::I64 {(bytes,old_bytes,added)} else {
+                                let limit=b.ins().iconst(types::I64,u32::MAX as i64);
+                                let okay=b.ins().icmp(ir::condcodes::IntCC::UnsignedLessThanOrEqual,bytes,limit);
+                                file_io::require(module,b,ptr_ty,dc,okay,"allocation size overflow")?;
+                                (b.ins().ireduce(ptr_ty,bytes),b.ins().ireduce(ptr_ty,old_bytes),b.ins().ireduce(ptr_ty,added))
+                            };
+                            for cell in [cell,mask_cell] {
+                                let old=b.ins().load(ptr_ty,MemFlags::new(),cell,0);
+                                let data=file_io::call(module,b,"realloc",&[old,bytes],ptr_ty)?;
+                                let okay=b.ins().icmp_imm(ir::condcodes::IntCC::NotEqual,data,0);
+                                file_io::require(module,b,ptr_ty,dc,okay,"constructor storage allocation failed")?;
+                                b.ins().store(MemFlags::new(),data,cell,0);
+                                let tail=b.ins().iadd(data,old_bytes);
+                                let zero=b.ins().iconst(types::I32,0);
+                                file_io::call(module,b,"memset",&[tail,zero,added],ptr_ty)?;
+                            }
+                            continue;
+                        }
                         let one=b.ins().iconst(types::I64,1);let empty=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,count,0);let count=b.ins().select(empty,one,count);
                         let count=if ptr_ty==types::I64 {count}else{let limit=b.ins().iconst(types::I64,(u32::MAX/8) as i64);let okay=b.ins().icmp(ir::condcodes::IntCC::UnsignedLessThanOrEqual,count,limit);file_io::require(module,b,ptr_ty,dc,okay,"allocation size overflow")?;b.ins().ireduce(ptr_ty,count)};
                         let width=b.ins().iconst(ptr_ty,8);

@@ -150,7 +150,7 @@ impl Lower {
                     *intent = format!("@bounded:@character_heap_bytes${name}:{flag}");
                 }
                 Stmt::CallSub { name, args }
-                    if name == "@heap_allocate"
+                    if matches!(name.as_str(), "@heap_allocate" | "@heap_resize")
                         && matches!(args.first(),Some(Expr::Ident(n)) if arrays.contains_key(n)) =>
                 {
                     let Expr::Ident(n) = &args[0] else {

@@ -947,14 +947,22 @@ retains its declared INTEGER kind. The enclosing index variable is unchanged.
 A temporary captures every result before destination writes; too many elements
 or a final shape mismatch produce a runtime error.
 
-Runtime-bound constructors in other expression contexts, array-valued runtime
-items, runtime strides, and CHARACTER function calls inside delayed constructors
-remain unsupported. PARAMETER and declaration initializers still require
-constant expressions. CHARACTER scalar-element constructors can be passed to
+Runtime-bound constructors can also be ordinary expression values, including
+arithmetic, reductions, procedure arguments, and control expressions. Their
+storage grows at runtime, so these uses do not need a compile-time capacity.
+Nested loops, runtime strides, zero-trip ranges, and whole-array items in array
+element order are supported. Bounds and items are evaluated once at their
+respective evaluation sites; constructor indices retain local scope. Fixed-length
+CHARACTER scalar items also support runtime construction and assignment.
+The bounded numeric assignment path remains an optimization for existing cases.
+Some array-valued expressions and sections inside runtime constructors, and
+CHARACTER function results requiring later specialization, remain unsupported.
+PARAMETER and declaration initializers still require constant expressions. CHARACTER scalar-element constructors can be passed to
 read-only CHARACTER array dummies, including typed empty constructors. Constant
 formats can print fixed whole numeric/LOGICAL arrays in element order; runtime
 format strings with whole numeric/LOGICAL array lists remain unsupported.
-Run `python tests/test_runtime_constructors.py` for interpreter/native O0/O2
+Run `python tests/test_constructor_expressions.py` and
+`python tests/test_runtime_constructors.py` for interpreter/native O0/O2
 checks and gfortran comparisons; `tests/147_runtime_constructors.f90` reproduces
 `xconstructor_implied_do.f90` and the comparison expression in `util.f90`.
 
@@ -1795,13 +1803,13 @@ inference flattens scalar and array-valued elements to a rank-one type, checks
 type/kind consistency, and infers implied-DO items independently of their bounds.
 `tests/test_constructor_inference.py` covers numeric, LOGICAL and CHARACTER items,
 nested implied-DOs, typed empty constructors and mixed scalar/array elements.
-Read-only numeric/LOGICAL runtime-bound constructor actual arguments are now
-materialized when a finite capacity can be proven from preceding integer
-assignments or fixed array sizes. The constructor retains runtime controls and an
-active length, preserves implied-DO index scope, and uses checked temporary
-storage. Nested implied-DOs, constant positive/negative strides and empty results
-are supported; input-dependent or invalidated bounds still require further
-capacity analysis. `xset_alloc_implied_do.f90` now compiles and prints `1 2 3`;
+Read-only numeric/LOGICAL runtime-bound constructor actual arguments now use
+runtime storage, including bounds read from input or changed by previous calls.
+A compile-time capacity proof is no longer required. The constructor retains
+runtime controls and an active length, preserves implied-DO index scope, and
+uses checked temporary storage. Nested implied-DOs, runtime positive/negative
+strides and empty results are supported. `xset_alloc_implied_do.f90` now compiles
+and prints `1 2 3`;
 `tests/test_constructor_arguments.py` covers this path in the interpreter and
 native code at `-O0` and `-O2`. Generic dispatch now preserves array-section
 rank: scalar subscripts remove

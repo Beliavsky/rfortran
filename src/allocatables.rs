@@ -1039,8 +1039,8 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                     }
                     continue;
                 }
-                Stmt::CallSub {name,..} if name=="@module_bind" || name=="@heap_bind" || name=="@ptr_bind" => {out.push(s);continue;}
-                Stmt::CallSub{name,args} if name=="@heap_allocate"=>{
+                Stmt::CallSub {name,..} if matches!(name.as_str(), "@module_bind" | "@heap_bind" | "@ptr_bind" | "@heap_drop" | "@heap_free") => {out.push(s);continue;}
+                Stmt::CallSub{name,args} if name=="@heap_allocate" || name=="@heap_resize"=>{
                     for extent in args.iter_mut().skip(2){expression(extent,&shapes,&mut guards,checks,serial)?;}
                     out.extend(guards);out.push(s);continue;
                 }

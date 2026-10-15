@@ -64,7 +64,7 @@ end
         for expression in ['[1,2.0]', '[1,2_8]', '[.true.,1]', "['a',1]"]:
             with self.subTest(expression=expression):
                 self.reject(MODULE+'use kinds_mod\nprint *,identify('+expression+')\nend\n', 'same type and kind')
-        self.reject(MODULE+"use kinds_mod\nprint *,identify(['a','bb'])\nend\n", 'CHARACTER length')
+        self.reject(MODULE+"use kinds_mod\nprint *,identify(['a','bb'])\nend\n", 'equal lengths')
 
     def test_runtime_constructor_reaches_array_argument_lowering(self):
         self.check((ROOT/'xset_alloc_implied_do.f90').read_text(encoding='utf-8'), '1 2 3\n')

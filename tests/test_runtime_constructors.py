@@ -107,14 +107,15 @@ end program main
             with self.subTest(count=count):
                 self.check(program,error='constructor shape does not conform',data=f'{count}\n')
 
-    def test_rejects_runtime_array_valued_items(self):
-        self.reject("""program main
+    def test_runtime_array_valued_items(self):
+        self.check("""program main
 integer::i,n,a(2),b(2)
 b=[1,2]
 read(*,*)n
 a=[(b,i=1,n)]
+print *,a
 end program main
-""",'runtime constructor items must currently be scalar')
+""",'1 2\n',data='1\n')
 
     def test_invalid_constant_contexts_and_stride(self):
         self.reject("""program main
@@ -122,7 +123,7 @@ integer::i,n
 integer,parameter::a(3)=[(i,i=1,n)]
 end program main
 """,'PARAMETER initializer')
-        for step,message in [('0','stride must not be zero'),('n','stride must currently be a constant INTEGER')]:
+        for step,message in [('0','stride must not be zero')]:
             with self.subTest(step=step):
                 self.reject(f"program main\ninteger::i,n,a(3)\nread(*,*)n\na=[(i,i=1,n,{step})]\nend program main\n",message)
 

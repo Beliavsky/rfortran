@@ -167,7 +167,7 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                 for value in &args[2..]{read(value,env,&mut before,serial)?;}
                 for target in &args[..2]{let Expr::Ident(n)=target else{unreachable!()};write(n,None,env,&mut after,serial);}
             }
-            Stmt::CallSub {name,args} if name=="@heap_allocate" => {
+            Stmt::CallSub {name,args} if name=="@heap_allocate" || name=="@heap_resize" => {
                 for arg in &args[2..] {read(arg,env,&mut before,serial)?;}
                 let Expr::Ident(local)=&args[0] else{unreachable!()};
                 let flag=env[local].flag.clone();args.insert(2,Expr::Ident(flag));

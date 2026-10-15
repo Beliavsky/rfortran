@@ -1184,11 +1184,12 @@ pub fn interpret(program: &Program) {
                         let fr=call_stack.last_mut().unwrap();for (arg,value) in args[..2].iter().zip([lower,extent]){let Expr::Ident(n)=arg else{unreachable!()};fr.env_int.insert(n.clone(),value);}idx+=1;continue;
                     }
                     if name=="@heap_bind" {idx+=1;continue;}
-                    if name=="@heap_allocate" || name=="@heap_free" || name=="@heap_drop" {
+                    if name=="@heap_allocate" || name=="@heap_resize" || name=="@heap_free" || name=="@heap_drop" {
+                        let resize=name=="@heap_resize";
                         let Expr::Ident(local)=&args[0] else{unreachable!()};
-                        let Expr::Ident(mask)=&args[if name=="@heap_allocate" {2}else{1}] else{unreachable!()};
+                        let Expr::Ident(mask)=&args[if name=="@heap_allocate" || resize {2}else{1}] else{unreachable!()};
                         let mut length=0usize;
-                        if name=="@heap_allocate" {
+                        if name=="@heap_allocate" || resize {
                             let fr=call_stack.last().unwrap().clone();
                             let dimensions=args[3..].iter().map(|e|eval_expr(e,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap()).collect::<Vec<_>>();
                             if !dimensions.contains(&0) {length=dimensions.iter().try_fold(1usize,|total,&extent|total.checked_mul(usize::try_from(extent).ok()?)).filter(|n|*n<=isize::MAX as usize/8).unwrap_or_else(||{eprintln!("Runtime error: allocation size overflow");std::process::exit(1)});}
@@ -1196,9 +1197,9 @@ pub fn interpret(program: &Program) {
                         }
                         let fr=call_stack.last_mut().unwrap();
                         if let Some(array)=fr.env_real_arrays.get_mut(local) {
-                            array.clear();if name!="@heap_allocate" {*array=Vec::new();}array.try_reserve_exact(length).unwrap_or_else(|_|{eprintln!("Runtime error: array allocation failed");std::process::exit(1)});array.resize(length,0.0);
-                        }else{let array=fr.env_int_arrays.get_mut(local).unwrap();array.clear();if name!="@heap_allocate" {*array=Vec::new();}array.try_reserve_exact(length).unwrap_or_else(|_|{eprintln!("Runtime error: array allocation failed");std::process::exit(1)});array.resize(length,0);}
-                        let flags=fr.env_int_arrays.get_mut(mask).unwrap();flags.clear();if name!="@heap_allocate" {*flags=Vec::new();}flags.try_reserve_exact(length).unwrap_or_else(|_|{eprintln!("Runtime error: initialization mask allocation failed");std::process::exit(1)});flags.resize(length,0);
+                            if !resize {array.clear();}if name!="@heap_allocate" && !resize {*array=Vec::new();}array.try_reserve_exact(length).unwrap_or_else(|_|{eprintln!("Runtime error: array allocation failed");std::process::exit(1)});array.resize(length,0.0);
+                        }else{let array=fr.env_int_arrays.get_mut(local).unwrap();if !resize {array.clear();}if name!="@heap_allocate" && !resize {*array=Vec::new();}array.try_reserve_exact(length).unwrap_or_else(|_|{eprintln!("Runtime error: array allocation failed");std::process::exit(1)});array.resize(length,0);}
+                        let flags=fr.env_int_arrays.get_mut(mask).unwrap();if !resize {flags.clear();}if name!="@heap_allocate" && !resize {*flags=Vec::new();}flags.try_reserve_exact(length).unwrap_or_else(|_|{eprintln!("Runtime error: initialization mask allocation failed");std::process::exit(1)});flags.resize(length,0);
                         fr.commit_saved();idx+=1;continue;
                     }
                     if name=="@module_bind" {
