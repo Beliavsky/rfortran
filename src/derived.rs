@@ -187,12 +187,6 @@ impl Lowerer {
                             ),
                         }
                     }
-                    if fields
-                        .iter()
-                        .any(|f| matches!(f.kind, TypeSpec::Character(_)))
-                    {
-                        bail!("CHARACTER components are not yet supported");
-                    }
                     let mut names = HashSet::new();
                     for f in &fields {
                         if !names.insert(f.name.clone()) {

@@ -2,7 +2,10 @@
 // Copyright (c) 2026 Beliavsky
 // See LICENSE-MIT in the repository root.
 
-//! Snapshot fixed rank-one vector selections before bounds normalization.
+//! Snapshot vector selections in array element order before bounds normalization.
+#[path = "vector_runtime.rs"]
+mod runtime;
+
 use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec, UnOp};
 use anyhow::{bail, Context, Result};
 use std::collections::{HashMap, HashSet};
@@ -21,6 +24,7 @@ struct Info {
 struct Scope {
     variables: HashMap<String, Variable>,
     functions: HashMap<String, TypeSpec>,
+    procedures: HashMap<String, Vec<String>>,
 }
 fn int(n: i64) -> Expr {
     Expr::IntLit(n.to_string())
@@ -42,6 +46,9 @@ fn axis(e: &Expr) -> Result<(i64, i64)> {
     };
     let count = i64::try_from((i128::from(upper) - i128::from(lower) + 1).max(0))?;
     Ok((lower, count))
+}
+pub(crate) fn fixed_extent(dimension: &Expr) -> Option<i64> {
+    axis(dimension).ok().map(|(_, n)| n)
 }
 fn section(e: &Expr, scope: &Scope) -> Result<(i64, i64, i64)> {
     let Expr::Section {
@@ -94,6 +101,61 @@ fn section(e: &Expr, scope: &Scope) -> Result<(i64, i64, i64)> {
     }
     Ok((first, count, step))
 }
+// A triplet belongs to a particular source dimension, not necessarily dimension one.
+fn section_axis(e: &Expr, dimension: &Expr) -> Result<(i64, i64, i64)> {
+    let Expr::Section {
+        lower,
+        upper,
+        stride,
+        ..
+    } = e
+    else {
+        bail!("invalid section subscript");
+    };
+    let (base, extent) = axis(dimension)?;
+    let step = stride
+        .as_deref()
+        .map(crate::parameters::integer_constant)
+        .transpose()?
+        .unwrap_or(1);
+    if step == 0 {
+        bail!("array section stride must not be zero");
+    }
+    let last = i64::try_from(i128::from(base) + i128::from(extent) - 1)?;
+    let first = lower
+        .as_deref()
+        .map(crate::parameters::integer_constant)
+        .transpose()?
+        .unwrap_or(if step > 0 { base } else { last });
+    let end = upper
+        .as_deref()
+        .map(crate::parameters::integer_constant)
+        .transpose()?
+        .unwrap_or(if step > 0 { last } else { base });
+    let distance = (i128::from(end) - i128::from(first)) * i128::from(step.signum());
+    let count = if distance < 0 {
+        0
+    } else {
+        i64::try_from(distance / i128::from(step).abs() + 1)?
+    };
+    if count > 0 {
+        let final_index = i128::from(first) + (i128::from(count) - 1) * i128::from(step);
+        if first < base
+            || first > last
+            || final_index < i128::from(base)
+            || final_index > i128::from(last)
+        {
+            bail!("array section is outside bounds {base}:{last}");
+        }
+    }
+    Ok((first, count, step))
+}
+#[derive(Clone)]
+enum SelectedAxis {
+    Scalar(Expr),
+    Vector(String),
+    Triplet(i64, i64),
+}
 fn merge(a: TypeSpec, b: TypeSpec) -> TypeSpec {
     if a == TypeSpec::DoublePrecision || b == TypeSpec::DoublePrecision {
         TypeSpec::DoublePrecision
@@ -104,6 +166,23 @@ fn merge(a: TypeSpec, b: TypeSpec) -> TypeSpec {
     } else {
         a
     }
+}
+fn concatenation_kind(a: &TypeSpec, b: &TypeSpec) -> Result<TypeSpec> {
+    fn length(kind: &TypeSpec) -> Result<Expr> {
+        Ok(match kind {
+            TypeSpec::Character(n) => int(n.unwrap_or(1) as i64),
+            TypeSpec::CharacterLength(e) => *e.clone(),
+            _ => bail!("CHARACTER concatenation requires CHARACTER operands"),
+        })
+    }
+    let expression = bin(BinOp::Add, length(a)?, length(b)?);
+    Ok(
+        if let Ok(n) = crate::parameters::integer_constant(&expression) {
+            TypeSpec::Character(Some(usize::try_from(n)?))
+        } else {
+            TypeSpec::CharacterLength(Box::new(expression))
+        },
+    )
 }
 fn info(e: &Expr, scope: &Scope) -> Result<Option<Info>> {
     let scalar = |kind| {
@@ -157,7 +236,9 @@ fn info(e: &Expr, scope: &Scope) -> Result<Option<Info>> {
                 bail!("vector subscript expression shapes do not conform");
             }
             let shape = if a.shape.is_empty() { b.shape } else { a.shape };
-            let kind = if matches!(
+            let kind = if matches!(op, BinOp::Concat) {
+                concatenation_kind(&a.kind, &b.kind)?
+            } else if matches!(
                 op,
                 BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow
             ) {
@@ -167,6 +248,11 @@ fn info(e: &Expr, scope: &Scope) -> Result<Option<Info>> {
             };
             Ok(Some(Info { kind, shape }))
         }
+        Expr::Call(n, args) if n == "@typed_constructor" && args.len() == 1 => Ok(Some(Info {
+            kind: crate::empty_constructors::kind(e)?.context("invalid typed constructor")?,
+            shape: vec![0],
+        })),
+        Expr::Call(n, args) if n == "@vector_subscript" => info(&args[0], scope),
         Expr::Call(n, args) if n == "@integer_literal" => scalar(TypeSpec::Integer(Some(
             crate::parameters::integer_constant(&args[1])? as u8,
         ))),
@@ -207,10 +293,10 @@ fn info(e: &Expr, scope: &Scope) -> Result<Option<Info>> {
         {
             let v = &scope.variables[n];
             let mut shape = vec![];
-            for arg in args {
+            for (dimension, arg) in args.iter().enumerate() {
                 if let Expr::Call(tag, items) = arg {
                     if tag == "@section_subscript" {
-                        shape.push(section(&items[0], scope)?.1);
+                        shape.push(section_axis(&items[0], &v.dims[dimension])?.1);
                         continue;
                     }
                 }
@@ -267,8 +353,11 @@ fn vector(e: &Expr, scope: &Scope) -> Result<bool> {
     Ok(info(e, scope)?.is_some_and(|i| !i.shape.is_empty()))
 }
 fn selection(name: &str, args: &[Expr], scope: &Scope) -> Result<bool> {
-    // Higher-rank selections retain their existing explicit diagnostics.
-    if !scope.variables.get(name).is_some_and(|v| v.dims.len() == 1) {
+    if !scope
+        .variables
+        .get(name)
+        .is_some_and(|v| !v.dims.is_empty())
+    {
         return Ok(false);
     }
     for arg in args {
@@ -340,6 +429,25 @@ fn item(e: &Expr, ordinal: i64, scope: &Scope) -> Result<Expr> {
                 offset -= count;
             }
             bail!("vector constructor element is outside its shape")
+        }
+        Expr::Call(n, args) | Expr::Index(n, args)
+            if scope.variables.get(n).is_some_and(|v| !v.dims.is_empty()) =>
+        {
+            let source = &scope.variables[n];
+            let mut selected = vec![];
+            for (dimension, arg) in args.iter().enumerate() {
+                if let Expr::Call(tag, items) = arg {
+                    if tag == "@section_subscript" {
+                        let (first, _, step) = section_axis(&items[0], &source.dims[dimension])?;
+                        selected.push(int(i64::try_from(
+                            i128::from(first) + (i128::from(ordinal) - 1) * i128::from(step),
+                        )?));
+                        continue;
+                    }
+                }
+                selected.push(arg.clone());
+            }
+            Ok(Expr::Index(n.clone(), selected))
         }
         Expr::Bin(op, a, b) => Ok(bin(
             op.clone(),
@@ -422,6 +530,15 @@ impl Lowerer {
                     self.freeze_scalars(a, scope, output)?;
                 }
             }
+            Expr::Call(n, args) | Expr::Index(n, args)
+                if scope.variables.get(n).is_some_and(|v| !v.dims.is_empty()) =>
+            {
+                for arg in args {
+                    if !matches!(arg,Expr::Call(tag,_) if tag=="@section_subscript") {
+                        self.freeze_scalars(arg, scope, output)?;
+                    }
+                }
+            }
             // Constructor scalar items are already evaluated once by index capture.
             _ => {}
         }
@@ -434,23 +551,13 @@ impl Lowerer {
         scope: &mut Scope,
         output: &mut Vec<Stmt>,
         writable: bool,
+        dimension: usize,
     ) -> Result<(Vec<String>, i64, TypeSpec)> {
         let v = scope
             .variables
             .get(name)
             .context("vector selection requires a declared array")?
             .clone();
-        if v.dims.len() != 1
-            || !matches!(
-                v.kind,
-                TypeSpec::Integer(_)
-                    | TypeSpec::Real
-                    | TypeSpec::DoublePrecision
-                    | TypeSpec::Logical
-            )
-        {
-            bail!("vector subscripts currently require a rank-one numeric or LOGICAL source array");
-        }
         let value = info(e, scope)?.context("unknown vector subscript type")?;
         if value.shape.len() != 1
             || !matches!(value.kind, TypeSpec::Integer(None | Some(1 | 2 | 4 | 8)))
@@ -476,7 +583,7 @@ impl Lowerer {
                 }
             }
         }
-        let (lower, extent) = axis(&v.dims[0])?;
+        let (lower, extent) = axis(&v.dims[dimension])?;
         if count > 0 && extent == 0 {
             bail!("nonempty vector selects from empty array `{name}`");
         }
@@ -561,6 +668,148 @@ impl Lowerer {
         }
         Ok((captured, count, v.kind))
     }
+    fn selection_indices(
+        &mut self,
+        name: &str,
+        args: &mut [Expr],
+        scope: &mut Scope,
+        output: &mut Vec<Stmt>,
+        writable: bool,
+    ) -> Result<(Vec<SelectedAxis>, Vec<i64>)> {
+        let variable = scope.variables[name].clone();
+        if args.len() != variable.dims.len() {
+            bail!("array `{name}` requires {} subscripts", variable.dims.len());
+        }
+        let mut selected = vec![];
+        let mut shape = vec![];
+        for (dimension, arg) in args.iter_mut().enumerate() {
+            if let Expr::Call(tag, items) = arg {
+                if tag == "@vector_subscript" {
+                    *arg = items[0].clone();
+                }
+            }
+            if let Expr::Call(tag, items) = arg {
+                if tag == "@section_subscript" {
+                    let (first, count, step) = section_axis(&items[0], &variable.dims[dimension])?;
+                    selected.push(SelectedAxis::Triplet(first, step));
+                    shape.push(count);
+                    continue;
+                }
+            }
+            if vector(arg, scope)? {
+                let (indices, count, _) =
+                    self.indices(name, arg, scope, output, writable, dimension)?;
+                let captured =
+                    self.temporary("axis", TypeSpec::Integer(Some(8)), &[count], scope, output);
+                for (i, index) in indices.iter().enumerate() {
+                    output.push(Stmt::AssignIndex {
+                        name: captured.clone(),
+                        indices: vec![int(i as i64 + 1)],
+                        value: Expr::Ident(index.clone()),
+                    });
+                }
+                selected.push(SelectedAxis::Vector(captured));
+                shape.push(count);
+            } else {
+                self.expression(arg, scope, output)?;
+                let value = info(arg, scope)?.context("unknown array subscript type")?;
+                if !value.shape.is_empty() || !matches!(value.kind, TypeSpec::Integer(_)) {
+                    bail!("array subscript must be a scalar INTEGER or rank-one INTEGER array");
+                }
+                let captured = self.temporary(
+                    "scalar_index",
+                    TypeSpec::Integer(Some(8)),
+                    &[],
+                    scope,
+                    output,
+                );
+                output.push(Stmt::Assign {
+                    name: captured.clone(),
+                    value: arg.clone(),
+                });
+                selected.push(SelectedAxis::Scalar(Expr::Ident(captured)));
+            }
+        }
+        Ok((selected, shape))
+    }
+    fn coordinates(
+        &mut self,
+        shape: &[i64],
+        scope: &mut Scope,
+        output: &mut Vec<Stmt>,
+    ) -> (Vec<Expr>, Vec<(String, i64)>) {
+        let vars = shape
+            .iter()
+            .map(|n| {
+                (
+                    self.temporary("coordinate", TypeSpec::Integer(Some(8)), &[], scope, output),
+                    *n,
+                )
+            })
+            .collect::<Vec<_>>();
+        (
+            vars.iter().map(|(n, _)| Expr::Ident(n.clone())).collect(),
+            vars,
+        )
+    }
+    fn nest(&self, loops: Vec<(String, i64)>, mut body: Vec<Stmt>) -> Vec<Stmt> {
+        // Fortran array element order: the first retained dimension varies fastest.
+        for (var, count) in loops {
+            body = vec![Stmt::Do {
+                var,
+                start: int(1),
+                end: int(count),
+                body,
+            }];
+        }
+        body
+    }
+    fn capture_selected(
+        &mut self,
+        selected: &[SelectedAxis],
+        coordinates: &[Expr],
+        scope: &mut Scope,
+        body: &mut Vec<Stmt>,
+    ) -> Vec<Expr> {
+        self.selected_element(selected, coordinates)
+            .into_iter()
+            .map(|value| {
+                let n = self.temporary(
+                    "selected_index",
+                    TypeSpec::Integer(Some(8)),
+                    &[],
+                    scope,
+                    body,
+                );
+                body.push(Stmt::Assign {
+                    name: n.clone(),
+                    value,
+                });
+                Expr::Ident(n)
+            })
+            .collect()
+    }
+    fn selected_element(&self, selected: &[SelectedAxis], coordinates: &[Expr]) -> Vec<Expr> {
+        let mut coordinate = coordinates.iter();
+        selected
+            .iter()
+            .map(|axis| match axis {
+                SelectedAxis::Scalar(e) => e.clone(),
+                SelectedAxis::Vector(n) => {
+                    Expr::Index(n.clone(), vec![coordinate.next().unwrap().clone()])
+                }
+                SelectedAxis::Triplet(first, step) => bin(
+                    BinOp::Add,
+                    int(*first),
+                    bin(
+                        BinOp::Mul,
+                        bin(BinOp::Sub, coordinate.next().unwrap().clone(), int(1)),
+                        int(*step),
+                    ),
+                ),
+            })
+            .collect()
+    }
     fn expression(
         &mut self,
         e: &mut Expr,
@@ -568,32 +817,51 @@ impl Lowerer {
         output: &mut Vec<Stmt>,
     ) -> Result<()> {
         if let Expr::Call(n, args) = e {
-            if matches!(n.as_str(), "size" | "lbound" | "ubound" | "kind")
-                && !args.is_empty()
+            if matches!(
+                n.as_str(),
+                "size" | "shape" | "lbound" | "ubound" | "kind" | "len"
+            ) && !args.is_empty()
                 && contains(&args[0], scope)?
             {
                 let v = info(&args[0], scope)?.context("unknown vector inquiry shape")?;
-                if v.shape.len() != 1 {
-                    bail!("vector inquiries currently require a rank-one selection");
-                }
-                if let Some(dim) = args.get(1) {
-                    if crate::parameters::integer_constant(dim)? != 1 {
-                        bail!("vector inquiry DIM must be 1");
-                    }
+                let dimension = args
+                    .get(1)
+                    .map(crate::parameters::integer_constant)
+                    .transpose()?;
+                if dimension.is_some_and(|d| d < 1 || d as usize > v.shape.len()) {
+                    bail!("vector inquiry DIM must be between 1 and {}", v.shape.len());
                 }
                 *e = match n.as_str() {
-                    "size" => int(v.shape[0]),
+                    "size" => int(dimension
+                        .map(|d| v.shape[d as usize - 1])
+                        .unwrap_or(v.shape.iter().product())),
+                    "shape" => Expr::Call(
+                        "@array_constructor".into(),
+                        v.shape.iter().map(|d| int(*d)).collect(),
+                    ),
+                    "len" => match &v.kind {
+                        TypeSpec::Character(n) => int(n.unwrap_or(1) as i64),
+                        TypeSpec::CharacterLength(e) => *e.clone(),
+                        _ => bail!("LEN requires a CHARACTER argument"),
+                    },
                     "kind" => int(match v.kind {
                         TypeSpec::Integer(k) => k.unwrap_or(4) as i64,
                         TypeSpec::DoublePrecision => 8,
+                        TypeSpec::Character(_)
+                        | TypeSpec::CharacterLength(_)
+                        | TypeSpec::CharacterAssumed => 1,
                         _ => 4,
                     }),
                     _ => {
-                        let value = int(if n == "lbound" { 1 } else { v.shape[0] });
-                        if args.len() == 1 {
-                            Expr::Call("@array_constructor".into(), vec![value])
+                        let values = v
+                            .shape
+                            .iter()
+                            .map(|nsize| int(if n == "lbound" { 1 } else { *nsize }))
+                            .collect::<Vec<_>>();
+                        if let Some(d) = dimension {
+                            values[d as usize - 1].clone()
                         } else {
-                            value
+                            Expr::Call("@array_constructor".into(), values)
                         }
                     }
                 };
@@ -602,23 +870,20 @@ impl Lowerer {
         }
         match e {
             Expr::Call(n, args) | Expr::Index(n, args) if selection(n, args, scope)? => {
-                if args.len() != 1 {
-                    bail!("vector subscripts currently require a rank-one source array");
-                }
                 let name = n.clone();
-                let (indices, count, kind) =
-                    self.indices(&name, &mut args[0], scope, output, false)?;
-                let result = self.temporary("gather", kind, &[count], scope, output);
-                for i in 1..=count {
-                    output.push(Stmt::AssignIndex {
-                        name: result.clone(),
-                        indices: vec![int(i)],
-                        value: Expr::Index(
-                            name.clone(),
-                            vec![Expr::Ident(indices[(i - 1) as usize].clone())],
-                        ),
-                    });
-                }
+                let (selected, shape) =
+                    self.selection_indices(&name, args, scope, output, false)?;
+                let kind = scope.variables[&name].kind.clone();
+                let result = self.temporary("gather", kind, &shape, scope, output);
+                let (coordinates, loops) = self.coordinates(&shape, scope, output);
+                let mut body = vec![];
+                let source = self.capture_selected(&selected, &coordinates, scope, &mut body);
+                body.push(Stmt::AssignIndex {
+                    name: result.clone(),
+                    indices: coordinates,
+                    value: Expr::Index(name, source),
+                });
+                output.extend(self.nest(loops, body));
                 *e = Expr::Ident(result);
             }
             Expr::Call(_, args) | Expr::Index(_, args) => {
@@ -654,7 +919,7 @@ impl Lowerer {
         let selected = contains(e, scope)?;
         self.expression(e, scope, prefix)?;
         if selected && !matches!(e, Expr::Ident(_)) {
-            if let Some(value) = info(e, scope)?.filter(|v| v.shape.len() == 1) {
+            if let Some(value) = info(e, scope)?.filter(|v| !v.shape.is_empty()) {
                 let result = self.temporary("output", value.kind, &value.shape, scope, prefix);
                 prefix.push(Stmt::Assign {
                     name: result.clone(),
@@ -695,6 +960,16 @@ impl Lowerer {
                 _ => {}
             }
         }
+        if !params.is_empty()
+            && scope.variables.iter().any(|(n, v)| {
+                params.contains(n)
+                    && v.dims
+                        .iter()
+                        .any(|d| matches!(d,Expr::Ident(tag) if tag=="@deferred_extent"))
+            })
+        {
+            return Ok(());
+        }
         if body.iter().any(
             |s| matches!(s, Stmt::CallSub {name,..} if name == "@where" || name == "@elsewhere"),
         ) {
@@ -730,41 +1005,42 @@ impl Lowerer {
                 } if !matches!(indices.as_slice(), [Expr::Section { .. }])
                     && selection(name, indices, &scope)? =>
                 {
-                    if indices.len() != 1 {
-                        bail!("vector subscripts currently require a rank-one destination array");
-                    }
-                    let (captured, count, kind) =
-                        self.indices(name, &mut indices[0], &mut scope, &mut prefix, true)?;
+                    let (selected, selected_shape) =
+                        self.selection_indices(name, indices, &mut scope, &mut prefix, true)?;
                     self.expression(value, &mut scope, &mut prefix)?;
                     let rhs = info(value, &scope)?;
                     if rhs
                         .as_ref()
-                        .is_some_and(|v| !v.shape.is_empty() && v.shape != vec![count])
+                        .is_some_and(|v| !v.shape.is_empty() && v.shape != selected_shape)
                     {
                         bail!("vector-subscript assignment shapes do not conform");
                     }
                     let shape = if rhs.is_some_and(|v| !v.shape.is_empty()) {
-                        vec![count]
+                        selected_shape.clone()
                     } else {
                         vec![]
                     };
+                    let kind = scope.variables[name].kind.clone();
                     let values = self.temporary("values", kind, &shape, &mut scope, &mut prefix);
-                    // Existing array assignment lowering captures the complete RHS.
                     prefix.push(Stmt::Assign {
                         name: values.clone(),
                         value: value.clone(),
                     });
-                    for i in 1..=count {
-                        prefix.push(Stmt::AssignIndex {
-                            name: name.clone(),
-                            indices: vec![Expr::Ident(captured[(i - 1) as usize].clone())],
-                            value: if shape.is_empty() {
-                                Expr::Ident(values.clone())
-                            } else {
-                                Expr::Index(values.clone(), vec![int(i)])
-                            },
-                        });
-                    }
+                    let (coordinates, loops) =
+                        self.coordinates(&selected_shape, &mut scope, &mut prefix);
+                    let mut body = vec![];
+                    let destination =
+                        self.capture_selected(&selected, &coordinates, &mut scope, &mut body);
+                    body.push(Stmt::AssignIndex {
+                        name: name.clone(),
+                        indices: destination,
+                        value: if shape.is_empty() {
+                            Expr::Ident(values)
+                        } else {
+                            Expr::Index(values, coordinates)
+                        },
+                    });
+                    prefix.extend(self.nest(loops, body));
                     result.extend(prefix);
                     continue;
                 }
@@ -807,12 +1083,14 @@ impl Lowerer {
                     }
                 }
                 Stmt::CallSub { name, args } => {
+                    for (i, e) in args.iter().enumerate() {
+                        if contains(e, &scope)? {
+                            validate_actual(name, i, &scope.procedures)?;
+                        }
+                    }
                     for e in args {
                         if name.contains("read") && name.starts_with('@') && contains(e, &scope)? {
                             bail!("READ into vector-subscript selections is not yet supported");
-                        }
-                        if !name.starts_with('@') && contains(e, &scope)? {
-                            bail!("vector-subscript subroutine actual arguments are not yet supported");
                         }
                         if name == "@write" {
                             self.output_expression(e, &mut scope, &mut prefix)?;
@@ -885,7 +1163,117 @@ impl Lowerer {
         Ok(())
     }
 }
-pub fn resolve(mut program: Program) -> Result<Program> {
+fn serial_start(body: &[Stmt]) -> usize {
+    let mut serial = 0;
+    for stmt in body {
+        let names = match stmt {
+            Stmt::ArrayDecl { name, .. } => vec![name],
+            Stmt::VarDecl { names, .. } => names.iter().collect(),
+            _ => vec![],
+        };
+        for name in names {
+            if name.contains("@vector_") {
+                serial = serial.max(
+                    name.rsplit('_')
+                        .next()
+                        .and_then(|n| n.parse::<usize>().ok())
+                        .unwrap_or(0),
+                );
+            }
+        }
+        match stmt {
+            Stmt::Function { body, .. }
+            | Stmt::Subroutine { body, .. }
+            | Stmt::Block { body }
+            | Stmt::Module { body, .. }
+            | Stmt::Do { body, .. }
+            | Stmt::DoWhile { body, .. } => serial = serial.max(serial_start(body)),
+            Stmt::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                serial = serial.max(serial_start(then_body));
+                if let Some(b) = else_body {
+                    serial = serial.max(serial_start(b));
+                }
+            }
+            Stmt::SelectCase { cases, default, .. } => {
+                for c in cases {
+                    serial = serial.max(serial_start(&c.body));
+                }
+                if let Some(b) = default {
+                    serial = serial.max(serial_start(b));
+                }
+            }
+            _ => {}
+        }
+    }
+    serial
+}
+fn procedure_intents(body: &[Stmt]) -> HashMap<String, Vec<String>> {
+    let mut result = HashMap::new();
+    for stmt in body {
+        match stmt {
+            Stmt::Subroutine {
+                name, params, body, ..
+            } => {
+                result.insert(
+                    name.clone(),
+                    params
+                        .iter()
+                        .map(|p| {
+                            body.iter()
+                                .find_map(|s| {
+                                    if let Stmt::DummyIntent { name, intent } = s {
+                                        (name == p && intent.starts_with("intent("))
+                                            .then(|| intent.clone())
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap_or_default()
+                        })
+                        .collect(),
+                );
+                result.extend(procedure_intents(body));
+            }
+            Stmt::Module { body, .. } | Stmt::Function { body, .. } => {
+                result.extend(procedure_intents(body))
+            }
+            _ => {}
+        }
+    }
+    result
+}
+fn validate_actual(
+    name: &str,
+    index: usize,
+    procedures: &HashMap<String, Vec<String>>,
+) -> Result<()> {
+    if let Some(intents) = procedures.get(name) {
+        if intents.get(index).is_none_or(|i| i != "intent(in)") {
+            bail!("vector-subscript actual argument cannot be associated with writable dummy argument {} of `{name}`",index+1);
+        }
+    } else if !name.starts_with('@')
+        || matches!(
+            name,
+            "@random_number" | "@random_seed" | "@cpu_time" | "@system_clock" | "@date_and_time"
+        )
+    {
+        bail!("vector-subscript actual argument to `{name}` requires a known INTENT(IN) dummy");
+    }
+    Ok(())
+}
+pub fn resolve(program: Program) -> Result<Program> {
+    resolve_inner(program, false)
+}
+pub(crate) fn finish(program: Program) -> Result<Program> {
+    resolve_inner(program, true)
+}
+fn resolve_inner(mut program: Program, after_calls: bool) -> Result<Program> {
+    let procedures = procedure_intents(&program.body);
+    program = runtime::resolve(program, &procedures)?;
     fn functions(body: &[Stmt], scope: &mut Scope) {
         for s in body {
             match s {
@@ -913,8 +1301,16 @@ pub fn resolve(mut program: Program) -> Result<Program> {
         }
     }
     let mut scope = Scope::default();
+    scope.procedures = procedures;
     functions(&program.body, &mut scope);
-    Lowerer::default().body(&mut program.body, &scope, &[])?;
-    crate::substrings::hoist(&mut program.body);
+    Lowerer {
+        serial: serial_start(&program.body),
+    }
+    .body(&mut program.body, &scope, &[])?;
+    if after_calls {
+        crate::substrings::hoist_vectors(&mut program.body);
+    } else {
+        crate::substrings::hoist(&mut program.body);
+    }
     Ok(program)
 }

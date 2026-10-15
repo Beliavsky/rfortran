@@ -153,6 +153,12 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
             }
             Ok((Expr::Call(name.clone(),values),shape,symbols.elementals[name].clone()))
         }
+        Expr::Call(name,args) if name=="int" && (args.len()==1 || args.len()==2) => {
+            let (value,count,_) = element(&args[0],index,symbols)?;
+            let kind = if let Some(e)=args.get(1) {TypeSpec::Integer(Some(u8::try_from(constant(e)?)?))} else {TypeSpec::Integer(None)};
+            let mut values=vec![value];values.extend(args.iter().skip(1).cloned());
+            Ok((Expr::Call(name.clone(),values),count,kind))
+        }
         Expr::Call(name, args) if matches!(name.as_str(), "mod" | "modulo") => {
             if args.len() != 2 { bail!("{name} requires two arguments"); }
             let (a, alen, kind) = element(&args[0], index, symbols)?;

@@ -90,7 +90,6 @@ end program main
             ("integer::a(3)","a=1\nprint *,a([0,1])","outside 1:3"),
             ("integer::a(3)","a=1\nprint *,a([4])","outside 1:3"),
             ("integer::a(3),idx(2,2)","a=1\nidx=1\nprint *,a(idx)","rank-one INTEGER"),
-            ("integer::a(3),idx(1025)","a=1\nidx=1\nprint *,a(idx)","at most 1024"),
             ("integer::a(3),idx(2)","a=1\nprint *,a(idx)","uninitialized variable `idx`"),
             ("integer::a(3),idx(2)","a=1\nidx=1\nprint *,a(idx(1:3))","outside bounds 1:2"),
             ("integer::a(3),idx(2),n","a=1\nidx=[1,2]\nn=a(idx)","assigned to a scalar"),

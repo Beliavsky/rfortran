@@ -30,6 +30,7 @@ struct Lower {
     types: HashMap<String, Vec<Field>>,
     procedures: HashMap<String, Procedure>,
     serial: usize,
+    array_shapes: HashMap<String, Vec<Expr>>,
 }
 fn storage(object: &str, field: &str) -> String {
     format!("@record${object}${field}")
@@ -158,10 +159,13 @@ impl Lower {
                         | TypeSpec::RealKind(_)
                         | TypeSpec::DoublePrecision
                         | TypeSpec::Logical
+                        | TypeSpec::Character(_)
+                        | TypeSpec::CharacterLength(_)
+                        | TypeSpec::CharacterAssumed
                 )
             })
         {
-            bail!("derived arrays currently require scalar numeric or LOGICAL components: `{ty}`");
+            bail!("derived arrays currently require scalar intrinsic components: `{ty}`");
         }
         Ok(fields.clone())
     }
@@ -176,8 +180,118 @@ impl Lower {
         }
         Ok(())
     }
+    fn array_shape(&self, e: &Expr) -> Option<Vec<Expr>> {
+        match e {
+            Expr::Ident(n) => self.array_shapes.get(n).cloned(),
+            Expr::Section {
+                name,
+                lower,
+                upper,
+                stride,
+            } => {
+                let source = self.array_shapes.get(name)?;
+                if source.len() != 1 {
+                    return None;
+                }
+                let bounds = match &source[0] {
+                    Expr::Call(tag, a) if tag == "@declared_bounds" => (
+                        crate::parameters::integer_constant(&a[0]).ok()?,
+                        crate::parameters::integer_constant(&a[1]).ok()?,
+                    ),
+                    d => (1, crate::parameters::integer_constant(d).ok()?),
+                };
+                let step = stride
+                    .as_deref()
+                    .map(crate::parameters::integer_constant)
+                    .transpose()
+                    .ok()?
+                    .unwrap_or(1);
+                if step == 0 {
+                    return None;
+                }
+                let first = lower
+                    .as_deref()
+                    .map(crate::parameters::integer_constant)
+                    .transpose()
+                    .ok()?
+                    .unwrap_or(if step > 0 { bounds.0 } else { bounds.1 });
+                let end = upper
+                    .as_deref()
+                    .map(crate::parameters::integer_constant)
+                    .transpose()
+                    .ok()?
+                    .unwrap_or(if step > 0 { bounds.1 } else { bounds.0 });
+                Some(vec![Expr::IntLit(
+                    (((i128::from(end) - i128::from(first) + i128::from(step)) / i128::from(step))
+                        .max(0))
+                    .to_string(),
+                )])
+            }
+            Expr::Call(n, a) if n == "@typed_constructor" && a.len() == 1 => {
+                Some(vec![Expr::IntLit("0".into())])
+            }
+            Expr::Call(n, a) if n == "@array_constructor" => {
+                Some(vec![Expr::IntLit(a.len().to_string())])
+            }
+            Expr::Call(n, a) if n == "@vector_subscript" => self.array_shape(&a[0]),
+            Expr::Bin(_, a, b) => self.array_shape(a).or_else(|| self.array_shape(b)),
+            Expr::Un(_, a) => self.array_shape(a),
+            _ => None,
+        }
+    }
     fn capture_indices(&mut self, args: &mut [Expr], prefix: &mut Vec<Stmt>) {
         for arg in args {
+            if let Some(dims) = self.array_shape(arg).filter(|d| !d.is_empty()) {
+                // Captured vectors have lower bound one; retain known capacity
+                // even when the original index vector has explicit bounds.
+                let dims = dims
+                    .into_iter()
+                    .map(|d| {
+                        crate::vector_subscripts::fixed_extent(&d)
+                            .map_or(d, |n| Expr::IntLit(n.to_string()))
+                    })
+                    .collect::<Vec<_>>();
+                self.serial += 1;
+                let n = format!("@record_vector_index_{}", self.serial);
+                prefix.push(Stmt::ArrayDecl {
+                    kind: TypeSpec::Integer(Some(8)),
+                    name: n.clone(),
+                    dims: if dims
+                        .iter()
+                        .all(|e| crate::parameters::integer_constant(e).is_ok())
+                    {
+                        dims.clone()
+                    } else {
+                        deferred(1)
+                    },
+                });
+                if dims
+                    .iter()
+                    .any(|e| crate::parameters::integer_constant(e).is_err())
+                {
+                    prefix.push(Stmt::DummyIntent {
+                        name: n.clone(),
+                        intent: "allocatable".into(),
+                    });
+                    prefix.push(Stmt::CallSub {
+                        name: "@allocate".into(),
+                        args: vec![Expr::Call(
+                            n.clone(),
+                            vec![Expr::Call("size".into(), vec![arg.clone()])],
+                        )],
+                    });
+                }
+                prefix.push(Stmt::Assign {
+                    name: n.clone(),
+                    value: match arg {
+                        Expr::Call(tag, a) if tag == "@vector_subscript" => a[0].clone(),
+                        _ => arg.clone(),
+                    },
+                });
+                self.array_shapes.insert(n.clone(), dims);
+                *arg = Expr::Ident(n);
+                continue;
+            }
             match arg {
                 Expr::Section {
                     lower,
@@ -250,13 +364,18 @@ impl Lower {
                 if o.ty != ty {
                     bail!("derived array type mismatch");
                 }
+                let array = args.iter().any(|e| {
+                    self.array_shape(e).is_some()
+                        || matches!(e, Expr::Section { .. })
+                        || matches!(e,Expr::Call(tag,_) if tag=="@section_subscript")
+                });
                 self.capture_indices(&mut args, prefix);
                 Ok((
                     fields
                         .iter()
                         .map(|f| Expr::Call(storage(&n, &f.name), args.clone()))
                         .collect(),
-                    args.iter().any(|e|matches!(e,Expr::Section{..}) || matches!(e,Expr::Call(tag,_) if matches!(tag.as_str(),"@section_subscript"|"@vector_subscript"))),
+                    array,
                 ))
             }
             Expr::Section {
@@ -549,11 +668,62 @@ impl Lower {
             }
             if let Expr::Call(array, _) = &item {
                 if let Some(o) = objects.get(array).filter(|o| !o.dims.is_empty()).cloned() {
+                    let mut output_dims = vec![];
+                    let Expr::Call(_, args) = &item else {
+                        unreachable!()
+                    };
+                    for arg in args {
+                        if let Some(d) = self.array_shape(arg) {
+                            for dimension in d {
+                                if let Expr::Call(tag, a) = &dimension {
+                                    if tag == "@declared_bounds" {
+                                        let lower = crate::parameters::integer_constant(&a[0])?;
+                                        let upper = crate::parameters::integer_constant(&a[1])?;
+                                        output_dims.push(Expr::IntLit(
+                                            (upper - lower + 1).max(0).to_string(),
+                                        ));
+                                        continue;
+                                    }
+                                }
+                                output_dims.push(dimension);
+                            }
+                        } else if matches!(arg,Expr::Call(tag,_) if tag=="@section_subscript") {
+                            bail!("output of derived triplet sections is not yet supported");
+                        }
+                    }
                     let (parts, array) = self.parts(item, &o.ty, objects, prefix)?;
                     if array {
-                        bail!("output of derived array sections is not yet supported");
+                        if output_dims.is_empty()
+                            || output_dims
+                                .iter()
+                                .any(|e| crate::parameters::integer_constant(e).is_err())
+                        {
+                            bail!("output of runtime-sized derived vector selections is not yet supported");
+                        }
+                        self.serial += 1;
+                        let temp = format!("@record_output_selection_{}", self.serial);
+                        for (field, value) in self.fields(&o.ty)?.into_iter().zip(parts) {
+                            let name = storage(&temp, &field.name);
+                            prefix.push(Stmt::ArrayDecl {
+                                kind: field.kind,
+                                name: name.clone(),
+                                dims: output_dims.clone(),
+                            });
+                            prefix.push(Stmt::Assign { name, value });
+                        }
+                        objects.insert(
+                            temp.clone(),
+                            Object {
+                                ty: o.ty,
+                                dims: output_dims,
+                            },
+                        );
+                        let mut items = vec![Expr::Ident(temp)];
+                        self.output(&mut items, objects, prefix)?;
+                        expanded.extend(items);
+                    } else {
+                        expanded.extend(parts);
                     }
-                    expanded.extend(parts);
                     continue;
                 }
             }
@@ -564,6 +734,20 @@ impl Lower {
     }
     fn body(&mut self, body: &mut Vec<Stmt>, inherited: &Objects) -> Result<()> {
         let mut objects = inherited.clone();
+        let outer_shapes = self.array_shapes.clone();
+        for s in body.iter() {
+            match s {
+                Stmt::ArrayDecl { name, dims, .. } => {
+                    self.array_shapes.insert(name.clone(), dims.clone());
+                }
+                Stmt::VarDecl { names, .. } => {
+                    for n in names {
+                        self.array_shapes.remove(n);
+                    }
+                }
+                _ => {}
+            }
+        }
         for s in body.iter() {
             match s {
                 Stmt::DerivedDecl {
@@ -780,8 +964,10 @@ impl Lower {
                         prefix.extend(defaults);
                         return Ok(());
                     }
-                    Stmt::CallSub { name, args } if name == "@write" => {
-                        let mut values = args.split_off(2);
+                    Stmt::CallSub { name, args }
+                        if name == "@write" || name == "@formatted_print" =>
+                    {
+                        let mut values = args.split_off(if name == "@write" { 2 } else { 1 });
                         self.output(&mut values, &mut objects, &mut prefix)?;
                         args.extend(values);
                     }
@@ -959,6 +1145,7 @@ impl Lower {
             out.extend(prefix);
         }
         *body = out;
+        self.array_shapes = outer_shapes;
         Ok(())
     }
 }
@@ -967,6 +1154,7 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
         types: HashMap::new(),
         procedures: HashMap::new(),
         serial: 0,
+        array_shapes: HashMap::new(),
     };
     lower.collect(&p.body)?;
     lower.body(&mut p.body, &Objects::new())?;

@@ -1,0 +1,1145 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Beliavsky
+// See LICENSE-MIT in the repository root.
+
+//! Descriptor-backed vector selections. Fixed selections share the same
+//! Cartesian indexing rule in vector_subscripts; these loops retain active sizes.
+use crate::allocatables::{self, Shapes};
+use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec};
+use anyhow::{bail, Context, Result};
+use std::collections::HashMap;
+
+fn int(n: i64) -> Expr {
+    Expr::IntLit(n.to_string())
+}
+fn id(n: &str) -> Expr {
+    Expr::Ident(n.into())
+}
+fn bin(op: BinOp, a: Expr, b: Expr) -> Expr {
+    Expr::Bin(op, Box::new(a), Box::new(b))
+}
+fn assign(n: &str, value: Expr) -> Stmt {
+    Stmt::Assign {
+        name: n.into(),
+        value,
+    }
+}
+fn constant(e: &Expr) -> Option<i64> {
+    crate::parameters::integer_constant(e).ok()
+}
+fn product(dims: &[Expr]) -> Expr {
+    dims.iter()
+        .cloned()
+        .fold(int(1), |a, b| bin(BinOp::Mul, a, b))
+}
+fn error(cond: Expr, message: String) -> Stmt {
+    Stmt::If {
+        cond,
+        then_body: vec![Stmt::CallSub {
+            name: "@error_stop".into(),
+            args: vec![Expr::Str(message)],
+        }],
+        else_body: None,
+    }
+}
+fn declarations(body: &[Stmt], symbols: &mut Shapes) {
+    for s in body {
+        match s {
+            Stmt::ArrayDecl { kind, name, dims } => {
+                for key in [
+                    "@heap",
+                    "@pointer",
+                    "@axes",
+                    "@lowers",
+                    "@extent",
+                    "@allocated",
+                    "@axis_limits",
+                ] {
+                    symbols.remove(&format!("{key}:{name}"));
+                }
+                symbols.insert(name.clone(), (kind.clone(), dims.clone()));
+            }
+            Stmt::VarDecl { kind, names } => {
+                for n in names {
+                    for key in [
+                        "@heap",
+                        "@axes",
+                        "@lowers",
+                        "@extent",
+                        "@allocated",
+                        "@axis_limits",
+                    ] {
+                        symbols.remove(&format!("{key}:{n}"));
+                    }
+                    symbols.insert(n.clone(), (kind.clone(), vec![]));
+                }
+            }
+            _ => {}
+        }
+    }
+    allocatables::metadata(body, symbols);
+    for stmt in body {
+        if let Stmt::DummyIntent { name, intent } = stmt {
+            if intent == "pointer" {
+                symbols.insert(format!("@pointer:{name}"), (TypeSpec::Logical, vec![]));
+            }
+        }
+    }
+}
+fn axes(n: &str, s: &Shapes) -> Result<Vec<(Expr, Expr)>> {
+    let (_, decl) = s.get(n).context("undeclared vector selection source")?;
+    if s.contains_key(&format!("@pointer:{n}")) {
+        return Ok((1..=decl.len())
+            .map(|axis| {
+                (
+                    Expr::Call("lbound".into(), vec![id(n), int(axis as i64)]),
+                    Expr::Call("size".into(), vec![id(n), int(axis as i64)]),
+                )
+            })
+            .collect());
+    }
+    if let Some(d) = allocatables::axes(n, s) {
+        let lowers = allocatables::lowers(n, s).unwrap_or_else(|| vec![int(1); d.len()]);
+        return Ok(lowers.into_iter().zip(d).collect());
+    }
+    if let Some(length) = allocatables::length(n, s) {
+        return Ok(vec![(int(1), length)]);
+    }
+    decl.iter()
+        .map(|e| {
+            if let Expr::Call(tag, a) = e {
+                if tag == "@declared_bounds" {
+                    let extent = if let (Some(lo), Some(hi)) = (constant(&a[0]), constant(&a[1])) {
+                        int((hi - lo + 1).max(0))
+                    } else {
+                        Expr::Call(
+                            "max".into(),
+                            vec![
+                                int(0),
+                                bin(
+                                    BinOp::Add,
+                                    bin(BinOp::Sub, a[1].clone(), a[0].clone()),
+                                    int(1),
+                                ),
+                            ],
+                        )
+                    };
+                    return Ok((a[0].clone(), extent));
+                }
+            }
+            if matches!(e,Expr::Ident(n) if n=="@deferred_extent") {
+                bail!("vector selection requires a resolved array descriptor");
+            }
+            Ok((int(1), e.clone()))
+        })
+        .collect()
+}
+fn triplet(e: &Expr, axis: &(Expr, Expr)) -> Result<(Expr, Expr, Expr)> {
+    let Expr::Section {
+        lower,
+        upper,
+        stride,
+        ..
+    } = e
+    else {
+        bail!("invalid array triplet");
+    };
+    let step = stride.as_deref().cloned().unwrap_or(int(1));
+    let step_value = constant(&step)
+        .context("vector selection triplet stride must currently be a constant INTEGER")?;
+    if step_value == 0 {
+        bail!("array section stride must not be zero");
+    }
+    let last = bin(
+        BinOp::Sub,
+        bin(BinOp::Add, axis.0.clone(), axis.1.clone()),
+        int(1),
+    );
+    let first = lower.as_deref().cloned().unwrap_or(if step_value > 0 {
+        axis.0.clone()
+    } else {
+        last.clone()
+    });
+    let end =
+        upper
+            .as_deref()
+            .cloned()
+            .unwrap_or(if step_value > 0 { last } else { axis.0.clone() });
+    let count = if let (Some(first), Some(end)) = (constant(&first), constant(&end)) {
+        int(i64::try_from(
+            ((i128::from(end) - i128::from(first) + i128::from(step_value))
+                / i128::from(step_value))
+            .max(0),
+        )?)
+    } else {
+        Expr::Call(
+            "max".into(),
+            vec![
+                int(0),
+                bin(
+                    BinOp::Div,
+                    bin(
+                        BinOp::Add,
+                        bin(BinOp::Sub, end, first.clone()),
+                        step.clone(),
+                    ),
+                    step.clone(),
+                ),
+            ],
+        )
+    };
+    Ok((first, count, step))
+}
+fn shape(e: &Expr, s: &Shapes) -> Result<Option<(TypeSpec, Vec<Expr>)>> {
+    match e {
+        Expr::Ident(n) => s
+            .get(n)
+            .map(|(kind, d)| {
+                Ok((
+                    kind.clone(),
+                    if d.is_empty() {
+                        vec![]
+                    } else {
+                        axes(n, s)?.into_iter().map(|(_, d)| d).collect()
+                    },
+                ))
+            })
+            .transpose(),
+        Expr::IntLit(_) => Ok(Some((TypeSpec::Integer(None), vec![]))),
+        Expr::RealLit(n) => Ok(Some((
+            if n.to_ascii_lowercase().contains('d') {
+                TypeSpec::DoublePrecision
+            } else {
+                TypeSpec::Real
+            },
+            vec![],
+        ))),
+        Expr::Logical(_) => Ok(Some((TypeSpec::Logical, vec![]))),
+        Expr::Str(n) => Ok(Some((TypeSpec::Character(Some(n.len())), vec![]))),
+        Expr::Section { name, .. } => {
+            let a = axes(name, s)?;
+            if a.len() != 1 {
+                bail!("vector expression must be rank one");
+            }
+            Ok(Some((s[name].0.clone(), vec![triplet(e, &a[0])?.1])))
+        }
+        Expr::Bin(op, a, b) => {
+            let (Some((ak, ad)), Some((bk, bd))) = (shape(a, s)?, shape(b, s)?) else {
+                return Ok(None);
+            };
+            let kind = if matches!(op, BinOp::Concat) {
+                super::concatenation_kind(&ak, &bk)?
+            } else if matches!(
+                op,
+                BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow
+            ) {
+                super::merge(ak, bk)
+            } else {
+                TypeSpec::Logical
+            };
+            Ok(Some((kind, if ad.is_empty() { bd } else { ad })))
+        }
+        Expr::Un(_, a) => shape(a, s),
+        Expr::Call(n, a) if n == "@typed_constructor" && a.len() == 1 => Ok(Some((
+            crate::empty_constructors::kind(e)?.context("invalid typed constructor")?,
+            vec![int(0)],
+        ))),
+        Expr::Call(n, a) if n == "@integer_literal" => Ok(Some((
+            TypeSpec::Integer(Some(constant(&a[1]).unwrap_or(4) as u8)),
+            vec![],
+        ))),
+        Expr::Call(n, a) if n == "@vector_subscript" => shape(&a[0], s),
+        Expr::Call(n, a) if n == "@array_constructor" => {
+            let mut dims = vec![];
+            let mut kind = TypeSpec::Integer(None);
+            for (i, e) in a.iter().enumerate() {
+                let Some((k, d)) = shape(e, s)? else {
+                    return Ok(None);
+                };
+                if d.len() > 1 {
+                    bail!("vector constructors require scalar or rank-one items");
+                }
+                if i == 0 {
+                    kind = k;
+                } else if !crate::pointers::same_kind(&kind, &k) {
+                    bail!("vector constructor items must have the same type and kind");
+                }
+                dims.push(d.first().cloned().unwrap_or(int(1)));
+            }
+            Ok(Some((
+                kind,
+                vec![dims.into_iter().fold(int(0), |a, b| bin(BinOp::Add, a, b))],
+            )))
+        }
+        Expr::Call(n, a) | Expr::Index(n, a) if s.get(n).is_some_and(|(_, d)| !d.is_empty()) => {
+            let source = axes(n, s)?;
+            if a.len() != source.len() {
+                bail!("array `{n}` requires {} subscripts", source.len());
+            }
+            let mut dims = vec![];
+            for (index, axis) in a.iter().zip(source) {
+                if let Expr::Call(tag, items) = index {
+                    if tag == "@section_subscript" {
+                        dims.push(triplet(&items[0], &axis)?.1);
+                        continue;
+                    }
+                }
+                if let Some((kind, shape)) = shape(index, s)? {
+                    if !matches!(kind, TypeSpec::Integer(_)) || shape.len() > 1 {
+                        bail!(
+                            "vector subscript must be a rank-one INTEGER array or scalar INTEGER"
+                        );
+                    }
+                    dims.extend(shape);
+                }
+            }
+            Ok(Some((s[n].0.clone(), dims)))
+        }
+        Expr::Call(n, a)
+            if matches!(
+                n.as_str(),
+                "abs" | "int" | "mod" | "modulo" | "real" | "dble"
+            ) =>
+        {
+            let Some((mut kind, d)) = shape(&a[0], s)? else {
+                return Ok(None);
+            };
+            if n == "int" {
+                kind = TypeSpec::Integer(None);
+            }
+            Ok(Some((kind, d)))
+        }
+        Expr::Call(n, _) => Ok(s
+            .get(&format!("@function:{n}"))
+            .map(|(k, _)| (k.clone(), vec![]))),
+        _ => Ok(None),
+    }
+}
+fn vector(e: &Expr, s: &Shapes) -> bool {
+    shape(e, s)
+        .ok()
+        .flatten()
+        .is_some_and(|(_, d)| !d.is_empty())
+}
+fn selection(n: &str, a: &[Expr], s: &Shapes) -> bool {
+    if matches!(a,[Expr::Section{name,..}] if name==n) {
+        return false;
+    }
+    s.get(n).is_some_and(|(_, d)| !d.is_empty())
+        && a.iter()
+            .any(|e| !matches!(e,Expr::Call(tag,_) if tag=="@section_subscript") && vector(e, s))
+}
+fn dynamic(n: &str, a: &[Expr], s: &Shapes) -> bool {
+    if !selection(n, a, s) {
+        return false;
+    }
+    allocatables::length(n,s).is_some() || axes(n,s).is_ok_and(|d|d.iter().any(|(l,n)|constant(l).is_none()||constant(n).is_none()))
+        || a.iter().any(|e|shape(e,s).ok().flatten().is_some_and(|(_,d)|d.iter().any(|n|constant(n).is_none() || constant(n).is_some_and(|n|n>1024)))
+            || matches!(e,Expr::Call(tag,items) if tag=="@section_subscript" && matches!(&items[0],Expr::Section{lower,upper,..} if lower.as_deref().is_some_and(|e|constant(e).is_none())||upper.as_deref().is_some_and(|e|constant(e).is_none()))))
+}
+fn contains(e: &Expr, s: &Shapes) -> bool {
+    match e {
+        Expr::Call(n, a) | Expr::Index(n, a) => {
+            dynamic(n, a, s) || a.iter().any(|e| contains(e, s))
+        }
+        Expr::Bin(_, a, b) => contains(a, s) || contains(b, s),
+        Expr::Un(_, a) => contains(a, s),
+        _ => false,
+    }
+}
+fn capacity(e: &Expr, s: &Shapes) -> Option<Vec<i64>> {
+    match e {
+        // Heap backing declarations have extent one; that is not a capacity bound.
+        Expr::Ident(n) => {
+            if s.contains_key(&format!("@heap:{n}")) {
+                None
+            } else {
+                s.get(n)
+                    .and_then(|(_, d)| d.iter().map(super::fixed_extent).collect())
+            }
+        }
+        Expr::Section { name, .. } => capacity(&id(name), s),
+        Expr::Call(n, a) if n == "@vector_subscript" => capacity(&a[0], s),
+        Expr::Call(n, a) if n == "@array_constructor" => Some(vec![a
+            .iter()
+            .map(|e| {
+                if vector(e, s) {
+                    capacity(e, s)?.first().copied()
+                } else {
+                    Some(1)
+                }
+            })
+            .collect::<Option<Vec<_>>>()?
+            .iter()
+            .sum()]),
+        Expr::Bin(_, a, b) => capacity(a, s).or_else(|| capacity(b, s)),
+        Expr::Un(_, a) => capacity(a, s),
+        _ => None,
+    }
+}
+fn selection_capacity(n: &str, args: &[Expr], s: &Shapes) -> Option<Vec<i64>> {
+    let source = capacity(&id(n), s)?;
+    let mut result = vec![];
+    for (i, e) in args.iter().enumerate() {
+        if matches!(e,Expr::Call(tag,_) if tag=="@section_subscript") {
+            result.push(*source.get(i)?);
+        } else if vector(e, s) {
+            result.push(*capacity(e, s)?.first()?);
+        }
+    }
+    Some(result)
+}
+#[derive(Clone)]
+enum Axis {
+    Scalar(Expr),
+    Vector(String),
+    Triplet(Expr, Expr),
+}
+#[derive(Default)]
+struct Lower {
+    serial: usize,
+    procedures: HashMap<String, Vec<String>>,
+    force: bool,
+}
+impl Lower {
+    fn scalar(&mut self, role: &str, value: Expr, out: &mut Vec<Stmt>, s: &mut Shapes) -> Expr {
+        if let Some(n) = constant(&value) {
+            return int(n);
+        }
+        self.serial += 1;
+        let n = format!("@vector_runtime_{role}_{}", self.serial);
+        out.push(Stmt::VarDecl {
+            kind: TypeSpec::Integer(Some(8)),
+            names: vec![n.clone()],
+        });
+        out.push(assign(&n, value));
+        s.insert(n.clone(), (TypeSpec::Integer(Some(8)), vec![]));
+        id(&n)
+    }
+    fn buffer(
+        &mut self,
+        kind: TypeSpec,
+        dims: &[Expr],
+        out: &mut Vec<Stmt>,
+        s: &mut Shapes,
+    ) -> Result<String> {
+        self.buffer_capacity(kind, dims, None, out, s)
+    }
+    fn buffer_capacity(
+        &mut self,
+        kind: TypeSpec,
+        dims: &[Expr],
+        capacity: Option<Vec<i64>>,
+        out: &mut Vec<Stmt>,
+        s: &mut Shapes,
+    ) -> Result<String> {
+        self.serial += 1;
+        let n = format!("@vector_runtime_values_{}", self.serial);
+        if dims.iter().all(|d| constant(d).is_some()) {
+            out.push(Stmt::ArrayDecl {
+                kind: kind.clone(),
+                name: n.clone(),
+                dims: dims.to_vec(),
+            });
+            s.insert(n.clone(), (kind, dims.to_vec()));
+        } else {
+            if matches!(
+                kind,
+                TypeSpec::Character(_) | TypeSpec::CharacterAssumed | TypeSpec::CharacterLength(_)
+            ) {
+                let capacity = capacity.context(
+                    "runtime-sized CHARACTER vector selections require bounded result storage",
+                )?;
+                let declaration = capacity.iter().map(|n| int(*n)).collect::<Vec<_>>();
+                out.push(Stmt::ArrayDecl {
+                    kind: kind.clone(),
+                    name: n.clone(),
+                    dims: declaration.clone(),
+                });
+                let length = self.scalar("length", product(dims), out, s);
+                let mut fields = vec![];
+                for dim in dims {
+                    let value = self.scalar("extent", dim.clone(), out, s);
+                    if let Expr::Ident(field) = value {
+                        fields.push(field);
+                    } else {
+                        self.serial += 1;
+                        let field = format!("@vector_runtime_extent_{}", self.serial);
+                        out.push(Stmt::VarDecl {
+                            kind: TypeSpec::Integer(Some(8)),
+                            names: vec![field.clone()],
+                        });
+                        out.push(assign(&field, value));
+                        fields.push(field);
+                    }
+                }
+                let Expr::Ident(length) = length else {
+                    unreachable!()
+                };
+                let flag = format!("{n}$allocated");
+                out.push(Stmt::VarDecl {
+                    kind: TypeSpec::Logical,
+                    names: vec![flag.clone()],
+                });
+                out.push(assign(&flag, Expr::Logical(true)));
+                out.push(Stmt::DummyIntent {
+                    name: n.clone(),
+                    intent: format!("@bounded:{length}:{flag}"),
+                });
+                out.push(Stmt::DummyIntent {
+                    name: n.clone(),
+                    intent: format!("@bounded_shape:{}", fields.join(":")),
+                });
+                out.push(Stmt::DummyIntent {
+                    name: n.clone(),
+                    intent: format!(
+                        "@bounded_limits:{}",
+                        capacity
+                            .iter()
+                            .map(|n| n.to_string())
+                            .collect::<Vec<_>>()
+                            .join(":")
+                    ),
+                });
+                s.insert(n.clone(), (kind, declaration));
+                declarations(out, s);
+                return Ok(n);
+            }
+            heap_buffer(kind, n.clone(), dims, out, s)?;
+        }
+        Ok(n)
+    }
+    fn loop_vars(&mut self, dims: &[Expr], out: &mut Vec<Stmt>, s: &mut Shapes) -> Vec<String> {
+        dims.iter()
+            .map(|_| {
+                self.serial += 1;
+                let n = format!("@vector_runtime_coordinate_{}", self.serial);
+                out.push(Stmt::VarDecl {
+                    kind: TypeSpec::Integer(Some(8)),
+                    names: vec![n.clone()],
+                });
+                s.insert(n.clone(), (TypeSpec::Integer(Some(8)), vec![]));
+                n
+            })
+            .collect()
+    }
+    fn nest(&self, vars: &[String], dims: &[Expr], mut body: Vec<Stmt>) -> Vec<Stmt> {
+        for (var, end) in vars.iter().zip(dims) {
+            body = vec![Stmt::Do {
+                var: var.clone(),
+                start: int(1),
+                end: end.clone(),
+                body,
+            }];
+        }
+        body
+    }
+    fn element(&mut self, e: &Expr, index: Expr, s: &Shapes, out: &mut Vec<Stmt>) -> Result<Expr> {
+        if !vector(e, s) {
+            return Ok(e.clone());
+        }
+        Ok(match e {
+            Expr::Ident(n) => {
+                let a = axes(n, s)?;
+                if a.len() != 1 {
+                    bail!("vector subscript must be a rank-one INTEGER array");
+                }
+                Expr::Index(
+                    n.clone(),
+                    vec![bin(
+                        BinOp::Add,
+                        a[0].0.clone(),
+                        bin(BinOp::Sub, index, int(1)),
+                    )],
+                )
+            }
+            Expr::Section { name, .. } => {
+                let (first, _, step) = triplet(e, &axes(name, s)?[0])?;
+                Expr::Index(
+                    name.clone(),
+                    vec![bin(
+                        BinOp::Add,
+                        first,
+                        bin(BinOp::Mul, bin(BinOp::Sub, index, int(1)), step),
+                    )],
+                )
+            }
+            Expr::Bin(op, a, b) => bin(
+                op.clone(),
+                self.element(a, index.clone(), s, out)?,
+                self.element(b, index, s, out)?,
+            ),
+            Expr::Un(op, a) => Expr::Un(op.clone(), Box::new(self.element(a, index, s, out)?)),
+            Expr::Call(n, a) if matches!(n.as_str(), "abs" | "int" | "mod" | "modulo") => {
+                Expr::Call(
+                    n.clone(),
+                    a.iter()
+                        .map(|e| self.element(e, index.clone(), s, out))
+                        .collect::<Result<_>>()?,
+                )
+            }
+            Expr::Call(n, args) | Expr::Index(n, args)
+                if s.get(n).is_some_and(|(_, d)| !d.is_empty()) =>
+            {
+                let source = axes(n, s)?;
+                let mut selected = vec![];
+                for (arg, axis) in args.iter().zip(source) {
+                    if let Expr::Call(tag, items) = arg {
+                        if tag == "@section_subscript" {
+                            let (first, _, step) = triplet(&items[0], &axis)?;
+                            selected.push(bin(
+                                BinOp::Add,
+                                first,
+                                bin(BinOp::Mul, bin(BinOp::Sub, index.clone(), int(1)), step),
+                            ));
+                            continue;
+                        }
+                    }
+                    selected.push(arg.clone());
+                }
+                Expr::Index(n.clone(), selected)
+            }
+            Expr::Call(n, a) if n == "@array_constructor" => {
+                self.serial += 1;
+                let result = format!("@vector_runtime_constructor_{}", self.serial);
+                out.push(Stmt::VarDecl {
+                    kind: TypeSpec::Integer(Some(8)),
+                    names: vec![result.clone()],
+                });
+                let mut offset = int(0);
+                for arg in a {
+                    let dims = shape(arg, s)?.context("unknown vector constructor item")?.1;
+                    let count = dims.first().cloned().unwrap_or(int(1));
+                    let mut body = vec![];
+                    let value = self.element(
+                        arg,
+                        bin(BinOp::Sub, index.clone(), offset.clone()),
+                        s,
+                        &mut body,
+                    )?;
+                    body.push(assign(&result, value));
+                    let end = bin(BinOp::Add, offset.clone(), count);
+                    out.push(Stmt::If {
+                        cond: bin(
+                            BinOp::And,
+                            bin(BinOp::Gt, index.clone(), offset),
+                            bin(BinOp::Le, index.clone(), end.clone()),
+                        ),
+                        then_body: body,
+                        else_body: None,
+                    });
+                    offset = end;
+                }
+                id(&result)
+            }
+            Expr::Call(n, a) if n == "@typed_constructor" && a.len() == 1 => int(0),
+            Expr::Call(n, a) if n == "@vector_subscript" => self.element(&a[0], index, s, out)?,
+            _ => bail!("this vector subscript expression is not yet supported"),
+        })
+    }
+    fn freeze(&mut self, e: &mut Expr, s: &mut Shapes, out: &mut Vec<Stmt>) -> Result<()> {
+        if let Expr::Section {
+            lower,
+            upper,
+            stride,
+            ..
+        } = e
+        {
+            for bound in [lower, upper, stride].into_iter().flatten() {
+                self.freeze(bound, s, out)?;
+            }
+            return Ok(());
+        }
+        if matches!(e,Expr::Call(tag,_) if tag=="@section_subscript" || tag=="@vector_subscript") {
+            if let Expr::Call(_, a) = e {
+                for e in a {
+                    self.freeze(e, s, out)?;
+                }
+            }
+            return Ok(());
+        }
+        if let Some((kind, dims)) = shape(e, s)? {
+            if dims.is_empty() {
+                if !matches!(
+                    e,
+                    Expr::IntLit(_) | Expr::RealLit(_) | Expr::Logical(_) | Expr::Str(_)
+                ) && constant(e).is_none()
+                {
+                    self.serial += 1;
+                    let n = format!("@vector_runtime_operand_{}", self.serial);
+                    out.push(Stmt::VarDecl {
+                        kind: kind.clone(),
+                        names: vec![n.clone()],
+                    });
+                    out.push(assign(&n, e.clone()));
+                    s.insert(n.clone(), (kind, vec![]));
+                    *e = id(&n);
+                }
+                return Ok(());
+            }
+        }
+        match e {
+            Expr::Bin(_, a, b) => {
+                self.freeze(a, s, out)?;
+                self.freeze(b, s, out)?;
+            }
+            Expr::Un(_, a) => self.freeze(a, s, out)?,
+            Expr::Call(n, a) | Expr::Index(n, a)
+                if s.get(n).is_some_and(|(_, d)| !d.is_empty()) =>
+            {
+                for e in a {
+                    self.freeze(e, s, out)?;
+                }
+            }
+            Expr::Call(n, a)
+                if matches!(
+                    n.as_str(),
+                    "@array_constructor" | "abs" | "int" | "mod" | "modulo"
+                ) =>
+            {
+                for e in a {
+                    self.freeze(e, s, out)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+    fn indices(
+        &mut self,
+        n: &str,
+        args: &mut [Expr],
+        s: &mut Shapes,
+        out: &mut Vec<Stmt>,
+        writable: bool,
+    ) -> Result<(Vec<Axis>, Vec<Expr>)> {
+        let source = axes(n, s)?;
+        if source.len() != args.len() {
+            bail!("array `{n}` requires {} subscripts", source.len());
+        }
+        if let Some(flag) = allocatables::allocated(n, s) {
+            out.push(error(
+                Expr::Un(crate::ast::UnOp::Not, Box::new(flag)),
+                format!("vector selection of unallocated array `{n}`"),
+            ));
+        }
+        let mut result = vec![];
+        let mut dims = vec![];
+        for (arg, (lower, extent)) in args.iter_mut().zip(source) {
+            self.freeze(arg, s, out)?;
+            if let Expr::Call(tag, a) = arg {
+                if tag == "@vector_subscript" {
+                    *arg = a[0].clone();
+                }
+            }
+            let source_axis = (lower.clone(), extent.clone());
+            let upper = bin(BinOp::Sub, bin(BinOp::Add, lower.clone(), extent), int(1));
+            if let Expr::Call(tag, a) = arg {
+                if tag == "@section_subscript" {
+                    let (first, count, step) = triplet(&a[0], &source_axis)?;
+                    let first = self.scalar("first", first, out, s);
+                    let count = self.scalar("count", count, out, s);
+                    dims.push(count);
+                    result.push(Axis::Triplet(first, step));
+                    continue;
+                }
+            }
+            let previous = self.force;
+            self.force = true;
+            self.expression(arg, s, out)?;
+            self.force = previous;
+            let (kind, d) = shape(arg, s)?.context("unknown vector subscript type")?;
+            if !matches!(kind, TypeSpec::Integer(_)) || d.len() > 1 {
+                bail!("vector subscript must be a rank-one INTEGER array or scalar INTEGER");
+            }
+            if d.is_empty() {
+                let value = self.scalar("scalar_index", arg.clone(), out, s);
+                result.push(Axis::Scalar(value));
+                continue;
+            }
+            let count = self.scalar("count", d[0].clone(), out, s);
+            let captured = self.buffer(
+                TypeSpec::Integer(Some(8)),
+                std::slice::from_ref(&count),
+                out,
+                s,
+            )?;
+            let vars = self.loop_vars(std::slice::from_ref(&count), out, s);
+            let i = id(&vars[0]);
+            let mut body = vec![];
+            let value = self.element(arg, i.clone(), s, &mut body)?;
+            body.push(Stmt::AssignIndex {
+                name: captured.clone(),
+                indices: vec![i.clone()],
+                value,
+            });
+            let read = Expr::Index(captured.clone(), vec![i]);
+            body.push(error(
+                bin(
+                    BinOp::Or,
+                    bin(BinOp::Lt, read.clone(), lower),
+                    bin(BinOp::Gt, read, upper),
+                ),
+                format!("vector subscript of `{n}` is outside bounds"),
+            ));
+            out.extend(self.nest(&vars, std::slice::from_ref(&count), body));
+            if writable {
+                let other = self.loop_vars(std::slice::from_ref(&count), out, s);
+                let j = id(&other[0]);
+                out.push(Stmt::Do{var:vars[0].clone(),start:int(1),end:count.clone(),body:vec![Stmt::Do{var:other[0].clone(),start:bin(BinOp::Add,id(&vars[0]),int(1)),end:count.clone(),body:vec![error(bin(BinOp::Eq,Expr::Index(captured.clone(),vec![id(&vars[0])]),Expr::Index(captured.clone(),vec![j])),format!("vector-subscript assignment to `{n}` selects an element more than once"))]}]});
+            }
+            dims.push(count);
+            result.push(Axis::Vector(captured));
+        }
+        Ok((result, dims))
+    }
+    fn selected(&self, axes: &[Axis], vars: &[String]) -> Vec<Expr> {
+        let mut coordinates = vars.iter();
+        axes.iter()
+            .map(|a| match a {
+                Axis::Scalar(e) => e.clone(),
+                Axis::Vector(n) => Expr::Index(n.clone(), vec![id(coordinates.next().unwrap())]),
+                Axis::Triplet(first, step) => bin(
+                    BinOp::Add,
+                    first.clone(),
+                    bin(
+                        BinOp::Mul,
+                        bin(BinOp::Sub, id(coordinates.next().unwrap()), int(1)),
+                        step.clone(),
+                    ),
+                ),
+            })
+            .collect()
+    }
+    fn expression(&mut self, e: &mut Expr, s: &mut Shapes, out: &mut Vec<Stmt>) -> Result<()> {
+        if let Expr::Call(n, a) = e {
+            if matches!(
+                n.as_str(),
+                "size" | "shape" | "lbound" | "ubound" | "kind" | "len"
+            ) && a.first().is_some_and(|e| contains(e, s))
+            {
+                let (kind, d) = shape(&a[0], s)?.context("unknown vector inquiry shape")?;
+                let dim = a
+                    .get(1)
+                    .map(|e| constant(e).context("array inquiry DIM must be constant"))
+                    .transpose()?;
+                if dim.is_some_and(|i| i < 1 || i as usize > d.len()) {
+                    bail!("invalid array inquiry DIM");
+                }
+                *e = match n.as_str() {
+                    "size" => Expr::Call(
+                        "int".into(),
+                        vec![dim
+                            .map(|i| d[i as usize - 1].clone())
+                            .unwrap_or_else(|| product(&d))],
+                    ),
+                    "len" => match &kind {
+                        TypeSpec::Character(n) => int(n.unwrap_or(1) as i64),
+                        TypeSpec::CharacterLength(e) => *e.clone(),
+                        _ => bail!("LEN requires a CHARACTER argument"),
+                    },
+                    "kind" => int(match kind {
+                        TypeSpec::Integer(k) => i64::from(k.unwrap_or(4)),
+                        TypeSpec::DoublePrecision => 8,
+                        TypeSpec::Character(_) => 1,
+                        _ => 4,
+                    }),
+                    _ => {
+                        let values = d
+                            .iter()
+                            .map(|nsize| {
+                                if n == "lbound" {
+                                    int(1)
+                                } else {
+                                    Expr::Call("int".into(), vec![nsize.clone()])
+                                }
+                            })
+                            .collect::<Vec<_>>();
+                        if let Some(i) = dim {
+                            values[i as usize - 1].clone()
+                        } else {
+                            Expr::Call("@array_constructor".into(), values)
+                        }
+                    }
+                };
+                return Ok(());
+            }
+        }
+        match e {
+            Expr::Call(n, a) | Expr::Index(n, a)
+                if dynamic(n, a, s) || self.force && selection(n, a, s) =>
+            {
+                let n = n.clone();
+                let kind = s[&n].0.clone();
+                let capacity = selection_capacity(&n, a, s);
+                let (selected, dims) = self.indices(&n, a, s, out, false)?;
+                let result = self.buffer_capacity(kind, &dims, capacity, out, s)?;
+                let vars = self.loop_vars(&dims, out, s);
+                out.extend(self.nest(
+                    &vars,
+                    &dims,
+                    vec![Stmt::AssignIndex {
+                        name: result.clone(),
+                        indices: vars.iter().map(|n| id(n)).collect(),
+                        value: Expr::Index(n, self.selected(&selected, &vars)),
+                    }],
+                ));
+                *e = id(&result);
+            }
+            Expr::Call(_, a) | Expr::Index(_, a) => {
+                for e in a {
+                    self.expression(e, s, out)?;
+                }
+            }
+            Expr::Bin(_, a, b) => {
+                self.expression(a, s, out)?;
+                self.expression(b, s, out)?;
+            }
+            Expr::Un(_, a) => self.expression(a, s, out)?,
+            _ => {}
+        }
+        Ok(())
+    }
+    fn body(&mut self, body: &mut Vec<Stmt>, inherited: &Shapes, params: &[String]) -> Result<()> {
+        let mut s = inherited.clone();
+        for p in params {
+            s.remove(p);
+        }
+        declarations(body, &mut s);
+        if params.iter().any(|p| {
+            s.get(p)
+                .is_some_and(|(_, d)| !d.is_empty() && axes(p, &s).is_err())
+        }) {
+            return Ok(());
+        }
+        if body.iter().any(
+            |stmt| matches!(stmt,Stmt::CallSub{name,..} if name=="@where" || name=="@elsewhere"),
+        ) {
+            for stmt in body.iter() {
+                if match stmt {
+                    Stmt::Assign { value, .. } => contains(value, &s),
+                    Stmt::AssignIndex {
+                        name,
+                        indices,
+                        value,
+                    } => dynamic(name, indices, &s) || contains(value, &s),
+                    _ => false,
+                } {
+                    bail!("vector selections in WHERE assignments are not yet supported");
+                }
+            }
+        }
+        let mut result = vec![];
+        for mut stmt in std::mem::take(body) {
+            let mut prefix = vec![];
+            match &mut stmt {
+                Stmt::AssignIndex {
+                    name,
+                    indices,
+                    value,
+                } if dynamic(name, indices, &s) => {
+                    let capacity = selection_capacity(name, indices, &s);
+                    let (selected, dims) =
+                        self.indices(name, indices, &mut s, &mut prefix, true)?;
+                    self.expression(value, &mut s, &mut prefix)?;
+                    let (kind, rhs) =
+                        shape(value, &s)?.context("unknown vector assignment RHS type")?;
+                    if !rhs.is_empty() && rhs.len() != dims.len() {
+                        bail!("vector-subscript assignment shapes do not conform");
+                    }
+                    for (a, b) in rhs.iter().zip(&dims) {
+                        prefix.push(error(
+                            bin(BinOp::Ne, a.clone(), b.clone()),
+                            "vector-subscript assignment shapes do not conform".into(),
+                        ));
+                    }
+                    let vars = self.loop_vars(&dims, &mut prefix, &mut s);
+                    let value = if rhs.is_empty() {
+                        self.serial += 1;
+                        let temp = format!("@vector_runtime_scalar_{}", self.serial);
+                        prefix.push(Stmt::VarDecl {
+                            kind,
+                            names: vec![temp.clone()],
+                        });
+                        prefix.push(assign(&temp, value.clone()));
+                        id(&temp)
+                    } else {
+                        let temp =
+                            self.buffer_capacity(kind, &dims, capacity, &mut prefix, &mut s)?;
+                        prefix.push(assign(&temp, value.clone()));
+                        Expr::Index(temp, vars.iter().map(|n| id(n)).collect())
+                    };
+                    prefix.extend(self.nest(
+                        &vars,
+                        &dims,
+                        vec![Stmt::AssignIndex {
+                            name: name.clone(),
+                            indices: self.selected(&selected, &vars),
+                            value,
+                        }],
+                    ));
+                    result.extend(prefix);
+                    continue;
+                }
+                Stmt::Assign { value, .. } | Stmt::AssignIndex { value, .. } => {
+                    self.expression(value, &mut s, &mut prefix)?
+                }
+                Stmt::Print { items } => {
+                    for e in items {
+                        self.expression(e, &mut s, &mut prefix)?;
+                    }
+                }
+                Stmt::CallSub { name, args } => {
+                    for (i, e) in args.iter().enumerate() {
+                        if contains(e, &s) {
+                            super::validate_actual(name, i, &self.procedures)?;
+                        }
+                    }
+                    if name.starts_with('@')
+                        && name.contains("read")
+                        && args.iter().any(|e| contains(e, &s))
+                    {
+                        bail!("READ into vector-subscript selections is not yet supported");
+                    }
+                    for e in args {
+                        self.expression(e, &mut s, &mut prefix)?;
+                    }
+                }
+                Stmt::Read { args } => {
+                    if args.iter().any(|e| contains(e, &s)) {
+                        bail!("READ into vector-subscript selections is not yet supported");
+                    }
+                }
+                Stmt::Return(Some(e)) => self.expression(e, &mut s, &mut prefix)?,
+                Stmt::If {
+                    cond,
+                    then_body,
+                    else_body,
+                } => {
+                    self.expression(cond, &mut s, &mut prefix)?;
+                    self.body(then_body, &s, &[])?;
+                    if let Some(b) = else_body {
+                        self.body(b, &s, &[])?;
+                    }
+                }
+                Stmt::Do {
+                    start, end, body, ..
+                } => {
+                    self.expression(start, &mut s, &mut prefix)?;
+                    self.expression(end, &mut s, &mut prefix)?;
+                    self.body(body, &s, &[])?;
+                }
+                Stmt::DoWhile { cond, body } => {
+                    self.expression(cond, &mut s, &mut prefix)?;
+                    self.body(body, &s, &[])?;
+                    if !prefix.is_empty() {
+                        let (decls, mut evaluate): (Vec<_>, Vec<_>) =
+                            prefix.into_iter().partition(|s| {
+                                matches!(
+                                    s,
+                                    Stmt::VarDecl { .. }
+                                        | Stmt::ArrayDecl { .. }
+                                        | Stmt::DummyIntent { .. }
+                                )
+                            });
+                        prefix = decls;
+                        evaluate.push(Stmt::If {
+                            cond: Expr::Un(crate::ast::UnOp::Not, Box::new(cond.clone())),
+                            then_body: vec![Stmt::Exit],
+                            else_body: None,
+                        });
+                        evaluate.append(body);
+                        *body = evaluate;
+                        *cond = Expr::Logical(true);
+                    }
+                }
+                Stmt::Block { body } | Stmt::Module { body, .. } => self.body(body, &s, &[])?,
+                Stmt::Function { body, params, .. } | Stmt::Subroutine { body, params, .. } => {
+                    self.body(body, &s, params)?
+                }
+                Stmt::SelectCase {
+                    expr,
+                    cases,
+                    default,
+                } => {
+                    self.expression(expr, &mut s, &mut prefix)?;
+                    for c in cases {
+                        self.body(&mut c.body, &s, &[])?;
+                    }
+                    if let Some(b) = default {
+                        self.body(b, &s, &[])?;
+                    }
+                }
+                _ => {}
+            }
+            declarations(&prefix, &mut s);
+            result.extend(prefix);
+            result.push(stmt);
+        }
+        *body = result;
+        Ok(())
+    }
+}
+fn heap_buffer(
+    kind: TypeSpec,
+    n: String,
+    dims: &[Expr],
+    out: &mut Vec<Stmt>,
+    s: &mut Shapes,
+) -> Result<()> {
+    crate::heap::unallocated_result(kind, n.clone(), dims.len(), out, s)?;
+    out.push(Stmt::CallSub {
+        name: "@allocate".into(),
+        args: vec![Expr::Call(n, dims.to_vec())],
+    });
+    declarations(out, s);
+    Ok(())
+}
+pub(super) fn resolve(
+    mut p: Program,
+    procedures: &HashMap<String, Vec<String>>,
+) -> Result<Program> {
+    fn signatures(body: &[Stmt], symbols: &mut Shapes) {
+        for stmt in body {
+            match stmt {
+                Stmt::Function {
+                    name,
+                    return_type,
+                    body,
+                    ..
+                } => {
+                    let result = match body.last() {
+                        Some(Stmt::Return(Some(Expr::Ident(n)))) => n,
+                        _ => name,
+                    };
+                    let kind = return_type.clone().or_else(|| {
+                        body.iter().find_map(|s| {
+                            if let Stmt::VarDecl { kind, names } = s {
+                                names.contains(result).then(|| kind.clone())
+                            } else {
+                                None
+                            }
+                        })
+                    });
+                    if let Some(kind) = kind {
+                        symbols.insert(format!("@function:{name}"), (kind, vec![]));
+                    }
+                    signatures(body, symbols);
+                }
+                Stmt::Module { body, .. } | Stmt::Subroutine { body, .. } => {
+                    signatures(body, symbols)
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut symbols = Shapes::new();
+    signatures(&p.body, &mut symbols);
+    Lower {
+        serial: super::serial_start(&p.body),
+        procedures: procedures.clone(),
+        force: false,
+    }
+    .body(&mut p.body, &symbols, &[])?;
+    Ok(p)
+}

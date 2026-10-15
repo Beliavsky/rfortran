@@ -1631,6 +1631,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
     p = crate::pointers::resolve(p)?;
     p = crate::modules::bind_descriptors(p)?;
     p = crate::modules::finish_bounds(p)?;
+    p = crate::vector_subscripts::finish(p)?;
     p = crate::allocatables::finish(p)?;
     p = crate::output::prepare_character_views(p)?;
     p = crate::constructors::resolve(p)?;

@@ -1280,8 +1280,8 @@ access such as `x(i)%id`, constructors, assignment, and list-directed/formatted
 output in element order. Array-valued functions execute once and pass their
 component result arrays through a hidden subroutine call. This preserves side
 effects in ordinary functions and also works for PURE functions. The current
-subset requires scalar numeric or LOGICAL components; CHARACTER/nested/array
-components, polymorphic arrays, saved arrays, derived PARAMETER arrays, pointers,
+subset supports scalar numeric, LOGICAL and fixed-length CHARACTER components;
+nested/array components, polymorphic arrays, saved arrays, derived PARAMETER arrays, pointers,
 finalization and a separate-object record ABI remain unsupported.
 `xset_alloc_derived.f90` and `tests/185_allocated_derived_concat.f90` exercise empty
 and nonempty allocated inputs and replacement of an allocated output.
@@ -1394,25 +1394,38 @@ elements are padded or truncated to that length before assignment. Run
 
 ## Vector subscripts
 
-Local fixed rank-one numeric and LOGICAL arrays support INTEGER vector subscripts with
-up to 1024 selected elements. Selectors may be fixed-size INTEGER arrays,
+Arrays of ranks 1 through 15 support INTEGER vector subscripts. Implemented element
+types are INTEGER, REAL, DOUBLE PRECISION, LOGICAL, CHARACTER, and derived types
+with supported scalar intrinsic components. Scalar subscripts, triplets and vector
+subscripts can be mixed on different dimensions; the first retained dimension
+varies fastest. Selectors may be INTEGER arrays,
 constructors, constant implied-DOs, sections, supported arithmetic, ABS/MOD/MODULO
 or default INT conversions. Reads preserve order and repetitions. Assignments
 capture all indices and right-hand values before writing, including scalar fills,
 overlapping selections and an array used as its own index vector. Nondefault
 lower bounds and INTEGER kinds 1/2/4/8 are supported.
 
+Numeric and LOGICAL selections use active runtime descriptors for allocated source
+arrays and index vectors, including empty vectors, without the former 1024-element
+selection limit. Numeric POINTER sources and POINTER index vectors use their
+active bounds and strides. CHARACTER selections use existing bounded CHARACTER storage;
+runtime active lengths are supported when their storage capacity is known.
+Vector actual arguments are materialized for known INTENT(IN) subroutine dummies;
+association with writable dummies is rejected.
+
 Constant invalid indices and duplicate assignment indices are compile errors;
 dynamic indices are checked against the original bounds before any writes, and
 dynamic duplicate destinations cause a runtime error. Duplicate indices remain
-valid for reads. SIZE, LBOUND, UBOUND and KIND of supported selections use shape
+valid for reads. SIZE, SHAPE, LBOUND, UBOUND, KIND and CHARACTER LEN inquiries use shape
 and type information without reading the array or index values. Only selected
 source elements must be initialized. Loop-condition captures are reevaluated on
-every iteration, including after CYCLE. Run `python tests/test_vector_subscripts.py`.
+every iteration, including after CYCLE. Run `python tests/test_vector_subscripts.py`
+and `python tests/test_vector_ranks.py` for interpreter/native O0/O2 and gfortran checks.
 
-Higher-rank and CHARACTER selections, runtime-sized index vectors, READ
-destinations, vector actuals to subroutines and vector selections in WHERE
-assignments remain unsupported. Other vector expressions are rejected when they
+Unbounded runtime-sized CHARACTER result storage, vector READ destinations and
+vector selections in WHERE assignments remain unsupported. Derived selection
+output currently requires fixed result extents. COMPLEX and derived types with
+nested or array components are not yet implemented. Other vector expressions are rejected when they
 reach scalar array-index lowering, instead of silently using their first element.
 
 ## Named arguments
@@ -1570,6 +1583,7 @@ python tests/test_character_arrays.py
 python tests/test_character_array_parameters.py
 python tests/test_scalar_substrings.py
 python tests/test_vector_subscripts.py
+python tests/test_vector_ranks.py
 python tests/test_named_arguments.py
 python tests/test_ofort_compat_runner.py
 python tests/test_numeric_model.py

@@ -1367,7 +1367,6 @@ mod tests {
             ("print *,a(::0,:)", "stride must not be zero"),
             ("print *,a(:,4)", "dimension 2"),
             ("print *,a(:,1.5)", "constant integers"),
-            ("print *,a(:,a(:,1))", "constant integers"),
             ("print *,a(:,i)", "constant integers"),
             ("print *,a(:,:,1)", "requires 2 subscripts"),
             ("b=a(:,1:2)", "nonconforming array assignment"),

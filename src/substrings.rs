@@ -699,12 +699,16 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
 
 /// Generated declarations belong to the enclosing procedure, even when their
 /// captures execute conditionally or inside a loop.
-pub fn hoist(body: &mut Vec<Stmt>) {
-    fn walk(body: &mut Vec<Stmt>, declarations: &mut Vec<Stmt>) {
+pub fn hoist(body: &mut Vec<Stmt>) { hoist_kind(body,false); }
+pub(crate) fn hoist_vectors(body:&mut Vec<Stmt>) { hoist_kind(body,true); }
+fn hoist_kind(body:&mut Vec<Stmt>,vectors:bool) {
+    fn walk(body: &mut Vec<Stmt>, declarations: &mut Vec<Stmt>, vectors:bool) {
         let mut output = Vec::new();
         for mut s in std::mem::take(body) {
-            if matches!(&s, Stmt::VarDecl {names,..} if names.iter().all(|n|n.starts_with("@pointer_") || n.starts_with("@substring_") || n.starts_with("@character_") || n.starts_with("@vector_") || n.starts_with("@reduction_")))
-                || matches!(&s, Stmt::ArrayDecl {name,..} if name.starts_with("@pointer_") || name.starts_with("@vector_") || name.starts_with("@reduction_"))
+            let vector_declaration=matches!(&s,Stmt::VarDecl{names,..} if names.iter().all(|n|n.starts_with("@vector_") || n.starts_with("@matrix_alloc_@vector_") || n.starts_with("@record_value_") || n.starts_with("@record_index_") || n.starts_with("@record_vector_index_") || n.starts_with("@record_output_")))
+                || matches!(&s,Stmt::ArrayDecl{name,..}|Stmt::DummyIntent{name,..} if name.starts_with("@vector_") || name.starts_with("@record_array_value_") || name.starts_with("@record_vector_index_") || name.starts_with("@record$@record_output_selection_"));
+            if vector_declaration || !vectors && (matches!(&s, Stmt::VarDecl {names,..} if names.iter().all(|n|n.starts_with("@pointer_") || n.starts_with("@substring_") || n.starts_with("@character_") || n.starts_with("@vector_") || n.starts_with("@reduction_")))
+                || matches!(&s, Stmt::ArrayDecl {name,..} if name.starts_with("@pointer_") || name.starts_with("@vector_") || name.starts_with("@reduction_")))
             {
                 declarations.push(s);
                 continue;
@@ -712,26 +716,26 @@ pub fn hoist(body: &mut Vec<Stmt>) {
             match &mut s {
                 Stmt::Function { body, .. }
                 | Stmt::Subroutine { body, .. }
-                | Stmt::Module { body, .. } => hoist(body),
+                | Stmt::Module { body, .. } => hoist_kind(body,vectors),
                 Stmt::If {
                     then_body,
                     else_body,
                     ..
                 } => {
-                    walk(then_body, declarations);
+                    walk(then_body, declarations,vectors);
                     if let Some(b) = else_body {
-                        walk(b, declarations);
+                        walk(b, declarations,vectors);
                     }
                 }
                 Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } | Stmt::Block { body } => {
-                    walk(body, declarations)
+                    walk(body, declarations,vectors)
                 }
                 Stmt::SelectCase { cases, default, .. } => {
                     for c in cases {
-                        walk(&mut c.body, declarations);
+                        walk(&mut c.body, declarations,vectors);
                     }
                     if let Some(b) = default {
-                        walk(b, declarations);
+                        walk(b, declarations,vectors);
                     }
                 }
                 _ => {}
@@ -741,7 +745,7 @@ pub fn hoist(body: &mut Vec<Stmt>) {
         *body = output;
     }
     let mut declarations = Vec::new();
-    walk(body, &mut declarations);
+    walk(body, &mut declarations,vectors);
     declarations.append(body);
     *body = declarations;
 }
