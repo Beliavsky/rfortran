@@ -2,6 +2,8 @@
 mod file_io;
 #[path = "characters.rs"]
 mod characters;
+#[path = "module_data.rs"]
+mod module_data;
 use anyhow::{bail, Context, Result};
 use cranelift_codegen::{isa, settings};
 use cranelift_object::{ObjectBuilder, ObjectModule};
@@ -23,12 +25,14 @@ static GLOBAL_STR_ID: AtomicU32 = AtomicU32::new(0);
 pub struct CraneliftBackend {
     pub triple: Option<Triple>,
     pub flags: settings::Flags,
+    module_owners: Option<HashSet<String>>,
 }
 impl Default for CraneliftBackend {
     fn default() -> Self {
         Self {
             triple: None,
             flags: settings::Flags::new(settings::builder()),
+            module_owners: None,
         }
     }
 }
@@ -37,7 +41,12 @@ impl CraneliftBackend {
         Self {
             triple: None,
             flags,
+            module_owners: None,
         }
+    }
+    pub fn with_module_owners(mut self, owners: HashSet<String>) -> Self {
+        self.module_owners = Some(owners);
+        self
     }
 }
 enum CgVal {
@@ -3240,6 +3249,9 @@ impl Backend for CraneliftBackend {
             cranelift_module::default_libcall_names(),
         )?;
         let mut obj = ObjectModule::new(builder);
+        if let Some(owners) = &self.module_owners {
+            module_data::declare(&mut obj, module, owners)?;
+        }
         let file_units = obj.declare_data(".rfort.file_units", Linkage::Local, true, false)?;
         let mut file_data = DataDescription::new();
         file_data.define_zeroinit(2048 * 8);
@@ -3482,7 +3494,9 @@ impl Backend for CraneliftBackend {
                     .push(ir::AbiParam::new(ir::types::F64)),
                 crate::ast::TypeSpec::Character(_) => {}
             }
-            let linkage=if f.name.starts_with("@internal_") {Linkage::Local} else {Linkage::Export};
+            // Module procedures and generated specializations are private to
+            // this object; their definitions are carried in the .rmod file.
+            let linkage=if f.name.starts_with('@') || f.name == "__f90c_init" {Linkage::Local} else {Linkage::Export};
             let fid = obj.declare_function(&f.name, linkage, &ctx.func.signature)?;
             obj.clear_context(&mut ctx);
             func_ids.insert(f.name.clone(), fid);

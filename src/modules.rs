@@ -894,6 +894,50 @@ pub(crate) fn capture(mut program: Program) -> Result<Program> {
         *body = prefix;
         Ok(())
     }
+    // Keep a storage definition even when this compilation has no callers of
+    // the module entity. A later separately compiled user may reference it.
+    let mut bindings = Vec::new();
+    let mut names = data.keys().cloned().collect::<Vec<_>>();
+    names.sort();
+    for name in names {
+        let definition = &data[&name];
+        if definition.constant { continue; }
+        bindings.extend(definition.declarations.clone());
+        bindings.push(Stmt::CallSub {
+            name: "@module_bind".into(),
+            args: vec![Expr::Ident(name.clone()), Expr::Str(name),
+                Expr::Str(serde_json::to_string(&definition.storage)?)],
+        });
+    }
+    fn saved(body: &[Stmt], bindings: &mut Vec<Stmt>) {
+        for statement in body {
+            match statement {
+                Stmt::CallSub { name, args } if name == "@saved_bind" => {
+                    if let [Expr::Ident(local), Expr::Str(key), value] = args.as_slice() {
+                        if key.starts_with("@module$") {
+                            if let Some(kind) = body.iter().find_map(|s| match s {
+                                Stmt::VarDecl { kind, names } if names.contains(local) => Some(kind.clone()),
+                                _ => None,
+                            }) {
+                                let local = format!("@module_saved_owner_{}", bindings.len());
+                                bindings.push(Stmt::VarDecl { kind, names: vec![local.clone()] });
+                                bindings.push(Stmt::CallSub { name: name.clone(), args: vec![
+                                    Expr::Ident(local), Expr::Str(key.clone()), value.clone()] });
+                            }
+                        }
+                    }
+                }
+                Stmt::Module { body, .. } | Stmt::Function { body, .. }
+                | Stmt::Subroutine { body, .. } | Stmt::Block { body } => saved(body, bindings),
+                _ => {}
+            }
+        }
+    }
+    saved(&program.body, &mut bindings);
+    if !bindings.is_empty() {
+        program.body.push(Stmt::Subroutine { name: "@internal_module_storage".into(),
+            params: vec![], body: bindings, pure: false, elemental: false });
+    }
     inject(&mut program.body, &data, false)?;
     Ok(program)
 }

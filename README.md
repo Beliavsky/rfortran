@@ -24,7 +24,7 @@ Implemented subsets include:
   named arguments, and supported generic procedure calls.
 - Scalar and rank-1 through rank-15 pointer descriptors over fixed `TARGET`
   storage, including array views returned through subroutine output pointers.
-- Modules compiled in one source group, scalar derived types and arrays with
+- Modules compiled together or separately using persistent `.rmod` interfaces, scalar derived types and arrays with
   scalar numeric/LOGICAL components, type-bound
   procedures, and defined operators, including derived-type comparisons.
 - List-directed output, a subset of formatted input/output, runtime format
@@ -38,7 +38,7 @@ array operations require statically known shapes, and procedure calls use
 specialization rather than a general Fortran descriptor ABI. Important gaps
 include runtime-dependent declaration bounds and explicit CHARACTER lengths, general
 allocatable/pointer and polymorphic behavior, general CHARACTER-valued functions,
-separately compiled module interfaces, and broad file I/O support. The feature
+and broad file I/O support. The feature
 notes below describe the supported forms and their restrictions.
 
 The expanded ofort inventory refreshed on **2026-10-11** has 440 cases with valid
@@ -136,11 +136,54 @@ The default optimization level is `-O2`. `--verbose` shows compilation progress
 and tool commands; `--quiet` suppresses that progress. `--run` executes the
 linked program and propagates its failure status.
 
-List source files in dependency order, with the main program last. They are
-compiled as one source group; the compiler does not yet load module interfaces
-from separately compiled object files. Existing `.obj`/`.o` files can also be
-supplied for linking. Free-form `.f90`, `.f95`, `.f03`, and `.f08` inputs are
-accepted. The existing language limitations still apply.
+List source files with the main program last to compile them as one source group.
+Alternatively, compile modules in dependency order with `-c`, then compile their
+consumers and link the objects. Successful native compilation writes one
+`<module-name>.rmod` interface for each module defined in the source group.
+Existing `.obj`/`.o` files can also be supplied for linking. Free-form `.f90`,
+`.f95`, `.f03`, and `.f08` inputs are accepted. The existing language limitations
+still apply.
+
+For example, on Windows:
+
+```cmd
+rfort -c kind.f90
+rfort -c util.f90
+rfort -c xutil.f90
+rfort kind.obj util.obj xutil.obj -o xutil.exe
+```
+
+This workflow does not remove any remaining language blockers in `util.f90`.
+On Linux/macOS the corresponding object extension is `.o`.
+Interfaces default to the current directory. `-J <directory>` selects their output
+directory and adds it to module searches; repeat `-I <directory>` to add search
+paths. Searches check the output directory, current directory, explicit `-I`
+directories in order, and the input source directory. For example:
+
+```cmd
+if not exist build mkdir build
+rfort -J build\modules -c kind.f90 -o build\kind.obj
+rfort -I build\modules -c util.f90 -o build\util.obj
+```
+
+The compiler loads transitive module dependencies without needing the original
+source files. A module supplied in the current source group takes precedence
+over a saved interface. Missing, incompatible, circular and stale dependencies
+are diagnosed; rebuild a dependent module after changing one of its dependencies.
+Interfaces are published only after successful code generation; failed compilation
+does not replace an existing interface. Native linking requires the needed object
+files to be supplied explicitly.
+
+`.rmod` is rfort's versioned, target-specific format, separate from other compilers'
+`.mod` files. It stores parsed module definitions and source information, including
+private entities and procedure bodies needed by the current specialization passes.
+Imported module procedures are specialized or generated privately in each consuming
+object. Module variables, allocation descriptors, initialization masks and supported
+initialized procedure locals have one definition in their owning module object and
+are shared by its separately compiled users. This is not a public descriptor ABI
+or binary compatibility with gfortran. Recompile consumers when module definitions
+change. `check` and interpreted `run` also load interfaces but do not publish them.
+Run `python tests/test_module_compilation.py` for the separate-compilation regressions.
 
 The default executable and object names come from the last source file:
 `main.exe` and `main.obj` on Windows, or `main` and `main.o` on Linux/macOS.
@@ -1033,7 +1076,7 @@ INT64 (1/2/4/8) and REAL32/REAL64 (4/8). REAL128 is -1 to indicate an unsupporte
 real kind. USE, INTRINSIC :: ISO_FORTRAN_ENV, ordinary USE and USE :: forms support
 ONLY lists, host association and re-export through user modules. Explicit
 INTRINSIC selects the built-in module even if a user module has the same name;
-NON_INTRINSIC requires a user module in the same source group. Other intrinsic
+NON_INTRINSIC requires a user module in the source group or a saved `.rmod` interface. Other intrinsic
 modules and other ISO_FORTRAN_ENV entities are not yet implemented.
 Run `python tests/test_intrinsic_env.py`.
 
@@ -1526,10 +1569,11 @@ Existing type and rank limits still apply. Numeric module arrays use heap storag
 CHARACTER allocation retains its existing bounds. This does not add a general
 module pointer or derived-type storage ABI.
 
-Supply module sources before their consumers in the same invocation, for example
-`rfort m1.f90 m2.f90 main.f90 --run`. Compiled `.mod` interface files are not
-produced or consumed. Run `python tests/test_module_scope.py` for interpreter,
-native O0/O2 and gfortran comparisons.
+Supply module sources together, for example
+`rfort m1.f90 m2.f90 main.f90 --run`, or compile them separately using `-c`
+and the persistent `.rmod` interfaces described above. Run
+`python tests/test_module_scope.py` for interpreter, native O0/O2 and gfortran
+comparisons and `python tests/test_module_compilation.py` for cross-object tests.
 
 ## Toolchains
 
@@ -1592,6 +1636,7 @@ Place general options such as `--verbose` before an explicit subcommand.
 cargo build --bin rfort
 cargo test --bin rfort --test testsuite -- --test-threads=1
 python tests/test_driver.py
+python tests/test_module_compilation.py
 python tests/test_record_read.py
 python tests/test_runtime_read_format.py
 python tests/test_named_loops.py

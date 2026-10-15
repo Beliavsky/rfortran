@@ -58,6 +58,8 @@ pub fn print_help() {
     println!("\nOptions:");
     println!("  --verbose            Show build progress and toolchain commands");
     println!("  -c, --compile-only   Emit an object without linking");
+    println!("  -I <directory>       Search for rfort .rmod module interfaces (repeatable)");
+    println!("  -J <directory>       Write module interfaces here and search this directory");
     println!("  -Wall, --Wall        Enable all warnings");
     println!("  -Wunused             Enable all unused-declaration warnings");
     println!("  -Wunused-<category>  Enable type, variable, parameter, dummy-argument or function warnings");

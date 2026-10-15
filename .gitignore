@@ -1,4 +1,5 @@
 /target
+*.rmod
 *.exe
 !src/bin/tools/lld-link.exe
 !src/bin/tools/objdump.exe

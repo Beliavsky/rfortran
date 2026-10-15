@@ -394,28 +394,40 @@ pub fn instrument(mut program: Program) -> Result<Program> {
     crate::modules::unify_storage(program)
 }
 
+#[cfg(test)]
 pub fn instrument_with_source(program: Program, source: &str, filename: &str) -> Result<Program> {
-    fn locate(body: &mut Vec<Stmt>, inherited: Option<usize>, source: &str, filename: &str) {
+    instrument_with_origins(program, source, filename, &[])
+}
+
+pub(crate) fn instrument_with_origins(program: Program, source: &str, filename: &str,
+    origins: &[crate::source_diagnostics::SourceOrigin]) -> Result<Program> {
+    fn locate(body: &mut Vec<Stmt>, inherited: Option<usize>, source: &str, filename: &str,
+        origins: &[crate::source_diagnostics::SourceOrigin]) {
         let mut position = inherited;
         for stmt in body.iter_mut() {
             match stmt {
                 Stmt::SourceLocation(offset) => position = Some(*offset),
                 Stmt::CallSub { name, args } if name == "@check_initialized" => {
                     if let Some(offset) = position {
+                        let (source, offset, filename) = if let Some(origin) = origins.iter().find(|o| o.range.contains(&offset)) {
+                            let filename = std::path::Path::new(&origin.name).file_name()
+                                .and_then(|n| n.to_str()).unwrap_or(&origin.name);
+                            (&source[origin.range.clone()], offset - origin.range.start, filename)
+                        } else { (source, offset, filename) };
                         let line = source.as_bytes()[..offset.min(source.len())].iter().filter(|&&b| b == b'\n').count() + 1;
                         if args.len() == 2 { args.push(Expr::Str(String::new())); }
                         args.push(Expr::Str(format!("{filename}:{line}")));
                     }
                 }
                 Stmt::If { then_body, else_body, .. } => {
-                    locate(then_body, position, source, filename);
-                    if let Some(body) = else_body { locate(body, position, source, filename); }
+                    locate(then_body, position, source, filename, origins);
+                    if let Some(body) = else_body { locate(body, position, source, filename, origins); }
                 }
                 Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } | Stmt::Block { body }
-                | Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } | Stmt::Module { body, .. } => locate(body, position, source, filename),
+                | Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } | Stmt::Module { body, .. } => locate(body, position, source, filename, origins),
                 Stmt::SelectCase { cases, default, .. } => {
-                    for case in cases { locate(&mut case.body, position, source, filename); }
-                    if let Some(body) = default { locate(body, position, source, filename); }
+                    for case in cases { locate(&mut case.body, position, source, filename, origins); }
+                    if let Some(body) = default { locate(body, position, source, filename, origins); }
                 }
                 _ => {}
             }
@@ -423,7 +435,7 @@ pub fn instrument_with_source(program: Program, source: &str, filename: &str) ->
         body.retain(|stmt| !matches!(stmt, Stmt::SourceLocation(_)));
     }
     let mut program = instrument(program)?;
-    locate(&mut program.body, None, source, filename);
+    locate(&mut program.body, None, source, filename, origins);
     Ok(program)
 }
 

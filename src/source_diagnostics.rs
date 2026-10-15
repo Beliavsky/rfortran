@@ -16,7 +16,7 @@ pub(crate) struct LocatedError {
     range: Range<usize>,
     highlight: Option<String>,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct SourceOrigin {
     pub name: String,
     pub range: Range<usize>,

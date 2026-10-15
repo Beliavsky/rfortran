@@ -11,6 +11,7 @@ mod source_diagnostics;
 mod ir;
 mod intrinsics;
 mod modules;
+mod module_files;
 mod heap;
 mod heap_characters;
 mod random_seed;
@@ -186,7 +187,11 @@ fn compiler_main() -> Result<()> {
                     }
                 }
             };
-            let program = lower_program(program, &src, &tokens, input.to_str().unwrap_or("<unknown>"), None, &settings, &args.warnings)?;
+            let prepared = prepare_program(program, &src, &tokens, &input, None, &settings, &args)?;
+            let src = &prepared.source;
+            let tokens = lexer::lex(src);
+            let program = lower_program_body(prepared.program.clone(), src, &tokens,
+                input.to_str().unwrap_or("<unknown>"), Some(&prepared.origins))?;
             suppress_legacy_unused(&mut settings);
             let empty_obj_exports = std::collections::HashSet::new();
             let sema_errs = sema::analyze_with_src(
@@ -210,7 +215,7 @@ fn compiler_main() -> Result<()> {
                     std::process::exit(1);
                 }
             }
-            if !any_err { initialized::instrument_with_source(program, &src, input.file_name().and_then(|name| name.to_str()).unwrap_or("<unknown>"))?; }
+            if !any_err { initialized::instrument_with_origins(program, &src, input.file_name().and_then(|name| name.to_str()).unwrap_or("<unknown>"), &prepared.origins)?; }
             if sema_errs.is_empty() && !any_err {
                 println!("No problems found.");
             }
@@ -245,7 +250,11 @@ fn compiler_main() -> Result<()> {
                     anyhow::bail!("parse failed");
                 }
             };
-            let program = lower_program(program, &src, &tokens, input.to_str().unwrap_or("<unknown>"), None, &settings, &args.warnings)?;
+            let prepared = prepare_program(program, &src, &tokens, &input, None, &settings, &args)?;
+            let src = &prepared.source;
+            let tokens = lexer::lex(src);
+            let program = lower_program_body(prepared.program.clone(), src, &tokens,
+                input.to_str().unwrap_or("<unknown>"), Some(&prepared.origins))?;
             suppress_legacy_unused(&mut settings);
             let empty_obj_exports = std::collections::HashSet::new();
             let sema_errs = sema::analyze_with_src(
@@ -265,7 +274,7 @@ fn compiler_main() -> Result<()> {
             if sema_errs.iter().any(|e| matches!(e.kind, crate::errors::CompileErrorKind::Semantic)) {
                 anyhow::bail!("semantic checks failed");
             }
-            let program = initialized::instrument_with_source(program, &src, input.file_name().and_then(|name| name.to_str()).unwrap_or("<unknown>"))?;
+            let program = initialized::instrument_with_origins(program, &src, input.file_name().and_then(|name| name.to_str()).unwrap_or("<unknown>"), &prepared.origins)?;
             runtime::interpret(&program);
         }
         cli::Command::Link { inputs, out } => {
@@ -278,17 +287,25 @@ fn compiler_main() -> Result<()> {
     Ok(())
 }
 
-fn lower_program(
+fn prepare_program(
     program: ast::Program,
     src: &str,
     tokens: &[lexer::Token],
-    filename: &str,
+    input: &std::path::Path,
     origins: Option<&[source_diagnostics::SourceOrigin]>,
     settings: &sema::SemaSettings,
-    warning_options: &[String],
+    args: &cli::Cli,
+) -> Result<module_files::Prepared> {
+    let filename = input.to_str().unwrap_or("<unknown>");
+    unused::check(&program, src, tokens, filename, origins, settings, &args.warnings)?;
+    optional_warnings::check(&program, src, tokens, filename, origins, settings, &args.warnings)?;
+    module_files::prepare(program, src, input, origins, args)
+}
+
+fn lower_program_body(
+    program: ast::Program, src: &str, tokens: &[lexer::Token], filename: &str,
+    origins: Option<&[source_diagnostics::SourceOrigin]>,
 ) -> Result<ast::Program> {
-    unused::check(&program, src, tokens, filename, origins, settings, warning_options)?;
-    optional_warnings::check(&program, src, tokens, filename, origins, settings, warning_options)?;
     (|| {
         sections::resolve(reductions::resolve(array_calls::resolve(
             timing_intrinsics::resolve(parameters::resolve(random_seed::resolve(derived::resolve(program)?)?)?)?,
@@ -322,9 +339,37 @@ fn compile_to_object(
             return Err(anyhow::anyhow!("parse failed"));
         }
     };
-    let program = lower_program(program, &src, &tokens, input.to_str().unwrap_or("<unknown>"), origins, &settings, &args.warnings)?;
+    let prepared = prepare_program(program, &src, &tokens, input, origins, &settings, args)?;
+    let src = &prepared.source;
+    let tokens = lexer::lex(src);
+    let program = lower_program_body(prepared.program.clone(), src, &tokens,
+        input.to_str().unwrap_or("<unknown>"), Some(&prepared.origins))?;
     suppress_legacy_unused(&mut settings);
-    let empty_obj_exports = std::collections::HashSet::new();
+    let mut empty_obj_exports = std::collections::HashSet::new();
+    if args.compile_only {
+        // An implicit external subroutine interface can be resolved at link
+        // time. Do not suppress unrelated undefined-variable diagnostics.
+        fn external_calls(body: &[ast::Stmt], names: &mut std::collections::HashSet<String>) {
+            for statement in body {
+                match statement {
+                    ast::Stmt::CallSub { name, .. } if !name.starts_with('@') => { names.insert(name.clone()); }
+                    ast::Stmt::Module { body, .. } | ast::Stmt::Function { body, .. }
+                    | ast::Stmt::Subroutine { body, .. } | ast::Stmt::Block { body }
+                    | ast::Stmt::Do { body, .. } | ast::Stmt::DoWhile { body, .. } => external_calls(body, names),
+                    ast::Stmt::If { then_body, else_body, .. } => {
+                        external_calls(then_body, names);
+                        if let Some(body) = else_body { external_calls(body, names); }
+                    }
+                    ast::Stmt::SelectCase { cases, default, .. } => {
+                        for case in cases { external_calls(&case.body, names); }
+                        if let Some(body) = default { external_calls(body, names); }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        external_calls(&program.body, &mut empty_obj_exports);
+    }
     let sema_errs = sema::analyze_with_src(
         &program,
         &src,
@@ -349,7 +394,7 @@ fn compile_to_object(
             return Err(anyhow::anyhow!("compile failed"));
         }
     }
-    let program = initialized::instrument_with_source(program, &src, input.file_name().and_then(|name| name.to_str()).unwrap_or("<unknown>"))?;
+    let program = initialized::instrument_with_origins(program, &src, input.file_name().and_then(|name| name.to_str()).unwrap_or("<unknown>"), &prepared.origins)?;
     let lowered = ir::lower_to_ir_with_debug(&program, args.debug_ir)?;
     let has_program = lowered.has_program;
     if !args.quiet {
@@ -426,7 +471,8 @@ fn compile_to_object(
         }
     }
     let flags = Flags::new(flag_builder);
-    let backend = codegen::cranelift::CraneliftBackend::with_flags(flags);
+    let backend = codegen::cranelift::CraneliftBackend::with_flags(flags)
+        .with_module_owners(prepared.owned.clone());
     let obj = match backend.compile(&module, Some(&tokens)) {
         Ok(o) => o,
         Err(e) => {
@@ -469,6 +515,7 @@ fn compile_to_object(
         }
     };
     codegen::emitter::write_object_file(&obj, out)?;
+    prepared.publish()?;
     if args.emit_asm {
         let out_str = out.to_string_lossy().to_string();
         let mut printed = false;

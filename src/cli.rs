@@ -63,6 +63,12 @@ pub struct Cli {
     #[structopt(short = "c", long = "compile-only", help = "Emit an object without linking")]
     pub compile_only: bool,
 
+    #[structopt(short = "I", long = "module-path", number_of_values = 1, help = "Search directory for rfort module interfaces (repeatable)")]
+    pub module_paths: Vec<PathBuf>,
+
+    #[structopt(short = "J", long = "module-dir", help = "Write module interfaces here and also search this directory")]
+    pub module_dir: Option<PathBuf>,
+
     #[structopt(long = "debug-ir", help = "Show IR before and after optimizations")]
     pub debug_ir: bool,
 
