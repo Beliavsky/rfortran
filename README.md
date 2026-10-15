@@ -1356,6 +1356,14 @@ is still outside this subset. Run `python tests/test_runtime_sections.py` for in
 O0/O2 checks against gfortran; `tests/187_runtime_sections.f90` covers the basic
 regression.
 
+The runtime section path also applies to fixed arrays: scalar selectors such as
+`a(:,column)` and rank-one triplets such as `a(first:last:step)` can vary at
+runtime. Specialized functions preserve these selections in nested array-valued
+calls. FORALL captures its iterations before writes, and known function-result
+extents are folded before native storage and output are generated. Run
+`python tests/test_fixed_runtime_sections.py` for fixed-storage, overlap,
+copy-in/copy-out, element-type and rank-15 regressions against gfortran.
+
 ALLOCATABLE array dummies in functions, array transformations, masked/DIM
 reductions, automatic reallocation on assignment, and mixing fixed and
 runtime-sized multidimensional expressions retain their existing limitations.

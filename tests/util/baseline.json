@@ -4,20 +4,20 @@
     "kind": "c999f5d305aede589d31ea7585929d41e1fd5b1b86e1774f195b0b1354dec9c3",
     "manifest": "424d255ecf34fda0ed021b70e67db0a04413142298378c884e32708f71251666"
   },
-  "compiler_sha256": "b072196932effdf3626beed041cf3c9c6ef7305435f2947c39469054d62e7747",
+  "compiler_sha256": "f971376a269e442324ebeb60799e5a1d587e59c36f12a2b64ba9726738e29841",
   "mode": "isolated",
   "optimizations": [
     0,
     2
   ],
   "procedure_counts": {
-    "pass": 56,
+    "pass": 65,
     "untested": 435,
-    "blocked": 60
+    "blocked": 51
   },
   "case_outcomes": {
-    "compile_error": 28,
-    "pass": 32
+    "compile_error": 24,
+    "pass": 36
   },
   "cases": [
     {
@@ -45,8 +45,8 @@
       ],
       "driver_sha256": "4a88423284475c8168b2b4f77496790deaaa62d010053767eddc18ce25e606cd",
       "outcomes": {
-        "isolated-O0": "compile_error",
-        "isolated-O2": "compile_error"
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
       }
     },
     {
@@ -58,7 +58,7 @@
         "offdiag",
         "diag_3d"
       ],
-      "driver_sha256": "88da5243b273b9787d3505c1d33f93d4f874eda277f4d4825c37d8cf088962f7",
+      "driver_sha256": "e1ff3ff1eb8feb2cd966844441f58815f774c9049d561f10b08fc5486ddede3c",
       "outcomes": {
         "isolated-O0": "compile_error",
         "isolated-O2": "compile_error"
@@ -351,8 +351,8 @@
       ],
       "driver_sha256": "eb9c6e25860c9dbc24c1cede25ca803f1278255e34c1f527e47cdb9c6ed1e098",
       "outcomes": {
-        "isolated-O0": "compile_error",
-        "isolated-O2": "compile_error"
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
       }
     },
     {
@@ -991,7 +991,7 @@
     {
       "name": "cumul_sum_vec",
       "line": 1633,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "cumulative_sums"
       ]
@@ -999,7 +999,7 @@
     {
       "name": "cumul_sum0_vec",
       "line": 1646,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "cumulative_sums"
       ]
@@ -1007,7 +1007,7 @@
     {
       "name": "cumul_sum0_mat",
       "line": 1653,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "cumulative_sums"
       ]
@@ -1015,7 +1015,7 @@
     {
       "name": "cumul_sum_mat",
       "line": 1661,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "cumulative_sums"
       ]
@@ -1061,7 +1061,7 @@
     {
       "name": "matrix_row_col",
       "line": 1780,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "matrix_shapes"
       ]
@@ -1069,7 +1069,7 @@
     {
       "name": "matrix_from_vec",
       "line": 1786,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "matrix_shapes"
       ]
@@ -1077,7 +1077,7 @@
     {
       "name": "matrix_reshape",
       "line": 1793,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "matrix_shapes"
       ]
@@ -1085,7 +1085,7 @@
     {
       "name": "vector",
       "line": 1808,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "matrix_shapes"
       ]
@@ -1093,7 +1093,7 @@
     {
       "name": "tensor",
       "line": 1815,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "matrix_shapes"
       ]

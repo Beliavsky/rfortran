@@ -911,11 +911,22 @@ impl Lowerer {
                 }
                 vec![]
             };
-            if !self.defer_forall_shapes { if let Some(rhs_shape) = self.shape(&value, shapes)? {
-                if rhs_shape != shape {
-                    bail!("nonconforming FORALL assignment shapes {shape:?} and {rhs_shape:?}");
+            fn pending_call(e:&Expr, known:&HashMap<String,bool>, shapes:&Shapes)->bool {
+                match e {
+                    Expr::Call(n,a)|Expr::Index(n,a)=>known.contains_key(n)&&!shapes.contains_key(n)
+                        || a.iter().any(|e|pending_call(e,known,shapes)),
+                    Expr::Bin(_,a,b)=>pending_call(a,known,shapes)||pending_call(b,known,shapes),
+                    Expr::Un(_,a)=>pending_call(a,known,shapes),_=>false,
                 }
             }
+            // A function inside a constructor may still produce an array.
+            // Check known shapes now, and defer those calls until specialized.
+            if !(self.defer_forall_shapes && pending_call(&value,&self.pure_functions,shapes)) {
+                match self.shape(&value, shapes) {
+                    Ok(Some(rhs_shape)) if rhs_shape!=shape => bail!("nonconforming FORALL assignment shapes {shape:?} and {rhs_shape:?}"),
+                    Err(error) if !self.defer_forall_shapes => return Err(error),
+                    _ => {},
+                }
             }
             if !shape.is_empty() && total(&shape)? == 0 {
                 continue;
@@ -1366,8 +1377,7 @@ mod tests {
             ("print *,a(:,1:4)", "dimension 2"),
             ("print *,a(::0,:)", "stride must not be zero"),
             ("print *,a(:,4)", "dimension 2"),
-            ("print *,a(:,1.5)", "constant integers"),
-            ("print *,a(:,i)", "constant integers"),
+            ("print *,a(:,1.5)", "INTEGER"),
             ("print *,a(:,:,1)", "requires 2 subscripts"),
             ("b=a(:,1:2)", "nonconforming array assignment"),
             ("b=a(1:1,:)+a(:,1:1)", "nonconforming array shapes"),
@@ -1411,7 +1421,6 @@ mod tests {
             ("v(:)=b", "nonconforming section assignment"),
             ("a(0:2,:)=1", "dimension 1"),
             ("a(:,::0)=1", "stride must not be zero"),
-            ("a(:,i)=1", "constant integers"),
         ] {
             let source = format!("integer::a(2,3),b(1,4),v(4),i\n{statement}\nend");
             let error = format!("{:#}", lower(&source).unwrap_err());

@@ -431,6 +431,14 @@ impl Lower {
             }
         }
         if array_result && self.defer_calls && args.iter().any(|e|pending(e,symbols)){return Ok(());}
+        if !args.iter().any(|e|pending(e,symbols)) {
+            for (param,actual) in routine.params.iter().zip(args.iter_mut()) {
+                if routine.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==param && intent=="intent(in)"))
+                    && !routine.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==param && matches!(intent.as_str(),"target"|"pointer"|"allocatable"))) {
+                    crate::vector_subscripts::specialize_expression(actual,symbols,prefix,&mut self.serial)?;
+                }
+            }
+        }
         fn references(e:&Expr,name:&str)->bool {match e {
             Expr::Ident(n)=>n==name,Expr::Call(_,a)|Expr::Index(_,a)=>a.iter().any(|e|references(e,name)),
             Expr::Bin(_,a,b)=>references(a,name)||references(b,name),Expr::Un(_,e)=>references(e,name),_=>false,
@@ -616,12 +624,15 @@ impl Lower {
             prepared.body.truncate(prepared.body.len()-helper_count);
             specialized=prepared.body;
         }
-        let result_dims=specialized.iter().find_map(|s|if let Stmt::ArrayDecl{name,dims,..}=s {if name==&routine.result {Some(dims.clone())} else {None}} else {None});
-        if let Some(dims)=&result_dims {
+        let mut result_dims=specialized.iter().find_map(|s|if let Stmt::ArrayDecl{name,dims,..}=s {if name==&routine.result {Some(dims.clone())} else {None}} else {None});
+        if let Some(dims)=&mut result_dims {
             if routine.elemental {bail!("ELEMENTAL function requires a scalar result");}
-            let dims=dims.iter().map(crate::parameters::integer_constant).collect::<Result<Vec<_>>>().context("specialized function result extents must resolve to call-site constants")?;
-            let count=array_count(&dims)?;
+            let extents=dims.iter().map(crate::parameters::integer_constant).collect::<Result<Vec<_>>>().context("specialized function result extents must resolve to call-site constants")?;
+            let count=array_count(&extents)?;
             if !(0..=1024).contains(&count) {bail!("specialized function array results support at most 1024 elements");}
+            // Later storage/output passes require literal extents, rather than
+            // expressions such as 2*2 whose value is now statically known.
+            *dims=extents.into_iter().map(int).collect();
         }
         let result_kind = self.call_kind(&routine, &views, &shapes, &constants)?;
         for i in 0..count.unwrap_or(1) {
@@ -1040,18 +1051,7 @@ impl Lower {
                 }
                 if let Stmt::Block {body}=&mut stmt {
                     let marker=body.iter().position(|s|matches!(s,Stmt::CallSub{name,..} if name=="@forall"));
-                    fn character(e: &Expr, symbols: &Symbols) -> bool {
-                        let named=|n:&String| symbols.get(n).is_some_and(|(k,_)|matches!(k,TypeSpec::Character(_)|TypeSpec::CharacterAssumed|TypeSpec::CharacterLength(_)));
-                        match e {
-                            Expr::Ident(n)=>named(n),Expr::Str(_)=>true,
-                            Expr::Call(n,args)|Expr::Index(n,args)=>named(n)||args.iter().any(|e|character(e,symbols)),
-                            Expr::Bin(_,a,b)=>character(a,symbols)||character(b,symbols),Expr::Un(_,a)=>character(a,symbols),
-                            Expr::Section{name,..}=>named(name),_=>false
-                        }
-                    }
-                    let characters=body.iter().any(|s|matches!(s,Stmt::AssignIndex{name,value,..}
-                        if character(&Expr::Ident(name.clone()),&symbols)||character(value,&symbols)));
-                    if marker.is_some() && (self.contains_calls(body)||characters||marker!=Some(0)) {
+                    if marker.is_some() {
                         if !crate::multidim::specialize_forall(body,&symbols,&self.pure_functions,&mut self.serial)? {
                             // Argument specialization will supply the missing shape.
                             return Ok(());

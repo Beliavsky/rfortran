@@ -374,11 +374,17 @@ fn dynamic(n: &str, a: &[Expr], s: &Shapes) -> bool {
         return false;
     }
     allocatables::length(n,s).is_some() || axes(n,s).is_ok_and(|d|d.iter().any(|(l,n)|constant(l).is_none()||constant(n).is_none()))
+        // A scalar selector such as the column in A(:,column) changes the
+        // selected storage even when the section's shape is entirely fixed.
+        || a.iter().any(|e|!matches!(e,Expr::Call(tag,_) if tag=="@section_subscript")
+            && shape(e,s).ok().flatten().is_some_and(|(_,d)|d.is_empty()) && constant(e).is_none())
         || a.iter().any(|e|shape(e,s).ok().flatten().is_some_and(|(_,d)|d.iter().any(|n|constant(n).is_none() || constant(n).is_some_and(|n|n>1024)))
             || matches!(e,Expr::Call(tag,items) if tag=="@section_subscript" && matches!(&items[0],Expr::Section{lower,upper,stride,..} if lower.as_deref().is_some_and(|e|constant(e).is_none())||upper.as_deref().is_some_and(|e|constant(e).is_none())||stride.as_deref().is_some_and(|e|constant(e).is_none()))))
 }
 fn contains(e: &Expr, s: &Shapes) -> bool {
     match e {
+        Expr::Section{name,..} if !s.contains_key(&format!("@pointer:{name}")) && s.get(name).is_some_and(|(_,d)|d.len()==1) =>
+            dynamic(name,&[Expr::Call("@section_subscript".into(),vec![e.clone()])],s),
         Expr::Call(n, a) | Expr::Index(n, a) => {
             dynamic(n, a, s) || a.iter().any(|e| contains(e, s))
         }
@@ -863,6 +869,14 @@ impl Lower {
         Ok(e.clone())
     }
     fn expression(&mut self, e: &mut Expr, s: &mut Shapes, out: &mut Vec<Stmt>) -> Result<()> {
+        // Rank-one triplets use a dedicated AST node; use the same captured
+        // selection machinery as multidimensional triplets when they vary.
+        if let Expr::Section{name,..}=&*e {
+            if !s.contains_key(&format!("@pointer:{name}")) && s.get(name).is_some_and(|(_,d)|d.len()==1) {
+                let args=vec![Expr::Call("@section_subscript".into(),vec![e.clone()])];
+                if dynamic(name,&args,s) {*e=Expr::Call(name.clone(),args);}
+            }
+        }
         if let Expr::Call(n, a) = e {
             if matches!(
                 n.as_str(),
@@ -993,6 +1007,11 @@ impl Lower {
             s.remove(p);
         }
         declarations(body, &mut s);
+        // FORALL must capture all iterations before any writes. Leave its one
+        // assignment intact until the FORALL pass expands that ordering.
+        if body.iter().any(|stmt|matches!(stmt,Stmt::CallSub{name,..} if name=="@forall")) {
+            return Ok(());
+        }
         if params.iter().any(|p| {
             s.get(p)
                 .is_some_and(|(_, d)| !d.is_empty() && axes(p, &s).is_err())
@@ -1020,6 +1039,13 @@ impl Lower {
         for mut stmt in std::mem::take(body) {
             let mut prefix = vec![];
             let mut suffix = vec![];
+            if let Stmt::AssignIndex{name,indices,..}=&mut stmt {
+                if !s.contains_key(&format!("@pointer:{name}")) && s.get(name).is_some_and(|(_,d)|d.len()==1) && indices.len()==1
+                    && matches!(&indices[0],Expr::Section{..}) {
+                    let wrapped=Expr::Call("@section_subscript".into(),vec![indices[0].clone()]);
+                    if dynamic(name,std::slice::from_ref(&wrapped),&s) {indices[0]=wrapped;}
+                }
+            }
             match &mut stmt {
                 Stmt::AssignIndex {
                     name,
@@ -1082,6 +1108,8 @@ impl Lower {
                         self.expression(e, &mut s, &mut prefix)?;
                     }
                 }
+                // Association must retain the original TARGET and its aliasing.
+                Stmt::CallSub { name, .. } if name=="@pointer_associate" => {},
                 Stmt::CallSub { name, args } => {
                     for (i, e) in args.iter().enumerate() {
                         if contains_vector(e, &s) {
@@ -1200,6 +1228,13 @@ pub(super) fn specialize(body:&mut Vec<Stmt>, shapes:&Shapes, procedures:HashMap
     let inherited_serial=shapes.keys().filter(|n|n.contains("@vector_")).filter_map(|n|n.rsplit('_').next()?.parse::<usize>().ok()).max().unwrap_or(0);
     let mut lower=Lower{serial:(*serial).max(inherited_serial).max(super::serial_start(body)),procedures,force:false};
     lower.body(body,shapes,&[])?;
+    *serial=lower.serial;
+    Ok(())
+}
+pub(super) fn specialize_expression(e:&mut Expr, shapes:&mut Shapes, prefix:&mut Vec<Stmt>, serial:&mut usize)->Result<()> {
+    let inherited_serial=shapes.keys().filter(|n|n.contains("@vector_")).filter_map(|n|n.rsplit('_').next()?.parse::<usize>().ok()).max().unwrap_or(0);
+    let mut lower=Lower{serial:(*serial).max(inherited_serial),procedures:HashMap::new(),force:false};
+    lower.expression(e,shapes,prefix)?;
     *serial=lower.serial;
     Ok(())
 }

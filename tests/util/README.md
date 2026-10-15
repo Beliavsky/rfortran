@@ -9,19 +9,23 @@ compiler completion or branch coverage.
 
 ## Current baseline
 
-On Windows, using the debug compiler build, the 30 drivers have the same
+On Windows, using the release compiler build, the 30 drivers have the same
 outcomes at both O0 and O2:
 
 | Driver outcome | Count |
 | --- | ---: |
-| Pass against gfortran | 16 |
-| Compilation failure | 14 |
+| Pass against gfortran | 18 |
+| Compilation failure | 12 |
 | Incorrect output | 0 |
 
 All gfortran reference drivers compile and run successfully, including their
-repeat executions. The passing drivers target 56 procedures; 60 other targeted
+repeat executions. The passing drivers target 65 procedures; 51 other targeted
 procedures are in blocked groups. `string_fields` and `partitions_and_runs` now
 pass following fixes to early RETURN in explicit-step loops and NINT rounding.
+`matrix_shapes` and `cumulative_sums` now pass after routing runtime selectors
+and triplets on fixed storage through the runtime section path. `diagonals`
+now stops on runtime FORALL bounds, `unique_characters` on `match_string`
+argument specialization, and `formatted_output` on CHARACTER format handling.
 See [baseline.json](baseline.json)
 for exact input-source and compiler hashes and every procedure's inventory entry.
 

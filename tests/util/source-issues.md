@@ -24,3 +24,10 @@ The baseline exercises its current behavior with matching delimiters. Agreement
 with gfortran tests compiler consistency, not whether this library implements its
 intended API correctly. Distinct prefix and suffix behavior needs a library fix
 and an independent expected-value assertion.
+
+## offdiag counter
+
+`offdiag` increments its local `i` when it finds an off-diagonal element, without
+initializing `i`. General calls therefore read an undefined value. The `diagonals`
+driver tests its defined empty case on a 1-by-1 matrix; general calls need `i=0`
+in the original module before their output can be used as an oracle.
