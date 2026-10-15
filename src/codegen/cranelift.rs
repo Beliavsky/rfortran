@@ -894,6 +894,22 @@ fn eval_expr(
                         }
                     }
                 }
+                "nint" if !func_meta.contains_key(name) => {
+                    let v=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);
+                    let x=to_f64(b,v);
+                    // Adding 0.5 to ABS(x) can round an already integral large
+                    // value upward. Compare the fractional part instead.
+                    let integral=b.ins().trunc(x);
+                    let fraction=b.ins().fsub(x,integral);
+                    let fraction=b.ins().fabs(fraction);
+                    let half=b.ins().f64const(0.5);
+                    let away=b.ins().fcmp(ir::condcodes::FloatCC::GreaterThanOrEqual,fraction,half);
+                    let one=b.ins().f64const(1.0);
+                    let unit=b.ins().fcopysign(one,x);
+                    let next=b.ins().fadd(integral,unit);
+                    let rounded=b.ins().select(away,next,integral);
+                    CgVal::I64(b.ins().fcvt_to_sint(ir::types::I64,rounded))
+                }
                 "int" => {
                     let v = eval_expr(b, ex, ptr_ty, &args[0], ints, reals, bools, func_meta);
                     let iv = to_i64(b, v);
@@ -1370,7 +1386,7 @@ fn print_expr(
             let lname = name.to_ascii_lowercase();
             if crate::intrinsics::math_arity(name).is_some()
                 || crate::bit_intrinsics::decode(name).is_some()
-                || matches!(lname.as_str(), "abs" | "int" | "real" | "dble" | "max" | "min" | "mod" | "modulo")
+                || matches!(lname.as_str(), "abs" | "int" | "nint" | "real" | "dble" | "max" | "min" | "mod" | "modulo")
             {
                 let value = eval_expr(b, ex, ptr_ty, e, ints, reals, bools, func_meta);
                 print_numeric_value(b, ex, ptr_ty, value, double_expression(e, real_kind));

@@ -423,7 +423,8 @@ pub fn interpret(program: &Program) {
                     ))
                 }
             }
-            "aint" | "anint" | "nint" => {
+            "nint" => Some(ValueTuple::from_int(to_real(args.get(0)?)?.round() as i64)),
+            "aint" | "anint" => {
                 if let Some(f) = to_real(args.get(0)?) {
                     Some(ValueTuple::from_int(f.trunc() as i64))
                 } else {

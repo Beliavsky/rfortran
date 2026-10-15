@@ -1329,6 +1329,13 @@
       "program_stdout": " 2 5\n",
       "program_stderr": "",
       "program_exit_code": 0
+    },
+    "191_return_in_explicit_step": {
+      "compiler_stderr": "",
+      "compiler_exit_code": 0,
+      "program_stdout": ">,boy,,girl<\n><\n 3 5 8\n",
+      "program_stderr": "",
+      "program_exit_code": 0
     }
   }
 }

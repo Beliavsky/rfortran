@@ -448,6 +448,13 @@ names. Classification tests cover all registered intrinsic interfaces, while
 of impure calls. Some classified intrinsics still have incomplete semantic or
 execution support; the purity catalog records their language classification.
 
+`NINT(A[,KIND])` rounds REAL and DOUBLE PRECISION values to the nearest integer,
+with halfway cases rounded away from zero. Scalar and supported array arguments,
+keyword arguments, and INTEGER result kinds 1/2/4/8 are supported. Inlined
+functions and subroutines also preserve early RETURN from explicit-step DO loops,
+including nested loops and CYCLE paths. Run `python tests/test_util_correctness.py`
+for interpreter/native O0/O2 comparisons with gfortran.
+
 ERROR STOP is permitted in PURE and implicitly pure ELEMENTAL procedures,
 as in Fortran 2018. Its code expression is checked for impure calls, and
 unconditional error termination ends definite-assignment analysis for that path.
@@ -1754,6 +1761,27 @@ external compatibility runner.
 
 On Windows, after building release, also run `python tests/test_batch_sources.py`
 to verify the compatibility wrappers and multi-source fixtures.
+
+### External util.f90 procedures
+
+Small drivers track progress toward compiling and running `kind.f90 util.f90
+xutil.f90`. The initial suite targets 116 specific procedures in 30 drivers and
+inventories all 551 procedures in the current external utility source, leaving
+untested procedures visible. It compares native O0/O2 results with gfortran and
+retains standalone reproducers under `target/util-repros`.
+
+```bat
+python tests/run_util_coverage.py
+python tests/run_util_coverage.py --case string_matching --mode both
+python tests/test_util_coverage_runner.py
+```
+
+The default isolates unchanged procedure bodies with their dependencies;
+`--mode module` tests the original full module. `kind.f90`, `util.f90`, gfortran,
+and a release compiler build are required. This is a coverage/progress suite
+with known failures, rather than an all-passing regression gate. See
+[the runner documentation](tests/util/README.md) and
+[the coverage baseline](tests/util/baseline.json) for scope and results.
 
 ### External ofort fixtures
 

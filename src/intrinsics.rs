@@ -14,6 +14,16 @@ pub fn math_arity(name: &str) -> Option<usize> {
     REAL_MATH.iter().find(|(n, _)| name.eq_ignore_ascii_case(n)).map(|(_, arity)| *arity)
 }
 
+/// NINT's optional KIND describes the integer result, not its real argument.
+pub(crate) fn nint_kind(args: &[crate::ast::Expr]) -> anyhow::Result<crate::ast::TypeSpec> {
+    use anyhow::{bail, Context};
+    if !(1..=2).contains(&args.len()) {bail!("NINT expects A and optional KIND");}
+    let kind=args.get(1).map(crate::parameters::integer_constant).transpose()
+        .context("NINT KIND must be a constant INTEGER")?.unwrap_or(4);
+    if !matches!(kind,1|2|4|8) {bail!("NINT KIND must be a supported INTEGER kind (1, 2, 4 or 8)");}
+    Ok(crate::ast::TypeSpec::Integer(Some(kind as u8)))
+}
+
 /// Language purity for public intrinsic interfaces known to the compiler. Keep compiler
 /// internal expression markers in their owning lowering pass, not this catalog.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

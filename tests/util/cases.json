@@ -1,0 +1,271 @@
+[
+  {
+    "id": "numeric_vectors",
+    "procedures": [
+      "normalize",
+      "frac_true",
+      "reverse_real",
+      "seq"
+    ]
+  },
+  {
+    "id": "matrix_shapes",
+    "procedures": [
+      "matrix_from_vec",
+      "matrix_reshape",
+      "matrix_row_col",
+      "vector",
+      "tensor"
+    ]
+  },
+  {
+    "id": "diagonals",
+    "procedures": [
+      "above_diag",
+      "diag_matrix",
+      "diag",
+      "offdiag",
+      "diag_3d"
+    ]
+  },
+  {
+    "id": "first_tail",
+    "procedures": [
+      "first_int",
+      "first_real",
+      "first_char",
+      "tail_int",
+      "tail_real"
+    ]
+  },
+  {
+    "id": "optional_values",
+    "procedures": [
+      "optional_value_integer",
+      "optional_value_real",
+      "optional_value_character",
+      "optional_value_logical",
+      "if_else_int",
+      "if_else_real",
+      "and"
+    ]
+  },
+  {
+    "id": "set_optional",
+    "procedures": [
+      "set_optional_real",
+      "set_optional_integer",
+      "set_optional_logical",
+      "set_optional_character"
+    ]
+  },
+  {
+    "id": "string_fields",
+    "procedures": [
+      "quote",
+      "strip",
+      "num_fields",
+      "num_matching_char",
+      "ends_with"
+    ]
+  },
+  {
+    "id": "character_results",
+    "procedures": [
+      "char_plus_char",
+      "trim_append",
+      "munge",
+      "concat_char_vec",
+      "join_fixed"
+    ]
+  },
+  {
+    "id": "joins",
+    "procedures": [
+      "join",
+      "join_quote",
+      "join_csv",
+      "join_suffix",
+      "join_csv_suffix",
+      "concat",
+      "join_"
+    ]
+  },
+  {
+    "id": "optional_character_results",
+    "procedures": [
+      "vec",
+      "default_alloc_char"
+    ]
+  },
+  {
+    "id": "membership_positions",
+    "procedures": [
+      "pos_keep_char",
+      "intersection_char",
+      "num_missing",
+      "diff_vec_char"
+    ]
+  },
+  {
+    "id": "string_matching",
+    "procedures": [
+      "match_string_scalar",
+      "match_string_vec"
+    ]
+  },
+  {
+    "id": "unique_characters",
+    "procedures": [
+      "unique_values_char",
+      "unique_char"
+    ]
+  },
+  {
+    "id": "all_equal",
+    "procedures": [
+      "all_equal_in_vec",
+      "all_equal_vec_int",
+      "all_equal_vec_real",
+      "check_all_equal"
+    ]
+  },
+  {
+    "id": "partitions_and_runs",
+    "procedures": [
+      "partition",
+      "max_consecutive"
+    ]
+  },
+  {
+    "id": "combinatorics",
+    "procedures": [
+      "factorial",
+      "factorial_long",
+      "choose",
+      "choose_func",
+      "choose_func_long"
+    ]
+  },
+  {
+    "id": "lagged_data",
+    "procedures": [
+      "lag_good_data_vec"
+    ]
+  },
+  {
+    "id": "matrix_columns",
+    "procedures": [
+      "add_constant_columns",
+      "add_one_var"
+    ]
+  },
+  {
+    "id": "random_matrix",
+    "procedures": [
+      "random_matrix",
+      "ran_uni_vec"
+    ]
+  },
+  {
+    "id": "formatted_output",
+    "procedures": [
+      "print_matrix_simple",
+      "write_trim_vec",
+      "write_words"
+    ]
+  },
+  {
+    "id": "clock_properties",
+    "procedures": [
+      "now",
+      "exe_name",
+      "set_time",
+      "time_elapsed",
+      "wall_time_elapsed"
+    ]
+  },
+  {
+    "id": "repeat_values",
+    "procedures": [
+      "repeat_int",
+      "repeat_real",
+      "repeat_logical",
+      "repeat_char",
+      "repeat_real_vec",
+      "repeat_char_vec",
+      "zeros"
+    ]
+  },
+  {
+    "id": "differences",
+    "procedures": [
+      "diff_vector_int",
+      "diff_vector_real",
+      "diff_matrix_real"
+    ]
+  },
+  {
+    "id": "cumulative_sums",
+    "procedures": [
+      "cumul_sum_vec",
+      "cumul_sum_mat",
+      "cumul_sum0_vec",
+      "cumul_sum0_mat"
+    ]
+  },
+  {
+    "id": "set_alloc_vectors",
+    "procedures": [
+      "set_alloc_int_vec",
+      "set_alloc_i64_vec",
+      "set_alloc_real_vec",
+      "set_alloc_logical_vec",
+      "set_alloc_character_vec"
+    ]
+  },
+  {
+    "id": "set_alloc_matrices",
+    "procedures": [
+      "set_alloc_integer_matrix",
+      "set_alloc_real_matrix",
+      "set_alloc_real_tensor",
+      "set_alloc_logical_matrix",
+      "set_alloc_logical_tensor",
+      "set_alloc_character_mat"
+    ]
+  },
+  {
+    "id": "same_shapes",
+    "procedures": [
+      "same_shape_real_real_1d",
+      "same_shape_real_real_2d",
+      "same_shape_real_real_3d"
+    ]
+  },
+  {
+    "id": "sorting",
+    "procedures": [
+      "indexx_int",
+      "indexx_real",
+      "indexx_order_real",
+      "quick_sort"
+    ]
+  },
+  {
+    "id": "sign_functions",
+    "procedures": [
+      "sgn_real",
+      "sign_changes_real"
+    ]
+  },
+  {
+    "id": "read_comments",
+    "procedures": [
+      "read_comments"
+    ],
+    "files": {
+      "comments.txt": "# first\n# second\n42\n"
+    }
+  }
+]

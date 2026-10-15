@@ -153,6 +153,13 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
             }
             Ok((Expr::Call(name.clone(),values),shape,symbols.elementals[name].clone()))
         }
+        Expr::Call(name,args) if name=="nint" && !symbols.contains_key(name) && !symbols.procedures.contains(name) => {
+            let kind=crate::intrinsics::nint_kind(args)?;
+            let (value,count,input)=element(&args[0],index,symbols)?;
+            if !matches!(input,TypeSpec::Real|TypeSpec::DoublePrecision) {bail!("NINT A must be REAL or DOUBLE PRECISION");}
+            let mut values=vec![value];values.extend(args.iter().skip(1).cloned());
+            Ok((Expr::Call(name.clone(),values),count,kind))
+        }
         Expr::Call(name,args) if name=="int" && (args.len()==1 || args.len()==2) => {
             let (value,count,_) = element(&args[0],index,symbols)?;
             let kind = if let Some(e)=args.get(1) {TypeSpec::Integer(Some(u8::try_from(constant(e)?)?))} else {TypeSpec::Integer(None)};
@@ -480,6 +487,15 @@ fn lower_pack(e:&mut Expr,symbols:&mut Symbols,prefix:&mut Vec<Stmt>,serial:&mut
 fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, serial: &mut usize, expand_elementals: bool) -> Result<()> {
 
     match e {
+        Expr::Call(name,args) if name=="nint" && !symbols.contains_key(name) && !symbols.procedures.contains(name) => {
+            crate::intrinsics::nint_kind(args)?;
+            lower_expr_impl(&mut args[0],symbols,prefix,serial,expand_elementals)?;
+            let input=element(&args[0],&int(1),symbols).map(|(_,_,kind)|kind)
+                .or_else(|_|crate::array_calls::scalar_actual_kind(&args[0],symbols)).ok();
+            // Native scalar procedure calls are typed by sema, rather than by
+            // this array-expression symbol table.
+            if input.is_some_and(|k|!matches!(k,TypeSpec::Real|TypeSpec::DoublePrecision)) {bail!("NINT A must be REAL or DOUBLE PRECISION");}
+        }
         Expr::Call(name,args) if name=="merge" && !symbols.procedures.contains(name) => {
             if args.len()!=3 {bail!("MERGE expects TSOURCE, FSOURCE and MASK");}
             for arg in args.iter_mut() {lower_expr_impl(arg,symbols,prefix,serial,expand_elementals)?;}

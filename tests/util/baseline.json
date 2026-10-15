@@ -1,0 +1,3980 @@
+{
+  "source_hashes": {
+    "util": "5c478005438dcfd4d448cad18fe37fd3a97bb9e52a2489829b36f01180d69433",
+    "kind": "c999f5d305aede589d31ea7585929d41e1fd5b1b86e1774f195b0b1354dec9c3",
+    "manifest": "424d255ecf34fda0ed021b70e67db0a04413142298378c884e32708f71251666"
+  },
+  "compiler_sha256": "b072196932effdf3626beed041cf3c9c6ef7305435f2947c39469054d62e7747",
+  "mode": "isolated",
+  "optimizations": [
+    0,
+    2
+  ],
+  "procedure_counts": {
+    "pass": 56,
+    "untested": 435,
+    "blocked": 60
+  },
+  "case_outcomes": {
+    "compile_error": 28,
+    "pass": 32
+  },
+  "cases": [
+    {
+      "id": "numeric_vectors",
+      "procedures": [
+        "normalize",
+        "frac_true",
+        "reverse_real",
+        "seq"
+      ],
+      "driver_sha256": "d1944aa1e9bf5faa11f2600db703278c3a439f065cfa7230c35e97559fe9452e",
+      "outcomes": {
+        "isolated-O0": "compile_error",
+        "isolated-O2": "compile_error"
+      }
+    },
+    {
+      "id": "matrix_shapes",
+      "procedures": [
+        "matrix_from_vec",
+        "matrix_reshape",
+        "matrix_row_col",
+        "vector",
+        "tensor"
+      ],
+      "driver_sha256": "4a88423284475c8168b2b4f77496790deaaa62d010053767eddc18ce25e606cd",
+      "outcomes": {
+        "isolated-O0": "compile_error",
+        "isolated-O2": "compile_error"
+      }
+    },
+    {
+      "id": "diagonals",
+      "procedures": [
+        "above_diag",
+        "diag_matrix",
+        "diag",
+        "offdiag",
+        "diag_3d"
+      ],
+      "driver_sha256": "88da5243b273b9787d3505c1d33f93d4f874eda277f4d4825c37d8cf088962f7",
+      "outcomes": {
+        "isolated-O0": "compile_error",
+        "isolated-O2": "compile_error"
+      }
+    },
+    {
+      "id": "first_tail",
+      "procedures": [
+        "first_int",
+        "first_real",
+        "first_char",
+        "tail_int",
+        "tail_real"
+      ],
+      "driver_sha256": "24f33e623397c2d8008966f8fe2c5a3fa542d4ae309e2c8c69a410309a1b053f",
+      "outcomes": {
+        "isolated-O0": "compile_error",
+        "isolated-O2": "compile_error"
+      }
+    },
+    {
+      "id": "optional_values",
+      "procedures": [
+        "optional_value_integer",
+        "optional_value_real",
+        "optional_value_character",
+        "optional_value_logical",
+        "if_else_int",
+        "if_else_real",
+        "and"
+      ],
+      "driver_sha256": "19a90f815175f962ea781c427bcc28ceb5c8cc199e2962f0d95ea105ab9491c4",
+      "outcomes": {
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
+      }
+    },
+    {
+      "id": "set_optional",
+      "procedures": [
+        "set_optional_real",
+        "set_optional_integer",
+        "set_optional_logical",
+        "set_optional_character"
+      ],
+      "driver_sha256": "19deee6227e9acbc94b274ec1d9f62d52a82b3a5c88267ad25869de47c2dd996",
+      "outcomes": {
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
+      }
+    },
+    {
+      "id": "string_fields",
+      "procedures": [
+        "quote",
+        "strip",
+        "num_fields",
+        "num_matching_char",
+        "ends_with"
+      ],
+      "driver_sha256": "505eae79726233db5f41a00710eb94daa95b6a68d583a961f575def505bf4b02",
+      "outcomes": {
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
+      }
+    },
+    {
+      "id": "character_results",
+      "procedures": [
+        "char_plus_char",
+        "trim_append",
+        "munge",
+        "concat_char_vec",
+        "join_fixed"
+      ],
+      "driver_sha256": "2ad1a0dc4db663fcf65dbf61adaae69dbd03673cd95b3e0da83b124a4eba0269",
+      "outcomes": {
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
+      }
+    },
+    {
+      "id": "joins",
+      "procedures": [
+        "join",
+        "join_quote",
+        "join_csv",
+        "join_suffix",
+        "join_csv_suffix",
+        "concat",
+        "join_"
+      ],
+      "driver_sha256": "22c7d41dfed6726112d2a72e6e0c3e4276a0fb5f8a4da9521562e74d74eebc43",
+      "outcomes": {
+        "isolated-O0": "compile_error",
+        "isolated-O2": "compile_error"
+      }
+    },
+    {
+      "id": "optional_character_results",
+      "procedures": [
+        "vec",
+        "default_alloc_char"
+      ],
+      "driver_sha256": "b5586322e5d206ae35609c09592c9e2d6542076b4e0075fb4ec087b5c8cfb44c",
+      "outcomes": {
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
+      }
+    },
+    {
+      "id": "membership_positions",
+      "procedures": [
+        "pos_keep_char",
+        "intersection_char",
+        "num_missing",
+        "diff_vec_char"
+      ],
+      "driver_sha256": "95c8f6bb153d884abe0928e9b5da0fe5843d2190a087f5d8d6085fee41f3c797",
+      "outcomes": {
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
+      }
+    },
+    {
+      "id": "string_matching",
+      "procedures": [
+        "match_string_scalar",
+        "match_string_vec"
+      ],
+      "driver_sha256": "d2a9c76fdecfb492cc985427647f89d604214d7d6e6e081623c5dc1c551c815c",
+      "outcomes": {
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
+      }
+    },
+    {
+      "id": "unique_characters",
+      "procedures": [
+        "unique_values_char",
+        "unique_char"
+      ],
+      "driver_sha256": "60fe90dc78b8d774da403ed444411d87248af516cd46340fdeb9865af3bcfe75",
+      "outcomes": {
+        "isolated-O0": "compile_error",
+        "isolated-O2": "compile_error"
+      }
+    },
+    {
+      "id": "all_equal",
+      "procedures": [
+        "all_equal_in_vec",
+        "all_equal_vec_int",
+        "all_equal_vec_real",
+        "check_all_equal"
+      ],
+      "driver_sha256": "f624b7235062f877f4c215ddfc73c309a93526da8372d715c69093716c874428",
+      "outcomes": {
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
+      }
+    },
+    {
+      "id": "partitions_and_runs",
+      "procedures": [
+        "partition",
+        "max_consecutive"
+      ],
+      "driver_sha256": "dd860aa0f56a421c025bcb0ab9ec97dc42ea2a873f4c998688a86f12d4375e14",
+      "outcomes": {
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
+      }
+    },
+    {
+      "id": "combinatorics",
+      "procedures": [
+        "factorial",
+        "factorial_long",
+        "choose",
+        "choose_func",
+        "choose_func_long"
+      ],
+      "driver_sha256": "ccd4ed9ad9e065a68ff887e7fa34271ef706fbfd5e410c2dc1205fe8411d6e53",
+      "outcomes": {
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
+      }
+    },
+    {
+      "id": "lagged_data",
+      "procedures": [
+        "lag_good_data_vec"
+      ],
+      "driver_sha256": "c5a6153ddb2e2f7697132a8f9a30cd1d19446de3c224fca1d3c121350f51b4eb",
+      "outcomes": {
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
+      }
+    },
+    {
+      "id": "matrix_columns",
+      "procedures": [
+        "add_constant_columns",
+        "add_one_var"
+      ],
+      "driver_sha256": "1190437fe794885ac41d6786bdcd701161b27ed1905b1c9d100d5af73b0785e0",
+      "outcomes": {
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
+      }
+    },
+    {
+      "id": "random_matrix",
+      "procedures": [
+        "random_matrix",
+        "ran_uni_vec"
+      ],
+      "driver_sha256": "3e044422162e3fd364782c9c3dcb44dee2b9b4e7fa0b484e7e007a8c967627fb",
+      "outcomes": {
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
+      }
+    },
+    {
+      "id": "formatted_output",
+      "procedures": [
+        "print_matrix_simple",
+        "write_trim_vec",
+        "write_words"
+      ],
+      "driver_sha256": "18907fc7bcf18921fe4c7395700b10e9fef2a01c63eb72487f5d450031f9ed35",
+      "outcomes": {
+        "isolated-O0": "compile_error",
+        "isolated-O2": "compile_error"
+      }
+    },
+    {
+      "id": "clock_properties",
+      "procedures": [
+        "now",
+        "exe_name",
+        "set_time",
+        "time_elapsed",
+        "wall_time_elapsed"
+      ],
+      "driver_sha256": "6e8340387d98e3a10b4af21f2c58798208f9859375b8d46d7b1dbb848ec476ac",
+      "outcomes": {
+        "isolated-O0": "compile_error",
+        "isolated-O2": "compile_error"
+      }
+    },
+    {
+      "id": "repeat_values",
+      "procedures": [
+        "repeat_int",
+        "repeat_real",
+        "repeat_logical",
+        "repeat_char",
+        "repeat_real_vec",
+        "repeat_char_vec",
+        "zeros"
+      ],
+      "driver_sha256": "4b1d41eeecc1c1e459fcf5617496ec9232c6bbad55bacf811bbd556181fc777c",
+      "outcomes": {
+        "isolated-O0": "compile_error",
+        "isolated-O2": "compile_error"
+      }
+    },
+    {
+      "id": "differences",
+      "procedures": [
+        "diff_vector_int",
+        "diff_vector_real",
+        "diff_matrix_real"
+      ],
+      "driver_sha256": "2d1e8d8fdb94b186ed026a2df37ec54624960860da145539ab10014eafea2a83",
+      "outcomes": {
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
+      }
+    },
+    {
+      "id": "cumulative_sums",
+      "procedures": [
+        "cumul_sum_vec",
+        "cumul_sum_mat",
+        "cumul_sum0_vec",
+        "cumul_sum0_mat"
+      ],
+      "driver_sha256": "eb9c6e25860c9dbc24c1cede25ca803f1278255e34c1f527e47cdb9c6ed1e098",
+      "outcomes": {
+        "isolated-O0": "compile_error",
+        "isolated-O2": "compile_error"
+      }
+    },
+    {
+      "id": "set_alloc_vectors",
+      "procedures": [
+        "set_alloc_int_vec",
+        "set_alloc_i64_vec",
+        "set_alloc_real_vec",
+        "set_alloc_logical_vec",
+        "set_alloc_character_vec"
+      ],
+      "driver_sha256": "36fb4b9b2eb7f91a2af247e52de1b4d4c0e7a7035e62f43f9f7250429338ba22",
+      "outcomes": {
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
+      }
+    },
+    {
+      "id": "set_alloc_matrices",
+      "procedures": [
+        "set_alloc_integer_matrix",
+        "set_alloc_real_matrix",
+        "set_alloc_real_tensor",
+        "set_alloc_logical_matrix",
+        "set_alloc_logical_tensor",
+        "set_alloc_character_mat"
+      ],
+      "driver_sha256": "460b68f1cd68a75c0df3050aabe538c3747ec4deff0b3e1fc950fa875d7a42ce",
+      "outcomes": {
+        "isolated-O0": "compile_error",
+        "isolated-O2": "compile_error"
+      }
+    },
+    {
+      "id": "same_shapes",
+      "procedures": [
+        "same_shape_real_real_1d",
+        "same_shape_real_real_2d",
+        "same_shape_real_real_3d"
+      ],
+      "driver_sha256": "2919b67b4f1fe187fd113e6df5a408f28dc5ee10f3a9e1bd07fa3bebff39eb63",
+      "outcomes": {
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
+      }
+    },
+    {
+      "id": "sorting",
+      "procedures": [
+        "indexx_int",
+        "indexx_real",
+        "indexx_order_real",
+        "quick_sort"
+      ],
+      "driver_sha256": "6898dc04d46e410c1f030a84573b01906fc4e2e9372261d4444d1d927d3f9646",
+      "outcomes": {
+        "isolated-O0": "compile_error",
+        "isolated-O2": "compile_error"
+      }
+    },
+    {
+      "id": "sign_functions",
+      "procedures": [
+        "sgn_real",
+        "sign_changes_real"
+      ],
+      "driver_sha256": "9fa278dc6089545aab1d0b1456ea7f04ed660dfe3a7212e45d6641bc57f7e634",
+      "outcomes": {
+        "isolated-O0": "compile_error",
+        "isolated-O2": "compile_error"
+      }
+    },
+    {
+      "id": "read_comments",
+      "procedures": [
+        "read_comments"
+      ],
+      "driver_sha256": "4d9e15d0202689b149286aa9cf73f5d3a9ed32e2f35c79932faa09972255da64",
+      "outcomes": {
+        "isolated-O0": "compile_error",
+        "isolated-O2": "compile_error"
+      }
+    }
+  ],
+  "inventory": [
+    {
+      "name": "ran_uni_vec",
+      "line": 499,
+      "status": "pass",
+      "tested_by": [
+        "random_matrix"
+      ]
+    },
+    {
+      "name": "diff_vector_int",
+      "line": 505,
+      "status": "pass",
+      "tested_by": [
+        "differences"
+      ]
+    },
+    {
+      "name": "diff_vector_real",
+      "line": 513,
+      "status": "pass",
+      "tested_by": [
+        "differences"
+      ]
+    },
+    {
+      "name": "diff_matrix_real",
+      "line": 522,
+      "status": "pass",
+      "tested_by": [
+        "differences"
+      ]
+    },
+    {
+      "name": "sech",
+      "line": 531,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "exe_name",
+      "line": 538,
+      "status": "blocked",
+      "tested_by": [
+        "clock_properties"
+      ]
+    },
+    {
+      "name": "matrix_by_vector_real",
+      "line": 548,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "read_words_line",
+      "line": 580,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "num_changes_int",
+      "line": 615,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "pos_first_nonzero_real_vec",
+      "line": 627,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "sum_no_overlap_vector",
+      "line": 640,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "sum_no_overlap_matrix",
+      "line": 651,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "compare_vec_strings",
+      "line": 664,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "compare_vec_strings_",
+      "line": 689,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "check_equal_strings",
+      "line": 712,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "normalize",
+      "line": 760,
+      "status": "blocked",
+      "tested_by": [
+        "numeric_vectors"
+      ]
+    },
+    {
+      "name": "alloc_sub_vec_real",
+      "line": 766,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "alloc_sub_vec_int",
+      "line": 773,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "read_alloc_char",
+      "line": 780,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "check_included_vec_int",
+      "line": 803,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "check_included_vec_char",
+      "line": 818,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "join",
+      "line": 833,
+      "status": "blocked",
+      "tested_by": [
+        "joins"
+      ]
+    },
+    {
+      "name": "join_quote",
+      "line": 852,
+      "status": "blocked",
+      "tested_by": [
+        "joins"
+      ]
+    },
+    {
+      "name": "join_csv",
+      "line": 873,
+      "status": "blocked",
+      "tested_by": [
+        "joins"
+      ]
+    },
+    {
+      "name": "join_csv_suffix",
+      "line": 887,
+      "status": "blocked",
+      "tested_by": [
+        "joins"
+      ]
+    },
+    {
+      "name": "join_suffix",
+      "line": 903,
+      "status": "blocked",
+      "tested_by": [
+        "joins"
+      ]
+    },
+    {
+      "name": "concat",
+      "line": 916,
+      "status": "blocked",
+      "tested_by": [
+        "joins"
+      ]
+    },
+    {
+      "name": "join_",
+      "line": 932,
+      "status": "blocked",
+      "tested_by": [
+        "joins"
+      ]
+    },
+    {
+      "name": "char_plus_char",
+      "line": 951,
+      "status": "pass",
+      "tested_by": [
+        "character_results"
+      ]
+    },
+    {
+      "name": "char_plus_int",
+      "line": 958,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "sign_changes_real",
+      "line": 967,
+      "status": "blocked",
+      "tested_by": [
+        "sign_functions"
+      ]
+    },
+    {
+      "name": "sgn_real",
+      "line": 977,
+      "status": "blocked",
+      "tested_by": [
+        "sign_functions"
+      ]
+    },
+    {
+      "name": "trim_append",
+      "line": 1006,
+      "status": "pass",
+      "tested_by": [
+        "character_results"
+      ]
+    },
+    {
+      "name": "munge",
+      "line": 1012,
+      "status": "pass",
+      "tested_by": [
+        "character_results"
+      ]
+    },
+    {
+      "name": "repeat_logical",
+      "line": 1021,
+      "status": "blocked",
+      "tested_by": [
+        "repeat_values"
+      ]
+    },
+    {
+      "name": "repeat_char",
+      "line": 1030,
+      "status": "blocked",
+      "tested_by": [
+        "repeat_values"
+      ]
+    },
+    {
+      "name": "repeat_int",
+      "line": 1039,
+      "status": "blocked",
+      "tested_by": [
+        "repeat_values"
+      ]
+    },
+    {
+      "name": "repeat_real",
+      "line": 1047,
+      "status": "blocked",
+      "tested_by": [
+        "repeat_values"
+      ]
+    },
+    {
+      "name": "zeros",
+      "line": 1056,
+      "status": "blocked",
+      "tested_by": [
+        "repeat_values"
+      ]
+    },
+    {
+      "name": "repeat_real_vec",
+      "line": 1063,
+      "status": "blocked",
+      "tested_by": [
+        "repeat_values"
+      ]
+    },
+    {
+      "name": "repeat_char_vec",
+      "line": 1078,
+      "status": "blocked",
+      "tested_by": [
+        "repeat_values"
+      ]
+    },
+    {
+      "name": "slice_int_vec",
+      "line": 1092,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "slice_real_vec",
+      "line": 1114,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "slice_rows_int_mat",
+      "line": 1136,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "slice_rows_real_mat",
+      "line": 1158,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "init_wall_time",
+      "line": 1180,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "print_wall_time_elapsed",
+      "line": 1184,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "set_time",
+      "line": 1207,
+      "status": "blocked",
+      "tested_by": [
+        "clock_properties"
+      ]
+    },
+    {
+      "name": "wall_time_elapsed",
+      "line": 1214,
+      "status": "blocked",
+      "tested_by": [
+        "clock_properties"
+      ]
+    },
+    {
+      "name": "time_elapsed",
+      "line": 1223,
+      "status": "blocked",
+      "tested_by": [
+        "clock_properties"
+      ]
+    },
+    {
+      "name": "print_time_elapsed",
+      "line": 1231,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "optional_value_real",
+      "line": 1255,
+      "status": "pass",
+      "tested_by": [
+        "optional_values"
+      ]
+    },
+    {
+      "name": "optional_value_integer",
+      "line": 1267,
+      "status": "pass",
+      "tested_by": [
+        "optional_values"
+      ]
+    },
+    {
+      "name": "optional_value_character",
+      "line": 1279,
+      "status": "pass",
+      "tested_by": [
+        "optional_values"
+      ]
+    },
+    {
+      "name": "optional_value_logical",
+      "line": 1291,
+      "status": "pass",
+      "tested_by": [
+        "optional_values"
+      ]
+    },
+    {
+      "name": "set_optional_alloc_real",
+      "line": 1303,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "set_optional_alloc_int",
+      "line": 1315,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "set_optional_alloc_character",
+      "line": 1327,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "set_optional_real",
+      "line": 1341,
+      "status": "pass",
+      "tested_by": [
+        "set_optional"
+      ]
+    },
+    {
+      "name": "set_optional_integer",
+      "line": 1353,
+      "status": "pass",
+      "tested_by": [
+        "set_optional"
+      ]
+    },
+    {
+      "name": "set_optional_logical",
+      "line": 1365,
+      "status": "pass",
+      "tested_by": [
+        "set_optional"
+      ]
+    },
+    {
+      "name": "set_optional_character",
+      "line": 1377,
+      "status": "pass",
+      "tested_by": [
+        "set_optional"
+      ]
+    },
+    {
+      "name": "present_and_true",
+      "line": 1389,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "present_and_false",
+      "line": 1399,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "first_row_all_true",
+      "line": 1409,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "last_row_all_true",
+      "line": 1422,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "if_else_real",
+      "line": 1435,
+      "status": "pass",
+      "tested_by": [
+        "optional_values"
+      ]
+    },
+    {
+      "name": "if_else_int",
+      "line": 1446,
+      "status": "pass",
+      "tested_by": [
+        "optional_values"
+      ]
+    },
+    {
+      "name": "demean_vec",
+      "line": 1457,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "demean_mat",
+      "line": 1471,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "demean_col",
+      "line": 1483,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "true_pos_count",
+      "line": 1491,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "true_pos_alloc",
+      "line": 1512,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "true_pos_few",
+      "line": 1522,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "true_pos_func",
+      "line": 1541,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "periodic_sum_vec",
+      "line": 1555,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "periodic_sum_mat",
+      "line": 1574,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "cumul_sum_periodic_vec",
+      "line": 1594,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "cumul_sum_periodic_matrix",
+      "line": 1613,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "cumul_sum_vec",
+      "line": 1633,
+      "status": "blocked",
+      "tested_by": [
+        "cumulative_sums"
+      ]
+    },
+    {
+      "name": "cumul_sum0_vec",
+      "line": 1646,
+      "status": "blocked",
+      "tested_by": [
+        "cumulative_sums"
+      ]
+    },
+    {
+      "name": "cumul_sum0_mat",
+      "line": 1653,
+      "status": "blocked",
+      "tested_by": [
+        "cumulative_sums"
+      ]
+    },
+    {
+      "name": "cumul_sum_mat",
+      "line": 1661,
+      "status": "blocked",
+      "tested_by": [
+        "cumulative_sums"
+      ]
+    },
+    {
+      "name": "growing_mean_vec",
+      "line": 1675,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "lag_data_vec",
+      "line": 1691,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "lag_good_data_vec",
+      "line": 1707,
+      "status": "pass",
+      "tested_by": [
+        "lagged_data"
+      ]
+    },
+    {
+      "name": "lag_data_matrix",
+      "line": 1732,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "lag_matrix_vec",
+      "line": 1749,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "lag_matrix_mat",
+      "line": 1763,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "matrix_row_col",
+      "line": 1780,
+      "status": "blocked",
+      "tested_by": [
+        "matrix_shapes"
+      ]
+    },
+    {
+      "name": "matrix_from_vec",
+      "line": 1786,
+      "status": "blocked",
+      "tested_by": [
+        "matrix_shapes"
+      ]
+    },
+    {
+      "name": "matrix_reshape",
+      "line": 1793,
+      "status": "blocked",
+      "tested_by": [
+        "matrix_shapes"
+      ]
+    },
+    {
+      "name": "vector",
+      "line": 1808,
+      "status": "blocked",
+      "tested_by": [
+        "matrix_shapes"
+      ]
+    },
+    {
+      "name": "tensor",
+      "line": 1815,
+      "status": "blocked",
+      "tested_by": [
+        "matrix_shapes"
+      ]
+    },
+    {
+      "name": "combine_col_real",
+      "line": 1822,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "combine_mat_col_real",
+      "line": 1835,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "combine_vec_mat_col_real",
+      "line": 1850,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "combine_mat_vec_col_real",
+      "line": 1858,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "combine_col_int",
+      "line": 1867,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "prepend_col",
+      "line": 1880,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "append_col_vec_mat_real",
+      "line": 1892,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "append_col_mat_vec_real",
+      "line": 1904,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "combine_mat",
+      "line": 1919,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "combine_vec_mat_real",
+      "line": 1931,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "combine_mat_tensor_real",
+      "line": 1970,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "combine_tensors_real",
+      "line": 2021,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "int_tf",
+      "line": 2056,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "variable_names",
+      "line": 2067,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "str_int",
+      "line": 2085,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "str_logical",
+      "line": 2109,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "set_offdiagonal",
+      "line": 2116,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "diag_matrix",
+      "line": 2130,
+      "status": "blocked",
+      "tested_by": [
+        "diagonals"
+      ]
+    },
+    {
+      "name": "above_diag",
+      "line": 2141,
+      "status": "blocked",
+      "tested_by": [
+        "diagonals"
+      ]
+    },
+    {
+      "name": "diag",
+      "line": 2158,
+      "status": "blocked",
+      "tested_by": [
+        "diagonals"
+      ]
+    },
+    {
+      "name": "offdiag",
+      "line": 2168,
+      "status": "blocked",
+      "tested_by": [
+        "diagonals"
+      ]
+    },
+    {
+      "name": "diag_3d",
+      "line": 2186,
+      "status": "blocked",
+      "tested_by": [
+        "diagonals"
+      ]
+    },
+    {
+      "name": "get_words_alloc",
+      "line": 2199,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "get_text_int",
+      "line": 2213,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "polynom_value_scalar",
+      "line": 2222,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "polynom_value_vec",
+      "line": 2237,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "first_pos_ge_int",
+      "line": 2245,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "first_pos_ge_int_vec",
+      "line": 2261,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "first_pos_ge_real",
+      "line": 2279,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "last_pos_le_int_vec",
+      "line": 2295,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "last_pos_le_int",
+      "line": 2313,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "last_pos_le_real",
+      "line": 2329,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "integer_label",
+      "line": 2345,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "integer_labels",
+      "line": 2355,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "conform_real_3d",
+      "line": 2369,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "conform_real_2d_3d",
+      "line": 2376,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "conform_real_2d",
+      "line": 2395,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "conform_real_1d",
+      "line": 2407,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "conform_optional_real_1d",
+      "line": 2414,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "conform_optional_real_2d",
+      "line": 2426,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "positions",
+      "line": 2438,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "select_tensor_real",
+      "line": 2452,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "select_vec_character",
+      "line": 2470,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "match_char",
+      "line": 2485,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "select_match_vec_char",
+      "line": 2506,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "set_alloc_real_vec",
+      "line": 2515,
+      "status": "pass",
+      "tested_by": [
+        "set_alloc_vectors"
+      ]
+    },
+    {
+      "name": "set_alloc_int_vec",
+      "line": 2527,
+      "status": "pass",
+      "tested_by": [
+        "set_alloc_vectors"
+      ]
+    },
+    {
+      "name": "set_alloc_i64_vec",
+      "line": 2549,
+      "status": "pass",
+      "tested_by": [
+        "set_alloc_vectors"
+      ]
+    },
+    {
+      "name": "set_alloc_logical_vec",
+      "line": 2568,
+      "status": "pass",
+      "tested_by": [
+        "set_alloc_vectors"
+      ]
+    },
+    {
+      "name": "set_alloc_logical_matrix",
+      "line": 2577,
+      "status": "blocked",
+      "tested_by": [
+        "set_alloc_matrices"
+      ]
+    },
+    {
+      "name": "set_alloc_logical_tensor",
+      "line": 2584,
+      "status": "blocked",
+      "tested_by": [
+        "set_alloc_matrices"
+      ]
+    },
+    {
+      "name": "set_alloc_integer_matrix",
+      "line": 2591,
+      "status": "blocked",
+      "tested_by": [
+        "set_alloc_matrices"
+      ]
+    },
+    {
+      "name": "set_alloc_real_matrix",
+      "line": 2599,
+      "status": "blocked",
+      "tested_by": [
+        "set_alloc_matrices"
+      ]
+    },
+    {
+      "name": "set_alloc_real_tensor",
+      "line": 2607,
+      "status": "blocked",
+      "tested_by": [
+        "set_alloc_matrices"
+      ]
+    },
+    {
+      "name": "set_alloc_character_vec",
+      "line": 2615,
+      "status": "pass",
+      "tested_by": [
+        "set_alloc_vectors"
+      ]
+    },
+    {
+      "name": "set_alloc_character_mat",
+      "line": 2625,
+      "status": "blocked",
+      "tested_by": [
+        "set_alloc_matrices"
+      ]
+    },
+    {
+      "name": "add_uniform_noise",
+      "line": 2633,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "runif_vec",
+      "line": 2640,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "num_unique_char",
+      "line": 2649,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "unique_vec_int",
+      "line": 2656,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "unique_char_int",
+      "line": 2673,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "unique_int",
+      "line": 2690,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "unique_real",
+      "line": 2715,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "unique_positions_int",
+      "line": 2743,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "uniq_char",
+      "line": 2767,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "unique_values_char",
+      "line": 2774,
+      "status": "blocked",
+      "tested_by": [
+        "unique_characters"
+      ]
+    },
+    {
+      "name": "uniq_int",
+      "line": 2813,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "unique_values_int",
+      "line": 2820,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "unique_values_real",
+      "line": 2849,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "uniq_real",
+      "line": 2879,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "unique_values_positions_char",
+      "line": 2887,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "unique_char",
+      "line": 2910,
+      "status": "blocked",
+      "tested_by": [
+        "unique_characters"
+      ]
+    },
+    {
+      "name": "in_row_int",
+      "line": 2932,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "read_comments",
+      "line": 2969,
+      "status": "blocked",
+      "tested_by": [
+        "read_comments"
+      ]
+    },
+    {
+      "name": "num_fields",
+      "line": 3004,
+      "status": "pass",
+      "tested_by": [
+        "string_fields"
+      ]
+    },
+    {
+      "name": "num_matching_char",
+      "line": 3022,
+      "status": "pass",
+      "tested_by": [
+        "string_fields"
+      ]
+    },
+    {
+      "name": "read_vec_real",
+      "line": 3037,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "read_vec_int",
+      "line": 3093,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "read_vec_char",
+      "line": 3149,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "quote",
+      "line": 3206,
+      "status": "pass",
+      "tested_by": [
+        "string_fields"
+      ]
+    },
+    {
+      "name": "irange",
+      "line": 3213,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "open_grid",
+      "line": 3223,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "grid_min_max",
+      "line": 3236,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "geometric_series",
+      "line": 3253,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "grid_real",
+      "line": 3274,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "grid_alloc_real",
+      "line": 3284,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "grid_alloc_int",
+      "line": 3299,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "grid_int",
+      "line": 3314,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "all_equal_vec_real",
+      "line": 3328,
+      "status": "pass",
+      "tested_by": [
+        "all_equal"
+      ]
+    },
+    {
+      "name": "all_equal_vec_int",
+      "line": 3354,
+      "status": "pass",
+      "tested_by": [
+        "all_equal"
+      ]
+    },
+    {
+      "name": "same_rows_real",
+      "line": 3377,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "good_pos_int",
+      "line": 3407,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "good_pos_char",
+      "line": 3434,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "in_range_int",
+      "line": 3457,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "exclude_vec_int",
+      "line": 3474,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "exclude_vec_real",
+      "line": 3496,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "copy_alloc_matrix_int",
+      "line": 3526,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "copy_alloc_matrix_real",
+      "line": 3542,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "copy_alloc_vec_int",
+      "line": 3558,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "copy_alloc_vec_char",
+      "line": 3573,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "vec_exclude_int",
+      "line": 3586,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "int_vec_in_vec",
+      "line": 3603,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "int_in_vec",
+      "line": 3610,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "char_in_vec",
+      "line": 3616,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "char_vec_in_vec",
+      "line": 3623,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "notall",
+      "line": 3631,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "int_vec_not_in_vec",
+      "line": 3637,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "int_not_in_vec",
+      "line": 3644,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "char_not_in_vec",
+      "line": 3650,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "copy_alloc_vec_real",
+      "line": 3657,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "ivec",
+      "line": 3668,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "default_logical",
+      "line": 3676,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "default_integer",
+      "line": 3688,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "default_real",
+      "line": 3700,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "default_character",
+      "line": 3712,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "default_character_nlen",
+      "line": 3724,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "copy_alloc_opt_char_vec",
+      "line": 3737,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "copy_alloc_char_vec",
+      "line": 3749,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "assert_eq2",
+      "line": 3757,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "assert_eq3",
+      "line": 3769,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "assert_eq4",
+      "line": 3781,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "assert_eqn",
+      "line": 3793,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "nrerror",
+      "line": 3805,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "iminloc",
+      "line": 3811,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "merge_alloc_int",
+      "line": 3819,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "merge_sub_character",
+      "line": 3830,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "merge_char",
+      "line": 3842,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "element_char",
+      "line": 3854,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "rebase_vec",
+      "line": 3872,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "rebase_mat",
+      "line": 3887,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "prepend_char",
+      "line": 3898,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "assert_vec",
+      "line": 3911,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "assert_scalar",
+      "line": 3928,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "first_false",
+      "line": 3946,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "spread_alloc_char",
+      "line": 3960,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "spread_alloc_logical",
+      "line": 3981,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "reverse_real",
+      "line": 4002,
+      "status": "blocked",
+      "tested_by": [
+        "numeric_vectors"
+      ]
+    },
+    {
+      "name": "renormalize_vec",
+      "line": 4017,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "renormalize_tensor",
+      "line": 4025,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "print_matrix_real_row_num",
+      "line": 4054,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "print_matrix_int_row_num",
+      "line": 4090,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "size_optional_int_vec",
+      "line": 4120,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "size_optional_char_vec",
+      "line": 4130,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "size_optional_real_vec",
+      "line": 4140,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "size_optional_logical_vec",
+      "line": 4150,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "read_unit_int_vec_alloc",
+      "line": 4160,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "read_unit_real_vec_alloc",
+      "line": 4172,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "read_int_vec_alloc",
+      "line": 4186,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "read_real_vec_alloc",
+      "line": 4207,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "interp_two_points",
+      "line": 4228,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "label_obs_bins",
+      "line": 4248,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "num_obs_bins",
+      "line": 4275,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "write_xname_yname",
+      "line": 4293,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "write_lines",
+      "line": 4310,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "write_lines_file",
+      "line": 4328,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "write_format",
+      "line": 4339,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "remove_char",
+      "line": 4356,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "append_file",
+      "line": 4375,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "copy_file",
+      "line": 4386,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "get_unit",
+      "line": 4413,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "get_unit_open_file",
+      "line": 4438,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "check_tickers_exist",
+      "line": 4505,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "file_exists",
+      "line": 4532,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "directory_exists",
+      "line": 4540,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "checkdir",
+      "line": 4558,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "files_exist",
+      "line": 4573,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "vector_to_matrix_alloc_real",
+      "line": 4595,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "piecewise_constant",
+      "line": 4609,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "piecewise_linear",
+      "line": 4626,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "piecewise_sine",
+      "line": 4646,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "append_str",
+      "line": 4664,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "combine_str",
+      "line": 4676,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "append_int",
+      "line": 4691,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "dealloc_char_vec",
+      "line": 4703,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "dealloc_real_vec",
+      "line": 4708,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "dealloc_real_matrix",
+      "line": 4713,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "dealloc_real_tensor",
+      "line": 4718,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "dealloc_int_vec",
+      "line": 4723,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "dealloc_int_matrix",
+      "line": 4728,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "dealloc_int_tensor",
+      "line": 4733,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "dealloc_logical_vec",
+      "line": 4738,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "dealloc_logical_matrix",
+      "line": 4743,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "dealloc_logical_tensor",
+      "line": 4748,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "upper_case_str",
+      "line": 4753,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "lower_case_str",
+      "line": 4767,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "max_optional_int",
+      "line": 4781,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "min_optional_int",
+      "line": 4792,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "ones_vec",
+      "line": 4804,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "write_tensor",
+      "line": 4810,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "reshape_matrix",
+      "line": 4833,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "combine_matrices",
+      "line": 4872,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "print_matrix_simple",
+      "line": 4914,
+      "status": "blocked",
+      "tested_by": [
+        "formatted_output"
+      ]
+    },
+    {
+      "name": "print_vector",
+      "line": 4934,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "print_labeled_vec",
+      "line": 4950,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "print_labeled_mat",
+      "line": 4984,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "sorted_real",
+      "line": 5019,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "remove_zero_rows",
+      "line": 5034,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "nonzero_columns",
+      "line": 5048,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "remove_zero_columns",
+      "line": 5065,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "remove_duplicate_columns",
+      "line": 5079,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "skip_lines",
+      "line": 5108,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "skip_lines_unit",
+      "line": 5120,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "short_file_name",
+      "line": 5130,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "base_file_name",
+      "line": 5143,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "order_distance",
+      "line": 5155,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "match_category_string_scalar",
+      "line": 5172,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "match_category_string_vec",
+      "line": 5196,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "match_int_scalar",
+      "line": 5207,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "match_int_vec",
+      "line": 5222,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "match_string_scalar",
+      "line": 5231,
+      "status": "pass",
+      "tested_by": [
+        "string_matching"
+      ]
+    },
+    {
+      "name": "matching_pos_string",
+      "line": 5246,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "match_string_vec",
+      "line": 5255,
+      "status": "pass",
+      "tested_by": [
+        "string_matching"
+      ]
+    },
+    {
+      "name": "match_integer_matrix",
+      "line": 5264,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "write_words",
+      "line": 5287,
+      "status": "blocked",
+      "tested_by": [
+        "formatted_output"
+      ]
+    },
+    {
+      "name": "rbinary",
+      "line": 5297,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "moving_average",
+      "line": 5303,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "exp_ma",
+      "line": 5320,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "realloc_real",
+      "line": 5338,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "realloc_logical",
+      "line": 5353,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "realloc_integer",
+      "line": 5368,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "sine_bound",
+      "line": 5383,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "half_sine_bound",
+      "line": 5390,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "sine_transform",
+      "line": 5397,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "half_sine_transform",
+      "line": 5412,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "duration",
+      "line": 5427,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "signed_power",
+      "line": 5447,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "power_transform",
+      "line": 5455,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "round_less",
+      "line": 5467,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "round_up",
+      "line": 5481,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "grid_round",
+      "line": 5509,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "ts_transform_matrix",
+      "line": 5528,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "running_sum",
+      "line": 5557,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "zero_small_changes",
+      "line": 5571,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "bands",
+      "line": 5584,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "bounded_time_series",
+      "line": 5611,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "tail_int",
+      "line": 5626,
+      "status": "blocked",
+      "tested_by": [
+        "first_tail"
+      ]
+    },
+    {
+      "name": "tail_real",
+      "line": 5639,
+      "status": "blocked",
+      "tested_by": [
+        "first_tail"
+      ]
+    },
+    {
+      "name": "last_real",
+      "line": 5652,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "positive_int_vec",
+      "line": 5667,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "interpolate_matrix_summarize",
+      "line": 5673,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "interpolate_matrix",
+      "line": 5699,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "interpolate_vec",
+      "line": 5717,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "fill_bad",
+      "line": 5747,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "fill_previous",
+      "line": 5764,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "first_true",
+      "line": 5788,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "last_true",
+      "line": 5802,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "fill_vec",
+      "line": 5816,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "fill_panel",
+      "line": 5858,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "fill_matrix_by_row",
+      "line": 5885,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "all_columns_equal_char",
+      "line": 5911,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "nearest_element_real",
+      "line": 5924,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "single_integer",
+      "line": 5953,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "single_real",
+      "line": 5974,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "timestamp",
+      "line": 5995,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "timestring",
+      "line": 6079,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "get_var",
+      "line": 6084,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "empty_char_vec",
+      "line": 6106,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "lagged",
+      "line": 6111,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "pos_changes",
+      "line": 6129,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "frac_true",
+      "line": 6154,
+      "status": "blocked",
+      "tested_by": [
+        "numeric_vectors"
+      ]
+    },
+    {
+      "name": "frac_changes",
+      "line": 6160,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "alloc_matrix_real",
+      "line": 6173,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "random_logical_vec",
+      "line": 6181,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "random_logical_matrix",
+      "line": 6191,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "random_logical_3d",
+      "line": 6201,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "init_random_seed",
+      "line": 6211,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "put_random_seed",
+      "line": 6222,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "default_variable_names",
+      "line": 6247,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "seq",
+      "line": 6257,
+      "status": "blocked",
+      "tested_by": [
+        "numeric_vectors"
+      ]
+    },
+    {
+      "name": "current_time",
+      "line": 6265,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "now",
+      "line": 6304,
+      "status": "blocked",
+      "tested_by": [
+        "clock_properties"
+      ]
+    },
+    {
+      "name": "get_data",
+      "line": 6311,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "replace_char",
+      "line": 6326,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "unix",
+      "line": 6337,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "unix_dir",
+      "line": 6345,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "threshold_weights",
+      "line": 6361,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "clip",
+      "line": 6383,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "clip_transform",
+      "line": 6389,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "and",
+      "line": 6404,
+      "status": "pass",
+      "tested_by": [
+        "optional_values"
+      ]
+    },
+    {
+      "name": "close_file",
+      "line": 6411,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "write_optional",
+      "line": 6419,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "pad_directory_name",
+      "line": 6425,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "backfill",
+      "line": 6442,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "directory_sep",
+      "line": 6466,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "str_real",
+      "line": 6471,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "str_concat",
+      "line": 6483,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "fold_bounds",
+      "line": 6490,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "group_sizes",
+      "line": 6509,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "read_strings_vec",
+      "line": 6529,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "read_matrix_alloc",
+      "line": 6557,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "read_matrix_unit",
+      "line": 6585,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "read_matrix",
+      "line": 6607,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "read_3d",
+      "line": 6621,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "random_number_seed",
+      "line": 6636,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "get_random_seeds",
+      "line": 6643,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "partition",
+      "line": 6651,
+      "status": "pass",
+      "tested_by": [
+        "partitions_and_runs"
+      ]
+    },
+    {
+      "name": "first_int",
+      "line": 6667,
+      "status": "blocked",
+      "tested_by": [
+        "first_tail"
+      ]
+    },
+    {
+      "name": "first_real",
+      "line": 6677,
+      "status": "blocked",
+      "tested_by": [
+        "first_tail"
+      ]
+    },
+    {
+      "name": "first_char",
+      "line": 6687,
+      "status": "blocked",
+      "tested_by": [
+        "first_tail"
+      ]
+    },
+    {
+      "name": "default_alloc_char",
+      "line": 6697,
+      "status": "pass",
+      "tested_by": [
+        "optional_character_results"
+      ]
+    },
+    {
+      "name": "first_pos_positive",
+      "line": 6708,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "floor_10",
+      "line": 6721,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "ceiling_10",
+      "line": 6727,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "exact_match_ascending_int",
+      "line": 6733,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "text_after_char",
+      "line": 6760,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "common_value",
+      "line": 6777,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "join_fixed",
+      "line": 6785,
+      "status": "pass",
+      "tested_by": [
+        "character_results"
+      ]
+    },
+    {
+      "name": "union_ascending",
+      "line": 6796,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "unique_ordered_int",
+      "line": 6831,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "unique_ordered_i64",
+      "line": 6844,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "get_sub_vec_real",
+      "line": 6857,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "get_sub_matrix_real",
+      "line": 6896,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "get_sub_array_3d_real",
+      "line": 6942,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "write_trim_vec",
+      "line": 7002,
+      "status": "blocked",
+      "tested_by": [
+        "formatted_output"
+      ]
+    },
+    {
+      "name": "write_vec",
+      "line": 7015,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "all_strings_in_lines",
+      "line": 7035,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "any_strings_in_lines",
+      "line": 7052,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "text_in_lines",
+      "line": 7071,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "index_case",
+      "line": 7103,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "print_matching_paragraphs",
+      "line": 7118,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "search_paragraphs_strings",
+      "line": 7164,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "rename_strings",
+      "line": 7211,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "pos_keep_char",
+      "line": 7228,
+      "status": "pass",
+      "tested_by": [
+        "membership_positions"
+      ]
+    },
+    {
+      "name": "lookup_char_scalar",
+      "line": 7237,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "lookup_char_vec",
+      "line": 7262,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "lookup_char_matrix",
+      "line": 7285,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "pos",
+      "line": 7308,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "dividend_adjusted_prices",
+      "line": 7327,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "returns",
+      "line": 7353,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "vec",
+      "line": 7395,
+      "status": "pass",
+      "tested_by": [
+        "optional_character_results"
+      ]
+    },
+    {
+      "name": "print_comment_lines",
+      "line": 7486,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "alloc_char_vec",
+      "line": 7505,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "ends_with",
+      "line": 7511,
+      "status": "pass",
+      "tested_by": [
+        "string_fields"
+      ]
+    },
+    {
+      "name": "moving_average_data_good",
+      "line": 7522,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "madev_good",
+      "line": 7572,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "madev_good_matrix",
+      "line": 7606,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "moving_average_data_good_matrix",
+      "line": 7637,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "moving_average_min_obs",
+      "line": 7667,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "moving_average_min_obs_matrix",
+      "line": 7710,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "moving_average_data_full",
+      "line": 7736,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "moving_average_data_full_matrix",
+      "line": 7763,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "mean",
+      "line": 7785,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "all_equal_in_vec",
+      "line": 7791,
+      "status": "pass",
+      "tested_by": [
+        "all_equal"
+      ]
+    },
+    {
+      "name": "check_all_equal",
+      "line": 7806,
+      "status": "pass",
+      "tested_by": [
+        "all_equal"
+      ]
+    },
+    {
+      "name": "intersection_char",
+      "line": 7815,
+      "status": "pass",
+      "tested_by": [
+        "membership_positions"
+      ]
+    },
+    {
+      "name": "add_constant_columns",
+      "line": 7826,
+      "status": "pass",
+      "tested_by": [
+        "matrix_columns"
+      ]
+    },
+    {
+      "name": "random_matrix",
+      "line": 7836,
+      "status": "pass",
+      "tested_by": [
+        "random_matrix"
+      ]
+    },
+    {
+      "name": "strip",
+      "line": 7842,
+      "status": "pass",
+      "tested_by": [
+        "string_fields"
+      ]
+    },
+    {
+      "name": "factorial",
+      "line": 7861,
+      "status": "pass",
+      "tested_by": [
+        "combinatorics"
+      ]
+    },
+    {
+      "name": "factorial_long",
+      "line": 7871,
+      "status": "pass",
+      "tested_by": [
+        "combinatorics"
+      ]
+    },
+    {
+      "name": "choose",
+      "line": 7881,
+      "status": "pass",
+      "tested_by": [
+        "combinatorics"
+      ]
+    },
+    {
+      "name": "choose_func",
+      "line": 7910,
+      "status": "pass",
+      "tested_by": [
+        "combinatorics"
+      ]
+    },
+    {
+      "name": "choose_func_long",
+      "line": 7932,
+      "status": "pass",
+      "tested_by": [
+        "combinatorics"
+      ]
+    },
+    {
+      "name": "few_combinations",
+      "line": 7954,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "gen",
+      "line": 7972,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "combos",
+      "line": 8002,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "gen_comb",
+      "line": 8025,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "write_int",
+      "line": 8038,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "num_missing",
+      "line": 8051,
+      "status": "pass",
+      "tested_by": [
+        "membership_positions"
+      ]
+    },
+    {
+      "name": "moving_average_xlen",
+      "line": 8062,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "add_one_var",
+      "line": 8091,
+      "status": "pass",
+      "tested_by": [
+        "matrix_columns"
+      ]
+    },
+    {
+      "name": "diff_vec_char",
+      "line": 8107,
+      "status": "pass",
+      "tested_by": [
+        "membership_positions"
+      ]
+    },
+    {
+      "name": "concat_char_vec",
+      "line": 8117,
+      "status": "pass",
+      "tested_by": [
+        "character_results"
+      ]
+    },
+    {
+      "name": "assert_int_range",
+      "line": 8126,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "assert_int_vec_range",
+      "line": 8138,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "assert_positive_int",
+      "line": 8155,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "assert_equal_2",
+      "line": 8166,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "assert_le",
+      "line": 8176,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "assert_equal_2__",
+      "line": 8188,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "assert_equal_3__",
+      "line": 8200,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "assert_equal_4__",
+      "line": 8212,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "assert_less",
+      "line": 8224,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "assert_equal_3",
+      "line": 8233,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "assert_equal_4",
+      "line": 8242,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "stop_if_missing",
+      "line": 8251,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "squared_distances_rows",
+      "line": 8265,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "distances_rows",
+      "line": 8284,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "squared_distances",
+      "line": 8291,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "elu",
+      "line": 8309,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "elu_smooth",
+      "line": 8319,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "x_times_logistic",
+      "line": 8333,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "elu_logistic",
+      "line": 8339,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "logistic",
+      "line": 8345,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "missing_pos",
+      "line": 8351,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "missing_pos_in_range",
+      "line": 8361,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "maxloc_match_1",
+      "line": 8371,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "maxloc_match_2",
+      "line": 8404,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "num_lines_string_first_field",
+      "line": 8441,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "alloc_init_real",
+      "line": 8460,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "num_lines_file",
+      "line": 8468,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "lookup_data",
+      "line": 8487,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "sum_ranges",
+      "line": 8517,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "duplicate_columns",
+      "line": 8536,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "is_positive",
+      "line": 8554,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "print_absolute_threshold_counts",
+      "line": 8564,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "print_threshold_counts",
+      "line": 8586,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "print_prices_large_returns",
+      "line": 8607,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "read_words",
+      "line": 8630,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "filter_matrix_rows",
+      "line": 8646,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "nearby_pos",
+      "line": 8670,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "int_within",
+      "line": 8704,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "real_within",
+      "line": 8710,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "max_consecutive",
+      "line": 8716,
+      "status": "pass",
+      "tested_by": [
+        "partitions_and_runs"
+      ]
+    },
+    {
+      "name": "num_good_rows",
+      "line": 8732,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "filter_vec",
+      "line": 8741,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "mask_vec",
+      "line": 8750,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "c",
+      "line": 8777,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "positions_char_string",
+      "line": 8801,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "split",
+      "line": 8812,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "split_string",
+      "line": 8836,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "nonzero_real",
+      "line": 8845,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "nonzero_int",
+      "line": 8852,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "quick_sort",
+      "line": 8859,
+      "status": "blocked",
+      "tested_by": [
+        "sorting"
+      ]
+    },
+    {
+      "name": "quick_sort.quick_sort_1",
+      "line": 8875,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "quick_sort.interchange_sort",
+      "line": 8917,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "indexx_int",
+      "line": 8933,
+      "status": "blocked",
+      "tested_by": [
+        "sorting"
+      ]
+    },
+    {
+      "name": "indexx_real",
+      "line": 8940,
+      "status": "blocked",
+      "tested_by": [
+        "sorting"
+      ]
+    },
+    {
+      "name": "indexx_order_real",
+      "line": 8949,
+      "status": "blocked",
+      "tested_by": [
+        "sorting"
+      ]
+    },
+    {
+      "name": "piecewise_cubic_unit",
+      "line": 8967,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "piecewise_quintic_unit",
+      "line": 8980,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "piecewise_cubic",
+      "line": 8993,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "piecewise_quintic",
+      "line": 9013,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "piecewise_func_unit",
+      "line": 9033,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "piecewise_func",
+      "line": 9076,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "changes_positions",
+      "line": 9099,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "count_rows",
+      "line": 9125,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "row_count_changes",
+      "line": 9133,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "set_optional_check_size",
+      "line": 9139,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "subset_char",
+      "line": 9154,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "subset_vec_mat",
+      "line": 9163,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "assert_zero",
+      "line": 9178,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "bound_positions",
+      "line": 9186,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "capped_sum_abs",
+      "line": 9204,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "capped_sum_abs_rows",
+      "line": 9217,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "capped_sum_abs_col",
+      "line": 9226,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "set_random_seed",
+      "line": 9235,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "complement",
+      "line": 9277,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "set_first_false",
+      "line": 9292,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "read_vec_data_unit",
+      "line": 9311,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "assert_conform",
+      "line": 9338,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "same_shape_real_real_1d",
+      "line": 9351,
+      "status": "pass",
+      "tested_by": [
+        "same_shapes"
+      ]
+    },
+    {
+      "name": "same_shape_real_real_2d",
+      "line": 9363,
+      "status": "pass",
+      "tested_by": [
+        "same_shapes"
+      ]
+    },
+    {
+      "name": "same_shape_real_real_3d",
+      "line": 9375,
+      "status": "pass",
+      "tested_by": [
+        "same_shapes"
+      ]
+    },
+    {
+      "name": "pow_norm",
+      "line": 9387,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "bound_value",
+      "line": 9398,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "print_random_seeds",
+      "line": 9406,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "get_numbers",
+      "line": 9417,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "remove",
+      "line": 9506,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "add_or_remove",
+      "line": 9514,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "num_records",
+      "line": 9529,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "ratios",
+      "line": 9544,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "ratio_diff",
+      "line": 9553,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "weighted_sums",
+      "line": 9562,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "moving_average_vec",
+      "line": 9577,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "weighted_moving_average_vec",
+      "line": 9600,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "spline_power_wgt",
+      "line": 9624,
+      "status": "untested",
+      "tested_by": []
+    },
+    {
+      "name": "compress",
+      "line": 9637,
+      "status": "untested",
+      "tested_by": []
+    }
+  ]
+}

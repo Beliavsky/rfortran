@@ -2769,6 +2769,13 @@ pub fn analyze_with_src(
                     if key == "random_number" {
                         problems.push((name.clone(), "RANDOM_NUMBER is a subroutine; use CALL RANDOM_NUMBER(harvest)".into()));
                     }
+                    if key=="nint" {
+                        if let Some(arg)=args.first() {
+                            if infer_expr_type(arg,sym,functions,returns).is_some_and(|k|!matches!(k,TypeSpec::Real|TypeSpec::DoublePrecision)) {
+                                problems.push((name.clone(), "NINT A must be REAL or DOUBLE PRECISION".into()));
+                            }
+                        }
+                    }
                     let math = crate::intrinsics::math_arity(&key);
                     let arity = (if matches!(key.as_str(), "max" | "min") { Some(args.len().max(2)) } else if matches!(key.as_str(), "mod" | "modulo") {Some(2)} else { math }).or_else(|| matches!(key.as_str(), "abs" | "int" | "real" | "dble").then_some(1));
                     if let Some(arity) = arity {

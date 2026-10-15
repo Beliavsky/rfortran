@@ -205,7 +205,16 @@ pub(crate) fn inline_returns_with_prefix(body: &mut Vec<Stmt>, serial: &mut usiz
                     lower(body,flag)?;
                     body.push(Stmt::If {cond:Expr::Ident(flag.into()),then_body:vec![Stmt::Exit],else_body:None});
                 }
-                Stmt::Block {body} => lower(body,flag)?,
+                Stmt::Block {body} => {
+                    // An explicit-step DO is still an annotated BLOCK here.
+                    // Its exit must precede the increment inserted by do_steps,
+                    // just as RETURN exits an ordinary DO immediately.
+                    let step_loop=matches!(body.first(),Some(Stmt::CallSub{name,..}) if name=="@do_step");
+                    lower(body,flag)?;
+                    if step_loop {
+                        body.push(Stmt::If {cond:Expr::Ident(flag.into()),then_body:vec![Stmt::Exit],else_body:None});
+                    }
+                },
                 Stmt::SelectCase {cases,default,..} => { for c in cases {lower(&mut c.body,flag)?;} if let Some(b)=default {lower(b,flag)?;} }
                 _ => {}
             }
