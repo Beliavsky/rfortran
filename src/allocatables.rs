@@ -399,7 +399,7 @@ fn logical_shape(
             Ok(a.or(b))
         }
         Expr::Un(_, a) => logical_shape(a, shapes, guards),
-        Expr::Call(n, _) if matches!(n.as_str(),"size"|"shape"|"lbound"|"ubound"|"allocated"|"kind")=>Ok(None),
+        Expr::Call(n, _) if matches!(n.as_str(),"size"|"shape"|"lbound"|"ubound"|"allocated"|"kind"|"@allocated_linear_element")=>Ok(None),
         Expr::Call(n, args) if !shapes.contains_key(n) => {
             let mut result: Option<(Vec<Expr>, bool)> = None;
             for arg in args {
@@ -885,6 +885,13 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
             }
         }
         match e {
+            Expr::Call(tag,a) if tag=="@allocated_linear_element"=>{
+                let Expr::Ident(name)=&a[0] else {unreachable!()};
+                let name=name.clone();let mut index=a[1].clone();
+                expression(&mut index,shapes,guards,checks,serial)?;
+                check(&name,shapes,guards);
+                *e=Expr::Index(name,vec![index]);
+            }
             Expr::Section { name, .. } if allocated(name, shapes).is_some() => {
                 bail!("sections of bounded allocatable arrays are not yet supported")
             }
@@ -1003,6 +1010,77 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
         for mut s in std::mem::take(body) {
             let mut guards = vec![];
             match &mut s {
+                Stmt::CallSub{name:operation,args} if operation=="@alloc_result_assign"=>{
+                    let [Expr::Ident(name),value]=args.as_slice() else {bail!("invalid allocatable function result assignment");};
+                    let name=name.clone();let mut value=value.clone();
+                    if crate::array_calls::scalar_actual_kind(&value,&shapes).is_ok() {
+                        let mut statements=vec![assign(&name,value)];
+                        lower(&mut statements,&shapes,serial,checks)?;
+                        out.extend(statements);continue;
+                    }
+                    let target_axes=axes(&name,&shapes).context("allocatable function result requires a heap descriptor")?;
+                    let mut statements=vec![];
+                    let rhs_axes=logical_shape(&value,&shapes,&mut statements)?.map(|v|v.0);
+                    let source_lower=if let Expr::Ident(n)=&value {lowers(n,&shapes)} else {None};
+                    expression(&mut value,&shapes,&mut statements,checks,serial)?;
+                    if let Expr::Ident(n)=&value {
+                        if shapes.get(n).is_some_and(|(_,d)|d.len()>1) {value=Expr::Call("@fixed_packed_view".into(),vec![id(n)]);}
+                    }
+                    let (kind,_,length)=crate::reductions::argument(&mut value,&shapes,&mut statements,serial)?;
+                    let rhs_axes=rhs_axes.unwrap_or_else(||vec![length.clone()]);
+                    if rhs_axes.len()!=target_axes.len() {bail!("allocatable function result assignment rank mismatch");}
+                    *serial+=1;let stem=format!("@alloc_result_assignment_{serial}");
+                    let snapshot=format!("{stem}_values");let index=format!("{stem}_index");
+                    let mut extents=vec![];let mut bounds=vec![];
+                    for (axis,extent) in rhs_axes.into_iter().enumerate() {
+                        let n=format!("{stem}_extent_{axis}");
+                        statements.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![n.clone()]});
+                        statements.push(assign(&n,extent));extents.push(id(&n));
+                        let lo=format!("{stem}_lower_{axis}");
+                        statements.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![lo.clone()]});
+                        statements.push(assign(&lo,source_lower.as_ref().map_or(int(1),|v|v[axis].clone())));
+                        bounds.push(Expr::Call("@heap_bounds".into(),vec![id(&lo),bin(BinOp::Sub,bin(BinOp::Add,id(&lo),id(&n)),int(1))]));
+                    }
+                    let length=extents.iter().cloned().reduce(|a,b|bin(BinOp::Mul,a,b)).unwrap();
+                    crate::heap::temporary(kind,snapshot.clone(),length.clone(),&mut statements);
+                    statements.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![index.clone()]});
+                    let mut rhs_shapes=shapes.clone();
+                    for s in &statements {match s {
+                        Stmt::ArrayDecl{kind,name,dims}=>{rhs_shapes.insert(name.clone(),(kind.clone(),dims.clone()));},
+                        Stmt::VarDecl{kind,names}=>for n in names {rhs_shapes.insert(n.clone(),(kind.clone(),vec![]));},
+                        _=>{},
+                    }}
+                    metadata(&statements,&mut rhs_shapes);
+                    let mut scalar=crate::reductions::argument_element(&value,&id(&index),&rhs_shapes)?;
+                    fn flat_elements(e:&mut Expr,shapes:&Shapes) {
+                        match e {
+                            Expr::Index(n,a) if a.len()==1 && axes(n,shapes).is_some()=>{
+                                *e=Expr::Call("@allocated_linear_element".into(),vec![id(n),a[0].clone()]);
+                            },
+                            Expr::Call(_,a)|Expr::Index(_,a)=>for e in a {flat_elements(e,shapes);},
+                            Expr::Bin(_,a,b)=>{flat_elements(a,shapes);flat_elements(b,shapes);},
+                            Expr::Un(_,a)=>flat_elements(a,shapes),_=>{},
+                        }
+                    }
+                    flat_elements(&mut scalar,&rhs_shapes);
+                    statements.push(Stmt::Do{var:index.clone(),start:int(1),end:length.clone(),body:vec![Stmt::AssignIndex{name:snapshot.clone(),indices:vec![id(&index)],value:scalar}]});
+                    let flag=allocated(&name,&shapes).context("allocatable function result requires allocation state")?;
+                    let mut resize=Expr::Un(UnOp::Not,Box::new(flag.clone()));
+                    for (target,source) in target_axes.iter().zip(&extents) {resize=bin(BinOp::Or,resize,bin(BinOp::Ne,target.clone(),source.clone()));}
+                    statements.push(Stmt::If{cond:resize,then_body:vec![
+                        Stmt::If{cond:flag,then_body:vec![Stmt::CallSub{name:"@deallocate".into(),args:vec![id(&name)]}],else_body:None},
+                        Stmt::CallSub{name:"@allocate".into(),args:vec![Expr::Call(name.clone(),bounds)]},
+                    ],else_body:None});
+                    let target_lowers=lowers(&name,&shapes).unwrap_or_else(||vec![int(1);extents.len()]);
+                    let mut ordinal=bin(BinOp::Sub,id(&index),int(1));let mut indices=vec![];
+                    for (extent,lower) in extents.iter().zip(target_lowers) {
+                        indices.push(bin(BinOp::Add,lower,Expr::Call("mod".into(),vec![ordinal.clone(),extent.clone()])));
+                        ordinal=bin(BinOp::Div,ordinal,extent.clone());
+                    }
+                    statements.push(Stmt::Do{var:index.clone(),start:int(1),end:length,body:vec![Stmt::AssignIndex{name,indices,value:Expr::Index(snapshot,vec![id(&index)])}]});
+                    lower(&mut statements,&shapes,serial,checks)?;
+                    out.push(Stmt::Block{body:statements});continue;
+                }
                 Stmt::CallSub { name, args } if name == "@deallocate" => {
                     for n in deallocation_targets(args)? {
                         if let Some(flag) = allocated(&n, &shapes) {

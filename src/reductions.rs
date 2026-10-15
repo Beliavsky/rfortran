@@ -480,6 +480,26 @@ fn lower_pack(e:&mut Expr,symbols:&mut Symbols,prefix:&mut Vec<Stmt>,serial:&mut
 fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, serial: &mut usize, expand_elementals: bool) -> Result<()> {
 
     match e {
+        Expr::Call(name,args) if name=="merge" && !symbols.procedures.contains(name) => {
+            if args.len()!=3 {bail!("MERGE expects TSOURCE, FSOURCE and MASK");}
+            for arg in args.iter_mut() {lower_expr_impl(arg,symbols,prefix,serial,expand_elementals)?;}
+            let kind=|e:&Expr|->Result<(TypeSpec,bool)> {
+                element(e,&int(1),symbols).map(|(_,shape,kind)|(kind,shape.is_some()))
+                    .or_else(|_|crate::array_calls::scalar_actual_kind(e,&symbols.variables).map(|kind|(kind,false)))
+            };
+            let (first,array)=kind(&args[0])?;let (second,other_array)=kind(&args[1])?;let (mask,mask_array)=kind(&args[2])?;
+            if array || other_array || mask_array {bail!("MERGE currently requires scalar arguments");}
+            if !same_kind(&first,&second) {bail!("MERGE sources must have the same type, kind and CHARACTER length");}
+            if mask!=TypeSpec::Logical {bail!("MERGE MASK must be LOGICAL");}
+            *serial+=1;let temp=format!("@merge_value_{serial}");
+            prefix.push(Stmt::VarDecl{kind:first.clone(),names:vec![temp.clone()]});
+            let store=|value:Expr|if let TypeSpec::Character(length)=&first {
+                Stmt::CallSub{name:"@character_assign".into(),args:vec![Expr::Ident(temp.clone()),value,int(length.unwrap_or(1) as i64)]}
+            }else{Stmt::Assign{name:temp.clone(),value}};
+            prefix.push(Stmt::If{cond:args[2].clone(),then_body:vec![store(args[0].clone())],else_body:Some(vec![store(args[1].clone())])});
+            symbols.insert(temp.clone(),(first,vec![]));
+            *e=Expr::Ident(temp);
+        }
         Expr::Call(name,args) if crate::bit_intrinsics::keys(name).is_some() && !symbols.contains_key(name) && !symbols.procedures.contains(name) => lower_bit(e,symbols,prefix,serial,expand_elementals)?,
         // Call specialization precedes multidimensional normalization. Its
         // rank-one PACK actuals can use the same bounded lowering directly.

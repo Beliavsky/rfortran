@@ -132,6 +132,7 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
         let arrays=body.iter().filter_map(|s|if let Stmt::ArrayDecl{kind,name,dims}=s {
             (dims.iter().all(|e|matches!(e,Expr::Ident(n) if n=="@deferred_extent"))
               && !params.contains(name)
+              && !body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name && intent=="@heap_dummy"))
               && (passed.contains(name) || name.starts_with("@module$") || ((dims.len()>1 || !array_dummies) && allocation(body,name)) || dims.len()>1 && body.iter().any(|s|matches!(s,Stmt::CallSub{name:call,args} if call=="@deallocate"&&args.iter().any(|e|matches!(e,Expr::Ident(n) if n==name)))))
               && numeric(kind) && (!matches!(kind,TypeSpec::Character(_)) || dims.len()>1)
               && body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name&&intent=="allocatable")))
@@ -251,7 +252,19 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
         }
         for s in body.iter_mut() {
             match s {
-                Stmt::Function { body, params, .. } | Stmt::Subroutine { body, params, .. } => {
+                Stmt::Function { name, body, params, .. } => {
+                    let result=match body.last() {Some(Stmt::Return(Some(Expr::Ident(n))))=>n.clone(),_=>name.clone()};
+                    if body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,kind,..} if name==&result && matches!(kind,TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision|TypeSpec::Logical)))
+                        && body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==&result && intent=="allocatable"))
+                        && !body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==&result && intent=="@heap_dummy")) {
+                        // The hidden output dummy borrows caller-owned result
+                        // storage. Keep its original rank and ALLOCATABLE
+                        // declaration until function-call lowering supplies it.
+                        body.insert(0,Stmt::DummyIntent{name:result,intent:"@heap_dummy".into()});
+                    }
+                    visit(body, params, interfaces)?
+                }
+                Stmt::Subroutine { body, params, .. } => {
                     visit(body, params, interfaces)?
                 }
                 Stmt::Module { body, .. }

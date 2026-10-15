@@ -1357,7 +1357,14 @@ for separate-object module interfaces.
 Zero and negative allocation extents produce allocated empty arrays.
 Numeric/LOGICAL array-valued functions can use runtime-sized inputs and results
 through a hidden allocated result argument, including calls nested in another
-procedure's input arguments. Runtime rank-one result section assignments retain
+procedure's input arguments. ALLOCATABLE numeric/LOGICAL results use caller-owned
+descriptors even for fixed-size actual arguments. Intrinsic assignment allocates
+or resizes these results to the RHS shape, preserving RHS values before any
+reallocation and retaining existing lower bounds when shapes conform. This also
+supports filling a result through an ALLOCATABLE INTENT(OUT) helper. Run
+`python tests/test_numeric_allocatable_results.py` to check direct assignment,
+helper calls, empty/repeated results, element kinds and multidimensional ranks.
+Runtime rank-one result section assignments retain
 RHS values before writing. CHARACTER functions continue to use bounded storage;
 direct constant allocations now supply their active shape before function calls
 are materialized. `tests/184_allocated_character_concat.f90` covers the empty

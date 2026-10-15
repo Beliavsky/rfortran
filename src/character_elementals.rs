@@ -437,7 +437,8 @@ impl Lower {
         }}
         let runtime_result=array_result && (args.iter().any(|e|runtime(e,symbols))
             || routine.params.iter().zip(args.iter()).any(|(p,e)|routine.body.iter().any(|s|matches!(s,Stmt::VarDecl{kind:TypeSpec::Integer(_),names} if names.contains(p))) && routine.body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,dims,..} if name==&routine.result && dims.iter().any(|d|references(d,p)))) && crate::parameters::integer_constant(e).is_err()));
-        if let Some(helper) = routine.descriptor_call.as_ref().filter(|_|!array_result||runtime_result) {
+        let allocatable_result=array_result && routine.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==&routine.result && intent=="allocatable"));
+        if let Some(helper) = routine.descriptor_call.as_ref().filter(|_|!array_result||runtime_result||allocatable_result) {
             self.serial += 1;
             let result = format!("@array_function_result_{}", self.serial);
             let result_rank=routine.body.iter().find_map(|s|match s {
@@ -1096,11 +1097,14 @@ impl Lower {
                         self.expression(cond, &mut symbols, &mut prefix)?;
                         self.body(body, &symbols)?;
                         if !prefix.is_empty() {
-                            // Declarations live in the enclosing scope; executable
-                            // association and calls must repeat at every loop test.
-                            prefix.retain(|s| {
-                                if matches!(s,Stmt::VarDecl{..}|Stmt::ArrayDecl{..}) {out.push(s.clone());false} else {true}
-                            });
+                            let owns_heap=prefix.iter().any(|s|matches!(s,Stmt::CallSub{name,..} if name=="@heap_bind"));
+                            // Result descriptors belong to one evaluation of
+                            // the condition, and must be released on every test.
+                            if !owns_heap {
+                                prefix.retain(|s| {
+                                    if matches!(s,Stmt::VarDecl{..}|Stmt::ArrayDecl{..}) {out.push(s.clone());false} else {true}
+                                });
+                            }
                             let condition = cond.clone();
                             *cond = Expr::Logical(true);
                             prefix.push(Stmt::If {
@@ -1109,7 +1113,7 @@ impl Lower {
                                 else_body: None,
                             });
                             prefix.append(body);
-                            *body = std::mem::take(&mut prefix);
+                            *body = if owns_heap {vec![Stmt::Block{body:std::mem::take(&mut prefix)}]} else {std::mem::take(&mut prefix)};
                         }
                     }
                     Stmt::Module { body, .. }
@@ -1145,8 +1149,10 @@ impl Lower {
             // Preserve facts established by this statement's direct allocation.
             if !matches!(&stmt,Stmt::CallSub{name,..} if name=="@allocate") {mutations(&stmt,&mut changed);}
             for n in changed {if let Some(dims)=allocation_facts.remove(&n) {if let Some(value)=symbols.get_mut(&n){value.1=dims;}}}
-            out.extend(prefix);
-            out.push(stmt);
+            if prefix.iter().any(|s|matches!(s,Stmt::CallSub{name,..} if name=="@heap_bind")) {
+                prefix.push(stmt);
+                out.push(Stmt::Block{body:prefix});
+            }else{out.extend(prefix);out.push(stmt);}
         }
         *body = out;
         Ok(())
@@ -1444,6 +1450,20 @@ pub(crate) fn prepare(mut p: Program) -> Result<(Program, Lower)> {
                                     if let Stmt::ArrayDecl{name,dims,..}=s {if name==&result {*dims=vec![Expr::Ident("@deferred_extent".into());dims.len()];}}
                                 }
                                 helper_body.push(Stmt::DummyIntent{name:result.clone(),intent:"@heap_dummy".into()});
+                                if allocatable {
+                                    fn result_assignments(body:&mut [Stmt],result:&str) {
+                                        for s in body {match s {
+                                            Stmt::Assign{name,value} if name==result=>{
+                                                *s=Stmt::CallSub{name:"@alloc_result_assign".into(),args:vec![Expr::Ident(name.clone()),value.clone()]};
+                                            },
+                                            Stmt::If{then_body,else_body,..}=>{result_assignments(then_body,result);if let Some(b)=else_body {result_assignments(b,result);}},
+                                            Stmt::Block{body}|Stmt::Do{body,..}|Stmt::DoWhile{body,..}=>result_assignments(body,result),
+                                            Stmt::SelectCase{cases,default,..}=>{for c in cases {result_assignments(&mut c.body,result);}if let Some(b)=default {result_assignments(b,result);}},
+                                            _=>{},
+                                        }}
+                                    }
+                                    result_assignments(&mut helper_body,&result);
+                                }
                                 if !allocatable {
                                     helper_body.push(Stmt::DummyIntent{name:result.clone(),intent:"allocatable".into()});
                                     let position=helper_body.iter().position(|s|!matches!(s,Stmt::SourceLocation(_)|Stmt::VarDecl{..}|Stmt::ArrayDecl{..}|Stmt::InitializedDecl{..}|Stmt::DummyIntent{..}|Stmt::Implicit(_)|Stmt::Use{..})).unwrap_or(helper_body.len());

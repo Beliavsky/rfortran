@@ -1322,6 +1322,13 @@
       "program_stdout": " 100 137 174\n",
       "program_stderr": "",
       "program_exit_code": 0
+    },
+    "190_allocatable_function_results": {
+      "compiler_stderr": "",
+      "compiler_exit_code": 0,
+      "program_stdout": " 2 5\n",
+      "program_stderr": "",
+      "program_exit_code": 0
     }
   }
 }

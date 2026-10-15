@@ -1407,12 +1407,42 @@ fn expand(
                                 Stmt::ArrayDecl {kind,name,dims}=>{shapes.insert(name.clone(),(kind.clone(),dims.clone()));},
                                 Stmt::VarDecl {kind,names}=>for n in names {shapes.insert(n.clone(),(kind.clone(),vec![]));},_=>{}
                             }}
+                            crate::allocatables::metadata(&prefix[start..],&mut shapes);
+                            if let Expr::Call(tag,values)=&captured {
+                                if tag=="@packed_view" && matches!(k,TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision|TypeSpec::Logical) && crate::parameters::integer_constant(&length).is_err()
+                                    && matches!(&values[0],Expr::Ident(n) if !shapes.contains_key(&format!("@heap:{n}"))) {
+                                    // A bounded expression buffer has capacity,
+                                    // not the active argument shape. Give the
+                                    // actual its own descriptor before binding
+                                    // a callee which may forward it again.
+                                    *serial+=1;let temp=format!("@array_call_view_{serial}");let index=format!("{temp}_index");
+                                    let element=crate::reductions::argument_element(&captured,&Expr::Ident(index.clone()),&shapes)?;
+                                    crate::heap::unallocated_result(k.clone(),temp.clone(),1,&mut prefix,&mut shapes)?;
+                                    prefix.push(Stmt::CallSub{name:"@allocate".into(),args:vec![Expr::Call(temp.clone(),vec![length.clone()])]});
+                                    prefix.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![index.clone()]});
+                                    prefix.push(Stmt::Do{var:index.clone(),start:Expr::IntLit("1".into()),end:length.clone(),body:vec![Stmt::AssignIndex{name:temp.clone(),indices:vec![Expr::Ident(index)],value:element}]});
+                                    captured=Expr::Ident(temp.clone());
+                                    (k,shapes[&temp].1.clone(),crate::allocatables::length(&temp,&shapes))
+                                } else {
+                                    let length=if crate::parameters::integer_constant(&length).ok()==Some(capacity) {None} else {Some(length)};
+                                    (k,vec![Expr::IntLit(capacity.to_string())],length)
+                                }
+                            } else {
                             // Statically sized expressions need no runtime view descriptor.
                             let length=if crate::parameters::integer_constant(&length).ok()==Some(capacity) {None} else {Some(length)};
                             (k,vec![Expr::IntLit(capacity.to_string())],length)
+                            }
                         };
                         let a=match &captured {Expr::Ident(a)=>a.clone(),Expr::Call(n,v) if n=="@packed_view"=>if let Expr::Ident(a)=&v[0] {a.clone()} else {bail!("array view requires materialized storage");},_=>bail!("array dummy `{p}` requires a materialized array argument")};
-                        let runtime_axes=runtime_actual_axes(actual,&shapes).or_else(||crate::allocatables::axes(&a,&shapes));
+                        let mut runtime_axes=runtime_actual_axes(actual,&shapes).or_else(||crate::allocatables::axes(&a,&shapes));
+                        if !allocatable && matches!(kind,TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision|TypeSpec::Logical) && runtime_axes.is_none() && actual_dims.len()==1 {
+                            if let Some(length)=&length {
+                                *serial+=1;let extent=format!("@array_call_active_extent_{serial}");
+                                prefix.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![extent.clone()]});
+                                prefix.push(Stmt::Assign{name:extent.clone(),value:length.clone()});
+                                runtime_axes=Some(vec![Expr::Ident(extent)]);
+                            }
+                        }
                         if allocatable && runtime_axes.is_some() && !shapes.contains_key(&format!("@heap:{a}")) {bail!("numeric ALLOCATABLE dummy `{p}` requires a heap descriptor");}
                         if matches!(kind, TypeSpec::CharacterAssumed) && matches!(actual_kind, TypeSpec::Character(_)) {
                             kind = actual_kind.clone();
@@ -1533,6 +1563,14 @@ fn expand(
                         cloned.push(Stmt::DummyIntent{name:p.clone(),intent:format!("@bounded_shape:{}",axes.join(":"))});
                         let mut lowers=vec![];for _ in &axes {*serial+=1;let n=format!("@dummy_lower_{serial}");cloned.splice(0..0,vec![Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![n.clone()]},Stmt::Assign{name:n.clone(),value:Expr::IntLit("1".into())}]);lowers.push(n);}
                         cloned.push(Stmt::DummyIntent{name:p.clone(),intent:format!("@bounded_lower:{}",lowers.join(":"))});
+                        if matches!(local.get(p),Some((TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision|TypeSpec::Logical,_))) {
+                        if let (Some(Expr::Ident(length)),Some(actual))=(crate::allocatables::length(p,&local),names.get(p)) {
+                            if let Some(Expr::Ident(flag))=crate::allocatables::allocated(actual,&shapes) {
+                                let borrowed=crate::heap::BORROWED_FIELD;
+                                cloned.push(Stmt::DummyIntent{name:p.clone(),intent:format!("@bounded:{borrowed}{length}:{borrowed}{flag}")});
+                            }
+                        }
+                        }
                     }
 
                     if local.contains_key(&format!("@target:{p}")) && intents.get(p).is_some_and(|i|i=="intent(in)") {
