@@ -976,7 +976,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
         serial: &mut usize,
         checks: &mut Vec<Stmt>,
     ) -> Result<()> {
-        let mut shapes = inherited.clone();
+        let mut shapes = if body.iter().any(|s|matches!(s,Stmt::DummyIntent{intent,..} if intent=="@native_recursive")) {Shapes::new()} else {inherited.clone()};
         for s in body.iter() {
             match s {
                 Stmt::ArrayDecl { kind, name, dims } => {
@@ -1039,7 +1039,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                     }
                     continue;
                 }
-                Stmt::CallSub {name,..} if name=="@module_bind" || name=="@heap_bind" => {out.push(s);continue;}
+                Stmt::CallSub {name,..} if name=="@module_bind" || name=="@heap_bind" || name=="@ptr_bind" => {out.push(s);continue;}
                 Stmt::CallSub{name,args} if name=="@heap_allocate"=>{
                     for extent in args.iter_mut().skip(2){expression(extent,&shapes,&mut guards,checks,serial)?;}
                     out.extend(guards);out.push(s);continue;

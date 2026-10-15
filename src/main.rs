@@ -45,6 +45,7 @@ mod array_calls;
 mod allocatables;
 mod allocation_bounds;
 mod optional;
+mod recursive_arrays;
 mod named_arguments;
 mod substrings;
 mod character_arrays;

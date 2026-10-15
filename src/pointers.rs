@@ -221,6 +221,7 @@ struct Pointer {
     level: usize,
     desc: Descriptor,
     targets: HashSet<String>,
+    borrowed: bool,
 }
 #[derive(Clone)]
 struct View {
@@ -330,7 +331,15 @@ impl Lower {
                     {
                         bail!("POINTER arrays require deferred shape with rank at most {MAX_RANK}");
                     }
-                    let desc = self.descriptor(dims.len());
+                    let fields = attrs.iter().find_map(|(n,i)| (n==&name).then(||i.strip_prefix("@borrowed_descriptor:")).flatten());
+                    let borrowed = fields.is_some();
+                    let desc = if let Some(fields) = fields {
+                        let fields = fields.split(',').collect::<Vec<_>>();
+                        if fields.len()!=5+3*dims.len() {bail!("invalid borrowed array descriptor");}
+                        self.name_capacity=self.name_capacity.max(256);
+                        Descriptor {data:fields[0].into(),flags:fields[1].into(),name:fields[2].into(),state:fields[3].into(),origin:fields[4].into(),
+                            axes:fields[5..].chunks_exact(3).map(|a|Axis{lower:id(a[0]),extent:id(a[1]),stride:id(a[2])}).collect()}
+                    } else {self.descriptor(dims.len())};
                     self.pointers.insert(
                         name.clone(),
                         Pointer {
@@ -338,6 +347,7 @@ impl Lower {
                             level,
                             desc,
                             targets: HashSet::new(),
+                            borrowed,
                         },
                     );
                 } else {
@@ -572,6 +582,12 @@ impl Lower {
                 let lo = self.integer(lo, out);
                 let hi = self.integer(hi, out);
                 let step = self.integer(step, out);
+                if lower.is_none() || upper.is_none() {
+                    let mut reversed=vec![];
+                    if lower.is_none() {if let Expr::Ident(n)=&lo {reversed.push(assign(n,add(a.lower.clone(),sub(a.extent.clone(),int(1)))));}}
+                    if upper.is_none() {if let Expr::Ident(n)=&hi {reversed.push(assign(n,a.lower.clone()));}}
+                    out.push(Stmt::If{cond:bin(BinOp::Lt,step.clone(),int(0)),then_body:reversed,else_body:None});
+                }
                 out.push(require(
                     bin(BinOp::Ne, step.clone(), int(0)),
                     "pointer section stride must not be zero".into(),
@@ -1193,11 +1209,15 @@ impl Lower {
                 out,
             )?;
             let temp = self.fresh();
-            out.push(Stmt::ArrayDecl {
-                kind: v.kind.clone(),
-                name: temp.clone(),
-                dims: vec![int(v.capacity.max(a.capacity))],
-            });
+            if v.capacity == 0 || a.capacity == 0 {
+                crate::heap::temporary(v.kind.clone(), temp.clone(), count.clone(), out);
+            } else {
+                out.push(Stmt::ArrayDecl {
+                    kind: v.kind.clone(),
+                    name: temp.clone(),
+                    dims: vec![int(v.capacity.max(a.capacity))],
+                });
+            }
             // The descriptor count can be zero; initialization is checked only
             // for elements actually written/read by these runtime loops.
 
@@ -1360,13 +1380,13 @@ impl Lower {
                     if matches!(
                         intent.as_str(),
                         "pointer" | "target" | "@pointer_readonly_target"
-                    ) || intent.starts_with("@pointer_bounds:") =>
+                    ) || intent.starts_with("@pointer_bounds:") || intent.starts_with("@borrowed_descriptor:") =>
                 {
                     continue
                 }
                 Stmt::VarDecl { names, .. } => {
                     for p in names.iter().filter_map(|n| self.pointers.get(n)) {
-                        self.initialize(&p.desc, &mut out);
+                        if !p.borrowed {self.initialize(&p.desc, &mut out);}
                     }
                     names.retain(|n| !self.pointers.contains_key(n));
                     if names.is_empty() {
@@ -1374,7 +1394,17 @@ impl Lower {
                     }
                 }
                 Stmt::ArrayDecl { name, .. } if self.pointers.contains_key(name) => {
-                    self.initialize(&self.pointers[name].desc, &mut out);
+                    if !self.pointers[name].borrowed {self.initialize(&self.pointers[name].desc, &mut out);}
+                    continue;
+                }
+                Stmt::CallSub { name, args } if name == "@borrowed_out" => {
+                    let v=self.view(&args[0],false,&mut out)?.context("missing borrowed output descriptor")?;
+                    let index=self.fresh();
+                    out.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![index.clone()]});
+                    let mut body=vec![];
+                    let offset=self.offset(&v,id(&index),&mut body);
+                    body.push(Stmt::CallSub{name:"@ptr_store_clear".into(),args:vec![v.flags.clone(),v.flags.clone(),offset,int(0)]});
+                    out.push(Stmt::Do{var:index,start:int(1),end:v.count(),body});
                     continue;
                 }
                 Stmt::CallSub { name, args } if name == "@pointer_associate" => {

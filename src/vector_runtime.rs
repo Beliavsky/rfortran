@@ -49,6 +49,7 @@ fn declarations(body: &[Stmt], symbols: &mut Shapes) {
                 for key in [
                     "@heap",
                     "@pointer",
+                    "@borrowed_pointer",
                     "@axes",
                     "@lowers",
                     "@extent",
@@ -84,6 +85,9 @@ fn declarations(body: &[Stmt], symbols: &mut Shapes) {
         if let Stmt::DummyIntent { name, intent } = stmt {
             if intent == "pointer" {
                 symbols.insert(format!("@pointer:{name}"), (TypeSpec::Logical, vec![]));
+            }
+            if intent.starts_with("@borrowed_descriptor:") {
+                symbols.insert(format!("@borrowed_pointer:{name}"),(TypeSpec::Logical,vec![]));
             }
             if matches!(intent.as_str(),"parameter"|"intent(in)"|"@heap_readonly") {
                 symbols.insert(format!("@readonly:{name}"),(TypeSpec::Logical,vec![]));
@@ -343,6 +347,9 @@ fn vector(e: &Expr, s: &Shapes) -> bool {
 }
 
 fn selection(n: &str, a: &[Expr], s: &Shapes) -> bool {
+    // Borrowed recursive descriptors retain their runtime strides. Ordinary
+    // triplets can be lowered directly by the pointer pass without a value view.
+    if s.contains_key(&format!("@borrowed_pointer:{n}")) && !vector_selection(n,a,s) {return false;}
     if matches!(a,[Expr::Section{name,..}] if name==n) {
         return false;
     }

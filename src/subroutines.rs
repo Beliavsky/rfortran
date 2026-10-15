@@ -15,7 +15,7 @@ fn name(n: &mut String, names: &Names) {
     if let Some(original)=n.strip_prefix(crate::heap::BORROWED_FIELD) {*n=original.to_owned();}
     else if let Some(new) = names.get(n) { *n = new.clone(); }
 }
-fn expr(e: &mut Expr, names: &Names) {
+pub(crate) fn expr(e: &mut Expr, names: &Names) {
     match e {
         Expr::Ident(n) => name(n, names),
         Expr::Index(n, args) | Expr::Call(n, args) => { name(n, names); for a in args { expr(a, names); } }
@@ -286,7 +286,7 @@ pub fn resolve(mut program: Program) -> Result<Program> {
     fn collect(body: &[Stmt], routines: &mut HashMap<String, Routine>) {
         for s in body {
             match s {
-                Stmt::Subroutine { name, params, body, .. } => { routines.insert(name.clone(), Routine { params: params.clone(), body: body.clone() }); }
+                Stmt::Subroutine { name, params, body, .. } if !body.iter().any(|s|matches!(s,Stmt::DummyIntent{intent,..} if intent=="@native_recursive")) => { routines.insert(name.clone(), Routine { params: params.clone(), body: body.clone() }); }
                 Stmt::Module { body, .. } => collect(body, routines),
                 _ => {}
             }

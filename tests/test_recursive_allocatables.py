@@ -154,6 +154,12 @@ end program main
                 directory = Path(tmp)
                 source = directory / "invalid.f90"
                 source.write_text(module + "program main\nuse m\ninteger::a(2)\ninteger,allocatable::result(:)\na=[1,2]\n" + statements + "\nend program main\n", encoding="utf-8")
+                if statements.startswith("print *,size(result)"):
+                    result = subprocess.run([COMPILER, "emit-obj", source, directory / "invalid.obj"],
+                                            capture_output=True, text=True, timeout=30)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("before ALLOCATE", result.stderr)
+                    continue
                 for command in build_commands(source, directory):
                     result = subprocess.run(command, capture_output=True, text=True, timeout=15)
                     self.assertNotEqual(result.returncode, 0, result.stdout)
@@ -162,8 +168,8 @@ end program main
     def test_unsupported_array_recursion_and_sections_are_diagnosed(self):
         for module, statements, error in [
             (self.module(), "call set_alloc_int_vec(a,result)\nprint *,result(:)", "sections of bounded allocatable"),
-            (self.module().replace("jj = ii", "jj = ii(:)"), "call set_alloc_int_vec(a,result,jmin=2)", "sections of runtime-sized"),
-            (self.module().replace("ni = size(ii)", "call set_alloc_int_vec(ii,jj)"), "call set_alloc_int_vec(a,result)", "recursive specialized"),
+            (self.module().replace("jj = ii", "jj = ii(:)"), "call set_alloc_int_vec(a,result,jmin=2)", "sections of bounded allocatable"),
+            (self.module().replace("ni = size(ii)", "call set_alloc_int_vec(ii,jj)"), "call set_alloc_int_vec(a,result)", "recursive ALLOCATABLE/POINTER dummy"),
         ]:
             with self.subTest(error=error), tempfile.TemporaryDirectory(prefix="recursive-unsupported-") as tmp:
                 directory = Path(tmp)

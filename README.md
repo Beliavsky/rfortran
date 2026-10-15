@@ -747,7 +747,7 @@ heap storage before association. Array elements are checked for initialization
 when read; a SIZE inquiry does not require initialized data. Explicit-shape
 numeric function inputs retain the existing fixed-size ABI and its 1024-element
 limit. OPTIONAL, POINTER and ALLOCATABLE dummies and array-valued results retain
-their existing specialization limits. Recursive array calls remain unsupported.
+their existing specialization limits. Recursive functions with array dummies remain unsupported.
 Run `python tests/test_scalar_array_functions.py` and
 `python tests/test_function_arrays.py`.
 
@@ -1236,10 +1236,30 @@ with gfortran comparisons. The Cargo suite includes
 
 RECURSIVE is accepted on functions and subroutines, including PURE RECURSIVE
 and RECURSIVE PURE prefixes. Scalar recursive functions can reuse OPTIONAL
-specializations. Array subroutines still use call-site expansion: recursion must
-terminate during specialization, as in `xpure_recursive.f90`, whose recursive
-call omits the optional bounds and selects the copy branch. General recursive
-array calls remain unsupported and produce a diagnostic.
+specializations. Ordinary INTEGER, REAL and LOGICAL array dummies can also use
+native recursive subroutine calls with borrowed data, initialization masks and
+per-dimension bounds/strides. Direct and mutual recursion, OPTIONAL presence
+variants, ranks through 15, writable scalar dummies, explicit-shape bounds and
+runtime-sized actual arrays are supported. Each activation has its own scalar
+locals; supported initialized locals retain shared SAVE storage. Whole-array
+forwarding preserves storage identity rather than converting it into a value
+expression. Section actuals use the existing association/copy rules.
+
+Array operations and sections inside these procedures use runtime descriptors.
+Overlapping assignments use temporary heap storage when the extent is unknown.
+Bounds and per-element initialization checks remain active, and INTENT(OUT)
+invalidates previous values on every recursive entry. Explicit-shape checks use
+captured scalar actuals even when the bound dummy follows the array in the
+argument list. `xrecursive_optional_array.f90` reproduces the `util.f90` gen/combos
+case; `tests/188_recursive_optional_array.f90` is its numbered regression.
+Run `python tests/test_recursive_arrays.py` for interpreter/native O0/O2 and
+gfortran comparisons.
+
+Recursive CHARACTER, ALLOCATABLE and POINTER dummy interfaces and forwarding a
+new section on a recursive edge retain their existing limitations. Recursive
+functions with array dummies or array-valued results remain outside this subset.
+Bounded ALLOCATABLE output recursion can still terminate during specialization, as in `xpure_recursive.f90`,
+whose recursive call omits the optional bounds and selects the copy branch.
 
 Numeric and LOGICAL ALLOCATABLE subroutine dummies support ranks 1 through 15
 with INTENT(IN), INTENT(OUT) and INTENT(INOUT). The dummy aliases the caller's
@@ -1256,7 +1276,7 @@ INTENT(INOUT) or INTENT(OUT) dummy update the caller. INTENT(IN) preserves
 allocation status and lower bounds and cannot be passed to a writable dummy.
 Allocation dimensions can depend on inputs, and outputs can exceed input sizes;
 a compile-time capacity bound is no longer needed for numeric dummy outputs.
-Calls continue to use specialization, with recursive array call cycles diagnosed.
+ALLOCATABLE dummy calls continue to use specialization, with recursive allocation call cycles diagnosed.
 Run `python tests/test_allocatable_dummies.py`.
 
 Fixed-length rank-one CHARACTER ALLOCATABLE outputs retain bounded
@@ -1652,6 +1672,7 @@ python tests/test_declarations_without_colons.py
 python tests/test_pointer_association.py
 python tests/test_pointer_descriptors.py
 python tests/test_recursive_allocatables.py
+python tests/test_recursive_arrays.py
 python tests/test_deallocate.py
 python tests/test_runtime_allocatables.py
 python tests/test_heap_allocations.py

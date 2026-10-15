@@ -1308,6 +1308,13 @@
       "program_stdout": "runtime sections ok\n",
       "program_stderr": "",
       "program_exit_code": 0
+    },
+    "188_recursive_optional_array": {
+      "compiler_stderr": "",
+      "compiler_exit_code": 0,
+      "program_stdout": " 1 2 3\n",
+      "program_stderr": "",
+      "program_exit_code": 0
     }
   }
 }

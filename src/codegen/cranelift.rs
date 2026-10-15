@@ -2762,6 +2762,7 @@ fn gen_stmts(
                     let offset=eval_expr(b,ex,ptr_ty,&args[2],ints,reals,bools,func_meta);let offset=to_i64(b,offset);let bytes=b.ins().imul_imm(offset,8);
                     let address=b.ins().iadd(base,bytes);let flag=b.ins().iadd(flags,bytes);
                     let value=eval_expr(b,ex,ptr_ty,&args[3],ints,reals,bools,func_meta);
+                    if kind=="clear" {let zero=b.ins().iconst(types::I64,0);b.ins().store(MemFlags::new(),zero,address,0);continue;}
                     let value=match kind {"r4"=>{let v=to_f64(b,value);let narrow=b.ins().fdemote(types::F32,v);b.ins().fpromote(types::F64,narrow)},"r8"=>to_f64(b,value),"l"=>to_bool(b,value),_=>to_i64(b,value)};
                     b.ins().store(MemFlags::new(),value,address,0);let one=b.ins().iconst(types::I64,1);b.ins().store(MemFlags::new(),one,flag,0);
                     continue;

@@ -1171,6 +1171,7 @@ pub fn interpret(program: &Program) {
                         assert_eq!(frame_index,flag_index);
                         let frame=&mut call_stack[frame_index];
                         let offset=usize::try_from(values[2].0.unwrap()).expect("negative pointer store offset");let value=&values[3];
+                        if kind=="clear" {if let Some(a)=frame.env_int_arrays.get_mut(&target){a[offset]=0;}else{assert_eq!(offset,0);frame.env_int.insert(target,0);}idx+=1;continue;}
                         if matches!(kind,"r4"|"r8") {let v=value.1.unwrap_or_else(||value.0.unwrap_or(0) as f64);let v=if kind=="r4"{v as f32 as f64}else{v};if let Some(a)=frame.env_real_arrays.get_mut(&target){a[offset]=v;}else if frame.env_real32.contains_key(&target){assert_eq!(offset,0);frame.env_real32.insert(target,v as f32);}else{assert_eq!(offset,0);frame.env_real64.insert(target,v);}}
                         else {let v=if kind=="l"{i64::from(value.2.unwrap_or(false))}else{value.0.unwrap_or_else(||value.1.unwrap_or(0.0) as i64)};if let Some(a)=frame.env_int_arrays.get_mut(&target){a[offset]=v;}else if kind=="l"{assert_eq!(offset,0);frame.env_log.insert(target,v!=0);}else{assert_eq!(offset,0);frame.env_int.insert(target,v);}}
                         if let Some(a)=frame.env_int_arrays.get_mut(&flag){a[offset]=1;}else{assert_eq!(offset,0);frame.env_int.insert(flag,1);}idx+=1;continue;

@@ -761,7 +761,8 @@ fn specialize(
             }
             Stmt::CallSub { args, .. } => {
                 for e in args {
-                    if matches!(e,Expr::Ident(n) if crate::allocatables::allocated(n,shapes).is_some()) {continue;}
+                    // Association needs the storage identity, not a value view.
+                    if matches!(e,Expr::Ident(n) if shapes.get(n).is_some_and(|(_,d)|!d.is_empty())) {continue;}
                     rewrite_value(e, shapes, constants, absent)?;
                 }
             }
@@ -1195,10 +1196,11 @@ fn expand(
     active: &mut Vec<String>,
     serial: &mut usize,
 ) -> Result<()> {
-    let mut inherited=inherited.clone();
+    let mut inherited=if body.iter().any(|s|matches!(s,Stmt::DummyIntent{intent,..} if intent=="@native_recursive")) {Shapes::new()} else {inherited.clone()};
     for s in body.iter() {
         if let Stmt::DummyIntent{name,intent}=s {
             if matches!(intent.as_str(),"pointer"|"target") {inherited.insert(format!("@{intent}:{name}"),(TypeSpec::Logical,vec![]));}
+            if intent.starts_with("@borrowed_descriptor:") {inherited.insert(format!("@borrowed_pointer:{name}"),(TypeSpec::Logical,vec![]));}
         }
     }
     if body
@@ -1318,6 +1320,7 @@ fn expand(
                 let mut absent = HashSet::new();
                 let mut prefix = vec![];
                 let mut undefine = vec![];
+                let mut shape_checks = Vec::new();
                 for (i, p) in r.params.iter().enumerate() {
                     local.remove(&format!("@extent:{p}"));
                     local.remove(&format!("@allocated:{p}"));
@@ -1425,17 +1428,16 @@ fn expand(
                                 crate::parameters::integer_constant(a)
                                     .ok()
                                     .zip(crate::parameters::integer_constant(b).ok())
-                                    .is_none_or(|(a, b)| a != b)
+                                    .is_some_and(|(a, b)| a != b)
                             }) {
                                 bail!("explicit-shape dummy `{p}` currently requires an exactly matching extent");
                             }
-                            if let Some(length)=&length {
-                                let extent=dims.iter().cloned().reduce(|a,b|Expr::Bin(crate::ast::BinOp::Mul,Box::new(a),Box::new(b))).unwrap();
-                                prefix.push(Stmt::If {cond:Expr::Bin(crate::ast::BinOp::Ne,Box::new(length.clone()),Box::new(extent)),then_body:vec![Stmt::CallSub {name:"@error_stop".into(),args:vec![Expr::Str(format!("explicit-shape dummy `{p}` requires a matching actual extent"))]}],else_body:None});
+                            let actual_axes=runtime_axes.as_ref().unwrap_or(&actual_dims);
+                            for (formal,actual) in dims.iter().zip(actual_axes) {
+                                shape_checks.push((p.clone(),formal.clone(),actual.clone()));
                             }
                         }
                         if let Some(axes)=runtime_axes {
-                            if !dims.iter().all(|d|matches!(d,Expr::Ident(n) if n=="@deferred_extent")) {for (formal,actual) in dims.iter().zip(&axes) {prefix.push(Stmt::If{cond:Expr::Bin(crate::ast::BinOp::Ne,Box::new(formal.clone()),Box::new(actual.clone())),then_body:vec![Stmt::CallSub{name:"@error_stop".into(),args:vec![Expr::Str(format!("explicit-shape dummy `{p}` requires a matching actual shape"))]}],else_body:None});}}
                             if !allocatable {if let Some(flag)=crate::allocatables::allocated(&a,&shapes) {prefix.push(Stmt::If{cond:Expr::Un(crate::ast::UnOp::Not,Box::new(flag)),then_body:vec![Stmt::CallSub{name:"@error_stop".into(),args:vec![Expr::Str(format!("unallocated actual for `{p}`"))]}],else_body:None});}}
                             local.insert(format!("@axes:{p}"),(TypeSpec::Integer(Some(8)),axes));
                         }
@@ -1498,6 +1500,12 @@ fn expand(
                             });
                         }
                     }
+                }
+                // Bounds are in the dummy scope. Capture all scalar actuals
+                // before evaluating them, including dummies listed after an array.
+                for (param,mut formal,actual) in shape_checks {
+                    crate::subroutines::expr(&mut formal,&names);
+                    prefix.push(Stmt::If{cond:Expr::Bin(crate::ast::BinOp::Ne,Box::new(formal),Box::new(actual)),then_body:vec![Stmt::CallSub{name:"@error_stop".into(),args:vec![Expr::Str(format!("explicit-shape dummy `{param}` requires a matching actual shape"))]}],else_body:None});
                 }
                 prefix.extend(undefine);
                 let mut cloned = r.body.clone();
@@ -1592,6 +1600,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
     p=crate::modules::prepare_globals(p)?;
     p=crate::internal_procedures::resolve(p)?;
     p=crate::optional::resolve(p)?;
+    p=crate::recursive_arrays::resolve(p)?;
     let (prepared,mut function_lower)=crate::character_elementals::prepare(p)?;
     p=prepared;
     p=crate::output::prepare_formatted(p)?;
