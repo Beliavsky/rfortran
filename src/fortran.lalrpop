@@ -415,6 +415,8 @@ Stmt: Stmt = {
     <name:LoopName?> <stmt:DoLoop> <end:END_LOOP_NAME?> => crate::named_loops::parsed(stmt,name,end),
     KW_RETURN => Stmt::Return(None),
     <name: Designator> EQ <rhs: RhsExpr> => Stmt::Assign { name, value: rhs },
+    <id: Designator> LPAREN <args: SubscriptList> RPAREN PERCENT <field:ComponentName> EQ <rhs:RhsExpr> =>
+        Stmt::AssignIndex{name:format!("{id}%{field}"),indices:args,value:rhs},
     <name:Designator> ARROW <target:RhsExpr> => Stmt::CallSub {name:"@pointer_associate".into(),args:vec![Expr::Ident(name),target]},
     <id: Designator> LPAREN <args: SubscriptList> RPAREN LPAREN <range: Subscript> RPAREN EQ <rhs: RhsExpr> =>
         Stmt::CallSub {name:"@array_substring_assign".into(), args:vec![crate::ast::section_or_call(id,args),range,rhs]},
@@ -607,6 +609,10 @@ Primary: Expr = {
     LBRACKET <items: ExprList> RBRACKET => Expr::Call("@array_constructor".into(), items),
     LBRACKET <kind:ConstructorType> DCOLON <items:ExprList?> RBRACKET =>
         crate::empty_constructors::parsed(kind,items.unwrap_or_default()),
+    LBRACKET <name:Ident> DCOLON <items:ExprList?> RBRACKET => {
+        let mut args=vec![Expr::Ident(name)];args.extend(items.unwrap_or_default());
+        Expr::Call("@record_constructor".into(),args)
+    },
     <n: INT> => Expr::IntLit(n),
     <f: FLOAT> => Expr::RealLit(f),
     <s: STR> => Expr::Str(s),
@@ -617,6 +623,8 @@ Primary: Expr = {
     // treat it as a function call here (Expr::Call). Array element assignment is
     // handled at the statement level by the AssignIndex rule above.
     <id: Designator> LPAREN <args: SubscriptList> RPAREN => crate::ast::section_or_call(id, args),
+    <id: Designator> LPAREN <args: SubscriptList> RPAREN PERCENT <field:ComponentName> =>
+        Expr::Call(format!("@record_component:{field}"),vec![crate::ast::section_or_call(id,args)]),
     <id: Designator> LPAREN <args: SubscriptList> RPAREN LPAREN <range: Subscript> RPAREN =>
         Expr::Call("@array_substring".into(),vec![crate::ast::section_or_call(id,args),range]),
     KW_REAL LPAREN <args: CallArgList> RPAREN => Expr::Call("real".to_string(), args),
@@ -743,8 +751,18 @@ PreFuncDecl: Vec<Stmt> = {
 PreFuncDeclData: Vec<Stmt> = {
     KW_TYPE DCOLON <name:Ident> <components:Components> KW_END KW_TYPE <_end:Ident> => vec![Stmt::DerivedType{name,components,bindings:vec![]}],
     KW_TYPE DCOLON <name:Ident> <components:Components> KW_CONTAINS <bindings:Bindings> KW_END KW_TYPE <_end:Ident> => vec![Stmt::DerivedType{name,components,bindings}],
-    KW_TYPE LPAREN <type_name:Ident> RPAREN <attributes:AttrList> DCOLON <names:IdentList> => vec![Stmt::DerivedDecl{type_name,names,attributes,polymorphic:false}],
-    KW_CLASS LPAREN <type_name:Ident> RPAREN <attributes:AttrList> DCOLON <names:IdentList> => vec![Stmt::DerivedDecl{type_name,names,attributes,polymorphic:true}],
+    KW_TYPE LPAREN <type_name:Ident> RPAREN <attributes:IntrinsicAttrList> DCOLON <entities:DeclEntities> => entities.into_iter().flat_map(|(name,dims,value,_)| {
+        let dims=if dims.is_empty(){attributes.1.clone().unwrap_or_default()}else{dims};
+        let mut attrs=attributes.0.clone();if value.is_some(){attrs.push("save".into());}
+        let mut out=vec![Stmt::DerivedDecl{type_name:type_name.clone(),names:vec![name.clone()],attributes:attrs,polymorphic:false,dims}];
+        if let Some(value)=value {out.push(Stmt::Assign{name,value});}out
+    }).collect(),
+    KW_CLASS LPAREN <type_name:Ident> RPAREN <attributes:IntrinsicAttrList> DCOLON <entities:DeclEntities> => entities.into_iter().flat_map(|(name,dims,value,_)| {
+        let dims=if dims.is_empty(){attributes.1.clone().unwrap_or_default()}else{dims};
+        let mut attrs=attributes.0.clone();if value.is_some(){attrs.push("save".into());}
+        let mut out=vec![Stmt::DerivedDecl{type_name:type_name.clone(),names:vec![name.clone()],attributes:attrs,polymorphic:true,dims}];
+        if let Some(value)=value {out.push(Stmt::Assign{name,value});}out
+    }).collect(),
     <head:IntrinsicDeclHead> <entities:DeclEntities> =>? {
         let (t,attrs,dimension,has_colons) = head;
         if !has_colons && entities.iter().any(|(_,_,value,_)| value.is_some()) {

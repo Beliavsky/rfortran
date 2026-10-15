@@ -1331,11 +1331,6 @@ mod tests {
                 "rank mismatch",
             ),
             (
-                "integer,allocatable::a(:,:)\nallocate(a(2,0))\nend",
-                "positive extent",
-            ),
-
-            (
                 "integer,allocatable::a(2,:)\nallocate(a(2,2))\nend",
                 "all dimensions",
             ),
@@ -1508,7 +1503,10 @@ mod tests {
     #[test]
     fn matrices_preserve_column_major_storage_and_initialization_checks() {
         let p = lower(include_str!("../tests/66_allocatable_matrices.f90")).unwrap();
-        assert!(p.body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,dims,..} if name=="a" && matches!(dims.as_slice(),[Expr::IntLit(n)] if n=="6"))));
+        assert!(p.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name=="a"&&intent=="@heap")));
+        assert!(p.body.iter().any(|s|matches!(s,Stmt::CallSub{name,..} if name=="@heap_allocate")));
+        let empty=lower("integer,allocatable::a(:,:)\nallocate(a(2,0))\nend").unwrap();
+        assert!(empty.body.iter().any(|s|matches!(s,Stmt::CallSub{name,..} if name=="@heap_allocate")));
         let p = lower("integer::a(2,3)\na(1,1)=1\nprint *,a(2,1)\nend").unwrap();
         let p = crate::sections::resolve(crate::reductions::resolve(p).unwrap()).unwrap();
         let err = crate::initialized::instrument(p).unwrap_err().to_string();

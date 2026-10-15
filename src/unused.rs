@@ -504,8 +504,9 @@ impl<'a> Analysis<'a> {
                     }
                 }
                 Stmt::DerivedDecl {
-                    type_name, names, ..
+                    type_name, names, dims, ..
                 } => {
+                    for e in dims {self.expr(scope,owner,e);}
                     for name in names {
                         let id = self.lookup(scope, name);
                         self.reference(scope, id, type_name, false);

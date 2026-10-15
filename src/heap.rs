@@ -120,7 +120,7 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
         actuals(body, interfaces, &mut passed);
         fn allocation(body: &[Stmt], array: &str) -> bool {
             body.iter().any(|s|match s {
-                Stmt::CallSub{name,args} if name=="@allocate"=>args.iter().any(|e|matches!(e,Expr::Call(n,dims) if n==array&&dims.iter().any(|e|crate::parameters::integer_constant(e).is_err())) || matches!(e,Expr::Section{name:n,..} if n==array)),
+                Stmt::CallSub{name,args} if name=="@allocate"=>args.iter().any(|e|matches!(e,Expr::Call(n,dims) if n==array) || matches!(e,Expr::Section{name:n,..} if n==array)),
                 Stmt::If{then_body,else_body,..}=>allocation(then_body,array)||else_body.as_ref().is_some_and(|b|allocation(b,array)),
                 Stmt::Do{body,..}|Stmt::DoWhile{body,..}=>allocation(body,array),_=>false,
             })
@@ -136,6 +136,20 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
               && body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name&&intent=="allocatable")))
                 .then_some((name.clone(),dims.len()))
         } else {None}).collect::<Vec<_>>();
+        // Retain definite errors in straight-line local code before converting
+        // allocation state to runtime descriptors. Calls/control flow require
+        // runtime guards because they can change or condition that state.
+        let mut pending:HashSet<_>=arrays.iter().filter(|(n,_)|!n.contains("@module$")).map(|(n,_)|n.clone()).collect();
+        let tracked=pending.clone();
+        let mut offset=None;
+        for s in body.iter() {match s {
+            Stmt::SourceLocation(p)=>offset=Some(*p),
+            Stmt::CallSub{name,args} if name=="@allocate"=>for e in args {match e{Expr::Call(n,_)|Expr::Section{name:n,..}=>{pending.remove(n);},_=>{}}},
+            Stmt::CallSub{name,args} if name=="@deallocate"=>for e in args {if let Expr::Ident(n)=e {if tracked.contains(n){pending.insert(n.clone());}}},
+            Stmt::Assign{..}|Stmt::AssignIndex{..}|Stmt::Print{..}|Stmt::Read{..}=>crate::array_calls::check_allocated(s,&pending).map_err(|e|crate::source_diagnostics::at(e,offset))?,
+            Stmt::CallSub{..}|Stmt::If{..}|Stmt::Do{..}|Stmt::DoWhile{..}|Stmt::SelectCase{..}|Stmt::Block{..}=>break,
+            _=>{},
+        }}
         let module = body
             .iter()
             .filter_map(|s| {
@@ -225,11 +239,15 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
                 true
             }
         });
-        let index = body
-            .iter()
-            .rposition(|s| matches!(s, Stmt::ArrayDecl { .. }))
-            .map_or(0, |i| i + 1);
-        body.splice(index..index, binds);
+        // Generated expression results can be declared after executable
+        // statements. Bind each descriptor at its own declaration, before any
+        // allocation or hidden-result call can use it.
+        for bind in binds {
+            let Stmt::CallSub{args,..}=&bind else{unreachable!()};
+            let Expr::Ident(name)=&args[0] else{unreachable!()};
+            let index=body.iter().position(|s|matches!(s,Stmt::ArrayDecl{name:n,..} if n==name)).map_or(0,|i|i+1);
+            body.insert(index,bind);
+        }
         for s in body.iter_mut() {
             match s {
                 Stmt::Function { body, params, .. } | Stmt::Subroutine { body, params, .. } => {
@@ -264,6 +282,21 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
     }
     visit(&mut program.body, &[], &interfaces)?;
     Ok(program)
+}
+
+/// Caller-owned result storage, allocated by a function's hidden output dummy.
+pub(crate) fn unallocated_result(kind: TypeSpec, name: String, rank: usize,
+    body: &mut Vec<Stmt>, shapes: &mut crate::allocatables::Shapes) -> Result<()> {
+    if rank==0 || rank>15 {bail!("function result array rank must be between 1 and 15");}
+    let mut declarations=vec![
+        Stmt::ArrayDecl{kind,name:name.clone(),dims:vec![Expr::Ident("@deferred_extent".into());rank]},
+        Stmt::DummyIntent{name:name.clone(),intent:"allocatable".into()},
+        Stmt::DummyIntent{name:name.clone(),intent:"@heap".into()},
+        Stmt::CallSub{name:"@heap_bind".into(),args:vec![Expr::Ident(name)]},
+    ];
+    crate::allocatables::prepare_matrices(&mut declarations,shapes,&HashMap::new())?;
+    body.extend(declarations);
+    Ok(())
 }
 
 /// Materialize a numeric expression using its active runtime extent.

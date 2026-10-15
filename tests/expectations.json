@@ -1280,6 +1280,20 @@
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": "\none       \none       two       \none       two       three     \none       two       three     four      \none       two       three     four      five      \none       two       three     four      five      six       \none       two       three     four      five      six       seven     \none       two       three     four      five      six       seven     eight     \none       two       three     four      five      six       seven     eight     nine      \none       two       three     four      five      six       seven     eight     nine      ten       \n"
+    },
+    "184_allocated_character_concat": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 3 10\nfour|five|zero\n"
+    },
+    "185_allocated_derived_concat": {
+      "compiler_exit_code": 0,
+      "compiler_stderr": "",
+      "program_exit_code": 0,
+      "program_stderr": "",
+      "program_stdout": " 2\n 1 1.5 T\n 2 2.5 F\n 4\n 3 3.5 T\n 4 4.5 F\n 1 1.5 T\n 2 2.5 F\n"
     }
   }
 }

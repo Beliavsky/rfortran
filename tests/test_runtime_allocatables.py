@@ -159,8 +159,11 @@ end
                                    ("deallocate(a)\ndeallocate(a)", "unallocated array"),
                                    ("deallocate(a)\nprint *,size(a,2)", "unallocated array")):
             with self.subTest(operation=operation):
-                self.check("integer,allocatable::a(:,:)\nallocate(a(2,3))\n" +
-                           operation + "\ndeallocate(a)\nend\n", error=message)
+                source="integer,allocatable::a(:,:)\nallocate(a(2,3))\n" + operation + "\ndeallocate(a)\nend\n"
+                if operation=="deallocate(a)\nprint *,size(a,2)":
+                    self.reject(source,"used before ALLOCATE")
+                else:
+                    self.check(source,error=message)
 
     def test_axis_bounds_not_just_flat_offset(self):
         self.check("""integer,allocatable::a(:,:)

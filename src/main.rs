@@ -55,6 +55,7 @@ mod format_spec;
 mod record_input;
 mod character_input;
 mod derived;
+mod derived_arrays;
 mod operators;
 mod imports;
 mod runtime;
@@ -75,6 +76,15 @@ struct BuildArtifact {
 }
 
 fn main() -> Result<()> {
+    // Windows' small default main-thread stack is insufficient for the AST
+    // traversals needed by valid high-rank array expressions.
+    match std::thread::Builder::new().name("rfort".into()).stack_size(32*1024*1024).spawn(compiler_main)?.join() {
+        Ok(result)=>result,
+        Err(panic)=>std::panic::resume_unwind(panic),
+    }
+}
+
+fn compiler_main() -> Result<()> {
     env_logger::init();
     let args = cli::Cli::from_command_line().normalize();
 

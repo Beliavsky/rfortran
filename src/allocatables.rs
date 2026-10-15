@@ -476,55 +476,32 @@ fn linear_index(
             indices.len()
         );
     }
-    let mut offset = int(1);
-    let mut stride = int(1);
-    for (axis, (index, extent)) in indices.iter().zip(axes).enumerate() {
-        if !matches!(
-            crate::array_calls::scalar_actual_kind(index, shapes)?,
-            TypeSpec::Integer(_)
-        ) {
-            bail!("array `{name}` subscript must be scalar INTEGER");
-        }
-        *serial += 1;
-        let function = format!("@alloc_bound_{serial}");
-        let position = format!("@alloc_position_{serial}");
-        let limit = format!("@alloc_limit_{serial}");
-        checks.push(Stmt::Function {
-            name: function.clone(),
-            params: vec![position.clone(), limit.clone()],
-            pure: true,
-            elemental: true,
-            return_type: Some(TypeSpec::Integer(Some(8))),
-            body: vec![
-                Stmt::VarDecl {
-                    kind: TypeSpec::Integer(Some(8)),
-                    names: vec![position.clone(), limit.clone()],
-                },
-                Stmt::DummyIntent{name:position.clone(),intent:"intent(in)".into()},
-                Stmt::DummyIntent{name:limit.clone(),intent:"intent(in)".into()},
-                fail(
-                    bin(
-                        BinOp::Or,
-                        bin(BinOp::Lt, id(&position), int(1)),
-                        bin(BinOp::Gt, id(&position), id(&limit)),
-                    ),
-                    &format!(
-                        "array `{name}` dimension {}: subscript outside allocated bounds",
-                        axis + 1
-                    ),
-                ),
-                Stmt::Return(Some(id(&position))),
-            ],
-        });
-        let position=if let Some(lower)=lowers(name,shapes) {bin(BinOp::Add,bin(BinOp::Sub,index.clone(),lower[axis].clone()),int(1))}else{index.clone()};
-        let checked = Expr::Call(function, vec![position, extent.clone()]);
-        offset = bin(
-            BinOp::Add,
-            offset,
-            bin(BinOp::Mul, bin(BinOp::Sub, checked, int(1)), stride.clone()),
-        );
-        stride = bin(BinOp::Mul, stride, extent);
+    // A rank-dependent nested offset expression can overflow the compiler's
+    // Windows stack. Keep offset calculation in a small scalar helper instead.
+    *serial+=1;
+    let function=format!("@alloc_offset_{serial}");
+    let offset=format!("@alloc_offset_value_{serial}");let stride=format!("@alloc_stride_value_{serial}");
+    let mut params=vec![];let mut actuals=vec![];let mut body=vec![];let mut terms=vec![];
+    for (axis,(index,extent)) in indices.iter().zip(axes).enumerate() {
+        if !matches!(crate::array_calls::scalar_actual_kind(index,shapes)?,TypeSpec::Integer(_)) {bail!("array `{name}` subscript must be scalar INTEGER");}
+        let position=format!("@alloc_position_{serial}_{axis}");let limit=format!("@alloc_limit_{serial}_{axis}");
+        params.extend([position.clone(),limit.clone()]);
+        let position_value=if let Some(lower)=lowers(name,shapes){bin(BinOp::Add,bin(BinOp::Sub,index.clone(),lower[axis].clone()),int(1))}else{index.clone()};
+        actuals.extend([position_value,extent]);
+        body.push(fail(bin(BinOp::Or,bin(BinOp::Lt,id(&position),int(1)),bin(BinOp::Gt,id(&position),id(&limit))),&format!("array `{name}` dimension {}: subscript outside allocated bounds",axis+1)));
+        terms.push((position,limit));
     }
+    let mut declarations=vec![Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:params.iter().cloned().chain([offset.clone(),stride.clone()]).collect()}];
+    declarations.extend(params.iter().map(|name|Stmt::DummyIntent{name:name.clone(),intent:"intent(in)".into()}));
+    declarations.append(&mut body);body=declarations;
+    body.extend([assign(&offset,int(1)),assign(&stride,int(1))]);
+    for (position,limit) in terms {
+        body.push(assign(&offset,bin(BinOp::Add,id(&offset),bin(BinOp::Mul,bin(BinOp::Sub,id(&position),int(1)),id(&stride)))));
+        body.push(assign(&stride,bin(BinOp::Mul,id(&stride),id(&limit))));
+    }
+    body.push(Stmt::Return(Some(id(&offset))));
+    checks.push(Stmt::Function{name:function.clone(),params,pure:true,elemental:true,return_type:Some(TypeSpec::Integer(Some(8))),body});
+    let offset=Expr::Call(function,actuals);
     *indices = vec![offset];
     Ok(())
 }
@@ -1269,6 +1246,44 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                     indices,
                     value,
                 } => {
+                    if indices.len()==1 && allocated(name,&shapes).is_some()
+                        && matches!(shapes[name].0,TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision|TypeSpec::Logical) {
+                        let section=match &indices[0] {
+                            Expr::Section{lower,upper,stride,..}=>Some((lower.clone(),upper.clone(),stride.clone())),
+                            Expr::Call(tag,args) if tag=="@section_subscript"=>match &args[0] {
+                                Expr::Section{lower,upper,stride,..}=>Some((lower.clone(),upper.clone(),stride.clone())),_=>None,
+                            },_=>None,
+                        };
+                        if let Some((lower_bound,upper,stride))=section {
+                            if axes(name,&shapes).is_some_and(|d|d.len()!=1) {bail!("runtime section assignment currently requires rank one");}
+                            let step=stride.as_deref().map(crate::parameters::integer_constant).transpose()?.unwrap_or(1);
+                            if step==0 {bail!("array section stride must not be zero");}
+                            let len=length(name,&shapes).unwrap();
+                            let lo=lower_bound.as_deref().cloned().unwrap_or_else(||if step>0 {int(1)} else {len.clone()});
+                            let hi=upper.as_deref().cloned().unwrap_or_else(||if step>0 {len.clone()} else {int(1)});
+                            *serial+=1;
+                            let base=format!("@runtime_section_{serial}");
+                            let first=format!("{base}_first");let count=format!("{base}_count");let index=format!("{base}_index");let temp=format!("{base}_values");
+                            let mut statements=vec![fail(Expr::Un(UnOp::Not,Box::new(allocated(name,&shapes).unwrap())),&format!("assignment to unallocated array `{name}`")),Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![first.clone(),count.clone(),index.clone()]},
+                                assign(&first,lo),assign(&count,Expr::Call("max".into(),vec![int(0),bin(BinOp::Div,bin(BinOp::Add,bin(BinOp::Sub,hi,id(&first)),int(step)),int(step))]))];
+                            let mut rhs=value.clone();
+                            expression(&mut rhs,&shapes,&mut statements,checks,serial)?;
+                            let (element,shape,kind)=crate::reductions::elemental_element(&rhs,&id(&index),&shapes)?;
+                            if shape.is_some() {
+                                let dims=logical_shape(&rhs,&shapes,&mut statements)?.context("section assignment requires an array shape")?.0;
+                                let extent=dims.into_iter().reduce(|a,b|bin(BinOp::Mul,a,b)).unwrap();
+                                statements.push(fail(bin(BinOp::Ne,id(&count),extent.clone()),"array section assignment shapes do not conform"));
+                                crate::heap::temporary(kind,temp.clone(),extent,&mut statements);
+                                statements.push(Stmt::Do{var:index.clone(),start:int(1),end:id(&count),body:vec![Stmt::AssignIndex{name:temp.clone(),indices:vec![id(&index)],value:element}]});
+                            } else {
+                                statements.push(Stmt::VarDecl{kind,names:vec![temp.clone()]});statements.push(assign(&temp,rhs));
+                            }
+                            let rhs=if shape.is_some(){Expr::Index(temp,vec![id(&index)])}else{id(&temp)};
+                            statements.push(Stmt::Do{var:index.clone(),start:int(1),end:id(&count),body:vec![Stmt::AssignIndex{name:name.clone(),indices:vec![bin(BinOp::Add,id(&first),bin(BinOp::Mul,bin(BinOp::Sub,id(&index),int(1)),int(step)))],value:rhs}]});
+                            lower(&mut statements,&shapes,serial,checks)?;
+                            out.extend(statements);continue;
+                        }
+                    }
                     linear_index(name, indices, &shapes, checks, serial)?;
                     if let Some(flag) = allocated(name, &shapes) {
                         guards.push(fail(

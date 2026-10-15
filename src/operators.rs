@@ -121,10 +121,11 @@ fn declarations(body: &[Stmt], inherited: &Vars) -> Vars {
                 vars.insert(name.clone(), Ty::Array(Box::new(scalar(kind)), dims.len()));
             }
             Stmt::DerivedDecl {
-                type_name, names, ..
+                type_name, names, dims, ..
             } => {
                 for n in names {
-                    vars.insert(n.clone(), Ty::Derived(type_name.clone()));
+                    let ty=Ty::Derived(type_name.clone());
+                    vars.insert(n.clone(), if dims.is_empty(){ty}else{Ty::Array(Box::new(ty),dims.len())});
                 }
             }
             _ => {}
@@ -238,7 +239,8 @@ impl Resolver {
                 } => {
                     let vars = declarations(body, &Vars::new());
                     let result_name=match body.last() {Some(Stmt::Return(Some(Expr::Ident(n))))=>n,_=>name};
-                    let array_specialization=crate::character_elementals::inline_array(*pure,params,result_name,body)
+                    let array_specialization=body.iter().any(|s|matches!(s,Stmt::DerivedDecl{dims,..} if !dims.is_empty()))
+                        || crate::character_elementals::inline_array(*pure,params,result_name,body)
                         || crate::elemental::inline_character(*elemental,name,params,return_type,body);
                     let result=vars.get(result_name).cloned()
                         .or_else(||return_type.as_ref().map(scalar)).unwrap_or(Ty::Unknown);
@@ -526,6 +528,11 @@ impl Resolver {
     }
     fn name_type(&self, name: &str, vars: &Vars) -> Ty {
         if let Some((object, component)) = name.split_once('%') {
+            if let Some(Ty::Array(inner,rank))=vars.get(object) {
+                if let Ty::Derived(ty)=inner.as_ref() {
+                    return self.components.get(ty).and_then(|c|c.get(component)).cloned().map(|t|Ty::Array(Box::new(t),*rank)).unwrap_or(Ty::Unknown);
+                }
+            }
             if let Some(Ty::Derived(ty)) = vars.get(object) {
                 return self
                     .components
@@ -542,6 +549,18 @@ impl Resolver {
             return Ok(Ty::Array(Box::new(scalar(&kind)),1));
         }
         if let Expr::Call(name, args) = e {
+            if name=="@record_constructor" {
+                if let Some(Expr::Ident(ty))=args.first(){return Ok(Ty::Array(Box::new(Ty::Derived(ty.clone())),1));}
+            }
+            if name.starts_with("@record_component:") && args.len()==1 {
+                let field=&name[18..];
+                let value=self.expression(&mut args[0],vars,visible)?;
+                return Ok(match value {
+                    Ty::Derived(ty)=>self.components.get(&ty).and_then(|c|c.get(field)).cloned().unwrap_or(Ty::Unknown),
+                    Ty::Array(inner,rank)=>if let Ty::Derived(ty)=inner.as_ref(){self.components.get(ty).and_then(|c|c.get(field)).cloned().map(|t|Ty::Array(Box::new(t),rank)).unwrap_or(Ty::Unknown)}else{Ty::Unknown},_=>Ty::Unknown,
+                });
+            }
+
             if name.starts_with("@keyword:") && args.len() == 1 {
                 return self.expression(&mut args[0], vars, visible);
             }

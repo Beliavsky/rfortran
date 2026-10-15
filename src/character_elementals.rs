@@ -412,10 +412,43 @@ impl Lower {
         if args.len() != routine.params.len() {
             bail!("wrong argument count for CHARACTER function `{name}`");
         }
-        if let Some(helper) = &routine.descriptor_call {
+        let array_result=routine.body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,..} if name==&routine.result));
+        fn runtime(e:&Expr,symbols:&Symbols)->bool {
+            match e {
+                Expr::Ident(n)=>symbols.get(n).is_some_and(|(_,dims)|dims.iter().any(|d|crate::parameters::integer_constant(d).is_err()))
+                    || symbols.contains_key(&format!("@axes:{n}")),
+                Expr::Call(_,args)|Expr::Index(_,args)=>args.iter().any(|e|runtime(e,symbols)),
+                Expr::Section{name,lower,upper,stride}=>runtime(&Expr::Ident(name.clone()),symbols)
+                    || [lower,upper,stride].into_iter().flatten().any(|e|runtime(e,symbols)),
+                Expr::Bin(_,a,b)=>runtime(a,symbols)||runtime(b,symbols),Expr::Un(_,e)=>runtime(e,symbols),_=>false,
+            }
+        }
+        fn pending(e:&Expr,symbols:&Symbols)->bool {
+            match e {
+                Expr::Ident(n)=>symbols.get(n).is_some_and(|(_,d)|d.iter().any(|d|matches!(d,Expr::Ident(n) if n=="@deferred_extent"))) && !symbols.contains_key(&format!("@axes:{n}")),
+                Expr::Section{name,..}=>pending(&Expr::Ident(name.clone()),symbols),
+                Expr::Call(_,a)|Expr::Index(_,a)=>a.iter().any(|e|pending(e,symbols)),Expr::Bin(_,a,b)=>pending(a,symbols)||pending(b,symbols),Expr::Un(_,e)=>pending(e,symbols),_=>false,
+            }
+        }
+        if array_result && self.defer_calls && args.iter().any(|e|pending(e,symbols)){return Ok(());}
+        fn references(e:&Expr,name:&str)->bool {match e {
+            Expr::Ident(n)=>n==name,Expr::Call(_,a)|Expr::Index(_,a)=>a.iter().any(|e|references(e,name)),
+            Expr::Bin(_,a,b)=>references(a,name)||references(b,name),Expr::Un(_,e)=>references(e,name),_=>false,
+        }}
+        let runtime_result=array_result && (args.iter().any(|e|runtime(e,symbols))
+            || routine.params.iter().zip(args.iter()).any(|(p,e)|routine.body.iter().any(|s|matches!(s,Stmt::VarDecl{kind:TypeSpec::Integer(_),names} if names.contains(p))) && routine.body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,dims,..} if name==&routine.result && dims.iter().any(|d|references(d,p)))) && crate::parameters::integer_constant(e).is_err()));
+        if let Some(helper) = routine.descriptor_call.as_ref().filter(|_|!array_result||runtime_result) {
             self.serial += 1;
             let result = format!("@array_function_result_{}", self.serial);
-            prefix.push(Stmt::VarDecl { kind: routine.kind.clone(), names: vec![result.clone()] });
+            let result_rank=routine.body.iter().find_map(|s|match s {
+                Stmt::ArrayDecl{name,dims,..} if name==&routine.result=>Some(dims.len()),_=>None,
+            });
+            if let Some(rank)=result_rank {
+                crate::heap::unallocated_result(routine.kind.clone(),result.clone(),rank,prefix,symbols)?;
+            } else {
+                prefix.push(Stmt::VarDecl { kind: routine.kind.clone(), names: vec![result.clone()] });
+                symbols.insert(result.clone(), (routine.kind.clone(), vec![]));
+            }
             let mut actuals = args.clone();
             for (param,actual) in routine.params.iter().zip(&mut actuals) {
                 if routine.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==param && matches!(intent.as_str(),"intent(out)"|"intent(inout)"))) {
@@ -452,7 +485,6 @@ impl Lower {
             }
             actuals.push(Expr::Ident(result.clone()));
             prefix.push(Stmt::CallSub { name: helper.clone(), args: actuals });
-            symbols.insert(result.clone(), (routine.kind.clone(), vec![]));
             *e = Expr::Ident(result);
             return Ok(());
         }
@@ -977,9 +1009,26 @@ impl Lower {
                 if intent=="intent(in)" {symbols.insert(format!("@function_readonly:{name}"),(TypeSpec::Logical,vec![]));}
             }
         }
+        let mut allocation_facts=HashMap::new();
         let mut out = vec![];
         let mut offset = None;
         for mut stmt in std::mem::take(body) {
+            // A direct constant allocation supplies the active shape before
+            // CHARACTER calls are materialized for allocation-bound analysis.
+            if let Stmt::CallSub{name,args}=&stmt {
+                if name=="@allocate" {
+                    for arg in args {if let Expr::Call(array,dims)=arg {
+                        if let Some((kind,old))=symbols.get(array).cloned() {
+                            if !symbols.contains_key(&format!("@axes:{array}"))
+                                && old.iter().all(|d|matches!(d,Expr::Ident(n) if n=="@deferred_extent"))
+                                && dims.iter().all(|d|crate::parameters::integer_constant(d).is_ok()) {
+                                allocation_facts.insert(array.clone(),old);
+                                symbols.insert(array.clone(),(kind,dims.iter().map(|d|int(crate::parameters::integer_constant(d).unwrap().max(0))).collect()));
+                            }
+                        }
+                    }}
+                }
+            }
             if let Stmt::SourceLocation(pos) = &stmt { offset = Some(*pos); }
             let mut prefix = vec![];
             (|| -> Result<()> {
@@ -1084,6 +1133,18 @@ impl Lower {
                 }
                 Ok(())
             })().map_err(|error| crate::source_diagnostics::at(error, offset))?;
+            fn mutations(s:&Stmt,names:&mut Vec<String>) {
+                match s {
+                    Stmt::CallSub{name,args} if name=="@allocate"=>for e in args {if let Expr::Call(n,_) =e {names.push(n.clone());}},
+                    Stmt::CallSub{name,args} if name=="@deallocate" || !name.starts_with('@')=>for e in args {if let Expr::Ident(n)=e {names.push(n.clone());}},
+                    Stmt::If{then_body,else_body,..}=>for s in then_body.iter().chain(else_body.iter().flatten()){mutations(s,names);},
+                    Stmt::Do{body,..}|Stmt::DoWhile{body,..}|Stmt::Block{body}=>for s in body {mutations(s,names);},_=>{},
+                }
+            }
+            let mut changed=vec![];
+            // Preserve facts established by this statement's direct allocation.
+            if !matches!(&stmt,Stmt::CallSub{name,..} if name=="@allocate") {mutations(&stmt,&mut changed);}
+            for n in changed {if let Some(dims)=allocation_facts.remove(&n) {if let Some(value)=symbols.get_mut(&n){value.1=dims;}}}
             out.extend(prefix);
             out.push(stmt);
         }
@@ -1355,7 +1416,6 @@ pub(crate) fn prepare(mut p: Program) -> Result<(Program, Lower)> {
                         // templates until their actual array descriptors are bound.
                         let input = |kind: &TypeSpec| numeric(kind) || matches!(kind, TypeSpec::Character(_) | TypeSpec::CharacterAssumed);
                         let descriptor = !*elemental && numeric(&kind)
-                            && !body.iter().any(|s| matches!(s, Stmt::ArrayDecl {name,..} if name == &result))
                             && params.iter().all(|param| {
                                 body.iter().any(|s| matches!(s, Stmt::VarDecl {kind,names} if names.contains(param) && input(kind))
                                     || matches!(s, Stmt::ArrayDecl {kind,name,..} if name == param && input(kind)))
@@ -1376,7 +1436,20 @@ pub(crate) fn prepare(mut p: Program) -> Result<(Program, Lower)> {
                                 }}
                             }
                             returns(&mut helper_body);
-                            if !helper_body.iter().any(|s| matches!(s, Stmt::VarDecl {names,..} if names.contains(&result))) {
+                            if let Some(dims)=helper_body.iter().find_map(|s|match s {
+                                Stmt::ArrayDecl{name,dims,..} if name==&result=>Some(dims.clone()),_=>None,
+                            }) {
+                                let allocatable=helper_body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==&result&&intent=="allocatable"));
+                                for s in &mut helper_body {
+                                    if let Stmt::ArrayDecl{name,dims,..}=s {if name==&result {*dims=vec![Expr::Ident("@deferred_extent".into());dims.len()];}}
+                                }
+                                helper_body.push(Stmt::DummyIntent{name:result.clone(),intent:"@heap_dummy".into()});
+                                if !allocatable {
+                                    helper_body.push(Stmt::DummyIntent{name:result.clone(),intent:"allocatable".into()});
+                                    let position=helper_body.iter().position(|s|!matches!(s,Stmt::SourceLocation(_)|Stmt::VarDecl{..}|Stmt::ArrayDecl{..}|Stmt::InitializedDecl{..}|Stmt::DummyIntent{..}|Stmt::Implicit(_)|Stmt::Use{..})).unwrap_or(helper_body.len());
+                                    helper_body.insert(position,Stmt::CallSub{name:"@allocate".into(),args:vec![Expr::Call(result.clone(),dims)]});
+                                }
+                            } else if !helper_body.iter().any(|s| matches!(s, Stmt::VarDecl {names,..} if names.contains(&result))) {
                                 helper_body.insert(0, Stmt::VarDecl {kind:kind.clone(),names:vec![result.clone()]});
                             }
                             helper_body.push(Stmt::DummyIntent {name:result.clone(),intent:"intent(out)".into()});

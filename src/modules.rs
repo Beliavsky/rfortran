@@ -224,9 +224,10 @@ fn scope(
             }
             Stmt::DerivedDecl {
                 type_name,
-                names: ns,
+                names: ns, dims,
                 ..
             } => {
+                for e in dims {expression(e,&names);}
                 rename(type_name, &names);
                 for n in ns {
                     rename(n, &names);

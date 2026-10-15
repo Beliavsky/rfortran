@@ -12,7 +12,7 @@ pub enum Stmt {
     GenericInterface { name: String, procedures: Vec<String>, end_name: Option<String> },
     OperatorInterface { operator: String, procedures: Vec<String>, #[serde(default)] end_operator: Option<String> },
     DerivedType { name: String, components: Vec<Stmt>, bindings: Vec<(String, String)> },
-    DerivedDecl { type_name: String, names: Vec<String>, attributes: Vec<String>, polymorphic: bool },
+    DerivedDecl { type_name: String, names: Vec<String>, attributes: Vec<String>, polymorphic: bool, #[serde(default)] dims: Vec<Expr> },
     Accessibility { public: bool, names: Vec<String> },
     DummyIntent { name: String, intent: String },
     /// Byte offset of the following source statement; retained through AST lowering.

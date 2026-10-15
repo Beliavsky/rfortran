@@ -174,7 +174,7 @@ impl Validator {
                         self.expression(e, &visible)?;
                     }
                 }
-                Stmt::DerivedDecl { type_name, .. } => self.name(type_name, &visible)?,
+                Stmt::DerivedDecl { type_name,dims, .. } => {self.name(type_name, &visible)?;for e in dims {self.expression(e,&visible)?;}},
                 Stmt::DerivedType {
                     components,
                     bindings,

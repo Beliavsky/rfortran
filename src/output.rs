@@ -502,7 +502,7 @@ pub(crate) fn prepare_character_views(mut program:crate::ast::Program)->Result<c
                     if let Expr::Call(tag,args)=item {
                         if tag=="@packed_view" && args.len()==2 {
                             if let Expr::Ident(array)=&args[0] {
-                                if matches!(symbols.get(array),Some((TypeSpec::Character(_),dims)) if dims.len()==1) {
+                                if matches!(symbols.get(array),Some((TypeSpec::Character(_)|TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision|TypeSpec::Logical,dims)) if dims.len()==1) {
                                     *serial+=1;
                                     let index=format!("@character_view_output_{serial}");
                                     let kind=TypeSpec::Integer(Some(8));

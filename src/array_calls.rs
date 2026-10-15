@@ -143,6 +143,13 @@ pub(crate) fn scalar_actual_kind(e: &Expr, shapes: &Shapes) -> Result<TypeSpec> 
             scalar_actual_kind(&args[0], shapes)?;
             Ok(match n.as_str() { "dble" => TypeSpec::DoublePrecision, "real" => TypeSpec::Real, _ => TypeSpec::Integer(None) })
         }
+        Expr::Call(n,args) if matches!(n.as_str(),"mod"|"modulo") && args.len()==2 => {
+            let a=scalar_actual_kind(&args[0],shapes)?;let b=scalar_actual_kind(&args[1],shapes)?;
+            Ok(match (&a,&b) {
+                (TypeSpec::Integer(x),TypeSpec::Integer(y))=>TypeSpec::Integer(Some(x.unwrap_or(4).max(y.unwrap_or(4)))),
+                _=>a,
+            })
+        }
         Expr::Call(n,args) if n=="@allocated_extent"=>scalar_actual_kind(&args[1],shapes),
         Expr::Call(n,_) if matches!(n.as_str(),"@heap_bound"|"@heap_lower_bound"|"@heap_upper_bound")=>Ok(TypeSpec::Integer(Some(8))),
         Expr::Call(n,args) if n=="size" || matches!(n.as_str(),"lbound"|"ubound") && args.len()==2=>Ok(TypeSpec::Integer(None)),
@@ -194,7 +201,10 @@ fn rewrite(
             *e = Expr::Logical(!absent.contains(param));
         }
         Expr::Call(n, args) if n == "len" && args.len()==1 => {
-            if let Expr::Ident(name)=&args[0] {
+            let operand=if let Expr::Call(tag,values)=&args[0] {
+                if tag=="@packed_view" {&values[0]} else {&args[0]}
+            } else {&args[0]};
+            if let Expr::Ident(name)=operand {
                 if absent.contains(name) {bail!("reference to absent OPTIONAL dummy `{name}`");}
                 if let Some((TypeSpec::Character(length),_))=shapes.get(name) {
                     *e=Expr::IntLit(length.unwrap_or(1).to_string());
@@ -282,7 +292,7 @@ fn rewrite(
             stride,
             ..
         } => {
-            if crate::allocatables::length(name,shapes).is_some_and(|e|crate::parameters::integer_constant(&e).is_err()) {bail!("sections of runtime-sized array dummies are not yet supported");}
+            if crate::allocatables::axes(name,shapes).is_some_and(|d|d.len()>1) {bail!("sections of runtime-sized multidimensional array dummies are not yet supported");}
             for e in [lower, upper, stride].into_iter().flatten() {
                 rewrite(e, shapes, constants, absent)?;
             }
@@ -709,11 +719,9 @@ fn specialize(
                     {
                         bail!("ALLOCATE currently requires a shape known at the call site");
                     }
-                    if dims
-                        .iter()
-                        .any(|d| crate::parameters::integer_constant(d).is_ok_and(|n| n < 1))
-                    {
-                        bail!("ALLOCATE currently requires a positive extent");
+                    // Nonpositive extents describe an empty allocated array.
+                    for d in dims.iter_mut() {
+                        *d=Expr::IntLit(crate::parameters::integer_constant(d)?.max(0).to_string());
                     }
                     shapes.insert(n.clone(), (kind.clone(), dims.clone()));
                     output.push(Stmt::ArrayDecl {
@@ -852,7 +860,7 @@ pub(crate) fn specialize_character_function(body:&mut Vec<Stmt>,shapes:&mut Shap
     let stable=stable(body);
     specialize(body,shapes,&HashSet::new(),&mut constants.clone(),&stable)
 }
-fn check_allocated(s: &Stmt, pending: &HashSet<String>) -> Result<()> {
+pub(crate) fn check_allocated(s: &Stmt, pending: &HashSet<String>) -> Result<()> {
     fn name(n: &str, pending: &HashSet<String>) -> Result<()> {
         if pending.contains(n) {
             bail!("array `{n}` is used before ALLOCATE");
@@ -861,6 +869,7 @@ fn check_allocated(s: &Stmt, pending: &HashSet<String>) -> Result<()> {
     }
     fn expr(e: &Expr, pending: &HashSet<String>) -> Result<()> {
         match e {
+            Expr::Call(n,_) if matches!(n.as_str(),"allocated"|"len"|"kind"|"present")=>{},
             Expr::Ident(n) => name(n, pending)?,
             Expr::Call(n, args) | Expr::Index(n, args) => {
                 name(n, pending)?;

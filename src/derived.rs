@@ -781,6 +781,7 @@ pub fn resolve(mut program: Program) -> Result<Program> {
     program = crate::named_arguments::resolve(program, false)?;
     program = crate::operators::resolve(program)?;
     program = crate::named_arguments::resolve(program, true)?;
+    program = crate::derived_arrays::resolve(program)?;
     let mut lower = Lowerer {
         types: HashMap::new(),
         procedures: HashMap::new(),

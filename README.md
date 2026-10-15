@@ -24,7 +24,8 @@ Implemented subsets include:
   named arguments, and supported generic procedure calls.
 - Scalar and rank-1 through rank-15 pointer descriptors over fixed `TARGET`
   storage, including array views returned through subroutine output pointers.
-- Modules compiled in one source group, scalar derived types, type-bound
+- Modules compiled in one source group, scalar derived types and arrays with
+  scalar numeric/LOGICAL components, type-bound
   procedures, and defined operators, including derived-type comparisons.
 - List-directed output, a subset of formatted input/output, runtime format
   strings, nonadvancing output, read-only named files, and scratch-file input/output.
@@ -1233,7 +1234,7 @@ fixed-size and output specializations may retain bounded storage. Different exte
 and zero-sized allocations are supported.
 Supported allocatable INTENT(INOUT) dummies share allocation state with the caller;
 INTENT(IN) objects and nonlocal objects in PURE procedures cannot be deallocated.
-Pointers, derived-type objects, and STAT/ERRMSG options
+Pointers and STAT/ERRMSG options
 remain outside this DEALLOCATE subset. Run `python tests/test_deallocate.py` for
 interpreter/native O0/O2 checks and comparison with gfortran.
 
@@ -1261,9 +1262,31 @@ are released on normal scope exit, including RETURN, EXIT and CYCLE.
 Runtime-sized multidimensional sections, ALLOCATABLE array dummies in functions,
 array transformations, masked/DIM reductions, automatic
 reallocation on assignment, and mixing fixed and runtime-sized multidimensional
-expressions remain unsupported. CHARACTER and derived-type heap allocation and
+expressions remain unsupported. CHARACTER heap allocation and
 STAT/ERRMSG are separate remaining work. No public descriptor ABI is provided
 for separate-object module interfaces.
+Zero and negative allocation extents produce allocated empty arrays.
+Numeric/LOGICAL array-valued functions can use runtime-sized inputs and results
+through a hidden allocated result argument, including calls nested in another
+procedure's input arguments. Runtime rank-one result section assignments retain
+RHS values before writing. CHARACTER functions continue to use bounded storage;
+direct constant allocations now supply their active shape before function calls
+are materialized. `tests/184_allocated_character_concat.f90` covers the empty
+CHARACTER input concatenation and allocation case from `xutil.f90`.
+
+Derived arrays use separate component arrays with a shared shape, supporting
+fixed and allocatable storage, ranks through 15, component defaults, element
+access such as `x(i)%id`, constructors, assignment, and list-directed/formatted
+output in element order. Array-valued functions execute once and pass their
+component result arrays through a hidden subroutine call. This preserves side
+effects in ordinary functions and also works for PURE functions. The current
+subset requires scalar numeric or LOGICAL components; CHARACTER/nested/array
+components, polymorphic arrays, saved arrays, derived PARAMETER arrays, pointers,
+finalization and a separate-object record ABI remain unsupported.
+`xset_alloc_derived.f90` and `tests/185_allocated_derived_concat.f90` exercise empty
+and nonempty allocated inputs and replacement of an allocated output.
+Run `python tests/test_allocated_array_functions.py` for interpreter/native
+O0/O2 checks and gfortran comparisons across element types.
 Run `python tests/test_heap_allocations.py` and
 `python tests/test_runtime_allocatables.py` for interpreter/native O0/O2 checks
 and gfortran comparisons.
