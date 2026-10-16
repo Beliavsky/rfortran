@@ -217,7 +217,20 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                 let Expr::Ident(dest)=&args[0] else {unreachable!()};
                 write(dest,None,env,&mut after,serial);
             }
-            Stmt::CallSub { name, args } if name == "@saved_bind" || name == "@internal_read_byte" || name == "@internal_format_end" || name == "@character_assign" || name == "@character_length" || name=="@file_name" || name=="@file_newunit" || name=="@file_open_dynamic" || name=="@list_read_end" => {
+            Stmt::CallSub {name,args} if name=="@saved_bind" => {
+                let undefined=args.get(3)==Some(&Expr::Logical(false));
+                args.truncate(3);
+                for arg in &args[1..] {read(arg,env,&mut before,serial)?;}
+                let Expr::Ident(dest)=&args[0] else {unreachable!()};
+                if undefined {
+                    let Expr::Str(key)=&args[1] else {unreachable!()};
+                    let variable=env.get_mut(dest).context("missing saved variable initialization state")?;
+                    before.push(Stmt::CallSub {name:"@saved_bind".into(),args:vec![
+                        Expr::Ident(variable.flag.clone()),Expr::Str(format!("{key}.initialized")),int(0)]});
+                    variable.state=State::Maybe;
+                } else {write(dest,None,env,&mut after,serial);}
+            }
+            Stmt::CallSub { name, args } if name == "@internal_read_byte" || name == "@internal_format_end" || name == "@character_assign" || name == "@character_length" || name=="@file_name" || name=="@file_newunit" || name=="@file_open_dynamic" || name=="@list_read_end" => {
                 for arg in &args[1..] { read(arg, env, &mut before, serial)?; }
                 let Expr::Ident(dest)=&args[0] else {unreachable!()};
                 write(dest,None,env,&mut after,serial);

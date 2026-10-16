@@ -138,6 +138,45 @@ end
         self.success('-c', main)
         self.run_objects(['counter', 'first', 'second', 'main'], '3 13')
 
+    def test_saved_uninitialized_state_shared_across_objects(self):
+        module = self.source('cache', '''module cache_mod
+implicit none
+contains
+subroutine cache(set_value,value)
+logical,intent(in) :: set_value
+integer,intent(inout) :: value
+integer,save :: stored
+if(set_value)then
+  stored=value
+else
+  value=stored
+end if
+end subroutine
+end module
+''')
+        self.success('-c', module)
+        module.unlink()
+        first = self.source('first', '''subroutine first()
+use cache_mod
+implicit none
+integer :: n
+n=42
+call cache(.true.,n)
+end subroutine
+''')
+        self.success('-O0', '-c', first)
+        main = self.source('main', '''use cache_mod
+implicit none
+integer :: n
+call first()
+n=0
+call cache(.false.,n)
+print *,n
+end
+''')
+        self.success('-O2', '-c', main)
+        self.run_objects(['cache', 'first', 'main'], '42')
+
     def test_generic_derived_array_character_and_keyword_interfaces(self):
         m = self.source('features', '''module features
 implicit none

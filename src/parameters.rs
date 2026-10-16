@@ -525,6 +525,7 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
     let mut array_values = HashMap::new();
     let mut variable_values = HashMap::new();
     let mut saved_keys = HashMap::new();
+    let mut saved_undefined = HashSet::new();
     let mut locals: HashSet<String> = arguments.iter().map(|s| s.to_ascii_lowercase()).collect();
     for stmt in body.iter() {
         match stmt {
@@ -603,7 +604,21 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
                     if !arrays.contains(name) { record_model_type(&mut constants,name,kind,0); }
                     let key = name.to_ascii_lowercase();
                     if !locals.insert(key.clone()) && !arrays.contains(&key) { bail!("duplicate declaration of initialized variable `{name}`"); }
-                    let mut value = initializer.clone().with_context(|| format!("initialized declaration `{name}` requires a value"))?;
+                    let mut value = if let Some(value) = initializer {
+                        value.clone()
+                    } else if save_key.is_some() {
+                        // Static storage needs bytes, but SAVE alone does not
+                        // define a Fortran value. Preserve that distinction for
+                        // the initialization checks, including across calls.
+                        saved_undefined.insert(name.clone());
+                        match kind {
+                            TypeSpec::Character(_) => Expr::Str(String::new()),
+                            TypeSpec::Logical => Expr::Logical(false),
+                            _ => Expr::IntLit("0".into()),
+                        }
+                    } else {
+                        bail!("initialized declaration `{name}` requires a value");
+                    };
                     rewrite_expr(&mut value,&constants)?;
                     if !arrays.contains(&key) && matches!(&value,Expr::Call(tag,_) if tag == "@array_constructor" || tag == "@typed_constructor") {
                         bail!("scalar declaration initializer cannot be an array");
@@ -727,7 +742,9 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
                         Expr::Call(tag,args) if tag=="@integer_literal"=>args[0].clone(),
                         other=>other,
                     };
-                    Stmt::CallSub {name:"@saved_bind".into(),args:vec![Expr::Ident(name.clone()),Expr::Str(key.clone()),value]}
+                    let mut args=vec![Expr::Ident(name.clone()),Expr::Str(key.clone()),value];
+                    if saved_undefined.contains(name) {args.push(Expr::Logical(false));}
+                    Stmt::CallSub {name:"@saved_bind".into(),args}
                 }
                 else {Stmt::Assign{name:name.clone(),value}})).collect(),
             Stmt::ArrayDecl {name,..} => variable_values.remove(&name.to_ascii_lowercase()).map(|value| vec![Stmt::Assign{name:name.clone(),value}]).unwrap_or_default(),

@@ -917,7 +917,7 @@ pub(crate) fn capture(mut program: Program) -> Result<Program> {
         for statement in body {
             match statement {
                 Stmt::CallSub { name, args } if name == "@saved_bind" => {
-                    if let [Expr::Ident(local), Expr::Str(key), value] = args.as_slice() {
+                    if let [Expr::Ident(local), Expr::Str(key), value, rest @ ..] = args.as_slice() {
                         if key.starts_with("@module$") {
                             if let Some(kind) = body.iter().find_map(|s| match s {
                                 Stmt::VarDecl { kind, names } if names.contains(local) => Some(kind.clone()),
@@ -925,8 +925,9 @@ pub(crate) fn capture(mut program: Program) -> Result<Program> {
                             }) {
                                 let local = format!("@module_saved_owner_{}", bindings.len());
                                 bindings.push(Stmt::VarDecl { kind, names: vec![local.clone()] });
-                                bindings.push(Stmt::CallSub { name: name.clone(), args: vec![
-                                    Expr::Ident(local), Expr::Str(key.clone()), value.clone()] });
+                                let mut args=vec![Expr::Ident(local),Expr::Str(key.clone()),value.clone()];
+                                args.extend_from_slice(rest);
+                                bindings.push(Stmt::CallSub { name: name.clone(), args });
                             }
                         }
                     }

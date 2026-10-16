@@ -108,6 +108,65 @@ end subroutine work
 end
 """,'4\n5\n',data='4\n')
 
+    def test_save_without_initializer_retains_values_and_definition_state(self):
+        self.check('''call cache(.true.)
+call cache(.false.)
+contains
+subroutine cache(set_values)
+logical,intent(in) :: set_values
+integer,save :: n, calls=0
+real,save :: r
+double precision,save :: d
+logical,save :: flag
+character(4),save :: text
+if(set_values)then
+  n=7
+  r=1.5
+  d=2.5d0
+  flag=.true.
+  text='save'
+end if
+calls=calls+1
+print *,n,r,d,flag,text,calls
+end subroutine
+end
+''','7 1.5 2.5 T save 1\n7 1.5 2.5 T save 2\n')
+
+    def test_save_does_not_initialize_a_variable(self):
+        self.check('''call work(.false.)
+contains
+subroutine work(set_value)
+logical,intent(in) :: set_value
+integer,save :: n
+if(set_value)n=3
+print *,n
+end subroutine
+end
+''',error='uninitialized variable `n`')
+
+    def test_cached_normal_pair_pattern(self):
+        self.check('''integer :: i
+do i=1,4
+  print *,normal_pair()
+end do
+contains
+function normal_pair() result(x)
+double precision :: x
+double precision,save :: v,sln
+logical,save :: second=.false.
+if(second)then
+  second=.false.
+  x=v*sln
+else
+  second=.true.
+  v=3.0d0
+  sln=2.0d0
+  x=4.0d0
+end if
+end function
+end
+''','4\n6\n4\n6\n')
+
     def test_block_state_and_fresh_automatic_local(self):
         self.check("""call work()
 call work()
@@ -129,7 +188,6 @@ end
         for declaration,message in [
             ('integer,save::n(2)=[1,2]','local arrays'),
             ('integer,save,target::n=0','TARGET persistent'),
-            ('integer,save::n','requires a value'),
         ]:
             with self.subTest(declaration=declaration):
                 self.reject('call work()\ncontains\nsubroutine work()\n'+declaration+'\nend subroutine work\nend\n',message)
