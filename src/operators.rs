@@ -742,6 +742,10 @@ impl Resolver {
                                 [Ty::Array(a,1),Ty::Array(b,1)] => binary_type(&BinOp::Mul,(**a).clone(),(**b).clone()),
                                 _=>Ty::Unknown,
                             },
+                            _ if crate::intrinsics::real_predicate(n) => {
+                                let logical=scalar(&TypeSpec::Logical);
+                                match arg_types.first() {Some(Ty::Array(_,rank))=>Ty::Array(Box::new(logical),*rank),_=>logical}
+                            }
                             _ if crate::intrinsics::math_arity(n).is_some() => {
                                 arg_types.first().cloned().unwrap_or(Ty::Unknown)
                             }

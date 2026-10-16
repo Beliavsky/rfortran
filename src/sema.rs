@@ -638,7 +638,7 @@ pub fn analyze_with_src(
     ] {
         known_intrinsics.insert(name.to_string(), TypeSpec::Integer(None));
     }
-    for name in ["all", "any", "allocated", "lge", "lgt", "lle", "llt"] {
+    for name in ["all", "any", "allocated", "lge", "lgt", "lle", "llt"].into_iter().chain(crate::intrinsics::REAL_PREDICATES.iter().copied()) {
         known_intrinsics.insert(name.to_string(), TypeSpec::Logical);
     }
     for name in [
@@ -1290,6 +1290,7 @@ pub fn analyze_with_src(
                 let lname = name.to_ascii_lowercase();
                 if !fn_map.contains_key(&lname) {
                     if let Some(kind) = sym.get(&lname) { return Some(kind.clone()); }
+                    if crate::intrinsics::real_predicate(&lname) {return Some(TypeSpec::Logical);}
                     if crate::intrinsics::math_arity(&lname).is_some() || matches!(lname.as_str(), "abs" | "max" | "min" | "mod" | "modulo") {
                         return args.first().and_then(|arg| infer_expr_type(arg, sym, fn_map, external_fn_ret));
                     }
@@ -2776,6 +2777,12 @@ pub fn analyze_with_src(
                             }
                         }
                     }
+                    if crate::intrinsics::real_predicate(&key) {
+                        if args.len()!=1 {problems.push((name.clone(),format!("intrinsic `{name}` expects 1 argument, got {}",args.len())));}
+                        else if infer_expr_type(&args[0],sym,functions,returns).is_some_and(|kind|!matches!(kind,TypeSpec::Real|TypeSpec::DoublePrecision)) {
+                            problems.push((name.clone(),format!("{} requires a REAL or DOUBLE PRECISION argument",key.to_ascii_uppercase())));
+                        }
+                    }
                     let math = crate::intrinsics::math_arity(&key);
                     let arity = (if matches!(key.as_str(), "max" | "min") { Some(args.len().max(2)) } else if matches!(key.as_str(), "mod" | "modulo") {Some(2)} else { math }).or_else(|| matches!(key.as_str(), "abs" | "int" | "real" | "dble").then_some(1));
                     if let Some(arity) = arity {
@@ -2860,7 +2867,7 @@ pub fn analyze_with_src(
                         problems.push((name.clone(), "RANDOM_NUMBER expects one writable REAL or DOUBLE PRECISION variable or array".into()));
                     }
                 }
-                if crate::intrinsics::math_arity(name).is_some() && !functions.contains_key(&name.to_ascii_lowercase()) {
+                if (crate::intrinsics::math_arity(name).is_some() || crate::intrinsics::real_predicate(name)) && !functions.contains_key(&name.to_ascii_lowercase()) {
                     problems.push((name.clone(), format!("intrinsic `{name}` is a function, not a subroutine")));
                 }
             }

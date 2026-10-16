@@ -14,12 +14,12 @@ outcomes at both O0 and O2:
 
 | Driver outcome | Count |
 | --- | ---: |
-| Pass against gfortran | 22 |
-| Compilation failure | 8 |
+| Pass against gfortran | 23 |
+| Compilation failure | 7 |
 | Incorrect output | 0 |
 
 All gfortran reference drivers compile and run successfully, including their
-repeat executions. The passing drivers target 79 procedures; 37 other targeted
+repeat executions. The passing drivers target 83 procedures; 33 other targeted
 procedures are in blocked groups. `string_fields` and `partitions_and_runs` now
 pass following fixes to early RETURN in explicit-step loops and NINT rounding.
 `matrix_shapes` and `cumulative_sums` now pass after routing runtime selectors
@@ -33,6 +33,9 @@ driver also exercises headers, trailers and embedded quotes.
 `numeric_vectors` now passes after adding numeric MIN/MAX to array-expression
 lowering, including scalar reduction results used as array operands. The driver
 covers zero normalization, an empty logical fraction, and empty/negative sequences.
+`sorting` now passes after implementing scalar and elemental GNU ISNAN. Its
+driver covers both sorting paths, duplicates, ascending/descending/original
+ordering, empty inputs, singletons and the NaN early-return path.
 See [baseline.json](baseline.json)
 for exact input-source and compiler hashes and every procedure's inventory entry.
 

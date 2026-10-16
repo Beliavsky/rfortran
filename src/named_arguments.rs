@@ -112,6 +112,7 @@ pub(crate) fn intrinsic(name: &str) -> Option<Signature> {
     let keys: &[&str] = match name {
         name if crate::bit_intrinsics::keys(name).is_some() => crate::bit_intrinsics::keys(name).unwrap(),
         name if crate::inquiries::numeric_model(name) => &["x"],
+        name if crate::intrinsics::real_predicate(name) => &["x"],
         "atan2" => &["y", "x"],
         "sqrt" | "exp" | "log" | "log10" | "sin" | "cos" | "tan" | "asin" | "acos" | "atan"
         | "sinh" | "cosh" | "tanh" => &["x"],
@@ -405,6 +406,7 @@ mod tests {
     #[test]
     fn implemented_intrinsics_have_keyword_association() {
         for name in crate::intrinsics::REAL_MATH.iter().map(|(n,_)|*n)
+            .chain(crate::intrinsics::REAL_PREDICATES.iter().copied())
             .chain(crate::bit_intrinsics::NAMES.iter().copied())
             .chain(["random_number","random_seed","cpu_time","system_clock","date_and_time","abs","dble","kind","mod","modulo","new_line",
                 "adjustl","adjustr","trim","repeat","index","scan","verify","real","int","nint","aint","anint",

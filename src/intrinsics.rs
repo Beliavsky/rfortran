@@ -14,6 +14,12 @@ pub fn math_arity(name: &str) -> Option<usize> {
     REAL_MATH.iter().find(|(n, _)| name.eq_ignore_ascii_case(n)).map(|(_, arity)| *arity)
 }
 
+/// Elemental real predicates return default LOGICAL with their argument's shape.
+pub const REAL_PREDICATES: &[&str] = &["isnan"];
+pub fn real_predicate(name:&str)->bool {
+    REAL_PREDICATES.iter().any(|n|name.eq_ignore_ascii_case(n))
+}
+
 /// NINT's optional KIND describes the integer result, not its real argument.
 pub(crate) fn nint_kind(args: &[crate::ast::Expr]) -> anyhow::Result<crate::ast::TypeSpec> {
     use anyhow::{bail, Context};
@@ -50,7 +56,7 @@ pub fn purity(name: &str) -> Option<Purity> {
     let name=name.to_ascii_lowercase();
     if IMPURE_PROCEDURES.contains(&name.as_str()) {
         Some(Purity::Impure)
-    } else if PURE_FUNCTIONS.contains(&name.as_str()) || math_arity(&name).is_some()
+    } else if PURE_FUNCTIONS.contains(&name.as_str()) || math_arity(&name).is_some() || real_predicate(&name)
         || crate::inquiries::numeric_model(&name) || crate::bit_intrinsics::keys(&name).is_some()
     {
         Some(Purity::Pure)
@@ -65,6 +71,7 @@ mod tests {
     fn classifies_pure_impure_and_unknown_intrinsics() {
         for name in super::PURE_FUNCTIONS.iter().copied()
             .chain(super::REAL_MATH.iter().map(|(name,_)|*name))
+            .chain(super::REAL_PREDICATES.iter().copied())
             .chain(crate::bit_intrinsics::NAMES.iter().copied())
         {
             assert_eq!(super::purity(name),Some(super::Purity::Pure),"{name}");

@@ -706,6 +706,7 @@ impl Lowerer {
             Expr::Call(n, args)
                 if self.elementals.contains(n)
                     || crate::intrinsics::math_arity(n).is_some()
+                    || crate::intrinsics::real_predicate(n) && !self.functions.contains_key(n) && !shapes.contains_key(n)
                     || matches!(n.as_str(),"min"|"max") && !self.functions.contains_key(n) && !shapes.contains_key(n)
                     || matches!(n.as_str(), "abs" | "dble" | "real" | "mod" | "modulo") =>
             {

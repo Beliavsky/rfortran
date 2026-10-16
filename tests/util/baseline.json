@@ -4,20 +4,20 @@
     "kind": "c999f5d305aede589d31ea7585929d41e1fd5b1b86e1774f195b0b1354dec9c3",
     "manifest": "424d255ecf34fda0ed021b70e67db0a04413142298378c884e32708f71251666"
   },
-  "compiler_sha256": "2feb399e40b315e61adb7b33f23fbfbc0b413d355ad6792ef309b2262ddf7692",
+  "compiler_sha256": "9aaf0e5c590338380ceb6329ceb94649e37c0725b5b1829b61bdc292aa12c60e",
   "mode": "isolated",
   "optimizations": [
     0,
     2
   ],
   "procedure_counts": {
-    "pass": 79,
+    "pass": 83,
     "untested": 435,
-    "blocked": 37
+    "blocked": 33
   },
   "case_outcomes": {
-    "pass": 44,
-    "compile_error": 16
+    "pass": 46,
+    "compile_error": 14
   },
   "cases": [
     {
@@ -407,10 +407,10 @@
         "indexx_order_real",
         "quick_sort"
       ],
-      "driver_sha256": "6898dc04d46e410c1f030a84573b01906fc4e2e9372261d4444d1d927d3f9646",
+      "driver_sha256": "da5ebd3532fe06f774e45956c278a372adcd6416f02fd1e7c301ac2719315b53",
       "outcomes": {
-        "isolated-O0": "compile_error",
-        "isolated-O2": "compile_error"
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
       }
     },
     {
@@ -3695,7 +3695,7 @@
     {
       "name": "quick_sort",
       "line": 8859,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "sorting"
       ]
@@ -3715,7 +3715,7 @@
     {
       "name": "indexx_int",
       "line": 8933,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "sorting"
       ]
@@ -3723,7 +3723,7 @@
     {
       "name": "indexx_real",
       "line": 8940,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "sorting"
       ]
@@ -3731,7 +3731,7 @@
     {
       "name": "indexx_order_real",
       "line": 8949,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "sorting"
       ]

@@ -1337,6 +1337,13 @@
       "program_stderr": "",
       "program_exit_code": 0
     },
+    "197_isnan": {
+      "compiler_stderr": "",
+      "compiler_exit_code": 0,
+      "program_stdout": " isnan tests passed\n",
+      "program_stderr": "",
+      "program_exit_code": 0
+    },
     "196_numeric_minmax": {
       "compiler_stderr": "",
       "compiler_exit_code": 0,

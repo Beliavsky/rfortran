@@ -850,6 +850,11 @@ fn eval_expr(
                 return CgVal::I64(result);
             }
             match if func_meta.contains_key(name) { "" } else { lname.as_str() } {
+                "isnan" => {
+                    let value=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);
+                    let value=to_f64(b,value);
+                    CgVal::Bool(b.ins().fcmp(ir::condcodes::FloatCC::Unordered,value,value))
+                }
                 "max" | "min" => {
                     let mut value = eval_expr(b, ex, ptr_ty, &args[0], ints, reals, bools, func_meta);
                     for arg in &args[1..] {
@@ -1384,7 +1389,7 @@ fn print_expr(
         }
         IExpr::Call(name, args) => {
             let lname = name.to_ascii_lowercase();
-            if crate::intrinsics::math_arity(name).is_some()
+            if crate::intrinsics::math_arity(name).is_some() || crate::intrinsics::real_predicate(name)
                 || crate::bit_intrinsics::decode(name).is_some()
                 || matches!(lname.as_str(), "abs" | "int" | "nint" | "real" | "dble" | "max" | "min" | "mod" | "modulo")
             {
@@ -3472,7 +3477,7 @@ impl Backend for CraneliftBackend {
                     param_double_flags.insert(name.clone(), vec![false; ar]);
                 }
 
-                "all" | "any" | "allocated" | "lge" | "lgt" | "lle" | "llt" => {
+                "all" | "any" | "allocated" | "lge" | "lgt" | "lle" | "llt" | "isnan" => {
                     eff_ret.insert(name.clone(), crate::ast::TypeSpec::Logical);
                     let ar = *import_arity.get(&name).unwrap_or(&1usize);
                     param_kinds_map.insert(name.clone(), vec![ParamKind::F64; ar]);

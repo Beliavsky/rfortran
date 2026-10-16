@@ -412,6 +412,7 @@ pub fn interpret(program: &Program) {
         }
         let n = name.to_ascii_lowercase();
         match n.as_str() {
+            "isnan"=>Some(ValueTuple::from_bool(to_real(args.first()?)?.is_nan())),
             "abs" => {
                 if let Some(i) = args.get(0)?.0 {
                     Some(ValueTuple::from_int(i.abs()))

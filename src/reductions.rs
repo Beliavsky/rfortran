@@ -75,6 +75,12 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
         return Ok((value,Some(count),kind));
     }
     match e {
+        Expr::Call(name,args) if crate::intrinsics::real_predicate(name) && !symbols.contains_key(name) && !symbols.procedures.contains(name) => {
+            if args.len()!=1 {bail!("{} expects 1 argument",name.to_ascii_uppercase());}
+            let (value,count,kind)=element(&args[0],index,symbols)?;
+            if !matches!(kind,TypeSpec::Real|TypeSpec::DoublePrecision) {bail!("{} requires a REAL or DOUBLE PRECISION argument",name.to_ascii_uppercase());}
+            Ok((Expr::Call(name.clone(),vec![value]),count,TypeSpec::Logical))
+        }
         Expr::Call(name,args) if crate::bit_intrinsics::keys(name).is_some() && !symbols.contains_key(name) && !symbols.procedures.contains(name)
             || crate::bit_intrinsics::decode(name).is_some() => {
             let mut values=vec![];let mut kinds=vec![];let mut shape=None;
@@ -502,6 +508,13 @@ fn lower_pack(e:&mut Expr,symbols:&mut Symbols,prefix:&mut Vec<Stmt>,serial:&mut
 fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, serial: &mut usize, expand_elementals: bool) -> Result<()> {
 
     match e {
+        Expr::Call(name,args) if crate::intrinsics::real_predicate(name) && !symbols.contains_key(name) && !symbols.procedures.contains(name) => {
+            if args.len()!=1 {bail!("{} expects 1 argument",name.to_ascii_uppercase());}
+            lower_expr_impl(&mut args[0],symbols,prefix,serial,expand_elementals)?;
+            let input=element(&args[0],&int(1),symbols).map(|(_,_,kind)|kind)
+                .or_else(|_|crate::array_calls::scalar_actual_kind(&args[0],symbols)).ok();
+            if input.is_some_and(|kind|!matches!(kind,TypeSpec::Real|TypeSpec::DoublePrecision)) {bail!("{} requires a REAL or DOUBLE PRECISION argument",name.to_ascii_uppercase());}
+        }
         Expr::Call(name,args) if name=="nint" && !symbols.contains_key(name) && !symbols.procedures.contains(name) => {
             crate::intrinsics::nint_kind(args)?;
             lower_expr_impl(&mut args[0],symbols,prefix,serial,expand_elementals)?;
@@ -947,7 +960,7 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             }
         }
         if name != "@packed_view" && args.iter().any(|arg| runtime_extent(arg).is_some()) {
-            if symbols.elementals.contains_key(name) || crate::intrinsics::math_arity(name).is_some()
+            if symbols.elementals.contains_key(name) || crate::intrinsics::math_arity(name).is_some() || crate::intrinsics::real_predicate(name)
                 || matches!(name.as_str(), "real" | "dble" | "int" | "abs" | "mod" | "modulo") || numeric_minmax(name,symbols) {
                 let length=args.iter().find_map(runtime_extent).unwrap();
                 for arg in args.iter() {
@@ -968,7 +981,7 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             bail!("runtime PACK results are not yet supported as arguments to `{name}`");
         }
     }
-    if expand_elementals && matches!(e,Expr::Call(name,_) if symbols.elementals.contains_key(name) || matches!(name.as_str(), "mod" | "modulo") || numeric_minmax(name,symbols)) && array_valued(e,symbols) {
+    if expand_elementals && matches!(e,Expr::Call(name,_) if symbols.elementals.contains_key(name) || matches!(name.as_str(), "mod" | "modulo") || numeric_minmax(name,symbols) || crate::intrinsics::real_predicate(name) && !symbols.contains_key(name) && !symbols.procedures.contains(name)) && array_valued(e,symbols) {
         *serial+=1;
         let index_name=format!("@elemental_index_{serial}");
         let temp=format!("@elemental_result_{serial}");

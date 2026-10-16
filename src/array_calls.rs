@@ -110,6 +110,12 @@ fn elemental_array_call(name: &str, args: &[Expr], routine: &Routine, shapes: &S
 pub(crate) fn scalar_actual_kind(e: &Expr, shapes: &Shapes) -> Result<TypeSpec> {
     use crate::ast::BinOp;
     match e {
+        Expr::Call(n,args) if crate::intrinsics::real_predicate(n) && !shapes.contains_key(n) => {
+            if args.first().is_some_and(|a|crate::reductions::elemental_element(a,&Expr::IntLit("1".into()),shapes).is_ok_and(|(_,shape,_)|shape.is_some())) {
+                bail!("scalar actual argument must not be an array expression");
+            }
+            Ok(TypeSpec::Logical)
+        },
         Expr::Call(n,args) if n=="nint" && !shapes.contains_key(n) => crate::intrinsics::nint_kind(args),
         Expr::Ident(n) => {
             let (kind, dims) = shapes.get(n).context("scalar actual argument must be declared")?;

@@ -743,6 +743,14 @@ multi-record quoted strings remain unsupported.
 
 ## Numeric and logical reductions
 
+The GNU `ISNAN(X)` extension is supported for REAL kinds 4 and 8. It is pure
+and elemental, returning default LOGICAL with the input's shape. NaNs return
+true; finite values, signed zero and infinities return false. Scalar expressions
+are evaluated once. Arrays, sections, empty arrays and runtime PACK results are
+supported, as is the `X=` keyword. Run `python tests/test_isnan.py` for
+interpreter/native O0/O2 comparisons with gfortran in GNU mode, including ranks
+through 15 and runtime-sized multidimensional arrays.
+
 Numeric `MIN` and `MAX` accept two or more same-type, same-kind arguments in
 array expressions. Scalar arguments broadcast across conformable arrays;
 sections and runtime-length PACK results are supported, including empty arrays.
