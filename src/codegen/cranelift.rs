@@ -849,7 +849,7 @@ fn eval_expr(
                 } else {result};
                 return CgVal::I64(result);
             }
-            match if crate::bit_intrinsics::keys(&lname).is_some() && func_meta.contains_key(name) { "" } else { lname.as_str() } {
+            match if func_meta.contains_key(name) { "" } else { lname.as_str() } {
                 "max" | "min" => {
                     let mut value = eval_expr(b, ex, ptr_ty, &args[0], ints, reals, bools, func_meta);
                     for arg in &args[1..] {

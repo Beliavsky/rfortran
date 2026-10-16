@@ -26,6 +26,9 @@ fn int(n: i64) -> Expr { Expr::IntLit(n.to_string()) }
 fn bin(op: BinOp, a: Expr, b: Expr) -> Expr { Expr::Bin(op, Box::new(a), Box::new(b)) }
 fn reduction(name: &str) -> bool { matches!(name.to_ascii_lowercase().as_str(), "sum" | "product" | "minval" | "maxval" | "any" | "all" | "count" | "@count_i8" | "@count_default" | "@any_reduction" | "@all_reduction") }
 fn array_element_kind(kind: &TypeSpec) -> bool { matches!(kind, TypeSpec::Integer(_) | TypeSpec::Real | TypeSpec::DoublePrecision | TypeSpec::Logical) }
+fn numeric_minmax(name:&str,symbols:&Symbols)->bool {
+    matches!(name,"min"|"max") && !symbols.contains_key(name) && !symbols.procedures.contains(name)
+}
 fn same_kind(a: &TypeSpec, b: &TypeSpec) -> bool {
     match (a,b) {
         (TypeSpec::Integer(a),TypeSpec::Integer(b)) => a.unwrap_or(4) == b.unwrap_or(4),
@@ -173,6 +176,18 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
             if !same_kind(&kind,&other) || matches!(kind, TypeSpec::Logical) { bail!("{name} arguments must have the same numeric type and kind"); }
             if let (Some(a),Some(b)) = (alen,blen) { if a != b { bail!("{name} argument shapes do not conform"); } }
             Ok((Expr::Call(name.clone(),vec![a,b]),alen.or(blen),kind))
+        }
+        Expr::Call(name,args) if numeric_minmax(name,symbols) => {
+            if args.len()<2 {bail!("{} expects at least 2 arguments",name.to_ascii_uppercase());}
+            let mut shape=None;let mut kind=None;let mut values=vec![];
+            for arg in args {
+                let (value,count,input)=element(arg,index,symbols)?;
+                if !array_element_kind(&input) || input==TypeSpec::Logical {bail!("{} requires numeric arguments",name.to_ascii_uppercase());}
+                if kind.as_ref().is_some_and(|previous|!same_kind(previous,&input)) {bail!("{} arguments must have the same type and kind",name.to_ascii_uppercase());}
+                if let (Some(a),Some(b))=(shape,count) {if a>=0 && b>=0 && a!=b {bail!("{} argument shapes do not conform",name.to_ascii_uppercase());}}
+                shape=shape.or(count);kind=Some(input);values.push(value);
+            }
+            Ok((Expr::Call(name.clone(),values),shape,kind.unwrap()))
         }
         Expr::Call(name,args) if name == "abs" && args.len() == 1 => {
             let (value,count,kind) = element(&args[0],index,symbols)?;
@@ -933,10 +948,11 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
         }
         if name != "@packed_view" && args.iter().any(|arg| runtime_extent(arg).is_some()) {
             if symbols.elementals.contains_key(name) || crate::intrinsics::math_arity(name).is_some()
-                || matches!(name.as_str(), "real" | "dble" | "int" | "abs" | "mod" | "modulo") {
+                || matches!(name.as_str(), "real" | "dble" | "int" | "abs" | "mod" | "modulo") || numeric_minmax(name,symbols) {
                 let length=args.iter().find_map(runtime_extent).unwrap();
                 for arg in args.iter() {
-                    if let Some(other)=runtime_extent(arg) {prefix.push(shape_guard(length.clone(),other));}
+                    let other=runtime_extent(arg).or(element(arg,&int(1),symbols)?.1.map(int));
+                    if let Some(other)=other {prefix.push(shape_guard(length.clone(),other));}
                 }
                 *serial+=1;
                 let index=format!("@runtime_elemental_index_{serial}");
@@ -952,7 +968,7 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             bail!("runtime PACK results are not yet supported as arguments to `{name}`");
         }
     }
-    if expand_elementals && matches!(e,Expr::Call(name,_) if symbols.elementals.contains_key(name) || matches!(name.as_str(), "mod" | "modulo")) && array_valued(e,symbols) {
+    if expand_elementals && matches!(e,Expr::Call(name,_) if symbols.elementals.contains_key(name) || matches!(name.as_str(), "mod" | "modulo") || numeric_minmax(name,symbols)) && array_valued(e,symbols) {
         *serial+=1;
         let index_name=format!("@elemental_index_{serial}");
         let temp=format!("@elemental_result_{serial}");
@@ -1126,7 +1142,10 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
         }
     }
     let mut output = Vec::new();
+    let mut source_offset=None;
+    (||->Result<()> {
     for mut stmt in std::mem::take(body) {
+        if let Stmt::SourceLocation(offset)=&stmt {source_offset=Some(*offset);}
         let mut prefix = Vec::new();
         if let Stmt::Assign { name, value } = &stmt {
             if let Some((TypeSpec::Character(length), dims)) = symbols.get(name) {
@@ -1556,6 +1575,8 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
         output.extend(prefix);
         output.push(stmt);
     }
+    Ok(())
+    })().map_err(|error|crate::source_diagnostics::at(error,source_offset))?;
     *body = output;
     Ok(())
 }

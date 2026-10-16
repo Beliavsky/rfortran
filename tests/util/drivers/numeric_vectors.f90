@@ -6,6 +6,7 @@ implicit none
 print *, normalize([1.0_dp,-2.0_dp,1.0_dp])
 print *, normalize([0.0_dp,0.0_dp])
 print *, frac_true([.true.,.false.,.true.])
+print *, frac_true([logical::])
 print *, reverse([1.0_dp,2.0_dp,3.0_dp])
 print *, size(reverse([real(dp)::]))
 print *, seq(4),size(seq(0)),size(seq(-2))

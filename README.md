@@ -743,6 +743,15 @@ multi-record quoted strings remain unsupported.
 
 ## Numeric and logical reductions
 
+Numeric `MIN` and `MAX` accept two or more same-type, same-kind arguments in
+array expressions. Scalar arguments broadcast across conformable arrays;
+sections and runtime-length PACK results are supported, including empty arrays.
+This also permits scalar extrema of reductions inside array expressions, such
+as `x / max(sum(abs(x)), tiny_value)`. Shape mismatches are checked before
+runtime-length element loops. Run `python tests/test_numeric_minmax.py` for
+interpreter/native O0/O2 and gfortran comparisons. Errors from numeric array
+lowering now include the source statement's location.
+
 Numeric reductions (`SUM`, `PRODUCT`, `MINVAL`, `MAXVAL`) accept `ARRAY=`,
 `DIM=`, and `MASK=` keywords, including reordered keywords. Masks may be scalar
 LOGICAL values or conformable LOGICAL arrays/expressions. A constant `DIM` reduces

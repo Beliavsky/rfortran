@@ -365,7 +365,7 @@ impl Lowerer {
     }
 
     fn expression(&mut self, e: &mut Expr, shapes: &Shapes) -> Result<()> {
-        if matches!(e,Expr::Call(n,_) if self.elementals.contains(n) || matches!(n.as_str(),"mod" | "modulo")) || matches!(e,Expr::Bin(..)) {
+        if matches!(e,Expr::Call(n,_) if self.elementals.contains(n) || matches!(n.as_str(),"mod" | "modulo") || matches!(n.as_str(),"min"|"max") && !self.functions.contains_key(n) && !shapes.contains_key(n)) || matches!(e,Expr::Bin(..)) {
             self.shape(e, shapes)?;
         }
         match e {
@@ -706,13 +706,14 @@ impl Lowerer {
             Expr::Call(n, args)
                 if self.elementals.contains(n)
                     || crate::intrinsics::math_arity(n).is_some()
+                    || matches!(n.as_str(),"min"|"max") && !self.functions.contains_key(n) && !shapes.contains_key(n)
                     || matches!(n.as_str(), "abs" | "dble" | "real" | "mod" | "modulo") =>
             {
-                let mut shape = None;
+                let mut shape:Option<Vec<i64>> = None;
                 for arg in args {
                     let next = self.shape(arg, shapes)?;
                     if let (Some(a), Some(b)) = (&shape, &next) {
-                        if a != b {
+                        if !conform(a,b) {
                             bail!("nonconforming array argument shapes {a:?} and {b:?}");
                         }
                     }

@@ -1337,6 +1337,13 @@
       "program_stderr": "",
       "program_exit_code": 0
     },
+    "196_numeric_minmax": {
+      "compiler_stderr": "",
+      "compiler_exit_code": 0,
+      "program_stdout": " minmax tests passed\n",
+      "program_stderr": "",
+      "program_exit_code": 0
+    },
     "195_output_unit": {
       "compiler_stderr": "",
       "compiler_exit_code": 0,

@@ -4,20 +4,20 @@
     "kind": "c999f5d305aede589d31ea7585929d41e1fd5b1b86e1774f195b0b1354dec9c3",
     "manifest": "424d255ecf34fda0ed021b70e67db0a04413142298378c884e32708f71251666"
   },
-  "compiler_sha256": "3685b74016ae5317e86aa3f3b33da50ace9df3fc37ddffd8db1a9d8e70b861a2",
+  "compiler_sha256": "2feb399e40b315e61adb7b33f23fbfbc0b413d355ad6792ef309b2262ddf7692",
   "mode": "isolated",
   "optimizations": [
     0,
     2
   ],
   "procedure_counts": {
-    "pass": 75,
+    "pass": 79,
     "untested": 435,
-    "blocked": 41
+    "blocked": 37
   },
   "case_outcomes": {
-    "compile_error": 18,
-    "pass": 42
+    "pass": 44,
+    "compile_error": 16
   },
   "cases": [
     {
@@ -28,10 +28,10 @@
         "reverse_real",
         "seq"
       ],
-      "driver_sha256": "d1944aa1e9bf5faa11f2600db703278c3a439f065cfa7230c35e97559fe9452e",
+      "driver_sha256": "a58e43e191d0085784ade304beb718dfc620dcb51b128c6257cbf3ca77e56a45",
       "outcomes": {
-        "isolated-O0": "compile_error",
-        "isolated-O2": "compile_error"
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
       }
     },
     {
@@ -541,7 +541,7 @@
     {
       "name": "normalize",
       "line": 760,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "numeric_vectors"
       ]
@@ -1965,7 +1965,7 @@
     {
       "name": "reverse_real",
       "line": 4002,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "numeric_vectors"
       ]
@@ -2717,7 +2717,7 @@
     {
       "name": "frac_true",
       "line": 6154,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "numeric_vectors"
       ]
@@ -2773,7 +2773,7 @@
     {
       "name": "seq",
       "line": 6257,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "numeric_vectors"
       ]
