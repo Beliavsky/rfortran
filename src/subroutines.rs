@@ -61,8 +61,8 @@ pub(crate) fn rename_with_prefix(
     }
     for s in body.iter_mut() {
         match s {
-            Stmt::DummyIntent { name: n, intent } if intent.starts_with("@bounded_shape:") || intent.starts_with("@bounded_lower:") => {
-                let tag=if intent.starts_with("@bounded_lower:"){"@bounded_lower:"}else{"@bounded_shape:"};
+            Stmt::DummyIntent { name: n, intent } if intent.starts_with("@bounded_shape:") || intent.starts_with("@bounded_lower:") || intent.starts_with("@character_spec_length:") => {
+                let tag=if intent.starts_with("@character_spec_length:"){"@character_spec_length:"}else if intent.starts_with("@bounded_lower:"){"@bounded_lower:"}else{"@bounded_shape:"};
                 let rest = intent.trim_start_matches(tag);
                 let axes = rest
                     .split(':')
@@ -172,7 +172,7 @@ pub(crate) fn rename_with_prefix(
             _ => {}
         }
     }
-    body.retain(|s| !matches!(s, Stmt::ArrayDecl { name, .. } if params.contains(name)) && !matches!(s, Stmt::DummyIntent { intent,.. } if prefix!="@alloc_block" && !(matches!(intent.as_str(),"pointer"|"target"|"@pointer_readonly_target") || intent.starts_with("@pointer_bounds:")) && intent!="@heap" && intent!="@heap_readonly" && !intent.starts_with("@bounded:") && !intent.starts_with("@bounded_shape:") && !intent.starts_with("@bounded_lower:") && !intent.starts_with("@bounded_limits:") && !intent.starts_with("@character_element_width:")) && !matches!(s, Stmt::VarDecl { names, .. } if names.is_empty()));
+    body.retain(|s| !matches!(s, Stmt::ArrayDecl { name, .. } if params.contains(name)) && !matches!(s, Stmt::DummyIntent { intent,.. } if prefix!="@alloc_block" && !(matches!(intent.as_str(),"pointer"|"target"|"@pointer_readonly_target") || intent.starts_with("@pointer_bounds:")) && intent!="@heap" && intent!="@heap_readonly" && !intent.starts_with("@bounded:") && !intent.starts_with("@bounded_shape:") && !intent.starts_with("@bounded_lower:") && !intent.starts_with("@bounded_limits:") && !intent.starts_with("@character_element_width:") && !intent.starts_with("@character_spec_length:")) && !matches!(s, Stmt::VarDecl { names, .. } if names.is_empty()));
     Ok(())
 }
 /// Preserve procedure RETURN when its body is expanded into the caller.

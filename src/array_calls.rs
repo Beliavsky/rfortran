@@ -798,7 +798,9 @@ fn specialize(
                         else_body.take().unwrap_or_default()
                     };
                     specialize(&mut chosen, shapes, absent, constants, stable)?;
+                    let returned=matches!(chosen.iter().rev().find(|s|!matches!(s,Stmt::SourceLocation(_))),Some(Stmt::Return(_)));
                     output.extend(chosen);
+                    if returned {break;}
                     continue;
                 }
                 specialize(
@@ -865,6 +867,7 @@ fn specialize(
             _ => {}
         }
         output.push(s);
+        if matches!(output.last(),Some(Stmt::Return(_))) {break;}
     }
     *body = output;
     crate::heap::automatic(body,shapes)?;
@@ -1349,6 +1352,7 @@ fn expand(
                         .get(p)
                         .context("dummy argument must be declared")?
                         .clone();
+                    let assumed_character=dims.is_empty() && matches!(kind,TypeSpec::CharacterAssumed);
                     if r.elemental || (dims.is_empty() && matches!(kind,TypeSpec::Character(_) | TypeSpec::CharacterAssumed)) {
                         let actual_kind = scalar_actual_kind(actual, &shapes)?;
                         if let TypeSpec::Character(length) = actual_kind {
@@ -1362,6 +1366,13 @@ fn expand(
                         }
                     }
                     local.insert(p.clone(),(kind.clone(),dims.clone()));
+                    if assumed_character {
+                        if let Expr::Ident(actual)=actual {
+                            if let Some(value)=shapes.get(&format!("@character_spec_length:{actual}")) {
+                                local.insert(format!("@character_spec_length:{p}"),value.clone());
+                            }
+                        }
+                    }
                     let intent = intents.get(p).map(String::as_str).unwrap_or("");
                     if local.contains_key(&format!("@pointer:{p}")) {
                         let Expr::Ident(a)=actual else {bail!("POINTER dummy `{p}` requires a POINTER variable");};
@@ -1554,6 +1565,9 @@ fn expand(
                 prefix.extend(undefine);
                 let mut cloned = r.body.clone();
                 for p in &r.params {
+                    if let Some((_,values))=local.get(&format!("@character_spec_length:{p}")) {
+                        if let Some(Expr::Ident(length))=values.first() {cloned.push(Stmt::DummyIntent{name:p.clone(),intent:format!("@character_spec_length:{length}")});}
+                    }
                     if intents.get(p).is_some_and(|i|i=="intent(in)") && local.get(p).is_some_and(|(_,d)|!d.is_empty()) {
                         cloned.push(Stmt::DummyIntent{name:p.clone(),intent:"@heap_readonly".into()});
                     }

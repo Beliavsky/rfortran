@@ -12,6 +12,7 @@ enum State { No, Maybe, Yes }
 fn join(a: State, b: State) -> State { if a == b { a } else { State::Maybe } }
 #[derive(Clone)]
 struct Variable {
+    zero_sized: bool,
     flag: String,
     extent: Option<i64>,
     state: State,
@@ -45,6 +46,7 @@ fn constant(e: &Expr) -> Option<i64> { crate::parameters::integer_constant(e).ok
 
 fn check(name: &str, index: Option<&Expr>, env: &Env, out: &mut Vec<Stmt>, serial: &mut usize) -> Result<()> {
     let Some(v) = env.get(name) else { return Ok(()) };
+    if v.zero_sized {return Ok(());}
     if v.heap_length.is_none() {if let (Some(n), None) = (v.extent, index) {
         if let Some(i) = (1..=n).find(|i| *v.elements.get(i).unwrap_or(&v.state) == State::No) {
             bail!("read of uninitialized variable `{name}`: element {i} before assignment");
@@ -379,7 +381,8 @@ fn scope(body: &mut Vec<Stmt>, inherited: &mut Env, params: &[String], result: O
         let assigned = params.contains(&name) && !body.iter().any(|s| matches!(s, Stmt::DummyIntent { name: n, intent } if n == &name && intent == "intent(out)"));
         let runtime_sized=name.starts_with("@pointer_") || body.iter().any(|s|matches!(s,Stmt::DummyIntent {name:n,intent} if n==&name && intent.starts_with("@bounded:")));
         let element_width=body.iter().find_map(|s|match s {Stmt::DummyIntent{name:n,intent} if n==&name=>intent.strip_prefix("@character_element_width:").and_then(|n|n.parse().ok()),_=>None}).unwrap_or(1);
-        let v = Variable { element_width, flag: flag.clone(), extent, state: if assigned { State::Yes } else { State::No }, elements: BTreeMap::new(), runtime_sized, heap_length: heap_shapes.contains_key(&format!("@heap:{name}")).then(||crate::allocatables::length(&name,&heap_shapes).unwrap()) };
+        let zero_sized=body.iter().any(|s|matches!(s,Stmt::VarDecl{kind:TypeSpec::Character(Some(0)),names} if names.contains(&name)));
+        let v = Variable { zero_sized, element_width, flag: flag.clone(), extent, state: if assigned { State::Yes } else { State::No }, elements: BTreeMap::new(), runtime_sized, heap_length: heap_shapes.contains_key(&format!("@heap:{name}")).then(||crate::allocatables::length(&name,&heap_shapes).unwrap()) };
         if let Some(n) = extent {
             prefix.push(Stmt::ArrayDecl { kind: TypeSpec::Integer(None), name: flag.clone(), dims: vec![int(n)] });
             let index = format!("@init_clear_{serial}");

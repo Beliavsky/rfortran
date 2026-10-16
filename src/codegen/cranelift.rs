@@ -2579,12 +2579,14 @@ fn gen_stmts(
                     continue;
                 }
                 if name=="@internal_format_end" {
-                    let [IExpr::Ident(dest),handle,_]=args.as_slice() else {anyhow::bail!("invalid internal WRITE destination");};
+                    let [IExpr::Ident(dest),handle,width]=args.as_slice() else {anyhow::bail!("invalid internal WRITE destination");};
                     let view=characters::view(module,b,ptr_ty,dc,chars,ints,&IExpr::Ident(dest.clone()))?;
                     let handle=eval_expr(b,ex,ptr_ty,handle,ints,reals,bools,func_meta);
                     let handle=to_i64(b,handle);
                     let handle=if ptr_ty==types::I64 {handle} else {b.ins().ireduce(ptr_ty,handle)};
-                    file_io::call(module,b,"rfort_internal_format_end",&[handle,view.address,view.length],types::I32)?;
+                    let width=eval_expr(b,ex,ptr_ty,width,ints,reals,bools,func_meta);let width=to_i64(b,width);
+                    let width=if ptr_ty==types::I64 {width} else {b.ins().ireduce(ptr_ty,width)};
+                    file_io::call(module,b,"rfort_internal_format_end",&[handle,view.address,width],types::I32)?;
                     continue;
                 }
                 if name=="@format_begin" {

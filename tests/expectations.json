@@ -1414,6 +1414,13 @@
       "program_stderr": "",
       "program_exit_code": 0
     },
+    "204_joins": {
+      "compiler_stderr": "",
+      "compiler_exit_code": 0,
+      "program_stdout": " joins tests passed\n",
+      "program_stderr": "",
+      "program_exit_code": 0
+    },
     "203_first_tail": {
       "compiler_stderr": "",
       "compiler_exit_code": 0,

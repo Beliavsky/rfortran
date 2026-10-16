@@ -36,7 +36,7 @@ Implemented subsets include:
 These are bounded implementations, not claims of full language support. Many
 array operations require statically known shapes, and procedure calls use
 specialization rather than a general Fortran descriptor ABI. Important gaps
-include runtime-dependent declaration bounds and explicit CHARACTER lengths, general
+include general runtime-dependent declaration bounds and unbounded CHARACTER storage, general
 allocatable/pointer and polymorphic behavior, general CHARACTER-valued functions,
 and broad file I/O support. The feature
 notes below describe the supported forms and their restrictions.
@@ -1868,6 +1868,16 @@ and empty-array branches are specialized before checking their element access.
 `python tests/test_first_tail.py` cover these cases and numeric empty-array
 sentinels.
 
+Scalar CHARACTER results and locals can also have content-dependent lengths,
+including `SUM(LEN_TRIM(words))`. These specifications are evaluated once on
+procedure entry, and their declared length stays fixed for that invocation.
+Storage is bounded by known argument widths and capacities; runtime-sized
+sections read only their active elements. LEN, nested assumed-length arguments,
+substrings and internal WRITE retain the logical length rather than the storage
+capacity. Unbounded heap inputs and unsupported specification expressions still
+produce diagnostics. `xjoin_length.f90`, `tests/204_joins.f90` and
+`python tests/test_joins.py` cover joins, empty inputs and runtime WRITE overflow.
+
 ### External util.f90 procedures
 
 Small drivers track progress toward compiling and running `kind.f90 util.f90
@@ -1925,8 +1935,8 @@ The first CHARACTER batch increased the focused 37-case sample from 6 to 11
 passes. At that checkpoint the broader selection had 16 passes, 63 compiler failures and five
 reference failures. These broader cases also exercise unsupported derived types,
 procedure pointers and I/O; their failures are not all CHARACTER bugs. Major
-remaining CHARACTER work includes runtime-dependent automatic string lengths
-(such as `sum(len_trim(words))` in a function result), deferred-length arrays,
+remaining CHARACTER work includes unbounded runtime-dependent automatic string
+storage, deferred-length arrays,
 explicit allocation selectors/SOURCE/MOLD, allocatable CHARACTER components,
 and internal array files.
 The full `kind.f90 util.f90 xutil.f90` build now gets past the initialized CHARACTER

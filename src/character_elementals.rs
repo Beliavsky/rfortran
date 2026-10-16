@@ -19,6 +19,7 @@ struct Routine {
 }
 #[derive(Clone)]
 struct Value {
+    active:Option<Expr>,
     kind: TypeSpec,
     items: Option<Vec<Expr>>,
 }
@@ -61,24 +62,29 @@ impl Lower {
         Ok(p)
     }
     fn view(&self, e: &Expr, symbols: &Symbols) -> Result<Value> {
-        if let Some(kind)=crate::empty_constructors::kind(e)? {return Ok(Value {kind,items:Some(vec![])});}
+        if let Some(kind)=crate::empty_constructors::kind(e)? {return Ok(Value { active:None,kind,items:Some(vec![])});}
         if let Some(items)=crate::multidim::fixed_section_elements(e,symbols)? {
             let (Expr::Call(name,_)|Expr::Index(name,_))=e else {unreachable!()};
-            return Ok(Value {kind:symbols[name].0.clone(),items:Some(items)});
+            return Ok(Value { active:None,kind:symbols[name].0.clone(),items:Some(items)});
         }
-        let scalar = |kind| Ok(Value { kind, items: None });
+        let scalar = |kind| Ok(Value { active:None, kind, items: None });
         match e {
             Expr::Call(n, _) if matches!(n.as_str(), "shape" | "lbound" | "ubound")
                 && !symbols.contains_key(n) && !self.returns.contains_key(n) => {
                 let value = crate::multidim::fixed_inquiry(e, symbols)?;
                 if let Expr::Call(tag, items) = value {
                     if tag == "@bounds_vector" {
-                        return Ok(Value { kind: TypeSpec::Integer(None), items: Some(items) });
+                        return Ok(Value { active:None, kind: TypeSpec::Integer(None), items: Some(items) });
                     }
                 }
                 scalar(TypeSpec::Integer(None))
             }
             Expr::Str(s) => scalar(TypeSpec::Character(Some(s.len()))),
+            Expr::Call(n,args) if n=="@packed_view" && args.len()==2=>{
+                let mut view=self.view(&args[0],symbols)?;
+                if view.items.as_ref().is_some_and(|items|!items.is_empty()) {view.active=Some(args[1].clone());}
+                Ok(view)
+            }
             Expr::Ident(n) => {
                 let (kind, dims) = symbols
                     .get(n)
@@ -96,7 +102,9 @@ impl Lower {
                 if !(0..=1024).contains(&count) {
                     bail!("CHARACTER elemental expansion supports at most 1024 elements");
                 }
-                Ok(Value {
+                let active=crate::allocatables::length(n,symbols).filter(|e|crate::parameters::integer_constant(e).is_err());
+                if active.is_some() && symbols.contains_key(&format!("@heap:{n}")) {bail!("content-dependent CHARACTER results currently require a bounded input array");}
+                Ok(Value { active:if count==0 {None}else{active},
                     kind: kind.clone(),
                     items: Some(
                         (0..count as usize)
@@ -159,7 +167,7 @@ impl Lower {
                         .checked_add(step)
                         .context("elemental section index overflow")?;
                 }
-                Ok(Value {
+                Ok(Value { active:None,
                     kind: base.kind,
                     items: Some(output),
                 })
@@ -178,7 +186,7 @@ impl Lower {
                 if items.len() > 1024 {
                     bail!("CHARACTER elemental expansion supports at most 1024 elements");
                 }
-                Ok(Value {
+                Ok(Value { active:None,
                     kind: kind.context("empty untyped elemental constructor")?,
                     items: Some(items),
                 })
@@ -205,7 +213,7 @@ impl Lower {
                     }
                     if ordinal<items.len() {items[ordinal].clone()} else {pad[(ordinal-items.len())%pad.len()].clone()}
                 }).collect();
-                Ok(Value{kind:source.kind,items:Some(values)})
+                Ok(Value{active:None,kind:source.kind,items:Some(values)})
             }
             Expr::Call(n,args) if n=="transpose" && args.len()==1 => {
                 let shape=crate::multidim::fixed_actual_shape(&args[0],symbols)?.context("TRANSPOSE requires a rank-two array")?;
@@ -266,7 +274,7 @@ impl Lower {
                         })
                         .collect()
                 });
-                Ok(Value { kind, items })
+                Ok(Value { active:None, kind, items })
             }
             Expr::Call(n, args) if n == "@array_substring" => {
                 let [base, Expr::Section {
@@ -317,7 +325,7 @@ impl Lower {
                         count = Some(items.len());
                     }
                 }
-                Ok(Value {
+                Ok(Value { active:None,
                     kind: kind.clone(),
                     items: count.map(|count| {
                         (0..count)
@@ -357,7 +365,7 @@ impl Lower {
                             crate::reductions::elemental_element(e, &int(i), symbols).map(|v| v.0)
                         })
                         .collect::<Result<_>>()?;
-                    return Ok(Value {
+                    return Ok(Value { active:None,
                         kind,
                         items: Some(items),
                     });
@@ -546,7 +554,7 @@ impl Lower {
             .collect::<Result<Vec<_>>>()?;
         let shapes=args.iter().zip(&views).map(|(arg,view)| {
             if let Some(items)=&view.items {
-                Ok(crate::multidim::fixed_actual_shape(arg,symbols)?.unwrap_or_else(||vec![items.len() as i64]))
+                if view.active.is_some() {Ok(vec![items.len() as i64])} else {Ok(crate::multidim::fixed_actual_shape(arg,symbols)?.unwrap_or_else(||vec![items.len() as i64]))}
             } else {Ok(vec![])}
         }).collect::<Result<Vec<_>>>()?;
         for (view,shape) in views.iter().zip(&shapes) {
@@ -554,6 +562,7 @@ impl Lower {
                 if array_count(shape)? as usize!=items.len() {bail!("function argument shape does not match its selected elements");}
             }
         }
+        if routine.elemental && views.iter().any(|v|v.active.is_some()) {bail!("runtime-sized ELEMENTAL CHARACTER calls are not yet supported");}
         let bound_types = self.types(&routine, &views)?;
         let writable=routine.params.iter().filter(|param|routine.body.iter().any(|s|
             matches!(s,Stmt::DummyIntent{name,intent} if name==*param && matches!(intent.as_str(),"intent(out)"|"intent(inout)"))))
@@ -607,6 +616,14 @@ impl Lower {
                     value: arg.clone(),
                 });
                 symbols.insert(temp.clone(), (view.kind.clone(), vec![]));
+                if let Expr::Ident(actual)=arg {
+                    if let Some((_,values))=symbols.get(&format!("@character_spec_length:{actual}")) {
+                        if let Some(Expr::Ident(length))=values.first() {
+                            prefix.push(Stmt::DummyIntent{name:temp.clone(),intent:format!("@character_spec_length:{length}")});
+                        }
+                    }
+                }
+                crate::allocatables::metadata(prefix,symbols);
                 *arg = Expr::Ident(temp);
             }
         }
@@ -625,7 +642,17 @@ impl Lower {
             }
         }
         let mut specialized=routine.body.clone();
-        self.specialize_types(&mut specialized,&routine,&views,&shapes,&constants)?;
+        let logical_lengths:HashMap<_,_>=routine.params.iter().zip(&actuals).filter_map(|(param,arg)| {
+            if !routine.body.iter().any(|s|matches!(s,Stmt::VarDecl{kind:TypeSpec::CharacterAssumed,names} if names.contains(param))) {return None;}
+            let Expr::Ident(actual)=arg else {return None;};
+            symbols.get(&format!("@character_spec_length:{actual}")).and_then(|(_,v)|v.first()).map(|length|(param.clone(),length.clone()))
+        }).collect();
+        for stmt in &mut specialized {
+            if let Stmt::VarDecl{kind:TypeSpec::CharacterLength(e),..}|Stmt::ArrayDecl{kind:TypeSpec::CharacterLength(e),..}=stmt {
+                crate::character_spec::dynamic_lengths(e,&logical_lengths);
+            }
+        }
+        let runtime_lengths=self.specialize_types(&mut specialized,&routine,&views,&shapes,&constants)?;
         for s in &mut specialized {
             if let Stmt::ArrayDecl{dims,..}=s {
                 for d in dims {if crate::parameters::integer_constant(d).is_ok_and(|n|n<0) {*d=int(0);}}
@@ -652,7 +679,12 @@ impl Lower {
             // expressions such as 2*2 whose value is now statically known.
             *dims=extents.into_iter().map(int).collect();
         }
-        let result_kind = self.call_kind(&routine, &views, &shapes, &constants)?;
+        let result_kind=if crate::substrings::deferred(&routine.kind) {self.call_kind(&routine,&views,&shapes,&constants)?} else {
+            specialized.iter().find_map(|s|match s {
+                Stmt::VarDecl{kind,names} if names.contains(&routine.result)=>Some(kind.clone()),
+                Stmt::ArrayDecl{kind,name,..} if name==&routine.result=>Some(kind.clone()),_=>None,
+            }).map(Ok).unwrap_or_else(||self.call_kind(&routine,&views,&shapes,&constants))?
+        };
         for i in 0..count.unwrap_or(1) {
             let args = actuals
                 .iter()
@@ -691,20 +723,62 @@ impl Lower {
                     let items=view.items.as_ref().unwrap();
                     let shape=&shapes[routine.params.iter().position(|p|p==param).unwrap()];
                     expanded.push(Stmt::ArrayDecl {kind:bound_types[param].clone(),name:temp.clone(),dims:shape.iter().copied().map(int).collect()});
-                    for (i,value) in items.iter().enumerate() {expanded.push(Stmt::AssignIndex {name:temp.clone(),indices:array_indices(i,shape),value:value.clone()});}
+                    let active=if let Some(value)=&view.active {
+                        self.serial+=1;let length=format!("@character_argument_length_{}",self.serial);let flag=format!("@character_argument_allocated_{}",self.serial);
+                        expanded.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![length.clone()]});
+                        expanded.push(Stmt::Assign{name:length.clone(),value:value.clone()});
+                        expanded.push(Stmt::VarDecl{kind:TypeSpec::Logical,names:vec![flag.clone()]});
+                        expanded.push(Stmt::Assign{name:flag.clone(),value:Expr::Logical(true)});
+                        expanded.push(Stmt::DummyIntent{name:temp.clone(),intent:format!("@bounded:{length}:{flag}")});
+                        expanded.push(Stmt::DummyIntent{name:temp.clone(),intent:format!("@bounded_shape:{length}")});
+                        Some(length)
+                    } else {None};
+                    for (i,value) in items.iter().enumerate() {
+                        let store=Stmt::AssignIndex {name:temp.clone(),indices:array_indices(i,shape),value:value.clone()};
+                        expanded.push(if let Some(length)=&active {Stmt::If{cond:Expr::Bin(BinOp::Ge,Box::new(Expr::Ident(length.clone())),Box::new(int(i as i64+1))),then_body:vec![store],else_body:None}}else{store});
+                    }
                 } else {
                     expanded.push(Stmt::VarDecl {kind:bound_types[param].clone(),names:vec![temp.clone()]});
                     expanded.push(Stmt::Assign {name:temp.clone(),value:arg});
+                    if let Some(Expr::Ident(length))=logical_lengths.get(param) {
+                        expanded.push(Stmt::DummyIntent{name:temp.clone(),intent:format!("@character_spec_length:{length}")});
+                    }
                 }
                 names.insert(param.clone(), temp);
             }
             let mut body = specialized.clone();
+            for (param,length) in &logical_lengths {if let Expr::Ident(length)=length {
+                body.push(Stmt::DummyIntent{name:param.clone(),intent:format!("@character_spec_length:{length}")});
+            }}
+            for (variable,expression,capacity) in &runtime_lengths {
+                self.serial+=1;
+                let length=format!("@character_spec_length_{}",self.serial);
+                prefix.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![length.clone()]});
+                let mut expression=expression.clone();crate::subroutines::expr(&mut expression,&names);
+                crate::character_spec::capture(&mut expression,&mut expanded,&mut self.serial)?;
+                expanded.push(Stmt::Assign{name:length.clone(),value:expression});
+                expanded.push(Stmt::If{cond:Expr::Bin(BinOp::Gt,Box::new(Expr::Ident(length.clone())),Box::new(int(*capacity as i64))),then_body:vec![Stmt::CallSub{name:"@error_stop".into(),args:vec![Expr::Str("CHARACTER specification exceeded its storage bound".into())]}],else_body:None});
+                let marker=Stmt::DummyIntent{name:variable.clone(),intent:format!("@character_spec_length:{length}")};
+                if variable==&routine.result {
+                    prefix.push(Stmt::DummyIntent{name:result.clone(),intent:format!("@character_spec_length:{length}")});
+                    crate::allocatables::metadata(prefix,symbols);
+                }
+                body.push(marker);
+            }
             if !routine.elemental {
                 let mut shapes=HashMap::new();
                 for stmt in &body {match stmt {
                     Stmt::VarDecl {kind,names}=>for n in names {shapes.insert(n.clone(),(kind.clone(),vec![]));},
                     Stmt::ArrayDecl {kind,name,dims}=>{shapes.insert(name.clone(),(kind.clone(),dims.clone()));},_=>{}
                 }}
+                crate::allocatables::metadata(&expanded,&mut shapes);
+                crate::allocatables::metadata(&body,&mut shapes);
+                for (param,bound) in &names {
+                    if let Some((_,values))=shapes.get(&format!("@extent:{bound}")).cloned() {
+                        shapes.insert(format!("@extent:{param}"),(TypeSpec::Integer(Some(8)),values.clone()));
+                        shapes.insert(format!("@axes:{param}"),(TypeSpec::Integer(Some(8)),values));
+                    }
+                }
                 crate::array_calls::specialize_character_function(&mut body,&mut shapes,&constants)?;
             }
             if matches!(body.last(),Some(Stmt::Return(Some(Expr::Ident(n)))) if n==&routine.result)
@@ -770,7 +844,7 @@ impl Lower {
                 crate::allocatables::metadata(prefix,symbols);
             }
             body.retain(|s| {
-                !matches!(s, Stmt::DummyIntent { intent,.. } if !intent.starts_with("@bounded"))
+                !matches!(s, Stmt::DummyIntent { intent,.. } if !intent.starts_with("@bounded") && !intent.starts_with("@character_spec_length:"))
                     && !matches!(s,Stmt::Implicit(_))
                     && !matches!(s,Stmt::VarDecl{names,..} if names.is_empty())
                     && !matches!(s,Stmt::ArrayDecl{name,..} if bound.contains(name))
@@ -949,13 +1023,15 @@ impl Lower {
         views: &[Value],
         shapes: &[Vec<i64>],
         constants:&HashMap<String,Expr>,
-    ) -> Result<()> {
+    ) -> Result<Vec<(String,Expr,usize)>> {
+        let mut runtime=vec![];
         let mut types = self.types(routine, views)?;
-        let sizes:HashMap<_,_>=routine.params.iter().zip(shapes).filter(|(_,d)|!d.is_empty()).map(|(n,d)|(n.clone(),d.clone())).collect();
+        let capacities:HashMap<_,_>=routine.params.iter().zip(shapes).filter(|(_,d)|!d.is_empty()).map(|(n,d)|(n.clone(),d.clone())).collect();
+        let sizes:HashMap<_,_>=routine.params.iter().zip(shapes).zip(views).filter(|((_,d),v)|!d.is_empty() && v.active.is_none()).map(|((n,d),_)|(n.clone(),d.clone())).collect();
         for s in body {
             if let Stmt::ArrayDecl {kind,name,dims}=s {
                 if routine.params.contains(name) {
-                    let shape=sizes.get(name).context("function array dummy requires an array actual")?;
+                    let shape=capacities.get(name).context("function array dummy requires an array actual")?;
                     if dims.len()!=shape.len() {bail!("rank mismatch for function dummy `{name}`: expected {}, got {}",dims.len(),shape.len());}
                     for (dim,extent) in dims.iter().zip(shape) {
                         if matches!(dim,Expr::Ident(n) if n=="@deferred_extent") {continue;}
@@ -974,13 +1050,23 @@ impl Lower {
                     continue;
                 }
                 if names.contains(&routine.result) && !routine.elemental && crate::substrings::deferred(kind) {continue;}
-                *kind = Self::specialize_kind(kind, &types,constants,&sizes)?;
+                *kind = match Self::specialize_kind(kind, &types,constants,&sizes) {
+                    Ok(kind)=>kind,
+                    Err(error)=>{
+                        let TypeSpec::CharacterLength(expression)=kind else {return Err(error);};
+                        let mut expression=(**expression).clone();
+                        Self::fold_lengths(&mut expression,&types);Self::length_constants(&mut expression,constants);Self::fold_sizes(&mut expression,&sizes);
+                        let (expression,capacity)=crate::character_spec::bounded(&expression,&types,&capacities).context(error)?;
+                        for name in names.iter() {runtime.push((name.clone(),expression.clone(),capacity));}
+                        TypeSpec::Character(Some(capacity))
+                    }
+                };
                 for n in names {
                     types.insert(n.clone(), kind.clone());
                 }
             }
         }
-        Ok(())
+        Ok(runtime)
     }
     pub(crate) fn contains_calls(&self, body: &[Stmt]) -> bool {
         fn expr(e: &Expr, routines: &HashMap<String, Routine>) -> bool {

@@ -229,6 +229,7 @@ pub(crate) fn deferred(kind: &TypeSpec) -> bool {
 struct DynamicScope {
     characters: Characters,
     lengths: HashMap<String, String>,
+    fixed: std::collections::HashSet<String>,
     symbols: HashMap<String, (TypeSpec, Vec<Expr>)>,
     procedures: std::collections::HashSet<String>,
     function_results: HashMap<String,TypeSpec>,
@@ -367,7 +368,7 @@ fn dynamic_slice(source: Expr, range: &Expr, scope: &mut DynamicScope, output: &
     Ok(Expr::Call("@dynamic_substring".into(), vec![source, start, size, int(cap)]))
 }
 fn dynamic_expression(e: &mut Expr, scope: &mut DynamicScope, output: &mut Vec<Stmt>, serial: &mut usize) -> Result<()> {
-    if scope.procedure && matches!(e, Expr::Ident(n) | Expr::Section {name:n,..} if scope.lengths.contains_key(n)) {
+    if scope.procedure && matches!(e, Expr::Ident(n) | Expr::Section {name:n,..} if scope.lengths.contains_key(n) && !scope.fixed.contains(n)) {
         bail!("deferred CHARACTER host association in procedures is not yet supported");
     }
     match e {
@@ -544,6 +545,7 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
             Stmt::VarDecl { kind, names } => for name in names {
                 scope.characters.remove(name);
                 scope.lengths.remove(name);
+                scope.fixed.remove(name);
                 scope.symbols.insert(name.clone(), (kind.clone(), vec![]));
                 if deferred(kind) {
                     if !local { bail!("deferred CHARACTER storage currently requires a main-program or BLOCK local variable"); }
@@ -567,6 +569,11 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
             _ => {}
         }
     }
+    for s in statements.iter() {if let Stmt::DummyIntent{name,intent}=s {
+        if let Some(length)=intent.strip_prefix("@character_spec_length:") {
+            scope.lengths.insert(name.clone(),length.to_owned());scope.fixed.insert(name.clone());
+        }
+    }}
     for iteration in 0..=targets.len() + 1 {
         let mut sizes = targets.iter().map(|n| (n.clone(), scope.characters[n])).collect::<Characters>();
         assignment_capacities(statements, &targets, &scope, &mut sizes)?;
@@ -607,7 +614,7 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
             }
             Stmt::Assign { name, value } => {
                 dynamic_expression(value, &mut scope, &mut prefix, serial)?;
-                if let Some(length) = scope.lengths.get(name).cloned() {
+                if let Some(length) = scope.lengths.get(name).filter(|_|!scope.fixed.contains(name)).cloned() {
                     let length_value = logical_length(value, &mut scope, &mut prefix, serial)?;
                     let saved = capture(length_value, &mut scope, &mut prefix, serial);
                     result.extend(prefix);
@@ -651,6 +658,12 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
                 for e in indices {
                     if !matches!(e, Expr::Section { .. }) { dynamic_expression(e, &mut scope, &mut prefix, serial)?; }
                 }
+            }
+            Stmt::CallSub{name,args} if name=="@internal_format_end" => {
+                if let Expr::Ident(target)=&args[0] {
+                    if let Some(length)=scope.lengths.get(target).filter(|_|scope.fixed.contains(target)) {args[2]=ident(length);}
+                }
+                for e in &mut args[1..] {dynamic_expression(e,&mut scope,&mut prefix,serial)?;}
             }
             Stmt::Print { items } | Stmt::CallSub { args: items, .. } => for e in items { dynamic_expression(e, &mut scope, &mut prefix, serial)?; },
             Stmt::Return(Some(e)) => dynamic_expression(e, &mut scope, &mut prefix, serial)?,

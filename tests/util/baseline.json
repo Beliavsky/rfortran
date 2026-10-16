@@ -4,20 +4,20 @@
     "kind": "c999f5d305aede589d31ea7585929d41e1fd5b1b86e1774f195b0b1354dec9c3",
     "manifest": "6654503f68422d27c30a65202dc3f9c4cdaba8f7cf59000627c0f5ba97c2d092"
   },
-  "compiler_sha256": "b8e5f33330862478514b190f4606150ba2f06e92b59a6c232cce658cbdd780e2",
+  "compiler_sha256": "4c6307b7750785da9cbde8bc3cd652e647bfc40e6e3495881c2020675205f35f",
   "mode": "isolated",
   "optimizations": [
     0,
     2
   ],
   "procedure_counts": {
-    "pass": 97,
+    "pass": 104,
     "untested": 431,
-    "blocked": 23
+    "blocked": 16
   },
   "case_outcomes": {
-    "pass": 58,
-    "compile_error": 10
+    "pass": 60,
+    "compile_error": 8
   },
   "cases": [
     {
@@ -196,10 +196,10 @@
         "concat",
         "join_"
       ],
-      "driver_sha256": "22c7d41dfed6726112d2a72e6e0c3e4276a0fb5f8a4da9521562e74d74eebc43",
+      "driver_sha256": "03d373d026b17de28e583aac7f983b835b2489fdb3f10b32b8330dceaec7b18a",
       "outcomes": {
-        "isolated-O0": "compile_error",
-        "isolated-O2": "compile_error"
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
       }
     },
     {
@@ -625,7 +625,7 @@
     {
       "name": "join",
       "line": 833,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "joins"
       ]
@@ -633,7 +633,7 @@
     {
       "name": "join_quote",
       "line": 852,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "joins"
       ]
@@ -641,7 +641,7 @@
     {
       "name": "join_csv",
       "line": 873,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "joins"
       ]
@@ -649,7 +649,7 @@
     {
       "name": "join_csv_suffix",
       "line": 887,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "joins"
       ]
@@ -657,7 +657,7 @@
     {
       "name": "join_suffix",
       "line": 903,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "joins"
       ]
@@ -665,7 +665,7 @@
     {
       "name": "concat",
       "line": 916,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "joins"
       ]
@@ -673,7 +673,7 @@
     {
       "name": "join_",
       "line": 932,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "joins"
       ]

@@ -36,6 +36,7 @@ fn fail(cond: Expr, message: &str) -> Stmt {
 pub(crate) fn metadata(body: &[Stmt], shapes: &mut Shapes) {
     for s in body {
         if let Stmt::DummyIntent { name, intent } = s {
+            if let Some(length)=intent.strip_prefix("@character_spec_length:") {shapes.insert(format!("@character_spec_length:{name}"),(TypeSpec::Integer(Some(8)),vec![id(length)]));}
             if intent=="@heap" {shapes.insert(format!("@heap:{name}"),(TypeSpec::Logical,vec![]));}
             if let Some(rest)=intent.strip_prefix("@bounded_lower:") {shapes.insert(format!("@lowers:{name}"),(TypeSpec::Integer(Some(8)),rest.split(':').map(id).collect()));}
             if let Some(rest) = intent.strip_prefix("@bounded_shape:") {
@@ -75,6 +76,7 @@ pub(crate) fn lowers(name:&str,shapes:&Shapes)->Option<Vec<Expr>> {shapes.get(&f
 pub(crate) fn inquiry(name: &str, args: &[Expr], shapes: &Shapes) -> Result<Option<Expr>> {
     if name=="len" && args.len()==1 {
         if let Some(Expr::Ident(n))=args.first() {
+            if let Some((_,values))=shapes.get(&format!("@character_spec_length:{n}")) {return Ok(values.first().cloned());}
             if let Some((TypeSpec::Character(width),_))=shapes.get(n) {return Ok(Some(int(width.unwrap_or(1) as i64)));}
         }
     }

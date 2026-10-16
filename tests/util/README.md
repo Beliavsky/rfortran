@@ -14,12 +14,21 @@ outcomes at both O0 and O2:
 
 | Driver outcome | Count |
 | --- | ---: |
-| Pass against gfortran | 29 |
-| Compilation failure | 5 |
+| Pass against gfortran | 30 |
+| Compilation failure | 4 |
 | Incorrect output | 0 |
 
+This refresh builds the Rust compiler with LTO disabled and 16 codegen units
+(`cargo build --release --bin rfort --config profile.release.lto=false --config profile.release.codegen-units=16`).
+The Fortran optimization levels under test remain O0 and O2.
+
+An initial release run returned empty stdout for `unit_inquiry` at O2. Its
+isolated recheck and the final full rerun passed. The initial report is retained
+in `target/joins-coverage-first-release.json`; this intermittent result remains
+unexplained.
+
 All gfortran reference drivers compile and run successfully, including their
-repeat executions. The inventory records 97 passing procedures and 23 blocked
+repeat executions. The inventory records 104 passing procedures and 16 blocked
 procedures. `string_fields` and `partitions_and_runs` now
 pass following fixes to early RETURN in explicit-step loops and NINT rounding.
 `matrix_shapes` and `cumulative_sums` now pass after routing runtime selectors
@@ -54,9 +63,12 @@ The driver uses a declared zero-size CHARACTER variable for its differential
 empty-array call: the installed gfortran returns length zero for a direct empty
 typed constructor in this function call. The separate regression retains the
 direct constructor and checks its declared element length explicitly.
-`joins` remains blocked by data-dependent CHARACTER result lengths involving
-`SUM(LEN_TRIM(words))`; it needs runtime length evaluation, not a literal-only
-substitution.
+`joins` now passes after evaluating content-dependent CHARACTER lengths at
+procedure entry, including `SUM(LEN_TRIM(words))`. The seven targeted procedures
+cover separators, quoting, suffixes and concatenation. The driver also checks
+changing contents, empty arrays and runtime-sized sections with uninitialized
+unused capacity. Storage remains bounded by known element widths and capacities;
+arbitrary unbounded heap inputs are not covered by this implementation.
 
 See [baseline.json](baseline.json)
 for exact input-source and compiler hashes and every procedure's inventory entry.

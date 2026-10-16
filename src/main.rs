@@ -40,6 +40,7 @@ mod internal_procedures;
 mod purity;
 mod elemental;
 mod character_elementals;
+mod character_spec;
 mod constructors;
 mod constructor_expressions;
 mod subroutines;
