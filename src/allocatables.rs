@@ -91,7 +91,7 @@ pub(crate) fn inquiry(name: &str, args: &[Expr], shapes: &Shapes) -> Result<Opti
     let Some(Expr::Ident(array)) = args.first() else {
         return Ok(None);
     };
-    let Some(length) = length(array, shapes) else {
+    let Some(length) = length(array, shapes).or_else(||axes(array,shapes).and_then(|v|v.into_iter().reduce(|a,b|bin(BinOp::Mul,a,b)))) else {
         return Ok(None);
     };
     let dimensions = axes(array, shapes).unwrap_or_else(|| vec![length.clone()]);

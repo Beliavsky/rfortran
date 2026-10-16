@@ -1095,6 +1095,10 @@ fn validate_input_writes(body: &[Stmt], inputs: &HashSet<String>) -> Result<()> 
 // CHARACTER constructors need CHARACTER storage before array-dummy specialization;
 // the numeric reduction materializer cannot provide that storage.
 fn character_constructor(actual:&mut Expr, shapes:&Shapes, prefix:&mut Vec<Stmt>, serial:&mut usize)->Result<Option<(TypeSpec,i64,Expr)>> {
+    if matches!(actual,Expr::Call(n,_) if matches!(n.as_str(),"reshape"|"transpose")) {
+        let (kind,items)=crate::character_elementals::Lower::fixed_items(actual,shapes)?;
+        *actual=if items.is_empty() {crate::empty_constructors::parsed(kind,items)} else {Expr::Call("@array_constructor".into(),items)};
+    }
     if let Expr::Call(tag,args)=actual {
         if tag=="@packed_view" && args.len()==2 {
             if let Expr::Ident(n)=&args[0] {
@@ -1396,6 +1400,10 @@ fn expand(
                         let allocatable=r.body.iter().any(|s|matches!(s,Stmt::DummyIntent {name,intent} if name==p && intent=="allocatable"));
                         if allocatable && !matches!(actual,Expr::Ident(_)) {bail!("ALLOCATABLE dummy `{p}` requires an ALLOCATABLE variable");}
                         let mut captured=actual.clone();
+                        // This is an optional rank hint, not expression validation.
+                        // Runtime sections and generated selectors are checked by
+                        // the materializer below and need not have a fixed shape.
+                        let expression_shape=crate::multidim::fixed_actual_shape(actual,&shapes).ok().flatten();
                         let (actual_kind,actual_dims,length) = if let Expr::Ident(a)=actual {
                             let (k,d)=shapes.get(a).context("undeclared array argument")?;
                             (k.clone(),d.clone(),crate::allocatables::length(a,&shapes))
@@ -1460,6 +1468,18 @@ fn expand(
                         };
                         let a=match &captured {Expr::Ident(a)=>a.clone(),Expr::Call(n,v) if n=="@packed_view"=>if let Expr::Ident(a)=&v[0] {a.clone()} else {bail!("array view requires materialized storage");},_=>bail!("array dummy `{p}` requires a materialized array argument")};
                         let mut runtime_axes=runtime_actual_axes(actual,&shapes).or_else(||crate::allocatables::axes(&a,&shapes));
+                        if runtime_axes.is_none() && actual_dims.len()==1 {
+                            if let Some(shape)=expression_shape.filter(|s|s.len()>1) {
+                                let mut axes=vec![];
+                                for extent in shape {
+                                    *serial+=1;let field=format!("@array_call_shape_{serial}");
+                                    prefix.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![field.clone()]});
+                                    prefix.push(Stmt::Assign{name:field.clone(),value:Expr::IntLit(extent.to_string())});
+                                    axes.push(Expr::Ident(field));
+                                }
+                                runtime_axes=Some(axes);
+                            }
+                        }
                         if !allocatable && matches!(kind,TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision|TypeSpec::Logical) && runtime_axes.is_none() && actual_dims.len()==1 {
                             if let Some(length)=&length {
                                 *serial+=1;let extent=format!("@array_call_active_extent_{serial}");

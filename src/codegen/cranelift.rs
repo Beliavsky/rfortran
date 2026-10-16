@@ -2534,7 +2534,7 @@ fn gen_stmts(
                     file_io::operation(module,b,ptr_ty,dc,name,unit,path)?;
                     continue;
                 }
-                if name == "@read_record_status" {
+                if name == "@read_record_status" || name=="@read_record_checked" {
                     let [IExpr::Ident(status),IExpr::Ident(dest),IExpr::IntLit(length),unit,..]=args.as_slice() else {anyhow::bail!("invalid record READ with IOSTAT");};
                     let (slot,capacity)=chars.get(dest).ok_or_else(||anyhow::anyhow!("record READ requires CHARACTER storage"))?;
                     let length:usize=length.parse()?;
@@ -2555,7 +2555,7 @@ fn gen_stmts(
                     let size=b.ins().iconst(ptr_ty,length as i64);
                     let code=if let Some(format)=format {
                         file_io::call(module,b,"rfort_read_record_format",&[file,pointer,size,format.address,format.length],types::I64)?
-                    } else {file_io::call(module,b,"rfort_read_record",&[file,pointer,size],types::I64)?};
+                    } else {file_io::call(module,b,if name=="@read_record_checked" {"rfort_read_record_checked"} else {"rfort_read_record"},&[file,pointer,size],types::I64)?};
                     b.ins().jump(done,&[code.into()]);
                     b.switch_to_block(done);b.seal_block(done);
                     let code=b.block_params(done)[0];

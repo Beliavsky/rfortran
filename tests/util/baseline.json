@@ -4,20 +4,18 @@
     "kind": "c999f5d305aede589d31ea7585929d41e1fd5b1b86e1774f195b0b1354dec9c3",
     "manifest": "6654503f68422d27c30a65202dc3f9c4cdaba8f7cf59000627c0f5ba97c2d092"
   },
-  "compiler_sha256": "4c6307b7750785da9cbde8bc3cd652e647bfc40e6e3495881c2020675205f35f",
+  "compiler_sha256": "f5494a5337ecb8bdccd117c169a82ac5c7acf6091db47eba9fbfbe711ff965b4",
   "mode": "isolated",
   "optimizations": [
     0,
     2
   ],
   "procedure_counts": {
-    "pass": 104,
-    "untested": 431,
-    "blocked": 16
+    "pass": 120,
+    "untested": 431
   },
   "case_outcomes": {
-    "pass": 60,
-    "compile_error": 8
+    "pass": 68
   },
   "cases": [
     {
@@ -369,8 +367,8 @@
       ],
       "driver_sha256": "4b1d41eeecc1c1e459fcf5617496ec9232c6bbad55bacf811bbd556181fc777c",
       "outcomes": {
-        "isolated-O0": "compile_error",
-        "isolated-O2": "compile_error"
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
       }
     },
     {
@@ -427,8 +425,8 @@
       ],
       "driver_sha256": "460b68f1cd68a75c0df3050aabe538c3747ec4deff0b3e1fc950fa875d7a42ce",
       "outcomes": {
-        "isolated-O0": "compile_error",
-        "isolated-O2": "compile_error"
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
       }
     },
     {
@@ -466,8 +464,8 @@
       ],
       "driver_sha256": "9fa278dc6089545aab1d0b1456ea7f04ed660dfe3a7212e45d6641bc57f7e634",
       "outcomes": {
-        "isolated-O0": "compile_error",
-        "isolated-O2": "compile_error"
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
       }
     },
     {
@@ -477,8 +475,8 @@
       ],
       "driver_sha256": "4d9e15d0202689b149286aa9cf73f5d3a9ed32e2f35c79932faa09972255da64",
       "outcomes": {
-        "isolated-O0": "compile_error",
-        "isolated-O2": "compile_error"
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
       }
     }
   ],
@@ -695,7 +693,7 @@
     {
       "name": "sign_changes_real",
       "line": 967,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "sign_functions"
       ]
@@ -703,7 +701,7 @@
     {
       "name": "sgn_real",
       "line": 977,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "sign_functions"
       ]
@@ -727,7 +725,7 @@
     {
       "name": "repeat_logical",
       "line": 1021,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "repeat_values"
       ]
@@ -735,7 +733,7 @@
     {
       "name": "repeat_char",
       "line": 1030,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "repeat_values"
       ]
@@ -743,7 +741,7 @@
     {
       "name": "repeat_int",
       "line": 1039,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "repeat_values"
       ]
@@ -751,7 +749,7 @@
     {
       "name": "repeat_real",
       "line": 1047,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "repeat_values"
       ]
@@ -759,7 +757,7 @@
     {
       "name": "zeros",
       "line": 1056,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "repeat_values"
       ]
@@ -767,7 +765,7 @@
     {
       "name": "repeat_real_vec",
       "line": 1063,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "repeat_values"
       ]
@@ -775,7 +773,7 @@
     {
       "name": "repeat_char_vec",
       "line": 1078,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "repeat_values"
       ]
@@ -1459,7 +1457,7 @@
     {
       "name": "set_alloc_logical_matrix",
       "line": 2577,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "set_alloc_matrices"
       ]
@@ -1467,7 +1465,7 @@
     {
       "name": "set_alloc_logical_tensor",
       "line": 2584,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "set_alloc_matrices"
       ]
@@ -1475,7 +1473,7 @@
     {
       "name": "set_alloc_integer_matrix",
       "line": 2591,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "set_alloc_matrices"
       ]
@@ -1483,7 +1481,7 @@
     {
       "name": "set_alloc_real_matrix",
       "line": 2599,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "set_alloc_matrices"
       ]
@@ -1491,7 +1489,7 @@
     {
       "name": "set_alloc_real_tensor",
       "line": 2607,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "set_alloc_matrices"
       ]
@@ -1507,7 +1505,7 @@
     {
       "name": "set_alloc_character_mat",
       "line": 2625,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "set_alloc_matrices"
       ]
@@ -1621,7 +1619,7 @@
     {
       "name": "read_comments",
       "line": 2969,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "read_comments"
       ]

@@ -145,6 +145,7 @@ struct Procedure {
     inputs: bool,
     subroutine: bool,
     array_specialization: bool,
+    elemental: bool,
 }
 #[derive(Default)]
 struct Resolver {
@@ -286,6 +287,7 @@ impl Resolver {
                                         _ => false,
                                     }),
                                 subroutine: false,
+                                elemental: *elemental,
                                 array_specialization,
                             },
                         )
@@ -296,7 +298,7 @@ impl Resolver {
                     self.collect(body)?;
                 }
                 Stmt::Subroutine {
-                    name, params, body, ..
+                    name, params, body, elemental, ..
                 } => {
                     let vars = declarations(body, &Vars::new());
                     if self
@@ -312,6 +314,7 @@ impl Resolver {
                                 result: Ty::Unknown,
                                 inputs: false,
                                 subroutine: true,
+                                elemental: *elemental,
                                 array_specialization:false,
                             },
                         )
@@ -495,16 +498,19 @@ impl Resolver {
             return Ok(None);
         };
         let mut matches = vec![];
+        let mut lifted = vec![];
         let mut association_errors = vec![];
         for n in candidates {
             let p = &self.procedures[n];
             if p.subroutine != subroutine { continue; }
             match p.signature.associate(name, actuals) {
                 Ok(slots) if p.args.iter().zip(&slots).all(|(ty, slot)| slot.is_none_or(|i| ty == &args[i])) => matches.push(n),
+                Ok(slots) if p.elemental && p.args.iter().zip(&slots).all(|(ty,slot)|slot.is_none_or(|i|ty==&args[i] || matches!(&args[i],Ty::Array(element,_) if &**element==ty)))=>lifted.push(n),
                 Ok(_) => {},
                 Err(error) => association_errors.push(error),
             }
         }
+        if matches.is_empty() {matches=lifted;}
         match matches.as_slice() {
             [target] => {
                 self.procedures[*target].signature.reorder(name, actuals)?;
@@ -653,7 +659,8 @@ impl Resolver {
                 }
                 if let Some(target) = self.select_generic(n, args, &arg_types, false, visible)? {
                     *n = target;
-                    return Ok(self.procedures[n].result.clone());
+                    let p=&self.procedures[n];
+                    return Ok(if p.elemental {elemental_result(p.result.clone(),&arg_types)} else {p.result.clone()});
                 }
                 if self.components.contains_key(n) {
                     Ty::Derived(n.clone())

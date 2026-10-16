@@ -303,10 +303,16 @@ impl Files {
     }
 
     pub(crate) fn record_status(&mut self, unit: i64, buffer: &mut [u8]) -> i64 {
+        self.record_status_mode(unit,buffer,false)
+    }
+    pub(crate) fn record_status_mode(&mut self, unit:i64,buffer:&mut [u8],checked:bool)->i64 {
+        let scan=|buffer:&mut [u8], byte:&mut dyn FnMut()->Result<Option<u8>,()>| {
+            if checked {crate::record_input::checked_record(buffer,byte)} else {crate::record_input::record(buffer,byte)}
+        };
         if unit == 5 {
             let stdin = std::io::stdin();
             let mut input = stdin.lock();
-            return crate::record_input::record(buffer, || {
+            return scan(buffer, &mut || {
                 let mut byte = [0];
                 match input.read(&mut byte) {
                     Ok(0) => Ok(None), Ok(_) => Ok(Some(byte[0])), Err(_) => Err(()),
@@ -315,7 +321,7 @@ impl Files {
         }
         if Self::valid(unit).is_err() { return crate::record_input::ERROR; }
         let Some(file) = self.0.get_mut(&unit) else { return crate::record_input::ERROR; };
-        crate::record_input::record(buffer, || {
+        scan(buffer, &mut || {
             let mut byte = [0];
             match file.read(&mut byte) {
                 Ok(0) => Ok(None), Ok(_) => Ok(Some(byte[0])), Err(_) => Err(()),

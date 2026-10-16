@@ -80,6 +80,14 @@ fn select(name: &str, section: Option<&Expr>, arrays: &Arrays) -> Result<Vec<Str
 }
 fn expression(e: Expr, arrays: &Arrays) -> Result<Value> {
     Ok(match e {
+        Expr::Call(n,args) if matches!(n.as_str(),"lbound"|"ubound") && matches!(args.first(),Some(Expr::Ident(a)) if arrays.contains_key(a)) => {
+            let Expr::Ident(a)=&args[0] else {unreachable!()};
+            let value=if n=="lbound" {Expr::IntLit("1".into())} else {arrays[a].extent.clone().unwrap_or_else(||Expr::IntLit(arrays[a].elements.len().to_string()))};
+            if args.len()>1 {
+                if args.len()!=2 || integer(&args[1])?!=1 {bail!("CHARACTER array bound DIM must be 1");}
+                Value::Scalar(value)
+            } else {Value::Scalar(Expr::Call("@array_constructor".into(),vec![value]))}
+        }
         Expr::Ident(n) if arrays.contains_key(&n) => Value::Array(
             select(&n, None, arrays)?
                 .into_iter()

@@ -1041,7 +1041,7 @@ pub fn interpret(program: &Program) {
                     let mut record = String::new();
                     let mut previous_character = None;
                     for (text, character) in parts {
-                        if !fragment { record.push_str(crate::utils::list_directed_separator(previous_character, character)); }
+                        if !fragment || previous_character.is_some() { record.push_str(crate::utils::list_directed_separator(previous_character, character)); }
                         record.push_str(&text);
                         previous_character = Some(character);
                     }
@@ -1380,7 +1380,7 @@ pub fn interpret(program: &Program) {
                         io_result(FILES.with(|files| files.borrow_mut().operation(name,unit,path)));
                         idx+=1;continue;
                     }
-                    if name == "@read_record_status" {
+                    if name == "@read_record_status" || name=="@read_record_checked" {
                         let [Expr::Ident(status),Expr::Ident(dest),Expr::IntLit(length),unit,..] = args.as_slice() else { unreachable!() };
                         let fr=call_stack.last().unwrap().clone();
                         let unit=eval_expr(unit,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
@@ -1389,7 +1389,7 @@ pub fn interpret(program: &Program) {
                             let text=eval_expr(format,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).3.unwrap();
                             crate::record_input::valid_format(text.as_bytes())
                         });
-                        let code=if valid {FILES.with(|files| files.borrow_mut().record_status(unit,&mut buffer))} else {crate::record_input::INVALID_FORMAT};
+                        let code=if valid {FILES.with(|files| files.borrow_mut().record_status_mode(unit,&mut buffer,name=="@read_record_checked"))} else {crate::record_input::INVALID_FORMAT};
                         let frame=call_stack.last_mut().unwrap();
                         frame.env_int.insert(status.clone(),code);
                         if code == 0 { frame.env_str.insert(dest.clone(),String::from_utf8(buffer).unwrap()); }

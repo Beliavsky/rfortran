@@ -37,7 +37,7 @@ fn input_destinations(stmts: &[IStmt]) -> std::collections::HashSet<String> {
                 let count=if matches!(name.as_str(),"@environment_query"|"@argument_query") {3} else if name=="@cwd_query" {2} else {4};
                 for arg in &args[..count] {if let IExpr::Ident(id)=arg {names.insert(id.clone());}}
             }
-            IStmt::Call(name, args) if name == "@read_record_status" => {
+            IStmt::Call(name, args) if name == "@read_record_status" || name=="@read_record_checked" => {
                 for arg in &args[..2] { if let IExpr::Ident(id) = arg { names.insert(id.clone()); } }
             }
             IStmt::Call(name, args) if name.eq_ignore_ascii_case("random_number") || name == "@random_seed_get" || name == "@date_snapshot" || name == "@read_record" || name == "@internal_read_byte" || name == "@internal_format_end" || name == "@module_bind" || name.starts_with("@heap_") || name == "@character_assign" || name == "@character_length" => {
@@ -1599,7 +1599,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
             IStmt::Read(vars) => vec![IStmt::Read(vars)],
             IStmt::Call(name, args) => {
                 if matches!(name.as_str(),"@file_inquire_unit"|"@file_inquire_file"|"@environment_query"|"@argument_query"|"@cwd_query") {return vec![IStmt::Call(name,args)];}
-                if name.eq_ignore_ascii_case("random_number") || name == "@random_seed_get" || name == "@date_snapshot" || name == "@format_begin" || name == "@read_record" || name == "@read_record_status" || name == "@internal_read_byte" || name == "@internal_format_end" || name == "@module_bind" || name.starts_with("@heap_") || name == "@character_assign" || name == "@character_length" {
+                if name.eq_ignore_ascii_case("random_number") || name == "@random_seed_get" || name == "@date_snapshot" || name == "@format_begin" || name == "@read_record" || name == "@read_record_status" || name=="@read_record_checked" || name == "@internal_read_byte" || name == "@internal_format_end" || name == "@module_bind" || name.starts_with("@heap_") || name == "@character_assign" || name == "@character_length" {
                     return vec![IStmt::Call(name, args)];
                 }
                 let optimized_args = args

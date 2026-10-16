@@ -690,6 +690,15 @@ The reader consumes invalid records so a subsequent read can continue with the
 next record. These reads accept standard input as `*`, constant unit 5, or an
 INTEGER unit variable whose value is 5. Input records may end without a final newline.
 
+External list-directed `READ(unit,*) n` also accepts one scalar INTEGER
+destination of kind 1, 2, 4 or 8, including `IOSTAT=`, NEWUNIT values and unit 5.
+It skips blank records and uses the checked internal integer scanner for signs,
+integer bounds, null fields and repetition syntax. The current parsing buffer
+supports records up to 4096 characters. Longer records are consumed and return
+positive IOSTAT, or stop with an error without IOSTAT; they are never parsed as
+truncated prefixes. Failed transfers leave the destination undefined. Multiple
+items and other external list-directed destination types remain unsupported.
+
 The format may also be a runtime scalar CHARACTER expression, including a
 variable, `TRIM`, concatenation, or substring. `READ(unit,fmt,iostat=status)`
 validates the format before consuming input; the supported format is `(A)`
@@ -1878,6 +1887,13 @@ capacity. Unbounded heap inputs and unsupported specification expressions still
 produce diagnostics. `xjoin_length.f90`, `tests/204_joins.f90` and
 `python tests/test_joins.py` cover joins, empty inputs and runtime WRITE overflow.
 
+`tests/205_util_families.f90` and `python tests/test_remaining_util.py` cover
+runtime CHARACTER constructors with array-valued items, elemental generic
+dispatch (including keywords and matching-rank precedence), allocatable output
+arguments and external integer input. Materialized multidimensional expressions
+retain their original rank and shape during argument association; tests cover
+reallocation, empty CHARACTER RESHAPE results, PAD/ORDER and ranks through 15.
+
 ### External util.f90 procedures
 
 Small drivers track progress toward compiling and running `kind.f90 util.f90
@@ -1894,8 +1910,8 @@ python tests/test_util_coverage_runner.py
 
 The default isolates unchanged procedure bodies with their dependencies;
 `--mode module` tests the original full module. `kind.f90`, `util.f90`, gfortran,
-and a release compiler build are required. This is a coverage/progress suite
-with known failures, rather than an all-passing regression gate. See
+and a release compiler build are required. The suite provides differential
+checks for the selected procedures. See
 [the runner documentation](tests/util/README.md) and
 [the coverage baseline](tests/util/baseline.json) for scope and results.
 The combined build now compiles and executes through `xutil.f90`'s final

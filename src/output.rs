@@ -153,6 +153,7 @@ fn character(e: &Expr, symbols: &Symbols) -> bool {
     match e {
         Expr::Str(_) | Expr::Bin(BinOp::Concat, _, _) => true,
         Expr::Ident(n) => matches!(symbols.get(n), Some((TypeSpec::Character(_), _))),
+        Expr::Index(n,_) | Expr::Call(n,_) if matches!(symbols.get(n),Some((TypeSpec::Character(_),_)))=>true,
         Expr::Call(n, _) => matches!(
             n.as_str(),
             "trim" | "adjustl" | "adjustr" | "achar" | "char" | "repeat"

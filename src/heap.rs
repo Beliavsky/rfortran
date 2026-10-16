@@ -41,6 +41,7 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
                 | TypeSpec::DoublePrecision
                 | TypeSpec::Logical
                 | TypeSpec::Character(_)
+                | TypeSpec::CharacterAssumed
         )
     }
     fn signatures(body: &mut [Stmt], result: &mut HashMap<String, Vec<usize>>) {
@@ -50,7 +51,7 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
                     name, params, body, ..
                 } => {
                     let positions=params.iter().enumerate().filter_map(|(i,p)|
-                    (body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,kind,dims} if name==p&&numeric(kind)&&(!matches!(kind,TypeSpec::Character(_))||dims.len()>1)))
+                    (body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,kind,dims} if name==p&&numeric(kind)&&(!matches!(kind,TypeSpec::Character(_)|TypeSpec::CharacterAssumed)||dims.len()>1)))
                      &&body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==p&&intent=="allocatable"))).then_some(i)).collect::<Vec<_>>();
                     for &i in &positions {
                         body.insert(

@@ -114,6 +114,13 @@ pub unsafe extern "C" fn rfort_file_inquire(
 pub unsafe extern "C" fn rfort_read_record(
     stream: *mut core::ffi::c_void, destination: *mut u8, length: usize,
 ) -> i64 {
+    read_record(stream,destination,length,false)
+}
+#[no_mangle]
+pub unsafe extern "C" fn rfort_read_record_checked(stream:*mut core::ffi::c_void,destination:*mut u8,length:usize)->i64 {
+    read_record(stream,destination,length,true)
+}
+unsafe fn read_record(stream:*mut core::ffi::c_void,destination:*mut u8,length:usize,checked:bool)->i64 {
     let stream = if stream.is_null() {
         #[cfg(windows)]
         { __acrt_iob_func(0) }
@@ -123,12 +130,13 @@ pub unsafe extern "C" fn rfort_read_record(
         { stdin }
     } else { stream };
     let buffer = core::slice::from_raw_parts_mut(destination, length);
-    let status = record_input::record(buffer, || {
+    let byte=|| {
         let value = fgetc(stream);
         if value >= 0 { Ok(Some(value as u8)) }
         else if ferror(stream) != 0 { Err(()) }
         else { Ok(None) }
-    });
+    };
+    let status=if checked {record_input::checked_record(buffer,byte)} else {record_input::record(buffer,byte)};
     *destination.add(length) = 0;
     status
 }

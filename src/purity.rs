@@ -91,6 +91,7 @@ pub fn validate(program: &Program) -> Result<()> {
                     for argument in args {expression(argument,&locals,known)?;}
                 }
                 Stmt::CallSub {name,args} if name == "@internal_read" => {
+                    if !matches!(&args[0],Expr::Ident(n)|Expr::Index(n,_)|Expr::Call(n,_)|Expr::Section{name:n,..} if characters.contains(n)) {bail!("PURE procedure cannot perform external I/O");}
                     expression(&args[0],&locals,known)?;
                     let has_status=matches!(&args[1],Expr::Str(key) if !key.is_empty());
                     for arg in args.iter().skip(if has_status {2} else {3}) {

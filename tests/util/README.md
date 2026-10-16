@@ -14,22 +14,22 @@ outcomes at both O0 and O2:
 
 | Driver outcome | Count |
 | --- | ---: |
-| Pass against gfortran | 30 |
-| Compilation failure | 4 |
+| Pass against gfortran | 34 |
+| Compilation failure | 0 |
 | Incorrect output | 0 |
 
 This refresh builds the Rust compiler with LTO disabled and 16 codegen units
 (`cargo build --release --bin rfort --config profile.release.lto=false --config profile.release.codegen-units=16`).
 The Fortran optimization levels under test remain O0 and O2.
 
-An initial release run returned empty stdout for `unit_inquiry` at O2. Its
+An earlier release refresh returned empty stdout for `unit_inquiry` at O2. Its
 isolated recheck and the final full rerun passed. The initial report is retained
 in `target/joins-coverage-first-release.json`; this intermittent result remains
 unexplained.
 
 All gfortran reference drivers compile and run successfully, including their
-repeat executions. The inventory records 104 passing procedures and 16 blocked
-procedures. `string_fields` and `partitions_and_runs` now
+repeat executions. The inventory records 120 passing procedures and no blocked
+procedures among the targeted families. `string_fields` and `partitions_and_runs` now
 pass following fixes to early RETURN in explicit-step loops and NINT rounding.
 `matrix_shapes` and `cumulative_sums` now pass after routing runtime selectors
 and triplets on fixed storage through the runtime section path. `diagonals`
@@ -69,6 +69,22 @@ cover separators, quoting, suffixes and concatenation. The driver also checks
 changing contents, empty arrays and runtime-sized sections with uninitialized
 unused capacity. Storage remains bounded by known element widths and capacities;
 arbitrary unbounded heap inputs are not covered by this implementation.
+
+The four previously blocked families now pass too. `repeat_values` uses runtime
+CHARACTER constructors with scalar and array-valued items. `sign_functions`
+uses elemental generic matching for array arguments, retaining type, kind and
+result rank. `set_alloc_matrices` retains the shape of materialized expressions
+and uses heap descriptors for assumed-length CHARACTER allocatable dummies.
+`read_comments` can resume with an external list-directed scalar INTEGER READ
+after BACKSPACE. Its parsing buffer is checked for overlong records.
+`tests/test_remaining_util.py` covers these paths, including empty arrays,
+reallocation, PAD/ORDER, keyword arguments, exact-rank generic precedence,
+rank-15 outputs, IOSTAT, EOF and PURE internal/external I/O rules.
+
+The broader Python checks retain three pre-existing failures: the parser rejects
+`deallocate(v,a)`, and two generic-inquiry tests fail with an unsupported numeric
+reduction expression. These were reproduced with the saved older compiler and
+are separate from this all-passing driver snapshot.
 
 See [baseline.json](baseline.json)
 for exact input-source and compiler hashes and every procedure's inventory entry.

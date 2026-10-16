@@ -372,7 +372,15 @@ impl Builder<'_> {
                 }
             }
             if array_item(item, self.shapes) {
-                bail!("runtime constructor items must currently be scalar");
+                *self.serial+=1;
+                let index=format!("@constructor_item_{}",self.serial);
+                let shape=crate::multidim::fixed_actual_shape(item,self.shapes)?.context("runtime constructor array item requires a bounded shape")?;
+                let extent=if let Expr::Ident(n)=item {crate::allocatables::length(n,self.shapes)} else {None}
+                    .unwrap_or(int(shape.iter().product()));
+                let value=crate::reductions::elemental_element(item,&id(&index),self.shapes)?.0;
+                out.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![index.clone()]});
+                out.push(Stmt::Do{var:index,start:int(1),end:extent,body:self.items(&[value],names)?});
+                continue;
             }
             let mut value = item.clone();
             rename(&mut value, names);
@@ -430,9 +438,10 @@ fn body(stmts: &mut Vec<Stmt>, inherited: &Shapes, serial: &mut usize) -> Result
                                 | TypeSpec::Real
                                 | TypeSpec::DoublePrecision
                                 | TypeSpec::Logical
+                                | TypeSpec::Character(_)
                         )
                     {
-                        bail!("runtime-bound constructors currently require a rank-one numeric or LOGICAL whole-array destination");
+                        bail!("runtime-bound constructors currently require a rank-one numeric, LOGICAL or CHARACTER whole-array destination");
                     }
                     let capacity = crate::parameters::integer_constant(&dims[0])
                         .context("runtime constructor destination requires bounded storage")?;

@@ -1414,6 +1414,13 @@
       "program_stderr": "",
       "program_exit_code": 0
     },
+    "205_util_families": {
+      "compiler_stderr": "",
+      "compiler_exit_code": 0,
+      "program_stdout": " utility driver regressions passed\n",
+      "program_stderr": "",
+      "program_exit_code": 0
+    },
     "204_joins": {
       "compiler_stderr": "",
       "compiler_exit_code": 0,

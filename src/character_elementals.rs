@@ -46,6 +46,7 @@ fn same(a: &TypeSpec, b: &TypeSpec) -> bool {
     matches!((a,b),(TypeSpec::Integer(a),TypeSpec::Integer(b)) if a.unwrap_or(4)==b.unwrap_or(4))
         || a == b
 }
+#[derive(Default)]
 pub(crate) struct Lower {
     routines: HashMap<String, Routine>,
     returns: HashMap<String, (bool, TypeSpec)>,
@@ -56,6 +57,11 @@ pub(crate) struct Lower {
     allocation_helpers: Vec<Stmt>,
 }
 impl Lower {
+    pub(crate) fn fixed_items(e:&Expr,symbols:&Symbols)->Result<(TypeSpec,Vec<Expr>)> {
+        let value=Self::default().view(e,symbols)?;
+        if value.active.is_some() {bail!("fixed array expression requires a constant extent");}
+        Ok((value.kind,value.items.context("array expression required")?))
+    }
     pub(crate) fn finish(&mut self, mut p: Program) -> Result<Program> {
         self.defer_calls=false;
         self.body(&mut p.body,&Symbols::new())?;

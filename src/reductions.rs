@@ -1519,6 +1519,14 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
             }
         }
         if let Stmt::Print { items } = &mut stmt {
+            fn flatten(e:Expr,out:&mut Vec<Expr>) {
+                if let Expr::Call(n,args)=e {
+                    if n=="@array_constructor" {for e in args {flatten(e,out);}return;}
+                    out.push(Expr::Call(n,args));
+                } else {out.push(e);}
+            }
+            let original=std::mem::take(items);
+            for e in original {flatten(e,items);}
             // A zero-size array contributes no output items (but PRINT still
             // terminates the record), regardless of its allocated storage.
             items.retain(|e| !matches!(e,Expr::Ident(n) if symbols.get(n).is_some_and(|(_,dims)| dims.len()==1 && constant(&dims[0]).ok()==Some(0))));

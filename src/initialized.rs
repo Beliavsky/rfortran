@@ -238,7 +238,7 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                     let Expr::Ident(dest)=arg else {unreachable!()};write(dest,None,env,&mut after,serial);
                 }
             }
-            Stmt::CallSub { name, args } if name == "@read_record_status" || name=="@read_character_field" => {
+            Stmt::CallSub { name, args } if name == "@read_record_status" || name=="@read_record_checked" || name=="@read_character_field" => {
                 for arg in &args[2..] { read(arg, env, &mut before, serial)?; }
                 for arg in &args[..2] {
                     let Expr::Ident(dest) = arg else { unreachable!() };

@@ -7,6 +7,21 @@ pub(crate) const END: i64 = -1;
 pub(crate) const ERROR: i64 = 1;
 pub(crate) const INVALID: i64 = 2;
 pub(crate) const INVALID_FORMAT: i64 = 3;
+pub(crate) const TOO_LONG: i64 = 4;
+
+/// Numeric record parsing must diagnose truncation instead of parsing a prefix.
+pub(crate) fn checked_record(destination:&mut [u8],mut byte:impl FnMut()->Result<Option<u8>,()>)->i64 {
+    let limit=destination.len();let mut count=0usize;let mut previous=0;let mut newline=false;
+    let status=record(destination,|| {
+        let value=byte()?;
+        if let Some(value)=value {
+            if value==b'\n' {newline=true;} else {count=count.saturating_add(1);previous=value;}
+        }
+        Ok(value)
+    });
+    if newline && previous==b'\r' {count=count.saturating_sub(1);}
+    if status==0 && count>limit {TOO_LONG} else {status}
+}
 
 /// The supported scalar CHARACTER transfer consumes one complete record.
 /// Share validation between compile-time checks, interpreter and native runtime.
@@ -57,6 +72,15 @@ pub(crate) fn record(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn checked_records_reject_truncation_and_consume_the_record() {
+        let mut input=b"1234\r\n42\r\n7\n".iter().copied();let mut buffer=[0;2];
+        assert_eq!(super::checked_record(&mut buffer,||Ok(input.next())),super::TOO_LONG);
+        assert_eq!(super::checked_record(&mut buffer,||Ok(input.next())),0);
+        assert_eq!(&buffer,b"42");
+        assert_eq!(super::checked_record(&mut buffer,||Ok(input.next())),0);
+        assert_eq!(&buffer,b"7 ");
+    }
     use super::*;
 
     #[test]

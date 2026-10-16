@@ -146,6 +146,9 @@ pub(crate) fn lower_integer_read(
     symbols: &HashMap<String, (TypeSpec, Vec<Expr>)>,
     serial: &mut usize,
 ) -> Result<Stmt> {
+    if let Some(unit)=args.first() {
+        if crate::output::integer(unit,symbols) {return lower_external_integer_read(args,symbols,serial);}
+    }
     let [source, Expr::Str(control), status, destination] = args else {
         bail!("internal list-directed READ currently supports one scalar INTEGER destination");
     };
@@ -362,6 +365,38 @@ pub(crate) fn lower_integer_read(
     Ok(Stmt::Block { body })
 }
 
+fn lower_external_integer_read(args:&[Expr],symbols:&HashMap<String,(TypeSpec,Vec<Expr>)>,serial:&mut usize)->Result<Stmt> {
+    let [unit,Expr::Str(control),status,Expr::Ident(dest)]=args else {bail!("external list-directed READ currently supports one scalar INTEGER destination");};
+    if crate::parameters::integer_constant(unit).ok()!=Some(5) {crate::file_io::unit(unit,symbols)?;}
+    if !control.is_empty() && (!control.eq_ignore_ascii_case("iostat") || !matches!(integer_kind(status,symbols),Some(4|8))) {bail!("IOSTAT must be a writable scalar INTEGER of kind 4 or 8");}
+    *serial+=1;
+    let buffer=format!("@external_integer_buffer_{serial}");
+    let code=format!("@external_integer_status_{serial}");
+    let saved_unit=format!("@external_integer_unit_{serial}");
+    let offset=format!("@external_integer_offset_{serial}");
+    let byte=format!("@external_integer_byte_{serial}");
+    let mut scope=symbols.clone();
+    scope.insert(buffer.clone(),(TypeSpec::Character(Some(4096)),vec![]));
+    scope.insert(code.clone(),(TypeSpec::Integer(None),vec![]));
+    let parse=lower_integer_read(&[var(&buffer),Expr::Str("iostat".into()),var(&code),var(dest)],&scope,serial)?;
+    let fetch=Stmt::CallSub{name:"@read_record_checked".into(),args:vec![var(&code),var(&buffer),int(4096),var(&saved_unit)]};
+    let next_byte=Stmt::CallSub{name:"@internal_read_byte".into(),args:vec![var(&byte),var(&buffer),var(&offset),int(4096)]};
+    let mut body=vec![
+        Stmt::VarDecl{kind:TypeSpec::Character(Some(4096)),names:vec![buffer.clone()]},
+        Stmt::VarDecl{kind:TypeSpec::Integer(None),names:vec![code.clone()]},
+        Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![saved_unit.clone(),offset.clone(),byte.clone()]},
+        set(&saved_unit,unit.clone()),set(&buffer,Expr::Str(String::new())),
+        Stmt::DoWhile{cond:Expr::Logical(true),body:vec![fetch,branch(bin(BinOp::Ne,var(&code),int(0)),vec![Stmt::Exit]),set(&offset,int(0)),next_byte.clone(),Stmt::DoWhile{cond:space(&byte),body:vec![set(&offset,bin(BinOp::Add,var(&offset),int(1))),next_byte]},branch(bin(BinOp::Ne,var(&byte),int(0)),vec![Stmt::Exit])]},
+        Stmt::If{cond:equal(&code,0),then_body:vec![parse],else_body:Some(vec![Stmt::CallSub{name:"@undefine".into(),args:vec![var(dest)]}])},
+    ];
+    if control.is_empty() {
+        body.push(branch(equal(&code,crate::record_input::TOO_LONG),vec![Stmt::CallSub{name:"@error_stop".into(),args:vec![Expr::Str("external integer READ record exceeds 4096 characters".into())]}]));
+        body.push(branch(bin(BinOp::Ne,var(&code),int(0)),vec![Stmt::CallSub{name:"@error_stop".into(),args:vec![Expr::Str("external integer READ failed: invalid input or end of file".into())]}]));
+    }
+    else {let Expr::Ident(status)=status else {bail!("IOSTAT requires a variable");};body.push(set(status,var(&code)));}
+    Ok(Stmt::Block{body})
+}
+
 fn lower_character_read(source:&Expr,control:&str,status:&Expr,dest:&str,length:usize,
                         symbols:&HashMap<String,(TypeSpec,Vec<Expr>)>,serial:&mut usize)->Result<Stmt> {
     if !control.is_empty() && !matches!(integer_kind(status,symbols),Some(4|8)) {bail!("IOSTAT must be a writable scalar INTEGER of kind 4 or 8");}
@@ -527,7 +562,7 @@ mod tests {
             ("", "read(text,*,iostat=n) n", false),
             ("", "read(text,*,iostat=ios) 1", false),
             ("", "read(text,*,iostat=ios) n,n", false),
-            ("", "read(5,*,iostat=ios) n", false),
+            ("", "read(5,*,iostat=ios) n", true),
             ("", "read('123',*,iostat=ios) n", false),
             ("real :: x", "read(text,*,iostat=ios) x", false),
             ("real :: x", "read(text,*,iostat=x) n", false),
