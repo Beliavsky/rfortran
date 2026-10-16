@@ -291,6 +291,19 @@ fn expand(body: &mut Vec<Stmt>, routines: &HashMap<String, Routine>, active: &mu
     }
     Ok(())
 }
+// Continue generated-name counters when a later pass revisits expanded storage.
+pub(crate) fn maximum_serial(body:&[Stmt],prefixes:&[&str])->usize {
+        let suffix=|n:&str|->usize {if prefixes.iter().any(|p|n.starts_with(p)) {n.rsplit('_').next().and_then(|n|n.parse().ok()).unwrap_or(0)}else{0}};
+        body.iter().map(|s|match s {
+            Stmt::VarDecl{names,..}=>names.iter().map(|n|suffix(n)).max().unwrap_or(0),
+            Stmt::ArrayDecl{name,..}=>suffix(name),
+            Stmt::Block{body}|Stmt::Module{body,..}|Stmt::Function{body,..}|Stmt::Subroutine{body,..}|Stmt::Do{body,..}|Stmt::DoWhile{body,..}=>maximum_serial(body,prefixes),
+            Stmt::If{then_body,else_body,..}=>maximum_serial(then_body,prefixes).max(else_body.as_ref().map(|b|maximum_serial(b,prefixes)).unwrap_or(0)),
+            Stmt::SelectCase{cases,default,..}=>cases.iter().map(|c|maximum_serial(&c.body,prefixes)).max().unwrap_or(0).max(default.as_ref().map(|b|maximum_serial(b,prefixes)).unwrap_or(0)),
+            _=>0,
+        }).max().unwrap_or(0)
+    }
+
 pub fn resolve(mut program: Program) -> Result<Program> {
     fn collect(body: &[Stmt], routines: &mut HashMap<String, Routine>) {
         for s in body {
@@ -304,18 +317,7 @@ pub fn resolve(mut program: Program) -> Result<Program> {
     let mut routines = HashMap::new(); collect(&program.body, &mut routines);
     // Array/CHARACTER call specialization can already have expanded some
     // calls using this namespace. Continue its numbering for the scalar calls.
-    fn maximum(body:&[Stmt])->usize {
-        fn suffix(n:&str)->usize {if n.starts_with("@sub_local_") || n.starts_with("@sub_returned_") {n.rsplit('_').next().and_then(|n|n.parse().ok()).unwrap_or(0)}else{0}}
-        body.iter().map(|s|match s {
-            Stmt::VarDecl{names,..}=>names.iter().map(|n|suffix(n)).max().unwrap_or(0),
-            Stmt::ArrayDecl{name,..}=>suffix(name),
-            Stmt::Block{body}|Stmt::Module{body,..}|Stmt::Function{body,..}|Stmt::Subroutine{body,..}|Stmt::Do{body,..}|Stmt::DoWhile{body,..}=>maximum(body),
-            Stmt::If{then_body,else_body,..}=>maximum(then_body).max(else_body.as_ref().map(|b|maximum(b)).unwrap_or(0)),
-            Stmt::SelectCase{cases,default,..}=>cases.iter().map(|c|maximum(&c.body)).max().unwrap_or(0).max(default.as_ref().map(|b|maximum(b)).unwrap_or(0)),
-            _=>0,
-        }).max().unwrap_or(0)
-    }
-    let mut serial=maximum(&program.body);
+    let mut serial=maximum_serial(&program.body,&["@sub_local_","@sub_returned_"]);
     expand(&mut program.body, &routines, &mut Vec::new(), &mut serial)?;
     Ok(program)
 }

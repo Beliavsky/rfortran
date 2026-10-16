@@ -571,6 +571,16 @@ fn body(
                 }
                 *value = expanded(value.clone(), &arrays, serial, &mut output)?.expr();
             }
+            Stmt::CallSub { name, args } if name=="@format_item" => {
+                let handle=args[0].clone();
+                match expanded(args[1].clone(),&arrays,serial,&mut output)? {
+                    Value::Scalar(e)=>args[1]=e,
+                    Value::Array(items)=>{
+                        for item in items {output.push(Stmt::CallSub {name:name.clone(),args:vec![handle.clone(),item]});}
+                        continue;
+                    }
+                }
+            }
             Stmt::CallSub { name, args } if matches!(name.as_str(),"@formatted_print"|"@formatted_write_noadvance"|"@write") => {
                 let mut first=if name=="@write" {2} else {1};
                 if name=="@write" {while matches!(args.get(first),Some(Expr::Call(n,_)) if n.starts_with("@write_option:")) {first+=1;}}

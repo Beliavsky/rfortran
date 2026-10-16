@@ -300,6 +300,13 @@ fn emit(
         if contains_implied_do(item) {
             bail!("output implied-DO must be a direct list-directed output item");
         }
+        if let Some(session)=session {
+            // Vector selections, function results and multidimensional views
+            // acquire their storage later. Preserve the complete item until
+            // reduction lowering can emit each of its active elements.
+            body.push(Stmt::CallSub {name:"@format_item".into(),args:vec![id(session),item.clone()]});
+            continue;
+        }
         let arrays = symbols
             .iter()
             .filter(|(_, (_, dims))| !dims.is_empty())

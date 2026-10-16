@@ -1095,11 +1095,10 @@ fn lower_where_mask(body: &mut Vec<Stmt>, symbols: &mut Symbols, serial: &mut us
     Ok(())
 }
 
-fn formatted_capture(format:Expr,items:&[Expr],advance:Expr,symbols:&Symbols,serial:&mut usize)->Result<Vec<Stmt>> {
-    *serial+=1;
-    let handle=format!("@formatted_array_list_{serial}");
-    let mut body=vec![Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![handle.clone()]},
-        Stmt::CallSub{name:"@format_begin".into(),args:vec![Expr::Ident(handle.clone()),format,advance]}];
+// A captured I/O item can become array-valued after vector selection or
+// function specialization. Emit every active element into the same session.
+fn formatted_items(handle:&str,items:&[Expr],symbols:&Symbols,serial:&mut usize)->Result<Vec<Stmt>> {
+    let mut body=vec![];
     let mut local=symbols.clone();
     for item in items {
         if element(item,&int(1),&local).is_ok_and(|(_,shape,_)|shape.is_some()) {
@@ -1112,9 +1111,18 @@ fn formatted_capture(format:Expr,items:&[Expr],advance:Expr,symbols:&Symbols,ser
             *serial+=1;let index=format!("@formatted_array_index_{serial}");
             let value=argument_element(&captured,&Expr::Ident(index.clone()),&local.variables)?;
             body.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![index.clone()]});
-            body.push(Stmt::Do{var:index,start:int(1),end:length,body:vec![Stmt::CallSub{name:"@format_item".into(),args:vec![Expr::Ident(handle.clone()),value]}]});
-        } else {body.push(Stmt::CallSub{name:"@format_item".into(),args:vec![Expr::Ident(handle.clone()),item.clone()]});}
+            body.push(Stmt::Do{var:index,start:int(1),end:length,body:vec![Stmt::CallSub{name:"@format_item".into(),args:vec![Expr::Ident(handle.to_owned()),value]}]});
+        } else {body.push(Stmt::CallSub{name:"@format_item".into(),args:vec![Expr::Ident(handle.to_owned()),item.clone()]});}
     }
+    Ok(body)
+}
+
+fn formatted_capture(format:Expr,items:&[Expr],advance:Expr,symbols:&Symbols,serial:&mut usize)->Result<Vec<Stmt>> {
+    *serial+=1;
+    let handle=format!("@formatted_array_list_{serial}");
+    let mut body=vec![Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![handle.clone()]},
+        Stmt::CallSub{name:"@format_begin".into(),args:vec![Expr::Ident(handle.clone()),format,advance]}];
+    body.extend(formatted_items(&handle,items,symbols,serial)?);
     body.push(Stmt::CallSub{name:"@format_end".into(),args:vec![Expr::Ident(handle)]});
     lower_body(&mut body,symbols,serial)?;
     Ok(body)
@@ -1209,6 +1217,13 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
             }
         }
         if let Stmt::CallSub {name,args}=&stmt {
+            if name=="@format_item" && args.len()==2 && element(&args[1],&int(1),&symbols).is_ok_and(|(_,shape,_)|shape.is_some()) {
+                let Expr::Ident(handle)=&args[0] else {bail!("invalid formatted output session");};
+                let mut expanded=formatted_items(handle,&args[1..],&symbols,serial)?;
+                lower_body(&mut expanded,&symbols,serial)?;
+                output.push(Stmt::Block{body:expanded});
+                continue;
+            }
             if name=="@format_begin" {
                 if character_capacity(&args[1],&symbols)?.is_none() {
                     bail!("WRITE/PRINT format must be scalar CHARACTER");

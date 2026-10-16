@@ -14,14 +14,13 @@ outcomes at both O0 and O2:
 
 | Driver outcome | Count |
 | --- | ---: |
-| Pass against gfortran | 27 |
+| Pass against gfortran | 28 |
 | Compilation failure | 6 |
-| Incorrect output | 1 |
+| Incorrect output | 0 |
 
 All gfortran reference drivers compile and run successfully, including their
-repeat executions. The inventory records 87 passing procedures, 32 blocked procedures, and one
-partial procedure (`exe_name`, which passes its dedicated driver but also
-appears in the failing `clock_properties` group). `string_fields` and `partitions_and_runs` now
+repeat executions. The inventory records 92 passing procedures and 28 blocked
+procedures. `string_fields` and `partitions_and_runs` now
 pass following fixes to early RETURN in explicit-step loops and NINT rounding.
 `matrix_shapes` and `cumulative_sums` now pass after routing runtime selectors
 and triplets on fixed storage through the runtime section path. `diagonals`
@@ -49,12 +48,17 @@ for exact input-source and compiler hashes and every procedure's inventory entry
 
 The `environment` driver tests the original `unix` platform query using PATH.
 The `executable_name` driver tests the original `exe_name`, including GETCWD and
-GET_COMMAND_ARGUMENT. Both now pass. `clock_properties` now compiles but
-exposes incorrect date/time string output from `now`; its executable-name and
-timer checks pass. Full-module compilation next reports an
-uninitialized generated temporary at `util.f90:6661`, in the FORALL/NINT
-expression in `partition`. Isolated successes and full-module
-integration are recorded separately.
+GET_COMMAND_ARGUMENT. Both now pass. `clock_properties` also passes after
+preserving every element of the integer vector used by `now`'s internal WRITE.
+The partition driver now checks runtime-sized results repeatedly, including
+empty results. Allocation lowering continues generated-name counters across
+function specialization and enclosing-program passes, preventing its FORALL
+shape capture from referring to an unrelated temporary.
+
+The combined `kind.f90 util.f90 xutil.f90` build now compiles and executes through
+the final intentional `check_all_equal([2,3],...)` stop. This integration check
+is separate from the isolated differential results and does not validate every
+printed value or all 551 procedures.
 
 ## Running
 

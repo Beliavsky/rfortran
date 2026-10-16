@@ -4,22 +4,20 @@
     "kind": "c999f5d305aede589d31ea7585929d41e1fd5b1b86e1774f195b0b1354dec9c3",
     "manifest": "6654503f68422d27c30a65202dc3f9c4cdaba8f7cf59000627c0f5ba97c2d092"
   },
-  "compiler_sha256": "96536ebcad333620057fc2b2b4756ab3667eecb6e10c8fa53103c4752db2da26",
+  "compiler_sha256": "bbdffa7abc809c7baaecec6c13e7c13912b3fe40d63a730da7e38adda5111dc7",
   "mode": "isolated",
   "optimizations": [
     0,
     2
   ],
   "procedure_counts": {
-    "pass": 87,
+    "pass": 92,
     "untested": 431,
-    "partial": 1,
-    "blocked": 32
+    "blocked": 28
   },
   "case_outcomes": {
-    "pass": 54,
-    "compile_error": 12,
-    "output_mismatch": 2
+    "pass": 56,
+    "compile_error": 12
   },
   "cases": [
     {
@@ -274,7 +272,7 @@
         "partition",
         "max_consecutive"
       ],
-      "driver_sha256": "dd860aa0f56a421c025bcb0ab9ec97dc42ea2a873f4c998688a86f12d4375e14",
+      "driver_sha256": "ea43e315e40cc9d63571b9b63892c6672cf927e3a9f33e8346171356b882f225",
       "outcomes": {
         "isolated-O0": "pass",
         "isolated-O2": "pass"
@@ -354,8 +352,8 @@
       ],
       "driver_sha256": "6e8340387d98e3a10b4af21f2c58798208f9859375b8d46d7b1dbb848ec476ac",
       "outcomes": {
-        "isolated-O0": "output_mismatch",
-        "isolated-O2": "output_mismatch"
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
       }
     },
     {
@@ -526,7 +524,7 @@
     {
       "name": "exe_name",
       "line": 538,
-      "status": "partial",
+      "status": "pass",
       "tested_by": [
         "executable_name",
         "clock_properties"
@@ -821,7 +819,7 @@
     {
       "name": "set_time",
       "line": 1207,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "clock_properties"
       ]
@@ -829,7 +827,7 @@
     {
       "name": "wall_time_elapsed",
       "line": 1214,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "clock_properties"
       ]
@@ -837,7 +835,7 @@
     {
       "name": "time_elapsed",
       "line": 1223,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "clock_properties"
       ]
@@ -2837,7 +2835,7 @@
     {
       "name": "now",
       "line": 6304,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "clock_properties"
       ]

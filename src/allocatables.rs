@@ -1515,7 +1515,36 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
         Ok(())
     }
     let mut checks = vec![];
-    lower(&mut p.body, &Shapes::new(), &mut 0, &mut checks)?;
+    // Function specialization can already have lowered allocation blocks.
+    // Continue its numbering when finishing the enclosing program.
+    let mut serial=crate::subroutines::maximum_serial(&p.body,&["@alloc_"]);
+    lower(&mut p.body, &Shapes::new(), &mut serial, &mut checks)?;
     p.body.extend(checks);
     Ok(p)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finishing_specialized_blocks_preserves_outer_shape_storage() {
+        // Model an already-specialized array result whose extent is captured
+        // by a later FORALL allocation block. A restarted counter would rename
+        // `length` to the outer extent name, making its initializer read itself.
+        let p=Program {name:"allocation_names".into(),body:vec![
+            Stmt::VarDecl {kind:TypeSpec::Integer(Some(8)),names:vec!["@alloc_block_1".into()]},
+            assign("@alloc_block_1",int(3)),
+            Stmt::Block {body:vec![
+                Stmt::VarDecl {kind:TypeSpec::Integer(Some(8)),names:vec!["length".into()]},
+                Stmt::VarDecl {kind:TypeSpec::Logical,names:vec!["allocated".into()]},
+                assign("length",id("@alloc_block_1")),
+                assign("allocated",Expr::Logical(true)),
+                Stmt::ArrayDecl {kind:TypeSpec::Integer(None),name:"values".into(),dims:vec![int(3)]},
+                Stmt::DummyIntent {name:"values".into(),intent:"@bounded:length:allocated".into()},
+                Stmt::Print {items:vec![id("length")]},
+            ]},
+        ]};
+        crate::initialized::instrument(finish(p).unwrap()).unwrap();
+    }
 }

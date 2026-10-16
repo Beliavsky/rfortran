@@ -641,6 +641,10 @@ one record and explicit formats; internal file arrays, list-directed output,
 IOSTAT and other WRITE control options remain unsupported.
 `xstr_real.f90`, `tests/172_internal_write.f90`, and
 `python tests/test_internal_write.py` cover this behavior.
+Captured array items also retain every element after vector selection and
+function specialization. `xnow_format.f90` reproduces a calendar string written
+from an integer vector selection; `python tests/test_util_regressions.py` checks
+this alongside multidimensional, empty and runtime-sized array items.
 
 Formatted PRINT/WRITE to standard output support nested implied-DO lists with
 runtime INTEGER bounds and positive/negative steps. Controls are evaluated once
@@ -1859,7 +1863,7 @@ to verify the compatibility wrappers and multi-source fixtures.
 ### External util.f90 procedures
 
 Small drivers track progress toward compiling and running `kind.f90 util.f90
-xutil.f90`. The initial suite targets 116 specific procedures in 30 drivers and
+xutil.f90`. The suite targets 120 specific procedures in 34 drivers and
 inventories all 551 procedures in the current external utility source, leaving
 untested procedures visible. It compares native O0/O2 results with gfortran and
 retains standalone reproducers under `target/util-repros`.
@@ -1876,6 +1880,10 @@ and a release compiler build are required. This is a coverage/progress suite
 with known failures, rather than an all-passing regression gate. See
 [the runner documentation](tests/util/README.md) and
 [the coverage baseline](tests/util/baseline.json) for scope and results.
+The combined build now compiles and executes through `xutil.f90`'s final
+intentional `check_all_equal([2,3],...)` stop. This does not imply that every
+utility procedure or every output has been validated; isolated drivers remain
+the differential checks against gfortran.
 
 ### External ofort fixtures
 
