@@ -76,7 +76,10 @@ uses elemental generic matching for array arguments, retaining type, kind and
 result rank. `set_alloc_matrices` retains the shape of materialized expressions
 and uses heap descriptors for assumed-length CHARACTER allocatable dummies.
 `read_comments` can resume with an external list-directed scalar INTEGER READ
-after BACKSPACE. Its parsing buffer is checked for overlong records.
+after BACKSPACE. The shared list-directed scanner now handles multiple intrinsic-type items
+and arbitrary-length records without a fixed parsing buffer.
+`tests/test_list_read.py` covers this extension and the `xwrite_read.f90`
+round trip through a named file.
 `tests/test_remaining_util.py` covers these paths, including empty arrays,
 reallocation, PAD/ORDER, keyword arguments, exact-rank generic precedence,
 rank-15 outputs, IOSTAT, EOF and PURE internal/external I/O rules.

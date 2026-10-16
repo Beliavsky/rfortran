@@ -277,7 +277,7 @@ struct Externs {
     printf: ir::FuncRef,
     sprintf: ir::FuncRef,
     gcvt: ir::FuncRef,
-    strcmp: ir::FuncRef,
+    character_compare: ir::FuncRef,
     pow: ir::FuncRef,
     scanf: ir::FuncRef,
 
@@ -287,13 +287,13 @@ struct Externs {
     gcvt_addr: Option<ir::Value>,
     scanf_addr: Option<ir::Value>,
     pow_addr: Option<ir::Value>,
-    strcmp_addr: Option<ir::Value>,
+    character_compare_addr: Option<ir::Value>,
 
     // Signatures for call_indirect when caching is enabled
     sig_printf: Option<ir::SigRef>,
     sig_sprintf: Option<ir::SigRef>,
     sig_gcvt: Option<ir::SigRef>,
-    sig_strcmp: Option<ir::SigRef>,
+    sig_character_compare: Option<ir::SigRef>,
     sig_pow: Option<ir::SigRef>,
     sig_scanf: Option<ir::SigRef>,
 
@@ -367,12 +367,14 @@ fn declare_externs(
     let scanf_id = module.declare_function(if cfg!(windows) { "scanf" } else { "rfort_scanf" }, Linkage::Import, &sig_scanf)?;
     let scanf_ref = module.declare_func_in_func(scanf_id, b.func);
 
-    let mut sig_strcmp = Signature::new(cc);
-    sig_strcmp.params.push(AbiParam::new(ptr_ty));
-    sig_strcmp.params.push(AbiParam::new(ptr_ty));
-    sig_strcmp.returns.push(AbiParam::new(types::I32));
-    let strcmp_id = module.declare_function("strcmp", Linkage::Import, &sig_strcmp)?;
-    let strcmp_ref = module.declare_func_in_func(strcmp_id, b.func);
+    let mut sig_character_compare = Signature::new(cc);
+    sig_character_compare.params.push(AbiParam::new(ptr_ty));
+    sig_character_compare.params.push(AbiParam::new(ptr_ty));
+    sig_character_compare.params.push(AbiParam::new(ptr_ty));
+    sig_character_compare.params.push(AbiParam::new(ptr_ty));
+    sig_character_compare.returns.push(AbiParam::new(types::I32));
+    let character_compare_id = module.declare_function("rfort_character_compare", Linkage::Import, &sig_character_compare)?;
+    let character_compare_ref = module.declare_func_in_func(character_compare_id, b.func);
 
     let mut c = 0u32;
     let fmt_s = make_data(module, b, ptr_ty, &mut c, b"%s")?;
@@ -404,7 +406,7 @@ fn declare_externs(
         printf: printf_ref,
         sprintf: sprintf_ref,
         gcvt: gcvt_ref,
-        strcmp: strcmp_ref,
+        character_compare: character_compare_ref,
         pow: pow_ref,
         scanf: scanf_ref,
         printf_addr: None,
@@ -412,11 +414,11 @@ fn declare_externs(
         gcvt_addr: None,
         scanf_addr: None,
         pow_addr: None,
-        strcmp_addr: None,
+        character_compare_addr: None,
         sig_printf: None,
         sig_sprintf: None,
         sig_gcvt: None,
-        sig_strcmp: None,
+        sig_character_compare: None,
         sig_pow: None,
         sig_scanf: None,
         fmt_s,
@@ -440,7 +442,7 @@ impl Externs {
         self.gcvt_addr = Some(b.ins().func_addr(ptr_ty, self.gcvt));
         self.scanf_addr = Some(b.ins().func_addr(ptr_ty, self.scanf));
         self.pow_addr = Some(b.ins().func_addr(ptr_ty, self.pow));
-        self.strcmp_addr = Some(b.ins().func_addr(ptr_ty, self.strcmp));
+        self.character_compare_addr = Some(b.ins().func_addr(ptr_ty, self.character_compare));
 
         // Import signatures for call_indirect
         let mut sig_printf = Signature::new(cc);
@@ -475,11 +477,13 @@ impl Externs {
         sig_scanf.returns.push(AbiParam::new(types::I32));
         self.sig_scanf = Some(b.func.import_signature(sig_scanf));
 
-        let mut sig_strcmp = Signature::new(cc);
-        sig_strcmp.params.push(AbiParam::new(ptr_ty));
-        sig_strcmp.params.push(AbiParam::new(ptr_ty));
-        sig_strcmp.returns.push(AbiParam::new(types::I32));
-        self.sig_strcmp = Some(b.func.import_signature(sig_strcmp));
+        let mut sig_character_compare = Signature::new(cc);
+        sig_character_compare.params.push(AbiParam::new(ptr_ty));
+        sig_character_compare.params.push(AbiParam::new(ptr_ty));
+        sig_character_compare.params.push(AbiParam::new(ptr_ty));
+        sig_character_compare.params.push(AbiParam::new(ptr_ty));
+        sig_character_compare.returns.push(AbiParam::new(types::I32));
+        self.sig_character_compare = Some(b.func.import_signature(sig_character_compare));
     }
 
     fn call_printf(&self, b: &mut FunctionBuilder, args: &[ir::Value]) -> ir::Inst {
@@ -531,11 +535,11 @@ impl Externs {
         }
     }
 
-    fn call_strcmp(&self, b: &mut FunctionBuilder, args: &[ir::Value]) -> ir::Inst {
-        if let (Some(addr), Some(sig)) = (self.strcmp_addr, self.sig_strcmp) {
+    fn call_character_compare(&self, b: &mut FunctionBuilder, args: &[ir::Value]) -> ir::Inst {
+        if let (Some(addr), Some(sig)) = (self.character_compare_addr, self.sig_character_compare) {
             b.ins().call_indirect(sig, addr, args)
         } else {
-            b.ins().call(self.strcmp, args)
+            b.ins().call(self.character_compare, args)
         }
     }
 }
@@ -2519,6 +2523,22 @@ fn gen_stmts(
                     b.ins().store(MemFlags::new(),code,destinations[0],0);
                     continue;
                 }
+                if name=="@file_open_dynamic" {
+                    let IExpr::Ident(dest)=&args[0] else {anyhow::bail!("invalid OPEN output");};
+                    let path=characters::view(module,b,ptr_ty,dc,chars,ints,&args[1])?;
+                    let mode=eval_expr(b,ex,ptr_ty,&args[2],ints,reals,bools,func_meta);let mode=to_i64(b,mode);
+                    let requested=if matches!(&args[3],IExpr::IntLit(n) if n=="1") {b.ins().iconst(types::I64,-1)}else{let v=eval_expr(b,ex,ptr_ty,&args[4],ints,reals,bools,func_meta);to_i64(b,v)};
+                    let newunit=eval_expr(b,ex,ptr_ty,&args[3],ints,reals,bools,func_meta);let newunit=to_i64(b,newunit);
+                    let unit=file_io::open_dynamic(module,b,ptr_ty,dc,requested,path.address,path.length,mode,newunit)?;
+                    let address=storage_addr(b,ptr_ty,ints[dest]);b.ins().store(MemFlags::new(),unit,address,0);continue;
+                }
+                if name=="@format_end_file" {
+                    let h=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);let h=to_i64(b,h);
+                    let unit=eval_expr(b,ex,ptr_ty,&args[1],ints,reals,bools,func_meta);let unit=to_i64(b,unit);
+                    let file=file_io::handle(module,b,ptr_ty,dc,unit)?;
+                    let code=file_io::call(module,b,"rfort_format_end_file",&[h,file],types::I32)?;
+                    let okay=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,code,0);file_io::require(module,b,ptr_ty,dc,okay,"formatted file WRITE failed")?;continue;
+                }
                 if name=="@file_write_record" {
                     let unit=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);let unit=to_i64(b,unit);
                     let file=file_io::handle(module,b,ptr_ty,dc,unit)?;
@@ -2533,6 +2553,57 @@ fn gen_stmts(
                     let path=match args.get(1) {Some(IExpr::Str(path))=>Some(path.as_str()),_=>None};
                     file_io::operation(module,b,ptr_ty,dc,name,unit,path)?;
                     continue;
+                }
+                if name=="@list_read_internal_begin" {
+                    let [IExpr::Ident(dest),IExpr::Ident(status),source]=args.as_slice() else {anyhow::bail!("invalid internal READ session");};
+                    let source=characters::view(module,b,ptr_ty,dc,chars,ints,source)?;
+                    let handle=file_io::call(module,b,"rfort_list_read_internal_begin",&[source.address,source.length],ptr_ty)?;
+                    let failed=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,handle,0);let code=b.ins().uextend(types::I64,failed);
+                    let address=storage_addr(b,ptr_ty,ints[dest]);b.ins().store(MemFlags::new(),handle,address,0);
+                    let address=storage_addr(b,ptr_ty,ints[status]);b.ins().store(MemFlags::new(),code,address,0);continue;
+                }
+                if name=="@list_read_begin" {
+                    let [IExpr::Ident(dest),IExpr::Ident(status),unit]=args.as_slice() else {anyhow::bail!("invalid list READ session");};
+                    let unit=eval_expr(b,ex,ptr_ty,unit,ints,reals,bools,func_meta);let unit=to_i64(b,unit);
+                    let (file,code)=file_io::read_handle(module,b,ptr_ty,unit)?;
+                    // An invalid unit must not accidentally become stdin.
+                    let okay=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,code,0);
+                    let begin=b.create_block();let done=b.create_block();b.append_block_param(done,ptr_ty);b.append_block_param(done,types::I64);
+                    let null=b.ins().iconst(ptr_ty,0);b.ins().brif(okay,begin,&[],done,&[null.into(),code.into()]);
+                    b.switch_to_block(begin);b.seal_block(begin);
+                    let handle=file_io::call(module,b,"rfort_list_read_begin",&[file],ptr_ty)?;
+                    let failed=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,handle,0);let code=b.ins().uextend(types::I64,failed);
+                    b.ins().jump(done,&[handle.into(),code.into()]);b.switch_to_block(done);b.seal_block(done);
+                    let handle=b.block_params(done)[0];let code=b.block_params(done)[1];
+                    let handle=if ptr_ty==types::I64 {handle}else{b.ins().uextend(types::I64,handle)};
+                    let address=storage_addr(b,ptr_ty,ints[dest]);b.ins().store(MemFlags::new(),handle,address,0);
+                    let address=storage_addr(b,ptr_ty,ints[status]);b.ins().store(MemFlags::new(),code,address,0);continue;
+                }
+                if name=="@list_read_complex_next" {
+                    let [IExpr::Ident(status),IExpr::Ident(re),IExpr::Ident(im),handle,width]=args.as_slice() else {anyhow::bail!("invalid COMPLEX READ");};
+                    let h=eval_expr(b,ex,ptr_ty,handle,ints,reals,bools,func_meta);let h=to_i64(b,h);
+                    let width=eval_expr(b,ex,ptr_ty,width,ints,reals,bools,func_meta);let width=to_i64(b,width);
+                    let re=storage_addr(b,ptr_ty,reals[re]);let im=storage_addr(b,ptr_ty,reals[im]);
+                    let code=file_io::call(module,b,"rfort_list_read_complex_next",&[h,width,re,im],types::I64)?;
+                    let status=storage_addr(b,ptr_ty,ints[status]);b.ins().store(MemFlags::new(),code,status,0);continue;
+                }
+                if name=="@list_read_next" || name=="@list_read_end" {
+                    let h=if name=="@list_read_next" {&args[2]}else{&args[1]};
+                    let h=eval_expr(b,ex,ptr_ty,h,ints,reals,bools,func_meta);let h=to_i64(b,h);
+                    let h=if ptr_ty==types::I64 {h}else{b.ins().ireduce(ptr_ty,h)};
+                    if name=="@list_read_end" {
+                        let finish=file_io::call(module,b,"rfort_list_read_end",&[h],types::I64)?;
+                        let IExpr::Ident(status)=&args[0] else {anyhow::bail!("invalid READ status");};
+                        let address=storage_addr(b,ptr_ty,ints[status]);let previous=b.ins().load(types::I64,MemFlags::new(),address,0);
+                        let okay=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,previous,0);let code=b.ins().select(okay,finish,previous);
+                        b.ins().store(MemFlags::new(),code,address,0);continue;
+                    }
+                    let [IExpr::Ident(status),IExpr::Ident(dest),_,IExpr::IntLit(tag),IExpr::IntLit(width)]=args.as_slice() else {anyhow::bail!("invalid list READ transfer");};
+                    let tag:i64=tag.parse()?;let width:i64=width.parse()?;
+                    let slot=match tag {4=>chars.get(dest).map(|s|s.0),2=>reals.get(dest).copied(),3=>bools.get(dest).copied(),_=>ints.get(dest).copied()}.ok_or_else(||anyhow::anyhow!("missing READ destination"))?;
+                    let out=storage_addr(b,ptr_ty,slot);let tag=b.ins().iconst(types::I64,tag);let width=b.ins().iconst(ptr_ty,width);
+                    let code=file_io::call(module,b,"rfort_list_read_next",&[h,tag,width,out],types::I64)?;
+                    let address=storage_addr(b,ptr_ty,ints[status]);b.ins().store(MemFlags::new(),code,address,0);continue;
                 }
                 if name == "@read_record_status" || name=="@read_record_checked" {
                     let [IExpr::Ident(status),IExpr::Ident(dest),IExpr::IntLit(length),unit,..]=args.as_slice() else {anyhow::bail!("invalid record READ with IOSTAT");};
@@ -3241,7 +3312,9 @@ fn gen_stmts(
                                                 let bytes = lit.as_bytes();
                                                 let litp = make_data(module, b, ptr_ty, dc, bytes)?;
                                                 let selp = storage_addr(b, ptr_ty, *ss);
-                                                let call = ex.call_strcmp(b, &[selp, litp]);
+                                                let sel_length=b.ins().iconst(ptr_ty,*_len as i64);
+                                                let lit_length=b.ins().iconst(ptr_ty,bytes.len() as i64);
+                                                let call = ex.call_character_compare(b, &[selp, sel_length, litp, lit_length]);
                                                 let res = b.inst_results(call)[0];
                                                 let zero = b.ins().iconst(ir::types::I32, 0);
                                                 let eq = b.ins().icmp(
@@ -3262,7 +3335,9 @@ fn gen_stmts(
                                                     let litp =
                                                         make_data(module, b, ptr_ty, dc, bytes)?;
                                                     let selp = storage_addr(b, ptr_ty, *ss);
-                                                    let call = ex.call_strcmp(b, &[selp, litp]);
+                                                    let sel_length=b.ins().iconst(ptr_ty,*_len as i64);
+                                                let lit_length=b.ins().iconst(ptr_ty,bytes.len() as i64);
+                                                let call = ex.call_character_compare(b, &[selp, sel_length, litp, lit_length]);
                                                     let res = b.inst_results(call)[0];
                                                     let zero = b.ins().iconst(ir::types::I32, 0);
                                                     let eq = b.ins().icmp(

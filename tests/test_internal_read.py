@@ -76,7 +76,7 @@ class InternalRead(unittest.TestCase):
         for text in ["bad", ""]:
             source = self.directory / "error.f90"
             source.write_text(f"character(len=8) :: text\ninteger :: n\ntext='{text}'\nread(text,*) n\nprint *,n\nend\n")
-            self.check_program(source, "internal integer READ failed")
+            self.check_program(source, "internal list-directed READ failed")
 
 
 if __name__ == "__main__":

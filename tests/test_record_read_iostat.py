@@ -122,7 +122,7 @@ end program main
             ("character::text\nreal::status", "read(*,'(a)',iostat=status) text", "IOSTAT must be a writable scalar INTEGER"),
             ("character::text\ninteger::status(2)", "read(*,'(a)',iostat=status) text", "IOSTAT must be a writable scalar INTEGER"),
             ("character::text", "read(*,'(a)',iostat=0) text", "IOSTAT must be a writable scalar INTEGER"),
-            ("character::text\ninteger,parameter::status=0", "read(*,'(a)',iostat=status) text", "IOSTAT must be a writable scalar INTEGER"),
+            ("character::text\ninteger,parameter::status=0", "read(*,'(a)',iostat=status) text", "cannot modify PARAMETER `status`"),
             ("integer::text,status", "read(*,'(a)',iostat=status) text", "CHARACTER variable"),
             ("character::text(2)\ninteger::status", "read(*,'(a)',iostat=status) text", "CHARACTER"),
             ("character::text\ninteger::status", "read(*,'(a4)',iostat=status) text", "only the (A) format"),

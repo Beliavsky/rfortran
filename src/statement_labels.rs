@@ -153,7 +153,7 @@ fn replace_end(
 ) -> Result<bool> {
     if let Stmt::CallSub { name, args } = stmt {
         let offset = match name.as_str() {
-            "@empty_read" => Some(1),
+            "@empty_read" | "@internal_read" => Some(1),
             "@formatted_read_status" => Some(2),
             _ => None,
         };
@@ -351,7 +351,7 @@ fn unit(body: &mut Vec<Stmt>) -> Result<()> {
     let mut temps = vec![];
     forward_regions(body, &mut temps)?;
     if unresolved_end(body) {
-        bail!("READ END= currently requires an empty list-directed or scalar CHARACTER formatted READ and a forward label outside intervening loops");
+        bail!("READ END= currently requires an list-directed or scalar CHARACTER formatted READ and a forward label outside intervening loops");
     }
     if !temps.is_empty() {
         body.insert(

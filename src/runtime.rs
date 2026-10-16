@@ -19,6 +19,8 @@ pub fn interpret(program: &Program) {
         static OUTPUT_LISTS: std::cell::RefCell<HashMap<i64,(String,bool,Vec<Expr>)>> = std::cell::RefCell::new(HashMap::new());
         static OUTPUT_SERIAL: std::cell::Cell<i64> = const {std::cell::Cell::new(0)};
     }
+    thread_local! {static INPUT_LISTS:std::cell::RefCell<HashMap<i64,(i64,crate::list_input::Session,Option<(Vec<u8>,usize)>)>>=std::cell::RefCell::new(HashMap::new());}
+    INPUT_LISTS.with(|lists|lists.borrow_mut().clear());
     OUTPUT_LISTS.with(|lists|lists.borrow_mut().clear());
     OUTPUT_SERIAL.with(|serial|serial.set(0));
     thread_local! { static SAVED: std::cell::RefCell<HashMap<String,ValueTuple>> = std::cell::RefCell::new(HashMap::new()); }
@@ -1362,6 +1364,14 @@ pub fn interpret(program: &Program) {
                         text.truncate(length);text.push_str(&" ".repeat(length-text.len()));frame.env_str.insert(dest.clone(),text);
                         idx+=1;continue;
                     }
+                    if name=="@file_open_dynamic" {
+                        let Expr::Ident(dest)=&args[0] else {unreachable!()};let fr=call_stack.last().unwrap().clone();
+                        let path=eval_expr(&args[1],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).3.unwrap();
+                        let mode=eval_expr(&args[2],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
+                        let requested=if matches!(&args[3],Expr::IntLit(n) if n=="1") {None}else{Some(eval_expr(&args[4],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap())};
+                        let unit=io_result(FILES.with(|files|files.borrow_mut().open_dynamic(requested,&path,mode)));
+                        call_stack.last_mut().unwrap().env_int.insert(dest.clone(),unit);idx+=1;continue;
+                    }
                     if name=="@file_write_record" {
                         let fr=call_stack.last().unwrap().clone();
                         let unit=eval_expr(&args[0],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
@@ -1379,6 +1389,43 @@ pub fn interpret(program: &Program) {
                         let path=match args.get(1) {Some(Expr::Str(path))=>Some(path.as_str()),_=>None};
                         io_result(FILES.with(|files| files.borrow_mut().operation(name,unit,path)));
                         idx+=1;continue;
+                    }
+                    if name=="@list_read_begin" || name=="@list_read_internal_begin" {
+                        let [Expr::Ident(handle),Expr::Ident(status),unit]=args.as_slice() else {unreachable!()};
+                        let fr=call_stack.last().unwrap().clone();
+                        let value=eval_expr(unit,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack);
+                        let internal=name=="@list_read_internal_begin";
+                        let unit=if internal {0}else{value.0.unwrap()};
+                        let source=if internal {Some((value.3.unwrap().into_bytes(),0usize))}else{None};
+                        let h=OUTPUT_SERIAL.with(|s|{let n=s.get()+1;s.set(n);n});
+                        INPUT_LISTS.with(|lists|lists.borrow_mut().insert(h,(unit,crate::list_input::Session::new(),source)));
+                        let fr=call_stack.last_mut().unwrap();fr.env_int.insert(handle.clone(),h);fr.env_int.insert(status.clone(),0);idx+=1;continue;
+                    }
+                    if name=="@list_read_next" || name=="@list_read_complex_next" || name=="@list_read_end" {
+                        let fr=call_stack.last().unwrap();let Expr::Ident(h)=&args[if name=="@list_read_next" {2}else if name=="@list_read_complex_next" {3}else{1}] else {unreachable!()};let h=fr.env_int[h];
+                        if name=="@list_read_end" {
+                            let (unit,mut session,mut source)=INPUT_LISTS.with(|lists|lists.borrow_mut().remove(&h).unwrap());
+                            let code=FILES.with(|files|session.finish(||if let Some((text,offset))=&mut source {let c=text.get(*offset).copied();*offset+=usize::from(c.is_some());Ok(c)}else{files.borrow_mut().input_byte(unit)}));
+                            let Expr::Ident(status)=&args[0] else {unreachable!()};let fr=call_stack.last_mut().unwrap();if fr.env_int[status]==0 {fr.env_int.insert(status.clone(),code);}idx+=1;continue;
+                        }
+                        if name=="@list_read_complex_next" {
+                            let [Expr::Ident(status),Expr::Ident(re),Expr::Ident(im),_,Expr::IntLit(width)]=args.as_slice() else {unreachable!()};
+                            let width:usize=width.parse().unwrap();let mut out=[0;16];
+                            let code=INPUT_LISTS.with(|lists|{let mut lists=lists.borrow_mut();let (unit,session,source)=lists.get_mut(&h).unwrap();FILES.with(|files|session.next(5,width,&mut out,||if let Some((text,offset))=source {let c=text.get(*offset).copied();*offset+=usize::from(c.is_some());Ok(c)}else{files.borrow_mut().input_byte(*unit)}))});
+                            let fr=call_stack.last_mut().unwrap();fr.env_int.insert(status.clone(),code);
+                            if code==0 {for (name,bytes) in [(re,&out[..8]),(im,&out[8..])] {let n=f64::from_ne_bytes(bytes.try_into().unwrap());if width==4 {fr.env_real32.insert(name.clone(),n as f32);}else{fr.env_real64.insert(name.clone(),n);}}}idx+=1;continue;
+                        }
+                        let [Expr::Ident(status),Expr::Ident(dest),_,Expr::IntLit(tag),Expr::IntLit(width)]=args.as_slice() else {unreachable!()};
+                        let tag:i64=tag.parse().unwrap();let width:usize=width.parse().unwrap();let mut out=vec![0;if tag==4 {width}else{8}];
+                        let code=INPUT_LISTS.with(|lists|{let mut lists=lists.borrow_mut();let (unit,session,source)=lists.get_mut(&h).unwrap();FILES.with(|files|session.next(tag,width,&mut out,||if let Some((text,offset))=source {let c=text.get(*offset).copied();*offset+=usize::from(c.is_some());Ok(c)}else{files.borrow_mut().input_byte(*unit)}))});
+                        let fr=call_stack.last_mut().unwrap();fr.env_int.insert(status.clone(),code);
+                        if code==0 {match tag {
+                            1=>{fr.env_int.insert(dest.clone(),i64::from_ne_bytes(out.try_into().unwrap()));}
+                            2=>{let n=f64::from_ne_bytes(out.try_into().unwrap());if width==4 {fr.env_real32.insert(dest.clone(),n as f32);}else{fr.env_real64.insert(dest.clone(),n);}}
+                            3=>{fr.env_log.insert(dest.clone(),i64::from_ne_bytes(out.try_into().unwrap())!=0);}
+                            4=>{fr.env_str.insert(dest.clone(),String::from_utf8(out).unwrap());}
+                            _=>unreachable!()
+                        }}idx+=1;continue;
                     }
                     if name == "@read_record_status" || name=="@read_record_checked" {
                         let [Expr::Ident(status),Expr::Ident(dest),Expr::IntLit(length),unit,..] = args.as_slice() else { unreachable!() };
@@ -1430,7 +1477,7 @@ pub fn interpret(program: &Program) {
                         call_stack.last_mut().unwrap().env_int.insert(dest.clone(),handle);
                         idx+=1;continue;
                     }
-                    if name=="@format_item" || name=="@format_end" || name=="@internal_format_end" {
+                    if name=="@format_item" || name=="@format_end" || name=="@internal_format_end" || name=="@format_end_file" {
                         let fr=call_stack.last().unwrap().clone();
                         let handle=eval_expr(&args[usize::from(name=="@internal_format_end")],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
                         if name=="@format_item" {
@@ -1442,15 +1489,18 @@ pub fn interpret(program: &Program) {
                             let (format,advance,items)=OUTPUT_LISTS.with(|lists|lists.borrow_mut().remove(&handle).unwrap());
                             let internal=name=="@internal_format_end";
                             let destination=if internal {Some((args[0].clone(),args[2].clone()))} else {None};
+                            let file=if name=="@format_end_file" {Some(args[1].clone())}else{None};
                             let mut args=vec![Expr::Str(format)];args.extend(items);
+                            if let Some(unit)=file {args.push(unit);exec_stmts(&[Stmt::CallSub{name:"@file_formatted_record".into(),args}],funcs,call_stack);idx+=1;continue;}
                             if let Some((target,length))=destination {args.extend([target,length]);}
                             exec_stmts(&[Stmt::CallSub {name:if internal {"@internal_formatted_record"} else if advance {"@formatted_print"} else {"@formatted_write_noadvance"}.into(),args}],funcs,call_stack);
                         }
                         idx+=1;continue;
                     }
-                    if name == "@formatted_print" || name == "@formatted_write_noadvance" || name=="@internal_formatted_record" {
+                    if name == "@formatted_print" || name == "@formatted_write_noadvance" || name=="@internal_formatted_record" || name=="@file_formatted_record" {
                         let internal=name=="@internal_formatted_record";
-                        let end=args.len()-if internal {2} else {0};
+                        let external=name=="@file_formatted_record";
+                        let end=args.len()-if internal {2} else if external {1}else {0};
                         let fr=call_stack.last().unwrap().clone();
                         let format=eval_expr(&args[0],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).3.unwrap();
                         let fields=crate::formatting::parse(&format,end-1).unwrap_or_else(|e| {
@@ -1484,6 +1534,11 @@ pub fn interpret(program: &Program) {
                             output.extend(std::iter::repeat_n(' ',length-output.len()));
                             call_stack.last_mut().unwrap().env_str.insert(destination.clone(),output);
                             idx+=1;continue;
+                        }
+                        if external {
+                            let unit=eval_expr(&args[end],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
+                            let output=output.strip_suffix('\n').unwrap_or(&output);
+                            io_result(FILES.with(|files|files.borrow_mut().write_record(unit,output)));idx+=1;continue;
                         }
                         print!("{output}");
                         if name == "@formatted_write_noadvance" {
@@ -1678,6 +1733,11 @@ pub fn interpret(program: &Program) {
                                         e, &strs, &ints, &r32, &r64, &logs, funcs, call_stack,
                                     );
 
+                                    if let (Some(left),Some(right))=(&sel.3,&v.3) {
+                                        if crate::character_input::compare(left.as_bytes(),right.as_bytes())==0 {
+                                            matched=true;if let Some(ret)=exec_stmts(&cb.body,funcs,call_stack) {return Some(ret);}break;
+                                        }continue;
+                                    }
                                     if let (Some(si), Some(ii)) = (sel.0, v.0) {
                                         if si == ii {
                                             matched = true;

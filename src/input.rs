@@ -2,9 +2,8 @@
 // Copyright (c) 2026 Beliavsky
 // See LICENSE-MIT in the repository root.
 
-//! Lower the supported internal integer READ to ordinary control flow.
-//! Native execution and the interpreter share this scanner and its overflow checks.
-use crate::ast::{BinOp, Expr, Stmt, TypeSpec, UnOp};
+//! Lower READ statements to shared, statement-scoped input sessions.
+use crate::ast::{BinOp, Expr, Stmt, TypeSpec};
 use anyhow::{bail, Result};
 use std::collections::HashMap;
 
@@ -18,7 +17,6 @@ pub(crate) fn read_controls(
     let mut option = None;
     let mut named = false;
     let mut seen = std::collections::HashSet::new();
-    let mut stdin_star = false;
     for (position, value) in controls.into_iter().enumerate() {
         let (key, value) = match value {
             Expr::Call(name, args) if name.starts_with("@read_control:") => {
@@ -43,7 +41,6 @@ pub(crate) fn read_controls(
         let star = matches!(&value,Expr::Call(n,_) if n=="@write_star");
         match key.as_str() {
             "unit" => {
-                stdin_star = star;
                 unit = Some(if star { int(5) } else { value });
             }
             "fmt" => format = Some(value),
@@ -63,9 +60,6 @@ pub(crate) fn read_controls(
     let list = matches!(&format,Expr::Call(n,_) if n=="@write_star");
     if !list && items.is_empty() {
         return Err("empty READ currently requires list-directed FMT='*'");
-    }
-    if list && stdin_star && option.is_none() && !items.is_empty() {
-        return Ok(Stmt::Read { args: items });
     }
     let empty = items.is_empty();
     let mut args = vec![unit];
@@ -118,19 +112,6 @@ fn branch(cond: Expr, body: Vec<Stmt>) -> Stmt {
 fn equal(n: &str, value: i64) -> Expr {
     bin(BinOp::Eq, var(n), int(value))
 }
-fn one_of(n: &str, values: &[i64]) -> Expr {
-    values
-        .iter()
-        .map(|&v| equal(n, v))
-        .reduce(|a, b| bin(BinOp::Or, a, b))
-        .unwrap()
-}
-fn space(n: &str) -> Expr {
-    one_of(n, &[9, 10, 13, 32])
-}
-fn boundary(n: &str) -> Expr {
-    bin(BinOp::Or, space(n), one_of(n, &[0, 44, 47]))
-}
 fn integer_kind(e: &Expr, symbols: &HashMap<String, (TypeSpec, Vec<Expr>)>) -> Option<u8> {
     let Expr::Ident(name) = e else {
         return None;
@@ -141,281 +122,386 @@ fn integer_kind(e: &Expr, symbols: &HashMap<String, (TypeSpec, Vec<Expr>)>) -> O
     }
 }
 
-pub(crate) fn lower_integer_read(
+pub(crate) fn lower_list_read(
     args: &[Expr],
     symbols: &HashMap<String, (TypeSpec, Vec<Expr>)>,
     serial: &mut usize,
 ) -> Result<Stmt> {
-    if let Some(unit)=args.first() {
-        if crate::output::integer(unit,symbols) {return lower_external_integer_read(args,symbols,serial);}
+    lower_session_read(args, symbols, serial)
+}
+
+fn lower_session_read(
+    args: &[Expr],
+    symbols: &HashMap<String, (TypeSpec, Vec<Expr>)>,
+    serial: &mut usize,
+) -> Result<Stmt> {
+    let [unit, Expr::Str(control), status, items @ ..] = args else {
+        bail!("invalid external READ");
+    };
+    let internal = !crate::output::integer(unit, symbols);
+    if internal
+        && !matches!(unit,Expr::Ident(n) if matches!(symbols.get(n),Some((TypeSpec::Character(_),dims)) if dims.is_empty()))
+    {
+        bail!("internal READ requires a scalar CHARACTER variable as its unit");
     }
-    let [source, Expr::Str(control), status, destination] = args else {
-        bail!("internal list-directed READ currently supports one scalar INTEGER destination");
-    };
-    if !control.is_empty() && !control.eq_ignore_ascii_case("iostat") {
-        bail!("internal READ currently supports only the IOSTAT control specifier");
+    if control.eq_ignore_ascii_case("iostat") && items.iter().any(|item| item == status) {
+        bail!("IOSTAT and an input destination must be distinct variables");
     }
-    let length = match source {
-        Expr::Ident(name) => match symbols.get(name) {
-            Some((TypeSpec::Character(len), dims)) if dims.is_empty() => len.unwrap_or(1),
-            _ => bail!("internal READ requires a scalar CHARACTER variable as its unit"),
-        },
-        _ => bail!("internal READ requires a scalar CHARACTER variable as its unit"),
-    };
-    if let Expr::Ident(dest)=destination {
-        if let Some((TypeSpec::Character(len),dims))=symbols.get(dest) {
-            if dims.is_empty() {return lower_character_read(source,control,status,dest,len.unwrap_or(1),symbols,serial);}
-        }
+    if !internal && crate::parameters::integer_constant(unit).ok() != Some(5) {
+        crate::file_io::unit(unit, symbols)?;
     }
-    let Some(kind @ (1 | 2 | 4 | 8)) = integer_kind(destination, symbols) else {
-        bail!("internal READ destination must be a writable scalar INTEGER of kind 1, 2, 4, or 8");
-    };
-    let Expr::Ident(dest) = destination else {
-        unreachable!()
-    };
-    let iostat = if control.is_empty() {
-        None
-    } else {
-        if !matches!(integer_kind(status, symbols), Some(4 | 8)) {
-            bail!("IOSTAT must be a writable scalar INTEGER of kind 4 or 8");
-        }
-        let Expr::Ident(name) = status else {
-            unreachable!()
-        };
-        if name == dest {
-            bail!("IOSTAT and the input destination must be distinct variables");
-        }
-        Some(name)
-    };
+    if !control.is_empty()
+        && (!control.eq_ignore_ascii_case("iostat")
+            || !matches!(integer_kind(status, symbols), Some(1 | 2 | 4 | 8)))
+    {
+        bail!("IOSTAT must be a writable scalar INTEGER of kind 1, 2, 4, or 8");
+    }
     *serial += 1;
-    let names: Vec<String> = [
-        "byte", "offset", "value", "sign", "digits", "status", "phase",
-    ]
-    .iter()
-    .map(|n| format!("@internal_read_{serial}_{n}"))
-    .collect();
-    let (byte, offset, value, sign, digits, stat, phase) = (
-        &names[0], &names[1], &names[2], &names[3], &names[4], &names[5], &names[6],
-    );
-    let fetch = Stmt::CallSub {
-        name: "@internal_read_byte".into(),
-        args: vec![var(byte), source.clone(), var(offset), int(length as i64)],
-    };
-    let advance = vec![
-        set(offset, bin(BinOp::Add, var(offset), int(1))),
-        fetch.clone(),
-    ];
-    let error = vec![set(stat, int(1)), Stmt::Exit];
-    // Accumulate negatively so -2**63 can be represented without overflow.
-    let overflow = bin(
-        BinOp::Or,
-        bin(BinOp::Lt, var(value), int(i64::MIN / 10)),
-        bin(
-            BinOp::And,
-            equal(value, i64::MIN / 10),
-            bin(BinOp::Gt, var(byte), int(56)),
-        ),
-    );
-    let mut digit_body = vec![
-        branch(overflow, error.clone()),
-        set(
-            value,
-            bin(
-                BinOp::Sub,
-                bin(BinOp::Mul, var(value), int(10)),
-                bin(BinOp::Sub, var(byte), int(48)),
-            ),
-        ),
-        set(digits, bin(BinOp::Add, var(digits), int(1))),
-    ];
-    digit_body.extend(advance.clone());
-    let digit_loop = Stmt::DoWhile {
-        cond: bin(
-            BinOp::And,
-            bin(BinOp::Ge, var(byte), int(48)),
-            bin(BinOp::Le, var(byte), int(57)),
-        ),
-        body: digit_body,
-    };
-    let mut sign_body = vec![
-        set(sign, int(1)),
-        branch(equal(byte, 45), vec![set(sign, int(-1))]),
-    ];
-    sign_body.extend(advance.clone());
-    let mut repeat_body = vec![branch(
-        bin(
-            BinOp::Or,
-            bin(BinOp::Ne, var(sign), int(0)),
-            one_of(value, &[0, i64::MIN]),
-        ),
-        error.clone(),
-    )];
-    repeat_body.extend(advance);
-    repeat_body.push(Stmt::Cycle);
-    let minimum = match kind {
-        1 => i8::MIN as i64,
-        2 => i16::MIN as i64,
-        4 => i32::MIN as i64,
-        _ => i64::MIN,
-    };
-    let maximum = match kind {
-        1 => i8::MAX as i64,
-        2 => i16::MAX as i64,
-        4 => i32::MAX as i64,
-        _ => i64::MAX,
-    };
-    let out_of_range = bin(
-        BinOp::Or,
-        bin(
-            BinOp::And,
-            bin(BinOp::Lt, var(sign), int(0)),
-            bin(BinOp::Lt, var(value), int(minimum)),
-        ),
-        bin(
-            BinOp::And,
-            bin(BinOp::Ge, var(sign), int(0)),
-            bin(BinOp::Lt, var(value), int(-maximum)),
-        ),
-    );
-    let parse = Stmt::Do {
-        var: phase.clone(),
-        start: int(1),
-        end: int(2),
-        body: vec![
-            set(value, int(0)),
-            set(sign, int(0)),
-            set(digits, int(0)),
-            branch(one_of(byte, &[43, 45]), sign_body),
-            digit_loop,
-            branch(bin(BinOp::Ne, var(stat), int(0)), vec![Stmt::Exit]),
-            branch(
-                equal(digits, 0),
-                vec![
-                    // A null value (comma, slash, or r*) leaves the variable unchanged.
-                    branch(
-                        bin(
-                            BinOp::Or,
-                            bin(BinOp::Ne, var(sign), int(0)),
-                            Expr::Un(UnOp::Not, Box::new(boundary(byte))),
-                        ),
-                        vec![set(stat, int(1))],
-                    ),
-                    Stmt::Exit,
-                ],
-            ),
-            branch(
-                bin(BinOp::And, equal(phase, 1), equal(byte, 42)),
-                repeat_body,
-            ),
-            branch(Expr::Un(UnOp::Not, Box::new(boundary(byte))), error.clone()),
-            branch(out_of_range, error),
-            branch(
-                bin(BinOp::Ge, var(sign), int(0)),
-                vec![set(value, Expr::Un(UnOp::Neg, Box::new(var(value))))],
-            ),
-            set(dest, var(value)),
-            Stmt::Exit,
-        ],
-    };
+    let handle = format!("@list_read_handle_{serial}");
+    let code = format!("@list_read_status_{serial}");
     let mut body = vec![
         Stmt::VarDecl {
             kind: TypeSpec::Integer(Some(8)),
-            names: names.clone(),
+            names: vec![handle.clone()],
         },
-        set(offset, int(0)),
-        set(stat, int(0)),
-        fetch,
-        Stmt::DoWhile {
-            cond: space(byte),
-            body: vec![
-                set(offset, bin(BinOp::Add, var(offset), int(1))),
-                Stmt::CallSub {
-                    name: "@internal_read_byte".into(),
-                    args: vec![var(byte), source.clone(), var(offset), int(length as i64)],
-                },
-            ],
+        Stmt::VarDecl {
+            kind: TypeSpec::Integer(None),
+            names: vec![code.clone()],
         },
-        Stmt::If {
-            cond: equal(byte, 0),
-            then_body: vec![set(stat, int(-1))],
-            else_body: Some(vec![parse]),
+        set(&code, int(0)),
+        Stmt::CallSub {
+            name: if internal {
+                "@list_read_internal_begin"
+            } else {
+                "@list_read_begin"
+            }
+            .into(),
+            args: vec![var(&handle), var(&code), unit.clone()],
         },
-        // Error/EOF does not define an input item. Conservatively invalidate it.
-        branch(
-            bin(BinOp::Ne, var(stat), int(0)),
-            vec![Stmt::CallSub {
-                name: "@undefine".into(),
-                args: vec![var(dest)],
-            }],
-        ),
     ];
-    if let Some(iostat) = iostat {
-        body.push(set(iostat, var(stat)));
-    } else {
+    emit_read_items(items, symbols, serial, &handle, &code, &mut body)?;
+    body.push(Stmt::CallSub {
+        name: "@list_read_end".into(),
+        args: vec![var(&code), var(&handle)],
+    });
+    if control.is_empty() {
         body.push(branch(
-            bin(BinOp::Ne, var(stat), int(0)),
+            bin(BinOp::Ne, var(&code), int(0)),
             vec![Stmt::CallSub {
                 name: "@error_stop".into(),
                 args: vec![Expr::Str(
-                    "internal integer READ failed: invalid input or end of record".into(),
+                    if internal {
+                        "internal list-directed READ failed: invalid input or end of file"
+                    } else {
+                        "list-directed READ failed: invalid input or end of file"
+                    }
+                    .into(),
                 )],
             }],
         ));
+    } else {
+        let Expr::Ident(status) = status else {
+            bail!("IOSTAT requires a variable");
+        };
+        body.push(set(status, var(&code)));
     }
     Ok(Stmt::Block { body })
 }
-
-fn lower_external_integer_read(args:&[Expr],symbols:&HashMap<String,(TypeSpec,Vec<Expr>)>,serial:&mut usize)->Result<Stmt> {
-    let [unit,Expr::Str(control),status,Expr::Ident(dest)]=args else {bail!("external list-directed READ currently supports one scalar INTEGER destination");};
-    if crate::parameters::integer_constant(unit).ok()!=Some(5) {crate::file_io::unit(unit,symbols)?;}
-    if !control.is_empty() && (!control.eq_ignore_ascii_case("iostat") || !matches!(integer_kind(status,symbols),Some(4|8))) {bail!("IOSTAT must be a writable scalar INTEGER of kind 4 or 8");}
-    *serial+=1;
-    let buffer=format!("@external_integer_buffer_{serial}");
-    let code=format!("@external_integer_status_{serial}");
-    let saved_unit=format!("@external_integer_unit_{serial}");
-    let offset=format!("@external_integer_offset_{serial}");
-    let byte=format!("@external_integer_byte_{serial}");
-    let mut scope=symbols.clone();
-    scope.insert(buffer.clone(),(TypeSpec::Character(Some(4096)),vec![]));
-    scope.insert(code.clone(),(TypeSpec::Integer(None),vec![]));
-    let parse=lower_integer_read(&[var(&buffer),Expr::Str("iostat".into()),var(&code),var(dest)],&scope,serial)?;
-    let fetch=Stmt::CallSub{name:"@read_record_checked".into(),args:vec![var(&code),var(&buffer),int(4096),var(&saved_unit)]};
-    let next_byte=Stmt::CallSub{name:"@internal_read_byte".into(),args:vec![var(&byte),var(&buffer),var(&offset),int(4096)]};
-    let mut body=vec![
-        Stmt::VarDecl{kind:TypeSpec::Character(Some(4096)),names:vec![buffer.clone()]},
-        Stmt::VarDecl{kind:TypeSpec::Integer(None),names:vec![code.clone()]},
-        Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![saved_unit.clone(),offset.clone(),byte.clone()]},
-        set(&saved_unit,unit.clone()),set(&buffer,Expr::Str(String::new())),
-        Stmt::DoWhile{cond:Expr::Logical(true),body:vec![fetch,branch(bin(BinOp::Ne,var(&code),int(0)),vec![Stmt::Exit]),set(&offset,int(0)),next_byte.clone(),Stmt::DoWhile{cond:space(&byte),body:vec![set(&offset,bin(BinOp::Add,var(&offset),int(1))),next_byte]},branch(bin(BinOp::Ne,var(&byte),int(0)),vec![Stmt::Exit])]},
-        Stmt::If{cond:equal(&code,0),then_body:vec![parse],else_body:Some(vec![Stmt::CallSub{name:"@undefine".into(),args:vec![var(dest)]}])},
-    ];
-    if control.is_empty() {
-        body.push(branch(equal(&code,crate::record_input::TOO_LONG),vec![Stmt::CallSub{name:"@error_stop".into(),args:vec![Expr::Str("external integer READ record exceeds 4096 characters".into())]}]));
-        body.push(branch(bin(BinOp::Ne,var(&code),int(0)),vec![Stmt::CallSub{name:"@error_stop".into(),args:vec![Expr::Str("external integer READ failed: invalid input or end of file".into())]}]));
+fn emit_read_items(
+    items: &[Expr],
+    symbols: &HashMap<String, (TypeSpec, Vec<Expr>)>,
+    serial: &mut usize,
+    handle: &str,
+    code: &str,
+    body: &mut Vec<Stmt>,
+) -> Result<()> {
+    for item in items {
+        if let Expr::Call(n, a) = item {
+            if n == "@input_implied_do" || n == "@output_implied_do" {
+                let Expr::Ident(index) = &a[0] else {
+                    bail!("READ implied-DO requires an INTEGER variable");
+                };
+                let mut inner = vec![];
+                emit_read_items(&a[4..], symbols, serial, handle, code, &mut inner)?;
+                inner.push(branch(bin(BinOp::Ne, var(code), int(0)), vec![Stmt::Exit]));
+                if !crate::output::integer(&a[0], symbols) {
+                    bail!("READ implied-DO requires an INTEGER variable");
+                }
+                *serial += 1;
+                let first = format!("@read_first_{serial}");
+                let last = format!("@read_last_{serial}");
+                let step = format!("@read_step_{serial}");
+                body.push(Stmt::VarDecl {
+                    kind: TypeSpec::Integer(Some(8)),
+                    names: vec![first.clone(), last.clone(), step.clone()],
+                });
+                body.extend([
+                    set(&first, a[1].clone()),
+                    set(&last, a[2].clone()),
+                    set(&step, a[3].clone()),
+                    branch(
+                        equal(&step, 0),
+                        vec![Stmt::CallSub {
+                            name: "@error_stop".into(),
+                            args: vec![Expr::Str("READ implied-DO step must not be zero".into())],
+                        }],
+                    ),
+                    set(index, var(&first)),
+                ]);
+                let overflow = vec![Stmt::CallSub {
+                    name: "@error_stop".into(),
+                    args: vec![Expr::Str("READ implied-DO variable overflow".into())],
+                }];
+                inner.push(Stmt::If {
+                    cond: bin(BinOp::Gt, var(&step), int(0)),
+                    then_body: vec![branch(
+                        bin(
+                            BinOp::Gt,
+                            var(index),
+                            bin(BinOp::Sub, int(i64::MAX), var(&step)),
+                        ),
+                        overflow.clone(),
+                    )],
+                    else_body: Some(vec![branch(
+                        bin(
+                            BinOp::Lt,
+                            var(index),
+                            bin(BinOp::Sub, int(i64::MIN), var(&step)),
+                        ),
+                        overflow,
+                    )]),
+                });
+                inner.push(set(index, bin(BinOp::Add, var(index), var(&step))));
+                let cond = bin(
+                    BinOp::Or,
+                    bin(
+                        BinOp::And,
+                        bin(BinOp::Gt, var(&step), int(0)),
+                        bin(BinOp::Le, var(index), var(&last)),
+                    ),
+                    bin(
+                        BinOp::And,
+                        bin(BinOp::Lt, var(&step), int(0)),
+                        bin(BinOp::Ge, var(index), var(&last)),
+                    ),
+                );
+                body.push(Stmt::DoWhile { cond, body: inner });
+                continue;
+            }
+            if n == "@array_constructor" {
+                emit_read_items(a, symbols, serial, handle, code, body)?;
+                continue;
+            }
+        }
+        if let Expr::Call(n, a) = item {
+            if n == "@input_complex" {
+                *serial += 1;
+                let re = format!("@read_re_{serial}");
+                let im = format!("@read_im_{serial}");
+                let width = crate::parameters::integer_constant(&a[2])?;
+                let store = |target: &Expr, value: Expr| -> Result<Stmt> {
+                    Ok(match target {
+                        Expr::Ident(n) => set(n, value),
+                        Expr::Index(n, indices) | Expr::Call(n, indices) => Stmt::AssignIndex {
+                            name: n.clone(),
+                            indices: indices.clone(),
+                            value,
+                        },
+                        _ => bail!("COMPLEX READ requires writable storage"),
+                    })
+                };
+                body.push(branch(
+                    equal(code, 0),
+                    vec![
+                        Stmt::VarDecl {
+                            kind: if width == 8 {
+                                TypeSpec::DoublePrecision
+                            } else {
+                                TypeSpec::Real
+                            },
+                            names: vec![re.clone(), im.clone()],
+                        },
+                        set(&re, Expr::RealLit("0.0".into())),
+                        set(&im, Expr::RealLit("0.0".into())),
+                        Stmt::CallSub {
+                            name: "@list_read_complex_next".into(),
+                            args: vec![var(code), var(&re), var(&im), var(handle), int(width)],
+                        },
+                        branch(
+                            equal(code, 0),
+                            vec![store(&a[0], var(&re))?, store(&a[1], var(&im))?],
+                        ),
+                        branch(
+                            bin(
+                                BinOp::And,
+                                bin(BinOp::Ne, var(code), int(0)),
+                                bin(BinOp::Ne, var(code), int(-2)),
+                            ),
+                            vec![
+                                Stmt::CallSub {
+                                    name: "@undefine".into(),
+                                    args: vec![a[0].clone()],
+                                },
+                                Stmt::CallSub {
+                                    name: "@undefine".into(),
+                                    args: vec![a[1].clone()],
+                                },
+                            ],
+                        ),
+                        branch(equal(code, -2), vec![set(code, int(0))]),
+                    ],
+                ));
+                continue;
+            }
+        }
+        if let Expr::Call(n, a) = item {
+            if n == "@input_character_slot" {
+                let mut cases = vec![];
+                // Select storage before fetching a value; no uninitialized slot is read.
+                *serial += 1;
+                let selected = format!("@read_character_index_{serial}");
+                body.push(Stmt::VarDecl {
+                    kind: TypeSpec::Integer(Some(8)),
+                    names: vec![selected.clone()],
+                });
+                body.push(set(&selected, a[0].clone()));
+                body.push(branch(
+                    bin(
+                        BinOp::Or,
+                        bin(BinOp::Lt, var(&selected), int(1)),
+                        bin(BinOp::Gt, var(&selected), a[1].clone()),
+                    ),
+                    vec![Stmt::CallSub {
+                        name: "@error_stop".into(),
+                        args: vec![Expr::Str("CHARACTER READ index out of bounds".into())],
+                    }],
+                ));
+                for (i, target) in a[2..].iter().enumerate() {
+                    let mut inner = vec![];
+                    emit_read_items(
+                        core::slice::from_ref(target),
+                        symbols,
+                        serial,
+                        handle,
+                        code,
+                        &mut inner,
+                    )?;
+                    cases.push(crate::ast::CaseBlock {
+                        items: vec![crate::ast::CaseItem::Single(int((i + 1) as i64))],
+                        body: inner,
+                    });
+                }
+                body.push(Stmt::SelectCase {
+                    expr: var(&selected),
+                    cases,
+                    default: Some(vec![Stmt::CallSub {
+                        name: "@error_stop".into(),
+                        args: vec![Expr::Str("CHARACTER READ index out of bounds".into())],
+                    }]),
+                });
+                continue;
+            }
+        }
+        *serial += 1;
+        let index = format!("@list_read_index_{serial}");
+        let (target, count, kind) = match item {
+            Expr::Ident(n) if matches!(symbols.get(n),Some((TypeSpec::Character(_),d)) if d.is_empty()) => {
+                (item.clone(), None, symbols[n].0.clone())
+            }
+            Expr::Index(n, _) | Expr::Call(n, _) if symbols.contains_key(n) => {
+                (item.clone(), None, symbols[n].0.clone())
+            }
+            _ => crate::reductions::elemental_element(item, &var(&index), symbols)?,
+        };
+        let (tag, width) = match kind {
+            TypeSpec::Integer(k @ (None | Some(1 | 2 | 4 | 8))) => (1, k.unwrap_or(4) as i64),
+            TypeSpec::Real => (2, 4),
+            TypeSpec::DoublePrecision => (2, 8),
+            TypeSpec::Logical => (3, 8),
+            TypeSpec::Character(n) => (4, n.unwrap_or(1) as i64),
+            _ => bail!("unsupported list-directed READ destination type"),
+        };
+        let temp = format!("@list_read_value_{serial}");
+        let invalidate = Stmt::CallSub {
+            name: "@undefine".into(),
+            args: vec![target.clone()],
+        };
+        let store = match target {
+            Expr::Ident(n) => {
+                if tag == 4 {
+                    Stmt::CallSub {
+                        name: "@character_assign".into(),
+                        args: vec![var(&n), var(&temp), int(width)],
+                    }
+                } else {
+                    set(&n, var(&temp))
+                }
+            }
+            Expr::Index(n, indices) | Expr::Call(n, indices) if symbols.contains_key(&n) => {
+                Stmt::AssignIndex {
+                    name: n,
+                    indices,
+                    value: var(&temp),
+                }
+            }
+            _ => bail!("READ item must designate writable storage"),
+        };
+        let initial = match kind {
+            TypeSpec::Real | TypeSpec::DoublePrecision => Expr::RealLit("0.0".into()),
+            TypeSpec::Logical => Expr::Logical(false),
+            TypeSpec::Character(_) => Expr::Str(String::new()),
+            _ => int(0),
+        };
+        let mut transfer = vec![
+            Stmt::VarDecl {
+                kind,
+                names: vec![temp.clone()],
+            },
+            set(&temp, initial),
+            Stmt::CallSub {
+                name: "@list_read_next".into(),
+                args: vec![var(code), var(&temp), var(handle), int(tag), int(width)],
+            },
+            branch(equal(code, 0), vec![store]),
+            branch(
+                bin(
+                    BinOp::And,
+                    bin(BinOp::Ne, var(code), int(0)),
+                    bin(BinOp::Ne, var(code), int(-2)),
+                ),
+                vec![invalidate],
+            ),
+            branch(equal(code, -2), vec![set(code, int(0))]),
+        ];
+        if let Some(count) = count {
+            let length = if let Expr::Call(n, a) = item {
+                if n == "@packed_view" {
+                    a[1].clone()
+                } else {
+                    int(count)
+                }
+            } else {
+                int(count)
+            };
+            transfer.push(branch(bin(BinOp::Ne, var(code), int(0)), vec![Stmt::Exit]));
+            body.push(Stmt::VarDecl {
+                kind: TypeSpec::Integer(None),
+                names: vec![index.clone()],
+            });
+            body.push(branch(
+                equal(code, 0),
+                vec![Stmt::Do {
+                    var: index,
+                    start: int(1),
+                    end: length,
+                    body: transfer,
+                }],
+            ));
+        } else {
+            body.push(branch(equal(code, 0), transfer));
+        }
     }
-    else {let Expr::Ident(status)=status else {bail!("IOSTAT requires a variable");};body.push(set(status,var(&code)));}
-    Ok(Stmt::Block{body})
-}
-
-fn lower_character_read(source:&Expr,control:&str,status:&Expr,dest:&str,length:usize,
-                        symbols:&HashMap<String,(TypeSpec,Vec<Expr>)>,serial:&mut usize)->Result<Stmt> {
-    if !control.is_empty() && !matches!(integer_kind(status,symbols),Some(4|8)) {bail!("IOSTAT must be a writable scalar INTEGER of kind 4 or 8");}
-    *serial+=1;
-    let code=format!("@character_read_code_{serial}");
-    let buffer=format!("@character_read_buffer_{serial}");
-    let mut body=vec![Stmt::VarDecl {kind:TypeSpec::Integer(None),names:vec![code.clone()]},
-        Stmt::VarDecl {kind:TypeSpec::Character(Some(length)),names:vec![buffer.clone()]},
-        set(&buffer,Expr::Str(String::new())),
-        Stmt::CallSub {name:"@read_character_field".into(),args:vec![var(&code),var(&buffer),source.clone(),int(length as i64)]},
-        branch(equal(&code,0),vec![Stmt::CallSub {name:"@character_assign".into(),args:vec![var(dest),var(&buffer),int(length as i64)]}])];
-    if control.is_empty() {
-        body.push(branch(bin(BinOp::And,bin(BinOp::Ne,var(&code),int(0)),bin(BinOp::Ne,var(&code),int(1))),vec![Stmt::CallSub {name:"@error_stop".into(),args:vec![Expr::Str("invalid or exhausted internal CHARACTER input".into())]}]));
-    } else {
-        let Expr::Ident(status)=status else {unreachable!()};
-        body.push(set(status,var(&code)));
-        body.push(branch(equal(&code,1),vec![set(status,int(0))]));
-    }
-    Ok(Stmt::Block {body})
+    Ok(())
 }
 
 pub(crate) fn lower_empty_read(
@@ -438,26 +524,39 @@ pub(crate) fn lower_empty_read(
         if !matches!(integer_kind(status, symbols), Some(4 | 8)) {
             bail!("IOSTAT must be a writable scalar INTEGER of kind 4 or 8");
         }
-        let Expr::Ident(name) = status else { unreachable!() };
+        let Expr::Ident(name) = status else {
+            unreachable!()
+        };
         Some(name)
     };
     *serial += 1;
     let code = format!("@empty_read_status_{serial}");
     let buffer = format!("@empty_read_buffer_{serial}");
     let mut body = vec![
-        Stmt::VarDecl { kind: TypeSpec::Integer(None), names: vec![code.clone()] },
-        Stmt::VarDecl { kind: TypeSpec::Character(Some(0)), names: vec![buffer.clone()] },
+        Stmt::VarDecl {
+            kind: TypeSpec::Integer(None),
+            names: vec![code.clone()],
+        },
+        Stmt::VarDecl {
+            kind: TypeSpec::Character(Some(0)),
+            names: vec![buffer.clone()],
+        },
         set(&buffer, Expr::Str(String::new())),
-        Stmt::CallSub { name: "@read_record_status".into(),
-            args: vec![var(&code), var(&buffer), int(0), unit.clone()] },
+        Stmt::CallSub {
+            name: "@read_record_status".into(),
+            args: vec![var(&code), var(&buffer), int(0), unit.clone()],
+        },
     ];
     if let Some(status) = status_name {
         body.push(set(status, var(&code)));
     } else {
-        body.push(branch(bin(BinOp::Ne, var(&code), int(0)), vec![Stmt::CallSub {
-            name: "@error_stop".into(),
-            args: vec![Expr::Str("end of file or input error in empty READ".into())],
-        }]));
+        body.push(branch(
+            bin(BinOp::Ne, var(&code), int(0)),
+            vec![Stmt::CallSub {
+                name: "@error_stop".into(),
+                args: vec![Expr::Str("end of file or input error in empty READ".into())],
+            }],
+        ));
     }
     Ok(Stmt::Block { body })
 }
@@ -476,18 +575,22 @@ pub(crate) fn lower_record_read(
     fn character(e: &Expr, symbols: &HashMap<String, (TypeSpec, Vec<Expr>)>) -> bool {
         match e {
             Expr::Str(_) => true,
-            Expr::Ident(n) => matches!(symbols.get(n),Some((TypeSpec::Character(_),dims)) if dims.is_empty()),
-            Expr::Bin(BinOp::Concat,a,b) => character(a,symbols) && character(b,symbols),
-            Expr::Call(n,a) if n=="trim" && a.len()==1 => character(&a[0],symbols),
-            Expr::Call(n,a) if n=="@dynamic_substring" && a.len()==4 => character(&a[0],symbols),
+            Expr::Ident(n) => {
+                matches!(symbols.get(n),Some((TypeSpec::Character(_),dims)) if dims.is_empty())
+            }
+            Expr::Bin(BinOp::Concat, a, b) => character(a, symbols) && character(b, symbols),
+            Expr::Call(n, a) if n == "trim" && a.len() == 1 => character(&a[0], symbols),
+            Expr::Call(n, a) if n == "@dynamic_substring" && a.len() == 4 => {
+                character(&a[0], symbols)
+            }
             _ => false,
         }
     }
-    if let Ok(text)=crate::parameters::character_constant(format) {
+    if let Ok(text) = crate::parameters::character_constant(format) {
         if !crate::record_input::valid_format(text.as_bytes()) {
             bail!("formatted READ currently supports only the (A) format");
         }
-    } else if !character(format,symbols) {
+    } else if !character(format, symbols) {
         bail!("READ format must be scalar CHARACTER; numeric format labels are not yet supported");
     }
     if crate::parameters::integer_constant(unit).ok() != Some(5) {
@@ -496,11 +599,18 @@ pub(crate) fn lower_record_read(
     let Some((TypeSpec::Character(length), dims)) = symbols.get(dest) else {
         bail!("formatted READ requires one writable scalar CHARACTER variable");
     };
-    if !dims.is_empty() { bail!("formatted READ requires a scalar CHARACTER variable"); }
+    if !dims.is_empty() {
+        bail!("formatted READ requires a scalar CHARACTER variable");
+    }
     if control.is_empty() && crate::parameters::character_constant(format).is_ok() {
-        let mut args=vec![var(dest),int(length.unwrap_or(1) as i64)];
-        if crate::parameters::integer_constant(unit).ok()!=Some(5) {args.push(unit.clone());}
-        return Ok(Stmt::CallSub {name:"@read_record".into(),args});
+        let mut args = vec![var(dest), int(length.unwrap_or(1) as i64)];
+        if crate::parameters::integer_constant(unit).ok() != Some(5) {
+            args.push(unit.clone());
+        }
+        return Ok(Stmt::CallSub {
+            name: "@read_record".into(),
+            args,
+        });
     }
     if !control.is_empty() && !matches!(integer_kind(status, symbols), Some(4 | 8)) {
         bail!("IOSTAT must be a writable scalar INTEGER of kind 4 or 8");
@@ -508,40 +618,78 @@ pub(crate) fn lower_record_read(
     *serial += 1;
     let code = format!("@record_read_status_{serial}");
     let buffer = format!("@record_read_buffer_{serial}");
-    let mut read_args=vec![var(&code),var(&buffer),int(length.unwrap_or(1) as i64),unit.clone()];
+    let mut read_args = vec![
+        var(&code),
+        var(&buffer),
+        int(length.unwrap_or(1) as i64),
+        unit.clone(),
+    ];
     // Constants were validated above; dynamic formats are checked before input.
-    if crate::parameters::character_constant(format).is_err() {read_args.push(format.clone());}
-    let mut body=vec![
-        Stmt::VarDecl { kind: TypeSpec::Integer(None), names: vec![code.clone()] },
-        Stmt::VarDecl { kind: TypeSpec::Character(*length), names: vec![buffer.clone()] },
+    if crate::parameters::character_constant(format).is_err() {
+        read_args.push(format.clone());
+    }
+    let mut body = vec![
+        Stmt::VarDecl {
+            kind: TypeSpec::Integer(None),
+            names: vec![code.clone()],
+        },
+        Stmt::VarDecl {
+            kind: TypeSpec::Character(*length),
+            names: vec![buffer.clone()],
+        },
         set(&buffer, Expr::Str(String::new())),
-        Stmt::CallSub { name: "@read_record_status".into(), args: read_args },
+        Stmt::CallSub {
+            name: "@read_record_status".into(),
+            args: read_args,
+        },
         Stmt::If {
-            cond: equal(&code, 0), then_body: vec![Stmt::CallSub {
+            cond: equal(&code, 0),
+            then_body: vec![Stmt::CallSub {
                 name: "@character_assign".into(),
-                args: vec![var(dest),var(&buffer),int(length.unwrap_or(1) as i64)],
+                args: vec![var(dest), var(&buffer), int(length.unwrap_or(1) as i64)],
             }],
-            else_body: Some(vec![Stmt::CallSub { name: "@undefine".into(), args: vec![var(dest)] }]),
+            else_body: Some(vec![Stmt::CallSub {
+                name: "@undefine".into(),
+                args: vec![var(dest)],
+            }]),
         },
     ];
     if control.is_empty() {
-        for (value,message) in [
-            (crate::record_input::INVALID_FORMAT,"unsupported runtime format in formatted READ (only (A) is supported)"),
-            (crate::record_input::INVALID,"formatted READ currently requires non-NUL ASCII input"),
+        for (value, message) in [
+            (
+                crate::record_input::INVALID_FORMAT,
+                "unsupported runtime format in formatted READ (only (A) is supported)",
+            ),
+            (
+                crate::record_input::INVALID,
+                "formatted READ currently requires non-NUL ASCII input",
+            ),
         ] {
-            body.push(branch(equal(&code,value),vec![Stmt::CallSub {
-                name:"@error_stop".into(),args:vec![Expr::Str(message.into())],
-            }]));
+            body.push(branch(
+                equal(&code, value),
+                vec![Stmt::CallSub {
+                    name: "@error_stop".into(),
+                    args: vec![Expr::Str(message.into())],
+                }],
+            ));
         }
-        body.push(branch(bin(BinOp::Ne,var(&code),int(0)),vec![Stmt::CallSub {
-            name:"@error_stop".into(),args:vec![Expr::Str("end of file or input error in formatted READ".into())],
-        }]));
+        body.push(branch(
+            bin(BinOp::Ne, var(&code), int(0)),
+            vec![Stmt::CallSub {
+                name: "@error_stop".into(),
+                args: vec![Expr::Str(
+                    "end of file or input error in formatted READ".into(),
+                )],
+            }],
+        ));
     } else {
-        let Expr::Ident(status)=status else {unreachable!()};
+        let Expr::Ident(status) = status else {
+            unreachable!()
+        };
         // Evaluate the unit and format before writing potentially aliased IOSTAT.
-        body.insert(4,set(status,var(&code)));
+        body.insert(4, set(status, var(&code)));
     }
-    Ok(Stmt::Block {body})
+    Ok(Stmt::Block { body })
 }
 
 #[cfg(test)]
@@ -553,7 +701,7 @@ mod tests {
     }
 
     #[test]
-    fn validates_internal_integer_read() {
+    fn validates_list_directed_read() {
         for (extra, statement, valid) in [
             ("", "read(text,*,iostat=ios) n", true),
             ("", "read(text,*) n", true),
@@ -561,12 +709,12 @@ mod tests {
             ("", "read(text,*,iostat=1) n", false),
             ("", "read(text,*,iostat=n) n", false),
             ("", "read(text,*,iostat=ios) 1", false),
-            ("", "read(text,*,iostat=ios) n,n", false),
+            ("", "read(text,*,iostat=ios) n,n", true),
             ("", "read(5,*,iostat=ios) n", true),
             ("", "read('123',*,iostat=ios) n", false),
-            ("real :: x", "read(text,*,iostat=ios) x", false),
+            ("real :: x", "read(text,*,iostat=ios) x", true),
             ("real :: x", "read(text,*,iostat=x) n", false),
-            ("integer :: a(2)", "read(text,*,iostat=ios) a", false),
+            ("integer :: a(2)", "read(text,*,iostat=ios) a", true),
             (
                 "integer,parameter :: k=3",
                 "read(text,*,iostat=ios) k",

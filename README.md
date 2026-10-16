@@ -663,10 +663,9 @@ O0/O2 checks with gfortran comparisons. The Cargo suite includes
 
 Transfer items inside implied-DOs must resolve to supported scalar values;
 existing CHARACTER procedure-argument limitations remain. Numeric format labels,
-format reversion and formatted implied-DOs to external file units remain
-unsupported. External file WRITE retains its `(A)` subset without control
-options. Other output through a unit variable checks that it contains 6 before
-transferring values. Format nesting is limited to 32 levels;
+format reversion remain unsupported outside the existing `(A)` file subset.
+Formatted array items and implied-DO lists can also write sequential file units.
+Format nesting is limited to 32 levels;
 the existing limits of
 256 for field width/precision and 10,000 for repeat counts apply.
 The native formatting runtime is written in Rust, built with the compiler,
@@ -675,10 +674,13 @@ and embedded in `rfort`; no separate runtime installation is needed. Use
 
 ## File input
 
-The current external-file I/O subset supports read-only sequential formatted
-files: `OPEN(unit=20,file='data.txt',status='old',action='read')`,
+Sequential formatted files support `OPEN(unit=20,file='data.txt',status='old',action='read')`,
 `READ(20,'(a)') text`, `BACKSPACE(20)`, `REWIND(20)`, and `CLOSE(20)`.
-FILE must be constant; STATUS and ACTION must be specified as shown. Units are
+FILE may be a runtime scalar CHARACTER expression. Named files also support
+NEWUNIT, STATUS='replace' with ACTION='write' or 'readwrite', and
+STATUS='old' with ACTION='read', 'write' or 'readwrite'. The default
+STATUS='unknown', ACTION='readwrite' combination opens or creates a file.
+POSITION='rewind' is supported. Explicit units are
 0 through 1023 except preconnected units 5 and 6. `(A)` reads accept one scalar
 CHARACTER destination; input records must contain non-NUL ASCII. Reads consume
 the entire record and handle LF/CRLF endings.
@@ -690,14 +692,29 @@ The reader consumes invalid records so a subsequent read can continue with the
 next record. These reads accept standard input as `*`, constant unit 5, or an
 INTEGER unit variable whose value is 5. Input records may end without a final newline.
 
-External list-directed `READ(unit,*) n` also accepts one scalar INTEGER
-destination of kind 1, 2, 4 or 8, including `IOSTAT=`, NEWUNIT values and unit 5.
-It skips blank records and uses the checked internal integer scanner for signs,
-integer bounds, null fields and repetition syntax. The current parsing buffer
-supports records up to 4096 characters. Longer records are consumed and return
-positive IOSTAT, or stop with an error without IOSTAT; they are never parsed as
-truncated prefixes. Failed transfers leave the destination undefined. Multiple
-items and other external list-directed destination types remain unsupported.
+List-directed READ uses a shared streaming scanner in native and interpreted
+execution. There is no fixed record-length limit: storage grows with token
+length, rather than record length. A statement can read multiple INTEGER
+(kind 1, 2, 4 or 8), REAL (kind 4 or 8), LOGICAL, CHARACTER and COMPLEX
+(kind 4 or 8) values, continuing across records as necessary. INTEGER range
+checks, E/D exponents, omitted exponent letters, repetition, null fields,
+slash termination, quoted strings, doubled quotes and quoted continuation
+across external records are supported. Null/slash fields preserve the old
+value and its initialization state. The remainder of the final record is
+consumed before the next advancing READ.
+
+Supported destinations include numeric/LOGICAL arrays, runtime-sized arrays,
+multidimensional triplet sections, bounded CHARACTER arrays and scalar
+COMPLEX or whole COMPLEX arrays. Nested input implied-DO lists accept runtime
+bounds and positive or negative steps. IOSTAT accepts INTEGER kinds 1, 2, 4
+and 8. Standard input (`*` or unit 5), connected external units and scalar
+CHARACTER internal files use the same scanner. Run
+`python tests/test_list_read.py` for interpreter/native O0/O2 checks against
+gfortran, including `tests/io/write_read.f90`, a copy of `xwrite_read.f90`.
+
+This is not yet complete Fortran input support: CHARACTER internal-file arrays,
+COMPLEX section destinations, vector subscripts, derived-type input and defined I/O,
+DECIMAL='COMMA', IOMSG and combined status controls remain unsupported.
 
 The format may also be a runtime scalar CHARACTER expression, including a
 variable, `TRIM`, concatenation, or substring. `READ(unit,fmt,iostat=status)`
@@ -720,7 +737,7 @@ are supported. Run `python tests/test_empty_read.py` for interpreter/native
 O0/O2 checks with gfortran comparisons.
 
 READ accepts named `UNIT=` and `FMT=` controls, including reordered keywords.
-`END=label` on an empty list-directed or scalar CHARACTER formatted READ branches
+`END=label` on a list-directed or scalar CHARACTER formatted READ branches
 at EOF to a following labelled statement in the same or an enclosing statement
 sequence. It can exit nested loops; other input errors still stop execution.
 Backward branches, transfers into loops or IF arms, and combining END with
@@ -749,20 +766,17 @@ distinct hard-link names are not equated. Run `python tests/test_inquire.py` for
 interpreter/native O0/O2 checks against gfortran, including connection changes.
 `(A)` READ destinations may also be dynamically indexed local CHARACTER elements.
 
-External list-directed input with transfer items, other external output formats,
-named writable files, and IOSTAT on OPEN/CLOSE or positioning operations remain
-unsupported.
+External list-directed WRITE, file ADVANCE controls, and IOSTAT on OPEN/CLOSE
+or positioning operations remain unsupported.
 Connections are shared within a
 compiled source group. Native file I/O currently requires a 64-bit target.
 Run `python tests/test_read_comments.py` for interpreter/native O0/O2 and
 gfortran comparisons of these features.
 
-Internal list-directed READ also accepts one scalar CHARACTER destination.
-It handles unquoted or quoted fields, doubled quote escapes, repeated values,
-null fields and slash termination, with blank padding or truncation. IOSTAT
-reports success, exhausted input or malformed fields; null fields leave the
-destination unchanged. Internal CHARACTER array-element destinations and
-multi-record quoted strings remain unsupported.
+Internal list-directed READ uses the shared scanner described above, including
+mixed-type input lists and bounded CHARACTER-array destinations. Scalar
+CHARACTER destinations use blank padding or truncation. Failed scalar transfers
+leave their destination undefined; null fields preserve its definition status.
 
 ## Numeric and logical reductions
 

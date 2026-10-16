@@ -1118,6 +1118,23 @@ impl Lower {
                             super::validate_actual(name, i, &self.procedures)?;
                         }
                     }
+                    if name=="@internal_read" {
+                        for item in &mut args[3..] {
+                            if let Expr::Call(n,a)|Expr::Index(n,a)=item {
+                                if selection(n,a,&s) && !vector_selection(n,a,&s) {
+                                    if s.contains_key(&format!("@readonly:{n}")) {bail!("cannot READ into PARAMETER or INTENT(IN) array `{n}`");}
+                                    let (selected,dims)=self.indices(n,a,&mut s,&mut prefix,true)?;
+                                    let vars=self.loop_vars(&dims,&mut prefix,&mut s);
+                                    let mut value=Expr::Index(n.clone(),self.selected(&selected,&vars));
+                                    for (var,dim) in vars.iter().zip(&dims) {
+                                        value=Expr::Call("@input_implied_do".into(),vec![id(var),int(1),dim.clone(),int(1),value]);
+                                    }
+                                    *item=value;
+                                }
+                            }
+                        }
+                        result.extend(prefix);result.push(stmt);continue;
+                    }
                     if name.starts_with('@')
                         && name.contains("read")
                         && args.iter().any(|e| contains(e, &s))

@@ -46,7 +46,7 @@ pub(crate) fn lower(
         };
         if !matches!(
             key.as_str(),
-            "unit" | "newunit" | "file" | "status" | "action" | "access" | "form" | "name" | "opened" | "number" | "iostat"
+            "unit" | "newunit" | "file" | "status" | "action" | "access" | "form" | "name" | "opened" | "number" | "iostat" | "position"
         ) {
             bail!("{operation}: unsupported I/O control `{key}`");
         }
@@ -74,41 +74,31 @@ pub(crate) fn lower(
         }
         return Ok(Stmt::CallSub {name:if newunit.is_some(){"@file_newunit"}else{"@file_scratch"}.into(),args:vec![destination]});
     }
-    if controls.contains_key("newunit") {bail!("NEWUNIT currently requires STATUS='scratch'");}
-    let unit_expr = controls
-        .remove("unit")
-        .context("file operation requires UNIT")?;
-    unit(&unit_expr, symbols)?;
-    let mut args = vec![unit_expr];
-    if operation == "open" {
-        for (key, expected, required) in [
-            ("status", "old", true),
-            ("action", "read", true),
-            ("access", "sequential", false),
-            ("form", "formatted", false),
-        ] {
-            match controls.remove(key) {
-                Some(Expr::Str(s)) if s.trim_end().eq_ignore_ascii_case(expected) => {}
-                None if !required => {}
-                _ => bail!(
-                    "OPEN currently requires {key}='{expected}'{}",
-                    if required {
-                        " explicitly"
-                    } else {
-                        " when specified"
-                    }
-                ),
-            }
+    if operation=="open" {
+        let newunit=controls.remove("newunit");
+        if newunit.is_some() && controls.contains_key("unit") {bail!("OPEN must not specify both UNIT and NEWUNIT");}
+        let destination=newunit.clone().or_else(||controls.remove("unit")).context("OPEN requires UNIT or NEWUNIT")?;
+        unit(&destination,symbols)?;
+        if newunit.is_some() && !matches!(destination,Expr::Ident(_)) {bail!("NEWUNIT requires an INTEGER variable");}
+        for (key,expected) in [("access","sequential"),("form","formatted"),("position","rewind")] {
+            if let Some(v)=controls.remove(key) {if !matches!(v,Expr::Str(s) if s.trim_end().eq_ignore_ascii_case(expected)) {bail!("OPEN currently supports {key}='{expected}'");}}
         }
-        let Some(Expr::Str(path)) = controls.remove("file") else {
-            bail!("OPEN currently requires a constant FILE name");
-        };
-        let path = path.trim_end();
-        if path.is_empty() || path.contains('\0') {
-            bail!("OPEN requires a nonempty FILE name without NUL bytes");
+        let status=match controls.remove("status") {Some(Expr::Str(s))=>s.trim_end().to_ascii_lowercase(),None=>"unknown".into(),_=>bail!("OPEN STATUS must currently be constant")};
+        let action=match controls.remove("action") {Some(Expr::Str(s))=>s.trim_end().to_ascii_lowercase(),None=>"readwrite".into(),_=>bail!("OPEN ACTION must currently be constant")};
+        let mode=match (status.as_str(),action.as_str()) {("old","read")=>0,("replace","write")=>1,("replace","readwrite")=>2,("old","readwrite")=>3,("old","write")=>4,("unknown","readwrite")=>5,_=>bail!("unsupported OPEN STATUS/ACTION combination")};
+        let path=controls.remove("file").context("OPEN requires FILE")?;
+        if !matches!(crate::array_calls::scalar_actual_kind(&path,symbols)?,TypeSpec::Character(_)) {bail!("FILE requires scalar CHARACTER");}
+        let mut args=vec![destination.clone(),path,Expr::IntLit(mode.to_string()),Expr::IntLit(i64::from(newunit.is_some()).to_string())];
+        if newunit.is_none() {
+            *serial+=1;let temp=format!("@open_unit_{serial}");
+            args[0]=Expr::Ident(temp.clone());args.push(destination);
+            return Ok(Stmt::Block{body:vec![Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![temp]},Stmt::CallSub{name:"@file_open_dynamic".into(),args}]});
         }
-        args.push(Expr::Str(path.into()));
+        return Ok(Stmt::CallSub{name:"@file_open_dynamic".into(),args});
     }
+    let unit_expr=controls.remove("unit").context("file operation requires UNIT")?;unit(&unit_expr,symbols)?;
+    let args=vec![unit_expr];
+
     Ok(Stmt::CallSub {
         name: format!("@file_{operation}"),
         args,
@@ -302,9 +292,22 @@ impl Files {
         Ok(String::from_utf8(bytes).unwrap())
     }
 
-    pub(crate) fn record_status(&mut self, unit: i64, buffer: &mut [u8]) -> i64 {
-        self.record_status_mode(unit,buffer,false)
+    pub(crate) fn open_dynamic(&mut self,requested:Option<i64>,path:&str,mode:i64)->Result<i64> {
+        let path=path.trim_end();if path.is_empty() || path.contains('\0') {bail!("invalid FILE name");}
+        let unit=match requested {Some(unit)=>unit,None=>(-1033..=-10).rev().find(|u|!self.0.contains_key(u)).context("no free NEWUNIT file slots")?};
+        Self::valid(unit)?;if self.0.contains_key(&unit) {bail!("OPEN on an already connected unit is not yet supported");}
+        let mut options=std::fs::OpenOptions::new();
+        options.read(matches!(mode,0|2|3|5)).write(mode!=0).create(matches!(mode,1|2|5)).truncate(matches!(mode,1|2));
+        let file=options.open(path).context("OPEN failed")?;self.0.insert(unit,file);self.1.insert(unit,path.into());Ok(unit)
     }
+    pub(crate) fn input_byte(&mut self,unit:i64)->Result<Option<u8>,()> {
+        let mut byte=[0];
+        let result=if unit==5 {std::io::stdin().read(&mut byte)} else {
+            let file=self.0.get_mut(&unit).ok_or(())?;file.read(&mut byte)
+        };
+        match result {Ok(0)=>Ok(None),Ok(_)=>Ok(Some(byte[0])),Err(_)=>Err(())}
+    }
+
     pub(crate) fn record_status_mode(&mut self, unit:i64,buffer:&mut [u8],checked:bool)->i64 {
         let scan=|buffer:&mut [u8], byte:&mut dyn FnMut()->Result<Option<u8>,()>| {
             if checked {crate::record_input::checked_record(buffer,byte)} else {crate::record_input::record(buffer,byte)}

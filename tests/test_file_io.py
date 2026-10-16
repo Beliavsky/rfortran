@@ -105,8 +105,7 @@ end
 
     def test_compile_time_diagnostics(self):
         for source, error in [
-            ("open(20,file='data',status='replace',action='read')\nend", "status='old'"),
-            ("open(20,file='data',status='old',action='write')\nend", "action='read'"),
+            ("open(20,file='data',status='replace',action='read')\nend", "unsupported OPEN STATUS/ACTION combination"),
             ("open(20,file='data',status='old',action='read',iostat=i)\nend", "unsupported I/O control `iostat`"),
             ("open(20,unit=21,file='data',status='old',action='read')\nend", "duplicate unit"),
             ("close(20,status='delete')\nend", "supports only UNIT"),

@@ -217,7 +217,7 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                 let Expr::Ident(dest)=&args[0] else {unreachable!()};
                 write(dest,None,env,&mut after,serial);
             }
-            Stmt::CallSub { name, args } if name == "@saved_bind" || name == "@internal_read_byte" || name == "@internal_format_end" || name == "@character_assign" || name == "@character_length" || name=="@file_name" || name=="@file_newunit" => {
+            Stmt::CallSub { name, args } if name == "@saved_bind" || name == "@internal_read_byte" || name == "@internal_format_end" || name == "@character_assign" || name == "@character_length" || name=="@file_name" || name=="@file_newunit" || name=="@file_open_dynamic" || name=="@list_read_end" => {
                 for arg in &args[1..] { read(arg, env, &mut before, serial)?; }
                 let Expr::Ident(dest)=&args[0] else {unreachable!()};
                 write(dest,None,env,&mut after,serial);
@@ -238,12 +238,23 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                     let Expr::Ident(dest)=arg else {unreachable!()};write(dest,None,env,&mut after,serial);
                 }
             }
-            Stmt::CallSub { name, args } if name == "@read_record_status" || name=="@read_record_checked" || name=="@read_character_field" => {
+            Stmt::CallSub{name,args} if name=="@list_read_complex_next" => {
+                for arg in &args[3..] {read(arg,env,&mut before,serial)?;}
+                for arg in &args[..3] {let Expr::Ident(dest)=arg else {unreachable!()};write(dest,None,env,&mut after,serial);}
+            }
+            Stmt::CallSub { name, args } if name == "@list_read_internal_begin" || name == "@list_read_begin" || name=="@list_read_next" || name == "@read_record_status" || name=="@read_record_checked" || name=="@read_character_field" => {
                 for arg in &args[2..] { read(arg, env, &mut before, serial)?; }
                 for arg in &args[..2] {
                     let Expr::Ident(dest) = arg else { unreachable!() };
                     write(dest, None, env, &mut after, serial);
                 }
+            }
+            Stmt::CallSub{name,args} if name=="@undefine" && matches!(args.first(),Some(Expr::Index(_,_)|Expr::Call(_,_))) => {
+                let Some((name,Some(index)))=args.first().and_then(key) else {bail!("invalid uninitialized READ destination");};
+                read(index,env,&mut before,serial)?;
+                let v=env.get_mut(name).context("undefined READ destination")?;
+                if let Some(i)=constant(index) {v.elements.insert(i,State::No);} else {v.state=State::Maybe;v.elements.clear();}
+                stmt=Stmt::AssignIndex{name:v.flag.clone(),indices:vec![index.clone()],value:int(0)};
             }
             Stmt::CallSub { name, args } if name == "@undefine" => {
                 let Expr::Ident(name) = &args[0] else { unreachable!() };
@@ -468,7 +479,8 @@ mod tests {
 
     fn parse(source: &str) -> crate::ast::Program {
         let tokens = crate::lexer::lex(source);
-        crate::parser::parse_with_src(source, &tokens, "initialization.f90").unwrap()
+        let program=crate::parser::parse_with_src(source, &tokens, "initialization.f90").unwrap();
+        crate::reductions::resolve(crate::parameters::resolve(program).unwrap()).unwrap()
     }
     #[test]
     fn rejects_definite_unassigned_reads() {

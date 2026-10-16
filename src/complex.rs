@@ -1331,6 +1331,28 @@ impl Lower {
         }
         Ok(())
     }
+    fn input_items(&mut self,items:&mut [Expr],s:&mut Scope,out:&mut Vec<Stmt>)->Result<()> {
+        for e in items {
+            if let Expr::Call(n,a)=e {if n=="@output_implied_do" || n=="@input_implied_do" {self.input_items(&mut a[4..],s,out)?;continue;}}
+            if self.info(e,s)?.is_some_and(|i|complex_kind(&i.kind).is_some()) {
+                let p=self.pair(e.clone(),s,out)?;
+                if p.dims.is_empty() {*e=call("@input_complex",vec![p.re,p.im,int(p.kind as i64)]);}
+                else {
+                    let (Expr::Ident(re),Expr::Ident(im))=(p.re,p.im) else {bail!("COMPLEX READ sections are not yet supported");};
+                    let mut vars=vec![];let mut subs=vec![];let mut bounds=vec![];
+                    for dim in p.dims {
+                        self.serial+=1;let index=format!("@complex_read_index_{}",self.serial);
+                        out.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![index.clone()]});
+                        let (lower,upper)=match dim {Expr::Call(n,a) if n=="@declared_bounds"=>(a[0].clone(),a[1].clone()),d=>(int(1),d)};
+                        subs.push(id(&index));vars.push(index);bounds.push((lower,upper));
+                    }
+                    let mut item=call("@input_complex",vec![Expr::Index(re,subs.clone()),Expr::Index(im,subs),int(p.kind as i64)]);
+                    for (var,(lower,upper)) in vars.into_iter().zip(bounds) {item=call("@input_implied_do",vec![id(&var),lower,upper,int(1),item]);}
+                    *e=item;
+                }
+            }
+        }Ok(())
+    }
     fn output(
         &mut self,
         items: &mut Vec<Expr>,
@@ -1530,6 +1552,7 @@ impl Lower {
                 Stmt::Assign{value,..}|Stmt::AssignIndex{value,..}=>self.expression(value,&mut scope,&mut prefix)?,
                 Stmt::Print{items}=>self.output(items,true,&mut scope,&mut prefix)?,
                 Stmt::Read{args}=>if args.iter().any(|e|self.info(e,&scope).ok().flatten().is_some_and(|i|complex_kind(&i.kind).is_some())){bail!("list-directed COMPLEX input is not yet supported");},
+                Stmt::CallSub{name,args} if name=="@internal_read"=>{self.input_items(&mut args[3..],&mut scope,&mut prefix)?;},
                 Stmt::CallSub{name,args} if matches!(name.as_str(),"@write"|"@formatted_print")=>{
                     let offset=if name=="@write"{2}else{1};let list=name=="@write"&&matches!(args.get(1),Some(Expr::Call(n,_)) if n=="@list_directed");let mut items=args.split_off(offset);self.output(&mut items,list,&mut scope,&mut prefix)?;args.extend(items);
                 },

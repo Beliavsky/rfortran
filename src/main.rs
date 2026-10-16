@@ -60,6 +60,7 @@ mod forall_runtime;
 mod formatting;
 mod format_spec;
 mod record_input;
+mod list_input;
 mod character_input;
 mod derived;
 mod complex;

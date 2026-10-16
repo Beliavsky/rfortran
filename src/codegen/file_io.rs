@@ -128,6 +128,13 @@ pub(super) fn newunit(module:&mut ObjectModule,b:&mut FunctionBuilder,ptr:ir::Ty
     let zero=b.ins().iconst(ptr,0);b.ins().store(MemFlags::new(),zero,address,0);
     Ok(unit)
 }
+pub(super) fn open_dynamic(module:&mut ObjectModule,b:&mut FunctionBuilder,ptr:ir::Type,dc:&mut u32,requested:ir::Value,path:ir::Value,length:ir::Value,mode:ir::Value,newunit:ir::Value)->Result<ir::Value> {
+    let slots=table(b,module,ptr,".rfort.file_units")?;let names=table(b,module,ptr,".rfort.file_names")?;
+    let unit=call(module,b,"rfort_file_open_dynamic",&[slots,names,requested,path,length,mode,newunit],types::I64)?;
+    let okay=b.ins().icmp_imm(IntCC::NotEqual,unit,i64::MIN+1);require(module,b,ptr,dc,okay,"OPEN on an already connected unit is not yet supported")?;
+    let okay=b.ins().icmp_imm(IntCC::NotEqual,unit,i64::MIN+2);require(module,b,ptr,dc,okay,"file units must be in 0..1023, excluding preconnected units 5 and 6")?;
+    let okay=b.ins().icmp_imm(IntCC::NotEqual,unit,i64::MIN);require(module,b,ptr,dc,okay,"OPEN failed")?;Ok(unit)
+}
 pub(super) fn name(module:&mut ObjectModule,b:&mut FunctionBuilder,ptr:ir::Type,dc:&mut u32,unit:ir::Value)->Result<ir::Value> {
     handle(module,b,ptr,dc,unit)?;
     let (index,_)=unit_index(b,unit);
@@ -250,6 +257,9 @@ pub(super) fn operation(
         require(module, b, ptr, dc, okay, "CLOSE failed")?;
         let zero = b.ins().iconst(ptr, 0);
         b.ins().store(MemFlags::new(), zero, slot, 0);
+        let (index,_)=unit_index(b,unit);let names=table(b,module,ptr,".rfort.file_names")?;
+        let offset=b.ins().imul_imm(index,8);let address=b.ins().iadd(names,offset);let path=b.ins().load(ptr,MemFlags::new(),address,0);
+        call(module,b,"rfort_file_free_name",&[path],types::I32)?;b.ins().store(MemFlags::new(),zero,address,0);
         b.ins().jump(done, &[]);
         b.switch_to_block(done);
         b.seal_block(done);

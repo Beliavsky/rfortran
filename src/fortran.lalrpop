@@ -391,6 +391,9 @@ Stmt: Stmt = {
     KW_READ LPAREN <controls:ReadControls> RPAREN <items:ExprList> =>?
         crate::input::read_controls(controls,items)
             .map_err(|error|lalrpop_util::ParseError::User {error}),
+    KW_READ STAR COMMA <es:ExprList> =>?
+        crate::input::read_controls(vec![Expr::Call("@write_star".into(),vec![]),Expr::Call("@write_star".into(),vec![])],es)
+            .map_err(|error|lalrpop_util::ParseError::User {error}),
     KW_READ STAR COMMA STAR COMMA <es: ExprList> => {
         let mut cloned: Vec<Expr> = Vec::new();
         for e in &es { cloned.push(e.clone()); }

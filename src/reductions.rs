@@ -1256,8 +1256,20 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                     } else {output.push(Stmt::Block {body});}
                     continue;
                     }
-                    if crate::parameters::integer_constant(&args[0]).is_ok() {bail!("external file WRITE currently supports only the (A) format without control options");}
-                    prefix.push(crate::output::require_stdout(args[0].clone()));
+                    if matches!(&args[1],Expr::Call(n,_) if n=="@list_directed") || args[2..].iter().any(|e|matches!(e,Expr::Call(n,_) if n.starts_with("@write_option:"))) {
+                        if crate::parameters::integer_constant(&args[0]).is_ok() {bail!("external file WRITE currently requires an explicit format without control options");}
+                        prefix.push(crate::output::require_stdout(args[0].clone()));
+                    } else {
+                    let mut file_body=formatted_capture(args[1].clone(),&args[2..],int(1),&symbols,serial)?;
+                    if let Some(Stmt::CallSub{name, args:end})=file_body.last_mut() {if name=="@format_end" {*name="@format_end_file".into();end.push(args[0].clone());}}
+                    if crate::parameters::integer_constant(&args[0]).is_ok() {output.push(Stmt::Block{body:file_body});}
+                    else {
+                        let stdout=formatted_capture(args[1].clone(),&args[2..],int(1),&symbols,serial)?;
+                        output.push(Stmt::If{cond:bin(BinOp::Eq,args[0].clone(),int(6)),then_body:vec![Stmt::Block{body:stdout}],else_body:Some(vec![Stmt::Block{body:file_body}])});
+                    }
+                        continue;
+                    }
+
                 }
                 let mut first_item = 2;
                 let mut advance = None;
@@ -1305,7 +1317,7 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                 continue;
             }
             if name=="@internal_read" {
-                output.push(crate::input::lower_integer_read(args,&symbols.variables,serial)?);
+                output.push(crate::input::lower_list_read(args,&symbols.variables,serial)?);
                 continue;
             }
             if name=="@formatted_read" {

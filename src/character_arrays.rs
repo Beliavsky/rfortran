@@ -407,6 +407,44 @@ fn dynamic(mut e: Expr, arrays: &Arrays, serial: &mut usize, output: &mut Vec<St
 fn expanded(e: Expr, arrays: &Arrays, serial: &mut usize, output: &mut Vec<Stmt>) -> Result<Value> {
     expression(dynamic(e,arrays,serial,output)?,arrays)
 }
+fn input_targets(e:Expr,arrays:&Arrays,serial:&mut usize,output:&mut Vec<Stmt>)->Result<Vec<Expr>> {
+    if let Expr::Call(n,a)=&e {
+        if n=="@input_implied_do" || n=="@output_implied_do" {
+            let mut args=a[..4].to_vec();for item in &a[4..] {args.extend(input_targets(item.clone(),arrays,serial,output)?);}
+            return Ok(vec![Expr::Call(n.clone(),args)]);
+        }
+    }
+    let slot=|n:&str,index:Expr| {
+        let mut targets=vec![index,arrays[n].extent.clone().unwrap_or_else(||Expr::IntLit(arrays[n].elements.len().to_string()))];
+        targets.extend(arrays[n].elements.iter().cloned().map(Expr::Ident));Expr::Call("@input_character_slot".into(),targets)
+    };
+    if let Expr::Call(n,a)=&e {
+        if n=="@packed_view" {
+            if let Expr::Ident(array)=&a[0] {
+                if arrays.contains_key(array) {
+                    *serial+=1;let index=format!("@character_input_index_{serial}");
+                    output.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![index.clone()]});
+                    let mut target=slot(array,Expr::Ident(index.clone()));
+                    if let Expr::Call(_,values)=&mut target {values[1]=a[1].clone();}
+                    return Ok(vec![Expr::Call("@input_implied_do".into(),vec![Expr::Ident(index),Expr::IntLit("1".into()),a[1].clone(),Expr::IntLit("1".into()),target])]);
+                }
+            }
+        }
+    }
+    if let Expr::Ident(n)=&e {
+        if let Some(extent)=arrays.get(n).and_then(|a|a.extent.as_ref()) {
+            *serial+=1;let index=format!("@character_input_index_{serial}");
+            output.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![index.clone()]});
+            return Ok(vec![Expr::Call("@input_implied_do".into(),vec![Expr::Ident(index.clone()),Expr::IntLit("1".into()),extent.clone(),Expr::IntLit("1".into()),slot(n,Expr::Ident(index))])]);
+        }
+    }
+    if let Expr::Call(n,a)|Expr::Index(n,a)=&e {
+        if arrays.contains_key(n) && a.len()==1 && (arrays[n].extent.is_some() || crate::parameters::integer_constant(&a[0]).is_err()) {
+            return Ok(vec![slot(n,a[0].clone())]);
+        }
+    }
+    Ok(match expanded(e,arrays,serial,output)? {Value::Scalar(e)=>vec![e],Value::Array(v)=>v})
+}
 fn body(
     stmts: &mut Vec<Stmt>,
     inherited: &Arrays,
@@ -603,8 +641,14 @@ fn body(
                 *args=values;
             }
             Stmt::CallSub { name, args } => {
-                if name=="@internal_read" && matches!(args.get(3),Some(Expr::Call(n,_)|Expr::Index(n,_)) if arrays.contains_key(n)) {
-                    bail!("internal READ currently requires a scalar CHARACTER destination, not an array element");
+                if name=="@internal_read" {
+                    let mut values=vec![];
+                    for (i,e) in std::mem::take(args).into_iter().enumerate() {
+                        if i>=3 {
+                            values.extend(input_targets(e,&arrays,serial,&mut output)?);
+                        } else {values.push(expanded(e,&arrays,serial,&mut output)?.expr());}
+                    }
+                    *args=values;output.push(s);continue;
                 }
                 let dest=match name.as_str() {"@formatted_read_status"=>Some((4,Some(3))),"@formatted_read"=>Some((2,None)),_=>None};
                 let mut suffix=Vec::new();

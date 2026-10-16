@@ -1399,6 +1399,21 @@ fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules, ass
                 if constants.contains_key(&name.to_ascii_lowercase()) {
                     bail!("PARAMETER `{name}` cannot be called");
                 }
+                fn input_variable(e:&Expr,constants:&Constants)->Result<()> {
+                    match e {
+                        Expr::Call(n,a) if matches!(n.as_str(),"@input_implied_do"|"@output_implied_do")=>{
+                            if let Expr::Ident(n)=&a[0] {variable(n,constants)?;}
+                            for item in &a[4..] {input_variable(item,constants)?;}
+                        }
+                        Expr::Ident(n)|Expr::Call(n,_)|Expr::Index(n,_)|Expr::Section{name:n,..}=>variable(n,constants)?,
+                        _=>{}
+                    }Ok(())
+                }
+                let layout=match name.as_str(){"@internal_read"=>Some((3,1,2)),"@formatted_read_status"=>Some((4,2,3)),"@formatted_read"=>Some((2,usize::MAX,usize::MAX)),"@empty_read"=>Some((3,1,2)),_=>None};
+                if let Some((first,control,status))=layout {
+                    for e in &args[first..] {input_variable(e,constants)?;}
+                    if matches!(args.get(control),Some(Expr::Str(n)) if n.eq_ignore_ascii_case("iostat")) {input_variable(&args[status],constants)?;}
+                }
                 for e in args {
                     rewrite_expr(e, constants)?;
                 }
@@ -1685,6 +1700,8 @@ mod tests {
                 "read(*,*) n",
                 "cannot modify PARAMETER",
             ),
+            ("integer, parameter :: n = 5\ninteger :: i", "read(*,*) (n,i=1,2)", "cannot modify PARAMETER"),
+            ("integer, parameter :: n = 5\ninteger :: i", "read(*,*,iostat=n) i", "cannot modify PARAMETER"),
             (
                 "integer, parameter :: n = 5",
                 "do n = 1, 3\nprint *, n\nend do",

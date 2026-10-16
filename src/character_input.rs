@@ -4,6 +4,14 @@
 
 //! One scalar CHARACTER field from an internal list-directed record.
 //! 0: assigned, 1: null/termination (unchanged), -1: end of record, 2: bad input.
+/// Fortran CHARACTER comparison pads the shorter value with blanks.
+pub(crate) fn compare(left:&[u8],right:&[u8])->i32 {
+    for i in 0..left.len().max(right.len()) {
+        let a=left.get(i).copied().unwrap_or(b' ');let b=right.get(i).copied().unwrap_or(b' ');
+        if a!=b {return if a<b {-1}else{1};}
+    }0
+}
+
 pub(crate) fn field(source: &[u8], destination: &mut [u8]) -> i64 {
     let mut i = 0;
     while source

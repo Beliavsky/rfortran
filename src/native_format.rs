@@ -9,6 +9,7 @@ mod calendar;
 mod environment;
 mod format_spec;
 mod record_input;
+mod list_input;
 mod character_input;
 mod file_inquiry;
 use format_spec::GroupParser;
@@ -17,6 +18,8 @@ extern "C" {
     fn malloc(size:usize)->*mut core::ffi::c_void;
     fn realloc(pointer:*mut core::ffi::c_void,size:usize)->*mut core::ffi::c_void;
     fn free(pointer:*mut core::ffi::c_void);
+    fn fopen(path:*const u8,mode:*const u8)->*mut core::ffi::c_void;
+    fn fputc(c:i32,stream:*mut core::ffi::c_void)->i32;
     fn fgetc(stream: *mut core::ffi::c_void) -> i32;
     fn ferror(stream: *mut core::ffi::c_void) -> i32;
     fn tmpfile() -> *mut core::ffi::c_void;
@@ -108,6 +111,86 @@ pub unsafe extern "C" fn rfort_file_inquire(
     status
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn rfort_file_free_name(path:*mut core::ffi::c_void)->i32 {free(path);0}
+#[no_mangle]
+pub unsafe extern "C" fn rfort_file_open_dynamic(slots:*mut *mut core::ffi::c_void,names:*mut *const u8,requested:i64,path:*const u8,length:usize,mode:i64,newunit:i64)->i64 {
+    let mut length=length;while length>0 && *path.add(length-1)==b' ' {length-=1;}
+    if length==0 || core::slice::from_raw_parts(path,length).contains(&0) {return i64::MIN;}
+    let unit=if newunit!=0 {
+        let mut unit=0;for i in 1024..2048 {if (*slots.add(i)).is_null() {unit=file_inquiry::unit(i);break;}}unit
+    }else{requested};
+    if newunit!=0 && unit==0 {return i64::MIN;}
+    if matches!(unit,5|6) {return i64::MIN+2;}let Some(index)=file_inquiry::index(unit) else {return i64::MIN+2;};
+    if !(*slots.add(index)).is_null() {return i64::MIN+1;}
+    let name=malloc(length+1).cast::<u8>();if name.is_null() {return i64::MIN;}
+    core::ptr::copy_nonoverlapping(path,name,length);*name.add(length)=0;
+    let flags=match mode {0=>b"rb\0".as_ptr(),1=>b"wb\0".as_ptr(),2=>b"w+b\0".as_ptr(),3|4|5=>b"r+b\0".as_ptr(),_=>{free(name.cast());return i64::MIN;}};
+    let mut file=fopen(name,flags);if file.is_null() && mode==5 {file=fopen(name,b"w+b\0".as_ptr());}
+    if file.is_null() {free(name.cast());return i64::MIN;}
+    *slots.add(index)=file;*names.add(index)=name;unit
+}
+#[no_mangle]
+pub unsafe extern "C" fn rfort_format_end_file(pointer:*mut core::ffi::c_void,stream:*mut core::ffi::c_void)->i32 {
+    let list=&*pointer.cast::<OutputList>();let mut failed=false;
+    if fseek(stream,0,1)!=0 {failed=true;}
+    render_format(list.format,list.length,list.items,list.count,&mut |c|{if fputc(c as i32,stream)<0 {failed=true;}});
+    if list.advance!=0 && fputc(10,stream)<0 {failed=true;}
+    if fflush(stream)!=0 {failed=true;}
+    #[cfg(windows)] {let pos=_ftelli64(stream);if pos<0 || _chsize_s(_fileno(stream),pos)!=0 {failed=true;}}
+    #[cfg(not(windows))] {let pos=ftello(stream);if pos<0 || ftruncate(fileno(stream),pos)!=0 {failed=true;}}
+    free_output_list(pointer);failed as i32
+}
+
+unsafe fn input_stream(stream:*mut core::ffi::c_void)->*mut core::ffi::c_void {
+    if !stream.is_null() {return stream;}
+    #[cfg(windows)] {__acrt_iob_func(0)}
+    #[cfg(target_os="macos")] {__stdinp}
+    #[cfg(not(any(windows,target_os="macos")))] {stdin}
+}
+#[repr(C)]
+struct ListReader {session:list_input::Session,stream:*mut core::ffi::c_void,source:*mut u8,length:usize,offset:usize}
+#[no_mangle]
+pub unsafe extern "C" fn rfort_list_read_begin(stream:*mut core::ffi::c_void)->*mut core::ffi::c_void {
+    let p=malloc(core::mem::size_of::<ListReader>()).cast::<ListReader>();
+    if !p.is_null() {p.write(ListReader {session:list_input::Session::new(),stream:input_stream(stream),source:core::ptr::null_mut(),length:0,offset:0});} p.cast()
+}
+#[no_mangle]
+pub unsafe extern "C" fn rfort_list_read_internal_begin(source:*const u8,length:usize)->*mut core::ffi::c_void {
+    let p=malloc(core::mem::size_of::<ListReader>()).cast::<ListReader>();if p.is_null() {return p.cast();}
+    let copy=malloc(length.max(1)).cast::<u8>();if copy.is_null() {free(p.cast());return core::ptr::null_mut();}
+    core::ptr::copy_nonoverlapping(source,copy,length);
+    p.write(ListReader{session:list_input::Session::new(),stream:core::ptr::null_mut(),source:copy,length,offset:0});p.cast()
+}
+unsafe fn reader_byte(stream:*mut core::ffi::c_void,source:*mut u8,length:usize,offset:&mut usize)->Result<Option<u8>,()> {
+    if source.is_null() {input_byte(stream)}else if *offset==length {Ok(None)}else{let c=*source.add(*offset);*offset+=1;Ok(Some(c))}
+}
+unsafe fn input_byte(stream:*mut core::ffi::c_void)->Result<Option<u8>,()> {
+    let c=fgetc(stream);if c>=0 {Ok(Some(c as u8))}else if ferror(stream)!=0 {Err(())}else{Ok(None)}
+}
+#[no_mangle]
+pub unsafe extern "C" fn rfort_list_read_next(handle:*mut core::ffi::c_void,kind:i64,width:usize,out:*mut u8)->i64 {
+    if handle.is_null() {return 1;}let r=&mut *handle.cast::<ListReader>();
+    if kind==3 {
+        let mut value=[0;8];let code=r.session.next(kind,width,&mut value,||reader_byte(r.stream,r.source,r.length,&mut r.offset));
+        if code==0 {*out=(i64::from_ne_bytes(value)!=0) as u8;}code
+    } else {
+        let length=if kind==4 {width}else{8};let out=core::slice::from_raw_parts_mut(out,length);
+        r.session.next(kind,width,out,||reader_byte(r.stream,r.source,r.length,&mut r.offset))
+    }
+}
+#[no_mangle]
+pub unsafe extern "C" fn rfort_list_read_complex_next(handle:*mut core::ffi::c_void,width:usize,re:*mut u8,im:*mut u8)->i64 {
+    if handle.is_null() {return 1;}let r=&mut *handle.cast::<ListReader>();let mut out=[0;16];
+    let code=r.session.next(5,width,&mut out,||reader_byte(r.stream,r.source,r.length,&mut r.offset));
+    if code==0 {core::ptr::copy_nonoverlapping(out.as_ptr(),re,8);core::ptr::copy_nonoverlapping(out.as_ptr().add(8),im,8);}code
+}
+#[no_mangle]
+pub unsafe extern "C" fn rfort_list_read_end(handle:*mut core::ffi::c_void)->i64 {
+    if handle.is_null() {return 1;}let r=&mut *handle.cast::<ListReader>();
+    let code=r.session.finish(||reader_byte(r.stream,r.source,r.length,&mut r.offset));free(r.source.cast());core::ptr::drop_in_place(r);free(handle);code
+}
+
 /// A null stream denotes standard input. The destination holds `length` bytes
 /// plus a terminator; the compiler copies it to user storage only on success.
 #[no_mangle]
@@ -151,6 +234,10 @@ pub unsafe extern "C" fn rfort_read_record_format(
     rfort_read_record(stream, destination, length)
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn rfort_character_compare(left:*const u8,left_length:usize,right:*const u8,right_length:usize)->i32 {
+    character_input::compare(core::slice::from_raw_parts(left,left_length),core::slice::from_raw_parts(right,right_length))
+}
 #[no_mangle]
 pub unsafe extern "C" fn rfort_read_character_field(source:*const u8,source_length:usize,destination:*mut u8,length:usize)->i64 {
     let code=character_input::field(core::slice::from_raw_parts(source,source_length),core::slice::from_raw_parts_mut(destination,length));

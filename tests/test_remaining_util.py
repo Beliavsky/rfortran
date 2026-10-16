@@ -19,7 +19,7 @@ print *,ios,n
 end
 ''','0 -9223372036854775808\n',data='-9223372036854775808\n')
 
-    def test_overlong_integer_record_is_not_silently_truncated(self):
+    def test_long_integer_record_is_not_truncated(self):
         self.check('''integer::u,n,ios
 character(4102)::text
 open(newunit=u,status='scratch')
@@ -29,12 +29,12 @@ write(u,'(a)')text
 write(u,'(a)')'17'
 rewind(u)
 read(u,*,iostat=ios)n
-print *,ios>0
+print *,ios,n
 read(u,*)n
 print *,n
 close(u)
 end
-''','T\n17\n',reference=False)
+''','0 42\n17\n')
 
     def test_character_runtime_constructors(self):
         self.check('''character(2)::words(2),a(4),b(4),empty(0)
