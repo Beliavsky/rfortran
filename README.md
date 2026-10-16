@@ -1860,6 +1860,14 @@ external compatibility runner.
 On Windows, after building release, also run `python tests/test_batch_sources.py`
 to verify the compatibility wrappers and multi-source fixtures.
 
+Scalar CHARACTER function results with lengths determined by the element width
+of an array dummy support fixed arrays and runtime-sized sections. Result
+specifications respect dummy/local declarations that shadow module entities,
+and empty-array branches are specialized before checking their element access.
+`xfirst_character.f90`, `tests/203_first_tail.f90`, and
+`python tests/test_first_tail.py` cover these cases and numeric empty-array
+sentinels.
+
 ### External util.f90 procedures
 
 Small drivers track progress toward compiling and running `kind.f90 util.f90

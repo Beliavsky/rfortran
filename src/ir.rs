@@ -1885,6 +1885,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
         external_ret: &std::collections::HashMap<String, crate::ast::TypeSpec>,
         types: &mut std::collections::HashMap<String, crate::ast::TypeSpec>,
     ) {
+        use crate::ast::TypeSpec;
         for s in stmts {
             let mut new_stmts = Vec::new();
             match s {
@@ -1908,7 +1909,15 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                         }
                     }
                 }
-                Stmt::Assign { name, value } => match value {
+                Stmt::Assign { name, value } => {
+                    let source=crate::inquiries::model_type(value,&|n|types.get(n).map(|k|(k.clone(),0))).ok().flatten();
+                    let conversion=match (types.get(name),source) {
+                        (Some(TypeSpec::Real|TypeSpec::DoublePrecision),Some(TypeSpec::Integer(_)))=>Some("dble"),
+                        _=>None,
+                    };
+                    if let Some(conversion)=conversion {
+                        new_stmts.push(IStmt::AssignExpr(name.clone(),IExpr::Call(conversion.into(),vec![lower_expr(value,types)])));
+                    } else {match value {
                     Expr::Str(s) => new_stmts.push(IStmt::AssignStr(name.clone(), s.clone())),
                     Expr::IntLit(s) => new_stmts.push(IStmt::AssignIntLit(name.clone(), s.clone())),
                     Expr::RealLit(s) => {
@@ -1917,6 +1926,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                     Expr::Logical(b) => new_stmts.push(IStmt::AssignBool(name.clone(), *b)),
                     Expr::Ident(id) => new_stmts.push(IStmt::AssignIdent(name.clone(), id.clone())),
                     _ => new_stmts.push(IStmt::AssignExpr(name.clone(), lower_expr(value, types))),
+                    }}
                 },
                 Stmt::AssignIndex {
                     name,

@@ -1413,6 +1413,13 @@
       "program_stdout": " command argument tests passed\n",
       "program_stderr": "",
       "program_exit_code": 0
+    },
+    "203_first_tail": {
+      "compiler_stderr": "",
+      "compiler_exit_code": 0,
+      "program_stdout": " first/tail tests passed\n",
+      "program_stderr": "",
+      "program_exit_code": 0
     }
   }
 }

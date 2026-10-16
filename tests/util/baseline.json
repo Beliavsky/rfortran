@@ -4,20 +4,20 @@
     "kind": "c999f5d305aede589d31ea7585929d41e1fd5b1b86e1774f195b0b1354dec9c3",
     "manifest": "6654503f68422d27c30a65202dc3f9c4cdaba8f7cf59000627c0f5ba97c2d092"
   },
-  "compiler_sha256": "bbdffa7abc809c7baaecec6c13e7c13912b3fe40d63a730da7e38adda5111dc7",
+  "compiler_sha256": "b8e5f33330862478514b190f4606150ba2f06e92b59a6c232cce658cbdd780e2",
   "mode": "isolated",
   "optimizations": [
     0,
     2
   ],
   "procedure_counts": {
-    "pass": 92,
+    "pass": 97,
     "untested": 431,
-    "blocked": 28
+    "blocked": 23
   },
   "case_outcomes": {
-    "pass": 56,
-    "compile_error": 12
+    "pass": 58,
+    "compile_error": 10
   },
   "cases": [
     {
@@ -118,10 +118,10 @@
         "tail_int",
         "tail_real"
       ],
-      "driver_sha256": "24f33e623397c2d8008966f8fe2c5a3fa542d4ae309e2c8c69a410309a1b053f",
+      "driver_sha256": "acf48f27e85aeddce4dfe475d6bab41a53ee09284ddf43e0838f15858d8e1470",
       "outcomes": {
-        "isolated-O0": "compile_error",
-        "isolated-O2": "compile_error"
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
       }
     },
     {
@@ -2617,7 +2617,7 @@
     {
       "name": "tail_int",
       "line": 5626,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "first_tail"
       ]
@@ -2625,7 +2625,7 @@
     {
       "name": "tail_real",
       "line": 5639,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "first_tail"
       ]
@@ -2999,7 +2999,7 @@
     {
       "name": "first_int",
       "line": 6667,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "first_tail"
       ]
@@ -3007,7 +3007,7 @@
     {
       "name": "first_real",
       "line": 6677,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "first_tail"
       ]
@@ -3015,7 +3015,7 @@
     {
       "name": "first_char",
       "line": 6687,
-      "status": "blocked",
+      "status": "pass",
       "tested_by": [
         "first_tail"
       ]

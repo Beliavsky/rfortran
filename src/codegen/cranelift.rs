@@ -2026,6 +2026,10 @@ fn gen_stmts(
                         let iv = b.ins().iconst(types::I64, v);
                         b.ins().store(MemFlags::new(), iv, a, 0);
                     }
+                } else if let Some(ss)=reals.get(name) {
+                    let value=b.ins().f64const(s.parse::<i128>()? as f64);
+                    let address=storage_addr(b,ptr_ty,*ss);
+                    b.ins().store(MemFlags::new(),value,address,0);
                 }
             }
             IStmt::AssignRealLit(name, s) => {

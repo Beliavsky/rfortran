@@ -14,12 +14,12 @@ outcomes at both O0 and O2:
 
 | Driver outcome | Count |
 | --- | ---: |
-| Pass against gfortran | 28 |
-| Compilation failure | 6 |
+| Pass against gfortran | 29 |
+| Compilation failure | 5 |
 | Incorrect output | 0 |
 
 All gfortran reference drivers compile and run successfully, including their
-repeat executions. The inventory records 92 passing procedures and 28 blocked
+repeat executions. The inventory records 97 passing procedures and 23 blocked
 procedures. `string_fields` and `partitions_and_runs` now
 pass following fixes to early RETURN in explicit-step loops and NINT rounding.
 `matrix_shapes` and `cumulative_sums` now pass after routing runtime selectors
@@ -43,6 +43,21 @@ specialization passes.
 `decimal_rounding` tests the original elemental `floor_10` and `ceiling_10`
 with positive and negative values above and below one. It passes after adding
 FLOOR and CEILING, including integer result kinds and array lowering.
+`first_tail` now passes after fixing dummy/local shadowing in module function
+result specifications, pruning constant SIZE guards before empty-array element
+lowering, and preserving INTEGER-to-REAL assignment conversion. Scalar CHARACTER
+results whose length follows the input element width also accept runtime-sized
+sections through argument descriptors. `tests/test_first_tail.py` covers these
+cases in the interpreter and native O0/O2 builds.
+
+The driver uses a declared zero-size CHARACTER variable for its differential
+empty-array call: the installed gfortran returns length zero for a direct empty
+typed constructor in this function call. The separate regression retains the
+direct constructor and checks its declared element length explicitly.
+`joins` remains blocked by data-dependent CHARACTER result lengths involving
+`SUM(LEN_TRIM(words))`; it needs runtime length evaluation, not a literal-only
+substitution.
+
 See [baseline.json](baseline.json)
 for exact input-source and compiler hashes and every procedure's inventory entry.
 

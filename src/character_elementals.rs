@@ -449,7 +449,21 @@ impl Lower {
         let runtime_result=array_result && (args.iter().any(|e|runtime(e,symbols))
             || routine.params.iter().zip(args.iter()).any(|(p,e)|routine.body.iter().any(|s|matches!(s,Stmt::VarDecl{kind:TypeSpec::Integer(_),names} if names.contains(p))) && routine.body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,dims,..} if name==&routine.result && dims.iter().any(|d|references(d,p)))) && crate::parameters::integer_constant(e).is_err()));
         let allocatable_result=array_result && routine.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==&routine.result && intent=="allocatable"));
-        if let Some(helper) = routine.descriptor_call.as_ref().filter(|_|!array_result||runtime_result||allocatable_result) {
+        let descriptor_kind=if !array_result && matches!(routine.kind,TypeSpec::Character(_)|TypeSpec::CharacterLength(_)) {
+            let mut types=HashMap::new();
+            for (param,actual) in routine.params.iter().zip(args.iter()) {
+                let kind=self.view(actual,symbols).ok().map(|v|v.kind).or_else(|| {
+                    // Runtime array views retain a known element type even
+                    // when their active extent cannot be enumerated here.
+                    if matches!(actual,Expr::Ident(_)|Expr::Section{..}) || matches!(actual,Expr::Call(tag,_) if tag=="@packed_view") {
+                        crate::inquiries::model_type(actual,&|n|symbols.get(n).map(|(k,d)|(k.clone(),d.len()))).ok().flatten()
+                    } else {None}
+                });
+                if let Some(kind)=kind {types.insert(param.clone(),kind);} else {types.clear();break;}
+            }
+            Self::specialize_kind(&routine.kind,&types,&HashMap::new(),&HashMap::new()).ok()
+        } else {Some(routine.kind.clone())};
+        if let Some(helper) = routine.descriptor_call.as_ref().filter(|_|descriptor_kind.is_some() && (!array_result||runtime_result||allocatable_result)) {
             self.serial += 1;
             let result = format!("@array_function_result_{}", self.serial);
             let result_rank=routine.body.iter().find_map(|s|match s {
@@ -458,8 +472,9 @@ impl Lower {
             if let Some(rank)=result_rank {
                 crate::heap::unallocated_result(routine.kind.clone(),result.clone(),rank,prefix,symbols)?;
             } else {
-                prefix.push(Stmt::VarDecl { kind: routine.kind.clone(), names: vec![result.clone()] });
-                symbols.insert(result.clone(), (routine.kind.clone(), vec![]));
+                let kind=descriptor_kind.clone().unwrap();
+                prefix.push(Stmt::VarDecl { kind: kind.clone(), names: vec![result.clone()] });
+                symbols.insert(result.clone(), (kind, vec![]));
             }
             let mut actuals = args.clone();
             for (param,actual) in routine.params.iter().zip(&mut actuals) {
@@ -1423,10 +1438,12 @@ pub(crate) fn prepare(mut p: Program) -> Result<(Program, Lower)> {
                         }
                         let numeric = |kind: &TypeSpec| matches!(kind, TypeSpec::Integer(_) | TypeSpec::Real | TypeSpec::DoublePrecision | TypeSpec::Logical);
                         // Reuse subroutine argument association for scalar-valued
-                        // numeric functions. Calls can be preserved in procedure
+                        // numeric and fixed-length CHARACTER functions. Calls can be preserved in procedure
                         // templates until their actual array descriptors are bound.
                         let input = |kind: &TypeSpec| numeric(kind) || matches!(kind, TypeSpec::Character(_) | TypeSpec::CharacterAssumed);
-                        let descriptor = !*elemental && numeric(&kind)
+                        let character_array_input=body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,..} if params.contains(name)))
+                            && !body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,..} if name==&result));
+                        let descriptor = !*elemental && (numeric(&kind) || character_array_input && matches!(kind,TypeSpec::Character(_)|TypeSpec::CharacterLength(_)))
                             && params.iter().all(|param| {
                                 body.iter().any(|s| matches!(s, Stmt::VarDecl {kind,names} if names.contains(param) && input(kind))
                                     || matches!(s, Stmt::ArrayDecl {kind,name,..} if name == param && input(kind)))

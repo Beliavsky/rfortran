@@ -455,7 +455,11 @@ fn scope(
                     .iter()
                     .any(|s| matches!(s,Stmt::VarDecl {names,..} if names.contains(&original)));
                 if let Some(ty) = return_type {
-                    kind(ty, &names);
+                    // Result specifications see the procedure's dummy/local
+                    // declarations, which shadow same-named module entities.
+                    let mut result_scope=host.clone();
+                    for local in declarations(body) {result_scope.remove(&local);}
+                    kind(ty, &result_scope);
                 }
                 scope(
                     body,

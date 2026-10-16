@@ -314,6 +314,8 @@ fn rewrite(
     }
     if let Ok(n) = crate::parameters::integer_constant(e) {
         *e = Expr::IntLit(n.to_string());
+    } else if let Ok(value)=crate::parameters::logical_constant(e,&HashMap::new()) {
+        *e=Expr::Logical(value);
     }
     Ok(())
 }

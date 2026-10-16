@@ -944,7 +944,13 @@ pub fn interpret(program: &Program) {
                         frame.env_str.insert(name.clone(), s);
                         frame.env_int.remove(name);
                     } else if let Some(i) = vt.0 {
-                        frame.env_int.insert(name.clone(), i);
+                        if frame.env_real64.contains_key(name) {
+                            frame.env_real64.insert(name.clone(),i as f64);
+                        } else if frame.env_real32.contains_key(name) {
+                            frame.env_real32.insert(name.clone(),i as f32);
+                        } else {
+                            frame.env_int.insert(name.clone(), i);
+                        }
                     } else if let Some(f) = vt.1 {
                         if frame.env_int.contains_key(name) {
                             frame.env_int.insert(name.clone(), f as i64);

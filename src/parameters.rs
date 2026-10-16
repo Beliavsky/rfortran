@@ -194,7 +194,7 @@ fn model_type_lookup(constants: &Constants, name: &str) -> Option<(TypeSpec,usiz
         _ => TypeSpec::Logical,
     },rank.parse().ok()?))
 }
-fn logical_constant(e: &Expr, constants: &Constants) -> Result<bool> {
+pub(crate) fn logical_constant(e: &Expr, constants: &Constants) -> Result<bool> {
     Ok(match e {
         Expr::Logical(value) => *value,
         Expr::Ident(name) => logical_constant(constants.get(name)
