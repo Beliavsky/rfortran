@@ -10,6 +10,8 @@ mod errors;
 mod source_diagnostics;
 mod ir;
 mod intrinsics;
+mod float_model;
+mod real_intrinsics;
 mod modules;
 mod module_files;
 mod heap;

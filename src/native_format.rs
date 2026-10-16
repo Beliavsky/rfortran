@@ -5,6 +5,20 @@
 //! Built once with the compiler and embedded as a native static library.
 #![no_std]
 mod timing;
+mod float_model;
+
+#[no_mangle]
+pub extern "C" fn rfort_float_model(op:i64,kind:i64,x:f64,i:i64,s:f64)->f64 {
+    if op==4 && s==0.0 {
+        let message=b"Runtime error: NEAREST S must not be zero\n";
+        unsafe {
+            #[cfg(windows)] _write(2,message.as_ptr(),message.len() as u32);
+            #[cfg(not(windows))] write(2,message.as_ptr(),message.len());
+            exit(1);
+        }
+    }
+    float_model::evaluate(op,kind as u8,x,i,s)
+}
 mod calendar;
 mod environment;
 mod format_spec;

@@ -11,6 +11,7 @@ use std::collections::{HashMap, HashSet};
 struct Symbols {
     variables: HashMap<String,(TypeSpec,Vec<Expr>)>,
     elementals: HashMap<String,TypeSpec>,
+    scalar_functions: HashMap<String,TypeSpec>,
     character_functions: HashMap<String,Vec<Option<usize>>>,
     procedures: HashSet<String>,
 }
@@ -75,6 +76,17 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
         return Ok((value,Some(count),kind));
     }
     match e {
+        Expr::Call(name,args) if crate::real_intrinsics::decode(name).is_some() || crate::real_intrinsics::keys(name).is_some() && !symbols.contains_key(name) && !symbols.procedures.contains(name) => {
+            let mut values=vec![];let mut kinds=vec![];let mut shape=None;
+            for arg in args {
+                let (value,count,kind)=element(arg,index,symbols)?;
+                if let (Some(a),Some(b))=(shape,count) {if a>=0 && b>=0 && a!=b {bail!("floating-point intrinsic array shapes do not conform");}}
+                shape=shape.or(count);values.push(value);kinds.push(kind);
+            }
+            let public=crate::real_intrinsics::decode(name).map_or(name.as_str(),|(n,_)|n);
+            let kind=crate::real_intrinsics::result_kind(public,&kinds)?;
+            Ok((Expr::Call(name.clone(),values),shape,kind))
+        }
         Expr::Call(name,args) if crate::intrinsics::real_predicate(name) && !symbols.contains_key(name) && !symbols.procedures.contains(name) => {
             if args.len()!=1 {bail!("{} expects 1 argument",name.to_ascii_uppercase());}
             let (value,count,kind)=element(&args[0],index,symbols)?;
@@ -161,6 +173,9 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
                 shape=shape.or(count); values.push(value);
             }
             Ok((Expr::Call(name.clone(),values),shape,symbols.elementals[name].clone()))
+        }
+        Expr::Call(name,_) if symbols.scalar_functions.contains_key(name) => {
+            Ok((e.clone(),None,symbols.scalar_functions[name].clone()))
         }
         Expr::Call(name,args) if crate::intrinsics::integer_rounding(name) && !symbols.contains_key(name) && !symbols.procedures.contains(name) => {
             let kind=crate::intrinsics::rounding_kind(name,args)?;
@@ -937,6 +952,14 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
         _ => {}
     }
     if let Expr::Call(name,args) = e {
+        if crate::real_intrinsics::keys(name).is_some() && !symbols.contains_key(name) && !symbols.procedures.contains(name) {
+            let arity=crate::real_intrinsics::keys(name).unwrap().len();
+            if args.len()!=arity {bail!("{} expects {arity} arguments, got {}",name.to_ascii_uppercase(),args.len());}
+            let kinds=args.iter().map(|arg|element(arg,&int(1),symbols).map(|(_,_,kind)|kind)).collect::<Result<Vec<_>>>()?;
+            crate::real_intrinsics::result_kind(name,&kinds)?;
+            if name=="nearest" && crate::parameters::real_constant(&args[1]).ok()==Some(0.0) {bail!("NEAREST S must not be zero");}
+            *name=crate::real_intrinsics::tag(name,if kinds[0]==TypeSpec::DoublePrecision {8}else{4});
+        }
         if let Some(lengths) = symbols.character_functions.get(name).cloned() {
             if args.len()!=lengths.len() { bail!("wrong number of arguments to CHARACTER-argument function `{name}`"); }
             for (arg,length) in args.iter_mut().zip(lengths) {
@@ -960,7 +983,7 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             }
         }
         if name != "@packed_view" && args.iter().any(|arg| runtime_extent(arg).is_some()) {
-            if symbols.elementals.contains_key(name) || crate::intrinsics::math_arity(name).is_some() || crate::intrinsics::integer_rounding(name) || crate::intrinsics::real_predicate(name)
+            if symbols.elementals.contains_key(name) || crate::intrinsics::math_arity(name).is_some() || crate::intrinsics::integer_rounding(name) || crate::intrinsics::real_predicate(name) || crate::real_intrinsics::decode(name).is_some()
                 || matches!(name.as_str(), "real" | "dble" | "int" | "abs" | "mod" | "modulo") || numeric_minmax(name,symbols) {
                 let length=args.iter().find_map(runtime_extent).unwrap();
                 for arg in args.iter() {
@@ -981,7 +1004,7 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             bail!("runtime PACK results are not yet supported as arguments to `{name}`");
         }
     }
-    if expand_elementals && matches!(e,Expr::Call(name,_) if symbols.elementals.contains_key(name) || matches!(name.as_str(), "mod" | "modulo") || numeric_minmax(name,symbols) || (crate::intrinsics::integer_rounding(name) || crate::intrinsics::real_predicate(name)) && !symbols.contains_key(name) && !symbols.procedures.contains(name)) && array_valued(e,symbols) {
+    if expand_elementals && matches!(e,Expr::Call(name,_) if crate::real_intrinsics::decode(name).is_some() || symbols.elementals.contains_key(name) || matches!(name.as_str(), "mod" | "modulo") || numeric_minmax(name,symbols) || (crate::intrinsics::integer_rounding(name) || crate::intrinsics::real_predicate(name)) && !symbols.contains_key(name) && !symbols.procedures.contains(name)) && array_valued(e,symbols) {
         *serial+=1;
         let index_name=format!("@elemental_index_{serial}");
         let temp=format!("@elemental_result_{serial}");
@@ -1642,6 +1665,19 @@ pub fn resolve(mut program: Program) -> Result<Program> {
     }
     procedures(&program.body,&mut symbols.procedures);
     symbols.elementals=crate::elemental::functions(&program);
+    fn scalar_functions(body:&[Stmt],out:&mut HashMap<String,TypeSpec>) {
+        for stmt in body {match stmt {
+            Stmt::Function{name,return_type,body,elemental:false,..}=>{
+                let result=match body.last() {Some(Stmt::Return(Some(Expr::Ident(n))))=>n.as_str(),_=>name.as_str()};
+                if !body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,..} if name==result)) {
+                    if let Some(kind)=crate::elemental::result_kind(name,return_type,body) {out.insert(name.clone(),kind);}
+                }
+                scalar_functions(body,out);
+            }
+            Stmt::Module{body,..}|Stmt::Subroutine{body,..}|Stmt::Function{body,..}|Stmt::Block{body}=>scalar_functions(body,out),_=>{}
+        }}
+    }
+    scalar_functions(&program.body,&mut symbols.scalar_functions);
     collect_character_functions(&program.body,&mut symbols.character_functions)?;
     // Call arguments may have been materialized in an earlier pass. Continue
     // its numbering so constructor and PACK temporaries cannot shadow them.

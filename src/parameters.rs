@@ -1230,6 +1230,50 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
                     else if range <= 9 { 4 } else if range <= 18 { 8 } else { -1 };
                 *expr = Expr::IntLit(kind.to_string());
             }
+            name if crate::real_intrinsics::keys(name).is_some() && !constants.contains_key(&model_type_key(name))
+                && !constants.contains_key(&format!("@model_procedure:{name}")) => {
+                let arity=crate::real_intrinsics::keys(name).unwrap().len();
+                if args.len()!=arity {bail!("{} expects {arity} arguments, got {}",name.to_ascii_uppercase(),args.len());}
+                let kinds=args.iter().map(|arg|crate::inquiries::model_type(arg,&|n|model_type_lookup(constants,n))).collect::<Result<Vec<_>>>()?;
+                let kinds=kinds.into_iter().collect::<Option<Vec<_>>>();
+                if let Some(kinds)=&kinds {crate::real_intrinsics::result_kind(name,kinds)?;}
+                // Elemental constant calls also accept constructor and named
+                // array constants, with ordinary scalar expansion.
+                let arrays=args.iter().map(|arg|match arg {
+                    Expr::Call(n,items) if n=="@array_constructor"=>Some(items.clone()),
+                    Expr::Ident(n)=>match constants.get(n) {Some(Expr::Call(tag,items)) if tag=="@array_constant"=>Some(items.clone()),_=>None},
+                    _=>None,
+                }).collect::<Vec<_>>();
+                if let Some(count)=arrays.iter().flatten().next().map(Vec::len) {
+                    if arrays.iter().flatten().any(|a|a.len()!=count) {bail!("{} array shapes do not conform",name.to_ascii_uppercase());}
+                    let mut values=vec![];
+                    let mut constant=args.iter().zip(&arrays).all(|(arg,array)|array.is_some() || real_constant(arg).is_ok() || integer_constant(arg).is_ok());
+                    for index in 0..count {
+                        let args=args.iter().zip(&arrays).map(|(arg,array)|array.as_ref().map_or_else(||arg.clone(),|a|a[index].clone())).collect();
+                        let mut item=Expr::Call(name.into(),args);
+                        rewrite_expr(&mut item,constants)?;
+                        if real_constant(&item).is_err() && integer_constant(&item).is_err() {constant=false;break;}
+                        values.push(item);
+                    }
+                    if constant {*expr=Expr::Call("@array_constructor".into(),values);return Ok(());}
+                }
+                if name=="nearest" && real_constant(&args[1]).ok()==Some(0.0) {bail!("NEAREST S must not be zero");}
+                if let Some(kinds)=kinds {
+                    let result=crate::real_intrinsics::result_kind(name,&kinds)?;
+                    let kind=if kinds[0]==TypeSpec::DoublePrecision {8}else{4};
+                    let x=real_constant(&args[0]).ok();
+                    let i=if matches!(name,"scale"|"set_exponent") {integer_constant(&args[1]).ok()} else {Some(0)};
+                    let s=if name=="nearest" {real_constant(&args[1]).ok()} else {Some(0.0)};
+                    if let (Some(x),Some(i),Some(s))=(x,i,s) {
+                        let value=crate::float_model::evaluate(crate::real_intrinsics::opcode(name),kind,x,i,s);
+                        if !value.is_finite() {bail!("non-finite {} constant expression",name.to_ascii_uppercase());}
+                        *expr=if result==TypeSpec::Integer(None) {Expr::IntLit((value as i64).to_string())}else{
+                            let literal=Expr::RealLit(value.to_string());
+                            if kind==8 {Expr::Call("dble".into(),vec![literal])}else{literal}
+                        };
+                    }
+                }
+            }
             name if crate::bit_intrinsics::keys(name).is_some() && !constants.contains_key(&model_type_key(name))
                 && !constants.contains_key(&format!("@model_procedure:{name}")) => {
                 let arity=crate::bit_intrinsics::keys(name).unwrap().len();

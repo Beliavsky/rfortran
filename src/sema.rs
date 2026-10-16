@@ -667,6 +667,12 @@ pub fn analyze_with_src(
     }
 
     known_intrinsics.insert("btest".into(),TypeSpec::Logical);
+    for name in crate::real_intrinsics::NAMES {
+        for kind in [4,8] {
+            let tag=crate::real_intrinsics::tag(name,kind);
+            known_intrinsics.insert(tag.clone(),crate::real_intrinsics::tag_kind(&tag).unwrap());
+        }
+    }
     for name in crate::bit_intrinsics::NAMES {
         for bytes in [1,2,4,8] {
             let tag=crate::bit_intrinsics::tag(name,bytes);

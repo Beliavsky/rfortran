@@ -271,6 +271,7 @@ fn read_record(
 }
 
 struct Externs {
+    float_model: ir::FuncRef,
     checked_integer: ir::FuncRef,
     cpu_seconds: ir::FuncRef,
     clock_count: ir::FuncRef,
@@ -399,7 +400,13 @@ fn declare_externs(
     sig.returns.push(AbiParam::new(types::I64));
     let id=module.declare_function("rfort_checked_integer",Linkage::Import,&sig)?;
     let checked_integer=module.declare_func_in_func(id,b.func);
+    let mut sig=module.make_signature();
+    sig.params.extend([AbiParam::new(types::I64),AbiParam::new(types::I64),AbiParam::new(types::F64),AbiParam::new(types::I64),AbiParam::new(types::F64)]);
+    sig.returns.push(AbiParam::new(types::F64));
+    let id=module.declare_function("rfort_float_model",Linkage::Import,&sig)?;
+    let float_model=module.declare_func_in_func(id,b.func);
     Ok(Externs {
+        float_model,
         checked_integer,
         cpu_seconds,
         clock_count,
@@ -798,6 +805,21 @@ fn eval_expr(
         IExpr::Call(name, args) => {
 
             let lname = name.to_ascii_lowercase();
+            if let Some((operation,kind))=crate::real_intrinsics::decode(&lname) {
+                let x=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);
+                let x=to_f64(b,x);
+                let mut i=b.ins().iconst(ir::types::I64,0);
+                let mut s=b.ins().f64const(0.0);
+                if args.len()==2 {
+                    let v=eval_expr(b,ex,ptr_ty,&args[1],ints,reals,bools,func_meta);
+                    if operation=="nearest" {s=to_f64(b,v);}else{i=to_i64(b,v);}
+                }
+                let op=b.ins().iconst(ir::types::I64,crate::real_intrinsics::opcode(operation));
+                let kind=b.ins().iconst(ir::types::I64,kind as i64);
+                let call=b.ins().call(ex.float_model,&[op,kind,x,i,s]);
+                let value=b.inst_results(call)[0];
+                return if operation=="exponent" {CgVal::I64(b.ins().fcvt_to_sint(ir::types::I64,value))} else {CgVal::F64(value)};
+            }
             if lname == "@cpu_seconds" {
                 let call = b.ins().call(ex.cpu_seconds, &[]);
                 return CgVal::F64(b.inst_results(call)[0]);
@@ -1416,7 +1438,7 @@ fn print_expr(
         IExpr::Call(name, args) => {
             let lname = name.to_ascii_lowercase();
             if crate::intrinsics::math_arity(name).is_some() || crate::intrinsics::integer_rounding(name) || crate::intrinsics::real_predicate(name)
-                || crate::bit_intrinsics::decode(name).is_some()
+                || crate::bit_intrinsics::decode(name).is_some() || crate::real_intrinsics::decode(name).is_some()
                 || matches!(lname.as_str(), "abs" | "int" | "nint" | "real" | "dble" | "max" | "min" | "mod" | "modulo")
             {
                 let value = eval_expr(b, ex, ptr_ty, e, ints, reals, bools, func_meta);
@@ -3601,6 +3623,7 @@ impl Backend for CraneliftBackend {
         }
 
         for name in import_arity.keys().cloned().collect::<Vec<_>>() {
+            if let Some(kind)=crate::real_intrinsics::tag_kind(&name) {eff_ret.insert(name.clone(),kind);continue;}
             let lname = name.to_ascii_lowercase();
             match lname.as_str() {
                 "abs" | "aimag" | "aint" | "anint" | "cmplx" | "conjg" | "dble" | "real"

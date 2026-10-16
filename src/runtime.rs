@@ -417,6 +417,14 @@ pub fn interpret(program: &Program) {
     }
 
     fn handle_intrinsic(name: &str, args: &[ValueTuple]) -> Option<ValueTuple> {
+        if let Some((op,kind))=crate::real_intrinsics::decode(name) {
+            let x=to_real(args.first()?)?;
+            let i=if matches!(op,"scale"|"set_exponent") {to_int(args.get(1)?)?} else {0};
+            let s=if op=="nearest" {to_real(args.get(1)?)?} else {0.0};
+            if op=="nearest" && s==0.0 {eprintln!("Runtime error: NEAREST S must not be zero");std::process::exit(1);}
+            let value=crate::float_model::evaluate(crate::real_intrinsics::opcode(op),kind,x,i,s);
+            return Some(if op=="exponent" {ValueTuple::from_int(value as i64)} else {ValueTuple::from_real(value)});
+        }
         if let Some((operation,bytes))=crate::bit_intrinsics::decode(name) {
             let values=args.iter().map(to_int).collect::<Option<Vec<_>>>()?;
             let value=crate::bit_intrinsics::evaluate(operation,bytes,&values).ok()?;

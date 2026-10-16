@@ -59,6 +59,11 @@ pub fn model_type(e: &Expr, lookup: &impl Fn(&str) -> Option<(TypeSpec,usize)>) 
         Ok(())
     };
     let kind = match e {
+        Expr::Call(tag,_) if crate::real_intrinsics::tag_kind(tag).is_some() => crate::real_intrinsics::tag_kind(tag),
+        Expr::Call(name,args) if crate::real_intrinsics::keys(name).is_some() && lookup(name).is_none() => {
+            let kinds=args.iter().map(|arg|model_type(arg,lookup)).collect::<Result<Vec<_>>>()?;
+            if let Some(kinds)=kinds.into_iter().collect::<Option<Vec<_>>>() {Some(crate::real_intrinsics::result_kind(name,&kinds)?)} else {None}
+        },
         Expr::Call(name,_) if name=="@typed_constructor" => crate::empty_constructors::kind(e)?,
         Expr::Call(tag,_) if crate::bit_intrinsics::tag_kind(tag).is_some() => crate::bit_intrinsics::tag_kind(tag),
         Expr::Call(name,args) if crate::bit_intrinsics::keys(name).is_some() && lookup(name).is_none() => {

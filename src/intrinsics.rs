@@ -59,7 +59,7 @@ pub fn purity(name: &str) -> Option<Purity> {
     if IMPURE_PROCEDURES.contains(&name.as_str()) {
         Some(Purity::Impure)
     } else if PURE_FUNCTIONS.contains(&name.as_str()) || math_arity(&name).is_some() || real_predicate(&name)
-        || crate::inquiries::numeric_model(&name) || crate::bit_intrinsics::keys(&name).is_some()
+        || crate::inquiries::numeric_model(&name) || crate::bit_intrinsics::keys(&name).is_some() || crate::real_intrinsics::keys(&name).is_some()
     {
         Some(Purity::Pure)
     } else {

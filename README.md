@@ -895,6 +895,18 @@ PRECISION and RANGE also accept COMPLEX kinds 4 and 8. General procedure-call
 arguments for these inquiries are not implemented.
 Variables and user procedures may still use these intrinsic names.
 
+`SCALE`, `FRACTION`, `EXPONENT`, `SET_EXPONENT`, `NEAREST`, `SPACING`, and
+`RRSPACING` support REAL kinds 4 and 8, keyword arguments, scalar expansion,
+conformable arrays, PURE procedures, and supported constant expressions.
+EXPONENT returns default INTEGER; the other results retain X's real kind.
+SCALE and SET_EXPONENT accept INTEGER kinds 1/2/4/8 for I. NEAREST's nonzero
+REAL direction argument may have a different kind from X; a zero direction
+is diagnosed at compile time when constant and otherwise at runtime.
+The shared binary implementation handles signed zero, subnormal values, and
+scaling across the representable range without an intermediate power overflow.
+Run `python tests/test_float_model.py` for interpreter/native O0/O2 and gfortran
+comparison checks.
+
 List-directed LOGICAL output uses `T` and `F` for scalar values, array elements,
 expressions and procedure results. CHARACTER strings containing `.TRUE.` or
 `.FALSE.` retain their spelling. Run `python tests/test_logical_list_output.py`

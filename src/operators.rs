@@ -777,6 +777,11 @@ impl Resolver {
                                 let logical=scalar(&TypeSpec::Logical);
                                 match arg_types.first() {Some(Ty::Array(_,rank))=>Ty::Array(Box::new(logical),*rank),_=>logical}
                             }
+                            _ if crate::real_intrinsics::keys(n).is_some() => {
+                                let first=arg_types.first().cloned().unwrap_or(Ty::Unknown);
+                                let result=if n=="exponent" {scalar(&TypeSpec::Integer(None))}else{match first {Ty::Array(t,_)=>*t,t=>t}};
+                                elemental_result(result,&arg_types)
+                            }
                             _ if crate::intrinsics::math_arity(n).is_some() => {
                                 arg_types.first().cloned().unwrap_or(Ty::Unknown)
                             }

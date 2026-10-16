@@ -110,6 +110,7 @@ impl Signature {
 
 pub(crate) fn intrinsic(name: &str) -> Option<Signature> {
     let keys: &[&str] = match name {
+        name if crate::real_intrinsics::keys(name).is_some() => crate::real_intrinsics::keys(name).unwrap(),
         name if crate::bit_intrinsics::keys(name).is_some() => crate::bit_intrinsics::keys(name).unwrap(),
         name if crate::inquiries::numeric_model(name) => &["x"],
         name if crate::intrinsics::real_predicate(name) => &["x"],
