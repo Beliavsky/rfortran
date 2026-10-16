@@ -1314,6 +1314,17 @@ pub fn interpret(program: &Program) {
                         value.truncate(length);value.push_str(&" ".repeat(length-value.len()));
                         call_stack.last_mut().unwrap().env_str.insert(dest.clone(),value);idx+=1;continue;
                     }
+                    if name=="@environment_query" {
+                        let fr=call_stack.last().unwrap().clone();
+                        let mut eval=|e:&Expr|eval_expr(e,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack);
+                        let text=eval(&args[3]).3.unwrap();let trim=eval(&args[4]).2.unwrap();
+                        let width=eval(&args[5]).0.unwrap() as usize;let present=eval(&args[6]).2.unwrap();
+                        let mut output=vec![0u8;width+1];let mut length=0;
+                        let status=unsafe {crate::environment::rfort_environment_query(text.as_ptr(),text.len(),i64::from(trim),output.as_mut_ptr(),width,i64::from(present),&mut length)};
+                        let frame=call_stack.last_mut().unwrap();
+                        for (arg,val) in args[..2].iter().zip([status,length]) {let Expr::Ident(n)=arg else {unreachable!()};frame.env_int.insert(n.clone(),val);}
+                        let Expr::Ident(n)=&args[2] else {unreachable!()};frame.env_str.insert(n.clone(),String::from_utf8_lossy(&output[..width]).into_owned());idx+=1;continue;
+                    }
                     if matches!(name.as_str(),"@file_inquire_unit"|"@file_inquire_file") {
                         let fr=call_stack.last().unwrap().clone();
                         let value=eval_expr(&args[4],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack);

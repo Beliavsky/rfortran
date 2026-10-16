@@ -2470,6 +2470,17 @@ fn gen_stmts(
                     file_io::call(module,b,"rfort_file_name",&[source,dest.address,dest.length],types::I32)?;
                     continue;
                 }
+                if name=="@environment_query" {
+                    let source=characters::view(module,b,ptr_ty,dc,chars,ints,&args[3])?;
+                    let dest=characters::view(module,b,ptr_ty,dc,chars,ints,&args[2])?;
+                    let trim=eval_expr(b,ex,ptr_ty,&args[4],ints,reals,bools,func_meta);let trim=to_i64(b,trim);
+                    let present=eval_expr(b,ex,ptr_ty,&args[6],ints,reals,bools,func_meta);let present=to_i64(b,present);
+                    let IExpr::Ident(length)=&args[1] else {unreachable!()};
+                    let length=storage_addr(b,ptr_ty,ints[length]);
+                    let code=file_io::call(module,b,"rfort_environment_query",&[source.address,source.length,trim,dest.address,dest.length,present,length],types::I64)?;
+                    let IExpr::Ident(status)=&args[0] else {unreachable!()};
+                    let status=storage_addr(b,ptr_ty,ints[status]);b.ins().store(MemFlags::new(),code,status,0);continue;
+                }
                 if matches!(name.as_str(),"@file_inquire_unit"|"@file_inquire_file") {
                     let mut destinations=vec![];
                     for dest in &args[..3] {

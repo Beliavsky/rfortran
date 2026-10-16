@@ -2,21 +2,21 @@
   "source_hashes": {
     "util": "5c478005438dcfd4d448cad18fe37fd3a97bb9e52a2489829b36f01180d69433",
     "kind": "c999f5d305aede589d31ea7585929d41e1fd5b1b86e1774f195b0b1354dec9c3",
-    "manifest": "4b248d7d11b68331fb225100a8fef53eb51e9184a5e87565486363ccbd71aa33"
+    "manifest": "4e493d51a1206bced96351d62f50b094d2acc9958a2b52d71e254575e5abacd3"
   },
-  "compiler_sha256": "44837e8039ba0b0471803cb6c2552eefd95248ccdc157b01154b3367d6e18181",
+  "compiler_sha256": "c06163b0ae7fd5ca55932d19128110e5be312eb21b204129b1c08257a9d487e8",
   "mode": "isolated",
   "optimizations": [
     0,
     2
   ],
   "procedure_counts": {
-    "pass": 86,
-    "untested": 432,
+    "pass": 87,
+    "untested": 431,
     "blocked": 33
   },
   "case_outcomes": {
-    "pass": 50,
+    "pass": 52,
     "compile_error": 14
   },
   "cases": [
@@ -38,6 +38,17 @@
         "ceiling_10"
       ],
       "driver_sha256": "861eb5698ba9f926f11c8af6f669d9e8cfe6b8cd200243d663c66be5f3863d90",
+      "outcomes": {
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
+      }
+    },
+    {
+      "id": "environment",
+      "procedures": [
+        "unix"
+      ],
+      "driver_sha256": "7d82e56fea0c218e1674f828faa0067a5b999014e45b1888283701b5873767de",
       "outcomes": {
         "isolated-O0": "pass",
         "isolated-O2": "pass"
@@ -2832,8 +2843,10 @@
     {
       "name": "unix",
       "line": 6337,
-      "status": "untested",
-      "tested_by": []
+      "status": "pass",
+      "tested_by": [
+        "environment"
+      ]
     },
     {
       "name": "unix_dir",

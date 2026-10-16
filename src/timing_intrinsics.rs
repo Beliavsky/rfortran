@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Beliavsky
 // See LICENSE-MIT in the repository root.
 
-//! Validate timing intrinsic outputs and lower them to ordinary assignments.
+//! Validate timing and environment intrinsic outputs and lower them to ordinary assignments.
 use crate::ast::{Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Context, Result};
 use std::collections::{HashMap, HashSet};
@@ -100,7 +100,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
             }
             let result = match &mut s {
                 Stmt::CallSub { name, args }
-                    if matches!(name.as_str(), "cpu_time" | "system_clock" | "date_and_time")
+                    if matches!(name.as_str(), "cpu_time" | "system_clock" | "date_and_time" | "get_environment_variable")
                         && !procedures.contains(name) =>
                 {
                     lower_call(name, args, &vars, &readonly, pure, serial).map(|statements| {
@@ -144,6 +144,15 @@ pub fn resolve(mut p: Program) -> Result<Program> {
         *body = out;
         Ok(())
     }
+    fn environment_call(body:&[Stmt])->bool {
+        body.iter().any(|s|match s {
+            Stmt::VarDecl{kind:TypeSpec::CharacterLength(_),names}=>names.iter().any(|n|n.starts_with("@clock_env_value_")),
+            Stmt::Function{body,..}|Stmt::Subroutine{body,..}|Stmt::Module{body,..}|Stmt::Block{body}|Stmt::Do{body,..}|Stmt::DoWhile{body,..}=>environment_call(body),
+            Stmt::If{then_body,else_body,..}=>environment_call(then_body)||else_body.as_ref().is_some_and(|b|environment_call(b)),
+            Stmt::SelectCase{cases,default,..}=>cases.iter().any(|c|environment_call(&c.body))||default.as_ref().is_some_and(|b|environment_call(b)),
+            _=>false,
+        })
+    }
     let mut procedures = HashSet::new();
     collect(&p.body, &mut procedures);
     scope(
@@ -154,7 +163,9 @@ pub fn resolve(mut p: Program) -> Result<Program> {
         false,
         &mut 0,
     )?;
-    Ok(p)
+    // Environment output temporaries can depend on LEN of an assumed-length
+    // dummy. Resolve their declaration lengths before array specialization.
+    if environment_call(&p.body) {crate::parameters::resolve_constants(p)} else {Ok(p)}
 }
 
 fn lower_call(
@@ -172,6 +183,7 @@ fn lower_call(
     crate::named_arguments::intrinsic(name)
         .unwrap()
         .reorder(name, args)?;
+    if name == "get_environment_variable" {return lower_environment(args,vars,readonly,serial);}
     if name == "date_and_time" {
         return lower_date(args, vars, readonly, serial);
     }
@@ -579,4 +591,42 @@ fn digits(value: Expr, width: u32) -> Expr {
             })
             .collect(),
     )
+}
+
+fn lower_environment(args:&[Expr],vars:&HashMap<String,(TypeSpec,usize)>,readonly:&HashSet<String>,serial:&mut usize)->Result<Vec<Stmt>> {
+    let kind=|e:&Expr|crate::inquiries::model_type(e,&|n|vars.get(n).cloned());
+    let character=|k:&TypeSpec|matches!(k,TypeSpec::Character(_)|TypeSpec::CharacterAssumed|TypeSpec::CharacterLength(_));
+    fn text(e:&Expr,vars:&HashMap<String,(TypeSpec,usize)>)->bool {
+        match e {
+            Expr::Str(_)=>true,
+            Expr::Bin(crate::ast::BinOp::Concat,a,b)=>text(a,vars)&&text(b,vars),
+            Expr::Call(n,a) if matches!(n.as_str(),"trim"|"adjustl"|"adjustr") && a.len()==1=>text(&a[0],vars),
+            _=>crate::inquiries::model_type(e,&|n|vars.get(n).cloned()).ok().flatten().is_some_and(|k|matches!(k,TypeSpec::Character(_)|TypeSpec::CharacterAssumed|TypeSpec::CharacterLength(_))),
+        }
+    }
+    if !text(&args[0],vars) || !scalar_index(&args[0],vars) {bail!("GET_ENVIRONMENT_VARIABLE NAME requires scalar CHARACTER");}
+    let supplied=|i:usize|args.get(i).filter(|e|!crate::named_arguments::omitted(e));
+    if let Some(e)=supplied(4) {if kind(e)?!=Some(TypeSpec::Logical) || !scalar_index(e,vars) {bail!("GET_ENVIRONMENT_VARIABLE TRIM_NAME requires scalar LOGICAL");}}
+    for i in 1..=3 {if let Some(e)=supplied(i) {
+        let n=match e {Expr::Ident(n)|Expr::Index(n,_)|Expr::Call(n,_)=>n,_=>bail!("GET_ENVIRONMENT_VARIABLE requires writable output variables")};
+        let (k,rank)=vars.get(n).context("GET_ENVIRONMENT_VARIABLE requires declared output variables")?;
+        let scalar=match e {Expr::Ident(_)=>*rank==0,Expr::Index(_,a)|Expr::Call(_,a)=>*rank>0 && a.len()==*rank && a.iter().all(|e|scalar_index(e,vars)),_=>false};
+        if !scalar || readonly.contains(n) {bail!("GET_ENVIRONMENT_VARIABLE requires writable scalar output variables");}
+        if i==1 {if !character(k) {bail!("GET_ENVIRONMENT_VARIABLE VALUE requires CHARACTER");}}
+        else if !matches!(k,TypeSpec::Integer(None|Some(4))) {bail!("GET_ENVIRONMENT_VARIABLE LENGTH and STATUS require default INTEGER");}
+    }}
+    let status=temporary(serial,"env_status");let length=temporary(serial,"env_length");let value=temporary(serial,"env_value");
+    let width=if let Some(e)=supplied(1) {
+        let n=match e {Expr::Ident(n)|Expr::Index(n,_)|Expr::Call(n,_)=>n,_=>unreachable!()};
+        match &vars[n].0 {
+            TypeSpec::Character(size)=>Expr::IntLit(size.unwrap_or(1).to_string()),
+            _=>Expr::Call("len".into(),vec![Expr::Ident(n.clone())]),
+        }
+    } else {Expr::IntLit("0".into())};
+    let value_kind=if let Expr::IntLit(n)=&width {TypeSpec::Character(Some(n.parse()?))} else {TypeSpec::CharacterLength(Box::new(width.clone()))};
+    let mut out=vec![Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![status.clone(),length.clone()]},
+        Stmt::VarDecl{kind:value_kind,names:vec![value.clone()]},
+        Stmt::CallSub{name:"@environment_query".into(),args:vec![Expr::Ident(status.clone()),Expr::Ident(length.clone()),Expr::Ident(value.clone()),args[0].clone(),supplied(4).cloned().unwrap_or(Expr::Logical(true)),width,Expr::Logical(supplied(1).is_some())]}];
+    for (i,temp) in [(1,value),(2,length),(3,status)] {if let Some(target)=supplied(i) {out.push(assign(target,Expr::Ident(temp)));}}
+    Ok(out)
 }

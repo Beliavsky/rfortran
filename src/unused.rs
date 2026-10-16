@@ -599,9 +599,11 @@ impl<'a> Analysis<'a> {
                             name.as_str(),
                             "random_number" | "cpu_time" | "system_clock" | "date_and_time"
                         );
-                    for e in args {
-                        let e = crate::named_arguments::keyword(e).map_or(e, |(_, e)| e);
-                        if outputs {
+                    for (index,e) in args.iter().enumerate() {
+                        let keyword=crate::named_arguments::keyword(e);
+                        let environment_output=!user_procedure && name=="get_environment_variable" && keyword.map_or((1..=3).contains(&index),|(key,_)|matches!(key,"value"|"length"|"status"));
+                        let e = keyword.map_or(e, |(_, e)| e);
+                        if outputs || environment_output {
                             self.target(scope, owner, e);
                         } else {
                             self.expr(scope, owner, e);

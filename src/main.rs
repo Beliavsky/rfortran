@@ -17,6 +17,7 @@ mod heap_characters;
 mod random_seed;
 mod timing;
 mod calendar;
+mod environment;
 mod timing_intrinsics;
 mod bit_intrinsics;
 mod inquiries;

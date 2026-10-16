@@ -761,6 +761,15 @@ supported, as is the `X=` keyword. Run `python tests/test_isnan.py` for
 interpreter/native O0/O2 comparisons with gfortran in GNU mode, including ranks
 through 15 and runtime-sized multidimensional arrays.
 
+`GET_ENVIRONMENT_VARIABLE(NAME, VALUE, LENGTH, STATUS, TRIM_NAME)` supports
+positional and keyword arguments. NAME accepts scalar CHARACTER text and
+TRIM_NAME defaults to true. VALUE is blank-padded or truncated; LENGTH reports
+the full value length. STATUS is 0 for success, -1 for truncation, and 1 for a
+missing variable. LENGTH and STATUS require default INTEGER outputs. The
+intrinsic is impure. It reads the host C runtime environment on Windows, Linux
+and macOS; Windows treats an empty environment assignment as removal. Run
+`python tests/test_environment.py` for interpreter/native O0/O2 and gfortran checks.
+
 FLOOR and CEILING accept scalar or elemental REAL inputs, including array
 sections and runtime-sized arrays. Both support `A=` and optional constant
 `KIND=` (INTEGER kinds 1, 2, 4 and 8), and constant PARAMETER initializers.

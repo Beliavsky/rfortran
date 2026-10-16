@@ -12,6 +12,12 @@
     ]
   },
   {
+    "id": "environment",
+    "procedures": [
+      "unix"
+    ]
+  },
+  {
     "id": "numeric_vectors",
     "procedures": [
       "normalize",

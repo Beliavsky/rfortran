@@ -129,6 +129,7 @@ pub(crate) fn intrinsic(name: &str) -> Option<Signature> {
         "random_number" => &["harvest"],
         "random_seed" => &["size", "put", "get"],
         "cpu_time" => &["time"],
+        "get_environment_variable" => &["name","value","length","status","trim_name"],
         "date_and_time" => &["date", "time", "zone", "values"],
         "system_clock" => &["count", "count_rate", "count_max"],
         "real" | "int" | "nint" | "aint" | "anint" | "floor" | "ceiling" => &["a", "kind"],
@@ -155,6 +156,8 @@ pub(crate) fn intrinsic(name: &str) -> Option<Signature> {
         params: keys.iter().map(|s| (*s).into()).collect(),
         optional: if name=="cmplx" {HashSet::from(["y".into(),"kind".into()])}else if matches!(name,"index"|"scan"|"verify") {
             HashSet::from(["back".into(),"kind".into()])
+        } else if name=="get_environment_variable" {
+            HashSet::from(["value".into(),"length".into(),"status".into(),"trim_name".into()])
         } else if name=="date_and_time" {
             HashSet::from(["date".into(),"time".into(),"zone".into(),"values".into()])
         } else if name=="system_clock" {
@@ -408,7 +411,7 @@ mod tests {
         for name in crate::intrinsics::REAL_MATH.iter().map(|(n,_)|*n)
             .chain(crate::intrinsics::REAL_PREDICATES.iter().copied())
             .chain(crate::bit_intrinsics::NAMES.iter().copied())
-            .chain(["random_number","random_seed","cpu_time","system_clock","date_and_time","abs","dble","kind","mod","modulo","new_line",
+            .chain(["random_number","random_seed","cpu_time","system_clock","date_and_time","get_environment_variable","abs","dble","kind","mod","modulo","new_line",
                 "adjustl","adjustr","trim","repeat","index","scan","verify","real","int","nint","aint","anint",
                 "floor","ceiling","char","achar","ichar","iachar","len","len_trim","sign","dim","dprod",
                 "dot_product","matmul","merge","lge","lgt","lle","llt","tiny","huge","allocated","present",

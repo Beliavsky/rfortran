@@ -1392,6 +1392,13 @@
       "program_stdout": " rounding tests passed\n",
       "program_stderr": "",
       "program_exit_code": 0
+    },
+    "200_environment": {
+      "compiler_stderr": "",
+      "compiler_exit_code": 0,
+      "program_stdout": " environment tests passed\n",
+      "program_stderr": "",
+      "program_exit_code": 0
     }
   }
 }

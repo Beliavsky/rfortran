@@ -1,25 +1,25 @@
 # util.f90 procedure coverage
 
 These small drivers exercise the external `util_mod` used by `xutil.f90`.
-The suite contains 32 drivers targeting 119 specific procedures, starting
+The suite contains 33 drivers targeting 120 specific procedures, starting
 with the families used by that program. The inventory covers all 551 procedures
-in the current source, including two internal procedures. The remaining 432
+in the current source, including two internal procedures. The remaining 431
 procedures are explicitly untested. These are procedure counts, not estimates of
 compiler completion or branch coverage.
 
 ## Current baseline
 
-On Windows, using the release compiler build, the 32 drivers have the same
+On Windows, using the release compiler build, the 33 drivers have the same
 outcomes at both O0 and O2:
 
 | Driver outcome | Count |
 | --- | ---: |
-| Pass against gfortran | 25 |
+| Pass against gfortran | 26 |
 | Compilation failure | 7 |
 | Incorrect output | 0 |
 
 All gfortran reference drivers compile and run successfully, including their
-repeat executions. The passing drivers target 86 procedures; 33 other targeted
+repeat executions. The passing drivers target 87 procedures; 33 other targeted
 procedures are in blocked groups. `string_fields` and `partitions_and_runs` now
 pass following fixes to early RETURN in explicit-step loops and NINT rounding.
 `matrix_shapes` and `cumulative_sums` now pass after routing runtime selectors
@@ -46,10 +46,11 @@ FLOOR and CEILING, including integer result kinds and array lowering.
 See [baseline.json](baseline.json)
 for exact input-source and compiler hashes and every procedure's inventory entry.
 
-The `string_matching` driver passes in isolation, while full-module compilation
-currently reports missing `GET_ENVIRONMENT_VARIABLE`
-(first at `util.f90:6341`). This demonstrates
-why isolated successes and full-module integration are recorded separately.
+The `environment` driver now tests the original `unix` platform query, using
+GET_ENVIRONMENT_VARIABLE to inspect PATH. Full-module compilation now gets past
+the previously missing environment and rounding intrinsics, and reports a read
+of an uninitialized generated allocation temporary. Isolated successes and
+full-module integration are recorded separately.
 
 ## Running
 
