@@ -14,6 +14,7 @@ extern {
         KW_OPERATOR => TokenKind::KwOperator,
         KW_KIND => TokenKind::KwKind,
         KW_ONLY => TokenKind::KwOnly,
+        ATTR_STMT => TokenKind::AttrStatement(<String>),
         END_INTERFACE_NAME => TokenKind::EndInterfaceName(<String>),
         END_UNIT_NAME => TokenKind::EndUnitName(<String>),
         BARE_END => TokenKind::BareEnd,
@@ -143,17 +144,17 @@ pub Program: Program = {
     <mut body: UnnamedMainBody> <_end: UnnamedEnd> <post: FuncList> => {
         body.extend(post); Program { name: "main".to_string(), body }
     },
-    <mut body: UnnamedMainBody> KW_CONTAINS <contained: FuncList> <_end: UnnamedEnd> => {
-        body.extend(contained); Program { name: "main".to_string(), body }
+    <mut body: UnnamedMainBody> KW_CONTAINS <contained: FuncList> <_end: UnnamedEnd> <post: FuncList> => {
+        body.extend(contained); body.extend(post); Program { name: "main".to_string(), body }
     },
     <pre: LeadingFuncs> KW_PROGRAM <name: Ident> <body: Stmts> <_end: ProgramEnd> <post: FuncList> => {
         let mut all = pre; all.extend(body); all.extend(post); Program { name, body: all }
     },
-    <pre: LeadingFuncs> KW_PROGRAM <name: Ident> <body: Stmts> KW_CONTAINS <contained: FuncList> <_end: ProgramEnd> => {
-        let mut all = pre; all.extend(body); all.extend(contained); Program { name, body: all }
+    <pre: LeadingFuncs> KW_PROGRAM <name: Ident> <body: Stmts> KW_CONTAINS <contained: FuncList> <_end: ProgramEnd> <post: FuncList> => {
+        let mut all = pre; all.extend(body); all.extend(contained); all.extend(post); Program { name, body: all }
     },
-    KW_PROGRAM <name: Ident> <body: Stmts> KW_CONTAINS <contained: FuncList> <_end: ProgramEnd> => {
-        let mut all = body; all.extend(contained); Program { name, body: all }
+    KW_PROGRAM <name: Ident> <body: Stmts> KW_CONTAINS <contained: FuncList> <_end: ProgramEnd> <post: FuncList> => {
+        let mut all = body; all.extend(contained); all.extend(post); Program { name, body: all }
     },
     KW_PROGRAM <name: Ident> <body: Stmts> <_end: ProgramEnd> <funcs: FuncList> => {
         let mut all = body; all.extend(funcs); Program { name, body: all }
@@ -339,6 +340,8 @@ DeclEntity: (String, Vec<Expr>, Option<Expr>, Option<TypeSpec>) = {
     <name: Ident> EQ <value: RhsExpr> => (name, vec![], Some(value), None),
     <name: Ident> LPAREN <dims: DimList> RPAREN => (name, dims, None, None),
     <name: Ident> LPAREN <dims: DimList> RPAREN EQ <value: RhsExpr> => (name, dims, Some(value), None),
+    <name: Ident> ARROW <target: RhsExpr> => (name, vec![], Some(crate::ast::pointer_initializer(target)), None),
+    <name: Ident> LPAREN <dims: DimList> RPAREN ARROW <target: RhsExpr> => (name, dims, Some(crate::ast::pointer_initializer(target)), None),
 };
 
 EntityCharLength: TypeSpec = {
@@ -766,26 +769,39 @@ PreFuncDecl: Vec<Stmt> = {
     },
 };
 PreFuncDeclData: Vec<Stmt> = {
-    KW_TYPE DCOLON <name:Ident> <components:Components> KW_END KW_TYPE <_end:Ident> => vec![Stmt::DerivedType{name,components,bindings:vec![]}],
-    KW_TYPE DCOLON <name:Ident> <components:Components> KW_CONTAINS <bindings:Bindings> KW_END KW_TYPE <_end:Ident> => vec![Stmt::DerivedType{name,components,bindings}],
+    <head:TypeDefHead> <components:Components> <_end:TypeDefEnd> => {
+        let (name,mut out)=head; out.push(Stmt::DerivedType{name,components,bindings:vec![]}); out
+    },
+    <head:TypeDefHead> <components:Components> KW_CONTAINS <bindings:Bindings> <_end:TypeDefEnd> => {
+        let (name,mut out)=head; out.push(Stmt::DerivedType{name,components,bindings}); out
+    },
     KW_TYPE LPAREN <type_name:Ident> RPAREN <attributes:IntrinsicAttrList> DCOLON <entities:DeclEntities> => entities.into_iter().flat_map(|(name,dims,value,_)| {
+        let (value,association)=crate::ast::split_pointer_initializer(&name,value);
         let dims=if dims.is_empty(){attributes.1.clone().unwrap_or_default()}else{dims};
         let mut attrs=attributes.0.clone();if value.is_some(){attrs.push("save".into());}
         let mut out=vec![Stmt::DerivedDecl{type_name:type_name.clone(),names:vec![name.clone()],attributes:attrs,polymorphic:false,dims}];
-        if let Some(value)=value {out.push(Stmt::Assign{name,value});}out
+        if let Some(value)=value {out.push(Stmt::Assign{name,value});}
+        out.extend(association);out
     }).collect(),
     KW_CLASS LPAREN <type_name:Ident> RPAREN <attributes:IntrinsicAttrList> DCOLON <entities:DeclEntities> => entities.into_iter().flat_map(|(name,dims,value,_)| {
+        let (value,association)=crate::ast::split_pointer_initializer(&name,value);
         let dims=if dims.is_empty(){attributes.1.clone().unwrap_or_default()}else{dims};
         let mut attrs=attributes.0.clone();if value.is_some(){attrs.push("save".into());}
         let mut out=vec![Stmt::DerivedDecl{type_name:type_name.clone(),names:vec![name.clone()],attributes:attrs,polymorphic:true,dims}];
-        if let Some(value)=value {out.push(Stmt::Assign{name,value});}out
+        if let Some(value)=value {out.push(Stmt::Assign{name,value});}
+        out.extend(association);out
     }).collect(),
+    <attr:ATTR_STMT> DCOLON? <names:IdentList> =>? crate::ast::attribute_statement(&attr, None, names)
+        .map_err(|error| lalrpop_util::ParseError::User { error }),
+    <attr:ATTR_STMT> LPAREN <intent:Ident> RPAREN DCOLON? <names:IdentList> =>? crate::ast::attribute_statement(&attr, Some(intent), names)
+        .map_err(|error| lalrpop_util::ParseError::User { error }),
     <head:IntrinsicDeclHead> <entities:DeclEntities> =>? {
         let (t,attrs,dimension,has_colons) = head;
         if !has_colons && entities.iter().any(|(_,_,value,_)| value.is_some()) {
             return Err(lalrpop_util::ParseError::User {error:"declaration initialization requires `::`"});
         }
         Ok(entities.into_iter().flat_map(|(name, dims, value, length)| {
+            let (value, association) = crate::ast::split_pointer_initializer(&name, value);
             let dims = if dims.is_empty() { dimension.clone().unwrap_or_default() } else { dims };
             let t = match length {
                 Some(length) if matches!(t,TypeSpec::Character(_) | TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed) => length,
@@ -808,10 +824,44 @@ PreFuncDeclData: Vec<Stmt> = {
                 Stmt::ArrayDecl { kind: t.clone(), name, dims }
             };
             declarations.push(declaration);
+            declarations.extend(association);
             declarations
         }).collect())
     }
 };
+
+// TYPE [[, attributes] ::] name. PUBLIC/PRIVATE become accessibility statements;
+// other attributes (EXTENDS, ABSTRACT, BIND(C), SEQUENCE semantics) are rejected
+// with a specific message until derived-type lowering supports them.
+TypeDefHead: (String, Vec<Stmt>) = {
+    KW_TYPE DCOLON <name:Ident> => (name, vec![]),
+    KW_TYPE <name:Ident> => (name, vec![]),
+    KW_TYPE COMMA <attrs:TypeAttrList> DCOLON <name:Ident> =>? {
+        let mut out = Vec::new();
+        for attr in attrs {
+            match attr.to_ascii_lowercase().as_str() {
+                "public" => out.push(Stmt::Accessibility { public: true, names: vec![name.clone()] }),
+                "private" => out.push(Stmt::Accessibility { public: false, names: vec![name.clone()] }),
+                "bind(c)" => {},
+                a if a.starts_with("extends(") => return Err(lalrpop_util::ParseError::User { error: "type extension (EXTENDS) is not yet supported" }),
+                "abstract" => return Err(lalrpop_util::ParseError::User { error: "ABSTRACT derived types are not yet supported" }),
+                _ => return Err(lalrpop_util::ParseError::User { error: "unsupported derived-type attribute" }),
+            }
+        }
+        Ok((name, out))
+    },
+};
+TypeAttrList: Vec<String> = {
+    <a:TypeAttr> => vec![a],
+    <mut v:TypeAttrList> COMMA <a:TypeAttr> => { v.push(a); v },
+};
+TypeAttr: String = {
+    KW_PUBLIC => "public".into(),
+    KW_PRIVATE => "private".into(),
+    <id:Ident> => id,
+    <id:Ident> LPAREN <arg:Ident> RPAREN => format!("{id}({arg})"),
+};
+TypeDefEnd: () = { KW_END KW_TYPE END_UNIT_NAME? => () };
 
 ImplicitRuleList: Vec<ImplicitRule> = {
     <rule: ImplicitRuleItem> => vec![rule],

@@ -331,6 +331,41 @@ pub fn section_or_call(name: String, mut args: Vec<Expr>) -> Expr {
     else { Expr::Call(name, args) }
 }
 
+// `name => target` in a declaration. Pointer descriptors start disassociated,
+// so NULL() needs no statement; another target is associated after declaration.
+pub fn pointer_initializer(target: Expr) -> Expr {
+    Expr::Call("@pointer_initializer".into(), vec![target])
+}
+pub fn split_pointer_initializer(name: &str, value: Option<Expr>) -> (Option<Expr>, Option<Stmt>) {
+    match value {
+        Some(Expr::Call(marker, mut args)) if marker == "@pointer_initializer" && args.len() == 1 => {
+            let target = args.pop().unwrap();
+            if matches!(&target, Expr::Call(n, a) if n.eq_ignore_ascii_case("null") && a.is_empty()) {
+                (None, None)
+            } else {
+                (None, Some(Stmt::CallSub { name: "@pointer_associate".into(), args: vec![Expr::Ident(name.into()), target] }))
+            }
+        }
+        value => (value, None),
+    }
+}
+
+// Attribute specification statements, e.g. `intent(in) :: x` or `pointer p`.
+// They record the same per-name attributes as the corresponding declaration
+// attribute. EXTERNAL and INTRINSIC only confirm how a name is resolved.
+pub fn attribute_statement(attr: &str, argument: Option<String>, names: Vec<String>) -> Result<Vec<Stmt>, &'static str> {
+    let attribute = match (attr, argument) {
+        ("intent", Some(intent)) => match intent.to_ascii_lowercase().as_str() {
+            intent @ ("in" | "out" | "inout") => format!("intent({intent})"),
+            _ => return Err("INTENT must be IN, OUT or INOUT"),
+        },
+        ("external" | "intrinsic", None) => return Ok(vec![]),
+        (attr @ ("optional" | "pointer" | "target" | "allocatable"), None) => attr.to_string(),
+        _ => return Err("invalid attribute specification statement"),
+    };
+    Ok(names.into_iter().map(|name| Stmt::DummyIntent { name, intent: attribute.clone() }).collect())
+}
+
 // Preserve the already-resolved representation for ordinary literal lengths.
 pub fn character_length(length: Expr) -> TypeSpec {
     if let Expr::IntLit(n) = &length {

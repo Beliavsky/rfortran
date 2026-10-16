@@ -167,6 +167,65 @@ mod tests {
     }
 
     #[test]
+    fn derived_type_headers_accept_optional_colons_attributes_and_end_names() {
+        use crate::ast::Stmt;
+        for source in [
+            "type box\ninteger :: a\nend type box\nend",
+            "type box\ninteger :: a\nend type\nend",
+            "type :: box\ninteger :: a\nend type\nx=1\nend",
+            "module m\ntype, public :: box\ninteger :: a\nend type box\nend module m",
+            "module m\ntype, bind(c) :: box\ninteger :: a\nend type\nend module m",
+        ] {
+            let program=super::parse_with_src(source,&crate::lexer::lex(source),"type.f90").unwrap();
+            let body=match &program.body[..] {
+                [Stmt::Module{body,..}] => body, body => body,
+            };
+            assert!(body.iter().any(|s|matches!(s,Stmt::DerivedType{name,..} if name=="box")),"{source}");
+        }
+        let source="module m\ntype, private :: box\ninteger :: a\nend type box\nend module m";
+        let program=super::parse_with_src(source,&crate::lexer::lex(source),"type.f90").unwrap();
+        let Stmt::Module{body,..}=&program.body[0] else {panic!("module missing")};
+        assert!(body.iter().any(|s|matches!(s,Stmt::Accessibility{public:false,names} if names==&["box"])));
+        // A variable named TYPE and a SELECT TYPE guard are not definitions.
+        let tokens=crate::lexer::lex("integer :: type\ntype = 3\nprint *, type");
+        assert!(!tokens.iter().any(|t|matches!(t.kind,crate::lexer::TokenKind::KwType)));
+        let source="module m\ntype, extends(base) :: child\nend type\nend module m";
+        assert!(super::parse_with_src(source,&crate::lexer::lex(source),"extends.f90").is_err());
+    }
+
+    #[test]
+    fn pointer_initializers_lower_to_disassociated_or_associated_pointers() {
+        use crate::ast::{Expr,Stmt};
+        let source="integer, target :: t\ninteger, pointer :: p => null(), q(:) => NULL()\ninteger, pointer :: r => t\nend";
+        let program=super::parse_with_src(source,&crate::lexer::lex(source),"pointer_init.f90").unwrap();
+        let associations:Vec<_>=program.body.iter().filter_map(|s|match s {
+            Stmt::CallSub{name,args} if name=="@pointer_associate" => Some(args.as_slice()), _ => None,
+        }).collect();
+        assert!(matches!(associations.as_slice(),[[Expr::Ident(p),Expr::Ident(t)]] if p=="r" && t=="t"));
+        assert!(!program.body.iter().any(|s|matches!(s,Stmt::InitializedDecl{..})));
+        for name in ["p","q","r"] {
+            assert!(program.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name && intent=="pointer")));
+        }
+    }
+
+    #[test]
+    fn attribute_statements_record_declaration_attributes() {
+        use crate::ast::Stmt;
+        let source="subroutine s(a,b,c,f)\nreal :: a,b,c\nexternal f\nintent(in) :: a, b\nintent(in out) c\noptional :: b\nintrinsic abs\nend subroutine s";
+        let program=super::parse_with_src(source,&crate::lexer::lex(source),"attributes.f90").unwrap();
+        let Stmt::Subroutine{body,..}=&program.body[0] else {panic!("subroutine missing")};
+        let attributes:Vec<_>=body.iter().filter_map(|s|match s {
+            Stmt::DummyIntent{name,intent} => Some((name.as_str(),intent.as_str())), _ => None,
+        }).collect();
+        assert_eq!(attributes,[("a","intent(in)"),("b","intent(in)"),("c","intent(inout)"),("b","optional")]);
+        // Variables and arrays with attribute names remain ordinary names.
+        let tokens=crate::lexer::lex("integer :: target, pointer(2), intent\ntarget = 1\npointer(1) = 2\nintent = target");
+        assert!(!tokens.iter().any(|t|matches!(t.kind,crate::lexer::TokenKind::AttrStatement(_))));
+        let source="subroutine s(a)\nintent(sideways) :: a\nend subroutine s";
+        assert!(super::parse_with_src(source,&crate::lexer::lex(source),"bad_intent.f90").is_err());
+    }
+
+    #[test]
     fn bare_end_is_an_empty_main_program() {
         for src in ["end\n", "! Empty main program\nEND ! done\n"] {
             let tokens = crate::lexer::lex(src);
@@ -229,6 +288,7 @@ fn human_token(tok: &TokenKind) -> String {
         TokenKind::KwOperator => "keyword operator".into(),
         TokenKind::KwKind => "keyword kind".into(),
         TokenKind::KwOnly => "keyword only".into(),
+        TokenKind::AttrStatement(word) => format!("keyword {word}"),
         TokenKind::EndInterfaceName(n) => format!("interface name {n}"),
         TokenKind::EndUnitName(n) => format!("unit name {n}"),
         TokenKind::BareEnd => "keyword end".into(),

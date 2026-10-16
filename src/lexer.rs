@@ -239,6 +239,9 @@ pub enum TokenKind {
     KwOperator,
     KwKind,
     KwOnly,
+    // INTENT, OPTIONAL, POINTER, TARGET, ALLOCATABLE, EXTERNAL or INTRINSIC
+    // beginning an attribute specification statement.
+    AttrStatement(String),
     #[token("%")]
     Percent,
     #[token("=>")]
@@ -452,6 +455,13 @@ pub(crate) fn same_statement(gap: &str) -> bool {
     true
 }
 
+// True when tokens[index] begins a logical statement (after an optional label).
+fn statement_head(tokens: &[Token], input: &str, index: usize) -> bool {
+    index == 0 || !same_statement(&input[tokens[index-1].span.end..tokens[index].span.start])
+        || matches!(tokens[index-1].kind, TokenKind::StatementLabel(_))
+            && (index == 1 || !same_statement(&input[tokens[index-2].span.end..tokens[index-1].span.start]))
+}
+
 pub fn lex(input: &str) -> Vec<Token> {
     let mut lexer = TokenKind::lexer(input);
     let mut tokens = Vec::new();
@@ -489,15 +499,17 @@ pub fn lex(input: &str) -> Vec<Token> {
     // INTENT(IN OUT) and INTENT(INOUT) are the same declaration attribute.
     // Normalize only this phrase, within a single logical statement, so both
     // the parser and source-token semantic checks see the canonical spelling.
-    let mut index = 1;
+    let mut index = 0;
     while index + 4 < tokens.len() {
-        if matches!(tokens[index-1].kind, TokenKind::Comma)
-            && matches!(&tokens[index].kind, TokenKind::Ident(n) if n.eq_ignore_ascii_case("intent"))
+        // After a declaration's comma, or beginning an INTENT statement.
+        let first = if statement_head(&tokens, input, index) { index }
+            else if matches!(tokens[index-1].kind, TokenKind::Comma) { index-1 } else { index += 1; continue };
+        if matches!(&tokens[index].kind, TokenKind::Ident(n) if n.eq_ignore_ascii_case("intent"))
             && matches!(tokens[index+1].kind, TokenKind::LParen)
             && matches!(&tokens[index+2].kind, TokenKind::Ident(n) if n.eq_ignore_ascii_case("in"))
             && matches!(&tokens[index+3].kind, TokenKind::Ident(n) if n.eq_ignore_ascii_case("out"))
             && matches!(tokens[index+4].kind, TokenKind::RParen)
-            && tokens[index-1..index+5].windows(2).all(|pair| same_statement(&input[pair[0].span.end..pair[1].span.start])) {
+            && tokens[first..index+5].windows(2).all(|pair| same_statement(&input[pair[0].span.end..pair[1].span.start])) {
             let end = tokens.remove(index+3).span.end;
             tokens[index+2].kind = TokenKind::Ident("inout".into());
             tokens[index+2].span.end = end;
@@ -618,6 +630,10 @@ pub fn lex(input: &str) -> Vec<Token> {
                 "len" if matches!(previous,Some(TokenKind::LParen)) && matches!(next,Some(TokenKind::Eq)) => Some(TokenKind::KwLen),
                 "kind" if matches!(previous,Some(TokenKind::LParen)) && matches!(next,Some(TokenKind::Eq)) => Some(TokenKind::KwKind),
                 "type" if matches!(next,Some(TokenKind::DColon|TokenKind::LParen)) || matches!(previous,Some(TokenKind::KwEnd)) => Some(TokenKind::KwType),
+                // TYPE, attributes :: name and TYPE name (alone on its statement).
+                "type" if statement_head(&tokens,input,start) && tokens.get(start+1).is_some_and(|t| same_statement(&input[tokens[start].span.end..t.span.start]))
+                    && (matches!(next,Some(TokenKind::Comma))
+                        || matches!(next,Some(TokenKind::Ident(_))) && tokens.get(start+2).is_none_or(|t| !same_statement(&input[tokens[start+1].span.end..t.span.start]))) => Some(TokenKind::KwType),
                 "class" if matches!(next,Some(TokenKind::LParen)) => Some(TokenKind::KwClass),
                 "procedure" if matches!(next,Some(TokenKind::DColon)) || matches!(previous,Some(TokenKind::KwModule)) => Some(TokenKind::KwProcedure),
                 "interface" if matches!(previous,Some(TokenKind::KwEnd)) || matches!(next,Some(TokenKind::Ident(_))) => Some(TokenKind::KwInterface),
@@ -771,6 +787,30 @@ pub fn lex(input: &str) -> Vec<Token> {
             }
         }
     }
+    // Attribute specification statements, e.g. `intent(in) :: x` or
+    // `external f`. A following `::` or name distinguishes them from variables.
+    for index in 0..tokens.len() {
+        let TokenKind::Ident(word) = &tokens[index].kind else { continue };
+        let word = word.to_ascii_lowercase();
+        if !matches!(word.as_str(), "intent" | "optional" | "pointer" | "target" | "allocatable" | "external" | "intrinsic")
+            || !statement_head(&tokens, input, index) {
+            continue;
+        }
+        let mut next = index + 1;
+        if word == "intent" {
+            if !matches!(tokens.get(next).map(|t| &t.kind), Some(TokenKind::LParen)) { continue; }
+            let mut depth = 0;
+            while next < tokens.len() {
+                match tokens[next].kind { TokenKind::LParen => depth += 1, TokenKind::RParen => depth -= 1, _ => {} }
+                next += 1;
+                if depth == 0 { break; }
+            }
+        }
+        if tokens.get(next).is_some_and(|t| matches!(t.kind, TokenKind::DColon | TokenKind::Ident(_))
+            && same_statement(&input[tokens[next-1].span.end..t.span.start])) {
+            tokens[index].kind = TokenKind::AttrStatement(word);
+        }
+    }
     // Distinct name tokens keep optional END DO names and named transfers from
     // consuming an identifier on the following logical statement.
     let mut named_index=0;
@@ -885,7 +925,7 @@ pub fn lex(input: &str) -> Vec<Token> {
             same_statement(&input[tokens[index].span.end..t.span.start]));
         if following.is_none() {
             tokens[index].kind = TokenKind::BareEnd;
-        } else if matches!(following.map(|t| &t.kind), Some(TokenKind::KwFunction | TokenKind::KwSubroutine | TokenKind::KwModule | TokenKind::KwProgram)) {
+        } else if matches!(following.map(|t| &t.kind), Some(TokenKind::KwFunction | TokenKind::KwSubroutine | TokenKind::KwModule | TokenKind::KwProgram | TokenKind::KwType)) {
             let end = tokens[index+1].span.end;
             if let Some(name) = tokens.get_mut(index+2) {
                 if same_statement(&input[end..name.span.start]) {
