@@ -40,6 +40,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
         procedures: &HashSet<String>,
         pure: bool,
         serial: &mut usize,
+        types: &crate::operators::ExpressionTypes,
     ) -> Result<()> {
         let mut vars = inherited.clone();
         let mut readonly = inherited_readonly.clone();
@@ -100,39 +101,39 @@ pub fn resolve(mut p: Program) -> Result<Program> {
             }
             let result = match &mut s {
                 Stmt::CallSub { name, args }
-                    if matches!(name.as_str(), "cpu_time" | "system_clock" | "date_and_time" | "get_environment_variable" | "getcwd")
+                    if matches!(name.as_str(), "cpu_time" | "system_clock" | "date_and_time" | "get_environment_variable" | "getcwd" | "get_command_argument")
                         && !procedures.contains(name) =>
                 {
-                    lower_call(name, args, &vars, &readonly, pure, serial).map(|statements| {
+                    lower_call(name, args, &vars, &readonly, pure, serial,types).map(|statements| {
                         s = Stmt::Block { body: statements };
                     })
                 }
                 Stmt::Function { body, pure, .. } | Stmt::Subroutine { body, pure, .. } => {
-                    scope(body, &vars, &readonly, procedures, *pure, serial)
+                    scope(body, &vars, &readonly, procedures, *pure, serial,types)
                 }
                 Stmt::Module { body, .. }
                 | Stmt::Block { body }
                 | Stmt::Do { body, .. }
                 | Stmt::DoWhile { body, .. } => {
-                    scope(body, &vars, &readonly, procedures, pure, serial)
+                    scope(body, &vars, &readonly, procedures, pure, serial,types)
                 }
                 Stmt::If {
                     then_body,
                     else_body,
                     ..
                 } => {
-                    scope(then_body, &vars, &readonly, procedures, pure, serial)?;
+                    scope(then_body, &vars, &readonly, procedures, pure, serial,types)?;
                     if let Some(body) = else_body {
-                        scope(body, &vars, &readonly, procedures, pure, serial)?;
+                        scope(body, &vars, &readonly, procedures, pure, serial,types)?;
                     }
                     Ok(())
                 }
                 Stmt::SelectCase { cases, default, .. } => {
                     for case in cases {
-                        scope(&mut case.body, &vars, &readonly, procedures, pure, serial)?;
+                        scope(&mut case.body, &vars, &readonly, procedures, pure, serial,types)?;
                     }
                     if let Some(body) = default {
-                        scope(body, &vars, &readonly, procedures, pure, serial)?;
+                        scope(body, &vars, &readonly, procedures, pure, serial,types)?;
                     }
                     Ok(())
                 }
@@ -153,6 +154,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
             _=>false,
         })
     }
+    let types=crate::operators::ExpressionTypes::new(&p)?;
     let mut procedures = HashSet::new();
     collect(&p.body, &mut procedures);
     scope(
@@ -162,6 +164,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
         &procedures,
         false,
         &mut 0,
+        &types,
     )?;
     // Environment output temporaries can depend on LEN of an assumed-length
     // dummy. Resolve their declaration lengths before array specialization.
@@ -175,6 +178,7 @@ fn lower_call(
     readonly: &HashSet<String>,
     pure: bool,
     serial: &mut usize,
+    types: &crate::operators::ExpressionTypes,
 ) -> Result<Vec<Stmt>> {
     let intrinsic = name.to_uppercase();
     if pure {
@@ -184,7 +188,7 @@ fn lower_call(
         .unwrap()
         .reorder(name, args)?;
     if name == "getcwd" {return lower_cwd(args,vars,readonly,serial);}
-    if name == "get_environment_variable" {return lower_environment(args,vars,readonly,serial);}
+    if matches!(name,"get_environment_variable"|"get_command_argument") {return lower_environment(name,args,vars,readonly,serial,types);}
     if name == "date_and_time" {
         return lower_date(args, vars, readonly, serial);
     }
@@ -594,7 +598,9 @@ fn digits(value: Expr, width: u32) -> Expr {
     )
 }
 
-fn lower_environment(args:&[Expr],vars:&HashMap<String,(TypeSpec,usize)>,readonly:&HashSet<String>,serial:&mut usize)->Result<Vec<Stmt>> {
+fn lower_environment(name:&str,args:&[Expr],vars:&HashMap<String,(TypeSpec,usize)>,readonly:&HashSet<String>,serial:&mut usize,types:&crate::operators::ExpressionTypes)->Result<Vec<Stmt>> {
+    let intrinsic=name.to_ascii_uppercase();
+    let command=name=="get_command_argument";
     let kind=|e:&Expr|crate::inquiries::model_type(e,&|n|vars.get(n).cloned());
     let character=|k:&TypeSpec|matches!(k,TypeSpec::Character(_)|TypeSpec::CharacterAssumed|TypeSpec::CharacterLength(_));
     fn text(e:&Expr,vars:&HashMap<String,(TypeSpec,usize)>)->bool {
@@ -605,16 +611,21 @@ fn lower_environment(args:&[Expr],vars:&HashMap<String,(TypeSpec,usize)>,readonl
             _=>crate::inquiries::model_type(e,&|n|vars.get(n).cloned()).ok().flatten().is_some_and(|k|matches!(k,TypeSpec::Character(_)|TypeSpec::CharacterAssumed|TypeSpec::CharacterLength(_))),
         }
     }
-    if !text(&args[0],vars) || !scalar_index(&args[0],vars) {bail!("GET_ENVIRONMENT_VARIABLE NAME requires scalar CHARACTER");}
+    if command {
+        let inferred=types.kind_rank(&args[0],vars)?;
+        let input=kind(&args[0]).ok().flatten().or_else(||inferred.as_ref().map(|(k,_)|k.clone()));
+        let scalar=inferred.as_ref().map_or_else(||scalar_index(&args[0],vars),|(_,rank)|*rank==0);
+        if !matches!(input,Some(TypeSpec::Integer(None|Some(4)))) || !scalar {bail!("GET_COMMAND_ARGUMENT NUMBER requires scalar default INTEGER");}
+    } else if !text(&args[0],vars) || !scalar_index(&args[0],vars) {bail!("GET_ENVIRONMENT_VARIABLE NAME requires scalar CHARACTER");}
     let supplied=|i:usize|args.get(i).filter(|e|!crate::named_arguments::omitted(e));
     if let Some(e)=supplied(4) {if kind(e)?!=Some(TypeSpec::Logical) || !scalar_index(e,vars) {bail!("GET_ENVIRONMENT_VARIABLE TRIM_NAME requires scalar LOGICAL");}}
     for i in 1..=3 {if let Some(e)=supplied(i) {
-        let n=match e {Expr::Ident(n)|Expr::Index(n,_)|Expr::Call(n,_)=>n,_=>bail!("GET_ENVIRONMENT_VARIABLE requires writable output variables")};
-        let (k,rank)=vars.get(n).context("GET_ENVIRONMENT_VARIABLE requires declared output variables")?;
+        let n=match e {Expr::Ident(n)|Expr::Index(n,_)|Expr::Call(n,_)=>n,_=>bail!("{intrinsic} requires writable output variables")};
+        let (k,rank)=vars.get(n).with_context(||format!("{intrinsic} requires declared output variables"))?;
         let scalar=match e {Expr::Ident(_)=>*rank==0,Expr::Index(_,a)|Expr::Call(_,a)=>*rank>0 && a.len()==*rank && a.iter().all(|e|scalar_index(e,vars)),_=>false};
-        if !scalar || readonly.contains(n) {bail!("GET_ENVIRONMENT_VARIABLE requires writable scalar output variables");}
-        if i==1 {if !character(k) {bail!("GET_ENVIRONMENT_VARIABLE VALUE requires CHARACTER");}}
-        else if !matches!(k,TypeSpec::Integer(None|Some(4))) {bail!("GET_ENVIRONMENT_VARIABLE LENGTH and STATUS require default INTEGER");}
+        if !scalar || readonly.contains(n) {bail!("{intrinsic} requires writable scalar output variables");}
+        if i==1 {if !character(k) {bail!("{intrinsic} VALUE requires CHARACTER");}}
+        else if !matches!(k,TypeSpec::Integer(None|Some(4))) {bail!("{intrinsic} LENGTH and STATUS require default INTEGER");}
     }}
     let status=temporary(serial,"env_status");let length=temporary(serial,"env_length");let value=temporary(serial,"env_value");
     let width=if let Some(e)=supplied(1) {
@@ -627,7 +638,7 @@ fn lower_environment(args:&[Expr],vars:&HashMap<String,(TypeSpec,usize)>,readonl
     let value_kind=if let Expr::IntLit(n)=&width {TypeSpec::Character(Some(n.parse()?))} else {TypeSpec::CharacterLength(Box::new(width.clone()))};
     let mut out=vec![Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![status.clone(),length.clone()]},
         Stmt::VarDecl{kind:value_kind,names:vec![value.clone()]},
-        Stmt::CallSub{name:"@environment_query".into(),args:vec![Expr::Ident(status.clone()),Expr::Ident(length.clone()),Expr::Ident(value.clone()),args[0].clone(),supplied(4).cloned().unwrap_or(Expr::Logical(true)),width,Expr::Logical(supplied(1).is_some())]}];
+        Stmt::CallSub{name:if command {"@argument_query"} else {"@environment_query"}.into(),args:vec![Expr::Ident(status.clone()),Expr::Ident(length.clone()),Expr::Ident(value.clone()),args[0].clone(),supplied(4).cloned().unwrap_or(Expr::Logical(true)),width,Expr::Logical(supplied(1).is_some())]}];
     for (i,temp) in [(1,value),(2,length),(3,status)] {if let Some(target)=supplied(i) {out.push(assign(target,Expr::Ident(temp)));}}
     Ok(out)
 }

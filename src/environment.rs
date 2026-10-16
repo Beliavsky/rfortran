@@ -66,3 +66,22 @@ pub unsafe extern "C" fn rfort_getcwd(output:*mut u8,width:usize)->i64 {
         let Some(next)=capacity.checked_mul(2) else {return 12;};capacity=next;
     }
 }
+
+// The native main wrapper sets these once, before any Fortran code executes.
+static mut ARG_COUNT:i32=0;
+static mut ARG_VALUES:*const *const u8=core::ptr::null();
+#[no_mangle]
+pub unsafe extern "C" fn rfort_set_arguments(count:i32,values:*const *const u8)->i64 {
+    ARG_COUNT=count;ARG_VALUES=values;0
+}
+#[no_mangle]
+pub unsafe extern "C" fn rfort_argument_query(number:i64,output:*mut u8,width:usize,present:i64,length:*mut i64)->i64 {
+    *length=0;core::ptr::write_bytes(output,b' ',width);*output.add(width)=0;
+    if number<0 || number>=i64::from(ARG_COUNT) || ARG_VALUES.is_null() {return 1;}
+    let value=*ARG_VALUES.add(number as usize);
+    if value.is_null() {return 1;}
+    let mut size=0;while *value.add(size)!=0 {size+=1;}
+    *length=size as i64;
+    core::ptr::copy_nonoverlapping(value,output,size.min(width));
+    if present!=0 && size>width {-1} else {0}
+}

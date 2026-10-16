@@ -1406,6 +1406,13 @@
       "program_stdout": " getcwd tests passed\n",
       "program_stderr": "",
       "program_exit_code": 0
+    },
+    "202_command_argument": {
+      "compiler_stderr": "",
+      "compiler_exit_code": 0,
+      "program_stdout": " command argument tests passed\n",
+      "program_stderr": "",
+      "program_exit_code": 0
     }
   }
 }

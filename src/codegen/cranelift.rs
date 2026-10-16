@@ -2476,6 +2476,15 @@ fn gen_stmts(
                     let IExpr::Ident(status)=&args[0] else {unreachable!()};
                     let status=storage_addr(b,ptr_ty,ints[status]);b.ins().store(MemFlags::new(),code,status,0);continue;
                 }
+                if name=="@argument_query" {
+                    let number=eval_expr(b,ex,ptr_ty,&args[3],ints,reals,bools,func_meta);let number=to_i64(b,number);
+                    let dest=characters::view(module,b,ptr_ty,dc,chars,ints,&args[2])?;
+                    let present=eval_expr(b,ex,ptr_ty,&args[6],ints,reals,bools,func_meta);let present=to_i64(b,present);
+                    let IExpr::Ident(length)=&args[1] else {unreachable!()};let length=storage_addr(b,ptr_ty,ints[length]);
+                    let code=file_io::call(module,b,"rfort_argument_query",&[number,dest.address,dest.length,present,length],types::I64)?;
+                    let IExpr::Ident(status)=&args[0] else {unreachable!()};let status=storage_addr(b,ptr_ty,ints[status]);
+                    b.ins().store(MemFlags::new(),code,status,0);continue;
+                }
                 if name=="@environment_query" {
                     let source=characters::view(module,b,ptr_ty,dc,chars,ints,&args[3])?;
                     let dest=characters::view(module,b,ptr_ty,dc,chars,ints,&args[2])?;
@@ -3900,6 +3909,8 @@ impl Backend for CraneliftBackend {
                 b.append_block_params_for_function_params(entry);
                 b.switch_to_block(entry);
                 b.seal_block(entry);
+                let argc=b.block_params(entry)[0];let argv=b.block_params(entry)[1];
+                file_io::call(&mut obj,&mut b,"rfort_set_arguments",&[argc,argv],types::I64)?;
                 let mut ex = declare_externs(&mut obj, &mut b, ptr_ty)?;
                 ex.enable_caching(&mut b, ptr_ty);
 

@@ -7,6 +7,8 @@ use structopt::StructOpt;
     about = "Fortran compiler written in Rust"
 )]
 pub struct Cli {
+    #[structopt(skip)]
+    pub run_args: Vec<std::ffi::OsString>,
     pub inputs: Vec<PathBuf>,
 
     #[structopt(
@@ -138,7 +140,14 @@ pub enum Command {
 impl Cli {
     pub fn from_command_line() -> Self {
         let mut args = Vec::<std::ffi::OsString>::new();
-        for arg in std::env::args_os() {
+        let mut original=std::env::args_os().collect::<Vec<_>>();
+        let mut run_args=Vec::new();
+        if let Some(split)=original.iter().position(|a|a=="--") {
+            if original[..split].iter().any(|a|a=="--run"||a=="run") {
+                run_args=original.split_off(split+1);original.pop();
+            }
+        }
+        for arg in original {
             let text = arg.to_string_lossy();
             match text.as_ref() {
                 "-Wall" | "--wall" => args.push("--Wall".into()),
@@ -150,7 +159,7 @@ impl Cli {
                 _ => args.push(arg),
             }
         }
-        Self::from_iter(args)
+        let mut cli=Self::from_iter(args);cli.run_args=run_args;cli
     }
 
     pub fn normalize(mut self) -> Self {

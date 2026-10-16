@@ -601,7 +601,7 @@ impl<'a> Analysis<'a> {
                         );
                     for (index,e) in args.iter().enumerate() {
                         let keyword=crate::named_arguments::keyword(e);
-                        let environment_output=!user_procedure && name=="get_environment_variable" && keyword.map_or((1..=3).contains(&index),|(key,_)|matches!(key,"value"|"length"|"status"));
+                        let environment_output=!user_procedure && matches!(name.as_str(),"get_environment_variable"|"get_command_argument") && keyword.map_or((1..=3).contains(&index),|(key,_)|matches!(key,"value"|"length"|"status"));
                         let e = keyword.map_or(e, |(_, e)| e);
                         if outputs || environment_output {
                             self.target(scope, owner, e);

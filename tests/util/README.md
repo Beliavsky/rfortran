@@ -1,7 +1,7 @@
 # util.f90 procedure coverage
 
 These small drivers exercise the external `util_mod` used by `xutil.f90`.
-The suite contains 33 drivers targeting 120 specific procedures, starting
+The suite contains 34 drivers targeting 120 specific procedures, starting
 with the families used by that program. The inventory covers all 551 procedures
 in the current source, including two internal procedures. The remaining 431
 procedures are explicitly untested. These are procedure counts, not estimates of
@@ -9,18 +9,19 @@ compiler completion or branch coverage.
 
 ## Current baseline
 
-On Windows, using the release compiler build, the 33 drivers have the same
+On Windows, using the release compiler build, the 34 drivers have the same
 outcomes at both O0 and O2:
 
 | Driver outcome | Count |
 | --- | ---: |
-| Pass against gfortran | 26 |
-| Compilation failure | 7 |
-| Incorrect output | 0 |
+| Pass against gfortran | 27 |
+| Compilation failure | 6 |
+| Incorrect output | 1 |
 
 All gfortran reference drivers compile and run successfully, including their
-repeat executions. The passing drivers target 87 procedures; 33 other targeted
-procedures are in blocked groups. `string_fields` and `partitions_and_runs` now
+repeat executions. The inventory records 87 passing procedures, 32 blocked procedures, and one
+partial procedure (`exe_name`, which passes its dedicated driver but also
+appears in the failing `clock_properties` group). `string_fields` and `partitions_and_runs` now
 pass following fixes to early RETURN in explicit-step loops and NINT rounding.
 `matrix_shapes` and `cumulative_sums` now pass after routing runtime selectors
 and triplets on fixed storage through the runtime section path. `diagonals`
@@ -46,12 +47,14 @@ FLOOR and CEILING, including integer result kinds and array lowering.
 See [baseline.json](baseline.json)
 for exact input-source and compiler hashes and every procedure's inventory entry.
 
-The `environment` driver now tests the original `unix` platform query, using
-GET_ENVIRONMENT_VARIABLE to inspect PATH. Full-module compilation now gets past
-the previously missing environment and rounding intrinsics. GETCWD now works;
-the next error is at `util.f90:544`, where the unimplemented
-GET_COMMAND_ARGUMENT is still treated as reading its output buffer. Isolated successes and
-full-module integration are recorded separately.
+The `environment` driver tests the original `unix` platform query using PATH.
+The `executable_name` driver tests the original `exe_name`, including GETCWD and
+GET_COMMAND_ARGUMENT. Both now pass. `clock_properties` now compiles but
+exposes incorrect date/time string output from `now`; its executable-name and
+timer checks pass. Full-module compilation next reports an
+uninitialized generated temporary at `util.f90:6661`, in the FORALL/NINT
+expression in `partition`. Isolated successes and full-module
+integration are recorded separately.
 
 ## Running
 

@@ -2,9 +2,9 @@
   "source_hashes": {
     "util": "5c478005438dcfd4d448cad18fe37fd3a97bb9e52a2489829b36f01180d69433",
     "kind": "c999f5d305aede589d31ea7585929d41e1fd5b1b86e1774f195b0b1354dec9c3",
-    "manifest": "4e493d51a1206bced96351d62f50b094d2acc9958a2b52d71e254575e5abacd3"
+    "manifest": "6654503f68422d27c30a65202dc3f9c4cdaba8f7cf59000627c0f5ba97c2d092"
   },
-  "compiler_sha256": "adb90f852b49a7870f641b0fc0efe917257797194b1f9c17d2f657495ed643fd",
+  "compiler_sha256": "96536ebcad333620057fc2b2b4756ab3667eecb6e10c8fa53103c4752db2da26",
   "mode": "isolated",
   "optimizations": [
     0,
@@ -13,11 +13,13 @@
   "procedure_counts": {
     "pass": 87,
     "untested": 431,
-    "blocked": 33
+    "partial": 1,
+    "blocked": 32
   },
   "case_outcomes": {
-    "pass": 52,
-    "compile_error": 14
+    "pass": 54,
+    "compile_error": 12,
+    "output_mismatch": 2
   },
   "cases": [
     {
@@ -49,6 +51,17 @@
         "unix"
       ],
       "driver_sha256": "7d82e56fea0c218e1674f828faa0067a5b999014e45b1888283701b5873767de",
+      "outcomes": {
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
+      }
+    },
+    {
+      "id": "executable_name",
+      "procedures": [
+        "exe_name"
+      ],
+      "driver_sha256": "07f06b0899557ee2c488990572f1b6e78e4a1d9d2e0bff5323a4f9fd41bf56d8",
       "outcomes": {
         "isolated-O0": "pass",
         "isolated-O2": "pass"
@@ -341,8 +354,8 @@
       ],
       "driver_sha256": "6e8340387d98e3a10b4af21f2c58798208f9859375b8d46d7b1dbb848ec476ac",
       "outcomes": {
-        "isolated-O0": "compile_error",
-        "isolated-O2": "compile_error"
+        "isolated-O0": "output_mismatch",
+        "isolated-O2": "output_mismatch"
       }
     },
     {
@@ -513,8 +526,9 @@
     {
       "name": "exe_name",
       "line": 538,
-      "status": "blocked",
+      "status": "partial",
       "tested_by": [
+        "executable_name",
         "clock_properties"
       ]
     },

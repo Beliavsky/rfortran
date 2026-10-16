@@ -229,8 +229,8 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                     if let Some((name,index))=key(arg) {if let Some(i)=index {read(i,env,&mut before,serial)?;}write(name,index,env,&mut after,serial);}
                 }
             }
-            Stmt::CallSub {name,args} if matches!(name.as_str(),"@file_inquire_unit"|"@file_inquire_file"|"@environment_query"|"@cwd_query") => {
-                let count=if name=="@environment_query" {3} else if name=="@cwd_query" {2} else {4};
+            Stmt::CallSub {name,args} if matches!(name.as_str(),"@file_inquire_unit"|"@file_inquire_file"|"@environment_query"|"@argument_query"|"@cwd_query") => {
+                let count=if matches!(name.as_str(),"@environment_query"|"@argument_query") {3} else if name=="@cwd_query" {2} else {4};
                 for arg in &args[count..] {read(arg,env,&mut before,serial)?;}
                 for arg in &args[..count] {
                     let Expr::Ident(dest)=arg else {unreachable!()};write(dest,None,env,&mut after,serial);

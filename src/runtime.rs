@@ -1322,6 +1322,16 @@ pub fn interpret(program: &Program) {
                         let Expr::Ident(n)=&args[0] else {unreachable!()};frame.env_int.insert(n.clone(),status);
                         let Expr::Ident(n)=&args[1] else {unreachable!()};frame.env_str.insert(n.clone(),String::from_utf8_lossy(&value[..width]).into_owned());idx+=1;continue;
                     }
+                    if name=="@argument_query" {
+                        let fr=call_stack.last().unwrap().clone();
+                        let mut eval=|e:&Expr|eval_expr(e,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack);
+                        let number=eval(&args[3]).0.unwrap();let width=eval(&args[5]).0.unwrap() as usize;let present=eval(&args[6]).2.unwrap();
+                        let mut output=vec![0u8;width+1];let mut length=0;
+                        let status=unsafe {crate::environment::rfort_argument_query(number,output.as_mut_ptr(),width,i64::from(present),&mut length)};
+                        let frame=call_stack.last_mut().unwrap();
+                        for (arg,val) in args[..2].iter().zip([status,length]) {let Expr::Ident(n)=arg else {unreachable!()};frame.env_int.insert(n.clone(),val);}
+                        let Expr::Ident(n)=&args[2] else {unreachable!()};frame.env_str.insert(n.clone(),String::from_utf8_lossy(&output[..width]).into_owned());idx+=1;continue;
+                    }
                     if name=="@environment_query" {
                         let fr=call_stack.last().unwrap().clone();
                         let mut eval=|e:&Expr|eval_expr(e,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack);

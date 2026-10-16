@@ -156,6 +156,11 @@ struct Resolver {
     exports: HashMap<String, Bindings>,
 }
 
+fn elemental_result(result:Ty,arguments:&[Ty])->Ty {
+    if matches!(result,Ty::Array(..)) {return result;}
+    if let Some(rank)=arguments.iter().find_map(|t|if let Ty::Array(_,rank)=t {Some(*rank)}else{None}) {Ty::Array(Box::new(result),rank)} else {result}
+}
+
 /// Reuse generic-resolution type inference for intrinsic input validation.
 pub(crate) struct ExpressionTypes(Resolver);
 impl ExpressionTypes {
@@ -691,7 +696,24 @@ impl Resolver {
                                 if dim.is_some() { element }
                                 else { Ty::Array(Box::new(element), 1) }
                             }
-                            "size" | "len" => scalar(&TypeSpec::Integer(None)),
+                            "merge" => elemental_result(arg_types.first().cloned().unwrap_or(Ty::Unknown),&arg_types),
+                            "@count_default" | "@count_i8" => {
+                                let result=scalar(&TypeSpec::Integer(Some(if n=="@count_i8" {8} else {4})));
+                                match arg_types.first() {Some(Ty::Array(_,rank)) if *rank>1 && args.len()>1=>Ty::Array(Box::new(result),rank-1),_=>result}
+                            },
+                            "size" | "len" | "len_trim" | "ichar" | "iachar" | "count" => {
+                                let slot=if matches!(n.as_str(),"size"|"count") {2} else {1};
+                                let argument=|key:&str,slot:usize|args.iter().find_map(|e|match e {
+                                    Expr::Call(tag,values) if tag==&format!("@keyword:{key}")=>values.first(),_=>None
+                                }).or_else(||args.get(slot).filter(|e|!matches!(e,Expr::Call(tag,_) if tag.starts_with("@keyword:")))).filter(|e|!crate::named_arguments::omitted(e));
+                                let kind=argument("kind",slot).map(crate::parameters::integer_constant).transpose()?.unwrap_or(4);
+                                let result=scalar(&TypeSpec::Integer(Some(kind as u8)));
+                                if n=="count" {
+                                    if argument("dim",1).is_some() {
+                                        match arg_types.first() {Some(Ty::Array(_,rank)) if *rank>1=>Ty::Array(Box::new(result),rank-1),_=>result}
+                                    } else {result}
+                                } else if matches!(n.as_str(),"size"|"len") {result} else {elemental_result(result,&arg_types)}
+                            },
                             "repeat" | "trim" | "adjustl" | "adjustr" => scalar(&TypeSpec::Character(None)),
                             "reshape" => match (arg_types.first(),args.get(1)) {
                                 (Some(Ty::Array(element,_)),Some(Expr::Call(tag,shape)))
@@ -730,10 +752,12 @@ impl Resolver {
                             }
                             "abs" | "mod" | "modulo" | "min" | "max" => {
                                 fn abs_type(t:Ty)->Ty{match t{Ty::Array(t,r)=>Ty::Array(Box::new(abs_type(*t)),r),Ty::Scalar(TypeSpec::Complex(k))=>scalar(&if k=="8"{TypeSpec::DoublePrecision}else{TypeSpec::Real}),t=>t}}
-                                let t=arg_types.first().cloned().unwrap_or(Ty::Unknown);if n=="abs"{abs_type(t)}else{t}
+                                let t=arg_types.first().cloned().unwrap_or(Ty::Unknown);if n=="abs"{abs_type(t)}else{elemental_result(t,&arg_types)}
                             }
-                            "sum" | "product" | "minval" | "maxval" if args.len() == 1 => {
+                            "sum" | "product" | "minval" | "maxval" => {
+                                let dim=matches!(arg_types.get(1),Some(Ty::Scalar(TypeSpec::Integer(_))));
                                 match arg_types.first() {
+                                    Some(Ty::Array(t,rank)) if dim && *rank>1=>Ty::Array(t.clone(),rank-1),
                                     Some(Ty::Array(t, _)) => (**t).clone(),
                                     _ => Ty::Unknown,
                                 }

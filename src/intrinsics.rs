@@ -51,7 +51,7 @@ pub const PURE_FUNCTIONS: &[&str] = &[
 ];
 
 pub const IMPURE_PROCEDURES: &[&str] = &[
-    "random_number", "random_seed", "cpu_time", "system_clock", "date_and_time", "get_environment_variable", "getcwd",
+    "random_number", "random_seed", "cpu_time", "system_clock", "date_and_time", "get_environment_variable", "getcwd", "get_command_argument",
 ];
 
 pub fn purity(name: &str) -> Option<Purity> {

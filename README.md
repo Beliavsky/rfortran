@@ -761,6 +761,18 @@ supported, as is the `X=` keyword. Run `python tests/test_isnan.py` for
 interpreter/native O0/O2 comparisons with gfortran in GNU mode, including ranks
 through 15 and runtime-sized multidimensional arrays.
 
+`GET_COMMAND_ARGUMENT(NUMBER, VALUE, LENGTH, STATUS)` supports keyword
+arguments and optional outputs. NUMBER, LENGTH and STATUS use default INTEGER.
+VALUE is blank-padded or truncated; LENGTH reports the complete argument length.
+STATUS is 0 for success, -1 for truncation, and positive for a missing argument.
+Argument zero is the native executable name, or the source filename when
+interpreting. Scalar array-element outputs and assumed-length CHARACTER dummies
+are supported, including zero-length VALUE buffers. The intrinsic is impure.
+Pass program arguments after `--`: `rfort main.f90 --run -- "hello world"` or
+`rfort run main.f90 -- "hello world"`. Arguments after `--` retain spaces, empty
+strings and leading hyphens. Run `python tests/test_command_argument.py` for
+interpreter/native O0/O2 and gfortran comparisons.
+
 The GNU `GETCWD` subroutine is supported as `CALL GETCWD(C, STATUS)` with
 optional STATUS, including keyword arguments. C is a writable scalar CHARACTER
 variable or array element; STATUS is INTEGER kind 4 or 8. Success returns 0 and

@@ -164,6 +164,7 @@ pub fn build(
     linker::link(&objects, &exe, cli)?;
     if run {
         let status = std::process::Command::new(exe.canonicalize()?)
+            .args(&cli.run_args)
             .status()
             .context("running compiled program")?;
         if !status.success() {

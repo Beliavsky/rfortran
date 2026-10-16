@@ -279,6 +279,10 @@ fn compiler_main() -> Result<()> {
                 anyhow::bail!("semantic checks failed");
             }
             let program = initialized::instrument_with_origins(program, &src, input.file_name().and_then(|name| name.to_str()).unwrap_or("<unknown>"), &prepared.origins)?;
+            let command=std::iter::once(input.as_os_str()).chain(args.run_args.iter().map(|a|a.as_os_str()))
+                .map(|a|std::ffi::CString::new(a.to_string_lossy().as_bytes())).collect::<std::result::Result<Vec<_>,_>>()?;
+            let pointers=command.iter().map(|a|a.as_ptr().cast::<u8>()).collect::<Vec<_>>();
+            unsafe {environment::rfort_set_arguments(i32::try_from(pointers.len())?,pointers.as_ptr());}
             runtime::interpret(&program);
         }
         cli::Command::Link { inputs, out } => {

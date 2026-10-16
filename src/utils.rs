@@ -73,6 +73,7 @@ pub fn print_help() {
     println!("  --help               Show this help message");
     println!("  --debug-ir           Show IR before and after optimizations");
     println!("  --run                Run the executable after building");
+    println!("  -- <arguments>       Pass arguments to --run or the run subcommand");
     println!("  -q                   Suppress build progress (warnings remain visible)");
     println!("  -S, --emit-asm       Print generated assembly for the object file");
     println!("  -o <output>          Specify output file (default derived from last source)");

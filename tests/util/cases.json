@@ -18,6 +18,12 @@
     ]
   },
   {
+    "id": "executable_name",
+    "procedures": [
+      "exe_name"
+    ]
+  },
+  {
     "id": "numeric_vectors",
     "procedures": [
       "normalize",
