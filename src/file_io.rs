@@ -7,6 +7,8 @@ use crate::ast::{Expr, Stmt, TypeSpec};
 use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
 use std::io::{Read, Write, Seek, SeekFrom};
+#[path="file_inquiry.rs"]
+mod inquiry;
 
 pub(crate) fn unit(expr: &Expr, symbols: &HashMap<String, (TypeSpec, Vec<Expr>)>) -> Result<()> {
     match expr {
@@ -29,6 +31,7 @@ pub(crate) fn lower(
     name: &str,
     args: &[Expr],
     symbols: &HashMap<String, (TypeSpec, Vec<Expr>)>,
+    serial:&mut usize,
 ) -> Result<Stmt> {
     let operation = name.strip_prefix("@io_").unwrap();
     let mut controls = HashMap::new();
@@ -43,18 +46,20 @@ pub(crate) fn lower(
         };
         if !matches!(
             key.as_str(),
-            "unit" | "newunit" | "file" | "status" | "action" | "access" | "form" | "name"
+            "unit" | "newunit" | "file" | "status" | "action" | "access" | "form" | "name" | "opened" | "number" | "iostat"
         ) {
             bail!("{operation}: unsupported I/O control `{key}`");
         }
-        if operation != "open" && key != "unit" && !(operation=="inquire" && key=="name") {
+        if operation=="inquire" && !matches!(key.as_str(),"unit"|"file"|"name"|"opened"|"number"|"iostat") {bail!("INQUIRE: unsupported I/O control `{key}`");}
+        if operation != "open" && operation!="inquire" && key != "unit" {
             bail!("{operation} currently supports only UNIT");
         }
-        if operation=="open" && key=="name" {bail!("OPEN: unsupported I/O control `name`");}
+        if operation=="open" && matches!(key.as_str(),"name"|"opened"|"number"|"iostat") {bail!("OPEN: unsupported I/O control `{key}`");}
         if controls.insert(key.clone(), value).is_some() {
             bail!("{operation}: duplicate {key} control");
         }
     }
+    if operation=="inquire" {return lower_inquiry(controls,symbols,serial);}
     if operation=="open" && matches!(controls.get("status"),Some(Expr::Str(s)) if s.trim_end().eq_ignore_ascii_case("scratch")) {
         if controls.contains_key("file") { bail!("scratch OPEN must not specify FILE"); }
         let newunit=controls.remove("newunit");
@@ -75,15 +80,6 @@ pub(crate) fn lower(
         .context("file operation requires UNIT")?;
     unit(&unit_expr, symbols)?;
     let mut args = vec![unit_expr];
-    if operation=="inquire" {
-        let dest=controls.remove("name").context("INQUIRE currently requires NAME")?;
-        if !matches!(&dest,Expr::Ident(n) if matches!(symbols.get(n),Some((TypeSpec::Character(_),d)) if d.is_empty())) {
-            bail!("INQUIRE NAME requires a writable scalar CHARACTER variable");
-        }
-        let Expr::Ident(n)=&dest else {unreachable!()};
-        let TypeSpec::Character(length)=symbols[n].0 else {unreachable!()};
-        return Ok(Stmt::CallSub {name:"@file_name".into(),args:vec![dest,args.remove(0),Expr::IntLit(length.unwrap_or(1).to_string())]});
-    }
     if operation == "open" {
         for (key, expected, required) in [
             ("status", "old", true),
@@ -119,9 +115,67 @@ pub(crate) fn lower(
     })
 }
 
+fn lower_inquiry(mut controls:HashMap<String,Expr>,symbols:&HashMap<String,(TypeSpec,Vec<Expr>)>,serial:&mut usize)->Result<Stmt> {
+    let unit=controls.remove("unit");let file=controls.remove("file");
+    if unit.is_some()==file.is_some() {bail!("INQUIRE requires exactly one of UNIT or FILE");}
+    let by_file=file.is_some();let selector=file.or(unit).unwrap();
+    fn character(e:&Expr,symbols:&HashMap<String,(TypeSpec,Vec<Expr>)>)->bool {
+        match e {
+            Expr::Str(_)=>true,
+            Expr::Ident(n)=>matches!(symbols.get(n),Some((TypeSpec::Character(_),d)) if d.is_empty()),
+            Expr::Bin(crate::ast::BinOp::Concat,a,b)=>character(a,symbols)&&character(b,symbols),
+            Expr::Call(n,a) if matches!(n.as_str(),"trim"|"adjustl"|"adjustr") && a.len()==1=>character(&a[0],symbols),
+            _=>false,
+        }
+    }
+    let kind=if by_file && character(&selector,symbols) {TypeSpec::Character(None)} else {
+        crate::array_calls::scalar_actual_kind(&selector,symbols).context("INQUIRE selector must be a scalar expression")?
+    };
+    if if by_file {!matches!(kind,TypeSpec::Character(_))} else {!matches!(kind,TypeSpec::Integer(_))} {
+        bail!("INQUIRE {} requires a scalar {} expression",if by_file {"FILE"}else{"UNIT"},if by_file {"CHARACTER"}else{"INTEGER"});
+    }
+    for (key,value) in &controls {
+        let Expr::Ident(n)=value else {bail!("INQUIRE {} requires a writable scalar variable",key.to_ascii_uppercase());};
+        let valid=symbols.get(n).is_some_and(|(kind,dims)|dims.is_empty() && match key.as_str() {
+            "name"=>matches!(kind,TypeSpec::Character(_)),"opened"=>*kind==TypeSpec::Logical,
+            _=>matches!(kind,TypeSpec::Integer(None|Some(1|2|4|8))),
+        });
+        if !valid {bail!("INQUIRE {} requires a writable scalar {} variable",key.to_ascii_uppercase(),match key.as_str(){"name"=>"CHARACTER","opened"=>"LOGICAL",_=>"INTEGER"});}
+    }
+    *serial+=1;
+    let names:Vec<String>=["status","number","opened","name"].iter().map(|key|format!("@inquire_{key}_{serial}")).collect();
+    let id=|i:usize|Expr::Ident(names[i].clone());let int=|n:i64|Expr::IntLit(n.to_string());
+    let name=controls.remove("name").unwrap_or_else(||id(3));
+    let length=if name==id(3) {0} else {
+        let Expr::Ident(n)=&name else {unreachable!()};let TypeSpec::Character(length)=symbols[n].0 else {unreachable!()};length.unwrap_or(1)
+    };
+    let mut body=vec![Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:names[..3].to_vec()}];
+    if name==id(3) {body.push(Stmt::VarDecl{kind:TypeSpec::Character(Some(0)),names:vec![names[3].clone()]});}
+    body.push(Stmt::CallSub{name:if by_file {"@file_inquire_file"}else{"@file_inquire_unit"}.into(),args:vec![id(0),id(1),id(2),name,selector,int(length as i64)]});
+    if let Some(dest)=controls.remove("iostat") {
+        let Expr::Ident(name)=dest else {unreachable!()};body.push(Stmt::Assign{name,value:id(0)});
+    } else {
+        body.push(Stmt::If{cond:Expr::Bin(crate::ast::BinOp::Ne,Box::new(id(0)),Box::new(int(0))),then_body:vec![Stmt::CallSub{name:"@error_stop".into(),args:vec![Expr::Str("INQUIRE failed".into())]}],else_body:None});
+    }
+    if let Some(Expr::Ident(name))=controls.remove("number") {body.push(Stmt::Assign{name,value:id(1)});}
+    if let Some(Expr::Ident(name))=controls.remove("opened") {body.push(Stmt::Assign{name,value:Expr::Bin(crate::ast::BinOp::Ne,Box::new(id(2)),Box::new(int(0)))});}
+    Ok(Stmt::Block{body})
+}
+
 #[derive(Default)]
 pub(crate) struct Files(HashMap<i64, std::fs::File>, HashMap<i64,String>);
 impl Files {
+    pub(crate) fn inquire(&self,unit:Option<i64>,path:Option<&str>)->(i64,i64,i64,String) {
+        if let Some(path)=path {
+            if path.as_bytes().contains(&0) {return (1,-1,0,String::new());}
+            let found=self.1.iter().find(|(unit,name)|self.0.contains_key(unit) && inquiry::same_name(path.as_bytes(),name.as_bytes()));
+            return match found {Some((unit,name))=>(0,*unit,1,name.clone()),None=>(0,-1,0,String::new())};
+        }
+        let unit=unit.unwrap();
+        if inquiry::invalid_unit(unit) {return (1,-1,0,String::new());}
+        if matches!(unit,5|6) {return (0,unit,1,if unit==5 {"stdin"}else{"stdout"}.into());}
+        if inquiry::index(unit).is_some_and(|index|self.0.contains_key(&inquiry::unit(index))) {(0,unit,1,self.1.get(&unit).cloned().unwrap_or_default())}else{(0,-1,0,String::new())}
+    }
     fn valid(unit: i64) -> Result<()> {
         if (!(0..1024).contains(&unit) && !(-1033..=-10).contains(&unit)) || matches!(unit, 5 | 6) {
             bail!("file units must be in 0..1023, excluding preconnected units 5 and 6");

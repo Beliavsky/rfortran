@@ -9,6 +9,7 @@ mod calendar;
 mod format_spec;
 mod record_input;
 mod character_input;
+mod file_inquiry;
 use format_spec::GroupParser;
 
 extern "C" {
@@ -73,6 +74,37 @@ pub unsafe extern "C" fn rfort_file_name(source:*const u8, destination:*mut u8, 
     }
     *destination.add(length)=0;
     0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rfort_file_inquire(
+    slots:*const *mut core::ffi::c_void, names:*const *const u8, unit:i64,
+    path:*const u8,path_length:usize,number:*mut i64,opened:*mut i64,
+    destination:*mut u8,length:usize,
+)->i64 {
+    *number=-1;*opened=0;
+    let mut source=core::ptr::null();let mut status=0;
+    if !path.is_null() {
+        let path=core::slice::from_raw_parts(path,path_length);
+        if path.contains(&0) {status=1;} else {
+            for i in 0..2048 {
+                let name=*names.add(i);
+                if !(*slots.add(i)).is_null() && !name.is_null() {
+                    let mut n=0;while *name.add(n)!=0 {n+=1;}
+                    if file_inquiry::same_name(path,core::slice::from_raw_parts(name,n)) {
+                        *number=file_inquiry::unit(i);*opened=1;source=name;break;
+                    }
+                }
+            }
+        }
+    } else if file_inquiry::invalid_unit(unit) {status=1;}
+    else if unit==5 || unit==6 {
+        *number=unit;*opened=1;source=if unit==5 {b"stdin\0".as_ptr()}else{b"stdout\0".as_ptr()};
+    } else if let Some(index)=file_inquiry::index(unit) {
+        if !(*slots.add(index)).is_null() {*number=unit;*opened=1;source=*names.add(index);}
+    }
+    rfort_file_name(source,destination,length);
+    status
 }
 
 /// A null stream denotes standard input. The destination holds `length` bytes

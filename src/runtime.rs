@@ -1306,6 +1306,19 @@ pub fn interpret(program: &Program) {
                         value.truncate(length);value.push_str(&" ".repeat(length-value.len()));
                         call_stack.last_mut().unwrap().env_str.insert(dest.clone(),value);idx+=1;continue;
                     }
+                    if matches!(name.as_str(),"@file_inquire_unit"|"@file_inquire_file") {
+                        let fr=call_stack.last().unwrap().clone();
+                        let value=eval_expr(&args[4],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack);
+                        let (status,number,opened,mut text)=FILES.with(|files|files.borrow().inquire(value.0,value.3.as_deref()));
+                        let frame=call_stack.last_mut().unwrap();
+                        for (arg,value) in args[..3].iter().zip([status,number,opened]) {
+                            let Expr::Ident(dest)=arg else {unreachable!()};frame.env_int.insert(dest.clone(),value);
+                        }
+                        let Expr::Ident(dest)=&args[3] else {unreachable!()};
+                        let Expr::IntLit(length)=&args[5] else {unreachable!()};let length:usize=length.parse().unwrap();
+                        text.truncate(length);text.push_str(&" ".repeat(length-text.len()));frame.env_str.insert(dest.clone(),text);
+                        idx+=1;continue;
+                    }
                     if name=="@file_write_record" {
                         let fr=call_stack.last().unwrap().clone();
                         let unit=eval_expr(&args[0],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();

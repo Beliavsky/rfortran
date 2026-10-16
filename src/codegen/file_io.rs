@@ -110,6 +110,13 @@ fn table(b: &mut FunctionBuilder,module:&mut ObjectModule,ptr:ir::Type,name:&str
     let global=module.declare_data_in_func(id,b.func);
     Ok(b.ins().global_value(ptr,global))
 }
+pub(super) fn inquire(module:&mut ObjectModule,b:&mut FunctionBuilder,ptr:ir::Type,arguments:&[ir::Value])->Result<ir::Value> {
+    anyhow::ensure!(ptr==types::I64,"file I/O currently requires a 64-bit target");
+    let units=table(b,module,ptr,".rfort.file_units")?;
+    let names=table(b,module,ptr,".rfort.file_names")?;
+    let mut args=vec![units,names];args.extend_from_slice(arguments);
+    call(module,b,"rfort_file_inquire",&args,types::I64)
+}
 pub(super) fn newunit(module:&mut ObjectModule,b:&mut FunctionBuilder,ptr:ir::Type,dc:&mut u32)->Result<ir::Value> {
     let slots=table(b,module,ptr,".rfort.file_units")?;
     let unit=call(module,b,"rfort_scratch_newunit",&[slots],types::I64)?;

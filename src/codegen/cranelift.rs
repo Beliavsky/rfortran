@@ -2448,6 +2448,25 @@ fn gen_stmts(
                     file_io::call(module,b,"rfort_file_name",&[source,dest.address,dest.length],types::I32)?;
                     continue;
                 }
+                if matches!(name.as_str(),"@file_inquire_unit"|"@file_inquire_file") {
+                    let mut destinations=vec![];
+                    for dest in &args[..3] {
+                        let IExpr::Ident(dest)=dest else {anyhow::bail!("INQUIRE requires INTEGER output storage")};
+                        let slot=ints.get(dest).ok_or_else(||anyhow::anyhow!("INQUIRE requires INTEGER output storage"))?;
+                        destinations.push(storage_addr(b,ptr_ty,*slot));
+                    }
+                    let dest=characters::view(module,b,ptr_ty,dc,chars,ints,&args[3])?;
+                    let (unit,path,length)=if name=="@file_inquire_file" {
+                        let source=characters::view(module,b,ptr_ty,dc,chars,ints,&args[4])?;
+                        (b.ins().iconst(types::I64,0),source.address,source.length)
+                    } else {
+                        let value=eval_expr(b,ex,ptr_ty,&args[4],ints,reals,bools,func_meta);let unit=to_i64(b,value);
+                        (unit,b.ins().iconst(ptr_ty,0),b.ins().iconst(ptr_ty,0))
+                    };
+                    let code=file_io::inquire(module,b,ptr_ty,&[unit,path,length,destinations[1],destinations[2],dest.address,dest.length])?;
+                    b.ins().store(MemFlags::new(),code,destinations[0],0);
+                    continue;
+                }
                 if name=="@file_write_record" {
                     let unit=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);let unit=to_i64(b,unit);
                     let file=file_io::handle(module,b,ptr_ty,dc,unit)?;

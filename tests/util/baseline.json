@@ -2,24 +2,35 @@
   "source_hashes": {
     "util": "5c478005438dcfd4d448cad18fe37fd3a97bb9e52a2489829b36f01180d69433",
     "kind": "c999f5d305aede589d31ea7585929d41e1fd5b1b86e1774f195b0b1354dec9c3",
-    "manifest": "424d255ecf34fda0ed021b70e67db0a04413142298378c884e32708f71251666"
+    "manifest": "a89720e22e0737cec16053be68c8331475c61b61315aed9774267e780d960678"
   },
-  "compiler_sha256": "9aaf0e5c590338380ceb6329ceb94649e37c0725b5b1829b61bdc292aa12c60e",
+  "compiler_sha256": "133ba4a6ec0ec6c14d6d2152249f0abdc2b94842924255275495634d47e217f4",
   "mode": "isolated",
   "optimizations": [
     0,
     2
   ],
   "procedure_counts": {
-    "pass": 83,
-    "untested": 435,
+    "pass": 84,
+    "untested": 434,
     "blocked": 33
   },
   "case_outcomes": {
-    "pass": 46,
+    "pass": 48,
     "compile_error": 14
   },
   "cases": [
+    {
+      "id": "unit_inquiry",
+      "procedures": [
+        "get_unit"
+      ],
+      "driver_sha256": "53bf561014f720b8b895ba0341df92ca28e0f48c1e818d2dd6c909493c957643",
+      "outcomes": {
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
+      }
+    },
     {
       "id": "numeric_vectors",
       "procedures": [
@@ -2105,8 +2116,10 @@
     {
       "name": "get_unit",
       "line": 4413,
-      "status": "untested",
-      "tested_by": []
+      "status": "pass",
+      "tested_by": [
+        "unit_inquiry"
+      ]
     },
     {
       "name": "get_unit_open_file",

@@ -722,8 +722,18 @@ negative unit and supports up to 1024 simultaneous scratch connections.
 `WRITE(iu,'(a)')` accepts scalar CHARACTER items, producing a record for each
 item through format reversion; an empty list writes an empty record. Writes
 replace subsequent records at the current position. Scratch files are deleted
-on close. `INQUIRE(unit=iu,name=text)` supports connected units; named files
-return their OPEN path, while scratch files fill NAME with blanks.
+on close. `INQUIRE` accepts exactly one of `UNIT=` or `FILE=`, with any
+combination of scalar-variable outputs `OPENED=`, `NUMBER=`, `NAME=` and
+`IOSTAT=`. Controls may be reordered; UNIT may also be positional. Unit queries
+recognize preconnected units 5 and 6 and scratch NEWUNIT connections. Unconnected
+units and filenames return OPENED false, NUMBER -1 and IOSTAT zero. Invalid
+queries return a nonzero IOSTAT, or stop with an error when IOSTAT is omitted.
+Named connections return their OPEN path in NAME, padded or truncated to the
+destination's declared length; scratch and unconnected queries fill NAME with
+blanks (NAME is undefined by Fortran for an unnamed/unconnected unit).
+Filename lookup ignores trailing blanks and compares normalized absolute paths;
+distinct hard-link names are not equated. Run `python tests/test_inquire.py` for
+interpreter/native O0/O2 checks against gfortran, including connection changes.
 `(A)` READ destinations may also be dynamically indexed local CHARACTER elements.
 
 External list-directed input with transfer items, other external output formats,

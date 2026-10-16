@@ -1,25 +1,25 @@
 # util.f90 procedure coverage
 
 These small drivers exercise the external `util_mod` used by `xutil.f90`.
-The initial suite contains 30 drivers targeting 116 specific procedures, starting
+The suite contains 31 drivers targeting 117 specific procedures, starting
 with the families used by that program. The inventory covers all 551 procedures
-in the current source, including two internal procedures. The remaining 435
+in the current source, including two internal procedures. The remaining 434
 procedures are explicitly untested. These are procedure counts, not estimates of
 compiler completion or branch coverage.
 
 ## Current baseline
 
-On Windows, using the release compiler build, the 30 drivers have the same
+On Windows, using the release compiler build, the 31 drivers have the same
 outcomes at both O0 and O2:
 
 | Driver outcome | Count |
 | --- | ---: |
-| Pass against gfortran | 23 |
+| Pass against gfortran | 24 |
 | Compilation failure | 7 |
 | Incorrect output | 0 |
 
 All gfortran reference drivers compile and run successfully, including their
-repeat executions. The passing drivers target 83 procedures; 33 other targeted
+repeat executions. The passing drivers target 84 procedures; 33 other targeted
 procedures are in blocked groups. `string_fields` and `partitions_and_runs` now
 pass following fixes to early RETURN in explicit-step loops and NINT rounding.
 `matrix_shapes` and `cumulative_sums` now pass after routing runtime selectors
@@ -36,11 +36,16 @@ covers zero normalization, an empty logical fraction, and empty/negative sequenc
 `sorting` now passes after implementing scalar and elemental GNU ISNAN. Its
 driver covers both sorting paths, duplicates, ascending/descending/original
 ordering, empty inputs, singletons and the NaN early-return path.
+`unit_inquiry` tests the original `get_unit`, including named-file lookup and
+finding free units before and after CLOSE. It passes after implementing INQUIRE
+connection queries and preventing temporary-name collisions between subroutine
+specialization passes.
 See [baseline.json](baseline.json)
 for exact input-source and compiler hashes and every procedure's inventory entry.
 
 The `string_matching` driver passes in isolation, while full-module compilation
-currently stops at `INQUIRE(...,OPENED=...)` in `util.f90:4428`. This demonstrates
+currently reports missing `GET_ENVIRONMENT_VARIABLE`, `FLOOR` and `CEILING`
+(first at `util.f90:6341`). This demonstrates
 why isolated successes and full-module integration are recorded separately.
 
 ## Running

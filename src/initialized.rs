@@ -227,6 +227,12 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                     if let Some((name,index))=key(arg) {if let Some(i)=index {read(i,env,&mut before,serial)?;}write(name,index,env,&mut after,serial);}
                 }
             }
+            Stmt::CallSub {name,args} if matches!(name.as_str(),"@file_inquire_unit"|"@file_inquire_file") => {
+                for arg in &args[4..] {read(arg,env,&mut before,serial)?;}
+                for arg in &args[..4] {
+                    let Expr::Ident(dest)=arg else {unreachable!()};write(dest,None,env,&mut after,serial);
+                }
+            }
             Stmt::CallSub { name, args } if name == "@read_record_status" || name=="@read_character_field" => {
                 for arg in &args[2..] { read(arg, env, &mut before, serial)?; }
                 for arg in &args[..2] {

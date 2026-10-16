@@ -1273,7 +1273,7 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
         }
         if let Stmt::CallSub { name, args } = &stmt {
             if name.starts_with("@io_") {
-                stmt = crate::file_io::lower(name, args, &symbols.variables)?;
+                stmt = crate::file_io::lower(name, args, &symbols.variables,serial)?;
             }
         }
         if let Stmt::Print { items } = &stmt {

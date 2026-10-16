@@ -1337,6 +1337,13 @@
       "program_stderr": "",
       "program_exit_code": 0
     },
+    "198_inquire": {
+      "compiler_stderr": "",
+      "compiler_exit_code": 0,
+      "program_stdout": " inquire tests passed\n",
+      "program_stderr": "",
+      "program_exit_code": 0
+    },
     "197_isnan": {
       "compiler_stderr": "",
       "compiler_exit_code": 0,

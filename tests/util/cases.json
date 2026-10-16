@@ -1,5 +1,10 @@
 [
   {
+    "id": "unit_inquiry",
+    "procedures": ["get_unit"],
+    "files": {"inquiry-data.txt": "hello\n"}
+  },
+  {
     "id": "numeric_vectors",
     "procedures": [
       "normalize",

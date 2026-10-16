@@ -302,6 +302,20 @@ pub fn resolve(mut program: Program) -> Result<Program> {
         }
     }
     let mut routines = HashMap::new(); collect(&program.body, &mut routines);
-    expand(&mut program.body, &routines, &mut Vec::new(), &mut 0)?;
+    // Array/CHARACTER call specialization can already have expanded some
+    // calls using this namespace. Continue its numbering for the scalar calls.
+    fn maximum(body:&[Stmt])->usize {
+        fn suffix(n:&str)->usize {if n.starts_with("@sub_local_") || n.starts_with("@sub_returned_") {n.rsplit('_').next().and_then(|n|n.parse().ok()).unwrap_or(0)}else{0}}
+        body.iter().map(|s|match s {
+            Stmt::VarDecl{names,..}=>names.iter().map(|n|suffix(n)).max().unwrap_or(0),
+            Stmt::ArrayDecl{name,..}=>suffix(name),
+            Stmt::Block{body}|Stmt::Module{body,..}|Stmt::Function{body,..}|Stmt::Subroutine{body,..}|Stmt::Do{body,..}|Stmt::DoWhile{body,..}=>maximum(body),
+            Stmt::If{then_body,else_body,..}=>maximum(then_body).max(else_body.as_ref().map(|b|maximum(b)).unwrap_or(0)),
+            Stmt::SelectCase{cases,default,..}=>cases.iter().map(|c|maximum(&c.body)).max().unwrap_or(0).max(default.as_ref().map(|b|maximum(b)).unwrap_or(0)),
+            _=>0,
+        }).max().unwrap_or(0)
+    }
+    let mut serial=maximum(&program.body);
+    expand(&mut program.body, &routines, &mut Vec::new(), &mut serial)?;
     Ok(program)
 }
