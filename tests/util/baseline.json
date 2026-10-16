@@ -2,21 +2,21 @@
   "source_hashes": {
     "util": "5c478005438dcfd4d448cad18fe37fd3a97bb9e52a2489829b36f01180d69433",
     "kind": "c999f5d305aede589d31ea7585929d41e1fd5b1b86e1774f195b0b1354dec9c3",
-    "manifest": "a89720e22e0737cec16053be68c8331475c61b61315aed9774267e780d960678"
+    "manifest": "4b248d7d11b68331fb225100a8fef53eb51e9184a5e87565486363ccbd71aa33"
   },
-  "compiler_sha256": "133ba4a6ec0ec6c14d6d2152249f0abdc2b94842924255275495634d47e217f4",
+  "compiler_sha256": "44837e8039ba0b0471803cb6c2552eefd95248ccdc157b01154b3367d6e18181",
   "mode": "isolated",
   "optimizations": [
     0,
     2
   ],
   "procedure_counts": {
-    "pass": 84,
-    "untested": 434,
+    "pass": 86,
+    "untested": 432,
     "blocked": 33
   },
   "case_outcomes": {
-    "pass": 48,
+    "pass": 50,
     "compile_error": 14
   },
   "cases": [
@@ -26,6 +26,18 @@
         "get_unit"
       ],
       "driver_sha256": "53bf561014f720b8b895ba0341df92ca28e0f48c1e818d2dd6c909493c957643",
+      "outcomes": {
+        "isolated-O0": "pass",
+        "isolated-O2": "pass"
+      }
+    },
+    {
+      "id": "decimal_rounding",
+      "procedures": [
+        "floor_10",
+        "ceiling_10"
+      ],
+      "driver_sha256": "861eb5698ba9f926f11c8af6f669d9e8cfe6b8cd200243d663c66be5f3863d90",
       "outcomes": {
         "isolated-O0": "pass",
         "isolated-O2": "pass"
@@ -3000,14 +3012,18 @@
     {
       "name": "floor_10",
       "line": 6721,
-      "status": "untested",
-      "tested_by": []
+      "status": "pass",
+      "tested_by": [
+        "decimal_rounding"
+      ]
     },
     {
       "name": "ceiling_10",
       "line": 6727,
-      "status": "untested",
-      "tested_by": []
+      "status": "pass",
+      "tested_by": [
+        "decimal_rounding"
+      ]
     },
     {
       "name": "exact_match_ascending_int",

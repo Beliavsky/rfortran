@@ -1,25 +1,25 @@
 # util.f90 procedure coverage
 
 These small drivers exercise the external `util_mod` used by `xutil.f90`.
-The suite contains 31 drivers targeting 117 specific procedures, starting
+The suite contains 32 drivers targeting 119 specific procedures, starting
 with the families used by that program. The inventory covers all 551 procedures
-in the current source, including two internal procedures. The remaining 434
+in the current source, including two internal procedures. The remaining 432
 procedures are explicitly untested. These are procedure counts, not estimates of
 compiler completion or branch coverage.
 
 ## Current baseline
 
-On Windows, using the release compiler build, the 31 drivers have the same
+On Windows, using the release compiler build, the 32 drivers have the same
 outcomes at both O0 and O2:
 
 | Driver outcome | Count |
 | --- | ---: |
-| Pass against gfortran | 24 |
+| Pass against gfortran | 25 |
 | Compilation failure | 7 |
 | Incorrect output | 0 |
 
 All gfortran reference drivers compile and run successfully, including their
-repeat executions. The passing drivers target 84 procedures; 33 other targeted
+repeat executions. The passing drivers target 86 procedures; 33 other targeted
 procedures are in blocked groups. `string_fields` and `partitions_and_runs` now
 pass following fixes to early RETURN in explicit-step loops and NINT rounding.
 `matrix_shapes` and `cumulative_sums` now pass after routing runtime selectors
@@ -40,11 +40,14 @@ ordering, empty inputs, singletons and the NaN early-return path.
 finding free units before and after CLOSE. It passes after implementing INQUIRE
 connection queries and preventing temporary-name collisions between subroutine
 specialization passes.
+`decimal_rounding` tests the original elemental `floor_10` and `ceiling_10`
+with positive and negative values above and below one. It passes after adding
+FLOOR and CEILING, including integer result kinds and array lowering.
 See [baseline.json](baseline.json)
 for exact input-source and compiler hashes and every procedure's inventory entry.
 
 The `string_matching` driver passes in isolation, while full-module compilation
-currently reports missing `GET_ENVIRONMENT_VARIABLE`, `FLOOR` and `CEILING`
+currently reports missing `GET_ENVIRONMENT_VARIABLE`
 (first at `util.f90:6341`). This demonstrates
 why isolated successes and full-module integration are recorded separately.
 

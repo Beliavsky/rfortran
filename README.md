@@ -761,6 +761,13 @@ supported, as is the `X=` keyword. Run `python tests/test_isnan.py` for
 interpreter/native O0/O2 comparisons with gfortran in GNU mode, including ranks
 through 15 and runtime-sized multidimensional arrays.
 
+FLOOR and CEILING accept scalar or elemental REAL inputs, including array
+sections and runtime-sized arrays. Both support `A=` and optional constant
+`KIND=` (INTEGER kinds 1, 2, 4 and 8), and constant PARAMETER initializers.
+Unrepresentable results, including NaN and infinity, report an error instead
+of converting silently. Run `python tests/test_rounding.py` for interpreter,
+native O0/O2 and gfortran comparisons.
+
 Numeric `MIN` and `MAX` accept two or more same-type, same-kind arguments in
 array expressions. Scalar arguments broadcast across conformable arrays;
 sections and runtime-length PACK results are supported, including empty arrays.

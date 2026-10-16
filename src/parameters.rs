@@ -372,6 +372,18 @@ fn evaluate(expr: &Expr, constants: &Constants) -> Result<i64> {
                     format!("`{name}` is not a previously defined integer PARAMETER")
                 }).and_then(|e| evaluate(e, &Constants::new()));
         }
+        Expr::Call(name,args) if matches!(name.as_str(),"floor"|"ceiling") => {
+            let kind=crate::intrinsics::rounding_kind(name,args)?;
+            let TypeSpec::Integer(Some(bytes))=kind else {unreachable!()};
+            let input=crate::inquiries::model_type(&args[0],&|_|None)?;
+            if input.as_ref().is_some_and(|k|!matches!(k,TypeSpec::Real|TypeSpec::DoublePrecision)) {bail!("{} A must be REAL or DOUBLE PRECISION",name.to_ascii_uppercase());}
+            let value=real_constant(&args[0])?;
+            let value=if input==Some(TypeSpec::Real) {(value as f32) as f64} else {value};
+            let rounded=if name=="floor" {value.floor()} else {value.ceil()};
+            let limit=2.0f64.powi(i32::from(bytes)*8-1);
+            if !rounded.is_finite() || rounded < -limit || rounded >= limit {bail!("{} result is outside INTEGER range",name.to_ascii_uppercase());}
+            Some(rounded as i64)
+        }
         Expr::Call(name,args) if matches!(name.as_str(),"index"|"scan"|"verify") => {
             if !(2..=4).contains(&args.len()) {bail!("{name} requires two CHARACTER arguments and optional BACK and KIND");}
             let text=character_constant(&args[0])?;let pattern=character_constant(&args[1])?;

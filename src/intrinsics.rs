@@ -20,13 +20,15 @@ pub fn real_predicate(name:&str)->bool {
     REAL_PREDICATES.iter().any(|n|name.eq_ignore_ascii_case(n))
 }
 
-/// NINT's optional KIND describes the integer result, not its real argument.
-pub(crate) fn nint_kind(args: &[crate::ast::Expr]) -> anyhow::Result<crate::ast::TypeSpec> {
-    use anyhow::{bail, Context};
-    if !(1..=2).contains(&args.len()) {bail!("NINT expects A and optional KIND");}
+/// Real-to-integer elemental rounding intrinsics.
+pub fn integer_rounding(name:&str)->bool { matches!(name,"nint"|"floor"|"ceiling") }
+pub(crate) fn rounding_kind(name:&str,args:&[crate::ast::Expr])->anyhow::Result<crate::ast::TypeSpec> {
+    use anyhow::{bail,Context};
+    let label=name.to_ascii_uppercase();
+    if !(1..=2).contains(&args.len()) {bail!("{label} expects A and optional KIND");}
     let kind=args.get(1).map(crate::parameters::integer_constant).transpose()
-        .context("NINT KIND must be a constant INTEGER")?.unwrap_or(4);
-    if !matches!(kind,1|2|4|8) {bail!("NINT KIND must be a supported INTEGER kind (1, 2, 4 or 8)");}
+        .with_context(||format!("{label} KIND must be a constant INTEGER"))?.unwrap_or(4);
+    if !matches!(kind,1|2|4|8) {bail!("{label} KIND must be a supported INTEGER kind (1, 2, 4 or 8)");}
     Ok(crate::ast::TypeSpec::Integer(Some(kind as u8)))
 }
 

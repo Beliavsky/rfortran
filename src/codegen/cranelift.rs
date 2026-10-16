@@ -271,6 +271,7 @@ fn read_record(
 }
 
 struct Externs {
+    checked_integer: ir::FuncRef,
     cpu_seconds: ir::FuncRef,
     clock_count: ir::FuncRef,
     printf: ir::FuncRef,
@@ -391,7 +392,13 @@ fn declare_externs(
     sig.returns.push(AbiParam::new(types::I64));
     let id = module.declare_function("rfort_clock_count", Linkage::Import, &sig)?;
     let clock_count = module.declare_func_in_func(id, b.func);
+    let mut sig=module.make_signature();
+    sig.params.extend([AbiParam::new(types::F64),AbiParam::new(types::I64),AbiParam::new(types::I64)]);
+    sig.returns.push(AbiParam::new(types::I64));
+    let id=module.declare_function("rfort_checked_integer",Linkage::Import,&sig)?;
+    let checked_integer=module.declare_func_in_func(id,b.func);
     Ok(Externs {
+        checked_integer,
         cpu_seconds,
         clock_count,
         printf: printf_ref,
@@ -850,6 +857,12 @@ fn eval_expr(
                 return CgVal::I64(result);
             }
             match if func_meta.contains_key(name) { "" } else { lname.as_str() } {
+                "@round_real32" => {
+                    let value=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);
+                    let value=to_f64(b,value);
+                    let value=b.ins().fdemote(ir::types::F32,value);
+                    CgVal::F64(b.ins().fpromote(ir::types::F64,value))
+                }
                 "isnan" => {
                     let value=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);
                     let value=to_f64(b,value);
@@ -898,6 +911,15 @@ fn eval_expr(
                             CgVal::I64(sel)
                         }
                     }
+                }
+                "floor" | "ceiling" => {
+                    let value=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);
+                    let value=to_f64(b,value);
+                    let rounded=if lname=="floor" {b.ins().floor(value)} else {b.ins().ceil(value)};
+                    let kind=if let Some(arg)=args.get(1) {let v=eval_expr(b,ex,ptr_ty,arg,ints,reals,bools,func_meta);to_i64(b,v)} else {b.ins().iconst(ir::types::I64,4)};
+                    let ceiling=b.ins().iconst(ir::types::I64,i64::from(lname=="ceiling"));
+                    let call=b.ins().call(ex.checked_integer,&[rounded,kind,ceiling]);
+                    CgVal::I64(b.inst_results(call)[0])
                 }
                 "nint" if !func_meta.contains_key(name) => {
                     let v=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);
@@ -1389,7 +1411,7 @@ fn print_expr(
         }
         IExpr::Call(name, args) => {
             let lname = name.to_ascii_lowercase();
-            if crate::intrinsics::math_arity(name).is_some() || crate::intrinsics::real_predicate(name)
+            if crate::intrinsics::math_arity(name).is_some() || crate::intrinsics::integer_rounding(name) || crate::intrinsics::real_predicate(name)
                 || crate::bit_intrinsics::decode(name).is_some()
                 || matches!(lname.as_str(), "abs" | "int" | "nint" | "real" | "dble" | "max" | "min" | "mod" | "modulo")
             {
@@ -3474,8 +3496,8 @@ impl Backend for CraneliftBackend {
         for name in import_arity.keys().cloned().collect::<Vec<_>>() {
             let lname = name.to_ascii_lowercase();
             match lname.as_str() {
-                "abs" | "aimag" | "aint" | "anint" | "ceiling" | "cmplx" | "conjg" | "dble" | "real"
-                | "dim" | "dprod" | "floor" | "db" | "sqrt" | "exp" | "log" | "log10" | "sin"
+                "abs" | "aimag" | "aint" | "anint" | "cmplx" | "conjg" | "dble" | "real"
+                | "dim" | "dprod" | "db" | "sqrt" | "exp" | "log" | "log10" | "sin"
                 | "cos" | "tan" | "asin" | "acos" | "atan" | "atan2" | "sinh" | "cosh" | "tanh"
                 | "scale" | "set_exponent" | "nearest" | "fraction" | "exponent" | "spacing"
                 | "rrspacing" | "precision" | "radix" | "range" | "tiny" | "epsilon" | "huge"
@@ -3487,7 +3509,7 @@ impl Backend for CraneliftBackend {
                     param_double_flags.insert(name.clone(), vec![false; ar]);
                 }
 
-                "int" | "nint" | "ichar" | "iachar" | "len" | "len_trim" | "count" | "size"
+                "int" | "nint" | "floor" | "ceiling" | "ichar" | "iachar" | "len" | "len_trim" | "count" | "size"
                 | "lbound" | "ubound" | "maxloc" | "minloc" | "index" | "scan" | "verify" => {
                     eff_ret.insert(name.clone(), crate::ast::TypeSpec::Integer(None));
                     let ar = *import_arity.get(&name).unwrap_or(&1usize);

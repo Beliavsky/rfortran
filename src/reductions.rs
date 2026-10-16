@@ -162,10 +162,10 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
             }
             Ok((Expr::Call(name.clone(),values),shape,symbols.elementals[name].clone()))
         }
-        Expr::Call(name,args) if name=="nint" && !symbols.contains_key(name) && !symbols.procedures.contains(name) => {
-            let kind=crate::intrinsics::nint_kind(args)?;
+        Expr::Call(name,args) if crate::intrinsics::integer_rounding(name) && !symbols.contains_key(name) && !symbols.procedures.contains(name) => {
+            let kind=crate::intrinsics::rounding_kind(name,args)?;
             let (value,count,input)=element(&args[0],index,symbols)?;
-            if !matches!(input,TypeSpec::Real|TypeSpec::DoublePrecision) {bail!("NINT A must be REAL or DOUBLE PRECISION");}
+            if !matches!(input,TypeSpec::Real|TypeSpec::DoublePrecision) {bail!("{} A must be REAL or DOUBLE PRECISION",name.to_ascii_uppercase());}
             let mut values=vec![value];values.extend(args.iter().skip(1).cloned());
             Ok((Expr::Call(name.clone(),values),count,kind))
         }
@@ -515,14 +515,14 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
                 .or_else(|_|crate::array_calls::scalar_actual_kind(&args[0],symbols)).ok();
             if input.is_some_and(|kind|!matches!(kind,TypeSpec::Real|TypeSpec::DoublePrecision)) {bail!("{} requires a REAL or DOUBLE PRECISION argument",name.to_ascii_uppercase());}
         }
-        Expr::Call(name,args) if name=="nint" && !symbols.contains_key(name) && !symbols.procedures.contains(name) => {
-            crate::intrinsics::nint_kind(args)?;
+        Expr::Call(name,args) if crate::intrinsics::integer_rounding(name) && !symbols.contains_key(name) && !symbols.procedures.contains(name) => {
+            crate::intrinsics::rounding_kind(name,args)?;
             lower_expr_impl(&mut args[0],symbols,prefix,serial,expand_elementals)?;
             let input=element(&args[0],&int(1),symbols).map(|(_,_,kind)|kind)
                 .or_else(|_|crate::array_calls::scalar_actual_kind(&args[0],symbols)).ok();
             // Native scalar procedure calls are typed by sema, rather than by
             // this array-expression symbol table.
-            if input.is_some_and(|k|!matches!(k,TypeSpec::Real|TypeSpec::DoublePrecision)) {bail!("NINT A must be REAL or DOUBLE PRECISION");}
+            if input.is_some_and(|k|!matches!(k,TypeSpec::Real|TypeSpec::DoublePrecision)) {bail!("{} A must be REAL or DOUBLE PRECISION",name.to_ascii_uppercase());}
         }
         Expr::Call(name,args) if name=="merge" && !symbols.procedures.contains(name) => {
             if args.len()!=3 {bail!("MERGE expects TSOURCE, FSOURCE and MASK");}
@@ -960,7 +960,7 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             }
         }
         if name != "@packed_view" && args.iter().any(|arg| runtime_extent(arg).is_some()) {
-            if symbols.elementals.contains_key(name) || crate::intrinsics::math_arity(name).is_some() || crate::intrinsics::real_predicate(name)
+            if symbols.elementals.contains_key(name) || crate::intrinsics::math_arity(name).is_some() || crate::intrinsics::integer_rounding(name) || crate::intrinsics::real_predicate(name)
                 || matches!(name.as_str(), "real" | "dble" | "int" | "abs" | "mod" | "modulo") || numeric_minmax(name,symbols) {
                 let length=args.iter().find_map(runtime_extent).unwrap();
                 for arg in args.iter() {
@@ -981,7 +981,7 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             bail!("runtime PACK results are not yet supported as arguments to `{name}`");
         }
     }
-    if expand_elementals && matches!(e,Expr::Call(name,_) if symbols.elementals.contains_key(name) || matches!(name.as_str(), "mod" | "modulo") || numeric_minmax(name,symbols) || crate::intrinsics::real_predicate(name) && !symbols.contains_key(name) && !symbols.procedures.contains(name)) && array_valued(e,symbols) {
+    if expand_elementals && matches!(e,Expr::Call(name,_) if symbols.elementals.contains_key(name) || matches!(name.as_str(), "mod" | "modulo") || numeric_minmax(name,symbols) || (crate::intrinsics::integer_rounding(name) || crate::intrinsics::real_predicate(name)) && !symbols.contains_key(name) && !symbols.procedures.contains(name)) && array_valued(e,symbols) {
         *serial+=1;
         let index_name=format!("@elemental_index_{serial}");
         let temp=format!("@elemental_result_{serial}");

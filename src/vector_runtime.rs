@@ -312,7 +312,7 @@ fn shape(e: &Expr, s: &Shapes) -> Result<Option<(TypeSpec, Vec<Expr>)>> {
             Ok(Some((s[n].0.clone(), dims)))
         }
         Expr::Call(n, a)
-            if crate::intrinsics::math_arity(n).is_some() || crate::intrinsics::real_predicate(n) || matches!(
+            if crate::intrinsics::math_arity(n).is_some() || crate::intrinsics::integer_rounding(n) || crate::intrinsics::real_predicate(n) || matches!(
                 n.as_str(),
                 "abs" | "int" | "mod" | "modulo" | "real" | "dble"
             ) =>
@@ -320,7 +320,8 @@ fn shape(e: &Expr, s: &Shapes) -> Result<Option<(TypeSpec, Vec<Expr>)>> {
             let Some((mut kind, d)) = shape(&a[0], s)? else {
                 return Ok(None);
             };
-            if n == "int" { kind = TypeSpec::Integer(None); }
+            if crate::intrinsics::integer_rounding(n) {kind=crate::intrinsics::rounding_kind(n,a)?;}
+            else if n == "int" { kind = TypeSpec::Integer(None); }
             else if crate::intrinsics::real_predicate(n) {kind=TypeSpec::Logical;}
             else if n == "dble" { kind = TypeSpec::DoublePrecision; }
             else if n == "real" { kind = TypeSpec::Real; }

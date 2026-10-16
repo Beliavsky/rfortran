@@ -1853,8 +1853,14 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                 } else {
                     IExpr::Call(
                         name.clone(),
-                        args.iter().map(|a| {
+                        args.iter().enumerate().map(|(index,a)| {
                             let lowered = lower_expr(a, types);
+                            // REAL(4) rounding occurs before the integer rounding operation,
+                            // including after constant propagation replaces a typed variable.
+                            if index==0 && matches!(name.as_str(),"floor"|"ceiling")
+                                && crate::inquiries::model_type(a,&|n|types.get(n).cloned().map(|k|(k,0))).ok().flatten()==Some(crate::ast::TypeSpec::Real) {
+                                return IExpr::Call("@round_real32".into(),vec![lowered]);
+                            }
                             // Keep the kind of a double argument when later constant
                             // propagation replaces its variable with a real literal.
                             if (crate::intrinsics::math_arity(name).is_some() || matches!(name.to_ascii_lowercase().as_str(), "abs" | "mod" | "modulo")) && double_kind(a, types) {

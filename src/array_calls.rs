@@ -116,7 +116,12 @@ pub(crate) fn scalar_actual_kind(e: &Expr, shapes: &Shapes) -> Result<TypeSpec> 
             }
             Ok(TypeSpec::Logical)
         },
-        Expr::Call(n,args) if n=="nint" && !shapes.contains_key(n) => crate::intrinsics::nint_kind(args),
+        Expr::Call(n,args) if crate::intrinsics::integer_rounding(n) && !shapes.contains_key(n) => {
+            if args.first().is_some_and(|a|crate::reductions::elemental_element(a,&Expr::IntLit("1".into()),shapes).is_ok_and(|(_,shape,_)|shape.is_some())) {
+                bail!("scalar actual argument must not be an array expression");
+            }
+            crate::intrinsics::rounding_kind(n,args)
+        },
         Expr::Ident(n) => {
             let (kind, dims) = shapes.get(n).context("scalar actual argument must be declared")?;
             if !dims.is_empty() { bail!("subroutine array actual arguments are not yet supported; pass scalar arguments"); }

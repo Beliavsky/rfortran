@@ -1385,6 +1385,13 @@
       "program_stdout": " 1.0 2.0\n 3.0 4.0\n 1.0 2.0 2.0 1.0\n",
       "program_stderr": "",
       "program_exit_code": 0
+    },
+    "199_rounding": {
+      "compiler_stderr": "",
+      "compiler_exit_code": 0,
+      "program_stdout": " rounding tests passed\n",
+      "program_stderr": "",
+      "program_exit_code": 0
     }
   }
 }

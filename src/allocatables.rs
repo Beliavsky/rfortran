@@ -448,7 +448,7 @@ fn logical_shape(
                 return Ok(None);
             }
             if crate::intrinsics::math_arity(n).is_some()
-                || crate::intrinsics::real_predicate(n)
+                || crate::intrinsics::integer_rounding(n) || crate::intrinsics::real_predicate(n)
                 || crate::bit_intrinsics::keys(n).is_some()
                 || matches!(
                     n.as_str(),

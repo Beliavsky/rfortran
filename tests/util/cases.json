@@ -5,6 +5,13 @@
     "files": {"inquiry-data.txt": "hello\n"}
   },
   {
+    "id": "decimal_rounding",
+    "procedures": [
+      "floor_10",
+      "ceiling_10"
+    ]
+  },
+  {
     "id": "numeric_vectors",
     "procedures": [
       "normalize",

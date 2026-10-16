@@ -123,10 +123,10 @@ pub fn model_type(e: &Expr, lookup: &impl Fn(&str) -> Option<(TypeSpec,usize)>) 
             if !matches!(kind,1|2|4|8) {bail!("{n} KIND must be a supported INTEGER kind (1, 2, 4 or 8)");}
             Some(TypeSpec::Integer(Some(kind as u8)))
         },
-        Expr::Call(n,a) if n=="nint" && lookup(n).is_none() => {
-            let kind=crate::intrinsics::nint_kind(a)?;
+        Expr::Call(n,a) if crate::intrinsics::integer_rounding(n) && lookup(n).is_none() => {
+            let kind=crate::intrinsics::rounding_kind(n,a)?;
             if model_type(&a[0],lookup)?.is_some_and(|k|!matches!(k,TypeSpec::Real|TypeSpec::DoublePrecision)) {
-                bail!("NINT A must be REAL or DOUBLE PRECISION");
+                bail!("{} A must be REAL or DOUBLE PRECISION",n.to_ascii_uppercase());
             }
             Some(kind)
         },

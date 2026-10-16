@@ -376,3 +376,19 @@ pub unsafe extern "C" fn rfort_formatted_output(
 ) {
     rfort_formatted_write(format, length, items, count, 1);
 }
+
+/// Convert an already rounded real value only when representable in its result kind.
+#[no_mangle]
+pub unsafe extern "C" fn rfort_checked_integer(value:f64,kind:i64,ceiling:i64)->i64 {
+    let limit=match kind {1=>128.0,2=>32768.0,4=>2147483648.0,_=>9223372036854775808.0};
+    if !value.is_finite() || value < -limit || value >= limit {
+        extern "C" {fn exit(code:i32)->!;}
+        let message=if ceiling==0 {b"Runtime error: FLOOR result is outside INTEGER range\n" as &[u8]} else {b"Runtime error: CEILING result is outside INTEGER range\n" as &[u8]};
+        #[cfg(windows)] let stream=__acrt_iob_func(2);
+        #[cfg(target_os="macos")] let stream={extern "C" {static mut __stderrp:*mut core::ffi::c_void;} __stderrp};
+        #[cfg(not(any(windows,target_os="macos")))] let stream={extern "C" {static mut stderr:*mut core::ffi::c_void;} stderr};
+        fwrite(message.as_ptr(),1,message.len(),stream);
+        exit(1);
+    }
+    value as i64
+}

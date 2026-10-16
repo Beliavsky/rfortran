@@ -388,6 +388,16 @@ pub fn interpret(program: &Program) {
                             a, env_str, env_int, env_real32, env_real64, env_log, funcs, call_stack,
                         ));
                     }
+                    if matches!(name.as_str(),"floor"|"ceiling") && !args.is_empty() {
+                        let kind=crate::inquiries::model_type(&args[0],&|n| {
+                            if env_real64.contains_key(n) {Some((crate::ast::TypeSpec::DoublePrecision,0))}
+                            else if env_real32.contains_key(n) {Some((crate::ast::TypeSpec::Real,0))}
+                            else {None}
+                        }).ok().flatten();
+                        if kind==Some(crate::ast::TypeSpec::Real) {
+                            if let Some(value)=to_real(&arg_vals[0]) {arg_vals[0]=ValueTuple::from_real((value as f32) as f64);}
+                        }
+                    }
                     if let Some(v) = handle_intrinsic(name, &arg_vals) {
                         return v;
                     }
@@ -412,6 +422,7 @@ pub fn interpret(program: &Program) {
         }
         let n = name.to_ascii_lowercase();
         match n.as_str() {
+            "@round_real32"=>Some(ValueTuple::from_real((to_real(args.first()?)? as f32) as f64)),
             "isnan"=>Some(ValueTuple::from_bool(to_real(args.first()?)?.is_nan())),
             "abs" => {
                 if let Some(i) = args.get(0)?.0 {
@@ -432,19 +443,16 @@ pub fn interpret(program: &Program) {
                     Some(ValueTuple::from_int(to_int(args.get(0)?)?))
                 }
             }
-            "ceiling" => {
-                if let Some(f) = to_real(args.get(0)?) {
-                    Some(ValueTuple::from_int(f.ceil() as i64))
-                } else {
-                    Some(ValueTuple::from_int(to_int(args.get(0)?)?))
+            "floor" | "ceiling" => {
+                let x=to_real(args.first()?)?;
+                let value=if n=="floor" {x.floor()} else {x.ceil()};
+                let kind=args.get(1).and_then(to_int).unwrap_or(4);
+                let limit=2.0f64.powi((kind*8-1) as i32);
+                if !value.is_finite() || value < -limit || value >= limit {
+                    eprintln!("Runtime error: {} result is outside INTEGER(KIND={kind}) range",n.to_ascii_uppercase());
+                    std::process::exit(1);
                 }
-            }
-            "floor" => {
-                if let Some(f) = to_real(args.get(0)?) {
-                    Some(ValueTuple::from_int(f.floor() as i64))
-                } else {
-                    Some(ValueTuple::from_int(to_int(args.get(0)?)?))
-                }
+                Some(ValueTuple::from_int(value as i64))
             }
             "sqrt" => to_real(args.get(0)?).map(|f| ValueTuple::from_real(f.sqrt())),
             "exp" => to_real(args.get(0)?).map(|f| ValueTuple::from_real(f.exp())),
