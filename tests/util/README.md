@@ -48,8 +48,9 @@ for exact input-source and compiler hashes and every procedure's inventory entry
 
 The `environment` driver now tests the original `unix` platform query, using
 GET_ENVIRONMENT_VARIABLE to inspect PATH. Full-module compilation now gets past
-the previously missing environment and rounding intrinsics, and reports a read
-of an uninitialized generated allocation temporary. Isolated successes and
+the previously missing environment and rounding intrinsics. GETCWD now works;
+the next error is at `util.f90:544`, where the unimplemented
+GET_COMMAND_ARGUMENT is still treated as reading its output buffer. Isolated successes and
 full-module integration are recorded separately.
 
 ## Running

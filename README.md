@@ -761,6 +761,14 @@ supported, as is the `X=` keyword. Run `python tests/test_isnan.py` for
 interpreter/native O0/O2 comparisons with gfortran in GNU mode, including ranks
 through 15 and runtime-sized multidimensional arrays.
 
+The GNU `GETCWD` subroutine is supported as `CALL GETCWD(C, STATUS)` with
+optional STATUS, including keyword arguments. C is a writable scalar CHARACTER
+variable or array element; STATUS is INTEGER kind 4 or 8. Success returns 0 and
+blank-pads C. On failure C is blank and STATUS receives a nonzero host error
+code. The function form is not implemented. Run `python tests/test_getcwd.py`
+for interpreter/native O0/O2 and gfortran comparisons. Initialization errors
+now include the source statement location, including calls in combined files.
+
 `GET_ENVIRONMENT_VARIABLE(NAME, VALUE, LENGTH, STATUS, TRIM_NAME)` supports
 positional and keyword arguments. NAME accepts scalar CHARACTER text and
 TRIM_NAME defaults to true. VALUE is blank-padded or truncated; LENGTH reports

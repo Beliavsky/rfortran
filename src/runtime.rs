@@ -1314,6 +1314,14 @@ pub fn interpret(program: &Program) {
                         value.truncate(length);value.push_str(&" ".repeat(length-value.len()));
                         call_stack.last_mut().unwrap().env_str.insert(dest.clone(),value);idx+=1;continue;
                     }
+                    if name=="@cwd_query" {
+                        let fr=call_stack.last().unwrap().clone();
+                        let width=eval_expr(&args[2],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap() as usize;
+                        let mut value=vec![0u8;width+1];let status=unsafe {crate::environment::rfort_getcwd(value.as_mut_ptr(),width)};
+                        let frame=call_stack.last_mut().unwrap();
+                        let Expr::Ident(n)=&args[0] else {unreachable!()};frame.env_int.insert(n.clone(),status);
+                        let Expr::Ident(n)=&args[1] else {unreachable!()};frame.env_str.insert(n.clone(),String::from_utf8_lossy(&value[..width]).into_owned());idx+=1;continue;
+                    }
                     if name=="@environment_query" {
                         let fr=call_stack.last().unwrap().clone();
                         let mut eval=|e:&Expr|eval_expr(e,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack);

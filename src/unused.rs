@@ -597,7 +597,7 @@ impl<'a> Analysis<'a> {
                     let outputs = !user_procedure
                         && matches!(
                             name.as_str(),
-                            "random_number" | "cpu_time" | "system_clock" | "date_and_time"
+                            "random_number" | "cpu_time" | "system_clock" | "date_and_time" | "getcwd"
                         );
                     for (index,e) in args.iter().enumerate() {
                         let keyword=crate::named_arguments::keyword(e);

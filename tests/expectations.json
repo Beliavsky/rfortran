@@ -226,7 +226,7 @@
     },
     "33_uninitialized_error": {
       "compiler_exit_code": 1,
-      "compiler_stderr": "Error: read of uninitialized variable `i` before assignment\n",
+      "compiler_stderr": "error: read of uninitialized variable `i` before assignment\n  \u250c\u2500 tests\\33_uninitialized_error.f90:3:1\n  \u2502\n3 \u2502 print *, i\n  \u2502 ^^^^^\n\nError: compile failed\n",
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": ""
@@ -247,7 +247,7 @@
     },
     "37_uninitialized_section": {
       "compiler_exit_code": 1,
-      "compiler_stderr": "Error: read of uninitialized variable `v`: element 3 before assignment\n",
+      "compiler_stderr": "error: read of uninitialized variable `v`: element 3 before assignment\n  \u250c\u2500 tests\\37_uninitialized_section.f90:4:1\n  \u2502\n4 \u2502 print *, v\n  \u2502 ^^^^^\n\nError: compile failed\n",
       "program_exit_code": 0,
       "program_stderr": "",
       "program_stdout": ""
@@ -373,7 +373,7 @@
     },
     "53_derived_uninitialized": {
       "compiler_exit_code": 1,
-      "compiler_stderr": "Error: read of uninitialized variable `p%second` before assignment\n",
+      "compiler_stderr": "error: read of uninitialized variable `p%second` before assignment\n  \u250c\u2500 tests\\53_derived_uninitialized.f90:7:1\n  \u2502\n7 \u2502 print *, p%second\n  \u2502 ^^^^^\n\nError: compile failed\n",
       "program_exit_code": 0,
       "program_stdout": "",
       "program_stderr": ""
@@ -1397,6 +1397,13 @@
       "compiler_stderr": "",
       "compiler_exit_code": 0,
       "program_stdout": " environment tests passed\n",
+      "program_stderr": "",
+      "program_exit_code": 0
+    },
+    "201_getcwd": {
+      "compiler_stderr": "",
+      "compiler_exit_code": 0,
+      "program_stdout": " getcwd tests passed\n",
       "program_stderr": "",
       "program_exit_code": 0
     }

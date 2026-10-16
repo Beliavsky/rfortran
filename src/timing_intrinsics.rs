@@ -100,7 +100,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
             }
             let result = match &mut s {
                 Stmt::CallSub { name, args }
-                    if matches!(name.as_str(), "cpu_time" | "system_clock" | "date_and_time" | "get_environment_variable")
+                    if matches!(name.as_str(), "cpu_time" | "system_clock" | "date_and_time" | "get_environment_variable" | "getcwd")
                         && !procedures.contains(name) =>
                 {
                     lower_call(name, args, &vars, &readonly, pure, serial).map(|statements| {
@@ -183,6 +183,7 @@ fn lower_call(
     crate::named_arguments::intrinsic(name)
         .unwrap()
         .reorder(name, args)?;
+    if name == "getcwd" {return lower_cwd(args,vars,readonly,serial);}
     if name == "get_environment_variable" {return lower_environment(args,vars,readonly,serial);}
     if name == "date_and_time" {
         return lower_date(args, vars, readonly, serial);
@@ -628,5 +629,26 @@ fn lower_environment(args:&[Expr],vars:&HashMap<String,(TypeSpec,usize)>,readonl
         Stmt::VarDecl{kind:value_kind,names:vec![value.clone()]},
         Stmt::CallSub{name:"@environment_query".into(),args:vec![Expr::Ident(status.clone()),Expr::Ident(length.clone()),Expr::Ident(value.clone()),args[0].clone(),supplied(4).cloned().unwrap_or(Expr::Logical(true)),width,Expr::Logical(supplied(1).is_some())]}];
     for (i,temp) in [(1,value),(2,length),(3,status)] {if let Some(target)=supplied(i) {out.push(assign(target,Expr::Ident(temp)));}}
+    Ok(out)
+}
+
+fn lower_cwd(args:&[Expr],vars:&HashMap<String,(TypeSpec,usize)>,readonly:&HashSet<String>,serial:&mut usize)->Result<Vec<Stmt>> {
+    for (i,e) in args.iter().enumerate() {
+        if crate::named_arguments::omitted(e) {continue;}
+        let n=match e {Expr::Ident(n)|Expr::Index(n,_)|Expr::Call(n,_)=>n,_=>bail!("GETCWD requires writable scalar output variables")};
+        let (kind,rank)=vars.get(n).context("GETCWD requires declared output variables")?;
+        let scalar=match e {Expr::Ident(_)=>*rank==0,Expr::Index(_,a)|Expr::Call(_,a)=>*rank>0 && a.len()==*rank && a.iter().all(|e|scalar_index(e,vars)),_=>false};
+        if !scalar || readonly.contains(n) {bail!("GETCWD requires writable scalar output variables");}
+        if i==0 {if !matches!(kind,TypeSpec::Character(_)|TypeSpec::CharacterAssumed|TypeSpec::CharacterLength(_)) {bail!("GETCWD CWD requires CHARACTER");}}
+        else if !matches!(kind,TypeSpec::Integer(None|Some(4|8))) {bail!("GETCWD STATUS requires INTEGER kind 4 or 8");}
+    }
+    // Capture output through its declared length, without reading unset text.
+    let n=match &args[0] {Expr::Ident(n)|Expr::Index(n,_)|Expr::Call(n,_)=>n,_=>unreachable!()};
+    let width=match &vars[n].0 {TypeSpec::Character(size)=>Expr::IntLit(size.unwrap_or(1).to_string()),_=>Expr::Call("len".into(),vec![Expr::Ident(n.clone())])};
+    let status=temporary(serial,"cwd_status");let value=temporary(serial,"env_value");
+    let kind=if let Expr::IntLit(n)=&width {TypeSpec::Character(Some(n.parse()?))} else {TypeSpec::CharacterLength(Box::new(width.clone()))};
+    let mut out=vec![Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![status.clone()]},Stmt::VarDecl{kind,names:vec![value.clone()]},
+        Stmt::CallSub{name:"@cwd_query".into(),args:vec![Expr::Ident(status.clone()),Expr::Ident(value.clone()),width]},assign(&args[0],Expr::Ident(value))];
+    if let Some(target)=args.get(1).filter(|e|!crate::named_arguments::omitted(e)) {out.push(assign(target,Expr::Ident(status)));}
     Ok(out)
 }

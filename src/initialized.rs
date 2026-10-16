@@ -146,11 +146,13 @@ fn possible_writes(body: &[Stmt], env: &mut Env) {
 fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut usize) -> Result<bool> {
     let mut output = Vec::new();
     let mut terminated = false;
+    let mut location=None;
     for mut stmt in std::mem::take(body) {
         if terminated { output.push(stmt); continue; }
         let mut before = Vec::new();
         let mut after = Vec::new();
-        match &mut stmt {
+        if let Stmt::SourceLocation(offset)=&stmt {location=Some(*offset);}
+        (|| -> Result<()> {match &mut stmt {
             Stmt::CallSub {name,args} if name=="@module_bind" => {
                 let [Expr::Ident(local),Expr::Str(key),Expr::Str(initializer)]=args.as_slice() else {unreachable!()};
                 let initial:crate::modules::Storage=serde_json::from_str(initializer)?;
@@ -227,8 +229,8 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                     if let Some((name,index))=key(arg) {if let Some(i)=index {read(i,env,&mut before,serial)?;}write(name,index,env,&mut after,serial);}
                 }
             }
-            Stmt::CallSub {name,args} if matches!(name.as_str(),"@file_inquire_unit"|"@file_inquire_file"|"@environment_query") => {
-                let count=if name=="@environment_query" {3} else {4};
+            Stmt::CallSub {name,args} if matches!(name.as_str(),"@file_inquire_unit"|"@file_inquire_file"|"@environment_query"|"@cwd_query") => {
+                let count=if name=="@environment_query" {3} else if name=="@cwd_query" {2} else {4};
                 for arg in &args[count..] {read(arg,env,&mut before,serial)?;}
                 for arg in &args[..count] {
                     let Expr::Ident(dest)=arg else {unreachable!()};write(dest,None,env,&mut after,serial);
@@ -326,6 +328,7 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
             Stmt::Exit | Stmt::Cycle => { terminated = true; }
             _ => {}
         }
+        Ok(())})().map_err(|error|crate::source_diagnostics::at(error,location))?;
         output.extend(before); output.push(stmt); output.extend(after);
     }
     *body = output;
@@ -441,7 +444,7 @@ pub(crate) fn instrument_with_origins(program: Program, source: &str, filename: 
         }
         body.retain(|stmt| !matches!(stmt, Stmt::SourceLocation(_)));
     }
-    let mut program = instrument(program)?;
+    let mut program = instrument(program).map_err(|error|crate::source_diagnostics::report(error,source,&crate::lexer::lex(source),filename,Some(origins)))?;
     locate(&mut program.body, None, source, filename, origins);
     Ok(program)
 }

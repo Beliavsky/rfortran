@@ -4,7 +4,7 @@
     "kind": "c999f5d305aede589d31ea7585929d41e1fd5b1b86e1774f195b0b1354dec9c3",
     "manifest": "4e493d51a1206bced96351d62f50b094d2acc9958a2b52d71e254575e5abacd3"
   },
-  "compiler_sha256": "c06163b0ae7fd5ca55932d19128110e5be312eb21b204129b1c08257a9d487e8",
+  "compiler_sha256": "adb90f852b49a7870f641b0fc0efe917257797194b1f9c17d2f657495ed643fd",
   "mode": "isolated",
   "optimizations": [
     0,
