@@ -56,6 +56,14 @@ print '(a,2(i0,1x,f4.1,1x,l1,1x))', 'items:', (i,real(i),(i==2),i=1,2)
 end
 ''','items:1  1.0 F 2  2.0 T\n')
 
+    def test_runtime_mixed_types_and_surplus_descriptors(self):
+        self.check('''implicit none
+integer :: i,n
+n=2
+write (*,'(100(i0,1x,f4.1,1x,l1,1x,a,1x))') (i,real(i),(i==2),'x',i=1,n)
+end
+''','1  1.0 F x 2  2.0 T x\n')
+
     def test_typed_constructor_lengths(self):
         self.check('''integer::i
 character(5)::words(2)=[character(2)::'abc','x']

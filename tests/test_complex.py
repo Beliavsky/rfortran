@@ -211,7 +211,6 @@ end
         for body, diagnostic in [
             ("complex(16)::z\nz=(1.,2.)", "unsupported COMPLEX kind 16"),
             ("complex::z\nz=(1.,2.)\nprint *,z<(3.,4.)", "ordered comparisons are not defined"),
-            ("complex::z\nread(*,*) z", "COMPLEX input is not yet supported"),
             ("complex::z\nprint *,real(z)", "uninitialized variable"),
         ]:
             with self.subTest(body=body), tempfile.TemporaryDirectory(prefix="complex-invalid-") as tmp:

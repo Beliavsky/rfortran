@@ -72,6 +72,34 @@ end
             interface.unlink()
         self.run_objects(['kind', 'm', 'main'], 'separate 2.5')
 
+    def test_formatted_implied_do_runtime_dummy_bounds(self):
+        module = self.source('lags', '''module lags_mod
+implicit none
+contains
+subroutine print_lags(nlags, first, step)
+integer,intent(in) :: nlags, first, step
+integer :: i,j
+write (*,"(/,'ACF_lag',100i8)") (i,i=1,nlags)
+write (*,'(100(i0,1x,a,1x))') (i,'lag',i=nlags,first,step)
+write (*,'(100i8)') ((10*i+j,j=1,i),i=1,nlags)
+end subroutine
+end module
+''')
+        for opt in ['-O0', '-O2']:
+            with self.subTest(opt=opt):
+                self.success(opt, '-c', module)
+                main = self.source('main', '''use lags_mod
+implicit none
+integer :: n
+n=3
+call print_lags(n,1,-1)
+call print_lags(0,1,-1)
+end
+''')
+                self.success(opt, '-c', main)
+                self.run_objects(['lags', 'main'],
+                                 'ACF_lag 1 2 3 3 lag 2 lag 1 lag 11 21 22 31 32 33 ACF_lag')
+
     def test_procedures_and_shared_state_across_objects(self):
         m = self.source('counter', '''module counter
 implicit none

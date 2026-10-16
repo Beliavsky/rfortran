@@ -1364,6 +1364,32 @@ impl Lower {
         let mut previous_character = false;
         let mut previous_complex = false;
         for mut e in std::mem::take(items) {
+            // An I/O implied-DO is a transfer list, not an array constructor.
+            // Its items may have different types and its bounds need not be
+            // constant. In particular, do not ask info() for a constructor
+            // extent before inspecting the individual transfer items.
+            if let Expr::Call(n, args) = &mut e {
+                if n == "@output_implied_do" && args.len() >= 5 {
+                    let mut inner = args[4..].to_vec();
+                    let mut prefix = vec![];
+                    let mut local = s.clone();
+                    self.output(&mut inner, list, &mut local, &mut prefix)?;
+                    if prefix.is_empty() {
+                        *s = local;
+                        args.truncate(4);
+                        args.extend(inner);
+                        values.push(e);
+                        previous_character = false;
+                        previous_complex = false;
+                        continue;
+                    }
+                    // Preserve the existing bounded COMPLEX constructor path
+                    // when producing an item requires materialized storage.
+                    if args[1..4].iter().any(|e| crate::parameters::integer_constant(e).is_err()) {
+                        bail!("this output implied-DO expression requires temporaries inside the loop that are not yet supported");
+                    }
+                }
+            }
             if self
                 .info(&e, s)?
                 .is_some_and(|i| complex_kind(&i.kind).is_some())
