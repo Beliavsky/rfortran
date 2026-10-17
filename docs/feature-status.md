@@ -12,7 +12,8 @@ tests for each supported feature; the links in the **Feature** column go there.
 | ⚠️ | Compiles, but gives wrong results in some cases. See [Known wrong results](#known-wrong-results). |
 
 The ❌ and 🟡 marks were checked on 2026-10-17 by compiling small test programs
-with rfort and comparing their output with gfortran. Rows marked ✅ or 🟡
+with rfort and comparing their output with gfortran, and by running rfort on
+Fortitude's test fixtures ([report](../evaluation/FORTITUDE_FIXTURES.md)). Rows marked ✅ or 🟡
 name the tests that cover them. Update this page when a feature changes.
 
 ## Known wrong results
@@ -35,6 +36,7 @@ not unsupported features.
 | `INCLUDE` lines | ❌ | | |
 | Implicit typing | ✅ | IMPLICIT COMPLEX is not supported | |
 | `IMPLICIT NONE` | ✅ | | |
+| `IMPLICIT NONE (TYPE, EXTERNAL)` | ❌ | | |
 | [Declarations without `::`](language-support.md#declarations-without-) | ✅ | Attributes and initializers still need `::` | test_declarations_without_colons.py |
 | [DIMENSION attribute](language-support.md#dimension-declarations-and-shape) | ✅ | | test_dimension_attribute.py |
 | [INTENT](language-support.md#intent-spellings) | ✅ | | |
@@ -119,7 +121,7 @@ not unsupported features.
 | [MOVE_ALLOC](language-support.md#move_alloc-and-allocate-options) | ✅ | Copies the data | test_allocation_options.py |
 | [ALLOCATE with SOURCE=, MOLD=, STAT=, ERRMSG=](language-support.md#move_alloc-and-allocate-options) | ✅ | | test_allocation_options.py |
 | Typed ALLOCATE (`allocate(character(len=5) :: s)`) | ❌ | | |
-| [DEALLOCATE](language-support.md#deallocate) | ✅ | | test_deallocate.py |
+| [DEALLOCATE](language-support.md#deallocate) | 🟡 | `deallocate(a, b)` with two or more objects does not parse | test_deallocate.py |
 | [POINTER association with TARGET](language-support.md#pointer-association) | ✅ | Ranks 0–15, sections, strides | test_pointer_association.py, test_pointer_descriptors.py |
 | NULLIFY, `NULL()`, ASSOCIATED with one or two arguments | ✅ | | test_associate.py |
 | ALLOCATE of a POINTER | ❌ | | |
@@ -170,6 +172,7 @@ not unsupported features.
 |---|---|---|---|
 | Internal and module procedures | ✅ | | test_internal_procedures.py, test_module_scope.py |
 | External procedures | ✅ | | |
+| Modules or procedures after the main program in the same file | ❌ | Put them before the main program | |
 | Calls without an argument list (`call s`, `subroutine s`) | ❌ | Write `call s()` and `subroutine s()` | |
 | [Named (keyword) arguments](language-support.md#named-arguments) | ✅ | | test_named_arguments.py |
 | [OPTIONAL and PRESENT](language-support.md#optional-arguments) | ✅ | | test_optional_procedures.py |
