@@ -68,6 +68,62 @@ call show(2, 2)
 end program
 """, "33 66\n2 4 14.0\n")
 
+    def test_character_arrays(self):
+        self.check("""module m
+implicit none
+contains
+subroutine show(c)
+  character(len=*), intent(in) :: c(:)
+  print *, size(c), c
+end subroutine show
+subroutine s(n)
+  integer, intent(in) :: n
+  character(len=4) :: names(n)
+  integer :: i
+  names = 'ab'
+  do i = 1, n
+    names(i) = 'ab' // achar(48 + i)
+  end do
+  names(n) = trim(names(n)) // 'z'
+  print *, size(names), len(names), count(names == 'ab1'), names(1)(2:3)
+  call show(names)
+end subroutine s
+end module m
+program main
+use m
+implicit none
+call s(3)
+call s(1)
+end program
+""", "3 4 1 b1\n3 ab1 ab2 ab3z\n1 4 0 b1\n1 ab1z\n")
+
+    def test_derived_type_arrays(self):
+        self.check("""module m
+implicit none
+type :: point
+  integer :: x = 0
+  real :: y = 1.5
+end type point
+contains
+subroutine s(n)
+  integer, intent(in) :: n
+  type(point) :: p(n), q(0:n)
+  integer :: i
+  do i = 1, n
+    p(i)%x = 10*i
+  end do
+  q%x = 1
+  print *, size(p), p%x, sum(p%y), lbound(q), sum(q%x)
+end subroutine s
+end module m
+program main
+use m
+implicit none
+call s(2)
+call s(4)
+end program
+""", "2 10 20 3.0 0 3\n4 10 20 30 40 6.0 0 5\n")
+
     def test_recursion_keeps_separate_arrays(self):
         self.check("""program main
 implicit none

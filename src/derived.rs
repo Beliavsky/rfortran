@@ -1015,6 +1015,7 @@ fn resolve_types(mut program: Program) -> Result<Program> {
     crate::imports::validate(&program)?;
     program=crate::modules::associate(program)?;
     program = crate::procedure_arguments::resolve(program)?;
+    program = crate::heap::automatic_derived(program)?;
     crate::elemental::validate_program(&program)?;
     crate::imports::validate(&program)?;
     program = crate::named_arguments::resolve(program, false)?;

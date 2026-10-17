@@ -180,6 +180,24 @@ continuations within an ending statement are supported.
 Run `python tests/test_unnamed_procedure_ends.py` for interpreter/native O0/O2
 checks with gfortran comparisons.
 
+### Other statement forms
+
+- `call s` and `subroutine s` may omit an empty argument list, and a module may
+  end with a bare `END`.
+- External procedures and modules may follow the main program in the same file.
+- `IMPLICIT NONE (TYPE)`, `IMPLICIT NONE (EXTERNAL)` and
+  `IMPLICIT NONE (TYPE, EXTERNAL)` are accepted. TYPE disables implicit
+  typing; EXTERNAL is accepted but not checked.
+- A function may be declared `type(t) function f(...)`, with or without RESULT.
+- The DIMENSION statement (`dimension a(2), b(0:n)`) gives array bounds to
+  entities typed elsewhere in the same scope or typed implicitly.
+- A CHARACTER literal may continue onto the next line with `&` at the end of
+  the line; the next line's leading `&` is optional, as in gfortran.
+- A source file may be empty or contain only comments.
+
+Named IF and SELECT CASE constructs (`name: if (...) then`) are not yet
+supported. Run `python tests/test_syntax_forms.py`.
+
 ### Statement labels
 
 Executable statements may have numeric labels of one to five digits, with
@@ -910,8 +928,11 @@ this subset. Run `python tests/test_locations.py`.
 Automatic arrays, procedure locals such as `real :: w(n)` or `integer :: a(0:n, m)`
 whose bounds depend on dummy arguments, are allocated on entry with the current
 bounds and released on return. Each recursive activation has its own array.
-Automatic CHARACTER and derived-type arrays are not yet supported. Run
-`python tests/test_automatic_arrays.py`.
+Fixed-length CHARACTER and derived-type automatic arrays work the same way.
+Like other runtime-sized CHARACTER arrays, an automatic CHARACTER array does not
+yet support substring assignment to an element (`c(i)(2:3) = ...`) or internal
+WRITE to an element. Automatic CHARACTER lengths such as `character(len=n)` are
+not yet supported. Run `python tests/test_automatic_arrays.py`.
 
 Numeric and LOGICAL allocatable locals and module variables now support heap
 allocation with runtime dimensions, including dimensions read from input or

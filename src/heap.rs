@@ -174,7 +174,8 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
                   // storage when ALLOCATEd; one allocated only by assignment needs
                   // runtime storage for its value's extent.
                   || (array_dummies && allocation(body,name,&declared) && !allocate_statement(body,name)) || dims.len()>1 && body.iter().any(|s|matches!(s,Stmt::CallSub{name:call,args} if call=="@deallocate"&&args.iter().any(|e|matches!(e,Expr::Ident(n) if n==name)))))
-              && numeric(kind) && (!matches!(kind,TypeSpec::Character(_)) || dims.len()>1)
+              && numeric(kind) && (!matches!(kind,TypeSpec::Character(_)) || dims.len()>1
+                  || body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name&&intent=="@automatic")))
               && body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name&&intent=="allocatable")))
                 .then_some((name.clone(),dims.len()))
         } else {None}).collect::<Vec<_>>();
@@ -371,7 +372,7 @@ pub(crate) fn automatic_locals(mut program: Program) -> Result<Program> {
         for s in body.iter() {
             let Stmt::ArrayDecl { kind, name, dims } = s else { continue };
             if params.contains(name) || name == result || name.starts_with('@') || attributes.contains(name.as_str())
-                || matches!(kind, TypeSpec::Character(_) | TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed)
+                || matches!(kind, TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed)
                 || dims.iter().any(|d| matches!(d, Expr::Ident(n) if n == "@deferred_extent" || n == "@assumed_extent"))
                 || dims.iter().all(|d| crate::vector_subscripts::fixed_extent(d).is_some()) {
                 continue;
@@ -413,6 +414,8 @@ pub(crate) fn automatic_locals(mut program: Program) -> Result<Program> {
         let mut tail = body.split_off(at);
         for (name, _) in &automatic {
             body.push(Stmt::DummyIntent { name: name.clone(), intent: "allocatable".into() });
+            // Rank-one CHARACTER locals otherwise use bounded storage.
+            body.push(Stmt::DummyIntent { name: name.clone(), intent: "@automatic".into() });
         }
         body.extend(allocations);
         body.append(&mut tail);
@@ -434,6 +437,86 @@ pub(crate) fn automatic_locals(mut program: Program) -> Result<Program> {
                     if !*elemental && !specialized(params, body) {
                         lower(params, &result, body);
                     }
+                    visit(body);
+                }
+                Stmt::Module { body, .. } => visit(body),
+                _ => {}
+            }
+        }
+    }
+    visit(&mut program.body);
+    Ok(program)
+}
+
+/// Automatic arrays of derived type, such as `type(point) :: p(n)`, become
+/// ALLOCATABLE arrays allocated on entry. This runs before derived-type
+/// lowering splits them into component arrays, so a bound is treated as
+/// runtime when it refers to a dummy argument.
+pub(crate) fn automatic_derived(mut program: Program) -> Result<Program> {
+    fn uses(e: &Expr, params: &[String]) -> bool {
+        match e {
+            Expr::Ident(n) => params.contains(n),
+            Expr::Call(_, args) | Expr::Index(_, args) => args.iter().any(|a| uses(a, params)),
+            Expr::Bin(_, a, b) => uses(a, params) || uses(b, params),
+            Expr::Un(_, a) => uses(a, params),
+            _ => false,
+        }
+    }
+    fn lower(params: &[String], result: &str, body: &mut Vec<Stmt>) {
+        let mut allocations = vec![];
+        for s in body.iter_mut() {
+            let Stmt::DerivedDecl { names, attributes, dims, .. } = s else { continue };
+            if dims.is_empty() || !dims.iter().any(|d| uses(d, params))
+                || names.iter().any(|n| params.contains(n) || n == result)
+                || attributes.iter().any(|a| matches!(a.as_str(), "allocatable" | "pointer" | "save" | "target") || a.starts_with("intent(")) {
+                continue;
+            }
+            for name in names.iter() {
+                let subscripts = dims.iter().map(|d| match d {
+                    Expr::Call(tag, a) if tag == "@declared_bounds" => Expr::Call("@section_subscript".into(), vec![Expr::Section {
+                        name: name.clone(),
+                        lower: Some(Box::new(a[0].clone())),
+                        upper: Some(Box::new(a[1].clone())),
+                        stride: None,
+                    }]),
+                    d => d.clone(),
+                }).collect();
+                allocations.push(Stmt::CallSub { name: "@allocate".into(), args: vec![Expr::Call(name.clone(), subscripts)] });
+            }
+            *dims = vec![Expr::Ident("@deferred_extent".into()); dims.len()];
+            attributes.push("allocatable".into());
+        }
+        if allocations.is_empty() {
+            return;
+        }
+        let declaration = |s: &Stmt| matches!(s, Stmt::GenericInterface { .. } | Stmt::OperatorInterface { .. } | Stmt::DerivedType { .. }
+            | Stmt::DerivedDecl { .. } | Stmt::Accessibility { .. } | Stmt::DummyIntent { .. } | Stmt::VarDecl { .. }
+            | Stmt::InitializedDecl { .. } | Stmt::ArrayDecl { .. } | Stmt::Use { .. } | Stmt::Implicit(_));
+        let mut at = 0;
+        for (i, s) in body.iter().enumerate() {
+            if declaration(s) {
+                at = i + 1;
+            } else if !matches!(s, Stmt::SourceLocation(_)) {
+                break;
+            }
+        }
+        let tail = body.split_off(at);
+        body.extend(allocations);
+        body.extend(tail);
+    }
+    fn visit(body: &mut Vec<Stmt>) {
+        for s in body.iter_mut() {
+            match s {
+                Stmt::Subroutine { params, body, .. } => {
+                    lower(params, "", body);
+                    visit(body);
+                }
+                Stmt::Function { name, params, body, .. } => {
+                    let result = match body.last() {
+                        Some(Stmt::Return(Some(Expr::Ident(n)))) => n.clone(),
+                        _ => name.clone(),
+                    };
+                    lower(params, &result, body);
                     visit(body);
                 }
                 Stmt::Module { body, .. } => visit(body),

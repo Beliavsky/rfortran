@@ -31,7 +31,11 @@ cannot generate code for, instead of using the value 0.
 | `INCLUDE` lines | ❌ | | |
 | Implicit typing | ✅ | IMPLICIT COMPLEX is not supported | |
 | `IMPLICIT NONE` | ✅ | | |
-| `IMPLICIT NONE (TYPE, EXTERNAL)` | ❌ | | |
+| [`IMPLICIT NONE (TYPE, EXTERNAL)`](language-support.md#other-statement-forms) | ✅ | EXTERNAL is accepted but not checked | test_syntax_forms.py |
+| [DIMENSION statement](language-support.md#other-statement-forms) | ✅ | | test_syntax_forms.py |
+| [CHARACTER literals continued across lines](language-support.md#other-statement-forms) | ✅ | | test_syntax_forms.py |
+| [Empty or comment-only source files](language-support.md#other-statement-forms) | ✅ | | test_syntax_forms.py |
+| Named IF and SELECT CASE constructs (`name: if (...) then`) | ❌ | Named DO loops work | |
 | [Declarations without `::`](language-support.md#declarations-without-) | ✅ | Attributes and initializers still need `::` | test_declarations_without_colons.py |
 | [DIMENSION attribute](language-support.md#dimension-declarations-and-shape) | ✅ | | test_dimension_attribute.py |
 | [INTENT](language-support.md#intent-spellings) | ✅ | | |
@@ -43,7 +47,7 @@ cannot generate code for, instead of using the value 0.
 | CONTIGUOUS attribute | ✅ | Accepted | |
 | VOLATILE attribute | ✅ | Accepted | |
 | [Statement labels](language-support.md#statement-labels) | 🟡 | Labels are accepted; no statement can branch to them except READ `END=` | test_statement_labels.py |
-| [Construct and procedure endings](language-support.md#procedure-and-module-endings) | ✅ | | test_unnamed_procedure_ends.py |
+| [Construct and procedure endings](language-support.md#procedure-and-module-endings) | ✅ | Including a bare `END` for a module | test_unnamed_procedure_ends.py, test_syntax_forms.py |
 | COMMON blocks | ❌ | | |
 | DATA statements | ❌ | | |
 | EQUIVALENCE | ❌ | | |
@@ -92,7 +96,7 @@ cannot generate code for, instead of using the value 0.
 | [Explicit lower bounds](language-support.md#explicit-array-bounds) | ✅ | Constant bounds | test_explicit_bounds.py |
 | Assumed-shape dummies `x(:)` | ✅ | | test_function_arrays.py |
 | Assumed-size dummies `x(*)` | ❌ | Only for PARAMETER arrays | |
-| [Automatic arrays `w(n)`](language-support.md#runtime-allocation) | ✅ | Not CHARACTER or derived type | test_automatic_arrays.py |
+| [Automatic arrays `w(n)`](language-support.md#runtime-allocation) | ✅ | Numeric, LOGICAL, fixed-length CHARACTER and derived type; no substring writes to CHARACTER elements | test_automatic_arrays.py |
 | [Array constructors and implied-DO](language-support.md#constructors) | ✅ | | test_array_constructors.py, test_runtime_constructors.py |
 | [Typed and empty constructors](language-support.md#constructors) | ✅ | | test_empty_constructors.py |
 | Sections with constant bounds | ✅ | | |
@@ -116,7 +120,7 @@ cannot generate code for, instead of using the value 0.
 | [MOVE_ALLOC](language-support.md#move_alloc-and-allocate-options) | ✅ | Copies the data | test_allocation_options.py |
 | [ALLOCATE with SOURCE=, MOLD=, STAT=, ERRMSG=](language-support.md#move_alloc-and-allocate-options) | ✅ | | test_allocation_options.py |
 | Typed ALLOCATE (`allocate(character(len=5) :: s)`) | ❌ | | |
-| [DEALLOCATE](language-support.md#deallocate) | 🟡 | `deallocate(a, b)` with two or more objects does not parse | test_deallocate.py |
+| [DEALLOCATE](language-support.md#deallocate) | ✅ | | test_deallocate.py, test_syntax_forms.py |
 | [POINTER association with TARGET](language-support.md#pointer-association) | ✅ | Ranks 0–15, sections, strides | test_pointer_association.py, test_pointer_descriptors.py |
 | NULLIFY, `NULL()`, ASSOCIATED with one or two arguments | ✅ | | test_associate.py |
 | ALLOCATE of a POINTER | ❌ | | |
@@ -153,7 +157,7 @@ cannot generate code for, instead of using the value 0.
 | FINAL procedures | ❌ | | |
 | [Defined operators](language-support.md#defined-operators-with-array-operands) | ✅ | | test_defined_operators.py, test_array_operators.py |
 | Defined assignment (`interface assignment(=)`) | ❌ | | |
-| Functions declared with a derived-type prefix (`type(t) function f()`) | ❌ | Use a RESULT variable | |
+| [Functions declared with a derived-type prefix (`type(t) function f()`)](language-support.md#other-statement-forms) | ✅ | | test_syntax_forms.py |
 | Printing a whole derived object (`print *, obj`) | ❌ | | |
 | Derived-type named constants | ❌ | | |
 | Type extension (EXTENDS), CLASS, polymorphism | ❌ | | |
@@ -167,8 +171,8 @@ cannot generate code for, instead of using the value 0.
 |---|---|---|---|
 | Internal and module procedures | ✅ | | test_internal_procedures.py, test_module_scope.py |
 | External procedures | ✅ | | |
-| Modules or procedures after the main program in the same file | ❌ | Put them before the main program | |
-| Calls without an argument list (`call s`, `subroutine s`) | ❌ | Write `call s()` and `subroutine s()` | |
+| [Modules or procedures after the main program in the same file](language-support.md#other-statement-forms) | ✅ | | test_syntax_forms.py |
+| [Calls without an argument list (`call s`, `subroutine s`)](language-support.md#other-statement-forms) | ✅ | | test_syntax_forms.py |
 | [Named (keyword) arguments](language-support.md#named-arguments) | ✅ | | test_named_arguments.py |
 | [OPTIONAL and PRESENT](language-support.md#optional-arguments) | ✅ | | test_optional_procedures.py |
 | [PURE and ELEMENTAL](language-support.md#elemental-functions) | ✅ | | test_character_elemental.py, test_impure_elemental.py |

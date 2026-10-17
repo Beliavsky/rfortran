@@ -137,28 +137,41 @@ LeadingFuncs: Vec<Stmt> = {
 };
 
 ModuleDef: Stmt = {
-    KW_MODULE <mn: Ident> <mb: Stmts> KW_END KW_MODULE <_emn: END_UNIT_NAME?> => Stmt::Module { name: mn, body: mb },
-    KW_MODULE <mn: Ident> <mb: Stmts> KW_CONTAINS <contained: FuncList> KW_END KW_MODULE <_emn: END_UNIT_NAME?> => { let mut all = mb; all.extend(contained); Stmt::Module { name: mn, body: all } },
+    KW_MODULE <mn: Ident> <mb: Stmts> <_end: ModuleEnd> => Stmt::Module { name: mn, body: mb },
+    KW_MODULE <mn: Ident> <mb: Stmts> KW_CONTAINS <contained: FuncList> <_end: ModuleEnd> => { let mut all = mb; all.extend(contained); Stmt::Module { name: mn, body: all } },
+};
+ModuleEnd: () = {
+    BARE_END => (),
+    KW_END KW_MODULE END_UNIT_NAME? => (),
+};
+
+// Program units after the main program: external procedures and modules.
+PostUnits: Vec<Stmt> = {
+    /* empty */ => vec![],
+    <v: PostUnits> <f: FuncDef> => { let mut v = v; v.push(f); v },
+    <v: PostUnits> <s: SubrDef> => { let mut v = v; v.push(s); v },
+    <v: PostUnits> <d: PreFuncDecl> => { let mut v = v; v.extend(d); v },
+    <v: PostUnits> <m: ModuleDef> => { let mut v = v; v.push(m); v },
 };
 
 pub Program: Program = {
-    <_end: UnnamedEnd> <post: FuncList> => Program { name: "main".to_string(), body: post },
-    <mut body: UnnamedMainBody> <_end: UnnamedEnd> <post: FuncList> => {
+    <_end: UnnamedEnd> <post: PostUnits> => Program { name: "main".to_string(), body: post },
+    <mut body: UnnamedMainBody> <_end: UnnamedEnd> <post: PostUnits> => {
         body.extend(post); Program { name: "main".to_string(), body }
     },
-    <mut body: UnnamedMainBody> KW_CONTAINS <contained: FuncList> <_end: UnnamedEnd> <post: FuncList> => {
+    <mut body: UnnamedMainBody> KW_CONTAINS <contained: FuncList> <_end: UnnamedEnd> <post: PostUnits> => {
         body.extend(contained); body.extend(post); Program { name: "main".to_string(), body }
     },
-    <pre: LeadingFuncs> KW_PROGRAM <name: Ident> <body: Stmts> <_end: ProgramEnd> <post: FuncList> => {
+    <pre: LeadingFuncs> KW_PROGRAM <name: Ident> <body: Stmts> <_end: ProgramEnd> <post: PostUnits> => {
         let mut all = pre; all.extend(body); all.extend(post); Program { name, body: all }
     },
-    <pre: LeadingFuncs> KW_PROGRAM <name: Ident> <body: Stmts> KW_CONTAINS <contained: FuncList> <_end: ProgramEnd> <post: FuncList> => {
+    <pre: LeadingFuncs> KW_PROGRAM <name: Ident> <body: Stmts> KW_CONTAINS <contained: FuncList> <_end: ProgramEnd> <post: PostUnits> => {
         let mut all = pre; all.extend(body); all.extend(contained); all.extend(post); Program { name, body: all }
     },
-    KW_PROGRAM <name: Ident> <body: Stmts> KW_CONTAINS <contained: FuncList> <_end: ProgramEnd> <post: FuncList> => {
+    KW_PROGRAM <name: Ident> <body: Stmts> KW_CONTAINS <contained: FuncList> <_end: ProgramEnd> <post: PostUnits> => {
         let mut all = body; all.extend(contained); all.extend(post); Program { name, body: all }
     },
-    KW_PROGRAM <name: Ident> <body: Stmts> <_end: ProgramEnd> <funcs: FuncList> => {
+    KW_PROGRAM <name: Ident> <body: Stmts> <_end: ProgramEnd> <funcs: PostUnits> => {
         let mut all = body; all.extend(funcs); Program { name, body: all }
     },
     <only: LeadingFuncs> => Program { name: "<anon>".to_string(), body: only },
@@ -228,6 +241,15 @@ FunctionDef: Stmt = {
         body.insert(0,Stmt::VarDecl {kind:kind.clone(),names:vec![name.clone()]});
         Stmt::Function { name, params, return_type:Some(kind),body,pure:false,elemental:false }
     },
+    KW_TYPE LPAREN <type_name: Ident> RPAREN KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN KW_RESULT LPAREN <result: Ident> RPAREN <mut body:ProcedureBody> <_end: FunctionEnd> => {
+        body.insert(0, Stmt::DerivedDecl { type_name, names: vec![result.clone()], attributes: vec![], polymorphic: false, dims: vec![] });
+        crate::ast::function_with_result(name, params, result, body)
+    },
+    KW_TYPE LPAREN <type_name: Ident> RPAREN KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN <mut body:ProcedureBody> <_end: FunctionEnd> => {
+        // Derived-type lowering identifies a derived result by its final RETURN value.
+        body.insert(0, Stmt::DerivedDecl { type_name, names: vec![name.clone()], attributes: vec![], polymorphic: false, dims: vec![] });
+        crate::ast::function_with_result(name.clone(), params, name, body)
+    },
     KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN KW_RESULT LPAREN <result: Ident> RPAREN <body:ProcedureBody> <_end: FunctionEnd> => crate::ast::function_with_result(name, params, result, body),
     KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN <body:ProcedureBody> <_end: FunctionEnd> => Stmt::Function { name, params, return_type: None, body, pure: false, elemental:false },
 };
@@ -236,6 +258,10 @@ SubrDef: Stmt = {
     <pos:@L> <prefix: FunctionPrefix> KW_SUBROUTINE <name: Ident> LPAREN <params: ParamList> RPAREN <mut body:ProcedureBody> <_end: SubroutineEnd> => {
         body.insert(0,Stmt::SourceLocation(pos));
         Stmt::Subroutine { name, params, body, pure: prefix.0, elemental: prefix.1 }
+    },
+    <pos:@L> <prefix: FunctionPrefix> KW_SUBROUTINE <name: Ident> <mut body:ProcedureBody> <_end: SubroutineEnd> => {
+        body.insert(0,Stmt::SourceLocation(pos));
+        Stmt::Subroutine { name, params: vec![], body, pure: prefix.0, elemental: prefix.1 }
     },
 };
 
@@ -253,6 +279,21 @@ ProgramEnd: () = {
 };
 
 Ident: String = { <s:ID> => s };
+
+DimensionEntities: Vec<(String, Vec<Expr>)> = {
+    <n:Ident> LPAREN <d:DimList> RPAREN => vec![(n, d)],
+    <mut v:DimensionEntities> COMMA <n:Ident> LPAREN <d:DimList> RPAREN => { v.push((n, d)); v },
+};
+
+ImplicitNoneSpecs: Vec<String> = {
+    /* empty */ => vec![],
+    <s: ImplicitNoneSpec> => vec![s],
+    <mut v: ImplicitNoneSpecs> COMMA <s: ImplicitNoneSpec> => { v.push(s); v },
+};
+ImplicitNoneSpec: String = {
+    <s: ID> => s,
+    KW_TYPE => "type".into(),
+};
 
 AssociationList: Vec<(String, Expr)> = {
     <n:Ident> ARROW <e:RhsExpr> => vec![(n, e)],
@@ -410,6 +451,7 @@ Stmt: Stmt = {
         Stmt::Read { args: cloned }
     },
     KW_CALL <name: Designator> LPAREN <args: CallArgList> RPAREN => Stmt::CallSub { name, args },
+    KW_CALL <name: Designator> => Stmt::CallSub { name, args: vec![] },
     // Single-line IF: executes a single statement when condition true, e.g. `if (cond) cycle`
     KW_IF LPAREN <cnd: CondExpr> RPAREN <s: Stmt> => {
         let mut v = Vec::new(); v.push(s); Stmt::If { cond: cnd, then_body: v, else_body: None }
@@ -442,6 +484,19 @@ Stmt: Stmt = {
     },
     KW_USE <head:UseHead> <tail:UseOnly> => Stmt::Use { module:head.0, nature:head.1, only:tail.0, renames:tail.1 },
     KW_IMPLICIT KW_NONE => Stmt::Implicit(Implicit::None),
+    // IMPLICIT NONE (TYPE) disables implicit typing; IMPLICIT NONE (EXTERNAL)
+    // requires the EXTERNAL attribute, which rfort does not check.
+    <pos:@L> KW_IMPLICIT KW_NONE LPAREN <specs: ImplicitNoneSpecs> RPAREN =>? {
+        let mut typed = false;
+        for spec in &specs {
+            match spec.to_ascii_lowercase().as_str() {
+                "type" => typed = true,
+                "external" => {}
+                _ => return Err(lalrpop_util::ParseError::User { error: "IMPLICIT NONE accepts TYPE and EXTERNAL" }),
+            }
+        }
+        Ok(if typed || specs.is_empty() { Stmt::Implicit(Implicit::None) } else { Stmt::SourceLocation(pos) })
+    },
     KW_IMPLICIT <rules: ImplicitRuleList> => {
         if rules.len() == 1 {
             let rule = &rules[0];
@@ -800,6 +855,10 @@ PreFuncDeclData: Vec<Stmt> = {
         if let Some(value)=value {out.push(Stmt::Assign{name,value});}
         out.extend(association);out
     }).collect(),
+    // The element type comes from a type declaration in the same scope or from
+    // implicit typing; parser::resolve_dimension_statements supplies it.
+    KW_DIMENSION DCOLON? <entities:DimensionEntities> => entities.into_iter()
+        .map(|(name,dims)| Stmt::ArrayDecl{kind:TypeSpec::IntegerKind("@dimension".into()),name,dims}).collect(),
     <declaration:PROC_DECL> => crate::ast::procedure_declaration(&declaration),
     <attr:ATTR_STMT> DCOLON? <names:IdentList> =>? crate::ast::attribute_statement(&attr, None, names)
         .map_err(|error| lalrpop_util::ParseError::User { error }),

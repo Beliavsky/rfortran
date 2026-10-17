@@ -210,6 +210,29 @@ print *, 7"##;
     }
 }
 
+/// Remove each `&`, line break, optional `&` sequence from a continued
+/// CHARACTER literal; an `&` not at the end of a line is an ordinary character.
+fn join_continued_literal(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find('&') {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + 1..];
+        let tail = after.trim_start_matches([' ', '\t']);
+        let newline = if tail.starts_with("\r\n") { 2 } else if tail.starts_with('\n') { 1 } else { 0 };
+        if newline == 0 {
+            out.push('&');
+            rest = after;
+            continue;
+        }
+        let next = &tail[newline..];
+        let line = next.trim_start_matches([' ', '\t']);
+        rest = line.strip_prefix('&').unwrap_or(line);
+    }
+    out.push_str(rest);
+    out
+}
+
 #[derive(Logos, Debug, Clone, PartialEq)]
 pub enum TokenKind {
     #[regex(r"[ \t\r\n;]+", logos::skip)]
@@ -255,13 +278,15 @@ pub enum TokenKind {
     DefinedOperator(String),
     // Fortran doubles the delimiter inside a character literal. Backslashes
     // are ordinary characters, including immediately before the closing quote.
-    #[regex(r#""([^"\r\n]|"")*""#, |lex| {
+    // A literal continued with `&` at the end of a line resumes after the `&`
+    // that begins the next line, or at its first nonblank character as gfortran does.
+    #[regex(r#""([^"\r\n&]|""|&|&[ \t]*\r?\n[ \t]*&?)*""#, |lex| {
         let s = lex.slice();
-        s[1..s.len()-1].replace("\"\"", "\"")
+        join_continued_literal(&s[1..s.len()-1]).replace("\"\"", "\"")
     })]
-    #[regex(r"'([^'\r\n]|'')*'", |lex| {
+    #[regex(r"'([^'\r\n&]|''|&|&[ \t]*\r?\n[ \t]*&?)*'", |lex| {
         let s = lex.slice();
-        s[1..s.len()-1].replace("''", "'")
+        join_continued_literal(&s[1..s.len()-1]).replace("''", "'")
     })]
     Str(String),
     #[regex(r"(([0-9]+\.[0-9]*|\.[0-9]+)([eEdD][+-]?[0-9]+)?|[0-9]+[eEdD][+-]?[0-9]+)(_[A-Za-z0-9_]+)?", |lex| lex.slice().to_string())]
@@ -785,6 +810,8 @@ pub fn lex(input: &str) -> Vec<Token> {
                 "procedure" if matches!(next,Some(TokenKind::DColon)) || matches!(previous,Some(TokenKind::KwModule)) => Some(TokenKind::KwProcedure),
                 "interface" if matches!(previous,Some(TokenKind::KwEnd)) || matches!(next,Some(TokenKind::Ident(_))) => Some(TokenKind::KwInterface),
                 "operator" if matches!(next,Some(TokenKind::LParen)) => Some(TokenKind::KwOperator),
+                // DIMENSION statement: `dimension a(2), b(3)` or `dimension :: a(2)`.
+                "dimension" if matches!(next,Some(TokenKind::Ident(_)|TokenKind::DColon)) && statement_head(&tokens,input,start) => Some(TokenKind::KwDimension),
                 "associate" if matches!(previous,Some(TokenKind::KwEnd))
                     || matches!(next,Some(TokenKind::LParen)) && statement_head(&tokens,input,start) => Some(TokenKind::KwAssociate),
                 _=>None,
@@ -1118,7 +1145,7 @@ pub fn lex(input: &str) -> Vec<Token> {
     for i in 0..normalized.len() {
         if !matches!(normalized[i].kind,TokenKind::LParen){continue;}
         if i>0 && same_statement(&input[normalized[i-1].span.end..normalized[i].span.start])
-            && matches!(normalized[i-1].kind,TokenKind::Ident(_)|TokenKind::RParen|TokenKind::RBracket|TokenKind::KwReal|TokenKind::KwComplex|TokenKind::KwInteger|TokenKind::KwCharacter|TokenKind::KwLogical|TokenKind::KwDimension|TokenKind::KwKind|TokenKind::KwLen|TokenKind::KwIf|TokenKind::KwWhile|TokenKind::KwRead|TokenKind::KwReadEmpty|TokenKind::KwWrite|TokenKind::KwWriteEmpty|TokenKind::KwOperator){continue;}
+            && matches!(normalized[i-1].kind,TokenKind::Ident(_)|TokenKind::RParen|TokenKind::RBracket|TokenKind::KwReal|TokenKind::KwComplex|TokenKind::KwInteger|TokenKind::KwCharacter|TokenKind::KwLogical|TokenKind::KwDimension|TokenKind::KwKind|TokenKind::KwLen|TokenKind::KwIf|TokenKind::KwWhile|TokenKind::KwRead|TokenKind::KwReadEmpty|TokenKind::KwWrite|TokenKind::KwWriteEmpty|TokenKind::KwOperator|TokenKind::KwAllocate|TokenKind::KwDeallocate|TokenKind::KwNullify|TokenKind::KwNone){continue;}
         let mut end=i+1;
         while end<normalized.len() && !matches!(normalized[end].kind,TokenKind::RParen|TokenKind::LParen|TokenKind::Eq|TokenKind::LBracket) {end+=1;}
         if end>=normalized.len() || !matches!(normalized[end].kind,TokenKind::RParen){continue;}

@@ -107,3 +107,25 @@ accept.
 Items 1–4 cover the first parse error in 30 more files, so they would let rfort
 parse up to 66 of the 86 valid fixtures, up from 36. Some of those files may
 then stop at a later error.
+
+## After the first fixes
+
+Rerun later on 2026-10-17, after fixing DEALLOCATE lists, `implicit none (type,
+external)`, units after the main program, empty files, SUBROUTINE and CALL
+without parentheses, bare `END` for a module, continued CHARACTER literals, the
+DIMENSION statement and `type(t) function`. Raw results:
+[fortitude_fixtures_after.json](fortitude_fixtures_after.json).
+
+| | Before | After |
+|---|---|---|
+| Valid fixtures rfort parses | 36 of 86 | 65 of 86 |
+| Valid fixtures rfort checks | 24 of 86 | 50 of 86 |
+
+Of the 21 that still fail to parse, 10 use obsolescent features or extensions.
+The others need named IF constructs (`name: if (...) then`), a CHARACTER kind
+prefix (`4_"text"`), `type(real(...))` declarations, FLUSH, BACKSPACE with
+IOSTAT=, single-line IF with ERROR STOP, `allocatable y(:)` with bounds,
+submodules, a keyword as a module name, and two adjacent literals joined by a
+continuation (`"a "&` then `&"b"`, which gfortran reads as one literal
+containing a doubled quote).
+

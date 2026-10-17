@@ -394,6 +394,69 @@ fn human_token(tok: &TokenKind) -> String {
     }
 }
 
+/// Give each DIMENSION-statement entity its type: from a type declaration of
+/// the same name in the same scope, or by default implicit typing.
+fn resolve_dimension_statements(body: &mut Vec<crate::ast::Stmt>) -> Result<(), String> {
+    use crate::ast::{Implicit, Stmt, TypeSpec};
+    let marker = |kind: &TypeSpec| matches!(kind, TypeSpec::IntegerKind(k) if k == "@dimension");
+    let pending: Vec<String> = body.iter().filter_map(|s| match s {
+        Stmt::ArrayDecl { kind, name, .. } if marker(kind) => Some(name.clone()),
+        _ => None,
+    }).collect();
+    for name in pending {
+        let lower = name.to_ascii_lowercase();
+        let mut kind = None;
+        let mut derived = None;
+        for s in body.iter_mut() {
+            match s {
+                Stmt::VarDecl { kind: k, names } if names.iter().any(|n| n.eq_ignore_ascii_case(&name)) => {
+                    names.retain(|n| !n.eq_ignore_ascii_case(&name));
+                    kind = Some(k.clone());
+                }
+                Stmt::DerivedDecl { type_name, names, attributes, polymorphic, dims } if names.iter().any(|n| n.eq_ignore_ascii_case(&name)) => {
+                    names.retain(|n| !n.eq_ignore_ascii_case(&name));
+                    derived = Some(Stmt::DerivedDecl { type_name: type_name.clone(), names: vec![name.clone()], attributes: attributes.clone(), polymorphic: *polymorphic, dims: dims.clone() });
+                }
+                Stmt::InitializedDecl { entities, .. } if entities.iter().any(|(n, _)| n.eq_ignore_ascii_case(&name)) => {
+                    return Err(format!("DIMENSION statement for initialized variable `{name}` is not yet supported"));
+                }
+                _ => {}
+            }
+        }
+        body.retain(|s| !matches!(s, Stmt::VarDecl { names, .. } | Stmt::DerivedDecl { names, .. } if names.is_empty()));
+        if kind.is_none() && derived.is_none() {
+            if body.iter().any(|s| matches!(s, Stmt::Implicit(Implicit::None))) {
+                return Err(format!("DIMENSION entity `{name}` has no type under IMPLICIT NONE"));
+            }
+            if body.iter().any(|s| matches!(s, Stmt::Implicit(_))) {
+                return Err(format!("DIMENSION entity `{name}` with IMPLICIT typing rules is not yet supported"));
+            }
+            kind = Some(if ('i'..='n').contains(&lower.chars().next().unwrap_or('a')) { TypeSpec::Integer(None) } else { TypeSpec::Real });
+        }
+        for s in body.iter_mut() {
+            if let Stmt::ArrayDecl { kind: k, name: n, dims } = s {
+                if marker(k) && *n == name {
+                    if let Some(Stmt::DerivedDecl { type_name, names, attributes, polymorphic, .. }) = derived.take() {
+                        *s = Stmt::DerivedDecl { type_name, names, attributes, polymorphic, dims: dims.clone() };
+                    } else {
+                        *k = kind.clone().unwrap();
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    for s in body.iter_mut() {
+        match s {
+            Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } | Stmt::Module { body, .. } | Stmt::Block { body } => {
+                resolve_dimension_statements(body)?
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 pub fn parse_with_src(
     src: &str,
     tokens: &[Token],
@@ -424,6 +487,11 @@ pub fn parse_with_src(
         }
     }
 
+    // A source file with no statements (only blanks or comments) is valid.
+    if tokens.is_empty() {
+        return Ok(Program { name: "<anon>".to_string(), body: vec![] });
+    }
+
     let triples: Vec<(usize, TokenKind, usize)> = tokens
         .iter()
         .map(|t| (t.span.start, t.kind.clone(), t.span.end))
@@ -432,7 +500,14 @@ pub fn parse_with_src(
     let parsed: Result<Program, Vec<CompileError>> = match fortran::ProgramParser::new()
         .parse(triples.into_iter())
     {
-        Ok(p) => Ok(p),
+        Ok(mut p) => {
+            if let Err(msg) = resolve_dimension_statements(&mut p.body) {
+                let diag = Diagnostic::error().with_message(&msg);
+                let _ = emit_to_io_write(&mut stderr, &Config::default(), &file, &diag);
+                errs.push(CompileError::new(CompileErrorKind::Parse, msg, 0..0));
+            }
+            Ok(p)
+        }
         Err(e) => {
             let (span, msg) = match e {
                 lalrpop_util::ParseError::InvalidToken { location } => {
