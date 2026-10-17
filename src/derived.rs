@@ -9,11 +9,33 @@ use crate::ast::{Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Context, Result};
 use std::collections::{HashMap, HashSet};
 
+/// Each component of a derived object becomes its own variable named
+/// `object%component`, so array, ALLOCATABLE and POINTER components reuse the
+/// ordinary array and pointer lowering.
 #[derive(Clone)]
 struct Component {
     name: String,
     kind: TypeSpec,
     default: Option<Expr>,
+    /// Empty for scalars; `@deferred_extent` entries for deferred shape.
+    dims: Vec<Expr>,
+    /// `allocatable` and/or `pointer`.
+    attrs: Vec<String>,
+}
+impl Component {
+    fn scalar(name: &str, kind: &TypeSpec, default: Option<Expr>) -> Self {
+        Self { name: name.into(), kind: kind.clone(), default, dims: vec![], attrs: vec![] }
+    }
+    fn allocatable(&self) -> bool { self.attrs.iter().any(|a| a == "allocatable") }
+    fn pointer(&self) -> bool { self.attrs.iter().any(|a| a == "pointer") }
+    /// Plain scalar components are copied through temporaries, so constructor
+    /// values may read the target object.
+    fn plain_scalar(&self) -> bool { self.dims.is_empty() && self.attrs.is_empty() }
+}
+fn call(name: &str, args: Vec<Expr>) -> Stmt { Stmt::CallSub { name: name.into(), args } }
+fn test(name: &str, object: &str) -> Expr { Expr::Call(name.into(), vec![Expr::Ident(object.into())]) }
+fn when(cond: Expr, then_body: Vec<Stmt>, else_body: Option<Vec<Stmt>>) -> Stmt {
+    Stmt::If { cond, then_body, else_body }
 }
 #[derive(Clone)]
 struct Definition {
@@ -69,6 +91,12 @@ fn references(body: &[Stmt], names: &mut HashSet<String>) {
                 expression(b, names);
             }
             Expr::Un(_, a) => expression(a, names),
+            Expr::Section { name, lower, upper, stride } => {
+                names.insert(name.clone());
+                for e in [lower, upper, stride].into_iter().flatten() {
+                    expression(e, names);
+                }
+            }
             _ => {}
         }
     }
@@ -153,17 +181,14 @@ impl Lowerer {
                     if self.types.contains_key(name) {
                         bail!("duplicate derived type name `{name}`; distinct scopes with the same type name are not yet supported");
                     }
-                    let mut fields = vec![];
+                    let mut fields: Vec<Component> = vec![];
+                    let mut attrs: Vec<(String, String)> = vec![];
                     for c in components {
                         match c {
                             Stmt::SourceLocation(_) => {},
                             Stmt::VarDecl { kind, names } => {
                                 for n in names {
-                                    fields.push(Component {
-                                        name: n.clone(),
-                                        kind: kind.clone(),
-                                        default: None,
-                                    });
+                                    fields.push(Component::scalar(n, kind, None));
                                 }
                             }
                             Stmt::InitializedDecl {
@@ -175,16 +200,42 @@ impl Lowerer {
                                     bail!("component attributes are not yet supported");
                                 }
                                 for (n, value) in entities {
-                                    fields.push(Component {
-                                        name: n.clone(),
-                                        kind: kind.clone(),
-                                        default: value.clone(),
-                                    });
+                                    fields.push(Component::scalar(n, kind, value.clone()));
                                 }
                             }
-                            _ => bail!(
-                                "derived types currently support scalar intrinsic components only"
+                            // An initialized array component is parsed as an
+                            // InitializedDecl followed by its ArrayDecl.
+                            Stmt::ArrayDecl { kind, name: n, dims } => {
+                                match fields.iter_mut().find(|f| &f.name == n && f.dims.is_empty() && f.default.is_some()) {
+                                    Some(f) => f.dims = dims.clone(),
+                                    None => fields.push(Component { dims: dims.clone(), ..Component::scalar(n, kind, None) }),
+                                }
+                            }
+                            Stmt::DummyIntent { name: n, intent } if intent == "allocatable" || intent == "pointer" => {
+                                attrs.push((n.clone(), intent.clone()));
+                            }
+                            Stmt::DummyIntent { intent, .. } => {
+                                bail!("{} components are not yet supported", intent.to_uppercase())
+                            }
+                            Stmt::DerivedDecl { .. } => bail!(
+                                "derived-type components of derived type are not yet supported"
                             ),
+                            _ => bail!(
+                                "derived types currently support intrinsic components only"
+                            ),
+                        }
+                    }
+                    for (n, a) in attrs {
+                        let f = fields.iter_mut().find(|f| f.name == n)
+                            .with_context(|| format!("attribute for unknown component `{n}`"))?;
+                        f.attrs.push(a);
+                    }
+                    for f in &fields {
+                        if f.allocatable() && f.dims.is_empty() {
+                            bail!("ALLOCATABLE scalar component `{}` is not yet supported", f.name);
+                        }
+                        if f.allocatable() && f.pointer() {
+                            bail!("component `{}` cannot be both ALLOCATABLE and POINTER", f.name);
                         }
                     }
                     let mut names = HashSet::new();
@@ -354,7 +405,7 @@ impl Lowerer {
                 .get(object)
                 .with_context(|| format!("`{object}` is not a declared derived object"))?;
             if !self.types[ty].components.iter().any(|c| c.name == field) {
-                bail!("type `{ty}` has no scalar component `{field}`");
+                bail!("type `{ty}` has no component `{field}`");
             }
         }
         Ok(())
@@ -364,6 +415,10 @@ impl Lowerer {
             let ty = objects
                 .get(object)
                 .with_context(|| format!("`{object}` is not a derived object"))?;
+            if self.types[ty].components.iter().any(|c| c.name == method && !c.dims.is_empty()) {
+                // An element or section of an array component, not a binding.
+                return Ok(());
+            }
             let target = self.types[ty]
                 .bindings
                 .get(method)
@@ -493,10 +548,17 @@ impl Lowerer {
         let intent = attrs.iter().find(|a| a.starts_with("intent("));
         for c in &self.types[ty].components {
             let field = format!("{name}%{}", c.name);
-            out.push(Stmt::VarDecl {
-                kind: c.kind.clone(),
-                names: vec![field.clone()],
-            });
+            for a in &c.attrs {
+                out.push(Stmt::DummyIntent { name: field.clone(), intent: a.clone() });
+            }
+            if c.dims.is_empty() {
+                out.push(Stmt::VarDecl {
+                    kind: c.kind.clone(),
+                    names: vec![field.clone()],
+                });
+            } else {
+                out.push(Stmt::ArrayDecl { kind: c.kind.clone(), name: field.clone(), dims: c.dims.clone() });
+            }
             if let Some(i) = intent {
                 out.push(Stmt::DummyIntent {
                     name: field.clone(),
@@ -544,30 +606,64 @@ impl Lowerer {
                 return Ok(());
             }
         }
+        enum Source {
+            Copy(String),
+            Value(Expr),
+            Absent,
+        }
         let fields = self.types[ty].components.clone();
-        let values =
+        let sources: Vec<Source> =
             match value {
                 Expr::Ident(n) if objects.get(&n).is_some_and(|t| t == ty) => self
                     .field_names(&n, ty)
                     .into_iter()
-                    .map(Expr::Ident)
+                    .map(Source::Copy)
                     .collect(),
-                Expr::Call(n, mut args) if n == ty => {
+                Expr::Call(n, args) if n == ty => {
                     if args.len() > fields.len() {
                         bail!("too many components in constructor `{ty}`");
                     }
-                    for c in fields.iter().skip(args.len()) {
-                        args.push(c.default.clone().with_context(|| {
-                            format!("missing constructor component `{}`", c.name)
-                        })?);
+                    let mut sources: Vec<Source> = args.into_iter().map(Source::Value).collect();
+                    for c in fields.iter().skip(sources.len()) {
+                        sources.push(match &c.default {
+                            Some(d) => Source::Value(d.clone()),
+                            None if c.allocatable() || c.pointer() => Source::Absent,
+                            None => bail!("missing constructor component `{}`", c.name),
+                        });
                     }
-                    args
+                    sources
                 }
                 _ => bail!("derived assignment to `{target}` requires a value of type `{ty}`"),
             };
+        // Scalar values go through temporaries and are written last; array,
+        // ALLOCATABLE and POINTER components are written before them, so every
+        // value still reads the target's old scalar components.
         let mut writes = vec![];
-        for (field, mut value) in fields.iter().zip(values) {
+        let mut arrays = vec![];
+        for (field, source) in fields.iter().zip(sources) {
+            let to = format!("{target}%{}", field.name);
+            let mut value = match source {
+                Source::Copy(n) if n == to => continue,
+                Source::Copy(n) if !field.plain_scalar() => {
+                    arrays.extend(self.copy_component(field, &to, &n));
+                    continue;
+                }
+                Source::Copy(n) => Expr::Ident(n),
+                Source::Value(v) => v,
+                Source::Absent => {
+                    arrays.push(if field.pointer() {
+                        call("@nullify", vec![Expr::Ident(to)])
+                    } else {
+                        when(test("allocated", &to), vec![call("@deallocate", vec![Expr::Ident(to)])], None)
+                    });
+                    continue;
+                }
+            };
             self.expression(&mut value, objects, out)?;
+            if !field.plain_scalar() {
+                self.component_value(field, &to, value, &mut arrays, out)?;
+                continue;
+            }
             self.serial += 1;
             let temp = format!("@derived_value_{}", self.serial);
             out.push(Stmt::VarDecl {
@@ -579,11 +675,100 @@ impl Lowerer {
                 value,
             });
             writes.push(Stmt::Assign {
-                name: format!("{target}%{}", field.name),
+                name: to,
                 value: Expr::Ident(temp),
             });
         }
+        out.extend(arrays);
         out.extend(writes);
+        Ok(())
+    }
+    /// ALLOCATE `to` with the bounds of the allocated array `from`, then copy it.
+    fn allocate_like(to: &str, from: &str, rank: usize) -> Vec<Stmt> {
+        let bound = |f: &str, d: usize| {
+            Some(Box::new(Expr::Call(f.into(), vec![Expr::Ident(from.into()), Expr::IntLit(d.to_string())])))
+        };
+        let subscripts = (1..=rank)
+            .map(|d| Expr::Call("@section_subscript".into(), vec![Expr::Section {
+                name: to.into(),
+                lower: bound("lbound", d),
+                upper: bound("ubound", d),
+                stride: None,
+            }]))
+            .collect();
+        vec![
+            call("@allocate", vec![Expr::Call(to.into(), subscripts)]),
+            Stmt::Assign { name: to.into(), value: Expr::Ident(from.into()) },
+        ]
+    }
+    /// Intrinsic assignment of a non-scalar component from the same component
+    /// of another object: deep copy for ALLOCATABLE, association for POINTER.
+    fn copy_component(&self, field: &Component, to: &str, from: &str) -> Vec<Stmt> {
+        let target = || Expr::Ident(to.into());
+        if field.pointer() {
+            vec![when(
+                test("associated", from),
+                vec![call("@pointer_associate", vec![target(), Expr::Ident(from.into())])],
+                Some(vec![call("@nullify", vec![target()])]),
+            )]
+        } else if field.allocatable() {
+            vec![
+                when(test("allocated", to), vec![call("@deallocate", vec![target()])], None),
+                when(test("allocated", from), Self::allocate_like(to, from, field.dims.len()), None),
+            ]
+        } else {
+            vec![Stmt::Assign { name: to.into(), value: Expr::Ident(from.into()) }]
+        }
+    }
+    /// Constructor or default value for a non-scalar component.
+    fn component_value(
+        &mut self,
+        field: &Component,
+        to: &str,
+        value: Expr,
+        arrays: &mut Vec<Stmt>,
+        out: &mut Vec<Stmt>,
+    ) -> Result<()> {
+        let null = matches!(&value, Expr::Call(n, a) if n.eq_ignore_ascii_case("null") && a.is_empty());
+        let target = || Expr::Ident(to.into());
+        if field.pointer() {
+            arrays.push(if null {
+                call("@nullify", vec![target()])
+            } else {
+                call("@pointer_associate", vec![target(), value])
+            });
+        } else if field.allocatable() {
+            if matches!(&value, Expr::Ident(n) if n == to) {
+                return Ok(());
+            }
+            arrays.push(when(test("allocated", to), vec![call("@deallocate", vec![target()])], None));
+            match value {
+                _ if null => {}
+                Expr::Ident(n) => arrays.extend(Self::allocate_like(to, &n, field.dims.len())),
+                // Without automatic reallocation on assignment, the extent must
+                // be evident: an array constructor of literal elements.
+                Expr::Call(n, items)
+                    if n == "@array_constructor" && field.dims.len() == 1 && items.iter().all(|e| {
+                        let e = match e { Expr::Un(_, e) => e.as_ref(), e => e };
+                        matches!(e, Expr::IntLit(_) | Expr::RealLit(_) | Expr::Logical(_) | Expr::Str(_))
+                    }) =>
+                {
+                    let size = Expr::IntLit(items.len().to_string());
+                    arrays.push(call("@allocate", vec![Expr::Call(to.into(), vec![size])]));
+                    arrays.push(Stmt::Assign { name: to.into(), value: Expr::Call(n, items) });
+                }
+                _ => bail!(
+                    "value for ALLOCATABLE component `{}` must be a whole array variable or an array constructor of literals",
+                    field.name
+                ),
+            }
+        } else {
+            self.serial += 1;
+            let temp = format!("@derived_value_{}", self.serial);
+            out.push(Stmt::ArrayDecl { kind: field.kind.clone(), name: temp.clone(), dims: field.dims.clone() });
+            out.push(Stmt::Assign { name: temp.clone(), value });
+            arrays.push(Stmt::Assign { name: to.into(), value: Expr::Ident(temp) });
+        }
         Ok(())
     }
     fn body(&mut self, body: &mut Vec<Stmt>, inherited: &Objects, params: &[String]) -> Result<()> {
@@ -857,7 +1042,7 @@ mod tests {
     #[test]
     fn rejects_invalid_components_constructors_and_bindings() {
         for (statement, expected) in [
-            ("a%unknown=3", "no scalar component"),
+            ("a%unknown=3", "no component"),
             ("call a%missing()", "no binding"),
             ("a=pair(1,2,3)", "too many components"),
             ("a=pair()", "missing constructor component"),

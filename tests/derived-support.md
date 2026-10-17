@@ -10,8 +10,13 @@ passed to INTENT(IN) arguments. Component copies capture their inputs before
 writing their outputs. Initialization checks operate on individual components,
 including defaults on entry to an INTENT(OUT) procedure.
 
+Array, ALLOCATABLE array and POINTER components are stored as separate
+`object%component` variables; `tests/test_derived_array_components.py` covers
+them.
+
 CLASS currently uses its declared concrete type. Inheritance, dynamic dispatch,
-arrays of derived types, nested/CHARACTER/allocatable/pointer components,
+arrays of derived types with non-scalar components, nested and ALLOCATABLE
+scalar components,
 keyword constructors, alternate PASS/NOPASS bindings, and an external derived
 type ABI are not implemented. Early RETURN in derived-result functions is
 diagnosed as unsupported. Type names must be unique within the compilation.

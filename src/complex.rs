@@ -1812,7 +1812,7 @@ pub(crate) fn hoist(body: &mut Vec<Stmt>) {
         let mut out = vec![];
         for mut stmt in std::mem::take(body) {
             let generated = matches!(&stmt,Stmt::VarDecl{names,..} if names.iter().all(|n|n.starts_with("@complex_")||n.starts_with("@derived_")))
-                || matches!(&stmt,Stmt::ArrayDecl{name,..}|Stmt::DummyIntent{name,..} if name.starts_with("@complex_"))
+                || matches!(&stmt,Stmt::ArrayDecl{name,..}|Stmt::DummyIntent{name,..} if name.starts_with("@complex_")||name.starts_with("@derived_"))
                 || matches!(&stmt,Stmt::DerivedDecl{names,..} if names.iter().all(|n|n.starts_with("@complex_")||n.starts_with("@derived_")));
             if generated {
                 decls.push(stmt);

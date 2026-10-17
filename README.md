@@ -24,7 +24,8 @@ Implemented subsets include:
   named arguments, and supported generic procedure calls.
 - Scalar and rank-1 through rank-15 pointer descriptors over fixed `TARGET`
   storage, including array views returned through subroutine output pointers.
-- Modules compiled together or separately using persistent `.rmod` interfaces, scalar derived types and arrays with
+- Modules compiled together or separately using persistent `.rmod` interfaces, scalar derived types with
+  scalar, array, ALLOCATABLE and POINTER components, arrays of derived types with
   scalar numeric/LOGICAL components, type-bound
   procedures, and defined operators, including derived-type comparisons.
 - List-directed output, a subset of formatted input/output, runtime format
@@ -135,6 +136,12 @@ Run `python tests/test_optional_warnings.py` for regression checks.
 The default optimization level is `-O2`. `--verbose` shows compilation progress
 and tool commands; `--quiet` suppresses that progress. `--run` executes the
 linked program and propagates its failure status.
+
+`rfort run main.f90` interprets a program without building an executable. Run mode
+is a separate implementation that is much less tested than native compilation:
+few regression tests exercise it, it can be orders of magnitude slower on loops,
+and it can produce results that differ from the compiled program. Prefer the
+native build (`rfort --run`) when correctness matters.
 
 List source files with the main program last to compile them as one source group.
 Alternatively, compile modules in dependency order with `-c`, then compile their
@@ -1288,6 +1295,22 @@ array subscripts are not associated with a same-named procedure's arguments.
 Calls that do not use derived arguments or results pass through without argument
 rewriting. `xivec_shadow.f90` and `tests/test_derived_shadowing.py` cover this
 behavior, including comparisons with and without an unrelated derived type.
+
+Scalar derived objects can have array, ALLOCATABLE array and POINTER (scalar or
+array) components. Each component is stored as its own variable, so element and
+section references, ALLOCATE/DEALLOCATE, ALLOCATED/ASSOCIATED, pointer
+assignment, NULLIFY and passing a component to an array dummy behave as they do
+for ordinary variables. Whole-object assignment deep-copies ALLOCATABLE
+components (keeping their bounds, or leaving the target unallocated) and copies
+POINTER association. Derived arguments, INTENT(OUT) dummies and derived function
+results carry these components. A constructor value for an ALLOCATABLE component
+must be a whole array variable, an array constructor of literals, or `null()`;
+an omitted ALLOCATABLE or POINTER component becomes unallocated or disassociated.
+Nested derived-type components, ALLOCATABLE scalar components (including
+deferred-length CHARACTER), arrays of derived types with such components and
+functions with ALLOCATABLE array dummies remain unsupported, and an ALLOCATABLE
+component, like any ALLOCATABLE array, must be allocated somewhere before it is
+referenced. Run `python tests/test_derived_array_components.py`.
 
 Local OPTIONAL functions and subroutines can be specialized for positional and
 named calls, including omitted arguments before later named arguments and
