@@ -1687,6 +1687,7 @@ fn expand(
 }
 pub fn resolve(mut p: Program) -> Result<Program> {
     p=crate::modules::capture(p)?;
+    p=crate::heap::automatic_locals(p)?;
     p=crate::heap::prepare(p)?;
     p=crate::modules::prepare_globals(p)?;
     p=crate::internal_procedures::resolve(p)?;

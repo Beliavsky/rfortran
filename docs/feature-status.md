@@ -18,14 +18,9 @@ name the tests that cover them. Update this page when a feature changes.
 
 ## Known wrong results
 
-These programs compile without error but produce wrong output. They are bugs,
-not unsupported features.
-
-| Feature | Problem |
-|---|---|
-| Automatic arrays | `real :: w(n)` in a procedure, where `n` is a dummy argument, gives the wrong size and wrong element values. |
-| `LGE`, `LGT`, `LLE`, `LLT` | Return false (native) or print nothing (interpreter) instead of the comparison result. |
-| `ISHFTC` | Returns 0. |
+None are known. The automatic-array, `LGE`/`LGT`/`LLE`/`LLT` and `ISHFTC` bugs
+found on 2026-10-17 are fixed. The compiler now reports an error for a call it
+cannot generate code for, instead of using the value 0.
 
 ## Source form and declarations
 
@@ -97,7 +92,7 @@ not unsupported features.
 | [Explicit lower bounds](language-support.md#explicit-array-bounds) | ✅ | Constant bounds | test_explicit_bounds.py |
 | Assumed-shape dummies `x(:)` | ✅ | | test_function_arrays.py |
 | Assumed-size dummies `x(*)` | ❌ | Only for PARAMETER arrays | |
-| Automatic arrays `w(n)` | ⚠️ | Wrong results; see above | |
+| [Automatic arrays `w(n)`](language-support.md#runtime-allocation) | ✅ | Not CHARACTER or derived type | test_automatic_arrays.py |
 | [Array constructors and implied-DO](language-support.md#constructors) | ✅ | | test_array_constructors.py, test_runtime_constructors.py |
 | [Typed and empty constructors](language-support.md#constructors) | ✅ | | test_empty_constructors.py |
 | Sections with constant bounds | ✅ | | |
@@ -141,7 +136,7 @@ not unsupported features.
 | [CHARACTER functions](language-support.md#scalar-character-functions) | 🟡 | Assigning the result one character at a time fails at runtime | test_character_functions.py |
 | [String intrinsics](language-support.md#character-named-constant-substrings-and-string-intrinsics) | ✅ | `LEN`, `LEN_TRIM`, `TRIM`, `ADJUSTL`, `ADJUSTR`, `INDEX`, `SCAN`, `VERIFY`, `REPEAT`, `NEW_LINE` | test_character_intrinsics.py |
 | [Character codes](language-support.md#character-codes) | ✅ | `ACHAR`, `CHAR`, `IACHAR`, `ICHAR` | test_character_codes.py |
-| `LGE`, `LGT`, `LLE`, `LLT` | ⚠️ | Wrong results; see above | |
+| [`LGE`, `LGT`, `LLE`, `LLT`](language-support.md#integer-bit-intrinsics) | ✅ | | test_intrinsic_rewrites.py |
 
 ## Derived types
 
@@ -227,7 +222,7 @@ not unsupported features.
 | [Numeric inquiries](language-support.md#integer-and-real-inquiries) (`HUGE`, `TINY`, `EPSILON`, `DIGITS`, `PRECISION`, `RANGE`, ...) | ✅ | | test_integer_huge.py, test_numeric_model.py |
 | [Floating-point model](language-support.md#integer-and-real-inquiries) (`FRACTION`, `EXPONENT`, `SCALE`, `NEAREST`, `SPACING`, ...) | ✅ | | test_float_model.py |
 | [Bit intrinsics](language-support.md#integer-bit-intrinsics) (`BTEST`, `IAND`, `IOR`, `IEOR`, `NOT`, `IBSET`, `IBCLR`, `IBITS`, `ISHFT`) | ✅ | Scalars only | test_bit_intrinsics.py |
-| `ISHFTC` | ⚠️ | Wrong results; see above | |
+| [`ISHFTC`](language-support.md#integer-bit-intrinsics) | ✅ | Not in PARAMETER initializers | test_intrinsic_rewrites.py |
 | `POPCNT`, `LEADZ`, `TRAILZ`, `SHIFTL`, `MASKR`, `BIT_SIZE` | ❌ | | |
 | [Reductions](language-support.md#reductions) (`SUM`, `PRODUCT`, `MAXVAL`, `MINVAL`, `COUNT`, `ANY`, `ALL`) | ✅ | DIM must be constant | test_masked_reductions.py, test_dim_reductions.py |
 | [Locations](language-support.md#array-transformations-and-locations) (`MAXLOC`, `MINLOC`, `FINDLOC`) | ✅ | | test_locations.py |

@@ -316,8 +316,15 @@ returns LOGICAL; the other results retain the first argument's INTEGER kind.
 Bit positions start at zero. Invalid constant positions, field lengths, and
 shift counts are compile errors; dynamic values are checked at runtime.
 Zero-length fields and shifts by the full bit width are supported. Initialization
-checks apply to the input values. Whole-array calls, INTEGER kind 16, and
-`ISHFTC` are not yet supported; scalar array elements are supported.
+checks apply to the input values. Whole-array calls and INTEGER kind 16 are not
+yet supported; scalar array elements are supported.
+
+`ISHFTC(I, SHIFT[, SIZE])` rotates the rightmost SIZE bits of I (all of its bits
+by default) and is lowered to the operations above. It is not yet accepted in
+PARAMETER initializers. `LGE`, `LGT`, `LLE` and `LLT` compare CHARACTER values
+in ASCII order, the same as the relational operators for rfort's ASCII storage.
+A user procedure with one of these names keeps its own definition. Run
+`python tests/test_intrinsic_rewrites.py`.
 
 Run `python tests/test_bit_intrinsics.py` for interpreter/native O0/O2 checks
 with gfortran comparisons. `tests/125_bit_intrinsics.f90` is the local fixture.
@@ -899,6 +906,12 @@ this subset. Run `python tests/test_locations.py`.
 ## ALLOCATABLE arrays and pointers
 
 ### Runtime allocation
+
+Automatic arrays, procedure locals such as `real :: w(n)` or `integer :: a(0:n, m)`
+whose bounds depend on dummy arguments, are allocated on entry with the current
+bounds and released on return. Each recursive activation has its own array.
+Automatic CHARACTER and derived-type arrays are not yet supported. Run
+`python tests/test_automatic_arrays.py`.
 
 Numeric and LOGICAL allocatable locals and module variables now support heap
 allocation with runtime dimensions, including dimensions read from input or

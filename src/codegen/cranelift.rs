@@ -1082,6 +1082,7 @@ fn eval_expr(
                             }
                         }
                     } else {
+                        UNRESOLVED_CALLS.with(|calls| calls.borrow_mut().push(name.clone()));
                         CgVal::I64(b.ins().iconst(ir::types::I64, 0))
                     }
                 }
@@ -3407,8 +3408,29 @@ struct FuncMeta {
     double: bool,
 }
 
+thread_local! {
+    /// Calls that expression code generation could not resolve. Code generation
+    /// continues with a placeholder value so the error can name every call.
+    static UNRESOLVED_CALLS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 impl Backend for CraneliftBackend {
     fn compile(&self, module: &Module, tokens: Option<&[crate::lexer::Token]>) -> Result<Vec<u8>> {
+        UNRESOLVED_CALLS.with(|calls| calls.borrow_mut().clear());
+        let object = self.compile_module(module, tokens)?;
+        let mut calls = UNRESOLVED_CALLS.with(|calls| std::mem::take(&mut *calls.borrow_mut()));
+        calls.sort();
+        calls.dedup();
+        if !calls.is_empty() {
+            let names = calls.iter().map(|n| format!("`{n}`")).collect::<Vec<_>>().join(", ");
+            anyhow::bail!("unsupported intrinsic or undefined function {names}");
+        }
+        Ok(object)
+    }
+}
+
+impl CraneliftBackend {
+    fn compile_module(&self, module: &Module, tokens: Option<&[crate::lexer::Token]>) -> Result<Vec<u8>> {
         use crate::ast::TypeSpec;
         use cranelift_module::FuncId;
         use ir::{types, AbiParam};

@@ -342,6 +342,109 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
     Ok(program)
 }
 
+/// Automatic arrays such as `real :: w(n)` in procedures whose bounds depend
+/// on scalar dummies become ALLOCATABLE locals allocated on entry. Procedures
+/// with array, CHARACTER or POINTER dummies, and ELEMENTAL procedures, are
+/// specialized per call and allocate their automatic arrays in `automatic`.
+pub(crate) fn automatic_locals(mut program: Program) -> Result<Program> {
+    fn specialized(params: &[String], body: &[Stmt]) -> bool {
+        body.iter().any(|s| match s {
+            Stmt::ArrayDecl { name, .. } => params.contains(name),
+            Stmt::VarDecl { kind: TypeSpec::Character(_) | TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed, names } => {
+                names.iter().any(|n| params.contains(n))
+            }
+            Stmt::DummyIntent { name, intent } => intent == "pointer" && params.contains(name),
+            _ => false,
+        })
+    }
+    fn declaration(s: &Stmt) -> bool {
+        matches!(s, Stmt::GenericInterface { .. } | Stmt::OperatorInterface { .. } | Stmt::DerivedType { .. }
+            | Stmt::DerivedDecl { .. } | Stmt::Accessibility { .. } | Stmt::DummyIntent { .. } | Stmt::VarDecl { .. }
+            | Stmt::InitializedDecl { .. } | Stmt::ArrayDecl { .. } | Stmt::Use { .. } | Stmt::Implicit(_))
+    }
+    fn lower(params: &[String], result: &str, body: &mut Vec<Stmt>) {
+        let attributes: HashSet<&str> = body.iter().filter_map(|s| match s {
+            Stmt::DummyIntent { name, intent } if matches!(intent.as_str(), "allocatable" | "pointer" | "parameter" | "save" | "target" | "@heap") => Some(name.as_str()),
+            _ => None,
+        }).collect();
+        let mut automatic = vec![];
+        for s in body.iter() {
+            let Stmt::ArrayDecl { kind, name, dims } = s else { continue };
+            if params.contains(name) || name == result || name.starts_with('@') || attributes.contains(name.as_str())
+                || matches!(kind, TypeSpec::Character(_) | TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed)
+                || dims.iter().any(|d| matches!(d, Expr::Ident(n) if n == "@deferred_extent" || n == "@assumed_extent"))
+                || dims.iter().all(|d| crate::vector_subscripts::fixed_extent(d).is_some()) {
+                continue;
+            }
+            automatic.push((name.clone(), dims.clone()));
+        }
+        if automatic.is_empty() {
+            return;
+        }
+        let mut allocations = vec![];
+        for s in body.iter_mut() {
+            if let Stmt::ArrayDecl { name, dims, .. } = s {
+                if let Some((_, bounds)) = automatic.iter().find(|(n, _)| n == name) {
+                    *dims = vec![Expr::Ident("@deferred_extent".into()); bounds.len()];
+                }
+            }
+        }
+        for (name, bounds) in &automatic {
+            let subscripts = bounds.iter().map(|d| match d {
+                Expr::Call(tag, a) if tag == "@declared_bounds" => Expr::Call("@section_subscript".into(), vec![Expr::Section {
+                    name: name.clone(),
+                    lower: Some(Box::new(a[0].clone())),
+                    upper: Some(Box::new(a[1].clone())),
+                    stride: None,
+                }]),
+                d => d.clone(),
+            }).collect();
+            allocations.push(Stmt::CallSub { name: "@allocate".into(), args: vec![Expr::Call(name.clone(), subscripts)] });
+        }
+        // After the leading specification statements; source markers may be interleaved.
+        let mut at = 0;
+        for (i, s) in body.iter().enumerate() {
+            if declaration(s) {
+                at = i + 1;
+            } else if !matches!(s, Stmt::SourceLocation(_)) {
+                break;
+            }
+        }
+        let mut tail = body.split_off(at);
+        for (name, _) in &automatic {
+            body.push(Stmt::DummyIntent { name: name.clone(), intent: "allocatable".into() });
+        }
+        body.extend(allocations);
+        body.append(&mut tail);
+    }
+    fn visit(body: &mut Vec<Stmt>) {
+        for s in body.iter_mut() {
+            match s {
+                Stmt::Subroutine { elemental, params, body, .. } => {
+                    if !*elemental && !specialized(params, body) {
+                        lower(params, "", body);
+                    }
+                    visit(body);
+                }
+                Stmt::Function { elemental, name, params, body, .. } => {
+                    let result = match body.last() {
+                        Some(Stmt::Return(Some(Expr::Ident(n)))) => n.clone(),
+                        _ => name.clone(),
+                    };
+                    if !*elemental && !specialized(params, body) {
+                        lower(params, &result, body);
+                    }
+                    visit(body);
+                }
+                Stmt::Module { body, .. } => visit(body),
+                _ => {}
+            }
+        }
+    }
+    visit(&mut program.body);
+    Ok(program)
+}
+
 /// Allocate source locals after call-site bounds have been specialized.
 pub(crate) fn automatic(body:&mut Vec<Stmt>,shapes:&mut crate::allocatables::Shapes)->Result<()> {
     let dummies=body.iter().filter_map(|s|match s {Stmt::DummyIntent{name,intent} if intent.starts_with("intent(")=>Some(name.clone()),_=>None}).collect::<HashSet<_>>();
