@@ -242,6 +242,9 @@ pub enum TokenKind {
     // INTENT, OPTIONAL, POINTER, TARGET, ALLOCATABLE, EXTERNAL or INTRINSIC
     // beginning an attribute specification statement.
     AttrStatement(String),
+    // A whole procedure declaration: an unnamed or ABSTRACT interface block,
+    // or a PROCEDURE(interface) statement, encoded as `form|entities`.
+    ProcedureDeclaration(String),
     #[token("%")]
     Percent,
     #[token("=>")]
@@ -359,6 +362,8 @@ pub enum TokenKind {
     KwDefault,
     #[token("block", ignore(ascii_case))]
     KwBlock,
+    // Contextual: ASSOCIATE ( ... ) and END ASSOCIATE.
+    KwAssociate,
     #[token("exit", ignore(ascii_case))]
     KwExit,
     #[token("cycle", ignore(ascii_case))]
@@ -460,6 +465,148 @@ fn statement_head(tokens: &[Token], input: &str, index: usize) -> bool {
     index == 0 || !same_statement(&input[tokens[index-1].span.end..tokens[index].span.start])
         || matches!(tokens[index-1].kind, TokenKind::StatementLabel(_))
             && (index == 1 || !same_statement(&input[tokens[index-2].span.end..tokens[index-1].span.start]))
+}
+
+/// Collapse each unnamed or ABSTRACT interface block, and each
+/// `PROCEDURE(interface) [, attributes] :: names` statement, into a single
+/// ProcedureDeclaration token. Interface blocks are encoded as
+/// `interface|name=function,...` or `abstract|...`; procedure statements as
+/// `procedure(iface),attribute...|name,...` (initializers such as `=> null()`
+/// are dropped).
+fn procedure_declarations(tokens: &mut Vec<Token>, input: &str) {
+    fn word(token: Option<&Token>) -> Option<String> {
+        match token.map(|t| &t.kind) {
+            Some(TokenKind::Ident(n)) => Some(n.to_ascii_lowercase()),
+            _ => None,
+        }
+    }
+    let ends_statement = |tokens: &[Token], index: usize| {
+        tokens.get(index + 1).is_none_or(|t| !same_statement(&input[tokens[index].span.end..t.span.start]))
+    };
+    let mut out: Vec<Token> = Vec::with_capacity(tokens.len());
+    let mut index = 0;
+    while index < tokens.len() {
+        let head = statement_head(tokens, input, index);
+        let abstract_head = head && word(tokens.get(index)).as_deref() == Some("abstract")
+            && word(tokens.get(index + 1)).as_deref() == Some("interface")
+            && same_statement(&input[tokens[index].span.end..tokens[index + 1].span.start])
+            && ends_statement(tokens, index + 1);
+        let interface_head = head && (word(tokens.get(index)).as_deref() == Some("interface")
+            || matches!(tokens[index].kind, TokenKind::KwInterface)) && ends_statement(tokens, index);
+        if abstract_head || interface_head {
+            let mut depth = 1;
+            let mut entities = vec![];
+            let mut cursor = index + usize::from(abstract_head) + 1;
+            let mut closed = None;
+            while cursor < tokens.len() {
+                let at_head = statement_head(tokens, input, cursor);
+                match &tokens[cursor].kind {
+                    TokenKind::KwEnd if matches!(tokens.get(cursor + 1).map(|t| &t.kind), Some(TokenKind::KwInterface)) => {
+                        depth -= 1;
+                        if depth == 0 {
+                            let mut last = cursor + 1;
+                            if matches!(tokens.get(last + 1).map(|t| &t.kind), Some(TokenKind::EndInterfaceName(_))) { last += 1; }
+                            closed = Some(last);
+                            break;
+                        }
+                        cursor += 1;
+                    }
+                    TokenKind::Ident(n) if at_head && n.eq_ignore_ascii_case("interface") => depth += 1,
+                    TokenKind::KwInterface if at_head => depth += 1,
+                    kind @ (TokenKind::KwFunction | TokenKind::KwSubroutine) if depth == 1
+                        && !matches!(cursor.checked_sub(1).map(|i| &tokens[i].kind), Some(TokenKind::KwEnd)) => {
+                        if let Some(name) = word(tokens.get(cursor + 1)) {
+                            let form = if matches!(kind, TokenKind::KwFunction) { "function" } else { "subroutine" };
+                            entities.push(format!("{name}={form}"));
+                        }
+                    }
+                    _ => {}
+                }
+                cursor += 1;
+            }
+            if let Some(last) = closed {
+                let form = if abstract_head { "abstract" } else { "interface" };
+                out.push(Token {
+                    kind: TokenKind::ProcedureDeclaration(format!("{form}|{}", entities.join(","))),
+                    span: tokens[index].span.start..tokens[last].span.end,
+                });
+                index = last + 1;
+                continue;
+            }
+        }
+        if head && word(tokens.get(index)).as_deref() == Some("procedure")
+            && matches!(tokens.get(index + 1).map(|t| &t.kind), Some(TokenKind::LParen)) {
+            if let Some((declaration, last)) = procedure_statement(tokens, input, index) {
+                out.push(Token {
+                    kind: TokenKind::ProcedureDeclaration(declaration),
+                    span: tokens[index].span.start..tokens[last].span.end,
+                });
+                index = last + 1;
+                continue;
+            }
+        }
+        out.push(tokens[index].clone());
+        index += 1;
+    }
+    *tokens = out;
+}
+
+/// PROCEDURE ( [interface] ) { , attribute } :: entity [=> initializer] { , ... }
+fn procedure_statement(tokens: &[Token], input: &str, index: usize) -> Option<(String, usize)> {
+    let kind = |i: usize| tokens.get(i).map(|t| &t.kind);
+    let word = |i: usize| match kind(i) {
+        Some(TokenKind::Ident(n)) => Some(n.to_ascii_lowercase()),
+        _ => None,
+    };
+    let mut cursor = index + 2;
+    let interface = word(cursor).unwrap_or_default();
+    if !interface.is_empty() { cursor += 1; }
+    if !matches!(kind(cursor), Some(TokenKind::RParen)) { return None; }
+    cursor += 1;
+    let mut form = vec![format!("procedure({interface})")];
+    while matches!(kind(cursor), Some(TokenKind::Comma)) {
+        let mut attribute = word(cursor + 1)?;
+        cursor += 2;
+        if matches!(kind(cursor), Some(TokenKind::LParen)) {
+            // e.g. PASS(self) or INTENT(IN)
+            let start = cursor;
+            let mut depth = 0;
+            while cursor < tokens.len() {
+                match tokens[cursor].kind { TokenKind::LParen => depth += 1, TokenKind::RParen => depth -= 1, _ => {} }
+                cursor += 1;
+                if depth == 0 { break; }
+            }
+            attribute.push_str(&input[tokens[start].span.start..tokens[cursor - 1].span.end].to_ascii_lowercase().replace(' ', ""));
+        }
+        form.push(attribute);
+    }
+    if !matches!(kind(cursor), Some(TokenKind::DColon)) { return None; }
+    let mut names = vec![];
+    let mut last = cursor;
+    cursor += 1;
+    while cursor < tokens.len() && same_statement(&input[tokens[cursor - 1].span.end..tokens[cursor].span.start]) {
+        match &tokens[cursor].kind {
+            TokenKind::Ident(n) => names.push(n.to_ascii_lowercase()),
+            TokenKind::Comma => {}
+            TokenKind::Arrow => {
+                // Skip the initializer up to the next entity.
+                let mut depth = 0;
+                while cursor + 1 < tokens.len() && same_statement(&input[tokens[cursor].span.end..tokens[cursor + 1].span.start]) {
+                    match tokens[cursor + 1].kind {
+                        TokenKind::LParen => depth += 1,
+                        TokenKind::RParen => depth -= 1,
+                        TokenKind::Comma if depth == 0 => break,
+                        _ => {}
+                    }
+                    cursor += 1;
+                }
+            }
+            _ => return None,
+        }
+        last = cursor;
+        cursor += 1;
+    }
+    (!names.is_empty()).then(|| (format!("{}|{}", form.join(","), names.join(",")), last))
 }
 
 pub fn lex(input: &str) -> Vec<Token> {
@@ -638,6 +785,8 @@ pub fn lex(input: &str) -> Vec<Token> {
                 "procedure" if matches!(next,Some(TokenKind::DColon)) || matches!(previous,Some(TokenKind::KwModule)) => Some(TokenKind::KwProcedure),
                 "interface" if matches!(previous,Some(TokenKind::KwEnd)) || matches!(next,Some(TokenKind::Ident(_))) => Some(TokenKind::KwInterface),
                 "operator" if matches!(next,Some(TokenKind::LParen)) => Some(TokenKind::KwOperator),
+                "associate" if matches!(previous,Some(TokenKind::KwEnd))
+                    || matches!(next,Some(TokenKind::LParen)) && statement_head(&tokens,input,start) => Some(TokenKind::KwAssociate),
                 _=>None,
             };
             let replacement = if !matches!(replacement, Some(TokenKind::KwOperator)) && start >= 2 && matches!(tokens[start-1].kind, TokenKind::KwInterface)
@@ -811,6 +960,7 @@ pub fn lex(input: &str) -> Vec<Token> {
             tokens[index].kind = TokenKind::AttrStatement(word);
         }
     }
+    procedure_declarations(&mut tokens, input);
     // Distinct name tokens keep optional END DO names and named transfers from
     // consuming an identifier on the following logical statement.
     let mut named_index=0;

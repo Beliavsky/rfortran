@@ -70,7 +70,6 @@ end program main
         operations=[
             "print *,cshift(pack(a,mask),1)",
             "print *,spread(pack(a,mask),1,2)",
-            "print *,sum([pack(a,mask)])",
             "print *,sum(pack(a,mask),dim=1)",
             "print *,unpack(pack(a,mask),mask,0)",
             "print *,pack(a,mask,vector=pack(a,mask))",

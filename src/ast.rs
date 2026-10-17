@@ -359,11 +359,156 @@ pub fn attribute_statement(attr: &str, argument: Option<String>, names: Vec<Stri
             intent @ ("in" | "out" | "inout") => format!("intent({intent})"),
             _ => return Err("INTENT must be IN, OUT or INOUT"),
         },
-        ("external" | "intrinsic", None) => return Ok(vec![]),
+        ("external", None) => "external".to_string(),
+        ("intrinsic", None) => return Ok(vec![]),
         (attr @ ("optional" | "pointer" | "target" | "allocatable"), None) => attr.to_string(),
         _ => return Err("invalid attribute specification statement"),
     };
     Ok(names.into_iter().map(|name| Stmt::DummyIntent { name, intent: attribute.clone() }).collect())
+}
+
+/// ASSOCIATE (name => selector, ...) block: each associate name is replaced
+/// by its selector, giving the aliasing the standard requires for variable
+/// selectors. A selector whose value could change inside the block is
+/// rejected, because it would be re-evaluated at each use.
+pub fn associate(pairs: Vec<(String, Expr)>, mut body: Vec<Stmt>) -> Result<Stmt, &'static str> {
+    use crate::procedure_arguments::{children, expressions, visit_expr};
+    fn assigned(body: &mut [Stmt], out: &mut Vec<String>) {
+        for s in body.iter_mut() {
+            match s {
+                Stmt::Assign { name, .. } | Stmt::AssignIndex { name, .. } => out.push(name.clone()),
+                Stmt::Do { var, .. } => out.push(var.clone()),
+                Stmt::Read { args } => out.extend(args.iter().filter_map(|a| match a {
+                    Expr::Ident(n) | Expr::Call(n, _) => Some(n.clone()),
+                    _ => None,
+                })),
+                Stmt::CallSub { name, args } if !name.starts_with('@') => out.extend(args.iter().filter_map(|a| match a {
+                    Expr::Ident(n) => Some(n.clone()),
+                    _ => None,
+                })),
+                _ => {}
+            }
+            for b in children(s) {
+                assigned(b, out);
+            }
+        }
+    }
+    fn base(e: &Expr) -> Option<&str> {
+        match e {
+            Expr::Ident(n) | Expr::Call(n, _) | Expr::Index(n, _) | Expr::Section { name: n, .. } => Some(n),
+            _ => None,
+        }
+    }
+    let mut written = vec![];
+    assigned(&mut body, &mut written);
+    for (name, selector) in &pairs {
+        // Names in the selector other than the designated variable itself.
+        let mut used = vec![];
+        let mut copy = selector.clone();
+        let designated = base(selector).map(str::to_string);
+        if let Expr::Call(_, args) | Expr::Index(_, args) = &mut copy {
+            for a in args {
+                visit_expr(a, &mut |e| if let Expr::Ident(n) = e { used.push(n.clone()) });
+            }
+        } else if let Expr::Section { lower, upper, stride, .. } = &mut copy {
+            for e in [lower, upper, stride].into_iter().flatten() {
+                visit_expr(e, &mut |e| if let Expr::Ident(n) = e { used.push(n.clone()) });
+            }
+        } else if !matches!(copy, Expr::Ident(_)) {
+            visit_expr(&mut copy, &mut |e| if let Expr::Ident(n) = e { used.push(n.clone()) });
+        }
+        let variable = matches!(selector, Expr::Ident(_) | Expr::Section { .. })
+            || matches!(selector, Expr::Call(_, args) | Expr::Index(_, args) if !args.is_empty());
+        if used.iter().any(|n| written.contains(n))
+            || !variable && designated.as_ref().is_some_and(|d| written.contains(d))
+            || pairs.iter().any(|(other, _)| other != name && used.contains(other)) {
+            return Err("an ASSOCIATE selector that depends on a variable modified in the block is not yet supported");
+        }
+        substitute(&mut body, name, selector)?;
+    }
+    fn substitute(body: &mut [Stmt], name: &str, selector: &Expr) -> Result<(), &'static str> {
+        let prefix = format!("{name}%");
+        let whole = match selector { Expr::Ident(n) => Some(n.as_str()), _ => None };
+        for s in body.iter_mut() {
+            match s {
+                Stmt::Assign { name: n, value } if n == name => match selector {
+                    Expr::Ident(a) => *n = a.clone(),
+                    Expr::Call(a, idx) | Expr::Index(a, idx) => {
+                        *s = Stmt::AssignIndex { name: a.clone(), indices: idx.clone(), value: value.clone() };
+                    }
+                    Expr::Section { name: a, .. } => {
+                        *s = Stmt::AssignIndex { name: a.clone(), indices: vec![selector.clone()], value: value.clone() };
+                    }
+                    _ => return Err("an ASSOCIATE name whose selector is an expression cannot be assigned"),
+                },
+                Stmt::Assign { name: n, .. } | Stmt::AssignIndex { name: n, .. } | Stmt::CallSub { name: n, .. } if n.starts_with(&prefix) => {
+                    let Some(a) = whole else { return Err("components of an ASSOCIATE name require a variable selector") };
+                    *n = format!("{a}%{}", &n[prefix.len()..]);
+                }
+                Stmt::AssignIndex { name: n, .. } if n == name => {
+                    let Some(a) = whole else { return Err("subscripts of an ASSOCIATE name require a whole-array selector") };
+                    *n = a.into();
+                }
+                Stmt::Do { var, .. } if var == name => return Err("an ASSOCIATE name cannot be a DO variable"),
+                _ => {}
+            }
+            let mut error = Ok(());
+            for e in expressions(s) {
+                visit_expr(e, &mut |e| match e {
+                    Expr::Ident(n) if n == name => *e = selector.clone(),
+                    Expr::Ident(n) | Expr::Call(n, _) | Expr::Index(n, _) | Expr::Section { name: n, .. }
+                        if n == name || n.starts_with(&prefix) =>
+                    {
+                        match whole {
+                            Some(a) if n == name => *n = a.into(),
+                            Some(a) => *n = format!("{a}%{}", &n[prefix.len()..]),
+                            None => error = Err("subscripts or components of an ASSOCIATE name require a variable selector"),
+                        }
+                    }
+                    _ => {}
+                });
+            }
+            error?;
+            for b in children(s) {
+                substitute(b, name, selector)?;
+            }
+        }
+        Ok(())
+    }
+    Ok(Stmt::Block { body })
+}
+
+/// Declarations from a lexer ProcedureDeclaration token (`form|entities`).
+/// Interface bodies declare their procedures EXTERNAL and record whether each
+/// is a function; ABSTRACT interfaces record only that; PROCEDURE(iface)
+/// statements record the interface and POINTER/OPTIONAL attributes.
+pub fn procedure_declaration(encoded: &str) -> Vec<Stmt> {
+    let (form, entities) = encoded.split_once('|').unwrap_or((encoded, ""));
+    let mut out = vec![];
+    let entities = entities.split(',').filter(|e| !e.is_empty());
+    match form {
+        "interface" | "abstract" => {
+            for entity in entities {
+                let (name, kind) = entity.split_once('=').unwrap_or((entity, "function"));
+                if form == "interface" {
+                    out.push(Stmt::DummyIntent { name: name.into(), intent: "external".into() });
+                }
+                out.push(Stmt::DummyIntent { name: name.into(), intent: format!("@{form}:{kind}") });
+            }
+        }
+        _ => {
+            let mut attributes = form.split(',');
+            let interface = attributes.next().unwrap_or("procedure()").to_string();
+            let attributes: Vec<&str> = attributes.filter(|a| matches!(*a, "pointer" | "optional")).collect();
+            for name in entities {
+                out.push(Stmt::DummyIntent { name: name.into(), intent: interface.clone() });
+                for a in &attributes {
+                    out.push(Stmt::DummyIntent { name: name.into(), intent: (*a).into() });
+                }
+            }
+        }
+    }
+    out
 }
 
 // Preserve the already-resolved representation for ordinary literal lengths.

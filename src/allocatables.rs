@@ -402,6 +402,9 @@ fn logical_shape(
         }
         Expr::Un(_, a) => logical_shape(a, shapes, guards),
         Expr::Call(n, _) if matches!(n.as_str(),"size"|"shape"|"lbound"|"ubound"|"allocated"|"kind"|"@allocated_linear_element")=>Ok(None),
+        // Constructor items are concatenated, not conformed; the extent is
+        // their total, computed when the constructor is lowered.
+        Expr::Call(n, _) if n == "@array_constructor" => Ok(None),
         Expr::Call(n, args) if !shapes.contains_key(n) => {
             let mut result: Option<(Vec<Expr>, bool)> = None;
             for arg in args {

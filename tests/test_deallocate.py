@@ -165,9 +165,8 @@ end
 """, error="DEALLOCATE of unallocated CHARACTER `s`")
 
     def test_invalid_targets_and_options(self):
-        for target, message in (("", "at least one"), ("a(1)", "whole ALLOCATABLE"),
-                                ("a,stat=i", "STAT/ERRMSG"),
-                                ("a,errmsg=s", "STAT/ERRMSG")):
+        # STAT= and ERRMSG= are supported; tests/test_allocation_options.py covers them.
+        for target, message in (("", "at least one"), ("a(1)", "whole ALLOCATABLE")):
             with self.subTest(target=target):
                 self.reject("integer,allocatable::a(:)\ninteger::i\n"
                             "character(80)::s\nallocate(a(2))\n"

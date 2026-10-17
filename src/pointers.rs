@@ -753,14 +753,70 @@ impl Lower {
             args: vec![v.data.clone(), v.flags.clone(), offset, value],
         });
     }
-    fn associated(&mut self, e: &mut Expr, args: &[Expr]) -> Result<()> {
-        if let [Expr::Ident(p)] = args {
-            if let Some(p) = self.pointers.get(p) {
-                *e = bin(BinOp::Ne, id(&p.desc.state), int(0));
+    fn associated(&mut self, e: &mut Expr, args: &[Expr], out: &mut Vec<Stmt>) -> Result<()> {
+        let mut actuals = args.to_vec();
+        crate::named_arguments::Signature {
+            params: vec!["pointer".into(), "target".into()],
+            optional: HashSet::from(["target".into()]),
+        }
+        .reorder("associated", &mut actuals)?;
+        let Some(Expr::Ident(p)) = actuals.first() else {
+            bail!("ASSOCIATED requires a POINTER variable");
+        };
+        let Some(ptr) = self.pointers.get(p).cloned() else {
+            bail!("ASSOCIATED requires a POINTER variable");
+        };
+        let associated = bin(BinOp::Ne, id(&ptr.desc.state), int(0));
+        let target = actuals.get(1).filter(|t| !crate::named_arguments::omitted(t));
+        let Some(target) = target else {
+            *e = associated;
+            return Ok(());
+        };
+        // Associated with the same elements in the same order: equal storage,
+        // origin, extents and strides (lower bounds may differ). A zero-sized
+        // target is never associated.
+        let (data, origin, axes): (Expr, Expr, Vec<(Expr, Expr)>) = match target {
+            Expr::Ident(q) if self.pointers.contains_key(q) => {
+                let q = self.pointers[q].desc.clone();
+                let both = bin(BinOp::And, associated.clone(), bin(BinOp::Ne, id(&q.state), int(0)));
+                let mut cond = both;
+                for (a, b) in ptr.desc.axes.iter().zip(&q.axes) {
+                    cond = bin(BinOp::And, cond, bin(BinOp::Eq, a.extent.clone(), b.extent.clone()));
+                    cond = bin(BinOp::And, cond, bin(BinOp::Eq, a.stride.clone(), b.stride.clone()));
+                }
+                cond = bin(BinOp::And, cond, bin(BinOp::Eq, id(&ptr.desc.data), id(&q.data)));
+                cond = bin(BinOp::And, cond, bin(BinOp::Eq, id(&ptr.desc.origin), id(&q.origin)));
+                *e = cond;
                 return Ok(());
             }
+            _ => {
+                let v = self
+                    .view(target, true, out)?
+                    .context("ASSOCIATED TARGET must be a TARGET variable, array section or POINTER")?;
+                if v.axes.len() != ptr.desc.axes.len() {
+                    *e = Expr::Logical(false);
+                    return Ok(());
+                }
+                let data = self.integer(v.data, out);
+                let origin = self.integer(v.origin, out);
+                let axes = v.axes.into_iter().map(|a| (self.integer(a.extent, out), self.integer(a.stride, out))).collect();
+                (data, origin, axes)
+            }
+        };
+        let mut cond = bin(BinOp::And, associated, bin(BinOp::Eq, id(&ptr.desc.data), data));
+        cond = bin(BinOp::And, cond, bin(BinOp::Eq, id(&ptr.desc.origin), origin));
+        let mut nonempty = None;
+        for (axis, (extent, stride)) in ptr.desc.axes.iter().zip(axes) {
+            cond = bin(BinOp::And, cond, bin(BinOp::Eq, axis.extent.clone(), extent.clone()));
+            cond = bin(BinOp::And, cond, bin(BinOp::Eq, axis.stride.clone(), stride));
+            let positive = bin(BinOp::Gt, extent, int(0));
+            nonempty = Some(match nonempty { None => positive, Some(c) => bin(BinOp::And, c, positive) });
         }
-        bail!("ASSOCIATED currently requires one POINTER variable")
+        if let Some(nonempty) = nonempty {
+            cond = bin(BinOp::And, cond, nonempty);
+        }
+        *e = cond;
+        Ok(())
     }
     fn inquiry(&mut self, n: &str, args: &[Expr], out: &mut Vec<Stmt>) -> Result<Expr> {
         let signature = crate::named_arguments::Signature {
@@ -1118,7 +1174,7 @@ impl Lower {
             if !self.functions.contains(n) {
                 if n == "associated" {
                     let args = args.clone();
-                    return self.associated(e, &args);
+                    return self.associated(e, &args, out);
                 }
                 if args.iter().any(|e| self.has_pointer(e)) {
                     if matches!(n.as_str(), "size" | "shape" | "lbound" | "ubound") {

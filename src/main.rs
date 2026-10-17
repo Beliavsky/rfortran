@@ -65,6 +65,8 @@ mod record_input;
 mod list_input;
 mod character_input;
 mod derived;
+mod procedure_arguments;
+mod allocation_options;
 mod complex;
 mod derived_arrays;
 mod operators;

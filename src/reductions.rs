@@ -602,11 +602,41 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
                 if kind.as_ref().is_some_and(|k| !same_kind(k,&item_kind)) { bail!("array constructor items must have the same type and kind"); }
                 kind = Some(item_kind);
                 let len = len.unwrap_or(1);
-                if len < 0 { bail!("runtime PACK results in constructors are not yet supported"); }
-                count = count.checked_add(len).context("array constructor extent overflow")?;
+                if len >= 0 { count = count.checked_add(len).context("array constructor extent overflow")?; }
                 items.push((arg.clone(),len));
             }
             let kind = kind.context("empty untyped array constructor is not supported")?;
+            if items.iter().any(|(_,len)| *len < 0) {
+                // Runtime-sized items, e.g. `[a, x]` with an ALLOCATABLE `a`,
+                // fill a heap temporary at a running offset.
+                *serial += 1;
+                let temp = format!("@constructor_array_{serial}");
+                let index = format!("@constructor_index_{serial}");
+                let offset = format!("@constructor_offset_{serial}");
+                let total = format!("@constructor_length_{serial}");
+                let mut lengths = vec![];
+                for (arg,len) in &items {
+                    lengths.push(if *len >= 0 { int(*len) } else {
+                        runtime_extent(arg).context("runtime-sized array constructor items must be whole runtime-sized arrays")?
+                    });
+                }
+                prefix.push(Stmt::VarDecl { kind:TypeSpec::Integer(Some(8)), names:vec![total.clone()] });
+                prefix.push(Stmt::Assign { name:total.clone(), value:lengths.iter().cloned().reduce(|a,b| bin(BinOp::Add,a,b)).unwrap() });
+                crate::heap::temporary(kind.clone(), temp.clone(), Expr::Ident(total.clone()), prefix);
+                prefix.push(Stmt::VarDecl { kind:TypeSpec::Integer(None), names:vec![index.clone()] });
+                prefix.push(Stmt::VarDecl { kind:TypeSpec::Integer(Some(8)), names:vec![offset.clone()] });
+                prefix.push(Stmt::Assign { name:offset.clone(), value:int(0) });
+                for ((arg,_),length) in items.into_iter().zip(lengths) {
+                    let (value,_,_) = element(&arg,&Expr::Ident(index.clone()),symbols)?;
+                    prefix.push(Stmt::Do { var:index.clone(),start:int(1),end:length.clone(),body:vec![Stmt::AssignIndex {
+                        name:temp.clone(),indices:vec![bin(BinOp::Add,Expr::Ident(offset.clone()),Expr::Ident(index.clone()))],value,
+                    }] });
+                    prefix.push(Stmt::Assign { name:offset.clone(), value:bin(BinOp::Add,Expr::Ident(offset.clone()),length) });
+                }
+                symbols.insert(temp.clone(),(kind,vec![int(1)]));
+                *e = Expr::Call("@packed_view".into(),vec![Expr::Ident(temp),Expr::Ident(total)]);
+                return Ok(());
+            }
             *serial += 1;
             let temp = format!("@constructor_array_{serial}");
             let index = format!("@constructor_index_{serial}");

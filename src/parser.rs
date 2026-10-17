@@ -217,7 +217,7 @@ mod tests {
         let attributes:Vec<_>=body.iter().filter_map(|s|match s {
             Stmt::DummyIntent{name,intent} => Some((name.as_str(),intent.as_str())), _ => None,
         }).collect();
-        assert_eq!(attributes,[("a","intent(in)"),("b","intent(in)"),("c","intent(inout)"),("b","optional")]);
+        assert_eq!(attributes,[("f","external"),("a","intent(in)"),("b","intent(in)"),("c","intent(inout)"),("b","optional")]);
         // Variables and arrays with attribute names remain ordinary names.
         let tokens=crate::lexer::lex("integer :: target, pointer(2), intent\ntarget = 1\npointer(1) = 2\nintent = target");
         assert!(!tokens.iter().any(|t|matches!(t.kind,crate::lexer::TokenKind::AttrStatement(_))));
@@ -289,6 +289,8 @@ fn human_token(tok: &TokenKind) -> String {
         TokenKind::KwKind => "keyword kind".into(),
         TokenKind::KwOnly => "keyword only".into(),
         TokenKind::AttrStatement(word) => format!("keyword {word}"),
+        TokenKind::ProcedureDeclaration(_) => "procedure declaration".into(),
+        TokenKind::KwAssociate => "keyword associate".into(),
         TokenKind::EndInterfaceName(n) => format!("interface name {n}"),
         TokenKind::EndUnitName(n) => format!("unit name {n}"),
         TokenKind::BareEnd => "keyword end".into(),

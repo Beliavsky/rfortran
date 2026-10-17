@@ -21,16 +21,18 @@ struct Component {
     dims: Vec<Expr>,
     /// `allocatable` and/or `pointer`.
     attrs: Vec<String>,
+    /// The type of a derived-type component, stored as its own components.
+    derived: Option<String>,
 }
 impl Component {
     fn scalar(name: &str, kind: &TypeSpec, default: Option<Expr>) -> Self {
-        Self { name: name.into(), kind: kind.clone(), default, dims: vec![], attrs: vec![] }
+        Self { name: name.into(), kind: kind.clone(), default, dims: vec![], attrs: vec![], derived: None }
     }
     fn allocatable(&self) -> bool { self.attrs.iter().any(|a| a == "allocatable") }
     fn pointer(&self) -> bool { self.attrs.iter().any(|a| a == "pointer") }
     /// Plain scalar components are copied through temporaries, so constructor
     /// values may read the target object.
-    fn plain_scalar(&self) -> bool { self.dims.is_empty() && self.attrs.is_empty() }
+    fn plain_scalar(&self) -> bool { self.dims.is_empty() && self.attrs.is_empty() && self.derived.is_none() }
 }
 fn call(name: &str, args: Vec<Expr>) -> Stmt { Stmt::CallSub { name: name.into(), args } }
 fn test(name: &str, object: &str) -> Expr { Expr::Call(name.into(), vec![Expr::Ident(object.into())]) }
@@ -217,9 +219,23 @@ impl Lowerer {
                             Stmt::DummyIntent { intent, .. } => {
                                 bail!("{} components are not yet supported", intent.to_uppercase())
                             }
-                            Stmt::DerivedDecl { .. } => bail!(
-                                "derived-type components of derived type are not yet supported"
-                            ),
+                            Stmt::DerivedDecl { type_name, names, attributes, dims, .. } => {
+                                if !self.types.contains_key(type_name) {
+                                    bail!("component type `{type_name}` must be defined before type `{name}`");
+                                }
+                                if !dims.is_empty() {
+                                    bail!("array components of derived type are not yet supported");
+                                }
+                                if !attributes.is_empty() {
+                                    bail!("ALLOCATABLE or POINTER components of derived type are not yet supported");
+                                }
+                                for n in names {
+                                    fields.push(Component {
+                                        derived: Some(type_name.clone()),
+                                        ..Component::scalar(n, &TypeSpec::Integer(None), None)
+                                    });
+                                }
+                            }
                             _ => bail!(
                                 "derived types currently support intrinsic components only"
                             ),
@@ -231,6 +247,9 @@ impl Lowerer {
                         f.attrs.push(a);
                     }
                     for f in &fields {
+                        if f.derived.is_some() && !f.attrs.is_empty() {
+                            bail!("ALLOCATABLE or POINTER components of derived type are not yet supported");
+                        }
                         if f.allocatable() && f.dims.is_empty() {
                             bail!("ALLOCATABLE scalar component `{}` is not yet supported", f.name);
                         }
@@ -306,7 +325,7 @@ impl Lowerer {
                 }
                 for n in names {
                     objects.arrays.remove(n);
-                    objects.insert(n.clone(), type_name.clone());
+                    self.register(&mut objects, n, type_name);
                 }
             }
         }
@@ -356,13 +375,15 @@ impl Lowerer {
                                     .bindings
                                     .keys()
                                     .any(|b| used.contains(&format!("{p}%{b}")));
+                            let leaves = self.leaves(ty);
                             used_fields.insert(
                                 p.clone(),
-                                definition
-                                    .components
-                                    .iter()
-                                    .filter(|c| all || used.contains(&format!("{p}%{}", c.name)))
-                                    .map(|c| c.name.clone())
+                                leaves
+                                    .into_iter()
+                                    .filter(|leaf| {
+                                        all || leaf.match_indices('%').map(|(i, _)| &leaf[..i]).chain(std::iter::once(leaf.as_str()))
+                                            .any(|prefix| used.contains(&format!("{p}%{prefix}")))
+                                    })
                                     .collect(),
                             );
                         }
@@ -392,15 +413,31 @@ impl Lowerer {
         }
         Ok(())
     }
+    /// Component paths of a type down to non-derived storage, e.g. `p%x`.
+    fn leaves(&self, ty: &str) -> Vec<String> {
+        let mut out = vec![];
+        for c in &self.types[ty].components {
+            match &c.derived {
+                Some(sub) => out.extend(self.leaves(sub).into_iter().map(|l| format!("{}%{l}", c.name))),
+                None => out.push(c.name.clone()),
+            }
+        }
+        out
+    }
     fn field_names(&self, object: &str, ty: &str) -> Vec<String> {
-        self.types[ty]
-            .components
-            .iter()
-            .map(|c| format!("{object}%{}", c.name))
-            .collect()
+        self.leaves(ty).into_iter().map(|l| format!("{object}%{l}")).collect()
+    }
+    /// Record an object and each of its derived-type components as objects.
+    fn register(&self, objects: &mut Objects, name: &str, ty: &str) {
+        objects.insert(name.to_string(), ty.to_string());
+        for c in &self.types[ty].components {
+            if let Some(sub) = &c.derived {
+                self.register(objects, &format!("{name}%{}", c.name), sub);
+            }
+        }
     }
     fn component(&self, name: &str, objects: &Objects) -> Result<()> {
-        if let Some((object, field)) = name.split_once('%') {
+        if let Some((object, field)) = name.rsplit_once('%') {
             let ty = objects
                 .get(object)
                 .with_context(|| format!("`{object}` is not a declared derived object"))?;
@@ -411,7 +448,7 @@ impl Lowerer {
         Ok(())
     }
     fn bound_call(&self, name: &mut String, args: &mut Vec<Expr>, objects: &Objects) -> Result<()> {
-        if let Some((object, method)) = name.split_once('%') {
+        if let Some((object, method)) = name.rsplit_once('%') {
             let ty = objects
                 .get(object)
                 .with_context(|| format!("`{object}` is not a derived object"))?;
@@ -548,6 +585,10 @@ impl Lowerer {
         let intent = attrs.iter().find(|a| a.starts_with("intent("));
         for c in &self.types[ty].components {
             let field = format!("{name}%{}", c.name);
+            if let Some(sub) = &c.derived {
+                self.declare(&field, sub, attrs, dummy, out)?;
+                continue;
+            }
             for a in &c.attrs {
                 out.push(Stmt::DummyIntent { name: field.clone(), intent: a.clone() });
             }
@@ -614,10 +655,9 @@ impl Lowerer {
         let fields = self.types[ty].components.clone();
         let sources: Vec<Source> =
             match value {
-                Expr::Ident(n) if objects.get(&n).is_some_and(|t| t == ty) => self
-                    .field_names(&n, ty)
-                    .into_iter()
-                    .map(Source::Copy)
+                Expr::Ident(n) if objects.get(&n).is_some_and(|t| t == ty) => fields
+                    .iter()
+                    .map(|f| Source::Copy(format!("{n}%{}", f.name)))
                     .collect(),
                 Expr::Call(n, args) if n == ty => {
                     if args.len() > fields.len() {
@@ -642,6 +682,20 @@ impl Lowerer {
         let mut arrays = vec![];
         for (field, source) in fields.iter().zip(sources) {
             let to = format!("{target}%{}", field.name);
+            if let Some(sub) = &field.derived {
+                let value = match source {
+                    Source::Copy(n) => Expr::Ident(n),
+                    Source::Value(v) => v,
+                    Source::Absent => bail!("missing constructor component `{}`", field.name),
+                };
+                if matches!(&value, Expr::Ident(n) if *n == to) {
+                    continue;
+                }
+                let mut nested = vec![];
+                self.assign(&to, sub, value, objects, &mut nested)?;
+                arrays.extend(nested);
+                continue;
+            }
             let mut value = match source {
                 Source::Copy(n) if n == to => continue,
                 Source::Copy(n) if !field.plain_scalar() => {
@@ -953,10 +1007,14 @@ impl Lowerer {
         Ok(())
     }
 }
-pub fn resolve(mut program: Program) -> Result<Program> {
+pub fn resolve(program: Program) -> Result<Program> {
+    crate::allocation_options::resolve(resolve_types(program)?)
+}
+fn resolve_types(mut program: Program) -> Result<Program> {
     crate::parameters::resolve_intrinsic_modules(&mut program)?;
     crate::imports::validate(&program)?;
     program=crate::modules::associate(program)?;
+    program = crate::procedure_arguments::resolve(program)?;
     crate::elemental::validate_program(&program)?;
     crate::imports::validate(&program)?;
     program = crate::named_arguments::resolve(program, false)?;

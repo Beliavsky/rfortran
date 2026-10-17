@@ -1102,15 +1102,23 @@ fn is_character_output(e: &IExpr, chars: &HashMap<String, (Storage, usize)>) -> 
 }
 
 fn double_expression(e: &IExpr, real_kind: &HashMap<String, bool>) -> bool {
+    double_value(e, real_kind, &HashMap::new())
+}
+
+/// Whether a REAL expression has DOUBLE PRECISION, including user function
+/// results and double-precision literals.
+fn double_value(e: &IExpr, real_kind: &HashMap<String, bool>, func_meta: &HashMap<String, FuncMeta>) -> bool {
     match e {
         IExpr::Ident(name) => *real_kind.get(name).unwrap_or(&false),
+        IExpr::RealLit(text) => text.contains(['d', 'D']),
         IExpr::Call(name, args) => {
+            if let Some(meta) = func_meta.get(name) { return meta.double; }
             if name.eq_ignore_ascii_case("dble") { return true; }
             if name.eq_ignore_ascii_case("real") { return false; }
-            args.first().is_some_and(|arg| double_expression(arg, real_kind))
+            args.first().is_some_and(|arg| double_value(arg, real_kind, func_meta))
         }
-        IExpr::Bin(_, a, b) => double_expression(a, real_kind) || double_expression(b, real_kind),
-        IExpr::Un(_, a) => double_expression(a, real_kind),
+        IExpr::Bin(_, a, b) => double_value(a, real_kind, func_meta) || double_value(b, real_kind, func_meta),
+        IExpr::Un(_, a) => double_value(a, real_kind, func_meta),
         _ => false,
     }
 }
@@ -1371,69 +1379,11 @@ fn print_expr(
                 return Ok(());
             }
             let val = eval_expr(b, ex, ptr_ty, e, ints, reals, bools, func_meta);
-            match val {
-                CgVal::I64(x) => {
-                    let p = int_to_str(b, ex, ptr_ty, ex.sprintf, x);
-                    ex.call_printf(b, &[ex.fmt_s, p]);
-                }
-                CgVal::F64(x) => {
-                    let (trunc,is_int) = print_integer_candidate(b,x);
-                    let buf_int = b.create_sized_stack_slot(ir::StackSlotData::new(
-                        ir::StackSlotKind::ExplicitSlot,
-                        64,
-                        0,
-                    ));
-                    let p_int = b.ins().stack_addr(ptr_ty, buf_int, 0);
-                    ex.call_sprintf(b, &[p_int, ex.fmt_i64_dot0, trunc]);
-                    let buf_f = b.create_sized_stack_slot(ir::StackSlotData::new(
-                        ir::StackSlotKind::ExplicitSlot,
-                        64,
-                        0,
-                    ));
-                    let p_f = b.ins().stack_addr(ptr_ty, buf_f, 0);
-                    let nd = b.ins().iconst(types::I32, 6);
-                    ex.call_gcvt(b, &[x, nd, p_f]);
-                    let p_sel = b.ins().select(is_int, p_int, p_f);
-                    ex.call_printf(b, &[ex.fmt_s, p_sel]);
-                }
-                CgVal::Bool(b1) => {
-                    let sel = b.ins().select(b1, ex.p_true, ex.p_false);
-                    ex.call_printf(b, &[ex.fmt_s, sel]);
-                }
-            }
+            print_numeric_value(b, ex, ptr_ty, val, double_value(e, real_kind, func_meta));
         }
         IExpr::Un(_, _) => {
             let val = eval_expr(b, ex, ptr_ty, e, ints, reals, bools, func_meta);
-            match val {
-                CgVal::I64(x) => {
-                    let p = int_to_str(b, ex, ptr_ty, ex.sprintf, x);
-                    ex.call_printf(b, &[ex.fmt_s, p]);
-                }
-                CgVal::F64(x) => {
-                    let (trunc,is_int) = print_integer_candidate(b,x);
-                    let buf_int = b.create_sized_stack_slot(ir::StackSlotData::new(
-                        ir::StackSlotKind::ExplicitSlot,
-                        64,
-                        0,
-                    ));
-                    let p_int = b.ins().stack_addr(ptr_ty, buf_int, 0);
-                    ex.call_sprintf(b, &[p_int, ex.fmt_i64_dot0, trunc]);
-                    let buf_f = b.create_sized_stack_slot(ir::StackSlotData::new(
-                        ir::StackSlotKind::ExplicitSlot,
-                        64,
-                        0,
-                    ));
-                    let p_f = b.ins().stack_addr(ptr_ty, buf_f, 0);
-                    let nd = b.ins().iconst(types::I32, 6);
-                    ex.call_gcvt(b, &[x, nd, p_f]);
-                    let p_sel = b.ins().select(is_int, p_int, p_f);
-                    ex.call_printf(b, &[ex.fmt_s, p_sel]);
-                }
-                CgVal::Bool(b1) => {
-                    let sel = b.ins().select(b1, ex.p_true, ex.p_false);
-                    ex.call_printf(b, &[ex.fmt_s, sel]);
-                }
-            }
+            print_numeric_value(b, ex, ptr_ty, val, double_value(e, real_kind, func_meta));
         }
         IExpr::Call(name, args) => {
             let lname = name.to_ascii_lowercase();
@@ -1849,7 +1799,7 @@ fn print_expr(
                                 0,
                             ));
                             let p_f = b.ins().stack_addr(ptr_ty, buf_f, 0);
-                            let nd = b.ins().iconst(ir::types::I32, 6);
+                            let nd = b.ins().iconst(ir::types::I32, if meta.double { 15 } else { 6 });
                             ex.call_gcvt(b, &[x, nd, p_f]);
                             let p_sel = b.ins().select(is_int, p_int, p_f);
                             ex.call_printf(b, &[ex.fmt_s, p_sel]);
@@ -3453,6 +3403,8 @@ struct FuncMeta {
     fref: ir::FuncRef,
     ret: RetKind,
     param_kinds: Vec<ParamKind>,
+    /// A REAL result is DOUBLE PRECISION (for list-directed output).
+    double: bool,
 }
 
 impl Backend for CraneliftBackend {
@@ -3852,6 +3804,7 @@ impl Backend for CraneliftBackend {
                             fref: fr,
                             ret: rk,
                             param_kinds: pkv,
+                            double: matches!(eff_ret.get(name), Some(crate::ast::TypeSpec::DoublePrecision)),
                         },
                     );
                 }
@@ -4037,6 +3990,7 @@ impl Backend for CraneliftBackend {
                             fref: fr,
                             ret: rk,
                             param_kinds: pkv,
+                            double: matches!(eff_ret.get(name), Some(crate::ast::TypeSpec::DoublePrecision)),
                         },
                     );
                 }

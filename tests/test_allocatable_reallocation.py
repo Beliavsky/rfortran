@@ -107,6 +107,63 @@ call s([5])
 end program
 """, "3 2 4 6\n2 1 2\n2 2 3\n1 10\n1 10\n1 5\n")
 
+    def test_append_with_runtime_constructors(self):
+        self.check("""program t
+implicit none
+integer, allocatable :: a(:), b(:)
+integer :: i
+a = [1, 2]
+a = [a, 3]
+print *, size(a), a
+do i = 4, 6
+  a = [a, i]
+end do
+print *, size(a), a
+b = [0, a, a(1:2)]
+print *, size(b), b
+end program
+""", '3 1 2 3\n6 1 2 3 4 5 6\n9 0 1 2 3 4 5 6 1 2\n')
+
+    def test_append_to_allocatable_dummy(self):
+        self.check("""module stack
+implicit none
+contains
+subroutine push(v, x)
+  real(8), allocatable, intent(inout) :: v(:)
+  real(8), intent(in) :: x
+  if (.not. allocated(v)) then
+    v = [x]
+  else
+    v = [v, x]
+  end if
+end subroutine push
+end module stack
+program ap2
+use stack
+implicit none
+real(8), allocatable :: v(:)
+integer :: i
+do i = 1, 5
+  call push(v, 0.5d0*i)
+end do
+print *, size(v), v
+end program ap2
+""", '5 0.5 1.0 1.5 2.0 2.5\n')
+
+    def test_constructors_with_runtime_pack(self):
+        self.check("""program main
+implicit none
+integer :: a(3)
+logical :: mask(3)
+integer, allocatable :: b(:)
+a = [1, 2, 3]
+mask = [.true., .false., .true.]
+print *, sum([pack(a, mask)]), sum([0, pack(a, mask), 10])
+b = [pack(a, mask), a]
+print *, size(b), b
+end program
+""", '4 14\n5 1 3 1 2 3\n')
+
 
 if __name__ == "__main__":
     unittest.main()

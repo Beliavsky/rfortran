@@ -1306,12 +1306,47 @@ POINTER association. Derived arguments, INTENT(OUT) dummies and derived function
 results carry these components. A constructor value for an ALLOCATABLE component
 is assigned with the reallocation rules below; `null()` or an omitted ALLOCATABLE
 or POINTER component becomes unallocated or disassociated.
-Nested derived-type components, ALLOCATABLE scalar components (including
-deferred-length CHARACTER), arrays of derived types with such components and
-functions with ALLOCATABLE array dummies remain unsupported, and an ALLOCATABLE
-component, like any ALLOCATABLE array, must be allocated (by ALLOCATE or by
-assignment) somewhere before it is referenced. Run
-`python tests/test_derived_array_components.py`.
+A component may itself have a derived type (`type(point) :: a`); `s%a%x`,
+whole nested values such as `s%a = point(1, 2)`, nested constructors and passing
+`s%a` to a `type(point)` dummy work as for top-level objects. Arrays of derived
+type as components, ALLOCATABLE or POINTER components of derived type,
+ALLOCATABLE scalar components (including deferred-length CHARACTER), arrays of
+derived types with non-scalar components and functions with ALLOCATABLE array
+dummies remain unsupported, and an ALLOCATABLE component, like any ALLOCATABLE
+array, must be allocated (by ALLOCATE or by assignment) somewhere before it is
+referenced. Run `python tests/test_derived_array_components.py`.
+
+Dummy procedures can be declared EXTERNAL (including `real(8), external :: f`),
+in an interface block, with `procedure(iface)` naming an ABSTRACT interface or
+another procedure, or simply by being invoked. Each call passing procedure names
+is redirected at compile time to a copy of the callee with the dummies replaced
+by those procedures, so calls through dummies are direct calls. Module,
+internal and external procedures can be passed, a dummy procedure can be
+forwarded to another procedure, and keyword actuals work. Procedure pointers
+declared with `procedure(iface), pointer` become an integer tag: `p => f`,
+`nullify(p)`, `associated(p)` and `associated(p, f)` update or test it, and calls
+through `p` dispatch on it to the procedures ever associated with `p` in its
+scope. Procedure pointer components, procedure pointers passed as actual
+arguments or used as dummies, OPTIONAL dummy procedures and passing intrinsic
+procedures are not yet supported. A module containing a procedure with dummy
+procedures must be compiled with its callers, since the copies are made per
+call. Run `python tests/test_procedure_arguments.py`.
+
+`call move_alloc(from, to)` moves an ALLOCATABLE array, including components,
+by copying it and deallocating `from`, so pointers into `from` are not carried
+over. ALLOCATE accepts `source=` and `mold=` (taking the bounds of an array
+source or mold, or the given bounds), and ALLOCATE and DEALLOCATE accept
+`stat=` and `errmsg=`, which report allocating an allocated array or
+deallocating an unallocated one instead of stopping. Run
+`python tests/test_allocation_options.py`.
+
+ASSOCIATE replaces each associate name by its selector inside the block, so a
+variable, element, section or component selector is updated through the name.
+A selector whose value could change inside the block, such as `a(i)` when the
+block assigns `i`, is rejected because it would be re-evaluated. ASSOCIATED
+also accepts a TARGET (a TARGET variable, section or POINTER) and is true when
+the pointer is associated with the same elements in the same order. Run
+`python tests/test_associate.py`.
 
 Intrinsic assignment of an array value to a whole heap-backed numeric or LOGICAL
 ALLOCATABLE array allocates it when unallocated and reallocates it when the
@@ -1321,10 +1356,10 @@ conforms keeps its bounds. The right-hand side is captured first, so it may
 refer to the target. Rank-one targets accept any array expression. Targets of
 rank two or more reallocate from whole arrays and sections; other
 multidimensional expressions still require a conforming allocated target.
-Scalar assignment never allocates. CHARACTER arrays, rank-one ALLOCATEd locals
-of procedures with array dummies (which use bounded call-site storage), and
-array constructors containing runtime-sized arrays such as `[a, x]` are not yet
-reallocated. Run
+Scalar assignment never allocates. Array constructors may contain whole
+runtime-sized arrays and sections, so `a = [a, x]` appends. CHARACTER arrays and
+rank-one ALLOCATEd locals of procedures with array dummies (which use bounded
+call-site storage) are not yet reallocated. Run
 `python tests/test_allocatable_reallocation.py`.
 
 Local OPTIONAL functions and subroutines can be specialized for positional and
@@ -1763,7 +1798,7 @@ existing intrinsic keyword support remains available.
 
 Unknown keywords, duplicate arguments, positional arguments after keywords and
 missing required arguments are compile errors. Named procedure calls currently
-require a known definition in the source group; external interface-only declarations and procedure pointers
+require a known definition in the source group; external interface-only declarations
 remain unsupported. Run `python tests/test_named_arguments.py`.
 
 ## Module data and procedure association

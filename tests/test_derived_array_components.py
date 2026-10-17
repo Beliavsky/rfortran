@@ -139,7 +139,7 @@ end program
 
     def test_unsupported_component_forms_are_diagnosed(self):
         for declaration, message in [
-            ("type(other) :: inner", "derived-type components of derived type"),
+            ("type(other) :: inner(2)", "array components of derived type"),
             ("character(len=:), allocatable :: s", "ALLOCATABLE scalar component"),
         ]:
             self.reject(f"""program main
@@ -169,6 +169,62 @@ x = t(x%v(1:2) + 1)
 print *, size(x%v), x%v
 end program
 """, "3 6.0 6.0 6.0\n2 7.0 7.0\n")
+
+    def test_nested_derived_components(self):
+        self.check("""module geo
+implicit none
+type :: point
+  real(8) :: x = 0d0, y = 0d0
+end type point
+type :: segment
+  type(point) :: a, b
+  integer :: id = 0
+end type segment
+type :: path
+  type(segment) :: first
+  real(8) :: w(2) = 1d0
+  integer, allocatable :: tags(:)
+end type path
+contains
+real(8) function length(s)
+  type(segment), intent(in) :: s
+  length = sqrt((s%b%x - s%a%x)**2 + (s%b%y - s%a%y)**2)
+end function length
+subroutine shift(p, dx)
+  type(point), intent(inout) :: p
+  real(8), intent(in) :: dx
+  p%x = p%x + dx
+end subroutine shift
+function mid(s) result(m)
+  type(segment), intent(in) :: s
+  type(point) :: m
+  m = point(0.5d0*(s%a%x + s%b%x), 0.5d0*(s%a%y + s%b%y))
+end function mid
+end module geo
+program nd
+use geo
+implicit none
+type(segment) :: s, t
+type(point) :: q
+type(path) :: pth, pth2
+s%a = point(0d0, 0d0)
+s%b%x = 3d0
+s%b%y = 4d0
+s%id = 7
+print *, s%a%x, s%b%y, s%id, length(s)
+t = s
+call shift(t%a, 1d0)
+print *, t%a%x, s%a%x, length(t)
+q = mid(s)
+print *, q%x, q%y
+t = segment(point(1d0, 1d0), q, 9)
+print *, t%a%x, t%b%x, t%b%y, t%id
+pth%first = s
+pth%tags = [1, 2, 3]
+pth2 = pth
+print *, pth2%first%b%x, pth2%w, size(pth2%tags), pth2%tags
+end program nd
+""", '0.0 4.0 7 5.0\n1.0 0.0 4.47213595499958\n1.5 2.0\n1.0 1.5 2.0 9\n3.0 1.0 1.0 3 1 2 3\n')
 
 
 if __name__ == "__main__":

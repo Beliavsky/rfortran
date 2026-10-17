@@ -148,6 +148,7 @@ pub(crate) fn intrinsic(name: &str) -> Option<Signature> {
         "lge" | "lgt" | "lle" | "llt" => &["string_a", "string_b"],
         "tiny" | "huge" => &["x"],
         "allocated" => &["array"],
+        "associated" => &["pointer", "target"],
         "present" => &["a"],
         "selected_int_kind" => &["r"],
         "selected_real_kind" => &["p", "r", "radix"],
@@ -157,7 +158,7 @@ pub(crate) fn intrinsic(name: &str) -> Option<Signature> {
     };
     Some(Signature {
         params: keys.iter().map(|s| (*s).into()).collect(),
-        optional: if name=="cmplx" {HashSet::from(["y".into(),"kind".into()])}else if matches!(name,"index"|"scan"|"verify") {
+        optional: if name=="cmplx" {HashSet::from(["y".into(),"kind".into()])}else if name=="associated" {HashSet::from(["target".into()])}else if matches!(name,"index"|"scan"|"verify") {
             HashSet::from(["back".into(),"kind".into()])
         } else if name=="get_command_argument" {HashSet::from(["value".into(),"length".into(),"status".into()])
         } else if name=="getcwd" {HashSet::from(["status".into()])

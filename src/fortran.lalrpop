@@ -15,6 +15,7 @@ extern {
         KW_KIND => TokenKind::KwKind,
         KW_ONLY => TokenKind::KwOnly,
         ATTR_STMT => TokenKind::AttrStatement(<String>),
+        PROC_DECL => TokenKind::ProcedureDeclaration(<String>),
         END_INTERFACE_NAME => TokenKind::EndInterfaceName(<String>),
         END_UNIT_NAME => TokenKind::EndUnitName(<String>),
         BARE_END => TokenKind::BareEnd,
@@ -116,6 +117,7 @@ extern {
         KW_CASE => TokenKind::KwCase,
         KW_DEFAULT => TokenKind::KwDefault,
         KW_BLOCK => TokenKind::KwBlock,
+        KW_ASSOCIATE => TokenKind::KwAssociate,
         KW_EXIT => TokenKind::KwExit,
         KW_CYCLE => TokenKind::KwCycle,
         KW_STOP => TokenKind::KwStop,
@@ -251,6 +253,11 @@ ProgramEnd: () = {
 };
 
 Ident: String = { <s:ID> => s };
+
+AssociationList: Vec<(String, Expr)> = {
+    <n:Ident> ARROW <e:RhsExpr> => vec![(n, e)],
+    <mut v:AssociationList> COMMA <n:Ident> ARROW <e:RhsExpr> => { v.push((n, e)); v },
+};
 
 ComponentName: String = { <n:Ident> => n, KW_PRINT => "print".into() };
 Designator: String = {
@@ -458,6 +465,8 @@ Stmt: Stmt = {
         Stmt::SelectCase { expr: e, cases: blocks, default }
     },
     KW_BLOCK <body: Stmts> KW_END KW_BLOCK => Stmt::Block { body },
+    KW_ASSOCIATE LPAREN <pairs: AssociationList> RPAREN <body: Stmts> KW_END KW_ASSOCIATE =>?
+        crate::ast::associate(pairs, body).map_err(|error| lalrpop_util::ParseError::User { error }),
     <name:NAMED_EXIT> => Stmt::CallSub {name:"@named_exit".into(),args:vec![Expr::Str(name)]},
     <name:NAMED_CYCLE> => Stmt::CallSub {name:"@named_cycle".into(),args:vec![Expr::Str(name)]},
     KW_EXIT => Stmt::Exit,
@@ -791,6 +800,7 @@ PreFuncDeclData: Vec<Stmt> = {
         if let Some(value)=value {out.push(Stmt::Assign{name,value});}
         out.extend(association);out
     }).collect(),
+    <declaration:PROC_DECL> => crate::ast::procedure_declaration(&declaration),
     <attr:ATTR_STMT> DCOLON? <names:IdentList> =>? crate::ast::attribute_statement(&attr, None, names)
         .map_err(|error| lalrpop_util::ParseError::User { error }),
     <attr:ATTR_STMT> LPAREN <intent:Ident> RPAREN DCOLON? <names:IdentList> =>? crate::ast::attribute_statement(&attr, Some(intent), names)
@@ -813,7 +823,7 @@ PreFuncDeclData: Vec<Stmt> = {
                 if matches!(attr.to_ascii_lowercase().as_str(), "public" | "private") {
                     declarations.push(Stmt::Accessibility {public: attr.eq_ignore_ascii_case("public"), names:vec![name.clone()]});
                 }
-                if attr.to_ascii_lowercase().starts_with("intent(") || matches!(attr.to_ascii_lowercase().as_str(), "optional" | "allocatable" | "parameter" | "pointer" | "target") {
+                if attr.to_ascii_lowercase().starts_with("intent(") || matches!(attr.to_ascii_lowercase().as_str(), "optional" | "allocatable" | "parameter" | "pointer" | "target" | "external") {
                     declarations.push(Stmt::DummyIntent { name: name.clone(), intent: attr.to_ascii_lowercase() });
                 }
             }
