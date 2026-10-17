@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Write, compile, and run Fortran with the experimental rfort compiler.">
+  <title>rfortran playground</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.mjs"></script>
+</head>
+<body>
+  <header>
+    <a class="brand" href="./"><span class="mark">rf</span><span>rfortran <small>playground</small></span></a>
+    <a class="repository" href="https://github.com/Beliavsky/rfortran" target="_blank" rel="noreferrer">View on GitHub ↗</a>
+  </header>
+  <main>
+    <div class="intro"><div><p class="eyebrow">FORTRAN, RIGHT HERE</p><h1>A small place to try big ideas.</h1><p>Write Fortran. Compile with rfort. See what happens.</p></div><span class="badge">Experimental compiler</span></div>
+    <section class="workspace" aria-label="Fortran playground">
+      <div class="toolbar">
+        <label>Example <select id="examples" aria-label="Load an example"></select></label>
+        <div class="options"><label>Optimization <select id="optimization"><option value="0">-O0</option><option value="2">-O2</option></select></label><label class="check"><input id="warnings" type="checkbox"> All warnings</label></div>
+        <button id="compile" class="secondary" disabled>Compile</button><button id="run" class="primary" disabled>▶ Compile &amp; run</button>
+      </div>
+      <div class="panes">
+        <div class="source-pane">
+          <div class="filebar"><div id="files" role="tablist" aria-label="Source files"></div><button id="add" class="icon" aria-label="Add source file" title="Add source file">+</button></div>
+          <div class="file-tools"><span id="order-note">Compile order: left to right · main program last</span><div><button id="earlier" class="text-button" title="Move file earlier">←</button><button id="later" class="text-button" title="Move file later">→</button><button id="rename" class="text-button">Rename</button><button id="remove" class="text-button">Remove</button></div></div>
+          <div class="editor-wrap"><pre id="lines" aria-hidden="true">1</pre><textarea id="source" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Fortran source code" wrap="off"></textarea></div>
+          <div class="editor-footer"><span id="position">Line 1, column 1</span><span>Ctrl / ⌘ + Enter to run</span></div>
+        </div>
+        <div class="result-pane">
+          <div class="output-heading"><h2>Output</h2><span id="status" role="status">Connecting…</span></div>
+          <pre id="output" aria-label="Compiler and program output" tabindex="0">Your program’s output will appear here.</pre>
+          <div id="diagnostics" aria-label="Diagnostic locations"></div>
+          <label class="stdin-label" for="stdin">Standard input <span>Sent to the program when it runs</span></label>
+          <textarea id="stdin" placeholder="Input for READ statements…" spellcheck="false"></textarea>
+        </div>
+      </div>
+      <div class="servicebar"><span><span id="connection-dot" class="dot"></span><span id="connection">Looking for rfort</span></span><button id="settings" class="text-button">Service connection</button></div>
+    </section>
+    <p class="footnote">Drafts stay in this browser. Source and input are sent to the execution service when you compile. Runs are limited to 3 seconds.</p>
+  </main>
+  <dialog id="service-dialog"><form id="service-form"><h2>Execution service</h2><p>Connect to an rfort playground service. Leave blank to use this site’s configured service.</p><label>Service URL<input id="service-url" type="url" placeholder="https://rfort.example.org"></label><p id="service-error" role="alert"></p><div class="dialog-actions"><button id="close-settings" type="button" class="secondary">Cancel</button><button type="submit" class="primary">Connect</button></div></form></dialog>
+</body>
+</html>

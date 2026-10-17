@@ -1,0 +1,24 @@
+[Unit]
+Description=rfort playground execution gateway
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=rfort-playground
+Group=rfort-playground
+SupplementaryGroups=docker
+WorkingDirectory=/opt/rfort-playground
+EnvironmentFile=/opt/rfort-playground/image.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 /opt/rfort-playground/server.py --image ${RFORT_PLAYGROUND_IMAGE} --origin https://beliavsky.github.io
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/rfort-playground
+
+[Install]
+WantedBy=multi-user.target

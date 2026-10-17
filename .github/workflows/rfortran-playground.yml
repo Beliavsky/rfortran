@@ -1,0 +1,116 @@
+name: rfortran playground
+
+on:
+  push:
+  pull_request:
+    paths: ['playground/**', 'playground-service/**', '.github/workflows/rfortran-playground.yml', 'src/**', 'Cargo.toml', 'build.rs']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: playground-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python -m unittest discover -s playground-service/tests -v
+      - run: node --test playground/tests/model.test.mjs
+
+  image:
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.name.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: name
+        shell: bash
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}-playground" >> "$GITHUB_OUTPUT"
+      - name: Build sandbox
+        env:
+          IMAGE: ${{ steps.name.outputs.image }}
+        run: docker build -f playground-service/Dockerfile --build-arg RFORT_COMMIT="$GITHUB_SHA" -t "$IMAGE:$GITHUB_SHA" .
+      - name: Check Linux compiler inside sandbox
+        env:
+          IMAGE: ${{ steps.name.outputs.image }}
+        run: python3 playground-service/smoke.py "$IMAGE:$GITHUB_SHA"
+      - name: Publish tested image
+        if: github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch
+        env:
+          IMAGE: ${{ steps.name.outputs.image }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker push "$IMAGE:$GITHUB_SHA"
+          docker tag "$IMAGE:$GITHUB_SHA" "$IMAGE:latest"
+          docker push "$IMAGE:latest"
+
+  execution-host:
+    needs: image
+    if: github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch && vars.PLAYGROUND_SSH_HOST != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update dedicated execution host
+        env:
+          SSH_HOST: ${{ vars.PLAYGROUND_SSH_HOST }}
+          SSH_USER: ${{ vars.PLAYGROUND_SSH_USER }}
+          SSH_KEY: ${{ secrets.PLAYGROUND_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.PLAYGROUND_SSH_KNOWN_HOSTS }}
+          IMAGE: ${{ needs.image.outputs.image }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$SSH_HOST" =~ ^[a-zA-Z0-9.-]+$ && "$SSH_USER" =~ ^[a-zA-Z0-9_-]+$ ]]
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+          scp -o BatchMode=yes -o StrictHostKeyChecking=yes playground-service/{server.py,worker.py,protocol.py,smoke.py,deploy.sh} "$SSH_USER@$SSH_HOST:/opt/rfort-playground/"
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "$SSH_USER@$SSH_HOST" "sh /opt/rfort-playground/deploy.sh '$IMAGE:$GITHUB_SHA'"
+
+  pages:
+    needs: [image, execution-host]
+    if: >-
+      always() && needs.image.result == 'success' &&
+      (needs.execution-host.result == 'success' || needs.execution-host.result == 'skipped') &&
+      github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch &&
+      vars.PLAYGROUND_API_URL != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure public execution service
+        env:
+          API_URL: ${{ vars.PLAYGROUND_API_URL }}
+        run: |
+          node --input-type=module -e 'import {serviceURL} from "./playground/model.mjs"; import fs from "node:fs"; const url=serviceURL(process.env.API_URL); if(!url.startsWith("https://")) throw Error("Pages requires an HTTPS execution service"); fs.writeFileSync("playground/config.json", JSON.stringify({api_base:url}));'
+          mkdir -p "$RUNNER_TEMP/playground-site"
+          cp playground/{index.html,style.css,app.mjs,examples.mjs,model.mjs,config.json} "$RUNNER_TEMP/playground-site/"
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ runner.temp }}/playground-site
+      - name: Deploy
+        id: deploy
+        uses: actions/deploy-pages@v4

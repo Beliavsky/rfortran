@@ -1,0 +1,9 @@
+**
+!Cargo.toml
+!Cargo.lock
+!build.rs
+!src/
+!src/**
+!playground-service/
+!playground-service/protocol.py
+!playground-service/worker.py
