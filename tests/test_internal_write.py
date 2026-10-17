@@ -8,7 +8,7 @@ class InternalWrite(unittest.TestCase):
     reject=test_deallocate.Deallocate.reject
 
     def test_str_real_reproducer(self):
-        self.check((ROOT/'xstr_real.f90').read_text(encoding='utf-8'),'1.2500\n1.25\n')
+        self.check((ROOT/'tests/programs/xstr_real.f90').read_text(encoding='utf-8'),'1.2500\n1.25\n')
 
     def test_grouped_format_padding_and_numeric_overflow(self):
         self.check("""implicit none

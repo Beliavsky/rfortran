@@ -19,7 +19,7 @@ class FirstTail(unittest.TestCase):
 
     def test_empty_typed_constructor(self):
         # GNU reports zero length for this constructor at the function call.
-        self.check((ROOT/'xfirst_character.f90').read_text(),
+        self.check((ROOT/'tests/programs/xfirst_character.f90').read_text(),
                    '[cat]\n[?  ]\n',reference=False)
 
     def test_module_name_shadowing(self):

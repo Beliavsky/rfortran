@@ -10,11 +10,11 @@ class DerivedOptional(unittest.TestCase):
     reject=test_deallocate.Deallocate.reject
 
     def test_reproducer(self):
-        source=(ROOT/"xstr_int.f90").read_text(encoding="utf-8")
+        source=(ROOT/"tests/programs/xstr_int.f90").read_text(encoding="utf-8")
         self.check(source,"7\n")
 
     def test_character_optional_combinations(self):
-        source=(ROOT/"xstr_int.f90").read_text(encoding="utf-8")
+        source=(ROOT/"tests/programs/xstr_int.f90").read_text(encoding="utf-8")
         source=source.replace("print '(a)', trim(str_int(7))", """print '(a)', trim(str_int(7))
 print '(a)', trim(str_int(7,3))
 print '(a)', trim(str_int(7,prefix='item'))
@@ -27,7 +27,7 @@ end if""")
         self.check(source,"7\n007\nitem7\nx07\ny07\n")
 
     def test_forward_absent_optional(self):
-        source=(ROOT/"xstr_int.f90").read_text(encoding="utf-8")
+        source=(ROOT/"tests/programs/xstr_int.f90").read_text(encoding="utf-8")
         source=source.replace("print '(a)', trim(str_int(7))", "print '(a)',trim(forward(7))\nprint '(a)',trim(forward(7,'n'))")
         source=source.replace("end program test_str_int", """function forward(i,prefix) result(ch)
 integer,intent(in)::i
@@ -92,7 +92,7 @@ end program
 ""","7 0\n9 3\n")
 
     def test_required_arguments_remain_required(self):
-        source=(ROOT/"xstr_int.f90").read_text(encoding="utf-8")
+        source=(ROOT/"tests/programs/xstr_int.f90").read_text(encoding="utf-8")
         self.reject(source.replace("str_int(7)","str_int(prefix='x')"),"missing required argument `i`")
         self.reject(source.replace("str_int(7)","str_int(7,2,'x',3)"),"too many arguments")
 

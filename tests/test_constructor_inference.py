@@ -67,10 +67,10 @@ end
         self.reject(MODULE+"use kinds_mod\nprint *,identify(['a','bb'])\nend\n", 'equal lengths')
 
     def test_runtime_constructor_reaches_array_argument_lowering(self):
-        self.check((ROOT/'xset_alloc_implied_do.f90').read_text(encoding='utf-8'), '1 2 3\n')
+        self.check((ROOT/'tests/programs/xset_alloc_implied_do.f90').read_text(encoding='utf-8'), '1 2 3\n')
 
     def test_set_alloc_with_constant_bound(self):
-        source=(ROOT/'xset_alloc_implied_do.f90').read_text(encoding='utf-8')
+        source=(ROOT/'tests/programs/xset_alloc_implied_do.f90').read_text(encoding='utf-8')
         source=source.replace('integer :: i, n', 'integer :: i\ninteger, parameter :: n=3').replace('\nn = 3\n', '\n')
         self.check(source, '1 2 3\n')
 

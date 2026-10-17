@@ -3,7 +3,7 @@ import unittest
 import test_deallocate
 from test_record_read import ROOT
 
-MODULE=(ROOT/'xset_alloc_implied_do.f90').read_text(encoding='utf-8').split('program xset_alloc_implied_do')[0]
+MODULE=(ROOT/'tests/programs/xset_alloc_implied_do.f90').read_text(encoding='utf-8').split('program xset_alloc_implied_do')[0]
 
 
 class ConstructorArguments(unittest.TestCase):
@@ -11,7 +11,7 @@ class ConstructorArguments(unittest.TestCase):
     reject=test_deallocate.Deallocate.reject
 
     def test_reproducer(self):
-        self.check((ROOT/'xset_alloc_implied_do.f90').read_text(encoding='utf-8'), '1 2 3\n')
+        self.check((ROOT/'tests/programs/xset_alloc_implied_do.f90').read_text(encoding='utf-8'), '1 2 3\n')
 
     def test_mixed_items_stride_nested_loops_and_index_scope(self):
         self.check(MODULE+"""use set_alloc_mod

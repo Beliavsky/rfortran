@@ -8,13 +8,13 @@ class IntrinsicKeywords(unittest.TestCase):
     reject=test_deallocate.Deallocate.reject
 
     def test_random_seed_reproducer(self):
-        self.check((ROOT/'xrandom_seed.f90').read_text(encoding='utf-8'),'T T T\n')
+        self.check((ROOT/'tests/programs/xrandom_seed.f90').read_text(encoding='utf-8'),'T T T\n')
 
     def test_seed_array_expression(self):
-        self.check((ROOT/'xrandom_seed_expression.f90').read_text(encoding='utf-8'),'T\n')
+        self.check((ROOT/'tests/programs/xrandom_seed_expression.f90').read_text(encoding='utf-8'),'T\n')
 
     def test_seed_runtime_pack_expression(self):
-        source=(ROOT/'xrandom_seed_expression.f90').read_text(encoding='utf-8')
+        source=(ROOT/'tests/programs/xrandom_seed_expression.f90').read_text(encoding='utf-8')
         self.check(source.replace('put=seed+37','put=pack(seed+37,seed>0)'),'T\n')
 
     def test_seed_constructor_section_and_elemental_expression(self):

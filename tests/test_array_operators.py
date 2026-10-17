@@ -22,7 +22,7 @@ class ArrayOperators(unittest.TestCase):
     reject = test_deallocate.Deallocate.reject
 
     def test_reproducer(self):
-        self.check((ROOT/'xnotin.f90').read_text(encoding='utf-8'), 'F T\n')
+        self.check((ROOT/'tests/programs/xnotin.f90').read_text(encoding='utf-8'), 'F T\n')
 
     def test_whole_arrays_sections_constructors_and_empty_arrays(self):
         self.check(MODULE+"""use membership_mod

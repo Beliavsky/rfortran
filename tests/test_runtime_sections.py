@@ -29,7 +29,7 @@ class RuntimeSections(unittest.TestCase):
 
     def test_original_reproducer(self):
         with tempfile.TemporaryDirectory(prefix="runtime-section-repro-") as tmp:
-            self.compare(ROOT / "xruntime_matrix_section.f90", "1 2 3\n", Path(tmp))
+            self.compare(ROOT / "tests/programs/xruntime_matrix_section.f90", "1 2 3\n", Path(tmp))
 
     def test_local_overlap_lower_bounds_and_empty_sections(self):
         self.check("""implicit none

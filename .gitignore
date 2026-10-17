@@ -10,7 +10,12 @@
 tests/tmp_test
 Cargo.lock
 src/fortran.rs
-./test.f90
-./*.f90
+# Scratch programs and build output in the repository root
+/*.f90
+/*.mod
+/*.o
+/*.lib
+/*.exp
+/*.out
 helpers.py
 tests/__pycache__/

@@ -159,14 +159,14 @@ local, CHARACTER operator interface, numeric `.notin.` operator and generic
 `exclude(shape(...), ...)` call. `SHAPE`, `LBOUND` and `UBOUND` now retain their
 INTEGER scalar or rank-one vector types during generic dispatch, and fixed-shape
 inquiry vectors can be passed to specialized read-only array functions.
-`xexclude.f90` prints `2 4`; `tests/test_generic_inquiries.py` checks dispatch,
+`tests/programs/xexclude.f90` prints `2 4`; `tests/test_generic_inquiries.py` checks dispatch,
 keywords, sections, empty extents and initialization diagnostics. The full build
 now gets past generic `repeat` resolution: a user generic can fall back to
 intrinsic `REPEAT` for scalar CHARACTER/INTEGER arguments, including the intrinsic
 keywords `STRING` and `NCOPIES`. Matching user specifics take precedence.
 Native `REPEAT` supports constant copy counts, CHARACTER sources and concatenation;
 runtime-dependent copy counts currently produce a native compilation error.
-`xrepeat_intrinsic.f90` prints `[000]`, and `tests/test_repeat_generic.py` checks
+`tests/programs/xrepeat_intrinsic.f90` prints `[000]`, and `tests/test_repeat_generic.py` checks
 the fallback, keyword association, user overloads and CHARACTER output. The full
 build now gets past the constructor-related `set_alloc` dispatch. Constructor
 inference flattens scalar and array-valued elements to a rank-one type, checks
@@ -178,14 +178,14 @@ runtime storage, including bounds read from input or changed by previous calls.
 A compile-time capacity proof is no longer required. The constructor retains
 runtime controls and an active length, preserves implied-DO index scope, and
 uses checked temporary storage. Nested implied-DOs, runtime positive/negative
-strides and empty results are supported. `xset_alloc_implied_do.f90` now compiles
+strides and empty results are supported. `tests/programs/xset_alloc_implied_do.f90` now compiles
 and prints `1 2 3`;
 `tests/test_constructor_arguments.py` covers this path in the interpreter and
 native code at `-O0` and `-O2`. Generic dispatch now preserves array-section
 rank: scalar subscripts remove
 axes, while triplets and vector subscripts retain them. Resolver tests cover
 ranks through 15 and the rank-three `select_tensor_real` calls in `util.f90`;
-`xgeneric_sections.f90` checks generic dispatch after reductions of sections.
+`tests/programs/xgeneric_sections.f90` checks generic dispatch after reductions of sections.
 `RESHAPE` also retains its source element type and derives result rank from a
 scalar-integer shape constructor, independently of runtime extent values.
 The full build now passes both `set_alloc` type/rank blockers and currently

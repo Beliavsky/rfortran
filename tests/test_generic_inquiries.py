@@ -27,7 +27,7 @@ class GenericInquiries(unittest.TestCase):
     reject = test_deallocate.Deallocate.reject
 
     def test_exclude_reproducer(self):
-        self.check((ROOT/'xexclude.f90').read_text(encoding='utf-8'), '2 4\n')
+        self.check((ROOT/'tests/programs/xexclude.f90').read_text(encoding='utf-8'), '2 4\n')
 
     def test_rank_keywords_sections_and_empty_extents(self):
         self.check(MODULE+"""use inquiry_mod

@@ -1085,7 +1085,7 @@ mod tests {
 
     #[test]
     fn resolves_runtime_constructor_generic_before_lowering() {
-        let p=lower(include_str!("../xset_alloc_implied_do.f90")).unwrap();
+        let p=lower(include_str!("../tests/programs/xset_alloc_implied_do.f90")).unwrap();
         assert!(p.body.iter().any(|s|matches!(s,crate::ast::Stmt::CallSub{name,..} if name=="@module$set_alloc_mod$set_alloc_int_vec")));
     }
 

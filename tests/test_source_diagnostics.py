@@ -99,7 +99,7 @@ end function good
                     self.assertIn(message,result.stderr)
 
     def test_array_function_specialization_location(self):
-        text=(Path(__file__).resolve().parent.parent/'xassumed_shape_function_call.f90').read_text(encoding='utf-8')
+        text=(Path(__file__).resolve().parent.parent/'tests/programs/xassumed_shape_function_call.f90').read_text(encoding='utf-8')
         # Forwarding is supported. Exceed its array-specialization limit to
         # retain a source-bearing failure in the called procedure.
         text=text.replace('logical::tf', 'logical::tf(size(values))').replace('tf=.not. any(i==values)', 'tf=i/=values').replace('if (not_in_vector(ii(i),jj))', 'if (any(not_in_vector(ii(i),jj)))')

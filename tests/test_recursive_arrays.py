@@ -12,10 +12,10 @@ class RecursiveArrays(unittest.TestCase):
     compare = test_recursive_allocatables.RecursiveAllocatables.compare
 
     def test_original_reproducer(self):
-        self.compare((ROOT / 'xrecursive_optional_array.f90').read_text(), '1 2 3\n')
+        self.compare((ROOT / 'tests/programs/xrecursive_optional_array.f90').read_text(), '1 2 3\n')
 
     def test_separately_compiled_recursive_module(self):
-        text=(ROOT/'xrecursive_optional_array.f90').read_text()
+        text=(ROOT/'tests/programs/xrecursive_optional_array.f90').read_text()
         module,main=text.split('program test_recursive_optional_array',1)
         main='program test_recursive_optional_array'+main
         with tempfile.TemporaryDirectory(prefix='recursive-array-modules-') as tmp:

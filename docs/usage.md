@@ -30,7 +30,7 @@ original declaration, including original files in a multi-source build.
 `!#deny(unused-type)` enables it as an error. The older post-lowering unused
 warnings have been replaced, so unused dummy arguments no longer produce
 messages saying "parameter" or duplicate local-variable warnings.
-`xunused.f90` demonstrates these diagnostics; run `rfort -Wall xunused.f90` or
+`tests/programs/xunused.f90` demonstrates these diagnostics; run `rfort -Wall tests/programs/xunused.f90` or
 `python tests/test_unused_warnings.py` for the regression checks.
 
 `-Woptional-argument` warns when an OPTIONAL dummy is referenced without a

@@ -14,7 +14,7 @@ class DerivedShadowing(unittest.TestCase):
                 self.check(source.replace("!TYPE", TYPE if derived else ""), expected)
 
     def test_reproducer(self):
-        source = (ROOT / "xivec_shadow.f90").read_text(encoding="utf-8")
+        source = (ROOT / "tests/programs/xivec_shadow.f90").read_text(encoding="utf-8")
         self.compare(source.replace("type :: unrelated_type\n   integer :: value\nend type unrelated_type", "!TYPE"), "7\n")
 
     def test_array_dummy_rank_three(self):

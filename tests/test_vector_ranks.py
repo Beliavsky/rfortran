@@ -22,7 +22,7 @@ class VectorRanks(unittest.TestCase):
 
     def test_character_repro(self):
         with tempfile.TemporaryDirectory(prefix="vector-character-") as tmp:
-            self.compare(ROOT / "xcharacter_vector_subscript.f90", "verb adj verb\n", Path(tmp))
+            self.compare(ROOT / "tests/programs/xcharacter_vector_subscript.f90", "verb adj verb\n", Path(tmp))
 
     def test_every_rank(self):
         declarations, statements = [], ["idx=[2,1]"]

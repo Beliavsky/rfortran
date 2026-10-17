@@ -28,7 +28,7 @@ class Getcwd(unittest.TestCase):
         self.check((ROOT/'tests/201_getcwd.f90').read_text(),'getcwd tests passed\n')
 
     def test_original_repro(self):
-        self.check((ROOT/'xgetcwd.f90').read_text(),'T\n')
+        self.check((ROOT/'tests/programs/xgetcwd.f90').read_text(),'T\n')
 
     def test_padding_and_output_dummies(self):
         self.check('''character(len=4096)::path

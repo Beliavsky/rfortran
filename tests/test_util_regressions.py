@@ -8,11 +8,11 @@ class UtilRegressions(unittest.TestCase):
     check = test_deallocate.Deallocate.check
 
     def test_calendar_vector_internal_write(self):
-        self.check((ROOT/'xnow_format.f90').read_text(),
+        self.check((ROOT/'tests/programs/xnow_format.f90').read_text(),
                    '[2026-10-16 09:08:07]\n')
 
     def test_partition_array_result(self):
-        self.check((ROOT/'xpartition_function.f90').read_text(),
+        self.check((ROOT/'tests/programs/xpartition_function.f90').read_text(),
                    '3 5 8\n1 1 1\n1 2 3 4\n0\n')
 
     def test_internal_write_array_expressions(self):

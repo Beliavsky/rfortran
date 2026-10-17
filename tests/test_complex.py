@@ -178,7 +178,7 @@ end
 
     def test_demo(self):
         with tempfile.TemporaryDirectory(prefix="complex-demo-") as tmp:
-            self.compare(ROOT/"xcomplex.f90", """z = (3,4)
+            self.compare(ROOT/"tests/programs/xcomplex.f90", """z = (3,4)
 conjg(z) = (3,-4)
 abs(z) = 5
 values = (3,4) (3,-4) (25,0)

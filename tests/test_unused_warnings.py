@@ -17,7 +17,7 @@ class UnusedWarnings(unittest.TestCase):
             return result.stderr
 
     def test_example_and_individual_controls(self):
-        source=(ROOT/"xunused.f90").read_text(encoding="utf-8")
+        source=(ROOT/"tests/programs/xunused.f90").read_text(encoding="utf-8")
         self.assertEqual(self.check(source),"")
         warnings=self.check(source,["-Wall"])
         self.assertEqual(warnings.count("warning:"),5,warnings)
@@ -252,7 +252,7 @@ end
 """,["-Wunused"]),"")
 
     def test_source_suppression(self):
-        source=(ROOT/"xunused.f90").read_text(encoding="utf-8")
+        source=(ROOT/"tests/programs/xunused.f90").read_text(encoding="utf-8")
         self.assertNotIn("unused-type",self.check("!#allow(unused-type)\n"+source,["-Wall"]))
         self.assertIn("error: derived type",self.check("!#deny(unused-type)\n"+source,errors=True))
         self.assertIn("error: variable",self.check("!#deny(unused_program_var)\ninteger::x\nend\n",errors=True))

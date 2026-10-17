@@ -6,7 +6,7 @@ import unittest
 import test_deallocate
 from test_record_read import ROOT, COMPILER
 
-MODULE = (ROOT/'xrepeat_intrinsic.f90').read_text(encoding='utf-8').split('program xrepeat_intrinsic')[0]
+MODULE = (ROOT/'tests/programs/xrepeat_intrinsic.f90').read_text(encoding='utf-8').split('program xrepeat_intrinsic')[0]
 
 
 class RepeatGeneric(unittest.TestCase):
@@ -14,7 +14,7 @@ class RepeatGeneric(unittest.TestCase):
     reject = test_deallocate.Deallocate.reject
 
     def test_reproducer(self):
-        self.check((ROOT/'xrepeat_intrinsic.f90').read_text(encoding='utf-8'), '[000]\n')
+        self.check((ROOT/'tests/programs/xrepeat_intrinsic.f90').read_text(encoding='utf-8'), '[000]\n')
 
     def test_custom_and_intrinsic_keywords(self):
         # A loop avoids the separate dynamic CHARACTER constructor limitation.

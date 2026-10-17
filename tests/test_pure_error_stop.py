@@ -11,10 +11,10 @@ class PureErrorStop(unittest.TestCase):
     reject=test_deallocate.Deallocate.reject
 
     def test_compress_reproducer(self):
-        self.check((ROOT/'xpure_error_stop.f90').read_text(encoding='utf-8'),'1 1\n')
+        self.check((ROOT/'tests/programs/xpure_error_stop.f90').read_text(encoding='utf-8'),'1 1\n')
 
     def test_failed_size_check(self):
-        source=(ROOT/'xpure_error_stop.f90').read_text(encoding='utf-8')
+        source=(ROOT/'tests/programs/xpure_error_stop.f90').read_text(encoding='utf-8')
         self.check(source.replace('call compress(2, factors)','call compress(3, factors)'),
                    error='ERROR STOP in compress, incorrect factors size')
 

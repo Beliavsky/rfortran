@@ -160,7 +160,7 @@ without initialization retain their existing behavior. PURE procedures reject
 saved initialized locals. Saved arrays, TARGET locals, module
 initialization and SAVE declarations without initializers remain unsupported.
 Run `python tests/test_saved_locals.py` and `python tests/test_saved_characters.py`;
-`xsave_counter.f90` is a small numeric example.
+`tests/programs/xsave_counter.f90` is a small numeric example.
 
 ### Contextual keywords
 
@@ -406,7 +406,7 @@ ERROR STOP is permitted in PURE and implicitly pure ELEMENTAL procedures,
 as in Fortran 2018. Its code expression is checked for impure calls, and
 unconditional error termination ends definite-assignment analysis for that path.
 Plain STOP remains forbidden in pure procedures. The existing stop-code support
-accepts CHARACTER and default INTEGER constants. `xpure_error_stop.f90`,
+accepts CHARACTER and default INTEGER constants. `tests/programs/xpure_error_stop.f90`,
 `tests/173_pure_error_stop.f90`, and `python tests/test_pure_error_stop.py`
 cover successful guards, error termination and integer exit statuses.
 
@@ -1110,7 +1110,7 @@ effects in ordinary functions and also works for PURE functions. The current
 subset supports scalar numeric, LOGICAL and fixed-length CHARACTER components;
 nested/array components, polymorphic arrays, saved arrays, derived PARAMETER arrays, pointers,
 finalization and a separate-object record ABI remain unsupported.
-`xset_alloc_derived.f90` and `tests/185_allocated_derived_concat.f90` exercise empty
+`tests/programs/xset_alloc_derived.f90` and `tests/185_allocated_derived_concat.f90` exercise empty
 and nonempty allocated inputs and replacement of an allocated output.
 Run `python tests/test_allocated_array_functions.py` for interpreter/native
 O0/O2 checks and gfortran comparisons across element types.
@@ -1123,14 +1123,14 @@ and gfortran comparisons.
 Scalar OPTIONAL arguments retain their positions during derived-type lowering,
 including calls to ordinary procedures, bound procedures and functions returning
 a derived value. An unrelated derived type in the same source group no longer
-makes omitted arguments required. `xstr_int.f90` and
+makes omitted arguments required. `tests/programs/xstr_int.f90` and
 `tests/test_derived_optional.py` cover omitted and reordered arguments, forwarding
 absent dummies, and component expansion around optional arguments.
 
 Derived-type lowering respects local array declarations and host association:
 array subscripts are not associated with a same-named procedure's arguments.
 Calls that do not use derived arguments or results pass through without argument
-rewriting. `xivec_shadow.f90` and `tests/test_derived_shadowing.py` cover this
+rewriting. `tests/programs/xivec_shadow.f90` and `tests/test_derived_shadowing.py` cover this
 behavior, including comparisons with and without an unrelated derived type.
 
 ## Procedures
@@ -1247,7 +1247,7 @@ Scalar CHARACTER function results with lengths determined by the element width
 of an array dummy support fixed arrays and runtime-sized sections. Result
 specifications respect dummy/local declarations that shadow module entities,
 and empty-array branches are specialized before checking their element access.
-`xfirst_character.f90`, `tests/203_first_tail.f90`, and
+`tests/programs/xfirst_character.f90`, `tests/203_first_tail.f90`, and
 `python tests/test_first_tail.py` cover these cases and numeric empty-array
 sentinels.
 
@@ -1258,7 +1258,7 @@ Storage is bounded by known argument widths and capacities; runtime-sized
 sections read only their active elements. LEN, nested assumed-length arguments,
 substrings and internal WRITE retain the logical length rather than the storage
 capacity. Unbounded heap inputs and unsupported specification expressions still
-produce diagnostics. `xjoin_length.f90`, `tests/204_joins.f90` and
+produce diagnostics. `tests/programs/xjoin_length.f90`, `tests/204_joins.f90` and
 `python tests/test_joins.py` cover joins, empty inputs and runtime WRITE overflow.
 
 ### CHARACTER array functions
@@ -1362,7 +1362,7 @@ assumption.
 the interpreter, native code at `-O0`/`-O2`, and gfortran when available.
 `python tests/test_multirank_array_functions.py` covers PURE and ordinary
 functions, ranks through 15, differing result ranks, sections, empty results,
-array expressions, writable arguments and module side effects. `xabove_diag.f90`
+array expressions, writable arguments and module side effects. `tests/programs/xabove_diag.f90`
 prints `4.0 7.0 8.0` with or without PURE.
 
 ### Defined operators with array operands
@@ -1379,7 +1379,7 @@ Scalar numeric and LOGICAL results can use runtime-sized array operands through
 the descriptor association described under
 [Array arguments to functions](#array-arguments-to-functions). Array-result specialization still
 copies bounded inputs and supports at most 1024 elements per dummy. Recursive
-specialization and unrestricted array-result ABIs remain unsupported. `xnotin.f90` now prints `F T`. Run
+specialization and unrestricted array-result ABIs remain unsupported. `tests/programs/xnotin.f90` now prints `F T`. Run
 `python tests/test_array_operators.py` for interpreter/native O0/O2 checks and
 gfortran comparisons.
 
@@ -1527,7 +1527,7 @@ Overlapping assignments use temporary heap storage when the extent is unknown.
 Bounds and per-element initialization checks remain active, and INTENT(OUT)
 invalidates previous values on every recursive entry. Explicit-shape checks use
 captured scalar actuals even when the bound dummy follows the array in the
-argument list. `xrecursive_optional_array.f90` reproduces the `util.f90` gen/combos
+argument list. `tests/programs/xrecursive_optional_array.f90` reproduces the `util.f90` gen/combos
 case; `tests/188_recursive_optional_array.f90` is its numbered regression.
 Run `python tests/test_recursive_arrays.py` for interpreter/native O0/O2 and
 gfortran comparisons.
@@ -1535,7 +1535,7 @@ gfortran comparisons.
 Recursive CHARACTER, ALLOCATABLE and POINTER dummy interfaces and forwarding a
 new section on a recursive edge retain their existing limitations. Recursive
 functions with array dummies or array-valued results remain outside this subset.
-Bounded ALLOCATABLE output recursion can still terminate during specialization, as in `xpure_recursive.f90`,
+Bounded ALLOCATABLE output recursion can still terminate during specialization, as in `tests/programs/xpure_recursive.f90`,
 whose recursive call omits the optional bounds and selects the copy branch.
 
 ## Modules
@@ -1613,10 +1613,10 @@ write local CHARACTER variables and writable dummy arguments; INTENT(IN),
 nonlocal destinations and external I/O remain protected. This subset supports
 one record and explicit formats; internal file arrays, list-directed output,
 IOSTAT and other WRITE control options remain unsupported.
-`xstr_real.f90`, `tests/172_internal_write.f90`, and
+`tests/programs/xstr_real.f90`, `tests/172_internal_write.f90`, and
 `python tests/test_internal_write.py` cover this behavior.
 Captured array items also retain every element after vector selection and
-function specialization. `xnow_format.f90` reproduces a calendar string written
+function specialization. `tests/programs/xnow_format.f90` reproduces a calendar string written
 from an integer vector selection; `python tests/test_util_regressions.py` checks
 this alongside multidimensional, empty and runtime-sized array items.
 
@@ -1812,9 +1812,9 @@ or an array element; PUT/GET require a rank-one default INTEGER array of at leas
 two elements. PUT is an input argument and accepts compatible array expressions,
 including arithmetic, constructors, sections and PACK; GET requires writable
 storage. Expressions use the same array materialization as other procedure
-inputs. `xrandom_seed_expression.f90` compares expression and variable inputs.
+inputs. `tests/programs/xrandom_seed_expression.f90` compares expression and variable inputs.
 GET can save the current stream for restoration with PUT.
-The no-argument form retains its deterministic reset. `xrandom_seed.f90` checks
+The no-argument form retains its deterministic reset. `tests/programs/xrandom_seed.f90` checks
 stream restoration and output range; `tests/test_intrinsic_keywords.py` checks
 keyword association and seed argument/intent diagnostics.
 
@@ -1830,7 +1830,7 @@ to zero. Integer outputs must share a kind; COUNT_RATE can also be REAL. If the
 OS clock is unavailable, CPU_TIME returns -1, and SYSTEM_CLOCK returns
 -HUGE(COUNT) with zero rate and maximum. Both intrinsics are rejected in PURE
 procedures. The OS adapters cover Windows, Linux and macOS; this change was tested
-on Windows. `xtiming.f90` demonstrates both calls, and `tests/test_timing.py`
+on Windows. `tests/programs/xtiming.f90` demonstrates both calls, and `tests/test_timing.py`
 checks the interpreter, native code at O0/O2, and gfortran when available.
 `DATE_AND_TIME` supports all four optional keywords (`DATE`, `TIME`, `ZONE`,
 `VALUES`) in the interpreter and native code. One snapshot produces local date
@@ -1841,6 +1841,6 @@ a writable whole rank-one INTEGER array of kind 2, 4 or 8 with at least eight el
 non-default lower bounds work, and only the first eight elements are written.
 Unavailable clocks produce blank strings and negative HUGE values. PURE calls,
 read-only outputs and invalid types/ranks are diagnosed. Windows, Linux and macOS
-have OS adapters; validation here ran on Windows. `xdate_and_time.f90` is a small
+have OS adapters; validation here ran on Windows. `tests/programs/xdate_and_time.f90` is a small
 example, and `tests/test_date_and_time.py` checks consistency and argument rules
 against the interpreter, native O0/O2 and gfortran when available.

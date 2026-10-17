@@ -18,7 +18,7 @@ class Joins(unittest.TestCase):
     check=test_deallocate.Deallocate.check
 
     def test_reproducer(self):
-        self.check((ROOT/'xjoin_length.f90').read_text(),'4 [a:bb]\n5 [abc:d]\n')
+        self.check((ROOT/'tests/programs/xjoin_length.f90').read_text(),'4 [a:bb]\n5 [abc:d]\n')
 
     def test_empty_blank_and_zero_length(self):
         self.check('''character(3)::empty(0),blank(2)

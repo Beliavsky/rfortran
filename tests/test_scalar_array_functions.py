@@ -8,7 +8,7 @@ class ArrayFunctions(unittest.TestCase):
     reject = test_deallocate.Deallocate.reject
 
     def test_repro(self):
-        self.check((Path(__file__).resolve().parent.parent/'xassumed_shape_function_call.f90').read_text(encoding='utf-8'), '2\n')
+        self.check((Path(__file__).resolve().parent.parent/'tests/programs/xassumed_shape_function_call.f90').read_text(encoding='utf-8'), '2\n')
 
     def test_runtime_forwarding_empty_and_reallocation(self):
         self.check("""program main
@@ -146,7 +146,7 @@ end program main
 """,'10\n')
 
     def test_character_forwarding(self):
-        text=(Path(__file__).resolve().parent.parent/'xassumed_shape_function_call.f90').read_text(encoding='utf-8')
+        text=(Path(__file__).resolve().parent.parent/'tests/programs/xassumed_shape_function_call.f90').read_text(encoding='utf-8')
         text=text.replace('integer,intent(in)', 'character(len=1),intent(in)').replace('call check_values([1,2,3],[1,3])', 'call check_values(["a","b","c"],["a","c"])')
         self.check(text, 'b\n')
 

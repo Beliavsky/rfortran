@@ -10,7 +10,7 @@ class ConstructorExpressions(unittest.TestCase):
     check = test_deallocate.Deallocate.check
 
     def test_reproducer(self):
-        self.check((ROOT/'xconstructor_arithmetic.f90').read_text(), '100 137 174\n')
+        self.check((ROOT/'tests/programs/xconstructor_arithmetic.f90').read_text(), '100 137 174\n')
 
     def test_runtime_input_and_arithmetic(self):
         self.check('''integer::i,n,a(3)
