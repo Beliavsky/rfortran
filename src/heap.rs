@@ -32,6 +32,24 @@ pub(crate) fn borrow_fields(name: &str, shapes: &mut crate::allocatables::Shapes
     }
 }
 
+/// Whether an assignment value may be an array, so that assigning it to an
+/// unallocated ALLOCATABLE array allocates the target. Scalar values cannot.
+fn array_valued(e: &Expr, arrays: &HashSet<String>) -> bool {
+    match e {
+        Expr::Ident(n) => arrays.contains(n),
+        Expr::Section { .. } => true,
+        Expr::Call(n, _) if n == "@array_constructor" => true,
+        // A section or vector subscript of a local array.
+        Expr::Call(n, args) if arrays.contains(n) => args.iter().any(|a| {
+            matches!(a, Expr::Call(t, _) if t == "@section_subscript") || array_valued(a, arrays)
+        }),
+        Expr::Call(_, args) => args.iter().any(|a| array_valued(a, arrays)),
+        Expr::Bin(_, a, b) => array_valued(a, arrays) || array_valued(b, arrays),
+        Expr::Un(_, a) => array_valued(a, arrays),
+        _ => false,
+    }
+}
+
 pub(crate) fn prepare(mut program: Program) -> Result<Program> {
     fn numeric(kind: &TypeSpec) -> bool {
         matches!(
@@ -120,11 +138,28 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
     ) -> Result<()> {
         let mut passed = HashSet::new();
         actuals(body, interfaces, &mut passed);
-        fn allocation(body: &[Stmt], array: &str) -> bool {
+        let declared: HashSet<String> = body.iter().filter_map(|s| match s {
+            Stmt::ArrayDecl { name, .. } => Some(name.clone()),
+            _ => None,
+        }).collect();
+        fn allocation(body: &[Stmt], array: &str, declared: &HashSet<String>) -> bool {
             body.iter().any(|s|match s {
                 Stmt::CallSub{name,args} if name=="@allocate"=>args.iter().any(|e|matches!(e,Expr::Call(n,dims) if n==array) || matches!(e,Expr::Section{name:n,..} if n==array)),
-                Stmt::If{then_body,else_body,..}=>allocation(then_body,array)||else_body.as_ref().is_some_and(|b|allocation(b,array)),
-                Stmt::Do{body,..}|Stmt::DoWhile{body,..}=>allocation(body,array),_=>false,
+                Stmt::If{then_body,else_body,..}=>allocation(then_body,array,declared)||else_body.as_ref().is_some_and(|b|allocation(b,array,declared)),
+                // Intrinsic assignment to the whole array also (re)allocates it.
+                Stmt::Assign{name,value}=>name==array && array_valued(value,declared),
+                Stmt::Do{body,..}|Stmt::DoWhile{body,..}|Stmt::Block{body}=>allocation(body,array,declared),
+                Stmt::SelectCase{cases,default,..}=>cases.iter().any(|c|allocation(&c.body,array,declared))||default.as_ref().is_some_and(|b|allocation(b,array,declared)),
+                _=>false,
+            })
+        }
+        fn allocate_statement(body: &[Stmt], array: &str) -> bool {
+            body.iter().any(|s| match s {
+                Stmt::CallSub{name,args} if name=="@allocate"=>args.iter().any(|e|matches!(e,Expr::Call(n,_)|Expr::Section{name:n,..} if n==array)),
+                Stmt::If{then_body,else_body,..}=>allocate_statement(then_body,array)||else_body.as_ref().is_some_and(|b|allocate_statement(b,array)),
+                Stmt::Do{body,..}|Stmt::DoWhile{body,..}|Stmt::Block{body}=>allocate_statement(body,array),
+                Stmt::SelectCase{cases,default,..}=>cases.iter().any(|c|allocate_statement(&c.body,array))||default.as_ref().is_some_and(|b|allocate_statement(b,array)),
+                _=>false,
             })
         }
         let array_dummies = body
@@ -134,7 +169,11 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
             (dims.iter().all(|e|matches!(e,Expr::Ident(n) if n=="@deferred_extent"))
               && !params.contains(name)
               && !body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name && intent=="@heap_dummy"))
-              && (passed.contains(name) || name.starts_with("@module$") || ((dims.len()>1 || !array_dummies) && allocation(body,name)) || dims.len()>1 && body.iter().any(|s|matches!(s,Stmt::CallSub{name:call,args} if call=="@deallocate"&&args.iter().any(|e|matches!(e,Expr::Ident(n) if n==name)))))
+              && (passed.contains(name) || name.starts_with("@module$") || ((dims.len()>1 || !array_dummies) && allocation(body,name,&declared))
+                  // Rank-one locals of procedures with array dummies use bounded
+                  // storage when ALLOCATEd; one allocated only by assignment needs
+                  // runtime storage for its value's extent.
+                  || (array_dummies && allocation(body,name,&declared) && !allocate_statement(body,name)) || dims.len()>1 && body.iter().any(|s|matches!(s,Stmt::CallSub{name:call,args} if call=="@deallocate"&&args.iter().any(|e|matches!(e,Expr::Ident(n) if n==name)))))
               && numeric(kind) && (!matches!(kind,TypeSpec::Character(_)) || dims.len()>1)
               && body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name&&intent=="allocatable")))
                 .then_some((name.clone(),dims.len()))
@@ -149,6 +188,10 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
             Stmt::SourceLocation(p)=>offset=Some(*p),
             Stmt::CallSub{name,args} if name=="@allocate"=>for e in args {match e{Expr::Call(n,_)|Expr::Section{name:n,..}=>{pending.remove(n);},_=>{}}},
             Stmt::CallSub{name,args} if name=="@deallocate"=>for e in args {if let Expr::Ident(n)=e {if tracked.contains(n){pending.insert(n.clone());}}},
+            Stmt::Assign{name,value} if tracked.contains(name) && array_valued(value,&declared)=>{
+                crate::array_calls::check_allocated(&Stmt::Print{items:vec![value.clone()]},&pending).map_err(|e|crate::source_diagnostics::at(e,offset))?;
+                pending.remove(name);
+            }
             Stmt::Assign{..}|Stmt::AssignIndex{..}|Stmt::Print{..}|Stmt::Read{..}=>crate::array_calls::check_allocated(s,&pending).map_err(|e|crate::source_diagnostics::at(e,offset))?,
             Stmt::CallSub{..}|Stmt::If{..}|Stmt::Do{..}|Stmt::DoWhile{..}|Stmt::SelectCase{..}|Stmt::Block{..}=>break,
             _=>{},

@@ -1012,6 +1012,27 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
         let mut out = vec![];
         for mut s in std::mem::take(body) {
             let mut guards = vec![];
+            // Intrinsic assignment to a whole heap-backed numeric/LOGICAL array
+            // (re)allocates it to the shape of an array-valued right-hand side.
+            if let Stmt::Assign{name,value}=&s {
+                // Earlier lowering can wrap a whole source array in a packed
+                // view; reallocation needs its shape and lower bounds.
+                let value=match value {
+                    Expr::Call(view,a) if view=="@packed_view" && matches!(a.first(),Some(Expr::Ident(n)) if axes(n,&shapes).is_some()) => a[0].clone(),
+                    value => value.clone(),
+                };
+                if shapes.contains_key(&format!("@heap:{name}")) && axes(name,&shapes).is_some()
+                    && !matches!(shapes.get(name),Some((TypeSpec::Character(_)|TypeSpec::CharacterAssumed|TypeSpec::CharacterLength(_),_)))
+                    && crate::array_calls::scalar_actual_kind(&value,&shapes).is_err()
+                    // Rank-one targets reallocate in the ordinary assignment path
+                    // below. Multidimensional targets reallocate from whole arrays
+                    // and sections; other expressions keep the conforming path.
+                    && (axes(name,&shapes).is_some_and(|a|a.len()>1)
+                        && matches!(&value,Expr::Ident(_)|Expr::Call(..)) && !matches!(&value,Expr::Call(f,_) if shapes.get(f).is_none())
+                        && matches!(logical_shape(&value,&shapes,&mut vec![]),Ok(Some((rhs,_))) if Some(rhs.len())==axes(name,&shapes).map(|a|a.len()))) {
+                    s=Stmt::CallSub{name:"@alloc_result_assign".into(),args:vec![id(name),value]};
+                }
+            }
             match &mut s {
                 Stmt::CallSub{name:operation,args} if operation=="@alloc_result_assign"=>{
                     let [Expr::Ident(name),value]=args.as_slice() else {bail!("invalid allocatable function result assignment");};
@@ -1021,7 +1042,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                         lower(&mut statements,&shapes,serial,checks)?;
                         out.extend(statements);continue;
                     }
-                    let target_axes=axes(&name,&shapes).context("allocatable function result requires a heap descriptor")?;
+                    let target_axes=axes(&name,&shapes).context("allocatable array assignment requires a heap descriptor")?;
                     let mut statements=vec![];
                     let rhs_axes=logical_shape(&value,&shapes,&mut statements)?.map(|v|v.0);
                     let source_lower=if let Expr::Ident(n)=&value {lowers(n,&shapes)} else {None};
@@ -1031,7 +1052,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                     }
                     let (kind,_,length)=crate::reductions::argument(&mut value,&shapes,&mut statements,serial)?;
                     let rhs_axes=rhs_axes.unwrap_or_else(||vec![length.clone()]);
-                    if rhs_axes.len()!=target_axes.len() {bail!("allocatable function result assignment rank mismatch");}
+                    if rhs_axes.len()!=target_axes.len() {bail!("allocatable array assignment rank mismatch");}
                     *serial+=1;let stem=format!("@alloc_result_assignment_{serial}");
                     let snapshot=format!("{stem}_values");let index=format!("{stem}_index");
                     let mut extents=vec![];let mut bounds=vec![];
@@ -1067,7 +1088,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                     }
                     flat_elements(&mut scalar,&rhs_shapes);
                     statements.push(Stmt::Do{var:index.clone(),start:int(1),end:length.clone(),body:vec![Stmt::AssignIndex{name:snapshot.clone(),indices:vec![id(&index)],value:scalar}]});
-                    let flag=allocated(&name,&shapes).context("allocatable function result requires allocation state")?;
+                    let flag=allocated(&name,&shapes).context("allocatable array assignment requires allocation state")?;
                     let mut resize=Expr::Un(UnOp::Not,Box::new(flag.clone()));
                     for (target,source) in target_axes.iter().zip(&extents) {resize=bin(BinOp::Or,resize,bin(BinOp::Ne,target.clone(),source.clone()));}
                     statements.push(Stmt::If{cond:resize,then_body:vec![
@@ -1210,7 +1231,25 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                     }
                 }
                 Stmt::Assign { name, value } if length(name, &shapes).is_some() => {
-                    if let Some(axes) = axes(name, &shapes) {
+                    // A heap-backed rank-one numeric/LOGICAL array is (re)allocated
+                    // to the extent of an array-valued right-hand side.
+                    let reallocate = shapes.contains_key(&format!("@heap:{name}"))
+                        && axes(name, &shapes).is_some_and(|a| a.len() == 1)
+                        && !matches!(shapes[name].0, TypeSpec::Character(_))
+                        && crate::array_calls::scalar_actual_kind(value, &shapes).is_err();
+                    // A reallocated target takes the bounds of a whole array source.
+                    let source_lower = match &*value {
+                        Expr::Ident(n) => Some(n),
+                        Expr::Call(view, a) if view == "@packed_view" => match a.first() {
+                            Some(Expr::Ident(n)) => Some(n),
+                            _ => None,
+                        },
+                        _ => None,
+                    }
+                    .and_then(|n| lowers(n, &shapes))
+                    .and_then(|l| l.first().cloned())
+                    .unwrap_or(int(1));
+                    if let Some(axes) = axes(name, &shapes).filter(|_| !reallocate) {
                         if let Some((rhs, _)) = logical_shape(value, &shapes, &mut out)? {
                             conform_axes(&axes, &rhs, &mut out)?;
                         }
@@ -1218,10 +1257,12 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                     expression(value, &shapes, &mut out, checks, serial)?;
                     let len = length(name, &shapes).unwrap();
                     let flag = allocated(name, &shapes).unwrap();
-                    out.push(fail(
-                        Expr::Un(UnOp::Not, Box::new(flag)),
-                        &format!("assignment to unallocated array `{name}`"),
-                    ));
+                    if !reallocate {
+                        out.push(fail(
+                            Expr::Un(UnOp::Not, Box::new(flag.clone())),
+                            &format!("assignment to unallocated array `{name}`"),
+                        ));
+                    }
                     if matches!(shapes[name].0, TypeSpec::Character(_)) {
                         character_copy(name, value, len, &shapes, serial, &mut out)?;
                         continue;
@@ -1273,16 +1314,26 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                             _ => {}
                         }
                     }
-                    out.push(fail(
-                        bin(BinOp::Ne, len.clone(), rhs_len),
-                        "allocatable array assignment shapes do not conform",
-                    ));
+                    if !reallocate {
+                        out.push(fail(
+                            bin(BinOp::Ne, len.clone(), rhs_len.clone()),
+                            "allocatable array assignment shapes do not conform",
+                        ));
+                    }
                     // Capture before writing, preserving overlap and self-assignment.
                     *serial += 1;
                     let index = format!("@alloc_copy_index_{serial}");
                     let temp = format!("@alloc_copy_{serial}");
+                    let extent = format!("@alloc_copy_extent_{serial}");
+                    let captured = if reallocate {
+                        out.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![extent.clone()] });
+                        out.push(assign(&extent, rhs_len));
+                        id(&extent)
+                    } else {
+                        len.clone()
+                    };
                     let (kind, dims) = shapes[name].clone();
-                    if shapes.contains_key(&format!("@heap:{name}")) {crate::heap::temporary(kind,temp.clone(),len.clone(),&mut out);}else{out.push(Stmt::ArrayDecl {
+                    if shapes.contains_key(&format!("@heap:{name}")) {crate::heap::temporary(kind,temp.clone(),captured.clone(),&mut out);}else{out.push(Stmt::ArrayDecl {
                         kind,
                         name: temp.clone(),
                         dims,
@@ -1295,13 +1346,26 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                     out.push(Stmt::Do {
                         var: index.clone(),
                         start: int(1),
-                        end: len.clone(),
+                        end: captured.clone(),
                         body: vec![Stmt::AssignIndex {
                             name: temp.clone(),
                             indices: vec![id(&index)],
                             value,
                         }],
                     });
+                    if reallocate {
+                        let upper = bin(BinOp::Sub, bin(BinOp::Add, source_lower.clone(), captured.clone()), int(1));
+                        let mut resize = vec![Stmt::If {
+                            cond: bin(BinOp::Or, Expr::Un(UnOp::Not, Box::new(flag.clone())), bin(BinOp::Ne, len.clone(), captured)),
+                            then_body: vec![
+                                Stmt::If { cond: flag, then_body: vec![Stmt::CallSub { name: "@deallocate".into(), args: vec![id(name)] }], else_body: None },
+                                Stmt::CallSub { name: "@allocate".into(), args: vec![Expr::Call(name.clone(), vec![Expr::Call("@heap_bounds".into(), vec![source_lower, upper])])] },
+                            ],
+                            else_body: None,
+                        }];
+                        lower(&mut resize, &shapes, serial, checks)?;
+                        out.extend(resize);
+                    }
                     out.push(Stmt::Do {
                         var: index.clone(),
                         start: int(1),

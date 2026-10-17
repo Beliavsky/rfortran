@@ -1304,13 +1304,28 @@ for ordinary variables. Whole-object assignment deep-copies ALLOCATABLE
 components (keeping their bounds, or leaving the target unallocated) and copies
 POINTER association. Derived arguments, INTENT(OUT) dummies and derived function
 results carry these components. A constructor value for an ALLOCATABLE component
-must be a whole array variable, an array constructor of literals, or `null()`;
-an omitted ALLOCATABLE or POINTER component becomes unallocated or disassociated.
+is assigned with the reallocation rules below; `null()` or an omitted ALLOCATABLE
+or POINTER component becomes unallocated or disassociated.
 Nested derived-type components, ALLOCATABLE scalar components (including
 deferred-length CHARACTER), arrays of derived types with such components and
 functions with ALLOCATABLE array dummies remain unsupported, and an ALLOCATABLE
-component, like any ALLOCATABLE array, must be allocated somewhere before it is
-referenced. Run `python tests/test_derived_array_components.py`.
+component, like any ALLOCATABLE array, must be allocated (by ALLOCATE or by
+assignment) somewhere before it is referenced. Run
+`python tests/test_derived_array_components.py`.
+
+Intrinsic assignment of an array value to a whole heap-backed numeric or LOGICAL
+ALLOCATABLE array allocates it when unallocated and reallocates it when the
+shape differs, as in Fortran 2003. A reallocated target takes the lower bounds
+of a whole array source and otherwise starts at 1; a target whose shape already
+conforms keeps its bounds. The right-hand side is captured first, so it may
+refer to the target. Rank-one targets accept any array expression. Targets of
+rank two or more reallocate from whole arrays and sections; other
+multidimensional expressions still require a conforming allocated target.
+Scalar assignment never allocates. CHARACTER arrays, rank-one ALLOCATEd locals
+of procedures with array dummies (which use bounded call-site storage), and
+array constructors containing runtime-sized arrays such as `[a, x]` are not yet
+reallocated. Run
+`python tests/test_allocatable_reallocation.py`.
 
 Local OPTIONAL functions and subroutines can be specialized for positional and
 named calls, including omitted arguments before later named arguments and
@@ -1513,7 +1528,7 @@ extents are folded before native storage and output are generated. Run
 copy-in/copy-out, element-type and rank-15 regressions against gfortran.
 
 ALLOCATABLE array dummies in functions, array transformations, masked/DIM
-reductions, automatic reallocation on assignment, and mixing fixed and
+reductions, reallocation on assignment beyond the cases described above, and mixing fixed and
 runtime-sized multidimensional expressions retain their existing limitations.
 Deferred-length CHARACTER array elements and STAT/ERRMSG remain unsupported. No public descriptor ABI is provided
 for separate-object module interfaces.

@@ -154,16 +154,21 @@ type(t) :: x
 print *, 1
 end program
 """, message)
-        self.reject("""program main
+
+    def test_allocatable_component_from_expressions(self):
+        self.check("""program main
 implicit none
 type :: t
-integer, allocatable :: v(:,:)
+real, allocatable :: v(:)
 end type t
 type(t) :: x
-integer :: a(2,2) = 1
-x = t(a + 1)
+real :: a(3) = 2.0
+x = t(a*3)
+print *, size(x%v), x%v
+x = t(x%v(1:2) + 1)
+print *, size(x%v), x%v
 end program
-""", "must be a whole array variable or an array constructor of literals")
+""", "3 6.0 6.0 6.0\n2 7.0 7.0\n")
 
 
 if __name__ == "__main__":

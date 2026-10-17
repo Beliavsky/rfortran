@@ -741,26 +741,28 @@ impl Lowerer {
             if matches!(&value, Expr::Ident(n) if n == to) {
                 return Ok(());
             }
-            arrays.push(when(test("allocated", to), vec![call("@deallocate", vec![target()])], None));
+            let release = when(test("allocated", to), vec![call("@deallocate", vec![target()])], None);
             match value {
-                _ if null => {}
-                Expr::Ident(n) => arrays.extend(Self::allocate_like(to, &n, field.dims.len())),
-                // Without automatic reallocation on assignment, the extent must
-                // be evident: an array constructor of literal elements.
+                _ if null => arrays.push(release),
+                Expr::Ident(n) => {
+                    arrays.push(release);
+                    arrays.extend(Self::allocate_like(to, &n, field.dims.len()));
+                }
+                // A literal constructor gives its extent without a runtime shape.
                 Expr::Call(n, items)
                     if n == "@array_constructor" && field.dims.len() == 1 && items.iter().all(|e| {
                         let e = match e { Expr::Un(_, e) => e.as_ref(), e => e };
                         matches!(e, Expr::IntLit(_) | Expr::RealLit(_) | Expr::Logical(_) | Expr::Str(_))
                     }) =>
                 {
+                    arrays.push(release);
                     let size = Expr::IntLit(items.len().to_string());
                     arrays.push(call("@allocate", vec![Expr::Call(to.into(), vec![size])]));
                     arrays.push(Stmt::Assign { name: to.into(), value: Expr::Call(n, items) });
                 }
-                _ => bail!(
-                    "value for ALLOCATABLE component `{}` must be a whole array variable or an array constructor of literals",
-                    field.name
-                ),
+                // Intrinsic assignment (re)allocates heap-backed arrays to the
+                // shape of the value after evaluating it, so it may read `to`.
+                value => arrays.push(Stmt::Assign { name: to.into(), value }),
             }
         } else {
             self.serial += 1;
