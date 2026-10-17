@@ -222,3 +222,60 @@ The most common remaining first diagnostics, among demos gfortran compiles:
 Reports for these runs are `target/m-intrinsics-compile-head.json`,
 `target/m-intrinsics-compile-step1.json` and
 `target/m-intrinsics-compiled-run-step1.json`, each with a companion `.md`.
+
+## After named constructs, more intrinsics and three wrong-result fixes: 2026-10-17
+
+A later debug build of the working tree adds:
+
+- named IF, SELECT CASE, BLOCK and ASSOCIATE constructs, with `EXIT name`;
+- `ASINH`, `ACOSH`, `ATANH`, `ERF`, `ERFC`, `GAMMA`, `LOG_GAMMA`, `HYPOT`,
+  `AINT`, `ANINT`, the degree and half-revolution trigonometric functions
+  (`SIND`, `ACOSD`, `ATAN2D`, `SINPI`, ...) and `ATAN(Y, X)`;
+- more ISO_FORTRAN_ENV entities (`OUTPUT_UNIT`, `ERROR_UNIT`, `IOSTAT_END`,
+  `INTEGER_KINDS`, `COMPILER_VERSION`, ...) and `IS_IOSTAT_END`/`IS_IOSTAT_EOR`.
+
+It also fixes three wrong results that these demos exposed:
+
+- PRINT and WRITE of an array expression (`x*2`, `sqrt(x)`, `cshift(i, 1)`,
+  `shape(m)`, `[i]`) wrote only the first element.
+- Names were case-sensitive (`integer :: I` and `i` were two variables).
+- A variable declared in a BLOCK shared storage with an outer variable of the
+  same name. `demo_block.f90` showed this.
+
+| rfort O0 outcome | All 249 demos | 204 demos gfortran compiles |
+|---|---:|---:|
+| Compiled | 70 | 56 |
+| Parse error | 58 | 38 |
+| Later error | 121 | 110 |
+
+In the previous run these were 48/67/134 and 35/47/122. No demo that compiled
+before stopped compiling.
+
+Execution checks of the 70 demos that compile, at both O0 and O2:
+
+| Execution outcome | O0 | O2 |
+|---|---:|---:|
+| Output matched gfortran | 38 | 38 |
+| Runtime error | 10 | 10 |
+| Runtime deliberately skipped | 8 | 8 |
+| No reference (empty upstream files) | 14 | 14 |
+
+No demo produced output that disagreed with gfortran. Nine runtime errors are
+output-format gaps: G0 with a non-REAL item, or format reversion. The tenth,
+`demo_allocated.f90`, reads `istat` after a DEALLOCATE that never ran.
+The variable is uninitialized, and rfort's runtime check reports it.
+
+The most common remaining first diagnostics, among demos gfortran compiles:
+
+| Cause | Demos |
+|---|---:|
+| Output descriptors `B`, `O`, `Z`, and formats held in CHARACTER variables | 22 |
+| Missing intrinsics (Bessel functions, `SIGN`, `DIM`, `OUT_OF_RANGE`, `BIT_SIZE`, `FLOAT`) | 12 |
+| `allocate(character(len=n) :: s)` | 6 |
+| Keyword arguments to intrinsics (`MOVE_ALLOC`, `NORM2`, `PARITY`, ...) | 6 |
+| Array initializers using `RESHAPE` or implied-DO | 6 |
+| `KIND(0.0)` or a named kind in a type parameter; `DO CONCURRENT` | 6 |
+| Assumed-rank dummies (`a(..)`) | 5 |
+
+Reports: `target/m-intrinsics-compile-step2.json` and
+`target/m-intrinsics-compiled-run-step2.json`, each with a companion `.md`.

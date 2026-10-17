@@ -1150,11 +1150,35 @@ fn lower_where_mask(body: &mut Vec<Stmt>, symbols: &mut Symbols, serial: &mut us
 
 // A captured I/O item can become array-valued after vector selection or
 // function specialization. Emit every active element into the same session.
+// Internal calls whose lowering produces an array.
+fn array_call(name: &str) -> bool {
+    matches!(name, "@spread" | "@cshift" | "@eoshift" | "@pack" | "@unpack" | "@bounds_vector")
+}
 fn formatted_items(handle:&str,items:&[Expr],symbols:&Symbols,serial:&mut usize)->Result<Vec<Stmt>> {
     let mut body=vec![];
     let mut local=symbols.clone();
     for item in items {
-        if element(item,&int(1),&local).is_ok_and(|(_,shape,_)|shape.is_some()) {
+        // Other array expressions, such as constructors and CSHIFT results,
+        // are materialized in a temporary before their elements are written.
+        let mut materialized=None;
+        if !element(item,&int(1),&local).is_ok_and(|(_,shape,_)|shape.is_some())
+            && (array_valued(item,&local) || matches!(item,Expr::Call(n,_) if array_call(n))) {
+            let mut captured=item.clone();let mut prefix=vec![];
+            if let Ok((_,count,length))=argument_with_elementals(&mut captured,&local.variables,&mut prefix,serial,&local.elementals) {
+                if count>=0 {materialized=Some((captured,prefix,length));}
+            }
+        }
+        if let Some((captured,prefix,length))=materialized {
+            let start=body.len();body.extend(prefix);
+            for s in &body[start..] {match s {
+                Stmt::ArrayDecl{kind,name,dims}=>{local.insert(name.clone(),(kind.clone(),dims.clone()));},
+                Stmt::VarDecl{kind,names}=>for n in names {local.insert(n.clone(),(kind.clone(),vec![]));},_=>{}
+            }}
+            *serial+=1;let index=format!("@formatted_array_index_{serial}");
+            let value=argument_element(&captured,&Expr::Ident(index.clone()),&local.variables)?;
+            body.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![index.clone()]});
+            body.push(Stmt::Do{var:index,start:int(1),end:length,body:vec![Stmt::CallSub{name:"@format_item".into(),args:vec![Expr::Ident(handle.to_owned()),value]}]});
+        } else if element(item,&int(1),&local).is_ok_and(|(_,shape,_)|shape.is_some()) {
             let mut captured=item.clone();let start=body.len();
             let (_,_,length)=argument_with_elementals(&mut captured,&local.variables,&mut body,serial,&local.elementals)?;
             for s in &body[start..] {match s {
@@ -1395,6 +1419,10 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                         Expr::Call(n, _) if matches!(n.as_str(),"@matrix_view"|"@packed_view"|"@array_constructor") => true,
                         Expr::Bin(_, a, b) => array_value(a, symbols) || array_value(b, symbols),
                         Expr::Un(_, a) => array_value(a, symbols),
+                        // Whether a call is array-valued is decided per item
+                        // when the list is written.
+                        Expr::Call(n, args) if !n.starts_with('@') && args.iter().any(|a| array_value(a, symbols)) => true,
+                        Expr::Call(n, _) if array_call(n) => true,
                         _ => false,
                     }
                 }
@@ -1595,10 +1623,20 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
             // A zero-size array contributes no output items (but PRINT still
             // terminates the record), regardless of its allocated storage.
             items.retain(|e| !matches!(e,Expr::Ident(n) if symbols.get(n).is_some_and(|(_,dims)| dims.len()==1 && constant(&dims[0]).ok()==Some(0))));
-            if items.iter().any(|e| runtime_extent(e).is_some()) {
+            // An elemental expression of a fixed-size rank-1 array, such as
+            // X*2 or SQRT(X), prints each of its elements.
+            let fixed_expression = |e: &Expr, symbols: &Symbols| -> Option<i64> {
+                // Internal section views already print as whole arrays.
+                if !matches!(e, Expr::Bin(..) | Expr::Un(..)) && !matches!(e, Expr::Call(n, _) if !n.starts_with('@'))
+                    || !array_valued(e, symbols) || runtime_extent(e).is_some() {
+                    return None;
+                }
+                element(e, &int(1), symbols).ok().and_then(|(_, count, _)| count).filter(|n| *n >= 0)
+            };
+            if items.iter().any(|e| runtime_extent(e).is_some() || fixed_expression(e, &symbols).is_some()) {
                 let mut declarations = vec![];
                 for item in items.iter_mut() {
-                    if let Some(length) = runtime_extent(item) {
+                    if let Some(length) = runtime_extent(item).or_else(|| fixed_expression(item, &symbols).map(int)) {
                         *serial += 1;
                         let index = format!("@packed_output_{serial}");
                         let kind = TypeSpec::Integer(Some(8));

@@ -21,7 +21,7 @@ class Deallocate(unittest.TestCase):
             encoding="utf-8"))["cases"][fixture.stem]["program_stdout"]
         self.check(fixture.read_text(encoding="utf-8"), expected)
 
-    def check(self, program, expected=None, error=None, data="", reference=True):
+    def check(self, program, expected=None, error=None, data="", reference=True, std="f2018"):
         with tempfile.TemporaryDirectory(prefix="deallocate-") as tmp:
             directory = Path(tmp)
             source = directory / "example.f90"
@@ -29,7 +29,7 @@ class Deallocate(unittest.TestCase):
             commands = build_commands(source, directory)
             if expected is not None and reference and shutil.which("gfortran"):
                 exe = directory / "reference.exe"
-                result = subprocess.run(["gfortran", "-std=f2018", "-fcheck=all",
+                result = subprocess.run(["gfortran", f"-std={std}", "-fcheck=all",
                                          source, "-o", exe], cwd=directory,
                                         capture_output=True, text=True, timeout=60)
                 self.assertEqual(result.returncode, 0, result.stderr)

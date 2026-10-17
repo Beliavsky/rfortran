@@ -1012,6 +1012,7 @@ pub fn resolve(program: Program) -> Result<Program> {
 }
 fn resolve_types(mut program: Program) -> Result<Program> {
     crate::parameters::resolve_intrinsic_modules(&mut program)?;
+    program = crate::block_scopes::resolve(program)?;
     crate::imports::validate(&program)?;
     program=crate::modules::associate(program)?;
     program = crate::procedure_arguments::resolve(program)?;

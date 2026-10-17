@@ -53,6 +53,34 @@ end function lge
 end program
 """, "3\n")
 
+    def test_degree_and_math_library_functions(self):
+        self.check("""program p
+implicit none
+real :: x(3) = [-1.0, 0.5, 1.0]
+double precision :: d = 0.5d0
+print '(7f8.3)', sind(30.0), cosd(60.0), tand(45.0), asind(0.5), acosd(0.5), atand(1.0), atan2d(1.0, 1.0)
+print '(3f8.3)', atan(1.0, -1.0), sind(30d0), asind(d)
+print '(3f8.2)', acosd(x)
+print '(4f9.5)', asinh(1.0), acosh(2.0), atanh(0.5), asinh(d)
+print '(5f9.4)', erf(0.5), erfc(0.5), gamma(5.0), log_gamma(10.0), hypot(3.0, 4.0)
+print '(6f5.1)', aint(2.7), aint(-2.7), anint(2.5), anint(-2.5), aint(1.5d0), anint(d)
+print '(3f5.1)', aint(x*2.6)
+end program
+""", "0.500 0.500 1.000 30.000 60.000 45.000 45.000\n2.356 0.500 30.000\n180.00 60.00 0.00\n"
+     "0.88137 1.31696 0.54931 0.48121\n0.5205 0.4795 24.0000 12.8018 5.0000\n"
+     "2.0 -2.0 3.0 -3.0 1.0 1.0\n-2.0 1.0 2.0\n", std="f2023")
+
+    def test_iso_fortran_env_entities(self):
+        self.check("""program p
+use iso_fortran_env, only: integer_kinds, real_kinds, output_unit, error_unit, input_unit, &
+  iostat_end, iostat_eor, compiler_version, character_storage_size
+implicit none
+print *, iostat_end, iostat_eor, is_iostat_end(-1), is_iostat_eor(-1)
+print *, integer_kinds(2), real_kinds(2), input_unit, output_unit, error_unit, character_storage_size
+write(output_unit, '(l1)') len_trim(compiler_version()) > 0
+end program
+""", "-1 -2 T F\n2 8 5 6 0 8\nT\n")
+
 
 if __name__ == "__main__":
     unittest.main()

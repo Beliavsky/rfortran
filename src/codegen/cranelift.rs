@@ -3703,7 +3703,7 @@ impl CraneliftBackend {
                     let mut sig = obj.make_signature();
                     for _ in 0..arity { sig.params.push(AbiParam::new(types::F64)); }
                     sig.returns.push(AbiParam::new(types::F64));
-                    let fid = obj.declare_function(&name.to_ascii_lowercase(), Linkage::Import, &sig)?;
+                    let fid = obj.declare_function(&crate::intrinsics::c_symbol(name), Linkage::Import, &sig)?;
                     func_ids.insert(name.clone(), fid);
                     eff_ret.insert(name.clone(), TypeSpec::Real);
                     param_kinds_map.insert(name.clone(), vec![ParamKind::F64; arity]);

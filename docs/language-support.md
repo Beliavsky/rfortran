@@ -25,6 +25,7 @@ gfortran when it is installed. Run the tests after `cargo build --bin rfort`.
   - [Integer and real inquiries](#integer-and-real-inquiries)
   - [Integer bit intrinsics](#integer-bit-intrinsics)
   - [Rounding, ISNAN, MIN and MAX](#rounding-isnan-min-and-max)
+  - [Elemental math functions](#elemental-math-functions)
 - [Control flow](#control-flow)
   - [DO loops](#do-loops)
   - [SELECT CASE ranges](#select-case-ranges)
@@ -204,9 +205,18 @@ checks with gfortran comparisons.
   `INT(boz, KIND)` with a constant KIND keeps that kind's low-order bits.
 - A relational or logical operator may follow an integer literal without a
   blank, as in `i>=97.and.i<=122`.
+- Names are case-insensitive: `Count`, `COUNT` and `count` are the same
+  variable.
+- IF, SELECT CASE, BLOCK and ASSOCIATE constructs may be named
+  (`search: block ... end block search`). `EXIT name` leaves any of them, and an
+  EXIT or CYCLE without a name still refers to the innermost DO loop. The
+  optional names after END, ELSE and CASE are accepted without checking that
+  they match.
+- Variables declared in a BLOCK are local to it, even when an outer variable
+  has the same name.
 
-Named IF and SELECT CASE constructs (`name: if (...) then`) are not yet
-supported. Run `python tests/test_syntax_forms.py`.
+Run `python tests/test_syntax_forms.py` and
+`python tests/test_named_constructs.py`.
 
 ### Statement labels
 
@@ -390,6 +400,22 @@ as `x / max(sum(abs(x)), tiny_value)`. Shape mismatches are checked before
 runtime-length element loops. Run `python tests/test_numeric_minmax.py` for
 interpreter/native O0/O2 and gfortran comparisons. Errors from numeric array
 lowering now include the source statement's location.
+
+### Elemental math functions
+
+`SQRT`, `EXP`, `LOG`, `LOG10`, the trigonometric and hyperbolic functions and
+their inverses (`ASINH`, `ACOSH`, `ATANH`), `ERF`, `ERFC`, `GAMMA`,
+`LOG_GAMMA`, `HYPOT`, `AINT` and `ANINT` call the C math library. They are
+elemental, including in PRINT and WRITE lists, and keep the kind of their
+argument.
+
+The Fortran 2023 degree functions (`SIND`, `COSD`, `TAND`, `ASIND`, `ACOSD`,
+`ATAND`, `ATAN2D`) and half-revolution functions (`SINPI`, `COSPI`, `TANPI`,
+`ASINPI`, `ACOSPI`, `ATANPI`, `ATAN2PI`) scale the argument or result of the
+ordinary function by pi in the argument's kind. gfortran reduces the angle in
+degrees first, so DOUBLE PRECISION results can differ from gfortran's in the
+last bit; for example `COSD(90d0)` is about 6e-17, not 0. `ATAN(Y, X)` is
+`ATAN2(Y, X)`. Run `python tests/test_intrinsic_rewrites.py`.
 
 ## Control flow
 
@@ -1609,9 +1635,13 @@ comparisons and `python tests/test_module_compilation.py` for cross-object tests
 
 ### Intrinsic modules
 
-ISO_FORTRAN_ENV currently provides the INTEGER kind constants INT8/INT16/INT32/
+ISO_FORTRAN_ENV provides the INTEGER kind constants INT8/INT16/INT32/
 INT64 (1/2/4/8) and REAL32/REAL64 (4/8). REAL128 is -1 to indicate an unsupported
-real kind. USE, INTRINSIC :: ISO_FORTRAN_ENV, ordinary USE and USE :: forms support
+real kind. It also provides INPUT_UNIT, OUTPUT_UNIT and ERROR_UNIT (5, 6 and 0),
+IOSTAT_END and IOSTAT_EOR (-1 and -2), the storage sizes, the arrays
+INTEGER_KINDS, REAL_KINDS, LOGICAL_KINDS and CHARACTER_KINDS, and the functions
+COMPILER_VERSION and COMPILER_OPTIONS. WRITE to ERROR_UNIT is not yet
+supported. The intrinsics IS_IOSTAT_END and IS_IOSTAT_EOR test an IOSTAT value. USE, INTRINSIC :: ISO_FORTRAN_ENV, ordinary USE and USE :: forms support
 ONLY lists, host association and re-export through user modules. Explicit
 INTRINSIC selects the built-in module even if a user module has the same name;
 NON_INTRINSIC requires a user module in the source group or a saved `.rmod` interface. Other intrinsic

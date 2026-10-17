@@ -85,9 +85,11 @@ end program main
             source=directory/"main.f90"
             for program,expected in cases:
                 source.write_text(program)
-                for command in build_commands(source,directory):
+                # Run in the temporary directory, so the user module named
+                # ISO_FORTRAN_ENV is not saved where other tests would find it.
+                for command in build_commands(source,directory,cwd=directory):
                     with self.subTest(program=program,command=command):
-                        result=subprocess.run(command,capture_output=True,text=True,timeout=15)
+                        result=subprocess.run(command,capture_output=True,text=True,timeout=15,cwd=directory)
                         self.assertEqual(result.returncode,0,result.stderr)
                         self.assertEqual(result.stderr,"")
                         self.assertTrue(equivalent(result.stdout,expected),result.stdout)

@@ -9,8 +9,12 @@
 //! storage. ISHFTC rotates the rightmost SIZE bits of I with IBITS, ISHFT and
 //! masks, using DIGITS(I)+1 as the default SIZE (the bit size of I's kind).
 //! BGE, BGT, BLE and BLT compare as unsigned integers: the signed comparison,
-//! reversed when exactly one argument is negative.
-//! A user procedure with one of these names keeps its own definition.
+//! reversed when exactly one argument is negative. IS_IOSTAT_END and
+//! IS_IOSTAT_EOR compare with the IOSTAT_END and IOSTAT_EOR values, -1 and -2.
+//! SIND, ASIND, SINPI, ATAN2D and the rest of the degree and half-revolution
+//! functions scale the argument or result of SIN, ASIN or ATAN2 by PI in the
+//! argument's kind, and ATAN(Y, X) is ATAN2(Y, X).
+//! A user procedure or variable with one of these names keeps its own definition.
 use crate::ast::{BinOp, Expr, Program, Stmt};
 use crate::procedure_arguments::{children, expressions, visit_expr};
 use anyhow::{bail, Result};
@@ -34,9 +38,11 @@ fn user_procedures(body: &[Stmt], out: &mut HashSet<String>) {
                 user_procedures(body, out);
             }
             Stmt::Module { body, .. } => user_procedures(body, out),
-            Stmt::GenericInterface { name, .. } => {
+            Stmt::GenericInterface { name, .. } | Stmt::ArrayDecl { name, .. } => {
                 out.insert(name.to_ascii_lowercase());
             }
+            Stmt::VarDecl { names, .. } => out.extend(names.iter().map(|n| n.to_ascii_lowercase())),
+            Stmt::InitializedDecl { entities, .. } => out.extend(entities.iter().map(|(n, _)| n.to_ascii_lowercase())),
             _ => {}
         }
     }
@@ -57,10 +63,60 @@ fn ishftc(args: &[Expr]) -> Result<Expr> {
     Ok(call("ior", vec![call("iand", vec![i, call("not", vec![mask])]), call("ior", vec![left, right])]))
 }
 
+// Pi in the kind of the REAL expression x, which may be an array.
+fn pi_like(x: &Expr) -> Expr {
+    call("acos", vec![bin(BinOp::Sub, bin(BinOp::Mul, x.clone(), int(0)), int(1))])
+}
+
+// Degree and half-revolution trigonometric functions: the argument is scaled
+// to radians before the ordinary function, or the result scaled after it.
+fn scaled_trig(lname: &str, args: &[Expr]) -> Option<Result<Expr>> {
+    let (base, unit) = if let Some(base) = lname.strip_suffix("pi") {
+        (base, None)
+    } else {
+        (lname.strip_suffix('d')?, Some(180))
+    };
+    let two = matches!(base, "atan2") || base == "atan" && args.len() == 2;
+    if !matches!(base, "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "atan2") {
+        return None;
+    }
+    if args.len() != if two { 2 } else { 1 } {
+        return Some(Err(anyhow::anyhow!("{} expects {} argument(s)", lname.to_ascii_uppercase(), if two { 2 } else { 1 })));
+    }
+    let x = &args[0];
+    let radians_per_unit = match unit { Some(u) => bin(BinOp::Div, pi_like(x), int(u)), None => pi_like(x) };
+    Some(Ok(if matches!(base, "sin" | "cos" | "tan") {
+        call(base, vec![bin(BinOp::Mul, x.clone(), radians_per_unit)])
+    } else if two {
+        bin(BinOp::Div, call("atan2", args.to_vec()), radians_per_unit)
+    } else {
+        bin(BinOp::Div, call(base, vec![x.clone()]), radians_per_unit)
+    }))
+}
+
 fn rewrite(e: &mut Expr, user: &HashSet<String>, error: &mut Option<anyhow::Error>) {
     let Expr::Call(name, args) = e else { return };
     let lname = name.to_ascii_lowercase();
     if user.contains(&lname) {
+        return;
+    }
+    if lname == "atan" && args.len() == 2 {
+        *e = call("atan2", args.clone());
+        return;
+    }
+    if let Some(result) = scaled_trig(&lname, args) {
+        match result {
+            Ok(value) => *e = value,
+            Err(err) => *error = Some(err),
+        }
+        return;
+    }
+    if let Some(code) = match lname.as_str() { "is_iostat_end" => Some(-1), "is_iostat_eor" => Some(-2), _ => None } {
+        if args.len() != 1 {
+            *error = Some(anyhow::anyhow!("{} expects I", lname.to_ascii_uppercase()));
+            return;
+        }
+        *e = bin(BinOp::Eq, args[0].clone(), int(code));
         return;
     }
     if let Some(op) = match lname.as_str() { "bge" => Some(BinOp::Ge), "bgt" => Some(BinOp::Gt), "ble" => Some(BinOp::Le), "blt" => Some(BinOp::Lt), _ => None } {

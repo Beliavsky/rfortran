@@ -141,7 +141,7 @@ pub(crate) fn report(
     let message = located.message.split('`').enumerate().map(|(i, part)| {
         let part = if i % 2 == 1 && part.starts_with("@module$") {
             part.rsplit('$').next().unwrap_or(part)
-        } else { part };
+        } else if i % 2 == 1 { crate::block_scopes::original(part) } else { part };
         if i == 0 { part.to_owned() } else { format!("`{part}") }
     }).collect::<String>();
     let diagnostic = Diagnostic::error()

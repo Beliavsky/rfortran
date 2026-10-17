@@ -114,9 +114,12 @@ pub(crate) fn intrinsic(name: &str) -> Option<Signature> {
         name if crate::bit_intrinsics::keys(name).is_some() => crate::bit_intrinsics::keys(name).unwrap(),
         name if crate::inquiries::numeric_model(name) => &["x"],
         name if crate::intrinsics::real_predicate(name) => &["x"],
-        "atan2" => &["y", "x"],
+        "atan2" | "atan2d" | "atan2pi" => &["y", "x"],
+        "hypot" => &["x", "y"],
         "sqrt" | "exp" | "log" | "log10" | "sin" | "cos" | "tan" | "asin" | "acos" | "atan"
-        | "sinh" | "cosh" | "tanh" => &["x"],
+        | "sinh" | "cosh" | "tanh" | "asinh" | "acosh" | "atanh" | "erf" | "erfc" | "gamma" | "log_gamma"
+        | "sind" | "cosd" | "tand" | "asind" | "acosd" | "atand"
+        | "sinpi" | "cospi" | "tanpi" | "asinpi" | "acospi" | "atanpi" => &["x"],
         "abs" | "dble" => &["a"],
         "cmplx"=> &["x","y","kind"],
         "aimag"|"conjg"=> &["z"],

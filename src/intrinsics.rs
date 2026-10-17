@@ -8,10 +8,24 @@ pub const REAL_MATH: &[(&str, usize)] = &[
     ("sin", 1), ("cos", 1), ("tan", 1),
     ("asin", 1), ("acos", 1), ("atan", 1), ("atan2", 2),
     ("sinh", 1), ("cosh", 1), ("tanh", 1),
+    ("asinh", 1), ("acosh", 1), ("atanh", 1),
+    ("erf", 1), ("erfc", 1), ("gamma", 1), ("log_gamma", 1), ("hypot", 2),
+    ("aint", 1), ("anint", 1),
 ];
 
 pub fn math_arity(name: &str) -> Option<usize> {
     REAL_MATH.iter().find(|(n, _)| name.eq_ignore_ascii_case(n)).map(|(_, arity)| *arity)
+}
+
+/// The C math library function for a REAL_MATH intrinsic.
+pub fn c_symbol(name: &str) -> String {
+    match name.to_ascii_lowercase().as_str() {
+        "gamma" => "tgamma".into(),
+        "log_gamma" => "lgamma".into(),
+        "aint" => "trunc".into(),
+        "anint" => "round".into(),
+        other => other.into(),
+    }
 }
 
 /// Elemental real predicates return default LOGICAL with their argument's shape.

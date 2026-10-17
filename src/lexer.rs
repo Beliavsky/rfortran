@@ -272,7 +272,8 @@ pub enum TokenKind {
     Percent,
     #[token("=>")]
     Arrow,
-    #[regex(r"[A-Za-z_][A-Za-z0-9_]*", |lex| lex.slice().to_string())]
+    // Fortran names are case-insensitive, so they are kept in lower case.
+    #[regex(r"[A-Za-z_][A-Za-z0-9_]*", |lex| lex.slice().to_ascii_lowercase())]
     Ident(String),
     // BOZ literal constants; lex() replaces each with an INTEGER literal.
     #[regex(r#"[bB]('[01]+'|"[01]+")|[oO]('[0-7]+'|"[0-7]+")|[zZ]('[0-9A-Fa-f]+'|"[0-9A-Fa-f]+")"#, |lex| lex.slice().to_string())]
@@ -292,9 +293,9 @@ pub enum TokenKind {
         join_continued_literal(&s[1..s.len()-1]).replace("''", "'")
     })]
     Str(String),
-    #[regex(r"(([0-9]+\.[0-9]*|\.[0-9]+)([eEdD][+-]?[0-9]+)?|[0-9]+[eEdD][+-]?[0-9]+)(_[A-Za-z0-9_]+)?", |lex| lex.slice().to_string())]
+    #[regex(r"(([0-9]+\.[0-9]*|\.[0-9]+)([eEdD][+-]?[0-9]+)?|[0-9]+[eEdD][+-]?[0-9]+)(_[A-Za-z0-9_]+)?", |lex| lex.slice().to_ascii_lowercase())]
     Float(String),
-    #[regex(r"[0-9]+(_[A-Za-z0-9_]+)?", |lex| lex.slice().to_string())]
+    #[regex(r"[0-9]+(_[A-Za-z0-9_]+)?", |lex| lex.slice().to_ascii_lowercase())]
     Integer(String),
     StatementLabel(String),
     KwContinue,
@@ -1075,10 +1076,14 @@ pub fn lex(input: &str) -> Vec<Token> {
         if named_index+2<tokens.len()
             && matches!(tokens[named_index].kind,TokenKind::Ident(_))
             && matches!(tokens[named_index+1].kind,TokenKind::Colon)
-            && matches!(tokens[named_index+2].kind,TokenKind::KwDo)
+            && (matches!(tokens[named_index+2].kind,TokenKind::KwDo|TokenKind::KwIf|TokenKind::KwSelect|TokenKind::KwBlock|TokenKind::KwAssociate)
+                || matches!(&tokens[named_index+2].kind,TokenKind::Ident(n) if n.eq_ignore_ascii_case("associate"))
+                    && matches!(tokens.get(named_index+3).map(|t|&t.kind),Some(TokenKind::LParen)))
+            && statement_head(&tokens,input,named_index)
             && same_statement(&input[tokens[named_index].span.end..tokens[named_index+2].span.start]) {
             let TokenKind::Ident(name)=tokens[named_index].kind.clone() else {unreachable!()};
             tokens[named_index].kind=TokenKind::ConstructName(name);
+            if matches!(tokens[named_index+2].kind,TokenKind::Ident(_)) {tokens[named_index+2].kind=TokenKind::KwAssociate;}
         }
         if named_index+1<tokens.len()
             && same_statement(&input[tokens[named_index].span.end..tokens[named_index+1].span.start]) {
@@ -1096,6 +1101,28 @@ pub fn lex(input: &str) -> Vec<Token> {
             }
         }
         named_index+=1;
+    }
+    // The optional construct name after END IF, END SELECT, END BLOCK,
+    // END ASSOCIATE, ELSE, ELSE IF (...) THEN and CASE selects nothing more.
+    let mut index=0;
+    while index+1<tokens.len() {
+        let next_same=same_statement(&input[tokens[index].span.end..tokens[index+1].span.start]);
+        let named=next_same && matches!(tokens[index+1].kind,TokenKind::Ident(_)) && match tokens[index].kind {
+            TokenKind::KwIf|TokenKind::KwSelect|TokenKind::KwBlock|TokenKind::KwAssociate => index>0
+                && matches!(tokens[index-1].kind,TokenKind::KwEnd)
+                && same_statement(&input[tokens[index-1].span.end..tokens[index].span.start]),
+            TokenKind::KwElse|TokenKind::KwDefault => true,
+            TokenKind::KwThen => (0..index).rev().find(|&i| statement_head(&tokens,input,i))
+                .is_some_and(|i| matches!(tokens[i].kind,TokenKind::KwElseIf|TokenKind::KwElse)
+                    || matches!(&tokens[i].kind,TokenKind::Ident(n) if n.eq_ignore_ascii_case("elseif"))),
+            TokenKind::RParen => (0..index).rev().find(|&i| statement_head(&tokens,input,i))
+                .is_some_and(|i| matches!(tokens[i].kind,TokenKind::KwCase)),
+            _ => false,
+        };
+        if named && tokens.get(index+2).is_none_or(|t| !same_statement(&input[tokens[index+1].span.end..t.span.start])) {
+            tokens.remove(index+1);
+        }
+        index+=1;
     }
     for index in 0..tokens.len() {
         // Newlines are skipped by the grammar. Distinguish PRINT * without an

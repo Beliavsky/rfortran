@@ -57,16 +57,46 @@ pub(crate) fn resolve_intrinsic_modules(program: &mut Program) -> Result<()> {
     let mut needed = false;
     visit(&mut program.body, &user_modules, &mut needed)?;
     if needed && !user_modules.contains(INTERNAL) {
-        let body = [("int8",1), ("int16",2), ("int32",4), ("int64",8),
-                    ("real32",4), ("real64",8), ("real128",-1)].into_iter()
+        let mut body: Vec<Stmt> = [("int8",1), ("int16",2), ("int32",4), ("int64",8),
+                    ("real32",4), ("real64",8), ("real128",-1),
+                    ("input_unit",5), ("output_unit",6), ("error_unit",0),
+                    ("iostat_end",-1), ("iostat_eor",-2), ("iostat_inquire_internal_unit",-3),
+                    ("character_storage_size",8), ("numeric_storage_size",32), ("file_storage_size",8)].into_iter()
             .map(|(name,value)| Stmt::InitializedDecl {
                 kind: TypeSpec::Integer(None), attributes: vec!["parameter".into()],
                 entities: vec![(name.into(),Some(Expr::IntLit(value.to_string())))],
             }).collect();
+        body.extend(intrinsic_module_source()?);
         program.body.insert(0, Stmt::Module { name: INTERNAL.into(), body });
     }
     Ok(())
 }
+
+// ISO_FORTRAN_ENV entities that are simplest to state in Fortran.
+fn intrinsic_module_source() -> Result<Vec<Stmt>> {
+    let source = format!("module iso_fortran_env_entities
+integer, parameter :: integer_kinds(4) = [1, 2, 4, 8]
+integer, parameter :: real_kinds(2) = [4, 8]
+integer, parameter :: logical_kinds(1) = [4]
+integer, parameter :: character_kinds(1) = [1]
+contains
+function compiler_version() result(version)
+  character(len={}) :: version
+  version = '{}'
+end function compiler_version
+function compiler_options() result(options)
+  character(len=1) :: options
+  options = ' '
+end function compiler_options
+end module iso_fortran_env_entities
+", COMPILER_VERSION.len(), COMPILER_VERSION);
+    let tokens = crate::lexer::lex(&source);
+    let program = crate::parser::parse_with_src(&source, &tokens, "<iso_fortran_env>")
+        .map_err(|_| anyhow::anyhow!("internal error: ISO_FORTRAN_ENV source does not parse"))?;
+    let Some(Stmt::Module { body, .. }) = program.body.into_iter().next() else { bail!("internal error: ISO_FORTRAN_ENV source is not a module") };
+    Ok(body)
+}
+const COMPILER_VERSION: &str = concat!("rfort version ", env!("CARGO_PKG_VERSION"));
 
 // Keep a literal's kind explicit until scalar lowering can allocate typed storage.
 pub(crate) fn integer_literal_kind(expr: &Expr) -> Option<u8> {

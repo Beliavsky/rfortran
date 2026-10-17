@@ -446,12 +446,27 @@ pub fn interpret(program: &Program) {
                 }
             }
             "nint" => Some(ValueTuple::from_int(to_real(args.get(0)?)?.round() as i64)),
-            "aint" | "anint" => {
-                if let Some(f) = to_real(args.get(0)?) {
-                    Some(ValueTuple::from_int(f.trunc() as i64))
-                } else {
-                    Some(ValueTuple::from_int(to_int(args.get(0)?)?))
+            "aint" => to_real(args.get(0)?).map(|f| ValueTuple::from_real(f.trunc())),
+            "anint" => to_real(args.get(0)?).map(|f| ValueTuple::from_real(f.round())),
+            "asinh" => to_real(args.get(0)?).map(|f| ValueTuple::from_real(f.asinh())),
+            "acosh" => to_real(args.get(0)?).map(|f| ValueTuple::from_real(f.acosh())),
+            "atanh" => to_real(args.get(0)?).map(|f| ValueTuple::from_real(f.atanh())),
+            "erf" | "erfc" | "gamma" | "log_gamma" => {
+                extern "C" {
+                    fn erf(x: f64) -> f64;
+                    fn erfc(x: f64) -> f64;
+                    fn tgamma(x: f64) -> f64;
+                    fn lgamma(x: f64) -> f64;
                 }
+                let x = to_real(args.get(0)?)?;
+                // SAFETY: C99 math library functions of one double.
+                let value = unsafe { match n.as_str() { "erf" => erf(x), "erfc" => erfc(x), "gamma" => tgamma(x), _ => lgamma(x) } };
+                Some(ValueTuple::from_real(value))
+            }
+            "hypot" => {
+                let x = to_real(args.get(0)?)?;
+                let y = to_real(args.get(1)?)?;
+                Some(ValueTuple::from_real(x.hypot(y)))
             }
             "floor" | "ceiling" => {
                 let x=to_real(args.first()?)?;

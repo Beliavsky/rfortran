@@ -5,6 +5,11 @@
 //! Resolve construct names before procedure specialization. Transfers to an
 //! enclosing loop unwind intervening loops using ordinary EXIT, then perform
 //! EXIT/CYCLE at the target. All backends share this control-flow lowering.
+//!
+//! A named IF, SELECT CASE, BLOCK or ASSOCIATE construct that is the target of
+//! an EXIT becomes a one-trip DO loop with that name. An EXIT or CYCLE without
+//! a name inside it still belongs to the innermost enclosing DO loop, so it
+//! leaves the one-trip loop and signals that loop like a named transfer.
 use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Result};
 use std::collections::HashSet;
@@ -26,6 +31,27 @@ pub(crate) fn parsed(stmt: Stmt, name: Option<String>, end: Option<String>) -> S
         ],
     }
 }
+pub(crate) fn named_construct(name: String, stmt: Stmt) -> Stmt {
+    Stmt::Block {
+        body: vec![
+            Stmt::CallSub { name: "@named_construct".into(), args: vec![Expr::Str(name)] },
+            stmt,
+        ],
+    }
+}
+// True when an EXIT in body names `target`.
+fn exits_to(body: &[Stmt], target: &str) -> bool {
+    body.iter().any(|s| match s {
+        Stmt::CallSub { name, args } if name == "@named_exit" =>
+            matches!(args.as_slice(), [Expr::Str(n)] if n.eq_ignore_ascii_case(target)),
+        Stmt::If { then_body, else_body, .. } =>
+            exits_to(then_body, target) || else_body.as_deref().is_some_and(|b| exits_to(b, target)),
+        Stmt::SelectCase { cases, default, .. } =>
+            cases.iter().any(|c| exits_to(&c.body, target)) || default.as_deref().is_some_and(|b| exits_to(b, target)),
+        Stmt::Block { body } | Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } => exits_to(body, target),
+        _ => false,
+    })
+}
 fn int(n: i64) -> Expr {
     Expr::IntLit(n.to_string())
 }
@@ -45,6 +71,8 @@ fn equal(n: &str, value: i64) -> Expr {
 struct Loop {
     name: Option<String>,
     flag: Option<String>,
+    // A one-trip loop standing for a named non-DO construct.
+    construct: bool,
 }
 struct Lower {
     stack: Vec<Loop>,
@@ -77,9 +105,10 @@ impl Lower {
         name: Option<String>,
         serial: &mut usize,
     ) -> Result<()> {
+        let construct = matches!(stmt, Stmt::Do { var, .. } if var.starts_with("@named_construct_trip_"));
         let flag = if let Some(name) = &name {
             if !self.names.insert(name.clone()) {
-                bail!("duplicate DO construct name `{name}`");
+                bail!("duplicate {}construct name `{name}`", if construct { "" } else { "DO " });
             }
             *serial += 1;
             let flag = format!("@named_loop_signal_{serial}");
@@ -88,7 +117,7 @@ impl Lower {
         } else {
             None
         };
-        self.stack.push(Loop { name, flag });
+        self.stack.push(Loop { name, flag, construct });
         match stmt {
             Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } => self.body(body, serial)?,
             Stmt::Block { body } if matches!(body.first(),Some(Stmt::CallSub {name,..}) if name=="@do_step") =>
@@ -151,6 +180,48 @@ impl Lower {
                     }
                 }
             }
+            if let Stmt::Block { body } = &mut stmt {
+                if let Some(Stmt::CallSub { name, args }) = body.first() {
+                    if name == "@named_construct" {
+                        let [Expr::Str(name)] = args.as_slice() else { unreachable!() };
+                        let name = name.to_ascii_lowercase();
+                        let construct = body.pop().expect("named construct missing");
+                        let inner = std::slice::from_ref(&construct);
+                        if exits_to(inner, &name) {
+                            *serial += 1;
+                            let trip = format!("@named_construct_trip_{serial}");
+                            self.flags.push(trip.clone());
+                            stmt = Stmt::Do { var: trip, start: int(1), end: int(1), body: vec![construct] };
+                            loop_name = Some(name);
+                        } else {
+                            if !self.names.insert(name.clone()) {
+                                bail!("duplicate construct name `{name}`");
+                            }
+                            stmt = construct;
+                        }
+                    }
+                }
+            }
+            if matches!(stmt, Stmt::Exit | Stmt::Cycle) && self.stack.last().is_some_and(|l| l.construct) {
+                // Leave the one-trip loops, then transfer at the enclosing DO.
+                let exit = matches!(stmt, Stmt::Exit);
+                let Some(index) = self.stack.iter().rposition(|l| !l.construct) else {
+                    bail!("{} must be within a DO construct", if exit { "EXIT" } else { "CYCLE" });
+                };
+                let flag = match &self.stack[index].flag {
+                    Some(flag) => flag.clone(),
+                    None => {
+                        *serial += 1;
+                        let flag = format!("@named_loop_signal_{serial}");
+                        self.flags.push(flag.clone());
+                        self.stack[index].flag = Some(flag.clone());
+                        flag
+                    }
+                };
+                output.push(set(&flag, if exit { 1 } else { 2 }));
+                output.push(Stmt::Exit);
+                continue;
+            }
             let is_loop = matches!(&stmt, Stmt::Do { .. } | Stmt::DoWhile { .. })
                 || matches!(&stmt,Stmt::Block {body} if matches!(body.first(),Some(Stmt::CallSub {name,..}) if name=="@do_step"));
             if is_loop {
@@ -170,7 +241,7 @@ impl Lower {
                             .is_some_and(|n| n.eq_ignore_ascii_case(target))
                     }) else {
                         bail!(
-                            "{} target `{target}` is not an enclosing DO construct",
+                            "{} target `{target}` is not an enclosing DO or named construct",
                             if name == "@named_exit" {
                                 "EXIT"
                             } else {
@@ -179,6 +250,9 @@ impl Lower {
                         );
                     };
                     let exit = name == "@named_exit";
+                    if !exit && self.stack[index].construct {
+                        bail!("CYCLE target `{target}` is not a DO construct");
+                    }
                     if index + 1 == self.stack.len() {
                         stmt = if exit { Stmt::Exit } else { Stmt::Cycle };
                     } else {

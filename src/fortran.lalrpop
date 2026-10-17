@@ -456,7 +456,8 @@ Stmt: Stmt = {
     KW_IF LPAREN <cnd: CondExpr> RPAREN <s: Stmt> => {
         let mut v = Vec::new(); v.push(s); Stmt::If { cond: cnd, then_body: v, else_body: None }
     },
-    KW_IF LPAREN <cnd: CondExpr> RPAREN KW_THEN <then_stmts: Stmts> <tail:IfTail> => Stmt::If { cond: cnd, then_body: then_stmts, else_body: tail },
+    <stmt:NameableConstruct> => stmt,
+    <name:LoopName> <stmt:NameableConstruct> => crate::named_loops::named_construct(name, stmt),
     KW_WHERE LPAREN <mask:CondExpr> RPAREN <assignment:Stmt> =>
         Stmt::Block { body: vec![Stmt::CallSub { name:"@where".into(), args:vec![mask] }, assignment] },
     KW_WHERE_BLOCK LPAREN <mask:CondExpr> RPAREN <body:Stmts> <tail:WhereTail> => {
@@ -508,20 +509,6 @@ Stmt: Stmt = {
             Stmt::Implicit(Implicit::Rules { rules })
         }
     },
-    KW_SELECT KW_CASE LPAREN <e: RhsExpr> RPAREN <case_blocks: CaseBlocks> KW_END KW_SELECT => {
-        let mut default: Option<Vec<Stmt>> = None;
-        let mut blocks: Vec<CaseBlock> = Vec::new();
-        for cb in case_blocks {
-            match cb {
-                CaseOrDefault::Case(b) => blocks.push(b),
-                CaseOrDefault::Default(d) => default = Some(d),
-            }
-        }
-        Stmt::SelectCase { expr: e, cases: blocks, default }
-    },
-    KW_BLOCK <body: Stmts> KW_END KW_BLOCK => Stmt::Block { body },
-    KW_ASSOCIATE LPAREN <pairs: AssociationList> RPAREN <body: Stmts> KW_END KW_ASSOCIATE =>?
-        crate::ast::associate(pairs, body).map_err(|error| lalrpop_util::ParseError::User { error }),
     <name:NAMED_EXIT> => Stmt::CallSub {name:"@named_exit".into(),args:vec![Expr::Str(name)]},
     <name:NAMED_CYCLE> => Stmt::CallSub {name:"@named_cycle".into(),args:vec![Expr::Str(name)]},
     KW_EXIT => Stmt::Exit,
@@ -959,6 +946,26 @@ LetterRangeItem: LetterRange = {
         let end_char = end.chars().next().unwrap_or('z').to_ascii_lowercase();
         LetterRange { start: start_char, end: Some(end_char) }
     },
+};
+
+// IF, SELECT CASE, BLOCK and ASSOCIATE constructs, which may have a construct
+// name. The lexer removes the optional names after ELSE, CASE and END.
+NameableConstruct: Stmt = {
+    KW_IF LPAREN <cnd: CondExpr> RPAREN KW_THEN <then_stmts: Stmts> <tail:IfTail> => Stmt::If { cond: cnd, then_body: then_stmts, else_body: tail },
+    KW_SELECT KW_CASE LPAREN <e: RhsExpr> RPAREN <case_blocks: CaseBlocks> KW_END KW_SELECT => {
+        let mut default: Option<Vec<Stmt>> = None;
+        let mut blocks: Vec<CaseBlock> = Vec::new();
+        for cb in case_blocks {
+            match cb {
+                CaseOrDefault::Case(b) => blocks.push(b),
+                CaseOrDefault::Default(d) => default = Some(d),
+            }
+        }
+        Stmt::SelectCase { expr: e, cases: blocks, default }
+    },
+    KW_BLOCK <body: Stmts> KW_END KW_BLOCK => Stmt::Block { body },
+    KW_ASSOCIATE LPAREN <pairs: AssociationList> RPAREN <body: Stmts> KW_END KW_ASSOCIATE =>?
+        crate::ast::associate(pairs, body).map_err(|error| lalrpop_util::ParseError::User { error }),
 };
 
 // Lower a branch chain to nested IF nodes, sharing a single closing END IF.

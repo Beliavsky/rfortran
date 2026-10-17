@@ -184,6 +184,24 @@ endblock
 endprogram p
 """, "1.5\none\nother\nelse\n5\nblk\n")
 
+    def test_names_are_case_insensitive(self):
+        self.check("""PROGRAM Main
+IMPLICIT NONE
+INTEGER, PARAMETER :: DP = KIND(1.0D0)
+INTEGER :: Count
+REAL(dp) :: X(2)
+count = 3
+x = 1.5_DP
+CALL Show(COUNT, X)
+CONTAINS
+SUBROUTINE SHOW(n, y)
+  integer, intent(IN) :: N
+  real(DP), intent(in) :: Y(:)
+  print *, n, SUM(y), Kind(Y)
+END SUBROUTINE show
+END PROGRAM main
+""", "3 3.0 8\n")
+
     def test_boz_literals_and_unsigned_comparisons(self):
         self.check("""program p
 use iso_fortran_env, only: int8, int16

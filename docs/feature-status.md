@@ -22,6 +22,15 @@ None are known. The automatic-array, `LGE`/`LGT`/`LLE`/`LLT` and `ISHFTC` bugs
 found on 2026-10-17 are fixed. The compiler now reports an error for a call it
 cannot generate code for, instead of using the value 0.
 
+Three more bugs found on 2026-10-17 are also fixed:
+
+- `print *, x*2` and other elemental expressions of a fixed-size array printed
+  only their first element.
+- Names were case-sensitive, so `integer :: I` and a later `i` were different
+  variables, even under `IMPLICIT NONE`.
+- A scalar, fixed-size array or CHARACTER variable declared in a BLOCK shared
+  storage with an outer variable of the same name.
+
 ## Source form and declarations
 
 | Feature | Status | Notes | Tests |
@@ -38,7 +47,8 @@ cannot generate code for, instead of using the value 0.
 | [One-word keywords (`ENDIF`, `ELSEIF`, `SELECTCASE`, `DOUBLEPRECISION`, ...)](language-support.md#other-statement-forms) | ✅ | | test_syntax_forms.py |
 | [BOZ literal constants](language-support.md#other-statement-forms) | 🟡 | Not in DATA statements; a pattern over 32 bits must be converted with `INT(..., 8)` | test_syntax_forms.py |
 | `ENDFILE` statement | ❌ | | |
-| Named IF and SELECT CASE constructs (`name: if (...) then`) | ❌ | Named DO loops work | |
+| [Named IF, SELECT CASE, BLOCK and ASSOCIATE constructs](language-support.md#other-statement-forms) | ✅ | Names after END, ELSE and CASE are not checked against the construct name | test_named_constructs.py |
+| [Case-insensitive names](language-support.md#other-statement-forms) | ✅ | | test_syntax_forms.py |
 | [Declarations without `::`](language-support.md#declarations-without-) | ✅ | Attributes and initializers still need `::` | test_declarations_without_colons.py |
 | [DIMENSION attribute](language-support.md#dimension-declarations-and-shape) | ✅ | | test_dimension_attribute.py |
 | [INTENT](language-support.md#intent-spellings) | ✅ | | |
@@ -69,7 +79,7 @@ cannot generate code for, instead of using the value 0.
 | LOGICAL | ✅ | Default kind | |
 | [CHARACTER](language-support.md#character-declarations-and-lengths) | 🟡 | Lengths must be known at compile time or bounded; see the CHARACTER section | test_character_lengths.py |
 | `SELECTED_INT_KIND`, `SELECTED_REAL_KIND`, `KIND` | ✅ | | |
-| [ISO_FORTRAN_ENV kinds](language-support.md#intrinsic-modules) | 🟡 | Kind constants only | test_intrinsic_env.py |
+| [ISO_FORTRAN_ENV](language-support.md#intrinsic-modules) | 🟡 | No `ATOMIC_*`, `LOCK_TYPE`, `EVENT_TYPE` or `STAT_*` entities | test_intrinsic_env.py, test_intrinsic_rewrites.py |
 | ISO_C_BINDING | ❌ | | |
 | IEEE_ARITHMETIC and other IEEE modules | ❌ | | |
 
@@ -83,8 +93,8 @@ cannot generate code for, instead of using the value 0.
 | DO CONCURRENT | ❌ | | |
 | Labelled DO (`do 10 i = ...`) | ❌ | | |
 | [SELECT CASE](language-support.md#select-case-ranges) | 🟡 | INTEGER values and ranges, CHARACTER values; CHARACTER ranges are not supported | test_case_ranges.py |
-| BLOCK construct | ✅ | | testsuite |
-| EXIT from a named BLOCK | ❌ | | |
+| BLOCK construct | ✅ | | testsuite, test_named_constructs.py |
+| [EXIT from a named BLOCK, IF, SELECT CASE or ASSOCIATE](language-support.md#other-statement-forms) | ✅ | | test_named_constructs.py |
 | [ASSOCIATE](language-support.md#associate) | 🟡 | Selectors whose value the block changes are rejected | test_associate.py |
 | SELECT TYPE, SELECT RANK | ❌ | | |
 | GOTO, computed GOTO, arithmetic IF | ❌ | | |
@@ -221,11 +231,14 @@ cannot generate code for, instead of using the value 0.
 
 | Feature | Status | Notes | Tests |
 |---|---|---|---|
-| Elemental math: `SQRT`, `EXP`, `LOG`, `LOG10`, trigonometric and hyperbolic functions | ✅ | | |
-| Inverse hyperbolic functions `ASINH`, `ACOSH`, `ATANH` | ❌ | | |
+| Elemental math: `SQRT`, `EXP`, `LOG`, `LOG10`, trigonometric and hyperbolic functions | ✅ | | test_print_array_expressions.py |
+| Inverse hyperbolic functions `ASINH`, `ACOSH`, `ATANH` | ✅ | | test_intrinsic_rewrites.py |
+| [Degree and half-revolution trigonometry](language-support.md#elemental-math-functions) (`SIND`, `ACOSD`, `ATAN2D`, `SINPI`, `ATAN2PI`, ...) and `ATAN(Y, X)` | ✅ | DOUBLE PRECISION results can differ from gfortran's in the last bit, and `COSD(90d0)` is 6e-17 instead of 0 | test_intrinsic_rewrites.py |
 | `ABS`, `MOD`, `MODULO`, `MIN`, `MAX`, `INT`, `NINT`, `REAL`, `DBLE`, `FLOOR`, `CEILING` | 🟡 | `INT` accepts KIND only for a constant INTEGER argument | test_rounding.py, test_numeric_minmax.py |
-| `SIGN`, `DIM`, `AINT`, `ANINT`, `DPROD` | ❌ | | |
-| `ERF`, `ERFC`, `GAMMA`, `LOG_GAMMA`, `HYPOT`, Bessel functions | ❌ | | |
+| `AINT`, `ANINT` | 🟡 | No KIND argument | test_intrinsic_rewrites.py |
+| `SIGN`, `DIM`, `DPROD` | ❌ | | |
+| `ERF`, `ERFC`, `GAMMA`, `LOG_GAMMA`, `HYPOT` | ✅ | | test_intrinsic_rewrites.py |
+| `ERFC_SCALED`, Bessel functions | ❌ | | |
 | [Numeric inquiries](language-support.md#integer-and-real-inquiries) (`HUGE`, `TINY`, `EPSILON`, `DIGITS`, `PRECISION`, `RANGE`, ...) | ✅ | | test_integer_huge.py, test_numeric_model.py |
 | [Floating-point model](language-support.md#integer-and-real-inquiries) (`FRACTION`, `EXPONENT`, `SCALE`, `NEAREST`, `SPACING`, ...) | ✅ | | test_float_model.py |
 | [Bit intrinsics](language-support.md#integer-bit-intrinsics) (`BTEST`, `IAND`, `IOR`, `IEOR`, `NOT`, `IBSET`, `IBCLR`, `IBITS`, `ISHFT`) | ✅ | Scalars only | test_bit_intrinsics.py |
