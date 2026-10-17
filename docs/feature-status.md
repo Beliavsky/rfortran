@@ -35,6 +35,9 @@ cannot generate code for, instead of using the value 0.
 | [DIMENSION statement](language-support.md#other-statement-forms) | ✅ | | test_syntax_forms.py |
 | [CHARACTER literals continued across lines](language-support.md#other-statement-forms) | ✅ | | test_syntax_forms.py |
 | [Empty or comment-only source files](language-support.md#other-statement-forms) | ✅ | | test_syntax_forms.py |
+| [One-word keywords (`ENDIF`, `ELSEIF`, `SELECTCASE`, `DOUBLEPRECISION`, ...)](language-support.md#other-statement-forms) | ✅ | | test_syntax_forms.py |
+| [BOZ literal constants](language-support.md#other-statement-forms) | 🟡 | Not in DATA statements; a pattern over 32 bits must be converted with `INT(..., 8)` | test_syntax_forms.py |
+| `ENDFILE` statement | ❌ | | |
 | Named IF and SELECT CASE constructs (`name: if (...) then`) | ❌ | Named DO loops work | |
 | [Declarations without `::`](language-support.md#declarations-without-) | ✅ | Attributes and initializers still need `::` | test_declarations_without_colons.py |
 | [DIMENSION attribute](language-support.md#dimension-declarations-and-shape) | ✅ | | test_dimension_attribute.py |
@@ -220,13 +223,14 @@ cannot generate code for, instead of using the value 0.
 |---|---|---|---|
 | Elemental math: `SQRT`, `EXP`, `LOG`, `LOG10`, trigonometric and hyperbolic functions | ✅ | | |
 | Inverse hyperbolic functions `ASINH`, `ACOSH`, `ATANH` | ❌ | | |
-| `ABS`, `MOD`, `MODULO`, `MIN`, `MAX`, `INT`, `NINT`, `REAL`, `DBLE`, `FLOOR`, `CEILING` | ✅ | | test_rounding.py, test_numeric_minmax.py |
+| `ABS`, `MOD`, `MODULO`, `MIN`, `MAX`, `INT`, `NINT`, `REAL`, `DBLE`, `FLOOR`, `CEILING` | 🟡 | `INT` accepts KIND only for a constant INTEGER argument | test_rounding.py, test_numeric_minmax.py |
 | `SIGN`, `DIM`, `AINT`, `ANINT`, `DPROD` | ❌ | | |
 | `ERF`, `ERFC`, `GAMMA`, `LOG_GAMMA`, `HYPOT`, Bessel functions | ❌ | | |
 | [Numeric inquiries](language-support.md#integer-and-real-inquiries) (`HUGE`, `TINY`, `EPSILON`, `DIGITS`, `PRECISION`, `RANGE`, ...) | ✅ | | test_integer_huge.py, test_numeric_model.py |
 | [Floating-point model](language-support.md#integer-and-real-inquiries) (`FRACTION`, `EXPONENT`, `SCALE`, `NEAREST`, `SPACING`, ...) | ✅ | | test_float_model.py |
 | [Bit intrinsics](language-support.md#integer-bit-intrinsics) (`BTEST`, `IAND`, `IOR`, `IEOR`, `NOT`, `IBSET`, `IBCLR`, `IBITS`, `ISHFT`) | ✅ | Scalars only | test_bit_intrinsics.py |
 | [`ISHFTC`](language-support.md#integer-bit-intrinsics) | ✅ | Not in PARAMETER initializers | test_intrinsic_rewrites.py |
+| [`BGE`, `BGT`, `BLE`, `BLT`](language-support.md#integer-bit-intrinsics) | ✅ | | test_syntax_forms.py |
 | `POPCNT`, `LEADZ`, `TRAILZ`, `SHIFTL`, `MASKR`, `BIT_SIZE` | ❌ | | |
 | [Reductions](language-support.md#reductions) (`SUM`, `PRODUCT`, `MAXVAL`, `MINVAL`, `COUNT`, `ANY`, `ALL`) | ✅ | DIM must be constant | test_masked_reductions.py, test_dim_reductions.py |
 | [Locations](language-support.md#array-transformations-and-locations) (`MAXLOC`, `MINLOC`, `FINDLOC`) | ✅ | | test_locations.py |

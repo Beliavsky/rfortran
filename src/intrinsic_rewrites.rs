@@ -8,6 +8,8 @@
 //! order of the intrinsic CHARACTER relational operators for rfort's ASCII
 //! storage. ISHFTC rotates the rightmost SIZE bits of I with IBITS, ISHFT and
 //! masks, using DIGITS(I)+1 as the default SIZE (the bit size of I's kind).
+//! BGE, BGT, BLE and BLT compare as unsigned integers: the signed comparison,
+//! reversed when exactly one argument is negative.
 //! A user procedure with one of these names keeps its own definition.
 use crate::ast::{BinOp, Expr, Program, Stmt};
 use crate::procedure_arguments::{children, expressions, visit_expr};
@@ -59,6 +61,17 @@ fn rewrite(e: &mut Expr, user: &HashSet<String>, error: &mut Option<anyhow::Erro
     let Expr::Call(name, args) = e else { return };
     let lname = name.to_ascii_lowercase();
     if user.contains(&lname) {
+        return;
+    }
+    if let Some(op) = match lname.as_str() { "bge" => Some(BinOp::Ge), "bgt" => Some(BinOp::Gt), "ble" => Some(BinOp::Le), "blt" => Some(BinOp::Lt), _ => None } {
+        if args.len() != 2 {
+            *error = Some(anyhow::anyhow!("{} expects I and J", lname.to_ascii_uppercase()));
+            return;
+        }
+        // Unsigned order is the signed order, reversed when the signs differ.
+        let (i, j) = (args[0].clone(), args[1].clone());
+        let signs = bin(BinOp::Neqv, bin(BinOp::Lt, i.clone(), int(0)), bin(BinOp::Lt, j.clone(), int(0)));
+        *e = bin(BinOp::Neqv, bin(op, i, j), signs);
         return;
     }
     let op = match lname.as_str() {

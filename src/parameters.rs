@@ -882,6 +882,20 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
                 else {Expr::Call("int".into(),vec![value,Expr::IntLit(bytes.to_string())])};
             return Ok(());
         }
+        // INT of a constant INTEGER, such as a BOZ literal, with a constant
+        // KIND keeps the low-order bits of that kind, as the bit intrinsics do.
+        if name=="int" && args.len()==2 && !constants.contains_key("@model_procedure:int") {
+            let mut kind=args[1].clone();rewrite_expr(&mut kind,constants)?;
+            let mut value=args[0].clone();rewrite_expr(&mut value,constants)?;
+            if let (Ok(bytes),Ok(n))=(evaluate(&kind,constants),evaluate(&value,constants)) {
+                if !matches!(&value,Expr::RealLit(_)) {
+                    let n=match bytes {1=>n as i8 as i64,2=>n as i16 as i64,4=>n as i32 as i64,8=>n,
+                        _=>bail!("INT: INTEGER KIND must be 1, 2, 4 or 8")};
+                    *expr=typed_integer(n,bytes as u8)?;
+                    return Ok(());
+                }
+            }
+        }
     }
     if let Some(mut kind)=crate::empty_constructors::kind(expr)? {
         resolve_kind(&mut kind,constants)?;

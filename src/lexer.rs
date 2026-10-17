@@ -274,6 +274,9 @@ pub enum TokenKind {
     Arrow,
     #[regex(r"[A-Za-z_][A-Za-z0-9_]*", |lex| lex.slice().to_string())]
     Ident(String),
+    // BOZ literal constants; lex() replaces each with an INTEGER literal.
+    #[regex(r#"[bB]('[01]+'|"[01]+")|[oO]('[0-7]+'|"[0-7]+")|[zZ]('[0-9A-Fa-f]+'|"[0-9A-Fa-f]+")"#, |lex| lex.slice().to_string())]
+    Boz(String),
     #[regex(r"\.[A-Za-z]+\.", |lex| lex.slice().to_ascii_lowercase())]
     DefinedOperator(String),
     // Fortran doubles the delimiter inside a character literal. Backslashes
@@ -634,27 +637,104 @@ fn procedure_statement(tokens: &[Token], input: &str, index: usize) -> Option<(S
     (!names.is_empty()).then(|| (format!("{}|{}", form.join(","), names.join(",")), last))
 }
 
+/// The value of a BOZ literal such as `b'0101'`, `o"17"` or `z'ff'`, as an
+/// INTEGER literal: the bits as a default INTEGER when they fit in 32 bits,
+/// otherwise as INTEGER(8). The result is negative when the sign bit is set.
+fn boz_value(text: &str) -> Option<(bool, String)> {
+    let radix = match text.as_bytes()[0].to_ascii_lowercase() { b'b' => 2, b'o' => 8, _ => 16 };
+    let value = u64::from_str_radix(&text[2..text.len()-1], radix).ok()?;
+    Some(if value <= u32::MAX as u64 {
+        let value = value as u32 as i32;
+        (value < 0, value.unsigned_abs().to_string())
+    } else {
+        let value = value as i64;
+        (value < 0, format!("{}_8", value.unsigned_abs()))
+    })
+}
+
+// A word followed by `.`, such as AND in `1.and.`: the `.` ends a relational
+// or logical operator, not a REAL literal.
+fn operator_after_number(rest: &str) -> bool {
+    let word: String = rest.chars().take_while(|c| c.is_ascii_alphabetic()).collect();
+    !word.is_empty() && rest[word.len()..].starts_with('.')
+}
+
 pub fn lex(input: &str) -> Vec<Token> {
-    let mut lexer = TokenKind::lexer(input);
     let mut tokens = Vec::new();
-    while let Some(res) = lexer.next() {
-        match res {
-            Ok(kind) => {
-                if matches!(kind, TokenKind::_WS | TokenKind::_COMMENT) {
-                    continue;
+    let mut offset = 0;
+    'restart: loop {
+        let mut lexer = TokenKind::lexer(&input[offset..]);
+        while let Some(res) = lexer.next() {
+            let span = lexer.span().start + offset..lexer.span().end + offset;
+            match res {
+                Ok(kind) => {
+                    if matches!(kind, TokenKind::_WS | TokenKind::_COMMENT) {
+                        continue;
+                    }
+                    // `97.and.x` is 97 .AND. x: restart lexing at the operator's `.`.
+                    if let TokenKind::Float(text) = &kind {
+                        if text.ends_with('.') && operator_after_number(&input[span.end..]) {
+                            tokens.push(Token { kind: TokenKind::Integer(text[..text.len()-1].into()), span: span.start..span.end-1 });
+                            offset = span.end - 1;
+                            continue 'restart;
+                        }
+                    }
+                    if let TokenKind::Boz(text) = &kind {
+                        let Some((negative, value)) = boz_value(text) else {
+                            tokens.push(Token { kind: TokenKind::Error(text.clone()), span });
+                            continue;
+                        };
+                        if negative {
+                            tokens.push(Token { kind: TokenKind::Minus, span: span.start..span.start });
+                        }
+                        tokens.push(Token { kind: TokenKind::Integer(value), span });
+                        continue;
+                    }
+                    tokens.push(Token { kind, span });
                 }
-                let span = lexer.span();
-                tokens.push(Token { kind, span });
-            }
-            Err(_) => {
-                let span = lexer.span();
-                let text = input.get(span.clone()).unwrap_or("").to_string();
-                tokens.push(Token {
-                    kind: TokenKind::Error(text),
-                    span,
-                });
+                Err(_) => {
+                    let text = input.get(span.clone()).unwrap_or("").to_string();
+                    tokens.push(Token {
+                        kind: TokenKind::Error(text),
+                        span,
+                    });
+                }
             }
         }
+        break;
+    }
+    // ENDIF, ENDSELECT, SELECTCASE, DOUBLEPRECISION and the like are the
+    // two-word forms written without a blank. Split them at the head of a
+    // statement, unless the word is a variable being assigned or referenced.
+    let mut index = 0;
+    while index < tokens.len() {
+        let word = match &tokens[index].kind { TokenKind::Ident(n) => n.to_ascii_lowercase(), _ => { index += 1; continue } };
+        let split = match word.as_str() {
+            "endif" | "endselect" | "endblock" | "endassociate" | "endfunction" | "endsubroutine"
+                | "endprogram" | "endmodule" | "endinterface" | "endtype" | "endforall" => Some(3),
+            "selectcase" => Some(6),
+            "doubleprecision" => Some(6),
+            _ => None,
+        };
+        let following = tokens.get(index + 1).filter(|t| same_statement(&input[tokens[index].span.end..t.span.start]));
+        let head = statement_head(&tokens, input, index)
+            || index > 0 && matches!(&tokens[index-1].kind, TokenKind::Ident(n)
+                if matches!(n.to_ascii_lowercase().as_str(), "pure" | "impure" | "elemental" | "recursive" | "module"))
+            || word == "doubleprecision" && index > 0 && matches!(tokens[index-1].kind, TokenKind::KwImplicit | TokenKind::Comma)
+                && matches!(tokens[(0..index).rev().find(|&i| statement_head(&tokens, input, i)).unwrap_or(0)].kind, TokenKind::KwImplicit);
+        let reference = matches!(following.map(|t| &t.kind), Some(TokenKind::Eq | TokenKind::Percent))
+            || word != "selectcase" && word != "doubleprecision" && matches!(following.map(|t| &t.kind), Some(TokenKind::LParen));
+        if let (Some(at), true, false) = (split, head, reference) {
+            let span = tokens[index].span.clone();
+            let second = &input[span.start + at..span.end];
+            let kind = TokenKind::lexer(second).next().and_then(|r| r.ok())
+                .unwrap_or_else(|| TokenKind::Ident(second.to_ascii_lowercase()));
+            let first = TokenKind::lexer(&input[span.start..span.start + at]).next().and_then(|r| r.ok()).unwrap();
+            tokens[index] = Token { kind: first, span: span.start..span.start + at };
+            tokens.insert(index + 1, Token { kind, span: span.start + at..span.end });
+            index += 1;
+        }
+        index += 1;
     }
     // A leading decimal number belongs to the following statement, rather
     // than to an expression. Keep it distinct for grammar and scope checks.

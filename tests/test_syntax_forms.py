@@ -139,6 +139,72 @@ print *, a%x
 end program
 """, "4.0\n")
 
+    def test_keywords_written_without_blanks(self):
+        self.check("""module m
+implicit none
+type :: pt
+  integer :: x
+endtype pt
+contains
+pure doubleprecision function half(x)
+  doubleprecision, intent(in) :: x
+  half = x/2
+endfunction half
+subroutine show(i)
+  integer, intent(in) :: i
+  selectcase (i)
+  case (1)
+    print *, 'one'
+  case default
+    print *, 'other'
+  endselect
+endsubroutine show
+endmodule m
+program p
+use m
+implicit none
+doubleprecision :: d
+integer :: i, endif
+d = 3.0d0
+print *, half(d)
+do i = 1, 3
+  if (i == 1) then
+    call show(i)
+  elseif (i == 2) then
+    call show(i)
+  else
+    print *, 'else'
+  endif
+enddo
+endif = 5
+print *, endif
+block
+  print *, 'blk'
+endblock
+endprogram p
+""", "1.5\none\nother\nelse\n5\nblk\n")
+
+    def test_boz_literals_and_unsigned_comparisons(self):
+        self.check("""program p
+use iso_fortran_env, only: int8, int16
+implicit none
+integer :: i
+integer(int16) :: s
+i = int(b'101') + int(o'17') + int(z'ff')
+s = int(b'1010101010101010', kind=int16)
+print *, i, s, int(b'00100100', int8), int(z'FFFFFFFF')
+print *, bge(b'1', 2), bgt(-1, 1), ble(5, 5), blt(1, -1)
+end program
+""", "275 -21846 36 -1\nF T T T\n")
+
+    def test_operators_after_integer_literals(self):
+        self.check("""program p
+implicit none
+integer :: i = 97
+print *, i>=97.and.i<=122, 1.eq.1, 2.ne.2, 1.e1, 3.
+end program
+""", "T T F 10.0 3.0\n")
+
     def test_empty_and_comment_only_files(self):
         with tempfile.TemporaryDirectory(prefix="syntax-forms-") as tmp:
             tmp = Path(tmp)

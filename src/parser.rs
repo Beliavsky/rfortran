@@ -281,6 +281,7 @@ fn human_token(tok: &TokenKind) -> String {
         TokenKind::KwComplex => "keyword complex".into(),
         TokenKind::ComplexOpen => "'('".into(),
         TokenKind::FileControl(name) | TokenKind::FilePosition(name) => format!("keyword {name}"),
+        TokenKind::Boz(text) => format!("BOZ literal {text}"),
         TokenKind::KwType => "keyword type".into(),
         TokenKind::KwClass => "keyword class".into(),
         TokenKind::KwProcedure => "keyword procedure".into(),

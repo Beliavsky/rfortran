@@ -194,6 +194,16 @@ checks with gfortran comparisons.
 - A CHARACTER literal may continue onto the next line with `&` at the end of
   the line; the next line's leading `&` is optional, as in gfortran.
 - A source file may be empty or contain only comments.
+- Two-word keywords may be written as one word: `ENDIF`, `ELSEIF`, `ENDDO`,
+  `ENDSELECT`, `SELECTCASE`, `ENDBLOCK`, `ENDASSOCIATE`, `ENDFORALL`,
+  `ENDFUNCTION`, `ENDSUBROUTINE`, `ENDPROGRAM`, `ENDMODULE`, `ENDINTERFACE`,
+  `ENDTYPE` and `DOUBLEPRECISION`. A variable with one of these names is still
+  a variable when it is assigned or referenced.
+- BOZ literal constants (`b'0101'`, `o"17"`, `z'ff'`) are INTEGER values: the
+  bits as a default INTEGER when they fit in 32 bits, otherwise as INTEGER(8).
+  `INT(boz, KIND)` with a constant KIND keeps that kind's low-order bits.
+- A relational or logical operator may follow an integer literal without a
+  blank, as in `i>=97.and.i<=122`.
 
 Named IF and SELECT CASE constructs (`name: if (...) then`) are not yet
 supported. Run `python tests/test_syntax_forms.py`.
@@ -341,6 +351,7 @@ yet supported; scalar array elements are supported.
 by default) and is lowered to the operations above. It is not yet accepted in
 PARAMETER initializers. `LGE`, `LGT`, `LLE` and `LLT` compare CHARACTER values
 in ASCII order, the same as the relational operators for rfort's ASCII storage.
+`BGE`, `BGT`, `BLE` and `BLT` compare INTEGER values as unsigned bit patterns.
 A user procedure with one of these names keeps its own definition. Run
 `python tests/test_intrinsic_rewrites.py`.
 
