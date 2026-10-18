@@ -512,7 +512,9 @@ pub fn parse_with_src(
         Ok(mut p) => {
             if let Err(msg) = resolve_dimension_statements(&mut p.body)
                 .and_then(|_| crate::statement_labels::formats(&mut p.body))
-                .and_then(|_| crate::data_statements::resolve(&mut p.body)) {
+                .and_then(|_| crate::data_statements::resolve(&mut p.body))
+                .and_then(|_| crate::deferred_arrays::resolve(&mut p.body))
+                .and_then(|_| crate::deferred_arrays::type_parameter_inquiries(&mut p.body)) {
                 let diag = Diagnostic::error().with_message(&msg);
                 let _ = emit_to_io_write(&mut stderr, &Config::default(), &file, &diag);
                 errs.push(CompileError::new(CompileErrorKind::Parse, msg, 0..0));

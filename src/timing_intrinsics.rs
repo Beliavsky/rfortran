@@ -628,18 +628,32 @@ fn lower_environment(name:&str,args:&[Expr],vars:&HashMap<String,(TypeSpec,usize
         else if !matches!(k,TypeSpec::Integer(None|Some(4))) {bail!("{intrinsic} LENGTH and STATUS require default INTEGER");}
     }}
     let status=temporary(serial,"env_status");let length=temporary(serial,"env_length");let value=temporary(serial,"env_value");
-    let width=if let Some(e)=supplied(1) {
+    // A deferred-length VALUE keeps its length: the text goes through bounded
+    // storage into the variable's current characters.
+    let deferred=supplied(1).and_then(|e|match e {Expr::Ident(n)=>Some(n),_=>None}).filter(|n|crate::substrings::deferred(&vars[*n].0)).cloned();
+    let width=if let Some(n)=&deferred {
+        Expr::Call("min".into(),vec![Expr::Call("len".into(),vec![Expr::Ident(n.clone())]),Expr::IntLit("4096".into())])
+    } else if let Some(e)=supplied(1) {
         let n=match e {Expr::Ident(n)|Expr::Index(n,_)|Expr::Call(n,_)=>n,_=>unreachable!()};
         match &vars[n].0 {
             TypeSpec::Character(size)=>Expr::IntLit(size.unwrap_or(1).to_string()),
             _=>Expr::Call("len".into(),vec![Expr::Ident(n.clone())]),
         }
     } else {Expr::IntLit("0".into())};
-    let value_kind=if let Expr::IntLit(n)=&width {TypeSpec::Character(Some(n.parse()?))} else {TypeSpec::CharacterLength(Box::new(width.clone()))};
+    let value_kind=if deferred.is_some() {TypeSpec::Character(Some(4096))}
+        else if let Expr::IntLit(n)=&width {TypeSpec::Character(Some(n.parse()?))} else {TypeSpec::CharacterLength(Box::new(width.clone()))};
     let mut out=vec![Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![status.clone(),length.clone()]},
         Stmt::VarDecl{kind:value_kind,names:vec![value.clone()]},
         Stmt::CallSub{name:if command {"@argument_query"} else {"@environment_query"}.into(),args:vec![Expr::Ident(status.clone()),Expr::Ident(length.clone()),Expr::Ident(value.clone()),args[0].clone(),supplied(4).cloned().unwrap_or(Expr::Logical(true)),width,Expr::Logical(supplied(1).is_some())]}];
-    for (i,temp) in [(1,value),(2,length),(3,status)] {if let Some(target)=supplied(i) {out.push(assign(target,Expr::Ident(temp)));}}
+    for (i,temp) in [(1,value),(2,length),(3,status)] {if let Some(target)=supplied(i) {
+        if let (1,Some(n))=(i,&deferred) {
+            let whole=Expr::Section{name:String::new(),lower:Some(Box::new(Expr::IntLit("1".into()))),upper:Some(Box::new(Expr::Call("len".into(),vec![Expr::Ident(n.clone())]))),stride:None};
+            out.push(Stmt::If{cond:Expr::Bin(crate::ast::BinOp::Gt,Box::new(Expr::Call("len".into(),vec![Expr::Ident(n.clone())])),Box::new(Expr::IntLit("0".into()))),
+                then_body:vec![Stmt::AssignIndex{name:n.clone(),indices:vec![whole],value:Expr::Ident(temp)}],else_body:None});
+            continue;
+        }
+        out.push(assign(target,Expr::Ident(temp)));
+    }}
     Ok(out)
 }
 

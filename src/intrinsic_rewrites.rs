@@ -89,7 +89,9 @@ fn ishftc(args: &[Expr]) -> Result<Expr> {
         bail!("ISHFTC expects I, SHIFT and optional SIZE");
     }
     let i = args[0].clone();
-    let size = args.get(2).cloned().unwrap_or_else(|| bin(BinOp::Add, call("digits", vec![i.clone()]), int(1)));
+    // DIGITS depends only on the type, which a constructor's first item has.
+    let mold = match &i { Expr::Call(n, items) if n == "@array_constructor" && !items.is_empty() => items[0].clone(), _ => i.clone() };
+    let size = args.get(2).cloned().unwrap_or_else(|| bin(BinOp::Add, call("digits", vec![mold]), int(1)));
     let shift = call("modulo", vec![args[1].clone(), size.clone()]);
     let field = call("ibits", vec![i.clone(), int(0), size.clone()]);
     let zero = call("ieor", vec![i.clone(), i.clone()]);
@@ -173,6 +175,12 @@ fn rewrite(e: &mut Expr, user: &HashSet<String>, error: &mut Option<anyhow::Erro
             Ok(value) => *e = value,
             Err(err) => *error = Some(err),
         }
+        return;
+    }
+    // AINT(A, KIND) and ANINT(A, KIND) round, then convert to that REAL kind.
+    if matches!(lname.as_str(), "aint" | "anint") && args.len() == 2 {
+        let kind = args[1].clone();
+        *e = call("real", vec![call(&lname, vec![args[0].clone()]), kind]);
         return;
     }
     if let Some(code) = match lname.as_str() { "is_iostat_end" => Some(-1), "is_iostat_eor" => Some(-2), _ => None } {

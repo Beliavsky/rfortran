@@ -1341,8 +1341,6 @@ pub fn lex(input: &str) -> Vec<Token> {
             tokens[index].kind = TokenKind::KwDoUnbounded;
         }
         if matches!(tokens[index].kind,TokenKind::KwStop)
-            && !(index>0 && matches!(tokens[index-1].kind,TokenKind::KwError)
-                && same_statement(&input[tokens[index-1].span.end..tokens[index].span.start]))
             && tokens.get(index+1).is_none_or(|next|!same_statement(&input[tokens[index].span.end..next.span.start])) {
             tokens[index].kind=TokenKind::KwStopEmpty;
         }

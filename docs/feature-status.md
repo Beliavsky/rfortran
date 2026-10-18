@@ -48,6 +48,17 @@ Three more bugs found on 2026-10-17 are also fixed:
 
 Bugs found on 2026-10-18, all fixed:
 
+- In compiled code, a REAL(4) variable kept double precision: a value stored
+  in it was not rounded to single precision, so a sum of `0.1` ten times was
+  exactly 1.0, `x = 16777217.0` kept its value, and `a == 1.0d0/3.0d0` was true
+  for `a = 1.0/3.0`. Stores to REAL(4) variables, elements and dummies now
+  round, and the interpreter rounds stores to REAL(4) array elements.
+- Formatted output of an expression of an array constructor, as in
+  `print '(*(g0,1x))', 2*[1.0, 2.0]`, wrote only the first element, and an
+  elemental intrinsic of a constructor there did not compile.
+- A bare `error stop` at the end of a line took the next statement, such as a
+  following `case (...)`, as its stop code.
+
 - In the interpreter (`rfort run`), storing an INTEGER value in an element of a
   REAL array, as in `x(3) = -1`, turned the whole array INTEGER, so later REAL
   values were truncated. Filling a REAL ALLOCATABLE array with an INTEGER
@@ -177,8 +188,8 @@ Bugs found on 2026-10-18, all fixed:
 |---|---|---|---|
 | [Fixed-length scalars, concatenation, comparison](language-support.md#character-declarations-and-lengths) | ✅ | | test_character_comparisons.py |
 | [Substrings](language-support.md#scalar-substrings) | ✅ | | test_scalar_substrings.py |
-| [Deferred-length `character(len=:), allocatable` scalars](language-support.md#deferred-length-scalar-character) | 🟡 | Storage must be bounded; `s = s // 'x'` in a loop is rejected | test_scalar_substrings.py |
-| Deferred-length CHARACTER arrays | ❌ | | |
+| [Deferred-length `character(len=:), allocatable` scalars](language-support.md#deferred-length-scalar-character) | 🟡 | Main-program and BLOCK locals; a value whose largest length is not known at compile time may have at most 4096 characters | test_scalar_substrings.py, test_kinds_and_deferred_strings.py |
+| [Deferred-length CHARACTER arrays](language-support.md#deferred-length-scalar-character) | 🟡 | Every assignment and ALLOCATE must give the same constant length | test_kinds_and_deferred_strings.py |
 | Automatic CHARACTER lengths `character(len=n)` | ❌ | Lengths derived from `LEN` of a dummy work | test_dummy_character_lengths.py |
 | [Fixed-length CHARACTER arrays](language-support.md#character-arrays) | ✅ | | test_character_arrays.py |
 | [CHARACTER functions](language-support.md#scalar-character-functions) | 🟡 | Assigning the result one character at a time fails at runtime | test_character_functions.py |
@@ -270,7 +281,7 @@ Bugs found on 2026-10-18, all fixed:
 | Inverse hyperbolic functions `ASINH`, `ACOSH`, `ATANH` | ✅ | | test_intrinsic_rewrites.py |
 | [Degree and half-revolution trigonometry](language-support.md#elemental-math-functions) (`SIND`, `ACOSD`, `ATAN2D`, `SINPI`, `ATAN2PI`, ...) and `ATAN(Y, X)` | ✅ | DOUBLE PRECISION results can differ from gfortran's in the last bit, and `COSD(90d0)` is 6e-17 instead of 0 | test_intrinsic_rewrites.py |
 | `ABS`, `MOD`, `MODULO`, `MIN`, `MAX`, `INT`, `NINT`, `REAL`, `DBLE`, `FLOOR`, `CEILING` | 🟡 | `INT` accepts KIND only for a constant INTEGER argument | test_rounding.py, test_numeric_minmax.py |
-| `AINT`, `ANINT` | 🟡 | No KIND argument | test_intrinsic_rewrites.py |
+| `AINT`, `ANINT`, and `INT` with a KIND argument | ✅ | | test_intrinsic_rewrites.py, test_kinds_and_deferred_strings.py |
 | `SIGN`, `DIM`, `DPROD` | ✅ | | test_formatted_output.py |
 | `ERF`, `ERFC`, `GAMMA`, `LOG_GAMMA`, `HYPOT` | ✅ | | test_intrinsic_rewrites.py |
 | [Bessel functions](language-support.md#elemental-math-functions) `BESSEL_J0`, `BESSEL_J1`, `BESSEL_JN`, `BESSEL_Y0`, `BESSEL_Y1`, `BESSEL_YN` | 🟡 | Not the transformational `BESSEL_JN(N1, N2, X)` form; REAL(4) results are computed in DOUBLE PRECISION | test_more_intrinsics.py |
@@ -279,7 +290,7 @@ Bugs found on 2026-10-18, all fixed:
 | [`OUT_OF_RANGE`](language-support.md#integer-bit-intrinsics) | 🟡 | Scalar arguments; ROUND must be a constant | test_more_intrinsics.py |
 | [Numeric inquiries](language-support.md#integer-and-real-inquiries) (`HUGE`, `TINY`, `EPSILON`, `DIGITS`, `PRECISION`, `RANGE`, ...) | ✅ | | test_integer_huge.py, test_numeric_model.py |
 | [Floating-point model](language-support.md#integer-and-real-inquiries) (`FRACTION`, `EXPONENT`, `SCALE`, `NEAREST`, `SPACING`, ...) | ✅ | | test_float_model.py |
-| [Bit intrinsics](language-support.md#integer-bit-intrinsics) (`BTEST`, `IAND`, `IOR`, `IEOR`, `NOT`, `IBSET`, `IBCLR`, `IBITS`, `ISHFT`) | ✅ | Array arguments need constant positions and shifts | test_bit_intrinsics.py |
+| [Bit intrinsics](language-support.md#integer-bit-intrinsics) (`BTEST`, `IAND`, `IOR`, `IEOR`, `NOT`, `IBSET`, `IBCLR`, `IBITS`, `ISHFT`) | ✅ | Array positions and shifts must be constants or constructors of constants | test_bit_intrinsics.py, test_kinds_and_deferred_strings.py |
 | [`ISHFTC`](language-support.md#integer-bit-intrinsics) | ✅ | Not in PARAMETER initializers | test_intrinsic_rewrites.py |
 | [`BGE`, `BGT`, `BLE`, `BLT`](language-support.md#integer-bit-intrinsics) | ✅ | | test_syntax_forms.py |
 | [`POPCNT`, `POPPAR`, `LEADZ`, `TRAILZ`, `DSHIFTL`, `DSHIFTR`, `BIT_SIZE`](language-support.md#integer-bit-intrinsics) | ✅ | | test_more_intrinsics.py |

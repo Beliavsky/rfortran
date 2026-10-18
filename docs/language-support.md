@@ -622,11 +622,20 @@ end
 ```
 
 This subset reserves bounded storage inferred from the possible assignment
-sources; it does not implement general heap allocation. An unknown maximum
-length or growing self-concatenation such as `s=s//'x'` is diagnosed. Deferred
-CHARACTER arrays, procedure/module storage and host association, explicit
-ALLOCATE, and READ into a deferred-length destination remain
-unsupported. Other intrinsic/procedure calls with runtime-length CHARACTER
+sources; it does not implement general heap allocation. When the largest
+length is not known at compile time, as for `s = repeat('ab', n)`, growth such
+as `s = s // 'x'` in a loop, or `allocate(character(len=n) :: s)`, the variable
+has 4096 characters of storage, and a longer value stops the program. ALLOCATE
+with a type specification sets the length; the value is undefined until
+assigned. A deferred-length variable can be the VALUE of GET_COMMAND_ARGUMENT
+and GET_ENVIRONMENT_VARIABLE, which fill its current length. A deferred-length
+CHARACTER array is supported when every assignment and ALLOCATE in its program
+unit gives the same constant length, as in
+`names = [character(len=8) :: 'ann', 'bob']`; assigning a constructor allocates
+the array. `x%len` and `x%kind` are LEN(x) and KIND(x). Procedure and module
+storage and host association, READ into a deferred-length destination, REPEAT
+with a runtime count in other contexts, and MAX and MIN of CHARACTER values
+remain unsupported. Other intrinsic/procedure calls with runtime-length CHARACTER
 arguments are diagnosed unless implemented for this subset (such as TRIM).
 Runtime substring conditions are reevaluated on each loop iteration,
 including after CYCLE. The scalar substring tests compare interpreter and native

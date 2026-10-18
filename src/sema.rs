@@ -2797,6 +2797,10 @@ pub fn analyze_with_src(
                     }
                     let math = crate::intrinsics::math_arity(&key);
                     let arity = (if matches!(key.as_str(), "max" | "min") { Some(args.len().max(2)) } else if matches!(key.as_str(), "mod" | "modulo" | "sign") {Some(2)} else { math }).or_else(|| matches!(key.as_str(), "abs" | "int" | "real" | "dble").then_some(1));
+                    // INT, AINT and ANINT take an optional constant KIND.
+                    let kinded = matches!(key.as_str(), "int" | "aint" | "anint") && args.len() == 2
+                        && crate::parameters::integer_constant(&args[1]).is_ok_and(|k| matches!(k, 1 | 2 | 4 | 8));
+                    let args = if kinded { &args[..1] } else { &args[..] };
                     if let Some(arity) = arity {
                         if args.len() != arity {
                             problems.push((name.clone(), format!("intrinsic `{name}` expects {arity} argument(s), got {}", args.len())));

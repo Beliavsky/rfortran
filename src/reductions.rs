@@ -474,6 +474,15 @@ fn lower_bit(e:&mut Expr,symbols:&mut Symbols,prefix:&mut Vec<Stmt>,serial:&mut 
     let arity=crate::bit_intrinsics::keys(name).unwrap().len();
     if args.len()!=arity {bail!("{} expects {arity} arguments, got {}",name.to_ascii_uppercase(),args.len());}
     let mut kinds=vec![];let mut elemental=false;
+    // Array control arguments that are constructors of constants, checked
+    // element by element, or the shift ISHFTC reduces modulo its size.
+    let checked=args.iter().enumerate().map(|(i,arg)| i>0 && match arg {
+        Expr::Call(n,items) if n=="@array_constructor" => items.iter().all(|e|crate::parameters::integer_constant(e).is_ok()),
+        Expr::Call(n,_) if n=="modulo" && name=="ishft" && i==1 => true,
+        Expr::Bin(BinOp::Sub,a,_) if matches!(&**a,Expr::Call(n,_) if n=="modulo") && name=="ishft" && i==1 => true,
+        _ => false,
+    }).collect::<Vec<_>>();
+    let constructed=args.clone();
     for arg in args.iter_mut() {
         lower_expr_impl(arg,symbols,prefix,serial,expand_elementals)?;
         let (_,shape,kind)=element(arg,&int(1),symbols)?;
@@ -488,7 +497,17 @@ fn lower_bit(e:&mut Expr,symbols:&mut Symbols,prefix:&mut Vec<Stmt>,serial:&mut 
     if elemental {
         // Array arguments are evaluated element by element; only constant
         // control arguments are range checked.
-        if values.iter().skip(1).any(Option::is_none) && !crate::bit_intrinsics::counts(name) && !matches!(name.as_str(),"iand"|"ior"|"ieor"|"not") {
+        for (i,arg) in constructed.iter().enumerate() {
+            if let (true,Expr::Call(n,items))=(checked[i],arg) {
+                if n=="@array_constructor" {
+                    for item in items {
+                        let mut each=values.clone();each[i]=crate::parameters::integer_constant(item).ok();
+                        crate::bit_intrinsics::validate_controls(name,bytes,&each)?;
+                    }
+                }
+            }
+        }
+        if values.iter().enumerate().skip(1).any(|(i,v)|v.is_none() && !checked[i]) && !crate::bit_intrinsics::counts(name) && !matches!(name.as_str(),"iand"|"ior"|"ieor"|"not") {
             bail!("{} with array arguments currently requires constant control arguments",name.to_ascii_uppercase());
         }
         *name=crate::bit_intrinsics::tag(name,bytes);
@@ -1588,6 +1607,28 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                         Expr::Call(n, _) if array_call(n) => true,
                         _ => false,
                     }
+                }
+                // An expression of an array constructor, as `2*[1.0,2.0]` or
+                // `abs([1,-2])`, is evaluated into a temporary array first.
+                fn constructor_expression(e: &Expr) -> bool {
+                    fn contains(e: &Expr) -> bool {
+                        match e {
+                            Expr::Call(n, _) if n == "@array_constructor" => true,
+                            Expr::Call(_, a) | Expr::Index(_, a) => a.iter().any(contains),
+                            Expr::Bin(_, a, b) => contains(a) || contains(b),
+                            Expr::Un(_, a) => contains(a),
+                            _ => false,
+                        }
+                    }
+                    !matches!(e, Expr::Call(n, _) if n == "@array_constructor" || n == "@output_implied_do") && contains(e)
+                }
+                for e in args[1..].iter_mut() {
+                    if constructor_expression(e) && !crate::output::contains_implied_do(e) {
+                        argument(e, &symbols.variables, &mut prefix, serial)?;
+                    }
+                }
+                for s in &prefix {
+                    if let Stmt::ArrayDecl {kind,name,dims}=s {symbols.variables.insert(name.clone(),(kind.clone(),dims.clone()));}
                 }
                 // A constant format can consume a fixed whole numeric/LOGICAL
                 // array in element order. Runtime-format array lists remain separate.

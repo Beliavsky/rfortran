@@ -475,6 +475,12 @@ Stmt: Stmt = {
     },
     KW_ERROR KW_STOP <arg: RhsExpr> => Stmt::CallSub { name: "@error_stop".into(), args: vec![arg] },
     KW_ALLOCATE LPAREN <args: CallArgList> RPAREN => Stmt::CallSub { name: "@allocate".into(), args },
+    // ALLOCATE(CHARACTER(LEN=n) :: s) of a deferred-length CHARACTER scalar.
+    KW_ALLOCATE LPAREN KW_CHARACTER LPAREN KW_LEN EQ <length:RhsExpr> RPAREN DCOLON <objects: CallArgList> RPAREN => {
+        let mut args = vec![length];
+        args.extend(objects);
+        Stmt::CallSub { name: crate::substrings::ALLOCATE_CHARACTER.into(), args }
+    },
     KW_DEALLOCATE LPAREN <args: CallArgList> RPAREN => Stmt::CallSub { name: "@deallocate".into(), args },
     KW_NULLIFY LPAREN <args:CallArgList> RPAREN => Stmt::CallSub{name:"@nullify".into(),args},
     KW_WRITE LPAREN <controls:WriteControls> RPAREN <items:ExprList> =>? {
@@ -597,6 +603,8 @@ Stmt: Stmt = {
     KW_CYCLE => Stmt::Cycle,
     KW_CONTINUE => Stmt::CallSub{name:"@continue".into(),args:vec![]},
     KW_STOP_EMPTY => Stmt::CallSub { name: "@stop".into(), args: vec![] },
+    // ERROR STOP without a stop code.
+    KW_ERROR KW_STOP_EMPTY => Stmt::CallSub { name: "@error_stop".into(), args: vec![Expr::Str(String::new())] },
     KW_STOP <arg: RhsExpr> => Stmt::CallSub { name: "@stop".into(), args: vec![arg] },
 };
 

@@ -1923,8 +1923,10 @@ pub fn interpret(program: &Program) {
                     // Store into the declared array, converting the value to its
                     // type as intrinsic assignment does.
                     let real = frame.env_real_arrays.contains_key(name);
+                    // A REAL(4) array holds single-precision values.
+                    let single = real && !frame.double_arrays.contains(name);
                     let vt = if real {
-                        ValueTuple(None, vt.1.or(vt.0.map(|i| i as f64)), None, None)
+                        ValueTuple(None, vt.1.or(vt.0.map(|i| i as f64)).map(|f| if single { f64::from(f as f32) } else { f }), None, None)
                     } else if frame.env_int_arrays.contains_key(name) && vt.0.is_none() && vt.2.is_none() {
                         ValueTuple(vt.1.map(|f| f.trunc() as i64), None, None, None)
                     } else {

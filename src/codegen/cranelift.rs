@@ -1143,6 +1143,17 @@ fn is_character_output(e: &IExpr, chars: &HashMap<String, (Storage, usize)>) -> 
     }
 }
 
+/// REAL values are held as doubles; a value stored in a REAL(4) variable is
+/// first rounded to single precision, as the variable can hold no more.
+fn store_rounded(b: &mut FunctionBuilder, real_kind: &HashMap<String, bool>, name: &str, value: ir::Value) -> ir::Value {
+    if real_kind.get(name) == Some(&false) {
+        let narrow = b.ins().fdemote(ir::types::F32, value);
+        b.ins().fpromote(ir::types::F64, narrow)
+    } else {
+        value
+    }
+}
+
 fn double_expression(e: &IExpr, real_kind: &HashMap<String, bool>) -> bool {
     double_value(e, real_kind, &HashMap::new())
 }
@@ -2087,6 +2098,7 @@ fn gen_stmts(
                 if let Some(ss) = reals.get(name) {
                     if let Ok(f) = s.parse::<f64>() {
                         let a = storage_addr(b, ptr_ty, *ss);
+                        let f = if real_kind.get(name) == Some(&false) { f64::from(f as f32) } else { f };
                         let fv = b.ins().f64const(f);
                         b.ins().store(MemFlags::new(), fv, a, 0);
                     }
@@ -2108,6 +2120,7 @@ fn gen_stmts(
                 } else if let Some(ss) = reals.get(name) {
                     let a = storage_addr(b, ptr_ty, *ss);
                     let fv = to_f64(b, v);
+                    let fv = store_rounded(b, real_kind, name, fv);
                     b.ins().store(MemFlags::new(), fv, a, 0);
                 } else if let Some(ss) = bools.get(name) {
                     let a = storage_addr(b, ptr_ty, *ss);
@@ -2141,6 +2154,7 @@ fn gen_stmts(
                     let a = storage_addr(b, ptr_ty, *ss);
                     let v = eval_expr(b, ex, ptr_ty, val, ints, reals, bools, func_meta);
                     let fv = to_f64(b, v);
+                    let fv = store_rounded(b, real_kind, name, fv);
                     let addr = b.ins().iadd(a, off);
                     b.ins().store(MemFlags::new(), fv, addr, 0);
                 } else if let Some(ss) = bools.get(name) {
@@ -2161,6 +2175,7 @@ fn gen_stmts(
                     b.ins().store(MemFlags::new(),value,address,0);
                 } else if let Some(slot)=reals.get(dst) {
                     let address=storage_addr(b,ptr_ty,*slot);let value=to_f64(b,value);
+                    let value=store_rounded(b,real_kind,dst,value);
                     b.ins().store(MemFlags::new(),value,address,0);
                 } else if let Some(slot)=bools.get(dst) {
                     let address=storage_addr(b,ptr_ty,*slot);let value=to_bool(b,value);
