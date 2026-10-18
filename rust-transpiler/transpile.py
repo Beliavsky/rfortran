@@ -11,6 +11,7 @@ import re
 import struct
 import subprocess
 import sys
+from rust_style import Plan, fields_fit, integer_constant, integer_range, simple_fields
 
 
 @dataclass
@@ -28,16 +29,80 @@ def rust_string(text):
 
 
 class Emitter:
-    def __init__(self):
+    def __init__(self, plan=None):
         self.symbols = {}
         self.parameters = set()
         self.loop_id = 0
         self.needs_format_runtime = False
+        self.plan = plan or Plan([])
+        self.ranges = dict(self.plan.constants)
+        self.identifiers = {}
+        self.used_identifiers = set()
 
-    @staticmethod
-    def rust_name(name):
-        # A prefix avoids Rust keywords without excluding valid Fortran identifiers.
-        return "v_" + name
+    def rust_name(self, name):
+        return self.identifiers[name]
+
+    def identifier(self, name, constant=False):
+        keywords = set("as async await break const continue crate dyn else enum extern false fn for gen if impl in let loop match mod move mut pub ref return self static struct super trait true type unsafe use where while abstract become box do final macro override priv typeof unsized virtual yield try union".split())
+        candidate = name.upper() if constant else name
+        if candidate in keywords or candidate.startswith("rf_"):
+            candidate = "v_" + name
+        base, index = candidate, 1
+        while candidate in self.used_identifiers:
+            candidate = f"{base}_{index}"
+            index += 1
+        self.used_identifiers.add(candidate)
+        self.identifiers[name] = candidate
+        return candidate
+
+    def readable(self, node, validated):
+        """Prefer ordinary Rust expressions only with a proof of INTEGER safety."""
+        def render(item):
+            if isinstance(item, ast.Constant) and type(item.value) is int:
+                return str(item.value)
+            if isinstance(item, ast.Name):
+                return self.rust_name(item.id.removeprefix("_rf_name_"))
+            if isinstance(item, ast.BinOp) and integer_range(item,self.ranges) is not None:
+                left, right = render(item.left), render(item.right)
+                if left is None or right is None:
+                    return None
+                if isinstance(item.op, ast.Pow):
+                    exponent = integer_constant(item.right,self.ranges)
+                    if exponent == 2 and isinstance(item.left,(ast.Name,ast.Constant)):
+                        return f"({left} * {left})"
+                    if exponent is not None and exponent >= 0:
+                        receiver = left + "i32" if isinstance(item.left,ast.Constant) else left
+                        return f"({receiver}).pow({exponent})"
+                    return None
+                operator = {ast.Add:"+",ast.Sub:"-",ast.Mult:"*",ast.Div:"/"}.get(type(item.op))
+                return f"({left} {operator} {right})" if operator else None
+            if isinstance(item, ast.Call) and isinstance(item.func,ast.Name) and len(item.args) == 1:
+                name = item.func.id.removeprefix("_rf_name_")
+                arg = render(item.args[0])
+                if arg is not None and name in ("real","dble"):
+                    return f"({arg} as {'f32' if name == 'real' else 'f64'})"
+                if arg is not None and name == "sqrt":
+                    return f"{arg}.sqrt()" if arg.startswith("(") else f"({arg}).sqrt()"
+            return None
+        return render(node) or validated.code
+
+    def direct_format(self, fmt, items, initialized, line):
+        fields = simple_fields(fmt.strip(),len(items))
+        if fields is None:
+            return None
+        values = [self.expr(item,initialized,line) for item in items]
+        if not fields_fit(fields,items,values,self.ranges):
+            return None
+        template, arguments = [], []
+        for (_,width,precision),item,value in zip(fields,items,values):
+            spec = str(width) if width else ""
+            if precision is not None:
+                spec += f".{precision}"
+            name = self.rust_name(item.id.removeprefix("_rf_name_")) if isinstance(item,ast.Name) else ""
+            template.append("{" + name + (":"+spec if spec else "") + "}")
+            if not name:
+                arguments.append(self.readable(item,value))
+        return "println!(" + rust_string("".join(template)) + (", " + ", ".join(arguments) if arguments else "") + ");"
 
     def require(self, condition, line, message):
         if not condition:
@@ -161,7 +226,9 @@ class Emitter:
             raise Unsupported(line, f"unsupported intrinsic or procedure `{name}`")
         raise Unsupported(line, "unsupported scalar expression")
 
-    def block(self, nodes, initialized, *, level=1, active_loops=frozenset(), declarations=False):
+    def block(self, nodes, initialized, *, level=1, active_loops=frozenset(), declarations=False, ranges=None):
+        previous_ranges = self.ranges
+        self.ranges = dict(previous_ranges if ranges is None else ranges)
         lines, state = [], set(initialized)
         indent = "    " * level
         executable = not declarations
@@ -179,8 +246,14 @@ class Emitter:
                     self.symbols[name] = typ
                     if parameter:
                         self.parameters.add(name)
-                    binding = "let " if parameter else "let mut "
-                    lines.append(indent + binding + self.rust_name(name) + ": " + typ + (" = " + value.code if value else "") + ";")
+                    known = integer_constant(initializer,self.ranges) if parameter and typ == "i32" and initializer is not None else None
+                    literal_const = parameter and initializer is not None and (isinstance(initializer,ast.Constant) and type(initializer.value) is bool or isinstance(initializer,ast.Call) and isinstance(initializer.func,ast.Name) and initializer.func.id in ("_rf_f32","_rf_f64") and typ in FLOAT)
+                    is_const = known is not None or literal_const
+                    self.identifier(name,is_const)
+                    binding = "const " if is_const else "let " if parameter else "let mut "
+                    code = str(known) if known is not None else value.code if value else None
+                    if not (initializer is None and name in self.plan.scoped_controls):
+                        lines.append(indent + binding + self.rust_name(name) + ": " + typ + (" = " + code if code is not None else "") + ";")
                     if value:
                         state.add(name)
                 continue
@@ -204,8 +277,12 @@ class Emitter:
                 code = 'println!(" {}", [' + ", ".join(values) + '].join(" "));' if values else 'println!();'
                 lines.append(indent + code)
             elif node.kind == "formatted_print":
-                self.needs_format_runtime = True
                 fmt, items = node.data
+                direct = self.direct_format(fmt,items,state,line)
+                if direct is not None:
+                    lines.append(indent + direct)
+                    continue
+                self.needs_format_runtime = True
                 values = []
                 for item in items:
                     if isinstance(item, ast.Constant) and isinstance(item.value, str):
@@ -240,7 +317,24 @@ class Emitter:
                 prefix = f"rf_do_{self.loop_id}"
                 start, limit, step = (prefix + suffix for suffix in ("_start", "_limit", "_step"))
                 var = self.rust_name(name)
-                body, _ = self.block(node.body, state | {name}, level=level+2, active_loops=active_loops | {name})
+                child_ranges = dict(self.ranges)
+                lower = integer_range(bounds[0],self.ranges)
+                upper = integer_range(bounds[1],self.ranges)
+                if lower and upper:
+                    child_ranges[name] = (min(lower[0],upper[0]),max(lower[1],upper[1]))
+                else:
+                    child_ranges.pop(name,None)
+                if id(node) in self.plan.range_loops:
+                    body, _ = self.block(node.body,state | {name},level=level+1,active_loops=active_loops | {name},ranges=child_ranges)
+                    start_code, end_code = (self.readable(bound,value) for bound,value in zip(bounds[:2],values[:2]))
+                    if not any(isinstance(part,ast.Name) and part.id.removeprefix("_rf_name_") in self.symbols for bound in bounds[:2] for part in ast.walk(bound)):
+                        # A literal-only range otherwise leaves method calls on
+                        # its Rust control variable with an ambiguous integer type.
+                        start_code = values[0].code
+                    lines += [indent + f"for {var} in {start_code}..={end_code} {{", *body, indent + "}"]
+                    state.add(name)
+                    continue
+                body, _ = self.block(node.body, state | {name}, level=level+2, active_loops=active_loops | {name},ranges=child_ranges)
                 lines += [indent + "{", *[indent + f"    let {target} = {value.code};" for target, value in zip((start, limit, step), values)],
                           indent + f'    assert_ne!({step}, 0, "zero DO stride at Fortran line {line}");',
                           indent + f"    {var} = {start};",
@@ -250,6 +344,7 @@ class Emitter:
                 state.add(name)
             elif node.kind != "noop":
                 raise Unsupported(line, "unsupported internal statement")
+        self.ranges = previous_ranges
         return lines, state
 
 
@@ -280,10 +375,18 @@ fn rf_ipow(base: i32, exponent: i32) -> i32 {
 
 def transpile(source, *, compiler=None, filename="input.f90"):
     def emit(tree):
-        emitter = Emitter()
+        emitter = Emitter(Plan(tree))
         body, _ = emitter.block(tree, set(), declarations=True)
         shared = format_runtime() if emitter.needs_format_runtime else ""
-        return RUNTIME + shared + "\nfn main() {\n" + "\n".join(body) + "\n}\n"
+        code = "\n".join(body)
+        conversion = RUNTIME.index("fn rf_to_i32")
+        power = RUNTIME.index("fn rf_ipow")
+        runtime = RUNTIME[:conversion]
+        if "rf_to_i32(" in code:
+            runtime += RUNTIME[conversion:power]
+        if "rf_ipow(" in code:
+            runtime += RUNTIME[power:]
+        return runtime + shared + "\nfn main() {\n" + code + "\n}\n"
     return Frontend(source, filename=filename, compiler=compiler).process(emit)
 
 
@@ -316,10 +419,13 @@ fn rf_formatted_print(format: &str, items: &[rf_format::Value<'_>], line: usize)
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", type=Path)
-    parser.add_argument("-o", "--out", type=Path, required=True)
+    parser.add_argument("-o", "--out", type=Path,
+                        help="Rust output path (default: target/rust-transpiler/<source-stem>.rs)")
     parser.add_argument("--rfort", type=Path, help="Existing compiler executable; no compiler build is performed")
     parser.add_argument("--run", action="store_true", help="Compile generated Rust with rustc and run it")
     args = parser.parse_args()
+    if args.out is None:
+        args.out = Path("target") / "rust-transpiler" / (args.source.stem + ".rs")
     try:
         generated = transpile(args.source.read_text(encoding="utf-8-sig"), compiler=args.rfort, filename=args.source)
         if args.out.resolve() == args.source.resolve():
@@ -328,7 +434,7 @@ def main():
         args.out.write_text(generated, encoding="utf-8")
         if args.run:
             executable = args.out.with_suffix(".exe" if sys.platform == "win32" else ".bin").resolve()
-            subprocess.run(["rustc", "--edition=2021", "-D", "warnings", str(args.out), "-o", str(executable)], check=True, timeout=120)
+            subprocess.run(["rustc", "--edition=2021", "--crate-name", "rfort_transpiled", "-D", "warnings", str(args.out), "-o", str(executable)], check=True, timeout=120)
             return subprocess.run([str(executable)], timeout=10).returncode
     except Unsupported as error:
         print(f"{args.source}:{error.line}: error: {error}", file=sys.stderr)

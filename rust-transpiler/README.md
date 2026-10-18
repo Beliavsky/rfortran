@@ -46,8 +46,15 @@ python rust-transpiler\transpile.py xloop.f90 -o target\rust-transpiler\xloop.rs
 From the repository root on Windows:
 
 ```cmd
-python rust-transpiler\transpile.py rust-transpiler\examples\scalars.f90 -o target\rust-transpiler\scalars.rs --run
+python rust-transpiler\transpile.py xloop.f90 --run
 ```
+
+`-o` is optional. Its default is `target/rust-transpiler/<source-stem>.rs`, relative
+to the current working directory. For `xloop.f90`, that creates
+`target/rust-transpiler/xloop.rs`; `--run` also builds and runs `xloop.exe` on
+Windows (`xloop.bin` on other platforms). Supplying `-o` overrides this path.
+Files with the same basename share a default output; use `-o` to distinguish them.
+Omitting `--run` simply generates the Rust source at the same default path.
 
 The existing small examples also work, if present in your checkout:
 
@@ -112,7 +119,8 @@ Assignments apply numeric conversions, while expressions retain their own kinds:
 `7/2` is integer division even if assigned to a real variable. Default real literals
 and D-exponent literals retain separate f32/f64 kinds. Exponentiation is right
 associative and binds more tightly than unary minus. Integer powers with negative
-exponents follow integer arithmetic. Integer operations use checked arithmetic;
+exponents follow integer arithmetic. Integer operations use checked arithmetic
+unless interval analysis proves the operation cannot overflow;
 overflow, division by zero, and out-of-range real-to-integer conversion fail instead
 of wrapping or saturating. Floating point transcendental results are tested with
 tolerances, not promised to be bitwise identical to gfortran.
@@ -131,6 +139,51 @@ USE association, allocation, pointers, recursion, complex arithmetic, READ,
 formatted file I/O, ELSE IF, DO WHILE, named constructs, EXIT, CYCLE, and STOP are outside
 this first subset. They are diagnosed rather than silently ignored. The mixture
 examples therefore cannot yet be translated.
+
+## Idiomatic Rust where behavior can be preserved
+
+The default emitter now runs a small Rust-oriented analysis over the compiler AST.
+For the current `xloop.f90`, its essential output is:
+
+```rust
+fn main() {
+    const N: i32 = 3;
+    for i in 1..=N {
+        println!("{i:5}{:5}{:10.6}", (i * i), (i as f32).sqrt());
+    }
+}
+```
+
+Generated files also include source-line comments and attributes for generated-code
+warnings. No formatting module or arithmetic helper functions are included when
+the generated statements do not need them.
+
+The transformations are deliberately conditional:
+
+- Statically evaluated default-INTEGER PARAMETERs and simple literal constants use
+  uppercase Rust `const` names. Initializers requiring runtime Rust math keep `let`.
+  Ordinary identifiers retain their Fortran spelling in lowercase; Rust keywords,
+  helper prefixes, and collisions are renamed consistently.
+- A positive unit-stride DO can become `for i in start..=limit` when the control
+  variable is unobserved afterward and the final Fortran index cannot overflow.
+  Bounds are still evaluated once. If the index is read later, the explicit loop
+  retains its post-loop value, including for empty loops. Nonunit, descending, and
+  insufficiently proven loops retain the general implementation. Nested and
+  loop-carried uses are treated conservatively.
+- Bounded integer expressions can use ordinary arithmetic (`i * i` for `i**2`)
+  when every intermediate is proved to fit. Unknown ranges retain checked code.
+- A narrow whitelist of flat `Iw` and `Fw.d` formats can become direct `println!`
+  formatting if all types and field sizes are proved compatible. Integer ranges,
+  finite real literal/conversion/square-root bounds, rounding carry, and negative
+  zero are accounted for. The bounds are intentionally loose. Possible field
+  overflow, unknown sizes, precision-zero F fields, I precision, scale/sign modes,
+  literals, groups, and reversion use the unchanged shared compiler formatter.
+
+This is not a second general format parser: the whitelist only recognizes simple
+optimization patterns; rfort validates the format, and `format_spec.rs` handles the
+general case. Named `square`/`root` temporaries are not invented by this version.
+
+All analysis lives in `rust-transpiler/rust_style.py`; compiler files are unchanged.
 
 ## Tests
 
