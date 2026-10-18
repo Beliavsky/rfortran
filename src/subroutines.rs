@@ -236,20 +236,26 @@ fn expand(body: &mut Vec<Stmt>, routines: &HashMap<String, Routine>, active: &mu
                 let intents: HashMap<_, _> = routine.body.iter().filter_map(|s| match s {
                     Stmt::DummyIntent { name, intent } => Some((name.clone(), intent.clone())), _ => None,
                 }).collect();
-                if intents.values().any(|i| i == "intent(out)" || i == "intent(inout)") {
+                let types: HashMap<String, TypeSpec> = routine.body.iter().flat_map(|s| match s {
+                    Stmt::VarDecl { names, kind } => names.iter().map(|n| (n.clone(), kind.clone())).collect(),
+                    _ => Vec::new(),
+                }).collect();
+                // A scalar dummy without INTENT may also be defined by the call.
+                let unspecified = routine.params.iter().all(|p| types.contains_key(p))
+                    && routine.params.iter().any(|p| !intents.get(p).is_some_and(|i| i.starts_with("intent(")))
+                    && !active.contains(callee);
+                if intents.values().any(|i| i == "intent(out)" || i == "intent(inout)") || unspecified {
                     if active.contains(callee) { bail!("recursive output-argument subroutine `{callee}` is not yet supported"); }
                     if args.len() != routine.params.len() { bail!("wrong argument count for subroutine `{callee}`"); }
-                    let types: HashMap<String, TypeSpec> = routine.body.iter().flat_map(|s| match s {
-                        Stmt::VarDecl { names, kind } => names.iter().map(|n| (n.clone(), kind.clone())).collect(),
-                        _ => Vec::new(),
-                    }).collect();
                     let mut prefix = Vec::new();
                     let mut undefine = Vec::new();
                     let mut names = Names::new();
                     for (param, actual) in routine.params.iter().zip(args.iter()) {
                         let kind = types.get(param).with_context(|| format!("output-argument calls currently require explicitly declared scalar dummy `{param}`"))?;
                         let intent = intents.get(param).map(String::as_str).unwrap_or("");
-                        if intent == "intent(in)" {
+                        // An expression passed to a dummy without INTENT is an input.
+                        let input = intent == "intent(in)" || !intent.starts_with("intent(") && !matches!(actual, Expr::Ident(_));
+                        if input {
                             *serial += 1;
                             let temp = format!("@sub_input_{serial}");
                             prefix.push(Stmt::VarDecl { kind: kind.clone(), names: vec![temp.clone()] });

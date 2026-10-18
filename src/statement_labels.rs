@@ -365,6 +365,72 @@ fn unit(body: &mut Vec<Stmt>) -> Result<()> {
     clean(body)
 }
 
+/// Give each READ, WRITE and PRINT whose format is a statement label the
+/// specification of that FORMAT statement, and remove the FORMAT statements.
+/// Labels are local to a program unit; contained procedures have their own.
+pub(crate) fn formats(body: &mut Vec<Stmt>) -> std::result::Result<(), String> {
+    fn collect(body: &[Stmt], formats: &mut std::collections::HashMap<String, String>) {
+        for (i, s) in body.iter().enumerate() {
+            match s {
+                Stmt::CallSub { name, args } if name == "@format_statement" => {
+                    if let (Some(Stmt::CallSub { name: l, args: label }), [Expr::Str(spec)]) = (i.checked_sub(1).map(|j| &body[j]), args.as_slice()) {
+                        if l == "@statement_label" {
+                            if let [Expr::IntLit(n)] = label.as_slice() {
+                                formats.insert(n.trim_start_matches('0').to_owned(), spec.clone());
+                            }
+                        }
+                    }
+                }
+                Stmt::If { then_body, else_body, .. } => {
+                    collect(then_body, formats);
+                    if let Some(b) = else_body { collect(b, formats); }
+                }
+                Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } | Stmt::Block { body } => collect(body, formats),
+                Stmt::SelectCase { cases, default, .. } => {
+                    for c in cases { collect(&c.body, formats); }
+                    if let Some(b) = default { collect(b, formats); }
+                }
+                _ => {}
+            }
+        }
+    }
+    fn replace(body: &mut Vec<Stmt>, formats: &std::collections::HashMap<String, String>) -> std::result::Result<(), String> {
+        body.retain(|s| !matches!(s, Stmt::CallSub { name, .. } if name == "@format_statement"));
+        for s in body.iter_mut() {
+            match s {
+                Stmt::CallSub { name, args } => {
+                    let position = match name.as_str() {
+                        "@formatted_print" => 0,
+                        "@write" | "@formatted_read" | "@formatted_read_status" | "@formatted_write_noadvance" => 1,
+                        _ => continue,
+                    };
+                    if let Some(format @ Expr::IntLit(_)) = args.get_mut(position) {
+                        let Expr::IntLit(n) = &*format else { unreachable!() };
+                        let spec = formats.get(n.trim_start_matches('0'))
+                            .ok_or_else(|| format!("format label {n} does not label a FORMAT statement in this program unit"))?;
+                        *format = Expr::Str(spec.clone());
+                    }
+                }
+                Stmt::If { then_body, else_body, .. } => {
+                    replace(then_body, formats)?;
+                    if let Some(b) = else_body { replace(b, formats)?; }
+                }
+                Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } | Stmt::Block { body } => replace(body, formats)?,
+                Stmt::SelectCase { cases, default, .. } => {
+                    for c in cases { replace(&mut c.body, formats)?; }
+                    if let Some(b) = default { replace(b, formats)?; }
+                }
+                Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } | Stmt::Module { body, .. } => self::formats(body)?,
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+    let mut table = std::collections::HashMap::new();
+    collect(body, &mut table);
+    replace(body, &table)
+}
+
 pub fn resolve(mut program: Program) -> Result<Program> {
     unit(&mut program.body)?;
     Ok(program)

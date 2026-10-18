@@ -451,3 +451,25 @@ The most common remaining first diagnostics, among demos gfortran compiles:
 
 Reports: `target/m-intrinsics-compile-step5.json` and
 `target/m-intrinsics-compiled-run-step5.json`, each with a companion `.md`.
+
+## After statement forms and I/O control
+
+FORMAT statements, DO CONCURRENT, labeled DO, DATA, FLUSH, ENDFILE, IOSTAT and
+IOMSG on file statements, formatted file output with implied-DO lists,
+formatted READ with edit descriptors, comment lines in continued strings, names
+split across lines and SELECT/CASE as names. 123 demos now compile, up from 111,
+with no regressions. Newly compiling: `demo_close`, `demo_comment`,
+`demo_endfile`, `demo_flush`, `demo_iand`, `demo_if`, `demo_is_iostat_end`,
+`demo_is_iostat_eor`, `demo_print`, `demo_rewind`, `demo_tanpi` and
+`demo_where`.
+
+| Execution outcome | O0 | O2 |
+|---|---:|---:|
+| Output matched gfortran | 89 | 89 |
+| Output differed from gfortran | 2 | 2 |
+| Runtime error | 1 | 1 |
+
+The differences and the runtime error are unchanged: `demo_bit_size.f90`,
+`demo_hypot.f90` and `demo_allocated.f90`. `demo_comment.f90` prints the date
+and time, and `demo_close.f90` lacks gfortran's reason ("No such file or
+directory") in its IOMSG text.

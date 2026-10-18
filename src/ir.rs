@@ -41,7 +41,7 @@ fn input_destinations(stmts: &[IStmt]) -> std::collections::HashSet<String> {
             IStmt::Call(name, args) if name == "@list_read_internal_begin" || name == "@list_read_begin" || name=="@list_read_next" || name == "@read_record_status" || name=="@read_record_checked" => {
                 for arg in &args[..2] { if let IExpr::Ident(id) = arg { names.insert(id.clone()); } }
             }
-            IStmt::Call(name, args) if name.eq_ignore_ascii_case("random_number") || name == "@random_seed_get" || name == "@date_snapshot" || name == "@read_record" || name == "@internal_read_byte" || name == "@internal_format_end" || name == "@module_bind" || name.starts_with("@heap_") || name == "@character_assign" || name == "@character_length" || name=="@file_open_dynamic" || name=="@list_read_end" => {
+            IStmt::Call(name, args) if name.eq_ignore_ascii_case("random_number") || name == "@random_seed_get" || name == "@date_snapshot" || name == "@read_record" || name == "@internal_read_byte" || name == "@internal_format_end" || name == "@module_bind" || name.starts_with("@heap_") || name == "@character_assign" || name == "@character_length" || (name=="@file_open_dynamic" || name=="@file_open_try") || name=="@list_read_end" => {
                 if let Some(IExpr::Ident(id) | IExpr::Index(id, _)) = args.first() { names.insert(id.clone()); }
             }
             IStmt::Do { body, .. } | IStmt::DoWhile { body, .. } | IStmt::Block { body } => names.extend(input_destinations(body)),
@@ -1609,7 +1609,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
             IStmt::Read(vars) => vec![IStmt::Read(vars)],
             IStmt::Call(name, args) => {
                 if matches!(name.as_str(),"@file_inquire_unit"|"@file_inquire_file"|"@environment_query"|"@argument_query"|"@cwd_query") {return vec![IStmt::Call(name,args)];}
-                if name=="@file_open_dynamic" || name.starts_with("@list_read_") || name.eq_ignore_ascii_case("random_number") || name == "@random_seed_get" || name == "@date_snapshot" || name == "@format_begin" || name == "@read_record" || name == "@read_record_status" || name=="@read_record_checked" || name == "@internal_read_byte" || name == "@internal_format_end" || name == "@module_bind" || name.starts_with("@heap_") || name == "@character_assign" || name == "@character_length" {
+                if (name=="@file_open_dynamic" || name=="@file_open_try") || name.starts_with("@list_read_") || name.eq_ignore_ascii_case("random_number") || name == "@random_seed_get" || name == "@date_snapshot" || name == "@format_begin" || name == "@read_record" || name == "@read_record_status" || name=="@read_record_checked" || name == "@internal_read_byte" || name == "@internal_format_end" || name == "@module_bind" || name.starts_with("@heap_") || name == "@character_assign" || name == "@character_length" {
                     return vec![IStmt::Call(name, args)];
                 }
                 let optimized_args = args

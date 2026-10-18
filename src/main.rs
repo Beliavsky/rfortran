@@ -66,6 +66,7 @@ mod list_input;
 mod character_input;
 mod derived;
 mod extensions;
+mod data_statements;
 mod procedure_arguments;
 mod intrinsic_rewrites;
 mod matmul_runtime;

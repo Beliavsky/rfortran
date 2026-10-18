@@ -199,6 +199,15 @@ checks with gfortran comparisons.
 
 - `call s` and `subroutine s` may omit an empty argument list, and a module may
   end with a bare `END`.
+- `DATA a / 1 /, b, c / 2*0.5, 3.0 /` gives whole variables initial values,
+  with `r*c` repeat counts (`r` may be a named constant), signed and BOZ
+  constants. The variables must be declared before the DATA statement; an
+  array must be the last variable of its value list. Array elements, sections
+  and implied-DO lists are not yet supported.
+- Comment and blank lines may appear between the continued lines of a
+  character literal, and a name or number may be split across lines with `&`
+  at the end of one line and the start of the next.
+- SELECT and CASE may be used as variable names.
 - External procedures and modules may follow the main program in the same file.
 - `IMPLICIT NONE (TYPE)`, `IMPLICIT NONE (EXTERNAL)` and
   `IMPLICIT NONE (TYPE, EXTERNAL)` are accepted. TYPE disables implicit
@@ -473,6 +482,13 @@ Unbounded `do` / `end do` loops repeat until EXIT, RETURN, or STOP transfers
 control. CYCLE starts the next iteration; nested loops target the innermost
 loop. A bare DO may end with a newline, a comment, or a semicolon. Continued
 counted DO and DO WHILE headers retain their control clauses.
+
+The older form `do 10 i = 1, n` (also `do 10, i = 1, n`) ends after the
+statement with label 10, which may be CONTINUE or another statement; nested
+loops may share it. DO CONCURRENT accepts several index controls with strides
+and a final mask, as in `do concurrent (i = 1:n, j = 1:m:2, a(i) > 0)`, and runs
+its iterations in order as nested DO loops. A type specification or locality
+specifiers such as LOCAL are not supported.
 
 Counted, unbounded, and DO WHILE loops accept construct names, for example
 `do_i: do i=1,ni` with `end do do_i` (or `enddo do_i`). `CYCLE do_i` and
@@ -1769,6 +1785,10 @@ Run `python tests/test_intrinsic_env.py`.
 
 ### Formatted output
 
+A FORMAT statement, as in `print 10, x` with `10 format (2e16.3)`, gives its
+format to PRINT, WRITE and READ that name its label, including `fmt=10` and
+`read 10, x`. Labels are local to each program unit.
+
 WRITE and PRINT accept scalar CHARACTER format expressions: literals, named
 PARAMETERs, variables (including formats read from input), concatenation, and
 TRIM. WRITE supports standard output (`*`, constant unit 6, or an INTEGER
@@ -1869,6 +1889,23 @@ Run `python tests/test_numeric_model.py` for interpreter/native O0/O2 comparison
 with gfortran, statement boundaries, initialization behavior and invalid arguments.
 
 ### File and standard input
+
+FLUSH writes all buffered output, and ENDFILE ends a file at its current
+position. With `iostat=`, an OPEN that fails sets a nonzero status, sets IOMSG to
+a message naming the file, and leaves NEWUNIT unchanged; CLOSE, REWIND,
+BACKSPACE, ENDFILE and FLUSH accept IOSTAT, IOMSG and ERR, but a failure of one
+of them stops the program, so IOSTAT is then always zero. READ accepts IOMSG
+with IOSTAT; IOMSG is not set.
+
+A formatted READ with a constant format of edit descriptors reads each record
+whole, then gives each item its field: A, I, F, E, ES, EN, D, G and L fields, X,
+T, TL, TR and `/`, with repeat counts, groups and reversion. Items may be
+scalars, array elements and rank-one arrays of constant size. A blank numeric
+field reads as zero, and an F, E, D or G field without a decimal point or
+exponent has an implied one. B, O and Z input, input implied-DO lists and
+runtime-sized arrays are not yet supported with edit descriptors. Records are
+read up to 4096 characters. Formatted WRITE with an implied-DO list goes to a
+file as well as to standard output.
 
 Sequential formatted files support `OPEN(unit=20,file='data.txt',status='old',action='read')`,
 `READ(20,'(a)') text`, `BACKSPACE(20)`, `REWIND(20)`, and `CLOSE(20)`.

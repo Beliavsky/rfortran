@@ -16,6 +16,7 @@ pub(crate) fn read_controls(
     let mut format = None;
     let mut option = None;
     let mut named = false;
+    let mut message = None;
     let mut seen = std::collections::HashSet::new();
     for (position, value) in controls.into_iter().enumerate() {
         let (key, value) = match value {
@@ -44,6 +45,9 @@ pub(crate) fn read_controls(
                 unit = Some(if star { int(5) } else { value });
             }
             "fmt" => format = Some(value),
+            // Only defined after an error; an input error that IOSTAT does not
+            // report stops the program, so IOMSG is never set.
+            "iomsg" => message = Some(value),
             _ => {
                 if star {
                     return Err("only READ UNIT and FMT may use '*'");
@@ -81,9 +85,14 @@ pub(crate) fn read_controls(
     } else {
         "@formatted_read"
     };
-    Ok(Stmt::CallSub {
+    let read = Stmt::CallSub {
         name: name.into(),
         args,
+    };
+    // IOMSG is only defined after an error that IOSTAT reports.
+    Ok(match message {
+        Some(message) => Stmt::Block { body: vec![read, Stmt::CallSub { name: crate::initialized::MAY_DEFINE.into(), args: vec![message] }] },
+        None => read,
     })
 }
 
@@ -559,6 +568,163 @@ pub(crate) fn lower_empty_read(
         ));
     }
     Ok(Stmt::Block { body })
+}
+
+/// Whether a field of `width` characters has no decimal point or exponent,
+/// so that an F, E, D or G descriptor would imply a decimal point.
+fn implied_decimal(field: &str, width: usize) -> Expr {
+    let mut none = Expr::Logical(true);
+    for i in 0..width {
+        let c = Expr::Call("@substring".into(), vec![var(field), int(i as i64), int(1)]);
+        for mark in [".", "e", "E", "d", "D"] {
+            none = bin(BinOp::And, none, bin(BinOp::Ne, c.clone(), Expr::Str(mark.into())));
+        }
+    }
+    none
+}
+
+/// The longest record a formatted READ with edit descriptors reads.
+const FIELD_RECORD: usize = 4096;
+
+/// Formatted READ with a constant format of edit descriptors: each record is
+/// read whole, then each item takes the field its descriptor selects. A
+/// numeric or LOGICAL field is converted by list-directed internal input; a
+/// blank numeric field is zero, and an F, E, D or G field without a decimal
+/// point or exponent has an implied decimal point. `args` are the unit, the
+/// format, the status control and variable, and the items. None when the
+/// format or items are outside this subset.
+pub(crate) fn lower_field_read(
+    args: &[Expr],
+    symbols: &HashMap<String, (TypeSpec, Vec<Expr>)>,
+    serial: &mut usize,
+) -> Result<Option<Vec<Stmt>>> {
+    use crate::format_spec as spec;
+    let [unit, format, Expr::Str(control), status, items @ ..] = args else { return Ok(None) };
+    let Ok(text) = crate::parameters::character_constant(format) else { return Ok(None) };
+    if !control.is_empty() && !control.eq_ignore_ascii_case("iostat") { return Ok(None); }
+    // Plain (A) into one CHARACTER variable keeps the record READ.
+    let plain = text.chars().filter(|c| !c.is_whitespace()).collect::<String>().eq_ignore_ascii_case("(a)");
+    if plain && items.len() == 1 && matches!(&items[0], Expr::Ident(n) if matches!(symbols.get(n), Some((TypeSpec::Character(_), d)) if d.is_empty())) {
+        return Ok(None);
+    }
+    // Items: scalars, array elements, and rank-one arrays of constant size.
+    let mut targets: Vec<(Expr, TypeSpec)> = vec![];
+    for item in items {
+        match item {
+            Expr::Ident(n) => {
+                let Some((kind, dims)) = symbols.get(n) else { return Ok(None) };
+                if dims.is_empty() { targets.push((item.clone(), kind.clone())); continue; }
+                let [dim] = dims.as_slice() else { return Ok(None) };
+                let (lower, upper) = match dim {
+                    Expr::Call(tag, b) if tag == "@declared_bounds" => (crate::parameters::integer_constant(&b[0]), crate::parameters::integer_constant(&b[1])),
+                    d => (Ok(1), crate::parameters::integer_constant(d)),
+                };
+                let (Ok(lower), Ok(upper)) = (lower, upper) else { return Ok(None) };
+                for i in lower..=upper { targets.push((Expr::Index(n.clone(), vec![int(i)]), kind.clone())); }
+            }
+            Expr::Index(n, idx) | Expr::Call(n, idx) if symbols.get(n).is_some_and(|(_, d)| d.len() == idx.len() && !d.is_empty()) => {
+                targets.push((Expr::Index(n.clone(), idx.clone()), symbols[n].0.clone()));
+            }
+            _ => return Ok(None),
+        }
+    }
+    if control.is_empty() && targets.is_empty() { return Ok(None); }
+    let mut parser = spec::GroupParser::new(text.as_bytes(), targets.len()).map_err(anyhow::Error::msg)?;
+    // Records, each a list of (item, kind, first column, width, decimals).
+    let mut records: Vec<Vec<(Expr, TypeSpec, usize, usize, Option<usize>)>> = vec![vec![]];
+    let mut column = 1usize;
+    let mut next = targets.into_iter();
+    while let Some(d) = parser.next().map_err(anyhow::Error::msg)? {
+        match d.code {
+            code if spec::is_data(code) => {
+                if matches!(code, b'b' | b'o' | b'z') {
+                    bail!("formatted READ does not yet support B, O or Z input");
+                }
+                for _ in 0..d.repeat {
+                    let Some((item, kind)) = next.next() else { break };
+                    let character = matches!(kind, TypeSpec::Character(_));
+                    if character != (code == b'a') {
+                        bail!("formatted READ: the A edit descriptor requires a CHARACTER variable, and the other edit descriptors a numeric or LOGICAL one");
+                    }
+                    let width = match (code, d.width, &kind) {
+                        (b'a', 0, TypeSpec::Character(Some(n))) => *n,
+                        (_, 0, _) => bail!("formatted READ requires a field width"),
+                        (_, w, _) => w,
+                    };
+                    let decimals = (matches!(code, b'f' | b'e' | b'd' | b'g' | spec::ES | spec::EN) && d.has_precision).then_some(d.precision);
+                    records.last_mut().unwrap().push((item, kind, column, width, decimals));
+                    column += width;
+                }
+            }
+            b'x' | spec::TR => column += if d.width > 0 { d.width } else { d.repeat.max(1) },
+            spec::TL => column = column.saturating_sub(d.width.max(1)).max(1),
+            spec::T => column = d.width.max(1),
+            b'/' | spec::REVERSION => {
+                for _ in 0..d.repeat.max(1) { records.push(vec![]); }
+                column = 1;
+            }
+            _ => {}
+        }
+    }
+    *serial += 1;
+    let buffer = format!("@field_record_{serial}");
+    let field = format!("@field_text_{serial}");
+    let code = format!("@field_status_{serial}");
+    let widest = records.iter().flatten().map(|f| f.3).max().unwrap_or(1);
+    let iostat = !control.is_empty();
+    let read_record = || Stmt::CallSub { name: "@formatted_read_status".into(),
+        args: vec![unit.clone(), Expr::Str("(a)".into()), Expr::Str("iostat".into()), var(&code), var(&buffer)] };
+    let substring = |first: usize, last: usize| Expr::Call("@substring".into(), vec![var(&buffer), int(first as i64 - 1), int((last + 1 - first) as i64)]);
+    let store = |item: &Expr, value: Expr| match item {
+        Expr::Ident(n) => set(n, value),
+        Expr::Index(n, idx) => Stmt::AssignIndex { name: n.clone(), indices: idx.clone(), value },
+        _ => unreachable!(),
+    };
+    let convert = |(item, kind, first, width, decimals): &(Expr, TypeSpec, usize, usize, Option<usize>)| -> Vec<Stmt> {
+        let last = first + width - 1;
+        if let TypeSpec::Character(length) = kind {
+            // Aw with w longer than the item takes the rightmost characters.
+            let length = length.unwrap_or(1);
+            let start = if *width > length { last + 1 - length } else { *first };
+            return vec![store(item, substring(start, last))];
+        }
+        let blank = bin(BinOp::Eq, var(&field), Expr::Str(String::new()));
+        let zero = match kind { TypeSpec::Logical => Expr::Logical(false), _ => int(0) };
+        let mut read = vec![Stmt::CallSub { name: "@internal_read".into(), args: if iostat {
+            vec![var(&field), Expr::Str("iostat".into()), var(&code), item.clone()]
+        } else {
+            vec![var(&field), Expr::Str(String::new()), int(0), item.clone()]
+        } }];
+        if let Some(d) = decimals.filter(|d| *d > 0) {
+            let scaled = bin(BinOp::Div, item.clone(), Expr::RealLit(format!("{}.0", 10f64.powi(d as i32))));
+            read.push(branch(implied_decimal(&field, *width), vec![store(item, scaled)]));
+        }
+        vec![set(&field, substring(*first, last)), Stmt::If { cond: blank, then_body: vec![store(item, zero)], else_body: Some(read) }]
+    };
+    // Each later record is read only when the earlier ones succeeded.
+    let mut nested: Vec<Stmt> = vec![];
+    for record in records.iter().rev() {
+        let mut segment = vec![read_record()];
+        let mut fields: Vec<Stmt> = record.iter().flat_map(convert).collect();
+        fields.extend(nested);
+        segment.push(branch(equal(&code, 0), fields));
+        nested = segment;
+    }
+    let mut body = vec![
+        Stmt::VarDecl { kind: TypeSpec::Character(Some(FIELD_RECORD)), names: vec![buffer.clone()] },
+        Stmt::VarDecl { kind: TypeSpec::Character(Some(widest)), names: vec![field] },
+        Stmt::VarDecl { kind: TypeSpec::Integer(None), names: vec![code.clone()] },
+        set(&code, int(0)),
+    ];
+    body.extend(nested);
+    if iostat {
+        let Expr::Ident(status) = status else { bail!("IOSTAT must be a writable scalar INTEGER variable") };
+        body.push(set(status, var(&code)));
+    } else {
+        body.push(branch(bin(BinOp::Ne, var(&code), int(0)), vec![Stmt::CallSub {
+            name: "@error_stop".into(), args: vec![Expr::Str("end of file or input error in formatted READ".into())] }]));
+    }
+    Ok(Some(vec![Stmt::Block { body }]))
 }
 
 pub(crate) fn lower_record_read(

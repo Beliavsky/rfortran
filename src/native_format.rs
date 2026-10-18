@@ -156,6 +156,14 @@ pub unsafe extern "C" fn rfort_file_delete(path:*const u8)->i32 {
     extern "C" {fn remove(path:*const u8)->i32;}
     if path.is_null() {0} else {i32::from(remove(path)!=0)}
 }
+/// ENDFILE: end the file at the current position.
+#[no_mangle]
+pub unsafe extern "C" fn rfort_file_endfile(stream:*mut core::ffi::c_void)->i32 {
+    if fflush(stream)!=0 {return 1;}
+    #[cfg(windows)] {let pos=_ftelli64(stream);if pos<0 || _chsize_s(_fileno(stream),pos)!=0 {return 1;}}
+    #[cfg(not(windows))] {let pos=ftello(stream);if pos<0 || ftruncate(fileno(stream),pos)!=0 {return 1;}}
+    0
+}
 #[no_mangle]
 pub unsafe extern "C" fn rfort_file_open_dynamic(slots:*mut *mut core::ffi::c_void,names:*mut *const u8,requested:i64,path:*const u8,length:usize,mode:i64,newunit:i64)->i64 {
     let mut length=length;while length>0 && *path.add(length-1)==b' ' {length-=1;}

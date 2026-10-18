@@ -82,6 +82,8 @@ extern {
         FLOAT => TokenKind::Float(<String>),
         INT => TokenKind::Integer(<String>),
         LABEL => TokenKind::StatementLabel(<String>),
+        FORMAT_SPEC => TokenKind::FormatSpec(<String>),
+        KW_DATA => TokenKind::KwData,
         KW_CONTINUE => TokenKind::KwContinue,
         TRUE => TokenKind::True,
         FALSE => TokenKind::False,
@@ -498,6 +500,12 @@ Stmt: Stmt = {
     KW_READ LPAREN <controls:ReadControls> RPAREN <items:ExprList> =>?
         crate::input::read_controls(controls,items)
             .map_err(|error|lalrpop_util::ParseError::User {error}),
+    // READ label, items: formatted input with a FORMAT statement.
+    KW_READ <label:INT> COMMA <es:ExprList> => {
+        let mut args = vec![Expr::IntLit("5".into()), Expr::IntLit(label)];
+        args.extend(es);
+        Stmt::CallSub { name: "@formatted_read".into(), args }
+    },
     KW_READ STAR COMMA <es:ExprList> =>?
         crate::input::read_controls(vec![Expr::Call("@write_star".into(),vec![]),Expr::Call("@write_star".into(),vec![])],es)
             .map_err(|error|lalrpop_util::ParseError::User {error}),
@@ -537,6 +545,10 @@ Stmt: Stmt = {
     },
     <name:LoopName?> <stmt:DoLoop> <end:END_LOOP_NAME?> => crate::named_loops::parsed(stmt,name,end),
     KW_RETURN => Stmt::Return(None),
+    // DATA objects / values / [[,] objects / values /]...
+    KW_DATA <sets:DataSets> => Stmt::CallSub { name: "@data".into(), args: sets },
+    // A FORMAT statement; its label gives the format to READ, WRITE and PRINT.
+    <spec:FORMAT_SPEC> => Stmt::CallSub { name: "@format_statement".into(), args: vec![Expr::Str(spec)] },
     <name: Designator> EQ <rhs: RhsExpr> => Stmt::Assign { name, value: rhs },
     <id: Designator> LPAREN <args: SubscriptList> RPAREN PERCENT <field:ComponentPath> EQ <rhs:RhsExpr> =>
         Stmt::AssignIndex{name:format!("{id}%{field}"),indices:args,value:rhs},
@@ -807,6 +819,73 @@ ForallControl: Vec<Expr> = {
         vec![Expr::Ident(index), start, end, step.unwrap_or(Expr::IntLit("1".into()))],
 };
 ForallStride: Expr = { COLON <e:RhsExpr> => e };
+DataSets: Vec<Expr> = {
+    <set:DataSet> => vec![set],
+    // The comma between sets is optional in Fortran, but without newline
+    // tokens a set without it cannot be told from a following statement.
+    <mut v:DataSets> COMMA <set:DataSet> => { v.push(set); v },
+};
+DataSet: Expr = {
+    <objects:DataObjects> SLASH <values:DataValues> SLASH => Expr::Call("@data_set".into(), vec![
+        Expr::Call("@data_objects".into(), objects), Expr::Call("@data_values".into(), values)]),
+};
+DataObjects: Vec<Expr> = {
+    <o:DataObject> => vec![o],
+    <mut v:DataObjects> COMMA <o:DataObject> => { v.push(o); v },
+};
+DataObject: Expr = {
+    <n:Designator> => Expr::Ident(n),
+    <n:Designator> LPAREN <a:SubscriptList> RPAREN => crate::ast::section_or_call(n, a),
+};
+DataValues: Vec<Expr> = {
+    <c:DataValue> => vec![c],
+    <mut v:DataValues> COMMA <c:DataValue> => { v.push(c); v },
+};
+DataValue: Expr = {
+    <c:DataConstant> => c,
+    <r:INT> STAR <c:DataConstant> => Expr::Call(crate::data_statements::REPEAT.into(), vec![Expr::IntLit(r), c]),
+    <r:Ident> STAR <c:DataConstant> => Expr::Call(crate::data_statements::REPEAT.into(), vec![Expr::Ident(r), c]),
+};
+DataConstant: Expr = {
+    <n:INT> => Expr::IntLit(n),
+    <f:FLOAT> => Expr::RealLit(f),
+    <s:STR> => Expr::Str(s),
+    TRUE => Expr::Logical(true),
+    FALSE => Expr::Logical(false),
+    MINUS <n:INT> => Expr::neg(Expr::IntLit(n)),
+    MINUS <f:FLOAT> => Expr::neg(Expr::RealLit(f)),
+    PLUS <n:INT> => Expr::IntLit(n),
+    PLUS <f:FLOAT> => Expr::RealLit(f),
+    <n:Ident> => Expr::Ident(n),
+    COMPLEX_OPEN <re:RhsExpr> COMMA <im:RhsExpr> RPAREN => Expr::Call("@complex_literal".into(),vec![re,im]),
+};
+// Index controls of DO CONCURRENT, then an optional mask. The items share
+// one list so that a comma needs no lookahead past the next token.
+ConcurrentHeader: (Vec<Expr>, Option<Expr>) = {
+    <items:ConcurrentItems> =>? {
+        let mut controls = vec![];
+        let mut mask = None;
+        for item in items {
+            match item {
+                Ok(control) if mask.is_none() => controls.extend(control),
+                Err(m) if mask.is_none() => mask = Some(m),
+                _ => return Err(lalrpop_util::ParseError::User { error: "the DO CONCURRENT mask must follow its index controls" }),
+            }
+        }
+        if controls.is_empty() {
+            return Err(lalrpop_util::ParseError::User { error: "DO CONCURRENT requires an index control" });
+        }
+        Ok((controls, mask))
+    },
+};
+ConcurrentItems: Vec<Result<Vec<Expr>, Expr>> = {
+    <item:ConcurrentItem> => vec![item],
+    <mut v:ConcurrentItems> COMMA <item:ConcurrentItem> => { v.push(item); v },
+};
+ConcurrentItem: Result<Vec<Expr>, Expr> = {
+    <control:ForallControl> => Ok(control),
+    <mask:CondExpr> => Err(mask),
+};
 
 SubscriptList: Vec<Expr> = {
     => vec![],
@@ -1097,6 +1176,13 @@ DoLoop: Stmt = {
     },
     KW_DO <var: Ident> EQ <s: RhsExpr> COMMA <e: RhsExpr> <body: Stmts> LoopEnd => Stmt::Do { var, start: s, end: e, body },
     KW_DO KW_WHILE LPAREN <cond: CondExpr> RPAREN <body: Stmts> LoopEnd => Stmt::DoWhile { cond, body },
+    // DO CONCURRENT runs its iterations in order, as nested DO loops.
+    KW_DO <c: Ident> LPAREN <header: ConcurrentHeader> RPAREN <body: Stmts> LoopEnd =>? {
+        if !c.eq_ignore_ascii_case("concurrent") {
+            return Err(lalrpop_util::ParseError::User { error: "expected DO CONCURRENT" });
+        }
+        Ok(crate::ast::do_concurrent(header.0, header.1, body))
+    },
     KW_DO_UNBOUNDED <body: Stmts> LoopEnd => Stmt::DoWhile { cond: Expr::Logical(true), body },
 };
 

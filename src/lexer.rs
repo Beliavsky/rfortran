@@ -225,7 +225,13 @@ fn join_continued_literal(text: &str) -> String {
             rest = after;
             continue;
         }
-        let next = &tail[newline..];
+        let mut next = &tail[newline..];
+        // Skip blank and comment lines before the continuation line.
+        loop {
+            let line = next.trim_start_matches([' ', '\t']);
+            if !(line.starts_with('!') || line.starts_with('\n') || line.starts_with("\r\n")) { break; }
+            match line.find('\n') { Some(end) => next = &line[end + 1..], None => break }
+        }
         let line = next.trim_start_matches([' ', '\t']);
         rest = line.strip_prefix('&').unwrap_or(line);
     }
@@ -284,11 +290,13 @@ pub enum TokenKind {
     // are ordinary characters, including immediately before the closing quote.
     // A literal continued with `&` at the end of a line resumes after the `&`
     // that begins the next line, or at its first nonblank character as gfortran does.
-    #[regex(r#""([^"\r\n&]|""|&|&[ \t]*\r?\n[ \t]*&?)*""#, |lex| {
+    // Blank and comment lines may come between the continued lines. The
+    // lexer does not backtrack, so each run of blanks has one place to match.
+    #[regex(r#""([^"\r\n&]|""|&|&[ \t]*\r?\n[ \t]*((![^\r\n]*)?\r?\n[ \t]*)*&?)*""#, |lex| {
         let s = lex.slice();
         join_continued_literal(&s[1..s.len()-1]).replace("\"\"", "\"")
     })]
-    #[regex(r"'([^'\r\n&]|''|&|&[ \t]*\r?\n[ \t]*&?)*'", |lex| {
+    #[regex(r"'([^'\r\n&]|''|&|&[ \t]*\r?\n[ \t]*((![^\r\n]*)?\r?\n[ \t]*)*&?)*'", |lex| {
         let s = lex.slice();
         join_continued_literal(&s[1..s.len()-1]).replace("''", "'")
     })]
@@ -298,6 +306,10 @@ pub enum TokenKind {
     #[regex(r"[0-9]+(_[A-Za-z0-9_]+)?", |lex| lex.slice().to_ascii_lowercase())]
     Integer(String),
     StatementLabel(String),
+    /// The parenthesized specification of a FORMAT statement, as written,
+    /// with continuation lines joined.
+    FormatSpec(String),
+    KwData,
     KwContinue,
     #[token(".true.", ignore(ascii_case))]
     True,
@@ -678,6 +690,101 @@ fn operator_after_number(rest: &str) -> bool {
     !word.is_empty() && rest[word.len()..].starts_with('.')
 }
 
+/// Join the lines of a continued statement, dropping each `&`, the line
+/// break, comment lines and the leading `&` of the next line. Character
+/// context, where `!` is not a comment, is tracked across lines.
+fn join_continued(text: &str) -> String {
+    let mut out = String::new();
+    let mut quote: Option<char> = None;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' | '"' if quote.is_none() => { quote = Some(c); out.push(c); }
+            c if Some(c) == quote => { quote = None; out.push(c); }
+            '!' if quote.is_none() => { while chars.peek().is_some_and(|c| *c != '\n') { chars.next(); } }
+            '&' => {
+                // Skip to the next line that has code, then past its `&`.
+                let rest: String = chars.clone().collect();
+                if !rest.split('\n').next().unwrap_or("").trim().is_empty() && !rest.split('\n').next().unwrap_or("").trim_start().starts_with('!') {
+                    out.push(c);
+                    continue;
+                }
+                loop {
+                    while chars.peek().is_some_and(|c| *c != '\n') { chars.next(); }
+                    if chars.next().is_none() { break; }
+                    let line: String = chars.clone().take_while(|c| *c != '\n').collect();
+                    let code = line.trim_start();
+                    if code.is_empty() || code.starts_with('!') { continue; }
+                    while chars.peek().is_some_and(|c| *c == ' ' || *c == '\t') { chars.next(); }
+                    if chars.peek() == Some(&'&') { chars.next(); }
+                    break;
+                }
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// `DO label [,] i = ...` ends after the statement with that label, as if
+/// END DO followed it. Drop the label and insert that END DO, once for each
+/// loop that shares the terminal statement.
+fn labeled_do(tokens: &mut Vec<Token>, input: &str) {
+    let normal = |n: &str| n.trim_start_matches('0').to_owned();
+    let mut pending: Vec<String> = vec![];
+    let mut i = 0;
+    while i < tokens.len() {
+        if matches!(tokens[i].kind, TokenKind::KwDo) {
+            if let Some(TokenKind::Integer(label)) = tokens.get(i + 1).filter(|t| same_statement(&input[tokens[i].span.end..t.span.start])).map(|t| &t.kind) {
+                if label.bytes().all(|c| c.is_ascii_digit()) {
+                    pending.push(normal(label));
+                    tokens.remove(i + 1);
+                    if matches!(tokens.get(i + 1).map(|t| &t.kind), Some(TokenKind::Comma)) {
+                        tokens.remove(i + 1);
+                    }
+                }
+            }
+        }
+        if let TokenKind::StatementLabel(label) = &tokens[i].kind {
+            let label = normal(label);
+            let count = pending.iter().filter(|l| **l == label).count();
+            if count > 0 {
+                pending.retain(|l| *l != label);
+                let mut end = i;
+                while end + 1 < tokens.len() && same_statement(&input[tokens[end].span.end..tokens[end + 1].span.start]) {
+                    end += 1;
+                }
+                let at = tokens[end].span.end;
+                for _ in 0..count {
+                    tokens.insert(end + 1, Token { kind: TokenKind::KwEndDo, span: at..at });
+                }
+                i = end + count;
+            }
+        }
+        i += 1;
+    }
+}
+
+/// Replace `label FORMAT (spec)` with the label and one FormatSpec token,
+/// since a format specification is not made of Fortran expressions.
+fn format_statements(tokens: &mut Vec<Token>, input: &str) {
+    let mut i = 0;
+    while i + 2 < tokens.len() {
+        let format = matches!(tokens[i].kind, TokenKind::StatementLabel(_))
+            && matches!(&tokens[i + 1].kind, TokenKind::Ident(n) if n.eq_ignore_ascii_case("format"))
+            && matches!(tokens[i + 2].kind, TokenKind::LParen);
+        if !format { i += 1; continue; }
+        let mut end = i + 2;
+        while end + 1 < tokens.len() && same_statement(&input[tokens[end].span.end..tokens[end + 1].span.start]) {
+            end += 1;
+        }
+        let span = tokens[i + 1].span.start..tokens[end].span.end;
+        let spec = join_continued(&input[tokens[i + 2].span.start..tokens[end].span.end]);
+        tokens.splice(i + 1..=end, [Token { kind: TokenKind::FormatSpec(spec), span }]);
+        i += 2;
+    }
+}
+
 pub fn lex(input: &str) -> Vec<Token> {
     let mut tokens = Vec::new();
     let mut offset = 0;
@@ -722,6 +829,29 @@ pub fn lex(input: &str) -> Vec<Token> {
         }
         break;
     }
+    // A name or number may be split across lines by `&` at the end of one
+    // line and at the start of the next, with nothing else between.
+    let mut i = 0;
+    while i + 1 < tokens.len() {
+        let gap = &input[tokens[i].span.end..tokens[i + 1].span.start];
+        let joined = gap.len() > 1 && gap.starts_with('&') && gap.ends_with('&') && {
+            let inner = &gap[1..gap.len() - 1];
+            inner.contains('\n') && inner.lines().all(|l| l.trim().is_empty() || l.trim_start().starts_with('!'))
+        };
+        // The pieces form one token when their joined text lexes as one.
+        let text = joined.then(|| format!("{}{}", &input[tokens[i].span.clone()], &input[tokens[i + 1].span.clone()]))
+            .and_then(|text| {
+                let mut lexer = TokenKind::lexer(&text);
+                let first = lexer.next()?.ok()?;
+                (lexer.span().end == text.len() && !matches!(first, TokenKind::Str(_))).then_some(first)
+            });
+        if let (true, Some(kind)) = (joined, text) {
+            let span = tokens[i].span.start..tokens[i + 1].span.end;
+            tokens.splice(i..=i + 1, [Token { kind, span }]);
+            continue;
+        }
+        i += 1;
+    }
     // ENDIF, ENDSELECT, SELECTCASE, DOUBLEPRECISION and the like are the
     // two-word forms written without a blank. Split them at the head of a
     // statement, unless the word is a variable being assigned or referenced.
@@ -765,6 +895,27 @@ pub fn lex(input: &str) -> Vec<Token> {
                     tokens[i].kind = TokenKind::StatementLabel(number.clone());
                 }
             }
+        }
+    }
+    format_statements(&mut tokens, input);
+    // SELECT and CASE are keywords only where a SELECT CASE construct or a
+    // CASE statement can be; elsewhere they are names, as `integer :: case`.
+    for i in 0..tokens.len() {
+        if !matches!(tokens[i].kind, TokenKind::KwCase | TokenKind::KwSelect) { continue; }
+        let head = statement_head(&tokens, input, i)
+            // `name: select case`; construct names are recognized later.
+            || i >= 2 && matches!(tokens[i-1].kind, TokenKind::Colon)
+                && matches!(tokens[i-2].kind, TokenKind::Ident(_) | TokenKind::ConstructName(_)) && statement_head(&tokens, input, i-2);
+        let next = tokens.get(i+1).filter(|t| same_statement(&input[tokens[i].span.end..t.span.start])).map(|t| &t.kind);
+        let assigned = matches!(next, Some(TokenKind::Eq | TokenKind::Percent));
+        let ended = i > 0 && matches!(tokens[i-1].kind, TokenKind::KwEnd);
+        let keyword = ended || match tokens[i].kind {
+            TokenKind::KwSelect => head && !assigned,
+            _ => head && !assigned || i > 0 && matches!(tokens[i-1].kind, TokenKind::KwSelect),
+        };
+        if !keyword {
+            let name = input[tokens[i].span.clone()].to_ascii_lowercase();
+            tokens[i].kind = TokenKind::Ident(name);
         }
     }
     // INTENT(IN OUT) and INTENT(INOUT) are the same declaration attribute.
@@ -909,6 +1060,8 @@ pub fn lex(input: &str) -> Vec<Token> {
                     && (matches!(next,Some(TokenKind::Comma))
                         || matches!(next,Some(TokenKind::Ident(_))) && tokens.get(start+2).is_none_or(|t| !same_statement(&input[tokens[start+1].span.end..t.span.start]))) => Some(TokenKind::KwType),
                 "class" if matches!(next,Some(TokenKind::LParen)) => Some(TokenKind::KwClass),
+                // DATA name / values /, but not a variable named DATA.
+                "data" if matches!(next,Some(TokenKind::Ident(_))) && statement_head(&tokens,input,start) => Some(TokenKind::KwData),
                 "procedure" if matches!(next,Some(TokenKind::DColon)) || matches!(previous,Some(TokenKind::KwModule))
                     // A type-bound binding with attributes: `procedure, private :: f`.
                     || matches!(next,Some(TokenKind::Comma)) && statement_head(&tokens,input,start) => Some(TokenKind::KwProcedure),
@@ -930,7 +1083,7 @@ pub fn lex(input: &str) -> Vec<Token> {
         // File-control words are contextual, including after a single-line IF.
         if let TokenKind::Ident(word) = &tokens[start].kind {
             let word = word.to_ascii_lowercase();
-            if matches!(word.as_str(), "open" | "close" | "backspace" | "rewind" | "inquire" | "nullify") {
+            if matches!(word.as_str(), "open" | "close" | "backspace" | "rewind" | "inquire" | "nullify" | "flush" | "endfile") {
                 let mut begin = start;
                 while begin > 0 && same_statement(&input[tokens[begin-1].span.end..tokens[begin].span.start]) { begin -= 1; }
                 if matches!(tokens[begin].kind, TokenKind::StatementLabel(_)) { begin += 1; }
@@ -948,7 +1101,7 @@ pub fn lex(input: &str) -> Vec<Token> {
                                 break;
                             }
                         }
-                    } else if matches!(word.as_str(), "backspace" | "rewind")
+                    } else if matches!(word.as_str(), "backspace" | "rewind" | "flush" | "endfile")
                         && tokens.get(start+1).is_some_and(|t| !matches!(t.kind,TokenKind::Eq) && same_statement(&input[tokens[start].span.end..t.span.start])) {
                         tokens[start].kind=TokenKind::FilePosition(word);
                     }
@@ -1289,5 +1442,8 @@ pub fn lex(input: &str) -> Vec<Token> {
             if part(&normalized[i+1..*comma])&&part(&normalized[*comma+1..end]){normalized[i].kind=TokenKind::ComplexOpen;}
         }
     }
+    // Last, since the inserted END DO tokens have no source text to separate
+    // them from the statement they follow.
+    labeled_do(&mut normalized, input);
     normalized
 }

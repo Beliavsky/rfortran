@@ -76,8 +76,8 @@ Bugs found on 2026-10-18, all fixed:
 | [CHARACTER literals continued across lines](language-support.md#other-statement-forms) | ✅ | | test_syntax_forms.py |
 | [Empty or comment-only source files](language-support.md#other-statement-forms) | ✅ | | test_syntax_forms.py |
 | [One-word keywords (`ENDIF`, `ELSEIF`, `SELECTCASE`, `DOUBLEPRECISION`, ...)](language-support.md#other-statement-forms) | ✅ | | test_syntax_forms.py |
-| [BOZ literal constants](language-support.md#other-statement-forms) | 🟡 | Not in DATA statements; a pattern over 32 bits must be converted with `INT(..., 8)` | test_syntax_forms.py |
-| `ENDFILE` statement | ❌ | | |
+| [BOZ literal constants](language-support.md#other-statement-forms) | 🟡 | A pattern over 32 bits must be converted with `INT(..., 8)` | test_syntax_forms.py |
+| [`ENDFILE` and `FLUSH` statements](language-support.md#file-and-standard-input) | ✅ | | test_statement_forms_io.py |
 | [Named IF, SELECT CASE, BLOCK and ASSOCIATE constructs](language-support.md#other-statement-forms) | ✅ | Names after END, ELSE and CASE are not checked against the construct name | test_named_constructs.py |
 | [Case-insensitive names](language-support.md#other-statement-forms) | ✅ | | test_syntax_forms.py |
 | [Declarations without `::`](language-support.md#declarations-without-) | ✅ | Attributes and initializers still need `::` | test_declarations_without_colons.py |
@@ -93,7 +93,7 @@ Bugs found on 2026-10-18, all fixed:
 | [Statement labels](language-support.md#statement-labels) | 🟡 | Labels are accepted; no statement can branch to them except READ `END=` | test_statement_labels.py |
 | [Construct and procedure endings](language-support.md#procedure-and-module-endings) | ✅ | Including a bare `END` for a module | test_unnamed_procedure_ends.py, test_syntax_forms.py |
 | COMMON blocks | ❌ | | |
-| DATA statements | ❌ | | |
+| [DATA statements](language-support.md#other-statement-forms) | 🟡 | Whole variables only, not array elements, sections or implied-DO lists | test_statement_forms_io.py |
 | EQUIVALENCE | ❌ | | |
 | ENUM, BIND(C) enumerators | ❌ | | |
 | Source locations in diagnostics | ✅ | | test_source_diagnostics.py |
@@ -121,8 +121,8 @@ Bugs found on 2026-10-18, all fixed:
 | IF, ELSE IF, ELSE, single-line IF | ✅ | | test_else_if.py |
 | [DO with step, DO WHILE, unbounded DO](language-support.md#do-loops) | ✅ | The step must be constant | test_do_steps.py |
 | [Named loops, EXIT and CYCLE](language-support.md#do-loops) | ✅ | | test_named_loops.py |
-| DO CONCURRENT | ❌ | | |
-| Labelled DO (`do 10 i = ...`) | ❌ | | |
+| [DO CONCURRENT](language-support.md#do-loops) | 🟡 | Runs its iterations in order; no type specification or locality specifiers | test_statement_forms_io.py |
+| [Labelled DO (`do 10 i = ...`)](language-support.md#do-loops) | ✅ | | test_statement_forms_io.py |
 | [SELECT CASE](language-support.md#select-case-ranges) | 🟡 | INTEGER values and ranges, CHARACTER values; CHARACTER ranges are not supported | test_case_ranges.py |
 | BLOCK construct | ✅ | | testsuite, test_named_constructs.py |
 | [EXIT from a named BLOCK, IF, SELECT CASE or ASSOCIATE](language-support.md#other-statement-forms) | ✅ | | test_named_constructs.py |
@@ -250,12 +250,12 @@ Bugs found on 2026-10-18, all fixed:
 | [T, TL, TR, SP, SS, S, BN, BZ, kP edit descriptors](language-support.md#formatted-output) | ✅ | A record with T or TL editing is limited to 4096 characters | test_formatted_output.py |
 | [Format reversion](language-support.md#formatted-output) | ✅ | | test_formatted_output.py |
 | DC decimal comma; RU, RD, RZ, RN, RC, RP rounding modes | ❌ | | |
-| FORMAT statements | ❌ | Use a format string | |
+| [FORMAT statements](language-support.md#formatted-output) | ✅ | | test_statement_forms_io.py |
 | [Nonadvancing output](language-support.md#formatted-output) | ✅ | | test_nonadvancing_output.py |
 | [Internal WRITE to a CHARACTER variable](language-support.md#formatted-output) | 🟡 | One record; CHARACTER array internal files are not supported. List-directed internal WRITE is supported | test_internal_write.py, test_formatted_output.py |
 | [List-directed READ](language-support.md#file-and-standard-input) | ✅ | Standard input, files and internal files | test_list_read.py |
-| [Formatted READ](language-support.md#file-and-standard-input) | 🟡 | Only the `(A)` format | test_runtime_read_format.py |
-| [OPEN, CLOSE, REWIND, BACKSPACE for sequential formatted files](language-support.md#file-and-standard-input) | 🟡 | IOSTAT on OPEN and CLOSE is not supported; STATUS='new' does not check that the file is absent | test_file_io.py, test_formatted_output.py |
+| [Formatted READ](language-support.md#file-and-standard-input) | 🟡 | A constant format of A, I, F, E, D, G, L, X, T and `/` into scalars, elements and constant-size arrays; not B, O or Z, implied-DO lists or runtime-sized arrays | test_runtime_read_format.py, test_statement_forms_io.py |
+| [OPEN, CLOSE, REWIND, BACKSPACE for sequential formatted files](language-support.md#file-and-standard-input) | 🟡 | IOSTAT is set on OPEN failure; other failed file statements stop the program. STATUS='new' does not check that the file is absent | test_file_io.py, test_formatted_output.py, test_statement_forms_io.py |
 | [List-directed WRITE to a file, and WRITE to unit 0 (standard error)](language-support.md#file-and-standard-input) | ✅ | Items are written as G0 separated by blanks | test_formatted_output.py |
 | [INQUIRE](language-support.md#file-and-standard-input) | 🟡 | UNIT/FILE with OPENED, NUMBER, NAME, IOSTAT; not EXIST | test_inquire.py |
 | Unformatted, stream and direct access | ❌ | | |

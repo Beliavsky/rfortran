@@ -1407,12 +1407,14 @@ pub fn interpret(program: &Program) {
                         text.truncate(length);text.push_str(&" ".repeat(length-text.len()));frame.env_str.insert(dest.clone(),text);
                         idx+=1;continue;
                     }
-                    if name=="@file_open_dynamic" {
+                    if name=="@file_open_dynamic" || name=="@file_open_try" {
                         let Expr::Ident(dest)=&args[0] else {unreachable!()};let fr=call_stack.last().unwrap().clone();
                         let path=eval_expr(&args[1],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).3.unwrap();
                         let mode=eval_expr(&args[2],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
                         let requested=if matches!(&args[3],Expr::IntLit(n) if n=="1") {None}else{Some(eval_expr(&args[4],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap())};
-                        let unit=io_result(FILES.with(|files|files.borrow_mut().open_dynamic(requested,&path,mode)));
+                        let opened=FILES.with(|files|files.borrow_mut().open_dynamic(requested,&path,mode));
+                        // With IOSTAT a failure is a negative code, not an error.
+                        let unit=if name=="@file_open_try" {opened.unwrap_or(i64::MIN)} else {io_result(opened)};
                         call_stack.last_mut().unwrap().env_int.insert(dest.clone(),unit);idx+=1;continue;
                     }
                     if name=="@file_write_record" {
@@ -1426,7 +1428,12 @@ pub fn interpret(program: &Program) {
                         let unit=eval_expr(&args[0],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
                         io_result(FILES.with(|files|files.borrow_mut().scratch(Some(unit))));idx+=1;continue;
                     }
-                    if matches!(name.as_str(), "@file_open" | "@file_close" | "@file_close_delete" | "@file_rewind" | "@file_backspace") {
+                    if name == "@file_flush" {
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        idx+=1;continue;
+                    }
+                    if matches!(name.as_str(), "@file_open" | "@file_close" | "@file_close_delete" | "@file_rewind" | "@file_backspace" | "@file_endfile") {
                         let fr=call_stack.last().unwrap().clone();
                         let unit=eval_expr(&args[0],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
                         let path=match args.get(1) {Some(Expr::Str(path))=>Some(path.as_str()),_=>None};

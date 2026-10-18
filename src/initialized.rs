@@ -47,6 +47,8 @@ fn constant(e: &Expr) -> Option<i64> { crate::parameters::integer_constant(e).ok
 /// Statements between these markers read without initialization checks; the
 /// values they write count as set.
 pub(crate) const UNCHECKED_BEGIN: &str = "@unchecked_begin";
+/// The variable may have been given a value here, as IOMSG may be by I/O.
+pub(crate) const MAY_DEFINE: &str = "@may_define";
 pub(crate) const UNCHECKED_END: &str = "@unchecked_end";
 thread_local! { static UNCHECKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
 
@@ -157,7 +159,16 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
     let mut terminated = false;
     let mut location=None;
     for mut stmt in std::mem::take(body) {
-        if let Stmt::CallSub { name, .. } = &stmt {
+        if let Stmt::CallSub { name, args } = &stmt {
+            if name == MAY_DEFINE {
+                if let Some(Expr::Ident(n)) = args.first() {
+                    if let Some(v) = env.get_mut(n) {
+                        if v.state == State::No { v.state = State::Maybe; }
+                        for e in v.elements.values_mut() { if *e == State::No { *e = State::Maybe; } }
+                    }
+                }
+                continue;
+            }
             if name == UNCHECKED_BEGIN || name == UNCHECKED_END {
                 let begin = name == UNCHECKED_BEGIN;
                 UNCHECKED.with(|c| c.set(if begin { c.get() + 1 } else { c.get().saturating_sub(1) }));
@@ -244,7 +255,7 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                     variable.state=State::Maybe;
                 } else {write(dest,None,env,&mut after,serial);}
             }
-            Stmt::CallSub { name, args } if name == "@internal_read_byte" || name == "@internal_format_end" || name == "@character_assign" || name == "@character_length" || name=="@file_name" || name=="@file_newunit" || name=="@file_open_dynamic" || name=="@list_read_end" => {
+            Stmt::CallSub { name, args } if name == "@internal_read_byte" || name == "@internal_format_end" || name == "@character_assign" || name == "@character_length" || name=="@file_name" || name=="@file_newunit" || name=="@file_open_dynamic" || name=="@file_open_try" || name=="@list_read_end" => {
                 for arg in &args[1..] { read(arg, env, &mut before, serial)?; }
                 let Expr::Ident(dest)=&args[0] else {unreachable!()};
                 write(dest,None,env,&mut after,serial);

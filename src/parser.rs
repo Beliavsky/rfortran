@@ -322,6 +322,8 @@ fn human_token(tok: &TokenKind) -> String {
         TokenKind::KwReadEmpty => "keyword read".into(),
         TokenKind::KwContinue => "keyword continue".into(),
         TokenKind::StatementLabel(n) => format!("statement label {n}"),
+        TokenKind::FormatSpec(_) => "FORMAT statement".into(),
+        TokenKind::KwData => "keyword data".into(),
         TokenKind::KwIf => "keyword if".into(),
         TokenKind::KwThen => "keyword then".into(),
         TokenKind::KwElse => "keyword else".into(),
@@ -508,7 +510,9 @@ pub fn parse_with_src(
         .parse(triples.into_iter())
     {
         Ok(mut p) => {
-            if let Err(msg) = resolve_dimension_statements(&mut p.body) {
+            if let Err(msg) = resolve_dimension_statements(&mut p.body)
+                .and_then(|_| crate::statement_labels::formats(&mut p.body))
+                .and_then(|_| crate::data_statements::resolve(&mut p.body)) {
                 let diag = Diagnostic::error().with_message(&msg);
                 let _ = emit_to_io_write(&mut stderr, &Config::default(), &file, &diag);
                 errs.push(CompileError::new(CompileErrorKind::Parse, msg, 0..0));

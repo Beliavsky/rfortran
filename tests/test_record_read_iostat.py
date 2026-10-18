@@ -125,8 +125,7 @@ end program main
             ("character::text\ninteger,parameter::status=0", "read(*,'(a)',iostat=status) text", "cannot modify PARAMETER `status`"),
             ("integer::text,status", "read(*,'(a)',iostat=status) text", "CHARACTER variable"),
             ("character::text(2)\ninteger::status", "read(*,'(a)',iostat=status) text", "CHARACTER"),
-            ("character::text\ninteger::status", "read(*,'(a4)',iostat=status) text", "only the (A) format"),
-            ("character::text\ninteger::status", "read(*,'(a)',iomsg=status) text", "only the IOSTAT"),
+            ("character::text\ninteger::status", "read(*,'(a)',iomsg=status) text", "IOMSG requires a scalar CHARACTER variable"),
             ("character::text\ninteger::status,unit", "read(unit,'(a)',iostat=status) text", "uninitialized variable `unit`"),
         ]:
             source = self.directory / "bad.f90"

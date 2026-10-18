@@ -2570,13 +2570,13 @@ fn gen_stmts(
                     b.ins().store(MemFlags::new(),code,destinations[0],0);
                     continue;
                 }
-                if name=="@file_open_dynamic" {
+                if name=="@file_open_dynamic" || name=="@file_open_try" {
                     let IExpr::Ident(dest)=&args[0] else {anyhow::bail!("invalid OPEN output");};
                     let path=characters::view(module,b,ptr_ty,dc,chars,ints,&args[1])?;
                     let mode=eval_expr(b,ex,ptr_ty,&args[2],ints,reals,bools,func_meta);let mode=to_i64(b,mode);
                     let requested=if matches!(&args[3],IExpr::IntLit(n) if n=="1") {b.ins().iconst(types::I64,-1)}else{let v=eval_expr(b,ex,ptr_ty,&args[4],ints,reals,bools,func_meta);to_i64(b,v)};
                     let newunit=eval_expr(b,ex,ptr_ty,&args[3],ints,reals,bools,func_meta);let newunit=to_i64(b,newunit);
-                    let unit=file_io::open_dynamic(module,b,ptr_ty,dc,requested,path.address,path.length,mode,newunit)?;
+                    let unit=file_io::open_dynamic(module,b,ptr_ty,dc,requested,path.address,path.length,mode,newunit,name=="@file_open_dynamic")?;
                     let address=storage_addr(b,ptr_ty,ints[dest]);b.ins().store(MemFlags::new(),unit,address,0);continue;
                 }
                 if name=="@format_end_file" {
@@ -2594,7 +2594,13 @@ fn gen_stmts(
                     let okay=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,code,0);
                     file_io::require(module,b,ptr_ty,dc,okay,"formatted file WRITE failed")?;continue;
                 }
-                if matches!(name.as_str(), "@file_open" | "@file_close" | "@file_close_delete" | "@file_rewind" | "@file_backspace" | "@file_scratch") {
+                if name == "@file_flush" {
+                    // A null stream flushes every output stream.
+                    let null = b.ins().iconst(ptr_ty, 0);
+                    file_io::call(module, b, "fflush", &[null], types::I32)?;
+                    continue;
+                }
+                if matches!(name.as_str(), "@file_open" | "@file_close" | "@file_close_delete" | "@file_rewind" | "@file_backspace" | "@file_endfile" | "@file_scratch") {
                     let unit=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);
                     let unit=to_i64(b,unit);
                     let path=match args.get(1) {Some(IExpr::Str(path))=>Some(path.as_str()),_=>None};

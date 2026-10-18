@@ -419,7 +419,7 @@ pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> Result<crat
                     ))
                 } else if name == "@write"
                     && (crate::parameters::integer_constant(&args[0]).ok() == Some(6)
-                        || crate::parameters::integer_constant(&args[0]).is_err() && crate::file_io::unit(&args[0],&symbols).is_ok())
+                        || crate::file_io::unit(&args[0],&symbols).is_ok())
                     && args[2..].iter().any(contains_implied_do)
                     && args[2..].iter().all(|e|ready(e,&symbols))
                     && !matches!(&args[1],Expr::Call(n,_) if n=="@list_directed")
@@ -463,7 +463,6 @@ pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> Result<crat
                     },
                 ];
                 inner.splice(1..1,control_prefix);
-                if let Some(unit)=unit_check {inner.insert(0,require_stdout(unit));}
                 emit(
                     &items,
                     &symbols,
@@ -475,6 +474,13 @@ pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> Result<crat
                 )?;
                 inner.push(if let Some((target,length))=internal {
                     Stmt::CallSub {name:"@internal_format_end".into(),args:vec![id(&target),id(&handle),int(length as i64)]}
+                } else if let Some(unit)=unit_check {
+                    // A file unit, or a variable that may name standard output.
+                    let file=Stmt::CallSub {name:"@format_end_file".into(),args:vec![id(&handle),unit.clone()]};
+                    if crate::parameters::integer_constant(&unit).is_ok() {file} else {
+                        Stmt::If {cond:bin(BinOp::Eq,unit,int(6)),
+                            then_body:vec![Stmt::CallSub {name:"@format_end".into(),args:vec![id(&handle)]}],else_body:Some(vec![file])}
+                    }
                 } else {
                     Stmt::CallSub {name:"@format_end".into(),args:vec![id(&handle)]}
                 });

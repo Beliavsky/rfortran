@@ -46,21 +46,86 @@ pub(crate) fn lower(
         };
         if !matches!(
             key.as_str(),
-            "unit" | "newunit" | "file" | "status" | "action" | "access" | "form" | "name" | "opened" | "number" | "iostat" | "position"
+            "unit" | "newunit" | "file" | "status" | "action" | "access" | "form" | "name" | "opened" | "number" | "iostat" | "position" | "iomsg" | "err"
         ) {
             bail!("{operation}: unsupported I/O control `{key}`");
         }
         if operation=="inquire" && !matches!(key.as_str(),"unit"|"file"|"name"|"opened"|"number"|"iostat") {bail!("INQUIRE: unsupported I/O control `{key}`");}
-        if operation != "open" && operation!="inquire" && key != "unit" && !(operation=="close" && key=="status") {
-            bail!("{operation} currently supports only UNIT");
+        if operation != "open" && operation!="inquire" && !matches!(key.as_str(), "unit" | "iostat" | "iomsg" | "err") && !(operation=="close" && key=="status") {
+            bail!("{} currently supports UNIT, IOSTAT, IOMSG and ERR{}", operation.to_uppercase(), if operation == "close" { " and STATUS" } else { "" });
         }
-        if operation=="open" && matches!(key.as_str(),"name"|"opened"|"number"|"iostat") {bail!("OPEN: unsupported I/O control `{key}`");}
+        if operation == "inquire" && matches!(key.as_str(), "iomsg" | "err") {
+            bail!("INQUIRE: unsupported I/O control `{key}`");
+        }
+        if operation=="open" && matches!(key.as_str(),"name"|"opened"|"number"|"err") {bail!("OPEN: unsupported I/O control `{key}`");}
         if controls.insert(key.clone(), value).is_some() {
             bail!("{operation}: duplicate {key} control");
         }
     }
     if operation=="inquire" {return lower_inquiry(controls,symbols,serial);}
-    if operation=="open" && matches!(controls.get("status"),Some(Expr::Str(s)) if s.trim_end().eq_ignore_ascii_case("scratch")) {
+    // IOMSG is only defined after an error that IOSTAT reports.
+    let message=match controls.remove("iomsg") {
+        Some(Expr::Ident(n))=>Some(n),
+        Some(_)=>bail!("{} IOMSG requires a scalar CHARACTER variable",operation.to_uppercase()),
+        None=>None,
+    };
+    let may_define=|mut body:Vec<Stmt>|{
+        if let Some(n)=&message {body.push(Stmt::CallSub{name:crate::initialized::MAY_DEFINE.into(),args:vec![Expr::Ident(n.clone())]});}
+        if body.len()==1 {body.pop().unwrap()} else {Stmt::Block{body}}
+    };
+    if operation=="open" {
+        if let Some(status)=controls.remove("iostat") {
+            let Expr::Ident(status)=status else {bail!("OPEN IOSTAT requires a scalar INTEGER variable");};
+            let path=controls.get("file").cloned();
+            let open=lower_open(controls,symbols,serial,true)?;
+            let mut body=open.with_status(&status);
+            // Describe a failure as gfortran does, naming the file.
+            if let (Some(message),Some(path),Some(Stmt::If{then_body,..}))=(&message,path,body.last_mut()) {
+                let text=Expr::Bin(crate::ast::BinOp::Concat,Box::new(Expr::Str("Cannot open file '".into())),
+                    Box::new(Expr::Bin(crate::ast::BinOp::Concat,Box::new(Expr::Call("trim".into(),vec![path])),Box::new(Expr::Str("'".into())))));
+                then_body.push(Stmt::Assign{name:message.clone(),value:text});
+            }
+            return Ok(may_define(body));
+        }
+        return Ok(may_define(vec![lower_open(controls,symbols,serial,false)?.statement()]));
+    }
+    let unit_expr=controls.remove("unit").context("file operation requires UNIT")?;
+    // A failed CLOSE, REWIND, BACKSPACE, ENDFILE or FLUSH stops the program, so
+    // when it returns IOSTAT is zero, IOMSG is unchanged and ERR is not taken.
+    let iostat=match controls.remove("iostat") {
+        Some(Expr::Ident(n))=>Some(n),
+        Some(_)=>bail!("{} IOSTAT requires a scalar INTEGER variable",operation.to_uppercase()),
+        None=>None,
+    };
+    controls.remove("err");
+    let succeeded=|op:Stmt|match &iostat {
+        Some(n)=>Stmt::Block{body:vec![op,Stmt::Assign{name:n.clone(),value:Expr::IntLit("0".into())}]},
+        None=>op,
+    };
+    // FLUSH writes all buffered output, so it accepts any unit.
+    if operation=="flush" {
+        return Ok(may_define(vec![succeeded(Stmt::CallSub{name:"@file_flush".into(),args:vec![]})]));
+    }
+    unit(&unit_expr,symbols)?;
+    let args=vec![unit_expr];
+    let status=match controls.remove("status") {
+        None=>"keep".to_owned(),
+        Some(Expr::Str(s))=>s.trim_end().to_ascii_lowercase(),
+        Some(_)=>bail!("CLOSE STATUS must currently be constant"),
+    };
+    let name=match status.as_str() {
+        "keep"=>format!("@file_{operation}"),
+        "delete"=>"@file_close_delete".into(),
+        _=>bail!("CLOSE STATUS must be 'keep' or 'delete'"),
+    };
+    Ok(may_define(vec![succeeded(Stmt::CallSub {
+        name,
+        args,
+    })]))
+}
+
+fn lower_open(mut controls:HashMap<String,Expr>,symbols:&HashMap<String,(TypeSpec,Vec<Expr>)>,serial:&mut usize,checked:bool)->Result<Open> {
+    if matches!(controls.get("status"),Some(Expr::Str(s)) if s.trim_end().eq_ignore_ascii_case("scratch")) {
         if controls.contains_key("file") { bail!("scratch OPEN must not specify FILE"); }
         let newunit=controls.remove("newunit");
         if newunit.is_some() && controls.contains_key("unit") {bail!("OPEN must not specify both UNIT and NEWUNIT");}
@@ -72,9 +137,9 @@ pub(crate) fn lower(
                 if !matches!(v,Expr::Str(s) if s.trim_end().eq_ignore_ascii_case(expected)) {bail!("scratch OPEN currently supports {key}='{expected}'");}
             }
         }
-        return Ok(Stmt::CallSub {name:if newunit.is_some(){"@file_newunit"}else{"@file_scratch"}.into(),args:vec![destination]});
+        return Ok(Open{body:vec![Stmt::CallSub {name:if newunit.is_some(){"@file_newunit"}else{"@file_scratch"}.into(),args:vec![destination]}],result:None,newunit:None});
     }
-    if operation=="open" {
+    {
         let newunit=controls.remove("newunit");
         if newunit.is_some() && controls.contains_key("unit") {bail!("OPEN must not specify both UNIT and NEWUNIT");}
         let destination=newunit.clone().or_else(||controls.remove("unit")).context("OPEN requires UNIT or NEWUNIT")?;
@@ -91,29 +156,46 @@ pub(crate) fn lower(
         let path=controls.remove("file").context("OPEN requires FILE")?;
         if !matches!(crate::array_calls::scalar_actual_kind(&path,symbols)?,TypeSpec::Character(_)) {bail!("FILE requires scalar CHARACTER");}
         let mut args=vec![destination.clone(),path,Expr::IntLit(mode.to_string()),Expr::IntLit(i64::from(newunit.is_some()).to_string())];
-        if newunit.is_none() {
+        // With IOSTAT the raw result, a unit or a failure code, goes to a
+        // temporary that the caller tests.
+        let name=if checked {"@file_open_try"} else {"@file_open_dynamic"};
+        if newunit.is_none() || checked {
             *serial+=1;let temp=format!("@open_unit_{serial}");
-            args[0]=Expr::Ident(temp.clone());args.push(destination);
-            return Ok(Stmt::Block{body:vec![Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![temp]},Stmt::CallSub{name:"@file_open_dynamic".into(),args}]});
+            args[0]=Expr::Ident(temp.clone());
+            if newunit.is_none() {args.push(destination.clone());}
+            return Ok(Open{body:vec![Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![temp.clone()]},Stmt::CallSub{name:name.into(),args}],
+                result:checked.then_some(temp),newunit:newunit.map(|_|destination)});
         }
-        return Ok(Stmt::CallSub{name:"@file_open_dynamic".into(),args});
+        Ok(Open{body:vec![Stmt::CallSub{name:name.into(),args}],result:None,newunit:None})
     }
-    let unit_expr=controls.remove("unit").context("file operation requires UNIT")?;unit(&unit_expr,symbols)?;
-    let args=vec![unit_expr];
-    let status=match controls.remove("status") {
-        None=>"keep".to_owned(),
-        Some(Expr::Str(s))=>s.trim_end().to_ascii_lowercase(),
-        Some(_)=>bail!("CLOSE STATUS must currently be constant"),
-    };
-    let name=match status.as_str() {
-        "keep"=>format!("@file_{operation}"),
-        "delete"=>"@file_close_delete".into(),
-        _=>bail!("CLOSE STATUS must be 'keep' or 'delete'"),
-    };
-    Ok(Stmt::CallSub {
-        name,
-        args,
-    })
+}
+
+/// A lowered OPEN: its statements, and when IOSTAT is wanted, the temporary
+/// holding the raw result and the unit variable NEWUNIT assigns.
+struct Open { body: Vec<Stmt>, result: Option<String>, newunit: Option<Expr> }
+impl Open {
+    fn statement(mut self) -> Stmt {
+        if self.body.len() == 1 { self.body.pop().unwrap() } else { Stmt::Block { body: self.body } }
+    }
+    /// Set IOSTAT from the raw result, a unit or a negative failure code, and
+    /// assign NEWUNIT only when the OPEN succeeded.
+    fn with_status(mut self, status: &str) -> Vec<Stmt> {
+        let Some(result) = self.result.take() else {
+            self.body.push(Stmt::Assign { name: status.into(), value: Expr::IntLit("0".into()) });
+            return self.body;
+        };
+        let failed = Expr::Bin(crate::ast::BinOp::Lt, Box::new(Expr::Ident(result.clone())), Box::new(Expr::IntLit("-2000".into())));
+        let mut success = vec![Stmt::Assign { name: status.into(), value: Expr::IntLit("0".into()) }];
+        if let Some(Expr::Ident(unit)) = self.newunit.take() {
+            success.push(Stmt::Assign { name: unit, value: Expr::Ident(result) });
+        }
+        self.body.push(Stmt::If {
+            cond: failed,
+            then_body: vec![Stmt::Assign { name: status.into(), value: Expr::IntLit("1".into()) }],
+            else_body: Some(success),
+        });
+        self.body
+    }
 }
 
 fn lower_inquiry(mut controls:HashMap<String,Expr>,symbols:&HashMap<String,(TypeSpec,Vec<Expr>)>,serial:&mut usize)->Result<Stmt> {
@@ -209,6 +291,11 @@ impl Files {
             .context("file unit is not connected")?;
         if op == "@file_rewind" {
             file.seek(SeekFrom::Start(0))?;
+            return Ok(());
+        }
+        if op == "@file_endfile" {
+            let position = file.stream_position()?;
+            file.set_len(position).context("ENDFILE failed")?;
             return Ok(());
         }
         let mut position = file.stream_position()?;

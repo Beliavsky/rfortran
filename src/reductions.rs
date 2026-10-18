@@ -1543,6 +1543,11 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
             if matches!(name.as_str(), "@formatted_print" | "@formatted_write_noadvance") && args.iter().any(crate::output::contains_implied_do) {
                 bail!("implied-DO is currently supported only in list-directed output");
             }
+            if name==crate::initialized::MAY_DEFINE {
+                if !matches!(&args[0],Expr::Ident(n) if matches!(symbols.variables.get(n),Some((TypeSpec::Character(_),d)) if d.is_empty())) {
+                    bail!("IOMSG requires a scalar CHARACTER variable");
+                }
+            }
             if name=="@empty_read" {
                 output.push(crate::input::lower_empty_read(args,&symbols.variables,serial)?);
                 continue;
@@ -1551,15 +1556,19 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                 output.push(crate::input::lower_list_read(args,&symbols.variables,serial)?);
                 continue;
             }
-            if name=="@formatted_read" {
-                let mut controlled=args[..2].to_vec();
-                controlled.extend([Expr::Str(String::new()),int(0)]);
-                controlled.extend_from_slice(&args[2..]);
+            if name=="@formatted_read" || name=="@formatted_read_status" {
+                let controlled=if name=="@formatted_read" {
+                    let mut controlled=args[..2].to_vec();
+                    controlled.extend([Expr::Str(String::new()),int(0)]);
+                    controlled.extend_from_slice(&args[2..]);
+                    controlled
+                } else {args.clone()};
+                if let Some(mut fields)=crate::input::lower_field_read(&controlled,&symbols.variables,serial)? {
+                    lower_body(&mut fields,&symbols,serial)?;
+                    output.extend(fields);
+                    continue;
+                }
                 output.push(crate::input::lower_record_read(&controlled,&symbols.variables,serial)?);
-                continue;
-            }
-            if name=="@formatted_read_status" {
-                output.push(crate::input::lower_record_read(args,&symbols.variables,serial)?);
                 continue;
             }
         }
@@ -2009,11 +2018,11 @@ mod tests {
             ("character :: text", "read(5,'( A )') text", true),
             ("character(len=0) :: text", "read(*,'(a)') text", true),
             ("integer :: text", "read(*,'(a)') text", false),
-            ("character(len=8) :: text(2)", "read(*,'(a)') text", false),
+            ("character(len=8) :: text(2)", "read(*,'(a)') text", true),
             ("character(len=8) :: text", "read(*,'(a)') trim(text)", false),
             ("character(len=8) :: text", "read(*,'(a)') 'literal'", false),
-            ("character(len=8) :: text", "read(*,'(a)') text,text", false),
-            ("character(len=8) :: text", "read(*,'(a4)') text", false),
+            ("character(len=8) :: text", "read(*,'(a)') text,text", true),
+            ("character(len=8) :: text", "read(*,'(a4)') text", true),
             ("character(len=8) :: text", "read(10,'(a)') text", true),
             ("character(len=8) :: text\ninteger :: iu", "read(iu,'(a)') text", false),
             ("character(len=*),parameter :: text='constant'", "read(*,'(a)') text", false),

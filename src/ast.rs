@@ -184,6 +184,26 @@ pub fn function_with_result(name: String, params: Vec<String>, result: String, m
     Stmt::Function { name, params, return_type, body, pure: false, elemental: false }
 }
 
+/// DO CONCURRENT as nested DO loops over its controls, each given as index,
+/// start, end and stride, with the body under the mask.
+pub fn do_concurrent(controls: Vec<Expr>, mask: Option<Expr>, body: Vec<Stmt>) -> Stmt {
+    let mut body = match mask {
+        Some(cond) => vec![Stmt::If { cond, then_body: body, else_body: None }],
+        None => body,
+    };
+    for control in controls.chunks(4).rev() {
+        let [Expr::Ident(var), start, end, step] = control else { unreachable!("DO CONCURRENT control") };
+        body = vec![if matches!(step, Expr::IntLit(n) if n == "1") {
+            Stmt::Do { var: var.clone(), start: start.clone(), end: end.clone(), body }
+        } else {
+            let mut statements = vec![Stmt::CallSub { name: "@do_step".into(), args: vec![Expr::Ident(var.clone()), start.clone(), end.clone(), step.clone()] }];
+            statements.extend(body);
+            Stmt::Block { body: statements }
+        }];
+    }
+    body.pop().unwrap()
+}
+
 /// Resolve each `@generic:name` binding entry, which names a specific
 /// binding of the type, to that binding's procedure.
 pub fn generic_bindings(bindings: Vec<(String, String)>) -> Vec<(String, String)> {

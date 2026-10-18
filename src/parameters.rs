@@ -656,6 +656,13 @@ fn substitute(e: &mut Expr, index: &str, value: i64) {
 fn constructor_elements(e: &Expr, out: &mut Vec<Expr>) -> Result<()> {
     match e {
         Expr::Call(tag, items) if tag == "@array_constructor" => for item in items { constructor_elements(item, out)?; },
+        // `r*c` in a DATA value list.
+        Expr::Call(tag, args) if tag == crate::data_statements::REPEAT && args.len() == 2 => {
+            let count = integer_constant(&args[0])?;
+            if count < 0 { bail!("a DATA repeat count must not be negative"); }
+            if count > 1 << 24 { bail!("array initializer is too large"); }
+            for _ in 0..count { constructor_elements(&args[1], out)?; }
+        }
         Expr::Call(tag, args) if tag == "@output_implied_do" && args.len() >= 4 => {
             let Expr::Ident(index) = &args[0] else { bail!("invalid implied-DO index") };
             let (start, end, stride) = (integer_constant(&args[1])?, integer_constant(&args[2])?, integer_constant(&args[3])?);

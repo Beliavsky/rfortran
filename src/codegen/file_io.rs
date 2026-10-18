@@ -128,9 +128,11 @@ pub(super) fn newunit(module:&mut ObjectModule,b:&mut FunctionBuilder,ptr:ir::Ty
     let zero=b.ins().iconst(ptr,0);b.ins().store(MemFlags::new(),zero,address,0);
     Ok(unit)
 }
-pub(super) fn open_dynamic(module:&mut ObjectModule,b:&mut FunctionBuilder,ptr:ir::Type,dc:&mut u32,requested:ir::Value,path:ir::Value,length:ir::Value,mode:ir::Value,newunit:ir::Value)->Result<ir::Value> {
+/// OPEN a file; unless `checked`, a failure is returned as a negative code.
+pub(super) fn open_dynamic(module:&mut ObjectModule,b:&mut FunctionBuilder,ptr:ir::Type,dc:&mut u32,requested:ir::Value,path:ir::Value,length:ir::Value,mode:ir::Value,newunit:ir::Value,checked:bool)->Result<ir::Value> {
     let slots=table(b,module,ptr,".rfort.file_units")?;let names=table(b,module,ptr,".rfort.file_names")?;
     let unit=call(module,b,"rfort_file_open_dynamic",&[slots,names,requested,path,length,mode,newunit],types::I64)?;
+    if !checked {return Ok(unit);}
     let okay=b.ins().icmp_imm(IntCC::NotEqual,unit,i64::MIN+1);require(module,b,ptr,dc,okay,"OPEN on an already connected unit is not yet supported")?;
     let okay=b.ins().icmp_imm(IntCC::NotEqual,unit,i64::MIN+2);require(module,b,ptr,dc,okay,"file units must be in 0..1023, excluding preconnected units 5 and 6")?;
     let okay=b.ins().icmp_imm(IntCC::NotEqual,unit,i64::MIN);require(module,b,ptr,dc,okay,"OPEN failed")?;Ok(unit)
@@ -296,6 +298,11 @@ pub(super) fn operation(
     if op == "@file_rewind" {
         let zero = b.ins().iconst(types::I64, 0);
         return seek(module, b, ptr, dc, file, zero);
+    }
+    if op == "@file_endfile" {
+        let result = call(module, b, "rfort_file_endfile", &[file], types::I32)?;
+        let okay = b.ins().icmp_imm(IntCC::Equal, result, 0);
+        return require(module, b, ptr, dc, okay, "ENDFILE failed");
     }
     let position = call(
         module,
