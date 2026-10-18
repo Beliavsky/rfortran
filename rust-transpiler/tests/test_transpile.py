@@ -86,6 +86,14 @@ class AdapterTests(unittest.TestCase):
         with self.assertRaisesRegex(Unsupported, "unsupported Rust backend expression: Section"):
             self.frontend().expr({"Section": {"name":"x"}}, 2)
 
+    def test_unsupported_call_reports_its_name(self):
+        with self.assertRaisesRegex(Unsupported, "unsupported Rust backend call: missing"):
+            self.frontend().statements([{"CallSub":{"name":"missing","args":[]}}])
+
+    def test_formatted_print_requires_literal_format(self):
+        with self.assertRaisesRegex(Unsupported, "requires a literal format"):
+            self.frontend().statements([{"CallSub":{"name":"@formatted_print","args":[{"Ident":"fmt"}]}}])
+
     def test_compiler_source_offsets_are_utf8_bytes(self):
         frontend = self.frontend("! \u03bc\nprint *, 1\nend\n")
         self.assertEqual(frontend.line(len("! \u03bc\n".encode("utf-8"))), 2)
@@ -112,7 +120,7 @@ class AdapterTests(unittest.TestCase):
 
 @unittest.skipUnless(HAS_FRONTEND and shutil.which("rustc") and shutil.which("gfortran"), "rfort, rustc, and gfortran required")
 class NativeTests(unittest.TestCase):
-    def compare(self, source, *, tolerance=2e-6):
+    def compare(self, source, *, tolerance=2e-6, exact=False):
         parent = ROOT.parent / "target"
         parent.mkdir(exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="rust-transpiler-test-", dir=parent) as directory:
@@ -122,6 +130,7 @@ class NativeTests(unittest.TestCase):
             rust.write_text(transpile(source), encoding="utf-8")
             fort.write_text(source, encoding="utf-8")
             outputs = []
+            raw_outputs = []
             for compiler, path, name, flags in (("rustc",rust,"rust",["--edition=2021","-D","warnings"]),
                                                  ("gfortran",fort,"fortran",["-std=f2018","-fcheck=all"])):
                 exe = work / (name + (".exe" if sys.platform == "win32" else ".bin"))
@@ -129,7 +138,10 @@ class NativeTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr + rust.read_text())
                 result = subprocess.run([str(exe)], cwd=work, capture_output=True, text=True, timeout=10)
                 self.assertEqual(result.returncode, 0, result.stderr)
+                raw_outputs.append(result.stdout)
                 outputs.append(result.stdout.split())
+            if exact:
+                self.assertEqual(raw_outputs[0], raw_outputs[1])
             self.assertEqual(len(outputs[0]), len(outputs[1]), outputs)
             for actual, expected in zip(*outputs):
                 try:
@@ -142,6 +154,15 @@ class NativeTests(unittest.TestCase):
 
     def test_scalar_example(self):
         self.compare((ROOT / "examples" / "scalars.f90").read_text())
+
+    def test_formatted_loop_matches_gfortran_exactly(self):
+        self.compare((ROOT / "examples" / "formatted.f90").read_text(), exact=True)
+
+    def test_formatted_scalar_types_and_nested_groups(self):
+        self.compare(program('print "(a,1x,i5.3,1x,f8.2,1x,l3)", "value", -7, 1.25d0, .true.\nprint "(2(i3,1x),a)", 1, 2, "end"'), exact=True)
+
+    def test_format_reversion_and_overflow_fields(self):
+        self.compare(program('print "(i2)", 1, 2, 3\nprint "(i2,f5.1)", 1234, 12345.0\nprint "(\'literal only\')"'), exact=True)
 
     def test_integer_division_powers_and_precedence(self):
         self.compare(program("print *, -7/3, 7/(-3), 2**3**2, -2**2, (-2)**2\nprint *, 2**(-3), (-1)**(-3), 0**0, mod(-7,3)"))

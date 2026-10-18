@@ -32,6 +32,7 @@ class Emitter:
         self.symbols = {}
         self.parameters = set()
         self.loop_id = 0
+        self.needs_format_runtime = False
 
     @staticmethod
     def rust_name(name):
@@ -202,6 +203,24 @@ class Emitter:
                         values.append(f'(if {value.code} {{ "T" }} else {{ "F" }}).to_string()' if value.typ == "bool" else f"({value.code}).to_string()")
                 code = 'println!(" {}", [' + ", ".join(values) + '].join(" "));' if values else 'println!();'
                 lines.append(indent + code)
+            elif node.kind == "formatted_print":
+                self.needs_format_runtime = True
+                fmt, items = node.data
+                values = []
+                for item in items:
+                    if isinstance(item, ast.Constant) and isinstance(item.value, str):
+                        values.append(f"rf_format::Value::Character({rust_string(item.value)}.as_bytes())")
+                        continue
+                    value = expression(item)
+                    constructor = {"i32":"Integer", "f32":"Real", "f64":"Real", "bool":"Logical"}[value.typ]
+                    if value.typ == "i32":
+                        arguments = f"({value.code}) as i64, 4"
+                    elif value.typ in FLOAT:
+                        arguments = f"({value.code}) as f64, {4 if value.typ == 'f32' else 8}"
+                    else:
+                        arguments = value.code
+                    values.append(f"rf_format::Value::{constructor}({arguments})")
+                lines.append(indent + f"rf_formatted_print({rust_string(fmt)}, &[{', '.join(values)}], {line});")
             elif node.kind == "if":
                 condition = expression(node.data)
                 self.require(condition.typ == "bool", line, "IF condition must be LOGICAL")
@@ -261,9 +280,37 @@ fn rf_ipow(base: i32, exponent: i32) -> i32 {
 
 def transpile(source, *, compiler=None, filename="input.f90"):
     def emit(tree):
-        body, _ = Emitter().block(tree, set(), declarations=True)
-        return RUNTIME + "\nfn main() {\n" + "\n".join(body) + "\n}\n"
+        emitter = Emitter()
+        body, _ = emitter.block(tree, set(), declarations=True)
+        shared = format_runtime() if emitter.needs_format_runtime else ""
+        return RUNTIME + shared + "\nfn main() {\n" + "\n".join(body) + "\n}\n"
     return Frontend(source, filename=filename, compiler=compiler).process(emit)
+
+
+def format_runtime():
+    root = Path(__file__).resolve().parent.parent
+    # Embed the existing runtime verbatim: no second format parser/renderer and
+    # no generated-code dependency on the source checkout or a Fortran runtime.
+    source = (root / "src" / "format_spec.rs").read_text(encoding="utf-8")
+    license_text = (root / "LICENSE-MIT").read_text(encoding="utf-8")
+    notice = "\n// Shared formatting code from rfortran/src/format_spec.rs.\n"
+    notice += "\n".join("// " + line if line else "//" for line in license_text.splitlines())
+    return notice + "\nmod rf_format {\n" + source + "\n}\n" + FORMATTED_OUTPUT
+
+
+FORMATTED_OUTPUT = '''
+fn rf_formatted_print(format: &str, items: &[rf_format::Value<'_>], line: usize) {
+    use std::io::Write;
+    let mut output = Vec::new();
+    rf_format::render_with(
+        format.as_bytes(), items.len(),
+        &|index, visit| visit(items[index]),
+        &mut |byte| output.push(byte), true,
+    ).unwrap_or_else(|error| panic!("Fortran line {line}: {error}"));
+    output.push(b'\\n');
+    std::io::stdout().lock().write_all(&output).expect("formatted output failed");
+}
+'''
 
 
 def main():

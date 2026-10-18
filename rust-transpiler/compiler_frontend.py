@@ -187,6 +187,14 @@ class Frontend:
                 nodes.append(Node("assign",line,(data["name"].lower(),self.expr(data["value"],line))))
             elif tag == "Print":
                 nodes.append(Node("print",line,[self.expr(item,line) for item in data["items"]]))
+            elif tag == "CallSub":
+                name = data["name"]
+                if name != "@formatted_print":
+                    raise Unsupported(line, f"unsupported Rust backend call: {name}")
+                args = data["args"]
+                if not args or not isinstance(args[0], dict) or "Str" not in args[0]:
+                    raise Unsupported(line, "formatted PRINT currently requires a literal format")
+                nodes.append(Node("formatted_print",line,(args[0]["Str"],[self.expr(item,line) for item in args[1:]])))
             elif tag == "If":
                 nodes.append(Node("if",line,self.expr(data["cond"],line),self.statements(data["then_body"],line),self.statements(data["else_body"] or [],line)))
             elif tag == "Do":

@@ -54,6 +54,7 @@ The existing small examples also work, if present in your checkout:
 ```cmd
 python rust-transpiler\transpile.py xloop.f90 -o target\rust-transpiler\xloop.rs --run
 python rust-transpiler\transpile.py xmath.f90 -o target\rust-transpiler\xmath.rs --run
+python rust-transpiler\transpile.py rust-transpiler\examples\formatted.f90 -o target\rust-transpiler\formatted.rs --run
 ```
 
 Omit `--run` to generate Rust without compiling or executing the generated program
@@ -90,7 +91,16 @@ All testing so far is on x86-64 Windows; Linux/macOS have not been verified.
 - List-directed PRINT of scalar expressions and character literals. Items are
   separated by spaces; logical output uses T/F. Formatting, field widths, floating
   point spelling, and adjacent character items are **not** an exact emulation of
-  Fortran list-directed output. Character variables and formatted PRINT are absent.
+  Fortran list-directed output. Character variables are absent.
+- Formatted PRINT with a literal format and supported scalar expressions or
+  character literals, including `print "(2i5,f10.6)", i,i**2,sqrt(real(i))`.
+  This embeds the existing `src/format_spec.rs` parser/renderer, rather than
+  implementing a separate formatter. It provides the same descriptor support and
+  limits as that shared module, including repeats, nested groups, reversion,
+  literals, integer padding, logical fields, real fields, and overflow asterisks.
+  The source module is read at generation time without editing it; generated Rust
+  contains the module and its MIT license notice and needs no source checkout at
+  build/run time. Runtime format variables and formatted file I/O remain unsupported.
 - Comments, semicolon-separated statements, and continuation between tokens.
   Continuation syntax and string decoding are handled by rfort's parser.
 - Intrinsics `real`, `dble`, `int`, `abs`, `min`, `max`, `mod`, `sqrt`, `exp`, `log`,
@@ -118,7 +128,7 @@ flow requires deeper analysis. It is not a complete Fortran conformance checker.
 
 Arrays, kind selectors/suffixes, derived types, functions/subroutines, modules,
 USE association, allocation, pointers, recursion, complex arithmetic, READ,
-formatted I/O, ELSE IF, DO WHILE, named constructs, EXIT, CYCLE, and STOP are outside
+formatted file I/O, ELSE IF, DO WHILE, named constructs, EXIT, CYCLE, and STOP are outside
 this first subset. They are diagnosed rather than silently ignored. The mixture
 examples therefore cannot yet be translated.
 
@@ -135,14 +145,17 @@ in temporary build directories and compare results, including integer division,
 powers, logical expressions, scalar math, loop-index values, changed loop bounds,
 negative strides, and empty loops. They also cover `xloop.f90` and `xmath.f90` when
 those root examples are available. Output is compared by tokens with numeric
-tolerances, since exact Fortran output formatting is not implemented.
+tolerances for list-directed output. Formatted PRINT regressions compare complete
+output strings with gfortran, including leading blanks, field widths and newlines.
 
 ## Design and relationship to the binding generator
 
 The reusable compiler parts are `src/lexer.rs`, `src/parser.rs`, the LALRPOP
 grammar, and `src/ast.rs`, executed by `rfort parse`; and the preparation,
-semantic, and initialization passes executed by `rfort check`. No compiler source
-is copied. `compiler_frontend.py` reads the serialized compiler AST and adapts the
+semantic, and initialization passes executed by `rfort check`. Compiler frontend
+source is not copied. Formatted PRINT additionally reuses the existing
+`src/format_spec.rs` module verbatim in generated Rust, with its copyright and MIT
+permission notice. `compiler_frontend.py` reads the serialized compiler AST and adapts the
 supported nodes. It constructs Python AST objects as a convenient internal
 expression representation; it never calls Python's parser, eval, or exec.
 
