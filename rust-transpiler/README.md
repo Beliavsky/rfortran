@@ -122,6 +122,7 @@ is translated together with those modules into its own Rust file/executable.
 python rust-transpiler\run_batch.py "*.f90"
 python rust-transpiler\run_batch.py "x*.f90" --run
 python rust-transpiler\run_batch.py "x*.f90" --limit 10 --run
+python rust-transpiler\run_batch.py "x*.f90" --max-failures 5 --run
 python rust-transpiler\run_batch.py xloop.f90 xrandom_array.f90 --run --verbose
 python rust-transpiler\run_batch.py "rust-transpiler/examples/**/*.f90" --run --report target\rust-batch.json
 ```
@@ -132,6 +133,16 @@ within each glob, after deduplication and module exclusion. Failures count towar
 the limit. Unmatched inputs still report errors. The console and JSON report show
 how many drivers were selected; JSON also lists drivers skipped by the limit.
 Skipped files do not count as failures, and their existing artifacts are untouched.
+
+`--max-failures N` stops after N failed drivers; N must be a positive integer.
+Translation, Rust compilation, execution, output-directory failures, and timeouts
+each count as one failed driver. Successful drivers and unmatched input patterns
+do not consume this budget, though unmatched inputs still make the command fail.
+The default is to continue after every failure. Combine it with `--limit` to cap
+both attempted drivers and failures. The report is still saved when stopping early:
+`drivers_attempted` and `driver_failures` give the actual counts, and
+`drivers_skipped_after_failures` lists selected drivers left unprocessed.
+`drivers_skipped` continues to list drivers excluded by `--limit`.
 
 Without `--run`, it tries translation only. With `--run`, each successful
 translation is compiled by rustc and executed. Statuses distinguish translation,
@@ -160,8 +171,9 @@ Exit status is zero when all selected files succeed, one for any failure
 ## Current subset
 
 - One free-form main program, optionally with a PROGRAM statement, with optional
-  preceding module files. IMPLICIT NONE
-  is currently required. Program structure and END parsing are delegated to rfort.
+  preceding module files. IMPLICIT NONE is recommended but optional; variables
+  still need explicit declarations because implicit typing is not yet supported.
+  Program structure and END parsing are delegated to rfort.
   Modules in the source group can contain the scalar procedures described below.
   Main-program internal procedures are not yet supported.
 - Scalar `integer`, `real`, `double precision`, and `logical` declarations, with
@@ -233,8 +245,9 @@ Exit status is zero when all selected files succeed, one for any failure
   default seed, and 24/53-bit conversion to values in `[0,1)`. Its stream differs
   from gfortran's. `random_seed` and keyword arguments are not yet supported.
 - Modules containing explicitly typed scalar functions/subroutines and supported
-  scalar PARAMETER constants. Modules require IMPLICIT NONE, inherited by their
-  procedures. USE, USE ONLY, renaming, PUBLIC/PRIVATE accessibility, cross-module
+  scalar PARAMETER constants. IMPLICIT NONE is optional in modules/procedures as
+  well; explicit variable and dummy types are still required.
+  USE, USE ONLY, renaming, PUBLIC/PRIVATE accessibility, cross-module
   calls, and module/USE-associated constants are supported within one source group;
   dependencies must precede consumers. Local declarations can shadow host names.
   Module constants currently require initializers that emit Rust `const` bindings.

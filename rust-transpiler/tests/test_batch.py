@@ -154,6 +154,72 @@ class BatchTests(unittest.TestCase):
                 self.invoke(source,"--limit",value)
             self.assertEqual(caught.exception.code,2)
 
+    def test_max_failures_stops_after_failed_drivers_and_preserves_report(self):
+        drivers = [self.source(f"driver{i}.f90") for i in range(6)]
+        statuses = ("translated", "translate_failed", "translated", "compile_timeout")
+        results = [dict(source=str(source),status=status,stages=[])
+                   for source,status in zip(drivers,statuses)]
+        with mock.patch.object(run_batch,"try_file",side_effect=results) as runner:
+            self.assertEqual(self.invoke(*drivers,"--max-failures",2,"--limit",5),1)
+        self.assertEqual([call.args[0] for call in runner.call_args_list],drivers[:4])
+        report = json.loads((self.work / "output/report.json").read_text())
+        self.assertEqual(report["results"],results)
+        self.assertEqual(report["max_failures"],2)
+        self.assertEqual(report["drivers_selected"],5)
+        self.assertEqual(report["drivers_attempted"],4)
+        self.assertEqual(report["driver_failures"],2)
+        self.assertTrue(report["stopped_early"])
+        self.assertEqual(report["drivers_skipped_after_failures"],[str(drivers[4])])
+        self.assertEqual(report["drivers_skipped"],[str(drivers[5])])
+
+    def test_max_failures_counts_each_failed_stage_and_output_failure(self):
+        drivers = [self.source(name) for name in ("a.f90","b.f90")]
+        for failed_stage in ("translate","compile","run"):
+            for status in ("failed","timeout"):
+                with self.subTest(stage=failed_stage,status=status):
+                    def phase(name,command,cwd,timeout):
+                        result = self.phase(name,command,cwd,timeout)
+                        if name == failed_stage:
+                            result.update(status=status,returncode=1,stderr="failure")
+                        return result
+                    with mock.patch.object(run_batch,"run_phase",side_effect=phase) as runner:
+                        self.assertEqual(self.invoke(*drivers,"--run","--max-failures",1),1)
+                    self.assertEqual([call.args[0] for call in runner.call_args_list],
+                                     ["translate","compile","run"][:["translate","compile","run"].index(failed_stage)+1])
+                    report = json.loads((self.work / "output/report.json").read_text())
+                    self.assertEqual(report["driver_failures"],1)
+                    self.assertEqual(report["drivers_skipped_after_failures"],[str(drivers[1])])
+        result = dict(source=str(drivers[0]),status="output_failed",stages=[])
+        with mock.patch.object(run_batch,"try_file",return_value=result) as runner:
+            self.assertEqual(self.invoke(*drivers,"--max-failures",1),1)
+        self.assertEqual(runner.call_count,1)
+
+    def test_input_errors_do_not_consume_driver_failure_budget(self):
+        source = self.source("main.f90")
+        with mock.patch.object(run_batch,"run_phase",side_effect=self.phase) as runner:
+            self.assertEqual(self.invoke(self.work / "absent*.f90",source,"--max-failures",1),1)
+        self.assertEqual(runner.call_count,1)
+        report = json.loads((self.work / "output/report.json").read_text())
+        self.assertEqual(report["driver_failures"],0)
+        self.assertFalse(report["stopped_early"])
+
+    def test_max_failures_reached_on_final_driver_does_not_report_early_stop(self):
+        source = self.source("main.f90")
+        result = dict(source=str(source),status="translate_failed",stages=[])
+        with mock.patch.object(run_batch,"try_file",return_value=result):
+            self.assertEqual(self.invoke(source,"--max-failures",1),1)
+        report = json.loads((self.work / "output/report.json").read_text())
+        self.assertEqual(report["drivers_attempted"],1)
+        self.assertFalse(report["stopped_early"])
+        self.assertEqual(report["drivers_skipped_after_failures"],[])
+
+    def test_max_failures_requires_a_positive_integer(self):
+        source = self.source("main.f90")
+        for value in ("0","-1","1.5","abc"):
+            with self.subTest(value=value),contextlib.redirect_stderr(io.StringIO()),self.assertRaises(SystemExit) as caught:
+                self.invoke(source,"--max-failures",value)
+            self.assertEqual(caught.exception.code,2)
+
 
 if __name__ == "__main__":
     unittest.main()
