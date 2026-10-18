@@ -155,6 +155,27 @@ def output_type(procedure):
 
 
 class ProcedureSupport:
+    def associate_arguments(self, name, args, line):
+        params = [param for param,_,_ in self.procedures[name]["params"]]
+        slots = [None] * len(params)
+        keywords = False
+        for index,arg in enumerate(args):
+            if isinstance(arg,ast.Call) and isinstance(arg.func,ast.Name) and arg.func.id.startswith("_rf_name_@keyword:"):
+                keywords = True
+                key = arg.func.id.split(":",1)[1].lower()
+                self.require(key in params,line,f"unknown keyword `{key}` in call to `{name}`")
+                slot = params.index(key)
+                self.require(len(arg.args)==1,line,"invalid keyword argument AST")
+                arg = arg.args[0]
+            else:
+                self.require(not keywords,line,f"positional argument after keyword argument in call to `{name}`")
+                slot = index
+            self.require(slot < len(params),line,f"wrong number of arguments to `{name}`")
+            self.require(slots[slot] is None,line,f"duplicate argument `{params[slot]}` in call to `{name}`")
+            slots[slot] = arg
+        self.require(all(arg is not None for arg in slots),line,f"wrong number of arguments to `{name}`")
+        return slots
+
     def bind_members(self,members,state,line=1):
         for name,member in members.items():
             if member["kind"]=="procedure":
@@ -178,7 +199,7 @@ class ProcedureSupport:
         self.require(not constant,line,"procedure calls are not supported in PARAMETER initializers")
         proc = self.procedures[name]
         self.require(proc["result"] is not None,line,f"`{name}` is a subroutine, not a function")
-        self.require(len(args)==len(proc["params"]),line,f"wrong number of arguments to `{name}`")
+        args = self.associate_arguments(name,args,line)
         values = [self.expr(arg,state,line) for arg in args]
         for value,(_,typ,_) in zip(values,proc["params"]):
             self.require(value.extent is None and value.typ==typ,line,f"argument type/kind/rank mismatch in call to `{name}`")
@@ -188,7 +209,7 @@ class ProcedureSupport:
         self.require(name in self.procedures,line,f"unsupported Rust backend call: {name}")
         proc = self.procedures[name]
         self.require(proc["result"] is None,line,f"`{name}` is a function, not a subroutine")
-        self.require(len(args)==len(proc["params"]),line,f"wrong number of arguments to `{name}`")
+        args = self.associate_arguments(name,args,line)
         inputs,outputs = [],[]
         for arg,(_,typ,intent) in zip(args,proc["params"]):
             if intent!="in":

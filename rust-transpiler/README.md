@@ -182,6 +182,18 @@ Exit status is zero when all selected files succeed, one for any failure
   INTEGER → `i32`, REAL → `f32`, DOUBLE PRECISION → `f64`, LOGICAL → `bool`.
   This matches the ordinary gfortran defaults used by the reference tests; it does
   not model compiler flags that change default kinds.
+- Numeric kind parameters are resolved from rfort's AST, including module USE
+  association, renaming, visibility, re-exports, and procedure host association.
+  REAL kinds 4 and 8 map to f32 and f64; INTEGER kind 4 maps to i32. Literal
+  suffixes such as `1.0_dp`, `1.0_8`, and `2_4` retain those kinds. Other numeric
+  kinds are rejected explicitly. KIND supports the implemented numeric/logical
+  variables, literals, and simple expressions. SELECTED_REAL_KIND and
+  SELECTED_INT_KIND accept constant arguments, including keywords, and follow
+  rfort's supported kind model (binary32/binary64, integer kinds 1/2/4/8).
+  Selecting an integer kind does not imply the backend can declare that kind.
+  Scalar constants from ISO_FORTRAN_ENV, including REAL32/REAL64 and INT32/INT64,
+  can be imported and renamed. Extended precision and kind-changing compiler
+  flags remain unsupported.
 - Scalar assignments, arithmetic, exponentiation, numeric comparisons (including
   dotted spellings), `.true.`, `.false.`, `.and.`, `.or.`, and `.not.`.
 - Block IF/ELSE/END IF and counted integer DO loops, including nested loops,
@@ -206,7 +218,7 @@ Exit status is zero when all selected files succeed, one for any failure
   Continuation syntax and string decoding are handled by rfort's parser.
 - Intrinsics `real`, `dble`, `int`, `abs`, `min`, `max`, `mod`, `sqrt`, `exp`, `log`,
   `log10`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `sinh`, `cosh`, and `tanh`.
-  Calls are positional. Conversion intrinsics accept one argument; MIN/MAX and MOD
+  These math calls are positional. Conversion intrinsics accept one argument; MIN/MAX and MOD
   require arguments with matching supported types/kinds.
 - Fixed-size rank-one INTEGER, REAL, and DOUBLE PRECISION arrays, with constant
   extents and the default lower bound of 1. They become Rust `Vec<T>` values.
@@ -258,7 +270,9 @@ Exit status is zero when all selected files succeed, one for any failure
   value and returns updated outputs, using a tuple for multiple outputs; it never
   reads an uninitialized caller variable to pass INTENT(OUT). Both ordinary and
   PURE procedures are supported; purity checking remains with rfort. Positional
-  calls, RETURN, and supported local statements/arrays work inside procedures.
+  and keyword calls, RETURN, and supported local statements/arrays work inside
+  procedures. Keyword actuals are associated with dummy names before type and
+  intent checks; unknown, duplicate, and missing arguments are diagnosed.
   A scalar function used in an array arithmetic expression is evaluated once,
   rather than once per element.
 

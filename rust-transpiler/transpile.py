@@ -320,7 +320,10 @@ class Emitter(ArraySupport, ProcedureSupport, AllocatableSupport):
                     known = integer_constant(initializer,self.ranges) if parameter and typ == "i32" and initializer is not None else None
                     if known is not None:
                         self.plan.constants[name] = self.ranges[name] = (known,known)
-                    literal_const = parameter and initializer is not None and (isinstance(initializer,ast.Constant) and type(initializer.value) is bool or isinstance(initializer,ast.Call) and isinstance(initializer.func,ast.Name) and initializer.func.id in ("_rf_f32","_rf_f64") and typ in FLOAT)
+                    literal = initializer
+                    while isinstance(literal,ast.UnaryOp) and isinstance(literal.op,(ast.USub,ast.UAdd)):
+                        literal = literal.operand
+                    literal_const = parameter and literal is not None and (isinstance(literal,ast.Constant) and type(literal.value) is bool or isinstance(literal,ast.Call) and isinstance(literal.func,ast.Name) and literal.func.id in ("_rf_f32","_rf_f64") and typ in FLOAT)
                     is_const = known is not None or literal_const
                     self.identifier(name,is_const)
                     binding = "const " if is_const else "let " if parameter else "let mut "

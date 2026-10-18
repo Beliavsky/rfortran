@@ -10,6 +10,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+from numeric_kinds import NumericKinds
 
 
 class Unsupported(ValueError):
@@ -125,8 +126,7 @@ class Frontend:
         main_line = self.locations.starts[-1] if getattr(self,"locations",None) else 1
         if program.get("contains"):
             raise Unsupported(main_line, "unsupported Rust backend feature: contained procedures")
-        if not any(isinstance(item, dict) and item.get("Implicit") == "None" for item in program["body"]):
-            raise Unsupported(main_line, "this Rust backend currently requires IMPLICIT NONE")
+        program = NumericKinds(self.line, Unsupported).normalize(program)
         return self.statements(program["body"])
 
     def typ(self, value, line):
@@ -137,8 +137,6 @@ class Frontend:
         raise Unsupported(line, f"unsupported Rust backend type: {value}")
 
     def module(self, data, line):
-        if not any(item.get("Implicit")=="None" for item in data["body"]):
-            raise Unsupported(line,"modules currently require IMPLICIT NONE")
         body, access, default = [], {}, True
         for item in data["body"]:
             if "SourceLocation" in item:
@@ -153,6 +151,11 @@ class Frontend:
                 kind = "Function" if "Function" in item else "Subroutine"
                 body.append(self.procedure(kind,item[kind],line))
             else:
+                if "InitializedDecl" in item:
+                    declaration = item["InitializedDecl"]
+                    attrs = [attr.lower() for attr in declaration["attributes"]]
+                    if "public" in attrs or "private" in attrs:
+                        access.update((name.lower(),"public" in attrs) for name,_ in declaration["entities"])
                 body += self.statements([item],line)
         return Node("module",line,{"name":data["name"].lower(),"access":access,"public":default},body)
 
@@ -215,7 +218,8 @@ class Frontend:
             try:
                 if "_" in data:
                     raise ValueError()
-                return ast.Constant(int(data))
+                number = int(data)
+                return ast.UnaryOp(op=ast.USub(), operand=ast.Constant(-number)) if number < 0 else ast.Constant(number)
             except ValueError:
                 raise Unsupported(line, "integer kind suffixes are not yet supported by the Rust backend") from None
         if tag == "RealLit":
@@ -293,7 +297,7 @@ class Frontend:
                 nodes.append(Node("array_decl",line,(self.typ(data["kind"],line),data["name"].lower(),self.expr(data["dims"][0],line))))
             elif tag == "InitializedDecl":
                 attrs = [item.lower() for item in data["attributes"]]
-                if set(attrs) - {"parameter", "save"}:
+                if set(attrs) - {"parameter", "save", "public", "private"}:
                     raise Unsupported(line, f"unsupported declaration attributes: {attrs}")
                 entities = [(name.lower(),self.expr(value,line) if value is not None else None) for name,value in data["entities"]]
                 nodes.append(Node("decl",line,(self.typ(data["kind"],line),"parameter" in attrs,entities)))
