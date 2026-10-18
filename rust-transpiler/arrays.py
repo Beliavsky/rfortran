@@ -32,6 +32,8 @@ class ArraySupport:
         return f"rf_init_{self.rust_name(name)}.fill(true);"
 
     def array_value(self,name,state,line):
+        if name in self.allocatables:
+            return self.alloc_value(name,line)
         rust = self.rust_name(name)
         if name in state:
             return Value(rust,self.symbols[name],self.arrays[name])
@@ -51,16 +53,19 @@ class ArraySupport:
         else:
             scalar = self.scalar_binary(operator,Value("rf_scalar",left.typ),Value("rf_item",right.typ),line)
             sequence = f"{{ let rf_scalar = {left.code}; ({iterator(right)}).map(move |rf_item| {scalar.code}) }}"
-        return Value(f"({sequence}).collect::<Vec<{scalar.typ}>>()",scalar.typ,array.extent,sequence,True)
+        return Value(f"({sequence}).collect::<Vec<{scalar.typ}>>()",scalar.typ,array.extent,sequence,True,array.rank,array.shape)
 
     def array_cast(self,value,typ,line):
         if typ == value.typ:
             return value
         scalar = self.cast(Value("rf_item",value.typ),typ,line)
         sequence = f"({iterator(value)}).map(|rf_item| {scalar.code})"
-        return Value(f"({sequence}).collect::<Vec<{typ}>>()",typ,value.extent,sequence,True)
+        return Value(f"({sequence}).collect::<Vec<{typ}>>()",typ,value.extent,sequence,True,value.rank,value.shape)
 
     def array_element(self,name,args,state,line,writing=False):
+        if name in self.allocatables:
+            self.require(not writing,line,"internal allocatable assignment dispatch error")
+            return self.alloc_element(name,args,state,line)
         self.require(len(args)==1,line,"only rank-one indexing is currently supported")
         index = self.expr(args[0],state,line)
         self.require(index.typ=="i32" and index.extent is None,line,"array subscript must be a scalar default INTEGER")
@@ -73,6 +78,7 @@ class ArraySupport:
         return Value(f"{rust}[rf_index({index.code}, {rust}.len(), {line})]",self.symbols[name])
 
     def array_section(self,name,args,state,line):
+        self.require(name not in self.allocatables,line,"sections of allocatable arrays are not yet supported")
         self.require(name in self.arrays,line,f"unknown array `{name}`")
         self.require(len(args)==3,line,"invalid section metadata")
         default = lambda value: isinstance(value,ast.Constant) and value.value is None
@@ -108,6 +114,8 @@ class ArraySupport:
         return Value(code,value.typ)
 
     def assign_array(self,name,value,line):
+        if name in self.allocatables:
+            return self.assign_allocatable(name,value,line)
         self.array_writes.add(name)
         typ,size = self.symbols[name],self.arrays[name]
         value = self.cast(value,typ,line)
@@ -115,6 +123,7 @@ class ArraySupport:
             return f"{self.rust_name(name)} = vec![{value.code}; {size}]; " + self.mark_array_initialized(name)
         self.require(value.extent >= 0 and value.extent == size,line,
                      "array assignment requires an equal, statically known extent")
+        self.require(value.rank==1,line,"array assignment rank mismatch")
         code = value.code if value.owned else f"({value.code}).to_vec()"
         return f"{self.rust_name(name)} = {code}; " + self.mark_array_initialized(name)
 
@@ -129,6 +138,8 @@ class ArraySupport:
             self.require(typ in ("f32","f64"),line,"RANDOM_NUMBER requires a real destination")
             value = f"rf_rng.next({str(typ=='f64').lower()}) as {typ}"
             if name in self.arrays:
+                if name in self.allocatables:
+                    return self.alloc_random_number(name,line)
                 self.array_writes.add(name)
                 code = f"{self.rust_name(name)} = (0..{self.arrays[name]}).map(|_| {value}).collect(); " + self.mark_array_initialized(name)
             else:

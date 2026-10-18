@@ -253,6 +253,7 @@ class Frontend:
 
     def statements(self, items, inherited_line=1):
         nodes, line = [], inherited_line
+        allocatables = set()
         for statement in items:
             if not isinstance(statement, dict) or len(statement) != 1:
                 raise FrontendError("unsupported rfort statement schema")
@@ -265,10 +266,15 @@ class Frontend:
                     raise Unsupported(line, "only IMPLICIT NONE is supported by the Rust backend")
                 continue
             if tag == "DummyIntent":
+                if data["intent"]=="allocatable":
+                    allocatables.add(data["name"].lower())
+                    continue
                 if data["intent"] != "parameter":
                     raise Unsupported(line, f"unsupported declaration attribute: {data['intent']}")
                 continue
             if tag == "VarDecl":
+                if any(name.lower() in allocatables for name in data["names"]):
+                    raise Unsupported(line,"allocatable scalars are not yet supported")
                 nodes.append(Node("decl",line,(self.typ(data["kind"],line),False,[(name.lower(),None) for name in data["names"]])))
             elif tag == "Module":
                 nodes.append(self.module(data,line))
@@ -277,6 +283,11 @@ class Frontend:
             elif tag == "Return":
                 nodes.append(Node("return",line,self.expr(data,line) if data is not None else None))
             elif tag == "ArrayDecl":
+                if data["name"].lower() in allocatables:
+                    if not all(dim=={"Ident":"@deferred_extent"} for dim in data["dims"]):
+                        raise Unsupported(line,"allocatable declarations require deferred extents")
+                    nodes.append(Node("alloc_decl",line,(self.typ(data["kind"],line),data["name"].lower(),len(data["dims"]))))
+                    continue
                 if len(data["dims"]) != 1:
                     raise Unsupported(line,"only rank-one numeric arrays are currently supported")
                 nodes.append(Node("array_decl",line,(self.typ(data["kind"],line),data["name"].lower(),self.expr(data["dims"][0],line))))
@@ -290,12 +301,16 @@ class Frontend:
                 nodes.append(Node("assign",line,(data["name"].lower(),self.expr(data["value"],line))))
             elif tag == "AssignIndex":
                 if len(data["indices"]) != 1:
-                    raise Unsupported(line,"only rank-one element assignments are supported")
+                    nodes.append(Node("assign_indices",line,(data["name"].lower(),[self.expr(item,line) for item in data["indices"]],self.expr(data["value"],line))))
+                    continue
                 nodes.append(Node("assign_index",line,(data["name"].lower(),self.expr(data["indices"][0],line),self.expr(data["value"],line))))
             elif tag == "Print":
                 nodes.append(Node("print",line,[self.expr(item,line) for item in data["items"]]))
             elif tag == "CallSub":
                 name = data["name"]
+                if name in ("@allocate","@deallocate"):
+                    nodes.append(Node(name[1:],line,[self.expr(item,line) for item in data["args"]]))
+                    continue
                 if name.lower()=="random_number":
                     nodes.append(Node("random_number",line,[self.expr(item,line) for item in data["args"]]))
                     continue

@@ -29,6 +29,10 @@ def program(body):
 
 @unittest.skipUnless(HAS_FRONTEND, "An existing rfort executable is required")
 class ValidationTests(unittest.TestCase):
+    def test_invalid_static_allocatable_inquiries_are_rejected(self):
+        self.reject("integer,allocatable :: a(:)\nprint *,size(a)","before ALLOCATE")
+        self.reject("integer,allocatable :: a(:)\nallocate(a(2))\nprint *,size(a,2)","DIM must be between")
+
     def test_module_scope_and_procedure_limits(self):
         module = """module m
 implicit none
@@ -219,6 +223,73 @@ class StyleTests(unittest.TestCase):
 
 @unittest.skipUnless(HAS_FRONTEND and shutil.which("rustc") and shutil.which("gfortran"), "rfort, rustc, and gfortran required")
 class NativeTests(unittest.TestCase):
+    def test_numeric_allocatables_shapes_indexing_and_lifecycle(self):
+        self.compare(program("""integer,allocatable :: a(:,:)
+real,allocatable :: b(:,:,:)
+double precision,allocatable :: c(:,:)
+print *,allocated(a),allocated(b),allocated(c)
+allocate(a(2,3),b(2,2,2),c(0,2))
+print *,allocated(a),size(a),size(a,1),size(a,2),size(b),size(c),size(c,2)
+a=2
+a(2,3)=9
+b=0.5
+b(2,1,2)=3.0
+print *,a,b,sum(a),product(a),minval(b),maxval(b),sum(c)
+deallocate(a,b,c)
+print *,allocated(a),allocated(b),allocated(c)
+"""))
+
+    def test_allocatable_assignment_reallocates_and_preserves_shape(self):
+        self.compare(program("""integer,allocatable :: a(:,:),b(:,:),v(:)
+integer :: fixed(3)
+allocate(a(2,3))
+a=3
+a(2,1)=5
+b=a
+print *,allocated(b),size(b,1),size(b,2),b
+b=b*2
+print *,b
+deallocate(a)
+allocate(a(1,2))
+a=7
+b=a
+print *,size(b,1),size(b,2),b
+fixed=4
+v=fixed
+print *,allocated(v),size(v),v
+"""))
+
+    def test_rank_fifteen_allocatable_storage(self):
+        rank = ",".join([":"]*15)
+        extents = ",".join(["2"]+["1"]*14)
+        indices = ",".join(["2"]+["1"]*14)
+        self.compare(program(f"integer,allocatable :: a({rank})\nallocate(a({extents}))\na=4\na({indices})=9\nprint *,size(a),size(a,15),sum(a),a({indices})\ndeallocate(a)"))
+
+    def test_allocatable_runtime_errors(self):
+        cases = (
+            ("deallocate(a)","is not allocated"),
+            ("allocate(a(2))\nallocate(a(2))","already allocated"),
+            ("allocate(a(2))\na=1\nprint *,a(3)","outside 1..=2"),
+            ("allocate(a(2))\na=1\ndeallocate(a)\nallocate(a(2))\nprint *,sum(a)","uninitialized array `a`: element 1"),
+            ("allocate(a(2))\na(1)=5\nprint *,a(2)","uninitialized array `a`: subscripts [2]"),
+        )
+        for body,diagnostic in cases:
+            with self.subTest(body=body):
+                result = self.run_rust(program("integer,allocatable :: a(:)\n"+body))
+                self.assertNotEqual(result.returncode,0)
+                self.assertIn(diagnostic,result.stderr)
+                self.assertIn("Fortran line",result.stderr)
+
+    def test_xalloc_random_array_driver(self):
+        result = self.run_rust((ROOT.parent / "xalloc.f90").read_text())
+        self.assertEqual(result.returncode,0,result.stderr)
+        rows = [[float(token) for token in line.split()] for line in result.stdout.splitlines()]
+        self.assertEqual(len(rows),3)
+        for x,size,mean in rows:
+            self.assertTrue(0 <= x < 1)
+            self.assertEqual(size,12 if x>0.5 else 200)
+            self.assertTrue(0 <= mean < 1)
+
     def test_existing_module_procedure_examples(self):
         for name in ("xfunc.f90","xpure_func.f90","xsub.f90","xpure_sub.f90"):
             with self.subTest(name=name):

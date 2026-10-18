@@ -105,7 +105,7 @@ class Modules:
         for item in node.body:
             if item.kind=="decl":
                 local.update(name for name,_ in item.data[2])
-            elif item.kind=="array_decl":
+            elif item.kind in ("array_decl","alloc_decl"):
                 local.add(item.data[1])
         scope = {name:member for name,member in module["scope"].items() if name not in local}
         state = set()

@@ -9,6 +9,8 @@ class Value:
     extent: int | None = None
     iterator: str | None = None
     owned: bool = False
+    rank: int = 1
+    shape: str | None = None
 
 
 def iterator(value):

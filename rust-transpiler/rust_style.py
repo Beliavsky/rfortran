@@ -30,6 +30,13 @@ def references(nodes):
         elif node.kind == "assign_index":
             result.add(node.data[0])
             result |= names(node.data[1]) | names(node.data[2])
+        elif node.kind=="assign_indices":
+            result.add(node.data[0])
+            for value in [*node.data[1],node.data[2]]:
+                result |= names(value)
+        elif node.kind in ("allocate","deallocate"):
+            for value in node.data:
+                result |= names(value)
         elif node.kind == "random_number":
             for value in node.data:
                 result |= names(value)

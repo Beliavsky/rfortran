@@ -5,6 +5,7 @@ import argparse
 import ast
 from compiler_frontend import Frontend, FrontendError, Unsupported
 from arrays import ArraySupport, ARRAY_RUNTIME, RANDOM_RUNTIME
+from allocatable import AllocatableSupport, ALLOC_RUNTIME
 from values import Value, iterator
 from procedures import Modules, ProcedureSupport
 from source_group import SourceGroup
@@ -25,10 +26,12 @@ def rust_string(text):
     return '"' + "".join('\\"' if c == '"' else "\\\\" if c == "\\" else f"\\u{{{ord(c):x}}}" if ord(c) < 32 or ord(c) == 127 else c for c in text) + '"'
 
 
-class Emitter(ArraySupport, ProcedureSupport):
+class Emitter(ArraySupport, ProcedureSupport, AllocatableSupport):
     def __init__(self, plan=None, *, source_comments=False, source_location=None):
         self.symbols = {}
         self.arrays = {}
+        self.allocatables = {}
+        self.needs_alloc_runtime = False
         self.array_writes = set()
         self.modules = None
         self.procedure = None
@@ -204,10 +207,17 @@ class Emitter(ArraySupport, ProcedureSupport):
                 return self.function_call(decoded,node.args,initialized,line,constant)
             if decoded in self.arrays:
                 return self.array_element(decoded,node.args,initialized,line)
+            if decoded=="allocated":
+                self.require(not constant,line,"ALLOCATED is not a constant expression")
+                return self.alloc_inquiry(decoded,node.args,initialized,line)
             if decoded == "size" and len(node.args)==1 and isinstance(node.args[0],ast.Name):
                 array = node.args[0].id.removeprefix("_rf_name_")
+                if array in self.allocatables:
+                    return self.alloc_inquiry(decoded,node.args,initialized,line)
                 if array in self.arrays:
                     return Value(f"{self.arrays[array]}i32","i32")
+            if decoded=="size" and node.args and isinstance(node.args[0],ast.Name) and node.args[0].id.removeprefix("_rf_name_") in self.allocatables:
+                return self.alloc_inquiry(decoded,node.args,initialized,line)
             if name in ("_rf_f32", "_rf_f64"):
                 self.require(len(node.args) == 1 and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str), line, "invalid literal")
                 number = float(node.args[0].value)
@@ -291,6 +301,10 @@ class Emitter(ArraySupport, ProcedureSupport):
                 self.require(not executable,line,"declarations must precede executable statements at program scope")
                 lines.extend(indent+part for part in self.declare_array(node,state).splitlines())
                 continue
+            if node.kind == "alloc_decl":
+                self.require(not executable,line,"declarations must precede executable statements")
+                lines.append(indent+self.declare_allocatable(node))
+                continue
             if node.kind == "decl":
                 self.require(not executable, line, "declarations must precede executable statements at program scope")
                 typ, parameter, items = node.data
@@ -317,7 +331,9 @@ class Emitter(ArraySupport, ProcedureSupport):
                         state.add(name)
                 continue
             executable = True
-            if node.kind == "assign":
+            if node.kind in ("allocate","deallocate"):
+                lines.extend(indent+part for part in self.allocate_statement(node.data,state,line,node.kind=="deallocate"))
+            elif node.kind == "assign":
                 name, text = node.data
                 typ = self.variable(name, line)
                 self.require(name not in self.parameters, line, f"cannot assign PARAMETER `{name}`")
@@ -333,6 +349,9 @@ class Emitter(ArraySupport, ProcedureSupport):
             elif node.kind == "assign_index":
                 name,index,text = node.data
                 self.require(name in self.arrays,line,f"unknown array `{name}`")
+                if name in self.allocatables:
+                    lines.extend(indent+part for part in self.alloc_element_assignment(name,[index],text,state,line))
+                    continue
                 target = self.array_element(name,[index],state,line,writing=True)
                 value = self.cast(expression(text),target.typ,line)
                 self.require(value.extent is None,line,"array element assignment requires a scalar")
@@ -346,6 +365,10 @@ class Emitter(ArraySupport, ProcedureSupport):
                     state.add((name,known))
                     if sum(isinstance(item,tuple) and item[0]==name for item in state)==self.arrays[name]:
                         state.add(name)
+            elif node.kind == "assign_indices":
+                name,indices,text = node.data
+                self.require(name in self.allocatables,line,"multidimensional element assignment currently requires an allocatable array")
+                lines.extend(indent+part for part in self.alloc_element_assignment(name,indices,text,state,line))
             elif node.kind == "random_number":
                 if "random_number" in self.procedures:
                     lines.extend(indent+part for part in self.subroutine_call("random_number",node.data,state,line,active_loops))
@@ -492,6 +515,8 @@ def transpile(source, *, compiler=None, filename="input.f90", source_comments=Fa
         shared = format_runtime() if any(e.needs_format_runtime for e in emitters) else ""
         if any(e.needs_array_runtime for e in emitters):
             shared += ARRAY_RUNTIME
+        if any(e.needs_alloc_runtime for e in emitters):
+            shared += ALLOC_RUNTIME
         if any(e.needs_array_runtime or e.needs_format_runtime for e in emitters):
             shared += location_runtime(locations)
         if emitter.needs_random_runtime:

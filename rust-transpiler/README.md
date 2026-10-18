@@ -121,9 +121,17 @@ is translated together with those modules into its own Rust file/executable.
 ```cmd
 python rust-transpiler\run_batch.py "*.f90"
 python rust-transpiler\run_batch.py "x*.f90" --run
+python rust-transpiler\run_batch.py "x*.f90" --limit 10 --run
 python rust-transpiler\run_batch.py xloop.f90 xrandom_array.f90 --run --verbose
 python rust-transpiler\run_batch.py "rust-transpiler/examples/**/*.f90" --run --report target\rust-batch.json
 ```
+
+`--limit N` tries at most N drivers; N must be a positive integer. The default is
+all matched drivers. Selection preserves input-pattern order and sorted matches
+within each glob, after deduplication and module exclusion. Failures count toward
+the limit. Unmatched inputs still report errors. The console and JSON report show
+how many drivers were selected; JSON also lists drivers skipped by the limit.
+Skipped files do not count as failures, and their existing artifacts are untouched.
 
 Without `--run`, it tries translation only. With `--run`, each successful
 translation is compiled by rustc and executed. Statuses distinguish translation,
@@ -205,7 +213,22 @@ Exit status is zero when all selected files succeed, one for any failure
   Empty arrays have the usual reduction identities. Array
   constructors and array arguments to other math intrinsics
   are not yet supported.
-- `call random_number(x)` for a real scalar or whole rank-one real array. Generated
+- Numeric ALLOCATABLE arrays of ranks 1 through 15, with deferred extents in the
+  declaration and default lower bounds of 1. ALLOCATE evaluates runtime extents;
+  DEALLOCATE releases storage. ALLOCATED and positional SIZE(array[,dim]) query
+  allocation/shape without reading uninitialized elements. Generated Rust uses
+  `Option<RfArray<T>>`, with a shape vector, flat column-major storage, and per-element
+  initialization flags. Whole-array scalar fills, element indexing/assignment,
+  reductions, numeric conversion, array printing, and scalar-array arithmetic
+  work on these arrays. Array-valued assignment to an allocatable automatically
+  allocates/reallocates it to the right-hand side's shape. Allocation state,
+  bounds, double allocation, and unset-element reads are checked. Reallocation
+  starts with all elements unset. Total allocation size is limited to default
+  INTEGER range. Allocatable scalars, custom lower bounds, sections of allocatables,
+  STAT/ERRMSG/SOURCE/MOLD options, and binary operations between runtime-sized
+  arrays remain outside this subset. Native frontend checks can reject some
+  provably invalid allocation/inquiry cases before Rust generation.
+- `call random_number(x)` for a real scalar or supported whole real array. Generated
   Rust shares one generator across calls and uses rfort's xorshift64* recurrence,
   default seed, and 24/53-bit conversion to values in `[0,1)`. Its stream differs
   from gfortran's. `random_seed` and keyword arguments are not yet supported.
@@ -234,6 +257,12 @@ python rust-transpiler\transpile.py xrandom_array.f90 --run
 
 A stable copy is also supplied as `rust-transpiler/examples/random_array.f90`.
 
+The two-dimensional runtime allocation example also works:
+
+```cmd
+python rust-transpiler\transpile.py xalloc.f90 --run
+```
+
 The first module examples also work:
 
 ```cmd
@@ -260,10 +289,10 @@ do not initialize a variable after that loop, and an IF initializes a variable
 afterward only if both branches do. This can reject valid programs whose control
 flow requires deeper analysis. It is not a complete Fortran conformance checker.
 
-Multidimensional/dynamic arrays, kind selectors/suffixes, derived types,
+Fixed-size multidimensional arrays, kind selectors/suffixes, derived types,
 mutable module variables, initialized/SAVE procedure locals, optional/keyword
 procedure arguments, array/character procedure arguments/results, generic
-interfaces, internal procedures, separately compiled modules, allocation,
+interfaces, internal procedures, separately compiled modules,
 pointers, complex arithmetic, READ,
 formatted file I/O, ELSE IF, DO WHILE, named constructs, EXIT, CYCLE, and STOP are outside
 this first subset. They are diagnosed rather than silently ignored. The mixture

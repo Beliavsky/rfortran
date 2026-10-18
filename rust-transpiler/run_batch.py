@@ -98,10 +98,21 @@ def positive_seconds(value):
     return number
 
 
+def positive_integer(value):
+    try:
+        number = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("limit must be a positive integer") from None
+    if number <= 0:
+        raise argparse.ArgumentTypeError("limit must be a positive integer")
+    return number
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("inputs", nargs="+", help='Files or globs, e.g. "*.f90" or "tests/**/*.f90"')
     parser.add_argument("--run", action="store_true", help="Also compile and execute each successful translation")
+    parser.add_argument("--limit", type=positive_integer, help="Try at most N driver files after deduplication and module exclusion", metavar="N")
     parser.add_argument("--module", dest="modules", action="extend", nargs="+", type=Path, default=[],
                         help="Prepend one or more common module sources in dependency order; may be repeated")
     parser.add_argument("--out-dir", type=Path, default=Path("target/rust-transpiler/batch"))
@@ -126,8 +137,10 @@ def main(argv=None):
         parser.error("no driver sources selected after excluding --module inputs")
     if args.report in [*sources,*args.modules]:
         parser.error("report path must differ from an input source")
+    selected = sources[:args.limit] if args.limit is not None else sources
+    skipped = sources[len(selected):]
     started = time.perf_counter()
-    for source in sources:
+    for source in selected:
         result = try_file(source, args)
         results.append(result)
         print(f"{result['status'].upper():18} {source}", flush=True)
@@ -145,6 +158,8 @@ def main(argv=None):
     counts = dict(sorted(Counter(result["status"] for result in results).items()))
     report = {"schema_version": 1, "mode": "run" if args.run else "translate", "patterns": args.inputs,
               "modules": [str(path) for path in args.modules],
+              "limit": args.limit, "drivers_matched": len(sources), "drivers_selected": len(selected),
+              "drivers_skipped": [str(path) for path in skipped],
               "seconds": round(time.perf_counter()-started, 3), "summary": counts, "results": results}
     try:
         args.report.parent.mkdir(parents=True, exist_ok=True)
@@ -153,6 +168,8 @@ def main(argv=None):
         print(f"Cannot write report: {error}", file=sys.stderr)
         return 1
     print("\nSummary: " + ", ".join(f"{count} {status}" for status, count in counts.items()))
+    if args.limit is not None:
+        print(f"Drivers: {len(selected)} selected of {len(sources)}; {len(skipped)} skipped by --limit")
     print(f"Report: {args.report}")
     return int(any(result["status"] not in ("translated", "passed") for result in results))
 
