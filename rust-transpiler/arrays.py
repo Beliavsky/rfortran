@@ -9,6 +9,7 @@ class ArraySupport:
     def declare_array(self,node,state):
         typ,name,extent = node.data
         self.require(name not in self.symbols,node.line,f"duplicate declaration `{name}`")
+        self.require(name not in self.procedures,node.line,f"declaration conflicts with imported procedure `{name}`")
         self.require(typ in ("i32","f32","f64"),node.line,"only numeric arrays are currently supported")
         size = integer_constant(extent,self.plan.constants)
         self.require(size is not None,node.line,"array extent must currently be a constant default INTEGER expression")
@@ -45,11 +46,11 @@ class ArraySupport:
             scalar = self.scalar_binary(operator,Value("rf_left",left.typ),Value("rf_right",right.typ),line)
             sequence = f"({iterator(left)}).zip({iterator(right)}).map(|(rf_left, rf_right)| {scalar.code})"
         elif left.extent is not None:
-            scalar = self.scalar_binary(operator,Value("rf_item",left.typ),right,line)
-            sequence = f"({iterator(left)}).map(|rf_item| {scalar.code})"
+            scalar = self.scalar_binary(operator,Value("rf_item",left.typ),Value("rf_scalar",right.typ),line)
+            sequence = f"{{ let rf_scalar = {right.code}; ({iterator(left)}).map(move |rf_item| {scalar.code}) }}"
         else:
-            scalar = self.scalar_binary(operator,left,Value("rf_item",right.typ),line)
-            sequence = f"({iterator(right)}).map(|rf_item| {scalar.code})"
+            scalar = self.scalar_binary(operator,Value("rf_scalar",left.typ),Value("rf_item",right.typ),line)
+            sequence = f"{{ let rf_scalar = {left.code}; ({iterator(right)}).map(move |rf_item| {scalar.code}) }}"
         return Value(f"({sequence}).collect::<Vec<{scalar.typ}>>()",scalar.typ,array.extent,sequence,True)
 
     def array_cast(self,value,typ,line):
@@ -140,7 +141,7 @@ class ArraySupport:
 ARRAY_RUNTIME = '''
 fn rf_index(index: i32, len: usize, line: usize) -> usize {
     assert!(index >= 1 && (index as usize) <= len,
-            "Fortran line {line}: array subscript {index} is outside 1..={len}");
+            "Fortran {}: array subscript {index} is outside 1..={len}", rf_location(line));
     index as usize - 1
 }
 
@@ -153,14 +154,14 @@ fn rf_section<T>(values: &[T], lower: i32, upper: i32, line: usize) -> &[T] {
 
 fn rf_initialized<'a, T>(values: &'a [T], initialized: &[bool], line: usize, name: &str) -> &'a [T] {
     if let Some(index) = initialized.iter().position(|&set| !set) {
-        panic!("Fortran line {line}: read of uninitialized array `{name}`: element {}", index + 1);
+        panic!("Fortran {}: read of uninitialized array `{name}`: element {}", rf_location(line), index + 1);
     }
     values
 }
 
 fn rf_element<T: Copy>(values: &[T], initialized: &[bool], index: i32, line: usize, name: &str) -> T {
     let offset = rf_index(index, values.len(), line);
-    assert!(initialized[offset], "Fortran line {line}: read of uninitialized array `{name}`: element {index}");
+    assert!(initialized[offset], "Fortran {}: read of uninitialized array `{name}`: element {index}", rf_location(line));
     values[offset]
 }
 
@@ -169,7 +170,7 @@ fn rf_initialized_section<'a, T>(values: &'a [T], initialized: &[bool], lower: i
     if upper >= lower {
         if let Some(offset) = initialized[(lower as usize - 1)..upper as usize].iter().position(|&set| !set) {
             let index = lower as usize + offset;
-            panic!("Fortran line {line}: read of uninitialized array `{name}`: element {index}");
+            panic!("Fortran {}: read of uninitialized array `{name}`: element {index}", rf_location(line));
         }
     }
     section

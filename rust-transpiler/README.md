@@ -56,6 +56,28 @@ Windows (`xloop.bin` on other platforms). Supplying `-o` overrides this path.
 Files with the same basename share a default output; use `-o` to distinguish them.
 Omitting `--run` simply generates the Rust source at the same default path.
 
+Supply module files in dependency order, followed by the main-program file:
+
+```cmd
+python rust-transpiler\transpile.py m1.f90 m2.f90 main.f90 --run
+python rust-transpiler\transpile.py m1.f90 m2.f90 main.f90 -o target\rust-transpiler\example.rs --run
+python rust-transpiler\transpile.py rust-transpiler\examples\modules\base.f90 rust-transpiler\examples\modules\derived.f90 rust-transpiler\examples\modules\main.f90 --run
+```
+
+This produces **one Rust file and one executable** for the source group. The
+default output uses the final source's stem (`main.rs` above). Earlier inputs
+must contain complete module definitions; the final input contains the main
+program and can also define modules before it. Files are not reordered or searched
+automatically. Each input is parsed independently to validate its boundaries,
+then the ordered group is parsed and checked together with the existing rfort
+frontend. There is no separate compilation, `.mod` loading, or Cargo dependency
+generation. Existing single-file commands retain their behavior.
+
+Backend diagnostics, located compiler diagnostics, optional source comments, and
+array/format runtime errors map back to original file names and local line numbers
+for source groups. Some native compiler errors have no location; those messages
+are preserved without inventing a location.
+
 The existing small examples also work, if present in your checkout:
 
 ```cmd
@@ -81,7 +103,16 @@ All testing so far is on x86-64 Windows; Linux/macOS have not been verified.
 
 `run_batch.py` accepts individual files and quoted globs. It sorts each glob's
 matches, removes duplicate files, continues after failures, and prints a summary.
-Each file is a separate translation unit; this does not combine module dependencies.
+Each selected driver is a separate translation unit. Repeat `--module` to prepend
+common module sources in dependency order to every driver:
+
+```cmd
+python rust-transpiler\run_batch.py "x*.f90" --module m1.f90 --module m2.f90 --run
+```
+
+Explicit `--module` files are excluded from driver glob matches. Their ordered
+paths are included in artifact hashes and recorded in the JSON report. Each driver
+is translated together with those modules into its own Rust file/executable.
 
 ```cmd
 python rust-transpiler\run_batch.py "*.f90"
@@ -116,9 +147,11 @@ Exit status is zero when all selected files succeed, one for any failure
 
 ## Current subset
 
-- One free-form main program, optionally with a PROGRAM statement. IMPLICIT NONE
+- One free-form main program, optionally with a PROGRAM statement, with optional
+  preceding module files. IMPLICIT NONE
   is currently required. Program structure and END parsing are delegated to rfort.
-  Module procedures and contained procedures are not yet supported.
+  Modules in the source group can contain the scalar procedures described below.
+  Main-program internal procedures are not yet supported.
 - Scalar `integer`, `real`, `double precision`, and `logical` declarations, with
   optional initializers and PARAMETER. Both colon and ordinary declarations use
   rfort's grammar. The explicit numeric model is
@@ -172,6 +205,22 @@ Exit status is zero when all selected files succeed, one for any failure
   Rust shares one generator across calls and uses rfort's xorshift64* recurrence,
   default seed, and 24/53-bit conversion to values in `[0,1)`. Its stream differs
   from gfortran's. `random_seed` and keyword arguments are not yet supported.
+- Modules containing explicitly typed scalar functions/subroutines and supported
+  scalar PARAMETER constants. Modules require IMPLICIT NONE, inherited by their
+  procedures. USE, USE ONLY, renaming, PUBLIC/PRIVATE accessibility, cross-module
+  calls, and module/USE-associated constants are supported within one source group;
+  dependencies must precede consumers. Local declarations can shadow host names.
+  Module constants currently require initializers that emit Rust `const` bindings.
+- Procedure arguments must have explicit scalar types and INTENT. Functions accept
+  INTENT(IN) arguments and return scalar values; subroutines accept IN, OUT, and
+  INOUT. Input expressions must match the dummy's type/kind/rank. Output actuals
+  must be distinct writable scalar variables. Generated Rust passes inputs by
+  value and returns updated outputs, using a tuple for multiple outputs; it never
+  reads an uninitialized caller variable to pass INTENT(OUT). Both ordinary and
+  PURE procedures are supported; purity checking remains with rfort. Positional
+  calls, RETURN, and supported local statements/arrays work inside procedures.
+  A scalar function used in an array arithmetic expression is evaluated once,
+  rather than once per element.
 
 For example:
 
@@ -180,6 +229,13 @@ python rust-transpiler\transpile.py xrandom_array.f90 --run
 ```
 
 A stable copy is also supplied as `rust-transpiler/examples/random_array.f90`.
+
+The first module examples also work:
+
+```cmd
+python rust-transpiler\run_batch.py xfunc.f90 xpure_func.f90 xsub.f90 xpure_sub.f90 --run
+python rust-transpiler\transpile.py rust-transpiler\examples\module_scalar.f90 --run
+```
 
 Assignments apply numeric conversions, while expressions retain their own kinds:
 `7/2` is integer division even if assigned to a real variable. Default real literals
@@ -200,11 +256,19 @@ do not initialize a variable after that loop, and an IF initializes a variable
 afterward only if both branches do. This can reject valid programs whose control
 flow requires deeper analysis. It is not a complete Fortran conformance checker.
 
-Multidimensional/dynamic arrays, kind selectors/suffixes, derived types, functions/subroutines, modules,
-USE association, allocation, pointers, recursion, complex arithmetic, READ,
+Multidimensional/dynamic arrays, kind selectors/suffixes, derived types,
+mutable module variables, initialized/SAVE procedure locals, optional/keyword
+procedure arguments, array/character procedure arguments/results, generic
+interfaces, internal procedures, separately compiled modules, allocation,
+pointers, complex arithmetic, READ,
 formatted file I/O, ELSE IF, DO WHILE, named constructs, EXIT, CYCLE, and STOP are outside
 this first subset. They are diagnosed rather than silently ignored. The mixture
 examples therefore cannot yet be translated.
+
+Intrinsic module interfaces and RANDOM_NUMBER inside procedures are also deferred.
+Conservative return-path analysis can reject valid functions with more complicated
+early-return control flow. Supported procedure definitions are checked even when
+unused; an unsupported member of a large module still blocks translation.
 
 ## Idiomatic Rust where behavior can be preserved
 
@@ -266,6 +330,10 @@ negative strides, and empty loops. They also cover `xloop.f90` and `xmath.f90` w
 those root examples are available. Output is compared by tokens with numeric
 tolerances for list-directed output. Formatted PRINT regressions compare complete
 output strings with gfortran, including leading blanks, field widths and newlines.
+Source-group tests cover ordered module files, shared batch modules, dependency
+errors, output naming, and original-file diagnostics. Source-map tests need only
+Python; frontend tests require rfort, and group execution tests additionally need
+rustc (with a gfortran reference comparison when available).
 
 ## Design and relationship to the binding generator
 
@@ -300,6 +368,6 @@ term, selected procedures could be translated and unsupported library routines
 called through generated bindings. No automatic fallback or hybrid linking exists
 in this version.
 
-The next useful milestones are scalar procedures with explicit interfaces and
-broader array support, including explicit lower bounds. Tests against gfortran should
+The next useful milestones are broader procedure interfaces and array support,
+including array dummies/results and explicit lower bounds. Tests against gfortran should
 grow with each addition before tackling mixture models or other large programs.

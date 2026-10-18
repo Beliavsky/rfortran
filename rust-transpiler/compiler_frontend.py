@@ -13,8 +13,9 @@ import tempfile
 
 
 class Unsupported(ValueError):
-    def __init__(self, line, message):
+    def __init__(self, line, message, filename=None):
         self.line = line
+        self.filename = filename
         super().__init__(message)
 
 
@@ -59,22 +60,27 @@ def snapshot_compiler(path, modified, size):
 
 
 class Frontend:
-    def __init__(self, source, filename="input.f90", compiler=None):
+    def __init__(self, source, filename="input.f90", compiler=None, locations=None):
         self.source = source
         self.filename = str(filename)
         selected = find_compiler(compiler)
         metadata = selected.stat()
         self.owner, self.compiler = snapshot_compiler(str(selected), metadata.st_mtime_ns, metadata.st_size)
         self.raw = source.encode("utf-8")
+        self.locations = locations
 
-    def command(self, args, directory, snapshot):
+    def command(self, args, directory, snapshot, *, filename=None):
         try:
             result = subprocess.run([str(self.compiler), *map(str, args)], cwd=directory,
                                     capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
         except (OSError, subprocess.SubprocessError) as error:
             raise FrontendError(f"rfort frontend failed: {error}") from error
         if result.returncode:
-            diagnostics = (result.stderr + result.stdout).strip().replace(str(snapshot), self.filename)
+            diagnostics = (result.stderr + result.stdout).strip()
+            if filename is None and getattr(self,"locations",None):
+                diagnostics = self.locations.diagnostics(diagnostics,snapshot)
+            else:
+                diagnostics = diagnostics.replace(str(snapshot), filename or self.filename)
             raise FrontendError(f"rfort {args[0]} failed:\n{diagnostics}")
         return result
 
@@ -84,6 +90,18 @@ class Frontend:
             snapshot = work / "input.f90"
             snapshot.write_bytes(self.raw)  # Preserve exact UTF-8 offsets and newline bytes.
             exported = work / "ast.json"
+            if getattr(self,"locations",None):
+                # Parse each file independently before joining. This validates
+                # complete source units and stops continuations crossing files.
+                for index,(name,text) in enumerate(self.locations.parts):
+                    part = work / f"part-{index}.f90"
+                    part.write_bytes(text.encode("utf-8"))
+                    parsed = work / f"part-{index}.json"
+                    self.command(["parse",part,parsed],work,part,filename=name)
+                    if index < len(self.locations.parts)-1:
+                        unit = json.loads(parsed.read_text(encoding="utf-8"))
+                        if unit.get("contains") or any(next(iter(item)) not in ("Module","SourceLocation") for item in unit["body"]):
+                            raise FrontendError(f"{name}: only complete module definitions may precede the final main-program source")
             self.command(["parse", snapshot, exported], work, snapshot)
             try:
                 program = json.loads(exported.read_text(encoding="utf-8"))
@@ -104,10 +122,11 @@ class Frontend:
         return self.raw.count(b"\n", 0, offset) + 1
 
     def program(self, program):
+        main_line = self.locations.starts[-1] if getattr(self,"locations",None) else 1
         if program.get("contains"):
-            raise Unsupported(1, "unsupported Rust backend feature: contained procedures")
+            raise Unsupported(main_line, "unsupported Rust backend feature: contained procedures")
         if not any(isinstance(item, dict) and item.get("Implicit") == "None" for item in program["body"]):
-            raise Unsupported(1, "this Rust backend currently requires IMPLICIT NONE")
+            raise Unsupported(main_line, "this Rust backend currently requires IMPLICIT NONE")
         return self.statements(program["body"])
 
     def typ(self, value, line):
@@ -116,6 +135,75 @@ class Frontend:
         if isinstance(value, dict) and value.get("Integer", "missing") in (None, 4):
             return "i32"
         raise Unsupported(line, f"unsupported Rust backend type: {value}")
+
+    def module(self, data, line):
+        if not any(item.get("Implicit")=="None" for item in data["body"]):
+            raise Unsupported(line,"modules currently require IMPLICIT NONE")
+        body, access, default = [], {}, True
+        for item in data["body"]:
+            if "SourceLocation" in item:
+                line = self.line(item["SourceLocation"])
+            elif "Accessibility" in item:
+                visibility = item["Accessibility"]
+                if visibility["names"]:
+                    access.update((name.lower(),visibility["public"]) for name in visibility["names"])
+                else:
+                    default = visibility["public"]
+            elif "Function" in item or "Subroutine" in item:
+                kind = "Function" if "Function" in item else "Subroutine"
+                body.append(self.procedure(kind,item[kind],line))
+            else:
+                body += self.statements([item],line)
+        return Node("module",line,{"name":data["name"].lower(),"access":access,"public":default},body)
+
+    def procedure(self, kind, data, line):
+        params = [name.lower() for name in data["params"]]
+        intents, declarations, filtered = {}, {}, []
+        for item in data["body"]:
+            if "SourceLocation" in item and not filtered:
+                line = self.line(item["SourceLocation"])
+            if "DummyIntent" in item and item["DummyIntent"]["name"].lower() in params:
+                attr = item["DummyIntent"]
+                name,intent = attr["name"].lower(),attr["intent"].replace(" ","").lower()
+                if intent not in ("intent(in)","intent(out)","intent(inout)"):
+                    raise Unsupported(line,f"unsupported dummy argument attribute: {intent}")
+                intents[name] = intent[7:-1]
+                continue
+            if "InitializedDecl" in item:
+                declaration = item["InitializedDecl"]
+                attrs = [attr.lower() for attr in declaration["attributes"]]
+                if "parameter" not in attrs and ("save" in attrs or any(value is not None for _,value in declaration["entities"])):
+                    raise Unsupported(line,"initialized/SAVE procedure locals are not yet supported")
+            filtered.append(item)
+        nodes = self.statements(filtered,line)
+        body = []
+        for node in nodes:
+            if node.kind == "decl":
+                typ,parameter,items = node.data
+                kept = []
+                for name,initializer in items:
+                    if name in declarations:
+                        if declarations[name] != typ or initializer is not None:
+                            raise Unsupported(node.line,f"conflicting declaration `{name}`")
+                        # The parser can emit a typed RESULT declaration twice.
+                        continue
+                    declarations[name] = typ
+                    if name in params:
+                        if initializer is not None or parameter:
+                            raise Unsupported(node.line,"dummy arguments cannot have initializers")
+                    else:
+                        kept.append((name,initializer))
+                if kept:
+                    body.append(Node("decl",node.line,(typ,parameter,kept)))
+            else:
+                body.append(node)
+        for name in params:
+            if name not in declarations or name not in intents:
+                raise Unsupported(line,f"scalar dummy `{name}` currently requires an explicit type and INTENT")
+        if kind=="Function" and any(intents[name]!="in" for name in params):
+            raise Unsupported(line,"function dummy arguments currently require INTENT(IN)")
+        result_type = self.typ(data["return_type"],line) if kind=="Function" else None
+        return Node("procedure",line,{"name":data["name"].lower(),"params":[(name,declarations[name],intents[name]) for name in params],"result":result_type},body)
 
     def expr(self, value, line):
         if not isinstance(value, dict) or len(value) != 1:
@@ -182,6 +270,12 @@ class Frontend:
                 continue
             if tag == "VarDecl":
                 nodes.append(Node("decl",line,(self.typ(data["kind"],line),False,[(name.lower(),None) for name in data["names"]])))
+            elif tag == "Module":
+                nodes.append(self.module(data,line))
+            elif tag == "Use":
+                nodes.append(Node("use",line,data))
+            elif tag == "Return":
+                nodes.append(Node("return",line,self.expr(data,line) if data is not None else None))
             elif tag == "ArrayDecl":
                 if len(data["dims"]) != 1:
                     raise Unsupported(line,"only rank-one numeric arrays are currently supported")
@@ -206,7 +300,8 @@ class Frontend:
                     nodes.append(Node("random_number",line,[self.expr(item,line) for item in data["args"]]))
                     continue
                 if name != "@formatted_print":
-                    raise Unsupported(line, f"unsupported Rust backend call: {name}")
+                    nodes.append(Node("call",line,(name.lower(),[self.expr(item,line) for item in data["args"]])))
+                    continue
                 args = data["args"]
                 if not args or not isinstance(args[0], dict) or "Str" not in args[0]:
                     raise Unsupported(line, "formatted PRINT currently requires a literal format")

@@ -6,6 +6,8 @@ import ast
 from compiler_frontend import Frontend, FrontendError, Unsupported
 from arrays import ArraySupport, ARRAY_RUNTIME, RANDOM_RUNTIME
 from values import Value, iterator
+from procedures import Modules, ProcedureSupport
+from source_group import SourceGroup
 import math
 from pathlib import Path
 import re
@@ -23,17 +25,22 @@ def rust_string(text):
     return '"' + "".join('\\"' if c == '"' else "\\\\" if c == "\\" else f"\\u{{{ord(c):x}}}" if ord(c) < 32 or ord(c) == 127 else c for c in text) + '"'
 
 
-class Emitter(ArraySupport):
-    def __init__(self, plan=None, *, source_comments=False):
+class Emitter(ArraySupport, ProcedureSupport):
+    def __init__(self, plan=None, *, source_comments=False, source_location=None):
         self.symbols = {}
         self.arrays = {}
         self.array_writes = set()
+        self.modules = None
+        self.procedure = None
+        self.procedures = {}
+        self.readonly = set()
         self.needs_array_runtime = False
         self.needs_random_runtime = False
         self.parameters = set()
         self.loop_id = 0
         self.needs_format_runtime = False
         self.source_comments = source_comments
+        self.source_location = source_location or (lambda line:f"line {line}")
         self.plan = plan or Plan([])
         self.ranges = dict(self.plan.constants)
         self.identifiers = {}
@@ -43,6 +50,8 @@ class Emitter(ArraySupport):
         return self.identifiers[name]
 
     def identifier(self, name, constant=False):
+        if name in self.identifiers:
+            return self.identifiers[name]
         keywords = set("as async await break const continue crate dyn else enum extern false fn for gen if impl in let loop match mod move mut pub ref return self static struct super trait true type unsafe use where while abstract become box do final macro override priv typeof unsized virtual yield try union".split())
         candidate = name.upper() if constant else name
         if candidate in keywords or candidate.startswith("rf_"):
@@ -78,6 +87,8 @@ class Emitter(ArraySupport):
                 return f"({left} {operator} {right})" if operator else None
             if isinstance(item, ast.Call) and isinstance(item.func,ast.Name) and len(item.args) == 1:
                 name = item.func.id.removeprefix("_rf_name_")
+                if name in self.procedures:
+                    return None
                 arg = render(item.args[0])
                 if arg is not None and name in ("real","dble"):
                     return f"({arg} as {'f32' if name == 'real' else 'f64'})"
@@ -87,6 +98,8 @@ class Emitter(ArraySupport):
         return render(node) or validated.code
 
     def direct_format(self, fmt, items, initialized, line):
+        if any(isinstance(part,ast.Call) and isinstance(part.func,ast.Name) and part.func.id.removeprefix("_rf_name_") in self.procedures for item in items for part in ast.walk(item)):
+            return None
         fields = simple_fields(fmt.strip(),len(items))
         if fields is None:
             return None
@@ -100,6 +113,8 @@ class Emitter(ArraySupport):
             if precision is not None:
                 spec += f".{precision}"
             name = self.rust_name(item.id.removeprefix("_rf_name_")) if isinstance(item,ast.Name) else ""
+            if "::" in name:
+                name = ""
             template.append("{" + name + (":"+spec if spec else "") + "}")
             if not name:
                 arguments.append(self.readable(item,value))
@@ -185,6 +200,8 @@ class Emitter(ArraySupport):
             if name.startswith("_rf_section_"):
                 return self.array_section(name.removeprefix("_rf_section_"),node.args,initialized,line)
             decoded = name.removeprefix("_rf_name_")
+            if decoded in self.procedures:
+                return self.function_call(decoded,node.args,initialized,line,constant)
             if decoded in self.arrays:
                 return self.array_element(decoded,node.args,initialized,line)
             if decoded == "size" and len(node.args)==1 and isinstance(node.args[0],ast.Name):
@@ -263,8 +280,13 @@ class Emitter(ArraySupport):
         for node in nodes:
             line = node.line
             if self.source_comments:
-                lines.append(indent + f"// Fortran line {line}")
+                lines.append(indent + f"// Fortran {self.source_location(line)}")
             expression = lambda text, constant=False: self.expr(text, state, line, constant)
+            if node.kind == "use":
+                self.require(not executable,line,"USE must precede executable statements")
+                self.require(self.modules is not None,line,"unsupported USE without supplied modules")
+                self.bind_members(self.modules.imports(node),state,line)
+                continue
             if node.kind == "array_decl":
                 self.require(not executable,line,"declarations must precede executable statements at program scope")
                 lines.extend(indent+part for part in self.declare_array(node,state).splitlines())
@@ -274,6 +296,7 @@ class Emitter(ArraySupport):
                 typ, parameter, items = node.data
                 for name, initializer in items:
                     self.require(name not in self.symbols, line, f"duplicate declaration `{name}`")
+                    self.require(name not in self.procedures,line,f"declaration conflicts with imported procedure `{name}`")
                     self.require(not parameter or initializer is not None, line, "PARAMETER requires an initializer")
                     value = self.cast(expression(initializer, parameter), typ, line) if initializer is not None else None
                     self.require(value is None or value.extent is None,line,"scalar declaration requires a scalar initializer")
@@ -281,6 +304,8 @@ class Emitter(ArraySupport):
                     if parameter:
                         self.parameters.add(name)
                     known = integer_constant(initializer,self.ranges) if parameter and typ == "i32" and initializer is not None else None
+                    if known is not None:
+                        self.plan.constants[name] = self.ranges[name] = (known,known)
                     literal_const = parameter and initializer is not None and (isinstance(initializer,ast.Constant) and type(initializer.value) is bool or isinstance(initializer,ast.Call) and isinstance(initializer.func,ast.Name) and initializer.func.id in ("_rf_f32","_rf_f64") and typ in FLOAT)
                     is_const = known is not None or literal_const
                     self.identifier(name,is_const)
@@ -296,6 +321,7 @@ class Emitter(ArraySupport):
                 name, text = node.data
                 typ = self.variable(name, line)
                 self.require(name not in self.parameters, line, f"cannot assign PARAMETER `{name}`")
+                self.require(name not in self.readonly,line,f"cannot modify INTENT(IN) dummy `{name}`")
                 self.require(name not in active_loops, line, f"cannot modify active DO variable `{name}`")
                 value = self.cast(expression(text), typ, line)
                 if name in self.arrays:
@@ -321,7 +347,19 @@ class Emitter(ArraySupport):
                     if sum(isinstance(item,tuple) and item[0]==name for item in state)==self.arrays[name]:
                         state.add(name)
             elif node.kind == "random_number":
+                if "random_number" in self.procedures:
+                    lines.extend(indent+part for part in self.subroutine_call("random_number",node.data,state,line,active_loops))
+                    continue
+                for arg in node.data:
+                    if isinstance(arg,ast.Name):
+                        self.require(arg.id.removeprefix("_rf_name_") not in self.readonly,line,"cannot modify INTENT(IN) dummy")
                 lines.append(indent+self.random_number(node.data,state,line))
+            elif node.kind == "call":
+                name,args = node.data
+                lines.extend(indent+part for part in self.subroutine_call(name,args,state,line,active_loops))
+            elif node.kind == "return":
+                lines.append(indent+self.procedure_return(node.data,state,line))
+                break
             elif node.kind == "print":
                 values = []
                 has_arrays = False
@@ -405,7 +443,7 @@ class Emitter(ArraySupport):
                     continue
                 body, _ = self.block(node.body, state | {name}, level=level+2, active_loops=active_loops | {name},ranges=child_ranges)
                 lines += [indent + "{", *[indent + f"    let {target} = {value.code};" for target, value in zip((start, limit, step), values)],
-                          indent + f'    assert_ne!({step}, 0, "zero DO stride at Fortran line {line}");',
+                          indent + f'    assert_ne!({step}, 0, {rust_string("zero DO stride at Fortran "+self.source_location(line))});',
                           indent + f"    {var} = {start};",
                           indent + f"    while if {step} > 0 {{ {var} <= {limit} }} else {{ {var} >= {limit} }} {{",
                           *body, indent + f'        {var} = {var}.checked_add({step}).expect("DO variable overflow");',
@@ -442,26 +480,60 @@ fn rf_ipow(base: i32, exponent: i32) -> i32 {
 '''
 
 
-def transpile(source, *, compiler=None, filename="input.f90", source_comments=False):
+def transpile(source, *, compiler=None, filename="input.f90", source_comments=False, locations=None):
     def emit(tree):
-        emitter = Emitter(Plan(tree), source_comments=source_comments)
+        location = locations.label if locations else None
+        modules = Modules([node for node in tree if node.kind=="module"],Emitter,source_comments,location)
+        tree = [node for node in tree if node.kind!="module"]
+        emitter = Emitter(Plan(tree), source_comments=source_comments,source_location=location)
+        emitter.modules = modules
         body, _ = emitter.block(tree, set(), declarations=True)
-        shared = format_runtime() if emitter.needs_format_runtime else ""
-        if emitter.needs_array_runtime:
+        emitters = [emitter,*modules.emitters]
+        shared = format_runtime() if any(e.needs_format_runtime for e in emitters) else ""
+        if any(e.needs_array_runtime for e in emitters):
             shared += ARRAY_RUNTIME
+        if any(e.needs_array_runtime or e.needs_format_runtime for e in emitters):
+            shared += location_runtime(locations)
         if emitter.needs_random_runtime:
             shared += RANDOM_RUNTIME
             body.insert(0,"    let mut rf_rng = RfRng(1);")
         code = "\n".join(body)
+        module_code = "\n".join(modules.code)
         conversion = RUNTIME.index("fn rf_to_i32")
         power = RUNTIME.index("fn rf_ipow")
         runtime = RUNTIME[:conversion]
-        if "rf_to_i32(" in code:
+        if "rf_to_i32(" in code+module_code:
             runtime += RUNTIME[conversion:power]
-        if "rf_ipow(" in code:
+        if "rf_ipow(" in code+module_code:
             runtime += RUNTIME[power:]
-        return runtime + shared + "\nfn main() {\n" + code + "\n}\n"
-    return Frontend(source, filename=filename, compiler=compiler).process(emit)
+        return runtime + shared + module_code + "\nfn main() {\n" + code + "\n}\n"
+    try:
+        return Frontend(source, filename=filename, compiler=compiler,locations=locations).process(emit)
+    except Unsupported as error:
+        if locations:
+            name,line = locations.locate(error.line)
+            raise Unsupported(line,str(error),filename=name) from error
+        raise
+
+
+def transpile_files(paths, *, compiler=None, source_comments=False):
+    paths = list(paths)
+    if len(paths)==1:
+        return transpile(Path(paths[0]).read_text(encoding="utf-8-sig"),filename=paths[0],compiler=compiler,source_comments=source_comments)
+    group = SourceGroup.read(paths)
+    return transpile(group.source,compiler=compiler,filename="<source group>",source_comments=source_comments,locations=group)
+
+
+def location_runtime(locations):
+    if not locations:
+        return '\nfn rf_location(line: usize) -> String { format!("line {line}") }\n'
+    lines = ["\nfn rf_location(line: usize) -> String {", "    match line {"]
+    for index,((name,_),start) in enumerate(zip(locations.parts,locations.starts)):
+        end = locations.starts[index+1]-1 if index+1 < len(locations.starts) else None
+        pattern = f"{start}..={end}" if end is not None else "_"
+        lines.append(f'        {pattern} => format!("{{}}:{{}}", {rust_string(name)}, line - {start} + 1),')
+    lines += ["    }", "}"]
+    return "\n".join(lines)+"\n"
 
 
 def format_runtime():
@@ -483,7 +555,7 @@ fn rf_formatted_print(format: &str, items: &[rf_format::Value<'_>], line: usize)
         format.as_bytes(), items.len(),
         &|index, visit| visit(items[index]),
         &mut |byte| output.push(byte), true,
-    ).unwrap_or_else(|error| panic!("Fortran line {line}: {error}"));
+    ).unwrap_or_else(|error| panic!("Fortran {}: {error}", rf_location(line)));
     output.push(b'\\n');
     std::io::stdout().lock().write_all(&output).expect("formatted output failed");
 }
@@ -492,20 +564,19 @@ fn rf_formatted_print(format: &str, items: &[rf_format::Value<'_>], line: usize)
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("source", type=Path)
+    parser.add_argument("sources", nargs="+", type=Path, help="Module sources in dependency order, followed by the main-program source")
     parser.add_argument("-o", "--out", type=Path,
-                        help="Rust output path (default: target/rust-transpiler/<source-stem>.rs)")
+                        help="Rust output path (default: target/rust-transpiler/<last-source-stem>.rs)")
     parser.add_argument("--rfort", type=Path, help="Existing compiler executable; no compiler build is performed")
     parser.add_argument("--run", action="store_true", help="Compile generated Rust with rustc and run it")
     parser.add_argument("--source-comments", action="store_true", help="Include original Fortran line comments in generated Rust")
     args = parser.parse_args()
     if args.out is None:
-        args.out = Path("target") / "rust-transpiler" / (args.source.stem + ".rs")
+        args.out = Path("target") / "rust-transpiler" / (args.sources[-1].stem + ".rs")
     try:
-        generated = transpile(args.source.read_text(encoding="utf-8-sig"), compiler=args.rfort, filename=args.source,
-                              source_comments=args.source_comments)
-        if args.out.resolve() == args.source.resolve():
-            parser.error("output must differ from the input source")
+        if args.out.resolve() in {path.resolve() for path in args.sources}:
+            parser.error("output must differ from every input source")
+        generated = transpile_files(args.sources, compiler=args.rfort,source_comments=args.source_comments)
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(generated, encoding="utf-8")
         if args.run:
@@ -513,7 +584,7 @@ def main():
             subprocess.run(["rustc", "--edition=2021", "--crate-name", "rfort_transpiled", "-D", "warnings", str(args.out), "-o", str(executable)], check=True, timeout=120)
             return subprocess.run([str(executable)], timeout=10).returncode
     except Unsupported as error:
-        print(f"{args.source}:{error.line}: error: {error}", file=sys.stderr)
+        print(f"{error.filename or args.sources[-1]}:{error.line}: error: {error}", file=sys.stderr)
         return 1
     except FrontendError as error:
         print(str(error), file=sys.stderr)

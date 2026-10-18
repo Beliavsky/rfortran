@@ -38,6 +38,17 @@ class BatchTests(unittest.TestCase):
         a, b = self.source("a/main.f90"), self.source("b/main.f90")
         self.assertNotEqual(run_batch.artifact_dir(self.work,a),run_batch.artifact_dir(self.work,b))
         self.assertEqual(run_batch.artifact_dir(self.work,a),run_batch.artifact_dir(self.work,a))
+        self.assertNotEqual(run_batch.artifact_dir(self.work,a,[a]),run_batch.artifact_dir(self.work,a,[b]))
+
+    def test_common_modules_precede_each_driver_and_are_excluded_from_glob(self):
+        module,source = self.source("mod.f90"),self.source("main.f90")
+        with mock.patch.object(run_batch,"run_phase",side_effect=self.phase) as runner:
+            self.assertEqual(self.invoke(self.work / "*.f90","--module",module),0)
+        command = runner.call_args.args[1]
+        self.assertEqual(command[2:4],[module,source])
+        report = json.loads((self.work / "output/report.json").read_text())
+        self.assertEqual(report["modules"],[str(module)])
+        self.assertEqual(report["summary"],{"translated":1})
 
     def test_timeout_and_missing_executable_become_stage_results(self):
         error = subprocess.TimeoutExpired(["tool"],1,output=b"partial",stderr=b"diagnostic")

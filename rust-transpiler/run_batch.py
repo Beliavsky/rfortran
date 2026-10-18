@@ -35,10 +35,11 @@ def collect_inputs(patterns):
     return files, errors
 
 
-def artifact_dir(root, source):
+def artifact_dir(root, source, modules=()):
     # Keep same-named files from different directories distinct, independent of
     # selection order. Only a safe basename and a path digest become output paths.
-    digest = hashlib.sha256(str(source.resolve()).encode("utf-8")).hexdigest()[:16]
+    paths = [*modules,source]
+    digest = hashlib.sha256("\0".join(str(path.resolve()) for path in paths).encode("utf-8")).hexdigest()[:16]
     return root / f"{source.stem}-{digest}"
 
 
@@ -62,7 +63,7 @@ def run_phase(name, command, cwd, timeout):
 
 
 def try_file(source, args):
-    work = artifact_dir(args.out_dir, source)
+    work = artifact_dir(args.out_dir, source, args.modules)
     result = {"source": str(source), "artifact_dir": str(work), "stages": []}
     try:
         work.mkdir(parents=True, exist_ok=True)
@@ -70,7 +71,7 @@ def try_file(source, args):
         return dict(result, status="output_failed", diagnostic=str(error))
     rust = work / "main.rs"
     executable = work / ("main.exe" if sys.platform == "win32" else "main.bin")
-    command = [sys.executable, TRANSPILER, source, "-o", rust]
+    command = [sys.executable, TRANSPILER, *args.modules, source, "-o", rust]
     if args.rfort:
         command += ["--rfort", args.rfort]
     phases = [("translate", command, args.translate_timeout)]
@@ -101,6 +102,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("inputs", nargs="+", help='Files or globs, e.g. "*.f90" or "tests/**/*.f90"')
     parser.add_argument("--run", action="store_true", help="Also compile and execute each successful translation")
+    parser.add_argument("--module", dest="modules", action="append", type=Path, default=[],
+                        help="Prepend a common module source; repeat in dependency order")
     parser.add_argument("--out-dir", type=Path, default=Path("target/rust-transpiler/batch"))
     parser.add_argument("--report", type=Path, help="JSON report path (default: OUT_DIR/report.json)")
     parser.add_argument("--rfort", type=Path, help="Existing compiler executable; never rebuilt")
@@ -117,7 +120,11 @@ def main(argv=None):
     if Path(args.rustc).exists():
         args.rustc = str(Path(args.rustc).resolve())
     sources, results = collect_inputs(args.inputs)
-    if args.report in sources:
+    args.modules = [path.resolve() for path in args.modules]
+    sources = [path for path in sources if path not in args.modules]
+    if not sources and not results:
+        parser.error("no driver sources selected after excluding --module inputs")
+    if args.report in [*sources,*args.modules]:
         parser.error("report path must differ from an input source")
     started = time.perf_counter()
     for source in sources:
@@ -137,6 +144,7 @@ def main(argv=None):
             print(f"INPUT_FAILED       {result['source']}: {result['diagnostic']}")
     counts = dict(sorted(Counter(result["status"] for result in results).items()))
     report = {"schema_version": 1, "mode": "run" if args.run else "translate", "patterns": args.inputs,
+              "modules": [str(path) for path in args.modules],
               "seconds": round(time.perf_counter()-started, 3), "summary": counts, "results": results}
     try:
         args.report.parent.mkdir(parents=True, exist_ok=True)

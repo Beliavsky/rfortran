@@ -29,6 +29,48 @@ def program(body):
 
 @unittest.skipUnless(HAS_FRONTEND, "An existing rfort executable is required")
 class ValidationTests(unittest.TestCase):
+    def test_module_scope_and_procedure_limits(self):
+        module = """module m
+implicit none
+private
+public :: f, s
+integer,parameter :: hidden=7
+contains
+function f(i) result(j)
+integer,intent(in) :: i
+integer :: j
+j=i*2
+end function
+subroutine s(i,j)
+integer,intent(in) :: i
+integer,intent(out) :: j
+j=i+1
+end subroutine
+end module
+"""
+        for body,message in (
+            ("use m\nimplicit none\nprint *,f(1.0)","type/kind/rank mismatch"),
+            ("use m\nimplicit none\nprint *,f()","wrong number"),
+            ("use m\nimplicit none\ncall s(1,2)","output arguments"),
+            ("use m, only: missing\nimplicit none","no accessible member"),
+            ("use m, only: hidden\nimplicit none","no accessible member"),
+            ("implicit none\nprint *,f(1)","unsupported intrinsic or procedure"),
+        ):
+            with self.subTest(body=body):
+                with self.assertRaisesRegex(Unsupported,message):
+                    transpile(module+"program p\n"+body+"\nend program p\n")
+        with self.assertRaisesRegex(Unsupported,"INTENT\\(IN\\)"):
+            transpile(module.replace("j=i*2","i=1\nj=i*2")+program("use m\nprint *,f(1)"))
+        with self.assertRaisesRegex(Unsupported,"not definitely assigned"):
+            transpile(module.replace("j=i+1","")+program("use m\ninteger :: j\ncall s(1,j)"))
+
+    def test_module_data_and_saved_locals_are_explicitly_rejected(self):
+        for declarations,message in (("integer :: count","mutable module variables"),
+                                     ("contains\ninteger function f()\ninteger :: count=0\nf=count\nend function","SAVE procedure locals")):
+            with self.subTest(declarations=declarations):
+                with self.assertRaisesRegex(Unsupported,message):
+                    transpile("module m\nimplicit none\n"+declarations+"\nend module\n"+program("use m"))
+
     def reject(self, source, message):
         with self.assertRaisesRegex((Unsupported, FrontendError), message):
             transpile(program(source))
@@ -96,9 +138,10 @@ class AdapterTests(unittest.TestCase):
         with self.assertRaisesRegex(Unsupported, "unsupported Rust backend expression: NewExpression"):
             self.frontend().expr({"NewExpression": {}}, 2)
 
-    def test_unsupported_call_reports_its_name(self):
-        with self.assertRaisesRegex(Unsupported, "unsupported Rust backend call: missing"):
-            self.frontend().statements([{"CallSub":{"name":"missing","args":[]}}])
+    def test_subroutine_calls_preserve_names_for_scope_resolution(self):
+        nodes = self.frontend().statements([{"CallSub":{"name":"missing","args":[]}}])
+        self.assertEqual(nodes[0].kind,"call")
+        self.assertEqual(nodes[0].data,("missing",[]))
 
     def test_formatted_print_requires_literal_format(self):
         with self.assertRaisesRegex(Unsupported, "requires a literal format"):
@@ -176,6 +219,189 @@ class StyleTests(unittest.TestCase):
 
 @unittest.skipUnless(HAS_FRONTEND and shutil.which("rustc") and shutil.which("gfortran"), "rfort, rustc, and gfortran required")
 class NativeTests(unittest.TestCase):
+    def test_existing_module_procedure_examples(self):
+        for name in ("xfunc.f90","xpure_func.f90","xsub.f90","xpure_sub.f90"):
+            with self.subTest(name=name):
+                self.compare((ROOT.parent/name).read_text())
+
+    def test_module_dependencies_constants_only_and_renaming(self):
+        self.compare("""module base
+implicit none
+private
+integer,parameter :: factor=3
+public :: twice,plus,factor
+contains
+function twice(i) result(j)
+integer,intent(in) :: i
+integer :: j
+j=factor*i
+end function
+subroutine plus(i)
+integer,intent(inout) :: i
+i=i+factor
+end subroutine
+end module
+module other
+use base, only: alias=>twice,factor
+implicit none
+integer,parameter :: shift=factor+1
+contains
+function calc(i) result(j)
+integer,intent(in) :: i
+integer :: j
+j=alias(i)+shift
+end function
+end module
+program p
+use other, only: answer=>calc,shift
+use base, only: plus
+implicit none
+integer :: i
+i=2
+call plus(i)
+print '(i5)',shift
+print '(2i5)',shift,answer(i)
+end program
+""",exact=True)
+
+    def test_scalar_procedure_types_and_forward_calls(self):
+        self.compare("""module funcs
+implicit none
+contains
+function squared(x) result(y)
+real,intent(in) :: x
+real :: y
+y=x*x
+end function
+function hypot(x) result(y)
+double precision,intent(in) :: x
+double precision :: y
+y=sqrt(x*x+1.d0)
+if(x<0.d0) return
+end function
+function positive(i) result(yes)
+integer,intent(in) :: i
+logical :: yes
+yes=i>0
+end function
+integer function twice(i)
+integer,intent(in) :: i
+twice=inc(i)+i-1
+end function
+integer function inc(i)
+integer,intent(in) :: i
+inc=i+1
+end function
+end module
+program p
+use funcs
+implicit none
+print *,squared(1.5),hypot(2.d0),positive(-1),twice(3)
+end program
+""")
+
+    def test_scalar_subroutine_inputs_outputs_and_inout(self):
+        self.compare("""module funcs
+implicit none
+contains
+subroutine split(i,a,b)
+integer,intent(in) :: i
+integer,intent(out) :: a,b
+a=i/2
+b=i-a
+end subroutine
+subroutine inc(x,step)
+integer,intent(inout) :: x
+integer,intent(in) :: step
+x=x+step
+return
+end subroutine
+subroutine set(x)
+integer,intent(out) :: x
+x=5
+end subroutine
+end module
+program p
+use funcs
+implicit none
+integer :: i,j,k
+call split(3+4,i,j)
+call inc(i,j)
+call set(k)
+print *,i,j,k
+end program
+""")
+
+    def test_module_host_constants_local_shadowing_and_array_storage(self):
+        self.compare("""module funcs
+implicit none
+integer,parameter :: n=3
+contains
+function f(n) result(j)
+integer,intent(in) :: n
+integer :: j
+j=n+1
+end function
+function total(i) result(j)
+integer,intent(in) :: i
+integer :: j,a(n)
+a=i
+j=sum(a)
+end function
+end module
+program p
+use funcs
+implicit none
+print *,n,f(10),total(2)
+end program
+""")
+
+    def test_scalar_function_in_array_expression_evaluated_once(self):
+        self.compare("""module funcs
+implicit none
+contains
+function bump() result(x)
+integer :: x
+print *,'called'
+x=2
+end function
+end module
+program p
+use funcs
+implicit none
+integer :: a(3),total
+a=1
+a=a+bump()
+print *,a
+total=sum(bump()*a)
+print *,total
+end program
+""")
+
+    def test_user_procedures_can_shadow_intrinsics(self):
+        self.compare("""module funcs
+implicit none
+contains
+function sqrt(x) result(y)
+real,intent(in) :: x
+real :: y
+y=x+100.0
+end function
+subroutine random_number(x)
+real,intent(out) :: x
+x=0.25
+end subroutine
+end module
+program p
+use funcs
+implicit none
+real :: x
+call random_number(x)
+print '(f9.2)',sqrt(4.0)
+print *,x
+end program
+""")
+
     def test_array_print_and_element_initialization(self):
         self.compare(program("""integer :: a(3),i
 real :: x(2)

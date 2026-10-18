@@ -33,6 +33,11 @@ def references(nodes):
         elif node.kind == "random_number":
             for value in node.data:
                 result |= names(value)
+        elif node.kind == "call":
+            for value in node.data[1]:
+                result |= names(value)
+        elif node.kind == "return" and node.data is not None:
+            result |= names(node.data)
         elif node.kind == "do":
             result.add(node.data[0])
             for value in node.data[1]:
