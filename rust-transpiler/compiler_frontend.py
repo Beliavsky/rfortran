@@ -141,6 +141,11 @@ class Frontend:
             return ast.Name(id="_rf_name_" + data.lower())
         if tag == "Call":
             return ast.Call(func=ast.Name(id="_rf_name_" + data[0].lower()), args=[self.expr(item, line) for item in data[1]], keywords=[])
+        if tag == "Index":
+            return ast.Call(func=ast.Name(id="_rf_name_"+data[0].lower()),args=[self.expr(item,line) for item in data[1]],keywords=[])
+        if tag == "Section":
+            args = [self.expr(data[key],line) if data[key] is not None else ast.Constant(None) for key in ("lower","upper","stride")]
+            return ast.Call(func=ast.Name(id="_rf_section_"+data["name"].lower()),args=args,keywords=[])
         if tag == "Bin":
             operator, left, right = data
             a, b = self.expr(left, line), self.expr(right, line)
@@ -177,6 +182,10 @@ class Frontend:
                 continue
             if tag == "VarDecl":
                 nodes.append(Node("decl",line,(self.typ(data["kind"],line),False,[(name.lower(),None) for name in data["names"]])))
+            elif tag == "ArrayDecl":
+                if len(data["dims"]) != 1:
+                    raise Unsupported(line,"only rank-one numeric arrays are currently supported")
+                nodes.append(Node("array_decl",line,(self.typ(data["kind"],line),data["name"].lower(),self.expr(data["dims"][0],line))))
             elif tag == "InitializedDecl":
                 attrs = [item.lower() for item in data["attributes"]]
                 if set(attrs) - {"parameter", "save"}:
@@ -185,10 +194,17 @@ class Frontend:
                 nodes.append(Node("decl",line,(self.typ(data["kind"],line),"parameter" in attrs,entities)))
             elif tag == "Assign":
                 nodes.append(Node("assign",line,(data["name"].lower(),self.expr(data["value"],line))))
+            elif tag == "AssignIndex":
+                if len(data["indices"]) != 1:
+                    raise Unsupported(line,"only rank-one element assignments are supported")
+                nodes.append(Node("assign_index",line,(data["name"].lower(),self.expr(data["indices"][0],line),self.expr(data["value"],line))))
             elif tag == "Print":
                 nodes.append(Node("print",line,[self.expr(item,line) for item in data["items"]]))
             elif tag == "CallSub":
                 name = data["name"]
+                if name.lower()=="random_number":
+                    nodes.append(Node("random_number",line,[self.expr(item,line) for item in data["args"]]))
+                    continue
                 if name != "@formatted_print":
                     raise Unsupported(line, f"unsupported Rust backend call: {name}")
                 args = data["args"]

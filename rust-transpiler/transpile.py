@@ -4,7 +4,8 @@ from __future__ import annotations
 import argparse
 import ast
 from compiler_frontend import Frontend, FrontendError, Unsupported
-from dataclasses import dataclass
+from arrays import ArraySupport, ARRAY_RUNTIME, RANDOM_RUNTIME
+from values import Value, iterator
 import math
 from pathlib import Path
 import re
@@ -12,12 +13,6 @@ import struct
 import subprocess
 import sys
 from rust_style import Plan, fields_fit, integer_constant, integer_range, simple_fields
-
-
-@dataclass
-class Value:
-    code: str
-    typ: str
 
 
 NUMERIC = {"i32", "f32", "f64"}
@@ -28,9 +23,13 @@ def rust_string(text):
     return '"' + "".join('\\"' if c == '"' else "\\\\" if c == "\\" else f"\\u{{{ord(c):x}}}" if ord(c) < 32 or ord(c) == 127 else c for c in text) + '"'
 
 
-class Emitter:
+class Emitter(ArraySupport):
     def __init__(self, plan=None, *, source_comments=False):
         self.symbols = {}
+        self.arrays = {}
+        self.array_writes = set()
+        self.needs_array_runtime = False
+        self.needs_random_runtime = False
         self.parameters = set()
         self.loop_id = 0
         self.needs_format_runtime = False
@@ -92,6 +91,7 @@ class Emitter:
         if fields is None:
             return None
         values = [self.expr(item,initialized,line) for item in items]
+        self.require(all(v.extent is None for v in values),line,"formatted array output is not yet supported")
         if not fields_fit(fields,items,values,self.ranges):
             return None
         template, arguments = [], []
@@ -114,6 +114,8 @@ class Emitter:
         return self.symbols[name]
 
     def cast(self, value, typ, line):
+        if value.extent is not None:
+            return self.array_cast(value,typ,line)
         if value.typ == typ:
             return value
         self.require(value.typ in NUMERIC and typ in NUMERIC, line, "cannot convert between LOGICAL and numeric values")
@@ -122,6 +124,7 @@ class Emitter:
         return Value(f"(({value.code}) as {typ})", typ)
 
     def common(self, left, right, line):
+        self.require(left.extent is None and right.extent is None,line,"scalar operands required")
         self.require(left.typ in NUMERIC and right.typ in NUMERIC, line, "numeric operands required")
         typ = "f64" if "f64" in (left.typ, right.typ) else "f32" if "f32" in (left.typ, right.typ) else "i32"
         return self.cast(left, typ, line), self.cast(right, typ, line), typ
@@ -141,11 +144,15 @@ class Emitter:
         if isinstance(node, ast.Name):
             name = node.id.removeprefix("_rf_name_")
             typ = self.variable(name, line)
+            if name in self.arrays:
+                self.require(not constant,line,"array PARAMETER expressions are not yet supported")
+                return self.array_value(name,initialized,line)
             self.require(name in initialized, line, f"read of `{name}` before definite assignment")
             self.require(not constant or name in self.parameters, line, "PARAMETER initializer may reference only named constants")
-            return Value(self.rust_name(name), typ)
+            return Value(self.rust_name(name), typ, self.arrays.get(name))
         if isinstance(node, ast.UnaryOp):
             value = visit(node.operand)
+            self.require(value.extent is None,line,"array unary operations are not yet supported")
             if isinstance(node.op, ast.Not):
                 self.require(value.typ == "bool", line, ".NOT. requires LOGICAL")
                 return Value(f"(!({value.code}))", "bool")
@@ -157,22 +164,12 @@ class Emitter:
                 return Value(code, value.typ)
         if isinstance(node, ast.BinOp):
             left, right = visit(node.left), visit(node.right)
-            if isinstance(node.op, ast.Pow) and right.typ == "i32":
-                self.require(left.typ in NUMERIC, line, "numeric base required")
-                code = f"rf_ipow({left.code}, {right.code})" if left.typ == "i32" else f"({left.code}).powi({right.code})"
-                return Value(code, left.typ)
-            left, right, typ = self.common(left, right, line)
-            if isinstance(node.op, ast.Pow):
-                return Value(f"({left.code}).powf({right.code})", typ)
-            operators = {ast.Add:("+", "checked_add"), ast.Sub:("-", "checked_sub"),
-                         ast.Mult:("*", "checked_mul"), ast.Div:("/", "checked_div")}
-            self.require(type(node.op) in operators, line, "unsupported arithmetic operator")
-            op, checked = operators[type(node.op)]
-            code = f'({left.code}).{checked}({right.code}).expect("INTEGER overflow or division by zero")' if typ == "i32" else f"(({left.code}) {op} ({right.code}))"
-            return Value(code, typ)
+            if left.extent is not None or right.extent is not None:
+                return self.array_binary(node.op,left,right,line)
+            return self.scalar_binary(node.op,left,right,line)
         if isinstance(node, ast.BoolOp):
             values = [visit(value) for value in node.values]
-            self.require(all(value.typ == "bool" for value in values), line, ".AND./.OR. require LOGICAL operands")
+            self.require(all(value.typ == "bool" and value.extent is None for value in values), line, ".AND./.OR. require scalar LOGICAL operands")
             operator = " && " if isinstance(node.op, ast.And) else " || "
             return Value("(" + operator.join(f"({value.code})" for value in values) + ")", "bool")
         if isinstance(node, ast.Compare):
@@ -185,6 +182,15 @@ class Emitter:
             return Value(f"(({left.code}) {operators[type(node.ops[0])]} ({right.code}))", "bool")
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and not node.keywords:
             name = node.func.id
+            if name.startswith("_rf_section_"):
+                return self.array_section(name.removeprefix("_rf_section_"),node.args,initialized,line)
+            decoded = name.removeprefix("_rf_name_")
+            if decoded in self.arrays:
+                return self.array_element(decoded,node.args,initialized,line)
+            if decoded == "size" and len(node.args)==1 and isinstance(node.args[0],ast.Name):
+                array = node.args[0].id.removeprefix("_rf_name_")
+                if array in self.arrays:
+                    return Value(f"{self.arrays[array]}i32","i32")
             if name in ("_rf_f32", "_rf_f64"):
                 self.require(len(node.args) == 1 and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str), line, "invalid literal")
                 number = float(node.args[0].value)
@@ -202,9 +208,16 @@ class Emitter:
             name = name.removeprefix("_rf_name_")
             self.require(name not in self.symbols, line, f"scalar variable `{name}` cannot be called as a procedure")
             args = [visit(arg) for arg in node.args]
+            if name in ("sum","product","minval","maxval"):
+                self.require(len(args)==1,line,f"{name.upper()} currently requires one positional argument")
+                return self.reduction(name,args[0],line)
+            if name == "size":
+                self.require(len(args)==1 and args[0].extent is not None,line,"SIZE requires one array argument")
+                return Value(f"({args[0].code}).len() as i32","i32")
             if name in ("real", "dble", "int"):
                 self.require(len(args) == 1, line, "conversion intrinsics currently accept one positional argument")
                 return self.cast(args[0], {"real":"f32", "dble":"f64", "int":"i32"}[name], line)
+            self.require(all(v.extent is None for v in args),line,f"array arguments to {name.upper()} are not yet supported")
             if name in ("min", "max"):
                 self.require(len(args) >= 2 and all(v.typ == args[0].typ and v.typ in NUMERIC for v in args), line, "MIN/MAX need at least two numeric arguments of the same type and kind")
                 code = args[0].code
@@ -227,6 +240,20 @@ class Emitter:
             raise Unsupported(line, f"unsupported intrinsic or procedure `{name}`")
         raise Unsupported(line, "unsupported scalar expression")
 
+    def scalar_binary(self, operator, left, right, line):
+        if isinstance(operator, ast.Pow) and right.typ == "i32":
+            self.require(left.typ in NUMERIC,line,"numeric base required")
+            code = f"rf_ipow({left.code}, {right.code})" if left.typ == "i32" else f"({left.code}).powi({right.code})"
+            return Value(code,left.typ)
+        left,right,typ = self.common(left,right,line)
+        if isinstance(operator,ast.Pow):
+            return Value(f"({left.code}).powf({right.code})",typ)
+        operators = {ast.Add:("+","checked_add"),ast.Sub:("-","checked_sub"),ast.Mult:("*","checked_mul"),ast.Div:("/","checked_div")}
+        self.require(type(operator) in operators,line,"unsupported arithmetic operator")
+        op,checked = operators[type(operator)]
+        code = f'({left.code}).{checked}({right.code}).expect("INTEGER overflow or division by zero")' if typ=="i32" else f"(({left.code}) {op} ({right.code}))"
+        return Value(code,typ)
+
     def block(self, nodes, initialized, *, level=1, active_loops=frozenset(), declarations=False, ranges=None):
         previous_ranges = self.ranges
         self.ranges = dict(previous_ranges if ranges is None else ranges)
@@ -238,6 +265,10 @@ class Emitter:
             if self.source_comments:
                 lines.append(indent + f"// Fortran line {line}")
             expression = lambda text, constant=False: self.expr(text, state, line, constant)
+            if node.kind == "array_decl":
+                self.require(not executable,line,"declarations must precede executable statements at program scope")
+                lines.extend(indent+part for part in self.declare_array(node,state).splitlines())
+                continue
             if node.kind == "decl":
                 self.require(not executable, line, "declarations must precede executable statements at program scope")
                 typ, parameter, items = node.data
@@ -245,6 +276,7 @@ class Emitter:
                     self.require(name not in self.symbols, line, f"duplicate declaration `{name}`")
                     self.require(not parameter or initializer is not None, line, "PARAMETER requires an initializer")
                     value = self.cast(expression(initializer, parameter), typ, line) if initializer is not None else None
+                    self.require(value is None or value.extent is None,line,"scalar declaration requires a scalar initializer")
                     self.symbols[name] = typ
                     if parameter:
                         self.parameters.add(name)
@@ -266,18 +298,52 @@ class Emitter:
                 self.require(name not in self.parameters, line, f"cannot assign PARAMETER `{name}`")
                 self.require(name not in active_loops, line, f"cannot modify active DO variable `{name}`")
                 value = self.cast(expression(text), typ, line)
-                lines.append(indent + f"{self.rust_name(name)} = {value.code};")
+                if name in self.arrays:
+                    lines.append(indent+self.assign_array(name,value,line))
+                else:
+                    self.require(value.extent is None,line,"cannot assign an array to a scalar")
+                    lines.append(indent + f"{self.rust_name(name)} = {value.code};")
                 state.add(name)
+            elif node.kind == "assign_index":
+                name,index,text = node.data
+                self.require(name in self.arrays,line,f"unknown array `{name}`")
+                target = self.array_element(name,[index],state,line,writing=True)
+                value = self.cast(expression(text),target.typ,line)
+                self.require(value.extent is None,line,"array element assignment requires a scalar")
+                # Evaluate the index before taking the mutable element borrow.
+                lines.append(indent+f"let rf_index_value = rf_index({expression(index).code}, {self.rust_name(name)}.len(), {line});")
+                lines.append(indent+f"{self.rust_name(name)}[rf_index_value] = {value.code};")
+                lines.append(indent+f"rf_init_{self.rust_name(name)}[rf_index_value] = true;")
+                self.array_writes.add(name)
+                known = integer_constant(index,self.plan.constants)
+                if known is not None and 1 <= known <= self.arrays[name]:
+                    state.add((name,known))
+                    if sum(isinstance(item,tuple) and item[0]==name for item in state)==self.arrays[name]:
+                        state.add(name)
+            elif node.kind == "random_number":
+                lines.append(indent+self.random_number(node.data,state,line))
             elif node.kind == "print":
                 values = []
+                has_arrays = False
                 for item in node.data:
                     if isinstance(item, ast.Constant) and isinstance(item.value, str):
-                        values.append(rust_string(item.value) + ".to_string()")
+                        values.append((False,rust_string(item.value) + ".to_string()"))
                     else:
                         value = expression(item)
-                        values.append(f'(if {value.code} {{ "T" }} else {{ "F" }}).to_string()' if value.typ == "bool" else f"({value.code}).to_string()")
-                code = 'println!(" {}", [' + ", ".join(values) + '].join(" "));' if values else 'println!();'
-                lines.append(indent + code)
+                        if value.extent is not None:
+                            has_arrays = True
+                            values.append((True,f"({iterator(value)}).map(|rf_item| rf_item.to_string())"))
+                        else:
+                            values.append((False,f'(if {value.code} {{ "T" }} else {{ "F" }}).to_string()' if value.typ == "bool" else f"({value.code}).to_string()"))
+                if has_arrays:
+                    lines += [indent+"{",indent+"    let mut rf_output: Vec<String> = Vec::new();"]
+                    for array,code in values:
+                        method = "extend" if array else "push"
+                        lines.append(indent+f"    rf_output.{method}({code});")
+                    lines += [indent+'    println!(" {}", rf_output.join(" "));',indent+"}"]
+                else:
+                    code = 'println!(" {}", [' + ", ".join(code for _,code in values) + '].join(" "));' if values else 'println!();'
+                    lines.append(indent + code)
             elif node.kind == "formatted_print":
                 fmt, items = node.data
                 direct = self.direct_format(fmt,items,state,line)
@@ -291,6 +357,7 @@ class Emitter:
                         values.append(f"rf_format::Value::Character({rust_string(item.value)}.as_bytes())")
                         continue
                     value = expression(item)
+                    self.require(value.extent is None,line,"formatted array output is not yet supported")
                     constructor = {"i32":"Integer", "f32":"Real", "f64":"Real", "bool":"Logical"}[value.typ]
                     if value.typ == "i32":
                         arguments = f"({value.code}) as i64, 4"
@@ -302,7 +369,7 @@ class Emitter:
                 lines.append(indent + f"rf_formatted_print({rust_string(fmt)}, &[{', '.join(values)}], {line});")
             elif node.kind == "if":
                 condition = expression(node.data)
-                self.require(condition.typ == "bool", line, "IF condition must be LOGICAL")
+                self.require(condition.typ == "bool" and condition.extent is None, line, "IF condition must be scalar LOGICAL")
                 yes, yes_state = self.block(node.body, state, level=level+1, active_loops=active_loops)
                 no, no_state = self.block(node.otherwise, state, level=level+1, active_loops=active_loops)
                 lines += [indent + f"if {condition.code} {{", *yes, indent + "} else {", *no, indent + "}"]
@@ -312,7 +379,7 @@ class Emitter:
                 self.require(self.variable(name, line) == "i32", line, "DO variable must be default INTEGER")
                 self.require(name not in self.parameters and name not in active_loops, line, "invalid DO variable")
                 values = [expression(text) for text in bounds]
-                self.require(all(value.typ == "i32" for value in values), line, "DO bounds and stride must be default INTEGER")
+                self.require(all(value.typ == "i32" and value.extent is None for value in values), line, "DO bounds and stride must be scalar default INTEGER")
                 if len(values) == 2:
                     values.append(Value("1i32", "i32"))
                 self.loop_id += 1
@@ -380,6 +447,11 @@ def transpile(source, *, compiler=None, filename="input.f90", source_comments=Fa
         emitter = Emitter(Plan(tree), source_comments=source_comments)
         body, _ = emitter.block(tree, set(), declarations=True)
         shared = format_runtime() if emitter.needs_format_runtime else ""
+        if emitter.needs_array_runtime:
+            shared += ARRAY_RUNTIME
+        if emitter.needs_random_runtime:
+            shared += RANDOM_RUNTIME
+            body.insert(0,"    let mut rf_rng = RfRng(1);")
         code = "\n".join(body)
         conversion = RUNTIME.index("fn rf_to_i32")
         power = RUNTIME.index("fn rf_ipow")

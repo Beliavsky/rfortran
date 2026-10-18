@@ -77,6 +77,43 @@ The `--run` convenience option uses a 120-second compilation timeout and a
 10-second program timeout. It is for trusted local examples, not public execution.
 All testing so far is on x86-64 Windows; Linux/macOS have not been verified.
 
+## Try a set of files
+
+`run_batch.py` accepts individual files and quoted globs. It sorts each glob's
+matches, removes duplicate files, continues after failures, and prints a summary.
+Each file is a separate translation unit; this does not combine module dependencies.
+
+```cmd
+python rust-transpiler\run_batch.py "*.f90"
+python rust-transpiler\run_batch.py "x*.f90" --run
+python rust-transpiler\run_batch.py xloop.f90 xrandom_array.f90 --run --verbose
+python rust-transpiler\run_batch.py "rust-transpiler/examples/**/*.f90" --run --report target\rust-batch.json
+```
+
+Without `--run`, it tries translation only. With `--run`, each successful
+translation is compiled by rustc and executed. Statuses distinguish translation,
+Rust compilation, and execution failures and timeouts. A successful run means
+the program exited with status zero; output is not compared with a reference.
+
+Generated sources and executables go into separate folders under
+`target/rust-transpiler/batch`, including a path digest to distinguish identical
+basenames. Each program runs in its artifact folder with standard input closed;
+interactive programs receive EOF, and relative data files must be supplied there.
+The default timeouts are 120 seconds for translation, 120 for compilation, and
+10 for execution. Override these with `--translate-timeout`, `--compile-timeout`,
+and `--run-timeout`. `--out-dir`, `--rfort`, and `--rustc` select alternate paths.
+Only use `--run` for programs you intend to execute.
+
+The default JSON report is `target/rust-transpiler/batch/report.json`; `--report`
+overrides it. It includes source/artifact paths, status counts, commands, elapsed
+times, exit codes, and captured stdout/stderr for every attempted stage. Console
+output shows a short failure diagnostic; `--verbose` shows complete diagnostics
+and program output. Reports are replaced on each invocation; artifacts from prior
+runs may remain, so consult the report for current results. The runner never
+executes a previous executable after a translation or compilation failure.
+Exit status is zero when all selected files succeed, one for any failure
+(including unmatched globs), and two for invalid command-line arguments.
+
 ## Current subset
 
 - One free-form main program, optionally with a PROGRAM statement. IMPLICIT NONE
@@ -95,7 +132,7 @@ All testing so far is on x86-64 Windows; Linux/macOS have not been verified.
   The emitter can represent runtime strides, but the current rfort `check` command
   rejects nonconstant strides during lowering; that diagnostic is propagated.
   A zero stride or unrepresentable final DO index raises an error.
-- List-directed PRINT of scalar expressions and character literals. Items are
+- List-directed PRINT of scalar expressions, numeric arrays/sections, and character literals. Items are
   separated by spaces; logical output uses T/F. Formatting, field widths, floating
   point spelling, and adjacent character items are **not** an exact emulation of
   Fortran list-directed output. Character variables are absent.
@@ -114,6 +151,35 @@ All testing so far is on x86-64 Windows; Linux/macOS have not been verified.
   `log10`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `sinh`, `cosh`, and `tanh`.
   Calls are positional. Conversion intrinsics accept one argument; MIN/MAX and MOD
   require arguments with matching supported types/kinds.
+- Fixed-size rank-one INTEGER, REAL, and DOUBLE PRECISION arrays, with constant
+  extents and the default lower bound of 1. They become Rust `Vec<T>` values.
+  Whole-array assignment accepts a scalar broadcast or an array of matching known
+  extent. Numeric binary arithmetic and conversions work elementwise. `sum`,
+  `product`, `minval`, `maxval`, and `size` accept arrays; reductions consume
+  iterators directly, including expressions such as `sum(x**2)`.
+  Scalar indexing and unit-stride sections such as `x(1:nprod)` have bounds checks
+  that identify the Fortran line. Initialization is tracked per element: individual
+  assignments, whole-array assignments, and RANDOM_NUMBER mark their destinations
+  initialized. Constant-index writes contribute to definite-assignment analysis;
+  reads whose initialization depends on control flow use runtime flags. Runtime
+  errors identify the first unset element read and the Fortran line. A section
+  checks only its selected elements. Arrays with no preceding assignment are
+  rejected before translation, and untouched backing storage is never exposed.
+  Empty arrays have the usual reduction identities. Array
+  constructors and array arguments to other math intrinsics
+  are not yet supported.
+- `call random_number(x)` for a real scalar or whole rank-one real array. Generated
+  Rust shares one generator across calls and uses rfort's xorshift64* recurrence,
+  default seed, and 24/53-bit conversion to values in `[0,1)`. Its stream differs
+  from gfortran's. `random_seed` and keyword arguments are not yet supported.
+
+For example:
+
+```cmd
+python rust-transpiler\transpile.py xrandom_array.f90 --run
+```
+
+A stable copy is also supplied as `rust-transpiler/examples/random_array.f90`.
 
 Assignments apply numeric conversions, while expressions retain their own kinds:
 `7/2` is integer division even if assigned to a real variable. Default real literals
@@ -129,12 +195,12 @@ Unsupported backend statements and expressions produce `source.f90:line: error: 
 Compiler parse/check failures retain the compiler's diagnostics.
 The tool also diagnoses undeclared variables, invalid scalar types, assignments to
 named constants or active DO variables, and reads before definite assignment.
-Initialization analysis is conservative: assignments in a possibly empty DO loop
+Scalar initialization analysis is conservative: assignments in a possibly empty DO loop
 do not initialize a variable after that loop, and an IF initializes a variable
 afterward only if both branches do. This can reject valid programs whose control
 flow requires deeper analysis. It is not a complete Fortran conformance checker.
 
-Arrays, kind selectors/suffixes, derived types, functions/subroutines, modules,
+Multidimensional/dynamic arrays, kind selectors/suffixes, derived types, functions/subroutines, modules,
 USE association, allocation, pointers, recursion, complex arithmetic, READ,
 formatted file I/O, ELSE IF, DO WHILE, named constructs, EXIT, CYCLE, and STOP are outside
 this first subset. They are diagnosed rather than silently ignored. The mixture
@@ -234,6 +300,6 @@ term, selected procedures could be translated and unsupported library routines
 called through generated bindings. No automatic fallback or hybrid linking exists
 in this version.
 
-The next useful milestone is scalar procedures with explicit interfaces, followed
-by arrays with explicit shape/lower-bound semantics. Tests against gfortran should
+The next useful milestones are scalar procedures with explicit interfaces and
+broader array support, including explicit lower bounds. Tests against gfortran should
 grow with each addition before tackling mixture models or other large programs.
