@@ -65,6 +65,7 @@ fn collect(body: &[Stmt], labels: &mut HashSet<u32>, targets: &mut Vec<u32>) -> 
                     bail!("labels on specification statements are not yet supported");
                 }
             }
+            Stmt::CallSub { name, args } if name == "@goto" => targets.push(number(&args[0])?),
             Stmt::CallSub { name, args } => {
                 for arg in args {
                     references(arg, targets)?;
@@ -151,6 +152,13 @@ fn replace_end(
     region: &str,
     temps: &mut Vec<String>,
 ) -> Result<bool> {
+    // A forward GOTO leaves the region that ends at its label.
+    if let Stmt::CallSub { name, args } = stmt {
+        if name == "@goto" && number(&args[0])? == target {
+            *stmt = Stmt::CallSub { name: "@named_exit".into(), args: vec![Expr::Str(region.into())] };
+            return Ok(true);
+        }
+    }
     if let Stmt::CallSub { name, args } = stmt {
         let offset = match name.as_str() {
             "@empty_read" | "@internal_read" => Some(1),
@@ -278,7 +286,7 @@ fn forward_regions(body: &mut Vec<Stmt>, temps: &mut Vec<String>) -> Result<()> 
             }
             if let Some(first) = first {
                 if escaping_transfer(&body[first..position]) {
-                    bail!("use named EXIT/CYCLE when a forward READ END= region contains a transfer to an enclosing loop");
+                    bail!("use named EXIT/CYCLE when the statements before label {label}, which a GOTO or READ END= jumps to, contain a transfer to an enclosing loop");
                 }
                 let mut segment: Vec<_> = body.drain(first..position).collect();
                 segment.push(Stmt::Exit);
@@ -294,6 +302,23 @@ fn forward_regions(body: &mut Vec<Stmt>, temps: &mut Vec<String>) -> Result<()> 
                     ),
                 );
                 position = first + 1;
+            }
+            // A backward GOTO repeats the statements from its label: they
+            // become a loop that the GOTO cycles and that otherwise exits.
+            let region = format!("@goto_back_region_{label}");
+            let mut last = None;
+            for (i, stmt) in body.iter_mut().enumerate().skip(position + 1) {
+                if replace_goto(stmt, label, &region) { last = Some(i); }
+            }
+            if let Some(last) = last {
+                if escaping_transfer(&body[position..=last]) {
+                    bail!("use named EXIT/CYCLE when the statements from label {label} to a GOTO back to it contain a transfer to an enclosing loop");
+                }
+                let mut segment: Vec<_> = body.drain(position..=last).collect();
+                segment.push(Stmt::Exit);
+                body.insert(position, crate::named_loops::parsed(
+                    Stmt::DoWhile { cond: Expr::Logical(true), body: segment },
+                    Some(region.clone()), Some(region)));
             }
         }
         position += 1;
@@ -326,6 +351,43 @@ fn forward_regions(body: &mut Vec<Stmt>, temps: &mut Vec<String>) -> Result<()> 
     }
     Ok(())
 }
+/// Replace each GOTO `label`, which jumps back, by a CYCLE of `region`.
+fn replace_goto(stmt: &mut Stmt, label: u32, region: &str) -> bool {
+    match stmt {
+        Stmt::CallSub { name, args } if name == "@goto" && number(&args[0]).ok() == Some(label) => {
+            *stmt = Stmt::CallSub { name: "@named_cycle".into(), args: vec![Expr::Str(region.into())] };
+            true
+        }
+        Stmt::If { then_body, else_body, .. } => {
+            let mut found = false;
+            for s in then_body { found |= replace_goto(s, label, region); }
+            if let Some(b) = else_body { for s in b { found |= replace_goto(s, label, region); } }
+            found
+        }
+        Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } | Stmt::Block { body } => {
+            let mut found = false;
+            for s in body { found |= replace_goto(s, label, region); }
+            found
+        }
+        Stmt::SelectCase { cases, default, .. } => {
+            let mut found = false;
+            for c in cases { for s in &mut c.body { found |= replace_goto(s, label, region); } }
+            if let Some(b) = default { for s in b { found |= replace_goto(s, label, region); } }
+            found
+        }
+        _ => false,
+    }
+}
+/// The label of a GOTO that no region could express.
+fn unresolved_goto(body: &[Stmt]) -> Option<u32> {
+    body.iter().find_map(|stmt| match stmt {
+        Stmt::CallSub { name, args } if name == "@goto" => number(&args[0]).ok(),
+        Stmt::If { then_body, else_body, .. } => unresolved_goto(then_body).or_else(|| else_body.as_ref().and_then(|b| unresolved_goto(b))),
+        Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } | Stmt::Block { body } => unresolved_goto(body),
+        Stmt::SelectCase { cases, default, .. } => cases.iter().find_map(|c| unresolved_goto(&c.body)).or_else(|| default.as_ref().and_then(|b| unresolved_goto(b))),
+        _ => None,
+    })
+}
 fn unresolved_end(body: &[Stmt]) -> bool {
     body.iter().any(|stmt|match stmt {
         Stmt::CallSub{name,args}=>{
@@ -350,6 +412,9 @@ fn unit(body: &mut Vec<Stmt>) -> Result<()> {
     }
     let mut temps = vec![];
     forward_regions(body, &mut temps)?;
+    if let Some(label) = unresolved_goto(body) {
+        bail!("GOTO {label} jumps into a construct, or back into one from outside it; this is not yet supported");
+    }
     if unresolved_end(body) {
         bail!("READ END= currently requires an list-directed or scalar CHARACTER formatted READ and a forward label outside intervening loops");
     }

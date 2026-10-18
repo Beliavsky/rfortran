@@ -28,6 +28,7 @@ gfortran when it is installed. Run the tests after `cargo build --bin rfort`.
   - [Elemental math functions](#elemental-math-functions)
 - [Control flow](#control-flow)
   - [DO loops](#do-loops)
+  - [GOTO](#goto)
   - [SELECT CASE ranges](#select-case-ranges)
   - [ASSOCIATE](#associate)
   - [ERROR STOP](#error-stop)
@@ -498,6 +499,16 @@ matching name on END DO; duplicate names and transfers to non-enclosing loops
 are rejected. Unnamed CYCLE/EXIT continue to target the innermost loop.
 Run `python tests/test_named_loops.py` for interpreter/native O0/O2 checks with
 gfortran comparisons; `tests/137_named_loops.f90` is in the Cargo fixture suite.
+
+### GOTO
+
+`goto 10` and `go to 10` may jump forward to a label in the same statement
+list or an enclosing one, leaving any loops and constructs in between, or
+backward to a label earlier in the same statement list, which repeats the
+statements from the label. A jump into a construct, such as into a DO body from
+outside it, is diagnosed. A region that a GOTO creates may not contain an
+unnamed EXIT or CYCLE of an enclosing loop; name the loop instead. Computed and
+assigned GOTO and the arithmetic IF are not supported.
 
 ### SELECT CASE ranges
 
@@ -1890,6 +1901,12 @@ List-directed LOGICAL output uses `T` and `F` for scalar values, array elements,
 expressions and procedure results. CHARACTER strings containing `.TRUE.` or
 `.FALSE.` retain their spelling. Run `python tests/test_logical_list_output.py`
 for strict spelling checks in the interpreter and native code at O0/O2.
+List-directed REAL output has 6 significant digits for REAL and 15 for DOUBLE
+PRECISION, in fixed or exponent form as C's `%g` chooses, without trailing zeros
+but with a digit after the decimal point, and with an unpadded exponent:
+`0.5`, `60.0`, `1.0e-6`, `2.5e10`, `-0.0`, `Infinity`. An exactly integral value
+is written as `n.0`. The interpreter and compiled code write the same text on
+every platform. Run `python tests/test_goto_and_real_output.py`.
 List-directed `PRINT *` with no output items emits a blank record. Large real
 output, including `HUGE(0.0)` and `HUGE(0.0_8)`, no longer traps while choosing
 an output representation. Values near the largest DOUBLE PRECISION number retain

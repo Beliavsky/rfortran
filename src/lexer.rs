@@ -310,6 +310,7 @@ pub enum TokenKind {
     /// with continuation lines joined.
     FormatSpec(String),
     KwData,
+    KwGoto,
     KwContinue,
     #[token(".true.", ignore(ascii_case))]
     True,
@@ -898,6 +899,21 @@ pub fn lex(input: &str) -> Vec<Token> {
         }
     }
     format_statements(&mut tokens, input);
+    // GOTO label and GO TO label; no other statement has a name followed by
+    // an integer.
+    let mut i = 0;
+    while i + 1 < tokens.len() {
+        let same = |a: usize, b: usize, tokens: &Vec<Token>| same_statement(&input[tokens[a].span.end..tokens[b].span.start]);
+        let word = |t: &Token, w: &str| matches!(&t.kind, TokenKind::Ident(n) if n.eq_ignore_ascii_case(w));
+        if word(&tokens[i], "goto") && matches!(tokens[i + 1].kind, TokenKind::Integer(_)) && same(i, i + 1, &tokens) {
+            tokens[i].kind = TokenKind::KwGoto;
+        } else if i + 2 < tokens.len() && word(&tokens[i], "go") && word(&tokens[i + 1], "to")
+            && matches!(tokens[i + 2].kind, TokenKind::Integer(_)) && same(i, i + 1, &tokens) && same(i + 1, i + 2, &tokens) {
+            let span = tokens[i].span.start..tokens[i + 1].span.end;
+            tokens.splice(i..=i + 1, [Token { kind: TokenKind::KwGoto, span }]);
+        }
+        i += 1;
+    }
     // SELECT and CASE are keywords only where a SELECT CASE construct or a
     // CASE statement can be; elsewhere they are names, as `integer :: case`.
     for i in 0..tokens.len() {

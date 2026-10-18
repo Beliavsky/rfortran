@@ -237,13 +237,8 @@ pub fn interpret(program: &Program) {
                                 BinOp::Add => a + b,
                                 BinOp::Sub => a - b,
                                 BinOp::Mul => a * b,
-                                BinOp::Div => {
-                                    if b == 0.0 {
-                                        0.0
-                                    } else {
-                                        a / b
-                                    }
-                                }
+                                // IEEE division, as compiled code: x/0 is an infinity or NaN.
+                                BinOp::Div => a / b,
                                 BinOp::Pow => a.powf(b),
                                 _ => 0.0,
                             };
@@ -723,17 +718,14 @@ pub fn interpret(program: &Program) {
         }
     }
 
+    // The same text as compiled list-directed output: an exactly integral
+    // value as `n.0`, otherwise 6 (REAL) or 15 (DOUBLE PRECISION) significant digits.
     fn format_real(f: f64, double: bool) -> String {
-        if f.is_finite() && f.abs() > f64::MAX * 0.99 { return format!("{f:.16e}"); }
-        if f != 0.0 && (f.abs() < 1e-4 || f.abs() >= if double { 1e15 } else { 1e6 }) {
-            if double { format!("{f:.14e}") } else { format!("{f:.5e}") }
-        } else if f.fract() == 0.0 {
-            format!("{:.1}", f)
-        } else if double {
-            format!("{:.15}", f)
-        } else {
-            format!("{:.6}", f)
-        }
+        if f.fract() == 0.0 && f.abs() < 9.2e18 { return format!("{:.1}", f); }
+        let digits = if f.is_finite() && f.abs() > f64::MAX * 0.99 { 17 } else if double { 15 } else { 6 };
+        let mut out = [0u8; 64];
+        let n = crate::format_spec::list_real(f, digits, &mut out);
+        String::from_utf8_lossy(&out[..n]).into_owned()
     }
 
     fn double_expression(e: &Expr, doubles: &HashMap<String, f64>) -> bool {

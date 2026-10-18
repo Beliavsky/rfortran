@@ -237,7 +237,16 @@ fn expression(e: Expr, arrays: &Arrays) -> Result<Value> {
                     Value::Scalar(Expr::Call(n, values.into_iter().map(Value::expr).collect()))
                 }
             } else {
-                if let Some(count)=values.iter().find_map(|v|if let Value::Array(v)=v {Some(v.len())} else {None}) {
+                // A reduction of an elemental result, as SUM(LEN_TRIM(s)),
+                // takes the element values as an array constructor.
+                if n=="size" && values.len()==1 && matches!(&values[0],Value::Array(_)) {
+                    let Value::Array(items)=&values[0] else {unreachable!()};
+                    Value::Scalar(Expr::IntLit(items.len().to_string()))
+                } else if matches!(n.as_str(),"sum"|"product"|"maxval"|"minval"|"maxloc"|"minloc"|"count"|"any"|"all"
+                    |"@maxloc"|"@minloc"|"@count_default"|"@count")
+                    && values.iter().any(|v|matches!(v,Value::Array(_))) {
+                    Value::Scalar(Expr::Call(n, values.into_iter().map(Value::expr).collect()))
+                } else if let Some(count)=values.iter().find_map(|v|if let Value::Array(v)=v {Some(v.len())} else {None}) {
                     if !matches!(n.as_str(),"index"|"scan"|"verify"|"len_trim"|"ichar"|"iachar"|"adjustl"|"adjustr") {
                         bail!("CHARACTER array arguments to `{n}` are not yet supported");
                     }

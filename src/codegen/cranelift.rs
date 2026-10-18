@@ -352,7 +352,7 @@ fn declare_externs(
     sig_gcvt.params.push(AbiParam::new(types::I32));
     sig_gcvt.params.push(AbiParam::new(ptr_ty));
     sig_gcvt.returns.push(AbiParam::new(ptr_ty));
-    let gcvt_id = module.declare_function(if cfg!(windows) { "_gcvt" } else { "rfort_gcvt" }, Linkage::Import, &sig_gcvt)?;
+    let gcvt_id = module.declare_function("rfort_real_text", Linkage::Import, &sig_gcvt)?;
     let gcvt_ref = module.declare_func_in_func(gcvt_id, b.func);
     let mut sig_pow = Signature::new(cc);
     sig_pow.params.push(AbiParam::new(types::F64));
@@ -1216,6 +1216,13 @@ fn print_integer_candidate(b: &mut FunctionBuilder, value: ir::Value) -> (ir::Va
     let upper=b.ins().f64const(9223372036854775808.0);
     let below=b.ins().fcmp(ir::condcodes::FloatCC::LessThan,value,upper);
     let integral=b.ins().band(equal,below);
+    // Negative zero is written as `-0.0`, not as the integer 0.
+    let bits=b.ins().bitcast(ir::types::I64,ir::MemFlags::new(),value);
+    let negative=b.ins().icmp_imm(ir::condcodes::IntCC::SignedLessThan,bits,0);
+    let zero=b.ins().f64const(0.0);
+    let is_zero=b.ins().fcmp(ir::condcodes::FloatCC::Equal,value,zero);
+    let negative_zero=b.ins().band(negative,is_zero);
+    let integral=b.ins().band_not(integral,negative_zero);
     (integer,integral)
 }
 
@@ -1319,7 +1326,10 @@ fn print_expr(
             ));
             let p_f = b.ins().stack_addr(ptr_ty, buf_f, 0);
 
-            let nd = b.ins().iconst(types::I32, if s.len() > 8 { 15 } else { 6 });
+            // A value exactly representable in single precision, as a folded
+            // REAL constant is, prints as REAL; a longer literal as DOUBLE.
+            let single = f64::from(v as f32) == v;
+            let nd = b.ins().iconst(types::I32, if s.len() > 8 && !single { 15 } else { 6 });
             ex.call_gcvt(b, &[fv, nd, p_f]);
             let p_sel = b.ins().select(is_int, p_int, p_f);
             ex.call_printf(b, &[ex.fmt_s, p_sel]);

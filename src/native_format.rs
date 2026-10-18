@@ -156,6 +156,14 @@ pub unsafe extern "C" fn rfort_file_delete(path:*const u8)->i32 {
     extern "C" {fn remove(path:*const u8)->i32;}
     if path.is_null() {0} else {i32::from(remove(path)!=0)}
 }
+/// List-directed REAL text, NUL-terminated in a buffer of at least 64 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rfort_real_text(x:f64,digits:i32,buffer:*mut u8)->*mut u8 {
+    let out=core::slice::from_raw_parts_mut(buffer,63);
+    let n=format_spec::list_real(x,digits.max(1) as usize,out);
+    *buffer.add(n)=0;
+    buffer
+}
 /// ENDFILE: end the file at the current position.
 #[no_mangle]
 pub unsafe extern "C" fn rfort_file_endfile(stream:*mut core::ffi::c_void)->i32 {

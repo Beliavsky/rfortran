@@ -84,6 +84,7 @@ extern {
         LABEL => TokenKind::StatementLabel(<String>),
         FORMAT_SPEC => TokenKind::FormatSpec(<String>),
         KW_DATA => TokenKind::KwData,
+        KW_GOTO => TokenKind::KwGoto,
         KW_CONTINUE => TokenKind::KwContinue,
         TRUE => TokenKind::True,
         FALSE => TokenKind::False,
@@ -551,6 +552,7 @@ Stmt: Stmt = {
     },
     <name:LoopName?> <stmt:DoLoop> <end:END_LOOP_NAME?> => crate::named_loops::parsed(stmt,name,end),
     KW_RETURN => Stmt::Return(None),
+    KW_GOTO <label:INT> => Stmt::CallSub { name: "@goto".into(), args: vec![Expr::IntLit(label)] },
     // DATA objects / values / [[,] objects / values /]...
     KW_DATA <sets:DataSets> => Stmt::CallSub { name: "@data".into(), args: sets },
     // A FORMAT statement; its label gives the format to READ, WRITE and PRINT.

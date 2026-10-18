@@ -48,6 +48,11 @@ Three more bugs found on 2026-10-17 are also fixed:
 
 Bugs found on 2026-10-18, all fixed:
 
+- On Windows, compiled list-directed REAL output came from the C runtime's
+  `_gcvt`, giving `1.e-006` and `60.`; an initialized REAL variable printed
+  with 15 digits; `-0.0` printed as `0.0`; and the interpreter gave 0.0 for a
+  REAL division by zero instead of an infinity or NaN.
+
 - In compiled code, a REAL(4) variable kept double precision: a value stored
   in it was not rounded to single precision, so a sum of `0.1` ten times was
   exactly 1.0, `x = 16777217.0` kept its value, and `a == 1.0d0/3.0d0` was true
@@ -139,7 +144,8 @@ Bugs found on 2026-10-18, all fixed:
 | [EXIT from a named BLOCK, IF, SELECT CASE or ASSOCIATE](language-support.md#other-statement-forms) | ✅ | | test_named_constructs.py |
 | [ASSOCIATE](language-support.md#associate) | 🟡 | Selectors whose value the block changes are rejected | test_associate.py |
 | SELECT TYPE, SELECT RANK | ❌ | | |
-| GOTO, computed GOTO, arithmetic IF | ❌ | | |
+| [GOTO](language-support.md#goto) | 🟡 | Forward to a label in the same or an enclosing statement list, or backward to a label earlier in the same list; not into a construct | test_goto_and_real_output.py |
+| Computed GOTO, assigned GOTO, arithmetic IF | ❌ | | |
 | STOP with a code | ✅ | | test_pure_error_stop.py |
 | [ERROR STOP](language-support.md#error-stop) | ✅ | Also in PURE procedures | test_pure_error_stop.py |
 

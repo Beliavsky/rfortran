@@ -531,6 +531,49 @@ impl core::fmt::Write for Text {
     }
 }
 
+/// List-directed text of a REAL value with `digits` significant digits, as
+/// %g chooses fixed or exponent form, without trailing zeros but with at least
+/// one digit after the decimal point, and with an unpadded exponent: `0.5`,
+/// `60.0`, `1.0e-6`, `2.5e10`. Writes into `out` and returns the length.
+pub fn list_real(x: f64, digits: usize, out: &mut [u8]) -> usize {
+    use core::fmt::Write;
+    let mut text = Text::new();
+    let digits = digits.max(1);
+    if x.is_nan() {
+        text.extend(b"NaN");
+    } else if x.is_infinite() {
+        text.extend(if x < 0.0 { b"-Infinity" } else { b"Infinity" });
+    } else if x == 0.0 {
+        text.extend(if x.is_sign_negative() { b"-0.0" } else { b"0.0" });
+    } else {
+        let mut raw = Text::new();
+        let _ = write!(raw, "{:.*e}", digits - 1, x);
+        let raw = raw.as_bytes();
+        let e = raw.iter().position(|&c| c == b'e').unwrap_or(raw.len());
+        let exponent = core::str::from_utf8(&raw[e + 1..]).ok().and_then(|s| s.parse::<i32>().ok()).unwrap_or(0);
+        // Trailing zeros of the digits are dropped, keeping one decimal.
+        let trimmed = |t: &mut Text| {
+            if let Some(point) = t.as_bytes().iter().position(|&c| c == b'.') {
+                while t.len > point + 2 && t.bytes[t.len - 1] == b'0' { t.len -= 1; }
+            } else {
+                t.extend(b".0");
+            }
+        };
+        if exponent < -4 || exponent >= digits as i32 {
+            text.extend(&raw[..e]);
+            trimmed(&mut text);
+            let _ = write!(text, "e{exponent}");
+        } else {
+            let decimals = (digits as i32 - 1 - exponent).max(0) as usize;
+            let _ = write!(text, "{:.*}", decimals, x);
+            trimmed(&mut text);
+        }
+    }
+    let n = text.len.min(out.len());
+    out[..n].copy_from_slice(&text.as_bytes()[..n]);
+    n
+}
+
 /// `|x|` rounded to `digits` significant digits: the digits and the decimal
 /// exponent X with |x| = d.ddd * 10^X. Zero gives zeros and X = 0.
 fn significant(x: f64, digits: usize) -> Result<(Text, i32), &'static str> {

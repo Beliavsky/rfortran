@@ -148,6 +148,19 @@ print *, s%len, x%kind, s%kind
 end program
 """, ' 6 8 1\n')
 
+    def test_reductions_of_character_elementals(self):
+        """SUM, MAXVAL, MINLOC, MAXLOC, COUNT, ANY and SIZE of elemental results
+        of CHARACTER arrays, such as SUM(LEN_TRIM(s))."""
+        self.check("""program p
+character(len=5) :: s(3)
+s = ["five ", "six  ", "seven"]
+print *, len_trim(s)
+print *, sum(len_trim(s)), maxval(len_trim(s)), minloc(len_trim(s)), maxloc(len_trim(s))
+print *, count(len_trim(s) > 3), any(index(s, 'x') > 0), size(len_trim(s))
+print *, sum(len_trim(s(2:3))), product(index(s, 'e'))
+end program
+""", " 4 3 5\n 12 5 2 3\n 2 T 3\n 8 0\n")
+
     def test_error_stop_without_code(self):
         """A bare ERROR STOP ends its statement, so the next CASE is not read as its code."""
         self.check("""program p
