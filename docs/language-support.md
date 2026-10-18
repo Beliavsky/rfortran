@@ -354,8 +354,22 @@ returns LOGICAL; the other results retain the first argument's INTEGER kind.
 Bit positions start at zero. Invalid constant positions, field lengths, and
 shift counts are compile errors; dynamic values are checked at runtime.
 Zero-length fields and shifts by the full bit width are supported. Initialization
-checks apply to the input values. Whole-array calls and INTEGER kind 16 are not
-yet supported; scalar array elements are supported.
+checks apply to the input values. The functions are elemental; with array
+arguments, positions, lengths and shift counts must be constants. INTEGER kind
+16 is not supported.
+
+`POPCNT`, `POPPAR`, `LEADZ` and `TRAILZ` count bits and return a default
+INTEGER. `DSHIFTL(I, J, SHIFT)` and `DSHIFTR(I, J, SHIFT)` shift the bits of I
+and J as one double-width value; I and J have the same kind and SHIFT is
+between 0 and the bit size, checked at run time. `BIT_SIZE(I)` is a constant of
+I's kind. `OUT_OF_RANGE(X, MOLD [, ROUND])` tells whether X can be converted to
+MOLD's type and kind: a REAL X is truncated, or rounded when ROUND is true,
+before it is compared with an INTEGER range. X and MOLD must be scalars and
+ROUND a constant.
+
+Assigning an INTEGER value of a wider kind to a narrower variable keeps the
+value's low-order bits, as gfortran does: assigning 130 to an INTEGER(1)
+variable stores -126.
 
 `ISHFTC(I, SHIFT[, SIZE])` rotates the rightmost SIZE bits of I (all of its bits
 by default) and is lowered to the operations above. It is not yet accepted in
@@ -405,7 +419,12 @@ lowering now include the source statement's location.
 
 `SQRT`, `EXP`, `LOG`, `LOG10`, the trigonometric and hyperbolic functions and
 their inverses (`ASINH`, `ACOSH`, `ATANH`), `ERF`, `ERFC`, `GAMMA`,
-`LOG_GAMMA`, `HYPOT`, `AINT` and `ANINT` call the C math library. They are
+`LOG_GAMMA`, `HYPOT`, `AINT`, `ANINT` and the Bessel functions `BESSEL_J0`,
+`BESSEL_J1`, `BESSEL_JN(N, X)`, `BESSEL_Y0`, `BESSEL_Y1` and `BESSEL_YN(N, X)`
+call the C math library, in DOUBLE PRECISION. The transformational
+`BESSEL_JN(N1, N2, X)` form is not supported. `SIGN` takes
+the sign bit of B, so `SIGN(1.0, -0.0)` is -1.0 as in gfortran; `DIM` and
+`DPROD` are also supported. They are
 elemental, including in PRINT and WRITE lists, and keep the kind of their
 argument.
 
@@ -416,6 +435,13 @@ ordinary function by pi in the argument's kind. gfortran reduces the angle in
 degrees first, so DOUBLE PRECISION results can differ from gfortran's in the
 last bit; for example `COSD(90d0)` is about 6e-17, not 0. `ATAN(Y, X)` is
 `ATAN2(Y, X)`. Run `python tests/test_intrinsic_rewrites.py`.
+
+Specific names of generic intrinsics are accepted and call the generic: `IABS`,
+`DABS`, `FLOAT`, `SNGL`, `DFLOAT`, `IFIX`, `IDINT`, `IDNINT`, `DINT`, `DNINT`,
+`DSQRT`, `DEXP`, `ALOG`, `DLOG`, `ALOG10`, `DLOG10`, `DSIN`, `DCOS`, `DTAN`,
+`DASIN`, `DACOS`, `DATAN`, `DATAN2`, `DSINH`, `DCOSH`, `DTANH`, `AMOD`, `DMOD`,
+`ISIGN`, `DSIGN`, `IDIM`, `DDIM`, `MAX0`, `AMAX1`, `DMAX1`, `MIN0`, `AMIN1` and
+`DMIN1`. Run `python tests/test_more_intrinsics.py`.
 
 ## Control flow
 
@@ -877,10 +903,16 @@ Numeric reductions (`SUM`, `PRODUCT`, `MINVAL`, `MAXVAL`) accept `ARRAY=`,
 LOGICAL values or conformable LOGICAL arrays/expressions. A constant `DIM` reduces
 one axis of a fixed-shape array, preserving the other axes in order; without
 DIM the whole array is reduced. Runtime DIM remains unsupported.
-For a positional mask without DIM, use `MASK=`. Empty/all-false integer extrema
+A LOGICAL array in the second position is the MASK. Empty/all-false integer extrema
 use the argument kind's largest/smallest representable values.
 Run `python tests/test_masked_reductions.py` for interpreter/native O0/O2 checks
 and comparison with gfortran when installed.
+
+`IANY`, `IALL` and `IPARITY` reduce INTEGER arrays with IOR, IAND and IEOR, and
+`PARITY` reduces a LOGICAL array with .NEQV.; they take DIM and MASK as the
+numeric reductions do. `NORM2(X [, DIM])` is `SQRT(SUM(X*X [, DIM]))`, without
+the scaling that avoids overflow for very large elements. Run
+`python tests/test_more_intrinsics.py`.
 
 Logical reductions `COUNT`, `ANY`, and `ALL` accept `MASK=` and `DIM=` keywords.
 `COUNT` supports constant `KIND=4` (default) and `KIND=8`; `ANY` and `ALL` return
@@ -959,6 +991,21 @@ form, runtime DIM, CHARACTER arrays and runtime-sized PACK inputs remain outside
 this subset. Run `python tests/test_locations.py`.
 
 ## ALLOCATABLE arrays and pointers
+
+
+`MATMUL` multiplies REAL, DOUBLE PRECISION and INTEGER matrices and vectors of
+constant size, including mixed types (the result has the type of the product),
+section and TRANSPOSE operands, and checks that the inner extents agree.
+ALLOCATABLE, assumed-shape and other runtime-sized operands are also supported,
+with any lower bounds: the product is computed into a temporary before the
+statement, and operands whose inner extents differ stop the program with
+"MATMUL operand shapes do not conform". A runtime-sized operand must be a whole
+array, an elemental expression of whole arrays, or a TRANSPOSE or RESHAPE of
+one; other expressions, such as sections, must first be assigned to an
+ALLOCATABLE array. LOGICAL MATMUL is rejected. Run
+`python tests/test_runtime_matmul.py`.
+`MERGE` is elemental: TSOURCE, FSOURCE and MASK may be numeric or LOGICAL
+arrays of constant size, or scalars. Run `python tests/test_formatted_output.py`.
 
 ### Runtime allocation
 
@@ -1656,10 +1703,26 @@ WRITE and PRINT accept scalar CHARACTER format expressions: literals, named
 PARAMETERs, variables (including formats read from input), concatenation, and
 TRIM. WRITE supports standard output (`*`, constant unit 6, or an INTEGER
 unit variable containing 6), with or without
-an output list. Supported formats use A, I, F, L descriptors, repeat counts,
-quoted literals, `nX` spacing, and `/` record breaks. Runtime formats are checked
-for syntax, descriptor counts, and item types before the statement prints.
-Uninitialized format variables use the usual initialization checks.
+an output list. Runtime formats are checked for syntax and item types before
+the statement prints. Uninitialized format variables use the usual
+initialization checks.
+
+The edit descriptors are A, I, B, O, Z (with `w.m`), F, E, ES, EN, D and G
+(with `w.d`, and `Ee` exponent widths for E, ES, EN and G), G0 and G0.d, L,
+quoted literals, `nX`, T, TL, TR, `/`, `:`, the scale factor `kP`, sign control
+SP, SS and S, and BN and BZ (which do not affect output). Groups may be nested,
+and `*(...)` repeats until the output list ends. When the format ends with
+items left, a new record starts and output continues from the last top-level
+group, or from the start of the format if it has none (format reversion).
+G0 writes a REAL value with 9 significant digits for kind 4 and 17 for kind 8,
+as gfortran does. Numbers are rounded to nearest, ties to even, from their
+exact binary value. Output matches gfortran for these descriptors, including
+Infinity and NaN, asterisks for fields that do not fit, and dropping the
+optional leading zero (`.500`) when the field is too narrow or for F0.d. DC
+and the rounding-mode descriptors (RU, RD, RZ, RN, RC, RP) are not supported.
+The interpreter does not track INTEGER kinds, so B, O and Z of a negative
+value of a non-default kind use the default kind's bits there.
+Run `python tests/test_formatted_output.py`.
 
 WRITE controls may be positional or named: `WRITE(*,FMT=fmt)` and
 `WRITE(UNIT=6,FMT=fmt)` use the same format path. Named UNIT, FMT, and ADVANCE
@@ -1686,8 +1749,9 @@ captures its inputs before replacing the destination, pads unused characters
 with blanks, and reports record overflow. PURE and ELEMENTAL procedures may
 write local CHARACTER variables and writable dummy arguments; INTENT(IN),
 nonlocal destinations and external I/O remain protected. This subset supports
-one record and explicit formats; internal file arrays, list-directed output,
-IOSTAT and other WRITE control options remain unsupported.
+one record; internal file arrays, IOSTAT and other WRITE control options
+remain unsupported. List-directed internal WRITE (`write(s,*) n`) writes each
+item as G0 after a blank.
 `tests/programs/xstr_real.f90`, `tests/172_internal_write.f90`, and
 `python tests/test_internal_write.py` cover this behavior.
 Captured array items also retain every element after vector selection and
@@ -1741,8 +1805,14 @@ Sequential formatted files support `OPEN(unit=20,file='data.txt',status='old',ac
 FILE may be a runtime scalar CHARACTER expression. Named files also support
 NEWUNIT, STATUS='replace' with ACTION='write' or 'readwrite', and
 STATUS='old' with ACTION='read', 'write' or 'readwrite'. The default
-STATUS='unknown', ACTION='readwrite' combination opens or creates a file.
-POSITION='rewind' is supported. Explicit units are
+STATUS='unknown', ACTION='readwrite' combination opens or creates a file;
+STATUS='unknown' also accepts ACTION='write' or 'read', and STATUS='new'
+accepts ACTION='write' or 'readwrite' (without checking that the file is
+absent). CLOSE accepts STATUS='keep' or 'delete'.
+POSITION='rewind' is supported. Formatted and list-directed WRITE go to a
+connected unit; list-directed file output writes a blank, then each item as G0
+separated by blanks, which list-directed READ reads back. Unit 0 writes to
+standard error unless a file is connected to it. Explicit units are
 0 through 1023 except preconnected units 5 and 6. `(A)` reads accept one scalar
 CHARACTER destination; input records must contain non-NUL ASCII. Reads consume
 the entire record and handle LF/CRLF endings.

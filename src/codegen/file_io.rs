@@ -157,6 +157,27 @@ pub(super) fn handle(
     Ok(file)
 }
 
+/// The stream for output to `unit`: unit 0 without a connected file is
+/// standard error.
+pub(super) fn write_handle(
+    module: &mut ObjectModule,
+    b: &mut FunctionBuilder,
+    ptr: ir::Type,
+    dc: &mut u32,
+    unit: ir::Value,
+) -> Result<ir::Value> {
+    let slot = slot(module, b, ptr, dc, unit)?;
+    let file = b.ins().load(ptr, MemFlags::new(), slot, 0);
+    let stderr = call(module, b, "rfort_stderr_stream", &[], ptr)?;
+    let zero = b.ins().icmp_imm(IntCC::Equal, unit, 0);
+    let unconnected = b.ins().icmp_imm(IntCC::Equal, file, 0);
+    let error_unit = b.ins().band(zero, unconnected);
+    let file = b.ins().select(error_unit, stderr, file);
+    let connected = b.ins().icmp_imm(IntCC::NotEqual, file, 0);
+    require(module, b, ptr, dc, connected, "file unit is not connected")?;
+    Ok(file)
+}
+
 // READ with IOSTAT reports connection/range errors without terminating.
 // A null handle with status zero denotes preconnected standard input (unit 5).
 pub(super) fn read_handle(
@@ -245,7 +266,7 @@ pub(super) fn operation(
         b.ins().store(MemFlags::new(),path,address,0);
         return Ok(());
     }
-    if op == "@file_close" {
+    if op == "@file_close" || op == "@file_close_delete" {
         let close = b.create_block();
         let done = b.create_block();
         let connected = b.ins().icmp_imm(IntCC::NotEqual, file, 0);
@@ -259,6 +280,11 @@ pub(super) fn operation(
         b.ins().store(MemFlags::new(), zero, slot, 0);
         let (index,_)=unit_index(b,unit);let names=table(b,module,ptr,".rfort.file_names")?;
         let offset=b.ins().imul_imm(index,8);let address=b.ins().iadd(names,offset);let path=b.ins().load(ptr,MemFlags::new(),address,0);
+        if op == "@file_close_delete" {
+            let result = call(module, b, "rfort_file_delete", &[path], types::I32)?;
+            let okay = b.ins().icmp_imm(IntCC::Equal, result, 0);
+            require(module, b, ptr, dc, okay, "CLOSE could not delete the file")?;
+        }
         call(module,b,"rfort_file_free_name",&[path],types::I32)?;b.ins().store(MemFlags::new(),zero,address,0);
         b.ins().jump(done, &[]);
         b.switch_to_block(done);

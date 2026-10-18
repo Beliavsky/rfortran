@@ -279,3 +279,116 @@ The most common remaining first diagnostics, among demos gfortran compiles:
 
 Reports: `target/m-intrinsics-compile-step2.json` and
 `target/m-intrinsics-compiled-run-step2.json`, each with a companion `.md`.
+
+## After group 3 (formatted output and I/O): 2026-10-17
+
+A later debug build of the working tree replaces the formatted-output renderer
+with one shared by the compiler's runtime library and the interpreter, and adds:
+
+- the E, ES, EN, D and G edit descriptors (with `Ee` exponent widths), G0 for
+  INTEGER, LOGICAL and CHARACTER items, B, O and Z, T, TL and TR, `kP`, SP, SS
+  and S, BN and BZ;
+- format reversion, so `print '(i3)', v` writes one record per element;
+- list-directed WRITE to files and CHARACTER variables, and WRITE to unit 0
+  (standard error);
+- CLOSE with STATUS='keep' or 'delete', and more OPEN STATUS/ACTION pairs;
+- SIGN, DIM, DPROD, elemental MERGE of arrays, and MATMUL of REAL and INTEGER
+  arrays of constant size.
+
+| rfort O0 outcome | All 249 demos | 204 demos gfortran compiles |
+|---|---:|---:|
+| Compiled | 84 | 70 |
+| Parse error | 58 | 38 |
+| Later error | 107 | 96 |
+
+In the previous run these were 70/58/121 and 56/38/110. No demo that compiled
+before stopped compiling.
+
+Execution checks of the 84 demos that compile, at both O0 and O2:
+
+| Execution outcome | O0 | O2 |
+|---|---:|---:|
+| Output matched gfortran | 60 | 60 |
+| Runtime error | 1 | 1 |
+| Runtime deliberately skipped | 9 | 9 |
+| No reference (empty upstream files) | 14 | 14 |
+
+No demo produced output that disagreed with gfortran. The runtime error is
+`demo_allocated.f90` reading the uninitialized `istat`, as before. The output
+formatting errors from the previous runs (G0 of non-REAL items, format
+reversion) are gone.
+
+The most common remaining first diagnostics, among demos gfortran compiles:
+
+| Cause | Demos |
+|---|---:|
+| Missing intrinsics (Bessel functions, `BIT_SIZE`, `POPCNT`, `POPPAR`, `LEADZ`, `DSHIFTL`, `DSHIFTR`, `IALL`, `IPARITY`, `OUT_OF_RANGE`, `IABS`, `FLOAT`) | 19 |
+| `allocate(character(len=n) :: s)` | 6 |
+| Keyword arguments to intrinsics (`MOVE_ALLOC`, `NORM2`, `PARITY`, ...) | 6 |
+| Array initializers using `RESHAPE` or implied-DO | 6 |
+| `KIND(0.0)` or a named kind in a type parameter; `DO CONCURRENT` | 6 |
+| Assumed-rank dummies (`a(..)`) | 5 |
+
+Reports: `target/m-intrinsics-compile-step3.json` and
+`target/m-intrinsics-compiled-run-step3.json`, each with a companion `.md`.
+
+## After the missing intrinsics and runtime-sized MATMUL: 2026-10-17
+
+This run added:
+
+- POPCNT, POPPAR, LEADZ, TRAILZ, DSHIFTL, DSHIFTR and BIT_SIZE, with the
+  existing bit intrinsics now also elemental over arrays;
+- the reductions IANY, IALL, IPARITY and PARITY, NORM2, and a positional MASK
+  as the second argument of SUM and the other reductions;
+- BESSEL_J0, BESSEL_J1, BESSEL_JN, BESSEL_Y0, BESSEL_Y1 and BESSEL_YN;
+- OUT_OF_RANGE, and specific names such as IABS, FLOAT, DSQRT and MAX0;
+- MATMUL of ALLOCATABLE, assumed-shape and other runtime-sized arrays.
+
+It also fixed three bugs the demos exposed:
+
+- assigning to a variable of a narrower INTEGER kind kept the whole value, so
+  `demo_out_of_range.f90` printed 128 for an INTEGER(1) variable;
+- G0 output of RRSPACING and the other floating-point model functions of a
+  REAL(4) variable printed DOUBLE PRECISION digits;
+- a compiler temporary declared inside an ELSE IF branch was reported as an
+  undefined variable (`demo_gamma.f90`).
+
+| rfort O0 outcome | All 249 demos | 204 demos gfortran compiles |
+|---|---:|---:|
+| Compiled | 105 | 91 |
+| Parse error | 58 | 38 |
+| Later error | 86 | 75 |
+
+In the previous run these were 84/58/107 and 70/38/96. No demo that compiled
+before stopped compiling.
+
+Execution checks of the 105 demos that compile, at both O0 and O2:
+
+| Execution outcome | O0 | O2 |
+|---|---:|---:|
+| Output matched gfortran | 78 | 78 |
+| Output differed from gfortran | 2 | 2 |
+| Runtime error | 1 | 1 |
+| Runtime deliberately skipped | 10 | 10 |
+| No reference (empty upstream files) | 14 | 14 |
+
+The two differences are not wrong results:
+
+- `demo_bit_size.f90` lists the available INTEGER kinds, and gfortran also has
+  kind 16, which rfort does not support.
+- `demo_hypot.f90` uses list-directed output of REAL(4) values. Compiled rfort
+  writes 6 significant digits there (`1.03078` for gfortran's `1.03077638`),
+  more than the comparison's relative tolerance of 2e-6.
+
+The runtime error is `demo_allocated.f90` reading the uninitialized `istat`, as
+before.
+
+Demos that still fail for a reason related to these intrinsics:
+
+- `demo_dshiftl.f90`: its internal subroutine reads variables of the main
+  program, and host association from the main program is not supported.
+- `demo_norm2.f90`: an array declaration initialized with RESHAPE.
+- `demo_matmul.f90`: a PARAMETER array initializer.
+
+Reports: `target/m-intrinsics-compile-step4.json` and
+`target/m-intrinsics-compiled-run-step4.json`, each with a companion `.md`.

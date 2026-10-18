@@ -463,6 +463,21 @@ pub fn interpret(program: &Program) {
                 let value = unsafe { match n.as_str() { "erf" => erf(x), "erfc" => erfc(x), "gamma" => tgamma(x), _ => lgamma(x) } };
                 Some(ValueTuple::from_real(value))
             }
+            "bessel_j0" | "bessel_j1" | "bessel_y0" | "bessel_y1" | "rfort_bessel_jn" | "rfort_bessel_yn" => {
+                extern "C" {
+                    #[cfg_attr(windows, link_name = "_jn")] fn jn(n: i32, x: f64) -> f64;
+                    #[cfg_attr(windows, link_name = "_yn")] fn yn(n: i32, x: f64) -> f64;
+                }
+                let x = to_real(args.get(0)?)?;
+                let order = match n.as_str() {
+                    "bessel_j0" | "bessel_y0" => 0,
+                    "bessel_j1" | "bessel_y1" => 1,
+                    _ => to_real(args.get(1)?)? as i32,
+                };
+                // SAFETY: C library Bessel functions of an int order and a double.
+                let value = unsafe { if n.contains("_j") { jn(order, x) } else { yn(order, x) } };
+                Some(ValueTuple::from_real(value))
+            }
             "hypot" => {
                 let x = to_real(args.get(0)?)?;
                 let y = to_real(args.get(1)?)?;
@@ -541,6 +556,11 @@ pub fn interpret(program: &Program) {
             "int" => Some(ValueTuple::from_int(to_int(args.get(0)?)?)),
             "real" | "dble" => Some(ValueTuple::from_real(to_real(args.get(0)?)?)),
             "sign" => {
+                if let (Some(a), Some(b)) = (args.first()?.0, args.get(1)?.0) {
+                    if args[0].1.is_none() && args[1].1.is_none() {
+                        return Some(ValueTuple::from_int(if b < 0 { -a.abs() } else { a.abs() }));
+                    }
+                }
                 let a = to_real(args.get(0)?)?;
                 let b = to_real(args.get(1)?)?;
                 Some(ValueTuple::from_real(
@@ -1406,7 +1426,7 @@ pub fn interpret(program: &Program) {
                         let unit=eval_expr(&args[0],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
                         io_result(FILES.with(|files|files.borrow_mut().scratch(Some(unit))));idx+=1;continue;
                     }
-                    if matches!(name.as_str(), "@file_open" | "@file_close" | "@file_rewind" | "@file_backspace") {
+                    if matches!(name.as_str(), "@file_open" | "@file_close" | "@file_close_delete" | "@file_rewind" | "@file_backspace") {
                         let fr=call_stack.last().unwrap().clone();
                         let unit=eval_expr(&args[0],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
                         let path=match args.get(1) {Some(Expr::Str(path))=>Some(path.as_str()),_=>None};
@@ -1506,7 +1526,9 @@ pub fn interpret(program: &Program) {
                         if name=="@format_item" {
                             let value=eval_expr(&args[1],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack);
                             let value=if let Some(s)=value.3 {Expr::Str(s)} else if let Some(b)=value.2 {Expr::Logical(b)}
-                                else if let Some(f)=value.1 {Expr::RealLit(format!("{f:.17e}"))} else {Expr::IntLit(value.0.unwrap().to_string())};
+                                // DBLE marks a value that is not exact in single precision
+                                // as DOUBLE PRECISION for the output kind.
+                                else if let Some(f)=value.1 {let text=Expr::RealLit(format!("{f:.17e}"));if (f as f32) as f64==f {text} else {Expr::Call("dble".into(),vec![text])}} else {Expr::IntLit(value.0.unwrap().to_string())};
                             OUTPUT_LISTS.with(|lists|lists.borrow_mut().get_mut(&handle).unwrap().2.push(value));
                         } else {
                             let (format,advance,items)=OUTPUT_LISTS.with(|lists|lists.borrow_mut().remove(&handle).unwrap());
@@ -1533,26 +1555,43 @@ pub fn interpret(program: &Program) {
                             let fr=call_stack.last().unwrap().clone();
                             eval_expr(e,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack)
                         }).collect();
-                        for (field,value) in fields.iter().filter(|f| f.literal.is_none()).zip(&values) {
-                            let tag=if value.3.is_some() {4} else if value.2.is_some() {3} else if value.1.is_some() {2} else {1};
-                            if !crate::format_spec::matches_type(field.code as u8,tag) {
-                                eprintln!("Runtime error: invalid output format: descriptor does not match output item type"); std::process::exit(1)
+                        // The interpreter holds REAL values as f64; recover the kind
+                        // from the expression where it names one.
+                        fn real_kind(e:&Expr,fr:&CallFrame,value:f64)->u8 {
+                            match e {
+                                Expr::Ident(n) if fr.env_real32.contains_key(n) => 4,
+                                Expr::Ident(n) if fr.env_real64.contains_key(n) => 8,
+                                Expr::Index(n,_) | Expr::Call(n,_) if fr.double_arrays.contains(n) => 8,
+                                // Temporary arrays may not record a DOUBLE PRECISION kind, so
+                                // an element is single only if it is exact in single precision.
+                                Expr::Index(n,_) | Expr::Call(n,_) if fr.env_real_arrays.contains_key(n) => if (value as f32) as f64==value {4} else {8},
+                                Expr::RealLit(text) => if text.contains(['d','D']) || text.ends_with("_8") {8} else {4},
+                                Expr::Call(n,_) if n=="dble" => 8,
+                                Expr::Call(n,a) if !a.is_empty() && (crate::intrinsics::math_arity(n).is_some() || matches!(n.as_str(),"abs"|"sign"|"mod"|"modulo"|"max"|"min")) => real_kind(&a[0],fr,value),
+                                Expr::Call(n,a) if n=="real" && a.len()==1 => 4,
+                                Expr::Bin(_,a,b) => real_kind(a,fr,value).max(real_kind(b,fr,value)),
+                                Expr::Un(_,a) => real_kind(a,fr,value),
+                                _ => if (value as f32) as f64==value {4} else {8},
                             }
                         }
-                        let mut items=values.into_iter();
-                        let mut output=String::new();
-                        for field in &fields {
-                            if let Some(text)=&field.literal {output.push_str(text);continue;}
-                            let v=items.next().unwrap();
-                            let text=match field.code {'g'=>format!("{:.*e}",field.precision.saturating_sub(1),v.1.unwrap()),'a'=>v.3.unwrap(), 'i'=>{let i=v.0.unwrap();if i==0 && field.precision==0 {String::new()}else{format!("{}{:0width$}",if i<0 {"-"} else {""},i.unsigned_abs(),width=field.precision)}}, 'l'=>if v.2.unwrap_or(v.0==Some(1)) {"T".into()}else{"F".into()},_=>format!("{:.*}",field.precision,v.1.unwrap_or(v.0.unwrap_or(0) as f64))};
-                            if field.width==0 {if field.code=='i' && text.is_empty() {output.push(' ');}else{output.push_str(&text);}}
-                            else if text.len()>field.width {if field.code=='a' {output.extend(text.chars().take(field.width));}else{output.push_str(&"*".repeat(field.width));}}
-                            else {output.push_str(&format!("{:>width$}",text,width=field.width));}
-                        }
+                        let frame=call_stack.last().unwrap().clone();
+                        let items:Vec<(crate::format_spec::Value<'static>,Option<String>)>=args[1..end].iter().zip(&values).map(|(e,v)| {
+                            use crate::format_spec::Value;
+                            if let Some(s)=&v.3 {(Value::Logical(false),Some(s.clone()))}
+                            else if let Some(b)=v.2 {(Value::Logical(b),None)}
+                            else if let Some(f)=v.1 {(Value::Real(f,real_kind(e,&frame,f)),None)}
+                            else {let i=v.0.unwrap();(Value::Integer(i,if i==i as i32 as i64 {4} else {8}),None)}
+                        }).collect();
+                        let mut bytes=Vec::new();
+                        let rendered=crate::format_spec::render_with(format.as_bytes(),items.len(),&|i,f|{
+                            match &items[i] {(_,Some(s))=>f(crate::format_spec::Value::Character(s.as_bytes())),(v,None)=>f(*v)}
+                        },&mut |b|bytes.push(b),name!="@formatted_write_noadvance");
+                        if let Err(e)=rendered {eprintln!("Runtime error: invalid output format: {e}"); std::process::exit(1)}
+                        let mut output=String::from_utf8_lossy(&bytes).into_owned();
                         if internal {
                             let Expr::Ident(destination)=&args[end] else {unreachable!()};
                             let length=eval_expr(&args[end+1],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap() as usize;
-                            if fields.iter().any(|field|field.code=='/') {io_result::<()>(Err(anyhow::anyhow!("internal WRITE requires a single record; multiple records are not yet supported")));}
+                            if fields.iter().any(|field|field.literal.as_deref()==Some("\n")) {io_result::<()>(Err(anyhow::anyhow!("internal WRITE requires a single record; multiple records are not yet supported")));}
                             if output.len()>length {io_result::<()>(Err(anyhow::anyhow!("internal WRITE record exceeds CHARACTER destination length")));}
                             output.extend(std::iter::repeat_n(' ',length-output.len()));
                             call_stack.last_mut().unwrap().env_str.insert(destination.clone(),output);

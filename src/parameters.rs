@@ -1108,7 +1108,8 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
             if let Some(dim) = slots[1].take() {
                 args.extend([dim, Expr::Logical(true)]);
             }
-        } else if matches!(name.as_str(), "sum" | "product" | "minval" | "maxval") {
+        } else if matches!(name.as_str(), "sum" | "product" | "minval" | "maxval" | "iany" | "iall" | "iparity" | "parity") {
+            let first = if name == "parity" { "mask" } else { "array" };
             let mut slots: [Option<Expr>; 3] = [None, None, None];
             let mut keywords = false;
             for (position, arg) in args.iter().enumerate() {
@@ -1116,7 +1117,7 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
                     Expr::Call(tag, values) if tag.starts_with("@keyword:") => {
                         keywords = true;
                         let key = &tag[9..];
-                        let slot = match key { "array" => 0, "dim" => 1, "mask" => 2,
+                        let slot = match key { _ if key == first => 0, "dim" => 1, "mask" if name != "parity" => 2,
                             _ => bail!("{name}: unknown keyword `{key}`") };
                         (slot, &values[0])
                     }

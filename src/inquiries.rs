@@ -7,23 +7,31 @@ use crate::ast::{BinOp, Expr, TypeSpec, UnOp};
 use anyhow::{bail, Context, Result};
 
 pub fn numeric_model(name: &str) -> bool {
-    matches!(name, "epsilon" | "digits" | "radix" | "precision" | "range" | "minexponent" | "maxexponent")
+    matches!(name, "epsilon" | "digits" | "radix" | "precision" | "range" | "minexponent" | "maxexponent" | "bit_size")
 }
 
 /// These inquiries describe a type, and do not evaluate the argument's value.
 pub fn model_value(name: &str, kind: &TypeSpec) -> Result<Expr> {
     let int = |n: i64| Expr::IntLit(n.to_string());
     if let TypeSpec::Integer(bytes) = kind {
-        if !matches!(name, "digits" | "radix" | "range") {
+        if !matches!(name, "digits" | "radix" | "range" | "bit_size") {
             bail!("{} requires a REAL argument", name.to_ascii_uppercase());
         }
         let bytes = bytes.unwrap_or(4);
         if !matches!(bytes,1|2|4|8) { bail!("{} currently supports INTEGER kinds 1, 2, 4 and 8, not {bytes}",name.to_ascii_uppercase()); }
+        if name == "bit_size" {
+            // The result has the kind of I.
+            let bits = int(i64::from(bytes) * 8);
+            return Ok(if bytes == 4 { bits } else { Expr::Call("@integer_literal".into(), vec![bits, int(i64::from(bytes))]) });
+        }
         return Ok(int(match name {
             "digits" => i64::from(bytes) * 8 - 1,
             "radix" => 2,
             _ => match bytes { 1 => 2, 2 => 4, 4 => 9, 8 => 18, _ => unreachable!() },
         }));
+    }
+    if name == "bit_size" {
+        bail!("BIT_SIZE requires an INTEGER argument");
     }
     if let TypeSpec::Complex(k) = kind {
         if !matches!(name,"precision"|"range") { bail!("{} does not accept COMPLEX",name.to_ascii_uppercase()); }

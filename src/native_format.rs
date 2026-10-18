@@ -19,6 +19,18 @@ pub extern "C" fn rfort_float_model(op:i64,kind:i64,x:f64,i:i64,s:f64)->f64 {
     }
     float_model::evaluate(op,kind as u8,x,i,s)
 }
+/// BESSEL_JN(N, X) and BESSEL_YN(N, X): imported math routines take REAL
+/// arguments, so X comes first and the order N arrives as a whole REAL.
+#[no_mangle]
+pub extern "C" fn rfort_bessel_jn(x:f64,n:f64)->f64 {
+    extern "C" {#[cfg_attr(windows,link_name="_jn")] fn jn(n:i32,x:f64)->f64;}
+    unsafe {jn(n as i32,x)}
+}
+#[no_mangle]
+pub extern "C" fn rfort_bessel_yn(x:f64,n:f64)->f64 {
+    extern "C" {#[cfg_attr(windows,link_name="_yn")] fn yn(n:i32,x:f64)->f64;}
+    unsafe {yn(n as i32,x)}
+}
 mod calendar;
 mod environment;
 mod format_spec;
@@ -74,8 +86,19 @@ pub unsafe extern "C" fn rfort_scratch_newunit(slots: *mut *mut core::ffi::c_voi
     }
     0
 }
+/// Standard error, the stream of unit 0 when no file is connected to it.
+#[no_mangle]
+pub unsafe extern "C" fn rfort_stderr_stream()->*mut core::ffi::c_void {
+    #[cfg(windows)] {__acrt_iob_func(2)}
+    #[cfg(target_os="macos")] {extern "C" {static mut __stderrp:*mut core::ffi::c_void;} __stderrp}
+    #[cfg(not(any(windows,target_os="macos")))] {extern "C" {static mut stderr:*mut core::ffi::c_void;} stderr}
+}
 #[no_mangle]
 pub unsafe extern "C" fn rfort_file_write_record(stream:*mut core::ffi::c_void, data:*const u8, length:usize)->i32 {
+    if stream==rfort_stderr_stream() {
+        return i32::from(fwrite(data,1,length,stream)!=length || fwrite(b"
+".as_ptr(),1,1,stream)!=1 || fflush(stream)!=0);
+    }
     // Positioning permits switching from input to output on a C update stream.
     if fseek(stream,0,1)!=0 || fwrite(data,1,length,stream)!=length || fwrite(b"\n".as_ptr(),1,1,stream)!=1 || fflush(stream)!=0 {return 1;}
     // Sequential Fortran output replaces the remainder after the new record.
@@ -127,6 +150,12 @@ pub unsafe extern "C" fn rfort_file_inquire(
 
 #[no_mangle]
 pub unsafe extern "C" fn rfort_file_free_name(path:*mut core::ffi::c_void)->i32 {free(path);0}
+/// Delete the named file of a closed unit; a scratch unit has no name.
+#[no_mangle]
+pub unsafe extern "C" fn rfort_file_delete(path:*const u8)->i32 {
+    extern "C" {fn remove(path:*const u8)->i32;}
+    if path.is_null() {0} else {i32::from(remove(path)!=0)}
+}
 #[no_mangle]
 pub unsafe extern "C" fn rfort_file_open_dynamic(slots:*mut *mut core::ffi::c_void,names:*mut *const u8,requested:i64,path:*const u8,length:usize,mode:i64,newunit:i64)->i64 {
     let mut length=length;while length>0 && *path.add(length-1)==b' ' {length-=1;}
@@ -147,8 +176,15 @@ pub unsafe extern "C" fn rfort_file_open_dynamic(slots:*mut *mut core::ffi::c_vo
 #[no_mangle]
 pub unsafe extern "C" fn rfort_format_end_file(pointer:*mut core::ffi::c_void,stream:*mut core::ffi::c_void)->i32 {
     let list=&*pointer.cast::<OutputList>();let mut failed=false;
+    if stream==rfort_stderr_stream() {
+        render_format(list.format,list.length,list.items,list.count,&mut |c|{if fputc(c as i32,stream)<0 {failed=true;}},list.advance!=0);
+        if list.advance!=0 && fputc(10,stream)<0 {failed=true;}
+        if fflush(stream)!=0 {failed=true;}
+        free_output_list(pointer);
+        return failed as i32;
+    }
     if fseek(stream,0,1)!=0 {failed=true;}
-    render_format(list.format,list.length,list.items,list.count,&mut |c|{if fputc(c as i32,stream)<0 {failed=true;}});
+    render_format(list.format,list.length,list.items,list.count,&mut |c|{if fputc(c as i32,stream)<0 {failed=true;}},list.advance!=0);
     if list.advance!=0 && fputc(10,stream)<0 {failed=true;}
     if fflush(stream)!=0 {failed=true;}
     #[cfg(windows)] {let pos=_ftelli64(stream);if pos<0 || _chsize_s(_fileno(stream),pos)!=0 {failed=true;}}
@@ -336,7 +372,7 @@ pub unsafe extern "C" fn rfort_internal_format_end(pointer:*mut core::ffi::c_voi
     let format=core::slice::from_raw_parts(list.format,list.length);
     let mut parser=checked(GroupParser::new(format,list.count));
     while let Some(descriptor)=checked(parser.next()) {
-        if descriptor.code==b'/' {fail("internal WRITE requires a single record; multiple records are not yet supported");}
+        if descriptor.code==b'/' || descriptor.code==format_spec::REVERSION {fail("internal WRITE requires a single record; multiple records are not yet supported");}
     }
     core::ptr::write_bytes(destination,b' ',length);
     let mut cursor=0;
@@ -344,7 +380,7 @@ pub unsafe extern "C" fn rfort_internal_format_end(pointer:*mut core::ffi::c_voi
         if cursor==length {fail("internal WRITE record exceeds CHARACTER destination length");}
         *destination.add(cursor)=byte;
         cursor+=1;
-    });
+    },true);
     *destination.add(length)=0;
     free_output_list(pointer);
     0
@@ -358,121 +394,37 @@ fn checked<T>(result: Result<T, &'static str>) -> T {
 }
 /// The compiler supplies valid format bytes and an aligned array of `count`
 /// Items. CHARACTER items contain a valid pointer and length; other items hold
-/// INTEGER, REAL, or LOGICAL bits. All storage remains live for this call.
+/// INTEGER, REAL, or LOGICAL bits, with the kind in `length` (0 if unknown).
+/// All storage remains live for this call.
 unsafe fn render_format(
     format: *const u8,
     length: usize,
     items: *const Item,
     count: usize,
     emit: &mut impl FnMut(u8),
+    advancing: bool,
 ) {
     let bytes = core::slice::from_raw_parts(format, length);
     let items = core::slice::from_raw_parts(items, count);
-    // Validate the entire statement before writing any output.
-    let mut parser = checked(GroupParser::new(bytes,count));
-    let mut index = 0;
-    while let Some(d) = checked(parser.next()) {
-        if matches!(d.code, b'a' | b'i' | b'f' | b'g' | b'l') {
-            for _ in 0..d.repeat {
-                let Some(item) = items.get(index) else {
-                    break;
-                };
-                if !format_spec::matches_type(d.code, item.tag) {
-                    fail("descriptor does not match output item type");
-                }
-                index += 1;
+    let value = |i: usize, f: &mut dyn FnMut(format_spec::Value<'_>)| {
+        let item = &items[i];
+        f(match item.tag {
+            1 => {
+                let v = item.bits as i64;
+                let kind = if item.length != 0 { item.length as u8 } else if v == v as i32 as i64 { 4 } else { 8 };
+                format_spec::Value::Integer(v, kind)
             }
-        }
-    }
-    if index != count {
-        fail("format descriptor count must match the output list; format reversion is not yet supported");
-    }
-    let mut parser = checked(GroupParser::new(bytes,count));
-    index = 0;
-    'descriptors: while let Some(d) = checked(parser.next()) {
-        for _ in 0..d.repeat {
-            if matches!(d.code,b'a'|b'i'|b'f'|b'g'|b'l') && index==count {break 'descriptors;}
-            match d.code {
-                b'\'' | b'"' => {
-                    let mut i = 0;
-                    while i < d.literal.len() {
-                        let c = d.literal[i];
-                        emit(c);
-                        i += 1;
-                        if c == d.code && d.literal.get(i) == Some(&c) {
-                            i += 1;
-                        }
-                    }
-                }
-                b'x' => {
-                    emit(32);
-                }
-                b'/' => {
-                    emit(10);
-                }
-                _ => {
-                    let item = &items[index];
-                    index += 1;
-                    if d.code == b'a' {
-                        let n = if d.width == 0 {
-                            item.length as usize
-                        } else {
-                            (item.length as usize).min(d.width)
-                        };
-                        for _ in n..d.width {
-                            emit(32);
-                        }
-                        let text=core::slice::from_raw_parts(item.bits as usize as *const u8,n);
-                        for byte in text {emit(*byte);}
-                    } else {
-                        // Maximum F precision is 256; even DBL_MAX needs fewer than 600 bytes.
-                        let mut buffer = [0u8; 1024];
-                        let n = match d.code {
-                            b'i' => sprintf(
-                                buffer.as_mut_ptr(),
-                                b"%.*lld\0".as_ptr(),
-                                d.precision as i32,
-                                item.bits as i64,
-                            ),
-                            b'g' => sprintf(buffer.as_mut_ptr(), b"%.*g\0".as_ptr(), d.precision as i32, f64::from_bits(item.bits)),
-                            b'f' => sprintf(
-                                buffer.as_mut_ptr(),
-                                b"%.*f\0".as_ptr(),
-                                d.precision as i32,
-                                f64::from_bits(item.bits),
-                            ),
-                            _ => {
-                                buffer[0] = if item.bits == 0 { b'F' } else { b'T' };
-                                1
-                            }
-                        };
-                        if n < 0 || n as usize >= buffer.len() {
-                            fail("numeric formatting failed");
-                        }
-                        let n = n as usize;
-                        if d.width != 0 && n > d.width {
-                            for _ in 0..d.width {
-                                emit(b'*');
-                            }
-                        } else {
-                            for _ in n..d.width {
-                                emit(32);
-                            }
-                            if d.width == 0 && n == 0 && d.code == b'i' {
-                                emit(32);
-                            }
-                            for byte in &buffer[..n] {emit(*byte);}
-                        }
-                    }
-                }
-            }
-        }
-    }
+            2 => format_spec::Value::Real(f64::from_bits(item.bits), if item.length == 4 { 4 } else { 8 }),
+            3 => format_spec::Value::Logical(item.bits != 0),
+            _ => format_spec::Value::Character(core::slice::from_raw_parts(item.bits as usize as *const u8, item.length as usize)),
+        })
+    };
+    checked(format_spec::render_with(bytes, count, &value, &mut |b| emit(b), advancing));
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn rfort_formatted_write(format:*const u8,length:usize,items:*const Item,count:usize,advance:i32) {
-    render_format(format,length,items,count,&mut |byte| {putchar(byte as i32);});
+    render_format(format,length,items,count,&mut |byte| {putchar(byte as i32);},advance!=0);
     if advance!=0 {putchar(10);} else {fflush(core::ptr::null_mut());}
 }
 

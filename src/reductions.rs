@@ -25,7 +25,7 @@ impl std::ops::DerefMut for Symbols {
 }
 fn int(n: i64) -> Expr { Expr::IntLit(n.to_string()) }
 fn bin(op: BinOp, a: Expr, b: Expr) -> Expr { Expr::Bin(op, Box::new(a), Box::new(b)) }
-fn reduction(name: &str) -> bool { matches!(name.to_ascii_lowercase().as_str(), "sum" | "product" | "minval" | "maxval" | "any" | "all" | "count" | "@count_i8" | "@count_default" | "@any_reduction" | "@all_reduction") }
+fn reduction(name: &str) -> bool { matches!(name.to_ascii_lowercase().as_str(), "sum" | "product" | "minval" | "maxval" | "iany" | "iall" | "iparity" | "parity" | "any" | "all" | "count" | "@count_i8" | "@count_default" | "@any_reduction" | "@all_reduction") }
 fn array_element_kind(kind: &TypeSpec) -> bool { matches!(kind, TypeSpec::Integer(_) | TypeSpec::Real | TypeSpec::DoublePrecision | TypeSpec::Logical) }
 fn numeric_minmax(name:&str,symbols:&Symbols)->bool {
     matches!(name,"min"|"max") && !symbols.contains_key(name) && !symbols.procedures.contains(name)
@@ -190,7 +190,7 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
             let mut values=vec![value];values.extend(args.iter().skip(1).cloned());
             Ok((Expr::Call(name.clone(),values),count,kind))
         }
-        Expr::Call(name, args) if matches!(name.as_str(), "mod" | "modulo") => {
+        Expr::Call(name, args) if matches!(name.as_str(), "mod" | "modulo" | "sign") => {
             if args.len() != 2 { bail!("{name} requires two arguments"); }
             let (a, alen, kind) = element(&args[0], index, symbols)?;
             let (b, blen, other) = element(&args[1], index, symbols)?;
@@ -265,6 +265,19 @@ pub(crate) fn argument_element(e: &Expr, index: &Expr, shapes: &HashMap<String,(
 
 fn lower_expr(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, serial: &mut usize) -> Result<()> {
     lower_expr_impl(e,symbols,prefix,serial,true)
+}
+
+// Integers are held in 64 bits, so a value of a wider INTEGER kind assigned
+// to a narrower variable keeps its low-order bits, as two's complement
+// conversion does. IOR(VALUE, 0) in the target kind performs that wrap.
+fn narrow_integer(name: &str, value: &mut Expr, symbols: &Symbols) {
+    let Some((TypeSpec::Integer(target), _)) = symbols.get(name) else { return };
+    let target = target.unwrap_or(4);
+    if target >= 8 { return; }
+    let Ok((_, None, TypeSpec::Integer(have))) = element(value, &int(1), symbols) else { return };
+    if have.unwrap_or(4) > target {
+        *value = Expr::Call(crate::bit_intrinsics::tag("ior", target), vec![std::mem::replace(value, int(0)), int(0)]);
+    }
 }
 
 fn lower_assignment_value(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, serial: &mut usize) -> Result<()> {
@@ -410,16 +423,61 @@ fn lower_character_comparison(op: BinOp, a: &Expr, b: &Expr, symbols: &mut Symbo
     Ok(Some(bin(op,id(5),int(0))))
 }
 
+// OUT_OF_RANGE(X, MOLD [, ROUND]) as comparisons with the limits of MOLD's
+// type. A REAL X is truncated, or rounded when ROUND is true, before it is
+// compared with an INTEGER range; NaN is out of every INTEGER range, while
+// infinities and NaN are representable in every REAL kind.
+fn out_of_range(e:&Expr,symbols:&Symbols)->Result<Expr> {
+    let Expr::Call(_,args)=e else {unreachable!()};
+    if !(2..=3).contains(&args.len()) {bail!("OUT_OF_RANGE expects X, MOLD and optional ROUND");}
+    let mut kinds=vec![];
+    for arg in &args[..2] {
+        let (_,shape,kind)=element(arg,&int(1),symbols)?;
+        if shape.is_some() {bail!("OUT_OF_RANGE currently requires scalar arguments");}
+        kinds.push(kind);
+    }
+    let round=match args.get(2) {
+        None=>false,
+        Some(arg) if crate::named_arguments::omitted(arg)=>false,
+        Some(Expr::Logical(value))=>*value,
+        Some(_)=>bail!("OUT_OF_RANGE ROUND must currently be a LOGICAL constant"),
+    };
+    let x=args[0].clone();
+    Ok(match (&kinds[0],&kinds[1]) {
+        (TypeSpec::Integer(have),TypeSpec::Integer(mold)) => {
+            let (have,mold)=(have.unwrap_or(4),mold.unwrap_or(4));
+            if have<=mold {return Ok(Expr::Logical(false));}
+            let high=int(crate::inquiries::integer_huge(Some(mold))?);
+            let low=bin(BinOp::Sub,Expr::Un(UnOp::Neg,Box::new(high.clone())),int(1));
+            bin(BinOp::Or,bin(BinOp::Gt,x.clone(),high),bin(BinOp::Lt,x,low))
+        }
+        (TypeSpec::Real|TypeSpec::DoublePrecision,TypeSpec::Integer(mold)) => {
+            let limit=2f64.powi(i32::from(mold.unwrap_or(4))*8-1).to_string();
+            let limit=if kinds[0]==TypeSpec::DoublePrecision {Expr::Call("dble".into(),vec![Expr::RealLit(limit)])} else {Expr::RealLit(limit)};
+            let whole=Expr::Call(if round {"anint"} else {"aint"}.into(),vec![x]);
+            let inside=bin(BinOp::And,bin(BinOp::Ge,whole.clone(),Expr::Un(UnOp::Neg,Box::new(limit.clone()))),bin(BinOp::Lt,whole,limit));
+            Expr::Un(UnOp::Not,Box::new(inside))
+        }
+        (TypeSpec::DoublePrecision,TypeSpec::Real) => {
+            let magnitude=Expr::Call("abs".into(),vec![x]);
+            let huge=|v:f64|Expr::Call("dble".into(),vec![Expr::RealLit(format!("{v:.1}"))]);
+            bin(BinOp::And,bin(BinOp::Gt,magnitude.clone(),huge(f32::MAX as f64)),bin(BinOp::Le,magnitude,huge(f64::MAX)))
+        }
+        (TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision,TypeSpec::Real|TypeSpec::DoublePrecision) => Expr::Logical(false),
+        _ => bail!("OUT_OF_RANGE requires INTEGER or REAL X and MOLD"),
+    })
+}
+
 // Keep bit captures/checks outside the recursive lowering frame on Windows.
 fn lower_bit(e:&mut Expr,symbols:&mut Symbols,prefix:&mut Vec<Stmt>,serial:&mut usize,expand_elementals:bool)->Result<()> {
     let Expr::Call(name,args)=e else {unreachable!()};
     let arity=crate::bit_intrinsics::keys(name).unwrap().len();
     if args.len()!=arity {bail!("{} expects {arity} arguments, got {}",name.to_ascii_uppercase(),args.len());}
-    let mut kinds=vec![];
+    let mut kinds=vec![];let mut elemental=false;
     for arg in args.iter_mut() {
         lower_expr_impl(arg,symbols,prefix,serial,expand_elementals)?;
         let (_,shape,kind)=element(arg,&int(1),symbols)?;
-        if shape.is_some() {bail!("{} currently requires scalar arguments; whole-array bit operations are not yet supported",name.to_ascii_uppercase());}
+        elemental|=shape.is_some();
         kinds.push(kind);
     }
     crate::bit_intrinsics::result_kind(name,&kinds)?;
@@ -427,6 +485,15 @@ fn lower_bit(e:&mut Expr,symbols:&mut Symbols,prefix:&mut Vec<Stmt>,serial:&mut 
     let bytes=bytes.unwrap_or(4);let bits=i64::from(bytes)*8;
     let values=args.iter().map(|arg|crate::parameters::integer_constant(arg).ok()).collect::<Vec<_>>();
     crate::bit_intrinsics::validate_controls(name,bytes,&values)?;
+    if elemental {
+        // Array arguments are evaluated element by element; only constant
+        // control arguments are range checked.
+        if values.iter().skip(1).any(Option::is_none) && !crate::bit_intrinsics::counts(name) && !matches!(name.as_str(),"iand"|"ior"|"ieor"|"not") {
+            bail!("{} with array arguments currently requires constant control arguments",name.to_ascii_uppercase());
+        }
+        *name=crate::bit_intrinsics::tag(name,bytes);
+        return Ok(());
+    }
     // Capture before checks so each argument is evaluated exactly once.
     for (arg,kind) in args.iter_mut().zip(kinds) {
         *serial+=1;let temp=format!("@bit_argument_{serial}");
@@ -445,6 +512,7 @@ fn lower_bit(e:&mut Expr,symbols:&mut Symbols,prefix:&mut Vec<Stmt>,serial:&mut 
         "btest"|"ibset"|"ibclr"=>Some(bin(BinOp::Or,bin(BinOp::Lt,args[1].clone(),int(0)),bin(BinOp::Ge,args[1].clone(),int(bits)))),
         "ishft"=>Some(bin(BinOp::Or,bin(BinOp::Lt,args[1].clone(),int(-bits)),bin(BinOp::Gt,args[1].clone(),int(bits)))),
         "ibits"=>Some(bin(BinOp::Gt,args[2].clone(),bin(BinOp::Sub,int(bits),args[1].clone()))),
+        "dshiftl"|"dshiftr"=>Some(bin(BinOp::Or,bin(BinOp::Lt,args[2].clone(),int(0)),bin(BinOp::Gt,args[2].clone(),int(bits)))),
         _=>None,
     };
     if let Some(cond)=control {prefix.push(Stmt::If {cond,then_body:vec![Stmt::CallSub {name:"@error_stop".into(),args:vec![Expr::Str(crate::bit_intrinsics::range_message(name,bits))]}],else_body:None});}
@@ -547,9 +615,33 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
                     .or_else(|_|crate::array_calls::scalar_actual_kind(e,&symbols.variables).map(|kind|(kind,false)))
             };
             let (first,array)=kind(&args[0])?;let (second,other_array)=kind(&args[1])?;let (mask,mask_array)=kind(&args[2])?;
-            if array || other_array || mask_array {bail!("MERGE currently requires scalar arguments");}
             if !same_kind(&first,&second) {bail!("MERGE sources must have the same type, kind and CHARACTER length");}
             if mask!=TypeSpec::Logical {bail!("MERGE MASK must be LOGICAL");}
+            if array || other_array || mask_array {
+                // Elemental MERGE: select each element into a temporary array.
+                if !array_element_kind(&first) {bail!("MERGE of arrays currently requires numeric or LOGICAL sources");}
+                let mut extent=None;
+                for arg in args.iter() {
+                    if let Some(n)=element(arg,&int(1),symbols)?.1 {
+                        if n<0 {bail!("MERGE of arrays currently requires arrays of known size");}
+                        if extent.is_some_and(|m|m!=n) {bail!("MERGE argument shapes do not conform");}
+                        extent=Some(n);
+                    }
+                }
+                let extent=extent.unwrap();
+                *serial+=1;
+                let temp=format!("@merge_array_{serial}");let index=format!("@merge_index_{serial}");
+                let at=|arg:&Expr|element(arg,&Expr::Ident(index.clone()),symbols).map(|(value,_,_)|value);
+                let (source,other,choose)=(at(&args[0])?,at(&args[1])?,at(&args[2])?);
+                prefix.push(Stmt::ArrayDecl{kind:first.clone(),name:temp.clone(),dims:vec![int(extent)]});
+                prefix.push(Stmt::VarDecl{kind:TypeSpec::Integer(None),names:vec![index.clone()]});
+                let set=|value|Stmt::AssignIndex{name:temp.clone(),indices:vec![Expr::Ident(index.clone())],value};
+                prefix.push(Stmt::Do{var:index.clone(),start:int(1),end:int(extent),body:vec![
+                    Stmt::If{cond:choose,then_body:vec![set(source)],else_body:Some(vec![set(other)])}]});
+                symbols.insert(temp.clone(),(first,vec![int(extent)]));
+                *e=Expr::Ident(temp);
+                return Ok(());
+            }
             *serial+=1;let temp=format!("@merge_value_{serial}");
             prefix.push(Stmt::VarDecl{kind:first.clone(),names:vec![temp.clone()]});
             let store=|value:Expr|if let TypeSpec::Character(length)=&first {
@@ -558,6 +650,10 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             prefix.push(Stmt::If{cond:args[2].clone(),then_body:vec![store(args[0].clone())],else_body:Some(vec![store(args[1].clone())])});
             symbols.insert(temp.clone(),(first,vec![]));
             *e=Expr::Ident(temp);
+        }
+        Expr::Call(name,_) if name=="out_of_range" && !symbols.contains_key(name) && !symbols.procedures.contains(name) => {
+            *e=out_of_range(e,symbols)?;
+            lower_expr_impl(e,symbols,prefix,serial,expand_elementals)?;
         }
         Expr::Call(name,args) if crate::bit_intrinsics::keys(name).is_some() && !symbols.contains_key(name) && !symbols.procedures.contains(name) => lower_bit(e,symbols,prefix,serial,expand_elementals)?,
         // Call specialization precedes multidimensional normalization. Its
@@ -725,6 +821,39 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             symbols.insert(temp.clone(),(kind,vec![int(count)]));
             *e = Expr::Ident(temp);
         }
+        Expr::Call(name, args) if name == "@matmul" => {
+            // Column-major product: element (row, col) sums A(row, k) * B(k, col).
+            lower_expr(&mut args[0], symbols, prefix, serial)?;
+            lower_expr(&mut args[1], symbols, prefix, serial)?;
+            let (rows, inner, cols) = (constant(&args[2])?, constant(&args[3])?, constant(&args[4])?);
+            *serial += 1;
+            let temp = format!("@matmul_array_{serial}");
+            let [row, col, k] = ["row", "col", "inner"].map(|part| format!("@matmul_{part}_{serial}"));
+            let id = |n: &str| Expr::Ident(n.into());
+            let less = |n: &str| bin(BinOp::Sub, id(n), int(1));
+            let a_index = bin(BinOp::Add, id(&row), bin(BinOp::Mul, less(&k), int(rows)));
+            let b_index = bin(BinOp::Add, id(&k), bin(BinOp::Mul, less(&col), int(inner)));
+            let (a, _, a_kind) = element(&args[0], &a_index, symbols)?;
+            let (b, _, b_kind) = element(&args[1], &b_index, symbols)?;
+            if matches!(a_kind, TypeSpec::Logical) || matches!(b_kind, TypeSpec::Logical) {
+                bail!("MATMUL of LOGICAL arrays is not yet supported");
+            }
+            let kind = merge_kind(a_kind, b_kind);
+            let target = vec![bin(BinOp::Add, id(&row), bin(BinOp::Mul, less(&col), int(rows)))];
+            let item = Expr::Index(temp.clone(), target.clone());
+            let zero = match kind { TypeSpec::Real => Expr::RealLit("0.0".into()), TypeSpec::DoublePrecision => Expr::RealLit("0.0d0".into()), _ => int(0) };
+            prefix.push(Stmt::ArrayDecl { kind: kind.clone(), name: temp.clone(), dims: vec![int(rows * cols)] });
+            prefix.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![row.clone(), col.clone(), k.clone()] });
+            let product = Stmt::AssignIndex { name: temp.clone(), indices: target.clone(), value: bin(BinOp::Add, item, bin(BinOp::Mul, a, b)) };
+            let cell = vec![
+                Stmt::AssignIndex { name: temp.clone(), indices: target, value: zero },
+                Stmt::Do { var: k, start: int(1), end: int(inner), body: vec![product] },
+            ];
+            let column = vec![Stmt::Do { var: row, start: int(1), end: int(rows), body: cell }];
+            prefix.push(Stmt::Do { var: col, start: int(1), end: int(cols), body: column });
+            symbols.insert(temp.clone(), (kind, vec![int(rows * cols)]));
+            *e = Expr::Ident(temp);
+        }
         Expr::Call(name, args) if name == "@cshift" => {
             lower_expr(&mut args[0], symbols, prefix, serial)?;
             lower_expr(&mut args[1], symbols, prefix, serial)?;
@@ -848,7 +977,8 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             let name = match name.as_str() {
                 "@count_default" => "count", "@any_reduction" => "any", "@all_reduction" => "all", _ => name.as_str()
             }.to_ascii_lowercase();
-            if matches!(name.as_str(), "any" | "all" | "count" | "@count_i8") != matches!(kind, TypeSpec::Logical) { bail!("reduction argument has incorrect numeric/logical type"); }
+            if matches!(name.as_str(), "any" | "all" | "count" | "@count_i8" | "parity") != matches!(kind, TypeSpec::Logical) { bail!("reduction argument has incorrect numeric/logical type"); }
+            if matches!(name.as_str(), "iany" | "iall" | "iparity") && !matches!(kind, TypeSpec::Integer(_)) { bail!("{}: ARRAY must be INTEGER", name.to_ascii_uppercase()); }
             let result_kind = match name.as_str() { "count" => TypeSpec::Integer(None), "@count_i8" => TypeSpec::Integer(Some(8)), _ => kind.clone() };
             let integer = matches!(kind, TypeSpec::Integer(_));
             let integer_max = match kind { TypeSpec::Integer(Some(1)) => i8::MAX as i64, TypeSpec::Integer(Some(2)) => i16::MAX as i64, TypeSpec::Integer(Some(8)) => i64::MAX, _ => i32::MAX as i64 };
@@ -856,7 +986,9 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             let huge = if matches!(kind, TypeSpec::DoublePrecision) { f64::MAX } else { f32::MAX as f64 };
             let identity = match name.as_str() {
                 "count" | "@count_i8" => int(0),
-                "any" => Expr::Logical(false),
+                "any" | "parity" => Expr::Logical(false),
+                "iany" | "iparity" => int(0),
+                "iall" => int(-1),
                 "all" => Expr::Logical(true),
                 "sum" => if integer { int(0) } else { Expr::RealLit("0.0".into()) },
                 "product" => if integer { int(1) } else { Expr::RealLit("1.0".into()) },
@@ -864,7 +996,7 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
                 _ => if integer { int(integer_min) } else { Expr::RealLit((-huge).to_string()) },
             };
             prefix.push(Stmt::VarDecl { kind: TypeSpec::Integer(None), names: vec![index_name.clone()] });
-            prefix.push(Stmt::VarDecl { kind, names: vec![item_name.clone()] });
+            prefix.push(Stmt::VarDecl { kind: kind.clone(), names: vec![item_name.clone()] });
             prefix.push(Stmt::VarDecl { kind: result_kind.clone(), names: vec![acc_name.clone()] });
             symbols.insert(acc_name.clone(), (result_kind.clone(), vec![]));
             let loop_start = prefix.len();
@@ -878,6 +1010,13 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
                     else_body: None,
                 },
                 "any" | "all" => Stmt::Assign { name: acc_name.clone(), value: bin(if name == "any" { BinOp::Or } else { BinOp::And }, acc.clone(), item.clone()) },
+                "parity" => Stmt::Assign { name: acc_name.clone(), value: bin(BinOp::Neqv, acc.clone(), item.clone()) },
+                "iany" | "iall" | "iparity" => {
+                    let TypeSpec::Integer(bytes) = &kind else { unreachable!() };
+                    let operation = match name.as_str() { "iany" => "ior", "iall" => "iand", _ => "ieor" };
+                    let tag = crate::bit_intrinsics::tag(operation, bytes.unwrap_or(4));
+                    Stmt::Assign { name: acc_name.clone(), value: Expr::Call(tag, vec![acc.clone(), item.clone()]) }
+                },
                 "sum" | "product" => Stmt::Assign { name: acc_name.clone(), value: bin(if name == "sum" { BinOp::Add } else { BinOp::Mul }, acc.clone(), item.clone()) },
                 _ => Stmt::If {
                     cond: bin(if name == "minval" { BinOp::Lt } else { BinOp::Gt }, item.clone(), acc.clone()),
@@ -1014,7 +1153,7 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
         }
         if name != "@packed_view" && args.iter().any(|arg| runtime_extent(arg).is_some()) {
             if symbols.elementals.contains_key(name) || crate::intrinsics::math_arity(name).is_some() || crate::intrinsics::integer_rounding(name) || crate::intrinsics::real_predicate(name) || crate::real_intrinsics::decode(name).is_some()
-                || matches!(name.as_str(), "real" | "dble" | "int" | "abs" | "mod" | "modulo") || numeric_minmax(name,symbols) {
+                || matches!(name.as_str(), "real" | "dble" | "int" | "abs" | "mod" | "modulo" | "sign") || numeric_minmax(name,symbols) {
                 let length=args.iter().find_map(runtime_extent).unwrap();
                 for arg in args.iter() {
                     let other=runtime_extent(arg).or(element(arg,&int(1),symbols)?.1.map(int));
@@ -1034,7 +1173,7 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             bail!("runtime PACK results are not yet supported as arguments to `{name}`");
         }
     }
-    if expand_elementals && matches!(e,Expr::Call(name,_) if crate::real_intrinsics::decode(name).is_some() || symbols.elementals.contains_key(name) || matches!(name.as_str(), "mod" | "modulo") || numeric_minmax(name,symbols) || (crate::intrinsics::integer_rounding(name) || crate::intrinsics::real_predicate(name)) && !symbols.contains_key(name) && !symbols.procedures.contains(name)) && array_valued(e,symbols) {
+    if expand_elementals && matches!(e,Expr::Call(name,_) if crate::real_intrinsics::decode(name).is_some() || crate::bit_intrinsics::decode(name).is_some() || symbols.elementals.contains_key(name) || matches!(name.as_str(), "mod" | "modulo" | "sign") || numeric_minmax(name,symbols) || (crate::intrinsics::integer_rounding(name) || crate::intrinsics::real_predicate(name)) && !symbols.contains_key(name) && !symbols.procedures.contains(name)) && array_valued(e,symbols) {
         *serial+=1;
         let index_name=format!("@elemental_index_{serial}");
         let temp=format!("@elemental_result_{serial}");
@@ -1152,7 +1291,7 @@ fn lower_where_mask(body: &mut Vec<Stmt>, symbols: &mut Symbols, serial: &mut us
 // function specialization. Emit every active element into the same session.
 // Internal calls whose lowering produces an array.
 fn array_call(name: &str) -> bool {
-    matches!(name, "@spread" | "@cshift" | "@eoshift" | "@pack" | "@unpack" | "@bounds_vector")
+    matches!(name, "@spread" | "@cshift" | "@eoshift" | "@pack" | "@unpack" | "@bounds_vector" | "@array_constructor" | "@matmul")
 }
 fn formatted_items(handle:&str,items:&[Expr],symbols:&Symbols,serial:&mut usize)->Result<Vec<Stmt>> {
     let mut body=vec![];
@@ -1333,7 +1472,22 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                     } else {output.push(Stmt::Block {body});}
                     continue;
                     }
-                    if matches!(&args[1],Expr::Call(n,_) if n=="@list_directed") || args[2..].iter().any(|e|matches!(e,Expr::Call(n,_) if n.starts_with("@write_option:"))) {
+                    let options=args[2..].iter().any(|e|matches!(e,Expr::Call(n,_) if n.starts_with("@write_option:")));
+                    if matches!(&args[1],Expr::Call(n,_) if n=="@list_directed") && !options {
+                        // List-directed file output: a blank, then each item as G0
+                        // separated by blanks, which list-directed READ accepts.
+                        let format=Expr::Str("(*(1x,g0))".into());
+                        let mut file_body=formatted_capture(format,&args[2..],int(1),&symbols,serial)?;
+                        if let Some(Stmt::CallSub{name, args:end})=file_body.last_mut() {if name=="@format_end" {*name="@format_end_file".into();end.push(args[0].clone());}}
+                        if crate::parameters::integer_constant(&args[0]).is_ok() {output.push(Stmt::Block{body:file_body});}
+                        else {
+                            let mut stdout=vec![Stmt::Print{items:args[2..].to_vec()}];
+                            lower_body(&mut stdout,&symbols,serial)?;
+                            output.push(Stmt::If{cond:bin(BinOp::Eq,args[0].clone(),int(6)),then_body:stdout,else_body:Some(vec![Stmt::Block{body:file_body}])});
+                        }
+                        continue;
+                    }
+                    if matches!(&args[1],Expr::Call(n,_) if n=="@list_directed") || options {
                         if crate::parameters::integer_constant(&args[0]).is_ok() {bail!("external file WRITE currently requires an explicit format without control options");}
                         prefix.push(crate::output::require_stdout(args[0].clone()));
                     } else {
@@ -1486,10 +1640,14 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
         }
         match &mut stmt {
             Stmt::Print { items } | Stmt::Read { args: items } | Stmt::CallSub { args: items, .. } => for e in items { lower_expr(e, &mut symbols, &mut prefix, serial)?; },
-            Stmt::Assign { value, .. } => lower_assignment_value(value, &mut symbols, &mut prefix, serial)?,
-            Stmt::Return(Some(value)) => lower_expr(value, &mut symbols, &mut prefix, serial)?,
-            Stmt::AssignIndex { value, indices, .. } => {
+            Stmt::Assign { name, value } => {
                 lower_assignment_value(value, &mut symbols, &mut prefix, serial)?;
+                narrow_integer(name, value, &symbols);
+            }
+            Stmt::Return(Some(value)) => lower_expr(value, &mut symbols, &mut prefix, serial)?,
+            Stmt::AssignIndex { name, value, indices } => {
+                lower_assignment_value(value, &mut symbols, &mut prefix, serial)?;
+                narrow_integer(name, value, &symbols);
                 for e in indices { lower_expr(e, &mut symbols, &mut prefix, serial)?; }
             }
             Stmt::If { cond, then_body, else_body } => {
@@ -1829,8 +1987,9 @@ mod tests {
             ("integer,parameter :: stdout=6", "write(stdout,*) 42", true),
             ("", "write(*,'(i3)') 42", true),
             ("", "write(*,*)\nx=42", true),
-            ("", "write(7,*) 42", false),
+            ("", "write(7,*) 42", true),
             ("integer :: unit", "unit=6\nwrite(unit,*) 42", true),
+            // Internal WRITE is lowered by an earlier pass, not run here.
             ("character(len=8) :: text", "write(text,*) 42", false),
             ("", "write(*,'*') 42", false),
             ("", "write(*,'(q3)') 42", false),

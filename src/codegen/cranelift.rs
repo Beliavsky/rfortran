@@ -874,6 +874,28 @@ fn eval_expr(
                         let full=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,magnitude,bits);
                         b.ins().select(full,zero,shifted)
                     },
+                    "popcnt"=>b.ins().popcnt(i),
+                    "poppar"=>{let count=b.ins().popcnt(i);b.ins().band(count,one)},
+                    "leadz"=>{let count=b.ins().clz(i);b.ins().iadd_imm(count,bits-64)},
+                    "trailz"=>{
+                        let count=b.ins().ctz(i);let width=b.ins().iconst(ir::types::I64,bits);
+                        let none=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,i,0);
+                        b.ins().select(none,width,count)
+                    },
+                    "dshiftl"|"dshiftr"=>{
+                        // DSHIFTR(I, J, S) is DSHIFTL(I, J, BITS-S); the ends select I or J
+                        // because Cranelift shift amounts are taken modulo 64.
+                        let j=b.ins().band(values[1],mask);
+                        let width=b.ins().iconst(ir::types::I64,bits);
+                        let left=if operation=="dshiftl" {values[2]} else {b.ins().isub(width,values[2])};
+                        let right=b.ins().isub(width,left);
+                        let high=b.ins().ishl(i,left);let low=b.ins().ushr(j,right);
+                        let joined=b.ins().bor(high,low);
+                        let none=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,left,0);
+                        let all=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,left,bits);
+                        let joined=b.ins().select(all,j,joined);
+                        b.ins().select(none,i,joined)
+                    },
                     _=>unreachable!(),
                 };
                 let result=if bytes<8 {
@@ -972,6 +994,25 @@ fn eval_expr(
                     let v = eval_expr(b, ex, ptr_ty, &args[0], ints, reals, bools, func_meta);
                     let fv = to_f64(b, v);
                     CgVal::F64(fv)
+                }
+                "sign" if args.len() == 2 => {
+                    let a = eval_expr(b, ex, ptr_ty, &args[0], ints, reals, bools, func_meta);
+                    let sign = eval_expr(b, ex, ptr_ty, &args[1], ints, reals, bools, func_meta);
+                    match (a, sign) {
+                        (CgVal::I64(a), CgVal::I64(s)) => {
+                            let magnitude = b.ins().iabs(a);
+                            let negated = b.ins().ineg(magnitude);
+                            let negative = b.ins().icmp_imm(ir::condcodes::IntCC::SignedLessThan, s, 0);
+                            CgVal::I64(b.ins().select(negative, negated, magnitude))
+                        }
+                        (a, s) => {
+                            // The sign bit of B, so a negative zero gives a negative result.
+                            let a = to_f64(b, a);
+                            let s = to_f64(b, s);
+                            let magnitude = b.ins().fabs(a);
+                            CgVal::F64(b.ins().fcopysign(magnitude, s))
+                        }
+                    }
                 }
                 "mod" | "modulo" => {
                     let a = eval_expr(b, ex, ptr_ty, &args[0], ints, reals, bools, func_meta);
@@ -1110,16 +1151,46 @@ fn double_expression(e: &IExpr, real_kind: &HashMap<String, bool>) -> bool {
 /// results and double-precision literals.
 fn double_value(e: &IExpr, real_kind: &HashMap<String, bool>, func_meta: &HashMap<String, FuncMeta>) -> bool {
     match e {
-        IExpr::Ident(name) => *real_kind.get(name).unwrap_or(&false),
+        IExpr::Ident(name) | IExpr::Index(name, _) => *real_kind.get(name).unwrap_or(&false),
         IExpr::RealLit(text) => text.contains(['d', 'D']),
         IExpr::Call(name, args) => {
+            // A math intrinsic, imported from the C library, has its argument's kind.
+            if crate::intrinsics::math_arity(name).is_some() {
+                return args.first().is_some_and(|arg| double_value(arg, real_kind, func_meta));
+            }
+            if let Some((_, kind)) = crate::real_intrinsics::decode(name) { return kind == 8; }
             if let Some(meta) = func_meta.get(name) { return meta.double; }
             if name.eq_ignore_ascii_case("dble") { return true; }
             if name.eq_ignore_ascii_case("real") { return false; }
+            // An array element.
+            if let Some(double) = real_kind.get(name) { return *double; }
             args.first().is_some_and(|arg| double_value(arg, real_kind, func_meta))
         }
         IExpr::Bin(_, a, b) => double_value(a, real_kind, func_meta) || double_value(b, real_kind, func_meta),
         IExpr::Un(_, a) => double_value(a, real_kind, func_meta),
+        _ => false,
+    }
+}
+
+/// Whether a REAL expression is known to have kind 4. Formatted output rounds
+/// such values to single precision, so an unknown kind counts as kind 8.
+fn single_value(e: &IExpr, real_kind: &HashMap<String, bool>, func_meta: &HashMap<String, FuncMeta>) -> bool {
+    match e {
+        IExpr::Ident(name) | IExpr::Index(name, _) => real_kind.get(name) == Some(&false),
+        IExpr::RealLit(text) => !text.contains(['d', 'D']),
+        IExpr::Call(name, args) => {
+            if crate::intrinsics::math_arity(name).is_some() || matches!(name.as_str(), "abs" | "sign" | "mod" | "modulo") {
+                return args.first().is_some_and(|arg| single_value(arg, real_kind, func_meta));
+            }
+            if let Some((_, kind)) = crate::real_intrinsics::decode(name) { return kind == 4; }
+            if let Some(meta) = func_meta.get(name) { return !meta.double; }
+            if name.eq_ignore_ascii_case("real") { return args.len() == 1; }
+            real_kind.get(name) == Some(&false)
+        }
+        IExpr::Bin(_, a, b) => !double_value(a, real_kind, func_meta) && !double_value(b, real_kind, func_meta)
+            && (single_value(a, real_kind, func_meta) || single_value(b, real_kind, func_meta))
+            && [a, b].iter().all(|x| single_value(x, real_kind, func_meta) || matches!(***x, IExpr::IntLit(_))),
+        IExpr::Un(_, a) => single_value(a, real_kind, func_meta),
         _ => false,
     }
 }
@@ -1353,7 +1424,7 @@ fn print_expr(
                             0,
                         ));
                         let p_f = b.ins().stack_addr(ptr_ty, buf_f, 0);
-                        let nd = b.ins().iconst(ir::types::I32, 6);
+                        let nd = b.ins().iconst(ir::types::I32, if *real_kind.get(name.as_str()).unwrap_or(&false) { 15 } else { 6 });
                         ex.call_gcvt(b, &[fv, nd, p_f]);
                         let p_sel = b.ins().select(cmp, p_int, p_f);
                         ex.call_printf(b, &[ex.fmt_s, p_sel]);
@@ -1390,7 +1461,7 @@ fn print_expr(
             let lname = name.to_ascii_lowercase();
             if crate::intrinsics::math_arity(name).is_some() || crate::intrinsics::integer_rounding(name) || crate::intrinsics::real_predicate(name)
                 || crate::bit_intrinsics::decode(name).is_some() || crate::real_intrinsics::decode(name).is_some()
-                || matches!(lname.as_str(), "abs" | "int" | "nint" | "real" | "dble" | "max" | "min" | "mod" | "modulo")
+                || matches!(lname.as_str(), "abs" | "int" | "nint" | "real" | "dble" | "max" | "min" | "mod" | "modulo" | "sign")
             {
                 let value = eval_expr(b, ex, ptr_ty, e, ints, reals, bools, func_meta);
                 print_numeric_value(b, ex, ptr_ty, value, double_expression(e, real_kind));
@@ -1867,6 +1938,9 @@ fn gen_stmts(
                 if !fragment { ex.call_printf(b, &[ex.fmt_s, ex.p_nl]); }
             }
             IStmt::DeclVar(kind, name, dims) => {
+                if let crate::ast::TypeSpec::Integer(Some(k)) = kind {
+                    INTEGER_KINDS.with(|kinds| kinds.borrow_mut().insert(name.clone(), *k));
+                }
                 if ints.contains_key(name)
                     || reals.contains_key(name)
                     || bools.contains_key(name)
@@ -2508,19 +2582,19 @@ fn gen_stmts(
                 if name=="@format_end_file" {
                     let h=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);let h=to_i64(b,h);
                     let unit=eval_expr(b,ex,ptr_ty,&args[1],ints,reals,bools,func_meta);let unit=to_i64(b,unit);
-                    let file=file_io::handle(module,b,ptr_ty,dc,unit)?;
+                    let file=file_io::write_handle(module,b,ptr_ty,dc,unit)?;
                     let code=file_io::call(module,b,"rfort_format_end_file",&[h,file],types::I32)?;
                     let okay=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,code,0);file_io::require(module,b,ptr_ty,dc,okay,"formatted file WRITE failed")?;continue;
                 }
                 if name=="@file_write_record" {
                     let unit=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);let unit=to_i64(b,unit);
-                    let file=file_io::handle(module,b,ptr_ty,dc,unit)?;
+                    let file=file_io::write_handle(module,b,ptr_ty,dc,unit)?;
                     let text=characters::view(module,b,ptr_ty,dc,chars,ints,&args[1])?;
                     let code=file_io::call(module,b,"rfort_file_write_record",&[file,text.address,text.length],types::I32)?;
                     let okay=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,code,0);
                     file_io::require(module,b,ptr_ty,dc,okay,"formatted file WRITE failed")?;continue;
                 }
-                if matches!(name.as_str(), "@file_open" | "@file_close" | "@file_rewind" | "@file_backspace" | "@file_scratch") {
+                if matches!(name.as_str(), "@file_open" | "@file_close" | "@file_close_delete" | "@file_rewind" | "@file_backspace" | "@file_scratch") {
                     let unit=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);
                     let unit=to_i64(b,unit);
                     let path=match args.get(1) {Some(IExpr::Str(path))=>Some(path.as_str()),_=>None};
@@ -2655,12 +2729,13 @@ fn gen_stmts(
                             (4,bits,length)
                         } else {
                             let value=eval_expr(b,ex,ptr_ty,&args[1],ints,reals,bools,func_meta);
-                            let (tag,bits)=match value {
-                                CgVal::I64(v)=>(1,v),
-                                CgVal::F64(v)=>(2,b.ins().bitcast(types::I64,MemFlags::new(),v)),
-                                CgVal::Bool(v)=>(3,b.ins().uextend(types::I64,v)),
+                            // The kind travels in the length field of numeric items.
+                            let (tag,bits,kind)=match value {
+                                CgVal::I64(v)=>(1,v,integer_kind(&args[1])),
+                                CgVal::F64(v)=>(2,b.ins().bitcast(types::I64,MemFlags::new(),v),if single_value(&args[1],real_kind,func_meta) {4} else {8}),
+                                CgVal::Bool(v)=>(3,b.ins().uextend(types::I64,v),0),
                             };
-                            (tag,bits,b.ins().iconst(types::I64,0))
+                            (tag,bits,b.ins().iconst(types::I64,kind))
                         };
                         let tag=b.ins().iconst(types::I64,tag);
                         file_io::call(module,b,"rfort_format_push",&[handle,tag,bits,length],types::I32)?;
@@ -2681,12 +2756,12 @@ fn gen_stmts(
                             (4,bits,length)
                         } else {
                             let value = eval_expr(b,ex,ptr_ty,e,ints,reals,bools,func_meta);
-                            let (tag,bits) = match value {
-                                CgVal::I64(v) => (1,v),
-                                CgVal::F64(v) => (2,b.ins().bitcast(types::I64,MemFlags::new(),v)),
-                                CgVal::Bool(v) => (3,b.ins().uextend(types::I64,v)),
+                            let (tag,bits,kind) = match value {
+                                CgVal::I64(v) => (1,v,integer_kind(e)),
+                                CgVal::F64(v) => (2,b.ins().bitcast(types::I64,MemFlags::new(),v),if single_value(e,real_kind,func_meta) {4} else {8}),
+                                CgVal::Bool(v) => (3,b.ins().uextend(types::I64,v),0),
                             };
-                            (tag,bits,b.ins().iconst(types::I64,0))
+                            (tag,bits,b.ins().iconst(types::I64,kind))
                         };
                         let tag = b.ins().iconst(types::I64,tag);
                         for (offset,value) in [(0,tag),(8,bits),(16,length)] {
@@ -3412,6 +3487,22 @@ thread_local! {
     /// Calls that expression code generation could not resolve. Code generation
     /// continues with a placeholder value so the error can name every call.
     static UNRESOLVED_CALLS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Declared INTEGER kinds other than the default, for B, O and Z output.
+    static INTEGER_KINDS: std::cell::RefCell<HashMap<String, u8>> = std::cell::RefCell::new(HashMap::new());
+}
+
+// The kind of an INTEGER output item, 0 when it is the default or unknown.
+fn integer_kind(e: &IExpr) -> i64 {
+    match e {
+        IExpr::Ident(n) | IExpr::Index(n, _) => INTEGER_KINDS.with(|k| k.borrow().get(n).copied()).map_or(0, i64::from),
+        IExpr::Call(n, args) if n == "@integer_literal" || n == "int" && args.len() == 2 => match args.get(1) {
+            Some(IExpr::IntLit(k)) => k.parse().unwrap_or(0),
+            _ => 0,
+        },
+        IExpr::Un(_, a) => integer_kind(a),
+        IExpr::Bin(_, a, b) => integer_kind(a).max(integer_kind(b)),
+        _ => 0,
+    }
 }
 
 impl Backend for CraneliftBackend {
@@ -3630,7 +3721,7 @@ impl CraneliftBackend {
                 }
 
                 "btest" | "iand" | "ibclr" | "ibits" | "ibset" | "ieor" | "ior" | "ishft"
-                | "ishftc" | "not" | "mod" | "modulo" => {
+                | "ishftc" | "not" | "mod" | "modulo" | "sign" => {
                     eff_ret.insert(name.clone(), crate::ast::TypeSpec::Integer(None));
                     let ar = *import_arity.get(&name).unwrap_or(&1usize);
                     param_kinds_map.insert(name.clone(), vec![ParamKind::I64; ar]);

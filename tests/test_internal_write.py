@@ -114,9 +114,5 @@ end subroutine
 write(text,'(i0)',advance='no') 1
 end
 """,'internal WRITE control options')
-        self.reject("""character(8)::text
-write(text,*) 1
-end
-""",'list-directed internal WRITE')
 
 if __name__=='__main__':unittest.main()

@@ -711,6 +711,15 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                 collect_assigned_vars_in_stmt(stmt, &mut multiply_assigned_vars);
             }
         }
+        // A non-default INTEGER kind must stay visible where the variable is
+        // used, for example for B, O and Z output of its bits.
+        for stmt in &stmts {
+            if let IStmt::DeclVar(crate::ast::TypeSpec::Integer(Some(kind)), var, _) = stmt {
+                if *kind != 4 {
+                    multiply_assigned_vars.insert(var.clone());
+                }
+            }
+        }
         let mut assigned_once = std::collections::HashSet::new();
         for stmt in &stmts {
             match stmt {
@@ -1865,7 +1874,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                             }
                             // Keep the kind of a double argument when later constant
                             // propagation replaces its variable with a real literal.
-                            if (crate::intrinsics::math_arity(name).is_some() || matches!(name.to_ascii_lowercase().as_str(), "abs" | "mod" | "modulo")) && double_kind(a, types) {
+                            if (crate::intrinsics::math_arity(name).is_some() || matches!(name.to_ascii_lowercase().as_str(), "abs" | "mod" | "modulo" | "sign")) && double_kind(a, types) {
                                 IExpr::Call("dble".into(), vec![lowered])
                             } else { lowered }
                         }).collect(),

@@ -51,7 +51,7 @@ pub(crate) fn lower(
             bail!("{operation}: unsupported I/O control `{key}`");
         }
         if operation=="inquire" && !matches!(key.as_str(),"unit"|"file"|"name"|"opened"|"number"|"iostat") {bail!("INQUIRE: unsupported I/O control `{key}`");}
-        if operation != "open" && operation!="inquire" && key != "unit" {
+        if operation != "open" && operation!="inquire" && key != "unit" && !(operation=="close" && key=="status") {
             bail!("{operation} currently supports only UNIT");
         }
         if operation=="open" && matches!(key.as_str(),"name"|"opened"|"number"|"iostat") {bail!("OPEN: unsupported I/O control `{key}`");}
@@ -85,7 +85,9 @@ pub(crate) fn lower(
         }
         let status=match controls.remove("status") {Some(Expr::Str(s))=>s.trim_end().to_ascii_lowercase(),None=>"unknown".into(),_=>bail!("OPEN STATUS must currently be constant")};
         let action=match controls.remove("action") {Some(Expr::Str(s))=>s.trim_end().to_ascii_lowercase(),None=>"readwrite".into(),_=>bail!("OPEN ACTION must currently be constant")};
-        let mode=match (status.as_str(),action.as_str()) {("old","read")=>0,("replace","write")=>1,("replace","readwrite")=>2,("old","readwrite")=>3,("old","write")=>4,("unknown","readwrite")=>5,_=>bail!("unsupported OPEN STATUS/ACTION combination")};
+        let mode=match (status.as_str(),action.as_str()) {("old","read")=>0,("replace","write")=>1,("replace","readwrite")=>2,("old","readwrite")=>3,("old","write")=>4,("unknown","readwrite"|"write")=>5,("unknown","read")=>0,
+            // NEW does not yet check that the file is absent.
+            ("new","write")=>1,("new","readwrite")=>2,_=>bail!("unsupported OPEN STATUS/ACTION combination")};
         let path=controls.remove("file").context("OPEN requires FILE")?;
         if !matches!(crate::array_calls::scalar_actual_kind(&path,symbols)?,TypeSpec::Character(_)) {bail!("FILE requires scalar CHARACTER");}
         let mut args=vec![destination.clone(),path,Expr::IntLit(mode.to_string()),Expr::IntLit(i64::from(newunit.is_some()).to_string())];
@@ -98,9 +100,18 @@ pub(crate) fn lower(
     }
     let unit_expr=controls.remove("unit").context("file operation requires UNIT")?;unit(&unit_expr,symbols)?;
     let args=vec![unit_expr];
-
+    let status=match controls.remove("status") {
+        None=>"keep".to_owned(),
+        Some(Expr::Str(s))=>s.trim_end().to_ascii_lowercase(),
+        Some(_)=>bail!("CLOSE STATUS must currently be constant"),
+    };
+    let name=match status.as_str() {
+        "keep"=>format!("@file_{operation}"),
+        "delete"=>"@file_close_delete".into(),
+        _=>bail!("CLOSE STATUS must be 'keep' or 'delete'"),
+    };
     Ok(Stmt::CallSub {
-        name: format!("@file_{operation}"),
+        name,
         args,
     })
 }
@@ -184,9 +195,12 @@ impl Files {
             return Ok(());
         }
         // CLOSE on an unconnected unit is a successful no-op.
-        if op == "@file_close" {
-            self.0.remove(&unit);
-            self.1.remove(&unit);
+        if op == "@file_close" || op == "@file_close_delete" {
+            let connected=self.0.remove(&unit).is_some();
+            let name=self.1.remove(&unit);
+            if op == "@file_close_delete" && connected {
+                if let Some(name)=name.filter(|n|!n.is_empty()) {std::fs::remove_file(name.trim_end()).context("CLOSE could not delete the file")?;}
+            }
             return Ok(());
         }
         let file = self
@@ -251,6 +265,11 @@ impl Files {
     }
     pub(crate) fn write_record(&mut self, unit:i64, text:&str)->Result<()> {
         Self::valid(unit)?;
+        // Unit 0 is preconnected to standard error unless a file is opened on it.
+        if unit==0 && !self.0.contains_key(&0) {
+            eprintln!("{text}");
+            return Ok(());
+        }
         let file=self.0.get_mut(&unit).context("file unit is not connected")?;
         file.write_all(text.as_bytes())?;file.write_all(b"\n")?;
         let position=file.stream_position()?;file.set_len(position)?;

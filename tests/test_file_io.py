@@ -108,7 +108,7 @@ end
             ("open(20,file='data',status='replace',action='read')\nend", "unsupported OPEN STATUS/ACTION combination"),
             ("open(20,file='data',status='old',action='read',iostat=i)\nend", "unsupported I/O control `iostat`"),
             ("open(20,unit=21,file='data',status='old',action='read')\nend", "duplicate unit"),
-            ("close(20,status='delete')\nend", "supports only UNIT"),
+            ("close(20,status='scratch')\nend", "CLOSE STATUS must be 'keep' or 'delete'"),
             ("integer::iu\nrewind(iu)\nend", "uninitialized variable `iu`"),
             ("character::text\ninteger::iu\nread(iu,'(a)') text\nend", "uninitialized variable `iu`"),
             ("rewind(5)\nend", "excluding preconnected units"),

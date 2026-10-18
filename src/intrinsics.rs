@@ -11,6 +11,9 @@ pub const REAL_MATH: &[(&str, usize)] = &[
     ("asinh", 1), ("acosh", 1), ("atanh", 1),
     ("erf", 1), ("erfc", 1), ("gamma", 1), ("log_gamma", 1), ("hypot", 2),
     ("aint", 1), ("anint", 1),
+    ("bessel_j0", 1), ("bessel_j1", 1), ("bessel_y0", 1), ("bessel_y1", 1),
+    // BESSEL_JN(N, X) and BESSEL_YN(N, X) are rewritten to these, with X first.
+    ("rfort_bessel_jn", 2), ("rfort_bessel_yn", 2),
 ];
 
 pub fn math_arity(name: &str) -> Option<usize> {
@@ -19,11 +22,14 @@ pub fn math_arity(name: &str) -> Option<usize> {
 
 /// The C math library function for a REAL_MATH intrinsic.
 pub fn c_symbol(name: &str) -> String {
-    match name.to_ascii_lowercase().as_str() {
+    let name = name.to_ascii_lowercase();
+    match name.as_str() {
         "gamma" => "tgamma".into(),
         "log_gamma" => "lgamma".into(),
         "aint" => "trunc".into(),
         "anint" => "round".into(),
+        "bessel_j0" | "bessel_j1" | "bessel_y0" | "bessel_y1" =>
+            format!("{}{}", if cfg!(windows) { "_" } else { "" }, &name[7..]),
         other => other.into(),
     }
 }
@@ -53,12 +59,12 @@ pub enum Purity { Pure, Impure }
 
 pub const PURE_FUNCTIONS: &[&str] = &[
     "cmplx", "aimag", "conjg", "abs", "achar", "adjustl", "adjustr", "aint", "all", "allocated",
-    "anint", "any", "associated", "ceiling", "char", "count", "cshift",
+    "anint", "any", "associated", "bessel_jn", "bessel_yn", "bit_size", "ceiling", "char", "count", "cshift",
     "dble", "dim", "dot_product", "dprod", "eoshift", "findloc", "floor",
-    "huge", "iachar", "ichar", "index", "int", "ishftc", "kind",
+    "huge", "iachar", "iall", "iany", "ichar", "index", "int", "iparity", "ishftc", "kind",
     "lbound", "len", "len_trim", "lge", "lgt", "lle", "llt",
     "matmul", "max", "maxloc", "maxval", "merge", "min", "minloc",
-    "minval", "mod", "modulo", "new_line", "nint", "pack", "present",
+    "minval", "mod", "modulo", "new_line", "nint", "norm2", "out_of_range", "pack", "parity", "present",
     "product", "real", "repeat", "reshape", "scan", "selected_int_kind", "selected_real_kind",
     "shape", "sign", "size", "spread", "sum", "tiny", "transpose",
     "trim", "ubound", "unpack", "verify",

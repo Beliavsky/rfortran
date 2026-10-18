@@ -67,6 +67,7 @@ mod character_input;
 mod derived;
 mod procedure_arguments;
 mod intrinsic_rewrites;
+mod matmul_runtime;
 mod block_scopes;
 mod allocation_options;
 mod complex;

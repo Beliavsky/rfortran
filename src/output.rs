@@ -402,11 +402,11 @@ pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> Result<crat
                     if args[2..].iter().any(|e|matches!(e,Expr::Call(n,_) if n.starts_with("@write_option:"))) {
                         bail!("internal WRITE control options are not yet supported");
                     }
-                    if matches!(&args[1],Expr::Call(n,_) if n=="@list_directed") {
-                        bail!("list-directed internal WRITE is not yet supported");
-                    }
+                    // List-directed internal output: a blank, then each item as
+                    // G0 separated by blanks.
+                    let format=if matches!(&args[1],Expr::Call(n,_) if n=="@list_directed") {Expr::Str("(*(1x,g0))".into())} else {args[1].clone()};
                     internal=Some((target.clone(),length.unwrap_or(1)));
-                    Some((args[1].clone(),args[2..].to_vec(),int(0)))
+                    Some((format,args[2..].to_vec(),int(0)))
                 } else if matches!(
                     name.as_str(),
                     "@formatted_print" | "@formatted_write_noadvance"

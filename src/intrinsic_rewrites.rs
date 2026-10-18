@@ -13,7 +13,10 @@
 //! IS_IOSTAT_EOR compare with the IOSTAT_END and IOSTAT_EOR values, -1 and -2.
 //! SIND, ASIND, SINPI, ATAN2D and the rest of the degree and half-revolution
 //! functions scale the argument or result of SIN, ASIN or ATAN2 by PI in the
-//! argument's kind, and ATAN(Y, X) is ATAN2(Y, X).
+//! argument's kind, and ATAN(Y, X) is ATAN2(Y, X). DIM(A, B) is MAX(A-B, 0) and
+//! DPROD(X, Y) is DBLE(X)*DBLE(Y). Specific names such as IABS, FLOAT and
+//! DSQRT become their generic intrinsic, BESSEL_JN(N, X) and BESSEL_YN(N, X)
+//! call runtime wrappers that take X first, and NORM2(X) is SQRT(SUM(X*X)).
 //! A user procedure or variable with one of these names keeps its own definition.
 use crate::ast::{BinOp, Expr, Program, Stmt};
 use crate::procedure_arguments::{children, expressions, visit_expr};
@@ -46,6 +49,39 @@ fn user_procedures(body: &[Stmt], out: &mut HashSet<String>) {
             _ => {}
         }
     }
+}
+
+/// Specific names of generic intrinsics whose arguments have the generic's types.
+fn specific(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "iabs" | "dabs" | "cabs" => "abs",
+        "float" | "sngl" => "real",
+        "dfloat" => "dble",
+        "idint" | "ifix" => "int",
+        "idnint" => "nint",
+        "dint" => "aint",
+        "dnint" => "anint",
+        "dsqrt" | "csqrt" => "sqrt",
+        "dexp" | "cexp" => "exp",
+        "alog" | "dlog" | "clog" => "log",
+        "alog10" | "dlog10" => "log10",
+        "dsin" | "csin" => "sin",
+        "dcos" | "ccos" => "cos",
+        "dtan" => "tan",
+        "dasin" => "asin",
+        "dacos" => "acos",
+        "datan" => "atan",
+        "datan2" => "atan2",
+        "dsinh" => "sinh",
+        "dcosh" => "cosh",
+        "dtanh" => "tanh",
+        "amod" | "dmod" => "mod",
+        "isign" | "dsign" => "sign",
+        "idim" | "ddim" => "dim",
+        "max0" | "amax1" | "dmax1" => "max",
+        "min0" | "amin1" | "dmin1" => "min",
+        _ => return None,
+    })
 }
 
 fn ishftc(args: &[Expr]) -> Result<Expr> {
@@ -96,8 +132,36 @@ fn scaled_trig(lname: &str, args: &[Expr]) -> Option<Result<Expr>> {
 
 fn rewrite(e: &mut Expr, user: &HashSet<String>, error: &mut Option<anyhow::Error>) {
     let Expr::Call(name, args) = e else { return };
-    let lname = name.to_ascii_lowercase();
+    let mut lname = name.to_ascii_lowercase();
     if user.contains(&lname) {
+        return;
+    }
+    if let Some(generic) = specific(&lname) {
+        *name = generic.into();
+        lname = generic.into();
+    }
+    if matches!(lname.as_str(), "bessel_jn" | "bessel_yn") {
+        if args.len() != 2 {
+            *error = Some(anyhow::anyhow!("{} currently supports only the elemental form (N, X)", lname.to_ascii_uppercase()));
+            return;
+        }
+        *e = call(&format!("rfort_{lname}"), vec![args[1].clone(), call("real", vec![args[0].clone()])]);
+        return;
+    }
+    if lname == "norm2" && (1..=2).contains(&args.len()) {
+        let mut sum = vec![bin(BinOp::Mul, args[0].clone(), args[0].clone())];
+        sum.extend(args.get(1).filter(|dim| !crate::named_arguments::omitted(dim)).cloned());
+        *e = call("sqrt", vec![call("sum", sum)]);
+        return;
+    }
+    if lname == "dim" && args.len() == 2 {
+        // The positive difference, zero in the kind of the arguments.
+        let zero = bin(BinOp::Sub, args[0].clone(), args[0].clone());
+        *e = call("max", vec![bin(BinOp::Sub, args[0].clone(), args[1].clone()), zero]);
+        return;
+    }
+    if lname == "dprod" && args.len() == 2 {
+        *e = bin(BinOp::Mul, call("dble", vec![args[0].clone()]), call("dble", vec![args[1].clone()]));
         return;
     }
     if lname == "atan" && args.len() == 2 {

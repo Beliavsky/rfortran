@@ -108,7 +108,7 @@ end program
     def test_uninitialized_and_whole_array_arguments(self):
         for declarations,expression,diagnostic in [
             ("integer::i","ibset(i,0)","uninitialized variable `i`"),
-            ("integer::a(3)","iand(a,1)","scalar arguments"),
+            ("integer::a(3),k\na=1\nk=1","ibset(a,k)","constant control arguments"),
             ("integer(16)::i","ibclr(i,0)","supports INTEGER kinds"),
         ]:
             with self.subTest(expression=expression),tempfile.TemporaryDirectory(prefix="unsupported-bits-") as tmp:

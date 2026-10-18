@@ -162,7 +162,7 @@ pub(crate) fn scalar_actual_kind(e: &Expr, shapes: &Shapes) -> Result<TypeSpec> 
             scalar_actual_kind(&args[0], shapes)?;
             Ok(match n.as_str() { "dble" => TypeSpec::DoublePrecision, "real" => TypeSpec::Real, _ => TypeSpec::Integer(None) })
         }
-        Expr::Call(n,args) if matches!(n.as_str(),"mod"|"modulo") && args.len()==2 => {
+        Expr::Call(n,args) if matches!(n.as_str(),"mod"|"modulo"|"sign") && args.len()==2 => {
             let a=scalar_actual_kind(&args[0],shapes)?;let b=scalar_actual_kind(&args[1],shapes)?;
             Ok(match (&a,&b) {
                 (TypeSpec::Integer(x),TypeSpec::Integer(y))=>TypeSpec::Integer(Some(x.unwrap_or(4).max(y.unwrap_or(4)))),

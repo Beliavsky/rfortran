@@ -96,9 +96,10 @@ end
 ''','file\nfirst\nsecond\n')
 
     def test_invalid_runtime_unit_and_advance(self):
-        self.check("integer::u\nu=17\nwrite(u,*) 'invalid'\nend\n",error='standard output unit 6',reference=False)
+        # List-directed WRITE to a unit with no connected file fails at runtime.
+        self.check("integer::u\nu=17\nwrite(u,*) 'invalid'\nend\n",error='file unit is not connected',reference=False)
         self.check("character(5)::advance\nadvance='maybe'\nwrite(6,'(a)',advance=advance) 'invalid'\nend\n",error="ADVANCE must be 'yes' or 'no'",reference=False)
-        self.reject("write(17,*) 'invalid'\nend\n",'external file WRITE')
+        self.check("write(17,*) 'invalid'\nend\n",error='file unit is not connected',reference=False)
 
     def test_empty_character_dummy_with_runtime_loop_bound(self):
         program='''program main

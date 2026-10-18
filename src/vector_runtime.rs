@@ -314,7 +314,7 @@ fn shape(e: &Expr, s: &Shapes) -> Result<Option<(TypeSpec, Vec<Expr>)>> {
         Expr::Call(n, a)
             if crate::intrinsics::math_arity(n).is_some() || crate::intrinsics::integer_rounding(n) || crate::intrinsics::real_predicate(n) || matches!(
                 n.as_str(),
-                "abs" | "int" | "mod" | "modulo" | "real" | "dble"
+                "abs" | "int" | "mod" | "modulo" | "sign" | "real" | "dble"
             ) =>
         {
             let Some((mut kind, d)) = shape(&a[0], s)? else {
@@ -620,7 +620,7 @@ impl Lower {
                 self.element(b, index, s, out)?,
             ),
             Expr::Un(op, a) => Expr::Un(op.clone(), Box::new(self.element(a, index, s, out)?)),
-            Expr::Call(n, a) if matches!(n.as_str(), "abs" | "int" | "mod" | "modulo") => {
+            Expr::Call(n, a) if matches!(n.as_str(), "abs" | "int" | "mod" | "modulo" | "sign") => {
                 Expr::Call(
                     n.clone(),
                     a.iter()
@@ -744,7 +744,7 @@ impl Lower {
             Expr::Call(n, a)
                 if matches!(
                     n.as_str(),
-                    "@array_constructor" | "abs" | "int" | "mod" | "modulo"
+                    "@array_constructor" | "abs" | "int" | "mod" | "modulo" | "sign"
                 ) =>
             {
                 for e in a {

@@ -257,7 +257,7 @@ impl Lowerer {
                     "int" | "nint" | "floor" | "ceiling" => args
                         .first()
                         .is_some_and(|e| self.shape(e, shapes).is_ok_and(|s| s.is_none())),
-                    "abs" | "mod" | "modulo" | "min" | "max" => {
+                    "abs" | "mod" | "modulo" | "sign" | "min" | "max" => {
                         args.iter().all(|a| self.integer_expr(a, shapes))
                     }
                     _ => false,
@@ -368,7 +368,7 @@ impl Lowerer {
         if matches!(e,Expr::Call(n,_) if crate::real_intrinsics::keys(n).is_some() && !self.functions.contains_key(n) && !shapes.contains_key(n)) {
             self.shape(e,shapes)?;
         }
-        if matches!(e,Expr::Call(n,_) if self.elementals.contains(n) || matches!(n.as_str(),"mod" | "modulo") || matches!(n.as_str(),"min"|"max") && !self.functions.contains_key(n) && !shapes.contains_key(n)) || matches!(e,Expr::Bin(..)) {
+        if matches!(e,Expr::Call(n,_) if self.elementals.contains(n) || matches!(n.as_str(),"mod" | "modulo" | "sign") || matches!(n.as_str(),"min"|"max") && !self.functions.contains_key(n) && !shapes.contains_key(n)) || matches!(e,Expr::Bin(..)) {
             self.shape(e, shapes)?;
         }
         match e {
@@ -416,6 +416,18 @@ impl Lowerer {
                 args[2] = int(dims[axis]);
                 args.push(Expr::Call("@spread_shape".into(),dims.into_iter().map(int).collect()));
                 *n = "@spread".into();
+            }
+            Expr::Call(n, _) if n == "matmul" => {
+                let dims = self.shape(e,shapes)?.unwrap();
+                let Expr::Call(n,args) = e else { unreachable!() };
+                let a = self.shape(&args[0],shapes)?.unwrap();
+                let b = self.shape(&args[1],shapes)?.unwrap();
+                let rows = if a.len() == 2 { a[0] } else { 1 };
+                let cols = if b.len() == 2 { b[1] } else { 1 };
+                for arg in args.iter_mut() { self.expression(arg,shapes)?; }
+                args.extend([int(rows), int(*a.last().unwrap()), int(cols)]);
+                args.push(Expr::Call("@matmul_shape".into(),dims.into_iter().map(int).collect()));
+                *n = "@matmul".into();
             }
             Expr::Call(n, args) if n == "transpose" => {
                 let dims = self.shape(e,shapes)?.unwrap();
@@ -470,10 +482,14 @@ impl Lowerer {
                     self.expression(&mut args[2], shapes)?;
                 }
             }
-            Expr::Call(n, args) if matches!(n.as_str(), "sum" | "product" | "minval" | "maxval" | "@count_default" | "@count_i8" | "@any_reduction" | "@all_reduction") && args.len() == 3 => {
+            Expr::Call(n, args) if matches!(n.as_str(), "sum" | "product" | "minval" | "maxval" | "iany" | "iall" | "iparity" | "parity" | "@count_default" | "@count_i8" | "@any_reduction" | "@all_reduction") && args.len() == 3 => {
                 let intrinsic = match n.as_str() { "@count_default" | "@count_i8" => "count", "@any_reduction" => "any", "@all_reduction" => "all", _ => n.as_str() };
                 let dims = self.shape(&args[0], shapes)?.context("reduction argument must be an array")?;
                 total(&dims)?;
+                // In the (ARRAY, MASK) form an array second argument is the MASK.
+                if matches!(&args[2], Expr::Logical(true)) && self.shape(&args[1], shapes)?.is_some() {
+                    args[2] = std::mem::replace(&mut args[1], Expr::Call("@no_dim".into(), vec![]));
+                }
                 let mut reduction_axis = None;
                 if !matches!(&args[1], Expr::Call(tag, _) if tag == "@no_dim") {
                     let dim = crate::parameters::integer_constant(&args[1]).context("reduction DIM must currently be a constant INTEGER; use MASK= for masks")?;
@@ -634,6 +650,24 @@ impl Lowerer {
                 let Expr::Call(_,dims) = &args[3] else { unreachable!() };
                 Ok(Some(dims.iter().map(crate::parameters::integer_constant).collect::<Result<Vec<_>>>()?))
             }
+            Expr::Call(n, args) if n == "matmul" => {
+                let [a, b] = args.as_slice() else { bail!("MATMUL expects MATRIX_A and MATRIX_B"); };
+                let a = self.shape(a,shapes)?.context("MATMUL MATRIX_A must be an array")?;
+                let b = self.shape(b,shapes)?.context("MATMUL MATRIX_B must be an array")?;
+                if a.len() > 2 || b.len() > 2 || a.len() == 1 && b.len() == 1 {
+                    bail!("MATMUL requires rank-one or rank-two arguments, at least one of rank two");
+                }
+                if a.last() != b.first() { bail!("MATMUL operand shapes do not conform"); }
+                let mut dims = vec![];
+                if a.len() == 2 { dims.push(a[0]); }
+                if b.len() == 2 { dims.push(b[1]); }
+                total(&dims)?;
+                Ok(Some(dims))
+            }
+            Expr::Call(n, args) if n == "@matmul" => {
+                let Expr::Call(_, dims) = &args[5] else { unreachable!() };
+                Ok(Some(dims.iter().map(crate::parameters::integer_constant).collect::<Result<Vec<_>>>()?))
+            }
             Expr::Call(n, args) if n == "transpose" => {
                 let mut dims = self.shape(&args[0],shapes)?.context("TRANSPOSE MATRIX must be a rank-two array")?;
                 if dims.len() != 2 { bail!("TRANSPOSE MATRIX must be a rank-two array"); }
@@ -651,12 +685,12 @@ impl Lowerer {
                 for arg in args { count = count.checked_add(match self.shape(arg, shapes)? { Some(dims) => total(&dims)?, None => 1 }).context("array constructor extent overflow")?; }
                 Ok(Some(vec![count]))
             }
-            Expr::Call(n, args) if matches!(n.as_str(), "sum" | "product" | "minval" | "maxval" | "@count_default" | "@count_i8" | "@any_reduction" | "@all_reduction") => {
+            Expr::Call(n, args) if matches!(n.as_str(), "sum" | "product" | "minval" | "maxval" | "iany" | "iall" | "iparity" | "parity" | "@count_default" | "@count_i8" | "@any_reduction" | "@all_reduction") => {
                 if args.len() == 5 {
                     let Expr::Call(_, dims) = &args[4] else { unreachable!() };
                     return Ok(Some(dims.iter().map(crate::parameters::integer_constant).collect::<Result<Vec<_>>>()?));
                 }
-                if args.len() != 3 || matches!(&args[1],Expr::Call(tag,_) if tag == "@no_dim") { return Ok(None); }
+                if args.len() != 3 || matches!(&args[1],Expr::Call(tag,_) if tag == "@no_dim") || self.shape(&args[1], shapes)?.is_some() { return Ok(None); }
                 let mut dims = self.shape(&args[0], shapes)?.context("reduction argument must be an array")?;
                 let axis = crate::parameters::integer_constant(&args[1]).context("reduction DIM must currently be a constant INTEGER")?;
                 if axis < 1 || axis as usize > dims.len() { bail!("reduction DIM must be between 1 and {}", dims.len()); }
@@ -712,7 +746,7 @@ impl Lowerer {
                     || (crate::intrinsics::integer_rounding(n) || crate::intrinsics::real_predicate(n)) && !self.functions.contains_key(n) && !shapes.contains_key(n)
                     || crate::real_intrinsics::keys(n).is_some() && !self.functions.contains_key(n) && !shapes.contains_key(n)
                     || matches!(n.as_str(),"min"|"max") && !self.functions.contains_key(n) && !shapes.contains_key(n)
-                    || matches!(n.as_str(), "abs" | "dble" | "real" | "mod" | "modulo") =>
+                    || matches!(n.as_str(), "abs" | "dble" | "real" | "mod" | "modulo" | "sign") =>
             {
                 let mut shape:Option<Vec<i64>> = None;
                 for arg in args {
@@ -826,7 +860,7 @@ impl Lowerer {
                                 | "lbound"
                                 | "ubound"
                                 | "sum"
-                                | "product"
+                                | "product" | "iany" | "iall" | "iparity" | "parity"
                                 | "minval"
                                 | "maxval" | "trim" | "len" | "len_trim" | "adjustl" | "adjustr" | "repeat" | "char" | "achar"
                         );

@@ -405,6 +405,14 @@ fn logical_shape(
         // Constructor items are concatenated, not conformed; the extent is
         // their total, computed when the constructor is lowered.
         Expr::Call(n, _) if n == "@array_constructor" => Ok(None),
+        Expr::Call(n, args) if n == "matmul" && !shapes.contains_key(n) => {
+            for arg in args {
+                if logical_shape(arg, shapes, guards)?.is_some_and(|(_, runtime)| runtime) {
+                    bail!("MATMUL of runtime-sized arrays requires whole-array arguments; assign other expressions to an ALLOCATABLE array first");
+                }
+            }
+            Ok(None)
+        }
         Expr::Call(n, args) if !shapes.contains_key(n) => {
             let mut result: Option<(Vec<Expr>, bool)> = None;
             for arg in args {
@@ -428,6 +436,7 @@ fn logical_shape(
                     | "product"
                     | "minval"
                     | "maxval"
+                    | "iany" | "iall" | "iparity" | "parity"
                     | "any"
                     | "all"
                     | "count"
@@ -439,7 +448,7 @@ fn logical_shape(
             if reduction {
                 if dynamic
                     && args.len() > 1
-                    && matches!(n.as_str(), "sum" | "product" | "minval" | "maxval")
+                    && matches!(n.as_str(), "sum" | "product" | "minval" | "maxval" | "iany" | "iall" | "iparity" | "parity")
                 {
                     bail!("masked or DIM reductions on runtime-sized multidimensional arrays are not yet supported");
                 }
@@ -457,7 +466,7 @@ fn logical_shape(
                 || crate::bit_intrinsics::keys(n).is_some()
                 || matches!(
                     n.as_str(),
-                    "abs" | "mod" | "modulo" | "real" | "int" | "dble"
+                    "abs" | "mod" | "modulo" | "sign" | "real" | "int" | "dble"
                 )
             {
                 return Ok(result);

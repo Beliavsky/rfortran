@@ -757,11 +757,11 @@ impl Resolver {
                                     _ => t,
                                 }
                             }
-                            "abs" | "mod" | "modulo" | "min" | "max" => {
+                            "abs" | "mod" | "modulo" | "sign" | "min" | "max" => {
                                 fn abs_type(t:Ty)->Ty{match t{Ty::Array(t,r)=>Ty::Array(Box::new(abs_type(*t)),r),Ty::Scalar(TypeSpec::Complex(k))=>scalar(&if k=="8"{TypeSpec::DoublePrecision}else{TypeSpec::Real}),t=>t}}
                                 let t=arg_types.first().cloned().unwrap_or(Ty::Unknown);if n=="abs"{abs_type(t)}else{elemental_result(t,&arg_types)}
                             }
-                            "sum" | "product" | "minval" | "maxval" => {
+                            "sum" | "product" | "minval" | "maxval" | "iany" | "iall" | "iparity" | "parity" => {
                                 let dim=matches!(arg_types.get(1),Some(Ty::Scalar(TypeSpec::Integer(_))));
                                 match arg_types.first() {
                                     Some(Ty::Array(t,rank)) if dim && *rank>1=>Ty::Array(t.clone(),rank-1),

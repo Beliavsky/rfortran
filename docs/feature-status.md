@@ -30,6 +30,15 @@ Three more bugs found on 2026-10-17 are also fixed:
   variables, even under `IMPLICIT NONE`.
 - A scalar, fixed-size array or CHARACTER variable declared in a BLOCK shared
   storage with an outer variable of the same name.
+- Compiled list-directed output of a DOUBLE PRECISION array element printed
+  only 6 significant digits. The interpreter still does.
+- Formatted output of a constant array constructor (`write(*,'(i3)') [1,2,3]`)
+  or a MATMUL result wrote only the first element.
+- Assigning a value to a variable of a narrower INTEGER kind kept the whole
+  value, so an INTEGER(1) variable could hold 130 and a default INTEGER could
+  hold 5000000000. The value now wraps to the variable's kind, as in gfortran.
+- G0 output of `FRACTION`, `SPACING`, `RRSPACING` and the other floating-point
+  model functions of a REAL(4) variable printed DOUBLE PRECISION digits.
 
 ## Source form and declarations
 
@@ -211,17 +220,19 @@ Three more bugs found on 2026-10-17 are also fixed:
 | Feature | Status | Notes | Tests |
 |---|---|---|---|
 | [List-directed output](language-support.md#list-directed-output) | ✅ | REAL values are printed with the shortest exact digits, not gfortran's fixed width | test_logical_list_output.py |
-| [Formatted output: A, I, F, L, X, `/`, I0, F0.d, G0](language-support.md#formatted-output) | ✅ | | test_write.py, test_runtime_formats.py |
-| E, ES, EN, G, D edit descriptors | ❌ | | |
-| B, O, Z edit descriptors | ❌ | | |
-| T, TL, TR, SP, SS, BN, BZ, P edit descriptors | ❌ | | |
+| [Formatted output: A, I, F, L, X, `/`, `:`, I0, F0.d](language-support.md#formatted-output) | ✅ | | test_write.py, test_runtime_formats.py, test_formatted_output.py |
+| [E, ES, EN, D and G edit descriptors, including Ew.dEe, G0 and G0.d](language-support.md#formatted-output) | ✅ | | test_formatted_output.py |
+| [B, O, Z edit descriptors](language-support.md#formatted-output) | ✅ | In the interpreter, a negative value of a non-default INTEGER kind uses the default kind's bits | test_formatted_output.py |
+| [T, TL, TR, SP, SS, S, BN, BZ, kP edit descriptors](language-support.md#formatted-output) | ✅ | A record with T or TL editing is limited to 4096 characters | test_formatted_output.py |
+| [Format reversion](language-support.md#formatted-output) | ✅ | | test_formatted_output.py |
+| DC decimal comma; RU, RD, RZ, RN, RC, RP rounding modes | ❌ | | |
 | FORMAT statements | ❌ | Use a format string | |
 | [Nonadvancing output](language-support.md#formatted-output) | ✅ | | test_nonadvancing_output.py |
-| [Internal WRITE to a CHARACTER variable](language-support.md#formatted-output) | 🟡 | One record; CHARACTER array internal files are not supported | test_internal_write.py |
+| [Internal WRITE to a CHARACTER variable](language-support.md#formatted-output) | 🟡 | One record; CHARACTER array internal files are not supported. List-directed internal WRITE is supported | test_internal_write.py, test_formatted_output.py |
 | [List-directed READ](language-support.md#file-and-standard-input) | ✅ | Standard input, files and internal files | test_list_read.py |
 | [Formatted READ](language-support.md#file-and-standard-input) | 🟡 | Only the `(A)` format | test_runtime_read_format.py |
-| [OPEN, CLOSE, REWIND, BACKSPACE for sequential formatted files](language-support.md#file-and-standard-input) | 🟡 | IOSTAT on OPEN and CLOSE, and CLOSE STATUS=, are not supported | test_file_io.py |
-| List-directed WRITE to a file | ❌ | Use an explicit format | |
+| [OPEN, CLOSE, REWIND, BACKSPACE for sequential formatted files](language-support.md#file-and-standard-input) | 🟡 | IOSTAT on OPEN and CLOSE is not supported; STATUS='new' does not check that the file is absent | test_file_io.py, test_formatted_output.py |
+| [List-directed WRITE to a file, and WRITE to unit 0 (standard error)](language-support.md#file-and-standard-input) | ✅ | Items are written as G0 separated by blanks | test_formatted_output.py |
 | [INQUIRE](language-support.md#file-and-standard-input) | 🟡 | UNIT/FILE with OPENED, NUMBER, NAME, IOSTAT; not EXIST | test_inquire.py |
 | Unformatted, stream and direct access | ❌ | | |
 | NAMELIST | ❌ | | |
@@ -236,22 +247,27 @@ Three more bugs found on 2026-10-17 are also fixed:
 | [Degree and half-revolution trigonometry](language-support.md#elemental-math-functions) (`SIND`, `ACOSD`, `ATAN2D`, `SINPI`, `ATAN2PI`, ...) and `ATAN(Y, X)` | ✅ | DOUBLE PRECISION results can differ from gfortran's in the last bit, and `COSD(90d0)` is 6e-17 instead of 0 | test_intrinsic_rewrites.py |
 | `ABS`, `MOD`, `MODULO`, `MIN`, `MAX`, `INT`, `NINT`, `REAL`, `DBLE`, `FLOOR`, `CEILING` | 🟡 | `INT` accepts KIND only for a constant INTEGER argument | test_rounding.py, test_numeric_minmax.py |
 | `AINT`, `ANINT` | 🟡 | No KIND argument | test_intrinsic_rewrites.py |
-| `SIGN`, `DIM`, `DPROD` | ❌ | | |
+| `SIGN`, `DIM`, `DPROD` | ✅ | | test_formatted_output.py |
 | `ERF`, `ERFC`, `GAMMA`, `LOG_GAMMA`, `HYPOT` | ✅ | | test_intrinsic_rewrites.py |
-| `ERFC_SCALED`, Bessel functions | ❌ | | |
+| [Bessel functions](language-support.md#elemental-math-functions) `BESSEL_J0`, `BESSEL_J1`, `BESSEL_JN`, `BESSEL_Y0`, `BESSEL_Y1`, `BESSEL_YN` | 🟡 | Not the transformational `BESSEL_JN(N1, N2, X)` form; REAL(4) results are computed in DOUBLE PRECISION | test_more_intrinsics.py |
+| `ERFC_SCALED` | ❌ | | |
+| [Specific names](language-support.md#elemental-math-functions) (`IABS`, `FLOAT`, `DSQRT`, `AMOD`, `ISIGN`, `MAX0`, ...) | ✅ | | test_more_intrinsics.py |
+| [`OUT_OF_RANGE`](language-support.md#integer-bit-intrinsics) | 🟡 | Scalar arguments; ROUND must be a constant | test_more_intrinsics.py |
 | [Numeric inquiries](language-support.md#integer-and-real-inquiries) (`HUGE`, `TINY`, `EPSILON`, `DIGITS`, `PRECISION`, `RANGE`, ...) | ✅ | | test_integer_huge.py, test_numeric_model.py |
 | [Floating-point model](language-support.md#integer-and-real-inquiries) (`FRACTION`, `EXPONENT`, `SCALE`, `NEAREST`, `SPACING`, ...) | ✅ | | test_float_model.py |
-| [Bit intrinsics](language-support.md#integer-bit-intrinsics) (`BTEST`, `IAND`, `IOR`, `IEOR`, `NOT`, `IBSET`, `IBCLR`, `IBITS`, `ISHFT`) | ✅ | Scalars only | test_bit_intrinsics.py |
+| [Bit intrinsics](language-support.md#integer-bit-intrinsics) (`BTEST`, `IAND`, `IOR`, `IEOR`, `NOT`, `IBSET`, `IBCLR`, `IBITS`, `ISHFT`) | ✅ | Array arguments need constant positions and shifts | test_bit_intrinsics.py |
 | [`ISHFTC`](language-support.md#integer-bit-intrinsics) | ✅ | Not in PARAMETER initializers | test_intrinsic_rewrites.py |
 | [`BGE`, `BGT`, `BLE`, `BLT`](language-support.md#integer-bit-intrinsics) | ✅ | | test_syntax_forms.py |
-| `POPCNT`, `LEADZ`, `TRAILZ`, `SHIFTL`, `MASKR`, `BIT_SIZE` | ❌ | | |
+| [`POPCNT`, `POPPAR`, `LEADZ`, `TRAILZ`, `DSHIFTL`, `DSHIFTR`, `BIT_SIZE`](language-support.md#integer-bit-intrinsics) | ✅ | | test_more_intrinsics.py |
+| `SHIFTL`, `SHIFTR`, `SHIFTA`, `MASKL`, `MASKR`, `MERGE_BITS` | ❌ | | |
 | [Reductions](language-support.md#reductions) (`SUM`, `PRODUCT`, `MAXVAL`, `MINVAL`, `COUNT`, `ANY`, `ALL`) | ✅ | DIM must be constant | test_masked_reductions.py, test_dim_reductions.py |
+| [`IANY`, `IALL`, `IPARITY`, `PARITY`](language-support.md#reductions) | ✅ | DIM must be constant | test_more_intrinsics.py |
 | [Locations](language-support.md#array-transformations-and-locations) (`MAXLOC`, `MINLOC`, `FINDLOC`) | ✅ | | test_locations.py |
 | [Array transformations](language-support.md#array-transformations-and-locations) (`PACK`, `UNPACK`, `SPREAD`, `RESHAPE`, `TRANSPOSE`, `CSHIFT`, `EOSHIFT`) | ✅ | DIM and NCOPIES must be constant | test_pack_unpack.py, test_spread.py, test_reshape_options.py |
-| `MERGE` | 🟡 | Scalars only | |
+| `MERGE` | 🟡 | Array sources must be numeric or LOGICAL, of constant size | test_formatted_output.py |
 | [`DOT_PRODUCT`](language-support.md#dot_product) | ✅ | | test_dot_product.py |
-| `MATMUL` | 🟡 | COMPLEX arrays only | test_complex.py |
-| `NORM2` | ❌ | | |
+| [`MATMUL`](language-support.md#allocatable-arrays-and-pointers) | 🟡 | Not LOGICAL; a runtime-sized operand must be a whole array, an elemental expression of whole arrays, or a TRANSPOSE or RESHAPE of one | test_complex.py, test_formatted_output.py, test_runtime_matmul.py |
+| [`NORM2`](language-support.md#reductions) | ✅ | Computed as `SQRT(SUM(X*X))`, without scaling against overflow | test_more_intrinsics.py |
 | `TRANSFER`, `STORAGE_SIZE`, `IS_CONTIGUOUS` | ❌ | | |
 | `RANDOM_NUMBER`, [`RANDOM_SEED`](language-support.md#intrinsic-keywords-and-random_seed) | ✅ | | test_intrinsic_keywords.py |
 | [`CPU_TIME`, `SYSTEM_CLOCK`, `DATE_AND_TIME`](language-support.md#cpu_time-system_clock-and-date_and_time) | ✅ | | test_timing.py, test_date_and_time.py |

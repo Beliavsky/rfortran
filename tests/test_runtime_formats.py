@@ -51,10 +51,11 @@ end program main
                         self.assertEqual(result.stderr, "")
                 for fmt, message in [
                     ("i3", "parenthesized"),
-                    ("(i3,e10.2,l2,a4)", "unsupported output descriptor"),
+                    ("(i3,q6.2,l2,a4)", "unsupported output descriptor"),
                     ("(i3,f6.2,l2,i4)", "item type"),
                     ("(a3,f6.2,l2,a4)", "item type"),
-                    ("(i3,f6.2,l2)", "descriptor count"),
+                    # Format reversion gives the fourth item the I3 descriptor.
+                    ("(i3,f6.2,l2)", "item type"),
                     ("(i999999,f6.2,l2,a4)", "supported limits"),
                     ("(999999999999999999999999i1)", "supported limits"),
                     ("('unterminated)", "unterminated literal"),

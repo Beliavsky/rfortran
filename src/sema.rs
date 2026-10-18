@@ -661,12 +661,14 @@ pub fn analyze_with_src(
     }
     for name in [
         "btest", "iand", "ibclr", "ibits", "ibset", "ieor", "ior", "ishft", "ishftc", "not", "mod",
-        "modulo",
+        "modulo", "sign", "popcnt", "poppar", "leadz", "trailz", "dshiftl", "dshiftr", "bit_size", "iany", "iall", "iparity",
     ] {
         known_intrinsics.insert(name.to_string(), TypeSpec::Integer(None));
     }
 
     known_intrinsics.insert("btest".into(),TypeSpec::Logical);
+    known_intrinsics.insert("parity".into(),TypeSpec::Logical);
+    known_intrinsics.insert("out_of_range".into(),TypeSpec::Logical);
     for name in crate::real_intrinsics::NAMES {
         for kind in [4,8] {
             let tag=crate::real_intrinsics::tag(name,kind);
@@ -850,6 +852,8 @@ pub fn analyze_with_src(
     for stmt in &program.body {
         walk_stmt_program_reads(stmt, &mut program_level_reads);
     }
+    // Lowering declares its temporaries inside the branch or loop that uses them.
+    program_level_reads.retain(|name| !name.starts_with('@'));
 
     for name in &program_level_reads {
         let lname = name.to_ascii_lowercase();
@@ -1298,7 +1302,7 @@ pub fn analyze_with_src(
                     if let Some(kind) = sym.get(&lname) { return Some(kind.clone()); }
                     if crate::intrinsics::integer_rounding(&lname) {return crate::intrinsics::rounding_kind(&lname,args).ok();}
                     if crate::intrinsics::real_predicate(&lname) {return Some(TypeSpec::Logical);}
-                    if crate::intrinsics::math_arity(&lname).is_some() || matches!(lname.as_str(), "abs" | "max" | "min" | "mod" | "modulo") {
+                    if crate::intrinsics::math_arity(&lname).is_some() || matches!(lname.as_str(), "abs" | "max" | "min" | "mod" | "modulo" | "sign") {
                         return args.first().and_then(|arg| infer_expr_type(arg, sym, fn_map, external_fn_ret));
                     }
                 }
@@ -2792,7 +2796,7 @@ pub fn analyze_with_src(
                         }
                     }
                     let math = crate::intrinsics::math_arity(&key);
-                    let arity = (if matches!(key.as_str(), "max" | "min") { Some(args.len().max(2)) } else if matches!(key.as_str(), "mod" | "modulo") {Some(2)} else { math }).or_else(|| matches!(key.as_str(), "abs" | "int" | "real" | "dble").then_some(1));
+                    let arity = (if matches!(key.as_str(), "max" | "min") { Some(args.len().max(2)) } else if matches!(key.as_str(), "mod" | "modulo" | "sign") {Some(2)} else { math }).or_else(|| matches!(key.as_str(), "abs" | "int" | "real" | "dble").then_some(1));
                     if let Some(arity) = arity {
                         if args.len() != arity {
                             problems.push((name.clone(), format!("intrinsic `{name}` expects {arity} argument(s), got {}", args.len())));
@@ -2813,7 +2817,7 @@ pub fn analyze_with_src(
                                     }
                                 }
                             }
-                            if matches!(key.as_str(), "atan2" | "max" | "min" | "mod" | "modulo") {
+                            if matches!(key.as_str(), "atan2" | "max" | "min" | "mod" | "modulo" | "sign") {
                                 for pair in types.windows(2) {
                                 if let (Some(a), Some(b)) = (&pair[0], &pair[1]) {
                                     if std::mem::discriminant(a) != std::mem::discriminant(b) {

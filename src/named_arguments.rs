@@ -112,13 +112,19 @@ pub(crate) fn intrinsic(name: &str) -> Option<Signature> {
     let keys: &[&str] = match name {
         name if crate::real_intrinsics::keys(name).is_some() => crate::real_intrinsics::keys(name).unwrap(),
         name if crate::bit_intrinsics::keys(name).is_some() => crate::bit_intrinsics::keys(name).unwrap(),
+        "bit_size" => &["i"],
         name if crate::inquiries::numeric_model(name) => &["x"],
         name if crate::intrinsics::real_predicate(name) => &["x"],
         "atan2" | "atan2d" | "atan2pi" => &["y", "x"],
         "hypot" => &["x", "y"],
+        "bessel_jn" | "bessel_yn" => &["n", "x"],
+        "rfort_bessel_jn" | "rfort_bessel_yn" => &["x", "n"],
+        "norm2" => &["x", "dim"],
+        "out_of_range" => &["x", "mold", "round"],
         "sqrt" | "exp" | "log" | "log10" | "sin" | "cos" | "tan" | "asin" | "acos" | "atan"
         | "sinh" | "cosh" | "tanh" | "asinh" | "acosh" | "atanh" | "erf" | "erfc" | "gamma" | "log_gamma"
         | "sind" | "cosd" | "tand" | "asind" | "acosd" | "atand"
+        | "bessel_j0" | "bessel_j1" | "bessel_y0" | "bessel_y1"
         | "sinpi" | "cospi" | "tanpi" | "asinpi" | "acospi" | "atanpi" => &["x"],
         "abs" | "dble" => &["a"],
         "cmplx"=> &["x","y","kind"],
@@ -176,6 +182,8 @@ pub(crate) fn intrinsic(name: &str) -> Option<Signature> {
         } else if name=="selected_real_kind" {
             HashSet::from(["p".into(),"r".into(),"radix".into()])
         } else if name=="ishftc" {HashSet::from(["size".into()])
+        } else if name=="out_of_range" {HashSet::from(["round".into()])
+        } else if name=="norm2" {HashSet::from(["dim".into()])
         } else if matches!(name, "real" | "int" | "nint" | "aint" | "anint" | "floor" | "ceiling" | "char" | "achar" | "ichar" | "iachar" | "len" | "len_trim") {
             HashSet::from(["kind".into()])
         } else {
@@ -193,6 +201,10 @@ fn intrinsic_keywords(name: &str) -> bool {
             | "shape"
             | "sum"
             | "product"
+            | "iany"
+            | "iall"
+            | "iparity"
+            | "parity"
             | "minval"
             | "maxval"
             | "count"
@@ -425,7 +437,8 @@ mod tests {
                 "floor","ceiling","char","achar","ichar","iachar","len","len_trim","sign","dim","dprod",
                 "dot_product","matmul","merge","lge","lgt","lle","llt","tiny","huge","allocated","present",
                 "selected_int_kind","selected_real_kind","max","min","transpose","epsilon","digits","radix",
-                "precision","range","minexponent","maxexponent","size","lbound","ubound","shape","sum","product",
+                "precision","range","minexponent","maxexponent","size","lbound","ubound","shape","sum","product","iany","iall","iparity","parity","norm2",
+                "bit_size","bessel_jn","bessel_yn","out_of_range",
                 "minval","maxval","count","any","all","minloc","maxloc","findloc","reshape","cshift","eoshift","spread","pack","unpack"]) {
             assert!(intrinsic(name).is_some() || intrinsic_keywords(name),"missing keyword interface for {name}");
             assert!(crate::intrinsics::purity(name).is_some(), "missing intrinsic purity classification for {name}");

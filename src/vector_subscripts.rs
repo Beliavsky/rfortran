@@ -319,7 +319,7 @@ fn info(e: &Expr, scope: &Scope) -> Result<Option<Info>> {
         Expr::Call(n, args)
             if matches!(
                 n.as_str(),
-                "abs" | "mod" | "modulo" | "dble" | "real" | "int"
+                "abs" | "mod" | "modulo" | "sign" | "dble" | "real" | "int"
             ) =>
         {
             let Some(mut result) = info(&args[0], scope)? else {
@@ -455,7 +455,7 @@ fn item(e: &Expr, ordinal: i64, scope: &Scope) -> Result<Expr> {
             item(b, ordinal, scope)?,
         )),
         Expr::Un(op, a) => Ok(Expr::Un(op.clone(), Box::new(item(a, ordinal, scope)?))),
-        Expr::Call(n, args) if matches!(n.as_str(), "abs" | "mod" | "modulo" | "int") => {
+        Expr::Call(n, args) if matches!(n.as_str(), "abs" | "mod" | "modulo" | "sign" | "int") => {
             Ok(Expr::Call(
                 n.clone(),
                 args.iter()
@@ -525,7 +525,7 @@ impl Lowerer {
                 self.freeze_scalars(b, scope, output)?;
             }
             Expr::Un(_, a) => self.freeze_scalars(a, scope, output)?,
-            Expr::Call(n, args) if matches!(n.as_str(), "abs" | "mod" | "modulo" | "int") => {
+            Expr::Call(n, args) if matches!(n.as_str(), "abs" | "mod" | "modulo" | "sign" | "int") => {
                 for a in args {
                     self.freeze_scalars(a, scope, output)?;
                 }
