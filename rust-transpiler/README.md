@@ -103,12 +103,16 @@ All testing so far is on x86-64 Windows; Linux/macOS have not been verified.
 
 `run_batch.py` accepts individual files and quoted globs. It sorts each glob's
 matches, removes duplicate files, continues after failures, and prints a summary.
-Each selected driver is a separate translation unit. Repeat `--module` to prepend
-common module sources in dependency order to every driver:
+Each selected driver is a separate translation unit. Use `--module` to prepend
+one or more common module sources in dependency order to every driver:
 
 ```cmd
-python rust-transpiler\run_batch.py "x*.f90" --module m1.f90 --module m2.f90 --run
+python rust-transpiler\run_batch.py "x*.f90" --module m1.f90 m2.f90 --run
 ```
+
+Repeated `--module` options also work and can be mixed with lists. Put driver
+files/globs before `--module`; following file arguments belong to the module list
+until the next option.
 
 Explicit `--module` files are excluded from driver glob matches. Their ordered
 paths are included in artifact hashes and recorded in the JSON report. Each driver

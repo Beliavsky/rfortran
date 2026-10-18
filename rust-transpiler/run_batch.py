@@ -102,8 +102,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("inputs", nargs="+", help='Files or globs, e.g. "*.f90" or "tests/**/*.f90"')
     parser.add_argument("--run", action="store_true", help="Also compile and execute each successful translation")
-    parser.add_argument("--module", dest="modules", action="append", type=Path, default=[],
-                        help="Prepend a common module source; repeat in dependency order")
+    parser.add_argument("--module", dest="modules", action="extend", nargs="+", type=Path, default=[],
+                        help="Prepend one or more common module sources in dependency order; may be repeated")
     parser.add_argument("--out-dir", type=Path, default=Path("target/rust-transpiler/batch"))
     parser.add_argument("--report", type=Path, help="JSON report path (default: OUT_DIR/report.json)")
     parser.add_argument("--rfort", type=Path, help="Existing compiler executable; never rebuilt")

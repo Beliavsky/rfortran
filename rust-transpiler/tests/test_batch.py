@@ -50,6 +50,20 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(report["modules"],[str(module)])
         self.assertEqual(report["summary"],{"translated":1})
 
+    def test_multiple_and_repeated_module_options_preserve_order(self):
+        first,second,third = [self.source(name) for name in ("m1.f90","m2.f90","m3.f90")]
+        source = self.source("driver.f90")
+        for options in (("--module",first,second,third),
+                        ("--module",first,"--module",second,"--module",third),
+                        ("--module",first,second,"--module",third)):
+            with self.subTest(options=options):
+                with mock.patch.object(run_batch,"run_phase",side_effect=self.phase) as runner:
+                    self.assertEqual(self.invoke(source,*options,"--run"),0)
+                command = runner.call_args_list[0].args[1]
+                self.assertEqual(command[2:6],[first,second,third,source])
+                report = json.loads((self.work / "output/report.json").read_text())
+                self.assertEqual(report["modules"],list(map(str,(first,second,third))))
+
     def test_timeout_and_missing_executable_become_stage_results(self):
         error = subprocess.TimeoutExpired(["tool"],1,output=b"partial",stderr=b"diagnostic")
         with mock.patch.object(run_batch.subprocess,"run",side_effect=error):
