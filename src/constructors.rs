@@ -114,6 +114,8 @@ pub(crate) fn prepare_arguments(mut p: Program) -> Result<Program> {
         Stmt::If {then_body,else_body,..}=>{procedures(then_body,shapes);if let Some(body)=else_body {procedures(body,shapes);}},_=>{}
     }}}
     fn scope(body: &mut Vec<Stmt>, inherited: &Shapes, serial: &mut usize) -> Result<()> {
+        let statement_location = std::cell::Cell::new(None);
+        let result = (|| -> Result<()> {
         let mut shapes=inherited.clone();
         for s in body.iter() {match s {
             Stmt::ArrayDecl {kind,name,dims}=>{shapes.insert(name.clone(),(kind.clone(),dims.clone()));},
@@ -124,6 +126,7 @@ pub(crate) fn prepare_arguments(mut p: Program) -> Result<Program> {
         if aliases {shapes.insert("@constructor_aliases".into(),(TypeSpec::Logical,vec![]));}
         let mut values=Ranges::new();let mut out=vec![];
         for mut s in std::mem::take(body) {
+            if let Some(p) = crate::source_diagnostics::statement_offset(&s) { statement_location.set(Some(p)); }
             match &mut s {
                 Stmt::Assign {name,value} if !aliases=>{
                     let known=range(value,&values,&shapes);
@@ -168,6 +171,8 @@ pub(crate) fn prepare_arguments(mut p: Program) -> Result<Program> {
             out.push(s);
         }
         *body=out;Ok(())
+            })();
+        result.map_err(|e| crate::source_diagnostics::at(e, statement_location.get()))
     }
     let mut inherited=Shapes::new();
     procedures(&p.body,&mut inherited);

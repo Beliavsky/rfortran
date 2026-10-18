@@ -1026,6 +1026,8 @@ impl Lowerer {
     }
 
     fn body(&mut self, body: &mut [Stmt], inherited: &Shapes) -> Result<()> {
+        let statement_location = std::cell::Cell::new(None);
+        let result = (|| -> Result<()> {
         let mut shapes = inherited.clone();
         let inherited_types = self.types.clone();
         for s in body.iter() {
@@ -1072,6 +1074,7 @@ impl Lowerer {
             }
         }
         for s in body {
+            if let Some(p) = crate::source_diagnostics::statement_offset(&s) { statement_location.set(Some(p)); }
             match s {
                 Stmt::ArrayDecl { name, dims, .. } => {
                     if let Some(shape) = shapes.get(name).filter(|d| d.len() > 1) {
@@ -1218,6 +1221,8 @@ impl Lowerer {
         }
         self.types = inherited_types;
         Ok(())
+            })();
+        result.map_err(|e| crate::source_diagnostics::at(e, statement_location.get()))
     }
 }
 // Function specialization precedes the main multidimensional pass. Reuse its

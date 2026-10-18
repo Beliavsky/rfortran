@@ -150,7 +150,7 @@ end program
 
     def test_reductions_of_character_elementals(self):
         """SUM, MAXVAL, MINLOC, MAXLOC, COUNT, ANY and SIZE of elemental results
-        of CHARACTER arrays, such as SUM(LEN_TRIM(s))."""
+        of CHARACTER arrays, such as SUM(LEN_TRIM(s)), also of allocatable arrays."""
         self.check("""program p
 character(len=5) :: s(3)
 s = ["five ", "six  ", "seven"]
@@ -160,6 +160,19 @@ print *, count(len_trim(s) > 3), any(index(s, 'x') > 0), size(len_trim(s))
 print *, sum(len_trim(s(2:3))), product(index(s, 'e'))
 end program
 """, " 4 3 5\n 12 5 2 3\n 2 T 3\n 8 0\n")
+        self.check("""program p
+character(len=:), allocatable :: s(:)
+s = [character(len=6) :: 'apple', 'kiwi', 'banana']
+print '(*(i0,1x))', len_trim(s), sum(len_trim(s)), maxval(len_trim(s))
+print '(*(i0,1x))', index(s, 'a'), scan(s, 'iw'), verify(s, 'apl')
+print '(*(i0,1x))', count(len_trim(s) > 4), sum(index(s, 'an'))
+block
+  character(len=:), allocatable :: t(:)
+  t = [character(len=8) :: ' how  ', 'and this']
+  print '(*(i0,1x))', len_trim(t), sum(len_trim(t))
+end block
+end program
+""", "5 4 6 15 6\n1 0 2 0 2 0 5 1 1\n2 2\n4 8 12\n")
 
     def test_error_stop_without_code(self):
         """A bare ERROR STOP ends its statement, so the next CASE is not read as its code."""

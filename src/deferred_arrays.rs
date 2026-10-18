@@ -31,24 +31,26 @@ fn shape(e: &Expr) -> Option<(usize, Option<usize>)> {
 }
 
 /// Every assignment of `name`, and every ALLOCATE of it with a type
-/// specification, with the length each gives.
-fn definitions(body: &[Stmt], name: &str, lengths: &mut Vec<Option<usize>>) {
+/// specification, with the length each gives and its source offset.
+type Definition = (Option<usize>, Option<usize>);
+fn definitions(body: &[Stmt], name: &str, mut at: Option<usize>, lengths: &mut Vec<Definition>) {
     for s in body {
         match s {
-            Stmt::Assign { name: n, value } if n == name => lengths.push(shape(value).map(|s| s.0)),
+            Stmt::SourceLocation(p) => at = Some(*p),
+            Stmt::Assign { name: n, value } if n == name => lengths.push((shape(value).map(|s| s.0), at)),
             Stmt::CallSub { name: n, args } if n == crate::substrings::ALLOCATE_CHARACTER
                 && args[1..].iter().any(|a| matches!(a, Expr::Call(o, _) | Expr::Index(o, _) if o == name)) =>
             {
-                lengths.push(crate::parameters::integer_constant(&args[0]).ok().and_then(|l| usize::try_from(l.max(0)).ok()));
+                lengths.push((crate::parameters::integer_constant(&args[0]).ok().and_then(|l| usize::try_from(l.max(0)).ok()), at));
             }
             Stmt::If { then_body, else_body, .. } => {
-                definitions(then_body, name, lengths);
-                if let Some(b) = else_body { definitions(b, name, lengths); }
+                definitions(then_body, name, at, lengths);
+                if let Some(b) = else_body { definitions(b, name, at, lengths); }
             }
-            Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } | Stmt::Block { body } => definitions(body, name, lengths),
+            Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } | Stmt::Block { body } => definitions(body, name, at, lengths),
             Stmt::SelectCase { cases, default, .. } => {
-                for c in cases { definitions(&c.body, name, lengths); }
-                if let Some(b) = default { definitions(b, name, lengths); }
+                for c in cases { definitions(&c.body, name, at, lengths); }
+                if let Some(b) = default { definitions(b, name, at, lengths); }
             }
             _ => {}
         }
@@ -101,8 +103,9 @@ fn rewrite(body: &mut Vec<Stmt>, arrays: &[String], allocated: &mut std::collect
 }
 
 /// Lower the deferred-length CHARACTER arrays of a program unit and of the
-/// units it contains.
-pub(crate) fn resolve(body: &mut Vec<Stmt>) -> Result<(), String> {
+/// units it contains. An error carries the source offset of the definition
+/// whose length differs.
+pub(crate) fn resolve(body: &mut Vec<Stmt>) -> Result<(), (String, Option<usize>)> {
     let declared: Vec<String> = body.iter().filter_map(|s| match s {
         Stmt::ArrayDecl { kind, name, .. } if crate::substrings::deferred(kind) => Some(name.clone()),
         _ => None,
@@ -110,10 +113,10 @@ pub(crate) fn resolve(body: &mut Vec<Stmt>) -> Result<(), String> {
     let mut lowered = vec![];
     for name in &declared {
         let mut lengths = vec![];
-        definitions(body, name, &mut lengths);
-        let Some(Some(first)) = lengths.first().copied() else { continue };
-        if lengths.iter().any(|l| *l != Some(first)) {
-            return Err(format!("deferred-length CHARACTER array `{name}` currently requires every assignment and ALLOCATE to give it the same constant length"));
+        definitions(body, name, None, &mut lengths);
+        let Some((Some(first), _)) = lengths.first().copied() else { continue };
+        if let Some((_, at)) = lengths.iter().find(|l| l.0 != Some(first)) {
+            return Err((format!("deferred-length CHARACTER array `{name}` currently requires every assignment and ALLOCATE to give it the same constant length"), *at));
         }
         for s in body.iter_mut() {
             if let Stmt::ArrayDecl { kind, name: n, .. } = s {

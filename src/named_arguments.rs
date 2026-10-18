@@ -352,7 +352,10 @@ impl Resolver {
                 arrays.insert(name.clone());
             }
         }
+        let mut statement_location = None;
         for s in body {
+            if let Some(p) = crate::source_diagnostics::statement_offset(&s) { statement_location = Some(p); }
+            (|| -> anyhow::Result<()> {
             match s {
                 Stmt::CallSub { name, args } => self.call(name, args, &arrays)?,
                 Stmt::Assign { value, .. } | Stmt::Return(Some(value)) => {
@@ -430,6 +433,8 @@ impl Resolver {
                 }
                 _ => {}
             }
+                    Ok(())
+            })().map_err(|e| crate::source_diagnostics::at(e, statement_location))?;
         }
         Ok(())
     }

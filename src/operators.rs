@@ -911,9 +911,12 @@ impl Resolver {
         Ok(())
     }
     fn body(&self, body: &mut Vec<Stmt>, vars: &Vars, visible: &Bindings) -> Result<()> {
+        let statement_location = std::cell::Cell::new(None);
+        let result = (|| -> Result<()> {
         let vars = declarations(body, vars);
         let visible = self.visible(body, visible)?;
         for s in body.iter_mut() {
+            if let Some(p) = crate::source_diagnostics::statement_offset(&s) { statement_location.set(Some(p)); }
             match s {
                 Stmt::Assign { name, value } => {
                     let source = self.expression(value, &vars, &visible)?;
@@ -1019,6 +1022,8 @@ impl Resolver {
             )
         });
         Ok(())
+            })();
+        result.map_err(|e| crate::source_diagnostics::at(e, statement_location.get()))
     }
 }
 

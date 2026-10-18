@@ -1086,6 +1086,8 @@ impl Lowerer {
         })
     }
     fn body(&mut self, body: &mut Vec<Stmt>, inherited: &Objects, params: &[String]) -> Result<()> {
+        let statement_location = std::cell::Cell::new(None);
+        let result = (|| -> Result<()> {
         let mut inherited = inherited.clone();
         for n in params {
             inherited.remove(n);
@@ -1107,6 +1109,7 @@ impl Lowerer {
         }
         let mut output = vec![];
         for mut s in std::mem::take(body) {
+            if let Some(p) = crate::source_diagnostics::statement_offset(&s) { statement_location.set(Some(p)); }
             let mut prefix = vec![];
             match &mut s {
                 Stmt::DerivedType { .. } => continue,
@@ -1312,6 +1315,8 @@ impl Lowerer {
         }
         *body = output;
         Ok(())
+            })();
+        result.map_err(|e| crate::source_diagnostics::at(e, statement_location.get()))
     }
 }
 pub fn resolve(program: Program) -> Result<Program> {

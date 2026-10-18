@@ -31,6 +31,10 @@ pub(crate) fn user_names(message: &str) -> String {
         if i == 0 { part.to_owned() } else { format!("`{part}") }
     }).collect()
 }
+/// The source offset a statement marker records, for locating errors.
+pub(crate) fn statement_offset<S: std::borrow::Borrow<crate::ast::Stmt>>(stmt: &S) -> Option<usize> {
+    match stmt.borrow() { crate::ast::Stmt::SourceLocation(p) => Some(*p), _ => None }
+}
 pub(crate) fn at(error: anyhow::Error, offset: Option<usize>) -> anyhow::Error {
     if error.downcast_ref::<LocatedError>().is_some() {
         return error;

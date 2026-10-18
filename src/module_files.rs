@@ -83,6 +83,27 @@ fn dependencies(definition: &Stmt) -> Vec<(String, bool)> {
     visit(&mut vec![definition.clone()], &mut names);
     names.into_iter().collect()
 }
+/// The source offset of the first USE of each module, for diagnostics;
+/// `at` locates the statement before `definition`.
+fn use_locations(definition: &Stmt, mut at: Option<usize>) -> HashMap<String, usize> {
+    fn visit(body: &mut Vec<Stmt>, at: &mut Option<usize>, found: &mut HashMap<String, usize>) {
+        for statement in body {
+            match statement {
+                Stmt::SourceLocation(p) => *at = Some(*p),
+                Stmt::Use { module, .. } => {
+                    if let Some(p) = *at {
+                        found.entry(module.clone()).or_insert(p);
+                    }
+                }
+                _ => {}
+            }
+            children(statement, &mut |body| visit(body, at, found));
+        }
+    }
+    let mut found = HashMap::new();
+    visit(&mut vec![definition.clone()], &mut at, &mut found);
+    found
+}
 fn strip_locations(body: &mut Vec<Stmt>) {
     body.retain(|s| !matches!(s, Stmt::SourceLocation(_)));
     for statement in body {
@@ -167,6 +188,9 @@ impl Loader {
                 if name == "iso_fortran_env" && !required {
                     return Ok(None);
                 }
+                if !required && matches!(name, "iso_c_binding" | "ieee_arithmetic" | "ieee_exceptions" | "ieee_features") {
+                    bail!("intrinsic module `{name}` is not yet supported");
+                }
                 bail!("module interface `{name}.rmod` not found; compile its module first or supply -I <directory>");
             };
             let interface: Interface =
@@ -196,10 +220,13 @@ impl Loader {
         };
         let is_own = self.own.contains_key(name);
         let mut resolved = BTreeMap::new();
+        // Only a module of this source group has offsets into its source.
+        let locations = if is_own { use_locations(&interface.definition, None) } else { HashMap::new() };
         for (dependency, required) in dependencies(&interface.definition) {
             if let Some(identity) = self
                 .load(&dependency, required)
-                .with_context(|| format!("required by module `{name}`"))?
+                .with_context(|| format!("required by module `{name}`"))
+                .map_err(|e| crate::source_diagnostics::at(e, locations.get(&dependency).copied()))?
             {
                 resolved.insert(dependency, identity);
             }
@@ -267,12 +294,19 @@ pub(crate) fn prepare(
         visiting: HashSet::new(),
         order: vec![],
     };
+    let mut at = None;
     for statement in &program.body {
+        if let Stmt::SourceLocation(p) = statement {
+            at = Some(*p);
+        }
         if let Stmt::Module { name, .. } = statement {
             loader.load(name, true)?;
         } else {
+            let locations = use_locations(statement, at);
             for (name, required) in dependencies(statement) {
-                loader.load(&name, required)?;
+                loader
+                    .load(&name, required)
+                    .map_err(|e| crate::source_diagnostics::at(e, locations.get(&name).copied()))?;
             }
         }
     }

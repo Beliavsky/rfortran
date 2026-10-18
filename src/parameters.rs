@@ -19,7 +19,10 @@ pub(crate) fn resolve_intrinsic_modules(program: &mut Program) -> Result<()> {
         if let Stmt::Module { name, .. } = s { Some(name.clone()) } else { None }
     }).collect();
     fn visit(body: &mut [Stmt], modules: &HashSet<String>, needed: &mut bool) -> Result<()> {
+        let statement_location = std::cell::Cell::new(None);
+        let result = (|| -> Result<()> {
         for stmt in body {
+            if let Some(p) = crate::source_diagnostics::statement_offset(&stmt) { statement_location.set(Some(p)); }
             match stmt {
                 Stmt::Use { module, nature, only, .. } => {
                     let intrinsic = match nature.take().map(|n| n.to_ascii_lowercase()).as_deref() {
@@ -53,6 +56,8 @@ pub(crate) fn resolve_intrinsic_modules(program: &mut Program) -> Result<()> {
             }
         }
         Ok(())
+            })();
+        result.map_err(|e| crate::source_diagnostics::at(e, statement_location.get()))
     }
     let mut needed = false;
     visit(&mut program.body, &user_modules, &mut needed)?;
@@ -524,7 +529,10 @@ fn separate_parameters(body: &mut Vec<Stmt>, arguments: &[String]) -> Result<()>
     let mut declared: HashMap<String,TypeSpec> = HashMap::new();
     let mut converted = HashSet::new();
     let mut output = Vec::new();
+    let mut statement_location = None;
     for stmt in std::mem::take(body) {
+        if let Some(p) = crate::source_diagnostics::statement_offset(&stmt) { statement_location = Some(p); }
+        (|| -> anyhow::Result<()> {
         match stmt {
             Stmt::InitializedDecl { attributes, entities, .. } if attributes.iter().any(|a| a == "@separate_parameter") => {
                 for (name, value) in entities {
@@ -542,6 +550,8 @@ fn separate_parameters(body: &mut Vec<Stmt>, arguments: &[String]) -> Result<()>
             }
             other => output.push(other),
         }
+            Ok(())
+        })().map_err(|e| crate::source_diagnostics::at(e, statement_location))?;
     }
     for stmt in &mut output {
         if let Stmt::VarDecl { names, .. } = stmt { names.retain(|n| !converted.contains(n)); }

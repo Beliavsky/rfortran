@@ -644,6 +644,8 @@ fn specialize(
     constants: &mut HashMap<String, Expr>,
     stable: &HashSet<String>,
 ) -> Result<()> {
+    let statement_location = std::cell::Cell::new(None);
+    let result = (|| -> Result<()> {
     crate::allocatables::prepare_matrices(body, shapes, constants)?;
     crate::modules::bind_scope(body)?;
     prepare_deallocated_locals(body, shapes, constants, absent, stable)?;
@@ -678,6 +680,7 @@ fn specialize(
     body.retain(|s| !matches!(s, Stmt::ArrayDecl { name, .. } if deferred.contains_key(name)));
     let mut output = Vec::new();
     for mut s in std::mem::take(body) {
+        if let Some(p) = crate::source_diagnostics::statement_offset(&s) { statement_location.set(Some(p)); }
         let pending: HashSet<_> = deferred
             .keys()
             .filter(|n| !allocated.contains(*n))
@@ -877,6 +880,8 @@ fn specialize(
     *body = output;
     crate::heap::automatic(body,shapes)?;
     Ok(())
+    })();
+    result.map_err(|e| crate::source_diagnostics::at(e, statement_location.get()))
 }
 // Resolve a CHARACTER function's fixed declarations and stable local constants
 // while its original dummy names still identify the associated array shapes.
@@ -1222,6 +1227,8 @@ fn expand(
     active: &mut Vec<String>,
     serial: &mut usize,
 ) -> Result<()> {
+    let statement_location = std::cell::Cell::new(None);
+    let result = (|| -> Result<()> {
     let mut inherited=if body.iter().any(|s|matches!(s,Stmt::DummyIntent{intent,..} if intent=="@native_recursive")) {Shapes::new()} else {inherited.clone()};
     for s in body.iter() {
         if let Stmt::DummyIntent{name,intent}=s {
@@ -1277,6 +1284,7 @@ fn expand(
         }
     }
     for s in body.iter_mut() {
+        if let Some(p) = crate::source_diagnostics::statement_offset(&s) { statement_location.set(Some(p)); }
         if let Stmt::CallSub { name, args } = s {
             if let Some(r) = routines.get(name) {
 
@@ -1684,6 +1692,8 @@ fn expand(
         }
     }
     Ok(())
+    })();
+    result.map_err(|e| crate::source_diagnostics::at(e, statement_location.get()))
 }
 pub fn resolve(mut p: Program) -> Result<Program> {
     p=crate::modules::capture(p)?;

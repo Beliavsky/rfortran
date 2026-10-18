@@ -511,14 +511,18 @@ pub fn parse_with_src(
         .parse(triples.into_iter())
     {
         Ok(mut p) => {
-            if let Err(msg) = resolve_dimension_statements(&mut p.body)
+            if let Err((msg, at)) = resolve_dimension_statements(&mut p.body)
                 .and_then(|_| crate::statement_labels::formats(&mut p.body))
                 .and_then(|_| crate::data_statements::resolve(&mut p.body))
+                .map_err(|msg| (msg, None))
                 .and_then(|_| crate::deferred_arrays::resolve(&mut p.body))
-                .and_then(|_| crate::deferred_arrays::type_parameter_inquiries(&mut p.body)) {
-                let diag = Diagnostic::error().with_message(&msg);
+                .and_then(|_| crate::deferred_arrays::type_parameter_inquiries(&mut p.body).map_err(|msg| (msg, None))) {
+                // Label the statement when the error has a source offset.
+                let span = at.map_or(0..0, |p| p..src[p..].find('\n').map_or(src.len(), |n| p + n));
+                let mut diag = Diagnostic::error().with_message(&msg);
+                if at.is_some() { diag = diag.with_labels(vec![Label::primary((), span.clone())]); }
                 let _ = emit_to_io_write(&mut stderr, &Config::default(), &file, &diag);
-                errs.push(CompileError::new(CompileErrorKind::Parse, msg, 0..0));
+                errs.push(CompileError::new(CompileErrorKind::Parse, msg, span));
             }
             Ok(p)
         }

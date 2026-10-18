@@ -48,6 +48,8 @@ pub fn validate(program: &Program) -> Result<()> {
         Ok(())
     }
     fn check(body: &[Stmt], inherited: &HashSet<String>, readonly: &HashSet<String>, known: &HashMap<String, Procedure>, inherited_characters: &HashSet<String>) -> Result<()> {
+        let statement_location = std::cell::Cell::new(None);
+        let result = (|| -> Result<()> {
         let mut locals = inherited.clone();
         let mut characters = inherited_characters.clone();
         for stmt in body {
@@ -81,6 +83,7 @@ pub fn validate(program: &Program) -> Result<()> {
             Ok(())
         };
         for stmt in body {
+            if let Some(p) = crate::source_diagnostics::statement_offset(&stmt) { statement_location.set(Some(p)); }
             match stmt {
                 Stmt::Print { .. } | Stmt::Read { .. } => bail!("PURE procedure cannot perform external I/O"),
                 Stmt::CallSub {name,..} if name == "@empty_read" => bail!("PURE procedure cannot perform external I/O"),
@@ -178,6 +181,8 @@ pub fn validate(program: &Program) -> Result<()> {
             }
         }
         Ok(())
+            })();
+        result.map_err(|e| crate::source_diagnostics::at(e, statement_location.get()))
     }
     fn walk(body: &[Stmt], known: &HashMap<String, Procedure>, inherited_characters: &HashSet<String>) -> Result<()> {
         let mut characters=inherited_characters.clone();

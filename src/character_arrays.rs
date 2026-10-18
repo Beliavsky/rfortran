@@ -461,6 +461,8 @@ fn body(
     module: bool,
     serial: &mut usize,
 ) -> Result<()> {
+    let statement_location = std::cell::Cell::new(None);
+    let result = (|| -> Result<()> {
     let mut arrays = inherited.clone();
     for p in params {
         arrays.remove(p);
@@ -509,6 +511,7 @@ fn body(
     }
     let mut output = Vec::new();
     for mut s in std::mem::take(stmts) {
+        if let Some(p) = crate::source_diagnostics::statement_offset(&s) { statement_location.set(Some(p)); }
         match &mut s {
             Stmt::CallSub {name,args} if name=="@module_bind" && matches!(&args[0],Expr::Ident(n) if arrays.contains_key(n)) => {
                 let [Expr::Ident(local),Expr::Str(key),Expr::Str(initializer)]=args.as_slice() else {unreachable!()};
@@ -743,6 +746,8 @@ fn body(
     }
     *stmts = output;
     Ok(())
+    })();
+    result.map_err(|e| crate::source_diagnostics::at(e, statement_location.get()))
 }
 pub fn resolve(mut p: Program) -> Result<Program> {
     body(&mut p.body, &Arrays::new(), &[], false, &mut 0)?;

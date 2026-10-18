@@ -303,7 +303,7 @@ Bugs found on 2026-10-18, all fixed:
 | `SHIFTL`, `SHIFTR`, `SHIFTA`, `MASKL`, `MASKR`, `MERGE_BITS` | ❌ | | |
 | [Reductions](language-support.md#reductions) (`SUM`, `PRODUCT`, `MAXVAL`, `MINVAL`, `COUNT`, `ANY`, `ALL`) | ✅ | DIM must be constant | test_masked_reductions.py, test_dim_reductions.py |
 | [`IANY`, `IALL`, `IPARITY`, `PARITY`](language-support.md#reductions) | ✅ | DIM must be constant | test_more_intrinsics.py |
-| [Locations](language-support.md#array-transformations-and-locations) (`MAXLOC`, `MINLOC`, `FINDLOC`) | ✅ | | test_locations.py |
+| [Locations](language-support.md#array-transformations-and-locations) (`MAXLOC`, `MINLOC`, `FINDLOC`) | 🟡 | ARRAY must have a fixed shape; not yet ALLOCATABLE arrays | test_locations.py |
 | [Array transformations](language-support.md#array-transformations-and-locations) (`PACK`, `UNPACK`, `SPREAD`, `RESHAPE`, `TRANSPOSE`, `CSHIFT`, `EOSHIFT`) | ✅ | DIM and NCOPIES must be constant | test_pack_unpack.py, test_spread.py, test_reshape_options.py |
 | `MERGE` | 🟡 | Array sources must be numeric or LOGICAL, of constant size | test_formatted_output.py |
 | [`DOT_PRODUCT`](language-support.md#dot_product) | ✅ | | test_dot_product.py |

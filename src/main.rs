@@ -326,6 +326,7 @@ fn prepare_program(
     unused::check(&program, src, tokens, filename, origins, settings, &args.warnings)?;
     optional_warnings::check(&program, src, tokens, filename, origins, settings, &args.warnings)?;
     module_files::prepare(program, src, input, origins, args)
+        .map_err(|error| source_diagnostics::report(error, src, tokens, filename, origins))
 }
 
 fn lower_program_body(

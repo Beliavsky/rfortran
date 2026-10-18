@@ -1421,6 +1421,8 @@ impl Lower {
         Ok(())
     }
     fn body(&mut self, body: &mut Vec<Stmt>, inherited: &HashSet<String>) -> Result<()> {
+        let statement_location = std::cell::Cell::new(None);
+        let result = (|| -> Result<()> {
         let mut readonly = inherited.clone();
         for s in body.iter() {
             if let Stmt::DummyIntent { name, intent } = s {
@@ -1431,6 +1433,7 @@ impl Lower {
         }
         let mut out = vec![];
         for mut s in std::mem::take(body) {
+            if let Some(p) = crate::source_diagnostics::statement_offset(&s) { statement_location.set(Some(p)); }
             match &mut s {
                 Stmt::DummyIntent { intent, .. }
                     if matches!(
@@ -1581,6 +1584,8 @@ impl Lower {
         }
         *body = out;
         Ok(())
+            })();
+        result.map_err(|e| crate::source_diagnostics::at(e, statement_location.get()))
     }
 }
 fn root(e: &Expr) -> Option<&str> {

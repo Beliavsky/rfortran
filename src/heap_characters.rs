@@ -20,6 +20,17 @@ fn bin(op: BinOp, a: Expr, b: Expr) -> Expr {
 }
 type Arrays = HashMap<String, usize>;
 
+/// The storage and extent of a whole runtime CHARACTER array view.
+fn view(e: &Expr, arrays: &Arrays) -> Option<(String, Expr)> {
+    match e {
+        Expr::Call(tag, a) if tag == "@packed_view" && a.len() == 2 => match &a[0] {
+            Expr::Ident(n) if arrays.contains_key(n) => Some((n.clone(), a[1].clone())),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 struct Lower {
     serial: usize,
 }
@@ -81,6 +92,67 @@ impl Lower {
                     }],
                 });
                 *e = id(&temp);
+            }
+            // An inquiry of a whole runtime CHARACTER array, as LEN_TRIM(s),
+            // gives a runtime INTEGER array of the inquiries of its elements.
+            Expr::Call(n, args)
+                if matches!(n.as_str(), "len_trim" | "index" | "scan" | "verify" | "ichar" | "iachar")
+                    && args.iter().any(|a| view(a, arrays).is_some()) =>
+            {
+                let length = args.iter().find_map(|a| view(a, arrays)).unwrap().1;
+                self.serial += 1;
+                let index = format!("@character_heap_index_{}", self.serial);
+                let values = format!("@character_heap_inquiry_{}", self.serial);
+                let mut reads = vec![];
+                for arg in args.iter_mut() {
+                    let Some((array, extent)) = view(arg, arrays) else {
+                        self.expression(arg, arrays, out)?;
+                        continue;
+                    };
+                    out.push(Stmt::If {
+                        cond: bin(BinOp::Ne, extent, length.clone()),
+                        then_body: vec![Stmt::CallSub {
+                            name: "@error_stop".into(),
+                            args: vec![Expr::Str(format!("nonconforming CHARACTER array arguments to `{n}`"))],
+                        }],
+                        else_body: None,
+                    });
+                    let width = arrays[&array];
+                    let element = self.capture(TypeSpec::Character(Some(width)), Expr::Str(String::new()), out);
+                    let position = self.capture(TypeSpec::Integer(Some(8)), int(0), out);
+                    let offset = bin(BinOp::Mul, bin(BinOp::Sub, id(&index), int(1)), int(width.max(1)));
+                    reads.push(Stmt::Do {
+                        var: position.clone(),
+                        start: int(0),
+                        end: Expr::IntLit((width as i64 - 1).to_string()),
+                        body: vec![Stmt::CallSub {
+                            name: "@character_code_store".into(),
+                            args: vec![
+                                id(&element),
+                                id(&position),
+                                Expr::Index(array, vec![bin(BinOp::Add, offset, bin(BinOp::Add, id(&position), int(1)))]),
+                            ],
+                        }],
+                    });
+                    *arg = id(&element);
+                }
+                crate::heap::temporary(TypeSpec::Integer(None), values.clone(), length.clone(), out);
+                out.push(Stmt::VarDecl {
+                    kind: TypeSpec::Integer(Some(8)),
+                    names: vec![index.clone()],
+                });
+                reads.push(Stmt::AssignIndex {
+                    name: values.clone(),
+                    indices: vec![id(&index)],
+                    value: e.clone(),
+                });
+                out.push(Stmt::Do {
+                    var: index,
+                    start: int(1),
+                    end: length.clone(),
+                    body: reads,
+                });
+                *e = Expr::Call("@packed_view".into(), vec![id(&values), length]);
             }
             Expr::Call(_, args) | Expr::Index(_, args) => {
                 for arg in args {

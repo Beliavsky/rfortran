@@ -1111,6 +1111,8 @@ impl Lower {
         })
     }
     fn body(&mut self, body: &mut Vec<Stmt>, inherited: &Symbols) -> Result<()> {
+        let statement_location = std::cell::Cell::new(None);
+        let result = (|| -> Result<()> {
         let mut symbols = inherited.clone();
         for s in body.iter() {
             match s {
@@ -1137,6 +1139,7 @@ impl Lower {
         let mut out = vec![];
         let mut offset = None;
         for mut stmt in std::mem::take(body) {
+            if let Some(p) = crate::source_diagnostics::statement_offset(&stmt) { statement_location.set(Some(p)); }
             // A direct constant allocation supplies the active shape before
             // CHARACTER calls are materialized for allocation-bound analysis.
             if let Stmt::CallSub{name,args}=&stmt {
@@ -1268,6 +1271,8 @@ impl Lower {
         }
         *body = out;
         Ok(())
+            })();
+        result.map_err(|e| crate::source_diagnostics::at(e, statement_location.get()))
     }
 }
 // Expansion may not accidentally bind a defining-scope variable to a same-named

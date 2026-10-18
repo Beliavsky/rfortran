@@ -1062,6 +1062,8 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
         serial: &mut usize,
         checks: &mut Vec<Stmt>,
     ) -> Result<()> {
+        let statement_location = std::cell::Cell::new(None);
+        let result = (|| -> Result<()> {
         let mut shapes = if body.iter().any(|s|matches!(s,Stmt::DummyIntent{intent,..} if intent=="@native_recursive")) {Shapes::new()} else {inherited.clone()};
         for s in body.iter() {
             match s {
@@ -1087,6 +1089,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
         metadata(body, &mut shapes);
         let mut out = vec![];
         for mut s in std::mem::take(body) {
+            if let Some(p) = crate::source_diagnostics::statement_offset(&s) { statement_location.set(Some(p)); }
             let mut guards = vec![];
             // Intrinsic assignment to a whole heap-backed numeric/LOGICAL array
             // (re)allocates it to the shape of an array-valued right-hand side.
@@ -1684,6 +1687,8 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
         }
         *body = out;
         Ok(())
+            })();
+        result.map_err(|e| crate::source_diagnostics::at(e, statement_location.get()))
     }
     let mut checks = vec![];
     // Function specialization can already have lowered allocation blocks.

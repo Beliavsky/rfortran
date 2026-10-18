@@ -555,6 +555,8 @@ fn dynamic_expression(e: &mut Expr, scope: &mut DynamicScope, output: &mut Vec<S
     Ok(())
 }
 fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: bool, serial: &mut usize) -> Result<()> {
+    let statement_location = std::cell::Cell::new(None);
+    let result = (|| -> Result<()> {
     let mut scope = inherited.clone();
     scope.procedure = !local;
     let mut targets = vec![];
@@ -610,6 +612,7 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
     }
     let mut result = vec![];
     for mut statement in std::mem::take(statements) {
+        if let Some(p) = crate::source_diagnostics::statement_offset(&statement) { statement_location.set(Some(p)); }
         let mut prefix = vec![];
         match &mut statement {
             Stmt::CallSub {name,args} if name==ALLOCATE_CHARACTER => {
@@ -756,6 +759,8 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
     }
     *statements = result;
     Ok(())
+    })();
+    result.map_err(|e| crate::source_diagnostics::at(e, statement_location.get()))
 }
 
 /// Generated declarations belong to the enclosing procedure, even when their

@@ -498,7 +498,10 @@ impl Rewrite<'_> {
         let mut locals = inherited.clone();
         locals.extend(declarations(body).into_keys());
         let mut output = vec![];
+        let mut statement_location = None;
         for mut stmt in std::mem::take(body) {
+            if let Some(p) = crate::source_diagnostics::statement_offset(&stmt) { statement_location = Some(p); }
+            (|| -> anyhow::Result<()> {
             let mut before = vec![];
             let mut after = vec![];
             if matches!(&stmt,Stmt::Read {args} if args.iter().any(|e|self.direct_capture(e,&locals)))
@@ -628,6 +631,8 @@ impl Rewrite<'_> {
             output.extend(before);
             output.push(stmt);
             output.extend(after);
+                    Ok(())
+            })().map_err(|e| crate::source_diagnostics::at(e, statement_location))?;
         }
         *body = output;
         Ok(())
@@ -653,6 +658,19 @@ fn hoist(body: &mut Vec<Stmt>) {
     collect(body, &mut decls);
     decls.append(body);
     *body = decls;
+}
+/// The source offset of the statement declaring `name` in a host body.
+fn declaration_offset(body: &[Stmt], name: &str) -> Option<usize> {
+    let mut at = None;
+    for stmt in body {
+        match stmt {
+            Stmt::SourceLocation(p) => at = Some(*p),
+            Stmt::VarDecl { names, .. } if names.iter().any(|n| n == name) => return at,
+            Stmt::ArrayDecl { name: n, .. } if n == name => return at,
+            _ => {}
+        }
+    }
+    None
 }
 fn procedure(
     body: &mut Vec<Stmt>,
@@ -785,8 +803,9 @@ fn procedure(
     let mut bindings = HashMap::new();
     let mut prefix = vec![];
     for (name, v) in host.iter().filter(|(n, _)| used.contains(*n)) {
+        let declared = declaration_offset(body, name);
         if v.attributes.contains("@implicit_host") {
-            bail!("host-associated variable `{name}` currently requires an explicit declaration");
+            return Err(crate::source_diagnostics::at(anyhow::anyhow!("host-associated variable `{name}` currently requires an explicit declaration"), declared));
         }
         if !matches!(
             v.kind,
@@ -799,7 +818,7 @@ fn procedure(
             .iter()
             .any(|a| matches!(a.as_str(), "pointer" | "allocatable" | "optional"))
         {
-            bail!("host association for `{name}` currently supports INTEGER(4/8), REAL(4/8), or LOGICAL storage without OPTIONAL, POINTER, or ALLOCATABLE");
+            return Err(crate::source_diagnostics::at(anyhow::anyhow!("host association for `{name}` currently supports INTEGER(4/8), REAL(4/8), or LOGICAL storage without OPTIONAL, POINTER, or ALLOCATABLE"), declared));
         }
         if v.rank > 15 {
             bail!("host-associated arrays support rank at most 15");
@@ -849,7 +868,10 @@ fn procedure(
         name_capacity,
     }
     .body(body, &host_locals)?;
+    let mut statement_location = None;
     for stmt in std::mem::take(body) {
+        if let Some(p) = crate::source_diagnostics::statement_offset(&stmt) { statement_location = Some(p); }
+        (|| -> anyhow::Result<()> {
         let declared = match &stmt {
             Stmt::VarDecl { names, .. } => names.clone(),
             Stmt::ArrayDecl { name, .. } => vec![name.clone()],
@@ -861,6 +883,8 @@ fn procedure(
                 prefix.extend(binding);
             }
         }
+            Ok(())
+        })().map_err(|e| crate::source_diagnostics::at(e, statement_location))?;
     }
     *body = prefix;
     for mut helper in helpers {

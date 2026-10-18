@@ -1004,6 +1004,8 @@ impl Lower {
         Ok(())
     }
     fn body(&mut self, body: &mut Vec<Stmt>, inherited: &Shapes, params: &[String]) -> Result<()> {
+        let statement_location = std::cell::Cell::new(None);
+        let result = (|| -> Result<()> {
         let mut s = inherited.clone();
         for p in params {
             s.remove(p);
@@ -1039,6 +1041,7 @@ impl Lower {
         }
         let mut result = vec![];
         for mut stmt in std::mem::take(body) {
+            if let Some(p) = crate::source_diagnostics::statement_offset(&stmt) { statement_location.set(Some(p)); }
             let mut prefix = vec![];
             let mut suffix = vec![];
             if let Stmt::AssignIndex{name,indices,..}=&mut stmt {
@@ -1241,6 +1244,8 @@ impl Lower {
         }
         *body = result;
         Ok(())
+            })();
+        result.map_err(|e| crate::source_diagnostics::at(e, statement_location.get()))
     }
 }
 pub(super) fn specialize(body:&mut Vec<Stmt>, shapes:&Shapes, procedures:HashMap<String,Vec<String>>, serial:&mut usize)->Result<()> {

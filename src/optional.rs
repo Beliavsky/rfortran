@@ -229,8 +229,11 @@ impl Specializer {
         optional: &Names,
         result: Option<&Expr>,
     ) -> Result<()> {
+        let statement_location = std::cell::Cell::new(None);
+        let result = (|| -> Result<()> {
         let mut output = Vec::new();
         for mut stmt in std::mem::take(body) {
+            if let Some(p) = crate::source_diagnostics::statement_offset(&stmt) { statement_location.set(Some(p)); }
             match &mut stmt {
                 Stmt::If {
                     cond,
@@ -341,6 +344,8 @@ impl Specializer {
         }
         *body = output;
         Ok(())
+            })();
+        result.map_err(|e| crate::source_diagnostics::at(e, statement_location.get()))
     }
 }
 pub fn resolve(mut program: Program) -> Result<Program> {
