@@ -490,6 +490,24 @@ pub(crate) fn same_statement(gap: &str) -> bool {
 }
 
 // True when tokens[index] begins a logical statement (after an optional label).
+// Whether the token at `index` follows a comma directly inside the parentheses
+// of a CHARACTER type selector that start with LEN= or KIND=.
+fn character_selector(tokens: &[Token], index: usize) -> bool {
+    let mut depth = 0usize;
+    for i in (0..index).rev() {
+        match tokens[i].kind {
+            TokenKind::RParen => depth += 1,
+            TokenKind::LParen if depth > 0 => depth -= 1,
+            TokenKind::LParen => {
+                return i >= 1 && matches!(tokens[i - 1].kind, TokenKind::KwCharacter)
+                    && matches!(tokens.get(i + 1).map(|t| &t.kind), Some(TokenKind::KwLen | TokenKind::KwKind));
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 fn statement_head(tokens: &[Token], input: &str, index: usize) -> bool {
     index == 0 || !same_statement(&input[tokens[index-1].span.end..tokens[index].span.start])
         || matches!(tokens[index-1].kind, TokenKind::StatementLabel(_))
@@ -882,6 +900,9 @@ pub fn lex(input: &str) -> Vec<Token> {
                     || (start >= 6 && matches!(tokens[start-6].kind,TokenKind::KwUse) && matches!(tokens[start-5].kind,TokenKind::Comma) && matches!(tokens[start-3].kind,TokenKind::DColon))) => Some(TokenKind::KwOnly),
                 "len" if matches!(previous,Some(TokenKind::LParen)) && matches!(next,Some(TokenKind::Eq)) => Some(TokenKind::KwLen),
                 "kind" if matches!(previous,Some(TokenKind::LParen)) && matches!(next,Some(TokenKind::Eq)) => Some(TokenKind::KwKind),
+                // The second selector of CHARACTER(LEN=..., KIND=...) or CHARACTER(KIND=..., LEN=...).
+                "kind" | "len" if matches!(previous,Some(TokenKind::Comma)) && matches!(next,Some(TokenKind::Eq)) && character_selector(&tokens,start) =>
+                    Some(if n.eq_ignore_ascii_case("kind") {TokenKind::KwKind} else {TokenKind::KwLen}),
                 "type" if matches!(next,Some(TokenKind::DColon|TokenKind::LParen)) || matches!(previous,Some(TokenKind::KwEnd)) => Some(TokenKind::KwType),
                 // TYPE, attributes :: name and TYPE name (alone on its statement).
                 "type" if statement_head(&tokens,input,start) && tokens.get(start+1).is_some_and(|t| same_statement(&input[tokens[start].span.end..t.span.start]))

@@ -392,3 +392,62 @@ Demos that still fail for a reason related to these intrinsics:
 
 Reports: `target/m-intrinsics-compile-step4.json` and
 `target/m-intrinsics-compiled-run-step4.json`, each with a companion `.md`.
+
+## After host association, reallocation, initializers and kinds: 2026-10-17
+
+This run added:
+
+- host association from the main program: an internal procedure of the main
+  program reads and updates its INTEGER, REAL and LOGICAL variables;
+- reallocation on assignment from expressions such as `t = c + 1` and
+  `t = sqrt(c)` for multidimensional ALLOCATABLE targets;
+- array declaration initializers using RESHAPE (with `SHAPE(array)`, PAD and
+  ORDER) and implied-DO constructors, with ABS, MOD, MAX, MIN and KIND in
+  constant expressions;
+- kind expressions such as `real(kind(0.0d0))` and `cmplx(x, y, kind=kind(z))`,
+  SELECTED_CHAR_KIND, and `character(len=n, kind=k)`.
+
+It also fixed a wrong result: an internal procedure of the main program that
+assigned a main-program variable changed only a local copy.
+
+| rfort O0 outcome | All 249 demos | 204 demos gfortran compiles |
+|---|---:|---:|
+| Compiled | 111 | 97 |
+| Parse error | 55 | 35 |
+| Later error | 83 | 72 |
+
+In the previous run these were 105/58/86 and 91/38/75. No demo that compiled
+before stopped compiling. The newly compiled demos are `demo_dshiftl.f90`,
+`demo_exp.f90`, `demo_kind.f90`, `demo_log.f90`, `demo_maxloc.f90` and
+`demo_minloc.f90`.
+
+Execution checks of the 111 demos that compile, at both O0 and O2:
+
+| Execution outcome | O0 | O2 |
+|---|---:|---:|
+| Output matched gfortran | 84 | 84 |
+| Output differed from gfortran | 2 | 2 |
+| Runtime error | 1 | 1 |
+| Runtime deliberately skipped | 10 | 10 |
+| No reference (empty upstream files) | 14 | 14 |
+
+The two differences and the runtime error are the same as in the previous run:
+`demo_bit_size.f90` (gfortran has INTEGER kind 16), `demo_hypot.f90` (6
+significant digits in list-directed REAL(4) output) and `demo_allocated.f90`
+(reading an uninitialized variable).
+
+The most common remaining first diagnostics, among demos gfortran compiles:
+
+| Cause | Demos |
+|---|---:|
+| `allocate(character(len=n) :: s)` | 7 |
+| Assumed-rank dummies (`a(..)`) | 5 |
+| Deferred-length CHARACTER arrays | 5 |
+| Array arguments to elemental intrinsics in some contexts (`abs(i)` of an array) | 3 |
+| `DO CONCURRENT` | 2 |
+| KIND argument of INT, ANINT and similar intrinsics | 3 |
+| Implied-DO bounds in array constructors that are not constant | 3 |
+| Keyword arguments to MOVE_ALLOC, REDUCE and SPLIT | 3 |
+
+Reports: `target/m-intrinsics-compile-step5.json` and
+`target/m-intrinsics-compiled-run-step5.json`, each with a companion `.md`.

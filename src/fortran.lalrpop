@@ -155,26 +155,26 @@ PostUnits: Vec<Stmt> = {
 };
 
 pub Program: Program = {
-    <_end: UnnamedEnd> <post: PostUnits> => Program { name: "main".to_string(), body: post },
+    <_end: UnnamedEnd> <post: PostUnits> => Program { name: "main".to_string(), body: post, contains: vec![] },
     <mut body: UnnamedMainBody> <_end: UnnamedEnd> <post: PostUnits> => {
-        body.extend(post); Program { name: "main".to_string(), body }
+        body.extend(post); Program { name: "main".to_string(), body, contains: vec![] }
     },
     <mut body: UnnamedMainBody> KW_CONTAINS <contained: FuncList> <_end: UnnamedEnd> <post: PostUnits> => {
-        body.extend(contained); body.extend(post); Program { name: "main".to_string(), body }
+        let contains = crate::ast::procedure_names(&contained); body.extend(contained); body.extend(post); Program { name: "main".to_string(), body, contains }
     },
     <pre: LeadingFuncs> KW_PROGRAM <name: Ident> <body: Stmts> <_end: ProgramEnd> <post: PostUnits> => {
-        let mut all = pre; all.extend(body); all.extend(post); Program { name, body: all }
+        let mut all = pre; all.extend(body); all.extend(post); Program { name, body: all, contains: vec![] }
     },
     <pre: LeadingFuncs> KW_PROGRAM <name: Ident> <body: Stmts> KW_CONTAINS <contained: FuncList> <_end: ProgramEnd> <post: PostUnits> => {
-        let mut all = pre; all.extend(body); all.extend(contained); all.extend(post); Program { name, body: all }
+        let contains = crate::ast::procedure_names(&contained); let mut all = pre; all.extend(body); all.extend(contained); all.extend(post); Program { name, body: all, contains }
     },
     KW_PROGRAM <name: Ident> <body: Stmts> KW_CONTAINS <contained: FuncList> <_end: ProgramEnd> <post: PostUnits> => {
-        let mut all = body; all.extend(contained); all.extend(post); Program { name, body: all }
+        let contains = crate::ast::procedure_names(&contained); let mut all = body; all.extend(contained); all.extend(post); Program { name, body: all, contains }
     },
     KW_PROGRAM <name: Ident> <body: Stmts> <_end: ProgramEnd> <funcs: PostUnits> => {
-        let mut all = body; all.extend(funcs); Program { name, body: all }
+        let mut all = body; all.extend(funcs); Program { name, body: all, contains: vec![] }
     },
-    <only: LeadingFuncs> => Program { name: "<anon>".to_string(), body: only },
+    <only: LeadingFuncs> => Program { name: "<anon>".to_string(), body: only, contains: vec![] },
 };
 
 // Share the declaration prefix with explicitly named programs and library units.
@@ -541,17 +541,11 @@ TypeSpec: TypeSpec = {
     KW_COMPLEX LPAREN KW_KIND EQ <kind:INT> RPAREN => TypeSpec::Complex(kind),
     KW_COMPLEX LPAREN <kind:Ident> RPAREN => TypeSpec::Complex(kind),
     KW_COMPLEX LPAREN <kind:INT> RPAREN => TypeSpec::Complex(kind),
-    KW_REAL LPAREN KW_KIND EQ <kind: Ident> RPAREN => TypeSpec::RealKind(kind),
-    KW_REAL LPAREN KW_KIND EQ <kind: INT> RPAREN => TypeSpec::RealKind(kind),
-    KW_REAL LPAREN <kind: Ident> RPAREN => TypeSpec::RealKind(kind),
-    KW_REAL LPAREN <kind: INT> RPAREN => TypeSpec::RealKind(kind),
+    KW_REAL LPAREN KW_KIND EQ <kind: RhsExpr> RPAREN => TypeSpec::RealKind(crate::ast::kind_text(kind)),
+    KW_REAL LPAREN <kind: RhsExpr> RPAREN => TypeSpec::RealKind(crate::ast::kind_text(kind)),
     KW_INTEGER => TypeSpec::Integer(None),
-    KW_INTEGER LPAREN KW_KIND EQ <kind: Ident> RPAREN => TypeSpec::IntegerKind(kind),
-    KW_INTEGER LPAREN KW_KIND EQ <kind: INT> RPAREN => TypeSpec::IntegerKind(kind),
-    KW_INTEGER LPAREN <kind: Ident> RPAREN => TypeSpec::IntegerKind(kind),
-    KW_INTEGER LPAREN <k: INT> RPAREN => {
-        match k.parse::<u8>() { Ok(k) => TypeSpec::Integer(Some(k)), Err(_) => TypeSpec::IntegerKind(k) }
-    },
+    KW_INTEGER LPAREN KW_KIND EQ <kind: RhsExpr> RPAREN => TypeSpec::IntegerKind(crate::ast::kind_text(kind)),
+    KW_INTEGER LPAREN <kind: RhsExpr> RPAREN => crate::ast::integer_kind(kind),
     KW_REAL => TypeSpec::Real,
     KW_DOUBLE KW_PRECISION => TypeSpec::DoublePrecision,
     KW_CHARACTER => TypeSpec::Character(None),
@@ -562,6 +556,10 @@ TypeSpec: TypeSpec = {
     KW_CHARACTER LPAREN STAR RPAREN => TypeSpec::CharacterAssumed,
     KW_CHARACTER LPAREN KW_LEN EQ <length:RhsExpr> RPAREN => crate::ast::character_length(length),
     KW_CHARACTER LPAREN <length:RhsExpr> RPAREN => crate::ast::character_length(length),
+    // CHARACTER storage is ASCII; the ASCII and default kinds are the same.
+    KW_CHARACTER LPAREN KW_LEN EQ <length:RhsExpr> COMMA KW_KIND EQ <_kind:RhsExpr> RPAREN => crate::ast::character_length(length),
+    KW_CHARACTER LPAREN KW_KIND EQ <_kind:RhsExpr> COMMA KW_LEN EQ <length:RhsExpr> RPAREN => crate::ast::character_length(length),
+    KW_CHARACTER LPAREN KW_KIND EQ <_kind:RhsExpr> RPAREN => TypeSpec::Character(None),
     KW_LOGICAL => TypeSpec::Logical,
 };
 

@@ -939,6 +939,50 @@ fn procedure(
     }
     Ok(())
 }
+// Names used as values rather than called, such as procedure actual arguments.
+fn bare_names(body: &[Stmt], out: &mut HashSet<String>) {
+    fn expr(e: &Expr, out: &mut HashSet<String>) {
+        match e {
+            Expr::Ident(n) => { out.insert(n.to_ascii_lowercase()); }
+            Expr::Call(_, args) | Expr::Index(_, args) => for a in args { expr(a, out); },
+            Expr::Bin(_, a, b) => { expr(a, out); expr(b, out); }
+            Expr::Un(_, a) => expr(a, out),
+            _ => {}
+        }
+    }
+    let mut body = body.to_vec();
+    for s in &mut body {
+        for e in crate::procedure_arguments::expressions(s) { expr(e, out); }
+        for child in crate::procedure_arguments::children(s) { bare_names(child, out); }
+    }
+}
+
+// Every name that a body uses as a variable, array or procedure.
+fn names_in(body: &[Stmt], out: &mut HashSet<String>) {
+    fn expr(e: &Expr, out: &mut HashSet<String>) {
+        match e {
+            Expr::Ident(n) => { out.insert(n.to_ascii_lowercase()); }
+            Expr::Call(n, args) | Expr::Index(n, args) => {
+                out.insert(n.to_ascii_lowercase());
+                for a in args { expr(a, out); }
+            }
+            Expr::Bin(_, a, b) => { expr(a, out); expr(b, out); }
+            Expr::Un(_, a) => expr(a, out),
+            Expr::Section { name, lower, upper, stride } => {
+                out.insert(name.to_ascii_lowercase());
+                for e in [lower, upper, stride].into_iter().flatten() { expr(e, out); }
+            }
+            _ => {}
+        }
+    }
+    let mut body = body.to_vec();
+    for s in &mut body {
+        if let Stmt::CallSub { name, .. } = s { out.insert(name.to_ascii_lowercase()); }
+        for e in crate::procedure_arguments::expressions(s) { expr(e, out); }
+        for child in crate::procedure_arguments::children(s) { names_in(child, out); }
+    }
+}
+
 pub(crate) fn resolve(mut p: Program) -> Result<Program> {
     fn maximum(body: &[Stmt]) -> usize {
         let own = declarations(body)
@@ -996,7 +1040,63 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
     }
     let capacity = maximum(&p.body).saturating_add(128);
     let mut lifted = vec![];
-    units(&mut p.body, &mut 0, &mut lifted, capacity, &[])?;
+    let mut serial = 0;
+    if !p.contains.is_empty() {
+        // The main program is the host of the procedures it CONTAINS: gather
+        // its statements and those procedures into one host body.
+        // Procedures with array, CHARACTER or POINTER dummies, and ELEMENTAL
+        // procedures, are expanded at their call sites later, where they see
+        // the main program's variables directly. So are the procedures they
+        // refer to.
+        let expanded = |s: &Stmt| match s {
+            Stmt::Function { params, body, elemental, .. } | Stmt::Subroutine { params, body, elemental, .. } => *elemental
+                || body.iter().any(|s| matches!(s, Stmt::DummyIntent { name, intent } if intent == "pointer" && params.contains(name))
+                    || matches!(s, Stmt::ArrayDecl { name, .. } if params.contains(name))
+                    || matches!(s, Stmt::VarDecl { kind: TypeSpec::Character(_) | TypeSpec::CharacterAssumed | TypeSpec::CharacterLength(_), names } if names.iter().any(|n| params.contains(n)))),
+            _ => false,
+        };
+        let mut lifted_names: HashSet<String> = p.body.iter().filter_map(|s| match s {
+            Stmt::Function { name, .. } | Stmt::Subroutine { name, .. } if p.contains.contains(&name.to_ascii_lowercase()) && !expanded(s) => Some(name.to_ascii_lowercase()),
+            _ => None,
+        }).collect();
+        let mut referenced = HashSet::new();
+        for s in &p.body {
+            if let Stmt::Function { name, body, .. } | Stmt::Subroutine { name, body, .. } = s {
+                if p.contains.contains(&name.to_ascii_lowercase()) && expanded(s) {
+                    names_in(body, &mut referenced);
+                }
+            }
+        }
+        // A procedure passed as an actual argument keeps its name, as does
+        // one that another program unit refers to, such as a specialized copy
+        // of a module procedure that received it as an actual argument.
+        let mut actuals = HashSet::new();
+        for s in &p.body {
+            match s {
+                Stmt::Function { name, body, .. } | Stmt::Subroutine { name, body, .. } if p.contains.contains(&name.to_ascii_lowercase()) => {
+                    let mut own = HashSet::new();
+                    bare_names(body, &mut own);
+                    own.remove(&name.to_ascii_lowercase());
+                    actuals.extend(own);
+                }
+                Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } | Stmt::Module { body, .. } => names_in(body, &mut referenced),
+                s => bare_names(std::slice::from_ref(s), &mut actuals),
+            }
+        }
+        lifted_names.retain(|n| !referenced.contains(n) && !actuals.contains(n));
+        if lifted_names.is_empty() { p.contains.clear(); }
+        let internal = |s: &Stmt| matches!(s, Stmt::Function { name, .. } | Stmt::Subroutine { name, .. }
+            if lifted_names.contains(&name.to_ascii_lowercase()));
+        let unit = |s: &Stmt| matches!(s, Stmt::Function { .. } | Stmt::Subroutine { .. } | Stmt::Module { .. });
+        if !p.contains.is_empty() {
+        let (mut host, others): (Vec<Stmt>, Vec<Stmt>) = std::mem::take(&mut p.body).into_iter().partition(|s| internal(s) || !unit(s));
+        procedure(&mut host, &[], &mut serial, &mut lifted, capacity, &[])?;
+        p.body = others;
+        p.body.extend(host);
+        p.contains.clear();
+        }
+    }
+    units(&mut p.body, &mut serial, &mut lifted, capacity, &[])?;
     p.body.extend(lifted);
     Ok(p)
 }

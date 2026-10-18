@@ -5,6 +5,34 @@ pub struct Program {
     #[allow(dead_code)]
     pub name: String,
     pub body: Vec<Stmt>,
+    /// Procedures the main program CONTAINS. They are kept in `body` with the
+    /// external procedures until host association lifts them.
+    #[serde(default)]
+    pub contains: Vec<String>,
+}
+
+/// Marks a kind type parameter given by an expression other than a name or a
+/// literal; the serialized expression follows and is evaluated with the
+/// named constants in scope.
+pub const KIND_EXPRESSION: &str = "@kind_expression:";
+pub fn kind_text(kind: Expr) -> String {
+    match kind {
+        Expr::Ident(name) | Expr::IntLit(name) => name,
+        kind => format!("{KIND_EXPRESSION}{}", serde_json::to_string(&kind).expect("serializable kind")),
+    }
+}
+
+pub fn integer_kind(kind: Expr) -> TypeSpec {
+    let kind = kind_text(kind);
+    match kind.parse::<u8>() { Ok(k) => TypeSpec::Integer(Some(k)), Err(_) => TypeSpec::IntegerKind(kind) }
+}
+
+/// The names of the procedures among `units`.
+pub fn procedure_names(units: &[Stmt]) -> Vec<String> {
+    units.iter().filter_map(|s| match s {
+        Stmt::Function { name, .. } | Stmt::Subroutine { name, .. } => Some(name.to_ascii_lowercase()),
+        _ => None,
+    }).collect()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

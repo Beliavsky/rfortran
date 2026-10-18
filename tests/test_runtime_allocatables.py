@@ -301,6 +301,51 @@ end subroutine show
 end program main
 ""","2 3 12\n")
 
+    def test_assignment_of_expressions_allocates(self):
+        self.check("""program ra
+implicit none
+real, allocatable :: c(:,:), t(:,:), v(:), w(:)
+integer, allocatable :: k(:)
+allocate(c(2,3), v(4))
+c = 1.0
+c(2,3) = 5.0
+v = [1.0, 2.0, 3.0, 4.0]
+t = c + 1
+print *, shape(t), t
+t = 2*c - t
+print *, shape(t), t
+t = sqrt(c)
+print *, t
+w = v*2 + 1
+print *, size(w), w
+w = abs(v - 10)
+print *, w
+k = int(v) * 3
+print *, k
+w = v(2:3) + 1
+print *, w
+end program
+""", "2 3 2.0 2.0 2.0 2.0 2.0 6.0\n2 3 0.0 0.0 0.0 0.0 0.0 4.0\n"
+            "1.0 1.0 1.0 1.0 1.0 2.23606801\n4 3.0 5.0 7.0 9.0\n9.0 8.0 7.0 6.0\n3 6 9 12\n3.0 4.0\n")
+        self.check("""program rc
+implicit none
+real, allocatable :: c(:,:), t(:,:)
+integer :: i
+allocate(c(0:1,3), t(5,5))
+c = reshape([(real(i), i = 1, 6)], [2,3])
+t = c * 2
+print *, shape(t), lbound(t), t
+t = t + 10
+print *, t
+t = -t / 2 + c
+print *, t
+deallocate(t)
+t = sqrt(c) + 1
+print *, lbound(t), t
+end program
+""", "2 3 1 1 2.0 4.0 6.0 8.0 10.0 12.0\n12.0 14.0 16.0 18.0 20.0 22.0\n"
+            "-5.0 -5.0 -5.0 -5.0 -5.0 -5.0\n1 1 2.0 2.41421366 2.73205090 3.0 3.23606801 3.44948983\n")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

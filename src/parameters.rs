@@ -120,6 +120,11 @@ fn typed_integer(value: i64, kind: u8) -> Result<Expr> {
 }
 
 fn kind_number(name: &str, constants: &Constants) -> Result<i64> {
+    if let Some(text) = name.strip_prefix(crate::ast::KIND_EXPRESSION) {
+        let mut kind: Expr = serde_json::from_str(text)?;
+        rewrite_expr(&mut kind, constants)?;
+        return evaluate(&kind, constants).context("a kind type parameter must be a constant INTEGER expression");
+    }
     if name.split_once('_').is_some_and(|(number,_)| number.parse::<i64>().is_ok()) {
         let mut literal = Expr::IntLit(name.into());
         rewrite_expr(&mut literal,constants)?;
@@ -427,6 +432,47 @@ fn evaluate(expr: &Expr, constants: &Constants) -> Result<i64> {
                 };
             Some(position.map_or(0,|i|i as i64+1))
         }
+        Expr::Call(name,args) if name=="kind" && args.len()==1 => {
+            // Declared variables are recorded as @model_type(code, rank).
+            let lookup=|n:&str|constants.get(&model_type_key(&n.to_ascii_lowercase())).or_else(||constants.get(&model_type_key(n))).and_then(|e|match e {
+                Expr::Call(tag,a) if tag=="@model_type" => {
+                    let code=integer_constant(&a[0]).ok()?;
+                    let kind=match code {c if c<0=>TypeSpec::Integer(Some((-c) as u8)),4=>TypeSpec::Real,8=>TypeSpec::DoublePrecision,c if c>100=>TypeSpec::Complex((c-100).to_string()),_=>return None};
+                    Some((kind,integer_constant(&a[1]).ok()? as usize))
+                }
+                _ => None,
+            });
+            // A literal with a D exponent is DOUBLE PRECISION.
+            let kind=if matches!(&args[0],Expr::RealLit(text) if text.contains(['d','D'])) {TypeSpec::DoublePrecision}
+                else {crate::inquiries::model_type(&args[0],&lookup)?.context("KIND argument must be a constant or a variable of known type")?};
+            Some(match kind {
+                TypeSpec::Integer(bytes) => i64::from(bytes.unwrap_or(4)),
+                TypeSpec::Real | TypeSpec::Logical => 4,
+                TypeSpec::DoublePrecision => 8,
+                TypeSpec::Complex(k) => k.parse().unwrap_or(4),
+                TypeSpec::Character(_) | TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed => 1,
+                _ => bail!("KIND argument has an unsupported type"),
+            })
+        }
+        // CHARACTER storage is ASCII, which is also the default kind.
+        Expr::Call(name,args) if name=="selected_char_kind" && args.len()==1 => {
+            Some(if matches!(character_constant(&args[0])?.trim().to_ascii_lowercase().as_str(),"ascii"|"default") {1} else {-1})
+        }
+        Expr::Call(name,args) if matches!(name.as_str(),"abs"|"iabs") && args.len()==1 => evaluate(&args[0],constants)?.checked_abs(),
+        Expr::Call(name,args) if matches!(name.as_str(),"mod"|"modulo"|"sign"|"dim") && args.len()==2 => {
+            let (a,b)=(evaluate(&args[0],constants)?,evaluate(&args[1],constants)?);
+            match name.as_str() {
+                "mod"|"modulo" if b==0 => bail!("{} P must not be zero",name.to_ascii_uppercase()),
+                "mod" => a.checked_rem(b),
+                "modulo" => a.checked_rem(b).map(|r|if r!=0 && (r<0)!=(b<0) {r+b} else {r}),
+                "sign" => a.checked_abs().map(|m|if b<0 {-m} else {m}),
+                _ => Some((a-b).max(0)),
+            }
+        }
+        Expr::Call(name,args) if matches!(name.as_str(),"max"|"min") && !args.is_empty() => {
+            let values=args.iter().map(|a|evaluate(a,constants)).collect::<Result<Vec<_>>>()?;
+            if name=="max" {values.into_iter().max()} else {values.into_iter().min()}
+        }
         Expr::Un(UnOp::Neg, e) => evaluate(e, constants)?.checked_neg(),
         Expr::Bin(op, left, right) => {
             let a = evaluate(left, constants)?;
@@ -503,6 +549,215 @@ fn separate_parameters(body: &mut Vec<Stmt>, arguments: &[String]) -> Result<()>
     output.retain(|s| !matches!(s,Stmt::VarDecl { names, .. } if names.is_empty()));
     *body = output;
     Ok(())
+}
+
+/// Replace KIND(variable) and KIND(z%re) with the kind number of the declared
+/// type, so that KIND= arguments such as CMPLX(x, y, KIND=KIND(z)) are
+/// constants for the lowering passes that precede PARAMETER resolution.
+/// Named kinds are resolved from the INTEGER PARAMETERs declared in scope.
+pub(crate) fn fold_kind_inquiries(program: &mut Program) {
+    fn kind_of(kind: &TypeSpec, constants: &Constants) -> Option<i64> {
+        match kind {
+            TypeSpec::Integer(bytes) => Some(i64::from(bytes.unwrap_or(4))),
+            TypeSpec::Real | TypeSpec::Logical => Some(4),
+            TypeSpec::DoublePrecision => Some(8),
+            TypeSpec::IntegerKind(k) | TypeSpec::RealKind(k) | TypeSpec::Complex(k) => kind_number(k, constants).ok(),
+            TypeSpec::Character(_) | TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed => Some(1),
+        }
+    }
+    fn fold(e: &mut Expr, types: &HashMap<String, TypeSpec>, constants: &Constants) {
+        if let Expr::Call(name, args) = e {
+            if name == "kind" && args.len() == 1 {
+                if let Expr::Ident(v) = &args[0] {
+                    let v = v.to_ascii_lowercase();
+                    let (base, component) = match v.rsplit_once('%') {
+                        Some((base, part @ ("re" | "im"))) => (base.to_owned(), Some(part)),
+                        _ => (v.clone(), None),
+                    };
+                    let kind = types.get(&base).filter(|t| component.is_none() || matches!(t, TypeSpec::Complex(_)));
+                    if let Some(n) = kind.and_then(|t| kind_of(t, constants)) {
+                        *e = Expr::IntLit(n.to_string());
+                        return;
+                    }
+                }
+            }
+        }
+        match e {
+            Expr::Call(_, args) | Expr::Index(_, args) => for a in args { fold(a, types, constants); },
+            Expr::Bin(_, a, b) => { fold(a, types, constants); fold(b, types, constants); }
+            Expr::Un(_, a) => fold(a, types, constants),
+            _ => {}
+        }
+    }
+    fn scope(body: &mut Vec<Stmt>, inherited_types: &HashMap<String, TypeSpec>, inherited: &Constants) {
+        let mut types = inherited_types.clone();
+        let mut constants = inherited.clone();
+        for s in body.iter() {
+            match s {
+                Stmt::VarDecl { kind, names } => for n in names { types.insert(n.to_ascii_lowercase(), kind.clone()); },
+                Stmt::ArrayDecl { kind, name, .. } => { types.insert(name.to_ascii_lowercase(), kind.clone()); }
+                Stmt::InitializedDecl { kind, attributes, entities } => {
+                    let parameter = attributes.iter().any(|a| a.eq_ignore_ascii_case("parameter"));
+                    for (n, value) in entities {
+                        types.insert(n.to_ascii_lowercase(), kind.clone());
+                        if parameter && matches!(kind, TypeSpec::Integer(_)) {
+                            if let Some(mut value) = value.clone() {
+                                fold(&mut value, &types, &constants);
+                                if let Ok(v) = evaluate(&value, &constants) { constants.insert(n.to_ascii_lowercase(), Expr::IntLit(v.to_string())); }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        for s in body.iter_mut() {
+            match s {
+                Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } | Stmt::Block { body } => scope(body, &types, &constants),
+                Stmt::Module { body, .. } => scope(body, &HashMap::new(), &Constants::new()),
+                s => {
+                    for e in crate::procedure_arguments::expressions(s) { fold(e, &types, &constants); }
+                    for child in crate::procedure_arguments::children(s) {
+                        let mut wrapper = std::mem::take(child);
+                        scope_statements(&mut wrapper, &types, &constants);
+                        *child = wrapper;
+                    }
+                }
+            }
+        }
+    }
+    // Branch and loop bodies share their scope's declarations.
+    fn scope_statements(body: &mut Vec<Stmt>, types: &HashMap<String, TypeSpec>, constants: &Constants) {
+        for s in body.iter_mut() {
+            match s {
+                Stmt::Block { body } => scope(body, types, constants),
+                s => {
+                    for e in crate::procedure_arguments::expressions(s) { fold(e, types, constants); }
+                    for child in crate::procedure_arguments::children(s) { scope_statements(child, types, constants); }
+                }
+            }
+        }
+    }
+    scope(&mut program.body, &HashMap::new(), &Constants::new());
+}
+
+fn substitute(e: &mut Expr, index: &str, value: i64) {
+    match e {
+        Expr::Ident(n) if n == index => *e = Expr::IntLit(value.to_string()),
+        Expr::Call(_, args) | Expr::Index(_, args) => for a in args { substitute(a, index, value); },
+        Expr::Bin(_, a, b) => { substitute(a, index, value); substitute(b, index, value); }
+        Expr::Un(_, a) => substitute(a, index, value),
+        _ => {}
+    }
+}
+
+// The elements of a constant array constructor in array element order, with
+// nested constructors and constant-bound implied-DO loops expanded.
+fn constructor_elements(e: &Expr, out: &mut Vec<Expr>) -> Result<()> {
+    match e {
+        Expr::Call(tag, items) if tag == "@array_constructor" => for item in items { constructor_elements(item, out)?; },
+        Expr::Call(tag, args) if tag == "@output_implied_do" && args.len() >= 4 => {
+            let Expr::Ident(index) = &args[0] else { bail!("invalid implied-DO index") };
+            let (start, end, stride) = (integer_constant(&args[1])?, integer_constant(&args[2])?, integer_constant(&args[3])?);
+            if stride == 0 { bail!("implied-DO stride must not be zero"); }
+            let mut i = start;
+            while if stride > 0 { i <= end } else { i >= end } {
+                if out.len() > 1 << 24 { bail!("array initializer is too large"); }
+                for item in &args[4..] {
+                    let mut item = item.clone();
+                    substitute(&mut item, index, i);
+                    constructor_elements(&item, out)?;
+                }
+                i += stride;
+            }
+        }
+        other => out.push(other.clone()),
+    }
+    Ok(())
+}
+
+// The extents of a declared array, from `n` or `lower:upper` bounds.
+fn declared_extents(dims: &[Expr], constants: &Constants) -> Result<Vec<i64>> {
+    dims.iter().map(|d| {
+        let mut d = d.clone();
+        rewrite_expr(&mut d, constants)?;
+        Ok(match &d {
+            Expr::Call(tag, b) if tag == "@declared_bounds" => integer_constant(&b[1])? - integer_constant(&b[0])? + 1,
+            d => integer_constant(d)?,
+        })
+    }).collect()
+}
+
+/// Fold an array initializer built from constructors, implied-DO loops and
+/// RESHAPE into one flat constructor in array element order. `shapes` gives
+/// the extents of declared arrays for SHAPE(array). Other forms are returned
+/// unchanged.
+fn fold_array_initializer(e: &Expr, shapes: &HashMap<String, Vec<i64>>) -> Result<Expr> {
+    let flat = |items: Vec<Expr>| Expr::Call("@array_constructor".into(), items);
+    match e {
+        Expr::Call(tag, _) if tag == "@array_constructor" => {
+            let mut out = vec![];
+            constructor_elements(e, &mut out)?;
+            Ok(flat(out))
+        }
+        Expr::Call(name, args) if name == "reshape" && !shapes.contains_key(name) => {
+            let mut slots: [Option<&Expr>; 4] = [None; 4];
+            for (position, arg) in args.iter().enumerate() {
+                match arg {
+                    Expr::Call(tag, v) if tag.starts_with("@keyword:") => {
+                        let slot = match &tag[9..] { "source" => 0, "shape" => 1, "pad" => 2, "order" => 3, k => bail!("RESHAPE: unknown keyword `{k}`") };
+                        slots[slot] = v.first();
+                    }
+                    _ if position < 4 => slots[position] = Some(arg),
+                    _ => bail!("RESHAPE expects SOURCE, SHAPE, PAD and ORDER"),
+                }
+            }
+            let elements = |e: Option<&Expr>| -> Result<Option<Vec<Expr>>> {
+                let Some(e) = e.filter(|e| !matches!(e, Expr::Call(tag, _) if tag.starts_with("@no_"))) else { return Ok(None) };
+                match fold_array_initializer(e, shapes)? {
+                    Expr::Call(tag, items) if tag == "@array_constructor" => Ok(Some(items)),
+                    _ => bail!("RESHAPE arguments in an initializer must be constant arrays"),
+                }
+            };
+            let source = elements(slots[0])?.context("RESHAPE requires SOURCE")?;
+            let extents: Vec<i64> = match slots[1] {
+                Some(Expr::Call(n, a)) if n == "shape" && a.len() == 1 && matches!(&a[0], Expr::Ident(v) if shapes.contains_key(v)) => {
+                    let Expr::Ident(v) = &a[0] else { unreachable!() };
+                    shapes[v].clone()
+                }
+                shape => elements(shape)?.context("RESHAPE requires SHAPE")?.iter().map(integer_constant).collect::<Result<_>>()?,
+            };
+            if extents.iter().any(|n| *n < 0) { bail!("RESHAPE SHAPE must not have negative extents"); }
+            let pad = elements(slots[2])?.unwrap_or_default();
+            let order: Vec<usize> = match elements(slots[3])? {
+                Some(order) => order.iter().map(|e| Ok(integer_constant(e)? as usize)).collect::<Result<_>>()?,
+                None => (1..=extents.len()).collect(),
+            };
+            let mut sorted = order.clone();
+            sorted.sort_unstable();
+            if sorted != (1..=extents.len()).collect::<Vec<_>>() { bail!("RESHAPE ORDER must be a permutation of 1..{}", extents.len()); }
+            let count = extents.iter().try_fold(1usize, |n, e| n.checked_mul(*e as usize)).context("RESHAPE result is too large")?;
+            if count > source.len() && pad.is_empty() { bail!("RESHAPE SOURCE has too few elements and no PAD"); }
+            // Element k of SOURCE, then PAD repeated, fills the result with the
+            // subscripts varying in ORDER; store each at its column-major offset.
+            let mut result = vec![Expr::IntLit("0".into()); count];
+            let mut subscript = vec![0i64; extents.len()];
+            for k in 0..count {
+                let value = if k < source.len() { source[k].clone() } else { pad[(k - source.len()) % pad.len()].clone() };
+                let mut offset = 0i64;
+                for axis in (0..extents.len()).rev() { offset = offset * extents[axis] + subscript[axis]; }
+                result[offset as usize] = value;
+                for &axis in &order {
+                    let axis = axis - 1;
+                    subscript[axis] += 1;
+                    if subscript[axis] < extents[axis] { break; }
+                    subscript[axis] = 0;
+                }
+            }
+            Ok(flat(result))
+        }
+        other => Ok(other.clone()),
+    }
 }
 
 // Resolve declaration initializers to constants before choosing automatic or
@@ -650,10 +905,23 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
                         bail!("initialized declaration `{name}` requires a value");
                     };
                     rewrite_expr(&mut value,&constants)?;
+                    if arrays.contains(&key) {
+                        let shapes=array_dimensions.iter().filter_map(|(n,d)|Some((n.clone(),declared_extents(d,&constants).ok()?))).collect();
+                        value=fold_array_initializer(&value,&shapes)?;
+                        rewrite_expr(&mut value,&constants)?;
+                    }
                     if !arrays.contains(&key) && matches!(&value,Expr::Call(tag,_) if tag == "@array_constructor" || tag == "@typed_constructor") {
                         bail!("scalar declaration initializer cannot be an array");
                     }
-                    let value = initial_value(kind,&value).with_context(|| format!("invalid declaration initializer for `{name}`"))?;
+                    let mut value = initial_value(kind,&value).with_context(|| format!("invalid declaration initializer for `{name}`"))?;
+                    // A folded multidimensional initializer is in array element order.
+                    if let (Some(dims),Expr::Call(tag,items))=(array_dimensions.get(&key),&value) {
+                        if dims.len()>1 && tag=="@array_constructor" && items.len()>1 {
+                            let extents=declared_extents(dims,&constants)?;
+                            let shape=Expr::Call("@array_constructor".into(),extents.iter().map(|n|Expr::IntLit(n.to_string())).collect());
+                            value=Expr::Call("reshape".into(),vec![value,shape,Expr::Call("@no_pad".into(),vec![]),Expr::Call("@no_order".into(),vec![])]);
+                        }
+                    }
                     if variable_values.insert(key.clone(),value).is_some() { bail!("duplicate initialization of `{name}`"); }
                     if !arrays.contains(&key) { scalars.push(name.clone()); }
                 }

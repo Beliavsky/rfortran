@@ -526,6 +526,34 @@ fn linear_index(
     *indices = vec![offset];
     Ok(())
 }
+// Single-subscript references to a multidimensional heap array address its
+// packed storage by linear position.
+fn flat_elements(e:&mut Expr,shapes:&Shapes) {
+    match e {
+        Expr::Index(n,a)|Expr::Call(n,a) if a.len()==1 && axes(n,shapes).is_some_and(|axes|axes.len()>1)=>{
+            *e=Expr::Call("@allocated_linear_element".into(),vec![id(n),a[0].clone()]);
+        },
+        Expr::Call(_,a)|Expr::Index(_,a)=>for e in a {flat_elements(e,shapes);},
+        Expr::Bin(_,a,b)=>{flat_elements(a,shapes);flat_elements(b,shapes);},
+        Expr::Un(_,a)=>flat_elements(a,shapes),_=>{},
+    }
+}
+
+// An arithmetic or elemental intrinsic expression with an array operand,
+// whose shape is that of its array operands.
+fn elemental_expression(e: &Expr, shapes: &Shapes) -> bool {
+    match e {
+        Expr::Bin(op, a, b) => matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow)
+            && [a, b].iter().all(|x| matches!(***x, Expr::Ident(_) | Expr::IntLit(_) | Expr::RealLit(_)) || elemental_expression(x, shapes)
+                || matches!(&***x, Expr::Call(f, _) if shapes.contains_key(f))),
+        Expr::Un(UnOp::Neg, a) => elemental_expression(a, shapes) || matches!(**a, Expr::Ident(_)),
+        Expr::Call(f, args) if !shapes.contains_key(f) && args.len() == 1
+            && (crate::intrinsics::math_arity(f) == Some(1) || matches!(f.as_str(), "abs" | "real" | "dble" | "int" | "nint")) =>
+            matches!(args[0], Expr::Ident(_)) || elemental_expression(&args[0], shapes),
+        _ => false,
+    }
+}
+
 pub(crate) fn length(name: &str, shapes: &Shapes) -> Option<Expr> {
     shapes
         .get(&format!("@extent:{name}"))
@@ -1037,10 +1065,11 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                     && !matches!(shapes.get(name),Some((TypeSpec::Character(_)|TypeSpec::CharacterAssumed|TypeSpec::CharacterLength(_),_)))
                     && crate::array_calls::scalar_actual_kind(&value,&shapes).is_err()
                     // Rank-one targets reallocate in the ordinary assignment path
-                    // below. Multidimensional targets reallocate from whole arrays
-                    // and sections; other expressions keep the conforming path.
+                    // below. Multidimensional targets reallocate from whole arrays,
+                    // sections and elemental expressions of them.
                     && (axes(name,&shapes).is_some_and(|a|a.len()>1)
-                        && matches!(&value,Expr::Ident(_)|Expr::Call(..)) && !matches!(&value,Expr::Call(f,_) if shapes.get(f).is_none())
+                        && (matches!(&value,Expr::Ident(_)|Expr::Call(..)) && !matches!(&value,Expr::Call(f,_) if shapes.get(f).is_none())
+                            || elemental_expression(&value,&shapes))
                         && matches!(logical_shape(&value,&shapes,&mut vec![]),Ok(Some((rhs,_))) if Some(rhs.len())==axes(name,&shapes).map(|a|a.len()))) {
                     s=Stmt::CallSub{name:"@alloc_result_assign".into(),args:vec![id(name),value]};
                 }
@@ -1062,7 +1091,33 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                     if let Expr::Ident(n)=&value {
                         if shapes.get(n).is_some_and(|(_,d)|d.len()>1) {value=Expr::Call("@fixed_packed_view".into(),vec![id(n)]);}
                     }
+                    // Operands of an elemental expression are read element by element
+                    // through their packed storage.
+                    fn packed_operands(e:&mut Expr,shapes:&Shapes) {
+                        match e {
+                            Expr::Ident(n) if axes(n,shapes).is_some_and(|a|a.len()>1)=>*e=view(n,shapes),
+                            Expr::Bin(_,a,b)=>{packed_operands(a,shapes);packed_operands(b,shapes);},
+                            Expr::Un(_,a)=>packed_operands(a,shapes),
+                            Expr::Call(f,args) if !shapes.contains_key(f) && !f.starts_with('@')=>for a in args {packed_operands(a,shapes);},
+                            _=>{},
+                        }
+                    }
+                    if !matches!(value,Expr::Ident(_)|Expr::Call(..)) || matches!(&value,Expr::Call(f,_) if !shapes.contains_key(f) && !f.starts_with('@')) {
+                        packed_operands(&mut value,&shapes);
+                    }
+                    let generated=statements.len();
                     let (kind,_,length)=crate::reductions::argument(&mut value,&shapes,&mut statements,serial)?;
+                    // A temporary filled from packed operands reads them by linear position.
+                    fn flat_statements(body:&mut [Stmt],shapes:&Shapes) {
+                        for s in body {
+                            match s {
+                                Stmt::AssignIndex{value,..}|Stmt::Assign{value,..}=>flat_elements(value,shapes),
+                                Stmt::Do{body,..}=>flat_statements(body,shapes),
+                                _=>{},
+                            }
+                        }
+                    }
+                    flat_statements(&mut statements[generated..],&shapes);
                     let rhs_axes=rhs_axes.unwrap_or_else(||vec![length.clone()]);
                     if rhs_axes.len()!=target_axes.len() {bail!("allocatable array assignment rank mismatch");}
                     *serial+=1;let stem=format!("@alloc_result_assignment_{serial}");
@@ -1088,16 +1143,6 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                     }}
                     metadata(&statements,&mut rhs_shapes);
                     let mut scalar=crate::reductions::argument_element(&value,&id(&index),&rhs_shapes)?;
-                    fn flat_elements(e:&mut Expr,shapes:&Shapes) {
-                        match e {
-                            Expr::Index(n,a) if a.len()==1 && axes(n,shapes).is_some()=>{
-                                *e=Expr::Call("@allocated_linear_element".into(),vec![id(n),a[0].clone()]);
-                            },
-                            Expr::Call(_,a)|Expr::Index(_,a)=>for e in a {flat_elements(e,shapes);},
-                            Expr::Bin(_,a,b)=>{flat_elements(a,shapes);flat_elements(b,shapes);},
-                            Expr::Un(_,a)=>flat_elements(a,shapes),_=>{},
-                        }
-                    }
                     flat_elements(&mut scalar,&rhs_shapes);
                     statements.push(Stmt::Do{var:index.clone(),start:int(1),end:length.clone(),body:vec![Stmt::AssignIndex{name:snapshot.clone(),indices:vec![id(&index)],value:scalar}]});
                     let flag=allocated(&name,&shapes).context("allocatable array assignment requires allocation state")?;
@@ -1610,7 +1655,7 @@ mod tests {
         // Model an already-specialized array result whose extent is captured
         // by a later FORALL allocation block. A restarted counter would rename
         // `length` to the outer extent name, making its initializer read itself.
-        let p=Program {name:"allocation_names".into(),body:vec![
+        let p=Program {name:"allocation_names".into(),contains:vec![],body:vec![
             Stmt::VarDecl {kind:TypeSpec::Integer(Some(8)),names:vec!["@alloc_block_1".into()]},
             assign("@alloc_block_1",int(3)),
             Stmt::Block {body:vec![

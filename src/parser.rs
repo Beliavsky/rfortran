@@ -490,7 +490,7 @@ pub fn parse_with_src(
 
     // A source file with no statements (only blanks or comments) is valid.
     if tokens.is_empty() {
-        return Ok(Program { name: "<anon>".to_string(), body: vec![] });
+        return Ok(Program { name: "<anon>".to_string(), body: vec![], contains: vec![] });
     }
 
     let triples: Vec<(usize, TokenKind, usize)> = tokens
@@ -553,6 +553,7 @@ pub fn parse_with_src(
             Ok(crate::ast::Program {
                 name: "<error>".into(),
                 body: vec![],
+                contains: vec![],
             })
         }
     };

@@ -681,6 +681,8 @@ impl Resolver {
                     match self.name_type(n, vars) {
                         Ty::Array(t, _) => *t,
                         _ => match n.as_str() {
+                            // A named KIND is resolved later, with the PARAMETERs.
+                            "cmplx" if args.get(2).filter(|e|!crate::named_arguments::omitted(e)).is_some_and(|k|crate::parameters::integer_constant(k).is_err()) => Ty::Unknown,
                             "cmplx"|"@complex_literal" => {
                                 let k=if n=="cmplx"{args.get(2).filter(|e|!crate::named_arguments::omitted(e)).map(crate::parameters::integer_constant).transpose()?.unwrap_or(4) as u8}else{if arg_types.iter().any(|t|*t==scalar(&TypeSpec::DoublePrecision)){8}else{4}};
                                 let result=scalar(&TypeSpec::Complex(k.to_string()));
@@ -713,9 +715,11 @@ impl Resolver {
                                 let argument=|key:&str,slot:usize|args.iter().find_map(|e|match e {
                                     Expr::Call(tag,values) if tag==&format!("@keyword:{key}")=>values.first(),_=>None
                                 }).or_else(||args.get(slot).filter(|e|!matches!(e,Expr::Call(tag,_) if tag.starts_with("@keyword:")))).filter(|e|!crate::named_arguments::omitted(e));
-                                let kind=argument("kind",slot).map(crate::parameters::integer_constant).transpose()?.unwrap_or(4);
-                                let result=scalar(&TypeSpec::Integer(Some(kind as u8)));
-                                if n=="count" {
+                                // A named KIND is resolved later, with the PARAMETERs.
+                                let kind=argument("kind",slot).map(crate::parameters::integer_constant).transpose().ok();
+                                let result=kind.map(|k|scalar(&TypeSpec::Integer(Some(k.unwrap_or(4) as u8)))).unwrap_or(Ty::Unknown);
+                                if kind.is_none() {Ty::Unknown}
+                                else if n=="count" {
                                     if argument("dim",1).is_some() {
                                         match arg_types.first() {Some(Ty::Array(_,rank)) if *rank>1=>Ty::Array(Box::new(result),rank-1),_=>result}
                                     } else {result}

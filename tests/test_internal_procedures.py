@@ -329,6 +329,63 @@ end subroutine
 end subroutine
 ''','requires an explicit declaration')
 
+    def test_main_program_host(self):
+        self.check('''program main
+implicit none
+integer :: i
+i=-1
+call bump()
+print *,i
+contains
+subroutine bump()
+i=i+1
+print *,i
+end subroutine
+end program
+''','0\n0\n')
+        self.check('''program h7
+implicit none
+integer :: n, a(5), i
+real :: total
+double precision :: d
+logical :: done
+n = 5
+a = [(i*i, i = 1, 5)]
+total = 0
+d = 1.5d0
+done = .false.
+call accumulate()
+print *, total, count_big(10), done
+call scale(2)
+print *, a, d
+contains
+subroutine accumulate()
+integer :: i
+do i = 1, n
+   total = total + a(i)
+end do
+done = .true.
+end subroutine
+integer function count_big(limit)
+integer, intent(in) :: limit
+integer :: j
+count_big = 0
+do j = 1, n
+   if (a(j) > limit) count_big = count_big + 1
+end do
+end function
+subroutine scale(k)
+integer, intent(in) :: k
+integer :: j
+do j = 1, n
+   a(j) = a(j) * k
+end do
+d = d * k
+call accumulate()
+end subroutine
+end program
+''','55.0 2 T\n2 8 18 32 50 3.0\n')
+
 
 if __name__=='__main__':
     unittest.main(verbosity=2)

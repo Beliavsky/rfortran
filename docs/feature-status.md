@@ -39,6 +39,12 @@ Three more bugs found on 2026-10-17 are also fixed:
   hold 5000000000. The value now wraps to the variable's kind, as in gfortran.
 - G0 output of `FRACTION`, `SPACING`, `RRSPACING` and the other floating-point
   model functions of a REAL(4) variable printed DOUBLE PRECISION digits.
+- An internal procedure of the main program that assigned a main-program
+  variable changed only a local copy, so the main program kept the old value.
+  Main-program variables are now host-associated.
+- Assigning an expression such as `c + 1` to an unallocated multidimensional
+  ALLOCATABLE array stopped with "runtime-sized array shapes do not conform"
+  instead of allocating it.
 
 ## Source form and declarations
 
@@ -62,7 +68,7 @@ Three more bugs found on 2026-10-17 are also fixed:
 | [DIMENSION attribute](language-support.md#dimension-declarations-and-shape) | ✅ | | test_dimension_attribute.py |
 | [INTENT](language-support.md#intent-spellings) | ✅ | | |
 | [PARAMETER attribute and statement](language-support.md#parameter-statements) | ✅ | Derived-type named constants are not supported | test_parameter_statements.py, test_named_constants.py |
-| [Declaration initialization](language-support.md#declaration-initialization) | 🟡 | Saved arrays are not supported | test_main_initialization.py, test_saved_locals.py |
+| [Declaration initialization](language-support.md#declaration-initialization) | 🟡 | Saved arrays are not supported | test_main_initialization.py, test_saved_locals.py, test_initializers_and_kinds.py |
 | SAVE | 🟡 | Scalars only | test_saved_locals.py |
 | VALUE attribute | ✅ | | |
 | PROTECTED attribute | ❌ | | |
@@ -87,7 +93,7 @@ Three more bugs found on 2026-10-17 are also fixed:
 | [COMPLEX kinds 4 and 8](language-support.md#complex) | 🟡 | COMPLEX input and COMPLEX components of derived types are not supported | test_complex.py |
 | LOGICAL | ✅ | Default kind | |
 | [CHARACTER](language-support.md#character-declarations-and-lengths) | 🟡 | Lengths must be known at compile time or bounded; see the CHARACTER section | test_character_lengths.py |
-| `SELECTED_INT_KIND`, `SELECTED_REAL_KIND`, `KIND` | ✅ | | |
+| [`SELECTED_INT_KIND`, `SELECTED_REAL_KIND`, `SELECTED_CHAR_KIND`, `KIND`](language-support.md#declaration-initialization), and kind expressions such as `real(kind(0d0))` | ✅ | A CHARACTER kind other than ASCII is accepted but stored as ASCII | test_initializers_and_kinds.py |
 | [ISO_FORTRAN_ENV](language-support.md#intrinsic-modules) | 🟡 | No `ATOMIC_*`, `LOCK_TYPE`, `EVENT_TYPE` or `STAT_*` entities | test_intrinsic_env.py, test_intrinsic_rewrites.py |
 | ISO_C_BINDING | ❌ | | |
 | IEEE_ARITHMETIC and other IEEE modules | ❌ | | |
@@ -138,7 +144,7 @@ Three more bugs found on 2026-10-17 are also fixed:
 | [ALLOCATABLE dummy arguments](language-support.md#allocatable-dummy-arguments) | 🟡 | Subroutines only, not functions | test_allocatable_dummies.py |
 | [ALLOCATABLE function results](language-support.md#allocatable-function-results) | 🟡 | Assigning a result to an unallocated ALLOCATABLE array is rejected | test_numeric_allocatable_results.py |
 | ALLOCATABLE scalars | ❌ | | |
-| [Reallocation on assignment](language-support.md#reallocation-on-assignment) | 🟡 | Not for CHARACTER arrays | test_allocatable_reallocation.py |
+| [Reallocation on assignment](language-support.md#reallocation-on-assignment) | 🟡 | Not for CHARACTER arrays; a multidimensional expression cannot mix fixed-size and runtime-sized arrays | test_allocatable_reallocation.py, test_runtime_allocatables.py |
 | [MOVE_ALLOC](language-support.md#move_alloc-and-allocate-options) | ✅ | Copies the data | test_allocation_options.py |
 | [ALLOCATE with SOURCE=, MOLD=, STAT=, ERRMSG=](language-support.md#move_alloc-and-allocate-options) | ✅ | | test_allocation_options.py |
 | Typed ALLOCATE (`allocate(character(len=5) :: s)`) | ❌ | | |
@@ -199,7 +205,7 @@ Three more bugs found on 2026-10-17 are also fixed:
 | [OPTIONAL and PRESENT](language-support.md#optional-arguments) | ✅ | | test_optional_procedures.py |
 | [PURE and ELEMENTAL](language-support.md#elemental-functions) | ✅ | | test_character_elemental.py, test_impure_elemental.py |
 | [RECURSIVE](language-support.md#recursive-procedures) | 🟡 | Recursive functions with array dummies are not supported | test_recursive_arrays.py |
-| [Internal procedures with host association](language-support.md#internal-procedures-and-host-association) | 🟡 | Cannot capture CHARACTER, POINTER, ALLOCATABLE or OPTIONAL host objects | test_internal_procedures.py |
+| [Internal procedures with host association](language-support.md#internal-procedures-and-host-association) | 🟡 | Cannot capture CHARACTER, POINTER, ALLOCATABLE or OPTIONAL host objects, or use whole host arrays | test_internal_procedures.py |
 | Generic interfaces | ✅ | | test_generic_inquiries.py |
 | Interface blocks for external procedures | ✅ | | |
 | [Dummy procedures](language-support.md#dummy-procedures-and-procedure-pointers) | 🟡 | Intrinsic procedures cannot be passed | test_procedure_arguments.py |

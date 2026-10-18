@@ -197,6 +197,7 @@ fn compiler_main() -> Result<()> {
                     crate::ast::Program {
                         name: "<error>".into(),
                         body: vec![],
+                        contains: vec![],
                     }
                 }
             };

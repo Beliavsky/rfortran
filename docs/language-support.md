@@ -144,12 +144,24 @@ statements remain unsupported. Run `python tests/test_parameter_statements.py`.
 ### Declaration initialization
 
 Main-program variables support declaration initialization from supported constant
-expressions. Numeric scalars, rank-one array constructors (including constant
+expressions. Numeric scalars, array constructors (including constant
 implied-DOs), scalar array fills, supported LOGICAL constant expressions and fixed-length CHARACTER
-scalars are supported. Values remain mutable; initialization runs once before
-normal use, including declarations with an explicit SAVE attribute. INTEGER
-initializers currently require integer constant expressions. Additional constant
-array transformations remain outside this subset. Run `python tests/test_main_initialization.py`.
+scalars are supported. Arrays of any rank may be initialized with RESHAPE of a
+constant constructor, with SHAPE given as a constructor or as `SHAPE(array)` of
+the declared array, and with PAD and ORDER. Values remain mutable; initialization
+runs once before normal use, including declarations with an explicit SAVE
+attribute. INTEGER initializers currently require integer constant expressions,
+which may use `ABS`, `MOD`, `MODULO`, `SIGN`, `DIM`, `MAX`, `MIN` and `KIND`.
+Other constant array transformations remain outside this subset. Run
+`python tests/test_main_initialization.py` and
+`python tests/test_initializers_and_kinds.py`.
+
+A kind type parameter may be any constant INTEGER expression, such as
+`real(kind(0.0d0))`, `integer(kind=selected_int_kind(9))` or a named constant.
+`KIND(x)` of a declared variable, including a COMPLEX part `z%re`, is a
+constant, so `cmplx(x, y, kind=kind(z))` works. `SELECTED_CHAR_KIND('ASCII')`
+is 1, and `CHARACTER(LEN=n, KIND=k)` is accepted; CHARACTER data is always
+stored as ASCII, whatever the kind.
 
 Initialized INTEGER, REAL, DOUBLE PRECISION, LOGICAL and fixed-length CHARACTER
 scalar locals in functions
@@ -1094,8 +1106,10 @@ shape differs, as in Fortran 2003. A reallocated target takes the lower bounds
 of a whole array source and otherwise starts at 1; a target whose shape already
 conforms keeps its bounds. The right-hand side is captured first, so it may
 refer to the target. Rank-one targets accept any array expression. Targets of
-rank two or more reallocate from whole arrays and sections; other
-multidimensional expressions still require a conforming allocated target.
+rank two or more reallocate from whole arrays, sections, and arithmetic and
+elemental intrinsic expressions of them, such as `t = 2*c - t` or
+`t = sqrt(c) + 1`. Such an expression cannot yet mix fixed-size and
+runtime-sized arrays.
 Scalar assignment never allocates. Array constructors may contain whole
 runtime-sized arrays and sections, so `a = [a, x]` appends. CHARACTER arrays and
 rank-one ALLOCATEd locals of procedures with array dummies (which use bounded
@@ -1601,11 +1615,15 @@ call. Run `python tests/test_procedure_arguments.py`.
 
 ### Internal procedures and host association
 
-Functions and subroutines accept CONTAINS with internal functions/subroutines.
-Internal procedures can read and update INTEGER(4/8), REAL(4/8), and LOGICAL
-variables explicitly declared in the enclosing procedure, including its dummy arguments
-and array elements of ranks 1 through 15. Array accesses retain lower bounds,
+Functions, subroutines and the main program accept CONTAINS with internal
+functions/subroutines. Internal procedures can read and update INTEGER(4/8),
+REAL(4/8), and LOGICAL variables explicitly declared in the enclosing procedure
+or main program, including its dummy arguments and array elements of ranks 1
+through 15. Array accesses retain lower bounds,
 check subscripts, and share the original storage and initialization flags.
+An internal procedure of the main program that has array, CHARACTER or POINTER
+dummy arguments, or is ELEMENTAL, is instead expanded at each call, so it also
+sees the main program's other variables, such as ALLOCATABLE arrays.
 SIZE, SHAPE, LBOUND, and UBOUND inquiries are supported; DIM must be constant.
 
 Recursive helpers with scalar input arguments forward their host environment,
