@@ -154,8 +154,8 @@ fn main() {
 }
 ```
 
-Generated files also include source-line comments and attributes for generated-code
-warnings. No formatting module or arithmetic helper functions are included when
+Generated files include attributes for generated-code warnings. Source-line comments
+are omitted by default; add `--source-comments` when debugging a translation. No formatting module or arithmetic helper functions are included when
 the generated statements do not need them.
 
 The transformations are deliberately conditional:
@@ -221,8 +221,9 @@ limits beyond what the Rust emitter could otherwise handle. Existing frontend
 diagnostic limitations also carry through; the tool does not independently
 revalidate complete Fortran program structure.
 
-Generated source includes original statement line comments, derived from compiler
-source locations. A few local Rust helpers implement checked conversions and
+The optional `--source-comments` flag includes original statement line comments,
+derived from compiler source locations. Diagnostic line numbers remain available
+regardless of this option. A few local Rust helpers implement checked conversions and
 integer powers. The AST JSON is currently an internal compiler format, not a
 versioned public API; unknown AST variants produce explicit errors and the adapter
 may need updating as the compiler evolves. No fallback parser is used.

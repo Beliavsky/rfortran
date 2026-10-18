@@ -29,11 +29,12 @@ def rust_string(text):
 
 
 class Emitter:
-    def __init__(self, plan=None):
+    def __init__(self, plan=None, *, source_comments=False):
         self.symbols = {}
         self.parameters = set()
         self.loop_id = 0
         self.needs_format_runtime = False
+        self.source_comments = source_comments
         self.plan = plan or Plan([])
         self.ranges = dict(self.plan.constants)
         self.identifiers = {}
@@ -234,7 +235,8 @@ class Emitter:
         executable = not declarations
         for node in nodes:
             line = node.line
-            lines.append(indent + f"// Fortran line {line}")
+            if self.source_comments:
+                lines.append(indent + f"// Fortran line {line}")
             expression = lambda text, constant=False: self.expr(text, state, line, constant)
             if node.kind == "decl":
                 self.require(not executable, line, "declarations must precede executable statements at program scope")
@@ -373,9 +375,9 @@ fn rf_ipow(base: i32, exponent: i32) -> i32 {
 '''
 
 
-def transpile(source, *, compiler=None, filename="input.f90"):
+def transpile(source, *, compiler=None, filename="input.f90", source_comments=False):
     def emit(tree):
-        emitter = Emitter(Plan(tree))
+        emitter = Emitter(Plan(tree), source_comments=source_comments)
         body, _ = emitter.block(tree, set(), declarations=True)
         shared = format_runtime() if emitter.needs_format_runtime else ""
         code = "\n".join(body)
@@ -423,11 +425,13 @@ def main():
                         help="Rust output path (default: target/rust-transpiler/<source-stem>.rs)")
     parser.add_argument("--rfort", type=Path, help="Existing compiler executable; no compiler build is performed")
     parser.add_argument("--run", action="store_true", help="Compile generated Rust with rustc and run it")
+    parser.add_argument("--source-comments", action="store_true", help="Include original Fortran line comments in generated Rust")
     args = parser.parse_args()
     if args.out is None:
         args.out = Path("target") / "rust-transpiler" / (args.source.stem + ".rs")
     try:
-        generated = transpile(args.source.read_text(encoding="utf-8-sig"), compiler=args.rfort, filename=args.source)
+        generated = transpile(args.source.read_text(encoding="utf-8-sig"), compiler=args.rfort, filename=args.source,
+                              source_comments=args.source_comments)
         if args.out.resolve() == args.source.resolve():
             parser.error("output must differ from the input source")
         args.out.parent.mkdir(parents=True, exist_ok=True)
