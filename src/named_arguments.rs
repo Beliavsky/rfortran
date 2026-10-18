@@ -250,6 +250,28 @@ impl Resolver {
                     }
                     self.collect(body);
                 }
+                // A structure constructor takes its components as keywords;
+                // derived lowering diagnoses components without a value.
+                Stmt::DerivedType { name, components, .. } => {
+                    let mut params: Vec<String> = vec![];
+                    for c in components {
+                        let names = match c {
+                            Stmt::VarDecl { names, .. } | Stmt::DerivedDecl { names, .. } => names.clone(),
+                            Stmt::InitializedDecl { entities, .. } => entities.iter().map(|(n, _)| n.clone()).collect(),
+                            Stmt::ArrayDecl { name, .. } => vec![name.clone()],
+                            _ => vec![],
+                        };
+                        for n in names {
+                            if !params.contains(&n) {
+                                params.push(n);
+                            }
+                        }
+                    }
+                    let optional = params.iter().cloned().collect();
+                    if self.signatures.insert(name.clone(), Signature { params, optional }).is_some() {
+                        self.duplicates.insert(name.clone());
+                    }
+                }
                 Stmt::Module { body, .. } | Stmt::Block { body } => self.collect(body),
                 _ => {}
             }

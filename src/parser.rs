@@ -189,8 +189,14 @@ mod tests {
         // A variable named TYPE and a SELECT TYPE guard are not definitions.
         let tokens=crate::lexer::lex("integer :: type\ntype = 3\nprint *, type");
         assert!(!tokens.iter().any(|t|matches!(t.kind,crate::lexer::TokenKind::KwType)));
+        // EXTENDS records the parent for type-extension lowering.
         let source="module m\ntype, extends(base) :: child\nend type\nend module m";
-        assert!(super::parse_with_src(source,&crate::lexer::lex(source),"extends.f90").is_err());
+        let program=super::parse_with_src(source,&crate::lexer::lex(source),"extends.f90").unwrap();
+        let Stmt::Module{body,..}=&program.body[0] else {panic!("module missing")};
+        assert!(body.iter().any(|s|matches!(s,Stmt::CallSub{name,args} if name==crate::extensions::EXTENDS
+            && matches!(args.as_slice(),[crate::ast::Expr::Ident(c),crate::ast::Expr::Ident(p)] if c=="child" && p=="base"))));
+        let source="module m\ntype, abstract :: base\nend type\nend module m";
+        assert!(super::parse_with_src(source,&crate::lexer::lex(source),"abstract.f90").is_err());
     }
 
     #[test]

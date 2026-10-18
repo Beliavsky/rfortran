@@ -50,7 +50,57 @@ fn array_valued(e: &Expr, arrays: &HashSet<String>) -> bool {
     }
 }
 
+/// An ALLOCATABLE array dummy of a function that the function does not
+/// allocate, deallocate or assign as a whole (an INTENT(IN) one cannot), and
+/// whose allocation status and bounds it does not inquire or pass on, behaves
+/// as an assumed-shape dummy. Treating it so lets such functions take
+/// runtime-sized actuals, as the flattened ALLOCATABLE components of a derived
+/// dummy do.
+fn fixed_allocation_dummies(body: &mut [Stmt]) {
+    fn passed(body: &[Stmt], name: &str) -> bool {
+        body.iter().any(|s| match s {
+            Stmt::CallSub { args, .. } => args.iter().any(|a| matches!(a, Expr::Ident(n) if n == name)),
+            Stmt::If { then_body, else_body, .. } => passed(then_body, name) || else_body.as_ref().is_some_and(|b| passed(b, name)),
+            Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } | Stmt::Block { body } => passed(body, name),
+            Stmt::SelectCase { cases, default, .. } => cases.iter().any(|c| passed(&c.body, name)) || default.as_ref().is_some_and(|b| passed(b, name)),
+            _ => false,
+        })
+    }
+    // ALLOCATE, DEALLOCATE or whole-array assignment, which may reallocate.
+    fn reallocated(body: &[Stmt], name: &str) -> bool {
+        body.iter().any(|s| match s {
+            Stmt::CallSub { name: n, args } if n == "@allocate" || n == "@deallocate" || n == "move_alloc" => args.iter()
+                .any(|a| matches!(a, Expr::Ident(x) | Expr::Call(x, _) if x == name)),
+            Stmt::Assign { name: n, .. } => n == name,
+            Stmt::If { then_body, else_body, .. } => reallocated(then_body, name) || else_body.as_ref().is_some_and(|b| reallocated(b, name)),
+            Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } | Stmt::Block { body } => reallocated(body, name),
+            Stmt::SelectCase { cases, default, .. } => cases.iter().any(|c| reallocated(&c.body, name)) || default.as_ref().is_some_and(|b| reallocated(b, name)),
+            _ => false,
+        })
+    }
+    for s in body.iter_mut() {
+        match s {
+            Stmt::Function { params, body, .. } => {
+                let text = serde_json::to_string(&*body).unwrap_or_default();
+                let has = |p: &str, attr: &str| body.iter().any(|s| matches!(s, Stmt::DummyIntent { name, intent } if name == p && intent == attr));
+                let inputs = params.iter().filter(|p| {
+                    let ident = serde_json::to_string(&Expr::Ident(p.to_string())).unwrap_or_default();
+                    has(p, "allocatable")
+                        && body.iter().any(|s| matches!(s, Stmt::ArrayDecl { name, .. } if name == *p))
+                        && ["allocated", "lbound", "ubound"].iter().all(|f| !text.contains(&format!("{{\"Call\":[\"{f}\",[{ident}")))
+                        && !passed(body, p)
+                        && (has(p, "intent(in)") || !reallocated(body, p))
+                }).cloned().collect::<HashSet<_>>();
+                body.retain(|s| !matches!(s, Stmt::DummyIntent { name, intent } if intent == "allocatable" && inputs.contains(name)));
+                fixed_allocation_dummies(body);
+            }
+            Stmt::Module { body, .. } | Stmt::Subroutine { body, .. } => fixed_allocation_dummies(body),
+            _ => {}
+        }
+    }
+}
 pub(crate) fn prepare(mut program: Program) -> Result<Program> {
+    fixed_allocation_dummies(&mut program.body);
     fn numeric(kind: &TypeSpec) -> bool {
         matches!(
             kind,
@@ -162,6 +212,19 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
                 _=>false,
             })
         }
+        // An ALLOCATE whose extents are not constant expressions may depend on
+        // runtime values even after call-site specialization, so its array
+        // needs runtime storage rather than a bound fixed at the call site.
+        fn runtime_allocate(body: &[Stmt], array: &str) -> bool {
+            body.iter().any(|s| match s {
+                Stmt::CallSub{name,args} if name=="@allocate"=>args.iter().any(|e|matches!(e,Expr::Call(n,dims) if n==array
+                    && dims.iter().any(|d|crate::parameters::integer_constant(d).is_err()))),
+                Stmt::If{then_body,else_body,..}=>runtime_allocate(then_body,array)||else_body.as_ref().is_some_and(|b|runtime_allocate(b,array)),
+                Stmt::Do{body,..}|Stmt::DoWhile{body,..}|Stmt::Block{body}=>runtime_allocate(body,array),
+                Stmt::SelectCase{cases,default,..}=>cases.iter().any(|c|runtime_allocate(&c.body,array))||default.as_ref().is_some_and(|b|runtime_allocate(b,array)),
+                _=>false,
+            })
+        }
         let array_dummies = body
             .iter()
             .any(|s| matches!(s,Stmt::ArrayDecl{name,..} if params.contains(name)));
@@ -169,7 +232,7 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
             (dims.iter().all(|e|matches!(e,Expr::Ident(n) if n=="@deferred_extent"))
               && !params.contains(name)
               && !body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name && intent=="@heap_dummy"))
-              && (passed.contains(name) || name.starts_with("@module$") || ((dims.len()>1 || !array_dummies) && allocation(body,name,&declared))
+              && (passed.contains(name) || name.starts_with("@module$") || ((dims.len()>1 || !array_dummies || runtime_allocate(body,name)) && allocation(body,name,&declared))
                   // Rank-one locals of procedures with array dummies use bounded
                   // storage when ALLOCATEd; one allocated only by assignment needs
                   // runtime storage for its value's extent.

@@ -65,6 +65,7 @@ mod record_input;
 mod list_input;
 mod character_input;
 mod derived;
+mod extensions;
 mod procedure_arguments;
 mod intrinsic_rewrites;
 mod matmul_runtime;
@@ -95,6 +96,11 @@ fn main() -> Result<()> {
     // Windows' small default main-thread stack is insufficient for the AST
     // traversals needed by valid high-rank array expressions.
     match std::thread::Builder::new().name("rfort".into()).stack_size(32*1024*1024).spawn(compiler_main)?.join() {
+        // Report as returning the error from main would, with user names.
+        Ok(Err(error))=>{
+            eprintln!("Error: {}", source_diagnostics::user_names(&format!("{error:?}")));
+            std::process::exit(1);
+        }
         Ok(result)=>result,
         Err(panic)=>std::panic::resume_unwind(panic),
     }

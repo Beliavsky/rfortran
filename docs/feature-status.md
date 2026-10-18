@@ -46,6 +46,22 @@ Three more bugs found on 2026-10-17 are also fixed:
   ALLOCATABLE array stopped with "runtime-sized array shapes do not conform"
   instead of allocating it.
 
+Bugs found on 2026-10-18, all fixed:
+
+- In the interpreter (`rfort run`), storing an INTEGER value in an element of a
+  REAL array, as in `x(3) = -1`, turned the whole array INTEGER, so later REAL
+  values were truncated. Filling a REAL ALLOCATABLE array with an INTEGER
+  (`a = 1`) did the same, and filling an INTEGER ALLOCATABLE array with a REAL
+  value (`a = 2.7`) stored 0 instead of 2.
+- Default component values were not applied to a fixed-size array of a derived
+  type, so reading one reported an uninitialized variable.
+- Assigning a function result to one of its own arguments, as in `r = r * m`
+  with a defined operator or `r = f(r)`, gave wrong values when the type had an
+  array component: the result was written into `r` while `r` was still being read.
+- Growing an array with MOVE_ALLOC (`allocate(tmp(2*n)); tmp(1:n) = a;
+  call move_alloc(tmp, a)`) stopped with "read of uninitialized variable",
+  because moving the array copied its unset elements.
+
 ## Source form and declarations
 
 | Feature | Status | Notes | Tests |
@@ -67,7 +83,7 @@ Three more bugs found on 2026-10-17 are also fixed:
 | [Declarations without `::`](language-support.md#declarations-without-) | ✅ | Attributes and initializers still need `::` | test_declarations_without_colons.py |
 | [DIMENSION attribute](language-support.md#dimension-declarations-and-shape) | ✅ | | test_dimension_attribute.py |
 | [INTENT](language-support.md#intent-spellings) | ✅ | | |
-| [PARAMETER attribute and statement](language-support.md#parameter-statements) | ✅ | Derived-type named constants are not supported | test_parameter_statements.py, test_named_constants.py |
+| [PARAMETER attribute and statement](language-support.md#parameter-statements) | ✅ | Derived-type named constants need scalar components | test_parameter_statements.py, test_named_constants.py, test_derived_type_features.py |
 | [Declaration initialization](language-support.md#declaration-initialization) | 🟡 | Saved arrays are not supported | test_main_initialization.py, test_saved_locals.py, test_initializers_and_kinds.py |
 | SAVE | 🟡 | Scalars only | test_saved_locals.py |
 | VALUE attribute | ✅ | | |
@@ -175,20 +191,22 @@ Three more bugs found on 2026-10-17 are also fixed:
 | Feature | Status | Notes | Tests |
 |---|---|---|---|
 | Scalar components and default initialization | ✅ | | |
-| Structure constructors | ✅ | | |
+| [Structure constructors](language-support.md#derived-type-components), including keyword components | ✅ | | test_derived_type_features.py |
 | [Array, ALLOCATABLE and POINTER components](language-support.md#derived-type-components) | ✅ | | test_derived_array_components.py |
-| [Nested derived-type components](language-support.md#derived-type-components) | ✅ | Not ALLOCATABLE or POINTER, and not arrays | test_derived_array_components.py |
+| [Nested derived-type components](language-support.md#derived-type-components) | ✅ | Not ALLOCATABLE or POINTER scalars | test_derived_array_components.py |
+| [Components that are arrays of a derived type](language-support.md#derived-type-components), fixed or ALLOCATABLE | ✅ | The element type must have scalar intrinsic components; no constructors of the containing type | test_derived_type_features.py |
 | ALLOCATABLE scalar and deferred-length CHARACTER components | ❌ | | |
-| [Arrays of derived type](language-support.md#arrays-of-derived-type) | 🟡 | Components must be scalars | test_allocated_array_functions.py |
+| [Arrays of derived type](language-support.md#arrays-of-derived-type), including elements as procedure arguments and in type-bound calls | 🟡 | Components may be scalars, fixed-size arrays or derived scalars, not ALLOCATABLE or POINTER | test_allocated_array_functions.py, test_derived_type_features.py |
 | Type-bound procedures | ✅ | | |
-| Generic type-bound procedures (`generic ::`) | ❌ | | |
+| [Generic type-bound procedures, operators and assignment (`generic ::`)](language-support.md#type-bound-procedures-and-generics) | ✅ | | test_derived_type_features.py |
 | FINAL procedures | ❌ | | |
 | [Defined operators](language-support.md#defined-operators-with-array-operands) | ✅ | | test_defined_operators.py, test_array_operators.py |
-| Defined assignment (`interface assignment(=)`) | ❌ | | |
+| [Defined assignment (`interface assignment(=)`)](language-support.md#type-bound-procedures-and-generics) | ✅ | To a whole variable, not to an element or component | test_derived_type_features.py |
 | [Functions declared with a derived-type prefix (`type(t) function f()`)](language-support.md#other-statement-forms) | ✅ | | test_syntax_forms.py |
-| Printing a whole derived object (`print *, obj`) | ❌ | | |
-| Derived-type named constants | ❌ | | |
-| Type extension (EXTENDS), CLASS, polymorphism | ❌ | | |
+| [Output of a whole derived object (`print *, obj`)](language-support.md#derived-type-components) | ✅ | Not with ALLOCATABLE or POINTER components, which need defined I/O | test_derived_type_features.py |
+| [Derived-type named constants, SAVE and initialized objects](language-support.md#derived-type-components) | ✅ | Scalar components | test_derived_type_features.py |
+| [Type extension (EXTENDS)](language-support.md#type-extension) | 🟡 | Without dynamic dispatch: a binding called through a CLASS dummy cannot be overridden | test_derived_type_features.py |
+| CLASS(*), SELECT TYPE, polymorphic ALLOCATABLE objects | ❌ | | |
 | ABSTRACT types | ❌ | | |
 | Parameterized derived types | ❌ | | |
 | Procedure-pointer components | ❌ | | |

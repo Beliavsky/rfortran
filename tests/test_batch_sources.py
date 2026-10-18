@@ -23,9 +23,12 @@ class BatchSources(unittest.TestCase):
     def batch(self, *sources, wrapper=BATCH):
         # Explicit cmd quoting also handles shell metacharacters in path names.
         arguments = " ".join('"' + str(p) + '"' for p in (wrapper, *sources))
+        # Test the wrapper's argument handling with the existing build; a
+        # release rebuild would outlast the timeout.
         return subprocess.run(
             'cmd.exe /d /v:off /s /c "' + arguments + '"',
             cwd=self.directory, capture_output=True, text=True, timeout=90,
+            env={**os.environ, "RFORT_NO_BUILD": "1"},
         )
 
     def sources(self):
@@ -376,7 +379,7 @@ class BatchSources(unittest.TestCase):
         program = self.directory / "elemental main.f90"
         library.write_text(module + "end module elemental_math\n", encoding="utf-8")
         program.write_text(main, encoding="utf-8")
-        self.check_build([library, program], "2 4 6 7\n 12\n 4 12 24\n 3 6 9\n 24\n 0\n 8 8 8 8\n 24 24\n 1.0 0.648054 0.648054 1.0")
+        self.check_build([library, program], "2 4 6 7\n 12\n 4 12 24\n 3 6 9\n 24\n 0\n 8 8 8 8\n 24 24\n 1.0 0.648054273663885 0.648054273663885 1.0")
 
     def test_section_assignment(self):
         source = (ROOT / "tests" / "71_section_assignment.f90").read_text(encoding="utf-8")

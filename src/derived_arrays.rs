@@ -13,6 +13,93 @@ struct Field {
     name: String,
     kind: TypeSpec,
     default: Option<Expr>,
+    /// Constant extents of an array component; empty for a scalar. Its
+    /// storage puts these axes ahead of the axes of the array of records.
+    dims: Vec<Expr>,
+}
+fn whole_axes(f: &Field) -> Vec<Expr> {
+    f.dims.iter().map(|_| Expr::Section { name: String::new(), lower: None, upper: None, stride: None }).collect()
+}
+/// Rename the owner of section subscripts already bound to `name`.
+fn retarget(e: &mut Expr, name: &str, target: &str) {
+    match e {
+        Expr::Section { name: n, .. } if n == name => *n = target.to_owned(),
+        Expr::Call(_, args) => {
+            for e in args {
+                retarget(e, name, target);
+            }
+        }
+        _ => {}
+    }
+}
+/// Split trailing component subscripts, as in `a(i)%x(j)`, from the
+/// subscripts of the array of records.
+fn component_subscripts(indices: &mut Vec<Expr>) -> Vec<Expr> {
+    match indices.last() {
+        Some(Expr::Call(n, _)) if n == "@component_subscripts" => {
+            let Some(Expr::Call(_, args)) = indices.pop() else { unreachable!() };
+            args
+        }
+        _ => vec![],
+    }
+}
+/// Element or section `object(indices)%field(component)` of record storage.
+fn select(object: &str, f: &Field, component: Vec<Expr>, indices: &[Expr]) -> Result<Expr> {
+    let target = storage(object, &f.name);
+    if f.dims.is_empty() && !component.is_empty() {
+        // A substring of a CHARACTER component.
+        let [range @ Expr::Section { .. }] = component.as_slice() else {
+            bail!("component `{}` is not an array", f.name);
+        };
+        let mut indices = indices.to_vec();
+        for e in &mut indices {
+            retarget(e, object, &target);
+        }
+        return Ok(Expr::Call("@array_substring".into(), vec![crate::ast::section_or_call(target, indices), range.clone()]));
+    }
+    if !component.is_empty() && component.len() != f.dims.len() {
+        bail!("component `{}` requires {} subscripts", f.name, f.dims.len());
+    }
+    let mut args = if component.is_empty() { whole_axes(f) } else { component };
+    for e in indices {
+        let mut e = e.clone();
+        retarget(&mut e, object, &target);
+        // An already bound triplet keeps its owner; unbind it so the combined
+        // subscript list binds every section to the storage array.
+        if let Expr::Call(n, a) = &e {
+            if n == "@section_subscript" && a.len() == 1 {
+                if let Expr::Section { lower, upper, stride, .. } = &a[0] {
+                    e = Expr::Section { name: String::new(), lower: lower.clone(), upper: upper.clone(), stride: stride.clone() };
+                }
+            }
+        }
+        if let Expr::Section { name, .. } = &mut e {
+            if name == object || name == &target {
+                name.clear();
+            }
+        }
+        args.push(e);
+    }
+    Ok(crate::ast::section_or_call(target, args))
+}
+/// Assign to an element or section that `select` gives.
+fn assignment(target: Expr, value: Expr) -> Stmt {
+    match target {
+        Expr::Call(name, mut args) if name == "@array_substring" => {
+            args.push(value);
+            Stmt::CallSub { name: "@array_substring_assign".into(), args }
+        }
+        Expr::Call(name, indices) => Stmt::AssignIndex { name, indices, value },
+        Expr::Section { ref name, .. } => Stmt::AssignIndex { name: name.clone(), indices: vec![target], value },
+        _ => unreachable!("record storage selections are calls or sections"),
+    }
+}
+/// Storage shape of a field of an array of records with shape `dims`.
+fn storage_dims(f: &Field, dims: &[Expr]) -> Vec<Expr> {
+    if !dims.is_empty() && dims.iter().all(|d| matches!(d, Expr::Ident(n) if n == "@deferred_extent")) {
+        return deferred(f.dims.len() + dims.len());
+    }
+    f.dims.iter().chain(dims).cloned().collect()
 }
 #[derive(Clone)]
 struct Object {
@@ -31,14 +118,166 @@ struct Lower {
     procedures: HashMap<String, Procedure>,
     serial: usize,
     array_shapes: HashMap<String, Vec<Expr>>,
+    /// Components of each type that are arrays of a derived type, and scalar
+    /// derived components, which may contain such arrays in turn.
+    array_components: HashMap<String, Vec<(String, Object)>>,
+    scalar_components: HashMap<String, Vec<(String, String)>>,
+    /// Dummy arguments of the procedure being lowered.
+    dummies: Vec<String>,
+    /// The components of each type in order, with the type of each derived
+    /// component, whose fields appear in `types` as `component%field`.
+    layouts: HashMap<String, Vec<(String, Option<String>)>>,
+    /// Procedures with a scalar derived dummy, which an array element is
+    /// passed to through a temporary object.
+    scalar_procedures: std::collections::HashSet<String>,
+    /// Type-bound procedure names of each type.
+    bindings: HashMap<String, std::collections::HashSet<String>>,
 }
+/// Storage of one field of an array of records. An array component `c` of a
+/// scalar object `g` is stored as the ordinary array components `c$field`,
+/// which scalar derived lowering then names `g%c$field`.
+/// A field of a nested derived component, `p%x`, is stored as `p$x`.
 fn storage(object: &str, field: &str) -> String {
-    format!("@record${object}${field}")
+    let field = field.replace('%', "$");
+    if object.contains('%') {
+        format!("{object}${field}")
+    } else {
+        format!("@record${object}${field}")
+    }
 }
 fn deferred(rank: usize) -> Vec<Expr> {
     vec![Expr::Ident("@deferred_extent".into()); rank]
 }
 impl Lower {
+    /// Replace each component that is an array of a derived type with one
+    /// array component per field of that type, keeping its shape and its
+    /// ALLOCATABLE or POINTER attribute.
+    fn expand_array_components(&mut self, body: &mut [Stmt]) -> Result<()> {
+        for s in body.iter_mut() {
+            match s {
+                Stmt::DerivedType { name, components, .. } => {
+                    let mut out = vec![];
+                    let mut arrays = vec![];
+                    let mut scalars = vec![];
+                    for c in std::mem::take(components) {
+                        match c {
+                            Stmt::DerivedDecl { type_name, names, attributes, dims, .. } if !dims.is_empty() => {
+                                let fields = self.fields(&type_name)
+                                    .with_context(|| format!("array component of type `{type_name}` in type `{name}`"))?;
+                                if let Some(a) = attributes.iter().find(|a| !matches!(a.as_str(), "allocatable" | "pointer")) {
+                                    bail!("attribute `{a}` on a derived array component is not yet supported");
+                                }
+                                for n in names {
+                                    for f in &fields {
+                                        let field = format!("{n}${}", f.name);
+                                        // Default initialization of fixed storage; allocated
+                                        // storage takes the defaults when it is allocated.
+                                        if let (Some(value), true) = (&f.default, attributes.is_empty()) {
+                                            out.push(Stmt::InitializedDecl {
+                                                kind: f.kind.clone(),
+                                                attributes: vec![],
+                                                entities: vec![(field.clone(), Some(value.clone()))],
+                                            });
+                                        }
+                                        out.push(Stmt::ArrayDecl { kind: f.kind.clone(), name: field.clone(), dims: dims.clone() });
+                                        for a in &attributes {
+                                            out.push(Stmt::DummyIntent { name: field.clone(), intent: a.clone() });
+                                        }
+                                    }
+                                    arrays.push((n, Object { ty: type_name.clone(), dims: dims.clone() }));
+                                }
+                            }
+                            Stmt::DerivedDecl { ref type_name, ref names, .. } => {
+                                scalars.extend(names.iter().map(|n| (n.clone(), type_name.clone())));
+                                out.push(c);
+                            }
+                            c => out.push(c),
+                        }
+                    }
+                    *components = out;
+                    if !arrays.is_empty() {
+                        self.array_components.insert(name.clone(), arrays);
+                    }
+                    if !scalars.is_empty() {
+                        self.scalar_components.insert(name.clone(), scalars);
+                    }
+                    self.collect(std::slice::from_ref(s))?;
+                }
+                Stmt::Module { body, .. }
+                | Stmt::Function { body, .. }
+                | Stmt::Subroutine { body, .. } => self.expand_array_components(body)?,
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+    /// Register the array components of a scalar object, such as `g%nodes`,
+    /// as derived arrays, including those of its derived components.
+    fn register_components(&self, object: &str, ty: &str, objects: &mut Objects) {
+        for (c, o) in self.array_components.get(ty).into_iter().flatten() {
+            objects.insert(format!("{object}%{c}"), o.clone());
+        }
+        for (c, sub) in self.scalar_components.get(ty).into_iter().flatten() {
+            self.register_components(&format!("{object}%{c}"), sub, objects);
+        }
+    }
+    /// Default initialization of field `f` of every record of `object`. A
+    /// scalar default fills the storage; an array default is copied into each
+    /// record's component.
+    fn default_fill(&mut self, object: &str, f: &Field, value: &Expr, rank: usize) -> Result<Vec<Stmt>> {
+        let target = storage(object, &f.name);
+        if f.dims.is_empty() || !matches!(value, Expr::Call(n, _) if n == "@array_constructor") {
+            return Ok(vec![Stmt::Assign { name: target, value: value.clone() }]);
+        }
+        let mut out = vec![];
+        let mut indices = vec![];
+        for _ in 0..rank {
+            self.serial += 1;
+            let index = format!("@record_default_{}", self.serial);
+            out.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![index.clone()] });
+            indices.push(Expr::Ident(index));
+        }
+        let mut body = vec![assignment(select(object, f, vec![], &indices)?, value.clone())];
+        for (axis, index) in indices.iter().enumerate().rev() {
+            let Expr::Ident(var) = index else { unreachable!() };
+            let bound = |name: &str| Expr::Call(name.into(), vec![Expr::Ident(target.clone()), Expr::IntLit((axis + 1 + f.dims.len()).to_string())]);
+            body = vec![Stmt::Do { var: var.clone(), start: bound("lbound"), end: bound("ubound"), body }];
+        }
+        out.extend(body);
+        Ok(out)
+    }
+    /// An element `a(i)` of an array of records, with scalar subscripts.
+    fn element<'e>(&self, e: &'e Expr, objects: &Objects) -> Option<(&'e str, &'e [Expr])> {
+        let (Expr::Call(n, idx) | Expr::Index(n, idx)) = e else { return None };
+        let o = objects.get(n).filter(|o| !o.dims.is_empty())?;
+        (idx.len() == o.dims.len() && idx.iter().all(|i| !matches!(i, Expr::Section { .. })
+            && !matches!(i, Expr::Call(t, _) if t == "@section_subscript" || t == "@vector_subscript")
+            && self.array_shape(i).is_none()))
+            .then_some((n.as_str(), idx.as_slice()))
+    }
+    /// Copy an element of an array of records into a new scalar object, and,
+    /// when `copy_back` is given, copy the object back after the statement.
+    fn element_temp(&mut self, e: &Expr, objects: &mut Objects, prefix: &mut Vec<Stmt>,
+        copy_back: Option<&mut Vec<Stmt>>) -> Result<String> {
+        let (object, idx) = self.element(e, objects).context("a type-bound call requires a scalar object or an array element")?;
+        let (object, mut idx) = (object.to_owned(), idx.to_vec());
+        self.capture_indices(&mut idx, prefix);
+        let ty = objects[&object].ty.clone();
+        self.serial += 1;
+        let temp = format!("@record_element_{}", self.serial);
+        prefix.push(Stmt::DerivedDecl { type_name: ty.clone(), names: vec![temp.clone()], attributes: vec![], polymorphic: false, dims: vec![] });
+        objects.insert(temp.clone(), Object { ty: ty.clone(), dims: vec![] });
+        self.register_components(&temp, &ty, objects);
+        for f in self.fields(&ty)? {
+            prefix.push(Stmt::Assign { name: format!("{temp}%{}", f.name), value: select(&object, &f, vec![], &idx)? });
+        }
+        if let Some(back) = copy_back {
+            for f in self.fields(&ty)? {
+                back.push(assignment(select(&object, &f, vec![], &idx)?, Expr::Ident(format!("{temp}%{}", f.name))));
+            }
+        }
+        Ok(temp)
+    }
     fn collect(&mut self, body: &[Stmt]) -> Result<()> {
         for s in body {
             match s {
@@ -46,6 +285,7 @@ impl Lower {
                     name, components, ..
                 } => {
                     let mut fields = vec![];
+                    let mut layout = vec![];
                     for c in components {
                         match c {
                             Stmt::VarDecl { kind, names } => {
@@ -54,7 +294,21 @@ impl Lower {
                                         name: name.clone(),
                                         kind: kind.clone(),
                                         default: None,
+                                        dims: vec![],
                                     });
+                                    layout.push((name.clone(), None));
+                                }
+                            }
+                            // A scalar derived component contributes its fields.
+                            Stmt::DerivedDecl { type_name, names, attributes, dims, .. }
+                                if dims.is_empty() && attributes.is_empty()
+                                    && self.types.get(type_name).is_some_and(|f| !f.is_empty()) =>
+                            {
+                                for n in names {
+                                    for f in self.types[type_name].clone() {
+                                        fields.push(Field { name: format!("{n}%{}", f.name), ..f });
+                                    }
+                                    layout.push((n.clone(), Some(type_name.clone())));
                                 }
                             }
                             Stmt::InitializedDecl { kind, entities, .. } => {
@@ -63,10 +317,26 @@ impl Lower {
                                         name: name.clone(),
                                         kind: kind.clone(),
                                         default: value.clone(),
+                                        dims: vec![],
                                     });
+                                    layout.push((name.clone(), None));
+                                }
+                            }
+                            // A fixed-size array component; an initialized one
+                            // follows its InitializedDecl.
+                            Stmt::ArrayDecl { kind, name, dims }
+                                if dims.iter().all(|d| crate::parameters::integer_constant(d).is_ok()) =>
+                            {
+                                match fields.iter_mut().find(|f| &f.name == name && f.dims.is_empty() && f.default.is_some()) {
+                                    Some(f) => f.dims = dims.clone(),
+                                    None => {
+                                        fields.push(Field { name: name.clone(), kind: kind.clone(), default: None, dims: dims.clone() });
+                                        layout.push((name.clone(), None));
+                                    }
                                 }
                             }
                             Stmt::SourceLocation(_) => {}
+                            Stmt::DummyIntent { name, .. } if name == crate::extensions::EXTENDS => {}
                             _ => {
                                 fields.clear();
                                 break;
@@ -74,6 +344,10 @@ impl Lower {
                         }
                     }
                     self.types.insert(name.clone(), fields);
+                    self.layouts.insert(name.clone(), layout);
+                    if let Stmt::DerivedType { bindings, .. } = s {
+                        self.bindings.insert(name.clone(), bindings.iter().map(|(b, _)| b.clone()).filter(|b| !b.starts_with('@')).collect());
+                    }
                 }
                 Stmt::Function {
                     name, params, body, ..
@@ -113,6 +387,11 @@ impl Lower {
                     } else {
                         None
                     };
+                    if body.iter().any(|s| matches!(s, Stmt::DerivedDecl { names, dims, .. }
+                        if dims.is_empty() && names.iter().any(|n| params.contains(n))))
+                    {
+                        self.scalar_procedures.insert(name.clone());
+                    }
                     if result.is_some() || params.iter().any(|n| arrays.contains_key(n)) {
                         self.procedures.insert(
                             name.clone(),
@@ -165,20 +444,37 @@ impl Lower {
                 )
             })
         {
-            bail!("derived arrays currently require scalar intrinsic components: `{ty}`");
+            bail!("arrays of type `{ty}` are not yet supported: the components of an array of a derived type must be scalars, fixed-size arrays or scalars of a derived type, not ALLOCATABLE or POINTER");
         }
         Ok(fields.clone())
     }
     fn component(&self, n: &mut String, objects: &Objects) -> Result<()> {
-        if let Some((object, field)) = n.split_once('%') {
+        self.component_field(n, objects).map(|_| ())
+    }
+    /// Rename `object%field` of an array of records to its storage, returning
+    /// the object and field.
+    fn component_field(&self, n: &mut String, objects: &Objects) -> Result<Option<(String, Field)>> {
+        // The array of records is the first prefix that names one, as `a` in
+        // `a%p%x` or `g%nodes` in `g%nodes%w`.
+        let split = n.match_indices('%').map(|(i, _)| (&n[..i], &n[i + 1..]))
+            .find(|(object, _)| objects.get(*object).is_some_and(|o| !o.dims.is_empty()));
+        if let Some((object, field)) = split {
             if let Some(o) = objects.get(object).filter(|o| !o.dims.is_empty()) {
-                if !self.fields(&o.ty)?.iter().any(|f| f.name == field) {
-                    bail!("unknown component `{field}` of `{}`", o.ty);
-                }
-                *n = storage(object, field);
+                let f = self.fields(&o.ty)?.into_iter().find(|f| f.name == field)
+                    .with_context(|| format!("unknown component `{field}` of `{}`", o.ty))?;
+                let object = object.to_owned();
+                *n = storage(&object, field);
+                return Ok(Some((object, f)));
             }
         }
-        Ok(())
+        Ok(None)
+    }
+    /// The first field and the number of its component axes, for inquiries
+    /// about the shape of the array of records.
+    fn shape_field(&self, ty: &str) -> Result<(String, usize)> {
+        let fields = self.fields(ty)?;
+        let f = fields.iter().find(|f| f.dims.is_empty()).unwrap_or(&fields[0]);
+        Ok((f.name.clone(), f.dims.len()))
     }
     fn array_shape(&self, e: &Expr) -> Option<Vec<Expr>> {
         match e {
@@ -377,8 +673,8 @@ impl Lower {
                 Ok((
                     fields
                         .iter()
-                        .map(|f| Expr::Call(storage(&n, &f.name), args.clone()))
-                        .collect(),
+                        .map(|f| if f.dims.is_empty() { Ok(Expr::Call(storage(&n, &f.name), args.clone())) } else { select(&n, f, vec![], &args) })
+                        .collect::<Result<_>>()?,
                     array,
                 ))
             }
@@ -394,15 +690,53 @@ impl Lower {
                 Ok((
                     fields
                         .iter()
-                        .map(|f| Expr::Section {
-                            name: storage(&name, &f.name),
-                            lower: lower.clone(),
-                            upper: upper.clone(),
-                            stride: stride.clone(),
+                        .map(|f| if f.dims.is_empty() {
+                            Ok(Expr::Section {
+                                name: storage(&name, &f.name),
+                                lower: lower.clone(),
+                                upper: upper.clone(),
+                                stride: stride.clone(),
+                            })
+                        } else {
+                            select(&name, f, vec![], &[Expr::Section { name: String::new(), lower: lower.clone(), upper: upper.clone(), stride: stride.clone() }])
                         })
-                        .collect(),
+                        .collect::<Result<_>>()?,
                     true,
                 ))
+            }
+            Expr::Call(n, mut args) if n == ty && fields.iter().any(|f| f.name.contains('%')) => {
+                let layout = self.layouts[ty].clone();
+                let defaulted = |c: &str| fields.iter().filter(|f| f.name == c || f.name.starts_with(&format!("{c}%")))
+                    .all(|f| f.default.is_some());
+                let signature = crate::named_arguments::Signature {
+                    params: layout.iter().map(|(c, _)| c.clone()).collect(),
+                    optional: layout.iter().filter(|(c, _)| defaulted(c)).map(|(c, _)| c.clone()).collect(),
+                };
+                signature.reorder(ty, &mut args)?;
+                args.resize_with(layout.len(), || Expr::Call(crate::named_arguments::OMITTED.into(), vec![]));
+                let mut values = vec![];
+                for (arg, (c, sub)) in args.into_iter().zip(&layout) {
+                    let omitted = crate::named_arguments::omitted(&arg);
+                    match sub {
+                        Some(sub) if !omitted => {
+                            let (parts, array) = self.parts(arg, sub, objects, prefix)?;
+                            if array {
+                                bail!("component `{c}` of a `{ty}` constructor requires a scalar value");
+                            }
+                            values.extend(parts);
+                        }
+                        _ => {
+                            for f in fields.iter().filter(|f| &f.name == c || f.name.starts_with(&format!("{c}%"))) {
+                                values.push(if omitted {
+                                    f.default.clone().with_context(|| format!("missing derived constructor component `{c}`"))?
+                                } else {
+                                    arg.clone()
+                                });
+                            }
+                        }
+                    }
+                }
+                Ok((values, false))
             }
             Expr::Call(n, mut args) if n == ty => {
                 let signature = crate::named_arguments::Signature {
@@ -451,6 +785,9 @@ impl Lower {
                 )
             }
             Expr::Call(n, args) if n == "@array_constructor" => {
+                if fields.iter().any(|f| !f.dims.is_empty()) {
+                    bail!("array constructors of type `{ty}` with array components are not yet supported");
+                }
                 let mut values = vec![vec![]; fields.len()];
                 for e in args {
                     let (parts, array) = self.parts(e, ty, objects, prefix)?;
@@ -519,10 +856,51 @@ impl Lower {
             Expr::Ident(n) => self.component(n, objects)?,
             Expr::Call(n, args) if n.starts_with("@record_component:") => {
                 let field = n[18..].to_owned();
+                let component = component_subscripts(args);
                 let [value] = args.as_mut_slice() else {
                     bail!("invalid record component selection");
                 };
                 self.expression(value, objects, prefix)?;
+                let mut component = component;
+                for e in &mut component {
+                    self.expression(e, objects, prefix)?;
+                }
+                // A type-bound function of an array element, `a(i)%f(...)`.
+                let binding = self.element(value, objects).map(|(n, _)| objects[n].ty.clone())
+                    .is_some_and(|ty| self.bindings.get(&ty).is_some_and(|b| b.contains(&field)));
+                if binding {
+                    let temp = self.element_temp(value, objects, prefix, None)?;
+                    *e = Expr::Call(format!("{temp}%{field}"), component);
+                    return Ok(());
+                }
+                if let Expr::Section { name, lower, upper, stride } = value {
+                    if let Some(f) = objects.get(name.as_str()).map(|o| self.fields(&o.ty)).transpose()?
+                        .and_then(|fields| fields.into_iter().find(|f| f.name == field && (!f.dims.is_empty() || !component.is_empty())))
+                    {
+                        let section = Expr::Section { name: String::new(), lower: lower.clone(), upper: upper.clone(), stride: stride.clone() };
+                        *e = select(name, &f, component, &[section])?;
+                        return Ok(());
+                    }
+                }
+                if let Expr::Call(object, indices) | Expr::Index(object, indices) = value {
+                    if let Some(f) = objects.get(object.as_str()).map(|o| self.fields(&o.ty)).transpose()?
+                        .and_then(|fields| fields.into_iter().find(|f| f.name == field && (!f.dims.is_empty() || !component.is_empty())))
+                    {
+                        *e = select(object, &f, component, indices)?;
+                        return Ok(());
+                    }
+                }
+                // A section selects the same section of the component's storage.
+                if let Expr::Section { name, lower, upper, stride } = value {
+                    let o = objects
+                        .get(name)
+                        .context("component selection requires a derived array")?;
+                    if !self.fields(&o.ty)?.iter().any(|f| f.name == field) {
+                        bail!("unknown component `{field}`");
+                    }
+                    *e = Expr::Section { name: storage(name, &field), lower: lower.clone(), upper: upper.clone(), stride: stride.clone() };
+                    return Ok(());
+                }
                 let (object, indices) = match value {
                     Expr::Call(n, a) | Expr::Index(n, a) => (n, a),
                     _ => bail!("record element component requires an array element"),
@@ -548,7 +926,11 @@ impl Lower {
                     let owner=match array {Expr::Ident(n)|Expr::Call(n,_)|Expr::Index(n,_)|Expr::Section{name:n,..}=>Some(n),_=>None};
                     if let Some(owner)=owner {
                         if let Some(o) = objects.get(owner).filter(|o| !o.dims.is_empty()) {
-                            *owner = storage(owner, &self.fields(&o.ty)?[0].name);
+                            let (field, axes) = self.shape_field(&o.ty)?;
+                            if axes > 0 {
+                                bail!("shape inquiries of arrays of type `{}` require a scalar component", o.ty);
+                            }
+                            *owner = storage(owner, &field);
                         }
                     }
                 }
@@ -561,15 +943,23 @@ impl Lower {
                     }
                     return Ok(());
                 }
+                // An element passed to a function's scalar derived dummy.
+                if self.scalar_procedures.contains(n.as_str()) {
+                    for a in args.iter_mut() {
+                        if self.element(a, objects).is_some() {
+                            *a = Expr::Ident(self.element_temp(a, objects, prefix, None)?);
+                        }
+                    }
+                }
                 if let Some((_, o)) = self.arguments(n, args, objects, prefix)? {
                     self.serial += 1;
                     let temp = format!("@record_result_{}", self.serial);
                     for f in self.fields(&o.ty)? {
                         let field = storage(&temp, &f.name);
                         prefix.push(Stmt::ArrayDecl {
-                            kind: f.kind,
+                            kind: f.kind.clone(),
                             name: field.clone(),
-                            dims: deferred(o.dims.len()),
+                            dims: deferred(f.dims.len() + o.dims.len()),
                         });
                         prefix.push(Stmt::DummyIntent {
                             name: field.clone(),
@@ -629,7 +1019,8 @@ impl Lower {
             if let Expr::Ident(array) = &item {
                 if let Some(o) = objects.get(array).filter(|o| !o.dims.is_empty()).cloned() {
                     let fields = self.fields(&o.ty)?;
-                    let first = storage(array, &fields[0].name);
+                    let (field, offset) = self.shape_field(&o.ty)?;
+                    let first = storage(array, &field);
                     self.serial += 1;
                     let index = format!("@record_output_{}", self.serial);
                     prefix.push(Stmt::VarDecl {
@@ -645,7 +1036,7 @@ impl Lower {
                     for axis in 1..=o.dims.len() {
                         let extent = Expr::Call(
                             "size".into(),
-                            vec![Expr::Ident(first.clone()), Expr::IntLit(axis.to_string())],
+                            vec![Expr::Ident(first.clone()), Expr::IntLit((axis + offset).to_string())],
                         );
                         indices.push(Expr::Bin(
                             crate::ast::BinOp::Add,
@@ -658,13 +1049,43 @@ impl Lower {
                         ordinal =
                             Expr::Bin(crate::ast::BinOp::Div, Box::new(ordinal), Box::new(extent));
                     }
+                    let count = (1..=o.dims.len())
+                        .map(|axis| Expr::Call("size".into(), vec![Expr::Ident(first.clone()), Expr::IntLit((axis + offset).to_string())]))
+                        .reduce(|a, b| Expr::Bin(crate::ast::BinOp::Mul, Box::new(a), Box::new(b)))
+                        .unwrap_or(Expr::IntLit("1".into()));
                     let mut args = vec![
                         Expr::Ident(index),
                         Expr::IntLit("1".into()),
-                        Expr::Call("size".into(), vec![Expr::Ident(first)]),
+                        count,
                         Expr::IntLit("1".into()),
                     ];
-                    args.extend(fields.iter().map(|f| Expr::Index(storage(array, &f.name), indices.clone())));
+                    for f in &fields {
+                        if f.dims.is_empty() {
+                            args.push(Expr::Index(storage(array, &f.name), indices.clone()));
+                            continue;
+                        }
+                        // An array component: its elements in array element order.
+                        self.serial += 1;
+                        let inner = format!("@record_output_{}", self.serial);
+                        prefix.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![inner.clone()] });
+                        let mut ordinal = Expr::Bin(crate::ast::BinOp::Sub, Box::new(Expr::Ident(inner.clone())), Box::new(Expr::IntLit("1".into())));
+                        let mut subscripts = vec![];
+                        let mut total = 1i64;
+                        for d in &f.dims {
+                            let extent = crate::parameters::integer_constant(d)?.max(0);
+                            total *= extent;
+                            let extent = Expr::IntLit(extent.to_string());
+                            subscripts.push(Expr::Bin(crate::ast::BinOp::Add,
+                                Box::new(Expr::Call("mod".into(), vec![ordinal.clone(), extent.clone()])),
+                                Box::new(Expr::IntLit("1".into()))));
+                            ordinal = Expr::Bin(crate::ast::BinOp::Div, Box::new(ordinal), Box::new(extent));
+                        }
+                        subscripts.extend(indices.iter().cloned());
+                        args.push(Expr::Call("@output_implied_do".into(), vec![
+                            Expr::Ident(inner), Expr::IntLit("1".into()), Expr::IntLit(total.to_string()), Expr::IntLit("1".into()),
+                            Expr::Index(storage(array, &f.name), subscripts),
+                        ]));
+                    }
                     expanded.push(Expr::Call("@output_implied_do".into(), args));
                     continue;
                 }
@@ -708,9 +1129,9 @@ impl Lower {
                         for (field, value) in self.fields(&o.ty)?.into_iter().zip(parts) {
                             let name = storage(&temp, &field.name);
                             prefix.push(Stmt::ArrayDecl {
-                                kind: field.kind,
+                                kind: field.kind.clone(),
                                 name: name.clone(),
-                                dims: output_dims.clone(),
+                                dims: storage_dims(&field, &output_dims),
                             });
                             prefix.push(Stmt::Assign { name, value });
                         }
@@ -767,6 +1188,9 @@ impl Lower {
                                 dims: dims.clone(),
                             },
                         );
+                        if dims.is_empty() {
+                            self.register_components(n, type_name, &mut objects);
+                        }
                     }
                 }
                 Stmt::VarDecl { names, .. } => {
@@ -789,6 +1213,7 @@ impl Lower {
                 continue;
             }
             let mut prefix = vec![];
+            let mut suffix = vec![];
             (|| -> Result<()> {
                 match &mut s {
                     Stmt::ArrayDecl{dims,..} => {
@@ -815,14 +1240,24 @@ impl Lower {
                         for e in dims.iter_mut() {
                             self.expression(e, &mut objects, &mut prefix)?;
                         }
+                        // Default initialization of fixed storage; ALLOCATE
+                        // applies the defaults to allocated storage.
+                        let dummies = self.dummies.clone();
+                        let initialize = |n: &String| !dummies.contains(n) && !attributes.iter()
+                            .any(|a| matches!(a.as_str(), "allocatable" | "pointer") || a.starts_with("intent("));
+                        let mut defaults = vec![];
                         for n in names {
+                            let initialize = initialize(n);
                             for f in self.fields(type_name)? {
                                 let field = storage(n, &f.name);
                                 prefix.push(Stmt::ArrayDecl {
-                                    kind: f.kind,
+                                    kind: f.kind.clone(),
                                     name: field.clone(),
-                                    dims: dims.clone(),
+                                    dims: storage_dims(&f, dims),
                                 });
+                                if let (true, Some(value)) = (initialize, &f.default) {
+                                    defaults.extend(self.default_fill(n, &f, value, dims.len())?);
+                                }
                                 for intent in attributes.iter().filter(|a| {
                                     matches!(
                                         a.as_str(),
@@ -836,6 +1271,7 @@ impl Lower {
                                 }
                             }
                         }
+                        prefix.extend(defaults);
                         return Ok(());
                     }
                     Stmt::Assign { name, value } | Stmt::AssignIndex { name, value, .. }
@@ -879,9 +1315,13 @@ impl Lower {
                             } else {
                                 self.serial += 1;
                                 let temp = format!("@record_value_{}", self.serial);
-                                prefix.push(Stmt::VarDecl {
-                                    kind: f.kind.clone(),
-                                    names: vec![temp.clone()],
+                                if !f.dims.is_empty() && indices.is_none() {
+                                    bail!("assigning one value of type `{}` to every element of `{name}` is not yet supported", o.ty);
+                                }
+                                prefix.push(if f.dims.is_empty() {
+                                    Stmt::VarDecl { kind: f.kind.clone(), names: vec![temp.clone()] }
+                                } else {
+                                    Stmt::ArrayDecl { kind: f.kind.clone(), name: temp.clone(), dims: f.dims.clone() }
                                 });
                                 prefix.push(Stmt::Assign {
                                     name: temp.clone(),
@@ -892,20 +1332,11 @@ impl Lower {
                         }
                         for (f, value) in fields.into_iter().zip(captured) {
                             let target = storage(&name, &f.name);
+                            if let (Some(indices), false) = (&indices, f.dims.is_empty()) {
+                                prefix.push(assignment(select(&name, &f, vec![], indices)?, value));
+                                continue;
+                            }
                             prefix.push(if let Some(indices) = &indices {
-                                fn retarget(e: &mut Expr, name: &str, target: &str) {
-                                    match e {
-                                        Expr::Section { name: n, .. } if n == name => {
-                                            *n = target.to_owned()
-                                        }
-                                        Expr::Call(_, args) => {
-                                            for e in args {
-                                                retarget(e, name, target);
-                                            }
-                                        }
-                                        _ => {}
-                                    }
-                                }
                                 let mut indices = indices.clone();
                                 for e in &mut indices {
                                     retarget(e, &name, &target);
@@ -951,13 +1382,13 @@ impl Lower {
                                 for f in self.fields(&o.ty)? {
                                     let field = storage(n, &f.name);
                                     flat.push(if let Some(d) = &bounds {
-                                        Expr::Call(field.clone(), d.clone())
+                                        Expr::Call(field.clone(), f.dims.iter().cloned().chain(d.iter().cloned()).collect())
                                     } else {
                                         Expr::Ident(field.clone())
                                     });
                                     if name == "@allocate" {
-                                        if let Some(value) = f.default {
-                                            defaults.push(Stmt::Assign { name: field, value });
+                                        if let Some(value) = &f.default {
+                                            defaults.extend(self.default_fill(n, &f, value, o.dims.len())?);
                                         }
                                     }
                                 }
@@ -981,6 +1412,21 @@ impl Lower {
                         args.extend(values);
                     }
                     Stmt::CallSub { name, args } => {
+                        // A type-bound call on an array element, `call a(i)%m()`,
+                        // and an element passed to a scalar derived dummy use a
+                        // temporary object copied back after the call.
+                        if let Some(method) = name.strip_prefix("@element_call:").map(str::to_owned) {
+                            let element = args.remove(0);
+                            let temp = self.element_temp(&element, &mut objects, &mut prefix, Some(&mut suffix))?;
+                            *name = format!("{temp}%{method}");
+                        } else if self.scalar_procedures.contains(name.as_str()) {
+                            for a in args.iter_mut() {
+                                if self.element(a, &objects).is_some() {
+                                    let temp = self.element_temp(a, &mut objects, &mut prefix, Some(&mut suffix))?;
+                                    *a = Expr::Ident(temp);
+                                }
+                            }
+                        }
                         if self
                             .arguments(name, args, &mut objects, &mut prefix)?
                             .is_some()
@@ -994,14 +1440,26 @@ impl Lower {
                             self.expression(e, &mut objects, &mut prefix)?;
                         }
                     }
-                    Stmt::Assign { name, value } | Stmt::AssignIndex { name, value, .. } => {
+                    Stmt::AssignIndex { name, value, indices } => {
+                        let mut component = component_subscripts(indices);
+                        for e in indices.iter_mut().chain(component.iter_mut()) {
+                            self.expression(e, &mut objects, &mut prefix)?;
+                        }
+                        self.expression(value, &mut objects, &mut prefix)?;
+                        let original = name.clone();
+                        match self.component_field(name, &objects)? {
+                            // An array component, or a part of one: `a(i)%x(j) = v`.
+                            Some((object, f)) if !f.dims.is_empty() || !component.is_empty() => {
+                                let target = select(&object, &f, component, indices)?;
+                                s = assignment(target, value.clone());
+                            }
+                            _ if !component.is_empty() => bail!("`{original}` is not a component of an array of derived type"),
+                            _ => {}
+                        }
+                    }
+                    Stmt::Assign { name, value } => {
                         self.component(name, &objects)?;
                         self.expression(value, &mut objects, &mut prefix)?;
-                        if let Stmt::AssignIndex { indices, .. } = &mut s {
-                            for e in indices {
-                                self.expression(e, &mut objects, &mut prefix)?;
-                            }
-                        }
                     }
                     Stmt::Return(Some(e)) => self.expression(e, &mut objects, &mut prefix)?,
                     Stmt::If {
@@ -1044,6 +1502,7 @@ impl Lower {
                         ..
                     } => {
                         let old_name = name.clone();
+                        let outer_dummies = std::mem::replace(&mut self.dummies, params.clone());
                         if let Some(p) = self.procedures.get(name).cloned() {
                             let mut flat = vec![];
                             for n in params.iter() {
@@ -1144,6 +1603,7 @@ impl Lower {
                         } else {
                             self.body(body, &objects)?;
                         }
+                        self.dummies = outer_dummies;
                     }
                     _ => {}
                 }
@@ -1152,6 +1612,7 @@ impl Lower {
             })()
             .map_err(|e| crate::source_diagnostics::at(e, offset))?;
             out.extend(prefix);
+            out.extend(suffix);
         }
         *body = out;
         self.array_shapes = outer_shapes;
@@ -1164,8 +1625,32 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
         procedures: HashMap::new(),
         serial: 0,
         array_shapes: HashMap::new(),
+        array_components: HashMap::new(),
+        scalar_components: HashMap::new(),
+        dummies: vec![],
+        layouts: HashMap::new(),
+        scalar_procedures: Default::default(),
+        bindings: HashMap::new(),
     };
+    lower.expand_array_components(&mut p.body)?;
     lower.collect(&p.body)?;
-    lower.body(&mut p.body, &Objects::new())?;
+    // Module objects have unique names after module association, so every
+    // scope that may use them can inherit them.
+    let mut globals = Objects::new();
+    for s in &p.body {
+        if let Stmt::Module { body, .. } = s {
+            for s in body {
+                if let Stmt::DerivedDecl { type_name, names, dims, .. } = s {
+                    for n in names {
+                        globals.insert(n.clone(), Object { ty: type_name.clone(), dims: dims.clone() });
+                        if dims.is_empty() {
+                            lower.register_components(n, type_name, &mut globals);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    lower.body(&mut p.body, &globals)?;
     Ok(p)
 }

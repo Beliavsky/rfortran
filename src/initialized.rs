@@ -44,7 +44,14 @@ fn guard(value: Expr, name: &str, index: Option<Expr>, width: i64) -> Stmt {
 }
 fn constant(e: &Expr) -> Option<i64> { crate::parameters::integer_constant(e).ok() }
 
+/// Statements between these markers read without initialization checks; the
+/// values they write count as set.
+pub(crate) const UNCHECKED_BEGIN: &str = "@unchecked_begin";
+pub(crate) const UNCHECKED_END: &str = "@unchecked_end";
+thread_local! { static UNCHECKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+
 fn check(name: &str, index: Option<&Expr>, env: &Env, out: &mut Vec<Stmt>, serial: &mut usize) -> Result<()> {
+    if UNCHECKED.with(|c| c.get()) > 0 { return Ok(()); }
     let Some(v) = env.get(name) else { return Ok(()) };
     if v.zero_sized {return Ok(());}
     if v.heap_length.is_none() {if let (Some(n), None) = (v.extent, index) {
@@ -150,6 +157,13 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
     let mut terminated = false;
     let mut location=None;
     for mut stmt in std::mem::take(body) {
+        if let Stmt::CallSub { name, .. } = &stmt {
+            if name == UNCHECKED_BEGIN || name == UNCHECKED_END {
+                let begin = name == UNCHECKED_BEGIN;
+                UNCHECKED.with(|c| c.set(if begin { c.get() + 1 } else { c.get().saturating_sub(1) }));
+                continue;
+            }
+        }
         if terminated { output.push(stmt); continue; }
         let mut before = Vec::new();
         let mut after = Vec::new();
@@ -427,6 +441,8 @@ fn scope(body: &mut Vec<Stmt>, inherited: &mut Env, params: &[String], result: O
 pub fn instrument(mut program: Program) -> Result<Program> {
     program = crate::subroutines::resolve(program)?;
     program = crate::heap::cleanup(program);
+    // An earlier failed instrumentation may have left a region open.
+    UNCHECKED.with(|c| c.set(0));
     scope(&mut program.body, &mut Env::new(), &[], None, &mut 0)?;
     crate::modules::unify_storage(program)
 }

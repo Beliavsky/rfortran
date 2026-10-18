@@ -5,7 +5,7 @@
 //! Resolve module-defined operators and named generics before derived values are flattened.
 //! Selection uses the original operand types, without numeric argument conversion.
 use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec, UnOp};
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -154,6 +154,10 @@ struct Resolver {
     module_procedures: HashSet<String>,
     components: HashMap<String, Vars>,
     methods: HashMap<String, HashMap<String, String>>,
+    /// Specific procedures of each generic type-bound procedure, by type.
+    generic_methods: HashMap<String, Bindings>,
+    /// Type-bound operators and assignments, visible wherever the type is.
+    type_operators: Bindings,
     exports: HashMap<String, Bindings>,
 }
 
@@ -235,7 +239,24 @@ impl Resolver {
                     self.components
                         .insert(name.clone(), declarations(components, &Vars::new()));
                     self.methods
-                        .insert(name.clone(), bindings.iter().cloned().collect());
+                        .insert(name.clone(), bindings.iter().filter(|(n, _)| !n.starts_with('@')).cloned().collect());
+                    let mut generics = Bindings::new();
+                    for (n, target) in bindings {
+                        if let Some(generic) = n.strip_prefix("@generic:") {
+                            generics.entry(format!("generic:{generic}")).or_default().push(target.clone());
+                        }
+                    }
+                    if !generics.is_empty() {
+                        self.generic_methods.insert(name.clone(), generics);
+                    }
+                    for (n, target) in bindings {
+                        if let Some(op) = n.strip_prefix("@operator:") {
+                            let names = self.type_operators.entry(op.to_owned()).or_default();
+                            if !names.contains(target) {
+                                names.push(target.clone());
+                            }
+                        }
+                    }
                 }
                 Stmt::Function {
                     name,
@@ -396,6 +417,17 @@ impl Resolver {
                     let Some(p) = self.procedures.get(name) else {
                         bail!("operator({operator}) requires a defined function `{name}`");
                     };
+                    if operator == "=" {
+                        if !p.subroutine || p.args.len() != 2 || p.args.iter().any(|a| !known_type(a)) {
+                            bail!("assignment(=) requires a subroutine `{name}` of two explicitly typed arguments");
+                        }
+                        let names = bindings.entry(operator.clone()).or_insert_with(Vec::new);
+                        if names.iter().any(|n| self.procedures[n].args == p.args) {
+                            bail!("ambiguous assignment(=): duplicate argument types for `{name}`");
+                        }
+                        names.push(name.clone());
+                        continue;
+                    }
                     if p.subroutine {
                         bail!("operator({operator}) requires a defined function `{name}`");
                     }
@@ -434,6 +466,7 @@ impl Resolver {
     }
     fn visible(&self, body: &[Stmt], inherited: &Bindings) -> Result<Bindings> {
         let mut visible = inherited.clone();
+        merge(&mut visible, &self.type_operators);
         merge(&mut visible, &self.local_bindings(body)?);
         for s in body {
             if let Stmt::Use { module, only, .. } = s {
@@ -539,6 +572,27 @@ impl Resolver {
             ),
             _ => bail!("ambiguous generic `{name}` with argument types {args:?}"),
         }
+    }
+    /// Resolve `object%generic(args)` to a specific procedure called with the
+    /// object as its first argument.
+    fn bound_generic(&self, name: &mut String, args: &mut Vec<Expr>, types: &mut Vec<Ty>, subroutine: bool, vars: &Vars) -> Result<bool> {
+        let Some((object, generic)) = name.rsplit_once('%') else { return Ok(false) };
+        let Ty::Derived(ty) = self.name_type(object, vars) else { return Ok(false) };
+        let Some(bindings) = self.generic_methods.get(&ty) else { return Ok(false) };
+        if !bindings.contains_key(&format!("generic:{generic}")) {
+            return Ok(false);
+        }
+        let mut actuals = vec![Expr::Ident(object.to_owned())];
+        actuals.extend(std::mem::take(args));
+        let mut actual_types = vec![Ty::Derived(ty.clone())];
+        actual_types.append(types);
+        let generic = generic.to_owned();
+        let target = self.select_generic(&generic, &mut actuals, &actual_types, subroutine, bindings)?
+            .with_context(|| format!("no specific binding for `{generic}` of type `{ty}`"))?;
+        *name = target;
+        *args = actuals;
+        *types = actual_types;
+        Ok(true)
     }
     fn name_type(&self, name: &str, vars: &Vars) -> Ty {
         if let Some((object, component)) = name.split_once('%') {
@@ -656,6 +710,10 @@ impl Resolver {
                             || matches!(ty,Ty::Array(_,1))
                     }).count();
                     return Ok(if rank==0 {*element} else {Ty::Array(element,rank)});
+                }
+                if self.bound_generic(n, args, &mut arg_types, false, vars)? {
+                    let p=&self.procedures[n];
+                    return Ok(if p.elemental {elemental_result(p.result.clone(),&arg_types)} else {p.result.clone()});
                 }
                 if let Some(target) = self.select_generic(n, args, &arg_types, false, visible)? {
                     *n = target;
@@ -857,7 +915,21 @@ impl Resolver {
         let visible = self.visible(body, visible)?;
         for s in body.iter_mut() {
             match s {
-                Stmt::Assign { value, .. } | Stmt::Return(Some(value)) => {
+                Stmt::Assign { name, value } => {
+                    let source = self.expression(value, &vars, &visible)?;
+                    let target = self.name_type(name, &vars);
+                    let types = [target, source];
+                    let defined = visible.get("=").into_iter().flatten()
+                        .filter(|p| self.procedures[*p].args == types).cloned().collect::<Vec<_>>();
+                    match defined.as_slice() {
+                        [procedure] if known_type(&types[0]) && known_type(&types[1]) => {
+                            *s = Stmt::CallSub { name: procedure.clone(), args: vec![Expr::Ident(name.clone()), value.clone()] };
+                        }
+                        [_, _, ..] => bail!("ambiguous defined assignment to `{name}`"),
+                        _ => {}
+                    }
+                }
+                Stmt::Return(Some(value)) => {
                     self.expression(value, &vars, &visible)?;
                 }
                 Stmt::AssignIndex { indices, value, .. } => {
@@ -870,10 +942,13 @@ impl Resolver {
                     for item in args {self.io_item(item,&vars,&visible)?;}
                 }
                 Stmt::CallSub { name, args } => {
-                    let types = args
+                    let mut types = args
                         .iter_mut()
                         .map(|e| self.expression(e, &vars, &visible))
                         .collect::<Result<Vec<_>>>()?;
+                    if self.bound_generic(name, args, &mut types, true, &vars)? {
+                        continue;
+                    }
                     if let Some(target) = self.select_generic(name, args, &types, true, &visible)? {
                         *name = target;
                     }

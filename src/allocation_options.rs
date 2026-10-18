@@ -181,7 +181,11 @@ fn move_alloc(args: &[Expr], ranks: &Ranks) -> Result<Vec<Stmt>> {
             test("allocated", &from),
             vec![
                 allocate_like(&to, &from, rank),
+                // The move also moves elements that were never set, so the
+                // copy is not checked for reads of unset elements.
+                call(crate::initialized::UNCHECKED_BEGIN, vec![]),
                 Stmt::Assign { name: to.clone(), value: id(&from) },
+                call(crate::initialized::UNCHECKED_END, vec![]),
                 call("@deallocate", vec![id(&from)]),
             ],
             None,

@@ -909,7 +909,9 @@ pub fn lex(input: &str) -> Vec<Token> {
                     && (matches!(next,Some(TokenKind::Comma))
                         || matches!(next,Some(TokenKind::Ident(_))) && tokens.get(start+2).is_none_or(|t| !same_statement(&input[tokens[start+1].span.end..t.span.start]))) => Some(TokenKind::KwType),
                 "class" if matches!(next,Some(TokenKind::LParen)) => Some(TokenKind::KwClass),
-                "procedure" if matches!(next,Some(TokenKind::DColon)) || matches!(previous,Some(TokenKind::KwModule)) => Some(TokenKind::KwProcedure),
+                "procedure" if matches!(next,Some(TokenKind::DColon)) || matches!(previous,Some(TokenKind::KwModule))
+                    // A type-bound binding with attributes: `procedure, private :: f`.
+                    || matches!(next,Some(TokenKind::Comma)) && statement_head(&tokens,input,start) => Some(TokenKind::KwProcedure),
                 "interface" if matches!(previous,Some(TokenKind::KwEnd)) || matches!(next,Some(TokenKind::Ident(_))) => Some(TokenKind::KwInterface),
                 "operator" if matches!(next,Some(TokenKind::LParen)) => Some(TokenKind::KwOperator),
                 // DIMENSION statement: `dimension a(2), b(3)` or `dimension :: a(2)`.

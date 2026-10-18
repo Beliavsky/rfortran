@@ -64,6 +64,8 @@ gfortran when it is installed. Run the tests after `cargo build --bin rfort`.
 - [Derived types](#derived-types)
   - [Derived-type components](#derived-type-components)
   - [Arrays of derived type](#arrays-of-derived-type)
+  - [Type-bound procedures and generics](#type-bound-procedures-and-generics)
+  - [Type extension](#type-extension)
   - [Derived arguments and OPTIONAL](#derived-arguments-and-optional)
 - [Procedures](#procedures)
   - [Named arguments](#named-arguments)
@@ -1069,6 +1071,12 @@ allocation status and lower bounds and cannot be passed to a writable dummy.
 Allocation dimensions can depend on inputs, and outputs can exceed input sizes;
 a compile-time capacity bound is no longer needed for numeric dummy outputs.
 ALLOCATABLE dummy calls continue to use specialization, with recursive allocation call cycles diagnosed.
+A function's ALLOCATABLE INTENT(IN) array dummy that the function does not
+inquire with ALLOCATED, LBOUND or UBOUND, or pass on to a subroutine, is treated
+as assumed-shape, so the function accepts runtime-sized actuals, including the
+ALLOCATABLE components of a derived argument. A procedure with array or derived
+dummies can ALLOCATE a local array with an extent known only at run time, such
+as `allocate(w(size(x)))`.
 Run `python tests/test_allocatable_dummies.py`.
 
 Fixed-length rank-one CHARACTER ALLOCATABLE outputs retain bounded
@@ -1222,14 +1230,28 @@ results carry these components. A constructor value for an ALLOCATABLE component
 is assigned with the reallocation rules below; `null()` or an omitted ALLOCATABLE
 or POINTER component becomes unallocated or disassociated.
 A component may itself have a derived type (`type(point) :: a`); `s%a%x`,
-whole nested values such as `s%a = point(1, 2)`, nested constructors and passing
-`s%a` to a `type(point)` dummy work as for top-level objects. Arrays of derived
-type as components, ALLOCATABLE or POINTER components of derived type,
-ALLOCATABLE scalar components (including deferred-length CHARACTER), arrays of
-derived types with non-scalar components and functions with ALLOCATABLE array
-dummies remain unsupported, and an ALLOCATABLE component, like any ALLOCATABLE
-array, must be allocated (by ALLOCATE or by assignment) somewhere before it is
-referenced. Run `python tests/test_derived_array_components.py`.
+whole nested values such as `s%a = point(1, 2)`, nested constructors, a default
+such as `type(point) :: hi = point(1, 1)` and passing `s%a` to a `type(point)`
+dummy work as for top-level objects. A component may also be a fixed-size or
+ALLOCATABLE array of a derived type, as in `type(node), allocatable :: nodes(:)`:
+`g%nodes(i)%id`, `g%nodes%w`, sections, ALLOCATE, SIZE, deep copies and passing
+`g` to a procedure all work. Its element type must have scalar intrinsic
+components, and a constructor of the containing type cannot yet give such a
+component. POINTER components of derived type and ALLOCATABLE scalar components
+(including deferred-length CHARACTER) remain unsupported, and an ALLOCATABLE
+component, like any ALLOCATABLE array, must be allocated (by ALLOCATE or by
+assignment) somewhere before it is referenced.
+
+Structure constructors accept keyword components, such as `pt(y=2.0)`; omitted
+components take their default initialization. A derived object in an output list
+stands for its components in order, so `print *, obj` works unless a component is
+ALLOCATABLE or POINTER, which Fortran requires defined input/output for. Derived
+objects can be named constants (`type(pt), parameter :: origin = pt(0, 0)`), SAVE
+locals, initialized variables and module variables, with PUBLIC and PRIVATE; a
+named constant or initializer may use another constant of the type. PARAMETER and
+saved local objects need scalar components. Run
+`python tests/test_derived_array_components.py` and
+`python tests/test_derived_type_features.py`.
 
 ### Arrays of derived type
 
@@ -1238,9 +1260,16 @@ fixed and allocatable storage, ranks through 15, component defaults, element
 access such as `x(i)%id`, constructors, assignment, and list-directed/formatted
 output in element order. Array-valued functions execute once and pass their
 component result arrays through a hidden subroutine call. This preserves side
-effects in ordinary functions and also works for PURE functions. The current
-subset supports scalar numeric, LOGICAL and fixed-length CHARACTER components;
-nested/array components, polymorphic arrays, saved arrays, derived PARAMETER arrays, pointers,
+effects in ordinary functions and also works for PURE functions. Components may
+be numeric, LOGICAL and fixed-length CHARACTER scalars, fixed-size arrays of
+those (`a(i)%pos(2)`, `a(i)%pos`, `a(i)%tag(1:2)`), and scalars of a derived type
+with such components (`a(i)%center%x`, `a%center%x`), with their defaults.
+An element can be passed to a scalar derived dummy (`call bump(a(i), 1.0)`) and
+can call type-bound procedures (`call a(i)%move(dx)`, `a(i)%norm()`); the element
+is copied into a temporary object for the call and, for a subroutine, copied
+back afterwards.
+ALLOCATABLE and POINTER components, array constructors of such types,
+polymorphic arrays, saved arrays, derived PARAMETER arrays, pointers,
 finalization and a separate-object record ABI remain unsupported.
 `tests/programs/xset_alloc_derived.f90` and `tests/185_allocated_derived_concat.f90` exercise empty
 and nonempty allocated inputs and replacement of an allocated output.
@@ -1249,6 +1278,29 @@ O0/O2 checks and gfortran comparisons across element types.
 Run `python tests/test_heap_allocations.py` and
 `python tests/test_runtime_allocatables.py` for interpreter/native O0/O2 checks
 and gfortran comparisons.
+
+### Type-bound procedures and generics
+
+Type-bound procedures may carry PUBLIC, PRIVATE, PASS and NON_OVERRIDABLE.
+`generic :: scale => scale_r, scale_i` selects a specific binding by the types of
+the actual arguments, as a generic interface does, and `generic :: operator(+) =>
+add` and `generic :: assignment(=) => assign` bind an operator or assignment to
+the type. `interface assignment(=)` with two-argument subroutines defines
+assignment to a whole variable; assignment to an element or a component still
+uses intrinsic assignment. NOPASS and DEFERRED bindings are not yet supported.
+Run `python tests/test_derived_type_features.py`.
+
+### Type extension
+
+`type, extends(shape) :: circle` inherits the components and type-bound
+procedures of `shape`; the extension's bindings override the parent's. The parent
+component `c%shape` names the inherited part, so `c%shape%x` is `c%x` and
+`s = c%shape` copies it. An extended object can be passed to a `type(shape)` or
+`class(shape)` dummy, and calls its inherited bindings. There is no dynamic
+dispatch yet: a CLASS dummy is treated as its declared type, so a type-bound call
+through a CLASS dummy is rejected at compile time when an extension overrides
+that binding, rather than calling the parent's procedure. ABSTRACT types,
+CLASS(*), SELECT TYPE and polymorphic ALLOCATABLE objects are not yet supported.
 
 ### Derived arguments and OPTIONAL
 

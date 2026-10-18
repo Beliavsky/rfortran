@@ -301,6 +301,11 @@ AssociationList: Vec<(String, Expr)> = {
 };
 
 ComponentName: String = { <n:Ident> => n, KW_PRINT => "print".into() };
+// Components after an array element, as `p%x` in `a(i)%p%x`.
+ComponentPath: String = {
+    <n:ComponentName> => n,
+    <p:ComponentPath> PERCENT <c:ComponentName> => format!("{p}%{c}"),
+};
 Designator: String = {
     <n:Ident> => n,
     <n:Designator> PERCENT <c:ComponentName> => format!("{n}%{c}"),
@@ -308,7 +313,50 @@ Designator: String = {
 Bindings: Vec<(String,String)> = {
     => vec![],
     <mut bindings:Bindings> KW_PROCEDURE DCOLON <items:BindingList> => {bindings.extend(items);bindings},
+    // Accessibility and PASS (the default) do not change how a binding is called.
+    <mut bindings:Bindings> KW_PROCEDURE COMMA <attrs:BindingAttributes> DCOLON <items:BindingList> =>? {
+        crate::ast::binding_attributes(&attrs).map_err(|error| lalrpop_util::ParseError::User { error })?;
+        bindings.extend(items);
+        Ok(bindings)
+    },
+    <mut bindings:Bindings> <g:Ident> COMMA <attrs:BindingAttributes> DCOLON <name:Ident> ARROW <specifics:IdentList> =>? {
+        if !g.eq_ignore_ascii_case("generic") {
+            return Err(lalrpop_util::ParseError::User { error: "expected PROCEDURE or GENERIC in a type-bound procedure part" });
+        }
+        crate::ast::binding_attributes(&attrs).map_err(|error| lalrpop_util::ParseError::User { error })?;
+        bindings.extend(specifics.into_iter().map(|b| (format!("@generic:{name}"), b)));
+        Ok(bindings)
+    },
+    // GENERIC :: ASSIGNMENT(=) => b and GENERIC :: OPERATOR(op) => b.
+    <mut bindings:Bindings> <g:Ident> DCOLON <a:Ident> LPAREN EQ RPAREN ARROW <specifics:IdentList> =>? {
+        if !g.eq_ignore_ascii_case("generic") || !a.eq_ignore_ascii_case("assignment") {
+            return Err(lalrpop_util::ParseError::User { error: "expected GENERIC :: ASSIGNMENT(=)" });
+        }
+        bindings.extend(specifics.into_iter().map(|b| ("@operator:=".to_string(), b)));
+        Ok(bindings)
+    },
+    <mut bindings:Bindings> <g:Ident> DCOLON KW_OPERATOR LPAREN <op:Operator> RPAREN ARROW <specifics:IdentList> =>? {
+        if !g.eq_ignore_ascii_case("generic") {
+            return Err(lalrpop_util::ParseError::User { error: "expected GENERIC :: OPERATOR(...)" });
+        }
+        bindings.extend(specifics.into_iter().map(|b| (format!("@operator:{op}"), b)));
+        Ok(bindings)
+    },
+    // A generic binding is recorded as `@generic:name` entries, one per
+    // specific binding; the type definition resolves them to procedures.
+    <mut bindings:Bindings> <g:Ident> DCOLON <name:Ident> ARROW <specifics:IdentList> =>? {
+        if !g.eq_ignore_ascii_case("generic") {
+            return Err(lalrpop_util::ParseError::User { error: "expected PROCEDURE or GENERIC in a type-bound procedure part" });
+        }
+        bindings.extend(specifics.into_iter().map(|b| (format!("@generic:{name}"), b)));
+        Ok(bindings)
+    },
 };
+BindingAttributes: Vec<String> = {
+    <a:BindingAttribute> => vec![a],
+    <mut v:BindingAttributes> COMMA <a:BindingAttribute> => {v.push(a);v},
+};
+BindingAttribute: String = { <n:Ident> => n, KW_PUBLIC => "public".into(), KW_PRIVATE => "private".into() };
 BindingList: Vec<(String,String)> = {
     <item:Binding> => vec![item],
     <mut items:BindingList> COMMA <item:Binding> => {items.push(item);items},
@@ -415,6 +463,14 @@ Stmt: Stmt = {
     <op:FILE_POSITION> <unit:RhsExpr> => Stmt::CallSub { name:format!("@io_{op}"), args:vec![unit] },
     KW_INTERFACE <name:Ident> <procedures:OperatorProcedures> KW_END KW_INTERFACE <end_name:END_INTERFACE_NAME?> => Stmt::GenericInterface { name, procedures, end_name },
     KW_INTERFACE KW_OPERATOR LPAREN <operator:Operator> RPAREN <procedures:OperatorProcedures> KW_END KW_INTERFACE <end_operator:EndOperator?> => Stmt::OperatorInterface { operator, procedures, end_operator },
+    // Defined assignment is the operator `=` of two-argument subroutines.
+    KW_INTERFACE <a:Ident> LPAREN EQ RPAREN <procedures:OperatorProcedures> KW_END KW_INTERFACE <end:(END_INTERFACE_NAME LPAREN EQ RPAREN)?> =>? {
+        let named = |n: &str| n.eq_ignore_ascii_case("assignment");
+        if !named(&a) || end.as_ref().is_some_and(|(n, _, _, _)| !named(n)) {
+            return Err(lalrpop_util::ParseError::User { error: "expected INTERFACE ASSIGNMENT(=)" });
+        }
+        Ok(Stmt::OperatorInterface { operator: "=".into(), procedures, end_operator: None })
+    },
     KW_ERROR KW_STOP <arg: RhsExpr> => Stmt::CallSub { name: "@error_stop".into(), args: vec![arg] },
     KW_ALLOCATE LPAREN <args: CallArgList> RPAREN => Stmt::CallSub { name: "@allocate".into(), args },
     KW_DEALLOCATE LPAREN <args: CallArgList> RPAREN => Stmt::CallSub { name: "@deallocate".into(), args },
@@ -451,6 +507,15 @@ Stmt: Stmt = {
         Stmt::Read { args: cloned }
     },
     KW_CALL <name: Designator> LPAREN <args: CallArgList> RPAREN => Stmt::CallSub { name, args },
+    // A type-bound call on an array element: `call a(i)%m(...)`.
+    // The element subscripts share the argument list rule of a call.
+    KW_CALL <id: Designator> LPAREN <sub: CallArgList> RPAREN PERCENT <m:ComponentName> LPAREN <args: CallArgList> RPAREN => {
+        let mut all = vec![Expr::Call(id, sub)];
+        all.extend(args);
+        Stmt::CallSub { name: format!("@element_call:{m}"), args: all }
+    },
+    KW_CALL <id: Designator> LPAREN <sub: CallArgList> RPAREN PERCENT <m:ComponentName> =>
+        Stmt::CallSub { name: format!("@element_call:{m}"), args: vec![Expr::Call(id, sub)] },
     KW_CALL <name: Designator> => Stmt::CallSub { name, args: vec![] },
     // Single-line IF: executes a single statement when condition true, e.g. `if (cond) cycle`
     KW_IF LPAREN <cnd: CondExpr> RPAREN <s: Stmt> => {
@@ -473,8 +538,13 @@ Stmt: Stmt = {
     <name:LoopName?> <stmt:DoLoop> <end:END_LOOP_NAME?> => crate::named_loops::parsed(stmt,name,end),
     KW_RETURN => Stmt::Return(None),
     <name: Designator> EQ <rhs: RhsExpr> => Stmt::Assign { name, value: rhs },
-    <id: Designator> LPAREN <args: SubscriptList> RPAREN PERCENT <field:ComponentName> EQ <rhs:RhsExpr> =>
+    <id: Designator> LPAREN <args: SubscriptList> RPAREN PERCENT <field:ComponentPath> EQ <rhs:RhsExpr> =>
         Stmt::AssignIndex{name:format!("{id}%{field}"),indices:args,value:rhs},
+    // An element or section of an array component of an array element.
+    <id: Designator> LPAREN <mut args: SubscriptList> RPAREN PERCENT <field:ComponentPath> LPAREN <sub: SubscriptList> RPAREN EQ <rhs:RhsExpr> => {
+        args.push(Expr::Call("@component_subscripts".into(), sub));
+        Stmt::AssignIndex{name:format!("{id}%{field}"),indices:args,value:rhs}
+    },
     <name:Designator> ARROW <target:RhsExpr> => Stmt::CallSub {name:"@pointer_associate".into(),args:vec![Expr::Ident(name),target]},
     <id: Designator> LPAREN <args: SubscriptList> RPAREN LPAREN <range: Subscript> RPAREN EQ <rhs: RhsExpr> =>
         Stmt::CallSub {name:"@array_substring_assign".into(), args:vec![crate::ast::section_or_call(id,args),range,rhs]},
@@ -691,8 +761,10 @@ Primary: Expr = {
     // treat it as a function call here (Expr::Call). Array element assignment is
     // handled at the statement level by the AssignIndex rule above.
     <id: Designator> LPAREN <args: SubscriptList> RPAREN => crate::ast::section_or_call(id, args),
-    <id: Designator> LPAREN <args: SubscriptList> RPAREN PERCENT <field:ComponentName> =>
+    <id: Designator> LPAREN <args: SubscriptList> RPAREN PERCENT <field:ComponentPath> =>
         Expr::Call(format!("@record_component:{field}"),vec![crate::ast::section_or_call(id,args)]),
+    <id: Designator> LPAREN <args: SubscriptList> RPAREN PERCENT <field:ComponentPath> LPAREN <sub: SubscriptList> RPAREN =>
+        Expr::Call(format!("@record_component:{field}"),vec![crate::ast::section_or_call(id,args),Expr::Call("@component_subscripts".into(),sub)]),
     <id: Designator> LPAREN <args: SubscriptList> RPAREN LPAREN <range: Subscript> RPAREN =>
         Expr::Call("@array_substring".into(),vec![crate::ast::section_or_call(id,args),range]),
     KW_REAL LPAREN <args: CallArgList> RPAREN => Expr::Call("real".to_string(), args),
@@ -822,7 +894,7 @@ PreFuncDeclData: Vec<Stmt> = {
         let (name,mut out)=head; out.push(Stmt::DerivedType{name,components,bindings:vec![]}); out
     },
     <head:TypeDefHead> <components:Components> KW_CONTAINS <bindings:Bindings> <_end:TypeDefEnd> => {
-        let (name,mut out)=head; out.push(Stmt::DerivedType{name,components,bindings}); out
+        let (name,mut out)=head; out.push(Stmt::DerivedType{name,components,bindings:crate::ast::generic_bindings(bindings)}); out
     },
     KW_TYPE LPAREN <type_name:Ident> RPAREN <attributes:IntrinsicAttrList> DCOLON <entities:DeclEntities> => entities.into_iter().flat_map(|(name,dims,value,_)| {
         let (value,association)=crate::ast::split_pointer_initializer(&name,value);
@@ -897,7 +969,10 @@ TypeDefHead: (String, Vec<Stmt>) = {
                 "public" => out.push(Stmt::Accessibility { public: true, names: vec![name.clone()] }),
                 "private" => out.push(Stmt::Accessibility { public: false, names: vec![name.clone()] }),
                 "bind(c)" => {},
-                a if a.starts_with("extends(") => return Err(lalrpop_util::ParseError::User { error: "type extension (EXTENDS) is not yet supported" }),
+                a if a.starts_with("extends(") && a.ends_with(')') => {
+                    let parent = attr[8..attr.len() - 1].to_string();
+                    out.push(Stmt::CallSub { name: crate::extensions::EXTENDS.into(), args: vec![Expr::Ident(name.clone()), Expr::Ident(parent)] });
+                }
                 "abstract" => return Err(lalrpop_util::ParseError::User { error: "ABSTRACT derived types are not yet supported" }),
                 _ => return Err(lalrpop_util::ParseError::User { error: "unsupported derived-type attribute" }),
             }

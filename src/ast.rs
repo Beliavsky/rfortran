@@ -184,6 +184,29 @@ pub fn function_with_result(name: String, params: Vec<String>, result: String, m
     Stmt::Function { name, params, return_type, body, pure: false, elemental: false }
 }
 
+/// Resolve each `@generic:name` binding entry, which names a specific
+/// binding of the type, to that binding's procedure.
+pub fn generic_bindings(bindings: Vec<(String, String)>) -> Vec<(String, String)> {
+    let specific = |b: &str| bindings.iter().find(|(n, _)| n == b && !n.starts_with('@')).map(|(_, t)| t.clone());
+    bindings.iter().map(|(n, t)| match n.starts_with("@generic:") || n.starts_with("@operator:") {
+        true => (n.clone(), specific(t).unwrap_or_else(|| t.clone())),
+        false => (n.clone(), t.clone()),
+    }).collect()
+}
+
+/// Check the attributes of a type-bound procedure binding.
+pub fn binding_attributes(attributes: &[String]) -> Result<(), &'static str> {
+    for a in attributes {
+        match a.to_ascii_lowercase().as_str() {
+            "public" | "private" | "pass" | "non_overridable" => {}
+            "nopass" => return Err("NOPASS type-bound procedures are not yet supported"),
+            "deferred" => return Err("DEFERRED type-bound procedures are not yet supported"),
+            _ => return Err("unknown type-bound procedure attribute"),
+        }
+    }
+    Ok(())
+}
+
 pub fn scalar_decl(kind: TypeSpec, attributes: Vec<String>, entities: Vec<(String, Option<Expr>)>) -> Stmt {
     if attributes.iter().any(|a| a.eq_ignore_ascii_case("parameter") || a.eq_ignore_ascii_case("save"))
         || entities.iter().any(|(_, value)| value.is_some())

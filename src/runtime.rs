@@ -1913,6 +1913,16 @@ pub fn interpret(program: &Program) {
                     }
                     let frame = call_stack.last_mut().unwrap();
                     frame.sync_saved();
+                    // Store into the declared array, converting the value to its
+                    // type as intrinsic assignment does.
+                    let real = frame.env_real_arrays.contains_key(name);
+                    let vt = if real {
+                        ValueTuple(None, vt.1.or(vt.0.map(|i| i as f64)), None, None)
+                    } else if frame.env_int_arrays.contains_key(name) && vt.0.is_none() && vt.2.is_none() {
+                        ValueTuple(vt.1.map(|f| f.trunc() as i64), None, None, None)
+                    } else {
+                        vt
+                    };
                     if let Some(i) = vt.0.or(vt.2.map(i64::from)) {
                         let vec = frame
                             .env_int_arrays

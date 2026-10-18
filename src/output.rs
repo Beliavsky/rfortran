@@ -143,7 +143,7 @@ pub(crate) fn integer(e: &Expr, symbols: &Symbols) -> bool {
             !args.is_empty() && args.iter().all(|e| integer(e, symbols))
         }
         Expr::Call(n, args) if matches!(n.as_str(), "size" | "len" | "len_trim" | "int") => {
-            args.len() == 1
+            args.len() == 1 || n == "size" && args.len() == 2 && integer(&args[1], symbols)
         }
         _ => false,
     }

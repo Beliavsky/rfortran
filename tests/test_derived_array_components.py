@@ -139,7 +139,6 @@ end program
 
     def test_unsupported_component_forms_are_diagnosed(self):
         for declaration, message in [
-            ("type(other) :: inner(2)", "array components of derived type"),
             ("character(len=:), allocatable :: s", "ALLOCATABLE scalar component"),
         ]:
             self.reject(f"""program main

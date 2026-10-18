@@ -1326,6 +1326,16 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                     }
                     let scalar = crate::array_calls::scalar_actual_kind(value, &shapes).ok();
                     if let Some(kind) = scalar {
+                        // Convert the value once, to the type of the target's
+                        // elements, as intrinsic assignment does.
+                        let integer = |k: &TypeSpec| matches!(k, TypeSpec::Integer(_) | TypeSpec::IntegerKind(_));
+                        let real = |k: &TypeSpec| matches!(k, TypeSpec::Real | TypeSpec::RealKind(_) | TypeSpec::DoublePrecision);
+                        let target = shapes[name].0.clone();
+                        let mut value = value.clone();
+                        if integer(&target) && real(&kind) {
+                            value = Expr::Call("int".into(), vec![value]);
+                        }
+                        let kind = if (real(&target) || integer(&target)) && (integer(&kind) || real(&kind)) { target } else { kind };
                         *serial += 1;
                         let temp = format!("@alloc_scalar_{serial}");
                         let index = format!("@alloc_scalar_index_{serial}");

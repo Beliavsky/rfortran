@@ -587,6 +587,16 @@ pub(crate) fn associate(mut program: Program) -> Result<Program> {
                             access.insert(n.clone(), *public);
                         }
                     }
+                    Stmt::DerivedDecl { attributes, names, .. } => {
+                        for n in names {
+                            if attributes.iter().any(|a| a == "private") {
+                                access.insert(n.clone(), false);
+                            }
+                            if attributes.iter().any(|a| a == "public") {
+                                access.insert(n.clone(), true);
+                            }
+                        }
+                    }
                     Stmt::InitializedDecl {
                         attributes,
                         entities,
