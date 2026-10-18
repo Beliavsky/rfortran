@@ -65,8 +65,19 @@ cargo build --release --bin rfort
 This creates `target/release/rfort.exe` on Windows and `target/release/rfort`
 on Linux/macOS. Put the executable in a directory on `PATH`. The native driver
 handles compilation and linking, including multiple source files, without a
-batch file or PowerShell. The Windows `rfort.bat` and `f90c.bat` entry points
-forward arguments to the built executable for compatibility.
+batch file or PowerShell.
+
+When working on the compiler itself, the wrappers in the repository root run
+the build in `target`, so you don't have to remember to rebuild:
+
+| | Rebuilds first when sources changed | Uses the existing build |
+|---|---|---|
+| Windows (Command Prompt) | `rfort.bat` | `rf.bat` |
+| Linux/macOS, Git Bash | `./rfort` | `./rf` |
+
+Setting `RFORT_NO_BUILD=1` makes `rfort` skip the rebuild as well. The first
+call after a source change waits for the release build. `f90c.bat` is a
+compatibility entry point that calls `rfort.bat`.
 
 For the current Windows Command Prompt session, you can add the release build
 directory to PATH while in the repository root:

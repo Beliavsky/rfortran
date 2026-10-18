@@ -1,0 +1,4 @@
+#!/bin/sh
+# Run the existing compiler build without checking whether it is current.
+# Use rfort to rebuild first when the sources changed.
+RFORT_NO_BUILD=1 exec "$(dirname -- "$0")/rfort" "$@"

@@ -1,0 +1,21 @@
+#!/bin/sh
+# Rebuild the release compiler when the sources changed, so the wrapper never
+# runs a stale build. Cargo does nothing when the build is current. Set
+# RFORT_NO_BUILD=1 to skip the check and use whichever build exists.
+root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) || exit 1
+unset CARGO_TARGET_DIR
+if [ -z "${RFORT_NO_BUILD-}" ] && command -v cargo >/dev/null 2>&1 \
+    && [ -f "$root/Cargo.toml" ]; then
+    cargo build --quiet --release --bin rfort --manifest-path "$root/Cargo.toml" || {
+        echo "Error: building the compiler failed." >&2
+        exit 1
+    }
+fi
+for compiler in "$root/target/release/rfort" "$root/target/debug/rfort" \
+    "$root/target/release/rfort.exe" "$root/target/debug/rfort.exe"; do
+    if [ -x "$compiler" ]; then
+        exec "$compiler" "$@"
+    fi
+done
+echo "Error: Build the compiler with cargo build --release --bin rfort." >&2
+exit 1
