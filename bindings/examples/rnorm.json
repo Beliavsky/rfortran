@@ -1,0 +1,12 @@
+{
+  "library": "rfort_rnorm",
+  "procedures": [
+    {
+      "module": "rnorm_mod",
+      "name": "random_normal_scalar",
+      "kind": "function",
+      "result": "f64",
+      "args": []
+    }
+  ]
+}

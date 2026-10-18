@@ -1,0 +1,25 @@
+{
+  "library": "rfort_binding_demo",
+  "procedures": [
+    {"module": "binding_demo", "name": "twice", "kind": "function", "result": "f64",
+     "args": [{"name": "x", "type": "f64", "intent": "in"}]},
+    {"module": "binding_demo", "name": "affine", "kind": "subroutine",
+     "args": [{"name": "x", "type": "f64", "intent": "inout", "rank": 1},
+              {"name": "a", "type": "f64", "intent": "in"},
+              {"name": "b", "type": "f64", "intent": "in"}]},
+    {"module": "binding_demo", "name": "add", "kind": "subroutine",
+     "args": [{"name": "x", "type": "f64", "intent": "in", "rank": 1},
+              {"name": "y", "type": "f64", "intent": "in", "rank": 1},
+              {"name": "z", "type": "f64", "intent": "out", "rank": 1}],
+     "same_length": [["x", "y", "z"]]},
+    {"module": "binding_demo", "name": "total", "kind": "function", "result": "f64",
+     "args": [{"name": "x", "type": "f64", "intent": "in", "rank": 1}]},
+    {"module": "binding_demo", "name": "classify", "kind": "subroutine",
+     "args": [{"name": "x", "type": "f64", "intent": "in"},
+              {"name": "code", "type": "i32", "intent": "out"}]},
+    {"module": "binding_demo", "name": "increment", "kind": "subroutine",
+     "args": [{"name": "x", "type": "i64", "intent": "inout"}]},
+    {"module": "binding_demo", "name": "twice_single", "kind": "function", "result": "f32",
+     "args": [{"name": "x", "type": "f32", "intent": "in"}]}
+  ]
+}
