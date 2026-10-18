@@ -50,6 +50,18 @@ fn array_valued(e: &Expr, arrays: &HashSet<String>) -> bool {
     }
 }
 
+fn array_assignment(body: &[Stmt], array: &str, declared: &HashSet<String>) -> bool {
+    body.iter().any(|s| match s {
+        Stmt::Assign { name, value } => name == array && array_valued(value, declared),
+        Stmt::If { then_body, else_body, .. } => array_assignment(then_body, array, declared)
+            || else_body.as_ref().is_some_and(|b| array_assignment(b, array, declared)),
+        Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } | Stmt::Block { body } => array_assignment(body, array, declared),
+        Stmt::SelectCase { cases, default, .. } => cases.iter().any(|c| array_assignment(&c.body, array, declared))
+            || default.as_ref().is_some_and(|b| array_assignment(b, array, declared)),
+        _ => false,
+    })
+}
+
 /// An ALLOCATABLE array dummy of a function that the function does not
 /// allocate, deallocate or assign as a whole (an INTENT(IN) one cannot), and
 /// whose allocation status and bounds it does not inquire or pass on, behaves
@@ -238,6 +250,7 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
                   // runtime storage for its value's extent.
                   || (array_dummies && allocation(body,name,&declared) && !allocate_statement(body,name)) || dims.len()>1 && body.iter().any(|s|matches!(s,Stmt::CallSub{name:call,args} if call=="@deallocate"&&args.iter().any(|e|matches!(e,Expr::Ident(n) if n==name)))))
               && numeric(kind) && (!matches!(kind,TypeSpec::Character(_)) || dims.len()>1
+                  || array_assignment(body,name,&declared)
                   || body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name&&intent=="@automatic")))
               && body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name&&intent=="allocatable")))
                 .then_some((name.clone(),dims.len()))

@@ -1099,7 +1099,7 @@ fn validate_input_writes(body: &[Stmt], inputs: &HashSet<String>) -> Result<()> 
 }
 // CHARACTER constructors need CHARACTER storage before array-dummy specialization;
 // the numeric reduction materializer cannot provide that storage.
-fn character_constructor(actual:&mut Expr, shapes:&Shapes, prefix:&mut Vec<Stmt>, serial:&mut usize)->Result<Option<(TypeSpec,i64,Expr)>> {
+pub(crate) fn character_constructor(actual:&mut Expr, shapes:&Shapes, prefix:&mut Vec<Stmt>, serial:&mut usize)->Result<Option<(TypeSpec,i64,Expr)>> {
     if matches!(actual,Expr::Call(n,_) if matches!(n.as_str(),"reshape"|"transpose")) {
         let (kind,items)=crate::character_elementals::Lower::fixed_items(actual,shapes)?;
         *actual=if items.is_empty() {crate::empty_constructors::parsed(kind,items)} else {Expr::Call("@array_constructor".into(),items)};

@@ -11,6 +11,42 @@ import test_deallocate
 class AllocatableReallocation(unittest.TestCase):
     check = test_deallocate.Deallocate.check
 
+    def test_character_constructor_implicit_allocation(self):
+        self.check("""implicit none
+character(len=2),allocatable :: s(:)
+s=["ab","cd","e "]
+print "(*(a4))",s
+print *,allocated(s),size(s),len(s)
+end
+""", "  ab  cd  e \nT 3 2\n")
+
+    def test_character_resize_overlap_bounds_and_element_length(self):
+        self.check("""implicit none
+character(len=2),allocatable :: s(:),t(:)
+allocate(s(-1:1))
+s=['ab','cd','ef']
+print *,lbound(s),ubound(s)
+t=s
+print *,lbound(t),ubound(t)
+print '(*(a))',t
+s=s(1:-1:-1)
+print '(*(a))',s
+s=s(0:1)
+print *,lbound(s),size(s)
+print '(*(a))',s
+s=[character(3)::'XYZ']
+print *,size(s),len(s)
+print '(*(a))',s
+s=[character(2)::]
+print *,allocated(s),size(s),len(s)
+s=['gh','ij']
+s='q'
+print '(*(a))',s
+deallocate(s,t)
+print *,allocated(s),allocated(t)
+end
+""", "-1 1\n-1 1\nabcdef\nefcdab\n1 2\ncdab\n1 2\nXY\nT 0 2\nq q \nF F\n")
+
     def test_rank_one_allocation_resize_and_bounds(self):
         self.check("""program main
 implicit none

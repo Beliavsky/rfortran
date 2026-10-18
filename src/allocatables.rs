@@ -606,30 +606,49 @@ fn capacity(e: &Expr, arrays: &HashMap<String, i64>) -> Option<i64> {
     }
 }
 // Capture the active elements before writing, including when the arrays overlap.
-fn character_copy(name: &str, value: &Expr, len: Expr, shapes: &Shapes,
+fn character_copy(name: &str, value: &Expr, len: Expr, shapes: &Shapes, reallocate: bool,
                   serial: &mut usize, out: &mut Vec<Stmt>) -> Result<()> {
+    let source_lower = match value {
+        Expr::Ident(n) => lowers(n,shapes),
+        Expr::Call(tag,args) if tag=="@packed_view" => args.first().and_then(|e|if let Expr::Ident(n)=e {lowers(n,shapes)}else{None}),
+        _ => None,
+    }.and_then(|v|v.first().cloned()).unwrap_or(int(1));
+    let mut value=value.clone();
+    let mut local=shapes.clone();
+    if !matches!(&value,Expr::Ident(_)|Expr::Section{..}) && !matches!(&value,Expr::Call(tag,_) if tag=="@packed_view") {
+        crate::array_calls::character_constructor(&mut value,shapes,out,serial)?;
+        for statement in out.iter() {match statement {
+            Stmt::ArrayDecl{kind,name,dims}=>{local.insert(name.clone(),(kind.clone(),dims.clone()));},
+            Stmt::VarDecl{kind,names}=>for name in names {local.insert(name.clone(),(kind.clone(),vec![]));},
+            _=>{},
+        }}
+        metadata(out,&mut local);
+    }
+    let shapes=&local;
     *serial += 1;
     let index = format!("@alloc_char_index_{serial}");
     let temp = format!("@alloc_char_copy_{serial}");
     let (kind, dims) = shapes[name].clone();
-    let (source, rhs_len) = match value {
+    let (source, rhs_len) = match &value {
         Expr::Ident(n) if matches!(shapes.get(n),Some((TypeSpec::Character(_),d)) if d.len()==1) =>
-            (Expr::Index(n.clone(),vec![id(&index)]), shapes[n].1[0].clone()),
+            (Expr::Index(n.clone(),vec![bin(BinOp::Add,source_lower.clone(),bin(BinOp::Sub,id(&index),int(1)))]), length(n,shapes).unwrap_or(shapes[n].1[0].clone())),
         Expr::Call(tag,a) if tag=="@packed_view" && a.len()==2 => {
             let Expr::Ident(n)=&a[0] else { bail!("CHARACTER array view requires array storage"); };
-            (Expr::Index(n.clone(),vec![id(&index)]),a[1].clone())
+            (Expr::Index(n.clone(),vec![bin(BinOp::Add,source_lower.clone(),bin(BinOp::Sub,id(&index),int(1)))]),a[1].clone())
         }
         Expr::Section { name:n, lower, upper, stride } if matches!(shapes.get(n),Some((TypeSpec::Character(_),d)) if d.len()==1) => {
             let step=stride.as_deref().map(crate::parameters::integer_constant).transpose()?.unwrap_or(1);
             if step==0 { bail!("CHARACTER array section stride must not be zero"); }
             let extent=length(n,shapes).unwrap_or(shapes[n].1[0].clone());
-            let lo=lower.as_deref().cloned().unwrap_or_else(||if step<0 {extent.clone()} else {int(1)});
-            let hi=upper.as_deref().cloned().unwrap_or_else(||if step<0 {int(1)} else {extent});
+            let first=lowers(n,shapes).and_then(|v|v.first().cloned()).unwrap_or(int(1));
+            let last=bin(BinOp::Sub,bin(BinOp::Add,first.clone(),extent),int(1));
+            let lo=lower.as_deref().cloned().unwrap_or_else(||if step<0 {last.clone()} else {first.clone()});
+            let hi=upper.as_deref().cloned().unwrap_or_else(||if step<0 {first} else {last});
             let count=Expr::Call("max".into(),vec![int(0),bin(BinOp::Div,bin(BinOp::Add,bin(BinOp::Sub,hi,lo.clone()),int(step)),int(step))]);
             (Expr::Index(n.clone(),vec![bin(BinOp::Add,lo,bin(BinOp::Mul,bin(BinOp::Sub,id(&index),int(1)),int(step)))]),count)
         }
         _ => {
-            let actual=crate::array_calls::scalar_actual_kind(value,shapes)?;
+            let actual=crate::array_calls::scalar_actual_kind(&value,shapes)?;
             if !matches!(actual,TypeSpec::Character(_)) { bail!("CHARACTER array assignment requires CHARACTER values"); }
             let scalar=format!("@alloc_char_scalar_{serial}");
             out.push(Stmt::VarDecl {kind:kind.clone(),names:vec![scalar.clone()]});
@@ -637,12 +656,29 @@ fn character_copy(name: &str, value: &Expr, len: Expr, shapes: &Shapes,
             (id(&scalar),len.clone())
         }
     };
-    out.push(fail(bin(BinOp::Ne,len.clone(),rhs_len),"allocatable array assignment shapes do not conform"));
-    if shapes.contains_key(&format!("@heap:{name}")) {crate::heap::temporary(kind,temp.clone(),len.clone(),out);}
+    let count=if reallocate {
+        let extent=format!("@alloc_char_extent_{serial}");
+        out.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![extent.clone()]});
+        out.push(assign(&extent,rhs_len));id(&extent)
+    } else {
+        out.push(fail(bin(BinOp::Ne,len.clone(),rhs_len),"allocatable array assignment shapes do not conform"));len.clone()
+    };
+    if shapes.contains_key(&format!("@heap:{name}")) {crate::heap::temporary(kind,temp.clone(),count.clone(),out);}
     else {out.push(Stmt::ArrayDecl {kind,name:temp.clone(),dims});}
     out.push(Stmt::VarDecl {kind:TypeSpec::Integer(None),names:vec![index.clone()]});
-    out.push(Stmt::Do {var:index.clone(),start:int(1),end:len.clone(),body:vec![Stmt::AssignIndex {name:temp.clone(),indices:vec![id(&index)],value:source}]});
-    out.push(Stmt::Do {var:index.clone(),start:int(1),end:len,body:vec![Stmt::AssignIndex {name:name.into(),indices:vec![id(&index)],value:Expr::Index(temp,vec![id(&index)])}]});
+    out.push(Stmt::Do {var:index.clone(),start:int(1),end:count.clone(),body:vec![Stmt::AssignIndex {name:temp.clone(),indices:vec![id(&index)],value:source}]});
+    if reallocate {
+        let lower=format!("@alloc_char_lower_{serial}");
+        out.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![lower.clone()]});
+        out.push(assign(&lower,source_lower));
+        let flag=allocated(name,shapes).context("CHARACTER assignment requires allocation state")?;
+        out.push(Stmt::If{cond:bin(BinOp::Or,Expr::Un(UnOp::Not,Box::new(flag.clone())),bin(BinOp::Ne,len.clone(),count.clone())),then_body:vec![
+            Stmt::If{cond:flag,then_body:vec![Stmt::CallSub{name:"@deallocate".into(),args:vec![id(name)]}],else_body:None},
+            Stmt::CallSub{name:"@allocate".into(),args:vec![Expr::Call(name.into(),vec![Expr::Call("@heap_bounds".into(),vec![id(&lower),bin(BinOp::Sub,bin(BinOp::Add,id(&lower),count.clone()),int(1))])])]},
+        ],else_body:None});
+    }
+    let lower=lowers(name,shapes).and_then(|v|v.first().cloned()).unwrap_or(int(1));
+    out.push(Stmt::Do {var:index.clone(),start:int(1),end:count,body:vec![Stmt::AssignIndex {name:name.into(),indices:vec![bin(BinOp::Add,lower,bin(BinOp::Sub,id(&index),int(1)))],value:Expr::Index(temp,vec![id(&index)])}]});
     Ok(())
 }
 pub(crate) fn prepare(p: Program) -> Result<Program> {
@@ -1292,7 +1328,6 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                     // to the extent of an array-valued right-hand side.
                     let reallocate = shapes.contains_key(&format!("@heap:{name}"))
                         && axes(name, &shapes).is_some_and(|a| a.len() == 1)
-                        && !matches!(shapes[name].0, TypeSpec::Character(_))
                         && crate::array_calls::scalar_actual_kind(value, &shapes).is_err();
                     // A reallocated target takes the bounds of a whole array source.
                     let source_lower = match &*value {
@@ -1321,7 +1356,10 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                         ));
                     }
                     if matches!(shapes[name].0, TypeSpec::Character(_)) {
-                        character_copy(name, value, len, &shapes, serial, &mut out)?;
+                        let mut copied=vec![];
+                        character_copy(name, value, len, &shapes, reallocate, serial, &mut copied)?;
+                        if reallocate {lower(&mut copied,&shapes,serial,checks)?;out.push(Stmt::Block{body:copied});}
+                        else {out.extend(copied);}
                         continue;
                     }
                     let scalar = crate::array_calls::scalar_actual_kind(value, &shapes).ok();
