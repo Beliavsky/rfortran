@@ -1282,6 +1282,13 @@ pub(crate) fn specialize_expression(e:&mut Expr, shapes:&mut crate::allocatables
     runtime::specialize_expression(e,shapes,prefix,serial)
 }
 
+/// Apply a private scalar implementation over descriptor-backed actuals.
+pub(crate) fn elemental_function(e:&mut Expr, shapes:&mut crate::allocatables::Shapes,
+    prefix:&mut Vec<Stmt>, serial:&mut usize,
+    routine:(&[String],&[Stmt],&str,&TypeSpec))->Result<bool> {
+    runtime::elemental_function(e,shapes,prefix,serial,routine)
+}
+
 fn resolve_inner(mut program: Program, after_calls: bool) -> Result<Program> {
     let procedures = procedure_intents(&program.body);
     program = runtime::resolve(program, &procedures)?;

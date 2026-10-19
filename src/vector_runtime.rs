@@ -207,6 +207,11 @@ fn triplet(e: &Expr, axis: &(Expr, Expr)) -> Result<(Expr, Expr, Expr)> {
 }
 fn shape(e: &Expr, s: &Shapes) -> Result<Option<(TypeSpec, Vec<Expr>)>> {
     match e {
+        Expr::Call(n,a) if n=="@packed_view" && a.len()==2=>{
+            // Packed views retain a multidimensional descriptor when supplied
+            // by argument association; their flat length is not their rank.
+            Ok(shape(&a[0],s)?.map(|(kind,dims)|(kind,if dims.len()>1 {dims}else{vec![a[1].clone()]})))
+        },
         Expr::Ident(n) => s
             .get(n)
             .map(|(kind, d)| {
@@ -327,6 +332,11 @@ fn shape(e: &Expr, s: &Shapes) -> Result<Option<(TypeSpec, Vec<Expr>)>> {
             else if n == "real" { kind = TypeSpec::Real; }
             Ok(Some((kind, d)))
         }
+        Expr::Call(n,a) if s.contains_key(&format!("@elemental_function:{n}"))=>{
+            let mut dims=vec![];
+            for arg in a {let Some((_,shape))=shape(arg,s)? else {return Ok(None)};if !shape.is_empty() {dims=shape;break;}}
+            Ok(Some((s[&format!("@elemental_function:{n}")].0.clone(),dims)))
+        },
         Expr::Call(n, _) if s.contains_key(&format!("@array_function:{n}")) => Ok(None),
         Expr::Call(n, _) => Ok(s
             .get(&format!("@function:{n}"))
@@ -1148,6 +1158,13 @@ impl Lower {
                         let intent=self.procedures.get(name).and_then(|v|v.get(i)).cloned()
                             .or_else(||(name=="random_number" && i==0).then(||"intent(out)".into()));
                         if intent.as_deref().is_some_and(|i|i!="intent(in)") {
+                            // Rank-one triplets use Section rather than Call
+                            // in the AST. Retain writable storage and copy back
+                            // through the same path as higher-rank sections.
+                            if matches!(e,Expr::Section{name,..} if s.get(name).is_some_and(|(_,d)|d.len()==1)) {
+                                let Expr::Section{name,..}=&*e else {unreachable!()};
+                                *e=Expr::Call(name.clone(),vec![Expr::Call("@section_subscript".into(),vec![e.clone()])]);
+                            }
                             if let Expr::Call(n,a) | Expr::Index(n,a) = e {
                                 if selection(n,a,&s) && !vector_selection(n,a,&s) {
                                     if s.contains_key(&format!("@readonly:{n}")) {bail!("cannot pass a section of PARAMETER or INTENT(IN) array `{n}` as a writable argument");}
@@ -1262,6 +1279,219 @@ pub(super) fn specialize_expression(e:&mut Expr, shapes:&mut Shapes, prefix:&mut
     *serial=lower.serial;
     Ok(())
 }
+
+/// Reuse Cartesian section indexing and owned expression buffers for an
+/// elemental function with writable actuals. Inputs are bound before outputs
+/// are defined, and each scalar invocation writes its own result/status.
+pub(super) fn elemental_function(
+    e: &mut Expr,
+    s: &mut Shapes,
+    out: &mut Vec<Stmt>,
+    serial: &mut usize,
+    routine: (&[String], &[Stmt], &str, &TypeSpec),
+) -> Result<bool> {
+    let (params, body, result, kind) = routine;
+    let Expr::Call(_, args) = e else {
+        return Ok(false);
+    };
+    let info = args
+        .iter()
+        .map(|a| shape(a, s)?.context("unknown elemental argument shape"))
+        .collect::<Result<Vec<_>>>()?;
+    let Some((_, dims)) = info.iter().find(|(_, d)| !d.is_empty()) else {
+        return Ok(false);
+    };
+    let inherited_serial = s
+        .keys()
+        .filter(|n| n.contains("@vector_"))
+        .filter_map(|n| n.rsplit('_').next()?.parse::<usize>().ok())
+        .max()
+        .unwrap_or(0);
+    let mut lower = Lower {
+        serial: (*serial).max(inherited_serial),
+        procedures: HashMap::new(),
+        force: false,
+    };
+    let dims = dims
+        .iter()
+        .map(|d| lower.scalar("elemental_extent", d.clone(), out, s))
+        .collect::<Vec<_>>();
+    for (_, actual) in &info {
+        if actual.is_empty() {
+            continue;
+        }
+        if actual.len() != dims.len() {
+            bail!("nonconforming elemental array argument shapes");
+        }
+        for (a, b) in actual.iter().zip(&dims) {
+            if let (Some(a), Some(b)) = (constant(a), constant(b)) {
+                if a != b {
+                    bail!("nonconforming elemental array argument shapes");
+                }
+            } else {
+                out.push(error(bin(BinOp::Ne,a.clone(),b.clone()),"@enumeration_runtime:nonconforming elemental array argument shapes in NEXT/PREVIOUS".into()));
+            }
+        }
+    }
+    let vars = lower.loop_vars(&dims, out, s);
+    let mut names = HashMap::new();
+    let mut invocation = vec![];
+    let mut stores = vec![];
+    for ((param, arg), (actual_kind, actual_dims)) in params.iter().zip(args.iter_mut()).zip(&info)
+    {
+        let writable=body.iter().any(|stmt|matches!(stmt,Stmt::DummyIntent{name,intent} if name==param && matches!(intent.as_str(),"intent(out)"|"intent(inout)")));
+        let expected = body
+            .iter()
+            .find_map(|stmt| match stmt {
+                Stmt::VarDecl { kind, names } if names.contains(param) => Some(kind),
+                _ => None,
+            })
+            .context("elemental scalar dummy requires a declared type")?;
+        if !crate::pointers::same_kind(expected, actual_kind) {
+            bail!("type mismatch for elemental function dummy `{param}`");
+        }
+        if writable && actual_dims.is_empty() {
+            bail!("ELEMENTAL writable dummy `{param}` requires an array actual when any argument is an array");
+        }
+        let value = if actual_dims.is_empty() {
+            lower.freeze(arg, s, out)?;
+            arg.clone()
+        } else {
+            // An OUT selection retains its original storage; it must never
+            // be materialized by reading its currently undefined elements.
+            if writable {
+                let n = match &*arg {
+                    Expr::Ident(n)
+                    | Expr::Section { name: n, .. }
+                    | Expr::Call(n, _)
+                    | Expr::Index(n, _) => n,
+                    _ => bail!(
+                        "writable elemental function dummy `{param}` requires a variable actual"
+                    ),
+                };
+                if s.contains_key(&format!("@readonly:{n}"))
+                    || s.contains_key(&format!("@function_readonly:{n}"))
+                {
+                    bail!("cannot pass PARAMETER or INTENT(IN) variable as writable argument `{param}`");
+                }
+            }
+            let (array, selected) = match &mut *arg {
+                Expr::Call(tag, values) if tag == "@packed_view" && values.len() == 2 => {
+                    let Expr::Ident(n) = &values[0] else {
+                        bail!("writable array view requires named storage")
+                    };
+                    let selected = axes(n, s)?
+                        .into_iter()
+                        .map(|(lo, _)| {
+                            Axis::Triplet(lower.scalar("elemental_lower", lo, out, s), int(1))
+                        })
+                        .collect();
+                    (n.clone(), selected)
+                }
+                Expr::Ident(n) => {
+                    let selected = axes(n, s)?
+                        .into_iter()
+                        .map(|(lo, _)| {
+                            Axis::Triplet(lower.scalar("elemental_lower", lo, out, s), int(1))
+                        })
+                        .collect();
+                    (n.clone(), selected)
+                }
+                Expr::Section { name, .. } => {
+                    let n = name.clone();
+                    let mut subscripts =
+                        vec![Expr::Call("@section_subscript".into(), vec![arg.clone()])];
+                    let (selected, _) = lower.indices(&n, &mut subscripts, s, out, writable)?;
+                    (n, selected)
+                }
+                Expr::Call(n, a) | Expr::Index(n, a)
+                    if s.get(n).is_some_and(|(_, d)| !d.is_empty()) =>
+                {
+                    let n = n.clone();
+                    let (selected, _) = lower.indices(&n, a, s, out, writable)?;
+                    (n, selected)
+                }
+                _ if !writable => {
+                    let n = lower.buffer(actual_kind.clone(), actual_dims, out, s)?;
+                    out.push(assign(&n, arg.clone()));
+                    (
+                        n,
+                        actual_dims
+                            .iter()
+                            .map(|_| Axis::Triplet(int(1), int(1)))
+                            .collect(),
+                    )
+                }
+                _ => {
+                    bail!("writable elemental function dummy `{param}` requires an array variable")
+                }
+            };
+            if let Some(flag) = allocatables::allocated(&array, s) {
+                out.push(error(
+                    Expr::Un(crate::ast::UnOp::Not, Box::new(flag)),
+                    format!("NEXT/PREVIOUS argument `{param}` is not allocated"),
+                ));
+            }
+            Expr::Index(array, lower.selected(&selected, &vars))
+        };
+        lower.serial += 1;
+        let temp = format!("@vector_elemental_argument_{}", lower.serial);
+        invocation.push(Stmt::VarDecl {
+            kind: expected.clone(),
+            names: vec![temp.clone()],
+        });
+        if writable {
+            let Expr::Index(array, indices) = value else {
+                bail!("elemental output must identify an array element")
+            };
+            stores.push(Stmt::AssignIndex {
+                name: array,
+                indices,
+                value: id(&temp),
+            });
+        } else {
+            invocation.push(assign(&temp, value));
+        }
+        names.insert(param.clone(), temp);
+    }
+    let output = lower.buffer(kind.clone(), &dims, out, s)?;
+    lower.serial += 1;
+    let scalar_result = format!("@vector_elemental_result_{}", lower.serial);
+    invocation.push(Stmt::VarDecl {
+        kind: kind.clone(),
+        names: vec![scalar_result.clone()],
+    });
+    names.insert(result.into(), scalar_result.clone());
+    let mut implementation = body.to_vec();
+    if matches!(implementation.last(),Some(Stmt::Return(Some(Expr::Ident(n)))) if n==result) {
+        implementation.pop();
+    }
+    let mut bound = params.to_vec();
+    bound.push(result.into());
+    crate::subroutines::rename_with_prefix(
+        &mut implementation,
+        &names,
+        &bound,
+        &mut lower.serial,
+        "@vector_elemental_local",
+    )?;
+    implementation.retain(|stmt| {
+        !matches!(stmt, Stmt::DummyIntent { .. } | Stmt::Implicit(_))
+            && !matches!(stmt,Stmt::VarDecl{names,..} if names.is_empty())
+    });
+    invocation.extend(implementation);
+    invocation.extend(stores);
+    invocation.push(Stmt::AssignIndex {
+        name: output.clone(),
+        indices: vars.iter().map(|n| id(n)).collect(),
+        value: id(&scalar_result),
+    });
+    out.extend(lower.nest(&vars, &dims, vec![Stmt::Block { body: invocation }]));
+    *e = id(&output);
+    *serial = lower.serial;
+    Ok(true)
+}
+
 fn heap_buffer(
     kind: TypeSpec,
     n: String,

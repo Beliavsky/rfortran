@@ -472,9 +472,9 @@ pub(crate) fn instrument_with_origins(program: Program, source: &str, filename: 
             match stmt {
                 Stmt::SourceLocation(offset) => position = Some(*offset),
                 Stmt::CallSub {name,args} if name=="@error_stop"
-                    && matches!(args.first(),Some(Expr::Str(s)) if s.starts_with("@enumeration_boundary:")) => {
+                    && matches!(args.first(),Some(Expr::Str(s)) if s.starts_with("@enumeration_boundary:") || s.starts_with("@enumeration_runtime:")) => {
                     if let Some(Expr::Str(message))=args.first_mut() {
-                        *message=message.trim_start_matches("@enumeration_boundary:").to_owned();
+                        *message=message.split_once(':').unwrap().1.to_owned();
                         if let Some(offset)=position {
                             let (text,offset,file)=if let Some(origin)=origins.iter().find(|o|o.range.contains(&offset)) {
                                 (&source[origin.range.clone()],offset-origin.range.start,origin.name.as_str())

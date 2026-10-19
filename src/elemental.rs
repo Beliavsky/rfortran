@@ -48,9 +48,9 @@ pub(crate) fn inline_character(
     declared: &Option<TypeSpec>,
     body: &[Stmt],
 ) -> bool {
-    if name.starts_with("@enumeration_step_") && params.iter().any(|p|p=="stat") {
-        // Reuse function specialization for the intrinsic's writable STAT;
-        // the ordinary scalar function ABI passes inputs by value.
+    if name.starts_with("@enumeration_step_") {
+        // Enumeration steps share descriptor loops for fixed/runtime arrays.
+        // A native scalar implementation is retained for masked evaluation.
         return true;
     }
     let character = |kind: &TypeSpec| {

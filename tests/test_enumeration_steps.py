@@ -17,6 +17,10 @@ class EnumerationSteps(unittest.TestCase):
         self.check((ROOT/'tests/programs/xenumeration_steps.f90').read_text(),
                    ' 2\n 2\n 3 T\n 1 T\n 2 3 3\n 0 0 1\n')
 
+    def test_runtime_example(self):
+        self.check((ROOT/'tests/programs/xenumeration_runtime.f90').read_text(),
+                   ' 3 3 3 3\n 0 0 0 1\n 1 1 1 2\n 0 0 0 0\n',data='4\n')
+
     def test_scalar_steps_status_and_keywords(self):
         self.check('implicit none\n'+enums.ENUM+'''type(colour)::c
 integer::status
@@ -255,6 +259,241 @@ b=next(a,status)
 print *,size(b),size(status)
 end
 ''', ' 0 0\n')
+
+    def test_runtime_automatic_arrays(self):
+        self.check('implicit none\n'+enums.ENUM+'''integer::n
+read *,n
+call exercise(n)
+contains
+subroutine exercise(n)
+integer,intent(in)::n
+type(colour)::a(n),b(n)
+integer(8)::status(n)
+a=orange
+if(n>0) a(n)=green
+b=next(a,stat=status)
+print *,int(b)
+print *,status
+b=previous(a,status)
+print *,int(b)
+print *,status
+end subroutine
+end
+''', ' 3 3 3 3\n 0 0 0 1\n 1 1 1 2\n 0 0 0 0\n',data='4\n')
+
+    def test_runtime_multidimensional_sections(self):
+        self.check('implicit none\n'+enums.ENUM+'''integer::n
+read *,n
+call exercise(n)
+contains
+subroutine exercise(n)
+integer,intent(in)::n
+type(colour)::a(-1:n-2,2),b(n,2)
+integer(2)::status(0:n+1,2)
+a=orange
+a(n-2,2)=green
+status=-1
+b=next(a,stat=status(1:n,:))
+print *,int(b)
+print *,status(:,1),status(:,2)
+b=previous(a(n-2:-1:-1,:),status(n:1:-1,:))
+print *,int(b)
+print *,status(:,1),status(:,2)
+end subroutine
+end
+''', ' 3 3 3 3 3 3\n -1 0 0 0 -1 -1 0 0 1 -1\n 1 1 1 2 1 1\n -1 0 0 0 -1 -1 0 0 0 -1\n',data='3\n')
+
+    def test_runtime_scalar_broadcast_and_nested_calls(self):
+        self.check('implicit none\n'+enums.ENUM+'''integer::n
+read *,n
+call exercise(n)
+contains
+subroutine exercise(n)
+integer,intent(in)::n
+type(colour)::a(n),b(n)
+integer::status(n)
+a=orange
+b=next(previous(a),status)
+print *,int(b)
+print *,status
+b=next(green,status)
+print *,int(b)
+print *,status
+end subroutine
+end
+''', ' 2 2 2\n 0 0 0\n 3 3 3\n 1 1 1\n',data='3\n')
+
+    def test_large_fixed_arrays_use_loops(self):
+        self.check('implicit none\n'+enums.ENUM+'''type(colour)::a(2048),b(2048)
+integer::status(2048)
+a=red
+b=next(a,status)
+print *,sum(int(b)),sum(status)
+end
+''', ' 4096 0\n')
+
+    def test_runtime_assumed_shape_dummies(self):
+        self.check('implicit none\n'+enums.ENUM+'''integer::n
+type(colour)::a(5),b(5)
+integer(8)::status(5)
+read *,n
+a=[red,orange,green,red,green]
+b=red
+status=-1
+call step(a(1:n),b(1:n),status(1:n))
+print *,int(b)
+print *,status
+contains
+pure subroutine step(a,b,status)
+type(colour),intent(in)::a(:)
+type(colour),intent(out)::b(:)
+integer(8),intent(out)::status(:)
+b=next(a,status)
+end subroutine
+end
+''', ' 2 3 3 2 1\n 0 0 1 0 -1\n',data='4\n')
+
+    def test_runtime_empty_and_negative_extents(self):
+        source='implicit none\n'+enums.ENUM+'''integer::n
+read *,n
+call exercise(n)
+contains
+subroutine exercise(n)
+integer,intent(in)::n
+type(colour)::a(n),b(n)
+integer::status(n)
+b=next(a,status)
+print *,size(b),sum(int(b)),sum(status)
+end subroutine
+end
+'''
+        for n in (0,-2):
+            with self.subTest(n=n):
+                self.check(source, ' 0 0 0\n',data=f'{n}\n')
+
+    def test_runtime_nonconforming_shapes_have_location(self):
+        source='implicit none\n'+enums.ENUM+'''integer::n,m
+read *,n,m
+call exercise(n,m)
+contains
+subroutine exercise(n,m)
+integer,intent(in)::n,m
+type(colour)::a(n,2),b(n,2)
+integer::status(n,m)
+a=red
+b=next(a,status)
+print *,int(b)
+end subroutine
+end
+'''
+        with tempfile.TemporaryDirectory() as tmp:
+            work=Path(tmp);path=work/'shape.f90';path.write_text(source)
+            line=source.splitlines().index('b=next(a,status)')+1
+            for command in build_commands(path,work,cwd=work):
+                # A zero total size does not make different shapes conformable.
+                for data in ('3 3\n','0 3\n'):
+                    p=subprocess.run(command,cwd=work,input=data,capture_output=True,text=True,timeout=30)
+                    self.assertNotEqual(p.returncode,0,p.stdout+p.stderr)
+                    self.assertIn('nonconforming elemental array argument shapes',p.stderr)
+                    self.assertIn(f'shape.f90:{line}',p.stderr)
+
+    def test_runtime_input_vector_subscript(self):
+        self.check('implicit none\n'+enums.ENUM+'''integer::n
+read *,n
+call exercise(n)
+contains
+subroutine exercise(n)
+integer,intent(in)::n
+type(colour)::a(n),b(n)
+integer::status(n),indices(n),i
+a=orange
+a(n)=green
+do i=1,n
+ indices(i)=n+1-i
+end do
+b=next(a(indices),status)
+print *,int(b)
+print *,status
+end subroutine
+end
+''', ' 3 3 3\n 1 0 0\n',data='3\n')
+
+    def test_masked_boundary_is_not_evaluated(self):
+        self.check('implicit none\n'+enums.ENUM+'''type(colour)::a(2),b(2)
+a=[red,green]
+b=red
+where ([.true.,.false.])
+ b=next(a)
+end where
+print *,int(b)
+end
+''', ' 2 1\n')
+
+    def test_runtime_rank_fifteen(self):
+        dims=','.join(['n']+['1']*14)
+        self.check('implicit none\n'+enums.ENUM+f'''integer::n
+read *,n
+call exercise(n)
+contains
+subroutine exercise(n)
+integer,intent(in)::n
+type(colour)::a({dims}),b({dims})
+integer::status({dims})
+a=green
+b=next(a,status)
+print *,sum(int(b)),sum(status)
+b=previous(a,status)
+print *,sum(int(b)),sum(status)
+end subroutine
+end
+''', ' 9 3\n 6 0\n',data='3\n')
+
+    def test_runtime_rank_three_assumed_shape(self):
+        self.check('implicit none\n'+enums.ENUM+'''integer::n
+read *,n
+call exercise(n)
+contains
+subroutine exercise(n)
+integer,intent(in)::n
+type(colour)::a(n,1,2),b(n,1,2)
+integer::status(n,1,2)
+a=green
+call step(a,b,status)
+print *,sum(int(b)),sum(status)
+end subroutine
+pure subroutine step(a,b,status)
+type(colour),intent(in)::a(:,:,:)
+type(colour),intent(out)::b(:,:,:)
+integer,intent(out)::status(:,:,:)
+b=previous(a,status)
+end subroutine
+end
+''', ' 12 0\n',data='3\n')
+
+    def test_runtime_optional_array_status(self):
+        self.check('implicit none\n'+enums.ENUM+'''integer::n
+read *,n
+call exercise(n)
+contains
+subroutine exercise(n)
+integer,intent(in)::n
+type(colour)::a(n),b(n)
+integer::status(n)
+a=orange
+call step(a,b)
+print *,sum(int(b))
+a=green
+call step(a,b,status)
+print *,sum(int(b)),sum(status)
+end subroutine
+pure subroutine step(a,b,status)
+type(colour),intent(in)::a(:)
+type(colour),intent(out)::b(:)
+integer,intent(out),optional::status(:)
+b=next(a,status)
+end subroutine
+end
+''', ' 9\n 9 3\n',data='3\n')
 
 
 if __name__=='__main__':

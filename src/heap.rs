@@ -538,10 +538,13 @@ pub(crate) fn automatic_derived(mut program: Program) -> Result<Program> {
             _ => false,
         }
     }
-    fn lower(params: &[String], result: &str, body: &mut Vec<Stmt>) {
+    fn lower(params: &[String], result: &str, body: &mut Vec<Stmt>, enumerations: &HashSet<String>) {
         let mut allocations = vec![];
         for s in body.iter_mut() {
-            let Stmt::DerivedDecl { names, attributes, dims, .. } = s else { continue };
+            let Stmt::DerivedDecl { type_name, names, attributes, dims, .. } = s else { continue };
+            // Enumeration storage is erased to INTEGER after nominal checks.
+            // Let ordinary automatic-array lowering allocate it at that point.
+            if enumerations.contains(type_name) {continue;}
             if dims.is_empty() || !dims.iter().any(|d| uses(d, params))
                 || names.iter().any(|n| params.contains(n) || n == result)
                 || attributes.iter().any(|a| matches!(a.as_str(), "allocatable" | "pointer" | "save" | "target") || a.starts_with("intent(")) {
@@ -580,27 +583,38 @@ pub(crate) fn automatic_derived(mut program: Program) -> Result<Program> {
         body.extend(allocations);
         body.extend(tail);
     }
-    fn visit(body: &mut Vec<Stmt>) {
+    fn visit(body: &mut Vec<Stmt>, enumerations: &HashSet<String>) {
         for s in body.iter_mut() {
             match s {
                 Stmt::Subroutine { params, body, .. } => {
-                    lower(params, "", body);
-                    visit(body);
+                    lower(params, "", body, enumerations);
+                    visit(body, enumerations);
                 }
                 Stmt::Function { name, params, body, .. } => {
                     let result = match body.last() {
                         Some(Stmt::Return(Some(Expr::Ident(n)))) => n.clone(),
                         _ => name.clone(),
                     };
-                    lower(params, &result, body);
-                    visit(body);
+                    lower(params, &result, body, enumerations);
+                    visit(body, enumerations);
                 }
-                Stmt::Module { body, .. } => visit(body),
+                Stmt::Module { body, .. } => visit(body, enumerations),
                 _ => {}
             }
         }
     }
-    visit(&mut program.body);
+    fn enumeration_types(body: &[Stmt], names: &mut HashSet<String>) {
+        for stmt in body {
+            if let Stmt::DerivedType{name,bindings,..}=stmt {
+                if bindings.iter().any(|(n,_)|n=="@enumeration") {names.insert(name.clone());}
+            }
+            let mut copy=stmt.clone();
+            for child in crate::procedure_arguments::children(&mut copy) {enumeration_types(child,names);}
+        }
+    }
+    let mut enumerations=HashSet::new();
+    enumeration_types(&program.body,&mut enumerations);
+    visit(&mut program.body, &enumerations);
     Ok(program)
 }
 

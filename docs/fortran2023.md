@@ -299,10 +299,19 @@ procedures, and valid calls without `STAT` can appear in constant initializers.
 
 These are elemental functions: array inputs produce array results, and any
 supplied `STAT` must then be a conformable array. A scalar `A` can broadcast over
-an array `STAT`. Calls with `STAT` reuse bounded function specialization, including
-sections and multidimensional arrays; its existing shape and expansion limits
-apply. Runtime-sized array calls with `STAT` are not yet supported.
-See `tests/programs/xenumeration_steps.f90` and `tests/test_enumeration_steps.py`.
+an array `STAT`. Fixed-size and runtime-sized arrays through rank 15 are supported,
+including automatic locals, assumed-shape dummies, and sections with runtime
+bounds or negative strides. `STAT` sections write back to the selected elements
+without reading their old values. Shape mismatches are checked at compilation
+when possible and otherwise at runtime, with a source file and line. Array calls
+with `STAT` use loops, removing the earlier 1,024-element expansion limit.
+Calls without `STAT` still honor WHERE masks.
+See `tests/programs/xenumeration_steps.f90`, `tests/programs/xenumeration_runtime.f90`,
+and `tests/test_enumeration_steps.py`.
+
+An existing list-directed output limitation affects a statement combining
+`INT(runtime_array)` and another array as separate output items; use separate
+PRINT statements for the enumeration ordinals and statuses for now.
 
 The interpreter and native compiler share these checks and lowering. Strict
 revision modes require Fortran 2023. This is the section 9.2 ENUMERATION TYPE
@@ -330,6 +339,7 @@ rf.bat -std=f2023 tests\programs\xmultiple_subscripts.f90 --run
 rf.bat -std=f2023 tests\programs\xconcurrent_reduce.f90 --run
 rf.bat -std=f2023 tests\programs\xenumeration.f90 --run
 rf.bat -std=f2023 tests\programs\xenumeration_steps.f90 --run
+echo 4 | rf.bat -std=f2023 tests\programs\xenumeration_runtime.f90 --run
 python tests/test_enumerations.py
 python tests/test_enumeration_steps.py
 python tests/test_concurrent_reduce.py

@@ -472,6 +472,16 @@ impl Lower {
             }
         }
         if array_result && self.defer_calls && args.iter().any(|e|pending(e,symbols)){return Ok(());}
+        if name.starts_with("@enumeration_step_") {
+            if self.defer_calls && args.iter().any(|e|pending(e,symbols)) {return Ok(());}
+            for (n,(elemental,kind)) in &self.returns {
+                symbols.insert(format!("@function:{n}"),(kind.clone(),vec![]));
+                if *elemental {symbols.insert(format!("@elemental_function:{n}"),(kind.clone(),vec![]));}
+            }
+            let mut call=Expr::Call(name.clone(),args.clone());
+            if crate::vector_subscripts::elemental_function(&mut call,symbols,prefix,&mut self.serial,
+                (&routine.params,&routine.body,&routine.result,&routine.kind))? {*e=call;return Ok(());}
+        }
         if !args.iter().any(|e|pending(e,symbols)) {
             for (param,actual) in routine.params.iter().zip(args.iter_mut()) {
                 if routine.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==param && intent=="intent(in)"))
@@ -1134,6 +1144,25 @@ impl Lower {
         Ok(runtime)
     }
     pub(crate) fn contains_calls(&self, body: &[Stmt]) -> bool {
+        if body.iter().any(|s|matches!(s,Stmt::CallSub{name,..} if name=="@where")) {
+            // Masked calls without STAT must not evaluate excluded elements.
+            let mut copy=body.to_vec();
+            for stmt in &mut copy {
+                for e in crate::procedure_arguments::expressions(stmt) {
+                    crate::procedure_arguments::visit_expr(e,&mut |e| {
+                        if let Expr::Call(n,_)=e {
+                            if n.starts_with("@enumeration_step_") && self.routines.get(n).is_some_and(|r|r.params.len()==1) {
+                                *n="@masked_enumeration_step".into();
+                            }
+                        }
+                    });
+                }
+            }
+            return self.contains_calls_raw(&copy);
+        }
+        self.contains_calls_raw(body)
+    }
+    fn contains_calls_raw(&self, body: &[Stmt]) -> bool {
         fn expr(e: &Expr, routines: &HashMap<String, Routine>) -> bool {
             match e {
                 Expr::Call(n, args) => {
@@ -1290,6 +1319,7 @@ impl Lower {
                             *body = if owns_heap {vec![Stmt::Block{body:std::mem::take(&mut prefix)}]} else {std::mem::take(&mut prefix)};
                         }
                     }
+                    Stmt::Block {body} if body.iter().any(|s|matches!(s,Stmt::CallSub{name,..} if name=="@where"))=>{},
                     Stmt::Module { body, .. }
                     | Stmt::Function { body, .. }
                     | Stmt::Subroutine { body, .. }
@@ -1665,6 +1695,9 @@ pub(crate) fn prepare(mut p: Program) -> Result<(Program, Lower)> {
                                 descriptor_call,
                             },
                         );
+                        if name.starts_with("@enumeration_step_") && params.len()==1 {
+                            out.push(stmt.clone());
+                        }
                         continue;
                     }
                 }
