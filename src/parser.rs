@@ -384,6 +384,7 @@ fn human_token(tok: &TokenKind) -> String {
         TokenKind::KwSimple => "keyword simple".into(),
         TokenKind::KwReduce => "keyword reduce".into(),
         TokenKind::KwEnumeration => "keyword enumeration".into(),
+        TokenKind::KwEnum => "keyword enum".into(),
         TokenKind::KwEnumerator => "keyword enumerator".into(),
         TokenKind::KwImpure => "keyword impure".into(),
         TokenKind::KwRecursive => "keyword recursive".into(),
@@ -472,6 +473,21 @@ fn resolve_dimension_statements(body: &mut Vec<crate::ast::Stmt>) -> Result<(), 
         }
     }
     Ok(())
+}
+
+/// Quiet grammar probe for interactive input; diagnostics are emitted only
+/// after a complete submission is selected.
+pub(crate) fn probe_fragment(source: &str, end_of_input: usize) -> (bool, bool) {
+    let tokens = crate::lexer::lex(source);
+    if tokens.iter().any(|t| matches!(t.kind, TokenKind::Error(_))) { return (false, false); }
+    let triples = tokens.into_iter().map(|t| (t.span.start, t.kind, t.span.end));
+    match fortran::ProgramParser::new().parse(triples) {
+        Ok(_) => (true, false),
+        Err(lalrpop_util::ParseError::UnrecognizedEof { .. }) => (false, true),
+        Err(lalrpop_util::ParseError::UnrecognizedToken { token: (start, _, _), .. })
+            if start >= end_of_input => (false, true),
+        _ => (false, false),
+    }
 }
 
 pub fn parse_with_src(

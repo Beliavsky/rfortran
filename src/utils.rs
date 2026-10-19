@@ -54,6 +54,7 @@ pub fn print_help() {
     println!("  build <inputs>        Compile the input file to an object file and link it into an executable");
     println!("  emit-obj <input>     Compile the input file to an object file");
     println!("  run <input>          Parse, check, and run the input file");
+    println!("  repl                 Start a persistent scalar Fortran session");
     println!("  link <inputs>        Link object files or sources into an executable");
     println!("\nOptions:");
     println!("  --verbose            Show build progress and toolchain commands");

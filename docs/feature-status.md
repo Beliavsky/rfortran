@@ -111,7 +111,8 @@ Bugs found on 2026-10-18, all fixed:
 | COMMON blocks | ❌ | | |
 | [DATA statements](language-support.md#other-statement-forms) | 🟡 | Whole variables only, not array elements, sections or implied-DO lists | test_statement_forms_io.py |
 | EQUIVALENCE | ❌ | | |
-| ENUM, BIND(C) enumerators | ❌ | | |
+| Unnamed ENUM, BIND(C) enumerators (Fortran 2003) | ❌ | | |
+| [Named enum types (Fortran 2023)](fortran2023.md#enum-types-section-93) | 🟡 | Initial scalar support; distinct from ENUMERATION TYPE | test_enum_types.py |
 | Source locations in diagnostics | ✅ | | test_source_diagnostics.py |
 
 ## Types and kinds

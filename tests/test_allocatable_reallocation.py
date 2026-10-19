@@ -201,5 +201,38 @@ end program
 """, '4 14\n5 1 3 1 2 3\n')
 
 
+    def test_character_constructors_of_runtime_arrays(self):
+        """Constructors of ALLOCATABLE CHARACTER arrays, their sections and scalars."""
+        self.check("""program p
+character(len=5), allocatable :: c(:), d(:)
+integer :: i
+c = ['one']
+do i = 1, 3
+  c = [c, 'n' // char(48+i) // '   ']
+end do
+print '(i0,1x,*(a,"|"))', size(c), c
+d = ['<    ', c(2:3), '>    ']
+print '(i0,1x,*(a,"|"))', size(d), d
+d = [c, 'abcde', d]
+print '(i0,1x,*(a,"|"))', size(d), d
+c = c(1:0)
+d = [c, c]
+print '(i0)', size(d)
+print '(*(i0,1x))', len_trim(d), maxloc(len_trim(c))
+end program
+""", '4 one  |n1   |n2   |n3   |\n4 <    |n1   |n2   |>    |\n9 one  |n1   |n2   |n3   |abcde|<    |n1   |n2   |>    |\n0\n0\n')
+        self.check("""program p
+character(len=4), allocatable :: c(:), d(:)
+c = ['ab', 'cd']
+print '(i0,1x,*(a,"|"))', size(c), c
+c = ['w', 'x', 'y']
+print '(i0,1x,*(a,"|"))', size(c), c
+d = c(2:3)
+print '(i0,1x,*(a,"|"))', size(d), d
+d = [c, c]
+print '(i0,1x,*(a,"|"))', size(d), d
+end program
+""", '2 ab  |cd  |\n3 w   |x   |y   |\n2 x   |y   |\n6 w   |x   |y   |w   |x   |y   |\n')
+
 if __name__ == "__main__":
     unittest.main()

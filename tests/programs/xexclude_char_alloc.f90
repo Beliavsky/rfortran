@@ -11,7 +11,9 @@ character(len=*), intent(in) :: xx(:),yy(:)
 character(len=len(xx)), allocatable :: zz(:)
 logical :: xuse(size(xx))
 integer :: i
-forall(i=1:size(xx)) xuse(i) = all(yy /= xx(i))
+do i=1,size(xx)
+   xuse(i) = all(yy /= xx(i))
+end do
 call set_alloc(pack(xx,xuse),zz)
 end function diff_vec_char
 
@@ -24,7 +26,8 @@ end subroutine set_alloc
 end module character_exclude_mod
 
 program main
-use character_exclude_mod, only: operator(.exclude.)
+use character_exclude_mod, only: operator(.exclude.), diff_vec_char
 implicit none
-write(*,"(100(a,1x))") ["dog","cat","boy"] .exclude. ["cat "]
+write(*,"(100(a,1x))") diff_vec_char(["dog","cat","boy"], ["cat "])
+! write(*,"(100(a,1x))") ["dog","cat","boy"] .exclude. ["cat "]
 end program main

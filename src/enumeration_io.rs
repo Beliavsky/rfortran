@@ -210,6 +210,9 @@ impl Context {
         scope: &Scope,
         layout: Layout,
     ) -> Result<()> {
+        if types.iter().any(|t|t.enumeration().is_some_and(|n|self.is_c_enum(n))) {
+            bail!("direct formatted I/O of enum objects is not yet supported; use INT for output");
+        }
         if types[..layout.first]
             .iter()
             .any(|t| t.enumeration().is_some())

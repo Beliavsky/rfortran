@@ -39,6 +39,7 @@ extern {
         KW_SIMPLE => TokenKind::KwSimple,
         KW_REDUCE => TokenKind::KwReduce,
         KW_ENUMERATION => TokenKind::KwEnumeration,
+        KW_ENUM => TokenKind::KwEnum,
         KW_ENUMERATOR => TokenKind::KwEnumerator,
         KW_IMPURE => TokenKind::KwImpure,
         KW_RECURSIVE => TokenKind::KwRecursive,
@@ -1027,6 +1028,8 @@ PreFuncDecl: Vec<Stmt> = {
     },
 };
 PreFuncDeclData: Vec<Stmt> = {
+    KW_ENUM COMMA <bind:Ident> LPAREN <language:Ident> RPAREN DCOLON <name:Ident> <items:EnumItems> KW_END KW_ENUM =>?
+        crate::enumerations::enum_definition(name,bind,language,items).map_err(|error|lalrpop_util::ParseError::User{error}),
     <head:EnumerationHead> <items:EnumerationItems> KW_END KW_ENUMERATION KW_TYPE <end:END_UNIT_NAME?> =>?
         crate::enumerations::definition(head.0,head.1,items,end).map_err(|error|lalrpop_util::ParseError::User{error}),
     <head:TypeDefHead> <components:Components> <_end:TypeDefEnd> => {
@@ -1135,6 +1138,14 @@ EnumerationHead: (String,Option<bool>) = {
     KW_ENUMERATION KW_TYPE DCOLON? <name:Ident> => (name,None),
     KW_ENUMERATION KW_TYPE COMMA KW_PUBLIC DCOLON <name:Ident> => (name,Some(true)),
     KW_ENUMERATION KW_TYPE COMMA KW_PRIVATE DCOLON <name:Ident> => (name,Some(false)),
+};
+EnumItems: Vec<(usize,Vec<(String,Option<Expr>)>)> = {
+    <pos:@L> KW_ENUMERATOR DCOLON? <items:EnumEntities> => vec![(pos,items)],
+    <mut items:EnumItems> <pos:@L> KW_ENUMERATOR DCOLON? <entities:EnumEntities> => {items.push((pos,entities));items},
+};
+EnumEntities: Vec<(String,Option<Expr>)> = {
+    <name:Ident> <value:(EQ <RhsExpr>)?> => vec![(name,value)],
+    <mut items:EnumEntities> COMMA <name:Ident> <value:(EQ <RhsExpr>)?> => {items.push((name,value));items},
 };
 EnumerationItems: Vec<(usize,Vec<String>)> = {
     <pos:@L> KW_ENUMERATOR DCOLON? <names:IdentList> => vec![(pos,names)],

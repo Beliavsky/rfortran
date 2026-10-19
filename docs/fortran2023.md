@@ -340,7 +340,7 @@ See `tests/programs/xenumeration_allocatable.f90` and
 
 The interpreter and native compiler share these checks and lowering. Strict
 revision modes require Fortran 2023. This is the section 9.2 ENUMERATION TYPE
-facility, not the distinct interoperable ENUM/BIND(C) facility in section 9.3.
+facility, distinct from the named interoperable enum types in section 9.3 below.
 
 Current limits include runtime formats, sections and I/O implied-DOs in direct
 formatted enumeration I/O, B/O/Z enumeration input, internal formatted READ,
@@ -353,6 +353,59 @@ can define same-named types. Other existing procedure/array limits still apply.
 The existing constant folder can confuse main-program named constants with
 same-named implicit variables in external procedures; shared enumeration
 definitions should be placed in modules to avoid that limitation.
+
+## Enum types (section 9.3)
+
+Initial support for Fortran 2023 named `ENUM, BIND(C)` types reuses nominal-type
+checking, but keeps their rules distinct from `ENUMERATION TYPE`. Naming the
+enum type is the Fortran 2023 addition; the older unnamed `ENUM, BIND(C)` form
+is not implemented yet.
+
+```fortran
+enum, bind(c) :: season
+   enumerator :: spring=5, summer=7, autumn, winter
+end enum
+type(season) :: current
+current = autumn + 1
+print *, int(current), current == winter ! 9 T
+current = season(6)                       ! an unnamed value is valid
+```
+
+Enumerator values default to zero for the first enumerator and to the preceding
+value plus one thereafter. Explicit constant INTEGER values, negative values,
+gaps, repeated values and multiple ENUMERATOR statements are supported.
+Enumerators are INTEGER named constants, not enum objects. For example,
+`summer*2` is an INTEGER expression and generic resolution selects an INTEGER
+specific for `f(summer)`, but an enum specific for `f(season(7))`.
+
+An enum object can be assigned another object of the same enum type or an INTEGER
+expression containing an enumerator of that type, such as `autumn+1`. An ordinary
+integer variable or literal is not type conforming; use the constructor explicitly.
+An ordinary INTEGER PARAMETER initialized from an enumerator does not itself
+become an enumerator. The six relational operators accept the same combinations.
+Arithmetic on enum objects and implicit conversion from enum to INTEGER are
+rejected. `INT` performs the explicit conversion. `HUGE`, `NEXT` and `PREVIOUS`
+of enumeration types do not apply to enum objects.
+
+The constructor accepts a scalar INTEGER expression or a BOZ constant, including
+values with no named enumerator. This implementation uses the signed 32-bit C
+`int` range; constant out-of-range values are compile errors and runtime values
+are checked before conversion. Other companion-C enum representations are not
+implemented. Scalar parameters, procedure arguments and results, module
+association and renaming, scalar derived-type components, SELECT CASE values and
+ranges, and list-directed output are covered by tests. List-directed input uses
+the shared INTEGER input path. Strict standard modes require Fortran 2023.
+
+This is an initial scalar implementation, not full section 9.3 support. Direct
+formatted enum I/O is diagnosed; use `INT` for formatted output. Array constructor
+and assignment integration is incomplete, including type-conforming INTEGER
+array expressions. POINTER objects and scalar ALLOCATABLE objects are not
+supported. Some INTEGER-valued intrinsic expressions, such as `IOR(spring,1)`,
+are not yet inferred by the nominal checker in an enum assignment or constructor;
+store the result in an INTEGER variable and use the enum constructor on that
+variable. Actual calls across a C ABI are not implemented or claimed by accepting
+the BIND(C) definition. Existing local-type scoping and procedure/backend limits
+also apply. See `tests/programs/xenum_type.f90` and `tests/test_enum_types.py`.
 
 ## Try it
 

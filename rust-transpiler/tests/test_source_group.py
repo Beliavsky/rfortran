@@ -66,12 +66,11 @@ class GroupFrontendTests(unittest.TestCase):
         self.assertEqual(caught.exception.filename,str(main))
         self.assertEqual(caught.exception.line,4)
 
-    def test_missing_implicit_none_refers_to_driver(self):
+    def test_driver_without_implicit_none_is_accepted(self):
         main = self.paths[-1]
         main.write_text("program p\nprint *,1\nend\n")
-        with self.assertRaisesRegex(Unsupported,"IMPLICIT NONE") as caught:
-            transpile_files(self.paths)
-        self.assertEqual(caught.exception.filename,str(main))
+        code = transpile_files(self.paths,source_comments=True)
+        self.assertIn("// Fortran "+str(main)+":2",code)
 
     def test_parse_failure_refers_to_original_file(self):
         main = self.paths[-1]

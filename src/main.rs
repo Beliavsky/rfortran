@@ -85,6 +85,7 @@ mod derived_arrays;
 mod operators;
 mod imports;
 mod runtime;
+mod repl;
 mod sema;
 mod unused;
 mod optional_warnings;
@@ -139,6 +140,8 @@ fn compiler_main() -> Result<()> {
         }
     }
     match args.cmd.clone().unwrap_or(cli::Command::Help) {
+        cli::Command::Repl => repl::run(&args)?,
+        cli::Command::ReplEval { input } => repl::evaluate(&input)?,
         cli::Command::Lex { input, out } => {
             let src = utils::read_file_to_string(&input)?;
             let tokens = lexer::lex(&src);

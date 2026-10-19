@@ -328,6 +328,7 @@ pub enum TokenKind {
     KwSimple,
     KwReduce,
     KwEnumeration,
+    KwEnum,
     KwEnumerator,
     KwImpure,
     KwRecursive,
@@ -1082,6 +1083,12 @@ pub fn lex(input: &str) -> Vec<Token> {
         start += 1;
     }
     for start in 0..tokens.len() {
+        if matches!(&tokens[start].kind,TokenKind::Ident(n) if n=="enum")
+            && (statement_head(&tokens,input,start) && matches!(tokens.get(start+1).map(|t|&t.kind),Some(TokenKind::Comma))
+                || start>0 && matches!(tokens[start-1].kind,TokenKind::KwEnd)
+                    && same_statement(&input[tokens[start-1].span.end..tokens[start].span.start])) {
+            tokens[start].kind=TokenKind::KwEnum;
+        }
         if matches!(&tokens[start].kind,TokenKind::Ident(n) if n=="enumeration")
             && matches!(tokens.get(start+1).map(|t|&t.kind),Some(TokenKind::Ident(n)) if n=="type")
             && same_statement(&input[tokens[start].span.end..tokens[start+1].span.start])

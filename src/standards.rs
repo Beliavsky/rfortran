@@ -357,6 +357,7 @@ impl Checker<'_> {
                 TokenKind::KwPure => Some("pure"),
                 TokenKind::KwSimple => Some("simple"),
                 TokenKind::KwEnumeration => {self.require("enumeration types",2023,t.span.start);None},
+                TokenKind::KwEnum => {self.require("named enum types",2023,t.span.start);None},
                 TokenKind::At => Some("multiple_subscripts"),
                 TokenKind::KwElemental => Some("elemental"),
                 TokenKind::KwImpure => Some("impure"),
@@ -604,7 +605,7 @@ impl Checker<'_> {
                     bindings,
                     ..
                 } => {
-                    if bindings.iter().any(|(n,_)|n=="@enumeration") {self.require("enumeration types",2023,offset);}
+                    if let Some((_,tag))=bindings.iter().find(|(n,_)|n=="@enumeration") {self.require(if tag.starts_with("cenum:") {"named enum types"} else {"enumeration types"},2023,offset);}
                     else if !bindings.is_empty() {
                         self.feature("type_bound", offset);
                     }

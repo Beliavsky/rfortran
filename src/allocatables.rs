@@ -75,7 +75,8 @@ pub(crate) fn axes(name: &str, shapes: &Shapes) -> Option<Vec<Expr>> {
 pub(crate) fn lowers(name:&str,shapes:&Shapes)->Option<Vec<Expr>> {shapes.get(&format!("@lowers:{name}")).map(|v|v.1.clone())}
 pub(crate) fn inquiry(name: &str, args: &[Expr], shapes: &Shapes) -> Result<Option<Expr>> {
     if name=="len" && args.len()==1 {
-        if let Some(Expr::Ident(n))=args.first() {
+        let operand=match &args[0] {Expr::Call(tag,a) if tag=="@packed_view"=>a.first(),e=>Some(e)};
+        if let Some(Expr::Ident(n)|Expr::Call(n,_)|Expr::Index(n,_))=operand {
             if let Some((_,values))=shapes.get(&format!("@character_spec_length:{n}")) {return Ok(values.first().cloned());}
             if let Some((TypeSpec::Character(width),_))=shapes.get(n) {return Ok(Some(int(width.unwrap_or(1) as i64)));}
         }
@@ -605,6 +606,60 @@ fn capacity(e: &Expr, arrays: &HashMap<String, i64>) -> Option<i64> {
         _ => None,
     }
 }
+// A constructor with runtime CHARACTER array items, as [c, c] for an
+// ALLOCATABLE c, fills a temporary in item order and gives its view.
+fn runtime_character_items(value: &Expr, shapes: &Shapes, target: &str, serial: &mut usize, out: &mut Vec<Stmt>) -> Result<Option<Expr>> {
+    let items = match value {
+        Expr::Call(tag,items) if tag=="@array_constructor" => &items[..],
+        Expr::Call(tag,items) if tag=="@typed_constructor" && !items.is_empty() => &items[1..],
+        _ => return Ok(None),
+    };
+    // Each item is an array with its storage, first index, extent and
+    // stride, or a scalar.
+    let array = |e: &Expr| -> Option<(String,Expr,Expr,i64)> {
+        let character = |n: &String| matches!(shapes.get(n),Some((TypeSpec::Character(_),d)) if d.len()==1);
+        let whole = |n: &String| length(n,shapes).unwrap_or(shapes[n].1[0].clone());
+        let first = |n: &String| lowers(n,shapes).and_then(|v|v.first().cloned()).unwrap_or(int(1));
+        match e {
+            Expr::Call(tag,a) if tag=="@packed_view" && a.len()==2 => match &a[0] { Expr::Ident(n) => Some((n.clone(),first(n),a[1].clone(),1)), _ => None },
+            Expr::Ident(n) if character(n) => Some((n.clone(),first(n),whole(n),1)),
+            Expr::Section { name:n, lower, upper, stride } if character(n) => {
+                let step = stride.as_deref().map(crate::parameters::integer_constant).transpose().ok()?.unwrap_or(1);
+                if step == 0 { return None; }
+                let last = bin(BinOp::Sub,bin(BinOp::Add,first(n),whole(n)),int(1));
+                let lo = lower.as_deref().cloned().unwrap_or_else(|| if step < 0 {last.clone()} else {first(n)});
+                let hi = upper.as_deref().cloned().unwrap_or_else(|| if step < 0 {first(n)} else {last});
+                let extent = Expr::Call("max".into(),vec![int(0),bin(BinOp::Div,bin(BinOp::Add,bin(BinOp::Sub,hi,lo.clone()),int(step)),int(step))]);
+                Some((n.clone(),lo,extent,step))
+            }
+            _ => None,
+        }
+    };
+    // The constructor lowering of CHARACTER actuals takes only scalar items.
+    let arrays = items.iter().any(|e| array(e).is_some());
+    if !arrays || items.iter().any(|e| matches!(e,Expr::Section{..}|Expr::Call(..)) && array(e).is_none()) { return Ok(None); }
+    *serial += 1;
+    let values = format!("@alloc_char_items_{serial}");
+    let total = format!("@alloc_char_items_total_{serial}");
+    let position = format!("@alloc_char_items_position_{serial}");
+    let element = format!("@alloc_char_items_element_{serial}");
+    let count = items.iter().map(|e| array(e).map_or(int(1),|(_,_,extent,_)| extent)).reduce(|a,b| bin(BinOp::Add,a,b)).unwrap_or(int(0));
+    out.push(Stmt::VarDecl {kind:TypeSpec::Integer(Some(8)),names:vec![total.clone(),position.clone(),element.clone()]});
+    out.push(assign(&total,count));
+    crate::heap::temporary(shapes[target].0.clone(),values.clone(),id(&total),out);
+    out.push(assign(&position,int(0)));
+    for item in items {
+        let next = assign(&position,bin(BinOp::Add,id(&position),int(1)));
+        match array(item) {
+            Some((n,first,extent,step)) => out.push(Stmt::Do {var:element.clone(),start:int(1),end:extent,body:vec![
+                next,
+                Stmt::AssignIndex {name:values.clone(),indices:vec![id(&position)],value:Expr::Index(n,vec![bin(BinOp::Add,first,bin(BinOp::Mul,bin(BinOp::Sub,id(&element),int(1)),int(step)))])},
+            ]}),
+            None => out.extend([next,Stmt::AssignIndex {name:values.clone(),indices:vec![id(&position)],value:item.clone()}]),
+        }
+    }
+    Ok(Some(Expr::Call("@packed_view".into(),vec![id(&values),id(&total)])))
+}
 // Capture the active elements before writing, including when the arrays overlap.
 fn character_copy(name: &str, value: &Expr, len: Expr, shapes: &Shapes, reallocate: bool,
                   serial: &mut usize, out: &mut Vec<Stmt>) -> Result<()> {
@@ -614,6 +669,7 @@ fn character_copy(name: &str, value: &Expr, len: Expr, shapes: &Shapes, realloca
         _ => None,
     }.and_then(|v|v.first().cloned()).unwrap_or(int(1));
     let mut value=value.clone();
+    if let Some(items)=runtime_character_items(&value,shapes,name,serial,out)? {value=items;}
     let mut local=shapes.clone();
     if !matches!(&value,Expr::Ident(_)|Expr::Section{..}) && !matches!(&value,Expr::Call(tag,_) if tag=="@packed_view") {
         crate::array_calls::character_constructor(&mut value,shapes,out,serial)?;

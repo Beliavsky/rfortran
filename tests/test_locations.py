@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from test_record_read import ROOT, COMPILER, build_commands
 from run_ofort_compat import equivalent
+import test_deallocate
 
 class LocationTests(unittest.TestCase):
     def test_execution(self):
@@ -81,6 +82,45 @@ end program main
                 result=subprocess.run(command,capture_output=True,text=True,timeout=15)
                 self.assertEqual(result.returncode,0,result.stderr)
                 self.assertTrue(equivalent(result.stdout,"4 2 4\n1 3 3\n3 3\n10 20\n\n"),result.stdout)
+
+    check = test_deallocate.Deallocate.check
+
+    def test_runtime_arrays(self):
+        """MAXLOC, MINLOC, FINDLOC and SIZE of ALLOCATABLE arrays and their expressions."""
+        self.check("""program p
+integer, allocatable :: a(:)
+real, allocatable :: x(:)
+integer :: n, i, k(1)
+n = 6
+allocate(x(n))
+a = [2, 7, 1, 7, -3, 0]
+do i = 1, n
+  x(i) = sin(real(i))
+end do
+print '(*(i0,1x))', maxloc(a), minloc(a), maxloc(a, back=.true.), findloc(a, 7), findloc(a, 7, back=.true.)
+print '(*(i0,1x))', maxloc(a, dim=1), minloc(a, mask=a > 0), findloc(a, 99), maxloc(-a)
+print '(*(i0,1x))', maxloc(x), minloc(x), maxloc(x, mask=x < 0.5), minloc(abs(x))
+k = maxloc(a(2:5))
+print '(*(i0,1x))', k, size(a)
+deallocate(a)
+allocate(a(0))
+print '(*(i0,1x))', maxloc(a), findloc(a, 1)
+end program
+""", '2 5 4 2 4\n2 3 0 5\n2 5 3 3\n1 6\n0 0\n')
+        self.check("""program p
+integer, allocatable :: a(:)
+real, allocatable :: x(:)
+character(len=:), allocatable :: s(:)
+integer :: b(4)
+a = [3, 1, 2]
+allocate(x(5))
+x = 1.5
+b = 0
+s = [character(len=6) :: 'apple', 'kiwi']
+print '(*(i0,1x))', size(a+1), size(-a), size(abs(a)*2), size(sqrt(x)), size(x, 1), size(len_trim(s)), size(index(s,'i')), size(b+1)
+print '(*(i0,1x))', maxloc(len_trim(s)), minloc(abs(a-2))
+end program
+""", '3 3 3 5 5 2 2 4\n1 3\n')
 
 if __name__=="__main__":
     unittest.main()

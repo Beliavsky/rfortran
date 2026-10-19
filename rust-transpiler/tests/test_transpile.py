@@ -108,8 +108,9 @@ end module
 
     def test_malformed_programs_and_late_declarations(self):
         self.reject("print *, 1\ninteger :: i", "declarations must precede")
-        with self.assertRaisesRegex(Unsupported, "requires IMPLICIT NONE"):
-            transpile("program p\nprint *, 1\nend\n")
+        transpile("program p\nprint *, 1\nend\n")
+        with self.assertRaisesRegex(Unsupported,"undeclared variable `i`"):
+            transpile("program p\ni=3\nprint *,i\nend\n")
 
     def test_compiler_syntax_errors_and_backend_limits_are_reported(self):
         for expression in ("0x10", "1_000", "[1,2]", "__import__('os')", "1 if .true. else 2", "2 // 1", "1 % 2"):
@@ -223,6 +224,24 @@ class StyleTests(unittest.TestCase):
 
 @unittest.skipUnless(HAS_FRONTEND and shutil.which("rustc") and shutil.which("gfortran"), "rfort, rustc, and gfortran required")
 class NativeTests(unittest.TestCase):
+    def test_omitted_implicit_none_with_explicit_declarations(self):
+        self.compare((ROOT.parent / "xno_implicit_none.f90").read_text())
+        self.compare("""module m
+contains
+function twice(i) result(j)
+integer,intent(in) :: i
+integer :: j
+j=2*i
+end function
+end module
+program p
+use m
+integer :: i
+i=3
+print *,twice(i)
+end program
+""")
+
     def test_numeric_allocatables_shapes_indexing_and_lifecycle(self):
         self.compare(program("""integer,allocatable :: a(:,:)
 real,allocatable :: b(:,:,:)

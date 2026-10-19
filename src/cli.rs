@@ -107,6 +107,10 @@ pub struct Cli {
 
 #[derive(Debug, StructOpt, Clone)]
 pub enum Command {
+    /// Start an interactive scalar Fortran session.
+    Repl,
+    #[structopt(setting = structopt::clap::AppSettings::Hidden)]
+    ReplEval { input: PathBuf },
     Lex {
         input: PathBuf,
         out: Option<PathBuf>,

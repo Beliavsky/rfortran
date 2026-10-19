@@ -119,6 +119,35 @@ few regression tests exercise it, it can be orders of magnitude slower on loops,
 and it can produce results that differ from the compiled program. Prefer the
 native build (`rfort --run`) when correctness matters.
 
+### Interactive scalar sessions
+
+Start a REPL with `rfort repl` (or `rf.bat repl` on Windows):
+
+```text
+rfort> integer :: n
+rfort> n = 10
+rfort> n**2
+ 100
+rfort> print *, n
+ 10
+```
+
+The session retains INTEGER, REAL, DOUBLE PRECISION, LOGICAL and CHARACTER
+scalars, named constants, and random-number state. Variables must be declared;
+the session uses `IMPLICIT NONE`. Declarations can be entered after executable
+statements. Bare expressions print their values. Multiline IF, DO and SELECT
+CASE constructs, and free-form `&` continuations, are accepted.
+
+Use `:help`, `:reset`, `:cancel` (discard unfinished input), and `:quit` or `:q`.
+EOF also exits. Redirected input has no banner or prompts.
+
+Only new input executes; previous output and random calls are not replayed.
+Each submission uses a worker process and saves initialized scalar values on
+success. A failed submission retains previous values; output already produced
+by that submission remains visible. The first version excludes arrays, COMPLEX,
+modules, user-defined procedures, READ and file I/O. Use `rfort run file.f90`
+for those features. The REPL shares the interpreter's current limitations.
+
 Warnings (`-Wall`, `-Wunused`, `-Woptional-argument`, `-Werror`), multi-file
 builds, separate compilation with `-c`, and the `.rmod` module interface files
 are described in [docs/usage.md](docs/usage.md).

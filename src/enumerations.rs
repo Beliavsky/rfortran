@@ -12,6 +12,9 @@ use std::collections::{HashMap, HashSet};
 mod io;
 #[path = "enumeration_allocation.rs"]
 mod allocation;
+#[path = "enum_types.rs"]
+mod enum_types;
+pub use enum_types::definition as enum_definition;
 
 pub fn definition(
     name: String,
@@ -211,6 +214,7 @@ impl Ty {
 }
 #[derive(Clone)]
 struct Scope {
+    enum_members: HashMap<String, String>,
     allocatables: HashSet<String>,
     shapes: HashMap<String, Vec<Expr>>,
     character_constants: HashMap<String, Expr>,
@@ -225,6 +229,7 @@ struct Scope {
 impl Default for Scope {
     fn default() -> Self {
         Self {
+            enum_members: HashMap::new(),
             allocatables: HashSet::new(),
             shapes: HashMap::new(),
             character_constants: HashMap::new(),
@@ -434,6 +439,7 @@ impl Context {
                 _ => vec![],
             };
             for n in names {
+                scope.enum_members.remove(&n);
                 scope.optional.remove(&n);
                 scope.readonly.remove(&n);
             }
@@ -531,6 +537,11 @@ impl Context {
                         scope
                             .vars
                             .insert(n.clone(), self.nominal(type_name, dims.len()));
+                        if attributes.iter().any(|a| a == "@enum_member") {
+                            scope.enum_members.insert(n.clone(), type_name.clone());
+                            scope.vars.insert(n.clone(), Ty::Integer(0));
+                            scope.kinds.insert(n.clone(), TypeSpec::Integer(None));
+                        }
                         scope.constants.remove(n);
                         scope.parameters.remove(n);
                         if attributes.iter().any(|a| a == "parameter") {
@@ -604,6 +615,7 @@ impl Context {
             {
                 let ty = self.expression(&mut args[0].clone(), scope, false).ok()?;
                 let ty = ty.enumeration()?;
+                if self.is_c_enum(ty) { return None; }
                 let value = self.constant(&args[0], scope)?;
                 let value = value + if n == "next" { 1 } else { -1 };
                 return (value >= 1 && value <= count(&self.types[ty]) as i64).then_some(value);
@@ -611,6 +623,14 @@ impl Context {
         }
         let mut e = e.clone();
         visit_expr(&mut e, &mut |e| match e {
+            Expr::IntLit(text) if text.contains('_') => {
+                if let Some((number,kind))=text.split_once('_') {
+                    let kind=kind.parse::<i64>().ok().or_else(||scope.constants.get(kind).copied()).or_else(||self.globals.constants.get(kind).copied());
+                    if let Some(kind @ (1|2|4|8))=kind {
+                        *e=Expr::Call("@integer_literal".into(),vec![Expr::IntLit(number.into()),int(kind)]);
+                    }
+                }
+            }
             Expr::Ident(n)
                 if scope.constants.contains_key(n) || self.globals.constants.contains_key(n) =>
             {
@@ -626,9 +646,7 @@ impl Context {
                     || n == "int" && !self.procedures.contains_key(n))
                     && a.len() == 1 =>
             {
-                if let Expr::IntLit(_) = &a[0] {
-                    *e = a[0].clone();
-                }
+                *e = a[0].clone();
             }
             Expr::Call(n, a) if n == "huge" && a.len() == 1 && !self.procedures.contains_key(n) => {
                 if let Ok(Some(TypeSpec::Integer(k))) =
@@ -794,6 +812,12 @@ impl Context {
             Expr::Ident(n) => {
                 let ty = self.name(n, scope);
                 if prepare {
+                    if scope.enum_members.contains_key(n) || self.globals.enum_members.contains_key(n) {
+                        if let Some(value) = scope.constants.get(n).or_else(||self.globals.constants.get(n)) {
+                            *e = int(*value);
+                        }
+                        return Ok(ty);
+                    }
                     if let (Some(t), Some(value)) = (
                         ty.enumeration(),
                         scope
@@ -822,6 +846,8 @@ impl Context {
                 self.name(name, scope).ranked(1)
             }
             Expr::Bin(op, a, b) => {
+                let left_members = self.member_types(a, scope);
+                let right_members = self.member_types(b, scope);
                 let left = self.expression(a, scope, prepare)?;
                 let right = self.expression(b, scope, prepare)?;
                 if left.enumeration().is_some() || right.enumeration().is_some() {
@@ -829,7 +855,9 @@ impl Context {
                         return Ok(Ty::Other);
                     }
                     if left.enumeration() != right.enumeration() {
-                        bail!("comparison operands must have the same enumeration type");
+                        let conforms = left.enumeration().is_some_and(|n|self.is_c_enum(n) && matches!(right,Ty::Integer(_)) && right_members.contains(n))
+                            || right.enumeration().is_some_and(|n|self.is_c_enum(n) && matches!(left,Ty::Integer(_)) && left_members.contains(n));
+                        if !conforms { bail!("comparison operands must have the same enumeration type or a type-conforming integer expression"); }
                     }
                     if !matches!(
                         op,
@@ -958,10 +986,13 @@ impl Context {
                         return Ok(Ty::Enum(n.clone(), 0));
                     }
                     if types.len() != 1 || types[0] != Ty::Integer(0) {
+                        if self.is_c_enum(n) { bail!("enum constructor `{n}` requires one scalar INTEGER value"); }
                         bail!("enumeration constructor `{n}` requires one scalar INTEGER ordinal");
                     }
                     if let Some(v) = self.constant(&args[0], scope) {
-                        if v < 1 || v > count(&self.types[n]) as i64 {
+                        if self.is_c_enum(n) {
+                            self.check_c_value(n,v)?;
+                        } else if v < 1 || v > count(&self.types[n]) as i64 {
                             bail!(
                                 "enumeration constructor `{n}` ordinal {v} is outside 1..{}",
                                 count(&self.types[n])
@@ -1032,6 +1063,7 @@ impl Context {
                         bail!("HUGE expects one argument");
                     }
                     let ty = types[0].enumeration().unwrap().to_string();
+                    if self.is_c_enum(&ty) { bail!("HUGE does not accept an enum type; it requires an enumeration type or a numeric type"); }
                     if prepare {
                         *e = Expr::Call(ty.clone(), vec![int(count(&self.types[&ty]) as i64)]);
                     }
@@ -1043,6 +1075,9 @@ impl Context {
                     if types[0].enumeration().is_none() && (self.strict || types[0] != Ty::Unknown)
                     {
                         bail!("{n} A must have enumeration type");
+                    }
+                    if types[0].enumeration().is_some_and(|n|self.is_c_enum(n)) {
+                        bail!("{n} requires an enumeration type, not an enum type");
                     }
                     if let Some(stat) = types.get(1) {
                         if !matches!(stat, Ty::Integer(_)) {
@@ -1137,6 +1172,19 @@ impl Context {
     ) -> Result<()> {
         let scope = self.scope(body, parent);
         let mut initialized = HashSet::new();
+        let mut available = scope.parameters.clone();
+        available.extend(self.globals.parameters.iter().cloned());
+        for statement in body.iter() {
+            match statement {
+                Stmt::DerivedDecl {names,attributes,..} if attributes.iter().any(|a|a=="parameter") => {
+                    for name in names {available.remove(name);}
+                }
+                Stmt::InitializedDecl {entities,attributes,..} if attributes.iter().any(|a|a=="parameter") => {
+                    for (name,_) in entities {available.remove(name);}
+                }
+                _=>{}
+            }
+        }
         for s in body {
             if let Stmt::SourceLocation(p) = s {
                 offset = Some(*p);
@@ -1209,25 +1257,37 @@ impl Context {
                             }
                         }
                     }
-                    Stmt::InitializedDecl { entities, .. } => {
+                    Stmt::InitializedDecl { entities, attributes, .. } => {
                         for (name, value) in entities {
                             if let Some(value) = value {
                                 let target = self.name(name, &scope);
-                                let ty = self.expression(value, &scope, prepare)?;
-                                self.compatible(&target, &ty)?;
+                                self.check_value(&target, value, &scope, prepare)?;
                             }
+                            if attributes.iter().any(|a|a=="parameter") {available.insert(name.clone());}
                         }
                     }
                     Stmt::Assign { name, value } => {
                         let t = self.name(name, &scope);
-                        let v = self.expression(value, &scope, prepare)?;
-                        self.compatible(&t, &v)?;
+                        if scope.enum_members.contains_key(name) {
+                            let mut forward = None;
+                            visit_expr(&mut value.clone(), &mut |e| if let Expr::Ident(n)=e {
+                                if (scope.parameters.contains(n) || self.globals.parameters.contains(n)) && !available.contains(n) {forward=Some(n.clone());}
+                            });
+                            if let Some(n)=forward {bail!("enumerator initializer refers to `{n}` before its definition");}
+                        }
+                        self.check_value(&t, value, &scope, prepare)?;
+                        if let Some(ty) = scope.enum_members.get(name) {
+                            let ordinal = self.constant(value, &scope).ok_or_else(||anyhow::anyhow!("enumerator `{name}` requires an integer constant expression"))?;
+                            self.check_c_value(ty,ordinal)?;
+                            if !initialized.insert(name.clone()) {bail!("cannot assign to enumeration named constant `{name}`");}
+                        }
                         if scope.parameters.contains(name)
                             && t.enumeration().is_some()
                             && !initialized.insert(name.clone())
                         {
                             bail!("cannot assign to enumeration named constant `{name}`");
                         }
+                        if scope.parameters.contains(name) {available.insert(name.clone());}
                     }
                     Stmt::AssignIndex {
                         name,
@@ -1236,8 +1296,7 @@ impl Context {
                     } => {
                         let rank = indices.iter().filter(|e| section(e)).count();
                         let t = self.name(name, &scope).ranked(rank);
-                        let v = self.expression(value, &scope, prepare)?;
-                        self.compatible(&t, &v)?;
+                        self.check_value(&t, value, &scope, prepare)?;
                         for e in indices {
                             if self.expression(e, &scope, false)?.enumeration().is_some()
                                 && !section(e)
@@ -1261,8 +1320,7 @@ impl Context {
                                     if matches!(e,Expr::Call(n,_) if n=="@case_unbounded") {
                                         continue;
                                     }
-                                    let v = self.expression(e, &scope, prepare)?;
-                                    self.compatible(&t, &v)?;
+                                    self.check_value(&t, e, &scope, prepare)?;
                                 }
                             }
                         }
@@ -1284,7 +1342,7 @@ impl Context {
                                 self.io_nested_type(e, &scope, ty)
                             })
                             .collect::<Result<Vec<_>>>()?;
-                        if name == "@internal_read" && types.iter().any(|t| t.enumeration().is_some()) {
+                        if name == "@internal_read" && types.iter().any(|t| t.enumeration().is_some_and(|n|!self.is_c_enum(n))) {
                             bail!("list-directed input/output is not permitted for enumeration values; use INT for output");
                         }
                         if types.iter().any(|t| t.enumeration().is_some())
@@ -1292,7 +1350,11 @@ impl Context {
                             && !self.procedures.contains_key(name)
                             && !self.generics.contains(name)
                         {
-                            if let Some(layout) = io::layout(name, args) {
+                            if name == "@internal_read" {
+                                if types.iter().take(3).any(|t|t.enumeration().is_some()) {
+                                    bail!("enum values cannot be used as I/O controls");
+                                }
+                            } else if let Some(layout) = io::layout(name, args) {
                                 self.check_io(args, &types, &scope, layout)?;
                             } else {
                                 bail!("construct `{name}` does not yet support enumeration operands");
@@ -1303,7 +1365,7 @@ impl Context {
                     Stmt::Print { items } | Stmt::Read { args: items } => {
                         for e in items {
                             let ty = self.expression(e, &scope, prepare)?;
-                            if self.io_nested_type(e, &scope, ty)?.enumeration().is_some() {
+                            if self.io_nested_type(e, &scope, ty)?.enumeration().is_some_and(|n|!self.is_c_enum(n)) {
                                 bail!("list-directed input/output is not permitted for enumeration values; use INT for output");
                             }
                         }
@@ -1449,11 +1511,15 @@ impl Context {
                 if self.types.contains_key(n) {
                     self.serial += 1;
                     let helper = format!("@enum_constructor_{}", self.serial);
-                    let size = count(&self.types[n]);
-                    let message = format!(
+                    let (lo,hi,message) = if self.is_c_enum(n) {
+                        (i32::MIN as i64,i32::MAX as i64,format!("@enumeration_runtime:enum constructor `{n}` integer value outside the supported C int range"))
+                    } else {
+                        let size = count(&self.types[n]);
+                        (1,size as i64,format!(
                         "enumeration constructor `{}` ordinal outside 1..{size}",
                         crate::source_diagnostics::user_names(&format!("`{n}`")).trim_matches('`')
-                    );
+                        ))
+                    };
                     self.helpers.push(Stmt::Function {
                         name: helper.clone(),
                         params: vec!["ordinal".into()],
@@ -1471,13 +1537,13 @@ impl Context {
                             },
                             Stmt::If {
                                 cond: Expr::or(
-                                    Expr::lt(Expr::Ident("ordinal".into()), int(1)),
-                                    Expr::gt(Expr::Ident("ordinal".into()), int(size as i64)),
+                                    Expr::lt(Expr::Ident("ordinal".into()), int(lo)),
+                                    Expr::gt(Expr::Ident("ordinal".into()), int(hi)),
                                 ),
-                                then_body: vec![Stmt::CallSub {
+                                then_body: self.location.filter(|_|self.is_c_enum(n)).map(Stmt::SourceLocation).into_iter().chain(std::iter::once(Stmt::CallSub {
                                     name: "@error_stop".into(),
                                     args: vec![Expr::Str(message)],
-                                }],
+                                })).collect(),
                                 else_body: None,
                             },
                             Stmt::Return(Some(Expr::Ident("ordinal".into()))),
@@ -1567,7 +1633,7 @@ impl Context {
                             let mut attrs: Vec<_> = attributes
                                 .iter()
                                 .filter(|a| {
-                                    !(attributes.iter().any(|a| a == "parameter")
+                                    a.as_str()!="@enum_member" && !(attributes.iter().any(|a| a == "parameter")
                                         && a.as_str() == "save")
                                 })
                                 .cloned()
@@ -1722,6 +1788,7 @@ fn context(p: &Program, strict: bool) -> Result<Context> {
             if let Stmt::Module { body, .. } = s {
                 let vars = c.scope(body, &Scope::default());
                 c.globals.vars.extend(vars.vars);
+                c.globals.enum_members.extend(vars.enum_members);
                 c.globals.kinds.extend(vars.kinds);
                 c.globals.constants.extend(vars.constants);
                 c.globals.parameters.extend(vars.parameters);

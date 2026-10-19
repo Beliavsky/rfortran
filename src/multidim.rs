@@ -14,6 +14,19 @@ fn int(n: i64) -> Expr {
 fn bin(op: BinOp, a: Expr, b: Expr) -> Expr {
     Expr::Bin(op, Box::new(a), Box::new(b))
 }
+/// The runtime extent of a rank-one expression of runtime array views.
+pub(crate) fn runtime_extent(e: &Expr) -> Option<Expr> {
+    match e {
+        Expr::Call(n, args) if n == "@packed_view" && args.len() == 2 => Some(args[1].clone()),
+        Expr::Bin(_, a, b) => runtime_extent(a).or_else(|| runtime_extent(b)),
+        Expr::Un(_, a) => runtime_extent(a),
+        Expr::Call(n, args) if crate::intrinsics::math_arity(n).is_some()
+            || matches!(n.as_str(), "abs" | "real" | "dble" | "int" | "nint" | "mod" | "modulo" | "sign" | "min" | "max"
+                | "len_trim" | "index" | "scan" | "verify" | "ichar" | "iachar") =>
+            args.iter().find_map(runtime_extent),
+        _ => None,
+    }
+}
 fn total(dims: &[i64]) -> Result<i64> {
     dims.iter().try_fold(1i64, |n, d| {
         if *d < 0 { bail!("this array operation requires a statically known shape; runtime PACK results are not supported here"); }
@@ -376,7 +389,17 @@ impl Lowerer {
             Expr::Call(n,_) if matches!(n.as_str(),"@minloc" | "@maxloc" | "@findloc") => {
                 let result_dims = self.shape(e,shapes)?.unwrap_or_default();
                 let Expr::Call(_,args) = e else { unreachable!() };
-                let dims = self.shape(&args[0],shapes)?.context("location ARRAY must be an array")?;
+                let Some(dims) = self.shape(&args[0],shapes)? else {
+                    // A runtime rank-one ARRAY, as an ALLOCATABLE array, is
+                    // searched up to its runtime extent.
+                    let length = runtime_extent(&args[0]).context("location ARRAY must be an array")?;
+                    if !matches!(&args[2],Expr::Call(tag,_) if tag == "@no_dim") && crate::parameters::integer_constant(&args[2]).ok() != Some(1) {
+                        bail!("location DIM must be 1 for a rank-one ARRAY");
+                    }
+                    for i in [0,1,3,5] { self.expression(&mut args[i],shapes)?; }
+                    args.extend([int(1),length,Expr::Call("@location_source_shape".into(),vec![int(-1)]),Expr::Call("@location_result_shape".into(),result_dims.into_iter().map(int).collect())]);
+                    return Ok(());
+                };
                 let count = total(&dims)?;
                 if let Some(mask) = self.shape(&args[3],shapes)? {
                     if mask != dims { bail!("location MASK shape must conform to ARRAY"); }
@@ -532,7 +555,24 @@ impl Lowerer {
             }
             Expr::Call(n, args) if n == "size" => {
                 let Some(Expr::Ident(array)) = args.first() else {
-                    bail!("SIZE currently requires a whole array");
+                    // An array expression, as SIZE(a+1) or SIZE(LEN_TRIM(s)),
+                    // has the extent of its arrays, which is not evaluated.
+                    let source = args.first().context("SIZE expects an array and optional dimension")?;
+                    if args.len() > 2 { bail!("SIZE expects an array and optional dimension"); }
+                    let axis = args.get(1).map(|d| crate::parameters::integer_constant(d).context("SIZE dimension must currently be constant")).transpose()?;
+                    if let Some(mut extent) = runtime_extent(source) {
+                        if axis.is_some_and(|a| a != 1) { bail!("SIZE dimension must be 1 for a rank-one array"); }
+                        self.expression(&mut extent, shapes)?;
+                        *e = extent;
+                        return Ok(());
+                    }
+                    let dims = self.shape(source, shapes)?.context("SIZE currently requires an array")?;
+                    *e = int(match axis {
+                        None => total(&dims)?,
+                        Some(axis) if axis >= 1 && axis as usize <= dims.len() => dims[axis as usize - 1],
+                        Some(_) => bail!("SIZE dimension must be between 1 and {}", dims.len()),
+                    });
+                    return Ok(());
                 };
                 self.check_association(array)?;
                 let Some(dims) = shapes.get(array) else {
@@ -603,7 +643,10 @@ impl Lowerer {
                     let Expr::Call(_,dims) = &args[9] else { unreachable!() };
                     return Ok(if dims.is_empty() { None } else { Some(dims.iter().map(crate::parameters::integer_constant).collect::<Result<Vec<_>>>()?) });
                 }
-                let mut dims = self.shape(&args[0],shapes)?.context("location ARRAY must be an array")?;
+                let Some(mut dims) = self.shape(&args[0],shapes)? else {
+                    runtime_extent(&args[0]).context("location ARRAY must be an array")?;
+                    return Ok(if matches!(&args[2],Expr::Call(tag,_) if tag == "@no_dim") { Some(vec![1]) } else { None });
+                };
                 total(&dims)?;
                 if matches!(&args[2],Expr::Call(tag,_) if tag == "@no_dim") { return Ok(Some(vec![dims.len() as i64])); }
                 let dim = crate::parameters::integer_constant(&args[2]).context("location DIM must currently be a constant INTEGER; use MASK= when omitting DIM")?;

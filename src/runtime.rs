@@ -9,8 +9,18 @@ struct FuncDef {
 }
 
 pub fn interpret(program: &Program) {
+    let _ = interpret_inner(program, None);
+}
+
+pub(crate) fn interpret_scalars(program: &Program, flags: &std::collections::BTreeMap<String,String>,
+    seed: &mut u64) -> anyhow::Result<HashMap<String,Expr>> {
+    interpret_inner(program, Some((flags, seed)))
+}
+
+fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeMap<String,String>, &mut u64)>)
+    -> anyhow::Result<HashMap<String,Expr>> {
     thread_local! { static RANDOM_STATE: std::cell::Cell<u64> = const { std::cell::Cell::new(1) }; }
-    RANDOM_STATE.with(|state| state.set(1));
+    RANDOM_STATE.with(|state| state.set(session.as_ref().map_or(1, |(_, seed)| **seed)));
     thread_local! { static FILES: std::cell::RefCell<crate::file_io::Files> = std::cell::RefCell::new(crate::file_io::Files::default()); }
     FILES.with(|files| *files.borrow_mut() = crate::file_io::Files::default());
     thread_local! { static POINTER_STORAGE: std::cell::RefCell<Vec<(usize,String)>> = std::cell::RefCell::new(vec![(usize::MAX,String::new())]); }
@@ -1983,6 +1993,22 @@ pub fn interpret(program: &Program) {
     };
     let mut call_stack = vec![top_frame];
     let _ = exec_stmts(&program.body, &funcs, &mut call_stack);
+    let mut values = HashMap::new();
+    if let Some((flags, seed)) = session {
+        *seed = RANDOM_STATE.with(|state| state.get());
+        let frame = &call_stack[0];
+        for (name, flag) in flags {
+            if name.starts_with('@') || frame.env_int.get(flag) != Some(&1) { continue; }
+            let value = if let Some(v) = frame.env_int.get(name) { Expr::IntLit(v.to_string()) }
+                else if let Some(v) = frame.env_real32.get(name) { Expr::RealLit((*v as f64).to_string()) }
+                else if let Some(v) = frame.env_real64.get(name) { Expr::RealLit(v.to_string()) }
+                else if let Some(v) = frame.env_log.get(name) { Expr::Logical(*v) }
+                else if let Some(v) = frame.env_str.get(name) { Expr::Str(v.clone()) }
+                else { continue; };
+            values.insert(name.clone(), value);
+        }
+    }
+    Ok(values)
 }
 
 #[no_mangle]
