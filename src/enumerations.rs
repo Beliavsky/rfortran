@@ -232,6 +232,7 @@ struct Routine {
 struct Context {
     types: HashMap<String, String>,
     fields: HashMap<String, HashMap<String, Ty>>,
+    field_order: HashMap<String, Vec<String>>,
     procedures: HashMap<String, Routine>,
     generics: HashSet<String>,
     strict: bool,
@@ -446,6 +447,25 @@ impl Context {
                 } if marker(s).is_none() => {
                     self.fields
                         .insert(name.clone(), self.scope(components, &Scope::default()).vars);
+                    let mut order = vec![];
+                    for component in components {
+                        let names = match component {
+                            Stmt::VarDecl { names, .. } | Stmt::DerivedDecl { names, .. } => {
+                                names.clone()
+                            }
+                            Stmt::ArrayDecl { name, .. } => vec![name.clone()],
+                            Stmt::InitializedDecl { entities, .. } => {
+                                entities.iter().map(|(n, _)| n.clone()).collect()
+                            }
+                            _ => vec![],
+                        };
+                        for n in names {
+                            if !order.contains(&n) {
+                                order.push(n);
+                            }
+                        }
+                    }
+                    self.field_order.insert(name.clone(), order);
                 }
                 Stmt::GenericInterface { name, .. } => {
                     self.generics.insert(name.clone());
@@ -635,6 +655,26 @@ impl Context {
                 ty
             }
             Expr::Call(n, args) | Expr::Index(n, args) => {
+                // The first argument is a type name, not a data expression.
+                if n == "@record_constructor" {
+                    if let Some(Expr::Ident(name)) = args.first() {
+                        if self.types.contains_key(name) {
+                            let name = name.clone();
+                            for item in &mut args[1..] {
+                                let actual = self.expression(item, scope, prepare)?;
+                                if actual.enumeration() != Some(name.as_str())
+                                    && (self.strict || actual != Ty::Unknown)
+                                {
+                                    bail!("typed array constructor requires elements of enumeration type `{name}`, got {}", actual.description());
+                                }
+                                if actual.rank() > 1 {
+                                    bail!("array constructor elements must be scalar or rank one");
+                                }
+                            }
+                            return Ok(Ty::Enum(name, 1));
+                        }
+                    }
+                }
                 if n == "@output_implied_do" && args.len() >= 5 {
                     let mut inner = scope.clone();
                     if let Expr::Ident(index) = &args[0] {
@@ -701,6 +741,24 @@ impl Context {
                     types.first().cloned().unwrap_or(Ty::Unknown)
                 } else if self.procedures.contains_key(n) || self.generics.contains(n) {
                     self.check_call(n, args, &types)?
+                } else if let Some(fields) = self.fields.get(n) {
+                    let order = &self.field_order[n];
+                    for (i, (arg, actual)) in args.iter().zip(&types).enumerate() {
+                        if crate::named_arguments::omitted(arg) {
+                            continue;
+                        }
+                        let field = crate::named_arguments::keyword(arg)
+                            .map(|(key, _)| key)
+                            .or_else(|| order.get(i).map(String::as_str));
+                        if let Some((field, expected)) =
+                            field.and_then(|f| fields.get(f).map(|t| (f, t)))
+                        {
+                            self.compatible(expected, actual).map_err(|e| {
+                                anyhow::anyhow!("constructor `{n}` component `{field}`: {e}")
+                            })?;
+                        }
+                    }
+                    Ty::Derived(n.clone(), 0)
                 } else if n == "@array_constructor" {
                     let enums = types.iter().filter_map(Ty::enumeration).collect::<Vec<_>>();
                     if let Some(first) = enums.first() {
@@ -1038,6 +1096,20 @@ impl Context {
     }
     fn erase_expr(&mut self, e: &mut Expr, scope: &Scope) -> Result<()> {
         if let Expr::Call(n, args) = e {
+            if n == "@record_constructor"
+                && matches!(args.first(), Some(Expr::Ident(t)) if self.types.contains_key(t))
+            {
+                let mut items = args.split_off(1);
+                for item in &mut items {
+                    self.erase_expr(item, scope)?;
+                }
+                *e = if items.is_empty() {
+                    crate::empty_constructors::parsed(TypeSpec::Integer(None), items)
+                } else {
+                    Expr::Call("@array_constructor".into(), items)
+                };
+                return Ok(());
+            }
             if n == "@enumeration_ordinal" && args.len() == 1 {
                 *e = args.pop().unwrap();
                 return self.erase_expr(e, scope);
@@ -1230,7 +1302,41 @@ impl Context {
             let module = matches!(s, Stmt::Module { .. });
             let empty = Scope::default();
             if let Stmt::DerivedType { components, .. } = &mut s {
+                // SAVE is parser metadata for a derived component default,
+                // not an attribute on the lowered intrinsic component.
+                let defaults: HashSet<String> = components
+                    .iter()
+                    .filter_map(|c| {
+                        if let Stmt::DerivedDecl {
+                            type_name,
+                            names,
+                            attributes,
+                            ..
+                        } = c
+                        {
+                            if self.types.contains_key(type_name)
+                                && attributes.iter().any(|a| a == "save")
+                            {
+                                return Some(names.clone());
+                            }
+                        }
+                        None
+                    })
+                    .flatten()
+                    .collect();
                 self.erase_body(components, &scope, false)?;
+                for c in components {
+                    if let Stmt::InitializedDecl {
+                        attributes,
+                        entities,
+                        ..
+                    } = c
+                    {
+                        if entities.iter().all(|(n, _)| defaults.contains(n)) {
+                            attributes.retain(|a| a != "save");
+                        }
+                    }
+                }
             }
             for b in children(&mut s) {
                 self.erase_body(b, if module || external { &empty } else { &scope }, module)?;
@@ -1260,6 +1366,7 @@ fn context(p: &Program, strict: bool) -> Result<Context> {
     let mut c = Context {
         types: HashMap::new(),
         fields: HashMap::new(),
+        field_order: HashMap::new(),
         procedures: HashMap::new(),
         generics: HashSet::new(),
         strict,

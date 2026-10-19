@@ -267,7 +267,23 @@ checked before conversion, including INTEGER(8) values. `INT(A[,KIND])` returns
 an ordinal and `HUGE(X)` returns the last enumerator. Keyword arguments to the
 supported intrinsics are accepted. Array constructors, constructor implied-DOs,
 fixed-size arrays and sections, SELECT CASE (including ranges), scalar procedure
-arguments/results, and derived-type component references are supported. Generic
+arguments/results, and derived-type component references are supported. Explicitly
+typed constructors such as `[colour :: red, green]` and `[colour ::]` retain
+their enumeration type for generic dispatch. Their elements can include runtime
+values, rank-one arrays, and implied-DOs. Structure constructors accept enumeration
+components, including keyword arguments and omitted components with defaults:
+
+```fortran
+type signal
+   integer :: id=0
+   type(colour) :: light=red
+end type
+type(signal) :: lamp
+lamp=signal(light=green)
+```
+
+Constructor elements and component values must have the declared enumeration
+type; INTEGER ordinals and values of a different enumeration are rejected. Generic
 interfaces distinguish enumeration types from INTEGER and from each other.
 USE ONLY/renaming, private types with public enumerators, and separate module
 compilation retain those distinctions.
@@ -277,9 +293,8 @@ revision modes require Fortran 2023. This is the section 9.2 ENUMERATION TYPE
 facility, not the distinct interoperable ENUM/BIND(C) facility in section 9.3.
 
 Current limits include NEXT/PREVIOUS, direct formatted enumeration I/O,
-POINTER/ALLOCATABLE enumeration objects, explicitly typed enumeration array
-constructors, derived constructors containing enumeration arguments, and some
-array intrinsics such as RESHAPE/PACK. List-directed and namelist enumeration I/O are forbidden by the
+POINTER/ALLOCATABLE enumeration objects, and some array intrinsics such as
+RESHAPE/PACK. List-directed and namelist enumeration I/O are forbidden by the
 language; use `INT(value)` to print its ordinal. Polymorphic enumeration objects
 are forbidden. Separate local type definitions with the same name in different
 procedures currently receive an unsupported-feature diagnostic; separate modules

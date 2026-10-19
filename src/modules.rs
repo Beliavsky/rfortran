@@ -259,7 +259,13 @@ fn scope(
                                 }
                             }
                         }
-                        Stmt::DerivedDecl { type_name, .. } => rename(type_name, &names),
+                        Stmt::DerivedDecl { type_name, dims, .. } => {
+                            rename(type_name, &names);
+                            for e in dims { expression(e, &names); }
+                        }
+                        // Derived component defaults follow their declarations
+                        // as assignments. Only the value sees the host scope.
+                        Stmt::Assign { value, .. } => expression(value, &names),
                         _ => {}
                     }
                 }

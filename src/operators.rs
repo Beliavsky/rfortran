@@ -651,7 +651,11 @@ impl Resolver {
             }
 
             if name=="@record_constructor" {
-                if let Some(Expr::Ident(ty))=args.first(){return Ok(Ty::Array(Box::new(Ty::Derived(ty.clone())),1));}
+                if let Some(Expr::Ident(ty))=args.first(){
+                    let ty=ty.clone();
+                    for item in &mut args[1..] {self.expression(item,vars,visible)?;}
+                    return Ok(Ty::Array(Box::new(Ty::Derived(ty)),1));
+                }
             }
             if name=="@enumeration_reference" && args.len()==3 {
                 self.expression(&mut args[2],vars,visible)?;

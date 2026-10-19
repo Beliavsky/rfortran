@@ -90,6 +90,166 @@ print *,int(b%light),b%light==orange
 end
 '''," 2 T\n")
 
+    def test_typed_array_constructors(self):
+        self.check('implicit none\n'+ENUM+'''type(colour)::a(4),c
+integer::i
+c=green
+a=[colour :: red,c,[colour :: orange],colour(1)]
+print *,int(a),size([colour ::])
+a=[colour :: (colour(i),i=1,3),c]
+print *,int(a)
+end
+'''," 1 3 2 1 0\n 1 2 3 3\n")
+
+    def test_typed_constructor_generic_dispatch(self):
+        self.check('module m\nimplicit none\n'+ENUM+'''interface code
+module procedure enum_code,int_code
+end interface
+contains
+integer function enum_code(c) result(n)
+type(colour),intent(in)::c(:)
+integer::n
+n=10+size(c)
+end function
+integer function int_code(c) result(n)
+integer,intent(in)::c(:)
+integer::n
+n=20+size(c)
+end function
+end module
+use m,only:hue=>colour,r=>red,code
+implicit none
+print *,code([hue :: r]),code([hue ::]),code([integer ::])
+end
+'''," 11 10 20\n")
+
+    def test_typed_constructor_rejects_wrong_elements(self):
+        for values in ('1','red,1','spring','red,spring','a'):
+            with self.subTest(values=values):
+                self.reject('implicit none\n'+ENUM+'''enumeration type :: season
+enumerator :: spring,summer
+end enumeration type
+integer::a(1)=[1]
+type(colour)::c(2)
+'''+f'c=[colour :: {values}]\nend\n',"typed array constructor requires elements")
+
+    def test_typed_constructor_resolves_generic_elements(self):
+        self.check('module m\nimplicit none\n'+ENUM+'''interface pick
+module procedure pick_colour,pick_integer
+end interface
+contains
+function pick_colour(c) result(r)
+type(colour),intent(in)::c
+type(colour)::r
+r=c
+end function
+integer function pick_integer(i) result(r)
+integer,intent(in)::i
+integer::r
+r=i
+end function
+end module
+use m
+implicit none
+type(colour)::a(2)
+a=[colour :: pick(red),pick(green)]
+print *,int(a)
+end
+'''," 1 3\n")
+
+    def test_generic_result_does_not_bypass_constructor_type_checks(self):
+        prefix='module m\nimplicit none\n'+ENUM+'''interface identity
+module procedure identity_integer
+end interface
+type signal
+type(colour)::light
+end type
+contains
+integer function identity_integer(i) result(r)
+integer,intent(in)::i
+integer::r
+r=i
+end function
+end module
+use m
+implicit none
+type(colour)::a(1)
+type(signal)::s
+'''
+        self.reject(prefix+'a=[colour :: identity(1)]\nend\n',
+                    "typed array constructor requires elements")
+        self.reject(prefix+'s=signal(identity(1))\nend\n',
+                    "constructor `signal` component")
+
+    def test_derived_constructors_with_enumeration_components(self):
+        self.check('implicit none\n'+ENUM+'''type signal
+integer::id=7
+type(colour)::light=orange
+end type
+type holder
+type(signal)::value
+end type
+type(signal)::a,b
+type(holder)::h
+type(colour)::c
+c=green
+a=signal(4,red)
+b=signal(light=c)
+h=holder(signal())
+print *,a%id,int(a%light),b%id,int(b%light),h%value%id,int(h%value%light)
+a=signal(light=b%light,id=9)
+print *,a%id,int(a%light)
+end
+'''," 4 1 7 3 7 2\n 9 3\n")
+
+    def test_derived_constructor_rejects_wrong_component_types(self):
+        for value in ('signal(1,1)','signal(1,spring)','signal(red,green)','signal(light=spring)','signal(light=[red])'):
+            with self.subTest(value=value):
+                self.reject('implicit none\n'+ENUM+'''enumeration type :: season
+enumerator :: spring,summer
+end enumeration type
+type signal
+integer::id=0
+type(colour)::light=red
+end type
+type(signal)::s
+'''+f's={value}\nend\n',"constructor `signal` component")
+
+    def test_imported_derived_constructor(self):
+        self.check('module m\nimplicit none\n'+ENUM+'''type signal
+integer::id=5
+type(colour)::light=red
+end type
+end module
+use m,only:lamp=>signal,go=>green
+implicit none
+type(lamp)::a
+a=lamp(light=go)
+print *,a%id,int(a%light)
+end
+'''," 5 3\n")
+
+    def test_constructor_array_components_and_distinct_enum_types(self):
+        self.check('implicit none\n'+ENUM+'''enumeration type :: season
+enumerator :: spring,summer
+end enumeration type
+type sample
+type(colour)::lights(2)
+type(season)::time
+end type
+type(sample)::s
+s=sample([colour :: red,green],summer)
+print *,int(s%lights),int(s%time)
+end
+'''," 1 3 2\n")
+
+    def test_typed_constructor_rejects_rank_two_item(self):
+        self.reject('implicit none\n'+ENUM+'''type(colour)::a(2,2),b(4)
+a=red
+b=[colour :: a]
+end
+''',"array constructor elements must be scalar or rank one")
+
     def test_renamed_imports(self):
         self.check('module m\nimplicit none\n'+ENUM+'''end module
 use m,only:hue=>colour,stop_colour=>red,go=>green
