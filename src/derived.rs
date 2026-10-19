@@ -1339,7 +1339,6 @@ fn resolve_types(mut program: Program) -> Result<Program> {
     program = crate::extensions::resolve(program)?;
     program = crate::procedure_arguments::resolve(program)?;
     program = crate::heap::automatic_derived(program)?;
-    crate::elemental::validate_program(&program)?;
     crate::imports::validate(&program)?;
     program=crate::tokenize::prepare(program)?;
     program = crate::named_arguments::resolve(program, false)?;
@@ -1350,6 +1349,9 @@ fn resolve_types(mut program: Program) -> Result<Program> {
     }
     program = crate::operators::resolve(program)?;
     program = crate::enumerations::lower(program)?;
+    // Enum scalar dummies/results retain nominal identity through dispatch and
+    // become supported INTEGER storage before ELEMENTAL storage validation.
+    crate::elemental::validate_program(&program)?;
     if crate::conditionals::contains(&program) {program=crate::heap::automatic_locals(program)?;}
     program = crate::conditionals::resolve(program)?;
     program = crate::named_arguments::resolve(program, true)?;

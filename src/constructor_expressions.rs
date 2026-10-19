@@ -335,6 +335,9 @@ impl Lower {
         let mut shapes = inherited.clone();
         for s in statements.iter() {
             match s {
+                Stmt::DummyIntent {name,intent} if matches!(intent.as_str(),"@heap"|"@heap_dummy") => {
+                    shapes.insert(format!("@constructor_heap:{name}"),(TypeSpec::Logical,vec![]));
+                }
                 Stmt::VarDecl { kind, names } => {
                     for n in names {
                         shapes.insert(n.clone(), (kind.clone(), vec![]));
@@ -367,9 +370,10 @@ impl Lower {
             let mut after = vec![];
             (|| -> Result<()> {
                 match &mut s {
-                    Stmt::Assign { value, .. }
+                    Stmt::Assign { name, value }
                         if matches!(&*value,Expr::Call(n,_) if n=="@array_constructor")
-                            && !Self::general(value, &shapes) => {}
+                            && !Self::general(value, &shapes)
+                            && !shapes.contains_key(&format!("@constructor_heap:{name}")) => {}
                     Stmt::Assign { value, .. } | Stmt::Return(Some(value)) => {
                         self.expr(value, &shapes, &mut before, &mut after)?
                     }

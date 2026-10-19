@@ -80,6 +80,19 @@ end function
 end
 '''," 3\n")
 
+    def test_elemental_enumeration_procedure(self):
+        self.check('implicit none\n'+ENUM+'''type(colour) :: a(2)
+a=identity([colour :: red,green])
+print *,int(a)
+contains
+pure elemental function identity(c) result(r)
+type(colour),intent(in) :: c
+type(colour) :: r
+r=c
+end function
+end
+'''," 1 3\n")
+
     def test_derived_component(self):
         self.check('implicit none\n'+ENUM+'''type box
 type(colour)::light

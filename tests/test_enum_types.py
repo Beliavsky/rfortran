@@ -93,10 +93,11 @@ s=season(6)
 print "(i3)",s
 end
 ''','direct formatted I/O of enum objects is not yet supported')
-        self.reject('implicit none\n'+ENUM+'''type(season) :: s(2)
+        self.check('implicit none\n'+ENUM+'''type(season) :: s(2)
 s=[spring,summer]
+print *,int(s)
 end
-''','type-conforming integer array expressions')
+''',' 5 7\n')
 
     def test_enumerator_uses_earlier_integer_parameters(self):
         self.check('''implicit none

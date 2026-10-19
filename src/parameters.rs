@@ -547,6 +547,14 @@ pub(crate) fn integer_constant(expr: &Expr) -> Result<i64> {
     evaluate(expr, &Constants::new())
 }
 
+/// Fold implemented intrinsic expressions before extracting an INTEGER value.
+/// Callers must have substituted visible constants and excluded user procedures.
+pub(crate) fn folded_integer_constant(expr: &Expr) -> Result<i64> {
+    let mut expr = expr.clone();
+    rewrite_expr(&mut expr, &Constants::new())?;
+    integer_constant(&expr)
+}
+
 fn separate_parameters(body: &mut Vec<Stmt>, arguments: &[String]) -> Result<()> {
     if !body.iter().any(|s| matches!(s,Stmt::InitializedDecl { attributes, .. } if attributes.iter().any(|a| a == "@separate_parameter"))) { return Ok(()); }
     let mut declared: HashMap<String,TypeSpec> = HashMap::new();

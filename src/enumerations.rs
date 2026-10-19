@@ -252,6 +252,7 @@ struct Routine {
     elemental: bool,
 }
 struct Context {
+    inference: Option<crate::operators::ExpressionTypes>,
     allocatable_fields: HashMap<String, HashSet<String>>,
     types: HashMap<String, String>,
     fields: HashMap<String, HashMap<String, Ty>>,
@@ -659,7 +660,12 @@ impl Context {
             }
             _ => {}
         });
-        crate::parameters::integer_constant(&e).ok()
+        let mut user_call = false;
+        visit_expr(&mut e.clone(), &mut |e| if let Expr::Call(n,_) = e {
+            user_call |= self.procedures.contains_key(n) || self.generics.contains(n);
+        });
+        if user_call { return None; }
+        crate::parameters::folded_integer_constant(&e).ok()
     }
     fn collect(&mut self, body: &[Stmt], parent: &Scope) -> Result<()> {
         let scope = self.scope(body, parent);
@@ -801,10 +807,13 @@ impl Context {
     }
     fn expression(&self, e: &mut Expr, scope: &Scope, prepare: bool) -> Result<Ty> {
         if let Expr::Call(n, args) = e {
-            if n == "@enumeration_reference" && args.len() == 3 {
-                self.expression(&mut args[2], scope, false)?;
+            if matches!(n.as_str(),"@enumeration_reference"|"@enum_conversion") && args.len() == 3 {
+                let actual = self.expression(&mut args[2], scope, false)?;
                 if let (Expr::Str(ty), Expr::IntLit(rank)) = (&args[0], &args[1]) {
-                    return Ok(Ty::Enum(ty.clone(), rank.parse().unwrap()));
+                    if n == "@enum_conversion" && (self.strict || actual != Ty::Unknown) && !matches!(actual,Ty::Integer(_)) && actual.enumeration()!=Some(ty.as_str()) {
+                        bail!("enum conversion requires an INTEGER expression");
+                    }
+                    return Ok(Ty::Enum(ty.clone(), if n=="@enum_conversion" && actual!=Ty::Unknown {actual.rank()} else {rank.parse().unwrap()}));
                 }
             }
         }
@@ -925,6 +934,9 @@ impl Context {
                     if let Some(Expr::Ident(name)) = args.first() {
                         if self.types.contains_key(name) {
                             let name = name.clone();
+                            if self.is_c_enum(&name) {
+                                return self.c_enum_items(&mut args[1..],Some(&name),scope,prepare).map(|t|t.unwrap());
+                            }
                             for item in &mut args[1..] {
                                 let actual = self.expression(item, scope, prepare)?;
                                 if actual.enumeration() != Some(name.as_str())
@@ -940,6 +952,9 @@ impl Context {
                         }
                     }
                 }
+                if n == "@array_constructor" {
+                    if let Some(ty)=self.c_enum_items(args,None,scope,prepare)? { return Ok(ty); }
+                }
                 if n == "@output_implied_do" && args.len() >= 5 {
                     let mut inner = scope.clone();
                     if let Expr::Ident(index) = &args[0] {
@@ -950,6 +965,7 @@ impl Context {
                             bail!("implied-DO bounds must be INTEGER, not enumeration values");
                         }
                     }
+                    if let Some(ty)=self.c_enum_items(&mut args[4..],None,&inner,prepare)? { return Ok(ty); }
                     let mut result = Ty::Unknown;
                     for e in &mut args[4..] {
                         let t = self.expression(e, &inner, prepare)?;
@@ -961,6 +977,22 @@ impl Context {
                         result = t;
                     }
                     return Ok(result.ranked(1));
+                }
+                if !self.procedures.contains_key(n) && !self.generics.contains(n) {
+                    if let Some(fields)=self.fields.get(n) {
+                        let order=&self.field_order[n];
+                        for (i,arg) in args.iter_mut().enumerate() {
+                            if crate::named_arguments::omitted(arg) {continue;}
+                            let field=crate::named_arguments::keyword(arg).map(|(key,_)|key.to_owned())
+                                .or_else(||order.get(i).cloned());
+                            if let Some((field,expected))=field.as_ref().and_then(|f|fields.get(f).map(|t|(f,t))) {
+                                let value=match arg {Expr::Call(tag,a) if tag.starts_with("@keyword:")=>&mut a[0],e=>e};
+                                self.check_value(expected,value,scope,prepare)
+                                    .map_err(|e|anyhow::anyhow!("constructor `{n}` component `{field}`: {e}"))?;
+                            } else {self.expression(arg,scope,prepare)?;}
+                        }
+                        return Ok(Ty::Derived(n.clone(),0));
+                    }
                 }
                 let array = self.name(n, scope);
                 let types = args
@@ -1009,24 +1041,6 @@ impl Context {
                     types.first().cloned().unwrap_or(Ty::Unknown)
                 } else if self.procedures.contains_key(n) || self.generics.contains(n) {
                     self.check_call(n, args, &types, scope)?
-                } else if let Some(fields) = self.fields.get(n) {
-                    let order = &self.field_order[n];
-                    for (i, (arg, actual)) in args.iter().zip(&types).enumerate() {
-                        if crate::named_arguments::omitted(arg) {
-                            continue;
-                        }
-                        let field = crate::named_arguments::keyword(arg)
-                            .map(|(key, _)| key)
-                            .or_else(|| order.get(i).map(String::as_str));
-                        if let Some((field, expected)) =
-                            field.and_then(|f| fields.get(f).map(|t| (f, t)))
-                        {
-                            self.compatible(expected, actual).map_err(|e| {
-                                anyhow::anyhow!("constructor `{n}` component `{field}`: {e}")
-                            })?;
-                        }
-                    }
-                    Ty::Derived(n.clone(), 0)
                 } else if n == "@array_constructor" {
                     let enums = types.iter().filter_map(Ty::enumeration).collect::<Vec<_>>();
                     if let Some(first) = enums.first() {
@@ -1049,7 +1063,8 @@ impl Context {
                             bail!("INT KIND must be a scalar INTEGER, not an enumeration value");
                         }
                     }
-                    Ty::Integer(types.iter().map(Ty::rank).max().unwrap_or(0))
+                    let inferred=self.intrinsic_type(n,args,&types,scope)?;
+                    if matches!(inferred,Ty::Integer(_)) {inferred} else {Ty::Integer(types.iter().map(Ty::rank).max().unwrap_or(0))}
                 } else if n == "@enumeration_ordinal" {
                     Ty::Integer(types.first().map(Ty::rank).unwrap_or(0))
                 } else if matches!(
@@ -1122,7 +1137,8 @@ impl Context {
                     }
                     Ty::Other
                 } else {
-                    self.check_call(n, args, &types, scope)?
+                    let ty=self.check_call(n, args, &types, scope)?;
+                    if ty==Ty::Unknown {self.intrinsic_type(n,args,&types,scope)?} else {ty}
                 }
             }
         };
@@ -1427,6 +1443,20 @@ impl Context {
         Ok(())
     }
     fn erase_expr(&mut self, e: &mut Expr, scope: &Scope) -> Result<()> {
+        if let Expr::Call(n,args)=e {
+            if n=="@enum_conversion" && args.len()==3 {
+                let Expr::Str(ty)=&args[0] else {bail!("invalid enum conversion metadata");};
+                let ty=ty.clone();
+                let mut value=args.pop().unwrap();
+                let actual=self.expression(&mut value.clone(),scope,false)?;
+                self.erase_expr(&mut value,scope)?;
+                *e=if actual.enumeration()==Some(ty.as_str()) {value} else {
+                    let helper=self.c_enum_array_helper(&ty);
+                    Expr::Call(helper,vec![value])
+                };
+                return Ok(());
+            }
+        }
         if let Expr::Call(n, args) = e {
             if matches!(n.as_str(), "next" | "previous")
                 && !self.procedures.contains_key(n)
@@ -1753,6 +1783,7 @@ fn context(p: &Program, strict: bool) -> Result<Context> {
         Ok(())
     }
     let mut c = Context {
+        inference: None,
         allocatable_fields: HashMap::new(),
         types: HashMap::new(),
         fields: HashMap::new(),
@@ -1798,6 +1829,9 @@ fn context(p: &Program, strict: bool) -> Result<Context> {
             }
         }
         c.collect(&p.body, &Scope::default())?;
+        if c.types.values().any(|tag|tag.starts_with("cenum:")) {
+            c.inference=Some(crate::operators::ExpressionTypes::new(p)?);
+        }
     }
     Ok(c)
 }

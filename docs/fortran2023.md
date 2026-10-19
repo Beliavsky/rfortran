@@ -396,16 +396,38 @@ association and renaming, scalar derived-type components, SELECT CASE values and
 ranges, and list-directed output are covered by tests. List-directed input uses
 the shared INTEGER input path. Strict standard modes require Fortran 2023.
 
-This is an initial scalar implementation, not full section 9.3 support. Direct
-formatted enum I/O is diagnosed; use `INT` for formatted output. Array constructor
-and assignment integration is incomplete, including type-conforming INTEGER
-array expressions. POINTER objects and scalar ALLOCATABLE objects are not
-supported. Some INTEGER-valued intrinsic expressions, such as `IOR(spring,1)`,
-are not yet inferred by the nominal checker in an enum assignment or constructor;
-store the result in an INTEGER variable and use the enum constructor on that
-variable. Actual calls across a C ABI are not implemented or claimed by accepting
-the BIND(C) definition. Existing local-type scoping and procedure/backend limits
-also apply. See `tests/programs/xenum_type.f90` and `tests/test_enum_types.py`.
+Enum arrays support typed and empty constructors, mixed enum/conforming INTEGER
+items, constructor implied-DOs, sections, whole-array assignment and reallocation,
+and conforming INTEGER array expressions. Enum identity survives constructors,
+module renaming, generic dispatch, procedure arguments/results, and ELEMENTAL
+procedures. Fixed-size array conversions through rank 15 and runtime-sized
+rank-one allocatable constructor results are tested. Integer-to-enum conversions
+check each value against the supported C integer range, retaining source locations
+for runtime errors. Intrinsic result inference reuses the shared expression-type
+resolver and numeric model catalog: examples include `IOR(spring,2)`, INTEGER
+conversions of REAL arrays, and integer-valued generic function results.
+
+Structure constructors accept conforming INTEGER expressions for enum components,
+including positional and keyword arguments, scalar and array components, and
+omitted components with defaults. For example:
+
+```fortran
+type calendar
+   type(season) :: current=summer
+   type(season) :: following(2)
+end type
+type(calendar) :: plan
+plan=calendar(following=[season :: spring,season(6)], current=ior(spring,2))
+```
+
+Section 9.3 remains partial. Direct formatted enum I/O is diagnosed; use `INT` for
+formatted output. POINTER objects and scalar ALLOCATABLE objects are not supported.
+Actual calls across a C ABI are not implemented or claimed by accepting the
+BIND(C) definition. Existing local-type scoping, expression inference,
+procedure and array-backend limits still apply; supported constructors do not
+imply support for every transformational intrinsic with enum arrays. See
+`tests/programs/xenum_type.f90`, `tests/programs/xenum_arrays.f90`,
+`tests/test_enum_types.py` and `tests/test_enum_arrays.py`.
 
 ## Try it
 

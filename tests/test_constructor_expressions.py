@@ -9,6 +9,18 @@ from test_record_read import ROOT, build_commands
 class ConstructorExpressions(unittest.TestCase):
     check = test_deallocate.Deallocate.check
 
+    def test_direct_assignment_to_runtime_allocatable(self):
+        self.check('''implicit none
+integer :: i,n
+integer,allocatable :: a(:)
+read *,n
+a=[(i*i,i=1,n)]
+print *,size(a),a
+a=[(i,i=n,1,-1)]
+print *,size(a),a
+end
+''','3 1 4 9\n3 3 2 1\n',data='3\n')
+
     def test_reproducer(self):
         self.check((ROOT/'tests/programs/xconstructor_arithmetic.f90').read_text(), '100 137 174\n')
 

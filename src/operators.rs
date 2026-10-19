@@ -657,10 +657,10 @@ impl Resolver {
                     return Ok(Ty::Array(Box::new(Ty::Derived(ty)),1));
                 }
             }
-            if name=="@enumeration_reference" && args.len()==3 {
-                self.expression(&mut args[2],vars,visible)?;
+            if matches!(name.as_str(),"@enumeration_reference"|"@enum_conversion") && args.len()==3 {
+                let value=self.expression(&mut args[2],vars,visible)?;
                 if let (Expr::Str(ty),Expr::IntLit(rank))=(&args[0],&args[1]) {
-                    let rank:usize=rank.parse()?;
+                    let rank:usize=if name=="@enum_conversion" && value!=Ty::Unknown {match value {Ty::Array(_,rank)=>rank,_=>0}} else {rank.parse()?};
                     let element=Ty::Derived(ty.clone());
                     return Ok(if rank==0 {element}else{Ty::Array(Box::new(element),rank)});
                 }
