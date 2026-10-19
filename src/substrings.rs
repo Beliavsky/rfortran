@@ -260,6 +260,7 @@ fn capacity(e: &Expr, scope: &DynamicScope) -> Option<usize> {
         Expr::Str(s) => Some(s.len()),
         Expr::Ident(n) | Expr::Section { name: n, .. } => scope.characters.get(n).copied(),
         Expr::Bin(BinOp::Concat, a, b) => capacity(a, scope)?.checked_add(capacity(b, scope)?),
+        Expr::Call(n,args) if n=="repeat" && args.len()==2 && !scope.procedures.contains(n) => capacity(&args[0],scope)?.checked_mul(usize::try_from(crate::parameters::integer_constant(&args[1]).ok()?.max(0)).ok()?),
         Expr::Call(n, args) if matches!(n.as_str(),"trim"|"adjustl"|"adjustr") && args.len() == 1 => capacity(&args[0], scope),
         Expr::Call(n, args) if matches!(n.as_str(), "char" | "achar") && args.len()==1 => Some(1),
         Expr::Call(n, args) if n == "@literal_substring" => capacity(&args[0], scope),
@@ -421,8 +422,9 @@ fn dynamic_expression(e: &mut Expr, scope: &mut DynamicScope, output: &mut Vec<S
             if capacity(&args[0],scope).is_none() {bail!("NEW_LINE requires a scalar CHARACTER argument");}
             *e=Expr::Str("\n".into());
         }
-        Expr::Call(n,args) if matches!(n.as_str(),"index"|"scan"|"verify") && !scope.procedures.contains(n) && !scope.symbols.contains_key(n) => {
+        Expr::Call(n,args) if matches!(n.as_str(),"index"|"scan"|"verify"|"@split_scan") && !scope.procedures.contains(n) && !scope.symbols.contains_key(n) => {
             let operation=n.clone();
+            let split=operation=="@split_scan";
             if !(2..=4).contains(&args.len()) {bail!("{operation} requires two CHARACTER arguments and optional BACK and KIND");}
             let mut back=args.get(2).filter(|e|!crate::named_arguments::omitted(e)).cloned().unwrap_or(Expr::Logical(false));
             dynamic_expression(&mut back,scope,output,serial)?;
@@ -436,8 +438,8 @@ fn dynamic_expression(e: &mut Expr, scope: &mut DynamicScope, output: &mut Vec<S
                 Expr::Bin(BinOp::Eq|BinOp::Ne|BinOp::Lt|BinOp::Le|BinOp::Gt|BinOp::Ge,_,_)=>true,
                 _=>false,
             }}
-            if !logical(&back,scope) {bail!("{operation} BACK must be a scalar LOGICAL expression");}
-            let kind=args.get(3).filter(|e|!crate::named_arguments::omitted(e)).map(crate::parameters::integer_constant).transpose()
+            if !split && !logical(&back,scope) {bail!("{operation} BACK must be a scalar LOGICAL expression");}
+            let kind=args.get(3).filter(|_|!split).filter(|e|!crate::named_arguments::omitted(e)).map(crate::parameters::integer_constant).transpose()
                 .context("CHARACTER search KIND must be a constant INTEGER")?.unwrap_or(4);
             if !matches!(kind,1|2|4|8) {bail!("{operation} KIND must be a supported INTEGER kind (1, 2, 4 or 8)");}
             *serial+=1;let back_name=format!("@substring_search_back_{serial}");
@@ -469,7 +471,21 @@ fn dynamic_expression(e: &mut Expr, scope: &mut DynamicScope, output: &mut Vec<S
                 output.push(Stmt::VarDecl {kind,names});
             }
             let assign=|name:&str,value:Expr|Stmt::Assign {name:name.into(),value};
+            let position=if split {
+                let mut pos=args[3].clone();
+                dynamic_expression(&mut pos,scope,output,serial)?;
+                Some(capture(pos,scope,output,serial))
+            } else {None};
             output.push(assign(&result,int(0)));
+            if let Some(pos)=&position {
+                let invalid=Stmt::CallSub{name:"@error_stop".into(),args:vec![Expr::Str("SPLIT POS is outside the permitted range".into())]};
+                output.push(Stmt::If{cond:back.clone(),then_body:vec![
+                    Stmt::If{cond:binary(BinOp::Or,binary(BinOp::Lt,pos.clone(),int(1)),binary(BinOp::Gt,pos.clone(),binary(BinOp::Add,lengths[0].clone(),int(1)))),then_body:vec![invalid.clone()],else_body:None}
+                ],else_body:Some(vec![
+                    Stmt::If{cond:binary(BinOp::Or,binary(BinOp::Lt,pos.clone(),int(0)),binary(BinOp::Gt,pos.clone(),lengths[0].clone())),then_body:vec![invalid],else_body:None},
+                    assign(&result,binary(BinOp::Add,lengths[0].clone(),int(1)))
+                ])});
+            }
             let found=vec![assign(&result,ident(&i)),Stmt::If {cond:Expr::Un(crate::ast::UnOp::Not,Box::new(back.clone())),then_body:vec![Stmt::Exit],else_body:None}];
             if operation=="index" {
                 let comparisons=vec![
@@ -487,8 +503,16 @@ fn dynamic_expression(e: &mut Expr, scope: &mut DynamicScope, output: &mut Vec<S
                     cond:back,then_body:vec![assign(&result,binary(BinOp::Add,lengths[0].clone(),int(1)))],else_body:Some(vec![assign(&result,int(1))])
                 }],else_body:Some(vec![search])});
             } else {
-                let condition=if operation=="scan" {ident(&matched)} else {Expr::Un(crate::ast::UnOp::Not,Box::new(ident(&matched)))};
-                output.push(Stmt::Do {var:i.clone(),start:int(1),end:lengths[0].clone(),body:vec![
+                let condition=if operation=="scan" || split {ident(&matched)} else {Expr::Un(crate::ast::UnOp::Not,Box::new(ident(&matched)))};
+                let start=capture(int(1),scope,output,serial);
+                let end=capture(lengths[0].clone(),scope,output,serial);
+                if let Some(pos)=&position {
+                    let Expr::Ident(start_name)=&start else {unreachable!()};
+                    let Expr::Ident(end_name)=&end else {unreachable!()};
+                    output.push(Stmt::If{cond:back.clone(),then_body:vec![assign(end_name,binary(BinOp::Sub,pos.clone(),int(1)))],
+                        else_body:Some(vec![assign(start_name,binary(BinOp::Add,pos.clone(),int(1)))])});
+                }
+                output.push(Stmt::Do {var:i.clone(),start,end,body:vec![
                     assign(&offset,binary(BinOp::Sub,ident(&i),int(1))),
                     Stmt::CallSub {name:"@internal_read_byte".into(),args:vec![ident(&a),ident(&buffers[0]),ident(&offset),int(caps[0])]},
                     assign(&matched,Expr::Logical(false)),
@@ -590,7 +614,7 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
         }
     }
     for s in statements.iter() {if let Stmt::DummyIntent{name,intent}=s {
-        if let Some(length)=intent.strip_prefix("@character_spec_length:") {
+        if let Some(length)=intent.strip_prefix("@character_spec_length:").filter(|_|scope.characters.contains_key(name)) {
             scope.lengths.insert(name.clone(),length.to_owned());scope.fixed.insert(name.clone());
         }
     }}

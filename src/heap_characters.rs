@@ -33,6 +33,7 @@ fn view(e: &Expr, arrays: &Arrays) -> Option<(String, Expr)> {
 
 struct Lower {
     serial: usize,
+    widths: HashMap<String,Expr>,
 }
 impl Lower {
     fn capture(&mut self, kind: TypeSpec, value: Expr, out: &mut Vec<Stmt>) -> String {
@@ -48,13 +49,18 @@ impl Lower {
         });
         n
     }
-    fn offset(&mut self, index: Expr, width: usize, out: &mut Vec<Stmt>) -> Expr {
+    fn offset(&mut self, index: Expr, width: Expr, out: &mut Vec<Stmt>) -> Expr {
         let n = self.capture(TypeSpec::Integer(Some(8)), index, out);
         bin(
             BinOp::Mul,
             bin(BinOp::Sub, id(&n), int(1)),
-            int(width.max(1)),
+            width,
         )
+    }
+    fn logical_width(&self,n:&str,capacity:usize)->Expr {self.widths.get(n).cloned().unwrap_or(int(capacity))}
+    fn stride(&self,n:&str,capacity:usize)->Expr {Expr::Call("max".into(),vec![self.logical_width(n,capacity),int(1)])}
+    fn value(&self,n:&str,temp:&str,capacity:usize)->Expr {
+        if self.widths.contains_key(n) {Expr::Call("@dynamic_substring".into(),vec![id(temp),int(0),self.logical_width(n,capacity),int(capacity)])} else {id(temp)}
     }
     fn expression(&mut self, e: &mut Expr, arrays: &Arrays, out: &mut Vec<Stmt>) -> Result<()> {
         match e {
@@ -64,7 +70,7 @@ impl Lower {
                     anyhow::bail!("heap CHARACTER element requires a linear index");
                 };
                 self.expression(index, arrays, out)?;
-                let offset = self.offset(index.clone(), width, out);
+                let offset = self.offset(index.clone(), self.stride(n,width), out);
                 let temp = self.capture(
                     TypeSpec::Character(Some(width)),
                     Expr::Str(String::new()),
@@ -74,7 +80,7 @@ impl Lower {
                 out.push(Stmt::Do {
                     var: position.clone(),
                     start: int(0),
-                    end: Expr::IntLit((width as i64 - 1).to_string()),
+                    end: bin(BinOp::Sub,self.logical_width(n,width),int(1)),
                     body: vec![Stmt::CallSub {
                         name: "@character_code_store".into(),
                         args: vec![
@@ -91,7 +97,7 @@ impl Lower {
                         ],
                     }],
                 });
-                *e = id(&temp);
+                *e = self.value(n,&temp,width);
             }
             // An inquiry of a whole runtime CHARACTER array, as LEN_TRIM(s),
             // gives a runtime INTEGER array of the inquiries of its elements.
@@ -120,21 +126,21 @@ impl Lower {
                     let width = arrays[&array];
                     let element = self.capture(TypeSpec::Character(Some(width)), Expr::Str(String::new()), out);
                     let position = self.capture(TypeSpec::Integer(Some(8)), int(0), out);
-                    let offset = bin(BinOp::Mul, bin(BinOp::Sub, id(&index), int(1)), int(width.max(1)));
+                    let offset = bin(BinOp::Mul, bin(BinOp::Sub, id(&index), int(1)), self.stride(&array,width));
                     reads.push(Stmt::Do {
                         var: position.clone(),
                         start: int(0),
-                        end: Expr::IntLit((width as i64 - 1).to_string()),
+                        end: bin(BinOp::Sub,self.logical_width(&array,width),int(1)),
                         body: vec![Stmt::CallSub {
                             name: "@character_code_store".into(),
                             args: vec![
                                 id(&element),
                                 id(&position),
-                                Expr::Index(array, vec![bin(BinOp::Add, offset, bin(BinOp::Add, id(&position), int(1)))]),
+                                Expr::Index(array.clone(), vec![bin(BinOp::Add, offset, bin(BinOp::Add, id(&position), int(1)))]),
                             ],
                         }],
                     });
-                    *arg = id(&element);
+                    *arg = self.value(&array,&element,width);
                 }
                 crate::heap::temporary(TypeSpec::Integer(None), values.clone(), length.clone(), out);
                 out.push(Stmt::VarDecl {
@@ -169,6 +175,7 @@ impl Lower {
         Ok(())
     }
     fn body(&mut self, body: &mut Vec<Stmt>, inherited: &Arrays) -> Result<()> {
+        let saved_widths=self.widths.clone();
         let mut arrays = inherited.clone();
         let mut shapes = HashMap::new();
         crate::allocatables::metadata(body, &mut shapes);
@@ -180,6 +187,9 @@ impl Lower {
                     ..
                 } if shapes.contains_key(&format!("@heap:{name}")) => {
                     arrays.insert(name.clone(), width.unwrap_or(1));
+                    if let Some((_,values))=shapes.get(&format!("@character_spec_length:{name}")) {
+                        if let Some(value)=values.first(){self.widths.insert(name.clone(),value.clone());}
+                    }
                 }
                 Stmt::ArrayDecl { name, .. } => {
                     arrays.remove(name);
@@ -228,13 +238,13 @@ impl Lower {
                     let Expr::Ident(n) = &args[0] else {
                         unreachable!()
                     };
-                    let width = arrays[n].max(1);
+                    let width = self.stride(n,arrays[n]);
                     let length = args[1].clone();
                     // Keep the public descriptor length in elements; the allocator
                     // and initialization mask count the underlying character codes.
                     let bytes = format!("@character_heap_bytes${n}");
                     args[1] = id(&bytes);
-                    args.push(int(width));
+                    args.push(width.clone());
                     result.extend(prefix);
                     result.push(stmt);
                     let Expr::Ident(length) = length else {
@@ -242,7 +252,7 @@ impl Lower {
                     };
                     result.push(Stmt::Assign {
                         name: length,
-                        value: bin(BinOp::Div, id(&bytes), int(width)),
+                        value: bin(BinOp::Div, id(&bytes), width),
                     });
                     continue;
                 }
@@ -289,7 +299,7 @@ impl Lower {
                         anyhow::bail!("heap CHARACTER assignment requires a linear index");
                     };
                     self.expression(index, &arrays, &mut prefix)?;
-                    let offset = self.offset(index.clone(), width, &mut prefix);
+                    let offset = self.offset(index.clone(), self.stride(name,width), &mut prefix);
                     self.expression(value, &arrays, &mut prefix)?;
                     let temp =
                         self.capture(TypeSpec::Character(Some(width)), value.clone(), &mut prefix);
@@ -298,7 +308,7 @@ impl Lower {
                     prefix.push(Stmt::Do {
                         var: position.clone(),
                         start: int(0),
-                        end: Expr::IntLit((width as i64 - 1).to_string()),
+                        end: bin(BinOp::Sub,self.logical_width(name,width),int(1)),
                         body: vec![
                             Stmt::CallSub {
                                 name: "@internal_read_byte".into(),
@@ -381,11 +391,12 @@ impl Lower {
             result.push(stmt);
         }
         *body = result;
+        self.widths=saved_widths;
         Ok(())
     }
 }
 pub(crate) fn resolve(mut p: Program) -> Result<Program> {
-    Lower { serial: 0 }
+    Lower { serial: 0, widths: HashMap::new() }
         .body(&mut p.body, &Arrays::new())
         .context("lowering runtime CHARACTER array storage")?;
     Ok(p)

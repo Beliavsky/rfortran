@@ -131,7 +131,7 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
                     name, params, body, ..
                 } => {
                     let positions=params.iter().enumerate().filter_map(|(i,p)|
-                    (body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,kind,dims} if name==p&&numeric(kind)&&(!matches!(kind,TypeSpec::Character(_)|TypeSpec::CharacterAssumed)||dims.len()>1)))
+                    (body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,kind,dims} if name==p&&numeric(kind)&&(!matches!(kind,TypeSpec::Character(_)|TypeSpec::CharacterAssumed)||dims.len()>1 || body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==p && intent=="@tokenize_deferred_character")))))
                      &&body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==p&&intent=="allocatable"))).then_some(i)).collect::<Vec<_>>();
                     for &i in &positions {
                         body.insert(
@@ -249,7 +249,7 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
                   // storage when ALLOCATEd; one allocated only by assignment needs
                   // runtime storage for its value's extent.
                   || (array_dummies && allocation(body,name,&declared) && !allocate_statement(body,name)) || dims.len()>1 && body.iter().any(|s|matches!(s,Stmt::CallSub{name:call,args} if call=="@deallocate"&&args.iter().any(|e|matches!(e,Expr::Ident(n) if n==name)))))
-              && numeric(kind) && (!matches!(kind,TypeSpec::Character(_)) || dims.len()>1
+              && numeric(kind) && (!matches!(kind,TypeSpec::Character(_)) || dims.len()>1 || body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name && intent=="@tokenize_deferred_character"))
                   || array_assignment(body,name,&declared)
                   || body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name&&intent=="@automatic")))
               && body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name&&intent=="allocatable")))

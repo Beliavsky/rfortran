@@ -101,7 +101,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
             }
             let result = match &mut s {
                 Stmt::CallSub { name, args }
-                    if matches!(name.as_str(), "cpu_time" | "system_clock" | "date_and_time" | "get_environment_variable" | "getcwd" | "get_command_argument")
+                    if matches!(name.as_str(), "split" | "cpu_time" | "system_clock" | "date_and_time" | "get_environment_variable" | "getcwd" | "get_command_argument")
                         && !procedures.contains(name) =>
                 {
                     lower_call(name, args, &vars, &readonly, pure, serial,types).map(|statements| {
@@ -181,12 +181,13 @@ fn lower_call(
     types: &crate::operators::ExpressionTypes,
 ) -> Result<Vec<Stmt>> {
     let intrinsic = name.to_uppercase();
-    if pure {
+    if pure && name != "split" {
         bail!("{intrinsic} is not permitted in a PURE procedure");
     }
     crate::named_arguments::intrinsic(name)
         .unwrap()
         .reorder(name, args)?;
+    if name == "split" {return lower_split(args,vars,readonly,serial,types);}
     if name == "getcwd" {return lower_cwd(args,vars,readonly,serial);}
     if matches!(name,"get_environment_variable"|"get_command_argument") {return lower_environment(name,args,vars,readonly,serial,types);}
     if name == "date_and_time" {
@@ -675,5 +676,36 @@ fn lower_cwd(args:&[Expr],vars:&HashMap<String,(TypeSpec,usize)>,readonly:&HashS
     let mut out=vec![Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![status.clone()]},Stmt::VarDecl{kind,names:vec![value.clone()]},
         Stmt::CallSub{name:"@cwd_query".into(),args:vec![Expr::Ident(status.clone()),Expr::Ident(value.clone()),width]},assign(&args[0],Expr::Ident(value))];
     if let Some(target)=args.get(1).filter(|e|!crate::named_arguments::omitted(e)) {out.push(assign(target,Expr::Ident(status)));}
+    Ok(out)
+}
+
+// SPLIT shares the character search implementation with SCAN. Keep association
+// and output validation here, before CHARACTER lowering erases source types.
+fn lower_split(args: &[Expr], vars: &HashMap<String,(TypeSpec,usize)>, readonly: &HashSet<String>, serial: &mut usize,
+    types: &crate::operators::ExpressionTypes) -> Result<Vec<Stmt>> {
+    for (slot,label) in [(0,"STRING"),(1,"SET")] {
+        if !matches!(types.kind_rank(&args[slot],vars)?,Some((TypeSpec::Character(_) | TypeSpec::CharacterAssumed | TypeSpec::CharacterLength(_),0))) {
+            bail!("SPLIT {label} requires a scalar CHARACTER expression");
+        }
+    }
+    let mut target=args[2].clone();
+    let name=match &target {Expr::Ident(n)|Expr::Index(n,_)|Expr::Call(n,_)=>n,_=>bail!("SPLIT POS requires a writable scalar INTEGER variable")};
+    let scalar=match &target {Expr::Ident(_)=>vars.get(name).is_some_and(|(_,r)|*r==0),
+        Expr::Index(_,i)|Expr::Call(_,i)=>vars.get(name).is_some_and(|(_,r)|*r>0 && *r==i.len() && i.iter().all(|e|scalar_index(e,vars))),_=>false};
+    if !scalar || !matches!(vars.get(name),Some((TypeSpec::Integer(_),_))) || readonly.contains(name) {
+        bail!("SPLIT POS requires a writable scalar INTEGER variable");
+    }
+    let back=args.get(3).filter(|e|!crate::named_arguments::omitted(e)).cloned().unwrap_or(Expr::Logical(false));
+    if !matches!(types.kind_rank(&back,vars)?,Some((TypeSpec::Logical,0))) {bail!("SPLIT BACK requires a scalar LOGICAL expression");}
+    let mut out=vec![];
+    if let Expr::Index(_,indices)|Expr::Call(_,indices)=&mut target {
+        for index in indices {
+            let temp=temporary(serial,"split_index");
+            out.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![temp.clone()]});
+            out.push(Stmt::Assign{name:temp.clone(),value:index.clone()});
+            *index=Expr::Ident(temp);
+        }
+    }
+    out.push(assign(&target,Expr::Call("@split_scan".into(),vec![args[0].clone(),args[1].clone(),back,target.clone()])));
     Ok(out)
 }

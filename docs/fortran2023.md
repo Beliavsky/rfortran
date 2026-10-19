@@ -72,6 +72,41 @@ The intrinsic is available in the interpreter and native compiler and requires
 `-std=f2023` when a standard is selected. Currently only the default CHARACTER
 kind is supported, as elsewhere in the compiler.
 
+## Token arrays and boundaries
+
+The pure generic subroutine TOKENIZE supports both Fortran 2023 interfaces:
+
+```fortran
+call tokenize(string, set, tokens [, separator])
+call tokenize(string, set, first, last)
+```
+
+STRING and SET accept scalar CHARACTER expressions of the default kind and are
+evaluated once. Output arguments must be writable, allocatable rank-one arrays.
+TOKENS and the optional SEPARATOR require deferred CHARACTER length. FIRST and
+LAST require INTEGER kind 1, 2, 4 or 8; their kinds may differ. An index that cannot
+be represented in its output kind produces a runtime error.
+
+Every output is allocated with lower bound one, replacing an existing allocation.
+TOKENS has one element per token, with element length equal to the longest token;
+shorter tokens are blank padded. SEPARATOR has length one and one fewer element
+than TOKENS. FIRST and LAST hold the inclusive substring boundaries. Leading,
+trailing and consecutive delimiters preserve empty tokens. An empty input yields
+one empty token, FIRST = 1 and LAST = 0, and an allocated empty separator array.
+An empty delimiter set yields one token containing the entire input.
+
+Keyword arguments, PURE procedures, CHARACTER allocatable output dummies and
+assumed-length array input dummies are supported. An unrelated module procedure
+named TOKENIZE does not hide the intrinsic. Both interfaces require Fortran 2023
+when a standard is selected.
+
+The implementation uses the compiler's existing bounded scalar CHARACTER
+representation for input captures and materialized array elements. Statically
+known larger capacities are retained; runtime growth beyond an inferred capacity
+stops with a diagnostic. The deferred-length array support added here covers
+TOKENIZE results and their reads/inquiries; general deferred-length CHARACTER
+array allocation and assignment remain incomplete.
+
 ## Conditional expressions and arguments
 
 Fortran 2023 parenthesized conditional expressions use this syntax:
@@ -112,8 +147,10 @@ polymorphism or assumed-rank execution. Selecting a standard requires
 ```cmd
 rf.bat -std=f2023 tests\programs\xfortran2023_basics.f90 --run
 rf.bat -std=f2023 tests\programs\xconditional.f90 --run
+rf.bat -std=f2023 tests\programs\xtokenize.f90 --run
 python tests/test_fortran2023.py
 python tests/test_split.py
+python tests/test_tokenize.py
 python tests/test_conditionals.py
 python tests/test_standards.py
 ```

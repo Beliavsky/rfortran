@@ -1351,6 +1351,7 @@ fn expand(
                     local.insert(format!("@optional:{p}"),(TypeSpec::Logical,vec![]));
                 }
                 let mut names = HashMap::new();
+                let mut borrowed_widths=HashSet::new();
                 let mut absent = HashSet::new();
                 let mut prefix = vec![];
                 let mut undefine = vec![];
@@ -1383,7 +1384,7 @@ fn expand(
                         }
                     }
                     local.insert(p.clone(),(kind.clone(),dims.clone()));
-                    if assumed_character {
+                    if assumed_character || !dims.is_empty() && matches!(kind,TypeSpec::CharacterAssumed) {
                         if let Expr::Ident(actual)=actual {
                             if let Some(value)=shapes.get(&format!("@character_spec_length:{actual}")) {
                                 local.insert(format!("@character_spec_length:{p}"),value.clone());
@@ -1411,6 +1412,16 @@ fn expand(
                     }
                     if !dims.is_empty() {
                         let allocatable=r.body.iter().any(|s|matches!(s,Stmt::DummyIntent {name,intent} if name==p && intent=="allocatable"));
+                        if allocatable {
+                            if let Expr::Ident(a)=actual {
+                                if let (Some((_,formal)),Some((_,actual_width)))=(local.get(&format!("@character_spec_length:{p}")),shapes.get(&format!("@character_spec_length:{a}"))) {
+                                    if let (Some(Expr::Ident(formal)),Some(Expr::Ident(actual_width)))=(formal.first(),actual_width.first()) {
+                                        names.insert(formal.clone(),format!("{}{actual_width}",crate::heap::BORROWED_FIELD));
+                                        borrowed_widths.insert(formal.clone());
+                                    }
+                                }
+                            }
+                        }
                         if allocatable && !matches!(actual,Expr::Ident(_)) {bail!("ALLOCATABLE dummy `{p}` requires an ALLOCATABLE variable");}
                         let mut captured=actual.clone();
                         // This is an optional rank hint, not expression validation.
@@ -1480,6 +1491,9 @@ fn expand(
                             }
                         };
                         let a=match &captured {Expr::Ident(a)=>a.clone(),Expr::Call(n,v) if n=="@packed_view"=>if let Expr::Ident(a)=&v[0] {a.clone()} else {bail!("array view requires materialized storage");},_=>bail!("array dummy `{p}` requires a materialized array argument")};
+                        if matches!(kind,TypeSpec::CharacterAssumed) {
+                            if let Some(value)=shapes.get(&format!("@character_spec_length:{a}")) {local.insert(format!("@character_spec_length:{p}"),value.clone());}
+                        }
                         let mut runtime_axes=runtime_actual_axes(actual,&shapes).or_else(||crate::allocatables::axes(&a,&shapes));
                         if runtime_axes.is_none() && actual_dims.len()==1 {
                             if let Some(shape)=expression_shape.filter(|s|s.len()>1) {
@@ -1640,7 +1654,7 @@ fn expand(
                 }
                 cloned.retain(|s|!matches!(s,Stmt::DummyIntent{name,intent} if intent=="target" && r.params.contains(name)));
                 for declaration in &mut cloned {
-                    if let Stmt::VarDecl {names,..} = declaration { names.retain(|n| !r.params.contains(n)); }
+                    if let Stmt::VarDecl {names,..} = declaration { names.retain(|n| !r.params.contains(n) && !borrowed_widths.contains(n)); }
                 }
                 cloned.retain(|s| !matches!(s,Stmt::ArrayDecl{name,..} if r.params.contains(name))
                     && !matches!(s,Stmt::VarDecl {names,..} if names.is_empty()));

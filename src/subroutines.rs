@@ -45,6 +45,9 @@ pub(crate) fn rename_with_prefix(
     serial: &mut usize,
     prefix: &str,
 ) -> Result<()> {
+    let deferred:std::collections::HashSet<String>=body.iter().filter_map(|s|match s {
+        Stmt::VarDecl{kind,names} if crate::substrings::deferred(kind)=>Some(names.clone()),_=>None,
+    }).flatten().collect();
     let mut names = inherited.clone();
     for s in body.iter() {
         let declared = match s {
@@ -59,8 +62,10 @@ pub(crate) fn rename_with_prefix(
             }
         }
     }
+    let kept_deferred:std::collections::HashSet<_>=deferred.iter().map(|n|names.get(n).cloned().unwrap_or_else(||n.clone())).collect();
     for s in body.iter_mut() {
         match s {
+            Stmt::DummyIntent{name:n,intent} if intent=="allocatable" && deferred.contains(n)=>name(n,&names),
             Stmt::DummyIntent { name: n, intent } if intent.starts_with("@bounded_shape:") || intent.starts_with("@bounded_lower:") || intent.starts_with("@character_spec_length:") => {
                 let tag=if intent.starts_with("@character_spec_length:"){"@character_spec_length:"}else if intent.starts_with("@bounded_lower:"){"@bounded_lower:"}else{"@bounded_shape:"};
                 let rest = intent.trim_start_matches(tag);
@@ -172,7 +177,7 @@ pub(crate) fn rename_with_prefix(
             _ => {}
         }
     }
-    body.retain(|s| !matches!(s, Stmt::ArrayDecl { name, .. } if params.contains(name)) && !matches!(s, Stmt::DummyIntent { intent,.. } if prefix!="@alloc_block" && !(matches!(intent.as_str(),"pointer"|"target"|"@pointer_readonly_target") || intent.starts_with("@pointer_bounds:")) && intent!="@heap" && intent!="@heap_readonly" && !intent.starts_with("@bounded:") && !intent.starts_with("@bounded_shape:") && !intent.starts_with("@bounded_lower:") && !intent.starts_with("@bounded_limits:") && !intent.starts_with("@character_element_width:") && !intent.starts_with("@character_spec_length:")) && !matches!(s, Stmt::VarDecl { names, .. } if names.is_empty()));
+    body.retain(|s| !matches!(s, Stmt::ArrayDecl { name, .. } if params.contains(name)) && !matches!(s, Stmt::DummyIntent { name,intent,.. } if prefix!="@alloc_block" && !(intent=="allocatable" && kept_deferred.contains(name)) && !(matches!(intent.as_str(),"pointer"|"target"|"@pointer_readonly_target") || intent.starts_with("@pointer_bounds:")) && intent!="@heap" && intent!="@heap_readonly" && !intent.starts_with("@bounded:") && !intent.starts_with("@bounded_shape:") && !intent.starts_with("@bounded_lower:") && !intent.starts_with("@bounded_limits:") && !intent.starts_with("@character_element_width:") && !intent.starts_with("@character_spec_length:")) && !matches!(s, Stmt::VarDecl { names, .. } if names.is_empty()));
     Ok(())
 }
 /// Preserve procedure RETURN when its body is expanded into the caller.

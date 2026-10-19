@@ -90,6 +90,10 @@ impl Validator {
         }
         Ok(())
     }
+    fn procedure(&self,name:&str,visible:&HashSet<String>)->Result<()> {
+        if !visible.contains(name) && crate::intrinsics::purity(name).is_some() {return Ok(());}
+        self.name(name,visible)
+    }
     fn kind(&self, kind: &TypeSpec, visible: &HashSet<String>) -> Result<()> {
         if let TypeSpec::RealKind(n) | TypeSpec::LogicalKind(n) | TypeSpec::IntegerKind(n) | TypeSpec::Complex(n) = kind {
             self.name(n, visible)?;
@@ -105,7 +109,7 @@ impl Validator {
                 }
             }
             Expr::Call(n, args) | Expr::Index(n, args) => {
-                self.name(n, visible)?;
+                self.procedure(n, visible)?;
                 for e in args {
                     self.expression(e, visible)?;
                 }
@@ -210,7 +214,7 @@ impl Validator {
                 | Stmt::Read { args: items }
                 | Stmt::CallSub { args: items, .. } => {
                     if let Stmt::CallSub { name, .. } = s {
-                        self.name(name, &visible)?;
+                        self.procedure(name, &visible)?;
                     }
                     for e in items {
                         self.expression(e, &visible)?;

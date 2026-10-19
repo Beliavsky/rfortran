@@ -1334,6 +1334,7 @@ fn resolve_types(mut program: Program) -> Result<Program> {
     program = crate::heap::automatic_derived(program)?;
     crate::elemental::validate_program(&program)?;
     crate::imports::validate(&program)?;
+    program=crate::tokenize::prepare(program)?;
     program = crate::named_arguments::resolve(program, false)?;
     if crate::conditionals::contains(&program) {
         crate::operators::validate_conditionals(&program)?;

@@ -136,6 +136,8 @@ pub(crate) fn intrinsic(name: &str) -> Option<Signature> {
         "repeat" => &["string", "ncopies"],
         "index" => &["string", "substring", "back", "kind"],
         "scan" | "verify" => &["string", "set", "back", "kind"],
+        "tokenize" => &["string", "set", "tokens", "separator"],
+        "split" => &["string", "set", "pos", "back"],
         "random_number" => &["harvest"],
         "random_seed" => &["size", "put", "get"],
         "cpu_time" => &["time"],
@@ -168,7 +170,7 @@ pub(crate) fn intrinsic(name: &str) -> Option<Signature> {
     };
     Some(Signature {
         params: keys.iter().map(|s| (*s).into()).collect(),
-        optional: if name=="cmplx" {HashSet::from(["y".into(),"kind".into()])}else if name=="associated" {HashSet::from(["target".into()])}else if matches!(name,"index"|"scan"|"verify") {
+        optional: if name=="tokenize" {HashSet::from(["separator".into()])}else if name=="split" {HashSet::from(["back".into()])}else if name=="cmplx" {HashSet::from(["y".into(),"kind".into()])}else if name=="associated" {HashSet::from(["target".into()])}else if matches!(name,"index"|"scan"|"verify") {
             HashSet::from(["back".into(),"kind".into()])
         } else if name=="get_command_argument" {HashSet::from(["value".into(),"length".into(),"status".into()])
         } else if name=="getcwd" {HashSet::from(["status".into()])
@@ -192,6 +194,15 @@ pub(crate) fn intrinsic(name: &str) -> Option<Signature> {
         },
     })
 }
+pub(crate) fn tokenize_signature(args:&[Expr],character:Option<bool>)->Result<Signature> {
+    let tokens=args.iter().filter_map(keyword).any(|(k,_)|matches!(k,"tokens"|"separator"));
+    let bounds=args.iter().filter_map(keyword).any(|(k,_)|matches!(k,"first"|"last"));
+    if tokens && bounds {bail!("TOKENIZE cannot mix TOKENS/SEPARATOR and FIRST/LAST keywords");}
+    let character=character.unwrap_or(tokens || !bounds && args.len()==3);
+    let keys=if character {["string","set","tokens","separator"]} else {["string","set","first","last"]};
+    Ok(Signature{params:keys.iter().map(|s|(*s).into()).collect(),optional:if character {HashSet::from(["separator".into()])} else {HashSet::new()}})
+}
+
 fn intrinsic_keywords(name: &str) -> bool {
     // These routines already associate optional keywords during intrinsic lowering.
     matches!(
@@ -294,6 +305,7 @@ impl Resolver {
                 // before falling back to an intrinsic signature.
                 .or_else(|| if !self.final_pass && self.generics.contains(name) {None} else {intrinsic(name)})
             {
+                if name=="tokenize" && !self.signatures.contains_key(name) {signature=tokenize_signature(args,None)?;}
                 if matches!(name,"min"|"max") && !self.signatures.contains_key(name) {
                     let mut count=args.len().max(2);
                     for arg in args.iter() {
@@ -460,7 +472,7 @@ mod tests {
         for name in crate::intrinsics::REAL_MATH.iter().map(|(n,_)|*n)
             .chain(crate::intrinsics::REAL_PREDICATES.iter().copied())
             .chain(crate::bit_intrinsics::NAMES.iter().copied())
-            .chain(["random_number","random_seed","cpu_time","system_clock","date_and_time","get_environment_variable","getcwd","get_command_argument","abs","dble","kind","mod","modulo","new_line",
+            .chain(["tokenize","split","random_number","random_seed","cpu_time","system_clock","date_and_time","get_environment_variable","getcwd","get_command_argument","abs","dble","kind","mod","modulo","new_line",
                 "adjustl","adjustr","trim","repeat","index","scan","verify","real","int","nint","aint","anint",
                 "floor","ceiling","char","achar","ichar","iachar","len","len_trim","sign","dim","dprod",
                 "dot_product","matmul","merge","lge","lgt","lle","llt","tiny","huge","allocated","present",

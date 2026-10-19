@@ -110,7 +110,7 @@ linked program and propagates its failure status.
 default remains permissive. These modes check recognized features rather than
 certifying full conformance; see [standard selection](docs/usage.md#standard-selection).
 Recent [Fortran 2023 additions](docs/fortran2023.md) include trimmed CHARACTER
-output with `AT`, `SPLIT`, `SELECTED_LOGICAL_KIND`, additional intrinsic kind constants,
+output with `AT`, `SPLIT`, `TOKENIZE`, `SELECTED_LOGICAL_KIND`, additional intrinsic kind constants,
 and lazy conditional expressions and arguments.
 
 `rfort run main.f90` interprets a program without building an executable. Run mode

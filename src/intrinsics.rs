@@ -67,7 +67,7 @@ pub const PURE_FUNCTIONS: &[&str] = &[
     "minval", "mod", "modulo", "new_line", "nint", "norm2", "out_of_range", "pack", "parity", "present",
     "product", "real", "repeat", "reshape", "scan", "selected_int_kind", "selected_real_kind", "selected_logical_kind",
     "shape", "sign", "size", "spread", "sum", "tiny", "transpose",
-    "trim", "ubound", "unpack", "verify",
+    "trim", "ubound", "unpack", "verify", "split", "tokenize",
 ];
 
 pub const IMPURE_PROCEDURES: &[&str] = &[

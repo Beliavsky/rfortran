@@ -22,6 +22,7 @@ mod timing;
 mod calendar;
 mod environment;
 mod timing_intrinsics;
+mod tokenize;
 mod conditionals;
 mod bit_intrinsics;
 mod inquiries;
@@ -343,7 +344,7 @@ fn lower_program_body(
 ) -> Result<ast::Program> {
     (|| {
         sections::resolve(reductions::resolve(array_calls::resolve(
-            timing_intrinsics::resolve(parameters::resolve(random_seed::resolve(derived::resolve(program)?)?)?)?,
+            tokenize::resolve(timing_intrinsics::resolve(parameters::resolve(random_seed::resolve(derived::resolve(program)?)?)?)?)?,
         )?)?)
     })()
     .map_err(|error| source_diagnostics::report(error, src, tokens, filename, origins))

@@ -216,7 +216,11 @@ pub fn validate(program: &Program) -> Result<()> {
         }
         Ok(())
     }
-    let mut known = HashMap::new();
+    let mut known = HashMap::from([("split".into(), Procedure {
+        pure: true, intents: Some(vec!["intent(in)".into(),"intent(in)".into(),"intent(inout)".into(),"intent(in)".into()]),
+        optional: vec![false,false,false,true],
+    })]);
+    known.insert("tokenize".into(),Procedure{pure:true,intents:Some(vec!["intent(in)".into(),"intent(in)".into(),"intent(out)".into(),"intent(out)".into()]),optional:vec![false,false,false,true]});
     procedures(&program.body, &mut known);
     walk(&program.body, &known, &HashSet::new())
 }
