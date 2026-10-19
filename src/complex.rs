@@ -1353,6 +1353,52 @@ impl Lower {
             }
         }Ok(())
     }
+    // Formatted transfer consumes a real descriptor for each component. Keep
+    // destination indices in the input list, where earlier input can define them.
+    fn formatted_input(&mut self, items: Vec<Expr>, scope: &Scope, prefix: &mut Vec<Stmt>) -> Result<Vec<Expr>> {
+        let mut values=vec![];
+        for mut item in items {
+            if let Expr::Call(n,a)=&mut item {
+                if matches!(n.as_str(),"@input_implied_do"|"@output_implied_do") {
+                    let nested=a.split_off(4);a.extend(self.formatted_input(nested,scope,prefix)?);
+                    values.push(item);continue;
+                }
+            }
+            if let Some(info)=self.info(&item,scope)?.filter(|i|complex_kind(&i.kind).is_some()) {
+                if !info.dims.is_empty() {
+                    let Expr::Ident(name)=item else {bail!("formatted COMPLEX READ sections are not yet supported");};
+                    let mut indices=vec![];let mut controls=vec![];
+                    for dim in info.dims {
+                        self.serial+=1;let index=format!("@complex_formatted_read_{}",self.serial);
+                        prefix.push(Stmt::VarDecl {kind:TypeSpec::Integer(Some(8)),names:vec![index.clone()]});
+                        let (lo,hi)=match dim {Expr::Call(n,a) if n=="@declared_bounds"=>(a[0].clone(),a[1].clone()),dim=>(int(1),dim)};
+                        indices.push(id(&index));controls.push((index,lo,hi));
+                    }
+                    let mut element=Expr::Index(name,indices);
+                    for (index,lo,hi) in controls {element=call("@input_implied_do",vec![id(&index),lo,hi,int(1),element]);}
+                    values.extend(self.formatted_input(vec![element],scope,prefix)?);
+                    continue;
+                }
+                let mut re=item.clone();let mut im=item;
+                for (part,suffix) in [(&mut re,"%re"),(&mut im,"%im")] {
+                    match part {
+                        Expr::Ident(n)=>n.push_str(suffix),
+                        Expr::Index(n,a)|Expr::Call(n,a)=>{
+                            let mut call_subscript=false;
+                            for subscript in a {crate::procedure_arguments::visit_expr(subscript,&mut |e| {
+                                if matches!(e,Expr::Call(_,_)|Expr::Index(_,_)) {call_subscript=true;}
+                            });}
+                            if call_subscript {bail!("formatted COMPLEX READ currently requires subscripts without function calls or array references");}
+                            n.push_str(suffix);
+                        },
+                        _=>bail!("formatted COMPLEX READ item must designate writable storage"),
+                    }
+                }
+                values.extend([re,im]);
+            } else {values.push(item);}
+        }
+        Ok(values)
+    }
     fn output(
         &mut self,
         items: &mut Vec<Expr>,
@@ -1579,6 +1625,10 @@ impl Lower {
                 Stmt::Print{items}=>self.output(items,true,&mut scope,&mut prefix)?,
                 Stmt::Read{args}=>if args.iter().any(|e|self.info(e,&scope).ok().flatten().is_some_and(|i|complex_kind(&i.kind).is_some())){bail!("list-directed COMPLEX input is not yet supported");},
                 Stmt::CallSub{name,args} if name=="@internal_read"=>{self.input_items(&mut args[3..],&mut scope,&mut prefix)?;},
+                Stmt::CallSub{name,args} if matches!(name.as_str(),"@formatted_read"|"@formatted_read_status")=>{
+                    let first=if name=="@formatted_read" {2}else{4};
+                    let items=args.split_off(first);args.extend(self.formatted_input(items,&scope,&mut prefix)?);
+                },
                 Stmt::CallSub{name,args} if matches!(name.as_str(),"@write"|"@formatted_print")=>{
                     let offset=if name=="@write"{2}else{1};let list=name=="@write"&&matches!(args.get(1),Some(Expr::Call(n,_)) if n=="@list_directed");let mut items=args.split_off(offset);self.output(&mut items,list,&mut scope,&mut prefix)?;args.extend(items);
                 },

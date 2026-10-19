@@ -112,7 +112,7 @@ Bugs found on 2026-10-18, all fixed:
 | [DATA statements](language-support.md#other-statement-forms) | 🟡 | Whole variables only, not array elements, sections or implied-DO lists | test_statement_forms_io.py |
 | EQUIVALENCE | ❌ | | |
 | Unnamed ENUM, BIND(C) enumerators (Fortran 2003) | ❌ | | |
-| [Named enum types (Fortran 2023)](fortran2023.md#enum-types-section-93) | 🟡 | Scalars, arrays, constructors, procedures and integer editing; formatted READ requires constant formats and scalar/fixed whole-array items; C calls remain unsupported | test_enum_types.py, test_enum_arrays.py, test_enum_io.py |
+| [Named enum types (Fortran 2023)](fortran2023.md#enum-types-section-93) | 🟡 | Scalars, arrays, constructors, procedures and integer editing; formatted READ requires constant formats and bounded input lists; C calls remain unsupported | test_enum_types.py, test_enum_arrays.py, test_enum_io.py, test_formatted_read_lists.py |
 | Source locations in diagnostics | ✅ | | test_source_diagnostics.py |
 
 ## Types and kinds
@@ -123,7 +123,7 @@ Bugs found on 2026-10-18, all fixed:
 | INTEGER kind 16 | 🟡 | Declarations and arithmetic compile; kind-16 literals, HUGE and pointers are not supported | |
 | REAL kinds 4 and 8, DOUBLE PRECISION | ✅ | | test_numeric_model.py |
 | REAL kind 16 (quad precision) | ❌ | `REAL128` is -1 | |
-| [COMPLEX kinds 4 and 8](language-support.md#complex) | 🟡 | COMPLEX input and COMPLEX components of derived types are not supported | test_complex.py |
+| [COMPLEX kinds 4 and 8](language-support.md#complex) | 🟡 | List-directed and bounded formatted input; input sections and COMPLEX components of derived types remain unsupported | test_complex.py, test_list_read.py, test_formatted_read_lists.py |
 | LOGICAL | ✅ | Default kind | |
 | [CHARACTER](language-support.md#character-declarations-and-lengths) | 🟡 | Lengths must be known at compile time or bounded; see the CHARACTER section | test_character_lengths.py |
 | [`SELECTED_INT_KIND`, `SELECTED_REAL_KIND`, `SELECTED_CHAR_KIND`, `KIND`](language-support.md#declaration-initialization), and kind expressions such as `real(kind(0d0))` | ✅ | A CHARACTER kind other than ASCII is accepted but stored as ASCII | test_initializers_and_kinds.py |

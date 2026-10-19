@@ -1325,6 +1325,7 @@ pub fn resolve(program: Program) -> Result<Program> {
     Ok(program)
 }
 fn resolve_types(mut program: Program) -> Result<Program> {
+    program=crate::input::prepare_formatted(program);
     crate::source_diagnostics::validate_function_results(&program)?;
     crate::enumerations::validate_definitions(&program)?;
     crate::conditionals::validate_source(&program)?;

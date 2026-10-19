@@ -117,6 +117,17 @@ end program main
         self.execute(commands, b"hello\n", "[hello]\nT\n")
         self.execute(commands, b"", "F\n")
 
+    def test_whole_character_array_with_format_reversion(self):
+        commands=self.commands("""implicit none
+character::text(2)
+integer::status
+read(*,'(a)',iostat=status)text
+print *,status
+print '(2a)',text
+end
+""",reference=True)
+        self.execute(commands,b'A\nB\n','0\nAB\n')
+
     def test_diagnostics(self):
         for declarations, statement, message in [
             ("character::text\nreal::status", "read(*,'(a)',iostat=status) text", "IOSTAT must be a writable scalar INTEGER"),
@@ -124,7 +135,6 @@ end program main
             ("character::text", "read(*,'(a)',iostat=0) text", "IOSTAT must be a writable scalar INTEGER"),
             ("character::text\ninteger,parameter::status=0", "read(*,'(a)',iostat=status) text", "cannot modify PARAMETER `status`"),
             ("integer::text,status", "read(*,'(a)',iostat=status) text", "CHARACTER variable"),
-            ("character::text(2)\ninteger::status", "read(*,'(a)',iostat=status) text", "CHARACTER"),
             ("character::text\ninteger::status", "read(*,'(a)',iomsg=status) text", "IOMSG requires a scalar CHARACTER variable"),
             ("character::text\ninteger::status,unit", "read(unit,'(a)',iostat=status) text", "uninitialized variable `unit`"),
         ]:

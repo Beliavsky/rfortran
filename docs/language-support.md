@@ -318,8 +318,10 @@ buffer padding while retaining ordinary CHARACTER padding. Explicit formats cons
 two real descriptors for each complex element. REAL `G0`/`G0.d` output is also
 supported. `CMPLX` without KIND returns default COMPLEX; `REAL(z)` and `AIMAG(z)`
 retain a complex argument's component kind. Initialization checks apply to each
-component. This is an initial subset: complex input, kind 16, complex components
-inside user-defined types, implicit COMPLEX declarations, persistent initialized
+component. List-directed input supports scalar and whole-array COMPLEX;
+constant-format input also supports bounded implied-DO lists, with two real
+fields per element. COMPLEX input sections remain unsupported.
+This is an initial subset: kind 16, complex components inside user-defined types, implicit COMPLEX declarations, persistent initialized
 complex locals, and user-defined complex ELEMENTAL procedures are not implemented.
 List-directed array output currently requires fixed extents.
 
@@ -1931,12 +1933,21 @@ with IOSTAT; IOMSG is not set.
 A formatted READ with a constant format of edit descriptors reads each record
 whole, then gives each item its field: A, I, B, O, Z, F, E, ES, EN, D, G and L fields, X,
 T, TL, TR and `/`, with repeat counts, groups and reversion. Items may be
-scalars, array elements and rank-one arrays of constant size. A blank numeric
+scalars, array elements, fixed-size whole arrays and sections, and nested
+implied-DO lists with constant bounds and steps. Sections use column-major
+transfer order and can have descending or empty ranges. Implied-DO indices
+are updated in input-list order, including their final and zero-trip values;
+fixed-array SIZE/LBOUND/UBOUND inquiries are supported in the bounds. A blank numeric
 field reads as zero, and an F, E, D or G field without a decimal point or
 exponent has an implied one (G editing of INTEGER objects ignores the precision).
 B/O/Z input accepts unsigned bit patterns for INTEGER kinds 1, 2, 4 and 8,
-checks overflow, and supports BN/BZ blank editing. Input implied-DO lists and
-runtime-sized arrays are not yet supported with edit descriptors. Records are
+checks overflow, and supports BN/BZ blank editing. Formatted COMPLEX input
+transfers the real and imaginary components with consecutive real descriptors;
+whole arrays and bounded implied-DOs are supported. COMPLEX input sections and
+subscripts containing function calls or array references remain unsupported.
+Formatted input with runtime-sized arrays, runtime section/loop bounds or
+runtime numeric formats is not yet supported. Bounded input expansion is limited
+to 10000 entries (including loop-index updates). Records are
 read up to 4096 characters. Formatted WRITE with an implied-DO list goes to a
 file as well as to standard output.
 

@@ -319,8 +319,10 @@ produce positive IOSTAT when supplied,
 or a runtime error with the source file and line otherwise. Input conversion
 errors and EOF also propagate through IOSTAT. These transfers use the shared
 integer formatter and input lowering after enumeration-specific validation.
-The initial implementation requires constant CHARACTER formats and scalar items
-or fixed whole arrays; output array constructors are also supported. Mixed
+Direct enumeration I/O requires constant CHARACTER formats. Input supports
+scalar items, fixed whole arrays and sections, and nested implied-DOs with
+constant bounds and steps. Output supports scalar items, fixed whole arrays
+and array constructors. Mixed
 ordinary and enumeration items, format reversion, named constant formats, and
 external file I/O are supported. See `tests/programs/xenumeration_io.f90` and
 `tests/test_enumeration_io.py`.
@@ -342,8 +344,8 @@ The interpreter and native compiler share these checks and lowering. Strict
 revision modes require Fortran 2023. This is the section 9.2 ENUMERATION TYPE
 facility, distinct from the named interoperable enum types in section 9.3 below.
 
-Current limits include runtime formats, sections and I/O implied-DOs in direct
-formatted enumeration I/O, B/O/Z enumeration input, internal formatted READ,
+Current limits include runtime formats, output sections/implied-DOs, runtime
+input section/implied-DO bounds, B/O/Z enumeration input, internal formatted READ,
 POINTER enumeration objects, scalar ALLOCATABLE enumeration objects, and some array intrinsics such as
 RESHAPE/PACK. List-directed and namelist enumeration I/O are forbidden by the
 language; use `INT(value)` to print its ordinal. Polymorphic enumeration objects
@@ -424,14 +426,15 @@ Direct formatted enum output uses INTEGER editing: I, B, O, Z and G descriptors,
 including runtime formats, array sections, constructor and implied-DO output,
 internal WRITE, mixed lists and format reversion through the shared output path.
 Constant-format external READ supports I, B, O, Z and G for scalar enum objects
-and fixed whole arrays, with IOSTAT for malformed input, overflow and EOF.
+fixed whole arrays and sections, and nested implied-DO lists with constant bounds,
+with IOSTAT for malformed input, overflow and EOF.
 Unnamed representable integer values are valid input; section 9.2 ordinal
 bounds do not apply. B/O/Z input also supports ordinary INTEGER objects of kinds
 1, 2, 4 and 8, unsigned bit patterns, and BN/BZ blank editing.
 
 Section 9.3 remains partial. Formatted enum READ still requires a constant format
-and scalar items or fixed whole arrays; input sections and implied-DOs, runtime
-input formats and internal formatted READ remain unsupported. POINTER objects
+and bounded input lists; runtime-sized arrays, runtime section/implied-DO bounds,
+runtime input formats and internal formatted READ remain unsupported. POINTER objects
 and scalar ALLOCATABLE objects are not supported.
 Actual calls across a C ABI are not implemented or claimed by accepting the
 BIND(C) definition. Existing local-type scoping, expression inference,

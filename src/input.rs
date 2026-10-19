@@ -9,6 +9,25 @@ use std::collections::HashMap;
 #[path = "input_radix.rs"]
 mod radix;
 
+/// Distinguish input implied-DOs from constructor/output implied-DOs before
+/// expression lowering; an input list may contain unrelated element types.
+pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> crate::ast::Program {
+    fn body(statements: &mut [Stmt]) {
+        for s in statements {
+            if let Stmt::CallSub {name,args}=s {
+                if matches!(name.as_str(),"@formatted_read"|"@formatted_read_status") {
+                    let first=if name=="@formatted_read" {2}else{4};
+                    for e in &mut args[first..] {crate::procedure_arguments::visit_expr(e,&mut |e| {
+                        if let Expr::Call(n,_)=e {if n=="@output_implied_do" {*n="@input_implied_do".into();}}
+                    });}
+                }
+            }
+            for child in crate::procedure_arguments::children(s) {body(child);}
+        }
+    }
+    body(&mut program.body);program
+}
+
 /// Canonicalize READ controls before the shared I/O lowering passes.
 pub(crate) fn read_controls(
     controls: Vec<Expr>,
@@ -609,31 +628,23 @@ pub(crate) fn lower_field_read(
     if plain && items.len() == 1 && matches!(&items[0], Expr::Ident(n) if matches!(symbols.get(n), Some((TypeSpec::Character(_), d)) if d.is_empty())) {
         return Ok(None);
     }
-    // Items: scalars, array elements, and rank-one arrays of constant size.
-    let mut targets: Vec<(Expr, TypeSpec)> = vec![];
-    for item in items {
-        match item {
-            Expr::Ident(n) => {
-                let Some((kind, dims)) = symbols.get(n) else { return Ok(None) };
-                if dims.is_empty() { targets.push((item.clone(), kind.clone())); continue; }
-                let [dim] = dims.as_slice() else { return Ok(None) };
-                let (lower, upper) = match dim {
-                    Expr::Call(tag, b) if tag == "@declared_bounds" => (crate::parameters::integer_constant(&b[0]), crate::parameters::integer_constant(&b[1])),
-                    d => (Ok(1), crate::parameters::integer_constant(d)),
-                };
-                let (Ok(lower), Ok(upper)) = (lower, upper) else { return Ok(None) };
-                for i in lower..=upper { targets.push((Expr::Index(n.clone(), vec![int(i)]), kind.clone())); }
-            }
-            Expr::Index(n, idx) | Expr::Call(n, idx) if symbols.get(n).is_some_and(|(_, d)| d.len() == idx.len() && !d.is_empty()) => {
-                targets.push((Expr::Index(n.clone(), idx.clone()), symbols[n].0.clone()));
-            }
-            _ => return Ok(None),
+    let shapes=symbols.iter().map(|(n,(_,d))|(n.clone(),d.clone())).collect();
+    let expanded=crate::input_items::expand(items,&shapes,&|e|crate::parameters::integer_constant(e).ok())?;
+    let mut pending=vec![];
+    let mut targets=vec![];
+    for item in expanded {
+        if let Some((n,value))=crate::input_items::index(&item) {
+            if !crate::output::integer(&var(n),symbols) {bail!("READ implied-DO requires an INTEGER variable");}
+            pending.push(set(n,value.clone()));continue;
         }
+        let name=match &item {Expr::Ident(n)|Expr::Index(n,_)|Expr::Call(n,_)=>n,_=>bail!("formatted READ item must designate writable storage")};
+        let Some((kind,_))=symbols.get(name) else {return Ok(None)};
+        let item=match item {Expr::Call(n,a)=>Expr::Index(n,a),e=>e};
+        targets.push((item,kind.clone(),std::mem::take(&mut pending)));
     }
-    if control.is_empty() && targets.is_empty() { return Ok(None); }
     let mut parser = spec::GroupParser::new(text.as_bytes(), targets.len()).map_err(anyhow::Error::msg)?;
     // Records, each a list of (item, kind, first column, width, decimals).
-    let mut records: Vec<Vec<(Expr, TypeSpec, usize, usize, Option<usize>, u8, bool)>> = vec![vec![]];
+    let mut records: Vec<Vec<(Expr, TypeSpec, usize, usize, Option<usize>, u8, bool, Vec<Stmt>)>> = vec![vec![]];
     let mut column = 1usize;
     let mut blank_zero = false;
     let mut next = targets.into_iter();
@@ -642,7 +653,7 @@ pub(crate) fn lower_field_read(
             spec::AT => bail!("AT edit descriptor is only permitted for output"),
             code if spec::is_data(code) => {
                 for _ in 0..d.repeat {
-                    let Some((item, kind)) = next.next() else { break };
+                    let Some((item, kind, prefix)) = next.next() else { break };
                     if matches!(code, b'b' | b'o' | b'z') && !matches!(kind, TypeSpec::Integer(_)) {
                         bail!("formatted B, O or Z READ currently requires an INTEGER variable");
                     }
@@ -658,7 +669,7 @@ pub(crate) fn lower_field_read(
                     let decimals = (matches!(kind, TypeSpec::Real | TypeSpec::DoublePrecision | TypeSpec::RealKind(_))
                         && matches!(code, b'f' | b'e' | b'd' | b'g' | spec::ES | spec::EN)
                         && d.has_precision).then_some(d.precision);
-                    records.last_mut().unwrap().push((item, kind, column, width, decimals, code, blank_zero));
+                    records.last_mut().unwrap().push((item, kind, column, width, decimals, code, blank_zero, prefix));
                     column += width;
                 }
             }
@@ -722,7 +733,7 @@ pub(crate) fn lower_field_read(
         // A failed transfer ends the input list. Later conversions must not
         // overwrite its status with success (or define subsequent items).
         let mut fields: Vec<Stmt> = record.iter()
-            .map(|field| branch(equal(&code, 0), convert(field))).collect();
+            .map(|field| {let mut steps=field.7.clone();steps.extend(convert(&(field.0.clone(),field.1.clone(),field.2,field.3,field.4,field.5,field.6)));branch(equal(&code,0),steps)}).collect();
         fields.extend(nested);
         segment.push(branch(equal(&code, 0), fields));
         nested = segment;
@@ -734,6 +745,7 @@ pub(crate) fn lower_field_read(
         set(&code, int(0)),
     ];
     body.extend(nested);
+    body.push(branch(equal(&code,0),pending));
     if iostat {
         let Expr::Ident(status) = status else { bail!("IOSTAT must be a writable scalar INTEGER variable") };
         body.push(set(status, var(&code)));

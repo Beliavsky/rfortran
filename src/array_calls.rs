@@ -1710,6 +1710,7 @@ fn expand(
     result.map_err(|e| crate::source_diagnostics::at(e, statement_location.get()))
 }
 pub fn resolve(mut p: Program) -> Result<Program> {
+    p=crate::input_items::prepare(p)?;
     p=crate::modules::capture(p)?;
     p=crate::heap::automatic_locals(p)?;
     p=crate::heap::prepare(p)?;

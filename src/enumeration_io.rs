@@ -203,6 +203,22 @@ impl Context {
         }
         Ok(out)
     }
+    fn io_read_items(&self, items: &[Expr], scope: &Scope) -> Result<Vec<(Expr, Option<String>)>> {
+        let mut values=items.to_vec();
+        for e in &mut values {visit_expr(e,&mut |e| {
+            if matches!(e,Expr::Call(n,_) if n=="@enumeration_reference") { *e=raw(e).clone(); }
+        });}
+        let mut shapes=self.globals.shapes.clone();shapes.extend(scope.shapes.clone());
+        let expanded=crate::input_items::expand(&values,&shapes,&|e|self.constant(e,scope))?;
+        let mut out=vec![];
+        for e in expanded {
+            if let Some((name,_))=crate::input_items::index(&e) {
+                if self.name(name,scope)!=Ty::Integer(0) {bail!("READ implied-DO requires an INTEGER variable");}
+                out.push((e,None));
+            } else {out.extend(self.io_items(&[e],scope)?);}
+        }
+        Ok(out)
+    }
     pub(super) fn check_io(
         &self,
         args: &[Expr],
@@ -231,7 +247,7 @@ impl Context {
             matches!(raw(e), Expr::Call(n,_) if matches!(n.as_str(), "@array_constructor" | "@record_constructor"))) {
             bail!("enumeration READ item must designate writable storage");
         }
-        let items = self.io_items(&args[layout.first..], scope)?;
+        let items = if layout.input {self.io_read_items(&args[layout.first..],scope)?} else {self.io_items(&args[layout.first..], scope)?};
         if layout.input {
             if layout.first == 4 {
                 if types.get(3) != Some(&Ty::Integer(0)) {
@@ -251,11 +267,11 @@ impl Context {
                 }
             }
             for (item, _) in &items {
-                let name = match item {
+                let name = if let Some((name,_))=crate::input_items::index(item) {name} else {match item {
                     Expr::Ident(n) | Expr::Index(n, _) => n,
                     Expr::Call(n, _) if self.name(n, scope).rank() > 0 => n,
                     _ => bail!("enumeration READ item must designate writable storage"),
-                };
+                }};
                 let root = name.split('%').next().unwrap_or(name);
                 if scope.parameters.contains(name) || self.globals.parameters.contains(name) {
                     bail!("cannot READ into named constant `{name}`");
@@ -265,9 +281,9 @@ impl Context {
                 }
             }
         }
-        let mut parser = crate::format_spec::GroupParser::new(format.as_bytes(), items.len())
+        let mut parser = crate::format_spec::GroupParser::new(format.as_bytes(), items.iter().filter(|(e,_)|crate::input_items::index(e).is_none()).count())
             .map_err(anyhow::Error::msg)?;
-        let mut next = items.iter();
+        let mut next = items.iter().filter(|(e,_)|crate::input_items::index(e).is_none());
         while let Some(d) = parser.next().map_err(anyhow::Error::msg)? {
             if !crate::format_spec::is_data(d.code) {
                 continue;
@@ -310,7 +326,7 @@ impl Context {
                 || self.io_items(&args[layout.first..], scope).is_err()) {
             return Ok(None);
         }
-        let items = self.io_items(&args[layout.first..], scope)?;
+        let items = if layout.input {self.io_read_items(&args[layout.first..],scope)?} else {self.io_items(&args[layout.first..], scope)?};
         let format = Expr::Str(self.io_format(&args[layout.format], scope)?);
         if !layout.input {
             let mut values = args[..layout.first].to_vec();
@@ -346,6 +362,10 @@ impl Context {
         ];
         let mut transfers = vec![];
         for (mut target, ty) in items {
+            if let Some((name,value))=crate::input_items::index(&target) {
+                transfers.push(Stmt::If {cond:eq(&code,0),then_body:vec![Stmt::Assign {name:name.into(),value:value.clone()}],else_body:None});
+                continue;
+            }
             let kind = if ty.is_some() {
                 TypeSpec::Integer(None)
             } else {
