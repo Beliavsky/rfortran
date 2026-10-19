@@ -309,9 +309,8 @@ Calls without `STAT` still honor WHERE masks.
 See `tests/programs/xenumeration_steps.f90`, `tests/programs/xenumeration_runtime.f90`,
 and `tests/test_enumeration_steps.py`.
 
-An existing list-directed output limitation affects a statement combining
-`INT(runtime_array)` and another array as separate output items; use separate
-PRINT statements for the enumeration ordinals and statuses for now.
+List-directed output can combine `INT(runtime_array)` and other array items
+in a single PRINT or WRITE statement, including enumeration ordinals and statuses.
 
 The interpreter and native compiler share these checks and lowering. Strict
 revision modes require Fortran 2023. This is the section 9.2 ENUMERATION TYPE

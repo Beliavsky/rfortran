@@ -47,11 +47,17 @@ fn constant(e: &Expr) -> Result<i64> {
 }
 
 // Runtime PACK results retain bounded storage plus a separate logical length.
-fn runtime_extent(e: &Expr) -> Option<Expr> {
+pub(crate) fn runtime_extent(e: &Expr) -> Option<Expr> {
     match e {
-        Expr::Call(n,args) if n == "@packed_view" => Some(args[1].clone()),
+        Expr::Call(n,args) if n == "@packed_view" && args.len() == 2 => Some(args[1].clone()),
         Expr::Bin(_,a,b) => runtime_extent(a).or_else(|| runtime_extent(b)),
         Expr::Un(_,a) => runtime_extent(a),
+        // Elemental functions preserve their array arguments' runtime shape.
+        // Inquiry and reduction calls, such as SIZE and SUM, remain scalar.
+        Expr::Call(n,args) if crate::intrinsics::math_arity(n).is_some()
+            || matches!(n.as_str(), "abs" | "real" | "dble" | "int" | "nint" | "mod" | "modulo" | "sign" | "min" | "max"
+                | "len_trim" | "index" | "scan" | "verify" | "ichar" | "iachar") =>
+            args.iter().find_map(runtime_extent),
         _ => None,
     }
 }

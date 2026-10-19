@@ -14,6 +14,76 @@ import test_deallocate
 class PrintArrayExpressions(unittest.TestCase):
     check = test_deallocate.Deallocate.check
 
+    def test_runtime_array_items(self):
+        self.check("""program p
+implicit none
+integer :: n
+read *, n
+call work(n)
+contains
+subroutine work(n)
+integer, intent(in) :: n
+integer :: a(n), b(n)
+a=2
+b=0
+print *, int(a), b
+write(*,*) b, int(a), 9
+print *, int(a)
+print *, a+1, -a, b
+print *, sum(a), int(a), size(b)
+print *, 'values:', int(a), b
+end subroutine
+end program
+""", "2 2 2 0 0 0\n0 0 0 2 2 2 9\n2 2 2\n"
+     "3 3 3 -2 -2 -2 0 0 0\n6 2 2 2 3\nvalues: 2 2 2 0 0 0\n", data="3\n")
+
+    def test_empty_runtime_array_items(self):
+        self.check("""program p
+implicit none
+integer :: n
+read *, n
+call work(n)
+contains
+subroutine work(n)
+integer, intent(in) :: n
+integer :: a(n), b(n)
+a=2
+b=0
+print *, 1, int(a), b, 9
+print *, int(a), b
+end subroutine
+end program
+""", "1 9\n\n", data="0\n")
+
+    def test_runtime_elemental_intrinsics_and_character_items(self):
+        self.check("""program p
+implicit none
+integer :: n
+read *, n
+call work(n)
+contains
+subroutine work(n)
+integer, intent(in) :: n
+real :: a(n)
+integer :: b(n), fixed(2)
+character(1) :: c(2)
+a=4
+b=0
+fixed=[1,2]
+c=['x','y']
+print *, int(a), c, b
+print *, c, fixed*2, int(a)
+write(*,*) sqrt(a), abs(-a), b
+print *, real(b), dble(b), nint(a), b
+print *, a>3, b
+print '(3i2,3i2)', int(a), b
+end subroutine
+end program
+""", "4 4 4 xy 0 0 0\nxy 2 4 4 4 4\n"
+     "2.0 2.0 2.0 4.0 4.0 4.0 0 0 0\n"
+     "0.0 0.0 0.0 0.0 0.0 0.0 4 4 4 0 0 0\n"
+     "T T T 0 0 0\n4 4 4 0 0 0\n", data="3\n")
+
     def test_list_directed(self):
         self.check("""program p
 implicit none

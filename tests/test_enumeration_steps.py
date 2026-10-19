@@ -272,14 +272,12 @@ integer(8)::status(n)
 a=orange
 if(n>0) a(n)=green
 b=next(a,stat=status)
-print *,int(b)
-print *,status
+print *,int(b),status
 b=previous(a,status)
-print *,int(b)
-print *,status
+print *,int(b),status
 end subroutine
 end
-''', ' 3 3 3 3\n 0 0 0 1\n 1 1 1 2\n 0 0 0 0\n',data='4\n')
+''', ' 3 3 3 3 0 0 0 1\n 1 1 1 2 0 0 0 0\n',data='4\n')
 
     def test_runtime_multidimensional_sections(self):
         self.check('implicit none\n'+enums.ENUM+'''integer::n

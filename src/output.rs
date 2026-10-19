@@ -311,6 +311,30 @@ fn emit(
             body.push(Stmt::CallSub {name:"@format_item".into(),args:vec![id(session),item.clone()]});
             continue;
         }
+        // An earlier item may already have forced this statement into fragment
+        // output. Keep elemental array expressions as arrays here too, rather
+        // than handing an array-valued cast or arithmetic expression to a
+        // scalar fragment printer.
+        if matches!(item, Expr::Call(..) | Expr::Bin(..) | Expr::Un(..)) {
+            *serial += 1;
+            let index = format!("@expression_output_{serial}");
+            if let Ok((value, Some(count), _)) =
+                crate::reductions::elemental_element(item, &id(&index), symbols)
+            {
+                if let Some(length) = crate::reductions::runtime_extent(item)
+                    .or_else(|| (count >= 0).then(|| int(count)))
+                {
+                    let mut scoped = symbols.clone();
+                    let kind = TypeSpec::Integer(Some(8));
+                    scoped.insert(index.clone(), (kind.clone(), vec![]));
+                    body.push(Stmt::VarDecl { kind, names: vec![index.clone()] });
+                    let loop_item = Expr::Call("@output_implied_do".into(),
+                        vec![id(&index), int(1), length, int(1), value]);
+                    emit(&[loop_item], &scoped, serial, previous, active, body, session)?;
+                    continue;
+                }
+            }
+        }
         let arrays = symbols
             .iter()
             .filter(|(_, (_, dims))| !dims.is_empty())
