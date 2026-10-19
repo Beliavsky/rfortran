@@ -154,6 +154,7 @@ struct Resolver {
     duplicate_procedures: HashSet<String>,
     module_procedures: HashSet<String>,
     components: HashMap<String, Vars>,
+    enumeration_types: HashSet<String>,
     methods: HashMap<String, HashMap<String, String>>,
     /// Specific procedures of each generic type-bound procedure, by type.
     generic_methods: HashMap<String, Bindings>,
@@ -237,6 +238,7 @@ impl Resolver {
                     components,
                     bindings,
                 } => {
+                    if bindings.iter().any(|(n,_)|n=="@enumeration") {self.enumeration_types.insert(name.clone());}
                     self.components
                         .insert(name.clone(), declarations(components, &Vars::new()));
                     self.methods
@@ -503,6 +505,12 @@ impl Resolver {
         Ok(visible)
     }
     fn select(&self, op: &str, args: &[Ty], visible: &Bindings) -> Result<Option<String>> {
+        fn element(ty:&Ty)->&Ty {match ty {Ty::Array(t,_)=>element(t),t=>t}}
+        if matches!(op,"=="|"/="|"<"|"<="|">"|">=") && args.len()==2 {
+            if let (Ty::Derived(a),Ty::Derived(b))=(element(&args[0]),element(&args[1])) {
+                if a==b&&self.enumeration_types.contains(a){return Ok(None);}
+            }
+        }
         if !defined_operator(op) && (intrinsic_operator(op,args)
             || (!visible.contains_key(op) && !args.iter().any(|a|matches!(a,Ty::Derived(_))))
             || args.iter().any(|a|!known_type(a))) {
@@ -644,6 +652,21 @@ impl Resolver {
 
             if name=="@record_constructor" {
                 if let Some(Expr::Ident(ty))=args.first(){return Ok(Ty::Array(Box::new(Ty::Derived(ty.clone())),1));}
+            }
+            if name=="@enumeration_reference" && args.len()==3 {
+                self.expression(&mut args[2],vars,visible)?;
+                if let (Expr::Str(ty),Expr::IntLit(rank))=(&args[0],&args[1]) {
+                    let rank:usize=rank.parse()?;
+                    let element=Ty::Derived(ty.clone());
+                    return Ok(if rank==0 {element}else{Ty::Array(Box::new(element),rank)});
+                }
+            }
+            if name=="@enumeration_ordinal" && args.len()==1 {
+                let value=self.expression(&mut args[0],vars,visible)?;
+                return Ok(match value {
+                    Ty::Array(_,rank)=>Ty::Array(Box::new(scalar(&TypeSpec::Integer(None))),rank),
+                    _=>scalar(&TypeSpec::Integer(None)),
+                });
             }
             if name.starts_with("@record_component:") && args.len()==1 {
                 let field=&name[18..];

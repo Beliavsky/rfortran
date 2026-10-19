@@ -327,6 +327,8 @@ pub enum TokenKind {
     KwPure,
     KwSimple,
     KwReduce,
+    KwEnumeration,
+    KwEnumerator,
     KwImpure,
     KwRecursive,
     KwElemental,
@@ -1080,6 +1082,18 @@ pub fn lex(input: &str) -> Vec<Token> {
         start += 1;
     }
     for start in 0..tokens.len() {
+        if matches!(&tokens[start].kind,TokenKind::Ident(n) if n=="enumeration")
+            && matches!(tokens.get(start+1).map(|t|&t.kind),Some(TokenKind::Ident(n)) if n=="type")
+            && same_statement(&input[tokens[start].span.end..tokens[start+1].span.start])
+            && (statement_head(&tokens,input,start) || start>0 && matches!(tokens[start-1].kind,TokenKind::KwEnd)) {
+            tokens[start].kind=TokenKind::KwEnumeration;
+            tokens[start+1].kind=TokenKind::KwType;
+        }
+        if matches!(&tokens[start].kind,TokenKind::Ident(n) if n=="enumerator")
+            && statement_head(&tokens,input,start)
+            && matches!(tokens.get(start+1).map(|t|&t.kind),Some(TokenKind::DColon|TokenKind::Ident(_))) {
+            tokens[start].kind=TokenKind::KwEnumerator;
+        }
         if matches!(tokens[start].kind,TokenKind::KwDo)
             && matches!(tokens.get(start+1).map(|t| &t.kind),Some(TokenKind::Ident(n)) if n=="concurrent") {
             let mut depth=0;
@@ -1438,6 +1452,15 @@ pub fn lex(input: &str) -> Vec<Token> {
             same_statement(&input[tokens[index].span.end..t.span.start]));
         if following.is_none() {
             tokens[index].kind = TokenKind::BareEnd;
+        } else if matches!(following.map(|t|&t.kind),Some(TokenKind::KwEnumeration)) {
+            if let Some(Token{kind:TokenKind::KwType,span})=tokens.get(index+2) {
+                let end=span.end;
+                if let Some(name)=tokens.get_mut(index+3) {
+                    if same_statement(&input[end..name.span.start]) {
+                        if let TokenKind::Ident(n)=&name.kind {name.kind=TokenKind::EndUnitName(n.clone());}
+                    }
+                }
+            }
         } else if matches!(following.map(|t| &t.kind), Some(TokenKind::KwFunction | TokenKind::KwSubroutine | TokenKind::KwModule | TokenKind::KwProgram | TokenKind::KwType)) {
             let end = tokens[index+1].span.end;
             if let Some(name) = tokens.get_mut(index+2) {

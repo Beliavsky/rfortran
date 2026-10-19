@@ -38,6 +38,8 @@ extern {
         KW_PURE => TokenKind::KwPure,
         KW_SIMPLE => TokenKind::KwSimple,
         KW_REDUCE => TokenKind::KwReduce,
+        KW_ENUMERATION => TokenKind::KwEnumeration,
+        KW_ENUMERATOR => TokenKind::KwEnumerator,
         KW_IMPURE => TokenKind::KwImpure,
         KW_RECURSIVE => TokenKind::KwRecursive,
         KW_ELEMENTAL => TokenKind::KwElemental,
@@ -1025,6 +1027,8 @@ PreFuncDecl: Vec<Stmt> = {
     },
 };
 PreFuncDeclData: Vec<Stmt> = {
+    <head:EnumerationHead> <items:EnumerationItems> KW_END KW_ENUMERATION KW_TYPE <end:END_UNIT_NAME?> =>?
+        crate::enumerations::definition(head.0,head.1,items,end).map_err(|error|lalrpop_util::ParseError::User{error}),
     <head:TypeDefHead> <components:Components> <_end:TypeDefEnd> => {
         let (name,mut out)=head; out.push(Stmt::DerivedType{name,components,bindings:vec![]}); out
     },
@@ -1126,6 +1130,16 @@ TypeAttr: String = {
     <id:Ident> LPAREN <arg:Ident> RPAREN => format!("{id}({arg})"),
 };
 TypeDefEnd: () = { KW_END KW_TYPE END_UNIT_NAME? => () };
+
+EnumerationHead: (String,Option<bool>) = {
+    KW_ENUMERATION KW_TYPE DCOLON? <name:Ident> => (name,None),
+    KW_ENUMERATION KW_TYPE COMMA KW_PUBLIC DCOLON <name:Ident> => (name,Some(true)),
+    KW_ENUMERATION KW_TYPE COMMA KW_PRIVATE DCOLON <name:Ident> => (name,Some(false)),
+};
+EnumerationItems: Vec<(usize,Vec<String>)> = {
+    <pos:@L> KW_ENUMERATOR DCOLON? <names:IdentList> => vec![(pos,names)],
+    <mut items:EnumerationItems> <pos:@L> KW_ENUMERATOR DCOLON? <names:IdentList> => {items.push((pos,names));items},
+};
 
 ImplicitRuleList: Vec<ImplicitRule> = {
     <rule: ImplicitRuleItem> => vec![rule],

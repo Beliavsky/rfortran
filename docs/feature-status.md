@@ -205,6 +205,11 @@ Bugs found on 2026-10-18, all fixed:
 
 ## Derived types
 
+Fortran 2023 [enumeration types](fortran2023.md#enumeration-types-us-21-section-92)
+are a separate nominal type facility with initial support. See
+`tests/test_enumerations.py` for executable coverage and the linked section for
+current limits.
+
 | Feature | Status | Notes | Tests |
 |---|---|---|---|
 | Scalar components and default initialization | ✅ | | |

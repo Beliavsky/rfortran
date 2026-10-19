@@ -383,6 +383,8 @@ fn human_token(tok: &TokenKind) -> String {
         TokenKind::KwPure => "keyword pure".into(),
         TokenKind::KwSimple => "keyword simple".into(),
         TokenKind::KwReduce => "keyword reduce".into(),
+        TokenKind::KwEnumeration => "keyword enumeration".into(),
+        TokenKind::KwEnumerator => "keyword enumerator".into(),
         TokenKind::KwImpure => "keyword impure".into(),
         TokenKind::KwRecursive => "keyword recursive".into(),
         TokenKind::KwWhere | TokenKind::KwWhereBlock => "keyword where".into(),

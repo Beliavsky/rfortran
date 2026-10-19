@@ -354,6 +354,7 @@ impl Checker<'_> {
                 }
                 TokenKind::KwPure => Some("pure"),
                 TokenKind::KwSimple => Some("simple"),
+                TokenKind::KwEnumeration => {self.require("enumeration types",2023,t.span.start);None},
                 TokenKind::At => Some("multiple_subscripts"),
                 TokenKind::KwElemental => Some("elemental"),
                 TokenKind::KwImpure => Some("impure"),
@@ -601,7 +602,8 @@ impl Checker<'_> {
                     bindings,
                     ..
                 } => {
-                    if !bindings.is_empty() {
+                    if bindings.iter().any(|(n,_)|n=="@enumeration") {self.require("enumeration types",2023,offset);}
+                    else if !bindings.is_empty() {
                         self.feature("type_bound", offset);
                     }
                     self.body(components, &names, offset, pure, true, &HashSet::new());

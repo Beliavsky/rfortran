@@ -1326,6 +1326,7 @@ pub fn resolve(program: Program) -> Result<Program> {
 }
 fn resolve_types(mut program: Program) -> Result<Program> {
     crate::source_diagnostics::validate_function_results(&program)?;
+    crate::enumerations::validate_definitions(&program)?;
     crate::conditionals::validate_source(&program)?;
     crate::parameters::resolve_intrinsic_modules(&mut program)?;
     program = crate::block_scopes::resolve(program)?;
@@ -1342,11 +1343,13 @@ fn resolve_types(mut program: Program) -> Result<Program> {
     crate::imports::validate(&program)?;
     program=crate::tokenize::prepare(program)?;
     program = crate::named_arguments::resolve(program, false)?;
+    program=crate::enumerations::prepare(program)?;
     if crate::conditionals::contains(&program) {
         crate::operators::validate_conditionals(&program)?;
         program=crate::parameters::resolve_constants(program)?;
     }
     program = crate::operators::resolve(program)?;
+    program = crate::enumerations::lower(program)?;
     if crate::conditionals::contains(&program) {program=crate::heap::automatic_locals(program)?;}
     program = crate::conditionals::resolve(program)?;
     program = crate::named_arguments::resolve(program, true)?;

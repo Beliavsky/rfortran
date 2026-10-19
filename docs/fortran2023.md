@@ -237,6 +237,57 @@ specifiers and parallel execution remain unsupported. Existing DO CONCURRENT
 semantic checking is partial; this addition does not claim full validation of
 iteration independence or procedure purity.
 
+## Enumeration types (US 21, section 9.2)
+
+Initial support for noninteroperable enumeration types preserves each type's
+identity through module association and generic resolution. Values use integer
+ordinal storage only after checking assignments, comparisons, and procedure
+arguments.
+
+```fortran
+enumeration type :: colour
+   enumerator :: red, orange, green
+end enumeration type colour
+type(colour) :: light = orange
+print *, int(light)             ! 2
+print *, light > red            ! T
+```
+
+Definitions accept multiple ENUMERATOR statements, optional double colons,
+PUBLIC/PRIVATE module accessibility, and an optional matching name on END
+ENUMERATION TYPE. Enumerator names are ordinary named constants in the
+containing scope. Assignment requires the same enumeration type on both sides;
+there is no implicit conversion to or from INTEGER. The six intrinsic relational
+operators compare ordinal positions, starting at one. Arithmetic, logical
+operations, enum subscripts/bounds/kinds, and cross-type assignments are rejected.
+
+`colour(i)` constructs a scalar value from a scalar INTEGER ordinal. Constant
+out-of-range ordinals are diagnosed during compilation; runtime ordinals are
+checked before conversion, including INTEGER(8) values. `INT(A[,KIND])` returns
+an ordinal and `HUGE(X)` returns the last enumerator. Keyword arguments to the
+supported intrinsics are accepted. Array constructors, constructor implied-DOs,
+fixed-size arrays and sections, SELECT CASE (including ranges), scalar procedure
+arguments/results, and derived-type component references are supported. Generic
+interfaces distinguish enumeration types from INTEGER and from each other.
+USE ONLY/renaming, private types with public enumerators, and separate module
+compilation retain those distinctions.
+
+The interpreter and native compiler share these checks and lowering. Strict
+revision modes require Fortran 2023. This is the section 9.2 ENUMERATION TYPE
+facility, not the distinct interoperable ENUM/BIND(C) facility in section 9.3.
+
+Current limits include NEXT/PREVIOUS, direct formatted enumeration I/O,
+POINTER/ALLOCATABLE enumeration objects, explicitly typed enumeration array
+constructors, derived constructors containing enumeration arguments, and some
+array intrinsics such as RESHAPE/PACK. List-directed and namelist enumeration I/O are forbidden by the
+language; use `INT(value)` to print its ordinal. Polymorphic enumeration objects
+are forbidden. Separate local type definitions with the same name in different
+procedures currently receive an unsupported-feature diagnostic; separate modules
+can define same-named types. Other existing procedure/array limits still apply.
+The existing constant folder can confuse main-program named constants with
+same-named implicit variables in external procedures; shared enumeration
+definitions should be placed in modules to avoid that limitation.
+
 ## Try it
 
 ```cmd
@@ -246,6 +297,8 @@ rf.bat -std=f2023 tests\programs\xtokenize.f90 --run
 rf.bat -std=f2023 tests\programs\xsimple_procedures.f90 --run
 rf.bat -std=f2023 tests\programs\xmultiple_subscripts.f90 --run
 rf.bat -std=f2023 tests\programs\xconcurrent_reduce.f90 --run
+rf.bat -std=f2023 tests\programs\xenumeration.f90 --run
+python tests/test_enumerations.py
 python tests/test_concurrent_reduce.py
 python tests/test_multiple_subscripts.py
 python tests/test_fortran2023.py
