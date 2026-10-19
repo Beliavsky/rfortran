@@ -21,6 +21,99 @@ pub(crate) struct SourceOrigin {
     pub name: String,
     pub range: Range<usize>,
 }
+
+/// Check source declarations before backend specialization can obscure a
+/// missing function result type with an unrelated unsupported-feature error.
+pub(crate) fn validate_function_results(program: &crate::ast::Program) -> anyhow::Result<()> {
+    use crate::ast::{Expr, Implicit};
+    // A local IMPLICIT statement can override part of the inherited mapping.
+    // Only whether each initial letter has a type matters for this check.
+    fn mapping(body: &[Stmt], mut inherited: [bool; 26]) -> [bool; 26] {
+        for stmt in body {
+            let rules = match stmt {
+                Stmt::Implicit(Implicit::None) => { inherited = [false; 26]; continue; }
+                Stmt::Implicit(Implicit::Rule { letter_ranges, .. }) => vec![letter_ranges],
+                Stmt::Implicit(Implicit::Rules { rules }) => rules.iter().map(|r| &r.letter_ranges).collect(),
+                _ => continue,
+            };
+            for ranges in rules {
+                for range in ranges {
+                    for letter in range.start.to_ascii_lowercase()..=range.end.unwrap_or(range.start).to_ascii_lowercase() {
+                        if letter.is_ascii_lowercase() { inherited[(letter as u8-b'a') as usize] = true; }
+                    }
+                }
+            }
+        }
+        inherited
+    }
+    fn walk(body: &[Stmt], inherited: [bool; 26], main_contains: Option<&[String]>) -> anyhow::Result<()> {
+        let scope = mapping(body, inherited);
+        let mut offset = None;
+        for stmt in body {
+            if let Stmt::SourceLocation(p) = stmt { offset = Some(*p); continue; }
+            match stmt {
+                Stmt::Function { name, return_type, body, .. } => {
+                    // Top-level external procedures do not inherit the main
+                    // program's IMPLICIT statements; CONTAINS procedures do.
+                    let parent = if main_contains.is_some_and(|names| !names.contains(name)) { [true;26] } else { scope };
+                    let local = mapping(body, parent);
+                    let result = match body.last() { Some(Stmt::Return(Some(Expr::Ident(n)))) => n, _ => name };
+                    let declared = return_type.is_some() || body.iter().any(|s| match s {
+                        Stmt::VarDecl { names, .. } | Stmt::DerivedDecl { names, .. } => names.contains(result),
+                        Stmt::ArrayDecl { name, .. } => name == result,
+                        Stmt::InitializedDecl { entities, .. } => entities.iter().any(|(n,_)| n == result),
+                        _ => false,
+                    });
+                    let implicitly_typed = result.bytes().next().filter(u8::is_ascii_lowercase).is_some_and(|c| local[(c-b'a') as usize]);
+                    if !declared && !implicitly_typed {
+                        let message = format!("function result `{result}` has no declared type under IMPLICIT NONE");
+                        let start = body.iter().find_map(statement_offset).or(offset);
+                        if let Some(start) = start {
+                            let end = body.iter().filter_map(statement_offset).find(|p| *p > start).unwrap_or(usize::MAX);
+                            return Err(LocatedError { message, range: start..end, highlight: Some(result.clone()) }.into());
+                        }
+                        anyhow::bail!(message);
+                    }
+                    walk(body, parent, None)?;
+                }
+                Stmt::Subroutine { name, body, .. } => {
+                    let parent = if main_contains.is_some_and(|names| !names.contains(name)) { [true;26] } else { scope };
+                    walk(body, parent, None)?;
+                }
+                Stmt::Module { body, .. } => walk(body, [true;26], None)?,
+                Stmt::Block { body } => walk(body, scope, None)?,
+                _ => {},
+            }
+        }
+        Ok(())
+    }
+    walk(&program.body, [true;26], Some(&program.contains))
+}
+
+#[cfg(test)]
+mod result_type_tests {
+    fn validate(source: &str) -> anyhow::Result<()> {
+        let p=crate::parser::parse_with_src(source,&crate::lexer::lex(source),"result.f90").unwrap();
+        super::validate_function_results(&p)
+    }
+    #[test]
+    fn preserves_implicit_scope_and_explicit_result_types() {
+        for source in [
+            "function f()\nf=1.0\nend function",
+            "implicit none\nend\nfunction f()\nf=1.0\nend function",
+            "module m\nimplicit none\ncontains\nfunction f()\nimplicit real(f)\nf=1.0\nend function\nend module",
+            "module m\nimplicit none\ncontains\nfunction f()\nimplicit real(a-e),integer(i-n)\nf=1.0\nend function\nend module",
+            "function f()\nimplicit none(external)\nf=1.0\nend function",
+            "module m\nimplicit none\ncontains\nreal function f()\nf=1.0\nend function\nend module",
+            "function f() result(r)\nimplicit none\nreal::r(2)\nr=1\nend function",
+        ] {
+            let result=validate(source);
+            // A partial local IMPLICIT mapping leaves F without a type.
+            if source.contains("implicit real(a-e)") { assert!(result.is_err(),"{source}"); }
+            else {assert!(result.is_ok(),"{source}: {result:?}");}
+        }
+    }
+}
 /// Module lowering gives symbols internal identities; diagnostics use the
 /// entity names the programmer wrote instead of exposing those identities.
 pub(crate) fn user_names(message: &str) -> String {
