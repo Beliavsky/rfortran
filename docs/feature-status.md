@@ -112,7 +112,7 @@ Bugs found on 2026-10-18, all fixed:
 | [DATA statements](language-support.md#other-statement-forms) | 🟡 | Whole variables only, not array elements, sections or implied-DO lists | test_statement_forms_io.py |
 | EQUIVALENCE | ❌ | | |
 | Unnamed ENUM, BIND(C) enumerators (Fortran 2003) | ❌ | | |
-| [Named enum types (Fortran 2023)](fortran2023.md#enum-types-section-93) | 🟡 | Scalars, arrays, constructors and procedures; direct formatted I/O and C calls remain unsupported | test_enum_types.py, test_enum_arrays.py |
+| [Named enum types (Fortran 2023)](fortran2023.md#enum-types-section-93) | 🟡 | Scalars, arrays, constructors, procedures and integer editing; formatted READ requires constant formats and scalar/fixed whole-array items; C calls remain unsupported | test_enum_types.py, test_enum_arrays.py, test_enum_io.py |
 | Source locations in diagnostics | ✅ | | test_source_diagnostics.py |
 
 ## Types and kinds

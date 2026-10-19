@@ -1929,11 +1929,13 @@ of them stops the program, so IOSTAT is then always zero. READ accepts IOMSG
 with IOSTAT; IOMSG is not set.
 
 A formatted READ with a constant format of edit descriptors reads each record
-whole, then gives each item its field: A, I, F, E, ES, EN, D, G and L fields, X,
+whole, then gives each item its field: A, I, B, O, Z, F, E, ES, EN, D, G and L fields, X,
 T, TL, TR and `/`, with repeat counts, groups and reversion. Items may be
 scalars, array elements and rank-one arrays of constant size. A blank numeric
 field reads as zero, and an F, E, D or G field without a decimal point or
-exponent has an implied one. B, O and Z input, input implied-DO lists and
+exponent has an implied one (G editing of INTEGER objects ignores the precision).
+B/O/Z input accepts unsigned bit patterns for INTEGER kinds 1, 2, 4 and 8,
+checks overflow, and supports BN/BZ blank editing. Input implied-DO lists and
 runtime-sized arrays are not yet supported with edit descriptors. Records are
 read up to 4096 characters. Formatted WRITE with an implied-DO list goes to a
 file as well as to standard output.

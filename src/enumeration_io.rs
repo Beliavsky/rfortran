@@ -210,14 +210,18 @@ impl Context {
         scope: &Scope,
         layout: Layout,
     ) -> Result<()> {
-        if types.iter().any(|t|t.enumeration().is_some_and(|n|self.is_c_enum(n))) {
-            bail!("direct formatted I/O of enum objects is not yet supported; use INT for output");
-        }
         if types[..layout.first]
             .iter()
             .any(|t| t.enumeration().is_some())
         {
             bail!("enumeration values cannot be used as I/O controls");
+        }
+        // Section 9.3 enums use INTEGER editing. Let the shared output path
+        // handle runtime formats, sections, constructors and implied-DO lists.
+        if !layout.input && types.iter().all(|t| t.enumeration().is_none_or(|n| self.is_c_enum(n)))
+            && (self.io_format(&args[layout.format], scope).is_err()
+                || self.io_items(&args[layout.first..], scope).is_err()) {
+            return Ok(());
         }
         if matches!(&args[layout.format], Expr::Call(n,_) if n == "@list_directed") {
             bail!("list-directed input/output is not permitted for enumeration values; use INT for output");
@@ -269,11 +273,13 @@ impl Context {
                 continue;
             }
             for _ in 0..d.repeat {
-                if let Some((_, Some(_))) = next.next() {
-                    if !matches!(d.code, b'i' | b'b' | b'o' | b'z') {
+                if let Some((_, Some(owner))) = next.next() {
+                    let c_enum = self.is_c_enum(owner);
+                    if !matches!(d.code, b'i' | b'b' | b'o' | b'z') && !(c_enum && d.code == b'g') {
+                        if c_enum { bail!("enum values require an I, B, O, Z or G edit descriptor"); }
                         bail!("enumeration values require an I, B, O or Z edit descriptor");
                     }
-                    if layout.input && d.code != b'i' {
+                    if layout.input && !c_enum && d.code != b'i' {
                         bail!("formatted enumeration READ currently supports only the I edit descriptor");
                     }
                 }
@@ -299,6 +305,11 @@ impl Context {
             return Ok(None);
         }
         self.check_io(args, &types, scope, layout)?;
+        if !layout.input && types.iter().all(|t| t.enumeration().is_none_or(|n| self.is_c_enum(n)))
+            && (self.io_format(&args[layout.format], scope).is_err()
+                || self.io_items(&args[layout.first..], scope).is_err()) {
+            return Ok(None);
+        }
         let items = self.io_items(&args[layout.first..], scope)?;
         let format = Expr::Str(self.io_format(&args[layout.format], scope)?);
         if !layout.input {
@@ -370,7 +381,7 @@ impl Context {
                 value: initial,
             });
             read.push(value.clone());
-            if let Some(ty) = ty {
+            if let Some(ty) = ty.filter(|ty| !self.is_c_enum(ty)) {
                 let max = count(&self.types[&ty]) as i64;
                 let invalid = Expr::Bin(
                     BinOp::Or,
@@ -427,7 +438,7 @@ impl Context {
                 cond: Expr::Bin(BinOp::Ne, Box::new(Expr::Ident(code)), Box::new(int(0))),
                 then_body: vec![Stmt::CallSub {
                     name: "@error_stop".into(),
-                    args: vec![Expr::Str("formatted enumeration READ failed".into())],
+                    args: vec![Expr::Str("@enumeration_runtime:formatted enumeration READ failed".into())],
                 }],
                 else_body: None,
             });

@@ -22,6 +22,8 @@ pub const SIGN_PLUS: u8 = b'+';
 pub const SIGN_DEFAULT: u8 = b'-';
 pub const SCALE: u8 = b'p';
 /// Input-only modes (BN, BZ) that do not change output.
+pub const BLANK_NULL: u8 = b'n';
+pub const BLANK_ZERO: u8 = b'j';
 pub const NO_EFFECT: u8 = b'_';
 /// Record break inserted by format reversion.
 pub const REVERSION: u8 = b'r';
@@ -169,7 +171,8 @@ impl<'a> Parser<'a> {
                     (b's', b'p') => { self.pos += 1; SIGN_PLUS }
                     (b's', b's') => { self.pos += 1; SIGN_DEFAULT }
                     (b's', _) => SIGN_DEFAULT,
-                    (b'b', b'n' | b'z') => { self.pos += 1; NO_EFFECT }
+                    (b'b', b'n') => { self.pos += 1; BLANK_NULL }
+                    (b'b', b'z') => { self.pos += 1; BLANK_ZERO }
                     (b'd', b'c') => return Err("DC (decimal comma) output is not yet supported"),
                     (b'd', b'p') => { self.pos += 1; NO_EFFECT }
                     (b'r', b'u' | b'd' | b'z' | b'n' | b'c' | b'p') => return Err("rounding-mode edit descriptors are not yet supported"),
@@ -184,7 +187,7 @@ impl<'a> Parser<'a> {
                     if d.code == T && d.width == 0 {
                         return Err("T edit descriptor position must be positive");
                     }
-                } else if matches!(d.code, SIGN_PLUS | SIGN_DEFAULT | NO_EFFECT) && count.is_some() {
+                } else if matches!(d.code, SIGN_PLUS | SIGN_DEFAULT | NO_EFFECT | BLANK_NULL | BLANK_ZERO) && count.is_some() {
                     return Err("invalid output descriptor");
                 } else if is_data(d.code) {
                     let width = self.number()?;
@@ -1067,7 +1070,7 @@ pub fn render_with(format: &[u8], count: usize, item: &dyn Fn(usize, &mut dyn Fn
                 SIGN_PLUS => style.plus = true,
                 SIGN_DEFAULT => style.plus = false,
                 SCALE => style.scale = d.scale,
-                NO_EFFECT => {}
+                NO_EFFECT | BLANK_NULL | BLANK_ZERO => {}
                 _ => {
                     if index == count {
                         break 'descriptors;

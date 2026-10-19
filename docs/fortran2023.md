@@ -420,14 +420,26 @@ type(calendar) :: plan
 plan=calendar(following=[season :: spring,season(6)], current=ior(spring,2))
 ```
 
-Section 9.3 remains partial. Direct formatted enum I/O is diagnosed; use `INT` for
-formatted output. POINTER objects and scalar ALLOCATABLE objects are not supported.
+Direct formatted enum output uses INTEGER editing: I, B, O, Z and G descriptors,
+including runtime formats, array sections, constructor and implied-DO output,
+internal WRITE, mixed lists and format reversion through the shared output path.
+Constant-format external READ supports I, B, O, Z and G for scalar enum objects
+and fixed whole arrays, with IOSTAT for malformed input, overflow and EOF.
+Unnamed representable integer values are valid input; section 9.2 ordinal
+bounds do not apply. B/O/Z input also supports ordinary INTEGER objects of kinds
+1, 2, 4 and 8, unsigned bit patterns, and BN/BZ blank editing.
+
+Section 9.3 remains partial. Formatted enum READ still requires a constant format
+and scalar items or fixed whole arrays; input sections and implied-DOs, runtime
+input formats and internal formatted READ remain unsupported. POINTER objects
+and scalar ALLOCATABLE objects are not supported.
 Actual calls across a C ABI are not implemented or claimed by accepting the
 BIND(C) definition. Existing local-type scoping, expression inference,
 procedure and array-backend limits still apply; supported constructors do not
 imply support for every transformational intrinsic with enum arrays. See
 `tests/programs/xenum_type.f90`, `tests/programs/xenum_arrays.f90`,
-`tests/test_enum_types.py` and `tests/test_enum_arrays.py`.
+`tests/programs/xenum_io.f90`, `tests/test_enum_types.py`,
+`tests/test_enum_arrays.py` and `tests/test_enum_io.py`.
 
 ## Try it
 

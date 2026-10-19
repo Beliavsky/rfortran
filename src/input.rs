@@ -6,6 +6,8 @@
 use crate::ast::{BinOp, Expr, Stmt, TypeSpec};
 use anyhow::{bail, Result};
 use std::collections::HashMap;
+#[path = "input_radix.rs"]
+mod radix;
 
 /// Canonicalize READ controls before the shared I/O lowering passes.
 pub(crate) fn read_controls(
@@ -631,18 +633,19 @@ pub(crate) fn lower_field_read(
     if control.is_empty() && targets.is_empty() { return Ok(None); }
     let mut parser = spec::GroupParser::new(text.as_bytes(), targets.len()).map_err(anyhow::Error::msg)?;
     // Records, each a list of (item, kind, first column, width, decimals).
-    let mut records: Vec<Vec<(Expr, TypeSpec, usize, usize, Option<usize>)>> = vec![vec![]];
+    let mut records: Vec<Vec<(Expr, TypeSpec, usize, usize, Option<usize>, u8, bool)>> = vec![vec![]];
     let mut column = 1usize;
+    let mut blank_zero = false;
     let mut next = targets.into_iter();
     while let Some(d) = parser.next().map_err(anyhow::Error::msg)? {
         match d.code {
             spec::AT => bail!("AT edit descriptor is only permitted for output"),
             code if spec::is_data(code) => {
-                if matches!(code, b'b' | b'o' | b'z') {
-                    bail!("formatted READ does not yet support B, O or Z input");
-                }
                 for _ in 0..d.repeat {
                     let Some((item, kind)) = next.next() else { break };
+                    if matches!(code, b'b' | b'o' | b'z') && !matches!(kind, TypeSpec::Integer(_)) {
+                        bail!("formatted B, O or Z READ currently requires an INTEGER variable");
+                    }
                     let character = matches!(kind, TypeSpec::Character(_));
                     if character != (code == b'a') {
                         bail!("formatted READ: the A edit descriptor requires a CHARACTER variable, and the other edit descriptors a numeric or LOGICAL one");
@@ -652,11 +655,15 @@ pub(crate) fn lower_field_read(
                         (_, 0, _) => bail!("formatted READ requires a field width"),
                         (_, w, _) => w,
                     };
-                    let decimals = (matches!(code, b'f' | b'e' | b'd' | b'g' | spec::ES | spec::EN) && d.has_precision).then_some(d.precision);
-                    records.last_mut().unwrap().push((item, kind, column, width, decimals));
+                    let decimals = (matches!(kind, TypeSpec::Real | TypeSpec::DoublePrecision | TypeSpec::RealKind(_))
+                        && matches!(code, b'f' | b'e' | b'd' | b'g' | spec::ES | spec::EN)
+                        && d.has_precision).then_some(d.precision);
+                    records.last_mut().unwrap().push((item, kind, column, width, decimals, code, blank_zero));
                     column += width;
                 }
             }
+            spec::BLANK_NULL => blank_zero = false,
+            spec::BLANK_ZERO => blank_zero = true,
             b'x' | spec::TR => column += if d.width > 0 { d.width } else { d.repeat.max(1) },
             spec::TL => column = column.saturating_sub(d.width.max(1)).max(1),
             spec::T => column = d.width.max(1),
@@ -681,13 +688,19 @@ pub(crate) fn lower_field_read(
         Expr::Index(n, idx) => Stmt::AssignIndex { name: n.clone(), indices: idx.clone(), value },
         _ => unreachable!(),
     };
-    let convert = |(item, kind, first, width, decimals): &(Expr, TypeSpec, usize, usize, Option<usize>)| -> Vec<Stmt> {
+    let convert = |(item, kind, first, width, decimals, descriptor, blank_zero): &(Expr, TypeSpec, usize, usize, Option<usize>, u8, bool)| -> Vec<Stmt> {
         let last = first + width - 1;
         if let TypeSpec::Character(length) = kind {
             // Aw with w longer than the item takes the rightmost characters.
             let length = length.unwrap_or(1);
             let start = if *width > length { last + 1 - length } else { *first };
             return vec![store(item, substring(start, last))];
+        }
+        if matches!(descriptor, b'b' | b'o' | b'z') {
+            let TypeSpec::Integer(kind) = kind else { unreachable!() };
+            let mut body = vec![set(&field, substring(*first, last))];
+            body.extend(radix::convert(&field, &code, item, kind.unwrap_or(4), *width, *descriptor, *blank_zero));
+            return body;
         }
         let blank = bin(BinOp::Eq, var(&field), Expr::Str(String::new()));
         let zero = match kind { TypeSpec::Logical => Expr::Logical(false), _ => int(0) };

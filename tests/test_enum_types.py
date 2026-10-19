@@ -88,11 +88,11 @@ end
 ''',' 8 T\n 9\n',data='3\n')
 
     def test_explicit_limits_do_not_apply_ordinal_rules(self):
-        self.reject('implicit none\n'+ENUM+'''type(season) :: s
+        self.check('implicit none\n'+ENUM+'''type(season) :: s
 s=season(6)
 print "(i3)",s
 end
-''','direct formatted I/O of enum objects is not yet supported')
+''','  6\n')
         self.check('implicit none\n'+ENUM+'''type(season) :: s(2)
 s=[spring,summer]
 print *,int(s)
