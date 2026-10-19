@@ -597,6 +597,19 @@ impl Lower {
         let writable=routine.params.iter().filter(|param|routine.body.iter().any(|s|
             matches!(s,Stmt::DummyIntent{name,intent} if name==*param && matches!(intent.as_str(),"intent(out)"|"intent(inout)"))))
             .cloned().collect::<std::collections::HashSet<_>>();
+        if routine.elemental && !writable.is_empty() {
+            let array_call=views.iter().any(|v|v.items.is_some());
+            for ((param,arg),view) in routine.params.iter().zip(args.iter()).zip(&views) {
+                if !writable.contains(param) {continue;}
+                if !same(&bound_types[param],&view.kind) {bail!("type mismatch for writable elemental function dummy `{param}`");}
+                if array_call && view.items.is_none() {bail!("ELEMENTAL writable dummy `{param}` requires an array actual when any argument is an array");}
+                let n=match arg {
+                    Expr::Ident(n)|Expr::Call(n,_)|Expr::Index(n,_)|Expr::Section{name:n,..}=>n,
+                    _=>bail!("writable elemental function dummy `{param}` requires a variable actual"),
+                };
+                if symbols.contains_key(&format!("@function_readonly:{n}")) {bail!("cannot pass INTENT(IN) variable as writable function argument `{param}`");}
+            }
+        }
         if !routine.elemental {
             for (param,view) in routine.params.iter().zip(&views) {
                 let array=routine.body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,..} if name==param));
@@ -737,9 +750,30 @@ impl Lower {
             let mut names = HashMap::new();
             names.insert(routine.result.clone(), result.clone());
             let mut expanded = vec![];
+            let mut copybacks = vec![];
             for (param, arg) in routine.params.iter().zip(args) {
                 if writable.contains(param) {
-                    let Expr::Ident(actual)=arg else {unreachable!()};
+                    let actual=match arg {
+                        Expr::Ident(actual)=>actual,
+                        Expr::Index(array,indices)|Expr::Call(array,indices) if routine.elemental=>{
+                            // Bind an OUT element through a fresh local, then
+                            // copy back without reading its previous value.
+                            self.serial+=1;
+                            let temp=format!("@elemental_writable_{}",self.serial);
+                            expanded.push(Stmt::VarDecl{kind:bound_types[param].clone(),names:vec![temp.clone()]});
+                            let mut saved=vec![];
+                            for index in indices {
+                                self.serial+=1;
+                                let name=format!("@elemental_writable_index_{}",self.serial);
+                                expanded.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![name.clone()]});
+                                expanded.push(Stmt::Assign{name:name.clone(),value:index});
+                                saved.push(Expr::Ident(name));
+                            }
+                            copybacks.push(Stmt::AssignIndex{name:array,indices:saved,value:Expr::Ident(temp.clone())});
+                            temp
+                        },
+                        _=>bail!("writable function dummy `{param}` requires a variable actual"),
+                    };
                     if routine.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==param && intent=="intent(out)")) {
                         expanded.push(Stmt::CallSub{name:"@undefine".into(),args:vec![Expr::Ident(actual.clone())]});
                     }
@@ -881,6 +915,7 @@ impl Lower {
             });
             crate::subroutines::inline_returns_with_prefix(&mut body, &mut self.serial, "@character_function_returned")?;
             expanded.extend(body);
+            expanded.extend(copybacks);
             self.body(&mut expanded, symbols)?;
             prefix.push(Stmt::Block { body: expanded });
             results.push(Expr::Ident(result));

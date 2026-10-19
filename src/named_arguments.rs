@@ -158,6 +158,7 @@ pub(crate) fn intrinsic(name: &str) -> Option<Signature> {
         "merge" => &["tsource", "fsource", "mask"],
         "lge" | "lgt" | "lle" | "llt" => &["string_a", "string_b"],
         "tiny" | "huge" => &["x"],
+        "next" | "previous" => &["a", "stat"],
         "allocated" => &["array"],
         "associated" => &["pointer", "target"],
         "present" => &["a"],
@@ -173,6 +174,7 @@ pub(crate) fn intrinsic(name: &str) -> Option<Signature> {
         optional: if name=="tokenize" {HashSet::from(["separator".into()])}else if name=="split" {HashSet::from(["back".into()])}else if name=="cmplx" {HashSet::from(["y".into(),"kind".into()])}else if name=="associated" {HashSet::from(["target".into()])}else if matches!(name,"index"|"scan"|"verify") {
             HashSet::from(["back".into(),"kind".into()])
         } else if name=="get_command_argument" {HashSet::from(["value".into(),"length".into(),"status".into()])
+        } else if matches!(name,"next"|"previous") {HashSet::from(["stat".into()])
         } else if name=="getcwd" {HashSet::from(["status".into()])
         } else if name=="get_environment_variable" {
             HashSet::from(["value".into(),"length".into(),"status".into(),"trim_name".into()])
@@ -475,7 +477,7 @@ mod tests {
             .chain(["tokenize","split","random_number","random_seed","cpu_time","system_clock","date_and_time","get_environment_variable","getcwd","get_command_argument","abs","dble","kind","mod","modulo","new_line",
                 "adjustl","adjustr","trim","repeat","index","scan","verify","real","int","nint","aint","anint",
                 "floor","ceiling","char","achar","ichar","iachar","len","len_trim","sign","dim","dprod",
-                "dot_product","matmul","merge","lge","lgt","lle","llt","tiny","huge","allocated","present",
+                "dot_product","matmul","merge","lge","lgt","lle","llt","tiny","huge","next","previous","allocated","present",
                 "selected_int_kind","selected_real_kind","max","min","transpose","epsilon","digits","radix",
                 "precision","range","minexponent","maxexponent","size","lbound","ubound","shape","sum","product","iany","iall","iparity","parity","norm2",
                 "bit_size","bessel_jn","bessel_yn","out_of_range",

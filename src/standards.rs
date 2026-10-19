@@ -192,6 +192,8 @@ fn intrinsic_year(name: &str) -> Option<u16> {
         | "selected_logical_kind"
         | "split"
         | "tokenize"
+        | "next"
+        | "previous"
         | "reduce" => 2023,
         _ => return None,
     })

@@ -82,8 +82,30 @@ pub fn validate(program: &Program) -> Result<()> {
             if !writable_locals.contains(name) { bail!("PURE procedure cannot modify nonlocal variable `{name}`; declare local variables explicitly"); }
             Ok(())
         };
+        let check_steps=known.keys().any(|n|n.starts_with("@enumeration_step_"));
         for stmt in body {
             if let Some(p) = crate::source_diagnostics::statement_offset(&stmt) { statement_location.set(Some(p)); }
+            if check_steps {
+                // Intrinsic functions may define STAT even in a PURE context;
+                // the actual must still be a writable local object.
+                let mut copy=stmt.clone();
+                let mut status_result=Ok(());
+                for expr in crate::procedure_arguments::expressions(&mut copy) {
+                    crate::procedure_arguments::visit_expr(expr,&mut |e| {
+                        if status_result.is_ok() {
+                            if let Expr::Call(n,args)=e {
+                                if n.starts_with("@enumeration_step_") && args.len()==2 {
+                                    status_result=match &args[1] {
+                                        Expr::Ident(n)|Expr::Call(n,_)|Expr::Index(n,_)|Expr::Section{name:n,..}=>writable(n),
+                                        _=>Err(anyhow::anyhow!("NEXT/PREVIOUS STAT must be writable")),
+                                    };
+                                }
+                            }
+                        }
+                    });
+                }
+                status_result?;
+            }
             match stmt {
                 Stmt::CallSub {name,..} if name == crate::initialized::UNCHECKED_BEGIN || name == crate::initialized::UNCHECKED_END => {},
                 Stmt::Print { .. } | Stmt::Read { .. } => bail!("PURE procedure cannot perform external I/O"),
@@ -200,7 +222,8 @@ pub fn validate(program: &Program) -> Result<()> {
                     if *elemental { crate::elemental::validate(name,params,return_type,body)?; }
                     let mut locals: HashSet<String> = params.iter().cloned().collect();
                     locals.insert(name.clone());
-                    check(body, &locals, &params.iter().cloned().collect(), known, &characters)?;
+                    let readonly=params.iter().filter(|p|!(name.starts_with("@enumeration_step_") && p.as_str()=="stat")).cloned().collect();
+                    check(body, &locals, &readonly, known, &characters)?;
                 }
                 Stmt::Subroutine { name, pure: true, elemental, params, body, .. } => {
                     if *elemental { crate::elemental::validate_subroutine(name,params,body)?; }

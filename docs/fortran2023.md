@@ -288,11 +288,27 @@ interfaces distinguish enumeration types from INTEGER and from each other.
 USE ONLY/renaming, private types with public enumerators, and separate module
 compilation retain those distinctions.
 
+`NEXT(A[,STAT])` and `PREVIOUS(A[,STAT])` step to the adjacent enumerator.
+At the last/first enumerator respectively, they retain the input value and set
+`STAT` to a positive value; successful steps set it to zero. Without `STAT`, a
+boundary error terminates execution and identifies the source file and line.
+`STAT` must be a writable INTEGER with a decimal exponent range of at least four
+(supported INTEGER kinds 2, 4 and 8). Keyword arguments and forwarding an absent
+OPTIONAL status dummy through a subroutine are supported. The functions can be used in PURE and SIMPLE
+procedures, and valid calls without `STAT` can appear in constant initializers.
+
+These are elemental functions: array inputs produce array results, and any
+supplied `STAT` must then be a conformable array. A scalar `A` can broadcast over
+an array `STAT`. Calls with `STAT` reuse bounded function specialization, including
+sections and multidimensional arrays; its existing shape and expansion limits
+apply. Runtime-sized array calls with `STAT` are not yet supported.
+See `tests/programs/xenumeration_steps.f90` and `tests/test_enumeration_steps.py`.
+
 The interpreter and native compiler share these checks and lowering. Strict
 revision modes require Fortran 2023. This is the section 9.2 ENUMERATION TYPE
 facility, not the distinct interoperable ENUM/BIND(C) facility in section 9.3.
 
-Current limits include NEXT/PREVIOUS, direct formatted enumeration I/O,
+Current limits include direct formatted enumeration I/O,
 POINTER/ALLOCATABLE enumeration objects, and some array intrinsics such as
 RESHAPE/PACK. List-directed and namelist enumeration I/O are forbidden by the
 language; use `INT(value)` to print its ordinal. Polymorphic enumeration objects
@@ -313,7 +329,9 @@ rf.bat -std=f2023 tests\programs\xsimple_procedures.f90 --run
 rf.bat -std=f2023 tests\programs\xmultiple_subscripts.f90 --run
 rf.bat -std=f2023 tests\programs\xconcurrent_reduce.f90 --run
 rf.bat -std=f2023 tests\programs\xenumeration.f90 --run
+rf.bat -std=f2023 tests\programs\xenumeration_steps.f90 --run
 python tests/test_enumerations.py
+python tests/test_enumeration_steps.py
 python tests/test_concurrent_reduce.py
 python tests/test_multiple_subscripts.py
 python tests/test_fortran2023.py

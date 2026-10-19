@@ -471,6 +471,20 @@ pub(crate) fn instrument_with_origins(program: Program, source: &str, filename: 
         for stmt in body.iter_mut() {
             match stmt {
                 Stmt::SourceLocation(offset) => position = Some(*offset),
+                Stmt::CallSub {name,args} if name=="@error_stop"
+                    && matches!(args.first(),Some(Expr::Str(s)) if s.starts_with("@enumeration_boundary:")) => {
+                    if let Some(Expr::Str(message))=args.first_mut() {
+                        *message=message.trim_start_matches("@enumeration_boundary:").to_owned();
+                        if let Some(offset)=position {
+                            let (text,offset,file)=if let Some(origin)=origins.iter().find(|o|o.range.contains(&offset)) {
+                                (&source[origin.range.clone()],offset-origin.range.start,origin.name.as_str())
+                            }else {(source,offset,filename)};
+                            let line=text.as_bytes()[..offset.min(text.len())].iter().filter(|&&b|b==b'\n').count()+1;
+                            let file=std::path::Path::new(file).file_name().and_then(|n|n.to_str()).unwrap_or(file);
+                            message.push_str(&format!(" at {file}:{line}"));
+                        }
+                    }
+                }
                 Stmt::CallSub { name, args } if name == "@check_initialized" => {
                     if let Some(offset) = position {
                         let (source, offset, filename) = if let Some(origin) = origins.iter().find(|o| o.range.contains(&offset)) {

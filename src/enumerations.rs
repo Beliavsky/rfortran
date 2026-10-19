@@ -208,16 +208,22 @@ impl Ty {
 #[derive(Clone)]
 struct Scope {
     vars: HashMap<String, Ty>,
+    kinds: HashMap<String, TypeSpec>,
     constants: HashMap<String, i64>,
     parameters: HashSet<String>,
+    optional: HashSet<String>,
+    readonly: HashSet<String>,
     implicit: [Option<bool>; 26],
 }
 impl Default for Scope {
     fn default() -> Self {
         Self {
             vars: HashMap::new(),
+            kinds: HashMap::new(),
             constants: HashMap::new(),
             parameters: HashSet::new(),
+            optional: HashSet::new(),
+            readonly: HashSet::new(),
             implicit: std::array::from_fn(|i| Some((8..14).contains(&i))),
         }
     }
@@ -233,15 +239,150 @@ struct Context {
     types: HashMap<String, String>,
     fields: HashMap<String, HashMap<String, Ty>>,
     field_order: HashMap<String, Vec<String>>,
+    field_kinds: HashMap<String, HashMap<String, TypeSpec>>,
     procedures: HashMap<String, Routine>,
     generics: HashSet<String>,
     strict: bool,
     serial: usize,
     helpers: Vec<Stmt>,
+    location: Option<usize>,
     globals: Scope,
     external: HashSet<(String, Option<usize>)>,
 }
 impl Context {
+    fn object_kind(&self, n: &str, scope: &Scope) -> Option<TypeSpec> {
+        if let Some(kind) = scope.kinds.get(n).or_else(|| self.globals.kinds.get(n)) {
+            return Some(kind.clone());
+        }
+        if let Some((object, field)) = n.rsplit_once('%') {
+            if let Ty::Derived(ty, _) = self.name(object, scope) {
+                return self.field_kinds.get(&ty)?.get(field).cloned();
+            }
+        }
+        None
+    }
+    fn stat_kind(&self, e: &Expr, scope: &Scope) -> Result<TypeSpec> {
+        let n = match e {
+            Expr::Ident(n) | Expr::Section { name: n, .. } => n,
+            Expr::Call(n, args) | Expr::Index(n, args) if self.name(n, scope).rank() > 0 => {
+                for a in args {
+                    if self.expression(&mut a.clone(), scope, false)?.rank() > 0 && !section(a) {
+                        bail!("NEXT/PREVIOUS STAT cannot have a vector subscript");
+                    }
+                }
+                n
+            }
+            _ => bail!("NEXT/PREVIOUS STAT must be a writable INTEGER variable"),
+        };
+        if scope.parameters.contains(n) || self.globals.parameters.contains(n) {
+            bail!("NEXT/PREVIOUS STAT must be writable, not a named constant");
+        }
+        let root = n.split('%').next().unwrap_or(n);
+        if scope.readonly.contains(root) {
+            bail!("NEXT/PREVIOUS STAT cannot be an INTENT(IN) variable");
+        }
+        let kind = match self
+            .object_kind(n, scope)
+            .unwrap_or(TypeSpec::Integer(None))
+        {
+            TypeSpec::IntegerKind(n) => {
+                let selector = if let Some(encoded) = n.strip_prefix(crate::ast::KIND_EXPRESSION) {
+                    serde_json::from_str(encoded)?
+                } else {
+                    Expr::Ident(n.clone())
+                };
+                let k = self
+                    .constant(&selector, scope)
+                    .or_else(|| n.parse().ok())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("STAT INTEGER kind must be a supported constant")
+                    })?;
+                TypeSpec::Integer(Some(u8::try_from(k)?))
+            }
+            k => k,
+        };
+        Ok(kind)
+    }
+    fn step_helper(&mut self, operation: &str, ty: &str, stat: Option<TypeSpec>) -> String {
+        self.serial += 1;
+        let name = format!("@enumeration_step_{}", self.serial);
+        let a = Expr::Ident("a".into());
+        let boundary = if operation == "next" {
+            count(&self.types[ty]) as i64
+        } else {
+            1
+        };
+        let with_stat = stat.is_some();
+        let mut body = vec![
+            crate::simple::marker(),
+            Stmt::VarDecl {
+                kind: TypeSpec::Integer(None),
+                names: vec!["a".into(), "result".into()],
+            },
+            Stmt::DummyIntent {
+                name: "a".into(),
+                intent: "intent(in)".into(),
+            },
+        ];
+        if let Some(p) = self.location {
+            body.push(Stmt::SourceLocation(p));
+        }
+        let failed = if let Some(kind) = stat {
+            body.push(Stmt::VarDecl {
+                kind,
+                names: vec!["stat".into()],
+            });
+            body.push(Stmt::DummyIntent {
+                name: "stat".into(),
+                intent: "intent(out)".into(),
+            });
+            body.push(Stmt::Assign {
+                name: "stat".into(),
+                value: int(0),
+            });
+            vec![Stmt::Assign {
+                name: "stat".into(),
+                value: int(1),
+            }]
+        } else {
+            vec![Stmt::CallSub {
+                name: "@error_stop".into(),
+                args: vec![Expr::Str(format!(
+                    "@enumeration_boundary:{}: no {} enumerator for `{}`",
+                    operation.to_uppercase(),
+                    operation,
+                    crate::source_diagnostics::user_names(&format!("`{ty}`")).trim_matches('`')
+                ))],
+            }]
+        };
+        body.push(Stmt::Assign {
+            name: "result".into(),
+            value: a.clone(),
+        });
+        body.push(Stmt::If {
+            cond: Expr::eq(a.clone(), int(boundary)),
+            then_body: failed,
+            else_body: Some(vec![Stmt::Assign {
+                name: "result".into(),
+                value: Expr::add(a, int(if operation == "next" { 1 } else { -1 })),
+            }]),
+        });
+        body.push(Stmt::Return(Some(Expr::Ident("result".into()))));
+        let params = if with_stat {
+            vec!["a".into(), "stat".into()]
+        } else {
+            vec!["a".into()]
+        };
+        self.helpers.push(Stmt::Function {
+            name: name.clone(),
+            params,
+            body,
+            return_type: Some(TypeSpec::Integer(None)),
+            pure: true,
+            elemental: true,
+        });
+        name
+    }
     fn external(&self, s: &Stmt) -> bool {
         match s {
             Stmt::Function { name, body, .. } | Stmt::Subroutine { name, body, .. } => {
@@ -270,6 +411,21 @@ impl Context {
     }
     fn scope(&self, body: &[Stmt], parent: &Scope) -> Scope {
         let mut scope = parent.clone();
+        // A local declaration can shadow an OPTIONAL or read-only host object.
+        for s in body {
+            let names = match s {
+                Stmt::VarDecl { names, .. } | Stmt::DerivedDecl { names, .. } => names.clone(),
+                Stmt::ArrayDecl { name, .. } => vec![name.clone()],
+                Stmt::InitializedDecl { entities, .. } => {
+                    entities.iter().map(|(n, _)| n.clone()).collect()
+                }
+                _ => vec![],
+            };
+            for n in names {
+                scope.optional.remove(&n);
+                scope.readonly.remove(&n);
+            }
+        }
         for s in body {
             use crate::ast::Implicit;
             let rules = match s {
@@ -301,14 +457,22 @@ impl Context {
         }
         for s in body {
             match s {
+                Stmt::DummyIntent { name, intent } if intent == "optional" => {
+                    scope.optional.insert(name.clone());
+                }
+                Stmt::DummyIntent { name, intent } if intent == "intent(in)" => {
+                    scope.readonly.insert(name.clone());
+                }
                 Stmt::VarDecl { kind, names } => {
                     for n in names {
+                        scope.kinds.insert(n.clone(), kind.clone());
                         scope.vars.insert(n.clone(), Self::scalar(kind, 0));
                         scope.constants.remove(n);
                         scope.parameters.remove(n);
                     }
                 }
                 Stmt::ArrayDecl { kind, name, dims } => {
+                    scope.kinds.insert(name.clone(), kind.clone());
                     scope
                         .vars
                         .insert(name.clone(), Self::scalar(kind, dims.len()));
@@ -319,6 +483,7 @@ impl Context {
                     entities,
                 } => {
                     for (n, _) in entities {
+                        scope.kinds.insert(n.clone(), kind.clone());
                         scope.vars.insert(n.clone(), Self::scalar(kind, 0));
                         scope.constants.remove(n);
                         if attributes.iter().any(|a| a == "parameter") {
@@ -402,6 +567,19 @@ impl Context {
         }
     }
     fn constant(&self, e: &Expr, scope: &Scope) -> Option<i64> {
+        if let Expr::Call(n, args) = e {
+            if matches!(n.as_str(), "next" | "previous")
+                && args.len() == 1
+                && !self.procedures.contains_key(n)
+                && !self.generics.contains(n)
+            {
+                let ty = self.expression(&mut args[0].clone(), scope, false).ok()?;
+                let ty = ty.enumeration()?;
+                let value = self.constant(&args[0], scope)?;
+                let value = value + if n == "next" { 1 } else { -1 };
+                return (value >= 1 && value <= count(&self.types[ty]) as i64).then_some(value);
+            }
+        }
         let mut e = e.clone();
         visit_expr(&mut e, &mut |e| match e {
             Expr::Ident(n)
@@ -445,6 +623,10 @@ impl Context {
                 Stmt::DerivedType {
                     name, components, ..
                 } if marker(s).is_none() => {
+                    self.field_kinds.insert(
+                        name.clone(),
+                        self.scope(components, &Scope::default()).kinds,
+                    );
                     self.fields
                         .insert(name.clone(), self.scope(components, &Scope::default()).vars);
                     let mut order = vec![];
@@ -655,6 +837,26 @@ impl Context {
                 ty
             }
             Expr::Call(n, args) | Expr::Index(n, args) => {
+                if n == "@conditional" {
+                    let mut result = Ty::Unknown;
+                    let length = args.len();
+                    for (i, arg) in args.iter_mut().enumerate() {
+                        let ty = self.expression(arg, scope, prepare)?;
+                        if i % 2 == 0 && i + 1 < length {
+                            if ty.enumeration().is_some() {
+                                bail!("conditional condition must be LOGICAL, not an enumeration value");
+                            }
+                        } else if !crate::conditionals::nil(arg) {
+                            if result != Ty::Unknown {
+                                self.compatible(&result, &ty)?;
+                            }
+                            if result == Ty::Unknown {
+                                result = ty;
+                            }
+                        }
+                    }
+                    return Ok(result);
+                }
                 // The first argument is a type name, not a data expression.
                 if n == "@record_constructor" {
                     if let Some(Expr::Ident(name)) = args.first() {
@@ -799,10 +1001,29 @@ impl Context {
                         *e = Expr::Call(ty.clone(), vec![int(count(&self.types[&ty]) as i64)]);
                     }
                     Ty::Enum(ty, 0)
-                } else if matches!(n.as_str(), "next" | "previous")
-                    && types.iter().any(|t| t.enumeration().is_some())
-                {
-                    bail!("{n} for enumeration types is not yet supported");
+                } else if matches!(n.as_str(), "next" | "previous") {
+                    if !(1..=2).contains(&types.len()) {
+                        bail!("{n} expects A and optional STAT");
+                    }
+                    if types[0].enumeration().is_none() && (self.strict || types[0] != Ty::Unknown)
+                    {
+                        bail!("{n} A must have enumeration type");
+                    }
+                    if let Some(stat) = types.get(1) {
+                        if !matches!(stat, Ty::Integer(_)) {
+                            bail!("{n} STAT must be an INTEGER variable");
+                        }
+                        let kind = self.stat_kind(&args[1], scope)?;
+                        if matches!(kind, TypeSpec::Integer(Some(1))) {
+                            bail!("{n} STAT must have a decimal exponent range of at least four");
+                        }
+                        if types[0].rank() > 0 && stat.rank() != types[0].rank() {
+                            bail!("{n} STAT must be a conformable array when A is an array");
+                        }
+                    }
+                    types[0]
+                        .clone()
+                        .ranked(types.iter().map(Ty::rank).max().unwrap_or(0))
                 } else if n == "merge" && types.iter().take(2).any(|t| t.enumeration().is_some()) {
                     if types.get(2).is_some_and(|t| t.enumeration().is_some()) {
                         bail!("MERGE MASK must be LOGICAL, not an enumeration value");
@@ -1096,6 +1317,51 @@ impl Context {
     }
     fn erase_expr(&mut self, e: &mut Expr, scope: &Scope) -> Result<()> {
         if let Expr::Call(n, args) = e {
+            if matches!(n.as_str(), "next" | "previous")
+                && !self.procedures.contains_key(n)
+                && !self.generics.contains(n)
+            {
+                let ty = self.expression(&mut args[0].clone(), scope, false)?;
+                if let Some(ty) = ty.enumeration() {
+                    if args.len() == 1 {
+                        if let Some(value) =
+                            self.constant(&Expr::Call(n.clone(), args.clone()), scope)
+                        {
+                            *e = int(value);
+                            return Ok(());
+                        }
+                    }
+                    let stat_kind = args.get(1).map(|e| self.stat_kind(e, scope)).transpose()?;
+                    let helper = self.step_helper(n, ty, stat_kind);
+                    let absent = if let Some(Expr::Ident(stat)) = args.get(1) {
+                        if scope.optional.contains(stat) {
+                            Some((stat.clone(), self.step_helper(n, ty, None)))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                    for a in args.iter_mut() {
+                        self.erase_expr(a, scope)?;
+                    }
+                    if let Some((stat, absent)) = absent {
+                        *e = Expr::Call(
+                            "@conditional".into(),
+                            vec![
+                                Expr::Call("present".into(), vec![Expr::Ident(stat)]),
+                                Expr::Call(helper, args.clone()),
+                                Expr::Call(absent, vec![args[0].clone()]),
+                            ],
+                        );
+                        return Ok(());
+                    }
+                    *n = helper;
+                    return Ok(());
+                }
+            }
+        }
+        if let Expr::Call(n, args) = e {
             if n == "@record_constructor"
                 && matches!(args.first(), Some(Expr::Ident(t)) if self.types.contains_key(t))
             {
@@ -1216,6 +1482,9 @@ impl Context {
         }
         let mut out = vec![];
         for (index, mut s) in std::mem::take(body).into_iter().enumerate() {
+            if let Stmt::SourceLocation(offset) = &s {
+                self.location = Some(*offset);
+            }
             let external = self.external(&s);
             if marker(&s).is_some() {
                 continue;
@@ -1367,11 +1636,13 @@ fn context(p: &Program, strict: bool) -> Result<Context> {
         types: HashMap::new(),
         fields: HashMap::new(),
         field_order: HashMap::new(),
+        field_kinds: HashMap::new(),
         procedures: HashMap::new(),
         generics: HashSet::new(),
         strict,
         serial: 0,
         helpers: vec![],
+        location: None,
         globals: Scope::default(),
         external: p
             .body
@@ -1396,6 +1667,7 @@ fn context(p: &Program, strict: bool) -> Result<Context> {
             if let Stmt::Module { body, .. } = s {
                 let vars = c.scope(body, &Scope::default());
                 c.globals.vars.extend(vars.vars);
+                c.globals.kinds.extend(vars.kinds);
                 c.globals.constants.extend(vars.constants);
                 c.globals.parameters.extend(vars.parameters);
             }

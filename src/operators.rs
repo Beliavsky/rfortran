@@ -672,6 +672,19 @@ impl Resolver {
                     _=>scalar(&TypeSpec::Integer(None)),
                 });
             }
+            if matches!(name.as_str(),"next"|"previous") && !self.procedures.contains_key(name) && !visible.contains_key(&format!("generic:{name}")) && !vars.contains_key(name) {
+                let types=args.iter_mut().map(|a|self.expression(a,vars,visible)).collect::<Result<Vec<_>>>()?;
+                if let Some(first)=types.first() {
+                    return Ok(match first {
+                        Ty::Array(t,r)=>Ty::Array(t.clone(),*r),
+                        t if types.get(1).is_some_and(|t|matches!(t,Ty::Array(..)))=>{
+                            let Ty::Array(_,rank)=&types[1] else {unreachable!()};
+                            Ty::Array(Box::new(t.clone()),*rank)
+                        },
+                        t=>t.clone(),
+                    });
+                }
+            }
             if name.starts_with("@record_component:") && args.len()==1 {
                 let field=&name[18..];
                 let value=self.expression(&mut args[0],vars,visible)?;

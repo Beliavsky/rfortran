@@ -64,7 +64,7 @@ pub const PURE_FUNCTIONS: &[&str] = &[
     "huge", "iachar", "iall", "iany", "ichar", "index", "int", "iparity", "ishftc", "kind",
     "lbound", "len", "len_trim", "lge", "lgt", "lle", "llt",
     "matmul", "max", "maxloc", "maxval", "merge", "min", "minloc",
-    "minval", "mod", "modulo", "new_line", "nint", "norm2", "out_of_range", "pack", "parity", "present",
+    "minval", "mod", "modulo", "new_line", "next", "previous", "nint", "norm2", "out_of_range", "pack", "parity", "present",
     "product", "real", "repeat", "reshape", "scan", "selected_int_kind", "selected_real_kind", "selected_logical_kind",
     "shape", "sign", "size", "spread", "sum", "tiny", "transpose",
     "trim", "ubound", "unpack", "verify", "split", "tokenize",

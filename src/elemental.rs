@@ -48,6 +48,11 @@ pub(crate) fn inline_character(
     declared: &Option<TypeSpec>,
     body: &[Stmt],
 ) -> bool {
+    if name.starts_with("@enumeration_step_") && params.iter().any(|p|p=="stat") {
+        // Reuse function specialization for the intrinsic's writable STAT;
+        // the ordinary scalar function ABI passes inputs by value.
+        return true;
+    }
     let character = |kind: &TypeSpec| {
         matches!(
             kind,
@@ -189,10 +194,13 @@ pub fn validate(
         ) {
             return Err(crate::source_diagnostics::declaration(body,param,None,format!("ELEMENTAL dummy argument `{param}` requires an explicitly declared supported scalar type")));
         }
-        if !body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name == param && intent == "intent(in)")) {
+        // NEXT/PREVIOUS are intrinsic elemental functions with an OUT STAT.
+        // The private scalar implementation is expanded before the numeric ABI.
+        let enum_stat = name.starts_with("@enumeration_step_") && param=="stat";
+        if !body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name == param && (intent == "intent(in)" || enum_stat && intent=="intent(out)"))) {
             return Err(crate::source_diagnostics::declaration(body,param,None,format!("ELEMENTAL function dummy argument `{param}` requires INTENT(IN)")));
         }
-        if body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name == param && intent != "intent(in)" && intent != "optional" && !intent.starts_with('@'))) {
+        if body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name == param && intent != "intent(in)" && intent != "optional" && !intent.starts_with('@') && !(enum_stat && intent=="intent(out)"))) {
             let attribute=body.iter().find_map(|s|match s {Stmt::DummyIntent{name,intent} if name==param&&intent!="intent(in)"&&intent!="optional"&&!intent.starts_with('@')=>Some(intent.as_str()),_=>None}).unwrap();
             let message=format!("attribute `{attribute}` on dummy argument `{param}` is not yet supported in ELEMENTAL function `{name}`");
             return Err(crate::source_diagnostics::declaration(body,param,Some(attribute),message));
