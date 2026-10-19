@@ -884,7 +884,7 @@ pub fn interpret(program: &Program) {
                             continue;
                         }
                         match kind {
-                            TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed | TypeSpec::RealKind(_) | TypeSpec::IntegerKind(_) | TypeSpec::Complex(_) => unreachable!("unresolved numeric kind"),
+                            TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed | TypeSpec::RealKind(_) | TypeSpec::LogicalKind(_) | TypeSpec::IntegerKind(_) | TypeSpec::Complex(_) => unreachable!("unresolved numeric kind"),
                             TypeSpec::Integer(_) => {
                                 frame.env_int.entry(n.clone()).or_insert(0);
                             }
@@ -911,7 +911,7 @@ pub fn interpret(program: &Program) {
                             if let Ok(v128) = i128::from_str_radix(s.as_str(), 10) {
                                 let len = usize::try_from(v128).unwrap_or(0);
                                 match kind {
-                            TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed | TypeSpec::RealKind(_) | TypeSpec::IntegerKind(_) | TypeSpec::Complex(_) => unreachable!("unresolved numeric kind"),
+                            TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed | TypeSpec::RealKind(_) | TypeSpec::LogicalKind(_) | TypeSpec::IntegerKind(_) | TypeSpec::Complex(_) => unreachable!("unresolved numeric kind"),
                                     TypeSpec::Integer(_) | TypeSpec::Logical => {
                                         fr.env_int_arrays.insert(name.clone(), vec![0; len]);
                                         if matches!(kind, TypeSpec::Logical) { fr.logical_arrays.insert(name.clone()); }
@@ -1546,6 +1546,21 @@ pub fn interpret(program: &Program) {
                         let external=name=="@file_formatted_record";
                         let end=args.len()-if internal {2} else if external {1}else {0};
                         let fr=call_stack.last().unwrap().clone();
+                        // A whole array item, as the result of MAXLOC, gives its elements.
+                        let expanded:Vec<Expr>;
+                        let args=if args[1..end].iter().any(|e|matches!(e,Expr::Ident(n) if fr.env_int_arrays.contains_key(n)||fr.env_real_arrays.contains_key(n))) {
+                            let mut items=vec![args[0].clone()];
+                            for e in &args[1..end] {
+                                let length=match e {Expr::Ident(n)=>fr.env_int_arrays.get(n).map(Vec::len).or_else(||fr.env_real_arrays.get(n).map(Vec::len)),_=>None};
+                                match (e,length) {
+                                    (Expr::Ident(n),Some(length))=>items.extend((1..=length).map(|i|Expr::Index(n.clone(),vec![Expr::IntLit(i.to_string())]))),
+                                    _=>items.push(e.clone()),
+                                }
+                            }
+                            items.extend(args[end..].iter().cloned());
+                            expanded=items;&expanded
+                        } else {args};
+                        let end=args.len()-if internal {2} else if external {1}else {0};
                         let format=eval_expr(&args[0],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).3.unwrap();
                         let fields=crate::formatting::parse(&format,end-1).unwrap_or_else(|e| {
                             eprintln!("Runtime error: invalid output format: {e}"); std::process::exit(1)

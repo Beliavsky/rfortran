@@ -5,7 +5,7 @@
 //! Allocation-free format parser and renderer shared by the interpreter and
 //! the standalone native runtime.
 //!
-//! Supported edit descriptors: A, I, B, O, Z, F, E, EN, ES, D, G, L, X, T, TL,
+//! Supported edit descriptors: A, AT, I, B, O, Z, F, E, EN, ES, D, G, L, X, T, TL,
 //! TR, /, :, kP, SP, SS, S, BN and BZ, character string literals, nested and
 //! unlimited groups, and format reversion. Numbers are converted with
 //! `core::fmt`, which rounds the exact binary value to nearest, ties to even.
@@ -16,6 +16,8 @@ pub const EN: u8 = b'N';
 pub const TL: u8 = b'<';
 pub const TR: u8 = b'>';
 pub const T: u8 = b't';
+/// CHARACTER output with trailing blanks removed (Fortran 2023).
+pub const AT: u8 = b'v';
 pub const SIGN_PLUS: u8 = b'+';
 pub const SIGN_DEFAULT: u8 = b'-';
 pub const SCALE: u8 = b'p';
@@ -41,7 +43,7 @@ pub struct Descriptor<'a> {
 
 /// Data edit descriptors, which consume an output list item.
 pub fn is_data(code: u8) -> bool {
-    matches!(code, b'a' | b'i' | b'b' | b'o' | b'z' | b'f' | b'e' | ES | EN | b'd' | b'g' | b'l')
+    matches!(code, b'a' | AT | b'i' | b'b' | b'o' | b'z' | b'f' | b'e' | ES | EN | b'd' | b'g' | b'l')
 }
 
 #[derive(Clone, Copy)]
@@ -158,6 +160,7 @@ impl<'a> Parser<'a> {
                 }
                 d.repeat = count.unwrap_or(1);
                 d.code = match (code, self.letter(0)) {
+                    (b'a', b't') => { self.pos += 1; AT }
                     (b'e', b's') => { self.pos += 1; ES }
                     (b'e', b'n') => { self.pos += 1; EN }
                     (b't', b'l') => { self.pos += 1; TL }
@@ -185,12 +188,13 @@ impl<'a> Parser<'a> {
                     return Err("invalid output descriptor");
                 } else if is_data(d.code) {
                     let width = self.number()?;
-                    if width.is_none() && !matches!(d.code, b'a') {
+                    if d.code == AT && width.is_some() {return Err("AT edit descriptor cannot have a width");}
+                    if width.is_none() && !matches!(d.code, b'a' | AT) {
                         return Err("output descriptor requires a width");
                     }
                     d.width = width.unwrap_or(0);
                     if self.bytes.get(self.pos) == Some(&b'.') {
-                        if matches!(d.code, b'a' | b'l') {
+                        if matches!(d.code, b'a' | AT | b'l') {
                             return Err("invalid output descriptor precision");
                         }
                         self.pos += 1;
@@ -234,13 +238,29 @@ impl<'a> Parser<'a> {
     }
 }
 
+/// Inspect descriptor syntax without mistaking quoted text for an AT descriptor.
+pub fn contains_at(format: &[u8]) -> bool {
+    fn scan(parser: &mut Parser<'_>, depth: usize) -> Result<bool, &'static str> {
+        if depth>32 {return Err("format nesting exceeds supported limits");}
+        loop {
+            parser.separator();
+            if let Some((body,_,_))=parser.group()? {
+                if scan(&mut Parser {bytes:body,pos:0},depth+1)? {return Ok(true);}
+            } else {
+                match parser.next()? {Some(d) if d.code==AT=>return Ok(true),Some(_)=>{},None=>return Ok(false)}
+            }
+        }
+    }
+    Parser::new(format).and_then(|mut p|scan(&mut p,0)).unwrap_or(false)
+}
+
 /// Item tags: 1 INTEGER, 2 REAL, 3 LOGICAL, 4 CHARACTER.
 pub fn matches_type(code: u8, tag: u64) -> bool {
     match code {
         b'i' | b'b' | b'o' | b'z' => tag == 1,
         b'f' | b'e' | ES | EN | b'd' => tag == 2,
         b'l' => tag == 3,
-        b'a' => tag == 4,
+        b'a' | AT => tag == 4,
         b'g' => matches!(tag, 1..=4),
         _ => false,
     }
@@ -922,6 +942,10 @@ fn render_item(d: &Descriptor<'_>, value: Value<'_>, style: &Style, emit: &mut d
     };
     match (d.code, value) {
         (b'a', Value::Character(s)) => render_character(s, d.width, emit),
+        (AT, Value::Character(s)) => {
+            let end=s.iter().rposition(|b|*b!=b' ').map_or(0,|i|i+1);
+            render_character(&s[..end],0,emit);
+        },
         (b'i', Value::Integer(v, _)) => render_integer(v, d, style, emit),
         (b'b' | b'o' | b'z', Value::Integer(v, kind)) => render_radix(v, kind, d, emit),
         (b'f', Value::Real(x, _)) => render_f(x, d.width, d.precision, style, emit)?,

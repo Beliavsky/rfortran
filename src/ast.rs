@@ -153,6 +153,7 @@ pub enum TypeSpec {
     CharacterLength(Box<Expr>),
     CharacterAssumed,
     Logical,
+    LogicalKind(String),
 }
 
 /// Normalize a named scalar result into explicit returns for the existing backends.

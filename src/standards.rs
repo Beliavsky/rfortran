@@ -207,8 +207,80 @@ struct Checker<'a> {
     issues: Vec<Issue>,
     headers: HashSet<usize>,
     modules: HashMap<String, HashSet<String>>,
+    env_names: HashSet<String>,
+    module_env: HashMap<String, HashSet<String>>,
 }
 impl Checker<'_> {
+    fn env_imports(&self, body: &[Stmt], inherited: &HashSet<String>) -> HashSet<String> {
+        let mut names = inherited.clone();
+        for stmt in body {
+            match stmt {
+                Stmt::VarDecl { names: local, .. } | Stmt::DerivedDecl { names: local, .. } => {
+                    for n in local {
+                        names.remove(n);
+                    }
+                }
+                Stmt::ArrayDecl { name, .. }
+                | Stmt::Function { name, .. }
+                | Stmt::Subroutine { name, .. } => {
+                    names.remove(name);
+                }
+                Stmt::InitializedDecl { entities, .. } => {
+                    for (n, _) in entities {
+                        names.remove(n);
+                    }
+                }
+                _ => {}
+            }
+        }
+        for stmt in body {
+            if let Stmt::Use {
+                module,
+                only,
+                renames,
+                nature,
+            } = stmt
+            {
+                let intrinsic = module == "iso_fortran_env"
+                    && (nature.as_deref() == Some("intrinsic")
+                        || !self.modules.contains_key(module));
+                let exports = if intrinsic {
+                    ["logical8", "logical16", "logical32", "logical64", "real16"]
+                        .map(String::from)
+                        .into_iter()
+                        .collect()
+                } else {
+                    self.module_env.get(module).cloned().unwrap_or_default()
+                };
+                let selected = only
+                    .clone()
+                    .unwrap_or_else(|| exports.iter().cloned().collect());
+                for remote in selected {
+                    if exports.contains(&remote) {
+                        names.insert(
+                            renames
+                                .iter()
+                                .find(|(_, r)| *r == remote)
+                                .map_or(remote.clone(), |(l, _)| l.clone()),
+                        );
+                    }
+                }
+                for (local, remote) in renames {
+                    if exports.contains(remote) {
+                        names.insert(local.clone());
+                    }
+                }
+            }
+        }
+        names
+    }
+    fn format(&mut self, expr: &Expr, offset: usize) {
+        if let Expr::Str(text) = expr {
+            if crate::format_spec::contains_at(text.as_bytes()) {
+                self.require("AT edit descriptor", 2023, offset);
+            }
+        }
+    }
     fn feature(&mut self, key: &str, offset: usize) {
         let f = FEATURES
             .iter()
@@ -274,6 +346,10 @@ impl Checker<'_> {
         });
         for (index, t) in tokens.iter().enumerate() {
             let key = match &t.kind {
+                TokenKind::FormatSpec(text) if crate::format_spec::contains_at(text.as_bytes()) => {
+                    self.require("AT edit descriptor", 2023, t.span.start);
+                    None
+                }
                 TokenKind::KwPure => Some("pure"),
                 TokenKind::KwElemental => Some("elemental"),
                 TokenKind::KwImpure => Some("impure"),
@@ -327,12 +403,28 @@ impl Checker<'_> {
         }
     }
     fn typ(&mut self, kind: &TypeSpec, offset: usize) {
+        if let TypeSpec::LogicalKind(name)
+        | TypeSpec::RealKind(name)
+        | TypeSpec::IntegerKind(name) = kind
+        {
+            if self.env_names.contains(name) {
+                self.require("Fortran 2023 ISO_FORTRAN_ENV kind constants", 2023, offset);
+            }
+            if let Some(encoded) = name.strip_prefix(crate::ast::KIND_EXPRESSION) {
+                if let Ok(expr) = serde_json::from_str::<Expr>(encoded) {
+                    self.expr(&expr, offset, &HashSet::new());
+                }
+            }
+        }
         if crate::substrings::deferred(kind) {
             self.feature("deferred_character", offset);
         }
     }
     fn expr(&mut self, e: &Expr, offset: usize, names: &HashSet<String>) {
         match e {
+            Expr::Ident(n) if self.env_names.contains(n) => {
+                self.require("Fortran 2023 ISO_FORTRAN_ENV kind constants", 2023, offset)
+            }
             Expr::Call(n, args) => {
                 if matches!(
                     n.as_str(),
@@ -428,6 +520,16 @@ impl Checker<'_> {
         component: bool,
         dummies: &HashSet<String>,
     ) {
+        let empty_env = HashSet::new();
+        let scope_env = self.env_imports(
+            body,
+            if inherited.is_empty() {
+                &empty_env
+            } else {
+                &self.env_names
+            },
+        );
+        let previous_env = std::mem::replace(&mut self.env_names, scope_env);
         let names = self.scope_names(body, inherited);
         let arrays = body
             .iter()
@@ -500,19 +602,39 @@ impl Checker<'_> {
                 Stmt::Module { body, .. } => {
                     self.body(body, &HashSet::new(), offset, false, false, &HashSet::new())
                 }
-                Stmt::Use { module, nature, .. }
-                    if nature.is_some()
-                        || !self.modules.contains_key(module)
-                            && matches!(
-                                module.as_str(),
-                                "iso_fortran_env"
-                                    | "iso_c_binding"
-                                    | "ieee_arithmetic"
-                                    | "ieee_exceptions"
-                                    | "ieee_features"
-                            ) =>
+                Stmt::Use {
+                    module,
+                    nature,
+                    only,
+                    renames,
+                } if nature.is_some()
+                    || !self.modules.contains_key(module)
+                        && matches!(
+                            module.as_str(),
+                            "iso_fortran_env"
+                                | "iso_c_binding"
+                                | "ieee_arithmetic"
+                                | "ieee_exceptions"
+                                | "ieee_features"
+                        ) =>
                 {
-                    self.feature("intrinsic_module", offset)
+                    self.feature("intrinsic_module", offset);
+                    if module == "iso_fortran_env"
+                        && (nature.as_deref() == Some("intrinsic")
+                            || !self.modules.contains_key(module))
+                        && only
+                            .iter()
+                            .flatten()
+                            .chain(renames.iter().map(|(_, r)| r))
+                            .any(|n| {
+                                matches!(
+                                    n.as_str(),
+                                    "logical8" | "logical16" | "logical32" | "logical64" | "real16"
+                                )
+                            })
+                    {
+                        self.require("Fortran 2023 ISO_FORTRAN_ENV kind constants", 2023, offset);
+                    }
                 }
                 Stmt::DerivedDecl {
                     names: declared,
@@ -594,6 +716,14 @@ impl Checker<'_> {
                     }
                 }
                 Stmt::CallSub { name, args } => {
+                    let format = match name.as_str() {
+                        "@formatted_print" | "@formatted_write_noadvance" => args.first(),
+                        "@write" => args.get(1),
+                        _ => None,
+                    };
+                    if let Some(format) = format {
+                        self.format(format, offset);
+                    }
                     if name == "@error_stop" {
                         self.feature(
                             if pure {
@@ -652,6 +782,7 @@ impl Checker<'_> {
                 _ => {}
             }
         }
+        self.env_names = previous_env;
     }
 }
 
@@ -674,11 +805,19 @@ pub(crate) fn check(
         issues: vec![],
         headers: HashSet::new(),
         modules: HashMap::new(),
+        env_names: HashSet::new(),
+        module_env: HashMap::new(),
     };
     for s in &program.body {
         if let Stmt::Module { name, body } = s {
             let names = checker.scope_names(body, &HashSet::new());
             checker.modules.insert(name.clone(), names);
+        }
+    }
+    for s in &program.body {
+        if let Stmt::Module { name, body } = s {
+            let names = checker.env_imports(body, &HashSet::new());
+            checker.module_env.insert(name.clone(), names);
         }
     }
     checker.body(

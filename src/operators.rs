@@ -35,6 +35,7 @@ fn scalar(kind: &TypeSpec) -> Ty {
         TypeSpec::Integer(None) => TypeSpec::Integer(Some(4)),
         TypeSpec::RealKind(k) if k == "4" => TypeSpec::Real,
         TypeSpec::RealKind(k) if k == "8" => TypeSpec::DoublePrecision,
+        TypeSpec::LogicalKind(k) if k == "4" => TypeSpec::Logical,
         TypeSpec::Character(_) | TypeSpec::CharacterAssumed | TypeSpec::CharacterLength(_) => TypeSpec::Character(None),
         _ => kind.clone(),
     })
@@ -1032,15 +1033,15 @@ pub fn resolve(mut program: Program) -> Result<Program> {
         body.iter().any(|s| match s {
             Stmt::GenericInterface { .. } | Stmt::OperatorInterface { .. } => true,
             Stmt::VarDecl {
-                kind: TypeSpec::IntegerKind(_) | TypeSpec::RealKind(_) | TypeSpec::Complex(_) | TypeSpec::CharacterLength(_),
+                kind: TypeSpec::IntegerKind(_) | TypeSpec::RealKind(_) | TypeSpec::LogicalKind(_) | TypeSpec::Complex(_) | TypeSpec::CharacterLength(_),
                 ..
             }
             | Stmt::ArrayDecl {
-                kind: TypeSpec::IntegerKind(_) | TypeSpec::RealKind(_) | TypeSpec::Complex(_) | TypeSpec::CharacterLength(_),
+                kind: TypeSpec::IntegerKind(_) | TypeSpec::RealKind(_) | TypeSpec::LogicalKind(_) | TypeSpec::Complex(_) | TypeSpec::CharacterLength(_),
                 ..
             }
             | Stmt::InitializedDecl {
-                kind: TypeSpec::IntegerKind(_) | TypeSpec::RealKind(_) | TypeSpec::Complex(_) | TypeSpec::CharacterLength(_),
+                kind: TypeSpec::IntegerKind(_) | TypeSpec::RealKind(_) | TypeSpec::LogicalKind(_) | TypeSpec::Complex(_) | TypeSpec::CharacterLength(_),
                 ..
             } => true,
             Stmt::DerivedType { components, .. } => needs_constants(components),

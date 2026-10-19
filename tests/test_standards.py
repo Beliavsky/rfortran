@@ -93,6 +93,23 @@ class Standards(unittest.TestCase):
         self.assert_feature("print *,out_of_range(1.0,0)\nend\n","f2008","f2018","out_of_range")
         self.assert_feature("pure subroutine s()\nerror stop 1\nend subroutine\n","f2008","f2018","ERROR STOP in a PURE")
 
+    def test_f2023_output_and_logical_kind_features(self):
+        for source,feature in (
+            ('print "(at)","abc"\nend\n',"AT edit descriptor"),
+            ('print "(2(a,at))","a","b","c","d"\nend\n',"AT edit descriptor"),
+            ('print 10,"abc"\n10 format(at)\nend\n',"AT edit descriptor"),
+            ('print *,selected_logical_kind(bits=32)\nend\n',"selected_logical_kind"),
+            ('logical(kind=selected_logical_kind(32))::x\nend\n',"selected_logical_kind"),
+            ('use iso_fortran_env,only:k=>logical32\nlogical(k)::x\nend\n',"Fortran 2023 ISO_FORTRAN_ENV"),
+            ('use iso_fortran_env\nprint *,real16\nend\n',"Fortran 2023 ISO_FORTRAN_ENV"),
+            ('module m\nuse iso_fortran_env\nend module\nprogram p\nuse m,only:k=>logical32\nlogical(k)::x\nend program\n',"Fortran 2023 ISO_FORTRAN_ENV"),
+        ):
+            with self.subTest(source=source): self.assert_feature(source,"f2018","f2023",feature)
+        result=self.invoke('print "(a)","(at)"\nend\n',"f90")
+        self.assertEqual(result.returncode,0,result.stderr)
+        result=self.invoke('print "(\'AT\',a)","x"\nend\n',"f90")
+        self.assertEqual(result.returncode,0,result.stderr)
+
     def test_comments_strings_continuations_and_names(self):
         source='''implicit none
 ! [integer::] PURE FORALL ERROR STOP

@@ -109,6 +109,8 @@ linked program and propagates its failure status.
 `-std=f2023` enable partial language-revision checks before lowering. The
 default remains permissive. These modes check recognized features rather than
 certifying full conformance; see [standard selection](docs/usage.md#standard-selection).
+Recent [Fortran 2023 additions](docs/fortran2023.md) include trimmed CHARACTER
+output with `AT`, `SELECTED_LOGICAL_KIND`, and additional intrinsic kind constants.
 
 `rfort run main.f90` interprets a program without building an executable. Run mode
 is a separate implementation that is much less tested than native compilation:

@@ -636,6 +636,7 @@ pub(crate) fn lower_field_read(
     let mut next = targets.into_iter();
     while let Some(d) = parser.next().map_err(anyhow::Error::msg)? {
         match d.code {
+            spec::AT => bail!("AT edit descriptor is only permitted for output"),
             code if spec::is_data(code) => {
                 if matches!(code, b'b' | b'o' | b'z') {
                     bail!("formatted READ does not yet support B, O or Z input");

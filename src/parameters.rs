@@ -64,6 +64,7 @@ pub(crate) fn resolve_intrinsic_modules(program: &mut Program) -> Result<()> {
     if needed && !user_modules.contains(INTERNAL) {
         let mut body: Vec<Stmt> = [("int8",1), ("int16",2), ("int32",4), ("int64",8),
                     ("real32",4), ("real64",8), ("real128",-1),
+                    ("logical8",-2), ("logical16",-2), ("logical32",4), ("logical64",-1), ("real16",-2),
                     ("input_unit",5), ("output_unit",6), ("error_unit",0),
                     ("iostat_end",-1), ("iostat_eor",-2), ("iostat_inquire_internal_unit",-3),
                     ("character_storage_size",8), ("numeric_storage_size",32), ("file_storage_size",8)].into_iter()
@@ -138,6 +139,12 @@ fn kind_number(name: &str, constants: &Constants) -> Result<i64> {
     name.parse().or_else(|_| evaluate(&Expr::Ident(name.into()), constants))
 }
 fn resolve_kind(kind: &mut TypeSpec, constants: &Constants) -> Result<()> {
+    if let TypeSpec::LogicalKind(name)=kind {
+        *kind=match kind_number(name,constants)? {
+            4=>TypeSpec::Logical,
+            other=>bail!("unsupported LOGICAL kind {other}; supported kind is 4"),
+        };
+    }
     if crate::substrings::deferred(kind) { return Ok(()); }
     if matches!(kind, TypeSpec::CharacterAssumed) { bail!("assumed CHARACTER length requires a PARAMETER declaration or a supported dummy argument"); }
     if let TypeSpec::CharacterLength(length) = kind {
@@ -571,7 +578,7 @@ pub(crate) fn fold_kind_inquiries(program: &mut Program) {
             TypeSpec::Integer(bytes) => Some(i64::from(bytes.unwrap_or(4))),
             TypeSpec::Real | TypeSpec::Logical => Some(4),
             TypeSpec::DoublePrecision => Some(8),
-            TypeSpec::IntegerKind(k) | TypeSpec::RealKind(k) | TypeSpec::Complex(k) => kind_number(k, constants).ok(),
+            TypeSpec::IntegerKind(k) | TypeSpec::RealKind(k) | TypeSpec::LogicalKind(k) | TypeSpec::Complex(k) => kind_number(k, constants).ok(),
             TypeSpec::Character(_) | TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed => Some(1),
         }
     }
@@ -872,7 +879,7 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
         };
         if let Some(kind) = kind {
             let mut kind=kind.clone();
-            if matches!(kind,TypeSpec::IntegerKind(_) | TypeSpec::RealKind(_) | TypeSpec::Complex(_)) { resolve_kind(&mut kind,&constants)?; }
+            if matches!(kind,TypeSpec::IntegerKind(_) | TypeSpec::RealKind(_) | TypeSpec::LogicalKind(_) | TypeSpec::Complex(_)) { resolve_kind(&mut kind,&constants)?; }
             for name in names { record_model_type(&mut constants,&name,&kind,rank); }
         }
         if let Stmt::InitializedDecl {
@@ -1571,6 +1578,12 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
                 let kind = if range <= 2 { 1 } else if range <= 4 { 2 }
                     else if range <= 9 { 4 } else if range <= 18 { 8 } else { -1 };
                 *expr = Expr::IntLit(kind.to_string());
+            }
+            "selected_logical_kind" if !constants.contains_key("@model_procedure:selected_logical_kind") && !constants.contains_key(&model_type_key("selected_logical_kind")) => {
+                if args.len()!=1 {bail!("SELECTED_LOGICAL_KIND expects one scalar INTEGER argument");}
+                if let Ok(bits)=evaluate(&args[0],constants) {
+                    *expr=Expr::IntLit(if bits<=32 {"4"} else {"-1"}.into());
+                }
             }
             name if crate::real_intrinsics::keys(name).is_some() && !constants.contains_key(&model_type_key(name))
                 && !constants.contains_key(&format!("@model_procedure:{name}")) => {

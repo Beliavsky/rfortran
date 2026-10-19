@@ -438,6 +438,7 @@ impl Lower {
                         | TypeSpec::RealKind(_)
                         | TypeSpec::DoublePrecision
                         | TypeSpec::Logical
+                        | TypeSpec::LogicalKind(_)
                         | TypeSpec::Character(_)
                         | TypeSpec::CharacterLength(_)
                         | TypeSpec::CharacterAssumed

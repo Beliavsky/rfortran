@@ -300,7 +300,8 @@ fn lower_location(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, s
     let find = name == "@findloc";
     let dim = !matches!(&args[2],Expr::Call(tag,_) if tag == "@no_dim");
     let stride = constant(&args[6])?.max(1);
-    let axis_len = constant(&args[7])?;
+    // A runtime rank-one ARRAY has a runtime extent and source shape [-1].
+    let axis_len = args[7].clone();
     let Expr::Call(_,source_dims) = &args[8] else { unreachable!() };
     let source_dims = source_dims.iter().map(constant).collect::<Result<Vec<_>>>()?;
     let Expr::Call(_,result_dims) = &args[9] else { unreachable!() };
@@ -320,7 +321,7 @@ fn lower_location(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, s
     let assign = |n: &str,value| Stmt::Assign {name:n.into(),value};
     let source_index = if dim {
         let ordinal = bin(BinOp::Sub,id(&outer),int(1));
-        bin(BinOp::Add,int(1),bin(BinOp::Add,Expr::Call("modulo".into(),vec![ordinal.clone(),int(stride)]),bin(BinOp::Add,bin(BinOp::Mul,bin(BinOp::Div,ordinal,int(stride)),int(stride*axis_len)),bin(BinOp::Mul,bin(BinOp::Sub,id(&index),int(1)),int(stride)))))
+        bin(BinOp::Add,int(1),bin(BinOp::Add,Expr::Call("modulo".into(),vec![ordinal.clone(),int(stride)]),bin(BinOp::Add,bin(BinOp::Mul,bin(BinOp::Div,ordinal,int(stride)),bin(BinOp::Mul,int(stride),axis_len.clone())),bin(BinOp::Mul,bin(BinOp::Sub,id(&index),int(1)),int(stride)))))
     } else { id(&index) };
     let (value,_,kind) = element(&args[0],&source_index,symbols)?;
     if !find && kind == TypeSpec::Logical { bail!("MINLOC/MAXLOC ARRAY must be numeric"); }
@@ -348,14 +349,16 @@ fn lower_location(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, s
     };
     let mut body = vec![assign(&position,int(0))];
     if !find { body.push(assign(&best,int(0))); }
-    body.push(Stmt::Do {var:index.clone(),start:int(1),end:int(axis_len),body:vec![Stmt::If {cond:mask,then_body:vec![assign(&item,value),Stmt::If {cond:update,then_body:if find {vec![assign(&position,id(&index))]} else {vec![assign(&position,id(&index)),assign(&best,id(&item))]},else_body:None}],else_body:None}]});
+    body.push(Stmt::Do {var:index.clone(),start:int(1),end:axis_len,body:vec![Stmt::If {cond:mask,then_body:vec![assign(&item,value),Stmt::If {cond:update,then_body:if find {vec![assign(&position,id(&index))]} else {vec![assign(&position,id(&index)),assign(&best,id(&item))]},else_body:None}],else_body:None}]});
     if dim {
         body.push(if scalar { assign(&temp,id(&position)) } else { Stmt::AssignIndex {name:temp.clone(),indices:vec![id(&outer)],value:id(&position)} });
         prefix.push(Stmt::Do {var:outer,start:int(1),end:int(output_len),body});
     } else {
         let mut stride = 1;
         for (axis,extent) in source_dims.iter().enumerate() {
-            let coordinate = bin(BinOp::Add,int(1),Expr::Call("modulo".into(),vec![bin(BinOp::Div,bin(BinOp::Sub,id(&position),int(1)),int(stride.max(1))),int((*extent).max(1))]));
+            let coordinate = if *extent < 0 { id(&position) } else {
+                bin(BinOp::Add,int(1),Expr::Call("modulo".into(),vec![bin(BinOp::Div,bin(BinOp::Sub,id(&position),int(1)),int(stride.max(1))),int((*extent).max(1))]))
+            };
             let set = |value| Stmt::AssignIndex {name:temp.clone(),indices:vec![int(axis as i64+1)],value};
             body.push(Stmt::If {cond:bin(BinOp::Eq,id(&position),int(0)),then_body:vec![set(int(0))],else_body:Some(vec![set(coordinate)])});
             stride *= extent;
@@ -610,6 +613,14 @@ fn lower_pack(e:&mut Expr,symbols:&mut Symbols,prefix:&mut Vec<Stmt>,serial:&mut
 fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, serial: &mut usize, expand_elementals: bool) -> Result<()> {
 
     match e {
+        Expr::Call(name,args) if name=="selected_logical_kind" && !symbols.procedures.contains(name) && !symbols.contains_key(name) => {
+            if args.len()!=1 {bail!("SELECTED_LOGICAL_KIND expects one scalar INTEGER argument");}
+            lower_expr_impl(&mut args[0],symbols,prefix,serial,expand_elementals)?;
+            let (bits,count,kind)=element(&args[0],&int(1),symbols)?;
+            if count.is_some() || !matches!(kind,TypeSpec::Integer(_)) {bail!("SELECTED_LOGICAL_KIND BITS must be scalar INTEGER");}
+            *e=Expr::Call("merge".into(),vec![int(4),int(-1),bin(BinOp::Le,bits,int(32))]);
+            return lower_expr_impl(e,symbols,prefix,serial,expand_elementals);
+        },
         Expr::Call(name,args) if crate::intrinsics::real_predicate(name) && !symbols.contains_key(name) && !symbols.procedures.contains(name) => {
             if args.len()!=1 {bail!("{} expects 1 argument",name.to_ascii_uppercase());}
             lower_expr_impl(&mut args[0],symbols,prefix,serial,expand_elementals)?;

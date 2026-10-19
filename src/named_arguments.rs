@@ -160,6 +160,7 @@ pub(crate) fn intrinsic(name: &str) -> Option<Signature> {
         "associated" => &["pointer", "target"],
         "present" => &["a"],
         "selected_int_kind" => &["r"],
+        "selected_logical_kind" => &["bits"],
         "selected_real_kind" => &["p", "r", "radix"],
         "max" | "min" => &["a1", "a2"],
         "ishftc" => &["i", "shift", "size"],
