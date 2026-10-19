@@ -230,7 +230,8 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
         fn runtime_allocate(body: &[Stmt], array: &str) -> bool {
             body.iter().any(|s| match s {
                 Stmt::CallSub{name,args} if name=="@allocate"=>args.iter().any(|e|matches!(e,Expr::Call(n,dims) if n==array
-                    && dims.iter().any(|d|crate::parameters::integer_constant(d).is_err()))),
+                    && dims.iter().any(|d|crate::parameters::integer_constant(d).is_err()))
+                    || matches!(e,Expr::Section{name:n,..} if n==array)),
                 Stmt::If{then_body,else_body,..}=>runtime_allocate(then_body,array)||else_body.as_ref().is_some_and(|b|runtime_allocate(b,array)),
                 Stmt::Do{body,..}|Stmt::DoWhile{body,..}|Stmt::Block{body}=>runtime_allocate(body,array),
                 Stmt::SelectCase{cases,default,..}=>cases.iter().any(|c|runtime_allocate(&c.body,array))||default.as_ref().is_some_and(|b|runtime_allocate(b,array)),
@@ -249,7 +250,7 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
                   // storage when ALLOCATEd; one allocated only by assignment needs
                   // runtime storage for its value's extent.
                   || (array_dummies && allocation(body,name,&declared) && !allocate_statement(body,name)) || dims.len()>1 && body.iter().any(|s|matches!(s,Stmt::CallSub{name:call,args} if call=="@deallocate"&&args.iter().any(|e|matches!(e,Expr::Ident(n) if n==name)))))
-              && numeric(kind) && (!matches!(kind,TypeSpec::Character(_)) || dims.len()>1 || body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name && intent=="@tokenize_deferred_character"))
+              && numeric(kind) && (!matches!(kind,TypeSpec::Character(_)) || dims.len()>1 || runtime_allocate(body,name) || body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name && intent=="@tokenize_deferred_character"))
                   || array_assignment(body,name,&declared)
                   || body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name&&intent=="@automatic")))
               && body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name&&intent=="allocatable")))

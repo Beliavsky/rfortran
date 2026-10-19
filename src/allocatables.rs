@@ -1417,8 +1417,11 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                     if matches!(shapes[name].0, TypeSpec::Character(_)) {
                         let mut copied=vec![];
                         character_copy(name, value, len, &shapes, reallocate, serial, &mut copied)?;
-                        if reallocate {lower(&mut copied,&shapes,serial,checks)?;out.push(Stmt::Block{body:copied});}
-                        else {out.extend(copied);}
+                        // Generated element accesses still use Fortran lower bounds.
+                        // Normalize them even for scalar broadcast, which does not
+                        // reallocate an already allocated destination.
+                        lower(&mut copied,&shapes,serial,checks)?;
+                        out.push(Stmt::Block{body:copied});
                         continue;
                     }
                     let scalar = crate::array_calls::scalar_actual_kind(value, &shapes).ok();

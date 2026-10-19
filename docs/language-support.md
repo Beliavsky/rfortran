@@ -1066,12 +1066,18 @@ length does not relax that requirement. Fixed-size CHARACTER arrays and sections
 nested calls, keyword arguments and use inside PURE/ELEMENTAL procedures are
 supported. Results are materialized before assignment, including when the
 destination also appears as a source. A scalar mask expression is evaluated once
-when broadcast over an array. CHARACTER array expansion is limited to 1024
-elements and requires fixed extents; runtime-sized/deferred-length CHARACTER
-MERGE remains unsupported. Numeric and LOGICAL array MERGE also currently
+when broadcast over an array. Runtime-sized rank-one arrays also support
+fixed-length CHARACTER MERGE, including scalar broadcasting, numeric expression
+masks, whole arrays and constant-stride sections. Runtime shapes are checked;
+allocatable destinations are allocated or resized as needed. A heap temporary
+preserves overlapping sources, and this runtime path has no 1024-element limit.
+The fixed-extent expansion remains limited to 1024 elements. Runtime-sized
+multidimensional arrays and deferred CHARACTER element lengths remain unsupported
+for CHARACTER MERGE. Numeric and LOGICAL array MERGE also currently
 requires known sizes. Run `python tests/test_character_merge.py` and
 `python tests/test_formatted_output.py`. The examples
-`tests/programs/xmerge_char.f90` and `tests/programs/xmerge_char_vec.f90`
+`tests/programs/xmerge_char.f90`, `tests/programs/xmerge_char_vec.f90` and
+`tests/programs/xmerge_char_vec_alloc.f90`
 exercise scalar and array masks.
 
 ### Runtime allocation

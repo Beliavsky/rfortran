@@ -451,7 +451,10 @@ impl Lower {
                 value: Expr::Call(tag, a),
             } = &s
             {
+                // Heap-backed destinations use allocatable assignment below,
+                // including allocation/reallocation before their first write.
                 if tag == "@packed_view"
+                    && !shapes.contains_key(&format!("@constructor_heap:{name}"))
                     && matches!(shapes.get(name),Some((TypeSpec::Character(_),d)) if d.len()==1)
                 {
                     let Expr::Ident(source) = &a[0] else {
