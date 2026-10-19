@@ -22,6 +22,7 @@ mod timing;
 mod calendar;
 mod environment;
 mod timing_intrinsics;
+mod conditionals;
 mod bit_intrinsics;
 mod inquiries;
 mod lexer;

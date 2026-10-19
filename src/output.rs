@@ -131,6 +131,7 @@ pub fn contains_implied_do(e: &Expr) -> bool {
 
 pub(crate) fn integer(e: &Expr, symbols: &Symbols) -> bool {
     match e {
+        Expr::Call(n,a) if n=="@conditional"=>integer(&a[1],symbols),
         Expr::IntLit(_) => true,
         Expr::Ident(n) => {
             matches!(symbols.get(n), Some((TypeSpec::Integer(None | Some(4) | Some(8)), dims)) if dims.is_empty())
@@ -151,6 +152,8 @@ pub(crate) fn integer(e: &Expr, symbols: &Symbols) -> bool {
 
 fn character(e: &Expr, symbols: &Symbols) -> bool {
     match e {
+        Expr::Call(n,a) if n=="@conditional"=>character(&a[1],symbols),
+        Expr::Call(n,_) if matches!(symbols.get(&format!("@constructor_function:{n}")),Some((TypeSpec::Character(_)|TypeSpec::CharacterAssumed|TypeSpec::CharacterLength(_),_)))=>true,
         Expr::Str(_) | Expr::Bin(BinOp::Concat, _, _) => true,
         Expr::Ident(n) => matches!(symbols.get(n), Some((TypeSpec::Character(_), _))),
         Expr::Index(n,_) | Expr::Call(n,_) if matches!(symbols.get(n),Some((TypeSpec::Character(_),_)))=>true,

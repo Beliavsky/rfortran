@@ -48,6 +48,7 @@ impl Lower {
         for item in items {
             let kind = match item {
                 Expr::Ident(n) if shapes.contains_key(n) => shapes[n].0.clone(),
+                Expr::Call(n,a) if n=="@conditional" => Self::kind(&a[1..2],shapes)?,
                 Expr::Call(n, a) if n == "@array_constructor" => Self::kind(a, shapes)?,
                 Expr::Call(n, a) if n == "@output_implied_do" => Self::kind(&a[4..], shapes)?,
                 Expr::Call(n, _) if shapes.contains_key(&format!("@constructor_function:{n}")) => {
@@ -262,6 +263,7 @@ impl Lower {
         out: &mut Vec<Stmt>,
         cleanup: &mut Vec<Stmt>,
     ) -> Result<()> {
+        if crate::conditionals::choice(e) {return Ok(());}
         if matches!(e, Expr::Call(n, _) if n == "@array_constructor") {
             if crate::constructors::delayed(e) {
                 crate::constructors::fixed_expression(e, shapes)?;
@@ -544,4 +546,24 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
     functions(&p.body, &mut shapes);
     Lower { serial: 0 }.scope(&mut p.body, &shapes)?;
     Ok(p)
+}
+
+// Materialize only implied-DO constructors whose choices depend on the active
+// index. Other choices must first be branched by the conditional lowering pass.
+pub(crate) fn conditional_items(s:&mut Stmt,shapes:&Shapes,serial:&mut usize)->Result<(Vec<Stmt>,Vec<Stmt>)> {
+    fn walk(e:&mut Expr,shapes:&Shapes,lower:&mut Lower,before:&mut Vec<Stmt>,after:&mut Vec<Stmt>)->Result<()> {
+        if crate::conditionals::choice(e) {return Ok(());}
+        if matches!(e,Expr::Call(n,_) if n=="@array_constructor") && crate::constructors::delayed(e) {
+            return lower.expr(e,shapes,before,after);
+        }
+        match e {
+            Expr::Call(_,a)|Expr::Index(_,a)=>for e in a {walk(e,shapes,lower,before,after)?;},
+            Expr::Bin(_,a,b)=>{walk(a,shapes,lower,before,after)?;walk(b,shapes,lower,before,after)?;},
+            Expr::Un(_,a)=>walk(a,shapes,lower,before,after)?,_=>{},
+        }
+        Ok(())
+    }
+    let mut lower=Lower{serial:*serial};let mut before=vec![];let mut after=vec![];
+    for e in crate::procedure_arguments::expressions(s) {walk(e,shapes,&mut lower,&mut before,&mut after)?;}
+    *serial=lower.serial;Ok((before,after))
 }

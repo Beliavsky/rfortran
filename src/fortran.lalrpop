@@ -19,6 +19,8 @@ extern {
         END_INTERFACE_NAME => TokenKind::EndInterfaceName(<String>),
         END_UNIT_NAME => TokenKind::EndUnitName(<String>),
         BARE_END => TokenKind::BareEnd,
+        QUESTION => TokenKind::Question,
+        NIL => TokenKind::Nil,
         DEFINED_OP => TokenKind::DefinedOperator(<String>),
         PERCENT => TokenKind::Percent,
         ARROW => TokenKind::Arrow,
@@ -767,7 +769,18 @@ UnaryExpr: Expr = {
     NOT <p: UnaryExpr> => Expr::not(p),
 };
 
+ConditionalTail: Vec<Expr> = {
+    <condition:RhsExpr> QUESTION <value:RhsExpr> COLON <rest:ConditionalTail> => {
+        let mut args=vec![condition,value];args.extend(rest);args
+    },
+    <value:RhsExpr> => vec![value],
+};
+
 Primary: Expr = {
+    LPAREN <condition:RhsExpr> QUESTION <value:RhsExpr> COLON <rest:ConditionalTail> RPAREN => {
+        let mut args=vec![condition,value];args.extend(rest);Expr::Call("@conditional".into(),args)
+    },
+    NIL => Expr::Call("@conditional_nil".into(),vec![]),
     LBRACKET <items: ExprList> RBRACKET => Expr::Call("@array_constructor".into(), items),
     LBRACKET <kind:ConstructorType> DCOLON <items:ExprList?> RBRACKET =>
         crate::empty_constructors::parsed(kind,items.unwrap_or_default()),

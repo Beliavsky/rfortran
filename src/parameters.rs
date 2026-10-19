@@ -241,7 +241,20 @@ fn model_type_lookup(constants: &Constants, name: &str) -> Option<(TypeSpec,usiz
         _ => TypeSpec::Logical,
     },rank.parse().ok()?))
 }
+fn conditional_constant<'a>(e:&'a Expr,constants:&Constants)->Result<&'a Expr> {
+    if let Expr::Call(n,a)=e {
+        if n=="@conditional" {
+            for pair in a[..a.len()-1].chunks_exact(2) {
+                if logical_constant(&pair[0],constants)? {return conditional_constant(&pair[1],constants);}
+            }
+            return conditional_constant(a.last().unwrap(),constants);
+        }
+    }
+    Ok(e)
+}
+
 pub(crate) fn logical_constant(e: &Expr, constants: &Constants) -> Result<bool> {
+    let e=conditional_constant(e,constants)?;
     Ok(match e {
         Expr::Logical(value) => *value,
         Expr::Ident(name) => logical_constant(constants.get(name)
@@ -283,6 +296,7 @@ pub(crate) fn logical_constant(e: &Expr, constants: &Constants) -> Result<bool> 
     })
 }
 pub(crate) fn real_constant(e: &Expr) -> Result<f64> {
+    let e=conditional_constant(e,&Constants::new())?;
     fn integral(e: &Expr) -> bool {
         match e { Expr::Call(tag,_) if tag == "@integer_literal" => true, Expr::IntLit(_) => true, Expr::Un(_, a) => integral(a), Expr::Bin(_, a,b) => integral(a) && integral(b), _ => false }
     }
@@ -313,6 +327,7 @@ pub(crate) fn real_constant(e: &Expr) -> Result<f64> {
 
 // Character constants are lowered to literals before either backend sees them.
 pub(crate) fn character_constant(expr: &Expr) -> Result<String> {
+    let expr=conditional_constant(expr,&Constants::new())?;
     match expr {
         Expr::Str(value) => Ok(value.clone()),
         Expr::Call(name,args) if name=="new_line" && args.len()==1 => {character_constant(&args[0])?;Ok("\n".into())},
@@ -409,6 +424,7 @@ pub(crate) fn resolve_constants(mut program: Program) -> Result<Program> {
 }
 
 fn evaluate(expr: &Expr, constants: &Constants) -> Result<i64> {
+    let expr=conditional_constant(expr,constants)?;
     let value = match expr {
         Expr::IntLit(s) => s.parse().ok(),
         Expr::Call(tag,args) if tag == "@integer_literal" && args.len() == 2 => return evaluate(&args[0],constants),
@@ -787,6 +803,7 @@ fn fold_array_initializer(e: &Expr, shapes: &HashMap<String, Vec<i64>>) -> Resul
 // Resolve declaration initializers to constants before choosing automatic or
 // persistent storage. Procedure declaration initialization implies SAVE.
 pub(crate) fn initial_value(kind: &TypeSpec, value: &Expr) -> Result<Expr> {
+    let value=conditional_constant(value,&Constants::new())?;
     if let Some(source)=crate::empty_constructors::kind(value)? {
         let numeric=|kind:&TypeSpec|matches!(kind,TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision);
         if !(numeric(kind)&&numeric(&source)
@@ -1207,6 +1224,15 @@ fn typed_constructor(kind:&TypeSpec,items:Vec<Expr>)->Result<Expr> {
 }
 
 fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
+    if let Expr::Call(name,args)=expr {
+        if name=="@conditional" {
+            // Preserve the full choice for static checking. Constant evaluators
+            // select a consequent lazily; runtime lowering creates real branches.
+            for arg in args.iter_mut() {rewrite_expr(arg,constants)?;}
+            crate::operators::validate_constant_alternatives(args)?;
+            return Ok(());
+        }
+    }
     if let Expr::Call(name,args)=expr {
         if matches!(name.as_str(),"len"|"len_trim"|"ichar"|"iachar"|"char"|"achar") && args.len()==2
             && !constants.contains_key(&format!("@model_procedure:{name}")) {

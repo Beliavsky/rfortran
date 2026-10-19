@@ -426,6 +426,7 @@ impl Checker<'_> {
                 self.require("Fortran 2023 ISO_FORTRAN_ENV kind constants", 2023, offset)
             }
             Expr::Call(n, args) => {
+                if n=="@conditional" {self.require("conditional expressions and arguments",2023,offset);}
                 if matches!(
                     n.as_str(),
                     "@typed_constructor" | "@typed_character_constructor"

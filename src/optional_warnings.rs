@@ -97,6 +97,16 @@ fn uses(e: &Expr, optional: &Names, present: &Names, known: &Interfaces, found: 
                 }
             }
         }
+        Expr::Call(n,args) if n=="@conditional" => {
+            let mut remaining=present.clone();
+            for pair in args[..args.len()-1].chunks_exact(2) {
+                uses(&pair[0],optional,&remaining,known,found);
+                let mut selected=remaining.clone();selected.extend(facts(&pair[0],true));
+                uses(&pair[1],optional,&selected,known,found);
+                remaining.extend(facts(&pair[0],false));
+            }
+            uses(args.last().unwrap(),optional,&remaining,known,found);
+        }
         Expr::Call(n, args) => {
             reference(n); // Array elements are also parsed as calls.
             for (i, e) in args.iter().enumerate() {

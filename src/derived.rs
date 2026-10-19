@@ -1323,6 +1323,7 @@ pub fn resolve(program: Program) -> Result<Program> {
     crate::allocation_options::resolve(resolve_types(program)?)
 }
 fn resolve_types(mut program: Program) -> Result<Program> {
+    crate::conditionals::validate_source(&program)?;
     crate::parameters::resolve_intrinsic_modules(&mut program)?;
     program = crate::block_scopes::resolve(program)?;
     crate::parameters::fold_kind_inquiries(&mut program);
@@ -1334,7 +1335,13 @@ fn resolve_types(mut program: Program) -> Result<Program> {
     crate::elemental::validate_program(&program)?;
     crate::imports::validate(&program)?;
     program = crate::named_arguments::resolve(program, false)?;
+    if crate::conditionals::contains(&program) {
+        crate::operators::validate_conditionals(&program)?;
+        program=crate::parameters::resolve_constants(program)?;
+    }
     program = crate::operators::resolve(program)?;
+    if crate::conditionals::contains(&program) {program=crate::heap::automatic_locals(program)?;}
+    program = crate::conditionals::resolve(program)?;
     program = crate::named_arguments::resolve(program, true)?;
     program = crate::intrinsic_rewrites::resolve(program)?;
     program = crate::matmul_runtime::resolve(program)?;

@@ -357,6 +357,8 @@ fn human_token(tok: &TokenKind) -> String {
         TokenKind::LParen => "'('".into(),
         TokenKind::RParen => "')'".into(),
         TokenKind::DColon => "'::'".into(),
+        TokenKind::Question => "'?'".into(),
+        TokenKind::Nil => "'.nil.'".into(),
         TokenKind::Colon => "':'".into(),
         TokenKind::Eq => "'='".into(),
         TokenKind::Plus => "'+'".into(),

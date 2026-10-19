@@ -621,6 +621,27 @@ impl Resolver {
             return Ok(Ty::Array(Box::new(scalar(&kind)),1));
         }
         if let Expr::Call(name, args) = e {
+            if name=="@conditional" {
+                let mut result=None;
+                let length=args.len();
+                for (i,arg) in args.iter_mut().enumerate() {
+                    let ty=self.expression(arg,vars,visible)?;
+                    if i%2==0 && i+1<length {
+                        if ty!=scalar(&TypeSpec::Logical) && ty!=Ty::Unknown {bail!("conditional condition must be a scalar LOGICAL expression");}
+                    } else if !crate::conditionals::nil(arg) {
+                        fn resolved(t:&Ty)->bool {match t {
+                            Ty::Scalar(TypeSpec::IntegerKind(_)|TypeSpec::RealKind(_)|TypeSpec::LogicalKind(_))=>false,
+                            Ty::Array(t,_)=>resolved(t),Ty::Unknown=>false,_=>true,
+                        }}
+                        if result.as_ref().is_some_and(|t|*t!=ty && resolved(t) && resolved(&ty)) {
+                            bail!("conditional alternatives must have the same declared type, kind and rank");
+                        }
+                        if result.is_none() || known_type(&ty) {result=Some(ty);}
+                    }
+                }
+                return Ok(result.unwrap_or(Ty::Unknown));
+            }
+
             if name=="@record_constructor" {
                 if let Some(Expr::Ident(ty))=args.first(){return Ok(Ty::Array(Box::new(Ty::Derived(ty.clone())),1));}
             }
@@ -689,7 +710,11 @@ impl Resolver {
         }
         Ok(match e {
             Expr::Ident(n) => self.name_type(n, vars),
-            Expr::IntLit(_) => scalar(&TypeSpec::Integer(None)),
+            Expr::IntLit(n) => match n.split_once('_') {
+                Some((_,k))=>k.parse().map(|k|scalar(&TypeSpec::Integer(Some(k)))).unwrap_or(Ty::Unknown),
+                None=>scalar(&TypeSpec::Integer(None)),
+            },
+            Expr::RealLit(n) if n.split_once('_').is_some_and(|(_,k)|k.parse::<u8>().is_err()) => Ty::Unknown,
             Expr::RealLit(n) => scalar(&if n.contains(['d', 'D']) || n.ends_with("_8") {
                 TypeSpec::DoublePrecision
             } else {
@@ -747,6 +772,15 @@ impl Resolver {
                                 let result=scalar(&TypeSpec::Complex(k.to_string()));
                                 if let Some(rank)=arg_types.iter().find_map(|t|if let Ty::Array(_,r)=t{Some(*r)}else{None}){Ty::Array(Box::new(result),rank)}else{result}
                             },
+                            "present"|"allocated"|"associated" => scalar(&TypeSpec::Logical),
+                            "all"|"any" => {
+                                let dim=args.iter().enumerate().any(|(i,a)| match crate::named_arguments::keyword(a) {
+                                    Some((key,_))=>key=="dim",None=>i==1 && !crate::named_arguments::omitted(a),
+                                });
+                                let logical=scalar(&TypeSpec::Logical);
+                                match arg_types.first() {Some(Ty::Array(_,r)) if dim && *r>1=>Ty::Array(Box::new(logical),r-1),_=>logical}
+                            },
+                            "btest"|"lge"|"lgt"|"lle"|"llt"|"out_of_range"=>elemental_result(scalar(&TypeSpec::Logical),&arg_types),
                             "conjg"=>arg_types.first().cloned().unwrap_or(Ty::Unknown),
                             "aimag"=>{
                                 fn part(t:&Ty)->Ty{match t{Ty::Array(t,r)=>Ty::Array(Box::new(part(t)),*r),Ty::Scalar(TypeSpec::Complex(k))=>scalar(&if k=="8"{TypeSpec::DoublePrecision}else{TypeSpec::Real}),_=>Ty::Unknown}}
@@ -1026,6 +1060,49 @@ impl Resolver {
             })();
         result.map_err(|e| crate::source_diagnostics::at(e, statement_location.get()))
     }
+}
+
+// Constant substitution can reveal kind differences hidden behind named kinds.
+pub(crate) fn validate_constant_alternatives(args:&[Expr])->Result<()> {
+    let resolver=Resolver::default();let mut previous=None;
+    for (i,arg) in args.iter().enumerate() {
+        if i%2==0 && i+1<args.len() || crate::conditionals::nil(arg) {continue;}
+        let ty=resolver.expression(&mut arg.clone(),&Vars::new(),&Bindings::new()).unwrap_or(Ty::Unknown);
+        if known_type(&ty) {
+            if previous.as_ref().is_some_and(|p|*p!=ty) {bail!("conditional alternatives must have the same declared type, kind and rank");}
+            previous=Some(ty);
+        }
+    }
+    Ok(())
+}
+
+// Validate choices before constant folding can discard unselected alternatives.
+// Other source expressions retain the ordinary resolver's processing order.
+pub(crate) fn validate_conditionals(program:&Program)->Result<()> {
+    fn walk(resolver:&Resolver,body:&[Stmt],inherited:&Vars,bindings:&Bindings)->Result<()> {
+        let vars=declarations(body,inherited);
+        let visible=resolver.visible(body,bindings)?;
+        let mut location=None;
+        for stmt in body {
+            if let Stmt::SourceLocation(n)=stmt {location=Some(*n);}
+            let result=(||->Result<()> {
+                let mut copy=stmt.clone();
+                for expr in crate::procedure_arguments::expressions(&mut copy) {
+                    let mut error=Ok(());
+                    crate::procedure_arguments::visit_expr(expr,&mut |e| {
+                        if crate::conditionals::choice(e) && error.is_ok() {error=resolver.expression(&mut e.clone(),&vars,&visible).map(|_|());}
+                    });
+                    error?;
+                }
+                for child in crate::procedure_arguments::children(&mut copy) {walk(resolver,child,&vars,&visible)?;}
+                Ok(())
+            })();
+            result.map_err(|e|crate::source_diagnostics::at(e,location))?;
+        }
+        Ok(())
+    }
+    let mut resolver=Resolver::default();resolver.collect(&program.body)?;
+    walk(&resolver,&program.body,&Vars::new(),&Bindings::new())
 }
 
 pub fn resolve(mut program: Program) -> Result<Program> {

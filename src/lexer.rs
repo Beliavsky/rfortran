@@ -447,6 +447,10 @@ pub enum TokenKind {
     DColon,
     #[token(":")]
     Colon,
+    #[token("?")]
+    Question,
+    #[token(".nil.", ignore(ascii_case))]
+    Nil,
     #[token("=")]
     Eq,
     #[token("(")]
