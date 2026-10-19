@@ -1059,8 +1059,20 @@ array, an elemental expression of whole arrays, or a TRANSPOSE or RESHAPE of
 one; other expressions, such as sections, must first be assigned to an
 ALLOCATABLE array. LOGICAL MATMUL is rejected. Run
 `python tests/test_runtime_matmul.py`.
-`MERGE` is elemental: TSOURCE, FSOURCE and MASK may be numeric or LOGICAL
-arrays of constant size, or scalars. Run `python tests/test_formatted_output.py`.
+`MERGE` is elemental: TSOURCE and FSOURCE may be numeric, LOGICAL or fixed-length
+CHARACTER values; MASK must be LOGICAL. Scalar arguments broadcast over conforming
+array arguments. CHARACTER sources must have equal lengths; the destination's
+length does not relax that requirement. Fixed-size CHARACTER arrays and sections,
+nested calls, keyword arguments and use inside PURE/ELEMENTAL procedures are
+supported. Results are materialized before assignment, including when the
+destination also appears as a source. A scalar mask expression is evaluated once
+when broadcast over an array. CHARACTER array expansion is limited to 1024
+elements and requires fixed extents; runtime-sized/deferred-length CHARACTER
+MERGE remains unsupported. Numeric and LOGICAL array MERGE also currently
+requires known sizes. Run `python tests/test_character_merge.py` and
+`python tests/test_formatted_output.py`. The examples
+`tests/programs/xmerge_char.f90` and `tests/programs/xmerge_char_vec.f90`
+exercise scalar and array masks.
 
 ### Runtime allocation
 

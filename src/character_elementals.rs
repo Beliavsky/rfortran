@@ -7,6 +7,9 @@
 use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
+#[path = "character_merge.rs"]
+mod merge;
+
 type Symbols = HashMap<String, (TypeSpec, Vec<Expr>)>;
 #[derive(Clone)]
 struct Routine {
@@ -229,6 +232,11 @@ impl Lower {
             Expr::Call(n, _) | Expr::Index(n, _) if symbols.contains_key(n) => {
                 scalar(symbols[n].0.clone())
             }
+            Expr::Un(op, source) => {
+                let value=self.view(source,symbols)?;
+                Ok(Value {active:value.active,kind:value.kind,
+                    items:value.items.map(|items|items.into_iter().map(|e|Expr::Un(op.clone(),Box::new(e))).collect())})
+            }
             Expr::Bin(op, a, b) => {
                 let aview = self.view(a, symbols)?;
                 let bview = self.view(b, symbols)?;
@@ -414,6 +422,7 @@ impl Lower {
             Expr::Un(_, a) => self.expression(a, symbols, prefix)?,
             _ => {}
         }
+        if self.merge_character(e,symbols,prefix)? {return Ok(());}
         if let Expr::Call(name,args)=e {
             if name=="@runtime_character_constructor" {
                 let length=usize::try_from(crate::parameters::integer_constant(&args[0])?)
