@@ -488,7 +488,9 @@ The older form `do 10 i = 1, n` (also `do 10, i = 1, n`) ends after the
 statement with label 10, which may be CONTINUE or another statement; nested
 loops may share it. DO CONCURRENT accepts several index controls with strides
 and a final mask, as in `do concurrent (i = 1:n, j = 1:m:2, a(i) > 0)`, and runs
-its iterations in order as nested DO loops. A type specification or locality
+its iterations in order as nested DO loops. Fortran 2023
+[REDUCE locality](fortran2023.md#do-concurrent-reductions-us-20) supports scalar
+and fixed-size explicit-shape intrinsic arrays. A type specification and other locality
 specifiers such as LOCAL are not supported.
 
 Counted, unbounded, and DO WHILE loops accept construct names, for example
@@ -1031,8 +1033,9 @@ conformable FIELD of the same type/kind as VECTOR. Both intrinsics preserve
 array-element order and check at runtime that VECTOR has enough elements.
 CHARACTER arrays remain unsupported. Run `python tests/test_pack_unpack.py`.
 
-MINLOC/MAXLOC support fixed-shape numeric arrays; FINDLOC also supports LOGICAL
-arrays. Optional constant DIM reduces rank, or omitting DIM returns one position
+MINLOC/MAXLOC support fixed-shape numeric arrays and rank-one runtime-sized
+ones, such as ALLOCATABLE arrays and their elemental expressions, with DIM
+omitted or 1; FINDLOC also supports LOGICAL arrays. Optional constant DIM reduces rank, or omitting DIM returns one position
 per source dimension. MASK may be scalar or conformable LOGICAL; runtime scalar
 BACK selects the last matching location instead of the first. Empty selections
 return zeros. KIND=4 and KIND=8 are supported. FINDLOC VALUE must currently have
@@ -1155,8 +1158,10 @@ elemental intrinsic expressions of them, such as `t = 2*c - t` or
 `t = sqrt(c) + 1`. Such an expression cannot yet mix fixed-size and
 runtime-sized arrays.
 Scalar assignment never allocates. Array constructors may contain whole
-runtime-sized arrays and sections, so `a = [a, x]` appends. CHARACTER arrays and
-rank-one ALLOCATEd locals of procedures with array dummies (which use bounded
+runtime-sized arrays and sections, so `a = [a, x]` appends. Rank-one
+fixed-length CHARACTER arrays reallocate the same way, from arrays, sections and
+constructors that mix them with scalars, such as `c = [c, 'new']`. Rank-one
+ALLOCATEd locals of procedures with array dummies (which use bounded
 call-site storage) are not yet reallocated. Run
 `python tests/test_allocatable_reallocation.py`.
 

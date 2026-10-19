@@ -1332,6 +1332,7 @@ fn resolve_types(mut program: Program) -> Result<Program> {
     crate::imports::validate(&program)?;
     program=crate::modules::associate(program)?;
     program=crate::multiple_subscripts::resolve(program)?;
+    program=crate::concurrent_reduce::resolve(program)?;
     crate::simple::validate(&program)?;
     program = crate::extensions::resolve(program)?;
     program = crate::procedure_arguments::resolve(program)?;

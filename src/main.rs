@@ -60,6 +60,7 @@ mod substrings;
 mod character_arrays;
 mod vector_subscripts;
 mod multiple_subscripts;
+mod concurrent_reduce;
 mod function_arrays;
 mod array_bounds;
 mod multidim;

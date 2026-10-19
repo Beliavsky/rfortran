@@ -199,6 +199,44 @@ components currently need explicit bounds. Other existing array-operation
 limits still apply. A scalar dummy associated with an array element cannot yet
 be used as a DO control variable.
 
+## DO CONCURRENT reductions (US 20)
+
+`REDUCE(operation:variable-list)` supports `+`, `*`, `.AND.`, `.OR.`, `.EQV.`,
+`.NEQV.`, `MAX`, `MIN`, `IAND`, `IOR`, and `IEOR`, with multiple clauses and
+multiple variables per clause. Variables require an explicit intrinsic type
+suitable for the operation. Scalar and fixed-size explicit-shape array reductions support
+whole-array, element, and section updates.
+The implemented types are INTEGER, REAL, COMPLEX (`+` and `*`), and LOGICAL;
+CHARACTER reductions are not supported yet.
+
+```fortran
+integer :: i, total = 10, largest = -100
+do concurrent (i=1:5) reduce(+:total) reduce(max:largest)
+   total = total + i
+   largest = max(largest,i)
+end do
+print *, total, largest    ! 25 5
+```
+
+Execution is sequential. Each reduction uses private storage initialized to its
+operation's identity and combines the accumulated result with the outside value
+after the loop. Empty and entirely masked loops leave the outside value alone.
+Index bounds are captured before execution. Masks, multiple index controls,
+constant strides, CYCLE (including a construct name), nested loops, and nested
+reductions on different variables are supported. Native O0/O2 and interpreter
+execution share this lowering. These clauses require Fortran 2023 in strict
+standard modes.
+
+Only the standard reduction assignment forms are accepted; references elsewhere,
+duplicate variables, incompatible types, prohibited attributes, and transfers
+out of the concurrent construct receive source-located errors. POINTER,
+ALLOCATABLE, runtime-sized, and assumed-shape/assumed-size reduction objects are not implemented
+yet. Named EXIT within a reduction construct is currently rejected, including
+when its target is a nested ordinary loop. Other DO CONCURRENT locality
+specifiers and parallel execution remain unsupported. Existing DO CONCURRENT
+semantic checking is partial; this addition does not claim full validation of
+iteration independence or procedure purity.
+
 ## Try it
 
 ```cmd
@@ -207,6 +245,8 @@ rf.bat -std=f2023 tests\programs\xconditional.f90 --run
 rf.bat -std=f2023 tests\programs\xtokenize.f90 --run
 rf.bat -std=f2023 tests\programs\xsimple_procedures.f90 --run
 rf.bat -std=f2023 tests\programs\xmultiple_subscripts.f90 --run
+rf.bat -std=f2023 tests\programs\xconcurrent_reduce.f90 --run
+python tests/test_concurrent_reduce.py
 python tests/test_multiple_subscripts.py
 python tests/test_fortran2023.py
 python tests/test_simple.py

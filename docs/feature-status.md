@@ -137,7 +137,7 @@ Bugs found on 2026-10-18, all fixed:
 | IF, ELSE IF, ELSE, single-line IF | ✅ | | test_else_if.py |
 | [DO with step, DO WHILE, unbounded DO](language-support.md#do-loops) | ✅ | The step must be constant | test_do_steps.py |
 | [Named loops, EXIT and CYCLE](language-support.md#do-loops) | ✅ | | test_named_loops.py |
-| [DO CONCURRENT](language-support.md#do-loops) | 🟡 | Runs its iterations in order; no type specification or locality specifiers | test_statement_forms_io.py |
+| [DO CONCURRENT](language-support.md#do-loops) | 🟡 | Sequential; F2023 REDUCE for scalar and fixed-size explicit-shape intrinsic arrays; no other locality specifiers or type specification | test_statement_forms_io.py, test_concurrent_reduce.py |
 | [Labelled DO (`do 10 i = ...`)](language-support.md#do-loops) | ✅ | | test_statement_forms_io.py |
 | [SELECT CASE](language-support.md#select-case-ranges) | 🟡 | INTEGER values and ranges, CHARACTER values; CHARACTER ranges are not supported | test_case_ranges.py |
 | BLOCK construct | ✅ | | testsuite, test_named_constructs.py |
@@ -177,7 +177,7 @@ Bugs found on 2026-10-18, all fixed:
 | [ALLOCATABLE dummy arguments](language-support.md#allocatable-dummy-arguments) | 🟡 | Subroutines only, not functions | test_allocatable_dummies.py |
 | [ALLOCATABLE function results](language-support.md#allocatable-function-results) | 🟡 | Assigning a result to an unallocated ALLOCATABLE array is rejected | test_numeric_allocatable_results.py |
 | ALLOCATABLE scalars | ❌ | | |
-| [Reallocation on assignment](language-support.md#reallocation-on-assignment) | 🟡 | Not for CHARACTER arrays; a multidimensional expression cannot mix fixed-size and runtime-sized arrays | test_allocatable_reallocation.py, test_runtime_allocatables.py |
+| [Reallocation on assignment](language-support.md#reallocation-on-assignment) | 🟡 | CHARACTER arrays rank one only; a multidimensional expression cannot mix fixed-size and runtime-sized arrays | test_allocatable_reallocation.py, test_runtime_allocatables.py |
 | [MOVE_ALLOC](language-support.md#move_alloc-and-allocate-options) | ✅ | Copies the data | test_allocation_options.py |
 | [ALLOCATE with SOURCE=, MOLD=, STAT=, ERRMSG=](language-support.md#move_alloc-and-allocate-options) | ✅ | | test_allocation_options.py |
 | Typed ALLOCATE (`allocate(character(len=5) :: s)`) | ❌ | | |
@@ -303,7 +303,7 @@ Bugs found on 2026-10-18, all fixed:
 | `SHIFTL`, `SHIFTR`, `SHIFTA`, `MASKL`, `MASKR`, `MERGE_BITS` | ❌ | | |
 | [Reductions](language-support.md#reductions) (`SUM`, `PRODUCT`, `MAXVAL`, `MINVAL`, `COUNT`, `ANY`, `ALL`) | ✅ | DIM must be constant | test_masked_reductions.py, test_dim_reductions.py |
 | [`IANY`, `IALL`, `IPARITY`, `PARITY`](language-support.md#reductions) | ✅ | DIM must be constant | test_more_intrinsics.py |
-| [Locations](language-support.md#array-transformations-and-locations) (`MAXLOC`, `MINLOC`, `FINDLOC`) | 🟡 | ARRAY must have a fixed shape; not yet ALLOCATABLE arrays | test_locations.py |
+| [Locations](language-support.md#array-transformations-and-locations) (`MAXLOC`, `MINLOC`, `FINDLOC`) | ✅ | Runtime-sized ARRAY must be rank one | test_locations.py |
 | [Array transformations](language-support.md#array-transformations-and-locations) (`PACK`, `UNPACK`, `SPREAD`, `RESHAPE`, `TRANSPOSE`, `CSHIFT`, `EOSHIFT`) | ✅ | DIM and NCOPIES must be constant | test_pack_unpack.py, test_spread.py, test_reshape_options.py |
 | `MERGE` | 🟡 | Array sources must be numeric or LOGICAL, of constant size | test_formatted_output.py |
 | [`DOT_PRODUCT`](language-support.md#dot_product) | ✅ | | test_dot_product.py |

@@ -724,6 +724,7 @@ impl Checker<'_> {
                     }
                 }
                 Stmt::CallSub { name, args } => {
+                    if name=="@concurrent_reduce" {self.require("DO CONCURRENT REDUCE",2023,offset);}
                     let format = match name.as_str() {
                         "@formatted_print" | "@formatted_write_noadvance" => args.first(),
                         "@write" => args.get(1),

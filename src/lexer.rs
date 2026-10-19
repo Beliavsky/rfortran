@@ -326,6 +326,7 @@ pub enum TokenKind {
     KwResult,
     KwPure,
     KwSimple,
+    KwReduce,
     KwImpure,
     KwRecursive,
     KwElemental,
@@ -1079,6 +1080,20 @@ pub fn lex(input: &str) -> Vec<Token> {
         start += 1;
     }
     for start in 0..tokens.len() {
+        if matches!(tokens[start].kind,TokenKind::KwDo)
+            && matches!(tokens.get(start+1).map(|t| &t.kind),Some(TokenKind::Ident(n)) if n=="concurrent") {
+            let mut depth=0;
+            let mut header=false;
+            for next in start+2..tokens.len() {
+                if !same_statement(&input[tokens[start].span.end..tokens[next].span.start]) {break;}
+                match &tokens[next].kind {
+                    TokenKind::LParen => {depth+=1;header=true;},
+                    TokenKind::RParen => depth-=1,
+                    TokenKind::Ident(n) if header && depth==0 && n=="reduce" => tokens[next].kind=TokenKind::KwReduce,
+                    _ => {},
+                }
+            }
+        }
         if let TokenKind::Ident(n) = &tokens[start].kind {
             let next=tokens.get(start+1).map(|t| &t.kind);
             let previous=start.checked_sub(1).and_then(|i| tokens.get(i)).map(|t| &t.kind);

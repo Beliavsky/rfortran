@@ -37,6 +37,7 @@ extern {
         KW_RESULT => TokenKind::KwResult,
         KW_PURE => TokenKind::KwPure,
         KW_SIMPLE => TokenKind::KwSimple,
+        KW_REDUCE => TokenKind::KwReduce,
         KW_IMPURE => TokenKind::KwImpure,
         KW_RECURSIVE => TokenKind::KwRecursive,
         KW_ELEMENTAL => TokenKind::KwElemental,
@@ -926,6 +927,18 @@ ConcurrentItem: Result<Vec<Expr>, Expr> = {
     <mask:CondExpr> => Err(mask),
 };
 
+ConcurrentReductions: Vec<Expr> = {
+    => vec![],
+    <mut clauses:ConcurrentReductions> KW_REDUCE LPAREN <op:Operator> COLON <names:IdentList> RPAREN => {
+        clauses.push(Expr::Call(format!("@reduce:{op}"),names.into_iter().map(Expr::Ident).collect()));
+        clauses
+    },
+    <mut clauses:ConcurrentReductions> KW_REDUCE LPAREN <op:Ident> COLON <names:IdentList> RPAREN => {
+        clauses.push(Expr::Call(format!("@reduce:{op}"),names.into_iter().map(Expr::Ident).collect()));
+        clauses
+    },
+};
+
 SubscriptList: Vec<Expr> = {
     => vec![],
     <e: Subscript> => vec![e],
@@ -1220,11 +1233,16 @@ DoLoop: Stmt = {
     KW_DO <var: Ident> EQ <s: RhsExpr> COMMA <e: RhsExpr> <body: Stmts> LoopEnd => Stmt::Do { var, start: s, end: e, body },
     KW_DO KW_WHILE LPAREN <cond: CondExpr> RPAREN <body: Stmts> LoopEnd => Stmt::DoWhile { cond, body },
     // DO CONCURRENT runs its iterations in order, as nested DO loops.
-    KW_DO <c: Ident> LPAREN <header: ConcurrentHeader> RPAREN <body: Stmts> LoopEnd =>? {
+    KW_DO <c: Ident> LPAREN <header: ConcurrentHeader> RPAREN <reductions:ConcurrentReductions> <body: Stmts> LoopEnd =>? {
         if !c.eq_ignore_ascii_case("concurrent") {
             return Err(lalrpop_util::ParseError::User { error: "expected DO CONCURRENT" });
         }
-        Ok(crate::ast::do_concurrent(header.0, header.1, body))
+        if reductions.is_empty() { return Ok(crate::ast::do_concurrent(header.0, header.1, body)); }
+        let mut args=vec![Expr::Call("@controls".into(),header.0),header.1.unwrap_or(Expr::Logical(true))];
+        args.extend(reductions);
+        let mut statements=vec![Stmt::CallSub{name:"@concurrent_reduce".into(),args}];
+        statements.extend(body);
+        Ok(Stmt::Block{body:statements})
     },
     KW_DO_UNBOUNDED <body: Stmts> LoopEnd => Stmt::DoWhile { cond: Expr::Logical(true), body },
 };

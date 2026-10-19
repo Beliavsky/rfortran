@@ -1274,11 +1274,14 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                 }
             }
             IStmt::Do {
-                var: _,
+                var,
                 start,
                 end,
                 body,
             } => {
+                // The loop machinery reads and increments its index even if
+                // the source body never references it. Retain its storage.
+                uses.insert(var.clone());
                 collect_variable_uses(start, uses);
                 collect_variable_uses(end, uses);
                 for s in body {
