@@ -74,11 +74,13 @@ pub const IMPURE_PROCEDURES: &[&str] = &[
     "random_number", "random_seed", "cpu_time", "system_clock", "date_and_time", "get_environment_variable", "getcwd", "get_command_argument",
 ];
 
+pub const PURE_SUBROUTINES: &[&str] = &["move_alloc"];
+
 pub fn purity(name: &str) -> Option<Purity> {
     let name=name.to_ascii_lowercase();
     if IMPURE_PROCEDURES.contains(&name.as_str()) {
         Some(Purity::Impure)
-    } else if PURE_FUNCTIONS.contains(&name.as_str()) || math_arity(&name).is_some() || real_predicate(&name)
+    } else if PURE_FUNCTIONS.contains(&name.as_str()) || PURE_SUBROUTINES.contains(&name.as_str()) || math_arity(&name).is_some() || real_predicate(&name)
         || crate::inquiries::numeric_model(&name) || crate::bit_intrinsics::keys(&name).is_some() || crate::real_intrinsics::keys(&name).is_some()
     {
         Some(Purity::Pure)

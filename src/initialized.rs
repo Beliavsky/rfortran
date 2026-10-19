@@ -50,6 +50,7 @@ pub(crate) const UNCHECKED_BEGIN: &str = "@unchecked_begin";
 /// The variable may have been given a value here, as IOMSG may be by I/O.
 pub(crate) const MAY_DEFINE: &str = "@may_define";
 pub(crate) const UNCHECKED_END: &str = "@unchecked_end";
+pub(crate) const COPY_INITIALIZATION: &str = "@copy_initialization";
 thread_local! { static UNCHECKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
 
 fn check(name: &str, index: Option<&Expr>, env: &Env, out: &mut Vec<Stmt>, serial: &mut usize) -> Result<()> {
@@ -160,6 +161,33 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
     let mut location=None;
     for mut stmt in std::mem::take(body) {
         if let Stmt::CallSub { name, args } = &stmt {
+            if name == COPY_INITIALIZATION {
+                fn storage(e:&Expr)->Option<&str> {
+                    match e {
+                        Expr::Ident(n)=>Some(n),
+                        Expr::Call(n,a) if n=="@packed_view"=>storage(&a[0]),
+                        _=>None,
+                    }
+                }
+                let arrays=args.iter().filter_map(storage).collect::<Vec<_>>();
+                if let [target,source]=arrays.as_slice() {
+                    if let (Some(dst),Some(src))=(env.get(*target).cloned(),env.get(*source).cloned()) {
+                        if dst.extent.is_some() && src.extent.is_some() {
+                            *serial+=1;
+                            let index=format!("@move_initialization_{serial}");
+                            output.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![index.clone()]});
+                            output.push(Stmt::Do {var:index.clone(),start:int(1),
+                                end:src.heap_length.clone().unwrap_or_else(||int(src.extent.unwrap())),
+                                body:vec![Stmt::AssignIndex{name:dst.flag,indices:vec![Expr::Ident(index.clone())],
+                                    value:Expr::Index(src.flag,vec![Expr::Ident(index)])}]});
+                            let dst=env.get_mut(*target).unwrap();
+                            dst.state=State::Maybe;
+                            dst.elements.clear();
+                        }
+                    }
+                }
+                continue;
+            }
             if name == MAY_DEFINE {
                 if let Some(Expr::Ident(n)) = args.first() {
                     if let Some(v) = env.get_mut(n) {
@@ -359,14 +387,14 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                 }
                 if let Some(merged) = merged { *env = merged; }
             }
-            Stmt::Block { body } => { scope(body, env, &[], None, serial)?; }
-            Stmt::Function { name, params, body, .. } => { scope(body, &mut Env::new(), params, Some(name), serial)?; }
-            Stmt::Subroutine { params, body, .. } => { scope(body, &mut Env::new(), params, None, serial)?; }
+            Stmt::Block { body } => { scope(body, env, &[], None, serial, None)?; }
+            Stmt::Function { name, params, body, .. } => { scope(body, &mut Env::new(), params, Some(name), serial, None)?; }
+            Stmt::Subroutine { params, body, .. } => { scope(body, &mut Env::new(), params, None, serial, None)?; }
             Stmt::Module { body, .. } => {
                 for member in body {
                     match member {
-                        Stmt::Function { name, params, body, .. } => { scope(body, &mut Env::new(), params, Some(name), serial)?; }
-                        Stmt::Subroutine { params, body, .. } => { scope(body, &mut Env::new(), params, None, serial)?; }
+                        Stmt::Function { name, params, body, .. } => { scope(body, &mut Env::new(), params, Some(name), serial, None)?; }
+                        Stmt::Subroutine { params, body, .. } => { scope(body, &mut Env::new(), params, None, serial, None)?; }
                         _ => {}
                     }
                 }
@@ -412,7 +440,7 @@ fn collect(body: &[Stmt], variables: &mut BTreeMap<String, Option<i64>>) {
         }
     }
 }
-fn scope(body: &mut Vec<Stmt>, inherited: &mut Env, params: &[String], result: Option<&str>, serial: &mut usize) -> Result<()> {
+fn scope(body: &mut Vec<Stmt>, inherited: &mut Env, params: &[String], result: Option<&str>, serial: &mut usize, capture: Option<&mut BTreeMap<String,String>>) -> Result<()> {
     let mut names = BTreeMap::new(); collect(body, &mut names);
     let declared: Vec<String> = body.iter().flat_map(|s| match s {
         Stmt::VarDecl { names, .. } => names.clone(),
@@ -446,6 +474,7 @@ fn scope(body: &mut Vec<Stmt>, inherited: &mut Env, params: &[String], result: O
     let terminated = flow(body, &mut env, result, serial)?;
     if !terminated { if let Some(name) = result { check(name, None, &env, body, serial)?; } }
     for (name, value) in inherited { if !declared.contains(name) { if let Some(v) = env.get(name) { *value = v.clone(); } } }
+    if let Some(capture) = capture { capture.extend(env.iter().map(|(name,v)|(name.clone(),v.flag.clone()))); }
     prefix.append(body); *body = prefix;
     Ok(())
 }
@@ -454,8 +483,18 @@ pub fn instrument(mut program: Program) -> Result<Program> {
     program = crate::heap::cleanup(program);
     // An earlier failed instrumentation may have left a region open.
     UNCHECKED.with(|c| c.set(0));
-    scope(&mut program.body, &mut Env::new(), &[], None, &mut 0)?;
+    scope(&mut program.body, &mut Env::new(), &[], None, &mut 0, None)?;
     crate::modules::unify_storage(program)
+}
+
+/// Instrument a fresh scalar submission and expose its initialization flags.
+pub(crate) fn instrument_scalars(mut program: Program) -> Result<(Program, BTreeMap<String,String>)> {
+    program = crate::subroutines::resolve(program)?;
+    program = crate::heap::cleanup(program);
+    UNCHECKED.with(|c| c.set(0));
+    let mut flags = BTreeMap::new();
+    scope(&mut program.body, &mut Env::new(), &[], None, &mut 0, Some(&mut flags))?;
+    Ok((crate::modules::unify_storage(program)?, flags))
 }
 
 #[cfg(test)]

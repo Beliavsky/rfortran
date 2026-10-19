@@ -186,6 +186,7 @@ fn move_alloc(args: &[Expr], ranks: &Ranks) -> Result<Vec<Stmt>> {
                 call(crate::initialized::UNCHECKED_BEGIN, vec![]),
                 Stmt::Assign { name: to.clone(), value: id(&from) },
                 call(crate::initialized::UNCHECKED_END, vec![]),
+                call(crate::initialized::COPY_INITIALIZATION, vec![id(&to),id(&from)]),
                 call("@deallocate", vec![id(&from)]),
             ],
             None,

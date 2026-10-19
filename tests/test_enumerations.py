@@ -320,7 +320,7 @@ type(colour)::c
 
     def test_polymorphic_and_storage_diagnostics(self):
         self.reject(ENUM+'class(colour)::c\nend\n',"cannot be polymorphic")
-        self.reject(ENUM+'type(colour),allocatable::a(:)\nend\n',"not yet supported")
+        self.reject(ENUM+'type(colour),pointer::a(:)\nend\n',"not yet supported")
 
     def test_private_type_and_public_enumerator(self):
         self.check('''module m

@@ -108,6 +108,11 @@ pub fn validate(program: &Program) -> Result<()> {
             }
             match stmt {
                 Stmt::CallSub {name,..} if name == crate::initialized::UNCHECKED_BEGIN || name == crate::initialized::UNCHECKED_END => {},
+                Stmt::CallSub {name,args} if name == crate::initialized::COPY_INITIALIZATION => {
+                    let [Expr::Ident(target),source]=args.as_slice() else {bail!("invalid initialization-mask transfer");};
+                    writable(target)?;
+                    expression(source,&locals,known)?;
+                },
                 Stmt::Print { .. } | Stmt::Read { .. } => bail!("PURE procedure cannot perform external I/O"),
                 Stmt::CallSub {name,..} if name == "@empty_read" => bail!("PURE procedure cannot perform external I/O"),
                 Stmt::CallSub {name,..} if name=="@stop" => bail!("PURE procedure cannot execute STOP"),

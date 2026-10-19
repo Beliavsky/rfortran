@@ -8,6 +8,10 @@ use crate::ast::{BinOp, CaseItem, Expr, Program, Stmt, TypeSpec};
 use crate::procedure_arguments::{children, expressions, visit_expr};
 use anyhow::{bail, Result};
 use std::collections::{HashMap, HashSet};
+#[path = "enumeration_io.rs"]
+mod io;
+#[path = "enumeration_allocation.rs"]
+mod allocation;
 
 pub fn definition(
     name: String,
@@ -207,6 +211,9 @@ impl Ty {
 }
 #[derive(Clone)]
 struct Scope {
+    allocatables: HashSet<String>,
+    shapes: HashMap<String, Vec<Expr>>,
+    character_constants: HashMap<String, Expr>,
     vars: HashMap<String, Ty>,
     kinds: HashMap<String, TypeSpec>,
     constants: HashMap<String, i64>,
@@ -218,6 +225,9 @@ struct Scope {
 impl Default for Scope {
     fn default() -> Self {
         Self {
+            allocatables: HashSet::new(),
+            shapes: HashMap::new(),
+            character_constants: HashMap::new(),
             vars: HashMap::new(),
             kinds: HashMap::new(),
             constants: HashMap::new(),
@@ -230,12 +240,14 @@ impl Default for Scope {
 }
 #[derive(Clone)]
 struct Routine {
+    allocatables: HashSet<String>,
     params: Vec<String>,
     types: Vec<Ty>,
     result: Ty,
     elemental: bool,
 }
 struct Context {
+    allocatable_fields: HashMap<String, HashSet<String>>,
     types: HashMap<String, String>,
     fields: HashMap<String, HashMap<String, Ty>>,
     field_order: HashMap<String, Vec<String>>,
@@ -457,6 +469,9 @@ impl Context {
         }
         for s in body {
             match s {
+                Stmt::DummyIntent { name, intent } if intent == "allocatable" => {
+                    scope.allocatables.insert(name.clone());
+                }
                 Stmt::DummyIntent { name, intent } if intent == "optional" => {
                     scope.optional.insert(name.clone());
                 }
@@ -465,6 +480,8 @@ impl Context {
                 }
                 Stmt::VarDecl { kind, names } => {
                     for n in names {
+                        scope.shapes.insert(n.clone(), vec![]);
+                        scope.character_constants.remove(n);
                         scope.kinds.insert(n.clone(), kind.clone());
                         scope.vars.insert(n.clone(), Self::scalar(kind, 0));
                         scope.constants.remove(n);
@@ -472,6 +489,7 @@ impl Context {
                     }
                 }
                 Stmt::ArrayDecl { kind, name, dims } => {
+                    scope.shapes.insert(name.clone(), dims.clone());
                     scope.kinds.insert(name.clone(), kind.clone());
                     scope
                         .vars
@@ -483,11 +501,18 @@ impl Context {
                     entities,
                 } => {
                     for (n, _) in entities {
+                        scope.shapes.insert(n.clone(), vec![]);
+                        scope.character_constants.remove(n);
                         scope.kinds.insert(n.clone(), kind.clone());
                         scope.vars.insert(n.clone(), Self::scalar(kind, 0));
                         scope.constants.remove(n);
                         if attributes.iter().any(|a| a == "parameter") {
                             scope.parameters.insert(n.clone());
+                        }
+                    }
+                    if attributes.iter().any(|a| a == "parameter") {
+                        for (n, value) in entities {
+                            if let Some(value) = value { scope.character_constants.insert(n.clone(), value.clone()); }
                         }
                     }
                 }
@@ -499,6 +524,10 @@ impl Context {
                     ..
                 } => {
                     for n in names {
+                        scope.shapes.insert(n.clone(), dims.clone());
+                        scope.allocatables.remove(n);
+                        if attributes.iter().any(|a|a=="allocatable") { scope.allocatables.insert(n.clone()); }
+                        if attributes.iter().any(|a| a == "intent(in)") { scope.readonly.insert(n.clone()); }
                         scope
                             .vars
                             .insert(n.clone(), self.nominal(type_name, dims.len()));
@@ -623,6 +652,7 @@ impl Context {
                 Stmt::DerivedType {
                     name, components, ..
                 } if marker(s).is_none() => {
+                    self.allocatable_fields.insert(name.clone(), self.scope(components, &Scope::default()).allocatables);
                     self.field_kinds.insert(
                         name.clone(),
                         self.scope(components, &Scope::default()).kinds,
@@ -668,6 +698,7 @@ impl Context {
                     self.procedures.insert(
                         name.clone(),
                         Routine {
+                            allocatables: inner.allocatables.clone(),
                             params: params.clone(),
                             types: params.iter().map(|p| self.name(p, &inner)).collect(),
                             result: inner
@@ -691,6 +722,7 @@ impl Context {
                     self.procedures.insert(
                         name.clone(),
                         Routine {
+                            allocatables: inner.allocatables.clone(),
                             params: params.clone(),
                             types: params.iter().map(|p| self.name(p, &inner)).collect(),
                             result: Ty::Unknown,
@@ -709,7 +741,7 @@ impl Context {
         }
         Ok(())
     }
-    fn check_call(&self, n: &str, args: &[Expr], types: &[Ty]) -> Result<Ty> {
+    fn check_call(&self, n: &str, args: &[Expr], types: &[Ty], scope: &Scope) -> Result<Ty> {
         if let Some(p) = self.procedures.get(n) {
             for (i, actual) in types.iter().enumerate() {
                 let position = crate::named_arguments::keyword(&args[i])
@@ -717,6 +749,9 @@ impl Context {
                     .unwrap_or(i);
                 if let Some(expected) = p.types.get(position) {
                     if actual.enumeration().is_some() || expected.enumeration().is_some() {
+                        if p.params.get(position).is_some_and(|n|p.allocatables.contains(n)) {
+                            self.require_allocatable(&args[i], scope)?;
+                        }
                         if actual.enumeration() != expected.enumeration()
                             && (self.strict || *actual != Ty::Unknown)
                         {
@@ -942,7 +977,7 @@ impl Context {
                 } else if n.starts_with("@keyword:") {
                     types.first().cloned().unwrap_or(Ty::Unknown)
                 } else if self.procedures.contains_key(n) || self.generics.contains(n) {
-                    self.check_call(n, args, &types)?
+                    self.check_call(n, args, &types, scope)?
                 } else if let Some(fields) = self.fields.get(n) {
                     let order = &self.field_order[n];
                     for (i, (arg, actual)) in args.iter().zip(&types).enumerate() {
@@ -1047,9 +1082,12 @@ impl Context {
                     }
                     Ty::Integer(usize::from(n == "shape"))
                 } else if matches!(n.as_str(), "allocated" | "associated" | "present") {
+                    if n=="allocated" && types.first().is_some_and(|t|t.enumeration().is_some()) {
+                        self.require_allocatable(&args[0],scope)?;
+                    }
                     Ty::Other
                 } else {
-                    self.check_call(n, args, &types)?
+                    self.check_call(n, args, &types, scope)?
                 }
             }
         };
@@ -1147,6 +1185,7 @@ impl Context {
                     type_name,
                     polymorphic,
                     attributes,
+                    dims,
                     ..
                 } = s
                 {
@@ -1154,13 +1193,11 @@ impl Context {
                         if *polymorphic {
                             bail!("enumeration objects cannot be polymorphic");
                         }
-                        if attributes
-                            .iter()
-                            .any(|a| matches!(a.as_str(), "pointer" | "allocatable"))
-                        {
-                            bail!(
-                                "POINTER and ALLOCATABLE enumeration objects are not yet supported"
-                            );
+                        if attributes.iter().any(|a|a=="pointer") {
+                            bail!("POINTER enumeration objects are not yet supported");
+                        }
+                        if dims.is_empty() && attributes.iter().any(|a|a=="allocatable") {
+                            bail!("scalar ALLOCATABLE enumeration objects are not yet supported");
                         }
                     }
                 }
@@ -1230,31 +1267,43 @@ impl Context {
                             }
                         }
                     }
+                    Stmt::CallSub { name, args } if self.check_allocation(name,args,&scope)? => {
+                        for arg in args {
+                            if let Expr::Call(tag,values) = arg {
+                                if matches!(tag.as_str(),"@keyword:source"|"@keyword:mold") {
+                                    self.expression(&mut values[0],&scope,prepare)?;
+                                }
+                            }
+                        }
+                    },
                     Stmt::CallSub { name, args } => {
                         let types = args
                             .iter_mut()
-                            .map(|e| self.expression(e, &scope, prepare))
+                            .map(|e| {
+                                let ty = self.expression(e, &scope, prepare)?;
+                                self.io_nested_type(e, &scope, ty)
+                            })
                             .collect::<Result<Vec<_>>>()?;
+                        if name == "@internal_read" && types.iter().any(|t| t.enumeration().is_some()) {
+                            bail!("list-directed input/output is not permitted for enumeration values; use INT for output");
+                        }
                         if types.iter().any(|t| t.enumeration().is_some())
                             && name.starts_with('@')
                             && !self.procedures.contains_key(name)
                             && !self.generics.contains(name)
                         {
-                            if matches!(
-                                name.as_str(),
-                                "@formatted_print" | "@write" | "@formatted_write_noadvance"
-                            ) || name.starts_with("@read")
-                                || name.starts_with("@io_")
-                            {
-                                bail!("direct input/output of enumeration values is not yet supported; use INT for output");
+                            if let Some(layout) = io::layout(name, args) {
+                                self.check_io(args, &types, &scope, layout)?;
+                            } else {
+                                bail!("construct `{name}` does not yet support enumeration operands");
                             }
-                            bail!("construct `{name}` does not yet support enumeration operands");
                         }
-                        self.check_call(name, args, &types)?;
+                        self.check_call(name, args, &types, &scope)?;
                     }
                     Stmt::Print { items } | Stmt::Read { args: items } => {
                         for e in items {
-                            if self.expression(e, &scope, prepare)?.enumeration().is_some() {
+                            let ty = self.expression(e, &scope, prepare)?;
+                            if self.io_nested_type(e, &scope, ty)?.enumeration().is_some() {
                                 bail!("list-directed input/output is not permitted for enumeration values; use INT for output");
                             }
                         }
@@ -1504,7 +1553,7 @@ impl Context {
                     for n in names {
                         for attr in attributes {
                             if attr.starts_with("intent(")
-                                || matches!(attr.as_str(), "optional" | "target" | "value")
+                                || matches!(attr.as_str(), "optional" | "target" | "value" | "allocatable")
                             {
                                 out.push(Stmt::DummyIntent {
                                     name: n.clone(),
@@ -1564,6 +1613,11 @@ impl Context {
                 if self.name(result, &inner).enumeration().is_some() {
                     *return_type = Some(TypeSpec::Integer(None));
                 }
+            }
+            if let Some(lowered) = self.lower_io(&s, &scope)
+                .map_err(|e| crate::source_diagnostics::at(e, self.location))? {
+                out.push(lowered);
+                continue;
             }
             for e in expressions(&mut s) {
                 self.erase_expr(e, &scope)?;
@@ -1633,6 +1687,7 @@ fn context(p: &Program, strict: bool) -> Result<Context> {
         Ok(())
     }
     let mut c = Context {
+        allocatable_fields: HashMap::new(),
         types: HashMap::new(),
         fields: HashMap::new(),
         field_order: HashMap::new(),
@@ -1670,6 +1725,9 @@ fn context(p: &Program, strict: bool) -> Result<Context> {
                 c.globals.kinds.extend(vars.kinds);
                 c.globals.constants.extend(vars.constants);
                 c.globals.parameters.extend(vars.parameters);
+                c.globals.shapes.extend(vars.shapes);
+                c.globals.character_constants.extend(vars.character_constants);
+                c.globals.allocatables.extend(vars.allocatables);
             }
         }
         c.collect(&p.body, &Scope::default())?;

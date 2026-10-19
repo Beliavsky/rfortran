@@ -312,12 +312,39 @@ and `tests/test_enumeration_steps.py`.
 List-directed output can combine `INT(runtime_array)` and other array items
 in a single PRINT or WRITE statement, including enumeration ordinals and statuses.
 
+Direct formatted enumeration output supports I, B, O and Z edit descriptors.
+Formatted READ supports I descriptors, transferring an ordinal only after checking
+that it is between one and the number of enumerators. Out-of-range ordinals
+produce positive IOSTAT when supplied,
+or a runtime error with the source file and line otherwise. Input conversion
+errors and EOF also propagate through IOSTAT. These transfers use the shared
+integer formatter and input lowering after enumeration-specific validation.
+The initial implementation requires constant CHARACTER formats and scalar items
+or fixed whole arrays; output array constructors are also supported. Mixed
+ordinary and enumeration items, format reversion, named constant formats, and
+external file I/O are supported. See `tests/programs/xenumeration_io.f90` and
+`tests/test_enumeration_io.py`.
+
+ALLOCATABLE enumeration arrays use the existing runtime array descriptors for
+ranks one through fifteen. Supported operations include ALLOCATE, DEALLOCATE,
+ALLOCATED, SOURCE=/MOLD=, STAT=/ERRMSG=, array-assignment reallocation (including
+empty constructors), and MOVE_ALLOC with positional or FROM=/TO= arguments.
+Type identity is checked before lowering: INTEGER values and values of another
+enumeration type cannot initialize, assign to, or move into these arrays.
+Allocatable dummy arguments, allocatable function results, module variables,
+and allocatable components of derived types are supported. Allocation cannot
+modify an INTENT(IN) object, and an allocatable dummy requires a whole allocatable
+actual argument. Uninitialized-element checks survive allocation and MOVE_ALLOC.
+See `tests/programs/xenumeration_allocatable.f90` and
+`tests/test_enumeration_allocatables.py`. Existing array-backend limits still apply.
+
 The interpreter and native compiler share these checks and lowering. Strict
 revision modes require Fortran 2023. This is the section 9.2 ENUMERATION TYPE
 facility, not the distinct interoperable ENUM/BIND(C) facility in section 9.3.
 
-Current limits include direct formatted enumeration I/O,
-POINTER/ALLOCATABLE enumeration objects, and some array intrinsics such as
+Current limits include runtime formats, sections and I/O implied-DOs in direct
+formatted enumeration I/O, B/O/Z enumeration input, internal formatted READ,
+POINTER enumeration objects, scalar ALLOCATABLE enumeration objects, and some array intrinsics such as
 RESHAPE/PACK. List-directed and namelist enumeration I/O are forbidden by the
 language; use `INT(value)` to print its ordinal. Polymorphic enumeration objects
 are forbidden. Separate local type definitions with the same name in different
@@ -339,8 +366,12 @@ rf.bat -std=f2023 tests\programs\xconcurrent_reduce.f90 --run
 rf.bat -std=f2023 tests\programs\xenumeration.f90 --run
 rf.bat -std=f2023 tests\programs\xenumeration_steps.f90 --run
 echo 4 | rf.bat -std=f2023 tests\programs\xenumeration_runtime.f90 --run
+echo 3 | rf.bat -std=f2023 tests\programs\xenumeration_io.f90 --run
+echo 3 | rf.bat -std=f2023 tests\programs\xenumeration_allocatable.f90 --run
 python tests/test_enumerations.py
 python tests/test_enumeration_steps.py
+python tests/test_enumeration_io.py
+python tests/test_enumeration_allocatables.py
 python tests/test_concurrent_reduce.py
 python tests/test_multiple_subscripts.py
 python tests/test_fortran2023.py

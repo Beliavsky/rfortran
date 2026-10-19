@@ -140,6 +140,7 @@ pub(crate) fn intrinsic(name: &str) -> Option<Signature> {
         "split" => &["string", "set", "pos", "back"],
         "random_number" => &["harvest"],
         "random_seed" => &["size", "put", "get"],
+        "move_alloc" => &["from", "to"],
         "cpu_time" => &["time"],
         "get_command_argument" => &["number","value","length","status"],
         "getcwd" => &["c","status"],
@@ -474,7 +475,7 @@ mod tests {
         for name in crate::intrinsics::REAL_MATH.iter().map(|(n,_)|*n)
             .chain(crate::intrinsics::REAL_PREDICATES.iter().copied())
             .chain(crate::bit_intrinsics::NAMES.iter().copied())
-            .chain(["tokenize","split","random_number","random_seed","cpu_time","system_clock","date_and_time","get_environment_variable","getcwd","get_command_argument","abs","dble","kind","mod","modulo","new_line",
+            .chain(["tokenize","split","random_number","random_seed","move_alloc","cpu_time","system_clock","date_and_time","get_environment_variable","getcwd","get_command_argument","abs","dble","kind","mod","modulo","new_line",
                 "adjustl","adjustr","trim","repeat","index","scan","verify","real","int","nint","aint","anint",
                 "floor","ceiling","char","achar","ichar","iachar","len","len_trim","sign","dim","dprod",
                 "dot_product","matmul","merge","lge","lgt","lle","llt","tiny","huge","next","previous","allocated","present",

@@ -11,6 +11,20 @@ import test_deallocate
 class AllocationOptions(unittest.TestCase):
     check = test_deallocate.Deallocate.check
 
+    def test_move_preserves_numeric_initialization_flags(self):
+        for kind,value in [('integer','7'),('real','1.0'),('logical','.true.')]:
+            with self.subTest(kind=kind):
+                self.check(f'''implicit none
+{kind},allocatable::a(:),b(:)
+integer::n
+read *,n
+allocate(a(n))
+a(1)={value}
+call move_alloc(from=a,to=b)
+print *,b
+end
+''',error='uninitialized variable `b`: element 2',data='3\n')
+
     def test_options_and_move_alloc(self):
         self.check("""program al2
 implicit none

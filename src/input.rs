@@ -706,7 +706,10 @@ pub(crate) fn lower_field_read(
     let mut nested: Vec<Stmt> = vec![];
     for record in records.iter().rev() {
         let mut segment = vec![read_record()];
-        let mut fields: Vec<Stmt> = record.iter().flat_map(convert).collect();
+        // A failed transfer ends the input list. Later conversions must not
+        // overwrite its status with success (or define subsequent items).
+        let mut fields: Vec<Stmt> = record.iter()
+            .map(|field| branch(equal(&code, 0), convert(field))).collect();
         fields.extend(nested);
         segment.push(branch(equal(&code, 0), fields));
         nested = segment;
