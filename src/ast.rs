@@ -562,6 +562,9 @@ pub fn procedure_declaration(encoded: &str) -> Vec<Stmt> {
         "interface" | "abstract" => {
             for entity in entities {
                 let (name, kind) = entity.split_once('=').unwrap_or((entity, "function"));
+                let simple = kind.ends_with("+simple");
+                let kind = kind.strip_suffix("+simple").unwrap_or(kind);
+                if simple { out.push(Stmt::DummyIntent { name: name.into(), intent: "@simple_interface".into() }); }
                 if form == "interface" {
                     out.push(Stmt::DummyIntent { name: name.into(), intent: "external".into() });
                 }

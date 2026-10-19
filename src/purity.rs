@@ -85,6 +85,7 @@ pub fn validate(program: &Program) -> Result<()> {
         for stmt in body {
             if let Some(p) = crate::source_diagnostics::statement_offset(&stmt) { statement_location.set(Some(p)); }
             match stmt {
+                Stmt::CallSub {name,..} if name == crate::initialized::UNCHECKED_BEGIN || name == crate::initialized::UNCHECKED_END => {},
                 Stmt::Print { .. } | Stmt::Read { .. } => bail!("PURE procedure cannot perform external I/O"),
                 Stmt::CallSub {name,..} if name == "@empty_read" => bail!("PURE procedure cannot perform external I/O"),
                 Stmt::CallSub {name,..} if name=="@stop" => bail!("PURE procedure cannot execute STOP"),

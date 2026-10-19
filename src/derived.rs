@@ -1320,7 +1320,9 @@ impl Lowerer {
     }
 }
 pub fn resolve(program: Program) -> Result<Program> {
-    crate::allocation_options::resolve(resolve_types(program)?)
+    let program = crate::allocation_options::resolve(resolve_types(program)?)?;
+    crate::simple::validate_calls(&program)?;
+    Ok(program)
 }
 fn resolve_types(mut program: Program) -> Result<Program> {
     crate::conditionals::validate_source(&program)?;
@@ -1329,6 +1331,7 @@ fn resolve_types(mut program: Program) -> Result<Program> {
     crate::parameters::fold_kind_inquiries(&mut program);
     crate::imports::validate(&program)?;
     program=crate::modules::associate(program)?;
+    crate::simple::validate(&program)?;
     program = crate::extensions::resolve(program)?;
     program = crate::procedure_arguments::resolve(program)?;
     program = crate::heap::automatic_derived(program)?;

@@ -325,6 +325,7 @@ pub enum TokenKind {
     // Contextual keyword, assigned only after a function's parameter list.
     KwResult,
     KwPure,
+    KwSimple,
     KwImpure,
     KwRecursive,
     KwElemental,
@@ -541,6 +542,7 @@ fn procedure_declarations(tokens: &mut Vec<Token>, input: &str) {
     fn word(token: Option<&Token>) -> Option<String> {
         match token.map(|t| &t.kind) {
             Some(TokenKind::Ident(n)) => Some(n.to_ascii_lowercase()),
+            Some(TokenKind::KwInterface) => Some("interface".into()),
             _ => None,
         }
     }
@@ -581,7 +583,21 @@ fn procedure_declarations(tokens: &mut Vec<Token>, input: &str) {
                         && !matches!(cursor.checked_sub(1).map(|i| &tokens[i].kind), Some(TokenKind::KwEnd)) => {
                         if let Some(name) = word(tokens.get(cursor + 1)) {
                             let form = if matches!(kind, TokenKind::KwFunction) { "function" } else { "subroutine" };
-                            entities.push(format!("{name}={form}"));
+                            let mut begin = cursor;
+                            while begin > index && same_statement(&input[tokens[begin-1].span.end..tokens[begin].span.start]) { begin -= 1; }
+                            let simple = tokens[begin..cursor].iter().any(|t| matches!(&t.kind, TokenKind::KwSimple) || matches!(&t.kind, TokenKind::Ident(n) if n.eq_ignore_ascii_case("simple")));
+                            let modifiers: Vec<_> = tokens[begin..cursor].iter().filter_map(|t| match t.kind {
+                                TokenKind::KwSimple => Some((None,false,true)),
+                                TokenKind::KwPure => Some((Some(true),false,false)),
+                                TokenKind::KwImpure => Some((Some(false),false,false)),
+                                TokenKind::KwElemental => Some((None,true,false)),
+                                _ => None,
+                            }).collect();
+                            if let Err(error) = crate::simple::prefix(&modifiers) {
+                                tokens[begin].kind = TokenKind::Error(error.into());
+                                return;
+                            }
+                            entities.push(format!("{name}={form}{}", if simple { "+simple" } else { "" }));
                         }
                     }
                     _ => {}
@@ -873,7 +889,7 @@ pub fn lex(input: &str) -> Vec<Token> {
         let following = tokens.get(index + 1).filter(|t| same_statement(&input[tokens[index].span.end..t.span.start]));
         let head = statement_head(&tokens, input, index)
             || index > 0 && matches!(&tokens[index-1].kind, TokenKind::Ident(n)
-                if matches!(n.to_ascii_lowercase().as_str(), "pure" | "impure" | "elemental" | "recursive" | "module"))
+                if matches!(n.to_ascii_lowercase().as_str(), "pure" | "simple" | "impure" | "elemental" | "recursive" | "module"))
             || word == "doubleprecision" && index > 0 && matches!(tokens[index-1].kind, TokenKind::KwImplicit | TokenKind::Comma)
                 && matches!(tokens[(0..index).rev().find(|&i| statement_head(&tokens, input, i)).unwrap_or(0)].kind, TokenKind::KwImplicit);
         let reference = matches!(following.map(|t| &t.kind), Some(TokenKind::Eq | TokenKind::Percent))
@@ -1208,13 +1224,15 @@ pub fn lex(input: &str) -> Vec<Token> {
             }
         }
         if let TokenKind::Ident(name) = &tokens[start].kind {
-            if matches!(name.to_ascii_lowercase().as_str(), "pure" | "impure" | "elemental" | "recursive") {
+            if matches!(name.to_ascii_lowercase().as_str(), "pure" | "simple" | "impure" | "elemental" | "recursive") {
                 let mut end = start + 1;
-                while tokens.get(end).is_some_and(|t| matches!(&t.kind,TokenKind::Ident(n) if matches!(n.to_ascii_lowercase().as_str(),"pure" | "impure" | "elemental" | "recursive"))) { end += 1; }
+                while tokens.get(end).is_some_and(|t| matches!(&t.kind,TokenKind::Ident(n) if matches!(n.to_ascii_lowercase().as_str(),"pure" | "simple" | "impure" | "elemental" | "recursive"))) { end += 1; }
                 let following = tokens.get(end).map(|t| &t.kind);
                 let same_line = tokens.get(end).is_some_and(|next| same_statement(&input[tokens[start].span.end..next.span.start]));
-                if same_line && matches!(following, Some(TokenKind::KwFunction | TokenKind::KwSubroutine | TokenKind::KwLogical | TokenKind::KwInteger | TokenKind::KwReal | TokenKind::KwComplex | TokenKind::KwDouble | TokenKind::KwCharacter)) {
-                    tokens[start].kind = match name.to_ascii_lowercase().as_str() { "elemental" => TokenKind::KwElemental, "recursive" => TokenKind::KwRecursive, "impure" => TokenKind::KwImpure, _ => TokenKind::KwPure };
+                let derived_type = matches!(following,Some(TokenKind::Ident(n)) if n.eq_ignore_ascii_case("type"))
+                    && matches!(tokens.get(end+1).map(|t|&t.kind),Some(TokenKind::LParen));
+                if same_line && (derived_type || matches!(following, Some(TokenKind::KwFunction | TokenKind::KwSubroutine | TokenKind::KwType | TokenKind::KwLogical | TokenKind::KwInteger | TokenKind::KwReal | TokenKind::KwComplex | TokenKind::KwDouble | TokenKind::KwCharacter))) {
+                    tokens[start].kind = match name.to_ascii_lowercase().as_str() { "elemental" => TokenKind::KwElemental, "recursive" => TokenKind::KwRecursive, "impure" => TokenKind::KwImpure, "simple" => TokenKind::KwSimple, _ => TokenKind::KwPure };
                 }
             }
         }

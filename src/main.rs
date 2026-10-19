@@ -43,6 +43,7 @@ mod do_steps;
 mod named_loops;
 mod internal_procedures;
 mod purity;
+mod simple;
 mod elemental;
 mod character_elementals;
 mod character_spec;

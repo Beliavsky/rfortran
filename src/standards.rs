@@ -64,6 +64,7 @@ macro_rules! feature {
 // than independent year comparisons scattered through backend lowering.
 const FEATURES: &[Feature] = &[
     feature!("pure", "PURE procedures", 1995),
+    feature!("simple", "SIMPLE procedures", 2023),
     feature!("elemental", "ELEMENTAL procedures", 1995),
     Feature {
         key: "forall",
@@ -351,6 +352,7 @@ impl Checker<'_> {
                     None
                 }
                 TokenKind::KwPure => Some("pure"),
+                TokenKind::KwSimple => Some("simple"),
                 TokenKind::KwElemental => Some("elemental"),
                 TokenKind::KwImpure => Some("impure"),
                 TokenKind::KwForall => Some("forall"),
@@ -558,6 +560,7 @@ impl Checker<'_> {
                         s,
                         Stmt::Function { pure: true, .. } | Stmt::Subroutine { pure: true, .. }
                     );
+                    if crate::simple::is_simple(body) { self.feature("simple", procedure_offset); }
                     if is_pure {
                         self.feature("pure", procedure_offset);
                     }
@@ -668,6 +671,7 @@ impl Checker<'_> {
                     }
                 }
                 Stmt::DummyIntent { name, intent } => match intent.as_str() {
+                    "@simple_interface" => self.feature("simple", offset),
                     "allocatable" if component => self.feature("allocatable_component", offset),
                     "allocatable" if dummies.contains(name) => {
                         self.feature("allocatable_dummy", offset)

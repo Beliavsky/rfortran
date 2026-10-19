@@ -142,13 +142,40 @@ compiler's existing type, array, and procedure support; they do not add general
 polymorphism or assumed-rank execution. Selecting a standard requires
 `-std=f2023` for either conditional form.
 
+## SIMPLE procedures (US 15)
+
+`SIMPLE` implies `PURE` and also forbids references to host-associated or
+USE-associated variables. Pass such data as dummy arguments. Host and module
+named constants remain available. All called user procedures and all internal
+procedures must themselves be SIMPLE; an ordinary PURE procedure is insufficient.
+
+```fortran
+real simple elemental function convert(a) result(b)
+integer, intent(in) :: a
+b = sqrt(real(a))
+end function
+```
+
+SIMPLE functions and subroutines work in the interpreter and native compiler,
+including ELEMENTAL procedures, module imports, generic calls, and supported
+dummy procedure specialization with an explicitly SIMPLE interface. SIMPLE
+cannot be combined with PURE or IMPURE. Earlier `-std` modes reject the prefix.
+Intrinsic functions and the supported simple intrinsic subroutines (including
+SPLIT and TOKENIZE) are allowed, subject to the existing PURE checks.
+
+The attribute does not require compile-time evaluation. General procedure
+pointer interfaces, deferred type-bound dispatch, coarrays, COMMON and ENTRY
+remain subject to the compiler's existing limitations.
+
 ## Try it
 
 ```cmd
 rf.bat -std=f2023 tests\programs\xfortran2023_basics.f90 --run
 rf.bat -std=f2023 tests\programs\xconditional.f90 --run
 rf.bat -std=f2023 tests\programs\xtokenize.f90 --run
+rf.bat -std=f2023 tests\programs\xsimple_procedures.f90 --run
 python tests/test_fortran2023.py
+python tests/test_simple.py
 python tests/test_split.py
 python tests/test_tokenize.py
 python tests/test_conditionals.py

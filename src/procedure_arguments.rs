@@ -191,6 +191,12 @@ fn template(params: &[String], body: &[Stmt]) -> Option<Template> {
     (!dummies.is_empty()).then(|| Template { params: params.to_vec(), dummies })
 }
 
+/// Dummy procedure names, including the implicit-interface form inferred from
+/// an invocation. Attribute validators must check these before specialization.
+pub(crate) fn dummy_procedures(params: &[String], body: &[Stmt]) -> Vec<String> {
+    template(params, body).map(|t| t.dummies.iter().map(|&i| params[i].clone()).collect()).unwrap_or_default()
+}
+
 fn collect(body: &[Stmt], templates: &mut HashMap<String, Template>, procedures: &mut HashSet<String>) -> Result<()> {
     for s in body {
         match s {

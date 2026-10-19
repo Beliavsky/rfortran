@@ -35,6 +35,7 @@ extern {
         KW_FUNCTION => TokenKind::KwFunction,
         KW_RESULT => TokenKind::KwResult,
         KW_PURE => TokenKind::KwPure,
+        KW_SIMPLE => TokenKind::KwSimple,
         KW_IMPURE => TokenKind::KwImpure,
         KW_RECURSIVE => TokenKind::KwRecursive,
         KW_ELEMENTAL => TokenKind::KwElemental,
@@ -211,60 +212,72 @@ FuncList: Vec<Stmt> = {
 };
 
 FuncDef: Stmt = {
-    <pos:@L> <prefix: FunctionPrefix> <mut function: FunctionDef> => {
-        if let Stmt::Function { pure, elemental, body, .. } = &mut function { *pure = prefix.0; *elemental = prefix.1; body.insert(0,Stmt::SourceLocation(pos)); }
+    <pos:@L> <header: FunctionHeader> <mut function: FunctionDef> => {
+        let (prefix, kind, derived) = header;
+        if let Some(type_name) = derived {
+            if let Stmt::Function { name, params, mut body, .. } = function {
+                let explicit_result = body.last().and_then(|s| match s { Stmt::Return(Some(Expr::Ident(n))) => Some(n.clone()), _ => None });
+                let result = explicit_result.clone().unwrap_or_else(|| name.clone());
+                body.insert(0,Stmt::DerivedDecl { type_name, names: vec![result.clone()], attributes: vec![], polymorphic: false, dims: vec![] });
+                function = if explicit_result.is_some() {
+                    Stmt::Function {name,params,body,return_type:None,pure:false,elemental:false}
+                } else { crate::ast::function_with_result(name,params,result,body) };
+            }
+        }
+        if let Stmt::Function { name, pure, elemental, return_type, body, .. } = &mut function {
+            *pure = prefix.0; *elemental = prefix.1;
+            if let Some(kind) = kind {
+                let result = body.last().and_then(|s| match s { Stmt::Return(Some(Expr::Ident(n))) => Some(n.clone()), _ => None }).unwrap_or_else(|| name.clone());
+                body.insert(0,Stmt::VarDecl { kind: kind.clone(), names: vec![result] });
+                *return_type = Some(kind);
+            }
+            if prefix.2 { body.insert(0,crate::simple::marker()); }
+            body.insert(0,Stmt::SourceLocation(pos));
+        }
         function
     },
 };
 
 #[inline]
-FunctionPrefix: (bool,bool) = {
-    <prefix:ProcedureModifier*> =>? {
-        let pure=prefix.iter().any(|p|p.0==Some(true));
-        let impure=prefix.iter().any(|p|p.0==Some(false));
-        let elemental=prefix.iter().any(|p|p.1);
-        if pure && impure {
-            Err(lalrpop_util::ParseError::User {error:"a procedure cannot specify both PURE and IMPURE"})
-        } else {
-            Ok((pure || elemental && !impure,elemental))
-        }
+FunctionHeader: ((bool,bool,bool), Option<TypeSpec>, Option<String>) = {
+    <prefix:FunctionPrefix> => (prefix,None,None),
+    <before:ProcedureModifier*> <kind:TypeSpec> <after:ProcedureModifier*> =>? {
+        let mut prefix=before; prefix.extend(after);
+        crate::simple::prefix(&prefix).map(|p|(p,Some(kind),None)).map_err(|error|lalrpop_util::ParseError::User {error})
+    },
+    <before:ProcedureModifier*> KW_TYPE LPAREN <name:Ident> RPAREN <after:ProcedureModifier*> =>? {
+        let mut prefix=before; prefix.extend(after);
+        crate::simple::prefix(&prefix).map(|p|(p,None,Some(name))).map_err(|error|lalrpop_util::ParseError::User {error})
     },
 };
-ProcedureModifier: (Option<bool>,bool) = {
-    KW_PURE => (Some(true),false),
-    KW_IMPURE => (Some(false),false),
-    KW_ELEMENTAL => (None,true),
-    KW_RECURSIVE => (None,false),
+
+#[inline]
+FunctionPrefix: (bool,bool,bool) = {
+    <prefix:ProcedureModifier*> =>? {
+        crate::simple::prefix(&prefix).map_err(|error|lalrpop_util::ParseError::User {error})
+    },
+};
+ProcedureModifier: (Option<bool>,bool,bool) = {
+    KW_PURE => (Some(true),false,false),
+    KW_SIMPLE => (None,false,true),
+    KW_IMPURE => (Some(false),false,false),
+    KW_ELEMENTAL => (None,true,false),
+    KW_RECURSIVE => (None,false,false),
 };
 
 FunctionDef: Stmt = {
-    <kind: TypeSpec> KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN KW_RESULT LPAREN <result: Ident> RPAREN <mut body:ProcedureBody> <_end: FunctionEnd> => {
-        body.insert(0, Stmt::VarDecl { kind, names: vec![result.clone()] });
-        crate::ast::function_with_result(name, params, result, body)
-    },
-    <kind: TypeSpec> KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN <mut body:ProcedureBody> <_end: FunctionEnd> => {
-        body.insert(0,Stmt::VarDecl {kind:kind.clone(),names:vec![name.clone()]});
-        Stmt::Function { name, params, return_type:Some(kind),body,pure:false,elemental:false }
-    },
-    KW_TYPE LPAREN <type_name: Ident> RPAREN KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN KW_RESULT LPAREN <result: Ident> RPAREN <mut body:ProcedureBody> <_end: FunctionEnd> => {
-        body.insert(0, Stmt::DerivedDecl { type_name, names: vec![result.clone()], attributes: vec![], polymorphic: false, dims: vec![] });
-        crate::ast::function_with_result(name, params, result, body)
-    },
-    KW_TYPE LPAREN <type_name: Ident> RPAREN KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN <mut body:ProcedureBody> <_end: FunctionEnd> => {
-        // Derived-type lowering identifies a derived result by its final RETURN value.
-        body.insert(0, Stmt::DerivedDecl { type_name, names: vec![name.clone()], attributes: vec![], polymorphic: false, dims: vec![] });
-        crate::ast::function_with_result(name.clone(), params, name, body)
-    },
     KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN KW_RESULT LPAREN <result: Ident> RPAREN <body:ProcedureBody> <_end: FunctionEnd> => crate::ast::function_with_result(name, params, result, body),
     KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN <body:ProcedureBody> <_end: FunctionEnd> => Stmt::Function { name, params, return_type: None, body, pure: false, elemental:false },
 };
 
 SubrDef: Stmt = {
     <pos:@L> <prefix: FunctionPrefix> KW_SUBROUTINE <name: Ident> LPAREN <params: ParamList> RPAREN <mut body:ProcedureBody> <_end: SubroutineEnd> => {
+        if prefix.2 { body.insert(0,crate::simple::marker()); }
         body.insert(0,Stmt::SourceLocation(pos));
         Stmt::Subroutine { name, params, body, pure: prefix.0, elemental: prefix.1 }
     },
     <pos:@L> <prefix: FunctionPrefix> KW_SUBROUTINE <name: Ident> <mut body:ProcedureBody> <_end: SubroutineEnd> => {
+        if prefix.2 { body.insert(0,crate::simple::marker()); }
         body.insert(0,Stmt::SourceLocation(pos));
         Stmt::Subroutine { name, params: vec![], body, pure: prefix.0, elemental: prefix.1 }
     },
