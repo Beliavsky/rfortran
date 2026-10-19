@@ -234,7 +234,14 @@ pub(crate) fn inline_returns_with_prefix(body: &mut Vec<Stmt>, serial: &mut usiz
     body.insert(0,Stmt::VarDecl {kind:TypeSpec::Logical,names:vec![flag]});
     Ok(())
 }
-fn expand(body: &mut Vec<Stmt>, routines: &HashMap<String, Routine>, active: &mut Vec<String>, serial: &mut usize) -> Result<()> {
+fn expand(body: &mut Vec<Stmt>, routines: &HashMap<String, Routine>, active: &mut Vec<String>, serial: &mut usize, inherited_arrays: &std::collections::HashSet<String>) -> Result<()> {
+    fn array_names(body:&[Stmt],out:&mut std::collections::HashSet<String>) {
+        for s in body {match s {
+            Stmt::ArrayDecl{name,..}=>{out.insert(name.clone());},
+            Stmt::Module{body,..}|Stmt::Block{body}=>array_names(body,out),_=>{},
+        }}
+    }
+    let mut arrays=inherited_arrays.clone();array_names(body,&mut arrays);
     for stmt in body {
         if let Stmt::CallSub { name: callee, args } = stmt {
             if let Some(routine) = routines.get(callee) {
@@ -255,11 +262,13 @@ fn expand(body: &mut Vec<Stmt>, routines: &HashMap<String, Routine>, active: &mu
                     let mut prefix = Vec::new();
                     let mut undefine = Vec::new();
                     let mut names = Names::new();
+                    let mut aliases=HashMap::new();
                     for (param, actual) in routine.params.iter().zip(args.iter()) {
                         let kind = types.get(param).with_context(|| format!("output-argument calls currently require explicitly declared scalar dummy `{param}`"))?;
                         let intent = intents.get(param).map(String::as_str).unwrap_or("");
                         // An expression passed to a dummy without INTENT is an input.
-                        let input = intent == "intent(in)" || !intent.starts_with("intent(") && !matches!(actual, Expr::Ident(_));
+                        let element=matches!(actual,Expr::Index(n,_)|Expr::Call(n,_) if arrays.contains(n));
+                        let input = intent == "intent(in)" || !intent.starts_with("intent(") && !matches!(actual, Expr::Ident(_)) && !element;
                         if input {
                             *serial += 1;
                             let temp = format!("@sub_input_{serial}");
@@ -267,6 +276,21 @@ fn expand(body: &mut Vec<Stmt>, routines: &HashMap<String, Routine>, active: &mu
                             prefix.push(Stmt::Assign { name: temp.clone(), value: actual.clone() });
                             names.insert(param.clone(), temp);
                         } else {
+                            if element {
+                                let (array,indices)=match actual {Expr::Index(n,a)|Expr::Call(n,a)=>(n,a),_=>unreachable!()};
+                                let mut captured=vec![];
+                                for index in indices {
+                                    *serial+=1;let n=format!("@sub_index_{serial}");
+                                    prefix.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![n.clone()]});
+                                    prefix.push(Stmt::Assign{name:n.clone(),value:index.clone()});
+                                    captured.push(Expr::Ident(n));
+                                }
+                                *serial+=1;let alias=format!("@sub_element_{serial}");
+                                let actual=Expr::Index(array.clone(),captured);
+                                if intent=="intent(out)" {undefine.push(Stmt::CallSub{name:"@undefine".into(),args:vec![actual.clone()]});}
+                                aliases.insert(alias.clone(),actual);names.insert(param.clone(),alias);
+                                continue;
+                            }
                             let Expr::Ident(actual) = actual else { bail!("writable argument `{param}` of `{callee}` must currently be a scalar variable"); };
                             names.insert(param.clone(), actual.clone());
                             if intent == "intent(out)" {
@@ -276,8 +300,21 @@ fn expand(body: &mut Vec<Stmt>, routines: &HashMap<String, Routine>, active: &mu
                     }
                     let mut expanded = routine.body.clone();
                     rename(&mut expanded, &names, &routine.params, serial)?;
+                    fn alias_body(body:&mut [Stmt],aliases:&HashMap<String,Expr>)->Result<()> {
+                        for s in body {
+                            for e in crate::procedure_arguments::expressions(s) {
+                                crate::procedure_arguments::visit_expr(e,&mut |e|if let Expr::Ident(n)=e {if let Some(a)=aliases.get(n) {*e=a.clone();}});
+                            }
+                            if let Stmt::Assign{name,value}=s {if let Some(Expr::Index(n,a))=aliases.get(name) {
+                                *s=Stmt::AssignIndex{name:n.clone(),indices:a.clone(),value:value.clone()};
+                            }}
+                            if matches!(s,Stmt::Do{var,..} if aliases.contains_key(var)) {bail!("an array-element actual used as a DO control variable is not yet supported");}
+                            for b in crate::procedure_arguments::children(s) {alias_body(b,aliases)?;}
+                        }Ok(())
+                    }
+                    alias_body(&mut expanded,&aliases)?;
                     active.push(callee.clone());
-                    expand(&mut expanded, routines, active, serial)?;
+                    expand(&mut expanded, routines, active, serial, &arrays)?;
                     active.pop();
                     inline_returns(&mut expanded, serial)?;
                     prefix.extend(undefine); prefix.extend(expanded);
@@ -288,14 +325,14 @@ fn expand(body: &mut Vec<Stmt>, routines: &HashMap<String, Routine>, active: &mu
         }
         match stmt {
             Stmt::If { then_body, else_body, .. } => {
-                expand(then_body, routines, active, serial)?;
-                if let Some(body) = else_body { expand(body, routines, active, serial)?; }
+                expand(then_body, routines, active, serial, &arrays)?;
+                if let Some(body) = else_body { expand(body, routines, active, serial, &arrays)?; }
             }
             Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } | Stmt::Block { body }
-            | Stmt::Module { body, .. } | Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } => expand(body, routines, active, serial)?,
+            | Stmt::Module { body, .. } | Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } => expand(body, routines, active, serial, &arrays)?,
             Stmt::SelectCase { cases, default, .. } => {
-                for case in cases { expand(&mut case.body, routines, active, serial)?; }
-                if let Some(body) = default { expand(body, routines, active, serial)?; }
+                for case in cases { expand(&mut case.body, routines, active, serial, &arrays)?; }
+                if let Some(body) = default { expand(body, routines, active, serial, &arrays)?; }
             }
             _ => {}
         }
@@ -328,7 +365,7 @@ pub fn resolve(mut program: Program) -> Result<Program> {
     let mut routines = HashMap::new(); collect(&program.body, &mut routines);
     // Array/CHARACTER call specialization can already have expanded some
     // calls using this namespace. Continue its numbering for the scalar calls.
-    let mut serial=maximum_serial(&program.body,&["@sub_local_","@sub_returned_"]);
-    expand(&mut program.body, &routines, &mut Vec::new(), &mut serial)?;
+    let mut serial=maximum_serial(&program.body,&["@sub_local_","@sub_returned_","@sub_index_","@sub_element_"]);
+    expand(&mut program.body, &routines, &mut Vec::new(), &mut serial, &std::collections::HashSet::new())?;
     Ok(program)
 }

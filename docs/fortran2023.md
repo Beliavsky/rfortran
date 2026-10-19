@@ -167,6 +167,38 @@ The attribute does not require compile-time evaluation. General procedure
 pointer interfaces, deferred type-bound dispatch, coarrays, COMMON and ENTRY
 remain subject to the compiler's existing limitations.
 
+## Multiple subscripts and subscript triplets (US 17)
+
+An INTEGER rank-one array preceded by `@` supplies several consecutive subscripts:
+
+```fortran
+print *, a(@[2,3])           ! a(2,3), a scalar element
+print *, a(1,@coords,4)      ! ordinary and multiple subscripts can be mixed
+print *, a(@lo:hi:2)         ! one section triplet per element of lo/hi
+```
+
+This differs from `a(coords)`, an ordinary vector subscript selecting several
+values in one dimension. In a multiple triplet, at least one bound or stride
+must be a rank-one INTEGER array. Other bounds/strides can be INTEGER scalars,
+which are broadcast. Arrays must have the same size. An omitted lower or upper
+bound supplies the corresponding array bound; an omitted stride supplies one.
+This follows [9.5.3.2 of the Fortran 2023 draft](https://j3-fortran.org/doc/year/24/24-007.pdf),
+including when the stride is negative.
+
+The expansion reuses existing array element and section handling, including
+assignment destinations, arguments, derived types, and supported ranks up to 15.
+INTEGER selector kinds 1, 2, 4 and 8 are supported. Selector expressions are
+evaluated once at their execution site, including inside loops, implied-DOs and
+lazy conditional branches. Earlier `-std` modes reject this syntax, including
+when it appears in an imported module interface.
+
+Current limits: selector sizes must be known statically, or a single unknown
+sequence size must be inferable from the parent array's rank. Several sequences
+with unknown sizes are diagnosed. Multiple triplets on subscripted array
+components currently need explicit bounds. Other existing array-operation
+limits still apply. A scalar dummy associated with an array element cannot yet
+be used as a DO control variable.
+
 ## Try it
 
 ```cmd
@@ -174,6 +206,8 @@ rf.bat -std=f2023 tests\programs\xfortran2023_basics.f90 --run
 rf.bat -std=f2023 tests\programs\xconditional.f90 --run
 rf.bat -std=f2023 tests\programs\xtokenize.f90 --run
 rf.bat -std=f2023 tests\programs\xsimple_procedures.f90 --run
+rf.bat -std=f2023 tests\programs\xmultiple_subscripts.f90 --run
+python tests/test_multiple_subscripts.py
 python tests/test_fortran2023.py
 python tests/test_simple.py
 python tests/test_split.py

@@ -80,6 +80,11 @@ fn select(name: &str, section: Option<&Expr>, arrays: &Arrays) -> Result<Vec<Str
 }
 fn expression(e: Expr, arrays: &Arrays) -> Result<Value> {
     Ok(match e {
+        Expr::Call(n,values) if n=="@character_view_values"=>{
+            let mut items=vec![];
+            for e in values {match expression(e,arrays)? {Value::Scalar(e)=>items.push(e),Value::Array(v)=>items.extend(v)}}
+            Value::Array(items)
+        },
         Expr::Call(n,args) if matches!(n.as_str(),"lbound"|"ubound") && matches!(args.first(),Some(Expr::Ident(a)) if arrays.contains_key(a)) => {
             let Expr::Ident(a)=&args[0] else {unreachable!()};
             let value=if n=="lbound" {Expr::IntLit("1".into())} else {arrays[a].extent.clone().unwrap_or_else(||Expr::IntLit(arrays[a].elements.len().to_string()))};
@@ -391,6 +396,15 @@ fn dispatch(name: &str, index: Expr, arrays: &Arrays, action: impl Fn(String)->S
 }
 // Dispatch at runtime to exactly one scalar slot, preserving initialization checks.
 fn dynamic(mut e: Expr, arrays: &Arrays, serial: &mut usize, output: &mut Vec<Stmt>) -> Result<Expr> {
+    if matches!(&e,Expr::Call(n,a) if n=="@matrix_view" && matches!(a.first(),Some(Expr::Ident(base)) if arrays.contains_key(base))) {
+        let (_,count)=crate::multidim::view_element(&e,&Expr::IntLit("1".into())).context("invalid CHARACTER array view")?;
+        let mut values=vec![];
+        for i in 1..=count {
+            let (element,_)=crate::multidim::view_element(&e,&Expr::IntLit(i.to_string())).unwrap();
+            values.push(dynamic(element,arrays,serial,output)?);
+        }
+        return Ok(Expr::Call("@character_view_values".into(),values));
+    }
     match &mut e {
         Expr::Call(n,a) | Expr::Index(n,a) if arrays.contains_key(n) && a.len()==1 => {
             let index=dynamic(a[0].clone(),arrays,serial,output)?;
@@ -562,6 +576,17 @@ fn body(
                 let [index] = indices.as_slice() else {
                     bail!("CHARACTER arrays currently require one subscript");
                 };
+                if let Some((_,count))=crate::multidim::view_element(index,&Expr::IntLit("1".into())) {
+                    let mut targets=vec![];
+                    for i in 1..=count {
+                        let (element,_)=crate::multidim::view_element(index,&Expr::IntLit(i.to_string())).unwrap();
+                        let Expr::Index(_,a)=element else {unreachable!()};
+                        targets.extend(select(name,Some(&a[0]),&arrays)?);
+                    }
+                    let value=dynamic(value.clone(),&arrays,serial,&mut output)?;
+                    assign(targets,arrays[name].length,None,value,&arrays,serial,&mut output)?;
+                    continue;
+                }
                 if !matches!(index,Expr::Section {..}) && (crate::parameters::integer_constant(index).is_err() || arrays[name].extent.is_some()) {
                     let index=dynamic(index.clone(),&arrays,serial,&mut output)?;
                     let index=capture_index(name,index,&arrays,serial,&mut output);

@@ -59,6 +59,7 @@ mod named_arguments;
 mod substrings;
 mod character_arrays;
 mod vector_subscripts;
+mod multiple_subscripts;
 mod function_arrays;
 mod array_bounds;
 mod multidim;

@@ -7,6 +7,7 @@ use crate::lexer::TokenKind;
 extern {
     type Location = usize;
     enum TokenKind {
+        AT_SIGN => TokenKind::At,
         KW_TYPE => TokenKind::KwType,
         KW_CLASS => TokenKind::KwClass,
         KW_PROCEDURE => TokenKind::KwProcedure,
@@ -931,6 +932,10 @@ SubscriptList: Vec<Expr> = {
     <mut v: SubscriptList> COMMA <e: Subscript> => { v.push(e); v },
 };
 Subscript: Expr = {
+    AT_SIGN <value:RhsExpr> => Expr::Call("@multiple_subscript".into(),vec![value]),
+    AT_SIGN <lower:RhsExpr?> COLON <upper:RhsExpr?> => Expr::Call("@multiple_triplet".into(),vec![Expr::Section{name:String::new(),lower:lower.map(Box::new),upper:upper.map(Box::new),stride:None}]),
+    AT_SIGN <lower:RhsExpr?> COLON <upper:RhsExpr?> COLON <stride:RhsExpr> => Expr::Call("@multiple_triplet".into(),vec![Expr::Section{name:String::new(),lower:lower.map(Box::new),upper:upper.map(Box::new),stride:Some(Box::new(stride))}]),
+    AT_SIGN <lower:RhsExpr?> DCOLON <stride:RhsExpr> => Expr::Call("@multiple_triplet".into(),vec![Expr::Section{name:String::new(),lower:lower.map(Box::new),upper:None,stride:Some(Box::new(stride))}]),
     <name:KeywordName> EQ <value:RhsExpr> => Expr::Call(format!("@keyword:{name}"), vec![value]),
     <e: RhsExpr> => e,
     <lower: RhsExpr?> COLON <upper: RhsExpr?> => Expr::Section { name: String::new(), lower: lower.map(Box::new), upper: upper.map(Box::new), stride: None },

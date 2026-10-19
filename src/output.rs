@@ -134,7 +134,7 @@ pub(crate) fn integer(e: &Expr, symbols: &Symbols) -> bool {
         Expr::Call(n,a) if n=="@conditional"=>integer(&a[1],symbols),
         Expr::IntLit(_) => true,
         Expr::Ident(n) => {
-            matches!(symbols.get(n), Some((TypeSpec::Integer(None | Some(4) | Some(8)), dims)) if dims.is_empty())
+            matches!(symbols.get(n), Some((TypeSpec::Integer(None | Some(1 | 2 | 4 | 8)), dims)) if dims.is_empty())
         }
         Expr::Un(UnOp::Neg, a) => integer(a, symbols),
         Expr::Bin(BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow, a, b) => {

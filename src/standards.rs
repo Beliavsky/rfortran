@@ -65,6 +65,7 @@ macro_rules! feature {
 const FEATURES: &[Feature] = &[
     feature!("pure", "PURE procedures", 1995),
     feature!("simple", "SIMPLE procedures", 2023),
+    feature!("multiple_subscripts", "multiple subscripts and subscript triplets", 2023),
     feature!("elemental", "ELEMENTAL procedures", 1995),
     Feature {
         key: "forall",
@@ -353,6 +354,7 @@ impl Checker<'_> {
                 }
                 TokenKind::KwPure => Some("pure"),
                 TokenKind::KwSimple => Some("simple"),
+                TokenKind::At => Some("multiple_subscripts"),
                 TokenKind::KwElemental => Some("elemental"),
                 TokenKind::KwImpure => Some("impure"),
                 TokenKind::KwForall => Some("forall"),
@@ -428,6 +430,7 @@ impl Checker<'_> {
                 self.require("Fortran 2023 ISO_FORTRAN_ENV kind constants", 2023, offset)
             }
             Expr::Call(n, args) => {
+                if matches!(n.as_str(),"@multiple_subscript"|"@multiple_triplet") {self.feature("multiple_subscripts",offset);}
                 if n=="@conditional" {self.require("conditional expressions and arguments",2023,offset);}
                 if matches!(
                     n.as_str(),

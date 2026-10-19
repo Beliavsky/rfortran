@@ -448,6 +448,8 @@ pub enum TokenKind {
     DColon,
     #[token(":")]
     Colon,
+    #[token("@")]
+    At,
     #[token("?")]
     Question,
     #[token(".nil.", ignore(ascii_case))]
