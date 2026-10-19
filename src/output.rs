@@ -539,6 +539,22 @@ pub(crate) fn prepare_character_views(mut program:crate::ast::Program)->Result<c
             };
             if let Some(items)=items {
                 for item in items {
+                    // Capture CHARACTER constructors before CHARACTER array
+                    // storage is lowered. Leaving [scalar_text] for the later
+                    // numeric constructor pass rejects its element type.
+                    if matches!(item,Expr::Call(tag,_) if tag=="@array_constructor") {
+                        if let Ok((kind,values))=crate::character_elementals::Lower::fixed_items(item,&symbols) {
+                            if matches!(kind,TypeSpec::Character(_)) {
+                                *item=if values.is_empty() {crate::empty_constructors::parsed(kind,values)}
+                                    else {Expr::Call("@array_constructor".into(),values)};
+                                let start=out.len();
+                                crate::array_calls::character_constructor(item,&symbols,&mut out,serial)?;
+                                for generated in &out[start..] {
+                                    if let Stmt::ArrayDecl{kind,name,dims}=generated {symbols.insert(name.clone(),(kind.clone(),dims.clone()));}
+                                }
+                            }
+                        }
+                    }
                     if let Expr::Call(tag,args)=item {
                         if tag=="@packed_view" && args.len()==2 {
                             if let Expr::Ident(array)=&args[0] {

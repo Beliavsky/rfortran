@@ -1183,6 +1183,22 @@ pub(crate) fn expand_constructor(expr:&mut Expr)->Result<()> {
     Ok(())
 }
 
+// Keep runtime CHARACTER values until their source types and array shapes are
+// available. Assignment into fixed-length array storage will apply the
+// explicit constructor length, including blank padding and truncation.
+fn typed_constructor(kind:&TypeSpec,items:Vec<Expr>)->Result<Expr> {
+    match items.iter().map(|e|initial_value(kind,e)).collect::<Result<Vec<_>>>() {
+        Ok(items)=>Ok(Expr::Call("@array_constructor".into(),items)),
+        Err(_) if matches!(kind,TypeSpec::Character(_))=>{
+            let TypeSpec::Character(length)=kind else {unreachable!()};
+            let mut args=vec![Expr::IntLit(length.unwrap_or(1).to_string())];
+            args.extend(items);
+            Ok(Expr::Call("@runtime_character_constructor".into(),args))
+        },
+        Err(error)=>Err(error).context("typed array constructor currently requires constant elements"),
+    }
+}
+
 fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
     if let Expr::Call(name,args)=expr {
         if matches!(name.as_str(),"len"|"len_trim"|"ichar"|"iachar"|"char"|"achar") && args.len()==2
@@ -1220,9 +1236,7 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
             *expr=crate::empty_constructors::parsed(kind,vec![]);
         } else {
             let mut items=vec![];constructor_items(&args[1..],constants,&mut items,&mut 4096)?;
-            let items=items.iter().map(|e|initial_value(&kind,e)).collect::<Result<Vec<_>>>()
-                .context("typed array constructor currently requires constant elements")?;
-            *expr=Expr::Call("@array_constructor".into(),items);
+            *expr=typed_constructor(&kind,items)?;
         }
         return Ok(());
     }
@@ -1231,9 +1245,7 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
             let mut length=args[0].clone();rewrite_expr(&mut length,constants)?;
             let length=usize::try_from(integer_constant(&length)?.max(0)).context("CHARACTER constructor length exceeds supported limits")?;
             let mut items=Vec::new();constructor_items(&args[1..],constants,&mut items,&mut 4096)?;
-            let items=items.iter().map(|e|character_parameter(e,&TypeSpec::Character(Some(length))))
-                .collect::<Result<Vec<_>>>().context("typed CHARACTER constructor currently requires constant CHARACTER elements")?;
-            *expr=Expr::Call("@array_constructor".into(),items);
+            *expr=typed_constructor(&TypeSpec::Character(Some(length)),items)?;
             return Ok(());
         }
     }

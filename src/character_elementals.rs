@@ -414,6 +414,30 @@ impl Lower {
             Expr::Un(_, a) => self.expression(a, symbols, prefix)?,
             _ => {}
         }
+        if let Expr::Call(name,args)=e {
+            if name=="@runtime_character_constructor" {
+                let length=usize::try_from(crate::parameters::integer_constant(&args[0])?)
+                    .context("CHARACTER constructor requires a nonnegative constant length")?;
+                let kind=TypeSpec::Character(Some(length));
+                let mut items=vec![];
+                for arg in &args[1..] {
+                    let value=self.view(arg,symbols)?;
+                    if !matches!(value.kind,TypeSpec::Character(_)) {bail!("typed CHARACTER constructor requires CHARACTER elements");}
+                    if value.active.is_some() {bail!("typed CHARACTER constructor currently requires a fixed array extent");}
+                    items.extend(value.items.unwrap_or_else(||vec![arg.clone()]));
+                }
+                self.serial+=1;
+                let temp=format!("@typed_character_array_{}",self.serial);
+                let dims=vec![int(items.len() as i64)];
+                prefix.push(Stmt::ArrayDecl{kind:kind.clone(),name:temp.clone(),dims:dims.clone()});
+                for (index,value) in items.into_iter().enumerate() {
+                    prefix.push(Stmt::AssignIndex{name:temp.clone(),indices:vec![int(index as i64+1)],value});
+                }
+                symbols.insert(temp.clone(),(kind,dims));
+                *e=Expr::Ident(temp);
+                return Ok(());
+            }
+        }
         let Expr::Call(name, args) = e else {
             return Ok(());
         };

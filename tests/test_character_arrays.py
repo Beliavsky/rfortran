@@ -11,6 +11,82 @@ import test_character_comparisons
 class CharacterArrays(unittest.TestCase):
     compare = test_character_comparisons.CharacterComparisons.compare
 
+    def test_formatted_character_constructors(self):
+        cases = [
+            ('implicit none\ncharacter(len=3) :: s="abc"\nprint "(a)", [s]\nend\n', "abc\n"),
+            ('''implicit none
+character(3) :: s="abc", t="def", a(2)
+a=["abc","def"]
+print "(*(a))", [s,t]
+print "(*(a))", [[s],[t]]
+print "(*(a))", [a,s]
+print "(*(a))", [character(4) :: "abc","xy"]
+print "(*(a))", [character(2) :: "abc","def"]
+print "(*(a))", [character(3) ::]
+end
+''', "abcdef\nabcdef\nabcdefabc\nabc xy  \nabde\n\n"),
+            ('''implicit none
+character(3) :: s="abc",t="def"
+character(6) :: fmt="(2a3)"
+print fmt,[s,t]
+write(*,"(2a3)",advance="no") [s,t]
+print "(a)","!"
+end
+''', "abcdef\nabcdef!\n"),
+        ]
+        with tempfile.TemporaryDirectory(prefix="character-constructor-output-") as tmp:
+            directory=Path(tmp)
+            for index,(program,expected) in enumerate(cases):
+                with self.subTest(index=index):
+                    source=directory / f"constructor{index}.f90"
+                    source.write_text(program,encoding="utf-8")
+                    self.compare(source,expected,directory)
+
+    def test_typed_character_constructor_runtime_elements(self):
+        program='''implicit none
+character(6) :: s="abcdef"
+character(2) :: t="xy",a(2)
+character(4) :: b(3)
+a=["pq","rs"]
+print "(a)", [character(len=3) :: s,"def"]
+print "(*(a))", "[",[character(4) :: s,t],"]"
+print "(*(a))", "[",[character(2) :: s,t],"]"
+print "(*(a))", "[",[character(0) :: s,t],"]"
+print "(*(a))", "[",[character(3) :: a,s],"]"
+b=[character(4) :: s,t,"zzz"]
+print "(*(a))", "[",b,"]"
+print *,len([character(4) :: s,t]),size([character(4) :: s,t])
+end
+'''
+        with tempfile.TemporaryDirectory(prefix="typed-character-runtime-") as tmp:
+            directory=Path(tmp)
+            source=directory / "typed.f90"
+            source.write_text(program,encoding="utf-8")
+            self.compare(source,"abc\ndef\n[abcdxy  ]\n[abxy]\n[]\n[pq rs abc]\n[abcdxy  zzz ]\n4 2\n",directory)
+
+    def test_typed_character_constructor_calls_are_evaluated_once(self):
+        program='''module m
+integer :: calls=0
+contains
+function next_text() result(s)
+character(2) :: s
+calls=calls+1
+s="ab"
+end function
+end module
+program main
+use m
+implicit none
+print "(*(a))", "[",[character(3) :: next_text(),next_text()],"]"
+print *,calls
+end program
+'''
+        with tempfile.TemporaryDirectory(prefix="typed-character-calls-") as tmp:
+            directory=Path(tmp)
+            source=directory / "calls.f90"
+            source.write_text(program,encoding="utf-8")
+            self.compare(source,"[ab ab ]\n2\n",directory)
+
     def test_overlap(self):
         source = ROOT / "tests/116_character_arrays.f90"
         expected = json.loads((ROOT / "tests/expectations.json").read_text(encoding="utf-8"))["cases"][source.stem]["program_stdout"]
