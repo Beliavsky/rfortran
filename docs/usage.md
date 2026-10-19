@@ -1,7 +1,48 @@
 # Using rfort
 
 [README](../README.md) covers building rfort and the basic commands. This page
-describes warnings, multi-file builds and separate compilation of modules.
+describes standard selection, warnings, multi-file builds and separate compilation of modules.
+
+## Standard selection
+
+Select a language revision with `-std=f90`, `-std=f95`, `-std=f2003`,
+`-std=f2008`, `-std=f2018`, or `-std=f2023`. The equivalent spelling
+`--std f2008` also works. Without this option rfort continues to accept all
+implemented features. A revision mode does not enable unimplemented features.
+
+```cmd
+rfort -std=f90 main.f90 --run
+rfort -std=f95 check main.f90
+rfort -std=f2003 xtyped_constructor.f90 --run
+```
+
+The compatibility checker runs on the original AST and token spelling before
+lowering. Diagnostics identify the required revision and selected revision,
+with the original file and line. Native builds, interpreter runs, checks, and
+AST exports use the same checker. Source groups and definitions loaded from
+previously compiled `.rmod` interfaces are checked too. Existing object files
+supplied for linking cannot be checked without their source.
+
+Checks currently cover PURE/ELEMENTAL, FORALL and derived-component default
+initialization (Fortran 95); square-bracket and explicitly typed constructors,
+polymorphism, type-bound procedures, ASSOCIATE, deferred CHARACTER lengths,
+allocatable scalars/dummies/results/components, newer declaration attributes,
+intrinsic modules and some I/O features (Fortran 2003); BLOCK, DO CONCURRENT,
+IMPURE prefixes, CONTIGUOUS, NEWUNIT, ERROR STOP and ranks above seven (Fortran
+2008); ERROR STOP in PURE procedures (Fortran 2018); and a table of newer
+intrinsics, including CPU_TIME, command/environment queries, newer bit and math
+functions, RANDOM_INIT, OUT_OF_RANGE, and the Fortran 2023 degree/pi trig functions.
+User-defined procedures and arrays sharing intrinsic names are distinguished.
+
+FORALL produces an obsolescence warning in the 2018 and 2023 modes; `-Werror`
+promotes it to an error. The permissive default does not enable these warnings.
+Introduction, obsolescence and deletion metadata live in `src/standards.rs`.
+
+**These are partial compatibility checks, not complete standard-conformance
+validation.** Context-dependent intrinsic overloads, all extension spellings,
+every obsolescent/deleted feature and every language constraint are not yet
+classified. Passing `-std=f90`, for example, does not certify Fortran 90
+conformance. Regression checks: `python tests/test_standards.py`.
 
 ## Warnings
 

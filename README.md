@@ -105,6 +105,11 @@ The default optimization level is `-O2`. `--verbose` shows compilation progress
 and tool commands; `--quiet` suppresses that progress. `--run` executes the
 linked program and propagates its failure status.
 
+`-std=f90`, `-std=f95`, `-std=f2003`, `-std=f2008`, `-std=f2018`, and
+`-std=f2023` enable partial language-revision checks before lowering. The
+default remains permissive. These modes check recognized features rather than
+certifying full conformance; see [standard selection](docs/usage.md#standard-selection).
+
 `rfort run main.f90` interprets a program without building an executable. Run mode
 is a separate implementation that is much less tested than native compilation:
 few regression tests exercise it, it can be orders of magnitude slower on loops,

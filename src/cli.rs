@@ -11,6 +11,10 @@ pub struct Cli {
     pub run_args: Vec<std::ffi::OsString>,
     pub inputs: Vec<PathBuf>,
 
+    #[structopt(long = "std", global = true, possible_values = &["f90","f95","f2003","f2008","f2018","f2023"],
+                help = "Check implemented features against a Fortran revision (default: permissive)")]
+    pub standard: Option<crate::standards::Standard>,
+
     #[structopt(
         short = "o",
         long,
@@ -150,6 +154,8 @@ impl Cli {
         for arg in original {
             let text = arg.to_string_lossy();
             match text.as_ref() {
+                "-std" => args.push("--std".into()),
+                flag if flag.starts_with("-std=") => args.push(format!("--std={}",&flag[5..]).into()),
                 "-Wall" | "--wall" => args.push("--Wall".into()),
                 "-Werror" | "--werror" => args.push("--Werror".into()),
                 flag if flag.starts_with("-W") => {

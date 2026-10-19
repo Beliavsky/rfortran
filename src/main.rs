@@ -8,6 +8,7 @@ mod driver;
 mod codegen;
 mod errors;
 mod source_diagnostics;
+mod standards;
 mod ir;
 mod intrinsics;
 mod float_model;
@@ -165,6 +166,7 @@ fn compiler_main() -> Result<()> {
             let tokens = lexer::lex(&src);
             match parser::parse_with_src(&src, &tokens, input.to_str().unwrap_or("<unknown>")) {
                 Ok(p) => {
+                    standards::check(&p, &src, &tokens, input.to_str().unwrap_or("<unknown>"), None, args.standard, args.werror)?;
                     if let Some(out_path) = out {
                         let serialized = serde_json::to_string_pretty(&p)?;
                         std::fs::write(&out_path, serialized)?;
@@ -325,8 +327,13 @@ fn prepare_program(
     let filename = input.to_str().unwrap_or("<unknown>");
     unused::check(&program, src, tokens, filename, origins, settings, &args.warnings)?;
     optional_warnings::check(&program, src, tokens, filename, origins, settings, &args.warnings)?;
-    module_files::prepare(program, src, input, origins, args)
-        .map_err(|error| source_diagnostics::report(error, src, tokens, filename, origins))
+    let prepared = module_files::prepare(program, src, input, origins, args)
+        .map_err(|error| source_diagnostics::report(error, src, tokens, filename, origins))?;
+    if args.standard.is_some() {
+        standards::check(&prepared.program, &prepared.source, &lexer::lex(&prepared.source), filename,
+                         Some(&prepared.origins), args.standard, settings.werror)?;
+    }
+    Ok(prepared)
 }
 
 fn lower_program_body(
