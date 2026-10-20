@@ -1363,6 +1363,45 @@ through a CLASS dummy is rejected at compile time when an extension overrides
 that binding, rather than calling the parent's procedure. ABSTRACT types,
 CLASS(*), SELECT TYPE and polymorphic ALLOCATABLE objects are not yet supported.
 
+### TYPEOF and CLASSOF declarations
+
+These follow the declaration rules in [J3/24-007, section 7.3.2.1](https://j3-fortran.org/doc/year/24/24-007.pdf).
+
+Fortran 2023 `typeof(object)` declares a nonpolymorphic entity with the declared
+type and type parameters of `object`. Its value, rank, bounds and attributes are
+not copied. For example:
+
+```fortran
+real(kind=dp) :: x(10)
+typeof(x) :: scalar, work(20)
+```
+
+The reference can name a supported intrinsic or derived-type object, an array
+element or a component. Chained declarations, declaration attributes, initialized
+objects, component definitions, BLOCK locals, host association and USE association
+(including renaming and private type names or kind constants behind an exported object) are
+supported. The reference's type must already be declared or established by
+implicit typing. Type inspection does not require an initialized value.
+
+CHARACTER lengths follow the referenced object's type parameters: assumed length
+becomes the referenced object's actual length, while deferred length stays
+deferred. An OPTIONAL reference cannot have assumed or deferred type parameters.
+The compiler's existing restrictions on CHARACTER storage still apply.
+
+`classof(object)` uses the declared derived type and type parameters, declaring a
+polymorphic entity. Its destination must be a dummy argument or have ALLOCATABLE
+or POINTER. Supported scalar CLASS dummy-argument cases use the existing derived-type
+and type-extension lowering; this does not add dynamic dispatch or polymorphic
+allocation. Intrinsic references are rejected. TYPEOF rejects unlimited
+polymorphic references; CLASSOF of CLASS(*) is valid Fortran but receives an
+explicit unsupported diagnostic. Parameterized derived types remain unsupported.
+
+These specifiers are accepted only in type declarations and component definitions,
+not in function prefixes, ALLOCATE type specifications or array constructors.
+Standard modes older than `-std=f2023` reject them with source locations.
+Run `python tests/test_referenced_types.py`. Examples are
+`tests/programs/xtypeof.f90` and `tests/programs/xclassof.f90`.
+
 ### Derived arguments and OPTIONAL
 
 Scalar OPTIONAL arguments retain their positions during derived-type lowering,

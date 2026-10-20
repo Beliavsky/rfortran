@@ -599,6 +599,7 @@ fn separate_parameters(body: &mut Vec<Stmt>, arguments: &[String]) -> Result<()>
 pub(crate) fn fold_kind_inquiries(program: &mut Program) {
     fn kind_of(kind: &TypeSpec, constants: &Constants) -> Option<i64> {
         match kind {
+            TypeSpec::Referenced {..} => None,
             TypeSpec::Integer(bytes) => Some(i64::from(bytes.unwrap_or(4))),
             TypeSpec::Real | TypeSpec::Logical => Some(4),
             TypeSpec::DoublePrecision => Some(8),
@@ -1758,6 +1759,16 @@ fn resolve_template_kind(kind: &mut TypeSpec, constants: &Constants, template: b
         }
     }
     resolve_kind(kind, constants)
+}
+/// Evaluate a declaration's type in its defining constant environment.
+pub(crate) fn concrete_kind_with(mut kind: TypeSpec, constants: &HashMap<String, Expr>) -> Result<TypeSpec> {
+    resolve_kind(&mut kind, constants)?;
+    Ok(kind)
+}
+pub(crate) fn constant_integer_with(expr: &Expr, constants: &HashMap<String, Expr>) -> Result<i64> {
+    let mut value=expr.clone();
+    rewrite_expr(&mut value,constants)?;
+    evaluate(&value,constants)
 }
 pub(crate) fn concrete_kind(mut kind: TypeSpec) -> Result<TypeSpec> {
     resolve_kind(&mut kind, &Constants::new())?;

@@ -260,6 +260,8 @@ pub enum TokenKind {
     FilePosition(String),
     KwType,
     KwClass,
+    KwTypeof,
+    KwClassof,
     KwProcedure,
     KwInterface,
     EndInterfaceName(String),
@@ -1134,6 +1136,18 @@ pub fn lex(input: &str) -> Vec<Token> {
                     && (matches!(next,Some(TokenKind::Comma))
                         || matches!(next,Some(TokenKind::Ident(_))) && tokens.get(start+2).is_none_or(|t| !same_statement(&input[tokens[start+1].span.end..t.span.start]))) => Some(TokenKind::KwType),
                 "class" if matches!(next,Some(TokenKind::LParen)) => Some(TokenKind::KwClass),
+                "typeof" | "classof" if matches!(next,Some(TokenKind::LParen)) && statement_head(&tokens,input,start) => {
+                    let mut depth=0i32;
+                    let mut closing=None;
+                    for i in start+1..tokens.len() {
+                        match tokens[i].kind {TokenKind::LParen=>depth+=1,TokenKind::RParen=>depth-=1,_=>{}}
+                        if depth==0 {closing=Some(i);break;}
+                    }
+                    // Do not reserve the names for procedure calls or assignments.
+                    let declaration=closing.and_then(|i|tokens.get(i+1)).is_some_and(|t|
+                        same_statement(&input[tokens[start].span.end..t.span.start]) && matches!(t.kind,TokenKind::DColon|TokenKind::Comma|TokenKind::Ident(_)));
+                    declaration.then_some(if n.eq_ignore_ascii_case("typeof"){TokenKind::KwTypeof}else{TokenKind::KwClassof})
+                },
                 // DATA name / values /, but not a variable named DATA.
                 "data" if matches!(next,Some(TokenKind::Ident(_))) && statement_head(&tokens,input,start) => Some(TokenKind::KwData),
                 "procedure" if matches!(next,Some(TokenKind::DColon)) || matches!(previous,Some(TokenKind::KwModule))

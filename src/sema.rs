@@ -7,6 +7,7 @@ use crate::lexer::{Token, TokenKind};
 
 fn show_type(type_spec: &TypeSpec) -> String {
     match type_spec {
+        TypeSpec::Referenced {polymorphic,..} => if *polymorphic {"CLASSOF"} else {"TYPEOF"}.into(),
         TypeSpec::Complex(kind) => format!("COMPLEX({kind})"),
         TypeSpec::RealKind(kind) => format!("REAL({kind})"),
         TypeSpec::LogicalKind(kind) => format!("LOGICAL({kind})"),

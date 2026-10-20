@@ -48,7 +48,7 @@ fn rename_expr(e: &mut Expr, from: &str, to: &str) {
 fn rename_kind(kind: &mut TypeSpec, from: &str, to: &str) {
     match kind {
         TypeSpec::IntegerKind(k) | TypeSpec::RealKind(k) | TypeSpec::Complex(k) if k == from => *k = to.into(),
-        TypeSpec::CharacterLength(length) => rename_expr(length, from, to),
+        TypeSpec::CharacterLength(length) | TypeSpec::Referenced {source:length,..} => rename_expr(length, from, to),
         _ => {}
     }
 }

@@ -894,7 +894,7 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                             continue;
                         }
                         match kind {
-                            TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed | TypeSpec::RealKind(_) | TypeSpec::LogicalKind(_) | TypeSpec::IntegerKind(_) | TypeSpec::Complex(_) => unreachable!("unresolved numeric kind"),
+                            TypeSpec::Referenced { .. } | TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed | TypeSpec::RealKind(_) | TypeSpec::LogicalKind(_) | TypeSpec::IntegerKind(_) | TypeSpec::Complex(_) => unreachable!("unresolved numeric kind"),
                             TypeSpec::Integer(_) => {
                                 frame.env_int.entry(n.clone()).or_insert(0);
                             }
@@ -921,7 +921,7 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                             if let Ok(v128) = i128::from_str_radix(s.as_str(), 10) {
                                 let len = usize::try_from(v128).unwrap_or(0);
                                 match kind {
-                            TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed | TypeSpec::RealKind(_) | TypeSpec::LogicalKind(_) | TypeSpec::IntegerKind(_) | TypeSpec::Complex(_) => unreachable!("unresolved numeric kind"),
+                            TypeSpec::Referenced { .. } | TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed | TypeSpec::RealKind(_) | TypeSpec::LogicalKind(_) | TypeSpec::IntegerKind(_) | TypeSpec::Complex(_) => unreachable!("unresolved numeric kind"),
                                     TypeSpec::Integer(_) | TypeSpec::Logical => {
                                         fr.env_int_arrays.insert(name.clone(), vec![0; len]);
                                         if matches!(kind, TypeSpec::Logical) { fr.logical_arrays.insert(name.clone()); }

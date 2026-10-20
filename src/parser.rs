@@ -290,6 +290,8 @@ fn human_token(tok: &TokenKind) -> String {
         TokenKind::Boz(text) => format!("BOZ literal {text}"),
         TokenKind::KwType => "keyword type".into(),
         TokenKind::KwClass => "keyword class".into(),
+        TokenKind::KwTypeof => "keyword typeof".into(),
+        TokenKind::KwClassof => "keyword classof".into(),
         TokenKind::KwProcedure => "keyword procedure".into(),
         TokenKind::KwInterface => "keyword interface".into(),
         TokenKind::KwOperator => "keyword operator".into(),

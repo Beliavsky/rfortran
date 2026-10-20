@@ -1338,9 +1338,11 @@ fn resolve_types(mut program: Program) -> Result<Program> {
     program=crate::concurrent_reduce::resolve(program)?;
     crate::simple::validate(&program)?;
     program = crate::extensions::resolve(program)?;
+    program=crate::referenced_types::resolve(program)?;
     program = crate::procedure_arguments::resolve(program)?;
     program = crate::heap::automatic_derived(program)?;
     crate::imports::validate(&program)?;
+    crate::referenced_types::clear_provenance(&mut program.body);
     program=crate::tokenize::prepare(program)?;
     program = crate::named_arguments::resolve(program, false)?;
     program=crate::enumerations::prepare(program)?;

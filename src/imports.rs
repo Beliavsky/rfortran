@@ -178,7 +178,11 @@ impl Validator {
                         self.expression(e, &visible)?;
                     }
                 }
-                Stmt::DerivedDecl { type_name,dims, .. } => {self.name(type_name, &visible)?;for e in dims {self.expression(e,&visible)?;}},
+                Stmt::DerivedDecl { type_name,dims,attributes,.. } => {
+                    // TYPEOF/CLASSOF name the source object, not its private type.
+                    if !attributes.iter().any(|a|a=="@referenced_type") {self.name(type_name, &visible)?;}
+                    for e in dims {self.expression(e,&visible)?;}
+                },
                 Stmt::DerivedType {
                     components,
                     bindings,

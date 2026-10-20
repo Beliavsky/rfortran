@@ -246,6 +246,8 @@ current limits.
 | [Output of a whole derived object (`print *, obj`)](language-support.md#derived-type-components) | F90 | ✅ | Not with ALLOCATABLE or POINTER components, which need defined I/O | test_derived_type_features.py |
 | [Derived-type named constants, SAVE and initialized objects](language-support.md#derived-type-components) | F90 | ✅ | Scalar components | test_derived_type_features.py |
 | [Type extension (EXTENDS)](language-support.md#type-extension) | F2003 | 🟡 | Without dynamic dispatch: a binding called through a CLASS dummy cannot be overridden | test_derived_type_features.py |
+| [TYPEOF declarations](language-support.md#typeof-and-classof-declarations) | F2023 | 🟡 | Supported intrinsic and derived types, components, array elements, USE/host association and CHARACTER lengths; existing storage/type limitations apply | test_referenced_types.py |
+| [CLASSOF declarations](language-support.md#typeof-and-classof-declarations) | F2023 | 🟡 | Scalar derived-type CLASS dummy arguments; no CLASS(*) or polymorphic allocation/dynamic dispatch | test_referenced_types.py |
 | CLASS(*), SELECT TYPE, polymorphic ALLOCATABLE objects | F2003 | ❌ |  |  |
 | ABSTRACT types | F2003 | ❌ |  |  |
 | Parameterized derived types | F2003 | ❌ |  |  |

@@ -354,6 +354,7 @@ impl Checker<'_> {
                     self.require("AT edit descriptor", 2023, t.span.start);
                     None
                 }
+                TokenKind::KwTypeof | TokenKind::KwClassof => {self.require("TYPEOF/CLASSOF declaration specifiers",2023,t.span.start);None},
                 TokenKind::KwPure => Some("pure"),
                 TokenKind::KwSimple => Some("simple"),
                 TokenKind::KwEnumeration => {self.require("enumeration types",2023,t.span.start);None},
@@ -411,6 +412,7 @@ impl Checker<'_> {
         }
     }
     fn typ(&mut self, kind: &TypeSpec, offset: usize) {
+        if matches!(kind,TypeSpec::Referenced {..}) {self.require("TYPEOF/CLASSOF declaration specifiers",2023,offset);}
         if let TypeSpec::LogicalKind(name)
         | TypeSpec::RealKind(name)
         | TypeSpec::IntegerKind(name) = kind

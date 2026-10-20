@@ -142,6 +142,8 @@ pub enum Stmt {
 
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub enum TypeSpec {
+    /// Fortran 2023 declaration type, resolved after USE/host association.
+    Referenced { source: Box<Expr>, polymorphic: bool },
     Integer(Option<u8>),
     IntegerKind(String),
     Real,

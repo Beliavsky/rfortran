@@ -10,6 +10,8 @@ extern {
         AT_SIGN => TokenKind::At,
         KW_TYPE => TokenKind::KwType,
         KW_CLASS => TokenKind::KwClass,
+        KW_TYPEOF => TokenKind::KwTypeof,
+        KW_CLASSOF => TokenKind::KwClassof,
         KW_PROCEDURE => TokenKind::KwProcedure,
         KW_INTERFACE => TokenKind::KwInterface,
         KW_OPERATOR => TokenKind::KwOperator,
@@ -441,8 +443,17 @@ IntrinsicAttrList: (Vec<String>, Option<Vec<Expr>>) = {
 
 // Attributes and initialization require ::; simple declarations may omit it.
 IntrinsicDeclHead: (TypeSpec, Vec<String>, Option<Vec<Expr>>, bool) = {
+    <t:ReferenceType> <attributes:IntrinsicAttrList> DCOLON => (t,attributes.0,attributes.1,true),
+    <t:ReferenceType> => (t,vec![],None,false),
     <t:TypeSpec> <attributes:IntrinsicAttrList> DCOLON => (t,attributes.0,attributes.1,true),
     <t:TypeSpec> => (t,vec![],None,false),
+};
+
+ClassTypeName: String = { <name:Ident> => name, STAR => "*".into() };
+
+ReferenceType: TypeSpec = {
+    KW_TYPEOF LPAREN <source:RhsExpr> RPAREN => TypeSpec::Referenced {source:Box::new(source),polymorphic:false},
+    KW_CLASSOF LPAREN <source:RhsExpr> RPAREN => TypeSpec::Referenced {source:Box::new(source),polymorphic:true},
 };
 
 DeclEntities: Vec<(String, Vec<Expr>, Option<Expr>, Option<TypeSpec>)> = {
@@ -1046,7 +1057,7 @@ PreFuncDeclData: Vec<Stmt> = {
         if let Some(value)=value {out.push(Stmt::Assign{name,value});}
         out.extend(association);out
     }).collect(),
-    KW_CLASS LPAREN <type_name:Ident> RPAREN <attributes:IntrinsicAttrList> DCOLON <entities:DeclEntities> => entities.into_iter().flat_map(|(name,dims,value,_)| {
+    KW_CLASS LPAREN <type_name:ClassTypeName> RPAREN <attributes:IntrinsicAttrList> DCOLON <entities:DeclEntities> => entities.into_iter().flat_map(|(name,dims,value,_)| {
         let (value,association)=crate::ast::split_pointer_initializer(&name,value);
         let dims=if dims.is_empty(){attributes.1.clone().unwrap_or_default()}else{dims};
         let mut attrs=attributes.0.clone();if value.is_some(){attrs.push("save".into());}
