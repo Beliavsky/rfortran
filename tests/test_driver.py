@@ -48,6 +48,28 @@ class NativeDriver(unittest.TestCase):
         self.success("build",source,"-o",output)
         self.execute(output)
 
+    def test_sources_named_like_subcommands(self):
+        # Relative names, since a path separator would hide the clap check.
+        for name in ("run.f90", "help.f90", "parse.f90", "hello.f90"):
+            with self.subTest(name=name):
+                self.source(name)
+                self.success(name, "-o", "named.exe")
+                self.execute(self.directory/"named.exe")
+                self.success("-O0", name, "-o", "named.exe")
+                self.execute(self.directory/"named.exe")
+        for name in ("m1", "m2", "main"):
+            self.source({"m1": "link", "m2": "lex", "main": "run"}[name]+".f90",
+                        (ROOT/"tests/multifile"/(name+".f90")).read_text())
+        self.success("link.f90", "lex.f90", "run.f90", "-o", "named.exe")
+        self.execute(self.directory/"named.exe")
+        # Subcommands, and suggestions for mistyped ones, are unchanged.
+        result = self.compile("run", "run.f90")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "42")
+        result = self.compile("buld", "run.f90")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Did you mean 'build'", result.stderr)
+
     def test_module_chain_and_repeat_build(self):
         sources=[]
         for name in ("m1", "m2", "main"):

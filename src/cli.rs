@@ -159,6 +159,26 @@ pub enum Command {
     Help,
 }
 
+/// The first argument that is neither an option nor an option's value: a
+/// subcommand or the first source.
+fn first_positional(args: &[std::ffi::OsString]) -> Option<String> {
+    // Options whose value may be the next argument.
+    const VALUED: &[&str] = &["-o", "--out", "-O", "--opt-level", "-I", "--module-path", "-J", "--module-dir",
+                              "--target", "--std", "--warning", "--ffixed-line-length"];
+    let mut args = args.iter().skip(1).map(|a| a.to_string_lossy());
+    while let Some(arg) = args.next() {
+        if arg == "--" {
+            return args.next().map(|a| a.into_owned());
+        }
+        if VALUED.contains(&arg.as_ref()) {
+            args.next();
+        } else if !arg.starts_with('-') || arg == "-" {
+            return Some(arg.into_owned());
+        }
+    }
+    None
+}
+
 impl Cli {
     pub fn from_command_line() -> Self {
         let mut args = Vec::<std::ffi::OsString>::new();
@@ -190,7 +210,15 @@ impl Cli {
                 _ => args.push(arg),
             }
         }
-        let mut cli=Self::from_iter(args);cli.run_args=run_args;cli
+        let mut app = Self::clap();
+        if first_positional(&args).is_some_and(|a| a.contains(['.', '/', '\\'])) {
+            // clap rejects a source named like a subcommand, such as run.f90
+            // or hello.f, as a mistyped subcommand. Inferring subcommands turns
+            // that check off; no subcommand name contains these characters,
+            // so a source cannot be inferred as one.
+            app = app.setting(structopt::clap::AppSettings::InferSubcommands);
+        }
+        let mut cli=Self::from_clap(&app.get_matches_from(args));cli.run_args=run_args;cli
     }
 
     /// Whether `path` is fixed source form: by option, else by extension.
