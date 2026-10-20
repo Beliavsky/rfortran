@@ -166,6 +166,21 @@ higher-rank allocatable arrays are not yet supported in the REPL.
 Use `:help`, `:reset`, `:cancel` (discard unfinished input), and `:quit` or `:q`.
 EOF also exits. Redirected input has no banner or prompts.
 
+Export a session as a complete Fortran program with `:save experiment.f90`.
+Quote filenames containing spaces, for example `:save "my experiment.f90"`.
+The saved program uses `implicit none` and explicit declarations, including
+declarations inferred by `:auto on`. Declarations appear before executable
+code; mutable declaration initializers become assignments at their original
+point in the session. Original expressions, formats, blocks and random-number
+calls are preserved. Bare expressions are saved as `print *` statements.
+
+Only successful submissions since the last `:reset` are included. Failed
+submissions, REPL commands and canceled input are excluded. The export records
+operations rather than snapshots of current values; random values and timings
+can differ when rerun or compiled with another compiler. Finish or `:cancel`
+pending multiline input before saving. Saving replaces an existing file only
+after the new contents have been written successfully.
+
 Only new input executes; previous output and random calls are not replayed.
 Fixed-size INTEGER, REAL (including DOUBLE PRECISION), and LOGICAL arrays
 support indexing, sections, whole-array assignments, expressions and printing:

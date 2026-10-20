@@ -13,6 +13,8 @@ use std::path::Path;
 mod arrays;
 #[path = "repl_dynamic.rs"]
 mod dynamic;
+#[path = "repl_export.rs"]
+mod export;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Evaluation {
@@ -60,11 +62,12 @@ struct Session {
     arrays: arrays::Values,
     allocations: dynamic::Allocations,
     automatic: bool,
+    history: export::History,
     seed: u64,
 }
 impl Default for Session {
     fn default() -> Self {
-        Self { declarations: vec![], names: HashSet::new(), values: HashMap::new(), arrays: HashMap::new(), allocations: Default::default(), automatic: false, seed: 1 }
+        Self { declarations: vec![], names: HashSet::new(), values: HashMap::new(), arrays: HashMap::new(), allocations: Default::default(), automatic: false, history: Default::default(), seed: 1 }
     }
 }
 
@@ -118,6 +121,7 @@ impl Session {
         let mut parsed = crate::parser::parse_with_src(input, &tokens, "<repl>")
             .map_err(|_| anyhow::anyhow!("parse failed"))?;
         validate(&parsed.body, true)?;
+        let mut history = export::History::submission(input, &parsed.body)?;
         let mut declarations = self.declarations.clone();
         let mut names = self.names.clone();
         // Array initializers have a paired InitializedDecl and ArrayDecl.
@@ -161,6 +165,7 @@ impl Session {
             crate::standards::check(&program, input, &tokens, "<repl>", None, args.standard, args.werror)?;
         }
         let prepared = dynamic::prepare(program, &self.allocations, &names, self.automatic)?;
+        history.inferred(&prepared.inferred)?;
         for stmt in &prepared.inferred {
             match stmt {
                 Stmt::VarDecl { names: declared, .. } => names.extend(declared.iter().cloned()),
@@ -196,6 +201,7 @@ impl Session {
         self.seed = snapshot.seed;
         self.declarations = declarations;
         self.names = names;
+        self.history.append(history);
         Ok(())
     }
 }
@@ -249,8 +255,16 @@ pub(crate) fn run(args: &crate::cli::Cli) -> Result<()> {
                 for line in dynamic::variables(&session.declarations, &session.allocations) { println!("{line}"); }
                 continue;
             },
+            text if text == ":save" || text.starts_with(":save ") || text.starts_with(":save\t") => {
+                let result = (|| -> Result<()> {
+                    if !pending.is_empty() { bail!("finish or :cancel pending input before saving the session"); }
+                    session.history.save(export::save_path(text)?, &session.names)
+                })();
+                if let Err(error) = result { eprintln!("Error: {error:#}"); }
+                continue;
+            },
             ":help" => {
-                println!("Declare scalars or INTEGER/REAL/LOGICAL arrays, assign values, PRINT/WRITE, or enter an expression.\nArrays support indexing, sections and expressions (snapshot limit: 10000 elements per array).\nMultiline IF/DO/SELECT CASE blocks and & continuations are accepted.\nStrict mode requires declarations (IMPLICIT NONE). :auto on enables inferred declarations for top-level assignments; :auto off restores strict mode.\n:vars shows declarations and allocation sizes. Rank-one allocatable arrays can resize on assignment at the prompt; ALLOCATE requires a constant extent.\n:reset clears the session; :cancel discards pending input; :quit exits.\nPointer/CHARACTER arrays, modules, procedures, READ and file I/O are not supported yet.");
+                println!("Declare scalars or INTEGER/REAL/LOGICAL arrays, assign values, PRINT/WRITE, or enter an expression.\nArrays support indexing, sections and expressions (snapshot limit: 10000 elements per array).\nMultiline IF/DO/SELECT CASE blocks and & continuations are accepted.\nStrict mode requires declarations (IMPLICIT NONE). :auto on enables inferred declarations for top-level assignments; :auto off restores strict mode.\n:save filename.f90 exports successful input as a compilable program; quote filenames containing spaces.\n:vars shows declarations and allocation sizes. Rank-one allocatable arrays can resize on assignment at the prompt; ALLOCATE requires a constant extent.\n:reset clears the session; :cancel discards pending input; :quit exits.\nPointer/CHARACTER arrays, modules, procedures, READ and file I/O are not supported yet.");
                 continue;
             },
             text if text.starts_with(':') => { eprintln!("Error: unknown REPL command `{text}`; use :help"); continue; },
