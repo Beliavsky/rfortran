@@ -34,30 +34,38 @@ pub(crate) fn borrow_fields(name: &str, shapes: &mut crate::allocatables::Shapes
 
 /// Whether an assignment value may be an array, so that assigning it to an
 /// unallocated ALLOCATABLE array allocates the target. Scalar values cannot.
-fn array_valued(e: &Expr, arrays: &HashSet<String>) -> bool {
+fn array_valued(e: &Expr, arrays: &HashSet<String>, functions: &HashSet<String>) -> bool {
     match e {
         Expr::Ident(n) => arrays.contains(n),
         Expr::Section { .. } => true,
-        Expr::Call(n, _) if n == "@array_constructor" => true,
+        Expr::Call(n, _) if n == "@array_constructor" || functions.contains(n) => true,
         // A section or vector subscript of a local array.
         Expr::Call(n, args) if arrays.contains(n) => args.iter().any(|a| {
-            matches!(a, Expr::Call(t, _) if t == "@section_subscript") || array_valued(a, arrays)
+            matches!(a, Expr::Call(t, _) if t == "@section_subscript") || array_valued(a, arrays, functions)
         }),
-        Expr::Call(_, args) => args.iter().any(|a| array_valued(a, arrays)),
-        Expr::Bin(_, a, b) => array_valued(a, arrays) || array_valued(b, arrays),
-        Expr::Un(_, a) => array_valued(a, arrays),
+        Expr::Call(_, args) => args.iter().any(|a| array_valued(a, arrays, functions)),
+        Expr::Bin(_, a, b) => array_valued(a, arrays, functions) || array_valued(b, arrays, functions),
+        Expr::Un(_, a) => array_valued(a, arrays, functions),
         _ => false,
     }
 }
 
-fn array_assignment(body: &[Stmt], array: &str, declared: &HashSet<String>) -> bool {
+fn array_result(name: &str, body: &[Stmt]) -> bool {
+    let result = match body.last() {
+        Some(Stmt::Return(Some(Expr::Ident(n)))) => n.as_str(),
+        _ => name,
+    };
+    body.iter().any(|s| matches!(s, Stmt::ArrayDecl { name, .. } if name == result))
+}
+
+fn array_assignment(body: &[Stmt], array: &str, declared: &HashSet<String>, functions: &HashSet<String>) -> bool {
     body.iter().any(|s| match s {
-        Stmt::Assign { name, value } => name == array && array_valued(value, declared),
-        Stmt::If { then_body, else_body, .. } => array_assignment(then_body, array, declared)
-            || else_body.as_ref().is_some_and(|b| array_assignment(b, array, declared)),
-        Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } | Stmt::Block { body } => array_assignment(body, array, declared),
-        Stmt::SelectCase { cases, default, .. } => cases.iter().any(|c| array_assignment(&c.body, array, declared))
-            || default.as_ref().is_some_and(|b| array_assignment(b, array, declared)),
+        Stmt::Assign { name, value } => name == array && array_valued(value, declared, functions),
+        Stmt::If { then_body, else_body, .. } => array_assignment(then_body, array, declared, functions)
+            || else_body.as_ref().is_some_and(|b| array_assignment(b, array, declared, functions)),
+        Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } | Stmt::Block { body } => array_assignment(body, array, declared, functions),
+        Stmt::SelectCase { cases, default, .. } => cases.iter().any(|c| array_assignment(&c.body, array, declared, functions))
+            || default.as_ref().is_some_and(|b| array_assignment(b, array, declared, functions)),
         _ => false,
     })
 }
@@ -197,21 +205,39 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
         body: &mut Vec<Stmt>,
         params: &[String],
         interfaces: &HashMap<String, Vec<usize>>,
+        inherited_functions: &HashSet<String>,
     ) -> Result<()> {
+        // Result rank is independent of the ranks of the actual arguments.
+        // Keep procedure names separate from arrays: f(i) is an array result,
+        // whereas a(i) with a scalar subscript is an array element.
+        let mut functions = inherited_functions.clone();
+        for statement in body.iter() {
+            match statement {
+                Stmt::VarDecl { names, .. } => for name in names { functions.remove(name); },
+                Stmt::ArrayDecl { name, .. } => { functions.remove(name); },
+                Stmt::Function { name, body, .. } => {
+                    functions.remove(name);
+                    if array_result(name, body) {
+                        functions.insert(name.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
         let mut passed = HashSet::new();
         actuals(body, interfaces, &mut passed);
         let declared: HashSet<String> = body.iter().filter_map(|s| match s {
             Stmt::ArrayDecl { name, .. } => Some(name.clone()),
             _ => None,
         }).collect();
-        fn allocation(body: &[Stmt], array: &str, declared: &HashSet<String>) -> bool {
+        fn allocation(body: &[Stmt], array: &str, declared: &HashSet<String>, functions: &HashSet<String>) -> bool {
             body.iter().any(|s|match s {
                 Stmt::CallSub{name,args} if name=="@allocate"=>args.iter().any(|e|matches!(e,Expr::Call(n,dims) if n==array) || matches!(e,Expr::Section{name:n,..} if n==array)),
-                Stmt::If{then_body,else_body,..}=>allocation(then_body,array,declared)||else_body.as_ref().is_some_and(|b|allocation(b,array,declared)),
+                Stmt::If{then_body,else_body,..}=>allocation(then_body,array,declared,functions)||else_body.as_ref().is_some_and(|b|allocation(b,array,declared,functions)),
                 // Intrinsic assignment to the whole array also (re)allocates it.
-                Stmt::Assign{name,value}=>name==array && array_valued(value,declared),
-                Stmt::Do{body,..}|Stmt::DoWhile{body,..}|Stmt::Block{body}=>allocation(body,array,declared),
-                Stmt::SelectCase{cases,default,..}=>cases.iter().any(|c|allocation(&c.body,array,declared))||default.as_ref().is_some_and(|b|allocation(b,array,declared)),
+                Stmt::Assign{name,value}=>name==array && array_valued(value,declared,functions),
+                Stmt::Do{body,..}|Stmt::DoWhile{body,..}|Stmt::Block{body}=>allocation(body,array,declared,functions),
+                Stmt::SelectCase{cases,default,..}=>cases.iter().any(|c|allocation(&c.body,array,declared,functions))||default.as_ref().is_some_and(|b|allocation(b,array,declared,functions)),
                 _=>false,
             })
         }
@@ -245,13 +271,13 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
             (dims.iter().all(|e|matches!(e,Expr::Ident(n) if n=="@deferred_extent"))
               && !params.contains(name)
               && !body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name && intent=="@heap_dummy"))
-              && (passed.contains(name) || name.starts_with("@module$") || ((dims.len()>1 || !array_dummies || runtime_allocate(body,name)) && allocation(body,name,&declared))
+              && (passed.contains(name) || name.starts_with("@module$") || ((dims.len()>1 || !array_dummies || runtime_allocate(body,name)) && allocation(body,name,&declared,&functions))
                   // Rank-one locals of procedures with array dummies use bounded
                   // storage when ALLOCATEd; one allocated only by assignment needs
                   // runtime storage for its value's extent.
-                  || (array_dummies && allocation(body,name,&declared) && !allocate_statement(body,name)) || dims.len()>1 && body.iter().any(|s|matches!(s,Stmt::CallSub{name:call,args} if call=="@deallocate"&&args.iter().any(|e|matches!(e,Expr::Ident(n) if n==name)))))
+                  || (array_dummies && allocation(body,name,&declared,&functions) && !allocate_statement(body,name)) || dims.len()>1 && body.iter().any(|s|matches!(s,Stmt::CallSub{name:call,args} if call=="@deallocate"&&args.iter().any(|e|matches!(e,Expr::Ident(n) if n==name)))))
               && numeric(kind) && (!matches!(kind,TypeSpec::Character(_)) || dims.len()>1 || runtime_allocate(body,name) || body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name && intent=="@tokenize_deferred_character"))
-                  || array_assignment(body,name,&declared)
+                  || array_assignment(body,name,&declared,&functions)
                   || body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name&&intent=="@automatic")))
               && body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name&&intent=="allocatable")))
                 .then_some((name.clone(),dims.len()))
@@ -266,7 +292,7 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
             Stmt::SourceLocation(p)=>offset=Some(*p),
             Stmt::CallSub{name,args} if name=="@allocate"=>for e in args {match e{Expr::Call(n,_)|Expr::Section{name:n,..}=>{pending.remove(n);},_=>{}}},
             Stmt::CallSub{name,args} if name=="@deallocate"=>for e in args {if let Expr::Ident(n)=e {if tracked.contains(n){pending.insert(n.clone());}}},
-            Stmt::Assign{name,value} if tracked.contains(name) && array_valued(value,&declared)=>{
+            Stmt::Assign{name,value} if tracked.contains(name) && array_valued(value,&declared,&functions)=>{
                 crate::array_calls::check_allocated(&Stmt::Print{items:vec![value.clone()]},&pending).map_err(|e|crate::source_diagnostics::at(e,offset))?;
                 pending.remove(name);
             }
@@ -384,31 +410,31 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
                         // declaration until function-call lowering supplies it.
                         body.insert(0,Stmt::DummyIntent{name:result,intent:"@heap_dummy".into()});
                     }
-                    visit(body, params, interfaces)?
+                    visit(body, params, interfaces, &functions)?
                 }
                 Stmt::Subroutine { body, params, .. } => {
-                    visit(body, params, interfaces)?
+                    visit(body, params, interfaces, &functions)?
                 }
                 Stmt::Module { body, .. }
                 | Stmt::Block { body }
                 | Stmt::Do { body, .. }
-                | Stmt::DoWhile { body, .. } => visit(body, &[], interfaces)?,
+                | Stmt::DoWhile { body, .. } => visit(body, &[], interfaces, &functions)?,
                 Stmt::If {
                     then_body,
                     else_body,
                     ..
                 } => {
-                    visit(then_body, &[], interfaces)?;
+                    visit(then_body, &[], interfaces, &functions)?;
                     if let Some(b) = else_body {
-                        visit(b, &[], interfaces)?;
+                        visit(b, &[], interfaces, &functions)?;
                     }
                 }
                 Stmt::SelectCase { cases, default, .. } => {
                     for c in cases {
-                        visit(&mut c.body, &[], interfaces)?;
+                        visit(&mut c.body, &[], interfaces, &functions)?;
                     }
                     if let Some(b) = default {
-                        visit(b, &[], interfaces)?;
+                        visit(b, &[], interfaces, &functions)?;
                     }
                 }
                 _ => {}
@@ -416,7 +442,25 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
         }
         Ok(())
     }
-    visit(&mut program.body, &[], &interfaces)?;
+    // Module binding has already given these procedures unique canonical
+    // names, including USE renames. Their interfaces remain inside MODULE
+    // nodes while callers can appear in any other scope.
+    fn module_results(body: &[Stmt], functions: &mut HashSet<String>) {
+        for statement in body {
+            match statement {
+                Stmt::Function { name, body, .. } if name.starts_with("@module$") => {
+                    if array_result(name, body) { functions.insert(name.clone()); }
+                    module_results(body, functions);
+                }
+                Stmt::Module { body, .. } | Stmt::Subroutine { body, .. }
+                | Stmt::Function { body, .. } => module_results(body, functions),
+                _ => {}
+            }
+        }
+    }
+    let mut functions = HashSet::new();
+    module_results(&program.body, &mut functions);
+    visit(&mut program.body, &[], &interfaces, &functions)?;
     Ok(program)
 }
 

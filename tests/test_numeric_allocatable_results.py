@@ -6,9 +6,133 @@ from test_record_read import ROOT
 
 class NumericAllocatableResults(unittest.TestCase):
     check = test_deallocate.Deallocate.check
+    reject = test_deallocate.Deallocate.reject
 
     def test_direct_assignment(self):
         self.check((ROOT/'tests/190_allocatable_function_results.f90').read_text(), '2 5\n')
+
+    def test_automatic_result_with_scalar_argument(self):
+        self.check((ROOT/'tests/405_automatic_array_result_assignment.f90').read_text(),
+                   '10 20 30\n')
+
+    def test_automatic_result_reallocation_and_empty(self):
+        for kind, value, expected in [('integer', 'i', '1 2 3'),
+                                      ('integer(8)', 'int(i,8)', '1 2 3'),
+                                      ('real', 'real(i)', '1 2 3'),
+                                      ('double precision', 'dble(i)', '1 2 3'),
+                                      ('logical', 'i>1', 'F T T')]:
+            with self.subTest(kind=kind):
+                self.check(f'''program main
+implicit none
+{kind},allocatable::x(:)
+integer::n
+read(*,*)n
+x=make_array(n)
+print *,x
+! Conforming assignment retains the existing lower bound.
+deallocate(x)
+allocate(x(-1:n-2))
+x=make_array(n)
+print *,lbound(x,1),ubound(x,1)
+x=make_array(1)
+print *,size(x),lbound(x,1),ubound(x,1)
+x=make_array(0)
+print *,allocated(x),size(x)
+contains
+function make_array(n) result(y)
+integer,intent(in)::n
+{kind}::y(n)
+integer::i
+do i=1,n
+y(i)={value}
+end do
+end function
+end
+''', expected+'\n-1 1\n1 1 1\nT 0\n', data='3\n')
+
+    def test_fixed_character_array_result(self):
+        self.check('''program main
+implicit none
+character(3),allocatable::x(:)
+x=words()
+print '(2a)',x
+contains
+function words() result(y)
+character(3)::y(2)
+y=['abc','def']
+end function
+end
+''', 'abcdef\n')
+
+    def test_multidimensional_automatic_result(self):
+        for rank in (2, 3):
+            shape=','.join(['n']*rank)
+            deferred=','.join([':']*rank)
+            self.check(f'''module m
+contains
+function filled(n) result(y)
+integer,intent(in)::n
+integer::y({shape})
+y=7
+end function
+end module
+program main
+use m,only:make_array=>filled
+implicit none
+integer,allocatable::x({deferred})
+integer::n
+read(*,*)n
+x=make_array(n)
+print *,shape(x),sum(x)
+x=make_array(0)
+print *,allocated(x),size(x)
+end
+''', ' '.join(['2']*rank+[str(7*2**rank)])+'\nT 0\n',data='2\n')
+
+    def test_scalar_results_do_not_allocate(self):
+        self.reject('''program main
+implicit none
+real,allocatable::x(:)
+x=scalar(3)
+contains
+real function scalar(n)
+integer,intent(in)::n
+scalar=real(n)
+end function
+end
+''', 'array `x` is used before ALLOCATE')
+        self.reject('''program main
+implicit none
+real,allocatable::x(:)
+real::a(2)
+a=1.0
+x=a(1)
+end
+''', 'array `x` is used before ALLOCATE')
+
+    def test_automatic_result_self_reference(self):
+        self.check('''program main
+implicit none
+integer,allocatable::x(:)
+x=sequence(3)
+x=append(x)
+print *,x
+contains
+function sequence(n) result(y)
+integer,intent(in)::n
+integer::y(n),i
+do i=1,n
+y(i)=i
+end do
+end function
+function append(a) result(y)
+integer,intent(in)::a(:)
+integer::y(size(a)+1)
+y(:size(a))=a
+y(size(y))=9
+end function
+end
+''', '1 2 3 9\n')
 
     def test_output_helper(self):
         self.check('''module m
