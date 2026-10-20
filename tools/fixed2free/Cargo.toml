@@ -1,0 +1,18 @@
+[package]
+name = "fixed2free"
+version = "0.1.0"
+edition = "2021"
+description = "Convert Fortran fixed source form to free source form"
+license-file = "../../LICENSE-MIT"
+
+# A standalone package, not a member of the rfortran compiler's build.
+[workspace]
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "fixed2free"
+path = "src/main.rs"
+
+[dependencies]
