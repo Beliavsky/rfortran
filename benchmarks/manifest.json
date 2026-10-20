@@ -1,0 +1,329 @@
+{
+  "schema_version": 1,
+  "benchmarks": [
+    {
+      "name": "integer_sum",
+      "source": "programs/integer_sum.f90",
+      "description": "INTEGER(64) modular accumulation",
+      "reference": "integer_sum",
+      "profiles": {
+        "smoke": {
+          "n": 10000,
+          "repetitions": 1
+        },
+        "small": {
+          "n": 2000000,
+          "repetitions": 1
+        },
+        "medium": {
+          "n": 20000000,
+          "repetitions": 1
+        },
+        "large": {
+          "n": 100000000,
+          "repetitions": 1
+        }
+      },
+      "rtol": 0.0,
+      "atol": 0.0,
+      "error_limit": 0.0
+    },
+    {
+      "name": "scalar_recurrence",
+      "source": "programs/scalar_recurrence.f90",
+      "description": "Dependent REAL(64) recurrence",
+      "reference": "recurrence",
+      "profiles": {
+        "smoke": {
+          "n": 10000,
+          "repetitions": 1
+        },
+        "small": {
+          "n": 2000000,
+          "repetitions": 1
+        },
+        "medium": {
+          "n": 20000000,
+          "repetitions": 1
+        },
+        "large": {
+          "n": 100000000,
+          "repetitions": 1
+        }
+      },
+      "rtol": 1e-08,
+      "atol": 1e-10,
+      "error_limit": 1e-08
+    },
+    {
+      "name": "procedure_calls",
+      "source": "programs/procedure_calls.f90",
+      "description": "Same recurrence through a pure scalar function",
+      "reference": "recurrence",
+      "profiles": {
+        "smoke": {
+          "n": 10000,
+          "repetitions": 1
+        },
+        "small": {
+          "n": 2000000,
+          "repetitions": 1
+        },
+        "medium": {
+          "n": 20000000,
+          "repetitions": 1
+        },
+        "large": {
+          "n": 100000000,
+          "repetitions": 1
+        }
+      },
+      "rtol": 1e-08,
+      "atol": 1e-10,
+      "error_limit": 1e-08
+    },
+    {
+      "name": "pi_integral",
+      "source": "programs/pi_integral.f90",
+      "description": "Midpoint numerical integration",
+      "reference": "pi",
+      "profiles": {
+        "smoke": {
+          "n": 4096,
+          "repetitions": 1
+        },
+        "small": {
+          "n": 200000,
+          "repetitions": 1
+        },
+        "medium": {
+          "n": 5000000,
+          "repetitions": 1
+        },
+        "large": {
+          "n": 25000000,
+          "repetitions": 1
+        }
+      },
+      "rtol": 1e-08,
+      "atol": 1e-10,
+      "error_limit": 1e-08
+    },
+    {
+      "name": "vector_loop",
+      "source": "programs/vector_loop.f90",
+      "description": "Vector update using explicit loops",
+      "reference": "vector",
+      "profiles": {
+        "smoke": {
+          "n": 512,
+          "repetitions": 2
+        },
+        "small": {
+          "n": 100000,
+          "repetitions": 20
+        },
+        "medium": {
+          "n": 1000000,
+          "repetitions": 100
+        },
+        "large": {
+          "n": 4000000,
+          "repetitions": 200
+        }
+      },
+      "rtol": 1e-09,
+      "atol": 1e-10,
+      "error_limit": 1e-08
+    },
+    {
+      "name": "vector_array",
+      "source": "programs/vector_array.f90",
+      "description": "Same vector update using array syntax",
+      "reference": "vector",
+      "profiles": {
+        "smoke": {
+          "n": 512,
+          "repetitions": 2
+        },
+        "small": {
+          "n": 100000,
+          "repetitions": 20
+        },
+        "medium": {
+          "n": 1000000,
+          "repetitions": 100
+        },
+        "large": {
+          "n": 4000000,
+          "repetitions": 200
+        }
+      },
+      "rtol": 1e-09,
+      "atol": 1e-10,
+      "error_limit": 1e-08
+    },
+    {
+      "name": "dot_product",
+      "source": "programs/dot_product.f90",
+      "description": "DOT_PRODUCT with changing input",
+      "reference": "dot",
+      "profiles": {
+        "smoke": {
+          "n": 512,
+          "repetitions": 2
+        },
+        "small": {
+          "n": 100000,
+          "repetitions": 20
+        },
+        "medium": {
+          "n": 1000000,
+          "repetitions": 100
+        },
+        "large": {
+          "n": 4000000,
+          "repetitions": 200
+        }
+      },
+      "rtol": 1e-09,
+      "atol": 1e-10,
+      "error_limit": 1e-08
+    },
+    {
+      "name": "array_reductions",
+      "source": "programs/array_reductions.f90",
+      "description": "SUM, MAXVAL and MINVAL with changing input",
+      "reference": "reductions",
+      "profiles": {
+        "smoke": {
+          "n": 512,
+          "repetitions": 2
+        },
+        "small": {
+          "n": 100000,
+          "repetitions": 20
+        },
+        "medium": {
+          "n": 1000000,
+          "repetitions": 100
+        },
+        "large": {
+          "n": 4000000,
+          "repetitions": 200
+        }
+      },
+      "rtol": 1e-09,
+      "atol": 1e-10,
+      "error_limit": 1e-08
+    },
+    {
+      "name": "matmul_loop",
+      "source": "programs/matmul_loop.f90",
+      "description": "Column-major matrix product using loops",
+      "reference": "matrix",
+      "profiles": {
+        "smoke": {
+          "n": 8,
+          "repetitions": 1
+        },
+        "small": {
+          "n": 64,
+          "repetitions": 3
+        },
+        "medium": {
+          "n": 192,
+          "repetitions": 5
+        },
+        "large": {
+          "n": 384,
+          "repetitions": 10
+        }
+      },
+      "rtol": 1e-09,
+      "atol": 1e-10,
+      "error_limit": 1e-08
+    },
+    {
+      "name": "matmul_intrinsic",
+      "source": "programs/matmul_intrinsic.f90",
+      "description": "Same matrix product using MATMUL",
+      "reference": "matrix",
+      "profiles": {
+        "smoke": {
+          "n": 8,
+          "repetitions": 1
+        },
+        "small": {
+          "n": 64,
+          "repetitions": 3
+        },
+        "medium": {
+          "n": 192,
+          "repetitions": 5
+        },
+        "large": {
+          "n": 384,
+          "repetitions": 10
+        }
+      },
+      "rtol": 1e-09,
+      "atol": 1e-10,
+      "error_limit": 1e-08
+    },
+    {
+      "name": "stencil_2d",
+      "source": "programs/stencil_2d.f90",
+      "description": "Jacobi stencil with an analytic eigenmode",
+      "reference": "stencil",
+      "profiles": {
+        "smoke": {
+          "n": 12,
+          "repetitions": 2
+        },
+        "small": {
+          "n": 96,
+          "repetitions": 20
+        },
+        "medium": {
+          "n": 384,
+          "repetitions": 100
+        },
+        "large": {
+          "n": 768,
+          "repetitions": 200
+        }
+      },
+      "rtol": 1e-09,
+      "atol": 1e-10,
+      "error_limit": 1e-08
+    },
+    {
+      "name": "allocation_fill",
+      "source": "programs/allocation_fill.f90",
+      "description": "Allocate, fill, reduce and deallocate",
+      "reference": "allocation",
+      "profiles": {
+        "smoke": {
+          "n": 32,
+          "repetitions": 3
+        },
+        "small": {
+          "n": 4096,
+          "repetitions": 100
+        },
+        "medium": {
+          "n": 16384,
+          "repetitions": 500
+        },
+        "large": {
+          "n": 65536,
+          "repetitions": 1000
+        }
+      },
+      "rtol": 1e-09,
+      "atol": 1e-10,
+      "error_limit": 1e-08
+    }
+  ]
+}
