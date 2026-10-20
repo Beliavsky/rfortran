@@ -46,6 +46,21 @@ conformance. Regression checks: `python tests/test_standards.py`.
 
 ## Warnings
 
+`-Wformat`, enabled by `-Wall`/`--wall`, checks known formats against known
+I/O-list types for formatted PRINT, WRITE and READ, including internal I/O.
+For example, `print '(2i4)',1,1.1` warns that the second I4 expects INTEGER
+but receives REAL. Literal formats, CHARACTER named constants and labelled
+FORMAT statements are checked using the existing format parser and constant
+evaluation. Fixed arrays, sections, bounded implied-DOs and the two real
+components of COMPLEX items are considered. Reversion and unused trailing
+descriptors are valid; repeated identical mismatches within an array item
+produce one warning. Runtime formats and uncertain list lengths retain runtime
+checks; static checking stops where descriptor alignment becomes uncertain.
+Derived-type I/O is not checked yet. BOZ editing's legal noninteger types are
+not diagnosed as type mismatches, even where runtime support remains limited.
+Disable with `-Wno-format`, promote with `-Werror=format`, or use
+`!#allow(format)` / `!#deny(format)`. Run `python tests/test_format_warnings.py`.
+
 `-Wunreachable-code`, enabled by `-Wall`/`--wall`, warns once at the first
 statement of each provably unreachable sequence. This includes statements after
 `STOP`, `ERROR STOP`, `RETURN`, `EXIT` or `CYCLE`, branches whose conditions are

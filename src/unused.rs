@@ -20,6 +20,7 @@ const CATEGORIES: &[&str] = &[
     "optional-argument",
     "implicit-typing",
     "unreachable-code",
+    "format",
 ];
 fn canonical(name: &str) -> &str {
     match name {
