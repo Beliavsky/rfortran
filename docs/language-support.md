@@ -251,6 +251,9 @@ checks with gfortran comparisons.
   whole later array, or a section of it, cannot yet be used.
 - `INTRINSIC REAL, MAX` and `EXTERNAL` lists may name procedures spelled like
   keywords.
+- The FORTRAN 77 sized types `REAL*4`, `REAL*8`, `COMPLEX*8`, `COMPLEX*16`,
+  `INTEGER*n` and `LOGICAL*n`, `DOUBLE COMPLEX`, and the specific COMPLEX
+  intrinsics `DIMAG`, `DCONJG`, `DREAL` and `DCMPLX` are accepted.
 - An assignment converts between INTEGER, REAL and DOUBLE PRECISION; a real
   value assigned to an INTEGER variable is truncated toward zero, as by INT.
 - A local array may have the name of an intrinsic, such as `sum(2,2)`; its
@@ -1489,7 +1492,9 @@ applies its own declarations:
 - An array element actual starts the dummy array at that element (sequence
   association), as in `call dscal(n, alpha, a(i,j), 1)`.
 - A constant or expression actual is passed in a temporary.
-- INTEGER, REAL, DOUBLE PRECISION and LOGICAL dummies and function results.
+- INTEGER, REAL, DOUBLE PRECISION, COMPLEX and LOGICAL dummies and function
+  results. A COMPLEX argument passes its real and imaginary parts as two
+  arguments, and a function with a COMPLEX result returns them in two more.
 - CHARACTER dummies receive a copy of the actual. A fixed-length dummy that
   the procedure changes is copied back on return; an assumed-length
   `character*(*)` dummy has the actual's length, and the procedure cannot
@@ -1507,8 +1512,7 @@ the end of the actual array, and reads are checked for initialization, as
 for local arrays. A procedure entered with an explicit-shape dummy larger than
 its actual, or with an array element outside its array, stops with an error.
 
-Not yet supported in these calls: COMPLEX and derived-type arguments, array
-sections, CHARACTER arrays, procedure arguments, assumed-shape dummies
+Not yet supported in these calls: derived-type arguments, array sections, CHARACTER arrays, procedure arguments, assumed-shape dummies
 (which need an explicit interface), and whole-array operations on a dummy
 inside the procedure. Run `python tests/test_external_calls.py`.
 

@@ -158,6 +158,18 @@ pub enum TypeSpec {
     LogicalKind(String),
 }
 
+/// A FORTRAN 77 sized type such as `REAL*8` or `COMPLEX*16`.
+pub fn sized_type(name: &str, bytes: &str) -> Result<TypeSpec, &'static str> {
+    let n: u32 = bytes.parse().map_err(|_| "invalid type size")?;
+    Ok(match (name, n) {
+        ("real", 4 | 8) => TypeSpec::RealKind(n.to_string()),
+        ("complex", 8 | 16) => TypeSpec::Complex((n / 2).to_string()),
+        ("integer", 1 | 2 | 4 | 8) => TypeSpec::Integer(Some(n as u8)),
+        ("logical", 1 | 2 | 4 | 8) => TypeSpec::LogicalKind(n.to_string()),
+        _ => return Err("unsupported type size: REAL*4, REAL*8, COMPLEX*8, COMPLEX*16, INTEGER*n and LOGICAL*n are supported"),
+    })
+}
+
 /// A computed GO TO: an IF chain that branches to the label the selector
 /// picks, or continues with the next statement if it picks none.
 pub fn computed_goto(labels: Vec<String>, selector: Expr) -> Stmt {

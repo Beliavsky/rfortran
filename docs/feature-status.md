@@ -140,6 +140,7 @@ Bugs found on 2026-10-18, all fixed:
 | INTEGER kind 16 | F90 | 🟡 | F90 kind syntax; 128-bit integer availability is processor-dependent. Declarations and arithmetic compile; kind-16 literals, HUGE and pointers are not supported |  |
 | REAL kinds 4 and 8, DOUBLE PRECISION | Mixed | ✅ | DOUBLE PRECISION: F77 or earlier; kind selection: F90. | test_numeric_model.py |
 | REAL kind 16 (quad precision) | F90 | ❌ | F90 kind syntax; quad precision is optional. The REAL128 named constant is F2008. `REAL128` is -1 |  |
+| [Sized types `REAL*8`, `COMPLEX*16`, `INTEGER*4`, `LOGICAL*4` and `DOUBLE COMPLEX`](language-support.md#other-statement-forms) | Extension | ✅ | Common FORTRAN 77 extensions, used throughout LAPACK | test_external_calls.py |
 | [COMPLEX kinds 4 and 8](language-support.md#complex) | F90 | 🟡 | COMPLEX itself predates F90; explicit kind selection is F90. List-directed and bounded formatted input; input sections and COMPLEX components of derived types remain unsupported | test_complex.py, test_list_read.py, test_formatted_read_lists.py |
 | LOGICAL | F77 or earlier | ✅ | Default kind |  |
 | [CHARACTER](language-support.md#character-declarations-and-lengths) | F77 or earlier | 🟡 | Lengths must be known at compile time or bounded; see the CHARACTER section | test_character_lengths.py |
@@ -260,7 +261,7 @@ current limits.
 | Feature | Introduced | Status | Notes | Tests |
 |---|---|---|---|---|
 | Internal and module procedures | F90 | ✅ |  | test_internal_procedures.py, test_module_scope.py |
-| [External procedures, compiled separately](language-support.md#external-procedures-and-separate-compilation) | F77 or earlier | 🟡 | Called by reference. Numeric, LOGICAL and CHARACTER scalars, and numeric and LOGICAL explicit-shape and assumed-size arrays; no COMPLEX, derived-type or procedure arguments | test_external_calls.py |
+| [External procedures, compiled separately](language-support.md#external-procedures-and-separate-compilation) | F77 or earlier | 🟡 | Called by reference. Numeric, COMPLEX, LOGICAL and CHARACTER scalars, and numeric, COMPLEX and LOGICAL explicit-shape and assumed-size arrays; no derived-type or procedure arguments | test_external_calls.py |
 | [Modules or procedures after the main program in the same file](language-support.md#other-statement-forms) | Mixed | ✅ | External program units: F77 or earlier; modules: F90. Source-file layout is a compiler matter. | test_syntax_forms.py |
 | [Calls without an argument list (`call s`, `subroutine s`)](language-support.md#other-statement-forms) | F77 or earlier | ✅ |  | test_syntax_forms.py |
 | [Named (keyword) arguments](language-support.md#named-arguments) | F90 | ✅ |  | test_named_arguments.py |

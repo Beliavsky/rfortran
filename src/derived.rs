@@ -417,7 +417,10 @@ impl Lowerer {
                     for p in params {
                         if let Some(ty) = objects.get(p) {
                             let definition = &self.types[ty];
+                            // Both parts of a COMPLEX dummy are passed, so that
+                            // separately compiled callers agree on its arguments.
                             let all = !inputs.contains(p)
+                                || crate::complex::type_kind(ty).is_some()
                                 || used.contains(p)
                                 || definition
                                     .bindings
@@ -1283,8 +1286,20 @@ impl Lowerer {
                                 _ => false,
                             })
                         }
+                        // The function becomes a subroutine that writes its result's
+                        // components as it runs, so a RETURN returns no value.
                         if has_return(body) {
-                            bail!("explicit early RETURN in a derived-result function is not yet supported");
+                            fn plain(body: &mut [Stmt]) {
+                                for s in body {
+                                    if let Stmt::Return(value) = s {
+                                        *value = None;
+                                    }
+                                    for b in crate::procedure_arguments::children(s) {
+                                        plain(b);
+                                    }
+                                }
+                            }
+                            plain(body);
                         }
                         self.body(body, &objects, &old_params)?;
                         (self.in_module, self.in_procedure) = outer;

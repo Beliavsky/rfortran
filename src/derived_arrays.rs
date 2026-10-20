@@ -835,7 +835,10 @@ impl Lower {
                     continue;
                 }
                 let (values, array) = self.parts(e, &o.ty, objects, prefix)?;
-                if !array {
+                // An element passes the rest of its array from it (sequence
+                // association), which only by-reference calls support.
+                let element = values.iter().all(|v| matches!(v, Expr::Call(..) | Expr::Index(..)));
+                if !array && !element {
                     bail!("derived array dummy `{param}` requires an array actual");
                 }
                 flat.extend(values);

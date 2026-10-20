@@ -678,6 +678,13 @@ TypeSpec: TypeSpec = {
     KW_COMPLEX LPAREN KW_KIND EQ <kind:INT> RPAREN => TypeSpec::Complex(kind),
     KW_COMPLEX LPAREN <kind:Ident> RPAREN => TypeSpec::Complex(kind),
     KW_COMPLEX LPAREN <kind:INT> RPAREN => TypeSpec::Complex(kind),
+    // FORTRAN 77 extensions: a size in bytes, and DOUBLE COMPLEX. The size of
+    // a COMPLEX is that of both parts.
+    KW_COMPLEX STAR <bytes:INT> =>? crate::ast::sized_type("complex", &bytes).map_err(|error| lalrpop_util::ParseError::User { error }),
+    KW_DOUBLE KW_COMPLEX => TypeSpec::Complex("8".into()),
+    KW_REAL STAR <bytes:INT> =>? crate::ast::sized_type("real", &bytes).map_err(|error| lalrpop_util::ParseError::User { error }),
+    KW_INTEGER STAR <bytes:INT> =>? crate::ast::sized_type("integer", &bytes).map_err(|error| lalrpop_util::ParseError::User { error }),
+    KW_LOGICAL STAR <bytes:INT> =>? crate::ast::sized_type("logical", &bytes).map_err(|error| lalrpop_util::ParseError::User { error }),
     KW_REAL LPAREN KW_KIND EQ <kind: RhsExpr> RPAREN => TypeSpec::RealKind(crate::ast::kind_text(kind)),
     KW_REAL LPAREN <kind: RhsExpr> RPAREN => TypeSpec::RealKind(crate::ast::kind_text(kind)),
     KW_INTEGER => TypeSpec::Integer(None),

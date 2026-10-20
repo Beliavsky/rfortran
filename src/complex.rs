@@ -1825,7 +1825,40 @@ pub(crate) fn uses_dot_product(body: &[Stmt]) -> bool {
     uses_feature(body, false, |n| n == "dot_product")
 }
 
+/// FORTRAN 77 specific names of the COMPLEX intrinsics, as their generic
+/// forms: DIMAG, DCONJG, DREAL and DCMPLX.
+fn specific_names(body: &mut [Stmt]) {
+    fn expr(e: &mut Expr) {
+        crate::procedure_arguments::visit_expr(e, &mut |e| {
+            if let Expr::Call(n, args) = e {
+                match n.as_str() {
+                    "dimag" => *n = "aimag".into(),
+                    "dconjg" => *n = "conjg".into(),
+                    "dreal" => *n = "dble".into(),
+                    "dcmplx" if !args.iter().any(|a| matches!(a, Expr::Call(t, _) if t.starts_with("@keyword:"))) => {
+                        *n = "cmplx".into();
+                        if args.len() == 1 {
+                            args.push(Expr::RealLit("0d0".into()));
+                        }
+                        args.push(int(8));
+                    }
+                    _ => {}
+                }
+            }
+        });
+    }
+    for s in body {
+        for e in crate::procedure_arguments::expressions(s) {
+            expr(e);
+        }
+        for b in crate::procedure_arguments::children(s) {
+            specific_names(b);
+        }
+    }
+}
+
 pub(crate) fn resolve(mut p: Program) -> Result<Program> {
+    specific_names(&mut p.body);
     let complex = uses_complex(&p.body);
     if !complex && !uses_dot_product(&p.body) {
         return Ok(p);

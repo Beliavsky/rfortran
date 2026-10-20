@@ -266,6 +266,62 @@ end program
         self.check(self.compile('main.obj', 'features.obj', '-o', 'program.exe'))
         self.assertEqual(self.run_program('program.exe').stdout, ' 10\n AB\n 2 20\n 30.0\n')
 
+    def test_complex(self):
+        # COMPLEX scalars, arrays, elements, constants and function results,
+        # with the FORTRAN 77 specific names DCONJG, DIMAG and DCMPLX.
+        library = self.write('zlib.f', """      SUBROUTINE ZAXPYS(N, ZA, ZX, ZY)
+      INTEGER N, I
+      COMPLEX*16 ZA, ZX(*), ZY(*)
+      DO 10 I = 1, N
+         ZY(I) = ZY(I) + ZA*ZX(I)
+   10 CONTINUE
+      END
+      COMPLEX*16 FUNCTION ZDOTCS(N, ZX, ZY)
+      INTEGER N, I
+      COMPLEX*16 ZX(*), ZY(*)
+      ZDOTCS = (0.0D0, 0.0D0)
+      IF (N .LE. 0) RETURN
+      DO 10 I = 1, N
+         ZDOTCS = ZDOTCS + DCONJG(ZX(I))*ZY(I)
+   10 CONTINUE
+      END
+      DOUBLE PRECISION FUNCTION CABS1S(Z)
+      COMPLEX*16 Z
+      CABS1S = ABS(DBLE(Z)) + ABS(DIMAG(Z))
+      END
+      SUBROUTINE ZROT90(Z)
+      DOUBLE COMPLEX Z
+      Z = DCMPLX(-DIMAG(Z), DBLE(Z))
+      END
+""")
+        self.check(self.compile('-c', library, '-o', 'zlib.obj'))
+        main = self.write('main.f90', """program main
+implicit none
+complex*16 x(4), y(4), zdotcs
+double precision cabs1s
+external zdotcs, cabs1s, zaxpys, zrot90
+integer i
+do i = 1, 4
+  x(i) = dcmplx(dble(i), 1d0)
+  y(i) = dcmplx(0d0, dble(i))
+end do
+call zaxpys(3, (0d0, 2d0), x, y(2))
+call zrot90(x(4))
+print '(8f7.2)', y
+print '(8f7.2)', x
+print '(2f8.2)', zdotcs(4, x, y), zdotcs(0, x, y)
+print '(f8.2)', cabs1s(y(3)) + cabs1s((3d0, -4d0))
+end program
+""")
+        self.check(self.compile('-c', main, '-o', 'main.obj'))
+        self.check(self.compile('main.obj', 'zlib.obj', '-o', 'program.exe'))
+        self.assertEqual(self.run_program('program.exe').stdout, """   0.00   1.00  -2.00   4.00  -2.00   7.00  -2.00  10.00
+   1.00   1.00   2.00   1.00   3.00   1.00  -1.00   4.00
+   44.00   32.00
+    0.00    0.00
+   16.00
+""")
+
     def test_bounds(self):
         source = self.write('bounds.f90', """program bounds
 implicit none

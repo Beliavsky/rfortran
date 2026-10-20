@@ -1074,6 +1074,12 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
     for stmt in body.iter_mut() {
         if let Stmt::ArrayDecl {kind,name,dims}=stmt {
             if dims.iter().any(|e|matches!(e,Expr::Ident(tag) if tag=="@assumed_extent")) {
+                // An assumed-size dummy left for the by-reference calls of
+                // procedures with COMPLEX dummies keeps (*) through COMPLEX
+                // lowering.
+                if arguments.contains(name) {
+                    continue;
+                }
                 let values=array_values.get(name).with_context(||format!("array `{name}`: (*) currently requires a PARAMETER array constructor initializer"))?;
                 if dims.len()!=1 {bail!("implied-shape PARAMETER arrays currently require rank one");}
                 dims[0]=Expr::IntLit(values.len().to_string());

@@ -366,7 +366,7 @@ fn lower_program_body(
 ) -> Result<ast::Program> {
     (|| {
         sections::resolve(reductions::resolve(array_calls::resolve(
-            tokenize::resolve(timing_intrinsics::resolve(parameters::resolve(random_seed::resolve(derived::resolve(external_calls::resolve(equivalence::resolve(program)?)?)?)?)?)?)?,
+            tokenize::resolve(timing_intrinsics::resolve(parameters::resolve(random_seed::resolve(external_calls::resolve_complex(derived::resolve(external_calls::resolve(equivalence::resolve(program)?)?)?)?)?)?)?)?,
         )?)?)
     })()
     .map_err(|error| source_diagnostics::report(error, src, tokens, filename, origins))

@@ -1045,7 +1045,7 @@ pub fn lex(input: &str) -> Vec<Token> {
     // Preserve the pair only within the same logical source statement.
     let type_words: Vec<bool> = (0..tokens.len()).map(|i| {
         matches!(tokens[i].kind, TokenKind::KwDouble)
-            && tokens.get(i+1).is_some_and(|next| matches!(next.kind, TokenKind::KwPrecision)
+            && tokens.get(i+1).is_some_and(|next| matches!(next.kind, TokenKind::KwPrecision | TokenKind::KwComplex)
                 && same_statement(&input[tokens[i].span.end..next.span.start]))
     }).collect();
     for i in 0..tokens.len() {
