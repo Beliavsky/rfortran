@@ -146,14 +146,55 @@ assignment. Existing declarations continue to govern type, kind and rank:
 rfort> :auto on
 rfort> x = [10.0, 20.0, 30.0]
 rfort> x = [x, 40.0]
-rfort> :vars
+rfort> :info
 real(4), allocatable :: x(:) ! allocated, size=4
 ```
 
-`:auto off` restores strict mode; `:auto` reports the mode. `:vars` lists
+`:auto off` restores strict mode; `:auto` reports the mode. `:info` lists
 declarations and allocation sizes. `:reset` clears variables and returns to
 strict mode. Automatic declarations apply to top-level assignments, not bare
 expressions, indexed assignments, loop variables or procedure output arguments.
+
+The REPL also accepts ofort-style `let` and `const` shortcuts without enabling
+automatic declarations:
+
+```text
+rfort> let x = 2.5
+rfort> const n = 3
+rfort> const v(n) = [10, 20, 30]
+rfort> .vars
+n = 3
+v = [10, 20, 30]
+x = 2.5
+```
+
+`let` declares a new variable and assigns its value; an array expression
+produces a rank-one allocatable array. `const` produces a Fortran `parameter`
+declaration and accepts scalar or rank-one array constants. Multiple definitions
+can be separated by commas, including dependent constants such as
+`const dp = kind(1d0), n = 3`. Names must be new. Use ordinary assignment to
+change a variable afterward; changing a constant requires a new session.
+Shortcuts expand to standard Fortran in listings and saved programs.
+
+Dot and colon command prefixes are interchangeable:
+
+| Command | Behavior |
+| --- | --- |
+| `.vars [names...]` | Show committed values; large arrays show the first and last three elements. |
+| `.info` | Show declarations and allocation sizes (the former `:vars` behavior). |
+| `.shapes [names...]`, `.sizes [names...]` | Show array extents or total element counts. |
+| `.list`, `.list -n` | List the complete exported program, with or without line numbers. |
+| `.save filename.f90` | Save the exported program. |
+| `.clear`, `.reset` | Clear values, source history and automatic-declaration mode. |
+| `.cancel` | Discard pending multiline input. |
+| `.quit`, `.quit!`, `.q` | Exit without autosaving. |
+| `.help` | Show command help. |
+
+Inspection uses snapshots and constant declarations; it never replays source or
+advances random-number state. Uninitialized values display as `<unset>` and
+unallocated arrays as `<unallocated>`. Initialized IEEE NaNs remain values.
+Array previews use Fortran element order. The native ofort source editor and
+replay commands (`.run`, `.del`, `.rep`, `reconst`) are not implemented here.
 
 Explicit rank-one INTEGER, REAL and LOGICAL allocatable declarations also work
 in strict mode. Supported operations include whole-array assignment (including
@@ -201,6 +242,14 @@ limit of 10000 elements per array. The REPL excludes pointer and
 CHARACTER arrays, COMPLEX,
 modules, user-defined procedures, READ and file I/O. Use `rfort run file.f90`
 for those features. The REPL shares the interpreter's current limitations.
+
+The shared fixtures in `tests/repl_compat.json` cover common ofort/rfortran
+syntax and saved source. Run `python tests/test_repl_compat.py` after building;
+`RFORT_TEST_COMPILER` selects another rfort executable. Set
+`OFORT_TEST_INTERPRETER` to an ofort executable to run the same fixtures there
+as well. The runner uses temporary directories and native ofort `--autorun`
+mode with warnings suppressed; banner and inspection-format differences are
+allowed. Saved source is syntax-checked with gfortran when available.
 
 Warnings (`-Wall`, `-Wunused`, `-Wformat`, `-Wimplicit-typing`, `-Wunreachable-code`,
 `-Woptional-argument`, `-Werror`), multi-file

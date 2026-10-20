@@ -76,7 +76,7 @@ d=[1d0,2d0]
 mask=d>1d0
 s='hello'
 print *,count(mask)
-:vars
+:info
 :save {self.source}
 :q
 """)
@@ -88,7 +88,7 @@ print *,count(mask)
         self.assertIn("character(len=5) :: s", source)
         self.assertIn("x=[x,40.]", source)
         self.assertNotIn(":auto", source)
-        self.assertNotIn(":vars", source)
+        self.assertNotIn(":info", source)
         self.assertNotIn("snapshot", source)
         self.assertEqual(self.exported_run(), ["4", "100", "1"] if shutil.which("gfortran") else None)
 

@@ -1,0 +1,62 @@
+[
+  {
+    "name": "let_const_values",
+    "input": "let x = 2.5\nconst n = 3\n.vars\n.info\n",
+    "stdout_contains": [
+      "x = 2.5",
+      "n = 3"
+    ],
+    "source_contains": [
+      "real :: x",
+      "integer, parameter :: n = 3",
+      "x = 2.5"
+    ]
+  },
+  {
+    "name": "array_parameter",
+    "input": "const n = 3\nconst v(n) = [10,20,30]\nprint *, sum(v)\n.vars n\n",
+    "stdout_contains": [
+      "60",
+      "n = 3"
+    ],
+    "source_contains": [
+      "integer, parameter :: v(n) = [10,20,30]"
+    ]
+  },
+  {
+    "name": "clear",
+    "input": "let n = 1\n.clear\nlet n = 7\n.vars n\n",
+    "stdout_contains": [
+      "n = 7"
+    ],
+    "source_contains": [
+      "n = 7"
+    ],
+    "source_excludes": [
+      "n = 1"
+    ]
+  },
+  {
+    "name": "character_literal",
+    "input": "let s = \"a;!b\"\nprint *, s\n",
+    "stdout_contains": [
+      "a;!b"
+    ],
+    "source_contains": [
+      "character(len=4) :: s",
+      "s = \"a;!b\""
+    ]
+  },
+  {
+    "name": "dependent_parameters",
+    "input": "const dp = kind(1.0d0), n = 2\nconst v(n) = [1d0,2d0]\nprint *, kind(v), size(v)\n.vars dp\n",
+    "stdout_contains": [
+      "8 2",
+      "dp = 8"
+    ],
+    "source_contains": [
+      "parameter :: dp = kind(1.0d0)",
+      "v(n) = [1d0,2d0]"
+    ]
+  }
+]

@@ -15,6 +15,10 @@ mod arrays;
 mod dynamic;
 #[path = "repl_export.rs"]
 mod export;
+#[path = "repl_shortcuts.rs"]
+mod shortcuts;
+#[path = "repl_inspect.rs"]
+mod inspect;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Evaluation {
@@ -244,15 +248,42 @@ pub(crate) fn run(args: &crate::cli::Cli) -> Result<()> {
             if !pending.is_empty() { eprintln!("Error: incomplete input at end of session; submission discarded"); }
             break;
         }
-        match line.trim() {
+        let command = shortcuts::command(line.trim());
+        match command.as_str() {
             ":quit" | ":q" => break,
             ":reset" => { session = Session::default(); pending.clear(); continue; },
             ":cancel" => { pending.clear(); continue; },
             ":auto" => { println!("automatic declarations: {}", if session.automatic { "on" } else { "off" }); continue; },
             ":auto on" => { session.automatic = true; continue; },
             ":auto off" => { session.automatic = false; continue; },
-            ":vars" => {
+            ":info" => {
                 for line in dynamic::variables(&session.declarations, &session.allocations) { println!("{line}"); }
+                continue;
+            },
+            text if matches!(text.split_whitespace().next(), Some(":vars" | ":shapes" | ":sizes")) => {
+                let result = (|| -> Result<()> {
+                    let end = text.find(char::is_whitespace).unwrap_or(text.len());
+                    let operation = &text[..end];
+                    let arguments = &text[end..];
+                    let view = inspect::View::new(&session)?;
+                    let mut selected = shortcuts::selected(arguments, &session.names)?;
+                    if arguments.trim().is_empty() && operation != ":vars" { selected.retain(|n| view.shapes.contains_key(n)); }
+                    let mut lines = vec![];
+                    for name in selected {
+                        let value = if operation == ":vars" { view.value(&name, &session) }
+                            else { view.shape(&name, &session, operation == ":sizes")? };
+                        lines.push(format!("{name} = {value}"));
+                    }
+                    for line in lines { println!("{line}"); }
+                    Ok(())
+                })();
+                if let Err(error) = result { eprintln!("Error: {error:#}"); }
+                continue;
+            },
+            ":list" | ":list -n" => {
+                let source = session.history.source(&session.names);
+                if command == ":list -n" { print!("{source}"); }
+                else { for (number, line) in source.lines().enumerate() { println!("{:4} {line}", number + 1); } }
                 continue;
             },
             text if text == ":save" || text.starts_with(":save ") || text.starts_with(":save\t") => {
@@ -264,7 +295,7 @@ pub(crate) fn run(args: &crate::cli::Cli) -> Result<()> {
                 continue;
             },
             ":help" => {
-                println!("Declare scalars or INTEGER/REAL/LOGICAL arrays, assign values, PRINT/WRITE, or enter an expression.\nArrays support indexing, sections and expressions (snapshot limit: 10000 elements per array).\nMultiline IF/DO/SELECT CASE blocks and & continuations are accepted.\nStrict mode requires declarations (IMPLICIT NONE). :auto on enables inferred declarations for top-level assignments; :auto off restores strict mode.\n:save filename.f90 exports successful input as a compilable program; quote filenames containing spaces.\n:vars shows declarations and allocation sizes. Rank-one allocatable arrays can resize on assignment at the prompt; ALLOCATE requires a constant extent.\n:reset clears the session; :cancel discards pending input; :quit exits.\nPointer/CHARACTER arrays, modules, procedures, READ and file I/O are not supported yet.");
+                println!("Declare scalars or INTEGER/REAL/LOGICAL arrays, assign values, PRINT/WRITE, or enter an expression.\nArrays support indexing, sections and expressions (snapshot limit: 10000 elements per array).\nMultiline IF/DO/SELECT CASE blocks and & continuations are accepted.\nStrict mode requires declarations (IMPLICIT NONE). :auto on enables inferred declarations for top-level assignments; :auto off restores strict mode.\n:save filename.f90 exports successful input as a compilable program; quote filenames containing spaces.\n.vars/:vars shows saved values; .info/:info shows declarations and allocation sizes.\n.list [-n] lists exported source; .shapes and .sizes inspect arrays.\nLET name = expression declares a new variable; CONST name = expression declares a named constant.\nDot commands and colon commands are interchangeable; .clear resets the session. Rank-one allocatable arrays can resize on assignment at the prompt; ALLOCATE requires a constant extent.\n:reset clears the session; :cancel discards pending input; :quit exits.\nPointer/CHARACTER arrays, modules, procedures, READ and file I/O are not supported yet.");
                 continue;
             },
             text if text.starts_with(':') => { eprintln!("Error: unknown REPL command `{text}`; use :help"); continue; },
@@ -275,8 +306,13 @@ pub(crate) fn run(args: &crate::cli::Cli) -> Result<()> {
         pending.push_str(&line);
         if !line.ends_with('\n') { pending.push('\n'); }
         if continued { continue; }
-        let statement = wrapped(&pending, false);
-        let expression = wrapped(&pending, true);
+        let expanded = match shortcuts::expand(&pending, &session) {
+            Ok(source) => source,
+            Err(error) => { eprintln!("Error: {error:#}"); pending.clear(); continue; },
+        };
+        let source = expanded.as_deref().unwrap_or(&pending);
+        let statement = wrapped(source, false);
+        let expression = wrapped(source, true);
         let stmt_probe = crate::parser::probe_fragment(&statement, statement.len() - 4);
         let expr_probe = crate::parser::probe_fragment(&expression, expression.len() - 4);
         let selected = if stmt_probe.0 { statement }

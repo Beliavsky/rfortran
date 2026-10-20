@@ -122,7 +122,7 @@ impl History {
         self.executable.append(&mut submission.executable);
     }
 
-    pub(super) fn save(&self, path: &Path, names: &HashSet<String>) -> Result<()> {
+    pub(super) fn source(&self, names: &HashSet<String>) -> String {
         let mut program = "repl_session".to_string();
         while names.contains(&program) {
             program.push_str("_export");
@@ -141,6 +141,11 @@ impl History {
             source.push('\n');
         }
         source.push_str(&format!("end program {program}\n"));
+        source
+    }
+
+    pub(super) fn save(&self, path: &Path, names: &HashSet<String>) -> Result<()> {
+        let source = self.source(names);
         // Write beside the destination, then replace it only once complete.
         // A failed write must not truncate a previously saved session.
         struct Temporary(std::path::PathBuf);
@@ -170,7 +175,7 @@ impl History {
     }
 }
 
-fn kind_text(kind: &TypeSpec) -> Result<String> {
+pub(super) fn kind_text(kind: &TypeSpec) -> Result<String> {
     Ok(match kind {
         TypeSpec::Integer(None) => "integer".into(),
         TypeSpec::Integer(Some(k)) => format!("integer(kind={k})"),

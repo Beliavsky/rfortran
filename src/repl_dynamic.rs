@@ -35,7 +35,7 @@ fn declaration(s: &Stmt) -> bool {
 
 /// Normalize kinds/constants with the compiler, then reuse its array-expression
 /// materializer for element type and extent. The probe never executes source.
-fn infer(value: &Expr, headers: &[Stmt]) -> Result<(TypeSpec, Option<i64>)> {
+pub(super) fn infer(value: &Expr, headers: &[Stmt]) -> Result<(TypeSpec, Option<i64>)> {
     let mut body: Vec<_> = headers.iter().filter(|s| declaration(s)).cloned().collect();
     body.push(Stmt::Print {
         items: vec![value.clone()],
@@ -521,6 +521,9 @@ pub(super) fn prepare(
 
 pub(super) fn variables(declarations: &[Stmt], allocations: &Allocations) -> Vec<String> {
     let mut lines = BTreeMap::new();
+    let parameters: HashSet<_> = declarations.iter().filter_map(|s| match s {
+        Stmt::DummyIntent { name, intent } if intent == "parameter" => Some(name.as_str()), _ => None,
+    }).collect();
     for stmt in declarations {
         match stmt {
             Stmt::VarDecl { kind, names } => {
@@ -544,8 +547,9 @@ pub(super) fn variables(declarations: &[Stmt], allocations: &Allocations) -> Vec
                     )
                 } else {
                     format!(
-                        "{} :: {name}({})",
+                        "{}{} :: {name}({})",
                         crate::sema::show_type(kind).to_ascii_lowercase(),
+                        if parameters.contains(name.as_str()) { ", parameter" } else { "" },
                         dims.iter()
                             .map(|d| match d {
                                 Expr::IntLit(n) | Expr::Ident(n) => n.clone(),

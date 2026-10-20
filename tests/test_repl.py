@@ -344,7 +344,7 @@ x
 :auto off
 x=[7.0]
 x
-:vars
+:info
 :quit
 """, " 10.0 20.0 30.0\n 10.0 20.0 30.0 40.0\n 20.0 30.0\n 2.5 2.5\n 7.0\nreal(4), allocatable :: x(:) ! allocated, size=1\n")
 
@@ -401,7 +401,7 @@ x
 size(x)
 n
 y=[3,4]; n=n/z
-:vars
+:info
 :quit
 """, " 1 2\n 2\n 7\ninteger(4) :: n\ninteger(4), allocatable :: x(:) ! allocated, size=2\ninteger(4) :: z\n",
                      ("integer division by zero", "previous scalar and array values retained"))
@@ -422,7 +422,7 @@ y=3
 :auto
 :reset
 :auto
-:vars
+:info
 :quit
 """, " 4\n 1.0 2.0 3.0\n 1.0 2.0 3.0\n 1.0 2.0 3.0\nautomatic declarations: off\nautomatic declarations: off\n",
                      ("undefined variable", "rank one"))
