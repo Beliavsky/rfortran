@@ -60,6 +60,12 @@ impl Capture {
             elements: Vec::new(),
             values: HashMap::new(),
         };
+        // A missing scalar is omitted by interpret_scalars even when its
+        // export flag is set. Share the flag and declare each value only on
+        // its initialized branch. In particular, an unset array must not
+        // populate thousands of scalar entries: the interpreter clones those
+        // maps when evaluating statements.
+        let ready = "rfort_repl_snapshot_ready".to_string();
         let declarations = program.body.clone();
         for stmt in declarations {
             let Stmt::ArrayDecl { kind, name, dims } = stmt else {
@@ -84,43 +90,40 @@ impl Capture {
                 bail!("missing REPL initialization flag for `{name}`");
             };
             capture.values.insert(name.clone(), vec![None; count]);
-            for i in 0..count {
-                let id = capture.elements.len();
-                let helper = format!("rfort_repl_snapshot_{id}");
-                let ready = format!("rfort_repl_snapshot_ready_{id}");
-                let index = vec![Expr::IntLit((i + 1).to_string())];
+            if capture.elements.is_empty() && count > 0 {
                 program.body.extend([
-                    Stmt::VarDecl {
-                        kind: kind.clone(),
-                        names: vec![helper.clone()],
-                    },
                     Stmt::VarDecl {
                         kind: TypeSpec::Integer(None),
                         names: vec![ready.clone()],
                     },
                     Stmt::Assign {
                         name: ready.clone(),
-                        value: Expr::IntLit("0".into()),
-                    },
-                    Stmt::If {
-                        cond: Expr::eq(
-                            Expr::Index(flag.clone(), index.clone()),
-                            Expr::IntLit("1".into()),
-                        ),
-                        then_body: vec![
-                            Stmt::Assign {
-                                name: helper.clone(),
-                                value: Expr::Index(name.clone(), index),
-                            },
-                            Stmt::Assign {
-                                name: ready.clone(),
-                                value: Expr::IntLit("1".into()),
-                            },
-                        ],
-                        else_body: None,
+                        value: Expr::IntLit("1".into()),
                     },
                 ]);
-                flags.insert(helper.clone(), ready);
+            }
+            for i in 0..count {
+                let id = capture.elements.len();
+                let helper = format!("rfort_repl_snapshot_{id}");
+                let index = vec![Expr::IntLit((i + 1).to_string())];
+                program.body.extend([Stmt::If {
+                    cond: Expr::eq(
+                        Expr::Index(flag.clone(), index.clone()),
+                        Expr::IntLit("1".into()),
+                    ),
+                    then_body: vec![
+                        Stmt::VarDecl {
+                            kind: kind.clone(),
+                            names: vec![helper.clone()],
+                        },
+                        Stmt::Assign {
+                            name: helper.clone(),
+                            value: Expr::Index(name.clone(), index),
+                        },
+                    ],
+                    else_body: None,
+                }]);
+                flags.insert(helper.clone(), ready.clone());
                 capture.elements.push((helper, name.clone(), i));
             }
         }

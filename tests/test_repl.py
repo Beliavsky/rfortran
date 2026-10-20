@@ -286,6 +286,21 @@ n
 :quit
 """, " 7\n", ("snapshot limit", "reserved by the REPL", "fixed-size INTEGER, REAL and LOGICAL"))
 
+    def test_large_sparse_array(self):
+        # The snapshot adapter must not create scalar runtime storage for
+        # every unset element. Previously this declaration alone took over a
+        # minute for 10000 elements. Exercise subsequent sparse restores too.
+        result = subprocess.run([COMPILER, "repl"], input="""real :: x(10000)
+x(10000)=3.5
+x(10000)
+x(1)
+x(10000)
+:quit
+""", text=True, capture_output=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, " 3.5\n 3.5\n")
+        self.assertIn("uninitialized variable `x`", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
