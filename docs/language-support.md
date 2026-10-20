@@ -69,6 +69,7 @@ gfortran when it is installed. Run the tests after `cargo build --bin rfort`.
   - [Type extension](#type-extension)
   - [Derived arguments and OPTIONAL](#derived-arguments-and-optional)
 - [Procedures](#procedures)
+  - [External procedures and separate compilation](#external-procedures-and-separate-compilation)
   - [Named arguments](#named-arguments)
   - [OPTIONAL arguments](#optional-arguments)
   - [CHARACTER arguments](#character-arguments)
@@ -239,11 +240,26 @@ checks with gfortran comparisons.
   with `r*c` repeat counts (`r` may be a named constant), signed and BOZ
   constants. The variables must be declared before the DATA statement; an
   array must be the last variable of its value list. Array elements, sections
-  and implied-DO lists are not yet supported.
+  and implied-DO lists are not yet supported. A local array of a procedure
+  that is given values by DATA and never changed, such as a table of pivots,
+  is a named constant; one that the procedure changes is not yet supported,
+  as it would need SAVE storage.
+- `EQUIVALENCE (cr(1,1), crv(1)), (a, b)` makes each later object of a set
+  share the storage of the first, so `crv(k)` is the k-th element of `cr` in
+  column-major order. The objects must be local variables of the same type,
+  with constant bounds, and each later object must lie within the first. A
+  whole later array, or a section of it, cannot yet be used.
+- `INTRINSIC REAL, MAX` and `EXTERNAL` lists may name procedures spelled like
+  keywords.
+- An assignment converts between INTEGER, REAL and DOUBLE PRECISION; a real
+  value assigned to an INTEGER variable is truncated toward zero, as by INT.
+- A local array may have the name of an intrinsic, such as `sum(2,2)`; its
+  references are elements, not the intrinsic.
 - Comment and blank lines may appear between the continued lines of a
   character literal, and a name or number may be split across lines with `&`
   at the end of one line and the start of the next.
-- SELECT and CASE may be used as variable names.
+- SELECT and CASE may be used as variable names, and SELECT as an array name,
+  as in `select(k) = .false.`.
 - External procedures and modules may follow the main program in the same file.
 - `IMPLICIT NONE (TYPE)`, `IMPLICIT NONE (EXTERNAL)` and
   `IMPLICIT NONE (TYPE, EXTERNAL)` are accepted. TYPE disables implicit
@@ -508,13 +524,15 @@ Specific names of generic intrinsics are accepted and call the generic: `IABS`,
 
 ### DO loops
 
-Counted loops accept `do i=first,last,step` with a constant nonzero INTEGER
-step, including negative steps and named parameters. The control variable must
-be a declared scalar INTEGER. Supported scalar INTEGER bounds are evaluated
-once before the control variable is assigned. CYCLE advances the index, EXIT
-preserves it, and empty loops retain the initial value. Increment overflow in
-the compiler's 64-bit INTEGER storage reports a runtime error. Runtime-variable
-steps are not yet supported.
+Counted loops accept `do i=first,last,step` with a nonzero INTEGER step,
+including negative steps, named parameters and steps known only at run time,
+such as `do i = 1, n, incx`. The control variable must be a declared scalar
+INTEGER. Supported scalar INTEGER bounds and the step are evaluated once before
+the control variable is assigned. CYCLE advances the index, EXIT preserves it,
+and empty loops retain the initial value. A runtime step runs
+`max((last - first + step) / step, 0)` iterations and stops the program if it
+is zero. Increment overflow of a constant step in the compiler's 64-bit INTEGER
+storage reports a runtime error.
 
 Unbounded `do` / `end do` loops repeat until EXIT, RETURN, or STOP transfers
 control. CYCLE starts the next iteration; nested loops target the innermost
@@ -546,8 +564,10 @@ list or an enclosing one, leaving any loops and constructs in between, or
 backward to a label earlier in the same statement list, which repeats the
 statements from the label. A jump into a construct, such as into a DO body from
 outside it, is diagnosed. A region that a GOTO creates may not contain an
-unnamed EXIT or CYCLE of an enclosing loop; name the loop instead. Computed and
-assigned GOTO and the arithmetic IF are not supported.
+unnamed EXIT or CYCLE of an enclosing loop; name the loop instead. A computed
+GOTO, `go to (10, 20, 30) k`, jumps to the k-th label, or continues with the
+next statement if k is out of range. Assigned GOTO and the arithmetic IF are
+not supported.
 
 ### SELECT CASE ranges
 
@@ -647,9 +667,10 @@ before reading its storage. Substring assignments still require constant bounds.
 Overlapping
 assignments capture the right-hand side before updating the destination;
 shorter values are blank-padded and longer ones truncated. LEN of a substring
-uses its declared bounds without reading the parent string. Partial writes
-currently require an initialized parent string; initialization tracking is not
-yet per character. Dynamic assignment bounds, substrings of
+uses its declared bounds without reading the parent string. A string may be
+defined one substring at a time, as `job(1:1) = 'S'` then `job(2:2) = 'V'`.
+Initialization tracking is not yet per character, so after a partial write the
+whole string counts as defined. Dynamic assignment bounds, substrings of
 PARAMETER strings, READ destinations and substring actuals to subroutines remain
 unsupported. Run `python tests/test_scalar_substrings.py`.
 
@@ -701,7 +722,7 @@ consistent with the non-NUL ASCII storage subset. Optional KIND arguments are
 not implemented. Variable-bound scalar substring assignments snapshot the RHS,
 truncate or pad it to the selected width, preserve the remaining characters,
 and check bounds at runtime. Empty destination ranges perform no write.
-Runtime partial updates require an initialized destination; bounded
+After a runtime partial update the whole destination counts as defined; bounded
 deferred-length strings retain their allocation and length after such updates.
 `tests/153_to_lower.f90` reproduces `xto_lower.f90`; run
 `python tests/test_character_codes.py` for interpreter/native O0/O2 checks and
@@ -1453,6 +1474,43 @@ rewriting. `tests/programs/xivec_shadow.f90` and `tests/test_derived_shadowing.p
 behavior, including comparisons with and without an unrelated derived type.
 
 ## Procedures
+
+### External procedures and separate compilation
+
+External subroutines and functions, outside any module or main program, are
+called by reference, as in FORTRAN 77, so they can be compiled separately with
+`-c` and linked later. Each one has an entry point, `rfort$name`, that receives
+every argument by reference. A caller needs no interface for it, so it may pass
+a scalar, a whole array, an array element or an expression, and the callee
+applies its own declarations:
+
+- Explicit-shape dummies such as `x(n)` and `a(lda,n)`, with lower bounds if
+  given, and assumed-size dummies such as `x(*)`, `a(lda,*)` and `w(0:*)`.
+- An array element actual starts the dummy array at that element (sequence
+  association), as in `call dscal(n, alpha, a(i,j), 1)`.
+- A constant or expression actual is passed in a temporary.
+- INTEGER, REAL, DOUBLE PRECISION and LOGICAL dummies and function results.
+- CHARACTER dummies receive a copy of the actual. A fixed-length dummy that
+  the procedure changes is copied back on return; an assumed-length
+  `character*(*)` dummy has the actual's length, and the procedure cannot
+  change it.
+
+A function is called this way when it is declared EXTERNAL, as in
+`double precision ddot` / `external ddot`, or when it is defined in the same
+compilation with array or CHARACTER dummies. Its references are evaluated
+before the statement that contains them, and before every test of a DO WHILE
+condition. A subroutine is called this way when it is not defined in the
+compilation, or when it has array or CHARACTER dummies.
+
+Element accesses through a dummy are checked against its bounds and against
+the end of the actual array, and reads are checked for initialization, as
+for local arrays. A procedure entered with an explicit-shape dummy larger than
+its actual, or with an array element outside its array, stops with an error.
+
+Not yet supported in these calls: COMPLEX and derived-type arguments, array
+sections, CHARACTER arrays, procedure arguments, assumed-shape dummies
+(which need an explicit interface), and whole-array operations on a dummy
+inside the procedure. Run `python tests/test_external_calls.py`.
 
 ### Named arguments
 

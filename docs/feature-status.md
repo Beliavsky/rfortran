@@ -126,8 +126,8 @@ Bugs found on 2026-10-18, all fixed:
 | [Statement labels](language-support.md#statement-labels) | F77 or earlier | 🟡 | Labels are accepted; no statement can branch to them except READ `END=` | test_statement_labels.py |
 | [Construct and procedure endings](language-support.md#procedure-and-module-endings) | Mixed | ✅ | Bare END: F77 or earlier; construct-specific and named endings: F90. Including a bare `END` for a module | test_unnamed_procedure_ends.py, test_syntax_forms.py |
 | COMMON blocks | F77 or earlier | ❌ |  |  |
-| [DATA statements](language-support.md#other-statement-forms) | F77 or earlier | 🟡 | Whole variables only, not array elements, sections or implied-DO lists | test_statement_forms_io.py |
-| EQUIVALENCE | F77 or earlier | ❌ |  |  |
+| [DATA statements](language-support.md#other-statement-forms) | F77 or earlier | 🟡 | Whole variables only, not array elements, sections or implied-DO lists. Procedure-local arrays only if the procedure does not change them | test_statement_forms_io.py, test_external_calls.py |
+| [EQUIVALENCE](language-support.md#other-statement-forms) | F77 or earlier | 🟡 | Local variables of one type with constant bounds; each later object must lie within the first, and cannot be used as a whole array | test_external_calls.py |
 | Unnamed ENUM, BIND(C) enumerators (Fortran 2003) | F2003 | ❌ |  |  |
 | [Named enum types (Fortran 2023)](fortran2023.md#enum-types-section-93) | F2023 | 🟡 | Scalars, arrays, constructors, procedures and integer editing; formatted READ requires constant formats and bounded input lists; C calls remain unsupported | test_enum_types.py, test_enum_arrays.py, test_enum_io.py, test_formatted_read_lists.py |
 | Source locations in diagnostics | N/A | ✅ |  | test_source_diagnostics.py |
@@ -153,7 +153,7 @@ Bugs found on 2026-10-18, all fixed:
 | Feature | Introduced | Status | Notes | Tests |
 |---|---|---|---|---|
 | IF, ELSE IF, ELSE, single-line IF | F77 or earlier | ✅ |  | test_else_if.py |
-| [DO with step, DO WHILE, unbounded DO](language-support.md#do-loops) | Mixed | ✅ | Counted DO with a step: F77 or earlier; DO WHILE and unbounded DO: F90. The step must be constant | test_do_steps.py |
+| [DO with step, DO WHILE, unbounded DO](language-support.md#do-loops) | Mixed | ✅ | Counted DO with a step: F77 or earlier; DO WHILE and unbounded DO: F90. The step may be a runtime value | test_do_steps.py, test_external_calls.py |
 | [Named loops, EXIT and CYCLE](language-support.md#do-loops) | F90 | ✅ |  | test_named_loops.py |
 | [DO CONCURRENT](language-support.md#do-loops) | Mixed | 🟡 | DO CONCURRENT: F2008; locality specifiers: F2018; REDUCE: F2023. Sequential; F2023 REDUCE for scalar and fixed-size explicit-shape intrinsic arrays; no other locality specifiers or type specification | test_statement_forms_io.py, test_concurrent_reduce.py |
 | [Labelled DO (`do 10 i = ...`)](language-support.md#do-loops) | F77 or earlier | ✅ |  | test_statement_forms_io.py |
@@ -163,7 +163,8 @@ Bugs found on 2026-10-18, all fixed:
 | [ASSOCIATE](language-support.md#associate) | F2003 | 🟡 | Selectors whose value the block changes are rejected | test_associate.py |
 | SELECT TYPE, SELECT RANK | Mixed | ❌ | SELECT TYPE: F2003; SELECT RANK: F2018. |  |
 | [GOTO](language-support.md#goto) | F77 or earlier | 🟡 | Forward to a label in the same or an enclosing statement list, or backward to a label earlier in the same list; not into a construct | test_goto_and_real_output.py |
-| Computed GOTO, assigned GOTO, arithmetic IF | F77 or earlier | ❌ |  |  |
+| [Computed GOTO](language-support.md#goto) | F77 or earlier | ✅ |  |  |
+| Assigned GOTO, arithmetic IF | F77 or earlier | ❌ |  |  |
 | STOP with a code | Mixed | ✅ | Literal codes: F77 or earlier; scalar constant expressions: F2008; nonconstant expressions: F2018. | test_pure_error_stop.py |
 | [ERROR STOP](language-support.md#error-stop) | F2008 | ✅ | ERROR STOP: F2008; permission in PURE procedures: F2018. Also in PURE procedures | test_pure_error_stop.py |
 
@@ -174,7 +175,8 @@ Bugs found on 2026-10-18, all fixed:
 | Explicit-shape arrays, ranks 1–15 | Mixed | ✅ | Explicit-shape arrays: F77 or earlier; maximum rank increased from 7 to 15 in F2008. | test_vector_ranks.py |
 | [Explicit lower bounds](language-support.md#explicit-array-bounds) | F77 or earlier | ✅ | Constant bounds | test_explicit_bounds.py |
 | Assumed-shape dummies `x(:)` | F90 | ✅ |  | test_function_arrays.py |
-| Assumed-size dummies `x(*)` | F77 or earlier | ❌ | Only for PARAMETER arrays |  |
+| [Assumed-size dummies `x(*)`](language-support.md#external-procedures-and-separate-compilation) | F77 or earlier | 🟡 | Numeric and LOGICAL dummies of external procedures | test_external_calls.py |
+| [Array element actuals for array dummies (sequence association)](language-support.md#external-procedures-and-separate-compilation) | F77 or earlier | 🟡 | Numeric and LOGICAL dummies of external procedures | test_external_calls.py |
 | [Automatic arrays `w(n)`](language-support.md#runtime-allocation) | F90 | ✅ | Numeric, LOGICAL, fixed-length CHARACTER and derived type; no substring writes to CHARACTER elements | test_automatic_arrays.py |
 | [Array constructors and implied-DO](language-support.md#constructors) | F90 | ✅ | Parenthesized (/ ... /) constructors: F90; square brackets: F2003. | test_array_constructors.py, test_runtime_constructors.py |
 | [Typed and empty constructors](language-support.md#constructors) | F2003 | ✅ |  | test_empty_constructors.py |
@@ -258,7 +260,7 @@ current limits.
 | Feature | Introduced | Status | Notes | Tests |
 |---|---|---|---|---|
 | Internal and module procedures | F90 | ✅ |  | test_internal_procedures.py, test_module_scope.py |
-| External procedures | F77 or earlier | ✅ |  |  |
+| [External procedures, compiled separately](language-support.md#external-procedures-and-separate-compilation) | F77 or earlier | 🟡 | Called by reference. Numeric, LOGICAL and CHARACTER scalars, and numeric and LOGICAL explicit-shape and assumed-size arrays; no COMPLEX, derived-type or procedure arguments | test_external_calls.py |
 | [Modules or procedures after the main program in the same file](language-support.md#other-statement-forms) | Mixed | ✅ | External program units: F77 or earlier; modules: F90. Source-file layout is a compiler matter. | test_syntax_forms.py |
 | [Calls without an argument list (`call s`, `subroutine s`)](language-support.md#other-statement-forms) | F77 or earlier | ✅ |  | test_syntax_forms.py |
 | [Named (keyword) arguments](language-support.md#named-arguments) | F90 | ✅ |  | test_named_arguments.py |

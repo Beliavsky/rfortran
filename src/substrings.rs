@@ -126,10 +126,15 @@ fn body(statements: &mut Vec<Stmt>, inherited: &Characters, serial: &mut usize) 
                             Box::new(slice(name, start + length, total - start - length)),
                         );
                     }
+                    // A variable may be defined one substring at a time, so
+                    // its unchanged characters are read without checks.
+                    let partial = start > 0 || start + length < total;
+                    if partial { output.push(unchecked(true)); }
                     output.push(Stmt::Assign {
                         name: name.clone(),
                         value,
                     });
+                    if partial { output.push(unchecked(false)); }
                 }
                 continue;
             }
@@ -203,6 +208,12 @@ fn body(statements: &mut Vec<Stmt>, inherited: &Characters, serial: &mut usize) 
     }
     *statements = output;
     Ok(())
+}
+/// The start or end of statements whose reads are not checked for
+/// initialization.
+fn unchecked(begin: bool) -> Stmt {
+    let name = if begin { crate::initialized::UNCHECKED_BEGIN } else { crate::initialized::UNCHECKED_END };
+    Stmt::CallSub { name: name.into(), args: vec![] }
 }
 pub fn resolve(mut program: Program) -> Result<Program> {
     fn procedures(body:&[Stmt],names:&mut std::collections::HashSet<String>,returns:&mut HashMap<String,TypeSpec>) {
@@ -725,7 +736,8 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
                         let replacement=binary(BinOp::Concat,
                             binary(BinOp::Concat,slice(source.clone(),int(0),start),slice(ident(&temp),int(0),size.clone())),
                             slice(source,end,tail));
-                        prefix.push(Stmt::If {cond:binary(BinOp::Gt,size,int(0)),then_body:vec![Stmt::Assign {name:name.clone(),value:replacement}],else_body:None});
+                        prefix.push(Stmt::If {cond:binary(BinOp::Gt,size,int(0)),then_body:vec![
+                            unchecked(true),Stmt::Assign {name:name.clone(),value:replacement},unchecked(false)],else_body:None});
                         result.extend(prefix);
                         continue;
                     }
@@ -767,7 +779,12 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
                     *cond = Expr::Logical(true);
                 }
             }
-            Stmt::Block { body } => dynamic_body(body, &scope, local, serial)?,
+            Stmt::Block { body } => {
+                // A BLOCK's own deferred-length variables are local to it,
+                // even in a procedure, where no host shares them.
+                let declares = body.iter().any(|s| matches!(s, Stmt::VarDecl { kind, .. } if deferred(kind)));
+                dynamic_body(body, &scope, local || declares, serial)?
+            }
             Stmt::Module { body, .. } | Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } => {
                 dynamic_body(body, &scope, false, serial)?;
             }

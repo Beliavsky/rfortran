@@ -981,7 +981,7 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             *e = Expr::Ident(temp);
         }
         Expr::Call(name, _) if name == "@output_implied_do" => bail!("implied-DO is currently supported only in list-directed output"),
-        Expr::Call(name, args) if reduction(name) => {
+        Expr::Call(name, args) if reduction(name) && !symbols.contains_key(name) => {
             if args.is_empty() || (args.len() > 2 && args.len() != 5) { bail!("{name} requires normalized ARRAY and optional MASK arguments"); }
             lower_expr(&mut args[0], symbols, prefix, serial)?;
             if args.len() >= 2 { lower_expr(&mut args[1], symbols, prefix, serial)?; }

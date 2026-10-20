@@ -196,6 +196,9 @@ struct Descriptor {
     state: String,
     origin: String,
     axes: Vec<Axis>,
+    /// For borrowed storage whose last extent is assumed, the number of
+    /// elements from `data`, which every element offset must stay below.
+    limit: Option<String>,
 }
 impl Descriptor {
     fn fields(&self) -> Vec<String> {
@@ -232,6 +235,7 @@ struct View {
     axes: Vec<Axis>,
     kind: TypeSpec,
     capacity: i64,
+    limit: Option<String>,
 }
 impl View {
     fn count(&self) -> Expr {
@@ -286,6 +290,7 @@ impl Lower {
                     stride: id(&self.fresh()),
                 })
                 .collect(),
+            limit: None,
         }
     }
     fn initialize(&self, d: &Descriptor, out: &mut Vec<Stmt>) {
@@ -337,8 +342,9 @@ impl Lower {
                         let fields = fields.split(',').collect::<Vec<_>>();
                         if fields.len()!=5+3*dims.len() {bail!("invalid borrowed array descriptor");}
                         self.name_capacity=self.name_capacity.max(256);
+                        let limit = attrs.iter().find_map(|(n,i)| (n==&name).then(||i.strip_prefix("@borrowed_limit:")).flatten()).map(String::from);
                         Descriptor {data:fields[0].into(),flags:fields[1].into(),name:fields[2].into(),state:fields[3].into(),origin:fields[4].into(),
-                            axes:fields[5..].chunks_exact(3).map(|a|Axis{lower:id(a[0]),extent:id(a[1]),stride:id(a[2])}).collect()}
+                            axes:fields[5..].chunks_exact(3).map(|a|Axis{lower:id(a[0]),extent:id(a[1]),stride:id(a[2])}).collect(),limit}
                     } else {self.descriptor(dims.len())};
                     self.pointers.insert(
                         name.clone(),
@@ -489,6 +495,7 @@ impl Lower {
             name: id(&d.name),
             origin: id(&d.origin),
             axes: d.axes.clone(),
+            limit: d.limit.clone(),
             kind: ptr.kind.clone(),
             capacity: ptr
                 .targets
@@ -539,6 +546,7 @@ impl Lower {
             axes,
             kind: v.kind,
             capacity: stride,
+            limit: None,
         })
     }
     fn section(
@@ -725,8 +733,18 @@ impl Lower {
         }
         offset
     }
+    /// Stop an access past the elements that borrowed storage has.
+    fn check_limit(v: &View, offset: &Expr, out: &mut Vec<Stmt>) {
+        if let Some(limit) = &v.limit {
+            out.push(require(
+                bin(BinOp::Lt, offset.clone(), id(limit)),
+                "array element is past the end of its actual argument".into(),
+            ));
+        }
+    }
     fn read(&mut self, v: &View, offset: Expr, out: &mut Vec<Stmt>) -> Expr {
         let offset = self.integer(offset, out);
+        Self::check_limit(v, &offset, out);
         out.push(Stmt::CallSub {
             name: "@check_initialized".into(),
             args: vec![
@@ -748,6 +766,7 @@ impl Lower {
         )
     }
     fn store(&self, v: &View, offset: Expr, value: Expr, out: &mut Vec<Stmt>) {
+        Self::check_limit(v, &offset, out);
         out.push(Stmt::CallSub {
             name: format!("@ptr_store_{}", suffix(&v.kind)),
             args: vec![v.data.clone(), v.flags.clone(), offset, value],
@@ -1081,6 +1100,40 @@ impl Lower {
         }
         (a.reads, a.value)
     }
+    /// MAXLOC or MINLOC along the only dimension of a rank-one array: the
+    /// first position of the largest or smallest value, or 0 if it is empty.
+    fn location(&mut self, n: &str, args: &[Expr], out: &mut Vec<Stmt>) -> Result<Expr> {
+        // The normalized arguments: ARRAY, VALUE, DIM, MASK, KIND, BACK.
+        let n = n.trim_start_matches('@');
+        let dim = args.get(2).map(crate::parameters::integer_constant);
+        if args.len() != 6 || !matches!(dim, Some(Ok(1))) || args[3] != Expr::Logical(true) || args[5] != Expr::Logical(false) {
+            bail!("POINTER `{n}` currently requires a rank-one array and DIM=1, without MASK or BACK");
+        }
+        let a = self.array(&args[0], out)?.context("pointer location requires an array")?;
+        if a.shape.len() != 1 {
+            bail!("POINTER `{n}` currently requires a rank-one array and DIM=1");
+        }
+        let count = a.shape[0].clone();
+        let kind = a.kind.clone();
+        let best = self.temp(kind.clone(), int(0), out);
+        let position = self.temp(TypeSpec::Integer(None), int(0), out);
+        let (Expr::Ident(best_name), Expr::Ident(position_name)) = (&best, &position) else { unreachable!() };
+        let (best_name, position_name) = (best_name.clone(), position_name.clone());
+        let element = self.fresh();
+        out.push(Stmt::VarDecl { kind, names: vec![element.clone()] });
+        let index = self.fresh();
+        out.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![index.clone()] });
+        let (mut body, value) = self.loop_body(a, &index);
+        body.push(assign(&element, value));
+        let better = bin(if n == "maxloc" { BinOp::Gt } else { BinOp::Lt }, id(&element), best.clone());
+        body.push(Stmt::If {
+            cond: bin(BinOp::Or, bin(BinOp::Eq, position.clone(), int(0)), better),
+            then_body: vec![assign(&best_name, id(&element)), assign(&position_name, id(&index))],
+            else_body: None,
+        });
+        out.push(Stmt::Do { var: index, start: int(1), end: count, body });
+        Ok(position)
+    }
     fn reduction(&mut self, n: &str, args: &[Expr], out: &mut Vec<Stmt>) -> Result<Expr> {
         let count_i8 = n == "@count_i8";
         let n = match n {
@@ -1196,6 +1249,10 @@ impl Lower {
                             | "@all_reduction"
                     ) {
                         *e = self.reduction(n, args, out)?;
+                        return Ok(());
+                    }
+                    if matches!(n.as_str(), "@maxloc" | "@minloc") {
+                        *e = self.location(n, args, out)?;
                         return Ok(());
                     }
                 }
@@ -1439,7 +1496,8 @@ impl Lower {
                     if matches!(
                         intent.as_str(),
                         "pointer" | "target" | "@pointer_readonly_target"
-                    ) || intent.starts_with("@pointer_bounds:") || intent.starts_with("@borrowed_descriptor:") =>
+                    ) || intent.starts_with("@pointer_bounds:") || intent.starts_with("@borrowed_descriptor:")
+                        || intent.starts_with("@borrowed_limit:") =>
                 {
                     continue
                 }
@@ -1534,6 +1592,18 @@ impl Lower {
                 Stmt::Read { args } if args.iter().any(|e| self.has_pointer(e)) => {
                     bail!("READ into POINTER storage is not yet supported")
                 }
+                // Allocating a local, such as an automatic array, whose
+                // bounds read a POINTER only evaluates them.
+                Stmt::CallSub { name, args } if name == "@allocate"
+                    && args.iter().all(|e| matches!(e, Expr::Call(n, _) if !self.pointers.contains_key(n))) => {
+                    for e in args.iter_mut() {
+                        if let Expr::Call(_, bounds) = e {
+                            for b in bounds {
+                                self.expr(b, &mut out)?;
+                            }
+                        }
+                    }
+                }
                 Stmt::CallSub { name, args } => {
                     if args.iter().any(|e| self.has_pointer(e))
                         && (name.contains("read")
@@ -1571,6 +1641,25 @@ impl Lower {
                     }
                 }
                 Stmt::SelectCase { expr, .. } => self.expr(expr, &mut out)?,
+                // An explicit-step DO or FORALL is a BLOCK that starts with
+                // its control. Read the bounds before it, as for DO, so that
+                // the control stays first.
+                Stmt::Block { body: inner }
+                    if matches!(inner.first(), Some(Stmt::CallSub { name, .. }) if name == "@do_step" || name == "@forall") =>
+                {
+                    if let Some(Stmt::CallSub { args, .. }) = inner.first_mut() {
+                        for control in args.chunks_exact_mut(4) {
+                            for e in &mut control[1..] {
+                                self.expr(e, &mut out)?;
+                            }
+                        }
+                    }
+                    let mut rest = inner.split_off(1);
+                    self.body(&mut rest, &readonly)?;
+                    inner.append(&mut rest);
+                    out.push(s);
+                    continue;
+                }
                 Stmt::Function { .. } | Stmt::Subroutine { .. } => {
                     out.push(s);
                     continue;

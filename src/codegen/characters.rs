@@ -102,6 +102,31 @@ pub(super) fn view(
             let length = integer(length)?;
             Ok(View { address: b.ins().iadd(source.address, start), length, capacity })
         }
+        // CHARACTER storage passed by reference: its address and length,
+        // and the capacity of the dummy that receives it. A fixed-length
+        // dummy takes the leading characters of a longer actual; a strict
+        // one, which keeps the actual's length, cannot.
+        IExpr::Call(name, args) if name == "@character_at" => {
+            let [IExpr::Ident(address), IExpr::Ident(length), IExpr::IntLit(capacity), IExpr::IntLit(strict)] = args.as_slice() else {
+                bail!("invalid CHARACTER argument view");
+            };
+            let mut load = |n: &str| -> Result<ir::Value> {
+                let slot = ints.get(n).context("missing CHARACTER argument storage")?;
+                let address = super::storage_addr(b, ptr, *slot);
+                let value = b.ins().load(types::I64, MemFlags::new(), address, 0);
+                Ok(if ptr == types::I64 { value } else { b.ins().ireduce(ptr, value) })
+            };
+            let address = load(address)?;
+            let length = load(length)?;
+            let capacity: usize = capacity.parse()?;
+            let limit = b.ins().iconst(ptr, capacity as i64);
+            let shorter = b.ins().icmp(IntCC::UnsignedLessThanOrEqual, length, limit);
+            if strict == "1" {
+                super::file_io::require(module, b, ptr, dc, shorter, &format!("CHARACTER actual argument is longer than {capacity} characters"))?;
+            }
+            let length = b.ins().select(shorter, length, limit);
+            Ok(View { address, length, capacity })
+        }
         IExpr::Str(text) => Ok(View {
             address: super::make_data(module, b, ptr, dc, text.as_bytes())?,
             length: b.ins().iconst(ptr, text.len() as i64),

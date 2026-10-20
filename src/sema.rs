@@ -1325,16 +1325,11 @@ pub fn analyze_with_src(
     fn match_types(decl: &TypeSpec, found: &TypeSpec) -> bool {
         use TypeSpec::*;
         match (decl, found) {
-            (Integer(_), Integer(_)) => true,
-            (Real, Integer(_)) => true,
-            (DoublePrecision, Integer(_)) | (DoublePrecision, Real) => true,
-            (Real, Real) => true,
-            (DoublePrecision, DoublePrecision) => true,
+            // Intrinsic assignment converts between numeric types; a REAL
+            // value assigned to an INTEGER is truncated, as by INT.
+            (Integer(_) | Real | DoublePrecision, Integer(_) | Real | DoublePrecision) => true,
             (Logical, Logical) => true,
             (Character(_), Character(_)) => true,
-
-            (Integer(_), Real) => false,
-            (Integer(_), DoublePrecision) => false,
             _ => false,
         }
     }
@@ -2436,6 +2431,7 @@ pub fn analyze_with_src(
                 if !sym.contains_key(&lname)
                     && !fn_map.contains_key(&lname)
                     && !external_fn_ret.contains_key(&lname)
+                    && !lname.starts_with('@')
                 {
                     undef.push(name);
                 }

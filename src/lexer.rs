@@ -312,6 +312,7 @@ pub enum TokenKind {
     /// with continuation lines joined.
     FormatSpec(String),
     KwData,
+    KwEquivalence,
     KwGoto,
     KwContinue,
     #[token(".true.", ignore(ascii_case))]
@@ -527,6 +528,29 @@ fn character_selector(tokens: &[Token], index: usize) -> bool {
             TokenKind::LParen => {
                 return i >= 1 && matches!(tokens[i - 1].kind, TokenKind::KwCharacter)
                     && matches!(tokens.get(i + 1).map(|t| &t.kind), Some(TokenKind::KwLen | TokenKind::KwKind));
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Whether the name at `index` is assigned: `=` follows its parenthesized
+/// subscripts in the same statement.
+fn assigned(tokens: &[Token], input: &str, index: usize) -> bool {
+    let mut depth = 0;
+    for i in index + 1..tokens.len() {
+        if !same_statement(&input[tokens[i - 1].span.end..tokens[i].span.start]) {
+            return false;
+        }
+        match tokens[i].kind {
+            TokenKind::LParen => depth += 1,
+            TokenKind::RParen => {
+                depth -= 1;
+                if depth == 0 {
+                    return tokens.get(i + 1).is_some_and(|t| matches!(t.kind, TokenKind::Eq)
+                        && same_statement(&input[tokens[i].span.end..t.span.start]));
+                }
             }
             _ => {}
         }
@@ -933,10 +957,14 @@ pub fn lex(input: &str) -> Vec<Token> {
     while i + 1 < tokens.len() {
         let same = |a: usize, b: usize, tokens: &Vec<Token>| same_statement(&input[tokens[a].span.end..tokens[b].span.start]);
         let word = |t: &Token, w: &str| matches!(&t.kind, TokenKind::Ident(n) if n.eq_ignore_ascii_case(w));
-        if word(&tokens[i], "goto") && matches!(tokens[i + 1].kind, TokenKind::Integer(_)) && same(i, i + 1, &tokens) {
+        // A computed GO TO starts a statement with a parenthesized label list.
+        let target = |j: usize, tokens: &Vec<Token>| matches!(tokens[j].kind, TokenKind::Integer(_))
+            || matches!(tokens[j].kind, TokenKind::LParen) && statement_head(tokens, input, i)
+                && tokens.get(j + 1).is_some_and(|t| matches!(t.kind, TokenKind::Integer(_)));
+        if word(&tokens[i], "goto") && target(i + 1, &tokens) && same(i, i + 1, &tokens) {
             tokens[i].kind = TokenKind::KwGoto;
         } else if i + 2 < tokens.len() && word(&tokens[i], "go") && word(&tokens[i + 1], "to")
-            && matches!(tokens[i + 2].kind, TokenKind::Integer(_)) && same(i, i + 1, &tokens) && same(i + 1, i + 2, &tokens) {
+            && target(i + 2, &tokens) && same(i, i + 1, &tokens) && same(i + 1, i + 2, &tokens) {
             let span = tokens[i].span.start..tokens[i + 1].span.end;
             tokens.splice(i..=i + 1, [Token { kind: TokenKind::KwGoto, span }]);
         }
@@ -953,8 +981,12 @@ pub fn lex(input: &str) -> Vec<Token> {
         let next = tokens.get(i+1).filter(|t| same_statement(&input[tokens[i].span.end..t.span.start])).map(|t| &t.kind);
         let assigned = matches!(next, Some(TokenKind::Eq | TokenKind::Percent));
         let ended = i > 0 && matches!(tokens[i-1].kind, TokenKind::KwEnd);
+        // A SELECT construct continues with CASE, TYPE or RANK; otherwise
+        // SELECT names an array, as in `select(k) = .false.`.
+        let construct = tokens.get(i+1).is_some_and(|t| same_statement(&input[tokens[i].span.end..t.span.start])
+            && matches!(input[t.span.clone()].to_ascii_lowercase().as_str(), "case" | "type" | "rank"));
         let keyword = ended || match tokens[i].kind {
-            TokenKind::KwSelect => head && !assigned,
+            TokenKind::KwSelect => head && !assigned && construct,
             _ => head && !assigned || i > 0 && matches!(tokens[i-1].kind, TokenKind::KwSelect),
         };
         if !keyword {
@@ -1150,6 +1182,9 @@ pub fn lex(input: &str) -> Vec<Token> {
                 },
                 // DATA name / values /, but not a variable named DATA.
                 "data" if matches!(next,Some(TokenKind::Ident(_))) && statement_head(&tokens,input,start) => Some(TokenKind::KwData),
+                // EQUIVALENCE (a, b), ..., but not an array named EQUIVALENCE.
+                "equivalence" if matches!(next,Some(TokenKind::LParen)) && statement_head(&tokens,input,start)
+                    && !assigned(&tokens,input,start) => Some(TokenKind::KwEquivalence),
                 "procedure" if matches!(next,Some(TokenKind::DColon)) || matches!(previous,Some(TokenKind::KwModule))
                     // A type-bound binding with attributes: `procedure, private :: f`.
                     || matches!(next,Some(TokenKind::Comma)) && statement_head(&tokens,input,start) => Some(TokenKind::KwProcedure),
@@ -1327,6 +1362,19 @@ pub fn lex(input: &str) -> Vec<Token> {
                 match tokens[next].kind { TokenKind::LParen => depth += 1, TokenKind::RParen => depth -= 1, _ => {} }
                 next += 1;
                 if depth == 0 { break; }
+            }
+        }
+        if matches!(word.as_str(), "intrinsic" | "external") {
+            // The listed names may be spelled like keywords: INTRINSIC REAL.
+            let mut i = next;
+            while i < tokens.len() && same_statement(&input[tokens[i - 1].span.end..tokens[i].span.start]) {
+                let text = &input[tokens[i].span.clone()];
+                if !matches!(tokens[i].kind, TokenKind::Comma | TokenKind::DColon | TokenKind::Ident(_))
+                    && text.starts_with(|c: char| c.is_ascii_alphabetic())
+                    && text.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                    tokens[i].kind = TokenKind::Ident(text.to_ascii_lowercase());
+                }
+                i += 1;
             }
         }
         if tokens.get(next).is_some_and(|t| matches!(t.kind, TokenKind::DColon | TokenKind::Ident(_))

@@ -4,7 +4,7 @@
 
 //! Lower explicit constant-step DO loops after parameter and shape resolution.
 use crate::ast::{BinOp, Expr, Stmt, TypeSpec};
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use std::collections::HashMap;
 
 fn int(n: i64) -> Expr { Expr::IntLit(n.to_string()) }
@@ -43,7 +43,11 @@ pub fn lower(body: &mut Vec<Stmt>, symbols: &HashMap<String,(TypeSpec,Vec<Expr>)
     if !crate::output::integer(start, symbols) || !crate::output::integer(end, symbols) {
         bail!("explicit-step DO bounds must be scalar INTEGER expressions");
     }
-    let step = crate::parameters::integer_constant(step).context("DO step must currently be a constant INTEGER")?;
+    let Ok(step) = crate::parameters::integer_constant(step) else {
+        if !crate::output::integer(step, symbols) { bail!("explicit-step DO step must be a scalar INTEGER expression"); }
+        let (var, start, end, step) = (var.clone(), start.clone(), end.clone(), step.clone());
+        return runtime_step(body, &var, &start, &end, &step, serial);
+    };
     if step == 0 { bail!("DO step must not be zero"); }
     let var = var.clone();
     let start = start.clone();
@@ -67,6 +71,34 @@ pub fn lower(body: &mut Vec<Stmt>, symbols: &HashMap<String,(TypeSpec,Vec<Expr>)
         Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![first.clone(),last.clone()] },
         assign(&first, start), assign(&last, end), assign(&var, id(&first)),
         Stmt::DoWhile { cond: bin(if step > 0 { BinOp::Le } else { BinOp::Ge }, id(&var), id(&last)), body: inner },
+    ];
+    Ok(())
+}
+
+/// A DO loop whose step is known only at run time executes
+/// max((end - start + step) / step, 0) iterations, counted at entry.
+fn runtime_step(body: &mut Vec<Stmt>, var: &str, start: &Expr, end: &Expr, step: &Expr, serial: &mut usize) -> Result<()> {
+    *serial += 1;
+    let [first, last, by, trip] = ["start", "end", "by", "trip"].map(|n| format!("@do_{n}_{serial}"));
+    let increment = vec![
+        assign(&trip, bin(BinOp::Sub, id(&trip), int(1))),
+        assign(var, bin(BinOp::Add, id(var), id(&by))),
+    ];
+    let mut inner = body.split_off(1);
+    cycles(&mut inner, &increment);
+    inner.extend(increment);
+    let count = bin(BinOp::Div, bin(BinOp::Add, bin(BinOp::Sub, id(&last), id(&first)), id(&by)), id(&by));
+    *body = vec![
+        Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![first.clone(), last.clone(), by.clone(), trip.clone()] },
+        assign(&first, start.clone()), assign(&last, end.clone()), assign(&by, step.clone()),
+        Stmt::If {
+            cond: bin(BinOp::Eq, id(&by), int(0)),
+            then_body: vec![Stmt::CallSub { name: "@error_stop".into(), args: vec![Expr::Str("DO step must not be zero".into())] }],
+            else_body: None,
+        },
+        assign(&trip, count),
+        assign(var, id(&first)),
+        Stmt::DoWhile { cond: bin(BinOp::Gt, id(&trip), int(0)), body: inner },
     ];
     Ok(())
 }

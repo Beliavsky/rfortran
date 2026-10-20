@@ -316,8 +316,30 @@ pub(crate) fn real_constant(e: &Expr) -> Result<f64> {
                 "acos" => value.acos(), "asin" => value.asin(), "atan" => value.atan(),
                 "cos" => value.cos(), "sin" => value.sin(), "tan" => value.tan(),
                 "sqrt" => value.sqrt(), "log" => value.ln(), "exp" => value.exp(),
-                "abs" => value.abs(), _ => bail!("unsupported function in real PARAMETER initializer: {name}"),
+                "abs" => value.abs(), "ceiling" => value.ceil(), "floor" => value.floor(),
+                "int" | "aint" => value.trunc(), "nint" | "anint" => value.round(),
+                _ => bail!("unsupported function in real PARAMETER initializer: {name}"),
             }
+        }
+        // REAL(x, kind) and DBLE-like conversions with a KIND.
+        Expr::Call(name, args) if args.len() == 2 && matches!(name.to_ascii_lowercase().as_str(), "real" | "int" | "nint") => {
+            let value = real_constant(&args[0])?;
+            let kind = integer_constant(&args[1])?;
+            match name.to_ascii_lowercase().as_str() {
+                "real" if kind == 4 => (value as f32) as f64,
+                "real" => value,
+                "int" => value.trunc(),
+                _ => value.round(),
+            }
+        }
+        Expr::Call(name, args) if args.len() >= 2 && matches!(name.to_ascii_lowercase().as_str(), "max" | "min" | "amax1" | "amin1" | "dmax1" | "dmin1" | "max0" | "min0") => {
+            let maximum = name.to_ascii_lowercase().contains("max");
+            let mut result = real_constant(&args[0])?;
+            for a in &args[1..] {
+                let v = real_constant(a)?;
+                result = if maximum { result.max(v) } else { result.min(v) };
+            }
+            result
         }
         _ => bail!("PARAMETER initializer must be a supported constant expression"),
     };
@@ -1232,6 +1254,9 @@ fn typed_constructor(kind:&TypeSpec,items:Vec<Expr>)->Result<Expr> {
     }
 }
 
+/// Marks a local array, by name, in the scoped constants.
+const LOCAL_ARRAY: &str = "@local_array:";
+
 fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
     if let Expr::Call(name,args)=expr {
         if name=="@conditional" {
@@ -1447,7 +1472,8 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
             if let Some(dim) = slots[1].take() {
                 args.extend([dim, Expr::Logical(true)]);
             }
-        } else if matches!(name.as_str(), "sum" | "product" | "minval" | "maxval" | "iany" | "iall" | "iparity" | "parity") {
+        } else if matches!(name.as_str(), "sum" | "product" | "minval" | "maxval" | "iany" | "iall" | "iparity" | "parity")
+            && !constants.contains_key(&format!("{LOCAL_ARRAY}{name}")) {
             let first = if name == "parity" { "mask" } else { "array" };
             let mut slots: [Option<Expr>; 3] = [None, None, None];
             let mut keywords = false;
@@ -1786,8 +1812,15 @@ fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules, ass
     // A local declaration hides host type information as well as its value.
     for stmt in body.iter() {
         match stmt {
-            Stmt::VarDecl { names, .. } => for name in names { scoped.remove(&format!("@character_length:{name}")); },
-            Stmt::ArrayDecl { name, .. } => { scoped.remove(&format!("@character_length:{name}")); },
+            Stmt::VarDecl { names, .. } => for name in names {
+                scoped.remove(&format!("@character_length:{name}"));
+                scoped.remove(&format!("{LOCAL_ARRAY}{name}"));
+            },
+            Stmt::ArrayDecl { name, .. } => {
+                scoped.remove(&format!("@character_length:{name}"));
+                // A local array hides an intrinsic of the same name, as SUM.
+                scoped.insert(format!("{LOCAL_ARRAY}{name}"), Expr::Logical(true));
+            },
             _ => {},
         }
     }

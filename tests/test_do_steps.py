@@ -29,8 +29,7 @@ class DoSteps(unittest.TestCase):
     def test_diagnostics(self):
         cases = [
             ("integer::i", "1,5,0", "DO step must not be zero"),
-            ("integer::i,j\nj=2", "1,5,j", "constant INTEGER"),
-            ("integer::i", "1,5,1.5", "constant INTEGER"),
+            ("integer::i", "1,5,1.5", "step must be a scalar INTEGER"),
             ("real::i", "1,5,2", "scalar INTEGER variable"),
             ("integer::i", "1.5,5,2", "bounds must be scalar INTEGER"),
             ("integer::i", "1,5.5,2", "bounds must be scalar INTEGER"),

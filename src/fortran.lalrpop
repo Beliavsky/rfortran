@@ -94,6 +94,7 @@ extern {
         LABEL => TokenKind::StatementLabel(<String>),
         FORMAT_SPEC => TokenKind::FormatSpec(<String>),
         KW_DATA => TokenKind::KwData,
+        KW_EQUIVALENCE => TokenKind::KwEquivalence,
         KW_GOTO => TokenKind::KwGoto,
         KW_CONTINUE => TokenKind::KwContinue,
         TRUE => TokenKind::True,
@@ -584,8 +585,14 @@ Stmt: Stmt = {
     <name:LoopName?> <stmt:DoLoop> <end:END_LOOP_NAME?> => crate::named_loops::parsed(stmt,name,end),
     KW_RETURN => Stmt::Return(None),
     KW_GOTO <label:INT> => Stmt::CallSub { name: "@goto".into(), args: vec![Expr::IntLit(label)] },
+    // Computed GO TO (l1, ..., ln) [,] selector.
+    KW_GOTO LPAREN <labels:LabelList> RPAREN COMMA? <selector:RhsExpr> => crate::ast::computed_goto(labels, selector),
+    // Two labels, as in GO TO (10, 20) K, lex like a COMPLEX constant.
+    KW_GOTO COMPLEX_OPEN <labels:LabelList> RPAREN COMMA? <selector:RhsExpr> => crate::ast::computed_goto(labels, selector),
     // DATA objects / values / [[,] objects / values /]...
     KW_DATA <sets:DataSets> => Stmt::CallSub { name: "@data".into(), args: sets },
+    // EQUIVALENCE (object, object, ...), ...
+    KW_EQUIVALENCE <sets:EquivalenceSets> => Stmt::CallSub { name: crate::equivalence::STATEMENT.into(), args: sets },
     // A FORMAT statement; its label gives the format to READ, WRITE and PRINT.
     <spec:FORMAT_SPEC> => Stmt::CallSub { name: "@format_statement".into(), args: vec![Expr::Str(spec)] },
     <name: Designator> EQ <rhs: RhsExpr> => Stmt::Assign { name, value: rhs },
@@ -648,6 +655,11 @@ ParamList: Vec<String> = {
 };
 
 CondExpr: Expr = { <e: RhsExpr> => e };
+
+LabelList: Vec<String> = {
+    <l:INT> => vec![l],
+    <mut v:LabelList> COMMA <l:INT> => { v.push(l); v },
+};
 
 IoControls: Vec<Expr> = {
     <arg:IoControl> => vec![arg],
@@ -873,6 +885,13 @@ ForallControl: Vec<Expr> = {
         vec![Expr::Ident(index), start, end, step.unwrap_or(Expr::IntLit("1".into()))],
 };
 ForallStride: Expr = { COLON <e:RhsExpr> => e };
+EquivalenceSets: Vec<Expr> = {
+    <s:EquivalenceSet> => vec![s],
+    <mut v:EquivalenceSets> COMMA <s:EquivalenceSet> => { v.push(s); v },
+};
+EquivalenceSet: Expr = {
+    LPAREN <objects:DataObjects> RPAREN => Expr::Call("@equivalence_set".into(), objects),
+};
 DataSets: Vec<Expr> = {
     <set:DataSet> => vec![set],
     // The comma between sets is optional in Fortran, but without newline
@@ -1004,6 +1023,7 @@ DeclaredDimension: Expr = {
     COLON => Expr::Ident("@deferred_extent".into()),
     <e:RhsExpr> => e,
     <lower:RhsExpr> COLON <upper:RhsExpr> => Expr::Call("@declared_bounds".into(),vec![lower,upper]),
+    <lower:RhsExpr> COLON STAR => Expr::Call("@declared_bounds".into(),vec![lower,Expr::Ident("@assumed_extent".into())]),
 };
 
 CaseBlocks: Vec<CaseOrDefault> = {

@@ -283,7 +283,7 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                     variable.state=State::Maybe;
                 } else {write(dest,None,env,&mut after,serial);}
             }
-            Stmt::CallSub { name, args } if name == "@internal_read_byte" || name == "@internal_format_end" || name == "@character_assign" || name == "@character_length" || name=="@file_name" || name=="@file_newunit" || name=="@file_open_dynamic" || name=="@file_open_try" || name=="@list_read_end" => {
+            Stmt::CallSub { name, args } if name == "@internal_read_byte" || name == "@internal_format_end" || name == "@character_assign" || name == "@character_length" || name == "@character_address" || name=="@file_name" || name=="@file_newunit" || name=="@file_open_dynamic" || name=="@file_open_try" || name=="@list_read_end" => {
                 for arg in &args[1..] { read(arg, env, &mut before, serial)?; }
                 let Expr::Ident(dest)=&args[0] else {unreachable!()};
                 write(dest,None,env,&mut after,serial);
@@ -340,8 +340,10 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
             Stmt::If { cond, then_body, else_body } => {
                 read(cond, env, &mut before, serial)?;
                 let mut a = env.clone(); let mut b = env.clone();
-                if !matches!(cond, Expr::Logical(false)) { flow(then_body, &mut a, result, serial)?; }
-                if !matches!(cond, Expr::Logical(true)) { if let Some(body) = else_body { flow(body, &mut b, result, serial)?; } }
+                // A branch that cannot run is removed rather than left
+                // without the instrumentation that code generation expects.
+                if !matches!(cond, Expr::Logical(false)) { flow(then_body, &mut a, result, serial)?; } else { then_body.clear(); }
+                if !matches!(cond, Expr::Logical(true)) { if let Some(body) = else_body { flow(body, &mut b, result, serial)?; } } else { *else_body = None; }
                 *env = match cond { Expr::Logical(true) => a, Expr::Logical(false) => b, _ => merge(&a, &b) };
             }
             Stmt::Do { var, start, end, body } => {

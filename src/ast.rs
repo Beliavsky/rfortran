@@ -158,6 +158,20 @@ pub enum TypeSpec {
     LogicalKind(String),
 }
 
+/// A computed GO TO: an IF chain that branches to the label the selector
+/// picks, or continues with the next statement if it picks none.
+pub fn computed_goto(labels: Vec<String>, selector: Expr) -> Stmt {
+    let mut chain: Option<Vec<Stmt>> = None;
+    for (i, label) in labels.into_iter().enumerate().rev() {
+        chain = Some(vec![Stmt::If {
+            cond: Expr::eq(selector.clone(), Expr::IntLit((i + 1).to_string())),
+            then_body: vec![Stmt::CallSub { name: "@goto".into(), args: vec![Expr::IntLit(label)] }],
+            else_body: chain,
+        }]);
+    }
+    chain.and_then(|mut c| c.pop()).unwrap_or(Stmt::CallSub { name: "@continue".into(), args: vec![] })
+}
+
 /// Normalize a named scalar result into explicit returns for the existing backends.
 pub fn function_with_result(name: String, params: Vec<String>, result: String, mut body: Vec<Stmt>) -> Stmt {
     fn returns(body: &mut [Stmt], result: &str) {

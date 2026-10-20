@@ -326,6 +326,7 @@ fn human_token(tok: &TokenKind) -> String {
         TokenKind::StatementLabel(n) => format!("statement label {n}"),
         TokenKind::FormatSpec(_) => "FORMAT statement".into(),
         TokenKind::KwData => "keyword data".into(),
+        TokenKind::KwEquivalence => "keyword equivalence".into(),
         TokenKind::KwGoto => "keyword goto".into(),
         TokenKind::KwIf => "keyword if".into(),
         TokenKind::KwThen => "keyword then".into(),

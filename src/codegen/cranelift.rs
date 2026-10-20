@@ -120,6 +120,26 @@ fn to_f64(b: &mut FunctionBuilder, v: CgVal) -> ir::Value {
         }
     }
 }
+/// The value of a constant INTEGER size expression.
+fn constant_size(e: &IExpr) -> Option<i128> {
+    use crate::ast::{BinOp, UnOp};
+    match e {
+        IExpr::IntLit(s) => s.parse().ok(),
+        IExpr::Un(UnOp::Neg, a) => constant_size(a).map(|v| -v),
+        IExpr::Bin(op, a, b) => {
+            let (a, b) = (constant_size(a)?, constant_size(b)?);
+            match op {
+                BinOp::Add => a.checked_add(b),
+                BinOp::Sub => a.checked_sub(b),
+                BinOp::Mul => a.checked_mul(b),
+                BinOp::Div if b != 0 => Some(a / b),
+                BinOp::Pow if (0..64).contains(&b) => a.checked_pow(b as u32),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
 fn to_i64(b: &mut FunctionBuilder, v: CgVal) -> ir::Value {
     use ir::types;
     match v {
@@ -1959,6 +1979,15 @@ fn gen_stmts(
                 if !fragment { ex.call_printf(b, &[ex.fmt_s, ex.p_nl]); }
             }
             IStmt::DeclVar(kind, name, dims) => {
+                // A constant size expression, such as 10*6, is folded here;
+                // only a literal size gives an array its storage below.
+                let folded: Vec<IExpr>;
+                let dims = if dims.len() == 1 && !matches!(dims[0], IExpr::IntLit(_)) {
+                    match constant_size(&dims[0]) {
+                        Some(n) => { folded = vec![IExpr::IntLit(n.to_string())]; &folded }
+                        None => dims,
+                    }
+                } else { dims };
                 if let crate::ast::TypeSpec::Integer(Some(k)) = kind {
                     INTEGER_KINDS.with(|kinds| kinds.borrow_mut().insert(name.clone(), *k));
                 }
@@ -2486,6 +2515,34 @@ fn gen_stmts(
                     let code=eval_expr(b,ex,ptr_ty,code,ints,reals,bools,func_meta);let code=to_i64(b,code);let byte=b.ins().ireduce(types::I8,code);
                     let address=storage_addr(b,ptr_ty,*slot);let address=b.ins().iadd(address,index);
                     b.ins().store(MemFlags::new(),byte,address,0);
+                    continue;
+                }
+                if name == "@character_store" {
+                    // Copy a CHARACTER dummy back to the actual passed by
+                    // reference, up to the shorter length.
+                    let [IExpr::Ident(address), IExpr::Ident(length), source] = args.as_slice() else { anyhow::bail!("invalid CHARACTER copy"); };
+                    let source = characters::view(module, b, ptr_ty, dc, chars, ints, source)?;
+                    let mut load = |n: &str| -> anyhow::Result<ir::Value> {
+                        let slot = ints.get(n).ok_or_else(|| anyhow::anyhow!("missing CHARACTER argument storage"))?;
+                        let a = storage_addr(b, ptr_ty, *slot);
+                        let v = b.ins().load(types::I64, MemFlags::new(), a, 0);
+                        Ok(if ptr_ty == types::I64 { v } else { b.ins().ireduce(ptr_ty, v) })
+                    };
+                    let address = load(address)?;
+                    let length = load(length)?;
+                    let shorter = b.ins().icmp(ir::condcodes::IntCC::UnsignedLessThan, length, source.length);
+                    let count = b.ins().select(shorter, length, source.length);
+                    file_io::call(module, b, "memmove", &[address, source.address, count], ptr_ty)?;
+                    continue;
+                }
+                if name == "@character_address" {
+                    // The address of a CHARACTER value passed by reference.
+                    let [IExpr::Ident(dest), source] = args.as_slice() else { anyhow::bail!("invalid CHARACTER address capture"); };
+                    let source = characters::view(module, b, ptr_ty, dc, chars, ints, source)?;
+                    let value = if ptr_ty == types::I64 { source.address } else { b.ins().uextend(types::I64, source.address) };
+                    let slot = ints.get(dest).ok_or_else(|| anyhow::anyhow!("missing CHARACTER address destination"))?;
+                    let address = storage_addr(b, ptr_ty, *slot);
+                    b.ins().store(MemFlags::new(), value, address, 0);
                     continue;
                 }
                 if name == "@character_length" {
