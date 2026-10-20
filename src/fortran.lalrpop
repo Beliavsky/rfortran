@@ -564,8 +564,8 @@ Stmt: Stmt = {
         Stmt::CallSub { name: format!("@element_call:{m}"), args: vec![Expr::Call(id, sub)] },
     KW_CALL <name: Designator> => Stmt::CallSub { name, args: vec![] },
     // Single-line IF: executes a single statement when condition true, e.g. `if (cond) cycle`
-    KW_IF LPAREN <cnd: CondExpr> RPAREN <s: Stmt> => {
-        let mut v = Vec::new(); v.push(s); Stmt::If { cond: cnd, then_body: v, else_body: None }
+    KW_IF LPAREN <cnd: CondExpr> RPAREN <pos:@L> <s: Stmt> => {
+        Stmt::If { cond: cnd, then_body: vec![Stmt::SourceLocation(pos), s], else_body: None }
     },
     <stmt:NameableConstruct> => stmt,
     <name:LoopName> <stmt:NameableConstruct> => crate::named_loops::named_construct(name, stmt),
@@ -1216,8 +1216,8 @@ NameableConstruct: Stmt = {
 IfTail: Option<Vec<Stmt>> = {
     KW_END KW_IF => None,
     KW_ELSE <body:Stmts> KW_END KW_IF => Some(body),
-    KW_ELSE_IF LPAREN <cond:CondExpr> RPAREN KW_THEN <body:Stmts> <tail:IfTail> =>
-        Some(vec![Stmt::If { cond, then_body: body, else_body: tail }]),
+    <pos:@L> KW_ELSE_IF LPAREN <cond:CondExpr> RPAREN KW_THEN <body:Stmts> <tail:IfTail> =>
+        Some(vec![Stmt::SourceLocation(pos), Stmt::If { cond, then_body: body, else_body: tail }]),
 };
 
 WhereTail: Vec<Stmt> = {

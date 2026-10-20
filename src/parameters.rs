@@ -1770,6 +1770,12 @@ pub(crate) fn constant_integer_with(expr: &Expr, constants: &HashMap<String, Exp
     rewrite_expr(&mut value,constants)?;
     evaluate(&value,constants)
 }
+/// Best-effort constant evaluation shared by source diagnostics.
+pub(crate) fn constant_expression_with(expr: &Expr, constants: &HashMap<String, Expr>) -> Result<Expr> {
+    let mut value = expr.clone();
+    rewrite_expr(&mut value, constants)?;
+    Ok(value)
+}
 pub(crate) fn concrete_kind(mut kind: TypeSpec) -> Result<TypeSpec> {
     resolve_kind(&mut kind, &Constants::new())?;
     Ok(kind)

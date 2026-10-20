@@ -18,6 +18,8 @@ const CATEGORIES: &[&str] = &[
     "unused-dummy-argument",
     "unused-function",
     "optional-argument",
+    "implicit-typing",
+    "unreachable-code",
 ];
 fn canonical(name: &str) -> &str {
     match name {
@@ -128,6 +130,7 @@ struct Analysis<'a> {
     bodies: HashMap<usize, usize>,
     modules: HashMap<String, usize>,
     roots: HashSet<usize>,
+    dead: HashSet<usize>,
 }
 impl<'a> Analysis<'a> {
     fn scope(
@@ -483,6 +486,7 @@ impl<'a> Analysis<'a> {
     }
     fn walk(&mut self, body: &[Stmt], scope: usize, owner: Option<usize>) {
         for stmt in body {
+            if self.dead.contains(&(stmt as *const Stmt as usize)) { continue; }
             match stmt {
                 Stmt::VarDecl { kind, .. } => self.kind(scope, owner, kind),
                 Stmt::ArrayDecl { kind, dims, .. } => {
@@ -690,6 +694,7 @@ pub fn check(
     program: &Program,
     src: &str,
     tokens: &[Token],
+    own_len: usize,
     filename: &str,
     origins: Option<&[crate::source_diagnostics::SourceOrigin]>,
     settings: &SemaSettings,
@@ -707,6 +712,7 @@ pub fn check(
         bodies: HashMap::new(),
         modules: HashMap::new(),
         roots: HashSet::new(),
+        dead: crate::reachability::analyze(program).dead,
     };
     let root = a.scope(None, None, false, &program.body);
     a.gather(&program.body, root);
@@ -747,6 +753,7 @@ pub fn check(
     ids.sort_by_key(|&id| a.decls[id].span.start);
     for id in ids {
         let d = &a.decls[id];
+        if d.span.start >= own_len { continue; }
         let module = a.scopes[d.scope].module;
         if d.public
             || d.result

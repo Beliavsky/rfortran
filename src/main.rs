@@ -91,6 +91,8 @@ mod repl;
 mod sema;
 mod unused;
 mod optional_warnings;
+mod implicit_warnings;
+mod reachability;
 mod utils;
 
 #[cfg(target_os = "windows")]
@@ -336,10 +338,16 @@ fn prepare_program(
     args: &cli::Cli,
 ) -> Result<module_files::Prepared> {
     let filename = input.to_str().unwrap_or("<unknown>");
-    unused::check(&program, src, tokens, filename, origins, settings, &args.warnings)?;
+    unused::validate_options(&args.warnings)?;
     optional_warnings::check(&program, src, tokens, filename, origins, settings, &args.warnings)?;
     let prepared = module_files::prepare(program, src, input, origins, args)
         .map_err(|error| source_diagnostics::report(error, src, tokens, filename, origins))?;
+    unused::check(&prepared.program, &prepared.source, &lexer::lex(&prepared.source), src.len(),
+                  filename, Some(&prepared.origins), settings, &args.warnings)?;
+    implicit_warnings::check(&prepared.program, &prepared.source, src.len(), filename,
+                             &prepared.origins, settings, &args.warnings)?;
+    reachability::check(&prepared.program, &prepared.source, src.len(), filename,
+                        &prepared.origins, settings, &args.warnings)?;
     if args.standard.is_some() {
         standards::check(&prepared.program, &prepared.source, &lexer::lex(&prepared.source), filename,
                          Some(&prepared.origins), args.standard, settings.werror)?;

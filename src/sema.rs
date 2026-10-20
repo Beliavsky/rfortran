@@ -5,7 +5,7 @@ use crate::ast::{CaseItem, Expr, Implicit, LetterRange, Program, Stmt, TypeSpec}
 use crate::errors::{CompileError, CompileErrorKind};
 use crate::lexer::{Token, TokenKind};
 
-fn show_type(type_spec: &TypeSpec) -> String {
+pub(crate) fn show_type(type_spec: &TypeSpec) -> String {
     match type_spec {
         TypeSpec::Referenced {polymorphic,..} => if *polymorphic {"CLASSOF"} else {"TYPEOF"}.into(),
         TypeSpec::Complex(kind) => format!("COMPLEX({kind})"),
@@ -2321,62 +2321,6 @@ pub fn analyze_with_src(
                             );
                         }
                     },
-                    _ => {}
-                }
-            }
-        }
-    }
-    if settings.wall {
-        for stmt in &program.body {
-            if let Stmt::If {
-                cond,
-                then_body,
-                else_body,
-            } = stmt
-            {
-                match cond {
-                    Expr::Logical(true) => {
-                        if let Some(else_b) = else_body {
-                            if !else_b.is_empty() {
-                                if let Some(span) = tokens
-                                    .iter()
-                                    .position(|t| matches!(t.kind, TokenKind::KwIf))
-                                    .map(|i| tokens[i].span.clone())
-                                {
-                                    let msg = "unreachable ELSE branch".to_string();
-                                    warn_or_error(
-                                        "unreachable_else",
-                                        msg,
-                                        span,
-                                        settings,
-                                        &mut stderr,
-                                        &file,
-                                        &mut errors,
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    Expr::Logical(false) => {
-                        if !then_body.is_empty() {
-                            if let Some(span) = tokens
-                                .iter()
-                                .position(|t| matches!(t.kind, TokenKind::KwIf))
-                                .map(|i| tokens[i].span.clone())
-                            {
-                                let msg = "unreachable THEN branch".to_string();
-                                warn_or_error(
-                                    "unreachable_then",
-                                    msg,
-                                    span,
-                                    settings,
-                                    &mut stderr,
-                                    &file,
-                                    &mut errors,
-                                );
-                            }
-                        }
-                    }
                     _ => {}
                 }
             }

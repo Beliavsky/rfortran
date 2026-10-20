@@ -148,7 +148,8 @@ by that submission remains visible. The first version excludes arrays, COMPLEX,
 modules, user-defined procedures, READ and file I/O. Use `rfort run file.f90`
 for those features. The REPL shares the interpreter's current limitations.
 
-Warnings (`-Wall`, `-Wunused`, `-Woptional-argument`, `-Werror`), multi-file
+Warnings (`-Wall`, `-Wunused`, `-Wimplicit-typing`, `-Wunreachable-code`,
+`-Woptional-argument`, `-Werror`), multi-file
 builds, separate compilation with `-c`, and the `.rmod` module interface files
 are described in [docs/usage.md](docs/usage.md).
 

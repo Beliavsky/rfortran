@@ -46,6 +46,28 @@ conformance. Regression checks: `python tests/test_standards.py`.
 
 ## Warnings
 
+`-Wunreachable-code`, enabled by `-Wall`/`--wall`, warns once at the first
+statement of each provably unreachable sequence. This includes statements after
+`STOP`, `ERROR STOP`, `RETURN`, `EXIT` or `CYCLE`, branches whose conditions are
+constant expressions, and code after an `IF` whose branches both transfer
+control. Named constants and host/module association are considered; values
+assigned to ordinary variables are not assumed constant. Labels conservatively
+allow another entry point. Declarations and procedure definitions are excluded.
+Disable with `-Wno-unreachable-code`, promote with `-Werror=unreachable-code`,
+or use `!#allow(unreachable-code)` / `!#deny(unreachable-code)`.
+Unused-entity checks ignore references from these unreachable statements.
+Run `python tests/test_reachability_warnings.py` for regression checks.
+
+`-Wimplicit-typing` warns once per implicitly typed variable at its first use,
+including loop indices and dummy arguments without explicit types. For example,
+`i=3` without a declaration warns that `i` is implicitly typed as `INTEGER(4)`.
+The warning is enabled by `-Wall`/`--wall`; suppress it with
+`-Wno-implicit-typing` or promote it with `-Werror=implicit-typing`.
+Custom `IMPLICIT` mappings are respected. Implicit typing remains valid Fortran;
+use `IMPLICIT NONE` to require explicit declarations. Source directives
+`!#allow(implicit-typing)` and `!#deny(implicit-typing)` also work.
+Run `python tests/test_implicit_warnings.py` for regression checks.
+
 Unused-declaration warnings are opt-in and run before lowering. Enable them with
 `-Wall` (also `--Wall`/`--wall`) or `-Wunused`, or select categories individually:
 `-Wunused-type`, `-Wunused-variable`, `-Wunused-but-set-variable`,
