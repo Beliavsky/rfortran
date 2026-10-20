@@ -123,7 +123,7 @@ integer :: =
 unknown+1
 integer, parameter :: k=3
 k=9
-integer, allocatable :: a(:)
+integer, pointer :: a(:)
 n
 k
 :quit
@@ -300,6 +300,162 @@ x(10000)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, " 3.5\n 3.5\n")
         self.assertIn("uninitialized variable `x`", result.stderr)
+
+    def test_large_initialized_array(self):
+        # Fully initialized snapshots must not add one scalar variable per
+        # element, which made each following submission quadratic in size.
+        result = subprocess.run([COMPILER, "repl"], input="""real :: x(10000)
+call random_number(x)
+x(1)
+x(10000)=0.5
+x(10000)
+x(1)
+:quit
+""", text=True, capture_output=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(result.stdout, " 0.280835\n 0.5\n 0.280835\n")
+
+    def test_packed_snapshots_preserve_numeric_ranges_and_special_values(self):
+        self.session("""double precision :: x(4)=[1d-300,1d300,-0d0,1.23456789012345d0]
+abs(x(1)/1d-300-1d0)<1d-14
+abs(x(2)/1d300-1d0)<1d-14
+1d0/x(3)<0d0
+abs(x(4)-1.23456789012345d0)<1d-14
+integer(kind=8) :: n(2)=[-9223372036854775807_8,9223372036854775807_8]
+n
+x(1)=0d0/0d0
+x(1)/=x(1)
+x(2)=1d0/0d0
+x(2)>1d300
+:quit
+""", " T\n T\n T\n T\n -9223372036854775807 9223372036854775807\n T\n T\n")
+
+    def test_auto_array_declarations_and_self_resizing(self):
+        self.session(""":auto on
+x=[10.0,20.0,30.0]
+x
+x=[x,40.0]
+x
+x=x(2:3)
+x
+x=2.5
+x
+:auto off
+x=[7.0]
+x
+:vars
+:quit
+""", " 10.0 20.0 30.0\n 10.0 20.0 30.0 40.0\n 20.0 30.0\n 2.5 2.5\n 7.0\nreal(4), allocatable :: x(:) ! allocated, size=1\n")
+
+    def test_auto_scalar_types_constants_and_array_kinds(self):
+        self.session(""":auto on
+n=3
+integer, parameter :: k=2
+integer :: i
+a=[(i,i=1,k)]
+a
+d=[1d0,2d0]
+kind(d)
+total=sum(d)
+total
+root=sqrt(9.)
+root
+mask=d>1d0
+mask
+s='hello'
+s
+n=n+1
+n
+:quit
+""", " 1 2\n 8\n 3.0\n 3.0\n F T\n hello\n 4\n")
+
+    def test_explicit_allocatable_arrays(self):
+        self.session("""real, allocatable :: x(:)
+allocated(x)
+x=[1.,2.]
+allocated(x)
+size(x)
+deallocate(x)
+allocated(x)
+integer, parameter :: n=3
+allocate(x(n))
+x(2)=8.
+x(2)
+x(1)
+x=4.
+x
+deallocate(x)
+allocate(x(0))
+allocated(x)
+size(x)
+:quit
+""", " F\n T\n 2\n F\n 8.0\n 4.0 4.0 4.0\n T\n 0\n", ("uninitialized variable",))
+
+    def test_auto_mode_and_allocation_roll_back_on_failure(self):
+        self.session(""":auto on
+x=[1,2]
+integer :: z=0,n=7
+x=[3,4,5]; n=n/z
+x
+size(x)
+n
+y=[3,4]; n=n/z
+:vars
+:quit
+""", " 1 2\n 2\n 7\ninteger(4) :: n\ninteger(4), allocatable :: x(:) ! allocated, size=2\ninteger(4) :: z\n",
+                     ("integer division by zero", "previous scalar and array values retained"))
+
+    def test_auto_strict_mode_rank_and_existing_types(self):
+        self.session("""x=[1.,2.]
+:auto on
+x=[1.,2.]
+x=[1,2,3]
+kind(x)
+x
+x=[.true.]
+x
+x=reshape([1.,2.,3.,4.],[2,2])
+x
+:auto off
+y=3
+:auto
+:reset
+:auto
+:vars
+:quit
+""", " 4\n 1.0 2.0 3.0\n 1.0 2.0 3.0\n 1.0 2.0 3.0\nautomatic declarations: off\nautomatic declarations: off\n",
+                     ("undefined variable", "rank one"))
+
+    def test_allocation_errors_and_multiple_assignments(self):
+        self.session("""integer, allocatable :: a(:)
+a
+a=2
+deallocate(a)
+allocate(a(2))
+allocate(a(3))
+a(1)=7
+a(1)
+:auto on
+b=[1,2]; b=[b,3]; b=[b,4]
+b
+:quit
+""", " 7\n 1 2 3 4\n", ("not allocated", "already allocated"))
+
+    def test_empty_allocatable_and_type_inquiries(self):
+        self.session("""real, allocatable :: x(:)
+kind(x)
+if (allocated(x)) then
+print *, x
+end if
+:auto on
+x=[real ::]
+allocated(array=x)
+size(x)
+x=[1.,2.]
+size(x)
+:quit
+""", " 4\n T\n 0\n 2\n")
 
 
 if __name__ == "__main__":

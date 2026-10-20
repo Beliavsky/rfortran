@@ -133,10 +133,35 @@ rfort> print *, n
 ```
 
 The session retains INTEGER, REAL, DOUBLE PRECISION, LOGICAL and CHARACTER
-scalars, named constants, and random-number state. Variables must be declared;
-the session uses `IMPLICIT NONE`. Declarations can be entered after executable
+scalars, named constants, and random-number state. Strict mode, the default,
+requires declarations and uses `IMPLICIT NONE`. Declarations can be entered after executable
 statements. Bare expressions print their values. Multiline IF, DO and SELECT
 CASE constructs, and free-form `&` continuations, are accepted.
+
+Use `:auto on` to infer declarations for undeclared variables assigned at the
+prompt. Array expressions infer rank-one allocatable arrays, which resize on
+assignment. Existing declarations continue to govern type, kind and rank:
+
+```text
+rfort> :auto on
+rfort> x = [10.0, 20.0, 30.0]
+rfort> x = [x, 40.0]
+rfort> :vars
+real(4), allocatable :: x(:) ! allocated, size=4
+```
+
+`:auto off` restores strict mode; `:auto` reports the mode. `:vars` lists
+declarations and allocation sizes. `:reset` clears variables and returns to
+strict mode. Automatic declarations apply to top-level assignments, not bare
+expressions, indexed assignments, loop variables or procedure output arguments.
+
+Explicit rank-one INTEGER, REAL and LOGICAL allocatable declarations also work
+in strict mode. Supported operations include whole-array assignment (including
+self-referential resizing), scalar expansion of allocated arrays, `ALLOCATED`,
+constant-extent `ALLOCATE`, and `DEALLOCATE`. Allocation changes and whole
+allocatable-array assignments currently require top-level statements; indexed
+updates may appear inside blocks. Runtime-dependent allocation extents and
+higher-rank allocatable arrays are not yet supported in the REPL.
 
 Use `:help`, `:reset`, `:cancel` (discard unfinished input), and `:quit` or `:q`.
 EOF also exits. Redirected input has no banner or prompts.
@@ -157,7 +182,7 @@ Each submission uses a worker process and saves initialized scalar and array val
 success. A failed submission retains previous values; output already produced
 by that submission remains visible. Partially initialized arrays retain their
 initialization checks across submissions. Array snapshots currently have a
-limit of 10000 elements per array. The REPL excludes allocatable, pointer and
+limit of 10000 elements per array. The REPL excludes pointer and
 CHARACTER arrays, COMPLEX,
 modules, user-defined procedures, READ and file I/O. Use `rfort run file.f90`
 for those features. The REPL shares the interpreter's current limitations.

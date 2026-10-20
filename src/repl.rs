@@ -11,6 +11,8 @@ use std::path::Path;
 
 #[path = "repl_arrays.rs"]
 mod arrays;
+#[path = "repl_dynamic.rs"]
+mod dynamic;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Evaluation {
@@ -56,11 +58,13 @@ struct Session {
     names: HashSet<String>,
     values: HashMap<String, Expr>,
     arrays: arrays::Values,
+    allocations: dynamic::Allocations,
+    automatic: bool,
     seed: u64,
 }
 impl Default for Session {
     fn default() -> Self {
-        Self { declarations: vec![], names: HashSet::new(), values: HashMap::new(), arrays: HashMap::new(), seed: 1 }
+        Self { declarations: vec![], names: HashSet::new(), values: HashMap::new(), arrays: HashMap::new(), allocations: Default::default(), automatic: false, seed: 1 }
     }
 }
 
@@ -75,7 +79,7 @@ fn validate(body: &[Stmt], top: bool) -> Result<()> {
             Stmt::SourceLocation(_) | Stmt::Assign { .. } | Stmt::AssignIndex { .. } | Stmt::Print { .. }
                 | Stmt::Exit | Stmt::Cycle => {},
             Stmt::Implicit(Implicit::None) if top => {},
-            Stmt::DummyIntent { intent, .. } if top && intent == "parameter" => {},
+            Stmt::DummyIntent { intent, .. } if top && matches!(intent.as_str(), "parameter" | "allocatable") => {},
             Stmt::VarDecl { kind, .. } if top => scalar(kind)?,
             Stmt::ArrayDecl { kind, .. } if top => arrays::kind(kind)?,
             Stmt::InitializedDecl { kind, attributes, .. } if top => {
@@ -99,9 +103,10 @@ fn validate(body: &[Stmt], top: bool) -> Result<()> {
                 }
             },
             Stmt::CallSub { name, .. } if matches!(name.as_str(), "random_number" | "random_seed"
+                | "@allocate" | "@deallocate"
                 | "cpu_time" | "system_clock" | "@formatted_print"
                 | "@formatted_write_noadvance") => {},
-            _ => bail!("unsupported in the REPL: allocation, pointers, procedures, modules, READ, file operations, and program control statements; use rfort run for full programs"),
+            _ => bail!("unsupported in the REPL: pointers, procedures, modules, READ, file operations, and program control statements; use rfort run for full programs"),
         }
     }
     Ok(())
@@ -121,7 +126,7 @@ impl Session {
             Stmt::ArrayDecl { name, .. } => Some(name.clone()), _ => None,
         }).collect();
         for stmt in &parsed.body {
-            if matches!(stmt, Stmt::DummyIntent { intent, .. } if intent == "parameter") {
+            if matches!(stmt, Stmt::DummyIntent { intent, .. } if matches!(intent.as_str(), "parameter" | "allocatable")) {
                 declarations.push(stmt.clone());
                 continue;
             }
@@ -155,7 +160,19 @@ impl Session {
         if args.standard.is_some() {
             crate::standards::check(&program, input, &tokens, "<repl>", None, args.standard, args.werror)?;
         }
-        let mut program = crate::lower_program_body(program, input, &tokens, "<repl>", None)?;
+        let prepared = dynamic::prepare(program, &self.allocations, &names, self.automatic)?;
+        for stmt in &prepared.inferred {
+            match stmt {
+                Stmt::VarDecl { names: declared, .. } => names.extend(declared.iter().cloned()),
+                Stmt::ArrayDecl { name, .. } => { names.insert(name.clone()); },
+                _ => {},
+            }
+        }
+        declarations.extend(prepared.inferred.clone());
+        let mut capture_names = names.clone();
+        for name in prepared.allocations.keys() { capture_names.remove(name); }
+        capture_names.extend(prepared.bindings.values().cloned());
+        let mut program = crate::lower_program_body(prepared.program, input, &tokens, "<repl>", None)?;
         arrays::restore(&mut program, &self.arrays);
         let mut settings = crate::sema::SemaSettings::default();
         settings.werror = args.werror;
@@ -167,9 +184,14 @@ impl Session {
         }
         let (mut program, mut flags) = crate::initialized::instrument_scalars(program)
             .map_err(|e| crate::source_diagnostics::report(e, input, &tokens, "<repl>", None))?;
-        let capture = arrays::Capture::prepare(&mut program, &mut flags, &names)?;
+        let capture = arrays::Capture::prepare(&mut program, &mut flags, &capture_names)?;
         let mut snapshot = execute(program, flags, self.seed)?;
-        self.arrays = capture.finish(&mut snapshot.values);
+        let mut saved = capture.finish(&mut snapshot.values)?;
+        for (name, storage) in &prepared.bindings {
+            if name != storage { if let Some(value) = saved.remove(storage) { saved.insert(name.clone(), value); } }
+        }
+        self.arrays = saved;
+        self.allocations = prepared.allocations;
         self.values = snapshot.values;
         self.seed = snapshot.seed;
         self.declarations = declarations;
@@ -220,8 +242,15 @@ pub(crate) fn run(args: &crate::cli::Cli) -> Result<()> {
             ":quit" | ":q" => break,
             ":reset" => { session = Session::default(); pending.clear(); continue; },
             ":cancel" => { pending.clear(); continue; },
+            ":auto" => { println!("automatic declarations: {}", if session.automatic { "on" } else { "off" }); continue; },
+            ":auto on" => { session.automatic = true; continue; },
+            ":auto off" => { session.automatic = false; continue; },
+            ":vars" => {
+                for line in dynamic::variables(&session.declarations, &session.allocations) { println!("{line}"); }
+                continue;
+            },
             ":help" => {
-                println!("Declare scalars or fixed-size INTEGER/REAL/LOGICAL arrays, assign values, PRINT/WRITE, or enter an expression.\nArrays support indexing, sections and expressions (snapshot limit: 10000 elements per array).\nMultiline IF/DO/SELECT CASE blocks and & continuations are accepted.\nVariables must be declared (IMPLICIT NONE).\n:reset clears the session; :cancel discards pending input; :quit exits.\nAllocatable/pointer/CHARACTER arrays, modules, procedures, READ and file I/O are not supported yet.");
+                println!("Declare scalars or INTEGER/REAL/LOGICAL arrays, assign values, PRINT/WRITE, or enter an expression.\nArrays support indexing, sections and expressions (snapshot limit: 10000 elements per array).\nMultiline IF/DO/SELECT CASE blocks and & continuations are accepted.\nStrict mode requires declarations (IMPLICIT NONE). :auto on enables inferred declarations for top-level assignments; :auto off restores strict mode.\n:vars shows declarations and allocation sizes. Rank-one allocatable arrays can resize on assignment at the prompt; ALLOCATE requires a constant extent.\n:reset clears the session; :cancel discards pending input; :quit exits.\nPointer/CHARACTER arrays, modules, procedures, READ and file I/O are not supported yet.");
                 continue;
             },
             text if text.starts_with(':') => { eprintln!("Error: unknown REPL command `{text}`; use :help"); continue; },
