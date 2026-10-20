@@ -43,10 +43,22 @@ impl Default for Options {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WarningKind {
+    /// Text after the last column was dropped; reported once, for line 0.
+    Truncation,
+    /// An output line is longer than free form allows by default. Only a
+    /// compiler with that limit needs it.
+    FreeLineLength,
+    /// Anything else, which may change or break the meaning of the code.
+    Source,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Warning {
     /// The 1-based input line.
     pub line: usize,
+    pub kind: WarningKind,
     pub message: String,
 }
 
@@ -271,7 +283,7 @@ struct Converter<'a> {
 
 impl Converter<'_> {
     fn warn(&mut self, line: usize, message: impl Into<String>) {
-        self.warnings.push(Warning { line, message: message.into() });
+        self.warnings.push(Warning { line, kind: WarningKind::Source, message: message.into() });
     }
 
     /// Scan the statement field `line[from..]`, whose first byte is in column
@@ -602,7 +614,7 @@ pub fn convert(source: &[u8], options: &Options) -> Converted {
             "text after column {length} ignored on {} line(s); sequence numbers are expected there, otherwise set the line length",
             converter.truncated
         );
-        converter.warnings.insert(0, Warning { line: 0, message });
+        converter.warnings.insert(0, Warning { line: 0, kind: WarningKind::Truncation, message });
     }
     let newline: &[u8] = if crlf { b"\r\n" } else { b"\n" };
     let mut text = vec![];
@@ -612,6 +624,7 @@ pub fn convert(source: &[u8], options: &Options) -> Converted {
         if line.text.len() > FREE_LINE_LENGTH {
             converter.warnings.push(Warning {
                 line: i + 1,
+                kind: WarningKind::FreeLineLength,
                 message: format!("line has {} characters, more than free form allows by default ({FREE_LINE_LENGTH})", line.text.len()),
             });
         }

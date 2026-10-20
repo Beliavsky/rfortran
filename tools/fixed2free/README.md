@@ -2,11 +2,11 @@
 
 Convert Fortran fixed source form to free source form.
 
-`fixed2free` is a standalone package, separate from the rfortran compiler
-build. Its library is written so the compiler can later convert fixed-form
-files internally: line `n` of the output is line `n` of the input, and
-`Converted::map` gives the input byte offset of every output byte, so
-diagnostics can point at the original line and column.
+`fixed2free` is a standalone package with its own workspace. The rfortran
+compiler also uses its library to read `.f`, `.for`, `.ftn` and `.f77` files:
+line `n` of the output is line `n` of the input, so diagnostics point at the
+original line, and `Converted::map` gives the input byte offset of every output
+byte. Each warning has a `WarningKind`, so a caller can choose which to show.
 
 ## Build and use
 

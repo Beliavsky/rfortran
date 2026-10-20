@@ -42,7 +42,7 @@ fn protect_output(output: &Path, inputs: &[PathBuf]) -> Result<()> {
     Ok(())
 }
 
-fn combine(sources: &[PathBuf], output: &Path, inputs: &[PathBuf]) -> Result<Vec<crate::source_diagnostics::SourceOrigin>> {
+fn combine(sources: &[PathBuf], output: &Path, inputs: &[PathBuf], cli: &Cli) -> Result<Vec<crate::source_diagnostics::SourceOrigin>> {
     protect_output(output, inputs)?;
     if output.exists() {
         let old = utils::read_file_to_string(output)?;
@@ -59,7 +59,7 @@ fn combine(sources: &[PathBuf], output: &Path, inputs: &[PathBuf]) -> Result<Vec
         let source = source.canonicalize()?;
         text.push_str(&format!("! Source: {}\n", source.display()));
         let start=text.len();
-        text.push_str(&utils::read_file_to_string(&source)?);
+        text.push_str(&utils::read_source(&source, cli)?);
         origins.push(crate::source_diagnostics::SourceOrigin{name:source.display().to_string(),range:start..text.len()});
         text.push('\n');
     }
@@ -94,9 +94,10 @@ pub fn build(
             .as_str()
         {
             "f90" | "f95" | "f03" | "f08" => sources.push(input.clone()),
+            extension if utils::FIXED_FORM_EXTENSIONS.contains(&extension) => sources.push(input.clone()),
             "obj" | "o" => objects.push(input.clone()),
             _ => bail!(
-                "Unsupported input type: {} (expected free-form Fortran or an object)",
+                "Unsupported input type: {} (expected Fortran source or an object)",
                 input.display()
             ),
         }
@@ -135,7 +136,7 @@ pub fn build(
                     combined.display()
                 );
             }
-            let origins=combine(&sources, &combined, inputs)?;
+            let origins=combine(&sources, &combined, inputs, cli)?;
             (combined,Some(origins))
         };
         if !cli.quiet {

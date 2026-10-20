@@ -147,7 +147,7 @@ fn compiler_main() -> Result<()> {
         cli::Command::Repl => repl::run(&args)?,
         cli::Command::ReplEval { input } => repl::evaluate(&input)?,
         cli::Command::Lex { input, out } => {
-            let src = utils::read_file_to_string(&input)?;
+            let src = utils::read_source(&input, &args)?;
             let tokens = lexer::lex(&src);
             let mut serialized = String::new();
             let mut longest_token = 0;
@@ -175,7 +175,7 @@ fn compiler_main() -> Result<()> {
             }
         }
         cli::Command::Parse { input, out } => {
-            let src = utils::read_file_to_string(&input)?;
+            let src = utils::read_source(&input, &args)?;
             let tokens = lexer::lex(&src);
             match parser::parse_with_src(&src, &tokens, input.to_str().unwrap_or("<unknown>")) {
                 Ok(p) => {
@@ -199,7 +199,7 @@ fn compiler_main() -> Result<()> {
             }
         }
         cli::Command::Check { input } => {
-            let src = utils::read_file_to_string(&input)?;
+            let src = utils::read_source(&input, &args)?;
             let tokens = lexer::lex(&src);
             let settings_from_src = sema::parse_directives(&src);
             let mut settings = settings_from_src;
@@ -268,7 +268,7 @@ fn compiler_main() -> Result<()> {
             }
         }
         cli::Command::Run { input } => {
-            let src = utils::read_file_to_string(&input)?;
+            let src = utils::read_source(&input, &args)?;
             let tokens = lexer::lex(&src);
             let settings_from_src = sema::parse_directives(&src);
             let mut settings = settings_from_src;
@@ -376,7 +376,8 @@ fn compile_to_object(
     allow_undefined: bool,
     origins: Option<&[source_diagnostics::SourceOrigin]>,
 ) -> Result<BuildArtifact> {
-    let src = utils::read_file_to_string(input)?;
+    // A combined source was converted file by file already.
+    let src = if origins.is_some() { utils::read_file_to_string(input)? } else { utils::read_source(input, args)? };
     let tokens = lexer::lex(&src);
     let settings_from_src = sema::parse_directives(&src);
     let mut settings = settings_from_src;

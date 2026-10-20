@@ -100,7 +100,7 @@ Bugs found on 2026-10-18, all fixed:
 | Feature | Introduced | Status | Notes | Tests |
 |---|---|---|---|---|
 | Free source form (`.f90`, `.f95`, `.f03`, `.f08`) | F90 | ✅ |  | testsuite |
-| Fixed source form (`.f`, `.for`) | F77 or earlier | ❌ |  |  |
+| [Fixed source form (`.f`, `.for`, `.ftn`, `.f77`)](language-support.md#fixed-source-form) | F77 or earlier | ✅ | Converted to free form as it is read. No preprocessing, so `.F` files with `#` lines fail; code written without blanks, such as `DO10I=1,5`, is not supported | test_fixed_form.py |
 | `INCLUDE` lines | F90 | ❌ |  |  |
 | Implicit typing | F77 or earlier | ✅ | IMPLICIT COMPLEX is not supported |  |
 | `IMPLICIT NONE` | F90 | ✅ |  |  |

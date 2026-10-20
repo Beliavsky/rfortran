@@ -35,6 +35,45 @@ pub fn read_file_to_string(path: &Path) -> Result<String> {
     Ok(fs::read_to_string(path)?.trim_start_matches('\u{feff}').to_owned())
 }
 
+/// Extensions of fixed source form files, in lower case.
+pub const FIXED_FORM_EXTENSIONS: &[&str] = &["f", "for", "ftn", "f77"];
+
+/// Read a Fortran source, converting fixed source form to free form. The
+/// conversion keeps every line on its line number, so diagnostics need no map.
+pub fn read_source(path: &Path, cli: &crate::cli::Cli) -> Result<String> {
+    if !cli.is_fixed_form(path) {
+        return read_file_to_string(path);
+    }
+    let options = cli.fixed_form_options()?;
+    let bytes = fs::read(path)?;
+    let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes);
+    let converted = fixed2free::convert(bytes, &options);
+    let mut warned = false;
+    for warning in &converted.warnings {
+        let shown = match warning.kind {
+            // rfort has no free-form line length limit.
+            fixed2free::WarningKind::FreeLineLength => false,
+            // Sequence numbers after column 72 are common, so as gfortran
+            // does, report the dropped text only with -Wall.
+            fixed2free::WarningKind::Truncation => cli.wall,
+            fixed2free::WarningKind::Source => true,
+        };
+        if !shown {
+            continue;
+        }
+        warned = true;
+        if warning.line == 0 {
+            eprintln!("{}: Warning: {}", path.display(), warning.message);
+        } else {
+            eprintln!("{}:{}: Warning: {}", path.display(), warning.line, warning.message);
+        }
+    }
+    if warned && cli.werror {
+        anyhow::bail!("fixed source form warnings in {} treated as errors", path.display());
+    }
+    Ok(String::from_utf8_lossy(&converted.text).into_owned())
+}
+
 pub fn default_object_output_path(input: &Path) -> PathBuf {
     let mut out = input.to_path_buf();
     out.set_extension(if cfg!(target_os = "windows") {
@@ -70,6 +109,10 @@ pub fn print_help() {
     println!("  -Wno-<category>      Disable a warning category");
     println!("  -Werror, --Werror    Treat enabled warnings as errors");
     println!("  -Werror=<category>  Enable a warning category and treat it as an error");
+    println!("  -ffixed-form         Read sources as fixed form (default for .f, .for, .ftn, .f77)");
+    println!("  -ffree-form          Read sources as free form, whatever their extension");
+    println!("  -ffixed-line-length-<n>  Last column of fixed-form lines: a number or none (default 72)");
+    println!("  -fd-lines-as-code    Compile fixed-form D lines instead of ignoring them");
     println!("  --lto                Enable link-time optimization");
     println!("  --opt-level <level>  Set optimization level (0, 1, 2, 3, s, z, S, Z)");
     println!("  --quiet              Suppress build progress (warnings remain visible)");

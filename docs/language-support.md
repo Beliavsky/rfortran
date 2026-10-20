@@ -97,6 +97,41 @@ gfortran when it is installed. Run the tests after `cargo build --bin rfort`.
 
 ## Source form and declarations
 
+### Fixed source form
+
+Files ending in `.f`, `.for`, `.ftn` or `.f77`, in either case, are read as
+fixed source form, and other Fortran files as free form. `-ffixed-form` and
+`-ffree-form` override the extension for every source. Fixed-form and
+free-form files can be compiled together.
+
+Each fixed-form file is converted to free form as it is read, by the
+`fixed2free` converter in `tools/fixed2free`. The conversion keeps every line on
+its line number, so errors are reported at the original line. Columns can
+differ by a few characters on lines that the conversion changed, for example
+where it added a blank in `STOP'done'`.
+
+The conversion follows the fixed-form rules:
+
+- Columns 1-5 hold a label, a non-blank other than `0` in column 6 marks a
+  continuation, and text after column 72 is ignored. Use
+  `-ffixed-line-length-N` or `-ffixed-line-length-none` to change the last
+  column; `-Wall` reports ignored text.
+- `C`, `c`, `*` or `!` in column 1 starts a comment line. `D` lines are
+  comments unless `-fd-lines-as-code` is given.
+- DEC tab format is accepted.
+- A CHARACTER literal continued onto the next line keeps its blanks up to the
+  last column.
+- Blanks inside numbers and operators, such as `.70710 67811` or `.AND .`, are
+  removed, and Hollerith constants in FORMAT statements become quoted strings.
+
+Code that relies on blanks being insignificant inside names and keywords, such
+as `DO10I=1,5` or `GOTO10`, is not supported, and there is no preprocessing, so
+`#` lines fail. A warning is shown for a construct that the conversion may not
+preserve, such as a statement starting before column 7; `-Werror` makes these
+warnings errors.
+
+Run `python tests/test_fixed_form.py` for the checks.
+
 ### Declarations without `::`
 
 Intrinsic type declarations may omit `::` when they have no attributes or
