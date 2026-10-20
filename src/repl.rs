@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Beliavsky
 
-//! Scalar sessions reuse the normal frontend and interpreter. Only declarations
+//! Sessions reuse the normal frontend and interpreter. Only declarations
 //! and snapshots of initialized values survive; executable input is never replayed.
 use crate::ast::{Expr, Implicit, Program, Stmt, TypeSpec};
 use anyhow::{bail, Result};
 use std::collections::{HashMap, HashSet};
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
+
+#[path = "repl_arrays.rs"]
+mod arrays;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Evaluation {
@@ -36,7 +39,7 @@ fn execute(program: Program, flags: std::collections::BTreeMap<String,String>, s
     std::fs::write(&path, serde_json::to_vec(&Evaluation { program, flags, seed })?)?;
     let status = std::process::Command::new(std::env::current_exe()?)
         .arg("repl-eval").arg(&path).stdin(std::process::Stdio::null()).status()?;
-    if !status.success() { bail!("submission failed; previous scalar values retained"); }
+    if !status.success() { bail!("submission failed; previous scalar and array values retained"); }
     let result = std::fs::read(work.0.join("result.json"))?;
     Ok(serde_json::from_slice(&result)?)
 }
@@ -52,11 +55,12 @@ struct Session {
     declarations: Vec<Stmt>,
     names: HashSet<String>,
     values: HashMap<String, Expr>,
+    arrays: arrays::Values,
     seed: u64,
 }
 impl Default for Session {
     fn default() -> Self {
-        Self { declarations: vec![], names: HashSet::new(), values: HashMap::new(), seed: 1 }
+        Self { declarations: vec![], names: HashSet::new(), values: HashMap::new(), arrays: HashMap::new(), seed: 1 }
     }
 }
 
@@ -68,11 +72,12 @@ fn scalar(kind: &TypeSpec) -> Result<()> {
 fn validate(body: &[Stmt], top: bool) -> Result<()> {
     for stmt in body {
         match stmt {
-            Stmt::SourceLocation(_) | Stmt::Assign { .. } | Stmt::Print { .. }
+            Stmt::SourceLocation(_) | Stmt::Assign { .. } | Stmt::AssignIndex { .. } | Stmt::Print { .. }
                 | Stmt::Exit | Stmt::Cycle => {},
             Stmt::Implicit(Implicit::None) if top => {},
             Stmt::DummyIntent { intent, .. } if top && intent == "parameter" => {},
             Stmt::VarDecl { kind, .. } if top => scalar(kind)?,
+            Stmt::ArrayDecl { kind, .. } if top => arrays::kind(kind)?,
             Stmt::InitializedDecl { kind, attributes, .. } if top => {
                 scalar(kind)?;
                 if attributes.iter().any(|a| !matches!(a.as_str(), "parameter" | "save")) {
@@ -96,7 +101,7 @@ fn validate(body: &[Stmt], top: bool) -> Result<()> {
             Stmt::CallSub { name, .. } if matches!(name.as_str(), "random_number" | "random_seed"
                 | "cpu_time" | "system_clock" | "@formatted_print"
                 | "@formatted_write_noadvance") => {},
-            _ => bail!("unsupported in the scalar REPL: arrays, procedures, modules, READ, file operations, and program control statements; use rfort run for full programs"),
+            _ => bail!("unsupported in the REPL: allocation, pointers, procedures, modules, READ, file operations, and program control statements; use rfort run for full programs"),
         }
     }
     Ok(())
@@ -110,6 +115,11 @@ impl Session {
         validate(&parsed.body, true)?;
         let mut declarations = self.declarations.clone();
         let mut names = self.names.clone();
+        // Array initializers have a paired InitializedDecl and ArrayDecl.
+        // Retain their shape once and execute mutable initializers only once.
+        let array_names: HashSet<_> = parsed.body.iter().filter_map(|s| match s {
+            Stmt::ArrayDecl { name, .. } => Some(name.clone()), _ => None,
+        }).collect();
         for stmt in &parsed.body {
             if matches!(stmt, Stmt::DummyIntent { intent, .. } if intent == "parameter") {
                 declarations.push(stmt.clone());
@@ -117,8 +127,10 @@ impl Session {
             }
             let (declared, retained) = match stmt {
                 Stmt::VarDecl { names, .. } => (names.clone(), stmt.clone()),
+                Stmt::ArrayDecl { name, .. } => (vec![name.clone()], stmt.clone()),
                 Stmt::InitializedDecl { kind, attributes, entities } => {
-                    let names: Vec<_> = entities.iter().map(|(n, _)| n.clone()).collect();
+                    let names: Vec<_> = entities.iter().map(|(n, _)| n.clone())
+                        .filter(|n| !array_names.contains(n)).collect();
                     let retained = if attributes.iter().any(|a| a == "parameter") { stmt.clone() }
                         else { Stmt::VarDecl { kind: kind.clone(), names: names.clone() } };
                     (names, retained)
@@ -126,6 +138,7 @@ impl Session {
                 _ => continue,
             };
             for name in declared {
+                if name.starts_with("rfort_repl_snapshot_") { bail!("name prefix `rfort_repl_snapshot_` is reserved by the REPL"); }
                 if !names.insert(name.clone()) { bail!("`{name}` is already declared; use :reset to start a new session"); }
             }
             declarations.push(retained);
@@ -142,7 +155,8 @@ impl Session {
         if args.standard.is_some() {
             crate::standards::check(&program, input, &tokens, "<repl>", None, args.standard, args.werror)?;
         }
-        let program = crate::lower_program_body(program, input, &tokens, "<repl>", None)?;
+        let mut program = crate::lower_program_body(program, input, &tokens, "<repl>", None)?;
+        arrays::restore(&mut program, &self.arrays);
         let mut settings = crate::sema::SemaSettings::default();
         settings.werror = args.werror;
         crate::suppress_legacy_unused(&mut settings);
@@ -151,9 +165,11 @@ impl Session {
         if errors.iter().any(|e| matches!(e.kind, crate::errors::CompileErrorKind::Semantic)) {
             bail!("semantic checks failed");
         }
-        let (program, flags) = crate::initialized::instrument_scalars(program)
+        let (mut program, mut flags) = crate::initialized::instrument_scalars(program)
             .map_err(|e| crate::source_diagnostics::report(e, input, &tokens, "<repl>", None))?;
-        let snapshot = execute(program, flags, self.seed)?;
+        let capture = arrays::Capture::prepare(&mut program, &mut flags, &names)?;
+        let mut snapshot = execute(program, flags, self.seed)?;
+        self.arrays = capture.finish(&mut snapshot.values);
         self.values = snapshot.values;
         self.seed = snapshot.seed;
         self.declarations = declarations;
@@ -187,7 +203,7 @@ fn code(line: &str) -> &str {
 
 pub(crate) fn run(args: &crate::cli::Cli) -> Result<()> {
     let terminal = io::stdin().is_terminal();
-    if terminal { println!("rfort scalar REPL. :help for help; :quit to exit."); }
+    if terminal { println!("rfort REPL. :help for help; :quit to exit."); }
     let mut session = Session::default();
     let mut pending = String::new();
     loop {
@@ -205,7 +221,7 @@ pub(crate) fn run(args: &crate::cli::Cli) -> Result<()> {
             ":reset" => { session = Session::default(); pending.clear(); continue; },
             ":cancel" => { pending.clear(); continue; },
             ":help" => {
-                println!("Declare scalars, assign values, PRINT/WRITE, or enter an expression.\nMultiline IF/DO/SELECT CASE blocks and & continuations are accepted.\nVariables must be declared (IMPLICIT NONE).\n:reset clears the session; :cancel discards pending input; :quit exits.\nArrays, modules, procedures, READ and file I/O are not supported yet.");
+                println!("Declare scalars or fixed-size INTEGER/REAL/LOGICAL arrays, assign values, PRINT/WRITE, or enter an expression.\nArrays support indexing, sections and expressions (snapshot limit: 10000 elements per array).\nMultiline IF/DO/SELECT CASE blocks and & continuations are accepted.\nVariables must be declared (IMPLICIT NONE).\n:reset clears the session; :cancel discards pending input; :quit exits.\nAllocatable/pointer/CHARACTER arrays, modules, procedures, READ and file I/O are not supported yet.");
                 continue;
             },
             text if text.starts_with(':') => { eprintln!("Error: unknown REPL command `{text}`; use :help"); continue; },

@@ -142,9 +142,23 @@ Use `:help`, `:reset`, `:cancel` (discard unfinished input), and `:quit` or `:q`
 EOF also exits. Redirected input has no banner or prompts.
 
 Only new input executes; previous output and random calls are not replayed.
-Each submission uses a worker process and saves initialized scalar values on
+Fixed-size INTEGER, REAL (including DOUBLE PRECISION), and LOGICAL arrays
+support indexing, sections, whole-array assignments, expressions and printing:
+
+```text
+rfort> integer :: a(3)
+rfort> a = [1, 2, 3]
+rfort> a(2) = 10
+rfort> sum(a)
+ 14
+```
+
+Each submission uses a worker process and saves initialized scalar and array values on
 success. A failed submission retains previous values; output already produced
-by that submission remains visible. The first version excludes arrays, COMPLEX,
+by that submission remains visible. Partially initialized arrays retain their
+initialization checks across submissions. Array snapshots currently have a
+limit of 10000 elements per array. The REPL excludes allocatable, pointer and
+CHARACTER arrays, COMPLEX,
 modules, user-defined procedures, READ and file I/O. Use `rfort run file.f90`
 for those features. The REPL shares the interpreter's current limitations.
 

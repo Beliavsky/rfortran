@@ -1,4 +1,4 @@
-"""Persistent scalar REPL, including worker runtime-error recovery.
+"""Persistent scalar and fixed-array REPL, including runtime-error recovery.
 
 Run after cargo build --bin rfort: python tests/test_repl.py
 RFORT_TEST_COMPILER can select the release executable.
@@ -123,12 +123,12 @@ integer :: =
 unknown+1
 integer, parameter :: k=3
 k=9
-integer :: a(2)
+integer, allocatable :: a(:)
 n
 k
 :quit
 """, " 5\n 3\n", ("already declared", "parse failed", "undefined variable",
-                           "cannot modify PARAMETER", "unsupported in the scalar REPL"))
+                           "cannot modify PARAMETER", "unsupported in the REPL"))
 
     def test_uninitialized_values_are_not_saved_as_zero(self):
         self.session("""integer :: n
@@ -153,7 +153,7 @@ n
 n=n+1
 n
 :quit
-""", " 5\n 6\n", ("integer division by zero", "previous scalar values retained"))
+""", " 5\n 6\n", ("integer division by zero", "previous scalar and array values retained"))
         self.assertNotIn("panicked", result.stderr)
 
     def test_cancel_reset_and_eof(self):
@@ -175,6 +175,116 @@ n
         self.assertIn(":reset", result.stdout)
         self.assertIn("unknown REPL command", result.stderr)
         self.assertNotIn("99", result.stdout)
+
+    def test_integer_array_state_sections_and_expressions(self):
+        self.session("""integer, parameter :: n=3
+integer :: a(n)
+a=[1,2,3]
+a(2)=10
+sum(a)
+a(1:3:2)=7
+a
+a+1
+:quit
+""", " 14\n 7 10 7\n 8 11 8\n")
+
+    def test_array_initializers_only_execute_once(self):
+        self.session("""integer :: a(3)=[1,2,3]
+a(2)=9
+a
+integer :: n=5
+a
+:quit
+""", " 1 9 3\n 1 9 3\n")
+
+    def test_real_and_logical_arrays(self):
+        self.session("""real :: x(2)
+double precision :: d(2)
+logical :: mask(2)
+x=[1.5,2.5]
+d=[1.23456789012345d0,2d0]
+mask=x>2
+mask
+sum(x)
+abs(d(1)-1.23456789012345d0)<1d-14
+:quit
+""", " F T\n 4.0\n T\n")
+
+    def test_multidimensional_arrays_and_nonunit_bounds(self):
+        self.session("""integer :: a(-1:0,2:3)
+a=0
+a(-1,3)=7
+a(0,2)=4
+a
+a(-1,3)+a(0,2)
+:quit
+""", " 0 4 7 0\n 11\n")
+
+    def test_partial_initialization_and_recovery(self):
+        self.session("""integer :: a(3)
+a(2)=8
+a(2)
+a(1)
+a(2)
+a(1)=4
+a(1:2)
+:quit
+""", " 8\n 8\n 4 8\n", ("uninitialized variable `a`",))
+
+    def test_runtime_failure_rolls_back_array_and_scalar_state(self):
+        self.session("""integer :: a(2)=[1,2], n=3, z=0
+if (.true.) then
+a(1)=9
+n=10
+n=n/z
+end if
+a
+n
+:quit
+""", " 1 2\n 3\n", ("integer division by zero", "previous scalar and array values retained"))
+
+    def test_runtime_uninitialized_array_read_retains_state(self):
+        self.session("""integer :: a(2)
+integer :: i=1
+a(2)=8
+a(i)
+a(2)
+:quit
+""", " 8\n", ("uninitialized variable `a`", "previous scalar and array values retained"))
+
+    def test_array_parameters_and_empty_arrays(self):
+        self.session("""integer, parameter :: p(2)=[2,3]
+integer :: empty(0)
+sum(empty)
+sum(p)
+p(1)=9
+sum(p)
+:quit
+""", " 0\n 5\n 5\n", ("cannot modify PARAMETER",))
+
+    def test_random_array_state_and_reset(self):
+        self.session("""real :: a(2)
+call random_number(a)
+a
+real :: x
+call random_number(x)
+x
+a
+:reset
+real :: a(2)
+call random_number(a)
+a
+:quit
+""", " 0.280835 0.671137\n 0.725846\n 0.280835 0.671137\n 0.280835 0.671137\n")
+
+    def test_array_limits_and_reserved_helpers(self):
+        self.session("""integer :: a(10001)
+integer :: rfort_repl_snapshot_0
+character(3) :: s(2)
+integer :: n=7
+n
+:quit
+""", " 7\n", ("snapshot limit", "reserved by the REPL", "fixed-size INTEGER, REAL and LOGICAL"))
 
 
 if __name__ == "__main__":
