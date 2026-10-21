@@ -42,6 +42,17 @@ pub struct Cli {
     #[structopt(long = "fd-lines-as-code", global = true, help = "Compile fixed-form D lines instead of ignoring them")]
     pub d_lines_as_code: bool,
 
+    #[structopt(long = "cpp", global = true,
+                help = "Apply preprocessor conditionals (default for .F, .F90 and other upper-case extensions)")]
+    pub cpp: bool,
+
+    #[structopt(long = "nocpp", global = true, conflicts_with = "cpp", help = "Do not apply preprocessor conditionals")]
+    pub nocpp: bool,
+
+    #[structopt(long = "define", number_of_values = 1, global = true, value_name = "NAME[=VALUE]",
+                help = "Define a preprocessor name, as -DNAME or -DNAME=VALUE")]
+    pub defines: Vec<String>,
+
     #[structopt(long = "warning", number_of_values = 1, help = "Control a warning (e.g. optional-argument or no-unused-type)")]
     pub warnings: Vec<String>,
 
@@ -164,7 +175,7 @@ pub enum Command {
 fn first_positional(args: &[std::ffi::OsString]) -> Option<String> {
     // Options whose value may be the next argument.
     const VALUED: &[&str] = &["-o", "--out", "-O", "--opt-level", "-I", "--module-path", "-J", "--module-dir",
-                              "--target", "--std", "--warning", "--ffixed-line-length"];
+                              "--target", "--std", "--warning", "--ffixed-line-length", "--define"];
     let mut args = args.iter().skip(1).map(|a| a.to_string_lossy());
     while let Some(arg) = args.next() {
         if arg == "--" {
@@ -198,6 +209,12 @@ impl Cli {
                 "-Werror" | "--werror" => args.push("--Werror".into()),
                 "-ffixed-form" | "-ffree-form" | "-fd-lines-as-code" => args.push(format!("-{text}").into()),
                 "-fd-lines-as-comments" => {}
+                "-cpp" | "-nocpp" => args.push(format!("-{text}").into()),
+                "-D" => args.push("--define".into()),
+                flag if flag.starts_with("-D") => {
+                    args.push("--define".into());
+                    args.push(flag[2..].into());
+                }
                 flag if flag.starts_with("-ffixed-line-length") => {
                     // gfortran spells it -ffixed-line-length-N; accept =N too.
                     let value = flag["-ffixed-line-length".len()..].trim_start_matches(['-', '=']);

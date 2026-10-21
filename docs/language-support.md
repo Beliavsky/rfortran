@@ -10,6 +10,7 @@ gfortran when it is installed. Run the tests after `cargo build --bin rfort`.
 ## Contents
 
 - [Source form and declarations](#source-form-and-declarations)
+  - [Preprocessor conditionals](#preprocessor-conditionals)
   - [Declarations without `::`](#declarations-without-)
   - [DIMENSION declarations and SHAPE](#dimension-declarations-and-shape)
   - [INTENT spellings](#intent-spellings)
@@ -100,7 +101,7 @@ gfortran when it is installed. Run the tests after `cargo build --bin rfort`.
 
 ### Fixed source form
 
-Files ending in `.f`, `.for`, `.ftn` or `.f77`, in either case, are read as
+Files ending in `.f`, `.for`, `.ftn`, `.f77` or `.fpp`, in either case, are read as
 fixed source form, and other Fortran files as free form. `-ffixed-form` and
 `-ffree-form` override the extension for every source. Fixed-form and
 free-form files can be compiled together.
@@ -126,12 +127,33 @@ The conversion follows the fixed-form rules:
   removed, and Hollerith constants in FORMAT statements become quoted strings.
 
 Code that relies on blanks being insignificant inside names and keywords, such
-as `DO10I=1,5` or `GOTO10`, is not supported, and there is no preprocessing, so
-`#` lines fail. A warning is shown for a construct that the conversion may not
+as `DO10I=1,5` or `GOTO10`, is not supported. A warning is shown for a construct that the conversion may not
 preserve, such as a statement starting before column 7; `-Werror` makes these
 warnings errors.
 
 Run `python tests/test_fixed_form.py` for the checks.
+
+### Preprocessor conditionals
+
+As with gfortran, sources whose extension is upper case, such as `.F`, `.FOR`,
+`.F90` and `.F08`, and `.fpp` files, go through conditional compilation before
+anything else; `-cpp` does this for every source and `-nocpp` for none.
+`-DNAME` and `-DNAME=VALUE` define names, and a name without a value is 1.
+
+- `#if`, `#ifdef`, `#ifndef`, `#elif`, `#else` and `#endif`, nested.
+  Conditions are C integer expressions with `defined NAME` or `defined(NAME)`,
+  the arithmetic, comparison, logical, bit and `?:` operators and parentheses;
+  a name that is not defined is 0. `_OPENMP` is not defined.
+- `#define NAME [VALUE]` and `#undef NAME`, for later conditions.
+- `#error`, which stops the compilation with its text.
+
+Directive lines and the lines a condition excludes become blank, so errors are
+reported at the original line numbers. Names are not replaced in Fortran
+lines: a line that uses a defined name, outside character constants and
+comments, is an error. `#include`, `#line`, `#pragma` and function-like
+macros are not supported and are errors where a condition includes them.
+This covers LAPACK's `.F` files, which test `defined(_OPENMP)`.
+Run `python tests/test_preprocessor.py`.
 
 ### Declarations without `::`
 

@@ -36,16 +36,33 @@ pub fn read_file_to_string(path: &Path) -> Result<String> {
 }
 
 /// Extensions of fixed source form files, in lower case.
-pub const FIXED_FORM_EXTENSIONS: &[&str] = &["f", "for", "ftn", "f77"];
+pub const FIXED_FORM_EXTENSIONS: &[&str] = &["f", "for", "ftn", "f77", "fpp"];
 
 /// Read a Fortran source, converting fixed source form to free form. The
 /// conversion keeps every line on its line number, so diagnostics need no map.
 pub fn read_source(path: &Path, cli: &crate::cli::Cli) -> Result<String> {
-    if !cli.is_fixed_form(path) {
-        return read_file_to_string(path);
+    let fixed = cli.is_fixed_form(path);
+    // Preprocessor conditionals come first; their lines become blank.
+    let preprocessed = if !cli.nocpp && (cli.cpp || crate::preprocess::by_extension(path)) {
+        let text = read_file_to_string(path)?;
+        let defined = crate::preprocess::definitions(&cli.defines)?;
+        let text = crate::preprocess::preprocess(&text, &defined, fixed)
+            .map_err(|e| anyhow::anyhow!("{}: {e:#}", path.display()))?;
+        Some(text)
+    } else {
+        None
+    };
+    if !fixed {
+        return match preprocessed {
+            Some(text) => Ok(text),
+            None => read_file_to_string(path),
+        };
     }
     let options = cli.fixed_form_options()?;
-    let bytes = fs::read(path)?;
+    let bytes = match preprocessed {
+        Some(text) => text.into_bytes(),
+        None => fs::read(path)?,
+    };
     let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes);
     let converted = fixed2free::convert(bytes, &options);
     let mut warned = false;
@@ -109,7 +126,11 @@ pub fn print_help() {
     println!("  -Wno-<category>      Disable a warning category");
     println!("  -Werror, --Werror    Treat enabled warnings as errors");
     println!("  -Werror=<category>  Enable a warning category and treat it as an error");
-    println!("  -ffixed-form         Read sources as fixed form (default for .f, .for, .ftn, .f77)");
+    println!("  -ffixed-form         Read sources as fixed form (default for .f, .for, .ftn, .f77, .fpp)");
+    println!("  -cpp                 Apply preprocessor #if/#ifdef/#else/#endif conditionals");
+    println!("                      Default for .F, .FOR, .FPP, .F90 and other upper-case extensions");
+    println!("  -nocpp               Do not apply preprocessor conditionals");
+    println!("  -DNAME[=VALUE]       Define a preprocessor name for conditionals (VALUE defaults to 1)");
     println!("  -ffree-form          Read sources as free form, whatever their extension");
     println!("  -ffixed-line-length-<n>  Last column of fixed-form lines: a number or none (default 72)");
     println!("  -fd-lines-as-code    Compile fixed-form D lines instead of ignoring them");

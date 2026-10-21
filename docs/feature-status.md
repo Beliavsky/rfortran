@@ -109,7 +109,8 @@ Found on 2026-10-21, fixed:
 | Feature | Introduced | Status | Notes | Tests |
 |---|---|---|---|---|
 | Free source form (`.f90`, `.f95`, `.f03`, `.f08`) | F90 | ✅ |  | testsuite |
-| [Fixed source form (`.f`, `.for`, `.ftn`, `.f77`)](language-support.md#fixed-source-form) | F77 or earlier | ✅ | Converted to free form as it is read. No preprocessing, so `.F` files with `#` lines fail; code written without blanks, such as `DO10I=1,5`, is not supported | test_fixed_form.py |
+| [Fixed source form (`.f`, `.for`, `.ftn`, `.f77`, `.fpp`)](language-support.md#fixed-source-form) | F77 or earlier | ✅ | Converted to free form as it is read. Code written without blanks, such as `DO10I=1,5`, is not supported | test_fixed_form.py |
+| [Preprocessor conditionals (`#if`, `#ifdef`, `#else`, `#endif`)](language-support.md#preprocessor-conditionals) | Extension | 🟡 | For `.F`, `.F90` and other upper-case extensions, or with `-cpp`; `-D` definitions. No `#include` or replacement of names in Fortran lines | test_preprocessor.py |
 | `INCLUDE` lines | F90 | ❌ |  |  |
 | Implicit typing | F77 or earlier | ✅ | IMPLICIT COMPLEX is not supported |  |
 | `IMPLICIT NONE` | F90 | ✅ |  |  |
