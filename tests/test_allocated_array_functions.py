@@ -99,6 +99,36 @@ end function make_array
 end program main
 ''','10000 100000.0\n')
 
+    def test_array_arguments_larger_than_1024(self):
+        self.check('''program main
+integer::x(2000),i
+real::m(40,50)
+logical::even(2000)
+do i=1,2000
+x(i)=i
+end do
+m=1.0
+even=is_even(x)
+print *,sum(twice(x)),count(even),total(x(1001:2000)),sum(m)
+contains
+function twice(a) result(b)
+integer,intent(in)::a(:)
+integer::b(size(a))
+b=2*a
+end function twice
+function is_even(a) result(b)
+integer,intent(in)::a(2000)
+logical::b(2000)
+b=mod(a,2)==0
+end function is_even
+function total(a) result(t)
+integer,intent(in)::a(:)
+integer::t(1)
+t(1)=sum(a)
+end function total
+end program main
+''','4002000 1000 1500500 2000.0\n')
+
     def test_character_repro(self):
         self.check((ROOT/'tests/184_allocated_character_concat.f90').read_text(encoding='utf-8'),'3 10\nfour|five|zero\n')
 

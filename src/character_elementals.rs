@@ -108,9 +108,6 @@ impl Lower {
                 let count = array_count(&dims).with_context(|| {
                     format!("cannot specialize array argument `{n}`: its extent must be known at this function call")
                 })?;
-                if !(0..=1024).contains(&count) {
-                    bail!("CHARACTER elemental expansion supports at most 1024 elements");
-                }
                 let active=crate::allocatables::length(n,symbols).filter(|e|crate::parameters::integer_constant(e).is_err());
                 if active.is_some() && symbols.contains_key(&format!("@heap:{n}")) {bail!("content-dependent CHARACTER results currently require a bounded input array");}
                 Ok(Value { active:if count==0 {None}else{active},
@@ -160,9 +157,6 @@ impl Lower {
                 let mut output = vec![];
                 let mut i = first;
                 while if step > 0 { i <= last } else { i >= last } {
-                    if output.len() >= 1024 {
-                        bail!("CHARACTER elemental expansion supports at most 1024 elements");
-                    }
                     output.push(
                         items
                             .get(
@@ -659,6 +653,8 @@ impl Lower {
                 if count.is_some_and(|c| c != items.len()) {
                     bail!("nonconforming elemental array argument shapes");
                 }
+                // Each element gets its own copy of the function body.
+                if items.len()>1024 {bail!("ELEMENTAL function calls with array arguments support at most 1024 elements");}
                 count = Some(items.len());
             }
         }
@@ -815,10 +811,15 @@ impl Lower {
                         expanded.push(Stmt::DummyIntent{name:temp.clone(),intent:format!("@bounded_shape:{length}")});
                         Some(length)
                     } else {None};
-                    for (i,value) in items.iter().enumerate() {
+                    // A large whole array or unit-stride section is copied by
+                    // one array assignment rather than an assignment per element.
+                    if items.len()>1024 && active.is_none() && (matches!(&arg,Expr::Ident(n) if symbols.get(n).is_some_and(|(_,dims)|dims.len()==shape.len()))
+                        || matches!(&arg,Expr::Section{name,stride:None,..} if shape.len()==1 && symbols.get(name).is_some_and(|(_,dims)|dims.len()==1))) {
+                        expanded.push(Stmt::Assign{name:temp.clone(),value:arg.clone()});
+                    } else { for (i,value) in items.iter().enumerate() {
                         let store=Stmt::AssignIndex {name:temp.clone(),indices:array_indices(i,shape),value:value.clone()};
                         expanded.push(if let Some(length)=&active {Stmt::If{cond:Expr::Bin(BinOp::Ge,Box::new(Expr::Ident(length.clone())),Box::new(int(i as i64+1))),then_body:vec![store],else_body:None}}else{store});
-                    }
+                    }}
                 } else {
                     expanded.push(Stmt::VarDecl {kind:bound_types[param].clone(),names:vec![temp.clone()]});
                     expanded.push(Stmt::Assign {name:temp.clone(),value:arg});
