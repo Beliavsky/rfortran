@@ -256,6 +256,8 @@ pub enum TokenKind {
     KwDeallocate,
     KwNullify,
     KwDimension,
+    /// A SAVE statement without a list, which saves every local variable.
+    KwSaveAll,
     FileControl(String),
     FilePosition(String),
     KwType,
@@ -938,6 +940,19 @@ pub fn lex(input: &str) -> Vec<Token> {
         }
         index += 1;
     }
+    // IF is a keyword before its condition and after END or ELSE; elsewhere,
+    // as in `IF = I - 1` or `A(IF+1)`, it names a variable.
+    for i in 0..tokens.len() {
+        if !matches!(tokens[i].kind, TokenKind::KwIf) {
+            continue;
+        }
+        let joined = |a: usize, b: usize| same_statement(&input[tokens[a].span.end..tokens[b].span.start]);
+        let condition = tokens.get(i + 1).is_some_and(|t| matches!(t.kind, TokenKind::LParen)) && joined(i, i + 1);
+        let closing = i > 0 && matches!(tokens[i - 1].kind, TokenKind::KwEnd | TokenKind::KwElse) && joined(i - 1, i);
+        if !condition && !closing {
+            tokens[i].kind = TokenKind::Ident("if".into());
+        }
+    }
     // A leading decimal number belongs to the following statement, rather
     // than to an expression. Keep it distinct for grammar and scope checks.
     for i in 0..tokens.len() {
@@ -1182,6 +1197,16 @@ pub fn lex(input: &str) -> Vec<Token> {
                 },
                 // DATA name / values /, but not a variable named DATA.
                 "data" if matches!(next,Some(TokenKind::Ident(_))) && statement_head(&tokens,input,start) => Some(TokenKind::KwData),
+                // DATA (implied-DO list) / values /.
+                "data" if matches!(next,Some(TokenKind::LParen)) && statement_head(&tokens,input,start) => {
+                    let mut depth=0i32;
+                    let mut after=None;
+                    for i in start+1..tokens.len() {
+                        match tokens[i].kind {TokenKind::LParen=>depth+=1,TokenKind::RParen=>depth-=1,_=>{}}
+                        if depth==0 {after=tokens.get(i+1).map(|t|&t.kind);break;}
+                    }
+                    matches!(after,Some(TokenKind::Slash|TokenKind::Comma)).then_some(TokenKind::KwData)
+                },
                 // EQUIVALENCE (a, b), ..., but not an array named EQUIVALENCE.
                 "equivalence" if matches!(next,Some(TokenKind::LParen)) && statement_head(&tokens,input,start)
                     && !assigned(&tokens,input,start) => Some(TokenKind::KwEquivalence),
@@ -1350,8 +1375,12 @@ pub fn lex(input: &str) -> Vec<Token> {
     for index in 0..tokens.len() {
         let TokenKind::Ident(word) = &tokens[index].kind else { continue };
         let word = word.to_ascii_lowercase();
-        if !matches!(word.as_str(), "intent" | "optional" | "pointer" | "target" | "allocatable" | "external" | "intrinsic")
+        if !matches!(word.as_str(), "intent" | "optional" | "pointer" | "target" | "allocatable" | "external" | "intrinsic" | "save")
             || !statement_head(&tokens, input, index) {
+            continue;
+        }
+        if word == "save" && tokens.get(index + 1).is_none_or(|t| !same_statement(&input[tokens[index].span.end..t.span.start])) {
+            tokens[index].kind = TokenKind::KwSaveAll;
             continue;
         }
         let mut next = index + 1;

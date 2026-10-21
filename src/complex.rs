@@ -124,6 +124,11 @@ struct Lower {
     serial: usize,
     functions: HashMap<String, Function>,
     helpers: HashSet<(String, u8)>,
+    /// Scalar temporaries of the current unit free for reuse, by type. A
+    /// statement's temporaries are live until it, nested bodies included, is
+    /// lowered, so a unit declares only as many as one statement needs.
+    free: HashMap<String, Vec<String>>,
+    live: Vec<(String, String)>,
 }
 fn declarations(body: &[Stmt], scope: &mut Scope) {
     for stmt in body {
@@ -349,6 +354,9 @@ impl Lower {
                     dims: dimensions,
                 }))
             }
+            Expr::Call(n, _) if s.get(n).is_some_and(|v| v.dims.is_empty()) && !self.functions.contains_key(n) => {
+                Ok(Some(Info::scalar(s[n].kind.clone())))
+            }
             Expr::Call(n, a) | Expr::Index(n, a)
                 if s.get(n).is_some_and(|v| !v.dims.is_empty()) =>
             {
@@ -482,6 +490,40 @@ impl Lower {
                 };
                 Ok(Some(i))
             }
+            // Intrinsics whose result has the kind of their arguments, and
+            // their FORTRAN 77 specific forms.
+            Expr::Call(n, a)
+                if matches!(
+                    n.as_str(),
+                    "max" | "min" | "mod" | "modulo" | "sign" | "dim" | "max0" | "min0" | "amax1" | "amin1" | "dmax1"
+                        | "dmin1" | "dsign" | "isign" | "dmod" | "amod" | "idim" | "ddim" | "dabs" | "iabs"
+                ) && !s.contains_key(n) && !self.functions.contains_key(n) =>
+            {
+                let mut result: Option<Info> = None;
+                for e in a {
+                    let Some(i) = self.info(e, s)? else {
+                        return Ok(None);
+                    };
+                    result = Some(match result {
+                        None => i,
+                        Some(r) => Info {
+                            kind: crate::vector_subscripts::merge(r.kind, i.kind),
+                            dims: if r.dims.is_empty() { i.dims } else { r.dims },
+                        },
+                    });
+                }
+                Ok(result)
+            }
+            Expr::Call(n, a)
+                if matches!(n.as_str(), "nint" | "idnint" | "ifix" | "idint" | "ichar" | "iachar" | "len" | "len_trim" | "index")
+                    && !s.contains_key(n) && !self.functions.contains_key(n) =>
+            {
+                let dims = match a.first().map(|e| self.info(e, s)).transpose()?.flatten() {
+                    Some(i) if matches!(n.as_str(), "nint" | "idnint" | "ifix" | "idint") => i.dims,
+                    _ => vec![],
+                };
+                Ok(Some(Info { kind: TypeSpec::Integer(None), dims }))
+            }
             Expr::Call(n, a)
                 if n == "dot_product" && !s.contains_key(n) && !self.functions.contains_key(n) =>
             {
@@ -569,9 +611,17 @@ impl Lower {
         s: &mut Scope,
         out: &mut Vec<Stmt>,
     ) -> Expr {
-        self.serial += 1;
-        let n = format!("@complex_value_{}", self.serial);
+        let key = format!("{kind:?}");
+        let reused = if dimensions.is_empty() { self.free.get_mut(&key).and_then(Vec::pop) } else { None };
+        let n = reused.clone().unwrap_or_else(|| {
+            self.serial += 1;
+            format!("@complex_value_{}", self.serial)
+        });
         if dimensions.is_empty() {
+            self.live.push((key, n.clone()));
+        }
+        if reused.is_some() {
+        } else if dimensions.is_empty() {
             out.push(Stmt::VarDecl {
                 kind: kind.clone(),
                 names: vec![n.clone()],
@@ -1594,7 +1644,15 @@ impl Lower {
             .collect();
         let mut result = vec![];
         let mut location = None;
+        let base = self.live.len();
         for mut stmt in std::mem::take(body) {
+            for (kind, name) in self.live.drain(base..) {
+                self.free.entry(kind).or_default().push(name);
+            }
+            // A procedure's temporaries are declared in it, so they are
+            // not reused in another.
+            let unit = matches!(stmt, Stmt::Function { .. } | Stmt::Subroutine { .. } | Stmt::Module { .. });
+            let outer = if unit { Some((std::mem::take(&mut self.free), std::mem::take(&mut self.live))) } else { None };
             if let Stmt::SourceLocation(offset) = stmt {
                 location = Some(offset);
                 result.push(Stmt::SourceLocation(offset));
@@ -1644,7 +1702,14 @@ impl Lower {
                 Stmt::SelectCase{expr,cases,default}=>{self.expression(expr,&mut scope,&mut prefix)?;for c in cases{self.body(&mut c.body,&scope,&[])?;}if let Some(b)=default{self.body(b,&scope,&[])?;}},
                 _=>{}
             }prefix.push(stmt.clone());Ok(())})().map_err(|e|crate::source_diagnostics::at(e,location))?;
+            if let Some((free, live)) = outer {
+                self.free = free;
+                self.live = live;
+            }
             result.extend(prefix);
+        }
+        for (kind, name) in self.live.drain(base..) {
+            self.free.entry(kind).or_default().push(name);
         }
         *body = result;
         Ok(())

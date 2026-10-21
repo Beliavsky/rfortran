@@ -95,6 +95,15 @@ Bugs found on 2026-10-18, all fixed:
   call move_alloc(tmp, a)`) stopped with "read of uninitialized variable",
   because moving the array copied its unset elements.
 
+Found on 2026-10-21, fixed:
+
+- Two or more automatic arrays of an external procedure, such as
+  `DOUBLE PRECISION A(N), B(N)` with `N` a dummy, overlapped: each was given
+  room for one element, so writing `B(1)` changed `A(2)`. A COMPLEX automatic
+  array, whose real and imaginary parts are separate arrays, gave wrong values
+  for the same reason, and when passed to another external procedure was also
+  passed with one element.
+
 ## Source form and declarations
 
 | Feature | Introduced | Status | Notes | Tests |
@@ -118,7 +127,7 @@ Bugs found on 2026-10-18, all fixed:
 | [INTENT](language-support.md#intent-spellings) | F90 | ✅ |  |  |
 | [PARAMETER attribute and statement](language-support.md#parameter-statements) | Mixed | ✅ | PARAMETER statement: F77; attribute: F90. Derived-type named constants need scalar components | test_parameter_statements.py, test_named_constants.py, test_derived_type_features.py |
 | [Declaration initialization](language-support.md#declaration-initialization) | F90 | 🟡 | Saved arrays are not supported | test_main_initialization.py, test_saved_locals.py, test_initializers_and_kinds.py |
-| SAVE | F77 or earlier | 🟡 | Scalars only | test_saved_locals.py |
+| SAVE | F77 or earlier | 🟡 | Scalars only; the SAVE statement saves listed scalars, or all local scalars without a list | test_saved_locals.py, test_external_calls.py |
 | VALUE attribute | F2003 | ✅ |  |  |
 | PROTECTED attribute | F2003 | ❌ |  |  |
 | CONTIGUOUS attribute | F2008 | ✅ | Accepted |  |
@@ -126,7 +135,7 @@ Bugs found on 2026-10-18, all fixed:
 | [Statement labels](language-support.md#statement-labels) | F77 or earlier | 🟡 | Labels are accepted; no statement can branch to them except READ `END=` | test_statement_labels.py |
 | [Construct and procedure endings](language-support.md#procedure-and-module-endings) | Mixed | ✅ | Bare END: F77 or earlier; construct-specific and named endings: F90. Including a bare `END` for a module | test_unnamed_procedure_ends.py, test_syntax_forms.py |
 | COMMON blocks | F77 or earlier | ❌ |  |  |
-| [DATA statements](language-support.md#other-statement-forms) | F77 or earlier | 🟡 | Whole variables only, not array elements, sections or implied-DO lists. Procedure-local arrays only if the procedure does not change them | test_statement_forms_io.py, test_external_calls.py |
+| [DATA statements](language-support.md#other-statement-forms) | F77 or earlier | 🟡 | Array elements and implied-DO lists must give every element of their array a value; sections are not supported. Procedure-local arrays only if the procedure does not change them | test_statement_forms_io.py, test_external_calls.py |
 | [EQUIVALENCE](language-support.md#other-statement-forms) | F77 or earlier | 🟡 | Local variables of one type with constant bounds; each later object must lie within the first, and cannot be used as a whole array | test_external_calls.py |
 | Unnamed ENUM, BIND(C) enumerators (Fortran 2003) | F2003 | ❌ |  |  |
 | [Named enum types (Fortran 2023)](fortran2023.md#enum-types-section-93) | F2023 | 🟡 | Scalars, arrays, constructors, procedures and integer editing; formatted READ requires constant formats and bounded input lists; C calls remain unsupported | test_enum_types.py, test_enum_arrays.py, test_enum_io.py, test_formatted_read_lists.py |
@@ -178,6 +187,7 @@ Bugs found on 2026-10-18, all fixed:
 | Assumed-shape dummies `x(:)` | F90 | ✅ |  | test_function_arrays.py |
 | [Assumed-size dummies `x(*)`](language-support.md#external-procedures-and-separate-compilation) | F77 or earlier | 🟡 | Numeric and LOGICAL dummies of external procedures | test_external_calls.py |
 | [Array element actuals for array dummies (sequence association)](language-support.md#external-procedures-and-separate-compilation) | F77 or earlier | 🟡 | Numeric and LOGICAL dummies of external procedures | test_external_calls.py |
+| [TRANSFER](language-support.md#external-procedures-and-separate-compilation) | F90 | 🟡 | Only a REAL array to a COMPLEX array of the same kind, with SIZE, as an actual argument of a CALL | test_external_calls.py |
 | [Automatic arrays `w(n)`](language-support.md#runtime-allocation) | F90 | ✅ | Numeric, LOGICAL, fixed-length CHARACTER and derived type; no substring writes to CHARACTER elements | test_automatic_arrays.py |
 | [Array constructors and implied-DO](language-support.md#constructors) | F90 | ✅ | Parenthesized (/ ... /) constructors: F90; square brackets: F2003. | test_array_constructors.py, test_runtime_constructors.py |
 | [Typed and empty constructors](language-support.md#constructors) | F2003 | ✅ |  | test_empty_constructors.py |
@@ -274,7 +284,7 @@ current limits.
 | [Dummy procedures](language-support.md#dummy-procedures-and-procedure-pointers) | F77 or earlier | 🟡 | External dummy procedures: F77 or earlier; explicit interfaces: F90. Intrinsic procedures cannot be passed | test_procedure_arguments.py |
 | [Procedure pointers](language-support.md#dummy-procedures-and-procedure-pointers) | F2003 | 🟡 | Not as components or arguments | test_procedure_arguments.py |
 | ENTRY statements | F77 or earlier | ❌ |  |  |
-| Statement functions | F77 or earlier | ❌ |  |  |
+| [Statement functions](language-support.md#other-statement-forms) | F77 or earlier | ✅ |  | test_external_calls.py |
 
 ## Modules
 

@@ -169,6 +169,19 @@ pub(crate) fn scalar_actual_kind(e: &Expr, shapes: &Shapes) -> Result<TypeSpec> 
                 _=>a,
             })
         }
+        // MAX and MIN of scalars, typed as the arithmetic operators type them.
+        Expr::Call(n,args) if matches!(n.as_str(),"max"|"min") && !args.is_empty() && !shapes.contains_key(n) => {
+            let mut kind=scalar_actual_kind(&args[0],shapes)?;
+            for a in &args[1..] {
+                let b=scalar_actual_kind(a,shapes)?;
+                kind=match (&kind,&b) {
+                    (TypeSpec::DoublePrecision,_)|(_,TypeSpec::DoublePrecision)=>TypeSpec::DoublePrecision,
+                    (TypeSpec::Real,_)|(_,TypeSpec::Real)=>TypeSpec::Real,
+                    _=>kind,
+                };
+            }
+            Ok(kind)
+        }
         Expr::Call(n,args) if n=="@allocated_extent"=>scalar_actual_kind(&args[1],shapes),
         Expr::Call(n,_) if matches!(n.as_str(),"@heap_bound"|"@heap_lower_bound"|"@heap_upper_bound")=>Ok(TypeSpec::Integer(Some(8))),
         Expr::Call(n,args) if n=="size" || matches!(n.as_str(),"lbound"|"ubound") && args.len()==2=>Ok(TypeSpec::Integer(None)),

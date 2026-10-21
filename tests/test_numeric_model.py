@@ -130,7 +130,10 @@ end program
     def test_invalid_array_argument_types(self):
         for argument,diagnostic in [("a(.true.)","subscript must be INTEGER"),
                                     ("a(missing)","inquiry subscript type"),
-                                    ("x(1)","wrong number of subscripts"),
+                                    # A typed scalar name with arguments references an
+                                    # external function, as with gfortran, which this
+                                    # program does not define.
+                                    ("x(1)","undefined symbol: rfort$x"),
                                     ("a(1,2)","wrong number of subscripts")]:
             with self.subTest(argument=argument),tempfile.TemporaryDirectory(prefix="numeric-subscript-") as tmp:
                 directory=Path(tmp)

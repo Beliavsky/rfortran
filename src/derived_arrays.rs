@@ -834,13 +834,24 @@ impl Lower {
                     flat.extend(std::iter::repeat_n(e, self.fields(&o.ty)?.len()));
                     continue;
                 }
-                let (values, array) = self.parts(e, &o.ty, objects, prefix)?;
                 // An element passes the rest of its array from it (sequence
-                // association), which only by-reference calls support.
-                let element = values.iter().all(|v| matches!(v, Expr::Call(..) | Expr::Index(..)));
-                if !array && !element {
-                    bail!("derived array dummy `{param}` requires an array actual");
-                }
+                // association), which only by-reference calls support, and a
+                // scalar variable passes its parts.
+                let simple = |values: &[Expr]| values.iter().all(|v| matches!(v, Expr::Call(..) | Expr::Index(..) | Expr::Ident(_)));
+                let values = match self.parts(e.clone(), &o.ty, objects, prefix) {
+                    Ok((values, array)) if array || simple(&values) => values,
+                    _ if self.fields(&o.ty)?.iter().all(|f| f.dims.is_empty()) => {
+                        // An expression passes its value in a scalar temporary.
+                        self.serial += 1;
+                        let temp = format!("@record_actual_{}", self.serial);
+                        prefix.push(Stmt::DerivedDecl { type_name: o.ty.clone(), names: vec![temp.clone()], attributes: vec![], polymorphic: false, dims: vec![] });
+                        objects.insert(temp.clone(), Object { ty: o.ty.clone(), dims: vec![] });
+                        self.register_components(&temp, &o.ty, objects);
+                        prefix.push(Stmt::Assign { name: temp.clone(), value: e });
+                        self.fields(&o.ty)?.iter().map(|f| Expr::Ident(format!("{temp}%{}", f.name))).collect()
+                    }
+                    _ => bail!("derived array dummy `{param}` requires an array actual"),
+                };
                 flat.extend(values);
             } else {
                 self.expression(&mut e, objects, prefix)?;

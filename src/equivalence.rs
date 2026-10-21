@@ -99,11 +99,13 @@ fn shapes(body: &[Stmt]) -> HashMap<String, Result<Shape>> {
                 let dims = dims
                     .iter()
                     .map(|d| -> Result<(i64, i64)> {
+                        // Named constants are not folded yet.
+                        let constant = |e: &Expr| {
+                            crate::data_statements::integer(body, e).map_or_else(|| crate::parameters::integer_constant(e), Ok)
+                        };
                         let (lower, upper) = match d {
-                            Expr::Call(tag, a) if tag == "@declared_bounds" => {
-                                (crate::parameters::integer_constant(&a[0])?, crate::parameters::integer_constant(&a[1])?)
-                            }
-                            _ => (1, crate::parameters::integer_constant(d)?),
+                            Expr::Call(tag, a) if tag == "@declared_bounds" => (constant(&a[0])?, constant(&a[1])?),
+                            _ => (1, constant(d)?),
                         };
                         Ok((lower, (upper - lower + 1).max(0)))
                     })

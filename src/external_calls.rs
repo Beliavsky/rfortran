@@ -38,8 +38,10 @@ thread_local! {
     /// types, which COMPLEX lowering does not keep.
     static STUBS: std::cell::RefCell<HashMap<String, Option<TypeSpec>>> = std::cell::RefCell::new(HashMap::new());
     /// External procedures with COMPLEX dummies or results, which get their
-    /// entry points in the second phase.
-    static COMPLEX_PROCEDURES: std::cell::RefCell<HashSet<String>> = std::cell::RefCell::new(HashSet::new());
+    /// entry points in the second phase, with the EXTERNAL names and the types
+    /// of the scalar names they declare, which COMPLEX lowering does not keep.
+    static COMPLEX_PROCEDURES: std::cell::RefCell<HashMap<String, (HashSet<String>, HashMap<String, TypeSpec>)>> =
+        std::cell::RefCell::new(HashMap::new());
 }
 
 /// A dummy of a stub, like the actuals of the calls it stands for.
@@ -319,6 +321,9 @@ fn infer(scope: &Scope, e: &Expr) -> Result<TypeSpec> {
             if scope.is_array(n) {
                 return scope.kind(n).with_context(|| format!("`{n}` has no type"));
             }
+            if let Some(kind) = n.strip_prefix("@complex_abs$") {
+                return Ok(if kind == "4" { TypeSpec::Real } else { TypeSpec::DoublePrecision });
+            }
             let argument = |i: usize| -> Result<TypeSpec> {
                 infer(scope, args.get(i).with_context(|| format!("missing argument of `{n}`"))?)
             };
@@ -375,6 +380,30 @@ fn keyword(e: &Expr) -> bool {
 /// point, which only another entry point can receive.
 fn borrowed(e: &Expr, scope: &Scope) -> bool {
     matches!(e, Expr::Ident(n) | Expr::Call(n, _) | Expr::Index(n, _) if scope.borrowed.contains_key(n))
+}
+
+/// The kind of a COMPLEX expression: that of its first COMPLEX name, or of
+/// its literals, or double precision.
+fn complex_kind(scope: &Scope, e: &Expr) -> TypeSpec {
+    let mut kind = None;
+    crate::procedure_arguments::visit_expr(&mut e.clone(), &mut |e| match e {
+        Expr::Ident(n) | Expr::Call(n, _) | Expr::Index(n, _) => {
+            if let Some(k @ TypeSpec::Complex(_)) = scope.kind(n) {
+                kind.get_or_insert(k);
+            }
+        }
+        _ => {}
+    });
+    kind.unwrap_or_else(|| {
+        // A COMPLEX literal with a D exponent, or DCMPLX, is double precision.
+        let mut double = false;
+        crate::procedure_arguments::visit_expr(&mut e.clone(), &mut |e| match e {
+            Expr::RealLit(t) if t.contains(['d', 'D']) => double = true,
+            Expr::Call(n, _) if n == "dcmplx" || n == "dconjg" => double = true,
+            _ => {}
+        });
+        TypeSpec::Complex(if double { "8" } else { "4" }.into())
+    })
 }
 
 /// Whether an expression has a COMPLEX value.
@@ -453,15 +482,43 @@ fn array_valued(scope: &Scope, e: &Expr) -> bool {
     }
 }
 
+/// The scope of a BLOCK that declares variables or arrays, or None if it
+/// declares none.
+fn block_scope(scope: &Scope, body: &[Stmt]) -> Option<Scope> {
+    if !body.iter().any(|s| matches!(s, Stmt::VarDecl { .. } | Stmt::ArrayDecl { .. })) {
+        return None;
+    }
+    let mut local = scope.clone();
+    for s in body {
+        match s {
+            Stmt::VarDecl { kind, names } => {
+                for n in names {
+                    local.kinds.insert(n.clone(), kind.clone());
+                    local.ranks.remove(n);
+                }
+            }
+            Stmt::ArrayDecl { kind, name, dims } => {
+                local.kinds.insert(name.clone(), kind.clone());
+                local.ranks.insert(name.clone(), dims.len());
+            }
+            _ => {}
+        }
+    }
+    Some(local)
+}
+
 struct Lower {
     definitions: HashMap<String, Definition>,
     /// The second phase, after COMPLEX lowering.
     complex_phase: bool,
+    /// Declarations for the current unit, of COMPLEX temporaries.
+    declarations: Vec<Stmt>,
+    /// Whether the current body is a COMPLEX procedure's: the first phase
+    /// only declares stubs for its calls, which the second phase rewrites
+    /// with all the rules once its dummies are lowered.
+    complex_body: bool,
     /// First phase: the stubs to declare. Second phase: their names.
     stubs: HashMap<String, (Option<TypeSpec>, Vec<StubDummy>)>,
-    /// Whether the compilation has no main program: a library of FORTRAN 77
-    /// procedures, whose typed function names need no EXTERNAL.
-    library: bool,
     /// Procedures defined in this compilation that are not external.
     others: HashSet<String>,
     serial: usize,
@@ -643,17 +700,20 @@ impl Lower {
                 }
             }
         }
+        // A call with COMPLEX actuals is left for COMPLEX lowering.
+        let mut complex = false;
         if let Stmt::CallSub { name, args } = s {
-            let complex = !self.complex_phase && args.iter().any(|a| complex_value(scope, a));
+            complex = !self.complex_phase && args.iter().any(|a| complex_value(scope, a));
             if complex && self.undefined(name, scope) && !args.iter().any(keyword)
                 && (!scope.uses || scope.externals.contains(name)) && crate::intrinsics::purity(name).is_none()
             {
-                let (name, args) = (name.clone(), args.clone());
-                self.stub(&name, &args, scope, None);
+                let (callee, original) = (name.clone(), args.clone());
+                self.stub(&callee, &original, scope, None);
+                self.complex_temporaries(args, scope, &mut prefix);
             }
         }
         match s {
-            Stmt::CallSub { name, args } if self.external(name, args, scope) => {
+            Stmt::CallSub { name, args } if !complex && self.external(name, args, scope) => {
                 let callee = name.clone();
                 let mut out = vec![];
                 let mut fields = vec![];
@@ -664,6 +724,13 @@ impl Lower {
                 *s = Stmt::Block { body: out };
             }
             _ => {
+                // A BLOCK, such as the one that holds the parts of an
+                // automatic COMPLEX array, declares names of its own.
+                let local = match &*s {
+                    Stmt::Block { body } => block_scope(scope, body),
+                    _ => None,
+                };
+                let scope = local.as_ref().unwrap_or(scope);
                 for body in crate::procedure_arguments::children(s) {
                     self.calls(body, scope)?;
                 }
@@ -704,13 +771,32 @@ impl Lower {
         let callee = name.clone();
         if !self.complex_phase {
             let result = scope.kind(&callee);
+            if self.complex_body {
+                if self.undefined(&callee, scope) && (result.as_ref().is_some_and(|k| matches!(k, TypeSpec::Complex(_)))
+                    || args.iter().any(|a| complex_value(scope, a)))
+                {
+                    let original = args.clone();
+                    self.stub(&callee, &original, scope, result);
+                    self.complex_temporaries(args, scope, out);
+                } else if let Some(kind) = result.filter(numeric) {
+                    // COMPLEX lowering does not keep the declared type of an
+                    // external function, so its value is given to a variable
+                    // of that type, and the second phase calls it there.
+                    self.serial += 1;
+                    let value = format!("rfort_value_{}", self.serial);
+                    self.declarations.push(Stmt::VarDecl { kind, names: vec![value.clone()] });
+                    out.push(assign(&value, std::mem::replace(e, id(&value))));
+                }
+                return Ok(());
+            }
             let complex = result.as_ref().is_some_and(|k| matches!(k, TypeSpec::Complex(_)))
                 || args.iter().any(|a| complex_value(scope, a));
             if complex {
                 // COMPLEX lowering passes the parts; the second phase calls it.
                 if self.undefined(&callee, scope) {
-                    let args = args.clone();
-                    self.stub(&callee, &args, scope, result);
+                    let original = args.clone();
+                    self.stub(&callee, &original, scope, result);
+                    self.complex_temporaries(args, scope, out);
                 }
                 return Ok(());
             }
@@ -755,7 +841,7 @@ impl Lower {
     /// declared EXTERNAL and defined elsewhere, or one defined here that only
     /// the entry point supports.
     fn external_function(&self, name: &str, args: &[Expr], scope: &Scope) -> bool {
-        if self.complex_phase {
+        if self.complex_phase && !self.complex_body {
             // A stub function with a REAL result and COMPLEX actuals.
             return self.stubs.contains_key(name) && !scope.is_array(name);
         }
@@ -769,7 +855,7 @@ impl Lower {
             // EXTERNAL, or a typed scalar name that is not an intrinsic or
             // statement function: FORTRAN 77 does not require EXTERNAL.
             None => scope.externals.contains(name)
-                || self.library && !scope.uses && scope.kinds.contains_key(name) && !scope.statement_functions.contains(name)
+                || !scope.uses && scope.kinds.contains_key(name) && !scope.statement_functions.contains(name)
                     && !scope.variables.contains(name)
                     && !name.contains('%') && crate::intrinsics::purity(name).is_none(),
         }
@@ -781,19 +867,18 @@ impl Lower {
         let dummies: Vec<StubDummy> = args
             .iter()
             .map(|a| {
-                let array = match a {
+                // A COMPLEX dummy is an array, so that an element passes the
+                // rest of its array; a scalar actual passes its parts as well.
+                let array = complex_value(scope, a) || match a {
                     Expr::Ident(n) => scope.is_array(n),
                     Expr::Call(n, _) | Expr::Index(n, _) => scope.is_array(n),
                     _ => false,
                 };
                 let kind = if complex_value(scope, a) {
-                    let kind = match a {
-                        Expr::Ident(n) | Expr::Call(n, _) | Expr::Index(n, _) => scope.kind(n).filter(|k| matches!(k, TypeSpec::Complex(_))),
-                        _ => None,
-                    };
-                    kind.unwrap_or_else(|| TypeSpec::Complex("8".into()))
+                    complex_kind(scope, a)
                 } else if character_value(scope, a).unwrap_or(false) {
-                    TypeSpec::CharacterAssumed
+                    // The stub only guides COMPLEX lowering; any length will do.
+                    TypeSpec::Character(None)
                 } else {
                     infer(scope, a).ok().filter(numeric).unwrap_or(TypeSpec::Integer(None))
                 };
@@ -806,18 +891,44 @@ impl Lower {
         }
     }
 
+    /// Give each COMPLEX actual that is an expression, rather than a variable
+    /// or array element, a COMPLEX temporary, whose parts are then passed.
+    fn complex_temporaries(&mut self, args: &mut [Expr], scope: &Scope, out: &mut Vec<Stmt>) {
+        for a in args.iter_mut() {
+            let variable = match a {
+                Expr::Ident(n) => !scope.constants.contains(n),
+                Expr::Call(n, _) | Expr::Index(n, _) => scope.is_array(n),
+                _ => false,
+            };
+            if variable || !complex_value(scope, a) {
+                continue;
+            }
+            let kind = Some(complex_kind(scope, a));
+            // COMPLEX lowering takes only ordinary names.
+            self.serial += 1;
+            let temporary = format!("rfort_complex_{}", self.serial);
+            // Declared with the unit's own declarations, which COMPLEX
+            // lowering takes from the unit rather than from a BLOCK.
+            self.declarations.push(Stmt::VarDecl { kind: kind.unwrap_or_else(|| TypeSpec::Complex("8".into())), names: vec![temporary.clone()] });
+            out.push(assign(&temporary, std::mem::replace(a, id(&temporary))));
+        }
+    }
+
     /// Whether a call is to a procedure that is not defined here and may be
     /// external, before the checks of its arguments.
     fn undefined(&self, name: &str, scope: &Scope) -> bool {
         !name.starts_with('@') && !name.contains('%') && !self.definitions.contains_key(name)
-            && !COMPLEX_PROCEDURES.with(|s| s.borrow().contains(name))
+            && !COMPLEX_PROCEDURES.with(|s| s.borrow().contains_key(name))
             && !self.others.contains(name) && !scope.procedures.contains(name) && !scope.dummies.contains(name)
             && !INTRINSIC_SUBROUTINES.contains(&name)
     }
 
     /// Whether a CALL statement uses a by-reference entry point.
     fn external(&self, name: &str, args: &[Expr], scope: &Scope) -> bool {
-        if self.complex_phase {
+        if !self.complex_phase && self.complex_body {
+            return false;
+        }
+        if self.complex_phase && !self.complex_body {
             // Only the calls that the first phase left for COMPLEX lowering.
             let base = name.strip_prefix(DERIVED_RESULT).unwrap_or(name);
             if self.stubs.contains_key(base) {
@@ -971,6 +1082,24 @@ fn writes(body: &[Stmt], name: &str) -> bool {
         }
         _ => false,
     })
+}
+
+/// Whether `body` may define `name`: by assignment or input, as a DO
+/// variable, or as an actual argument of a subroutine, conservatively.
+pub(crate) fn defines(body: &[Stmt], name: &str) -> bool {
+    writes(body, name)
+        || body.iter().any(|s| match s {
+            Stmt::Do { var, body, .. } => var == name || defines(body, name),
+            Stmt::DoWhile { body, .. } | Stmt::Block { body } => defines(body, name),
+            Stmt::If { then_body, else_body, .. } => defines(then_body, name) || else_body.as_deref().is_some_and(|b| defines(b, name)),
+            Stmt::SelectCase { cases, default, .. } => {
+                cases.iter().any(|c| defines(&c.body, name)) || default.as_deref().is_some_and(|b| defines(b, name))
+            }
+            Stmt::CallSub { name: callee, args } => {
+                !callee.starts_with('@') && args.iter().any(|a| matches!(a, Expr::Ident(n) if n == name))
+            }
+            _ => false,
+        })
 }
 
 /// The by-reference entry point of external subroutine `name`.
@@ -1209,14 +1338,16 @@ fn entry_point(name: &str, params: &[String], body: &[Stmt], dummies: &[(TypeSpe
         }
         _ => false,
     };
-    let (mut moved, kept): (Vec<Stmt>, Vec<Stmt>) = native.into_iter().partition(|s| automatic(s));
+    let (moved, kept): (Vec<Stmt>, Vec<Stmt>) = native.into_iter().partition(|s| automatic(s));
     native = kept;
     // Their bounds are evaluated with the other entry computations, into
-    // locals, since later passes evaluate a declared bound again.
+    // locals. Each array is ALLOCATABLE, as automatic arrays of internal
+    // procedures are, and is allocated after the bounds.
     let mut serial = 0;
-    for s in &mut moved {
-        let Stmt::ArrayDecl { dims, .. } = s else { continue };
-        for d in dims {
+    let mut allocations = vec![];
+    for s in moved {
+        let Stmt::ArrayDecl { kind, name, mut dims } = s else { continue };
+        for d in dims.iter_mut() {
             let bounds: Vec<&mut Expr> = match d {
                 Expr::Call(tag, a) if tag == "@declared_bounds" => a.iter_mut().collect(),
                 _ => vec![d],
@@ -1228,8 +1359,21 @@ fn entry_point(name: &str, params: &[String], body: &[Stmt], dummies: &[(TypeSpe
                 entry.push(assign(&bound, std::mem::replace(b, id(&bound))));
             }
         }
+        let subscripts = dims.iter().map(|d| match d {
+            Expr::Call(tag, a) if tag == "@declared_bounds" => Expr::Call("@section_subscript".into(), vec![Expr::Section {
+                name: name.clone(),
+                lower: Some(Box::new(a[0].clone())),
+                upper: Some(Box::new(a[1].clone())),
+                stride: None,
+            }]),
+            d => d.clone(),
+        }).collect();
+        allocations.push(Stmt::CallSub { name: "@allocate".into(), args: vec![Expr::Call(name.clone(), subscripts)] });
+        native.push(Stmt::ArrayDecl { kind, name: name.clone(), dims: vec![id("@deferred_extent"); dims.len()] });
+        native.push(Stmt::DummyIntent { name: name.clone(), intent: "allocatable".into() });
+        native.push(Stmt::DummyIntent { name, intent: "@automatic".into() });
     }
-    deferred.splice(0..0, moved);
+    entry.extend(allocations);
     if !copy_out.is_empty() {
         fn returns(body: &mut [Stmt], copy_out: &[Stmt]) {
             for s in body {
@@ -1325,7 +1469,7 @@ fn run(mut p: Program, complex_phase: bool) -> Result<Program> {
             continue;
         }
         let base = name.strip_prefix(DERIVED_RESULT).unwrap_or(name);
-        if complex_phase && !complex_procedures.contains(base) {
+        if complex_phase && !complex_procedures.contains_key(base) {
             continue;
         }
         let mut scope = Scope::new(None);
@@ -1333,7 +1477,9 @@ fn run(mut p: Program, complex_phase: bool) -> Result<Program> {
         if !complex_phase && !elemental {
             let complex = |k: Option<TypeSpec>| k.is_some_and(|k| matches!(k, TypeSpec::Complex(_)));
             if params.iter().any(|p| complex(scope.kind(p))) || return_type.is_some_and(|t| complex(t.clone().or_else(|| scope.kind(name)))) {
-                COMPLEX_PROCEDURES.with(|s| s.borrow_mut().insert(name.clone()));
+                let kinds = scope.kinds.iter().filter(|(n, k)| !scope.is_array(n) && !matches!(k, TypeSpec::Complex(_)))
+                    .map(|(n, k)| (n.clone(), k.clone())).collect();
+                COMPLEX_PROCEDURES.with(|s| s.borrow_mut().insert(name.clone(), (scope.externals.clone(), kinds)));
                 continue;
             }
         }
@@ -1373,7 +1519,18 @@ fn run(mut p: Program, complex_phase: bool) -> Result<Program> {
         // Without a main program, the procedures are a library that other
         // compilations call by reference, and only the entry points remain.
         let special = interface.as_ref().is_some_and(|i| i.iter().any(|(kind, dims)| !dims.is_empty() || character(kind)));
-        let native_only = interface.is_some() && (assumed_size || !main_program && special);
+        // The native ABI passes scalars by value, so a function that defines
+        // a scalar dummy, which its actual must then reflect, is called by
+        // reference.
+        let defined = if return_type.is_some() {
+            params.iter().find(|p| !body.iter().any(|s| matches!(s, Stmt::ArrayDecl { name, .. } if name == *p)) && defines(body, p))
+        } else {
+            None
+        };
+        if let (Some(p), None) = (defined, &interface) {
+            bail!("FUNCTION `{name}` defines its dummy argument `{p}`, which is not yet supported for this function");
+        }
+        let native_only = interface.is_some() && (assumed_size || !main_program && special || defined.is_some());
         let variable = params
             .iter()
             .map(|p| special && !body.iter().any(|s| matches!(s, Stmt::DummyIntent { name, intent } if name == p && intent.starts_with("intent("))))
@@ -1385,14 +1542,24 @@ fn run(mut p: Program, complex_phase: bool) -> Result<Program> {
         if definitions.get(name).is_some_and(|d| d.native_only)));
     p.body.extend(generated);
 
-    let mut lower = Lower { definitions, complex_phase, stubs, library: !main_program, others: other, serial: 0 };
+    let mut lower = Lower { definitions, complex_phase, complex_body: false, declarations: vec![], stubs, others: other, serial: 0 };
     fn walk(lower: &mut Lower, body: &mut Vec<Stmt>, scope: &Scope, top: bool, contains: &[String],
             scopes: &HashMap<String, Scope>, main: &Scope) -> Result<()> {
+        let outer = std::mem::take(&mut lower.declarations);
         lower.calls(body, scope)?;
+        let declarations = std::mem::replace(&mut lower.declarations, outer);
+        body.splice(0..0, declarations);
         for s in body.iter_mut() {
             match s {
                 Stmt::Subroutine { name, params, body, pure, elemental } | Stmt::Function { name, params, body, pure, elemental, .. } => {
                     let pure = *pure || *elemental;
+                    let base = name.strip_prefix(PREFIX).unwrap_or(name);
+                    let base = base.strip_prefix(DERIVED_RESULT).unwrap_or(base).to_string();
+                    let recorded = if top { COMPLEX_PROCEDURES.with(|s| s.borrow().get(&base).cloned()) } else { None };
+                    let outer = lower.complex_body;
+                    if top {
+                        lower.complex_body = recorded.is_some();
+                    }
                     let mut inner = if let Some(native) = scopes.get(name.as_str()) {
                         native.clone()
                     } else {
@@ -1403,7 +1570,14 @@ fn run(mut p: Program, complex_phase: bool) -> Result<Program> {
                         inner
                     };
                     inner.pure |= pure;
+                    if let (true, Some((externals, kinds))) = (lower.complex_phase, recorded) {
+                        inner.externals.extend(externals);
+                        for (n, k) in kinds {
+                            inner.kinds.entry(n).or_insert(k);
+                        }
+                    }
                     walk(lower, body, &inner, false, contains, scopes, main)?;
+                    lower.complex_body = outer;
                 }
                 Stmt::Module { body, .. } => {
                     let mut inner = Scope::new(None);

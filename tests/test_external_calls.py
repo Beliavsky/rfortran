@@ -322,6 +322,246 @@ end program
    16.00
 """)
 
+    def test_statement_functions_and_goto_dispatch(self):
+        # A computed GOTO into the middle of a backward loop needs a state
+        # machine; statement functions may have COMPLEX dummies.
+        source = self.write('dispatch.f', """      PROGRAM SF
+      DOUBLE PRECISION F, T, CABS1
+      COMPLEX*16 ZDUM, Z
+      INTEGER K, ISAVE, N
+      F(T) = 2*T + 1
+      CABS1(ZDUM) = ABS(DBLE(ZDUM)) + ABS(DIMAG(ZDUM))
+      Z = (3.0D0, -4.0D0)
+      PRINT '(3F8.2)', F(1.5D0), CABS1(Z), F(CABS1(Z))
+      DO 5 ISAVE = 1, 3
+         N = 0
+         K = 0
+         GO TO (10, 20, 30) ISAVE
+   10    CONTINUE
+         N = N + 1
+   20    CONTINUE
+         N = N + 10
+         K = K + 1
+   30    CONTINUE
+         N = N + 100
+         IF (K .LT. 2) GO TO 20
+         PRINT '(2I5)', N, K
+    5 CONTINUE
+      END
+""")
+        self.check(self.compile(source, '-o', 'program.exe'))
+        self.assertEqual(self.run_program('program.exe').stdout,
+                         '    4.00    7.00   15.00\n  221    2\n  220    2\n  320    2\n')
+
+    def test_save_data_and_dummy_sections(self):
+        # SAVE with and without a list, a variable named IF, DATA with
+        # implied-DO lists, and elemental operations on sections of dummies.
+        source = self.write('save.f', """      PROGRAM SD
+      INTEGER I, J, NEXT, ISTATE
+      COMPLEX*16 A( 3, 3 ), QC( 2, 3 )
+      DOUBLE PRECISION R( 3, 3 ), X( 3 )
+      ISTATE = 0
+      DO 10 I = 1, 3
+         J = NEXT( ISTATE )
+         PRINT '(2I5)', J, ISTATE
+   10 CONTINUE
+      CALL TABLE
+      DO 30 J = 1, 3
+         DO 20 I = 1, 3
+            A( I, J ) = DCMPLX( I, J )
+            R( I, J ) = I*J
+   20    CONTINUE
+         QC( 1, J ) = DCMPLX( J, -2*J )
+         QC( 2, J ) = 0
+   30 CONTINUE
+      X( 1 ) = -1.25D0
+      X( 2 ) = 0.25D0
+      X( 3 ) = 2.5D0
+      CALL SECT( 3, A, 3, QC, 2, R, X )
+      PRINT '(6F8.3)', DBLE( A( 1, 2 ) ), DIMAG( A( 1, 2 ) ),
+     $   DBLE( A( 2, 2 ) ), DIMAG( A( 2, 2 ) ), DBLE( A( 3, 2 ) ),
+     $   DIMAG( A( 3, 2 ) )
+      PRINT '(3F9.4)', R
+      END
+*     A counter whose locals keep their values between calls.
+      INTEGER FUNCTION NEXT( ISTATE )
+      INTEGER ISTATE, K, IF
+      DOUBLE PRECISION W
+      SAVE
+      IF( ISTATE.EQ.0 ) THEN
+         K = 10
+         W = 0.5D0
+      END IF
+      IF = K
+      K = K + 1
+      W = 2*W
+      ISTATE = INT( W )
+      NEXT = IF
+      END
+      SUBROUTINE TABLE
+      INTEGER LV, J, K, CALLS
+      PARAMETER ( LV = 3 )
+      INTEGER MM( LV, 2 ), V( 4 )
+      SAVE CALLS
+      DATA ( MM( 1, J ), J = 1, 2 ) / 11, 12 /,
+     $     ( MM( 2, J ), J = 1, 2 ) / 2*21 /
+      DATA ( ( MM( K, J ), J = 1, 2 ), K = 3, 3 ) / 31, 32 /
+      DATA V / 4*7 /, CALLS / 0 /
+      CALLS = CALLS + 1
+      PRINT '(8I4)', ( ( MM( K, J ), K = 1, LV ), J = 1, 2 ), V( 3 ),
+     $   CALLS
+      END
+*     Elemental operations on sections of dummy arrays.
+      SUBROUTINE SECT( N, A, LDA, QC, LDQC, R, X )
+      INTEGER N, LDA, LDQC
+      COMPLEX*16 A( LDA, * ), QC( LDQC, * )
+      DOUBLE PRECISION R( LDA, * ), X( * )
+      DOUBLE PRECISION, ALLOCATABLE :: W( : )
+      ALLOCATE( W( N ) )
+      W = X( 1:N )
+      A( 1:N, 2 ) = A( 1, 2 )*DCONJG( QC( 1, 1:N ) )
+      R( 1, 1:N ) = 2*W
+      R( 2, 1:N ) = ABS( X( 1:N ) ) + MAX( X( 1:N ), 0.5D0 )
+      R( 3, 1:N ) = DBLE( INT( X( 1:N )*10 ) ) + SQRT( ABS( X( 1:N ) ) )
+      END
+""")
+        self.check(self.compile(source, '-o', 'program.exe'))
+        self.assertEqual(self.run_program('program.exe').stdout, '   10    1\n   11    2\n   12    4\n  11  21  31  12  21  32   7   1\n  -3.000   4.000  -6.000   8.000  -9.000  12.000\n  -2.5000   1.7500 -10.8820\n   0.5000   0.7500   2.5000\n   5.0000   5.0000  26.5811\n')
+
+    def test_functions_defining_arguments(self):
+        # Functions that change scalar arguments, which the caller sees:
+        # module, internal and external ones, in expressions, conditions
+        # and DO WHILE conditions.
+        source = self.write('defining.f90', """module counters
+  implicit none
+  private
+  public :: bump, take
+contains
+  integer function bump(k)
+    integer, intent(inout) :: k
+    k = k + 1
+    bump = 10 * k
+  end function
+  function take(n, step) result(r)
+    integer :: n, step, r
+    r = n
+    if (n <= 0) return
+    n = n - step
+    r = -n
+  end function
+end module
+
+program f7
+  use counters, only: bump, take
+  implicit none
+  integer :: i, j, m, total
+  i = 0
+  j = bump(i) + bump(i)
+  print '(2i6)', j, i
+  if (bump(i) > 25) print '(a,i4)', 'big ', i
+  m = 7
+  total = 0
+  do while (take(m, 3) < 0)
+    total = total + 1
+  end do
+  print '(3i6)', m, total, take(m, 1)
+  print '(2i6)', bump(j), j
+  call inner(i)
+  print '(i6)', i
+contains
+  subroutine inner(k)
+    integer :: k
+    k = twice(k) + twice(k)
+  end subroutine
+  integer function twice(k)
+    integer :: k
+    k = 2 * k
+    twice = k
+  end function
+end program
+""")
+        self.check(self.compile(source, '-o', 'program.exe'))
+        self.assertEqual(self.run_program('program.exe').stdout, '    30     2\nbig    3\n    -2     2    -2\n   310    31\n    18\n')
+        main = self.write('main.f', """      PROGRAM FA
+      INTEGER I, J, NX
+      I = 0
+      J = NX( I )
+      PRINT '(2I3)', J, I
+      END
+""")
+        function = self.write('nx.f', """      INTEGER FUNCTION NX( K )
+      INTEGER K
+      K = K + 5
+      NX = 1
+      END
+""")
+        self.check(self.compile(main, function, '-o', 'one.exe'))
+        self.assertEqual(self.run_program('one.exe').stdout, '  1  5\n')
+        self.check(self.compile('-c', function, '-o', 'nx.obj'))
+        self.check(self.compile(main, 'nx.obj', '-o', 'two.exe'))
+        self.assertEqual(self.run_program('two.exe').stdout, '  1  5\n')
+
+    def test_transfer_and_automatic_arrays(self):
+        # TRANSFER of a REAL workspace to a COMPLEX dummy, as in LAPACK's
+        # xxxRFSX routines, in a loop; and automatic arrays, REAL and
+        # COMPLEX, of procedures with by-reference entry points.
+        main = self.write('main.f90', """program tr
+  implicit none
+  double precision :: r(6)
+  integer :: i
+  r = [(dble(i), i = 1, 6)]
+  call s(3, r)
+  call a(3, r)
+  print '(6f5.1)', r
+end program
+""")
+        library = self.write('library.f', """      SUBROUTINE S( N, RWORK )
+      INTEGER N, K
+      DOUBLE PRECISION RWORK( * )
+      DOUBLE PRECISION ZERO
+      PARAMETER ( ZERO = 0.0D+0 )
+      EXTERNAL G
+      INTRINSIC TRANSFER
+      DO K = 1, 2
+         CALL G( N-K+1, TRANSFER( RWORK( K:K+2*N-1 ),
+     $           (/ (ZERO, ZERO) /), N-K+1 ) )
+      END DO
+      END
+      SUBROUTINE A( N, RWORK )
+      INTEGER N, I
+      DOUBLE PRECISION RWORK( * )
+      DOUBLE PRECISION X( N ), Y( N )
+      COMPLEX*16 T( N )
+      EXTERNAL G
+      DO I = 1, N
+         X( I ) = RWORK( 2*I-1 )
+         Y( I ) = RWORK( 2*I )
+         T( I ) = DCMPLX( Y( I ), X( I ) )
+      END DO
+      DO I = 1, N
+         WRITE( *, '(A,2F5.1)' ) 'A', X( I ), Y( I )
+      END DO
+      CALL G( N, T )
+      END
+      SUBROUTINE G( N, Z )
+      INTEGER N, I
+      COMPLEX*16 Z( * )
+      DO I = 1, N
+         WRITE( *, '(A,2F5.1)' ) 'G', DBLE( Z( I ) ), DIMAG( Z( I ) )
+         Z( I ) = 0
+      END DO
+      END
+""")
+        # From gfortran.
+        expected = ('G  1.0  2.0\nG  3.0  4.0\nG  5.0  6.0\nG  2.0  3.0\nG  4.0  5.0\n'
+                    'A  1.0  2.0\nA  3.0  4.0\nA  5.0  6.0\nG  2.0  1.0\nG  4.0  3.0\nG  6.0  5.0\n'
+                    '  1.0  2.0  3.0  4.0  5.0  6.0\n')
+        self.check(self.compile(main, library, '-o', 'one.exe'))
+        self.assertEqual(self.run_program('one.exe').stdout, expected)
+        self.check(self.compile('-c', library, '-o', 'library.obj'))
+        self.check(self.compile(main, 'library.obj', '-o', 'two.exe'))
+        self.assertEqual(self.run_program('two.exe').stdout, expected)
+
     def test_bounds(self):
         source = self.write('bounds.f90', """program bounds
 implicit none

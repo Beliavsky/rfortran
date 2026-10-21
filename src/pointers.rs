@@ -181,6 +181,9 @@ struct Variable {
     level: usize,
     target: bool,
     allocatable: bool,
+    /// The variable holding the current extent of a rank-one ALLOCATABLE,
+    /// whose storage has its largest extent.
+    length: Option<String>,
 }
 #[derive(Clone)]
 struct Axis {
@@ -256,8 +259,20 @@ struct Lower {
     serial: usize,
     capacity: i64,
     name_capacity: usize,
+    /// Scalar temporaries free for reuse, by type. A statement's
+    /// temporaries are live until the statement, nested bodies included,
+    /// is lowered, so a unit declares only as many as one statement needs.
+    free: HashMap<String, Vec<String>>,
+    live: Vec<(String, String)>,
+    /// The declarations of the temporaries, for the start of the unit.
+    temporaries: Vec<Stmt>,
 }
 impl Lower {
+    fn release(&mut self, base: usize) {
+        for (kind, name) in self.live.drain(base..) {
+            self.free.entry(kind).or_default().push(name);
+        }
+    }
     fn fresh(&mut self) -> String {
         self.serial += 1;
         let name = format!("@pointer_{}", self.serial);
@@ -265,11 +280,16 @@ impl Lower {
         name
     }
     fn temp(&mut self, kind: TypeSpec, value: Expr, out: &mut Vec<Stmt>) -> Expr {
-        let n = self.fresh();
-        out.push(Stmt::VarDecl {
-            kind,
-            names: vec![n.clone()],
-        });
+        let key = format!("{kind:?}");
+        let n = match self.free.get_mut(&key).and_then(Vec::pop) {
+            Some(n) => n,
+            None => {
+                let n = self.fresh();
+                self.temporaries.push(Stmt::VarDecl { kind, names: vec![n.clone()] });
+                n
+            }
+        };
+        self.live.push((key, n.clone()));
         out.push(assign(&n, value));
         id(&n)
     }
@@ -399,6 +419,10 @@ impl Lower {
                                     || attrs
                                         .iter()
                                         .any(|(n, i)| n == &name && i.starts_with("@bounded:")),
+                                length: attrs.iter().find_map(|(n, i)| {
+                                    (n == &name).then(|| i.strip_prefix("@bounded:")).flatten()
+                                        .and_then(|rest| rest.split_once(':')).map(|(length, _)| length.to_string())
+                                }),
                             },
                         );
                     }
@@ -531,7 +555,10 @@ impl Lower {
         for (i, &extent) in v.dims.iter().enumerate() {
             axes.push(Axis {
                 lower: int(if original_bounds { v.lower[i] } else { 1 }),
-                extent: int(extent),
+                extent: match &v.length {
+                    Some(length) if v.dims.len() == 1 => id(length),
+                    _ => int(extent),
+                },
                 stride: int(stride),
             });
             stride = stride
@@ -995,6 +1022,7 @@ impl Lower {
                         level: 0,
                         target: false,
                         allocatable: false,
+                        length: None,
                     },
                 );
                 return self.array(&id(&temp), out);
@@ -1077,6 +1105,62 @@ impl Lower {
             if let Some(mut a) = self.array(a, out)? {
                 a.value = Expr::Un(op.clone(), Box::new(a.value));
                 return Ok(Some(a));
+            }
+        }
+        // An elemental intrinsic applies to each element of its array
+        // arguments, with its scalar arguments evaluated once.
+        if let Expr::Call(n, args) = e {
+            let conversion = match n.as_str() {
+                "dble" | "dfloat" if args.len() == 1 => Some(TypeSpec::DoublePrecision),
+                "real" | "sngl" | "float" if args.len() == 1 => Some(TypeSpec::Real),
+                "int" | "nint" | "idint" | "idnint" | "ifix" if args.len() == 1 => Some(TypeSpec::Integer(None)),
+                _ => None,
+            };
+            let elemental = conversion.is_some()
+                || matches!(
+                    n.as_str(),
+                    "abs" | "dabs" | "iabs" | "sqrt" | "dsqrt" | "exp" | "dexp" | "log" | "dlog" | "log10" | "dlog10"
+                        | "sin" | "dsin" | "cos" | "dcos" | "tan" | "dtan" | "asin" | "dasin" | "acos" | "dacos"
+                        | "atan" | "datan" | "sinh" | "dsinh" | "cosh" | "dcosh" | "tanh" | "dtanh" | "aint" | "anint"
+                        | "max" | "min" | "dmax1" | "dmin1" | "max0" | "min0" | "mod" | "dmod" | "sign" | "dsign"
+                        | "isign" | "dim" | "ddim"
+                );
+            if elemental && !self.functions.contains(n) && !self.vars.contains_key(n) && !self.pointers.contains_key(n) {
+                let mut parts = vec![];
+                for a in args {
+                    parts.push(self.array(a, out)?);
+                }
+                if let Some(first) = parts.iter().flatten().next() {
+                    let (shape, capacity) = (first.shape.clone(), first.capacity);
+                    let mut kind = first.kind.clone();
+                    let mut reads = vec![];
+                    let mut values = vec![];
+                    for (a, part) in args.iter().zip(parts) {
+                        match part {
+                            Some(p) => {
+                                self.conform(&shape, &p.shape, out)?;
+                                kind = promote(kind, p.kind.clone());
+                                reads.extend(p.reads);
+                                values.push(p.value);
+                            }
+                            None => {
+                                let mut e = a.clone();
+                                self.expr(&mut e, out)?;
+                                if let Ok(k) = self.kind(a) {
+                                    kind = promote(kind, k);
+                                }
+                                values.push(e);
+                            }
+                        }
+                    }
+                    return Ok(Some(ArrayValue {
+                        shape,
+                        kind: conversion.unwrap_or(kind),
+                        capacity,
+                        value: call(n, values),
+                        reads,
+                    }));
+                }
             }
         }
         Ok(None)
@@ -1489,7 +1573,9 @@ impl Lower {
             }
         }
         let mut out = vec![];
+        let base = self.live.len();
         for mut s in std::mem::take(body) {
+            self.release(base);
             if let Some(p) = crate::source_diagnostics::statement_offset(&s) { statement_location.set(Some(p)); }
             match &mut s {
                 Stmt::DummyIntent { intent, .. }
@@ -1671,6 +1757,7 @@ impl Lower {
             }
             out.push(s);
         }
+        self.release(base);
         *body = out;
         Ok(())
             })();
@@ -1732,11 +1819,15 @@ pub fn resolve(mut p: Program) -> Result<Program> {
             serial: 0,
             capacity: 1,
             name_capacity: 1,
+            free: HashMap::new(),
+            live: vec![],
+            temporaries: vec![],
         };
         lower.declarations(body, 0)?;
         if !lower.pointers.is_empty() {
             lower.targets(body)?;
             lower.body(body, &HashSet::new())?;
+            body.splice(0..0, std::mem::take(&mut lower.temporaries));
         }
         fn procedures(body: &mut Vec<Stmt>, functions: &HashSet<String>) -> Result<()> {
             for s in body {

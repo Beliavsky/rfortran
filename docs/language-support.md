@@ -209,8 +209,10 @@ procedure BLOCK scopes. Declaration initialization implies SAVE even when the
 attribute is omitted. Values survive repeated calls, OPTIONAL specializations and
 recursive activations; each declaration has independent storage. Ordinary locals
 without initialization retain their existing behavior. PURE procedures reject
-saved initialized locals. Saved arrays, TARGET locals, module
-initialization and SAVE declarations without initializers remain unsupported.
+saved initialized locals. The SAVE attribute and the SAVE statement also save
+scalars without initializers; SAVE without a list saves every local scalar of
+the procedure. Saved arrays, TARGET locals and module initialization remain
+unsupported, and SAVE of a local array of a procedure is reported as such.
 Run `python tests/test_saved_locals.py` and `python tests/test_saved_characters.py`;
 `tests/programs/xsave_counter.f90` is a small numeric example.
 
@@ -239,8 +241,11 @@ checks with gfortran comparisons.
 - `DATA a / 1 /, b, c / 2*0.5, 3.0 /` gives whole variables initial values,
   with `r*c` repeat counts (`r` may be a named constant), signed and BOZ
   constants. The variables must be declared before the DATA statement; an
-  array must be the last variable of its value list. Array elements, sections
-  and implied-DO lists are not yet supported. A local array of a procedure
+  array must be the last variable of its value list. Array elements with
+  constant subscripts and implied-DO lists, as in
+  `data ((mm(i,j), j = 1, 4), i = 1, 2) / ... /`, may give an array its
+  values element by element, if every element gets one; bounds may be named
+  constants. Sections are not yet supported. A local array of a procedure
   that is given values by DATA and never changed, such as a table of pivots,
   is a named constant; one that the procedure changes is not yet supported,
   as it would need SAVE storage.
@@ -254,6 +259,9 @@ checks with gfortran comparisons.
 - The FORTRAN 77 sized types `REAL*4`, `REAL*8`, `COMPLEX*8`, `COMPLEX*16`,
   `INTEGER*n` and `LOGICAL*n`, `DOUBLE COMPLEX`, and the specific COMPLEX
   intrinsics `DIMAG`, `DCONJG`, `DREAL` and `DCMPLX` are accepted.
+- Statement functions, such as `cabs1(z) = abs(dble(z)) + abs(dimag(z))`, are
+  expanded where they are referenced, with any argument types, COMPLEX
+  included, and the result converted to the function's declared type.
 - An assignment converts between INTEGER, REAL and DOUBLE PRECISION; a real
   value assigned to an INTEGER variable is truncated toward zero, as by INT.
 - A local array may have the name of an intrinsic, such as `sum(2,2)`; its
@@ -262,7 +270,8 @@ checks with gfortran comparisons.
   character literal, and a name or number may be split across lines with `&`
   at the end of one line and the start of the next.
 - SELECT and CASE may be used as variable names, and SELECT as an array name,
-  as in `select(k) = .false.`.
+  as in `select(k) = .false.`. IF may name a variable, as in `if = i - 1`; it
+  is a keyword only before a parenthesized condition and after END or ELSE.
 - External procedures and modules may follow the main program in the same file.
 - `IMPLICIT NONE (TYPE)`, `IMPLICIT NONE (EXTERNAL)` and
   `IMPLICIT NONE (TYPE, EXTERNAL)` are accepted. TYPE disables implicit
@@ -569,8 +578,10 @@ statements from the label. A jump into a construct, such as into a DO body from
 outside it, is diagnosed. A region that a GOTO creates may not contain an
 unnamed EXIT or CYCLE of an enclosing loop; name the loop instead. A computed
 GOTO, `go to (10, 20, 30) k`, jumps to the k-th label, or continues with the
-next statement if k is out of range. Assigned GOTO and the arithmetic IF are
-not supported.
+next statement if k is out of range. Jumps that nested loops cannot express,
+such as a computed GOTO into the middle of a statement range that a later
+GOTO repeats, are compiled as a loop over the labelled segments of the
+statement list. Assigned GOTO and the arithmetic IF are not supported.
 
 ### SELECT CASE ranges
 
@@ -1501,8 +1512,10 @@ applies its own declarations:
   change it.
 
 A function is called this way when it is declared EXTERNAL, as in
-`double precision ddot` / `external ddot`, or when it is defined in the same
-compilation with array or CHARACTER dummies. Its references are evaluated
+`double precision ddot` / `external ddot`, or only typed, as FORTRAN 77
+allows, or when it is defined in the same compilation with array or CHARACTER
+dummies, or may define one of its scalar dummies, which its actual argument
+must then reflect. Its references are evaluated
 before the statement that contains them, and before every test of a DO WHILE
 condition. A subroutine is called this way when it is not defined in the
 compilation, or when it has array or CHARACTER dummies.
@@ -1511,6 +1524,25 @@ Element accesses through a dummy are checked against its bounds and against
 the end of the actual array, and reads are checked for initialization, as
 for local arrays. A procedure entered with an explicit-shape dummy larger than
 its actual, or with an array element outside its array, stops with an error.
+
+Module and internal functions that define a scalar dummy, as in `k = k + 1`
+in the body of `f(k)`, are called through a subroutine with the result as a
+last argument, so that their actual arguments change too. Their dummies must
+be declared scalars.
+
+Inside a procedure, elemental intrinsics such as `DBLE`, `ABS`, `MAX` and
+`SQRT`, and COMPLEX arithmetic, apply to sections of dummy arrays, as in
+`a(k1:k2, j) = s*dconjg(qc(1, 1:n))`.
+
+Automatic arrays of these procedures, such as `DOUBLE PRECISION WORK(MAX(M, N))`
+or `COMPLEX*16 T(N)`, are allocated on entry, as in other procedures.
+
+TRANSFER of a REAL array to a COMPLEX array of the same kind may be an actual
+argument, as LAPACK's complex xxxRFSX routines pass a REAL workspace with
+`TRANSFER(RWORK(1:2*N), (/ (ZERO, ZERO) /), N)`: the callee receives a
+temporary COMPLEX array of SIZE elements, made from consecutive pairs of the
+source, which it may change without changing the source. TRANSFER is not
+otherwise supported.
 
 Not yet supported in these calls: derived-type arguments, array sections, CHARACTER arrays, procedure arguments, assumed-shape dummies
 (which need an explicit interface), and whole-array operations on a dummy

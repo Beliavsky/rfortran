@@ -82,6 +82,7 @@ extern {
         KW_COMPLEX => TokenKind::KwComplex,
         COMPLEX_OPEN => TokenKind::ComplexOpen,
         KW_DIMENSION => TokenKind::KwDimension,
+        KW_SAVE_ALL => TokenKind::KwSaveAll,
         KW_DOUBLE => TokenKind::KwDouble,
         KW_PRECISION => TokenKind::KwPrecision,
         KW_CHARACTER => TokenKind::KwCharacter,
@@ -915,6 +916,12 @@ DataObjects: Vec<Expr> = {
 };
 DataObject: Expr = {
     <n:Designator> => Expr::Ident(n),
+    // An implied-DO list: (objects, var = first, last).
+    LPAREN <objects:DataObjects> COMMA <var:Ident> EQ <first:RhsExpr> COMMA <last:RhsExpr> RPAREN => {
+        let mut args = vec![Expr::Ident(var), first, last];
+        args.extend(objects);
+        Expr::Call(crate::data_statements::IMPLIED_DO.into(), args)
+    },
     <n:Designator> LPAREN <a:SubscriptList> RPAREN => crate::ast::section_or_call(n, a),
 };
 DataValues: Vec<Expr> = {
@@ -1097,6 +1104,8 @@ PreFuncDeclData: Vec<Stmt> = {
     KW_DIMENSION DCOLON? <entities:DimensionEntities> => entities.into_iter()
         .map(|(name,dims)| Stmt::ArrayDecl{kind:TypeSpec::IntegerKind("@dimension".into()),name,dims}).collect(),
     <declaration:PROC_DECL> => crate::ast::procedure_declaration(&declaration),
+    // SAVE alone saves every local variable; data_statements lowers both forms.
+    KW_SAVE_ALL => vec![Stmt::DummyIntent { name: crate::data_statements::SAVE_ALL.into(), intent: "save".into() }],
     <attr:ATTR_STMT> DCOLON? <names:IdentList> =>? crate::ast::attribute_statement(&attr, None, names)
         .map_err(|error| lalrpop_util::ParseError::User { error }),
     <attr:ATTR_STMT> LPAREN <intent:Ident> RPAREN DCOLON? <names:IdentList> =>? crate::ast::attribute_statement(&attr, Some(intent), names)
@@ -1127,6 +1136,9 @@ PreFuncDeclData: Vec<Stmt> = {
                 crate::ast::scalar_decl(t.clone(), attrs.clone(), vec![(name, value)])
             } else {
                 if value.is_some() { declarations.push(crate::ast::scalar_decl(t.clone(), attrs.clone(), vec![(name.clone(), value)])); }
+                else if attrs.iter().any(|a| a.eq_ignore_ascii_case("save")) {
+                    declarations.push(Stmt::DummyIntent { name: name.clone(), intent: "save".into() });
+                }
                 Stmt::ArrayDecl { kind: t.clone(), name, dims }
             };
             declarations.push(declaration);

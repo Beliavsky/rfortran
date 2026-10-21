@@ -378,6 +378,172 @@ fn replace_goto(stmt: &mut Stmt, label: u32, region: &str) -> bool {
         _ => false,
     }
 }
+/// Lower GOTOs to state machines. In each statement list with labels that
+/// GOTOs inside it target, the list becomes a loop over the segments that
+/// those labels begin, which runs every segment from the current one on, and
+/// which a GOTO cycles after selecting the segment of its label. Outer lists
+/// go first; GOTOs left in the segments are to labels of nested lists. Each
+/// loop's state variable is added to `states`. Returns whether any list
+/// changed.
+fn dispatch(body: &mut Vec<Stmt>, top: bool, serial: &mut usize, states: &mut Vec<String>) -> Result<bool> {
+    fn gotos(body: &[Stmt], out: &mut HashSet<u32>) {
+        for s in body {
+            match s {
+                Stmt::CallSub { name, args } if name == "@goto" => {
+                    if let Ok(n) = number(&args[0]) {
+                        out.insert(n);
+                    }
+                }
+                Stmt::If { then_body, else_body, .. } => {
+                    gotos(then_body, out);
+                    if let Some(b) = else_body {
+                        gotos(b, out);
+                    }
+                }
+                Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } | Stmt::Block { body } => gotos(body, out),
+                Stmt::SelectCase { cases, default, .. } => {
+                    for c in cases {
+                        gotos(&c.body, out);
+                    }
+                    if let Some(b) = default {
+                        gotos(b, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    fn nested(body: &mut [Stmt], serial: &mut usize, states: &mut Vec<String>) -> Result<bool> {
+        let mut changed = false;
+        for s in body {
+            match s {
+                Stmt::If { then_body, else_body, .. } => {
+                    changed |= dispatch(then_body, false, serial, states)?;
+                    if let Some(b) = else_body {
+                        changed |= dispatch(b, false, serial, states)?;
+                    }
+                }
+                // An explicit-step DO or FORALL keeps its control first.
+                Stmt::Block { body } if matches!(body.first(), Some(Stmt::CallSub { name, .. }) if name == "@do_step" || name == "@forall") => {
+                    let mut rest = body.split_off(1);
+                    changed |= dispatch(&mut rest, false, serial, states)?;
+                    body.append(&mut rest);
+                }
+                Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } | Stmt::Block { body } => {
+                    changed |= dispatch(body, false, serial, states)?
+                }
+                Stmt::SelectCase { cases, default, .. } => {
+                    for c in cases {
+                        changed |= dispatch(&mut c.body, false, serial, states)?;
+                    }
+                    if let Some(b) = default {
+                        changed |= dispatch(b, false, serial, states)?;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(changed)
+    }
+    fn redirect(body: &mut [Stmt], index: &std::collections::HashMap<u32, i64>, state: &str, region: &str) {
+        for s in body {
+            match s {
+                Stmt::CallSub { name, args } if name == "@goto" => {
+                    if let Some(i) = number(&args[0]).ok().and_then(|n| index.get(&n)) {
+                        *s = Stmt::Block { body: vec![
+                            Stmt::Assign { name: state.into(), value: Expr::IntLit(i.to_string()) },
+                            Stmt::CallSub { name: "@named_cycle".into(), args: vec![Expr::Str(region.into())] },
+                        ] };
+                    }
+                }
+                Stmt::If { then_body, else_body, .. } => {
+                    redirect(then_body, index, state, region);
+                    if let Some(b) = else_body {
+                        redirect(b, index, state, region);
+                    }
+                }
+                Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } | Stmt::Block { body } => redirect(body, index, state, region),
+                Stmt::SelectCase { cases, default, .. } => {
+                    for c in cases {
+                        redirect(&mut c.body, index, state, region);
+                    }
+                    if let Some(b) = default {
+                        redirect(b, index, state, region);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut targets = HashSet::new();
+    gotos(body, &mut targets);
+    let labels: HashSet<u32> = body
+        .iter()
+        .filter_map(|s| match s {
+            Stmt::CallSub { name, args } if name == "@statement_label" => number(&args[0]).ok(),
+            _ => None,
+        })
+        .collect();
+    let targets: HashSet<u32> = targets.intersection(&labels).copied().collect();
+    if targets.is_empty() {
+        return nested(body, serial, states);
+    }
+    // Declarations, and contained procedures, stay outside the loop.
+    let first = if top {
+        body.iter()
+            .position(|s| !matches!(s, Stmt::SourceLocation(_) | Stmt::VarDecl { .. } | Stmt::ArrayDecl { .. }
+                | Stmt::InitializedDecl { .. } | Stmt::DummyIntent { .. } | Stmt::Implicit(_) | Stmt::Use { .. }
+                | Stmt::DerivedDecl { .. } | Stmt::DerivedType { .. } | Stmt::Accessibility { .. }
+                | Stmt::GenericInterface { .. } | Stmt::OperatorInterface { .. } | Stmt::Subroutine { .. }
+                | Stmt::Function { .. } | Stmt::Module { .. }))
+            .unwrap_or(body.len())
+    } else {
+        0
+    };
+    let mut statements = body.split_off(first);
+    let procedures: Vec<Stmt> = statements.iter().filter(|s| matches!(s, Stmt::Subroutine { .. } | Stmt::Function { .. } | Stmt::Module { .. })).cloned().collect();
+    statements.retain(|s| !matches!(s, Stmt::Subroutine { .. } | Stmt::Function { .. } | Stmt::Module { .. }));
+    let mut segments: Vec<Vec<Stmt>> = vec![vec![]];
+    let mut index = std::collections::HashMap::new();
+    for s in statements {
+        if let Stmt::CallSub { name, args } = &s {
+            if name == "@statement_label" {
+                let label = number(&args[0])?;
+                if targets.contains(&label) {
+                    index.insert(label, segments.len() as i64);
+                    segments.push(vec![]);
+                    continue;
+                }
+            }
+        }
+        segments.last_mut().unwrap().push(s);
+    }
+    *serial += 1;
+    let state = format!("@goto_state_{serial}");
+    let region = format!("@goto_dispatch_{serial}");
+    states.push(state.clone());
+    let mut loop_body = vec![];
+    for (i, mut segment) in segments.into_iter().enumerate() {
+        redirect(&mut segment, &index, &state, &region);
+        // Labels of nested lists get their own loops.
+        nested(&mut segment, serial, states)?;
+        loop_body.push(Stmt::If {
+            cond: Expr::Bin(BinOp::Le, Box::new(Expr::Ident(state.clone())), Box::new(Expr::IntLit(i.to_string()))),
+            then_body: segment,
+            else_body: None,
+        });
+    }
+    loop_body.push(Stmt::Exit);
+    body.push(Stmt::Assign { name: state, value: Expr::IntLit("0".into()) });
+    body.push(crate::named_loops::parsed(
+        Stmt::DoWhile { cond: Expr::Logical(true), body: loop_body },
+        Some(region.clone()),
+        Some(region),
+    ));
+    body.extend(procedures);
+    Ok(true)
+}
+
 /// The label of a GOTO that no region could express.
 fn unresolved_goto(body: &[Stmt]) -> Option<u32> {
     body.iter().find_map(|stmt| match stmt {
@@ -411,7 +577,22 @@ fn unit(body: &mut Vec<Stmt>) -> Result<()> {
         }
     }
     let mut temps = vec![];
-    forward_regions(body, &mut temps)?;
+    let original = body.clone();
+    let structured = forward_regions(body, &mut temps);
+    if structured.is_err() || unresolved_goto(body).is_some() {
+        // Jumps that nested loops cannot express, as from a computed GOTO
+        // into the middle of a backward loop, use a dispatch loop instead.
+        let mut dispatched = original;
+        temps.clear();
+        let mut states = vec![];
+        if dispatch(&mut dispatched, true, &mut 0, &mut states)? {
+            dispatched.insert(0, Stmt::VarDecl { kind: TypeSpec::Integer(None), names: states });
+            *body = dispatched;
+            forward_regions(body, &mut temps)?;
+        } else {
+            structured?;
+        }
+    }
     if let Some(label) = unresolved_goto(body) {
         bail!("GOTO {label} jumps into a construct, or back into one from outside it; this is not yet supported");
     }
