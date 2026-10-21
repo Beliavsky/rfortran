@@ -82,6 +82,23 @@ end function sequence
 end program main
 ''','2000 2001000\n')
 
+    def test_constant_size_array_result_larger_than_1024(self):
+        self.check('''program main
+real,allocatable::x(:)
+x=make_array(10000)
+print *,size(x),maxval(x)
+contains
+function make_array(n) result(y)
+integer,intent(in)::n
+real::y(n)
+integer::i
+do i=1,n
+y(i)=10.0*i
+end do
+end function make_array
+end program main
+''','10000 100000.0\n')
+
     def test_character_repro(self):
         self.check((ROOT/'tests/184_allocated_character_concat.f90').read_text(encoding='utf-8'),'3 10\nfour|five|zero\n')
 

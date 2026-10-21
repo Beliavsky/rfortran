@@ -735,8 +735,7 @@ impl Lower {
         if let Some(dims)=&mut result_dims {
             if routine.elemental {bail!("ELEMENTAL function requires a scalar result");}
             let extents=dims.iter().map(crate::parameters::integer_constant).collect::<Result<Vec<_>>>().context("specialized function result extents must resolve to call-site constants")?;
-            let count=array_count(&extents)?;
-            if !(0..=1024).contains(&count) {bail!("specialized function array results support at most 1024 elements");}
+            array_count(&extents)?;
             // Later storage/output passes require literal extents, rather than
             // expressions such as 2*2 whose value is now statically known.
             *dims=extents.into_iter().map(int).collect();

@@ -1782,8 +1782,9 @@ independently of PURE; argument and result ranks may differ. This includes
 numeric, LOGICAL and fixed-length CHARACTER arrays. Each dimension is preserved
 until storage lowering, with Fortran column-major element order. Read-only
 inputs are copied; explicit INTENT(OUT)/INTENT(INOUT) variables retain caller
-storage and side effects. These specializations still require at most 1024
-elements per array, with extents and CHARACTER lengths known after association.
+storage and side effects. Array arguments of these specializations still
+require at most 1024 elements; fixed-shape results have no such limit. Extents
+and CHARACTER lengths must be known after association.
 Source array elements copied into the function must be
 initialized. Rank-one fixed-length CHARACTER ALLOCATABLE results can use bounded
 ALLOCATABLE output helpers or direct `ALLOCATE` statements with proven finite
