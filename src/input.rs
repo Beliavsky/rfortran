@@ -11,9 +11,45 @@ mod radix;
 
 /// Distinguish input implied-DOs from constructor/output implied-DOs before
 /// expression lowering; an input list may contain unrelated element types.
+/// Also give internal READ and WRITE statements whose unit is a CHARACTER
+/// array element a scalar record of the element's type.
 pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> crate::ast::Program {
-    fn body(statements: &mut [Stmt]) {
-        for s in statements {
+    type Arrays = HashMap<String, (TypeSpec, usize)>;
+    fn element_record(s: &mut Stmt, arrays: &Arrays, serial: &mut usize) {
+        let Stmt::CallSub { name, args } = s else { return };
+        let read = matches!(name.as_str(), "@formatted_read" | "@formatted_read_status" | "@internal_read");
+        if !read && name != "@write" { return; }
+        let Some(Expr::Call(array, indices) | Expr::Index(array, indices)) = args.first() else { return };
+        let Some((kind, rank)) = arrays.get(array) else { return };
+        if indices.len() != *rank || indices.iter().any(|e| matches!(e, Expr::Section { .. })) { return; }
+        *serial += 1;
+        let record = format!("@internal_record_{serial}");
+        let (array, indices) = (array.clone(), indices.clone());
+        let mut transfer = args.clone();
+        transfer[0] = var(&record);
+        let transfer = Stmt::CallSub { name: name.clone(), args: transfer };
+        let declaration = Stmt::VarDecl { kind: kind.clone(), names: vec![record.clone()] };
+        // A WRITE defines the whole record, as it does the element.
+        *s = Stmt::Block { body: if read {
+            vec![declaration, set(&record, Expr::Call(array, indices)), transfer]
+        } else {
+            vec![declaration, transfer, Stmt::AssignIndex { name: array, indices, value: var(&record) }]
+        } };
+    }
+    fn body(statements: &mut Vec<Stmt>, inherited: &Arrays, serial: &mut usize) {
+        let mut arrays = inherited.clone();
+        for s in statements.iter() {
+            match s {
+                Stmt::ArrayDecl { kind: kind @ (TypeSpec::Character(_) | TypeSpec::CharacterLength(_)), name, dims } => {
+                    arrays.insert(name.clone(), (kind.clone(), dims.len()));
+                }
+                Stmt::ArrayDecl { name, .. } => { arrays.remove(name); }
+                Stmt::VarDecl { names, .. } => for n in names { arrays.remove(n); },
+                _ => {}
+            }
+        }
+        for s in statements.iter_mut() {
+            element_record(s, &arrays, serial);
             if let Stmt::CallSub {name,args}=s {
                 if matches!(name.as_str(),"@formatted_read"|"@formatted_read_status") {
                     let first=if name=="@formatted_read" {2}else{4};
@@ -22,10 +58,10 @@ pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> crate::ast:
                     });}
                 }
             }
-            for child in crate::procedure_arguments::children(s) {body(child);}
+            for child in crate::procedure_arguments::children(s) {body(child, &arrays, serial);}
         }
     }
-    body(&mut program.body);program
+    body(&mut program.body, &Arrays::new(), &mut 0);program
 }
 
 /// Canonicalize READ controls before the shared I/O lowering passes.
@@ -623,9 +659,15 @@ pub(crate) fn lower_field_read(
     let [unit, format, Expr::Str(control), status, items @ ..] = args else { return Ok(None) };
     let Ok(text) = crate::parameters::character_constant(format) else { return Ok(None) };
     if !control.is_empty() && !control.eq_ignore_ascii_case("iostat") { return Ok(None); }
+    // An internal file, a scalar CHARACTER variable, is a single record.
+    let internal = matches!(unit, Expr::Ident(n) if matches!(symbols.get(n), Some((TypeSpec::Character(_), d)) if d.is_empty()));
+    let record_length = match unit {
+        Expr::Ident(n) => match symbols.get(n) { Some((TypeSpec::Character(Some(n)), _)) if internal => *n, _ => 0 },
+        _ => 0,
+    };
     // Plain (A) into one CHARACTER variable keeps the record READ.
     let plain = text.chars().filter(|c| !c.is_whitespace()).collect::<String>().eq_ignore_ascii_case("(a)");
-    if plain && items.len() == 1 && matches!(&items[0], Expr::Ident(n) if matches!(symbols.get(n), Some((TypeSpec::Character(_), d)) if d.is_empty())) {
+    if !internal && plain && items.len() == 1 && matches!(&items[0], Expr::Ident(n) if matches!(symbols.get(n), Some((TypeSpec::Character(_), d)) if d.is_empty())) {
         return Ok(None);
     }
     let shapes=symbols.iter().map(|(n,(_,d))|(n.clone(),d.clone())).collect();
@@ -691,8 +733,15 @@ pub(crate) fn lower_field_read(
     let code = format!("@field_status_{serial}");
     let widest = records.iter().flatten().map(|f| f.3).max().unwrap_or(1);
     let iostat = !control.is_empty();
-    let read_record = || Stmt::CallSub { name: "@formatted_read_status".into(),
-        args: vec![unit.clone(), Expr::Str("(a)".into()), Expr::Str("iostat".into()), var(&code), var(&buffer)] };
+    let read_record = |index: usize| if !internal {
+        Stmt::CallSub { name: "@formatted_read_status".into(),
+            args: vec![unit.clone(), Expr::Str("(a)".into()), Expr::Str("iostat".into()), var(&code), var(&buffer)] }
+    } else if index == 0 {
+        set(&buffer, unit.clone())
+    } else {
+        // Past the end of the internal file.
+        set(&code, int(-1))
+    };
     let substring = |first: usize, last: usize| Expr::Call("@substring".into(), vec![var(&buffer), int(first as i64 - 1), int((last + 1 - first) as i64)]);
     let store = |item: &Expr, value: Expr| match item {
         Expr::Ident(n) => set(n, value),
@@ -728,8 +777,8 @@ pub(crate) fn lower_field_read(
     };
     // Each later record is read only when the earlier ones succeeded.
     let mut nested: Vec<Stmt> = vec![];
-    for record in records.iter().rev() {
-        let mut segment = vec![read_record()];
+    for (index, record) in records.iter().enumerate().rev() {
+        let mut segment = vec![read_record(index)];
         // A failed transfer ends the input list. Later conversions must not
         // overwrite its status with success (or define subsequent items).
         let mut fields: Vec<Stmt> = record.iter()
@@ -739,7 +788,7 @@ pub(crate) fn lower_field_read(
         nested = segment;
     }
     let mut body = vec![
-        Stmt::VarDecl { kind: TypeSpec::Character(Some(FIELD_RECORD)), names: vec![buffer.clone()] },
+        Stmt::VarDecl { kind: TypeSpec::Character(Some(FIELD_RECORD.max(record_length))), names: vec![buffer.clone()] },
         Stmt::VarDecl { kind: TypeSpec::Character(Some(widest)), names: vec![field] },
         Stmt::VarDecl { kind: TypeSpec::Integer(None), names: vec![code.clone()] },
         set(&code, int(0)),

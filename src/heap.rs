@@ -494,8 +494,13 @@ pub(crate) fn automatic_locals(mut program: Program) -> Result<Program> {
             && crate::vector_subscripts::fixed_extent(&dims[0]).is_some_and(|n| n > 1024)
     }
     fn lower(params: &[String], result: &str, body: &mut Vec<Stmt>, main: bool) {
+        // Arrays bound to static storage, such as SAVE arrays, are not automatic.
         let attributes: HashSet<&str> = body.iter().filter_map(|s| match s {
             Stmt::DummyIntent { name, intent } if matches!(intent.as_str(), "allocatable" | "pointer" | "parameter" | "save" | "target" | "@heap") => Some(name.as_str()),
+            Stmt::CallSub { name, args } if name == "@module_bind" => match args.first() {
+                Some(Expr::Ident(n)) => Some(n.as_str()),
+                _ => None,
+            },
             _ => None,
         }).collect();
         let mut automatic = vec![];

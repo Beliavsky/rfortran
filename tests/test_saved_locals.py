@@ -184,9 +184,54 @@ end subroutine work
 end
 """,'1 1\n2 1\n')
 
+    def test_saved_and_initialized_arrays(self):
+        self.check("""integer::k
+do k=1,3
+call counts()
+end do
+print *,total(5),total(6)
+contains
+subroutine counts()
+integer,save::n(3)
+integer,save::calls=0
+integer::c(3)=[1,2,3]
+character(len=4)::s(2)=['ab','cd']
+real::r(2,2)=reshape([1.0,2.0,3.0,4.0],[2,2])
+logical::seen(4)
+save seen
+calls=calls+1
+if(calls==1) then
+n=0
+seen=.false.
+end if
+n(calls)=10*calls
+c=c+1
+s(1)=trim(s(1))//'x'
+r(2,2)=r(2,2)*2
+seen(calls)=.true.
+print *,n,c,s(1),r(2,2),count(seen)
+end subroutine counts
+integer function total(v)
+integer,intent(in)::v
+integer::hist(4)=0
+hist(1)=hist(1)+v
+total=hist(1)
+end function total
+end
+""",'10 0 0 2 3 4 abx 8.0 1\n10 20 0 3 4 5 abxx 16.0 2\n10 20 30 4 5 6 abxx 32.0 3\n5 11\n')
+
+    def test_saved_array_without_value_is_undefined(self):
+        self.check("""call work()
+contains
+subroutine work()
+integer,save::n(2)
+print *,n(1)
+end subroutine work
+end
+""",error='n')
+
     def test_invalid_or_unsupported_saved_storage(self):
         for declaration,message in [
-            ('integer,save::n(2)=[1,2]','local arrays'),
             ('integer,save,target::n=0','TARGET persistent'),
         ]:
             with self.subTest(declaration=declaration):

@@ -72,6 +72,35 @@ class InternalRead(unittest.TestCase):
                 source.write_text(f"character(len=8) :: text\ninteger :: n,ios\n{initialization}\ntext='{text}'\nread(text,*,iostat=ios) n\nprint *,ios,n\nend\n")
                 self.check_program(source, "read of uninitialized variable `n`")
 
+    def test_formatted_input_from_scalars_and_array_elements(self):
+        source = self.directory / "formatted.f90"
+        source.write_text("""program formatted
+implicit none
+character(len=20) :: line
+character(len=8) :: s(3)
+character(len=5) :: word
+integer :: a, b, ios
+real :: x
+line = '  12  34 2.50 hello'
+read(line, '(2i4,f5.2,a6)') a, b, x, word
+print *, a, b, x, '[', word, ']'
+read(line, '(a)') word
+print *, '[', word, ']'
+read(line, '(i4/i4)', iostat=ios) a, b
+print *, ios < 0, a
+s(1) = '   12'
+s(2) = '  345'
+s(3) = 'abc'
+read(s(2), '(i8)') a
+read(s(1), *) b
+print *, a, b
+read(s(3), '(i8)', iostat=ios) a
+print *, ios > 0
+end program formatted
+""", encoding="utf-8")
+        output = self.check_program(source)
+        self.assertEqual(output.split(), "12 34 2.5 [hello] [ 12 ] T 12 345 12 T".split())
+
     def test_input_error_without_iostat_terminates(self):
         for text in ["bad", ""]:
             source = self.directory / "error.f90"

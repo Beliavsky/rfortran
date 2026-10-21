@@ -233,8 +233,11 @@ recursive activations; each declaration has independent storage. Ordinary locals
 without initialization retain their existing behavior. PURE procedures reject
 saved initialized locals. The SAVE attribute and the SAVE statement also save
 scalars without initializers; SAVE without a list saves every local scalar of
-the procedure. Saved arrays, TARGET locals and module initialization remain
-unsupported, and SAVE of a local array of a procedure is reported as such.
+the procedure. Local arrays of these types are saved the same way, by the SAVE
+attribute or statement or by a declaration initializer, and use static storage
+like module arrays; a saved array without an initializer starts undefined.
+Saved CHARACTER arrays are limited to 1024 elements. TARGET locals and module
+initialization remain unsupported.
 Run `python tests/test_saved_locals.py` and `python tests/test_saved_characters.py`;
 `tests/programs/xsave_counter.f90` is a small numeric example.
 
@@ -2079,8 +2082,9 @@ captures its inputs before replacing the destination, pads unused characters
 with blanks, and reports record overflow. PURE and ELEMENTAL procedures may
 write local CHARACTER variables and writable dummy arguments; INTENT(IN),
 nonlocal destinations and external I/O remain protected. This subset supports
-one record; internal file arrays, IOSTAT and other WRITE control options
-remain unsupported. List-directed internal WRITE (`write(s,*) n`) writes each
+one record. The internal file may also be an element of a CHARACTER array, such
+as `write(names(i),'(i8)') i`; whole arrays as internal files, IOSTAT and other
+WRITE control options remain unsupported. List-directed internal WRITE (`write(s,*) n`) writes each
 item as G0 after a blank.
 `tests/programs/xstr_real.f90`, `tests/172_internal_write.f90`, and
 `python tests/test_internal_write.py` cover this behavior.
@@ -2204,7 +2208,10 @@ multidimensional triplet sections, bounded CHARACTER arrays and scalar
 COMPLEX or whole COMPLEX arrays. Nested input implied-DO lists accept runtime
 bounds and positive or negative steps. IOSTAT accepts INTEGER kinds 1, 2, 4
 and 8. Standard input (`*` or unit 5), connected external units and scalar
-CHARACTER internal files use the same scanner. Run
+CHARACTER internal files use the same scanner. Formatted READ with a constant
+format also reads a scalar CHARACTER internal file as one record; a READ past
+it reaches end of file. CHARACTER array elements can be internal files for
+both forms of READ, such as `read(s(i),'(i8)') k`. Run
 `python tests/test_list_read.py` for interpreter/native O0/O2 checks against
 gfortran, including `tests/io/write_read.f90`, a copy of `xwrite_read.f90`.
 

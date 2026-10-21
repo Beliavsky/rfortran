@@ -954,7 +954,6 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
                 let mut scalars = vec![];
                 for (name,initializer) in entities.iter() {
                     if let Some(id)=&save_key {
-                        if arrays.contains(name) {bail!("persistent initialized local arrays are not yet supported");}
                         if arguments.contains(name) {bail!("a dummy argument cannot have a saved initializer");}
                         saved_keys.insert(name.clone(),format!("{id}_{name}"));
                     }
@@ -1123,7 +1122,13 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
                     Stmt::CallSub {name:"@saved_bind".into(),args}
                 }
                 else {Stmt::Assign{name:name.clone(),value}})).collect(),
-            Stmt::ArrayDecl {name,..} => variable_values.remove(&name.to_ascii_lowercase()).map(|value| vec![Stmt::Assign{name:name.clone(),value}]).unwrap_or_default(),
+            Stmt::ArrayDecl {name,kind,dims} => match variable_values.remove(&name.to_ascii_lowercase()) {
+                Some(value) => match saved_keys.get(name) {
+                    Some(key) => vec![saved_array(name,key,kind,dims,value,!saved_undefined.contains(name),&constants)?],
+                    None => vec![Stmt::Assign{name:name.clone(),value}],
+                },
+                None => vec![],
+            },
             _ => vec![],
         };
         if !matches!(&stmt,Stmt::VarDecl {names,..} if names.is_empty()) { output.push(stmt); }
@@ -1132,6 +1137,30 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
     *body = output;
     crate::empty_constructors::materialize(body)?;
     Ok(constants)
+}
+
+/// Bind a SAVE or initialized local array of a procedure to static storage
+/// that keeps its values between calls, as module arrays are bound.
+fn saved_array(name: &str, key: &str, kind: &TypeSpec, dims: &[Expr], value: Expr, initialized: bool, constants: &Constants) -> Result<Stmt> {
+    let count = declared_extents(dims, constants)?.iter().try_fold(1usize, |n, d| n.checked_mul((*d).max(0) as usize))
+        .context("saved array extent overflow")?;
+    // Values in array element order: a folded constructor, possibly reshaped
+    // to the declared rank, or one scalar for every element.
+    let items = match value {
+        Expr::Call(tag, mut args) if tag == "reshape" => match args.swap_remove(0) {
+            Expr::Call(tag, items) if tag == "@array_constructor" => items,
+            _ => bail!("unsupported initializer for saved array `{name}`"),
+        },
+        Expr::Call(tag, items) if tag == "@array_constructor" => items,
+        scalar => vec![scalar; count],
+    };
+    if items.len() != count {
+        bail!("saved array `{name}` initializer shape mismatch");
+    }
+    let values = items.iter().map(|v| initial_value(kind, v)).collect::<Result<Vec<_>>>()?;
+    let storage = crate::modules::Storage { kind: kind.clone(), values, initialized, rank: dims.len(), deferred: false };
+    Ok(Stmt::CallSub { name: "@module_bind".into(), args: vec![
+        Expr::Ident(name.to_owned()), Expr::Str(format!("@saved${key}")), Expr::Str(serde_json::to_string(&storage)?)] })
 }
 
 fn variable(name: &str, constants: &Constants) -> Result<()> {

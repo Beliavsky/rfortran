@@ -127,7 +127,7 @@ Found on 2026-10-21, fixed:
 | [DIMENSION attribute](language-support.md#dimension-declarations-and-shape) | F90 | ✅ |  | test_dimension_attribute.py |
 | [INTENT](language-support.md#intent-spellings) | F90 | ✅ |  |  |
 | [PARAMETER attribute and statement](language-support.md#parameter-statements) | Mixed | ✅ | PARAMETER statement: F77; attribute: F90. Derived-type named constants need scalar components | test_parameter_statements.py, test_named_constants.py, test_derived_type_features.py |
-| [Declaration initialization](language-support.md#declaration-initialization) | F90 | 🟡 | Saved arrays are not supported | test_main_initialization.py, test_saved_locals.py, test_initializers_and_kinds.py |
+| [Declaration initialization](language-support.md#declaration-initialization) | F90 | 🟡 | Saved arrays of INTEGER, REAL, DOUBLE PRECISION, LOGICAL and CHARACTER are supported; saved CHARACTER arrays are limited to 1024 elements | test_main_initialization.py, test_saved_locals.py, test_initializers_and_kinds.py |
 | SAVE | F77 or earlier | 🟡 | Scalars only; the SAVE statement saves listed scalars, or all local scalars without a list | test_saved_locals.py, test_external_calls.py |
 | VALUE attribute | F2003 | ✅ |  |  |
 | PROTECTED attribute | F2003 | ❌ |  |  |
@@ -308,7 +308,7 @@ current limits.
 | DC decimal comma; RU, RD, RZ, RN, RC, RP rounding modes | F2003 | ❌ |  |  |
 | [FORMAT statements](language-support.md#formatted-output) | F77 or earlier | ✅ |  | test_statement_forms_io.py |
 | [Nonadvancing output](language-support.md#formatted-output) | F90 | ✅ |  | test_nonadvancing_output.py |
-| [Internal WRITE to a CHARACTER variable](language-support.md#formatted-output) | Mixed | 🟡 | Internal formatted files: F77; list-directed internal I/O: F90. One record; CHARACTER array internal files are not supported. List-directed internal WRITE is supported | test_internal_write.py, test_formatted_output.py |
+| [Internal WRITE to a CHARACTER variable](language-support.md#formatted-output) | Mixed | 🟡 | Internal formatted files: F77; list-directed internal I/O: F90. One record; a CHARACTER array element can be the internal file, but not a whole array. List-directed internal WRITE is supported | test_internal_write.py, test_formatted_output.py |
 | [List-directed READ](language-support.md#file-and-standard-input) | Mixed | ✅ | External list-directed input: F77; internal list-directed input: F90. Standard input, files and internal files | test_list_read.py |
 | [Formatted READ](language-support.md#file-and-standard-input) | Mixed | 🟡 | Basic formatted input and implied-DOs: F77 or earlier; array sections and B/O/Z editing: F90. Constant formats with scalar, fixed-array, section and bounded implied-DO destinations; runtime formats support only (A); runtime-sized destinations/bounds remain unsupported | test_formatted_read_lists.py, test_enum_io.py, test_runtime_read_format.py, test_statement_forms_io.py |
 | [OPEN, CLOSE, REWIND, BACKSPACE for sequential formatted files](language-support.md#file-and-standard-input) | F77 or earlier | 🟡 | IOSTAT is set on OPEN failure; other failed file statements stop the program. STATUS='new' does not check that the file is absent | test_file_io.py, test_formatted_output.py, test_statement_forms_io.py |

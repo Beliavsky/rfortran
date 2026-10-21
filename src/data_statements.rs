@@ -297,7 +297,20 @@ fn save(body: &mut Vec<Stmt>, dummies: Option<&[String]>) -> Result<(), String> 
         }
         match declared(body, &name) {
             None => return Err(format!("SAVE requires `{name}` to be declared in the same program unit")),
-            Some((_, true)) => return Err(format!("SAVE of local array `{name}` in a procedure is not yet supported")),
+            Some((kind, true)) => {
+                // An array keeps its declaration; an initialized declaration
+                // without a value gives it static storage.
+                if let Some(Stmt::InitializedDecl { attributes, .. }) = body.iter_mut().find(|s|
+                    matches!(s, Stmt::InitializedDecl { entities, .. } if entities.iter().any(|(n, _)| n == &name))) {
+                    if !attributes.iter().any(|a| a == "save" || a == "parameter") {
+                        attributes.push("save".into());
+                    }
+                } else {
+                    let at = body.iter().position(|s| matches!(s, Stmt::ArrayDecl { name: n, .. } if n == &name)).unwrap();
+                    body.insert(at + 1, Stmt::InitializedDecl { kind, attributes: vec!["save".into()], entities: vec![(name, None)] });
+                }
+                continue;
+            }
             Some(_) => {}
         }
         let at = body.iter().position(|s| match s {

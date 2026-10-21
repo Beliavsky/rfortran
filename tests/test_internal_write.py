@@ -109,6 +109,32 @@ write(*,'(i0)') 1
 end subroutine
 """,'external I/O')
 
+    def test_array_element_records(self):
+        self.check("""character(len=8)::names(3)
+character(len=6)::grid(2,2)
+integer::i,j
+do i=1,3
+write(names(i),'(i8)') i*11
+end do
+write(names(3),'(a,i0)') 'n',42
+do j=1,2
+do i=1,2
+write(grid(i,j),'(i2,"-",i2)') i,j
+end do
+end do
+print '(3("[",a,"]"))',names
+print '(4(a,1x))',grid
+call sub()
+contains
+subroutine sub()
+character(len=4)::t(2)
+write(t(2),'(i4.4)') 7
+t(1)='x'
+print '(2a)',t
+end subroutine sub
+end
+""",'[      11][      22][n42     ]\n 1- 1  2- 1  1- 2  2- 2\nx   0007\n')
+
     def test_unsupported_controls_remain_errors(self):
         self.reject("""character(8)::text
 write(text,'(i0)',advance='no') 1
