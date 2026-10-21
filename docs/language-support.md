@@ -783,8 +783,11 @@ assumed-length scalar inputs.
 
 ### CHARACTER arrays
 
-Fixed-size rank-one CHARACTER arrays support up to 1024 elements in local
-storage. Supported operations include literal constructors, main-program
+Fixed-size rank-one CHARACTER arrays of up to 1024 elements use one scalar per
+element. Larger ones, and ALLOCATABLE arrays allocated with more than 1024
+elements, are allocated on the heap like automatic arrays; `rfort run`
+interprets these slowly, at about a millisecond per element operation.
+Supported operations include literal constructors, main-program
 declaration initialization, scalar fills, whole-array copies, constant element
 indices, runtime element indexing, constant sections (including strides), and
 elementwise substring assignment.
@@ -1782,10 +1785,10 @@ independently of PURE; argument and result ranks may differ. This includes
 numeric, LOGICAL and fixed-length CHARACTER arrays. Each dimension is preserved
 until storage lowering, with Fortran column-major element order. Read-only
 inputs are copied; explicit INTENT(OUT)/INTENT(INOUT) variables retain caller
-storage and side effects. Whole-array and rank-one section arguments and
-fixed-shape results have no element limit; ELEMENTAL calls expanded per element,
-such as CHARACTER ones, and constructor arguments still allow at most 1024
-elements. Extents and CHARACTER lengths must be known after association.
+storage and side effects. Whole arrays, rank-one unit-stride sections, RESHAPE
+and array constructor arguments, and fixed-shape results have no element limit;
+ELEMENTAL calls expanded per element, such as CHARACTER ones, and other array
+expression arguments, such as `abs(x)`, still allow at most 1024 elements. Extents and CHARACTER lengths must be known after association.
 Source array elements copied into the function must be
 initialized. Rank-one fixed-length CHARACTER ALLOCATABLE results can use bounded
 ALLOCATABLE output helpers or direct `ALLOCATE` statements with proven finite

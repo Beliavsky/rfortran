@@ -186,9 +186,6 @@ impl Lower {
                     kind = Some(view.kind);
                     items.extend(view.items.unwrap_or_else(|| vec![item.clone()]));
                 }
-                if items.len() > 1024 {
-                    bail!("CHARACTER elemental expansion supports at most 1024 elements");
-                }
                 Ok(Value { active:None,
                     kind: kind.context("empty untyped elemental constructor")?,
                     items: Some(items),
@@ -197,7 +194,6 @@ impl Lower {
             Expr::Call(n,args) if n=="reshape" => {
                 let dims=crate::multidim::reshape_shape(args)?;
                 let count=array_count(&dims)?;
-                if count>1024 {bail!("function array expression specialization supports at most 1024 elements");}
                 let order=crate::multidim::reshape_order(args,dims.len())?;
                 let source=self.view(&args[0],symbols)?;
                 let items=source.items.context("RESHAPE SOURCE must be an array")?;
@@ -366,7 +362,7 @@ impl Lower {
                     crate::reductions::elemental_element(e, &int(1), symbols)
                 {
                     if !(0..=1024).contains(&count) {
-                        bail!("CHARACTER elemental expansion supports at most 1024 elements");
+                        bail!("array expression arguments of specialized functions support at most 1024 elements");
                     }
                     let items = (1..=count)
                         .map(|i| {
@@ -811,9 +807,11 @@ impl Lower {
                         expanded.push(Stmt::DummyIntent{name:temp.clone(),intent:format!("@bounded_shape:{length}")});
                         Some(length)
                     } else {None};
-                    // A large whole array or unit-stride section is copied by
-                    // one array assignment rather than an assignment per element.
+                    // A large whole array, unit-stride section, RESHAPE or array
+                    // constructor is copied by one array assignment rather than
+                    // an assignment per element.
                     if items.len()>1024 && active.is_none() && (matches!(&arg,Expr::Ident(n) if symbols.get(n).is_some_and(|(_,dims)|dims.len()==shape.len()))
+                        || matches!(&arg,Expr::Call(n,_) if n=="reshape" || n=="@array_constructor" && shape.len()==1)
                         || matches!(&arg,Expr::Section{name,stride:None,..} if shape.len()==1 && symbols.get(name).is_some_and(|(_,dims)|dims.len()==1))) {
                         expanded.push(Stmt::Assign{name:temp.clone(),value:arg.clone()});
                     } else { for (i,value) in items.iter().enumerate() {

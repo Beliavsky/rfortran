@@ -255,8 +255,11 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
         // needs runtime storage rather than a bound fixed at the call site.
         fn runtime_allocate(body: &[Stmt], array: &str) -> bool {
             body.iter().any(|s| match s {
+                // Bounded storage also has a scalar per element, so a large
+                // constant extent uses runtime storage as well.
                 Stmt::CallSub{name,args} if name=="@allocate"=>args.iter().any(|e|matches!(e,Expr::Call(n,dims) if n==array
-                    && dims.iter().any(|d|crate::parameters::integer_constant(d).is_err()))
+                    && (dims.iter().any(|d|crate::parameters::integer_constant(d).is_err())
+                        || dims.iter().filter_map(|d|crate::parameters::integer_constant(d).ok()).try_fold(1i64,|a,d|a.checked_mul(d.max(0))).is_none_or(|n|n>1024)))
                     || matches!(e,Expr::Section{name:n,..} if n==array)),
                 Stmt::If{then_body,else_body,..}=>runtime_allocate(then_body,array)||else_body.as_ref().is_some_and(|b|runtime_allocate(b,array)),
                 Stmt::Do{body,..}|Stmt::DoWhile{body,..}|Stmt::Block{body}=>runtime_allocate(body,array),
@@ -484,7 +487,13 @@ pub(crate) fn automatic_locals(mut program: Program) -> Result<Program> {
             | Stmt::DerivedDecl { .. } | Stmt::Accessibility { .. } | Stmt::DummyIntent { .. } | Stmt::VarDecl { .. }
             | Stmt::InitializedDecl { .. } | Stmt::ArrayDecl { .. } | Stmt::Use { .. } | Stmt::Implicit(_))
     }
-    fn lower(params: &[String], result: &str, body: &mut Vec<Stmt>) {
+    // Fixed rank-one CHARACTER locals otherwise get one scalar per element,
+    // so large ones are allocated like automatic arrays.
+    fn large_character(kind: &TypeSpec, dims: &[Expr]) -> bool {
+        matches!(kind, TypeSpec::Character(_)) && dims.len() == 1
+            && crate::vector_subscripts::fixed_extent(&dims[0]).is_some_and(|n| n > 1024)
+    }
+    fn lower(params: &[String], result: &str, body: &mut Vec<Stmt>, main: bool) {
         let attributes: HashSet<&str> = body.iter().filter_map(|s| match s {
             Stmt::DummyIntent { name, intent } if matches!(intent.as_str(), "allocatable" | "pointer" | "parameter" | "save" | "target" | "@heap") => Some(name.as_str()),
             _ => None,
@@ -495,7 +504,7 @@ pub(crate) fn automatic_locals(mut program: Program) -> Result<Program> {
             if params.contains(name) || name == result || name.starts_with('@') || attributes.contains(name.as_str())
                 || matches!(kind, TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed)
                 || dims.iter().any(|d| matches!(d, Expr::Ident(n) if n == "@deferred_extent" || n == "@assumed_extent"))
-                || dims.iter().all(|d| crate::vector_subscripts::fixed_extent(d).is_some()) {
+                || (main || dims.iter().all(|d| crate::vector_subscripts::fixed_extent(d).is_some())) && !large_character(kind, dims) {
                 continue;
             }
             automatic.push((name.clone(), dims.clone()));
@@ -528,7 +537,8 @@ pub(crate) fn automatic_locals(mut program: Program) -> Result<Program> {
         for (i, s) in body.iter().enumerate() {
             if declaration(s) {
                 at = i + 1;
-            } else if !matches!(s, Stmt::SourceLocation(_)) {
+            } else if !(matches!(s, Stmt::SourceLocation(_))
+                || main && matches!(s, Stmt::Module { .. } | Stmt::Subroutine { .. } | Stmt::Function { .. })) {
                 break;
             }
         }
@@ -546,7 +556,7 @@ pub(crate) fn automatic_locals(mut program: Program) -> Result<Program> {
             match s {
                 Stmt::Subroutine { elemental, params, body, .. } => {
                     if !*elemental && !specialized(params, body) {
-                        lower(params, "", body);
+                        lower(params, "", body, false);
                     }
                     visit(body);
                 }
@@ -556,7 +566,7 @@ pub(crate) fn automatic_locals(mut program: Program) -> Result<Program> {
                         _ => name.clone(),
                     };
                     if !*elemental && !specialized(params, body) {
-                        lower(params, &result, body);
+                        lower(params, &result, body, false);
                     }
                     visit(body);
                 }
@@ -565,6 +575,7 @@ pub(crate) fn automatic_locals(mut program: Program) -> Result<Program> {
             }
         }
     }
+    lower(&[], "", &mut program.body, true);
     visit(&mut program.body);
     Ok(program)
 }

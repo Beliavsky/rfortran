@@ -129,6 +129,72 @@ end program
             source.write_text(program, encoding="utf-8")
             self.compare(source, "T\nT\nF\nT\n1 T\nT\n-1 1\nT\nT\n", directory)
 
+    def test_large_arrays(self):
+        # Arrays of more than 1024 elements use heap storage.
+        program = """program ch_big
+implicit none
+character(len=6) :: names(3000)
+character(len=6) :: other(1500)
+integer :: i
+names = 'abc'
+do i = 1, 3000, 7
+  names(i) = 'seven'
+end do
+names(2999:3000) = ['yy', 'zz']
+print *, count(names == 'seven'), size(names), len(names(1))
+print '(4(a,"|"))', names(2997:3000)
+print *, names(8)(1:3), ' ', trim(names(2999)) // trim(names(3000))
+other = names(1:1500)
+print *, count(other == 'seven'), other(1500)
+call fill(5000)
+print *, nseven(names)
+contains
+subroutine fill(n)
+integer, intent(in) :: n
+character(len=4) :: local(2500)
+integer :: j
+local = 'q'
+do j = 1, 2500, 2
+  local(j) = 'p'
+end do
+print *, count(local == 'p'), local(2500), n
+end subroutine fill
+integer function nseven(c)
+character(len=*), intent(in) :: c(:)
+nseven = count(c == 'seven')
+end function nseven
+end program ch_big
+"""
+        allocated = """program allocated
+implicit none
+character(len=6), allocatable :: names(:)
+allocate(names(-5:1994))
+names = 'abc'
+names(1994) = 'last'
+print *, lbound(names), ubound(names), size(names), names(1994), names(-5)
+deallocate(names)
+allocate(names(3000))
+names = 'zz'
+print *, size(names), names(3000)
+end program allocated
+"""
+        cases = [
+            (program, "429 3000 6\nseven |abc   |yy    |zz    |\nsev yyzz\n215 abc\n1250 q 5000\n429\n"),
+            (allocated, "-5 1994 2000 last abc\n3000 zz\n"),
+        ]
+        with tempfile.TemporaryDirectory(prefix="character-array-large-") as tmp:
+            directory = Path(tmp)
+            for index, (text, expected) in enumerate(cases):
+                source = directory / f"large{index}.f90"
+                source.write_text(text, encoding="utf-8")
+                # The interpreter takes about a millisecond per CHARACTER
+                # element operation, so only the compiled builds are run.
+                for command in build_commands(source, directory)[1:]:
+                    with self.subTest(index=index, command=command):
+                        result = subprocess.run(command, capture_output=True, text=True, timeout=15)
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertTrue(test_character_comparisons.equivalent(result.stdout, expected), result.stdout)
+
     def test_diagnostics(self):
         cases = [
             ("a='ab'\nprint *,all(a)", "requires a LOGICAL array mask"),

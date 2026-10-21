@@ -129,6 +129,22 @@ end function total
 end program main
 ''','4002000 1000 1500500 2000.0\n')
 
+    def test_reshape_and_constructor_arguments_larger_than_1024(self):
+        self.check('''program main
+integer::m(40,50),x(1000),y(1000)
+m=1
+x=1
+y=2
+print *,total(reshape(m,[2000])),total([x,y])
+contains
+function total(a) result(t)
+integer,intent(in)::a(:)
+integer::t(1)
+t(1)=sum(a)
+end function total
+end program main
+''','2000 3000\n')
+
     def test_character_repro(self):
         self.check((ROOT/'tests/184_allocated_character_concat.f90').read_text(encoding='utf-8'),'3 10\nfour|five|zero\n')
 
