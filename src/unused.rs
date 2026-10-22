@@ -23,6 +23,7 @@ const CATEGORIES: &[&str] = &[
     "format",
     "implicit-save",
     "missing-intent",
+    "short-circuit",
 ];
 fn canonical(name: &str) -> &str {
     match name {

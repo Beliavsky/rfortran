@@ -101,6 +101,7 @@ mod implicit_warnings;
 mod reachability;
 mod format_warnings;
 mod declaration_warnings;
+mod short_circuit_warnings;
 mod utils;
 
 #[cfg(target_os = "windows")]
@@ -355,6 +356,8 @@ fn prepare_program(
                   filename, Some(&prepared.origins), settings, &args.warnings)?;
     implicit_warnings::check(&prepared.program, &prepared.source, src.len(), filename,
                              &prepared.origins, settings, &args.warnings)?;
+    short_circuit_warnings::check(&prepared.program, &prepared.source, src.len(), filename,
+                                 &prepared.origins, settings, &args.warnings)?;
     reachability::check(&prepared.program, &prepared.source, src.len(), filename,
                         &prepared.origins, settings, &args.warnings)?;
     format_warnings::check(&prepared.program, &prepared.source, src.len(), filename,

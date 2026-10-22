@@ -45,20 +45,29 @@ fn interfaces(body: &[Stmt]) -> Interfaces {
         .collect()
 }
 fn facts(e: &Expr, truth: bool) -> Names {
+    inquiry_facts(e, truth, "present")
+}
+pub(crate) fn inquiry_facts(e: &Expr, truth: bool, inquiry: &str) -> Names {
     match e {
-        Expr::Call(n, args) if n == "present" && truth => match args.as_slice() {
-            [arg] => match crate::named_arguments::keyword(arg).map_or(arg, |(_, value)| value) {
+        Expr::Call(n, args) if n == inquiry && truth => {
+            let key = match inquiry { "allocated" => "array", "associated" => "pointer", _ => "a" };
+            match args.iter().enumerate().find_map(|(i, arg)| match crate::named_arguments::keyword(arg) {
+                Some((name, value)) if name == key => Some(value),
+                None if i == 0 => Some(arg),
+                _ => None,
+            }) {
+            Some(arg) => match arg {
                 Expr::Ident(n) => HashSet::from([n.clone()]),
                 _ => Names::new(),
             },
             _ => Names::new(),
-        },
-        Expr::Un(UnOp::Not, e) => facts(e, !truth),
+        }},
+        Expr::Un(UnOp::Not, e) => inquiry_facts(e, !truth, inquiry),
         Expr::Bin(BinOp::And, a, b) if truth => {
-            facts(a, true).union(&facts(b, true)).cloned().collect()
+            inquiry_facts(a, true, inquiry).union(&inquiry_facts(b, true, inquiry)).cloned().collect()
         }
         Expr::Bin(BinOp::Or, a, b) if !truth => {
-            facts(a, false).union(&facts(b, false)).cloned().collect()
+            inquiry_facts(a, false, inquiry).union(&inquiry_facts(b, false, inquiry)).cloned().collect()
         }
         _ => Names::new(),
     }

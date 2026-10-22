@@ -46,6 +46,34 @@ conformance. Regression checks: `python tests/test_standards.py`.
 
 ## Warnings
 
+`-Wshort-circuit`, enabled by `-Wall`/`--wall`, warns when a logical expression
+combines an intrinsic `ALLOCATED` or `ASSOCIATED` inquiry with an access that
+needs valid allocation or association. For example,
+`if (allocated(x) .and. size(x)>0)` is unsafe unless allocation is already
+established: Fortran `.AND.` and `.OR.` do not guarantee short-circuit evaluation.
+The check covers scalar/array pointer values, sections, shape inquiries, and
+component accesses. It suggests nested IF statements or lazy conditional
+expressions, and highlights a value reference rather than the safety inquiry
+where possible. `PRESENT`-related checks remain in `-Woptional-argument`.
+
+Prior positive/negated guards, early returns, branch joins, successful explicit
+allocation without STAT, and completed intrinsic assignments are considered.
+Proofs are reset conservatively across calls that could change storage and
+loop-carried changes. The check recognizes non-evaluating type/rank inquiries,
+non-deferred CHARACTER length inquiries, and whole-descriptor forwarding to
+known ALLOCATABLE, POINTER, or OPTIONAL dummy arguments. It respects local and
+USE-associated procedure names that shadow intrinsics, block-local declarations,
+and provably unreachable code. It does not infer arbitrary caller contracts,
+logical-variable aliases for guards, or allocation success from a STAT result.
+This is advice about guards, not a replacement for allocation, association, or
+uninitialized-read checks; the inquiry itself must still be valid.
+
+Disable with `-Wno-short-circuit`, promote with `-Werror=short-circuit`, or use
+`!#allow(short-circuit)` / `!#deny(short-circuit)`. Diagnostics retain original
+multi-source locations, and loaded `.rmod` definitions are not diagnosed again.
+Example: `rfort -Wall tests/programs/xshort_circuit_warnings.f90 --run`.
+Regression checks: `python tests/test_short_circuit_warnings.py`.
+
 `-Wimplicit-save`, enabled by `-Wall`/`--wall`, warns when declaration
 initialization gives a procedure-local variable implicit `SAVE`. For example,
 `integer :: count=0` initializes persistent storage, rather than resetting

@@ -9,6 +9,12 @@ below; unmarked recommendations remain proposals.
 
 ## Implementation status (2026-10-22)
 
+- **Implemented: `-Wshort-circuit`.** Enabled by `-Wall`; checks unsafe logical
+  guards combining ALLOCATED/ASSOCIATED with value or shape access. Reuses the
+  optional-argument inquiry-fact analysis and intrinsic purity registry. It
+  recognizes prior guards, early returns, allocation, assignment, safe inquiries,
+  descriptor forwarding, and lazy conditional expressions. Calls and loops are
+  handled conservatively. PRESENT checks remain in `-Woptional-argument`.
 - **Implemented: `-Wimplicit-save`.** Enabled by `-Wall`; checks procedure-local
   declaration initialization, including pointer initializers. Explicit SAVE,
   named constants, module/main-program variables, and component defaults are
@@ -17,10 +23,13 @@ below; unmarked recommendations remain proposals.
   arguments without explicit INTENT. Procedure, POINTER, and VALUE dummies are
   exempt in the initial implementation. It does not infer or insert attributes.
 
-Both support category suppression, `-Werror`, source directives, and original
+These checks support category suppression, `-Werror`, source directives, and original
 multi-file locations. See [usage](docs/usage.md#warnings), the
 [example](tests/programs/xdeclaration_warnings.f90), and
 [regression tests](tests/test_declaration_warnings.py).
+The allocation/association guard example and tests are
+[xshort_circuit_warnings.f90](tests/programs/xshort_circuit_warnings.f90) and
+[test_short_circuit_warnings.py](tests/test_short_circuit_warnings.py).
 
 ## Existing rfortran coverage
 
@@ -316,7 +325,8 @@ errors.
 ## Suggested first implementation batch
 
 1. Implicit `SAVE` (implemented; see status above).
-2. Allocation/association guards that rely on short-circuit evaluation.
+2. Allocation/association guards that rely on short-circuit evaluation
+   (implemented; see status above).
 3. Accidental shadowing.
 
 These checks catch consequential mistakes, have clear explanations, and
