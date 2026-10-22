@@ -182,6 +182,18 @@ pub(crate) fn scalar_actual_kind(e: &Expr, shapes: &Shapes) -> Result<TypeSpec> 
             }
             Ok(kind)
         }
+        // Scalar CHARACTER intrinsics of a scalar CHARACTER argument; the
+        // length is known when the argument and count are constant.
+        Expr::Call(n,args) if matches!(n.as_str(),"trim"|"adjustl"|"adjustr"|"repeat") && !shapes.contains_key(n)
+            && args.len()==if n=="repeat" {2} else {1} => {
+            let TypeSpec::Character(width)=scalar_actual_kind(&args[0],shapes)? else {bail!("`{n}` requires a CHARACTER argument");};
+            Ok(TypeSpec::Character(match (n.as_str(),&args[0]) {
+                ("adjustl"|"adjustr",_)=>width,
+                ("trim",Expr::Str(s))=>Some(s.trim_end_matches(' ').len()),
+                ("repeat",_)=>crate::parameters::integer_constant(&args[1]).ok().and_then(|c|usize::try_from(c).ok()).and_then(|c|width.map(|w|w*c)),
+                _=>None,
+            }))
+        }
         Expr::Call(n,args) if n=="@allocated_extent"=>scalar_actual_kind(&args[1],shapes),
         Expr::Call(n,_) if matches!(n.as_str(),"@heap_bound"|"@heap_lower_bound"|"@heap_upper_bound")=>Ok(TypeSpec::Integer(Some(8))),
         Expr::Call(n,args) if n=="size" || matches!(n.as_str(),"lbound"|"ubound") && args.len()==2=>Ok(TypeSpec::Integer(None)),

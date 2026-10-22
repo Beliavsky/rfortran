@@ -103,9 +103,8 @@ when a standard is selected.
 The implementation uses the compiler's existing bounded scalar CHARACTER
 representation for input captures and materialized array elements. Statically
 known larger capacities are retained; runtime growth beyond an inferred capacity
-stops with a diagnostic. The deferred-length array support added here covers
-TOKENIZE results and their reads/inquiries; general deferred-length CHARACTER
-array allocation and assignment remain incomplete.
+stops with a diagnostic. TOKENIZE results use the same storage as other
+deferred-length CHARACTER arrays whose length is set at run time.
 
 ## Conditional expressions and arguments
 

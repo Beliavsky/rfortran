@@ -21,12 +21,15 @@ class Deallocate(unittest.TestCase):
             encoding="utf-8"))["cases"][fixture.stem]["program_stdout"]
         self.check(fixture.read_text(encoding="utf-8"), expected)
 
-    def check(self, program, expected=None, error=None, data="", reference=True, std="f2018"):
+    def check(self, program, expected=None, error=None, data="", reference=True, std="f2018", interpreter=True):
         with tempfile.TemporaryDirectory(prefix="deallocate-") as tmp:
             directory = Path(tmp)
             source = directory / "example.f90"
             source.write_text(program, encoding="utf-8")
             commands = build_commands(source, directory)
+            if not interpreter:
+                # Programs too slow for the interpreter run compiled only.
+                commands = commands[1:]
             if expected is not None and reference and shutil.which("gfortran"):
                 exe = directory / "reference.exe"
                 result = subprocess.run(["gfortran", f"-std={std}", "-fcheck=all",

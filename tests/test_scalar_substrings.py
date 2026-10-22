@@ -123,7 +123,6 @@ end
     def test_deferred_length_diagnostics(self):
         cases = [
             ('character(:)::s', "s='x'", 'requires ALLOCATABLE'),
-            ('character(:),allocatable::s(:)', '', 'deferred CHARACTER arrays'),
             ('character(:),allocatable::s', 'print *,s', 'uninitialized variable `s`'),
             ('character(:),allocatable::s\ninteger::i', "s='abcd'(i:3)", 'uninitialized variable `i`'),
             ('character(:),allocatable::s\nreal::i', "i=1.0\ns='abcd'(i:3)", 'scalar INTEGER'),

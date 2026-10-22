@@ -33,7 +33,7 @@ fn assign(n: &str, value: Expr) -> Stmt {
     }
 }
 fn width(n: &str) -> String {
-    format!("@tokenize_width${n}")
+    crate::deferred_arrays::width(n)
 }
 #[derive(Clone)]
 struct Variable {
@@ -278,7 +278,19 @@ pub fn prepare(mut p: Program) -> Result<Program> {
             children(&mut copy).into_iter().any(|b| user(b))
         })
     }
-    if !used(&p.body) || user(&p.body) {
+    fn deferred(b: &[Stmt]) -> bool {
+        b.iter().any(|s| {
+            if matches!(s,Stmt::ArrayDecl{kind,..} if crate::substrings::deferred(kind)) {
+                return true;
+            }
+            let mut copy = s.clone();
+            children(&mut copy).into_iter().any(|b| deferred(b))
+        })
+    }
+    // Deferred-length CHARACTER arrays whose length is set at run time are
+    // stored like TOKENIZE results.
+    let intrinsic = used(&p.body) && !user(&p.body);
+    if !intrinsic && !deferred(&p.body) {
         return Ok(p);
     }
     fn expression_capacity(e: &Expr) -> usize {
@@ -340,6 +352,7 @@ pub fn prepare(mut p: Program) -> Result<Program> {
         b: &mut Vec<Stmt>,
         capacity: usize,
         inherited: &HashMap<String, TypeSpec>,
+        intrinsic: bool,
     ) -> Result<()> {
         let mut kinds = inherited.clone();
         for s in b.iter() {
@@ -385,7 +398,7 @@ pub fn prepare(mut p: Program) -> Result<Program> {
                 location = Some(*n);
             }
             if let Stmt::CallSub { name, args } = s {
-                if name == "tokenize" {
+                if name == "tokenize" && intrinsic {
                     (|| -> Result<()> {
                         let provisional = crate::named_arguments::tokenize_signature(args, None)?;
                         let slots = provisional.associate(name, args)?;
@@ -414,18 +427,41 @@ pub fn prepare(mut p: Program) -> Result<Program> {
                     });
                     added.push(Stmt::DummyIntent {
                         name: name.clone(),
-                        intent: "@tokenize_deferred_character".into(),
+                        intent: "@deferred_character_array".into(),
                     });
                 }
             }
             for child in children(s) {
-                body(child, capacity, &kinds)?;
+                body(child, capacity, &kinds, intrinsic)?;
             }
         }
         b.splice(0..0, added);
         Ok(())
     }
-    body(&mut p.body, capacity, &HashMap::new())?;
+    // A length set at run time may not exceed the storage capacity.
+    fn capacity_checks(b: &mut Vec<Stmt>, capacity: usize) {
+        let mut i = 0;
+        while i < b.len() {
+            if let Stmt::Assign { name, .. } = &b[i] {
+                if name.starts_with("@deferred_width$") {
+                    let array = name["@deferred_width$".len()..].to_string();
+                    b.insert(i + 1, Stmt::If {
+                        cond: bin(BinOp::Gt, id(name), int(capacity as i64)),
+                        then_body: vec![call("@error_stop", vec![Expr::Str(format!(
+                            "length of deferred-length CHARACTER array `{array}` exceeds its {capacity}-character storage capacity"))])],
+                        else_body: None,
+                    });
+                    i += 1;
+                }
+            }
+            for child in children(&mut b[i]) {
+                capacity_checks(child, capacity);
+            }
+            i += 1;
+        }
+    }
+    body(&mut p.body, capacity, &HashMap::new(), intrinsic)?;
+    capacity_checks(&mut p.body, capacity);
     Ok(p)
 }
 
@@ -494,7 +530,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
         for s in b.iter() {
             if let Stmt::DummyIntent { name, intent } = s {
                 if let Some(v) = vars.get_mut(name) {
-                    v.deferred |= intent == "@tokenize_deferred_character";
+                    v.deferred |= intent == "@deferred_character_array";
                     v.allocatable |= intent == "allocatable";
                     v.readonly |= matches!(intent.as_str(), "intent(in)" | "parameter");
                 }

@@ -142,6 +142,12 @@ fn expression(e: Expr, arrays: &Arrays) -> Result<Value> {
                 unreachable!()
             };
             let slice = |e: Expr| -> Result<Expr> {
+                // An element of a heap array whose length is set at run time
+                // is a prefix of a temporary of the storage capacity.
+                let e = match e {
+                    Expr::Call(n, mut a) if n == "@dynamic_substring" && a.len() == 4 && matches!(a[0], Expr::Ident(_)) => a.swap_remove(0),
+                    e => e,
+                };
                 let Expr::Ident(name) = e else {
                     bail!("array substring requires CHARACTER elements");
                 };

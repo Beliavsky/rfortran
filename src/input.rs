@@ -28,7 +28,11 @@ pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> crate::ast:
         let mut transfer = args.clone();
         transfer[0] = var(&record);
         let transfer = Stmt::CallSub { name: name.clone(), args: transfer };
-        let declaration = Stmt::VarDecl { kind: kind.clone(), names: vec![record.clone()] };
+        // The record for an element of a deferred-length array has the
+        // array's minimum storage capacity; assignment then truncates or pads
+        // it to the element's length.
+        let kind = if crate::substrings::deferred(kind) { TypeSpec::Character(Some(4096)) } else { kind.clone() };
+        let declaration = Stmt::VarDecl { kind, names: vec![record.clone()] };
         // A WRITE defines the whole record, as it does the element.
         *s = Stmt::Block { body: if read {
             vec![declaration, set(&record, Expr::Call(array, indices)), transfer]

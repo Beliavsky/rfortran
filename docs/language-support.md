@@ -738,11 +738,25 @@ as `s = s // 'x'` in a loop, or `allocate(character(len=n) :: s)`, the variable
 has 4096 characters of storage, and a longer value stops the program. ALLOCATE
 with a type specification sets the length; the value is undefined until
 assigned. A deferred-length variable can be the VALUE of GET_COMMAND_ARGUMENT
-and GET_ENVIRONMENT_VARIABLE, which fill its current length. A deferred-length
-CHARACTER array is supported when every assignment and ALLOCATE in its program
-unit gives the same constant length, as in
-`names = [character(len=8) :: 'ann', 'bob']`; assigning a constructor allocates
-the array. `x%len` and `x%kind` are LEN(x) and KIND(x). Procedure and module
+and GET_ENVIRONMENT_VARIABLE, which fill its current length.
+
+Deferred-length CHARACTER arrays (`character(len=:), allocatable :: w(:)`)
+are supported as main-program, BLOCK and procedure local variables. ALLOCATE
+with a type specification sets the length, which may be a runtime value, as in
+`allocate(character(len=n) :: w(m))`. Assignment of a whole array value
+reallocates the array to the value's length and size: a constructor, typed or
+not, another CHARACTER array, or a value that refers to the array itself, as in
+`w = [w(2), w(1)]` or the growth idiom `w = [w, item]`. Element assignment pads
+or truncates to the current length, and LEN, SIZE, ALLOCATED, DEALLOCATE,
+substrings of elements and internal READ and WRITE with an element work. When
+every assignment and ALLOCATE gives the same constant length, the array is
+stored with that fixed length. Otherwise each element has room for at least 4096
+characters, and a longer length stops the program. Deferred-length array
+dummy arguments, function results and module variables are not yet supported,
+nor are constructors with array sections or implied DO loops whose length is
+set at run time. Programs using runtime-length arrays are slow in the
+interpreter (`rfort run`); see [interpreter-todo.md](interpreter-todo.md).
+`x%len` and `x%kind` are LEN(x) and KIND(x). Procedure and module
 storage and host association, READ into a deferred-length destination, REPEAT
 with a runtime count in other contexts, and MAX and MIN of CHARACTER values
 remain unsupported. Other intrinsic/procedure calls with runtime-length CHARACTER

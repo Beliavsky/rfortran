@@ -148,7 +148,7 @@ passes. At that checkpoint the broader selection had 16 passes, 63 compiler fail
 reference failures. These broader cases also exercise unsupported derived types,
 procedure pointers and I/O; their failures are not all CHARACTER bugs. Major
 remaining CHARACTER work includes unbounded runtime-dependent automatic string
-storage, deferred-length arrays,
+storage, deferred-length array dummy arguments and results,
 explicit allocation selectors/SOURCE/MOLD, allocatable CHARACTER components,
 and internal array files.
 

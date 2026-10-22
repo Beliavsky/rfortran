@@ -227,7 +227,7 @@ Found on 2026-10-21, fixed:
 | [Fixed-length scalars, concatenation, comparison](language-support.md#character-declarations-and-lengths) | F77 or earlier | ✅ |  | test_character_comparisons.py |
 | [Substrings](language-support.md#scalar-substrings) | F77 or earlier | ✅ |  | test_scalar_substrings.py |
 | [Deferred-length `character(len=:), allocatable` scalars](language-support.md#deferred-length-scalar-character) | F2003 | 🟡 | Main-program and BLOCK locals; a value whose largest length is not known at compile time may have at most 4096 characters | test_scalar_substrings.py, test_kinds_and_deferred_strings.py |
-| [Deferred-length CHARACTER arrays](language-support.md#deferred-length-scalar-character) | F2003 | 🟡 | Every assignment and ALLOCATE must give the same constant length | test_kinds_and_deferred_strings.py |
+| [Deferred-length CHARACTER arrays](language-support.md#deferred-length-scalar-character) | F2003 | 🟡 | Local variables, with runtime lengths of up to 4096 characters; not dummy arguments, function results or module variables | test_deferred_character_arrays.py, test_kinds_and_deferred_strings.py |
 | Automatic CHARACTER lengths `character(len=n)` | F90 | ❌ | Lengths derived from `LEN` of a dummy work | test_dummy_character_lengths.py |
 | [Fixed-length CHARACTER arrays](language-support.md#character-arrays) | F77 or earlier | ✅ |  | test_character_arrays.py |
 | [CHARACTER functions](language-support.md#scalar-character-functions) | F77 or earlier | 🟡 | Assigning the result one character at a time fails at runtime | test_character_functions.py |
