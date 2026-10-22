@@ -1401,7 +1401,9 @@ fn expand(
                         if let TypeSpec::Character(length) = actual_kind {
                             match kind {
                                 TypeSpec::CharacterAssumed => kind = TypeSpec::Character(length),
-                                TypeSpec::Character(expected) if expected.unwrap_or(1) == length.unwrap_or(1) => {},
+                                // An actual may be longer than a fixed-length dummy,
+                                // which is associated with its leading characters.
+                                TypeSpec::Character(expected) if expected.unwrap_or(1) <= length.unwrap_or(1) => {},
                                 _ => bail!("type or CHARACTER length mismatch for dummy `{p}`"),
                             }
                         } else if !matches!((&kind,&actual_kind),(TypeSpec::Integer(a),TypeSpec::Integer(b)) if a.unwrap_or(4)==b.unwrap_or(4)) && kind != actual_kind {

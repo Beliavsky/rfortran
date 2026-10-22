@@ -130,7 +130,7 @@ end program main
 
     def test_invalid_types_unset_inputs_and_readonly_writes(self):
         for decl,actual,message in [
-            ('','1','fixed length'),
+            ('','1','type mismatch for dummy'),
             ('character(3)::text\n','text','uninitialized variable'),
         ]:
             self.reject('program main\n'+decl+'print *,length('+actual+')\ncontains\ninteger function length(text)\ncharacter(len=*),intent(in)::text\nlength=len(text)\nend function length\nend program main\n',message)
