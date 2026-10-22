@@ -130,7 +130,7 @@ end function good
             ('program main\nuse iso_c_binding\nend program\n',2,'intrinsic module `iso_c_binding`'),
             ('module m\nuse ieee_arithmetic\nend module m\nprogram main\nuse m\nend program\n',2,'intrinsic module `ieee_arithmetic`'),
             ('program main\ninteger,allocatable::a(:)\na=[3,1,2]\nprint *,maxloc(a,dim=2)\nend program\n',4,'location DIM must be 1'),
-            ("program main\ncharacter(len=:),allocatable::s(:)\ns=[character(len=2)::'ab']\nallocate(character(len=3)::s(1))\nend program\n",4,'same constant length'),
+            ("module m\ncharacter(len=:),allocatable::names(:)\nend module m\nprogram main\nuse m\nallocate(character(len=3)::names(2))\nend program\n",6,'requires deferred-length CHARACTER scalars'),
             ("program main\ncharacter(len=8)::text\ntext='a'\ncall show()\ncontains\nsubroutine show()\nprint *,text\nend subroutine\nend program\n",2,'host association for `text`'),
             ('program main\nprint *,f(1)\ncontains\npure integer function f(i)\ninteger,intent(in)::i\ncall g()\nf=i\nend function\nend program\n',6,'PURE procedure cannot call'),
         ]
