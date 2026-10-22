@@ -24,6 +24,13 @@ const CATEGORIES: &[&str] = &[
     "implicit-save",
     "missing-intent",
     "short-circuit",
+    "shadow",
+    "shadow-dummy-argument",
+    "dead-store",
+    "integer-division",
+    "unchecked-status",
+    "target-lifetime",
+    "aliasing",
 ];
 fn canonical(name: &str) -> &str {
     match name {

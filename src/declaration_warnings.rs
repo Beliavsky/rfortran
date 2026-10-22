@@ -22,7 +22,7 @@ fn word(token: &Token, name: &str) -> bool {
 }
 
 // Attribute words inside kind/length expressions are names, not attributes.
-fn attribute(tokens: &[Token], name: &str) -> bool {
+pub(crate) fn attribute(tokens: &[Token], name: &str) -> bool {
     let mut depth = 0;
     for token in tokens {
         match token.kind {
@@ -65,7 +65,7 @@ fn initializer(tokens: &[Token], name: &str) -> Option<Range<usize>> {
     None
 }
 
-fn statement_tokens<'a>(tokens: &'a [Token], start: usize, end: usize, src: &str) -> &'a [Token] {
+pub(crate) fn statement_tokens<'a>(tokens: &'a [Token], start: usize, end: usize, src: &str) -> &'a [Token] {
     let first = tokens.partition_point(|t| t.span.start < start);
     let last = tokens.partition_point(|t| t.span.start < end);
     let tokens = &tokens[first..last];

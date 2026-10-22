@@ -46,6 +46,53 @@ conformance. Regression checks: `python tests/test_standards.py`.
 
 ## Warnings
 
+The following source advice shares the existing `-Wno-<category>`,
+`-Werror=<category>`, and `!#allow(category)` / `!#deny(category)` controls.
+Diagnostics identify original source locations; shadowing, dead-store, aliasing,
+and lifetime diagnostics also identify the related declaration or assignment.
+
+| Option | In `-Wall` | Initial scope |
+| --- | --- | --- |
+| `-Wshadow` | No | Local data declarations hiding enclosing variables or named constants, including USE-associated names |
+| `-Wshadow-dummy-argument` | No | The corresponding check for dummy arguments, separately selectable |
+| `-Wdead-store` | No | Straight-line assignments to local scalars overwritten before a read |
+| `-Winteger-division` | Yes | Constant integer divisions with a nonzero discarded remainder, including named constants |
+| `-Wunchecked-status` | No | Local scalar IOSTAT, allocation STAT, and intrinsic status results not inspected or forwarded |
+| `-Wtarget-lifetime` | Yes | Pointer associations escaping a known automatic local target |
+| `-Waliasing` | Yes | Known overlapping actuals when a defined procedure's OUT dummy, or modified INOUT dummy, conflicts with another dummy's reads |
+
+Dead-store analysis excludes dummy arguments, function results, module variables,
+saved data, pointers, targets, allocatables, volatile/asynchronous data and
+storage-associated variables. Calls and control-flow boundaries stop the
+straight-line analysis. It does not diagnose final assignments merely because
+the variable is not subsequently read.
+
+Unchecked-status advice recognizes READ/WRITE and file-control IOSTAT,
+ALLOCATE/DEALLOCATE STAT, and status outputs described by implemented intrinsic
+signatures. It also recognizes EXECUTE_COMMAND_LINE's EXITSTAT/CMDSTAT, including
+where native command keyword lowering remains unsupported. A later read or
+forwarding suppresses the warning; this does not prove correct error handling.
+Possible inspection in a branch, loop, or opaque call is treated conservatively.
+Observable output storage (including dummy arguments and saved/module data) and
+array elements/components are outside this initial check.
+
+Lifetime analysis follows direct local pointer aliases within a straight-line
+region and recognizes pointer results, output dummies, saved/module pointers,
+and pointers in enclosing scopes. It excludes unknown dummy-target lifetimes;
+it does not implement general pointer-component escape analysis. Aliasing
+analysis uses defined procedure interfaces and keyword association, whole
+variables, constant elements, and unit-stride section overlap. It skips unresolved interfaces,
+unknown subscript relationships, and POINTER/TARGET/VALUE dummy exceptions.
+Neither check is a complete proof of storage safety or Fortran conformance.
+
+Enable all the new advice with, for example:
+
+```cmd
+rfort -Wall -Wshadow -Wshadow-dummy-argument -Wdead-store -Wunchecked-status check example.f90
+```
+
+Regression checks: `python tests/test_source_advice.py`.
+
 `-Wshort-circuit`, enabled by `-Wall`/`--wall`, warns when a logical expression
 combines an intrinsic `ALLOCATED` or `ASSOCIATED` inquiry with an access that
 needs valid allocation or association. For example,

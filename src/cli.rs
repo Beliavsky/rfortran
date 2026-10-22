@@ -22,7 +22,7 @@ pub struct Cli {
     )]
     pub out: Option<PathBuf>,
 
-    #[structopt(long = "Wall", help = "Enable common warnings (missing-intent remains opt-in)")]
+    #[structopt(long = "Wall", help = "Enable common warnings (some advice remains opt-in)")]
     pub wall: bool,
 
     #[structopt(long = "Werror", help = "Treat warnings as errors")]

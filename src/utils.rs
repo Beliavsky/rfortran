@@ -117,7 +117,7 @@ pub fn print_help() {
     println!("  -c, --compile-only   Emit an object without linking");
     println!("  -I <directory>       Search for rfort .rmod module interfaces (repeatable)");
     println!("  -J <directory>       Write module interfaces here and search this directory");
-    println!("  -Wall, --Wall        Enable common warnings (missing-intent remains opt-in)");
+    println!("  -Wall, --Wall        Enable common warnings (some advice remains opt-in)");
     println!("  -std=<revision>     Check implemented features: f90, f95, f2003, f2008, f2018, f2023");
     println!("                      Default: permissive; revision checks are partial");
     println!("  -Wunused             Enable all unused-declaration warnings");
@@ -126,6 +126,13 @@ pub fn print_help() {
     println!("  -Wshort-circuit     Warn about unsafe ALLOCATED/ASSOCIATED logical guards");
     println!("  -Wimplicit-save     Warn about implicit SAVE from local declaration initialization");
     println!("  -Wmissing-intent    Warn about data dummy arguments without INTENT (opt-in)");
+    println!("  -Wshadow            Warn about locals shadowing enclosing data declarations (opt-in)");
+    println!("  -Wshadow-dummy-argument  Include dummy-argument shadowing (opt-in)");
+    println!("  -Wdead-store        Warn about overwritten local scalar values (opt-in)");
+    println!("  -Winteger-division  Warn about truncating constant integer divisions");
+    println!("  -Wunchecked-status Warn about status results never inspected or forwarded (opt-in)");
+    println!("  -Wtarget-lifetime   Warn about pointers escaping automatic targets");
+    println!("  -Waliasing          Warn about conflicting overlapping actual arguments");
     println!("  -Wno-<category>      Disable a warning category");
     println!("  -Werror, --Werror    Treat enabled warnings as errors");
     println!("  -Werror=<category>  Enable a warning category and treat it as an error");

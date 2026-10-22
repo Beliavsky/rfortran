@@ -9,6 +9,23 @@ below; unmarked recommendations remain proposals.
 
 ## Implementation status (2026-10-22)
 
+- **Implemented: `-Wshadow` and `-Wshadow-dummy-argument`.** Separately opt-in;
+  lexical host/USE-associated data shadowing, with both declaration locations.
+- **Implemented: `-Wdead-store`.** Opt-in; overwritten ordinary local scalar
+  assignments within straight-line regions. Reads, calls and control flow are
+  barriers; persistent, aliased and externally observable storage is excluded.
+- **Implemented: `-Winteger-division`.** Enabled by `-Wall`; warns on discarded
+  remainders in constant integer division, including visible named constants.
+- **Implemented: `-Wunchecked-status`.** Opt-in; ignored local scalar IOSTAT,
+  STAT and intrinsic status outputs. Recognizes later inspection/forwarding;
+  does not prove error paths are handled correctly.
+- **Implemented: `-Wtarget-lifetime`.** Enabled by `-Wall`; known automatic
+  targets associated with escaping pointers, including direct pointer aliases.
+  General pointer-component escape and interprocedural lifetime analysis remain.
+- **Implemented: `-Waliasing`.** Enabled by `-Wall`; known overlapping actuals
+  at defined procedure calls with conflicting OUT/modified-INOUT and read
+  accesses. Includes keyword arguments and constant subscripts/sections;
+  general alias analysis and unresolved interfaces remain outside the check.
 - **Implemented: `-Wshort-circuit`.** Enabled by `-Wall`; checks unsafe logical
   guards combining ALLOCATED/ASSOCIATED with value or shape access. Reuses the
   optional-argument inquiry-fact analysis and intrinsic purity registry. It
@@ -30,6 +47,8 @@ multi-file locations. See [usage](docs/usage.md#warnings), the
 The allocation/association guard example and tests are
 [xshort_circuit_warnings.f90](tests/programs/xshort_circuit_warnings.f90) and
 [test_short_circuit_warnings.py](tests/test_short_circuit_warnings.py).
+The scope/value/status/storage checks are covered by
+[test_source_advice.py](tests/test_source_advice.py).
 
 ## Existing rfortran coverage
 

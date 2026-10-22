@@ -252,7 +252,9 @@ mode with warnings suppressed; banner and inspection-format differences are
 allowed. Saved source is syntax-checked with gfortran when available.
 
 Warnings (`-Wall`, `-Wunused`, `-Wformat`, `-Wimplicit-typing`, `-Wunreachable-code`,
-`-Woptional-argument`, `-Wshort-circuit`, `-Wimplicit-save`, opt-in `-Wmissing-intent`, `-Werror`), multi-file
+`-Woptional-argument`, `-Wshort-circuit`, `-Wimplicit-save`, `-Winteger-division`,
+`-Wtarget-lifetime`, `-Waliasing`, opt-in `-Wmissing-intent`, `-Wshadow`,
+`-Wshadow-dummy-argument`, `-Wdead-store`, `-Wunchecked-status`, `-Werror`), multi-file
 builds, separate compilation with `-c`, and the `.rmod` module interface files
 are described in [docs/usage.md](docs/usage.md).
 
