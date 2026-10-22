@@ -21,6 +21,8 @@ const CATEGORIES: &[&str] = &[
     "implicit-typing",
     "unreachable-code",
     "format",
+    "implicit-save",
+    "missing-intent",
 ];
 fn canonical(name: &str) -> &str {
     match name {

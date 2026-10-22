@@ -141,7 +141,7 @@ fn rename(body: &mut [Stmt], from: &str, to: &str) {
 }
 
 /// Names invoked as procedures in a body (CALL targets and function references).
-fn invoked(body: &[Stmt], names: &mut HashSet<String>) {
+pub(crate) fn invoked(body: &[Stmt], names: &mut HashSet<String>) {
     for s in body {
         let mut s = s.clone();
         if let Stmt::CallSub { name, .. } = &s {

@@ -117,12 +117,14 @@ pub fn print_help() {
     println!("  -c, --compile-only   Emit an object without linking");
     println!("  -I <directory>       Search for rfort .rmod module interfaces (repeatable)");
     println!("  -J <directory>       Write module interfaces here and search this directory");
-    println!("  -Wall, --Wall        Enable all warnings");
+    println!("  -Wall, --Wall        Enable common warnings (missing-intent remains opt-in)");
     println!("  -std=<revision>     Check implemented features: f90, f95, f2003, f2008, f2018, f2023");
     println!("                      Default: permissive; revision checks are partial");
     println!("  -Wunused             Enable all unused-declaration warnings");
     println!("  -Wunused-<category>  Enable type, variable, parameter, dummy-argument or function warnings");
     println!("  -Woptional-argument Warn about OPTIONAL dummy references without proven presence");
+    println!("  -Wimplicit-save     Warn about implicit SAVE from local declaration initialization");
+    println!("  -Wmissing-intent    Warn about data dummy arguments without INTENT (opt-in)");
     println!("  -Wno-<category>      Disable a warning category");
     println!("  -Werror, --Werror    Treat enabled warnings as errors");
     println!("  -Werror=<category>  Enable a warning category and treat it as an error");

@@ -100,6 +100,7 @@ mod optional_warnings;
 mod implicit_warnings;
 mod reachability;
 mod format_warnings;
+mod declaration_warnings;
 mod utils;
 
 #[cfg(target_os = "windows")]
@@ -347,6 +348,7 @@ fn prepare_program(
     let filename = input.to_str().unwrap_or("<unknown>");
     unused::validate_options(&args.warnings)?;
     optional_warnings::check(&program, src, tokens, filename, origins, settings, &args.warnings)?;
+    declaration_warnings::check(&program, src, tokens, filename, origins, settings, &args.warnings)?;
     let prepared = module_files::prepare(program, src, input, origins, args)
         .map_err(|error| source_diagnostics::report(error, src, tokens, filename, origins))?;
     unused::check(&prepared.program, &prepared.source, &lexer::lex(&prepared.source), src.len(),

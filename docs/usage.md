@@ -46,6 +46,32 @@ conformance. Regression checks: `python tests/test_standards.py`.
 
 ## Warnings
 
+`-Wimplicit-save`, enabled by `-Wall`/`--wall`, warns when declaration
+initialization gives a procedure-local variable implicit `SAVE`. For example,
+`integer :: count=0` initializes persistent storage, rather than resetting
+`count` on each call. The warning includes array and pointer initializers, and
+exempts explicit `SAVE` (including separate and bare SAVE statements), named
+constants, module/main-program variables, and derived-type component defaults.
+It points to the original entity name and suggests either documenting persistent
+state with explicit `SAVE`, or using executable initialization on each invocation.
+This diagnostic does not expand existing backend support for saved pointers.
+Disable with `-Wno-implicit-save`, promote with `-Werror=implicit-save`, or use
+`!#allow(implicit-save)` / `!#deny(implicit-save)`.
+
+`-Wmissing-intent` is opt-in and is **not enabled by `-Wall`**. It warns about
+data dummy arguments without explicit `INTENT`, without choosing an intent or
+rewriting the procedure. Procedure, POINTER, and VALUE dummies are exempt in
+this initial implementation. Separate INTENT statements and derived-type dummy
+attributes are recognized. The note explains that `INTENT(OUT)` makes the
+argument undefined on entry, so it must not be added merely to silence a warning.
+Disable with `-Wno-missing-intent`, promote with `-Werror=missing-intent`, or use
+`!#allow(missing-intent)` / `!#deny(missing-intent)`.
+Both checks run before lowering, including on uncalled procedure definitions,
+and retain original file locations in multi-source builds. Definitions loaded
+from `.rmod` files are not diagnosed again. Example:
+`rfort -Wall -Wmissing-intent check tests/programs/xdeclaration_warnings.f90`.
+Regression checks: `python tests/test_declaration_warnings.py`.
+
 `-Wformat`, enabled by `-Wall`/`--wall`, checks known formats against known
 I/O-list types for formatted PRINT, WRITE and READ, including internal I/O.
 For example, `print '(2i4)',1,1.1` warns that the second I4 expects INTEGER
