@@ -472,6 +472,35 @@ fn emit_read_items(
                 continue;
             }
         }
+        // An element of a runtime CHARACTER array stored as character codes:
+        // read a CHARACTER value, then store its codes.
+        if let Expr::Call(n, a) = item {
+            if n == "@character_heap_element" {
+                let [Expr::Ident(array), index, Expr::IntLit(capacity), length, stride] = a.as_slice() else {
+                    bail!("invalid CHARACTER array READ item");
+                };
+                *serial += 1;
+                let temp = format!("@list_read_value_{serial}");
+                let (byte, position) = (format!("@list_read_byte_{serial}"), format!("@list_read_position_{serial}"));
+                let capacity: i64 = capacity.parse()?;
+                let offset = bin(BinOp::Mul, bin(BinOp::Sub, index.clone(), int(1)), stride.clone());
+                let store = vec![
+                    Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![byte.clone(), position.clone()] },
+                    Stmt::Do { var: position.clone(), start: int(0), end: bin(BinOp::Sub, length.clone(), int(1)), body: vec![
+                        Stmt::CallSub { name: "@internal_read_byte".into(), args: vec![var(&byte), var(&temp), var(&position), int(capacity)] },
+                        Stmt::AssignIndex { name: array.clone(), indices: vec![bin(BinOp::Add, offset.clone(), bin(BinOp::Add, var(&position), int(1)))], value: var(&byte) },
+                    ] },
+                ];
+                body.push(branch(equal(code, 0), vec![
+                    Stmt::VarDecl { kind: TypeSpec::Character(Some(capacity as usize)), names: vec![temp.clone()] },
+                    set(&temp, Expr::Str(String::new())),
+                    Stmt::CallSub { name: "@list_read_next".into(), args: vec![var(code), var(&temp), var(handle), int(4), int(capacity)] },
+                    branch(equal(code, 0), store),
+                    branch(equal(code, -2), vec![set(code, int(0))]),
+                ]));
+                continue;
+            }
+        }
         *serial += 1;
         let index = format!("@list_read_index_{serial}");
         let (target, count, kind) = match item {

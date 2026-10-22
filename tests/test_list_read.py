@@ -253,6 +253,13 @@ print *,size(words),words,m
 end
 """,'2 aaabbb 17\n',data='aaa bbb\n17\n')
 
+    def test_runtime_character_array_elements_and_lengths(self):
+        """List-directed input into elements, implied DOs and whole runtime
+        CHARACTER arrays, with truncation, null values and IOSTAT, and into a
+        deferred-length array whose length is set at run time."""
+        self.check('character(4),allocatable::w(:)\ninteger::n,i,ios\nn=3\nallocate(w(n))\nw=\'zz\'\nread(*,*) w(2), i\nprint \'(3("[",a,"]"),i3)\', w, i\nread(*,*) (w(i),i=n,1,-1)\nprint \'(3("[",a,"]"))\', w\nread(*,*,iostat=ios) w\nprint \'(3("[",a,"]"),i3)\', w, ios\nread(*,*) w(1), w(3)\nprint \'(3("[",a,"]"))\', w\nend\n','[zz  ][tool][zz  ]  5\n[z   ][y   ][x   ]\n[a b ][y   ][c   ]  0\n[p   ][y   ][q   ]\n',data="toolong 5\nx y z\n'a b',, c\np q\n")
+        self.check('character(len=:),allocatable::w(:)\ninteger::n\nn=2\nallocate(character(len=n+1)::w(n+1))\nread(*,*) w\nprint \'(3("[",a,"]"))\', w\nend\n','[abc][e  ][fg ]\n',data='abcd e fg\n')
+
     def test_character_input_checks_active_bounds(self):
         self.check("""character(3),allocatable::words(:)
 integer::n,j
@@ -263,7 +270,7 @@ allocate(words(n))
 j=3
 read(*,*)words(j)
 end
-""",error='CHARACTER READ index out of bounds',data='aaa\n',reference=False)
+""",error='subscript outside allocated bounds',data='aaa\n',reference=False)
 
     def test_user_write_read(self):
         # Keep the user's temp.txt intact, and test their actual source unchanged.

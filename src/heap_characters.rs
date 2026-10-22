@@ -174,6 +174,34 @@ impl Lower {
         }
         Ok(())
     }
+    /// A READ item that is a runtime CHARACTER array, or an element of one,
+    /// becomes `@character_heap_element(array, index, capacity, length,
+    /// stride)` elements, which list-directed input reads as CHARACTER values
+    /// and stores as character codes. A whole array becomes an implied DO.
+    fn read_item(&mut self, item: &mut Expr, arrays: &Arrays, out: &mut Vec<Stmt>) -> Result<()> {
+        let element = |s: &Self, n: &str, index: Expr| Expr::Call("@character_heap_element".into(), vec![
+            id(n), index, int(arrays[n]), s.logical_width(n, arrays[n]), s.stride(n, arrays[n])]);
+        match item {
+            Expr::Call(tag, a) if tag == "@packed_view" && a.len() == 2 && matches!(&a[0], Expr::Ident(n) if arrays.contains_key(n)) => {
+                let Expr::Ident(n) = a[0].clone() else { unreachable!() };
+                let extent = a[1].clone();
+                self.serial += 1;
+                let index = format!("@character_heap_read_{}", self.serial);
+                out.push(Stmt::VarDecl { kind: TypeSpec::Integer(None), names: vec![index.clone()] });
+                *item = Expr::Call("@input_implied_do".into(), vec![id(&index), int(1), extent, int(1), element(self, &n, id(&index))]);
+            }
+            Expr::Index(n, a) | Expr::Call(n, a) if arrays.contains_key(n.as_str()) => {
+                let [index] = a.as_mut_slice() else { anyhow::bail!("heap CHARACTER element requires a linear index") };
+                self.expression(index, arrays, out)?;
+                *item = element(self, &n.clone(), index.clone());
+            }
+            Expr::Call(tag, a) if (tag == "@input_implied_do" || tag == "@output_implied_do") && a.len() > 4 => {
+                for e in &mut a[4..] { self.read_item(e, arrays, out)?; }
+            }
+            e => self.expression(e, arrays, out)?,
+        }
+        Ok(())
+    }
     fn body(&mut self, body: &mut Vec<Stmt>, inherited: &Arrays) -> Result<()> {
         let saved_widths=self.widths.clone();
         let mut arrays = inherited.clone();
@@ -331,6 +359,15 @@ impl Lower {
                 Stmt::Assign { value, .. }
                 | Stmt::AssignIndex { value, .. }
                 | Stmt::Return(Some(value)) => self.expression(value, &arrays, &mut prefix)?,
+                // List-directed READ: unit, control, status, then the items.
+                Stmt::CallSub { name, args } if name == "@internal_read" && args.len() > 3 => {
+                    for e in &mut args[..3] {
+                        self.expression(e, &arrays, &mut prefix)?;
+                    }
+                    for item in &mut args[3..] {
+                        self.read_item(item, &arrays, &mut prefix)?;
+                    }
+                }
                 Stmt::Print { items } | Stmt::CallSub { args: items, .. } => {
                     for e in items {
                         self.expression(e, &arrays, &mut prefix)?;
