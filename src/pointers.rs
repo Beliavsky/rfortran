@@ -617,12 +617,6 @@ impl Lower {
                 let lo = self.integer(lo, out);
                 let hi = self.integer(hi, out);
                 let step = self.integer(step, out);
-                if lower.is_none() || upper.is_none() {
-                    let mut reversed=vec![];
-                    if lower.is_none() {if let Expr::Ident(n)=&lo {reversed.push(assign(n,add(a.lower.clone(),sub(a.extent.clone(),int(1)))));}}
-                    if upper.is_none() {if let Expr::Ident(n)=&hi {reversed.push(assign(n,a.lower.clone()));}}
-                    out.push(Stmt::If{cond:bin(BinOp::Lt,step.clone(),int(0)),then_body:reversed,else_body:None});
-                }
                 out.push(require(
                     bin(BinOp::Ne, step.clone(), int(0)),
                     "pointer section stride must not be zero".into(),

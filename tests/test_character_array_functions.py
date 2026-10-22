@@ -56,14 +56,15 @@ contains
 """+MUNGE+"end program main\n",'>a:x  < >b:x  < >c:x  < >a:y  < >b:y  < >c:y  <\n6 5\nb:x   c:x  \nc:x   b:x   a:x  \n')
 
     def test_reverse_section_omitted_bounds(self):
-        # The installed Windows gfortran reports SIZE(left(::-1)) == 0;
-        # explicit bounds are compared with gfortran in the preceding test.
+        # Omitted bounds are the declared bounds whatever the stride's sign,
+        # so left(::-1) runs from 1 down to 3 and is empty.
         self.check("""program main
 character(1)::left(3)
 left=['a','b','c']
 print '(*(1x,a))',munge(left(::-1),['x'],':')
+print *,size(munge(left(::-1),['x'],':'))
 contains
-"""+MUNGE+"end program main\n",'c:x b:x a:x\n',reference=False)
+"""+MUNGE+"end program main\n",'\n 0\n')
 
     def test_nested_array_result_as_actual(self):
         self.check("""program main

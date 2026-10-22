@@ -152,8 +152,8 @@ impl Lower {
                     .context("elemental array section requires an array")?;
                 let step = stride.as_deref().map(crate::parameters::integer_constant).transpose()?.unwrap_or(1);
                 if step==0 {bail!("array section stride must not be zero");}
-                let first = lower.as_deref().map(crate::parameters::integer_constant).transpose()?.unwrap_or(if step>0 {1} else {items.len() as i64});
-                let last = upper.as_deref().map(crate::parameters::integer_constant).transpose()?.unwrap_or(if step>0 {items.len() as i64} else {1});
+                let first = lower.as_deref().map(crate::parameters::integer_constant).transpose()?.unwrap_or(1);
+                let last = upper.as_deref().map(crate::parameters::integer_constant).transpose()?.unwrap_or(items.len() as i64);
                 let mut output = vec![];
                 let mut i = first;
                 while if step > 0 { i <= last } else { i >= last } {

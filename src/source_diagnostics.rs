@@ -120,6 +120,10 @@ pub(crate) fn user_names(message: &str) -> String {
     message.split('`').enumerate().map(|(i, part)| {
         let part = if i % 2 == 1 && part.starts_with("@module$") {
             part.rsplit('$').next().unwrap_or(part)
+        } else if i % 2 == 1 && part.starts_with("@substring_allocated_length_") && part.contains("$of$") {
+            // The length of a deferred-length CHARACTER variable is reported
+            // as the variable.
+            part.split("$of$").nth(1).unwrap_or(part)
         } else if i % 2 == 1 { crate::block_scopes::original(part) } else { part };
         if i == 0 { part.to_owned() } else { format!("`{part}") }
     }).collect()

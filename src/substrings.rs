@@ -608,7 +608,8 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
                         bail!("deferred CHARACTER `{name}` requires ALLOCATABLE");
                     }
                     *serial += 1;
-                    let length = format!("@substring_allocated_length_{serial}");
+                    // The name ends with the variable's, which diagnostics show.
+                    let length = format!("@substring_allocated_length_{serial}$of${name}");
                     scope.symbols.insert(length.clone(), (TypeSpec::Integer(Some(8)), vec![]));
                     scope.lengths.insert(name.clone(), length);
                     scope.characters.insert(name.clone(), 0);

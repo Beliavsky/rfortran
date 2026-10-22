@@ -197,6 +197,16 @@ pub(crate) fn scalar_actual_kind(e: &Expr, shapes: &Shapes) -> Result<TypeSpec> 
         Expr::Call(n,args) if n=="@allocated_extent"=>scalar_actual_kind(&args[1],shapes),
         Expr::Call(n,_) if matches!(n.as_str(),"@heap_bound"|"@heap_lower_bound"|"@heap_upper_bound")=>Ok(TypeSpec::Integer(Some(8))),
         Expr::Call(n,args) if n=="size" || matches!(n.as_str(),"lbound"|"ubound") && args.len()==2=>Ok(TypeSpec::Integer(None)),
+        // A substring of a scalar CHARACTER variable, with a constant length
+        // when its bounds are constant.
+        Expr::Section { name, lower, upper, stride: None } if matches!(shapes.get(name), Some((TypeSpec::Character(_), dims)) if dims.is_empty()) => {
+            let Some((TypeSpec::Character(length), _)) = shapes.get(name) else { unreachable!() };
+            let constant = |e: &Option<Box<Expr>>, default: i64| e.as_deref().map_or(Some(default), |e| crate::parameters::integer_constant(e).ok());
+            Ok(TypeSpec::Character(match (constant(lower, 1), constant(upper, length.unwrap_or(1) as i64)) {
+                (Some(lo), Some(hi)) => Some(usize::try_from(hi - lo + 1).unwrap_or(0)),
+                _ => None,
+            }))
+        }
         Expr::Section { .. } => bail!("subroutine array actual arguments are not yet supported; pass scalar arguments"),
         _ => bail!("unsupported scalar actual expression in specialized subroutine call"),
     }
@@ -1217,8 +1227,8 @@ pub(crate) fn character_constructor(actual:&mut Expr, shapes:&Shapes, prefix:&mu
             let extent=crate::parameters::integer_constant(&dims[0])?;
             let step=stride.as_deref().map(crate::parameters::integer_constant).transpose()?.unwrap_or(1);
             if step==0 {bail!("CHARACTER section stride must not be zero");}
-            let first=lower.as_deref().map(crate::parameters::integer_constant).transpose()?.unwrap_or(if step>0 {1} else {extent});
-            let last=upper.as_deref().map(crate::parameters::integer_constant).transpose()?.unwrap_or(if step>0 {extent} else {1});
+            let first=lower.as_deref().map(crate::parameters::integer_constant).transpose()?.unwrap_or(1);
+            let last=upper.as_deref().map(crate::parameters::integer_constant).transpose()?.unwrap_or(extent);
             let distance=(i128::from(last)-i128::from(first))*i128::from(step.signum());
             let count=if distance<0 {0} else {distance/i128::from(step).abs()+1};
             if count>1024 {bail!("CHARACTER section actuals support at most 1024 elements");}

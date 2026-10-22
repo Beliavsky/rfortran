@@ -1119,6 +1119,40 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
                 .with_context(||format!("{name}: unsupported or undefined inquiry argument type"))?;
             *e=crate::inquiries::model_value(name,&kind)?;
         }
+        // SHAPE, LBOUND and UBOUND of an array of known shape, by keyword or
+        // position, as array actual arguments.
+        Expr::Call(name, args) if matches!(name.as_str(), "shape" | "lbound" | "ubound")
+            && !symbols.procedures.contains(name) && !symbols.contains_key(name) =>
+        {
+            let params: &[&str] = if name == "shape" { &["source", "kind"] } else { &["array", "dim", "kind"] };
+            let mut slots: Vec<Option<Expr>> = vec![None; params.len()];
+            for (position, a) in args.iter().enumerate() {
+                match crate::named_arguments::keyword(a) {
+                    Some((key, value)) => if let Some(slot) = params.iter().position(|p| *p == key) { slots[slot] = Some(value.clone()); },
+                    None if position < slots.len() && !crate::named_arguments::omitted(a) => slots[position] = Some(a.clone()),
+                    None => {}
+                }
+            }
+            let kind = slots.last().cloned().flatten();
+            let default_kind = kind.as_ref().is_none_or(|k| crate::parameters::integer_constant(k).ok() == Some(4));
+            let dims = match slots[0].as_ref() {
+                Some(source) if name == "shape" => crate::multidim::fixed_actual_shape(source, &symbols.variables).ok().flatten(),
+                // Bounds need the declared lower bounds, which are 1 for an
+                // array declared with constant extents.
+                Some(Expr::Ident(n)) => symbols.get(n).filter(|(_, d)| !d.is_empty())
+                    .and_then(|(_, d)| d.iter().map(|d| match d { Expr::IntLit(v) => v.parse().ok(), _ => None }).collect::<Option<Vec<i64>>>()),
+                _ => None,
+            };
+            if let (Some(dims), true) = (dims, default_kind) {
+                *e = if name == "shape" {
+                    Expr::Call("@bounds_vector".into(), dims.into_iter().map(int).collect())
+                } else {
+                    crate::inquiries::bounds(name, &dims, slots[1].as_ref())?
+                };
+                return lower_expr_impl(e, symbols, prefix, serial, expand_elementals);
+            }
+            for a in args.iter_mut() { lower_expr_impl(a, symbols, prefix, serial, expand_elementals)?; }
+        }
         Expr::Call(name, args) if matches!(name.as_str(), "tiny" | "huge" | "kind" | "size") => {
             if name == "kind" && args.len() == 1 {
                 if let Expr::Call(inquiry, inner) = &args[0] {

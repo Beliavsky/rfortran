@@ -141,12 +141,12 @@ fn section_view(name: &str, args: &[Expr], dims: &[i64]) -> Result<(Vec<i64>, Ex
             if step == 0 {
                 bail!("array section stride must not be zero");
             }
-            let first = lower.as_deref().map(&constant).transpose()?.unwrap_or(if step>0 {1} else {*extent});
+            let first = lower.as_deref().map(&constant).transpose()?.unwrap_or(1);
             let last = upper
                 .as_deref()
                 .map(&constant)
                 .transpose()?
-                .unwrap_or(if step>0 {*extent} else {1});
+                .unwrap_or(*extent);
             let distance = (i128::from(last) - i128::from(first)) * i128::from(step.signum());
             let count = if distance < 0 {
                 0
@@ -411,6 +411,9 @@ impl Lowerer {
                 for i in [0,1,3,5] { self.expression(&mut args[i],shapes)?; }
                 args.extend([int(stride),int(axis_len),Expr::Call("@location_source_shape".into(),dims.into_iter().map(int).collect()),Expr::Call("@location_result_shape".into(),result_dims.into_iter().map(int).collect())]);
             }
+            Expr::Call(n, args) if n == "pack" && self.shape(&args[0],shapes)?.is_none() && runtime_extent(&args[0]).is_some() => {
+                for a in args.iter_mut() { self.expression(a,shapes)?; }
+            }
             Expr::Call(n, _) if matches!(n.as_str(),"pack" | "unpack") => {
                 let dims = self.shape(e,shapes)?.unwrap();
                 let Expr::Call(n,args) = e else { unreachable!() };
@@ -661,7 +664,11 @@ impl Lowerer {
                 Ok(Some(self.shape(&args[1],shapes)?.context("UNPACK MASK must be an array")?))
             }
             Expr::Call(n,args) if n == "pack" => {
-                let source = self.shape(&args[0],shapes)?.context("PACK ARRAY must be an array")?;
+                // A runtime-sized ARRAY is packed by the runtime lowering.
+                let Some(source) = self.shape(&args[0],shapes)? else {
+                    runtime_extent(&args[0]).context("PACK ARRAY must be an array")?;
+                    return Ok(None);
+                };
                 let count = if !matches!(&args[2],Expr::Call(tag,_) if tag == "@no_vector") {
                     let vector = self.shape(&args[2],shapes)?.context("PACK VECTOR must be a rank-one array")?;
                     if vector.len()!=1 { bail!("PACK VECTOR must be a rank-one array"); }

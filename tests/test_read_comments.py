@@ -198,7 +198,7 @@ subroutine copy(a,b)
 character(*),intent(in)::a(:)
 character(*),allocatable,intent(out)::b(:)
 allocate(b(size(a)))
-b=a(::-1)
+b=a(size(a):1:-1)
 end subroutine copy
 end module copy_module
 program main
@@ -216,11 +216,10 @@ end do
 end
 """
         expected = "3 T\nend  \ntwo  \none  \n"
-        # This installed experimental gfortran mishandles omitted bounds with
-        # negative stride on this assumed-shape CHARACTER dummy. Compare the
-        # explicit-bounds spelling, then check the equivalent omitted bounds.
-        self.compare(program.replace("b=a(::-1)", "b=a(size(a):1:-1)"), expected)
-        self.compare(program, expected, reference=False)
+        # A reverse copy needs explicit bounds: with omitted bounds, a(::-1)
+        # runs from 1 down to 3 and is empty.
+        self.compare(program.replace("b=a(size(a):1:-1)", "b=a(3:1:-1)"), expected)
+        self.compare(program, expected)
 
     def test_dynamic_uninitialized_element_and_bounds(self):
         self.compare("""implicit none

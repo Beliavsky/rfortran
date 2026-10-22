@@ -258,17 +258,9 @@ impl Lower {
                     binary(BinOp::Add, first.clone(), v.axes[0].clone()),
                     int(1),
                 );
-                let lo = lower.as_deref().cloned().unwrap_or_else(|| {
-                    if step < 0 {
-                        last.clone()
-                    } else {
-                        first.clone()
-                    }
-                });
-                let hi = upper
-                    .as_deref()
-                    .cloned()
-                    .unwrap_or(if step < 0 { first } else { last });
+                // Omitted bounds are the declared bounds, whatever the stride's sign.
+                let lo = lower.as_deref().cloned().unwrap_or(first);
+                let hi = upper.as_deref().cloned().unwrap_or(last);
                 v.axes = vec![Expr::Call(
                     "max".into(),
                     vec![

@@ -156,9 +156,9 @@ fn triplet(e: &Expr, axis: &(Expr, Expr)) -> Result<(Expr, Expr, Expr)> {
     let step = stride.as_deref().cloned().unwrap_or(int(1));
     let Some(step_value) = constant(&step) else {
         let last=bin(BinOp::Sub,bin(BinOp::Add,axis.0.clone(),axis.1.clone()),int(1));
-        let choose=|a,b|Expr::Call("@runtime_section_first".into(),vec![a,b,step.clone()]);
-        let first=lower.as_deref().cloned().unwrap_or_else(||choose(axis.0.clone(),last.clone()));
-        let end=upper.as_deref().cloned().unwrap_or_else(||choose(last,axis.0.clone()));
+        // Omitted bounds are the declared bounds, whatever the stride's sign.
+        let first=lower.as_deref().cloned().unwrap_or_else(||axis.0.clone());
+        let end=upper.as_deref().cloned().unwrap_or(last);
         let count=Expr::Call("@runtime_section_extent".into(),vec![first.clone(),end,step.clone()]);
         return Ok((first,count,step));
     };
@@ -170,16 +170,8 @@ fn triplet(e: &Expr, axis: &(Expr, Expr)) -> Result<(Expr, Expr, Expr)> {
         bin(BinOp::Add, axis.0.clone(), axis.1.clone()),
         int(1),
     );
-    let first = lower.as_deref().cloned().unwrap_or(if step_value > 0 {
-        axis.0.clone()
-    } else {
-        last.clone()
-    });
-    let end =
-        upper
-            .as_deref()
-            .cloned()
-            .unwrap_or(if step_value > 0 { last } else { axis.0.clone() });
+    let first = lower.as_deref().cloned().unwrap_or(axis.0.clone());
+    let end = upper.as_deref().cloned().unwrap_or(last);
     let count = if let (Some(first), Some(end)) = (constant(&first), constant(&end)) {
         int(i64::try_from(
             ((i128::from(end) - i128::from(first) + i128::from(step_value))

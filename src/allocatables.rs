@@ -630,8 +630,9 @@ fn runtime_character_items(value: &Expr, shapes: &Shapes, target: &str, serial: 
                 let step = stride.as_deref().map(crate::parameters::integer_constant).transpose().ok()?.unwrap_or(1);
                 if step == 0 { return None; }
                 let last = bin(BinOp::Sub,bin(BinOp::Add,first(n),whole(n)),int(1));
-                let lo = lower.as_deref().cloned().unwrap_or_else(|| if step < 0 {last.clone()} else {first(n)});
-                let hi = upper.as_deref().cloned().unwrap_or_else(|| if step < 0 {first(n)} else {last});
+                // Omitted bounds are the declared bounds, whatever the stride's sign.
+                let lo = lower.as_deref().cloned().unwrap_or_else(|| first(n));
+                let hi = upper.as_deref().cloned().unwrap_or(last);
                 let extent = Expr::Call("max".into(),vec![int(0),bin(BinOp::Div,bin(BinOp::Add,bin(BinOp::Sub,hi,lo.clone()),int(step)),int(step))]);
                 Some((n.clone(),lo,extent,step))
             }
@@ -705,8 +706,9 @@ fn character_copy(name: &str, value: &Expr, len: Expr, shapes: &Shapes, realloca
             let extent=length(n,shapes).unwrap_or(shapes[n].1[0].clone());
             let first=lowers(n,shapes).and_then(|v|v.first().cloned()).unwrap_or(int(1));
             let last=bin(BinOp::Sub,bin(BinOp::Add,first.clone(),extent),int(1));
-            let lo=lower.as_deref().cloned().unwrap_or_else(||if step<0 {last.clone()} else {first.clone()});
-            let hi=upper.as_deref().cloned().unwrap_or_else(||if step<0 {first} else {last});
+            // Omitted bounds are the declared bounds, whatever the stride's sign.
+            let lo=lower.as_deref().cloned().unwrap_or(first);
+            let hi=upper.as_deref().cloned().unwrap_or(last);
             let count=Expr::Call("max".into(),vec![int(0),bin(BinOp::Div,bin(BinOp::Add,bin(BinOp::Sub,hi,lo.clone()),int(step)),int(step))]);
             (Expr::Index(n.clone(),vec![bin(BinOp::Add,lo,bin(BinOp::Mul,bin(BinOp::Sub,id(&index),int(1)),int(step)))]),count)
         }
@@ -1614,8 +1616,9 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                             let step=stride.as_deref().map(crate::parameters::integer_constant).transpose()?.unwrap_or(1);
                             if step==0 {bail!("array section stride must not be zero");}
                             let len=length(name,&shapes).unwrap();
-                            let lo=lower_bound.as_deref().cloned().unwrap_or_else(||if step>0 {int(1)} else {len.clone()});
-                            let hi=upper.as_deref().cloned().unwrap_or_else(||if step>0 {len.clone()} else {int(1)});
+                            // Omitted bounds are the declared bounds, whatever the stride's sign.
+                            let lo=lower_bound.as_deref().cloned().unwrap_or_else(||int(1));
+                            let hi=upper.as_deref().cloned().unwrap_or_else(||len.clone());
                             *serial+=1;
                             let base=format!("@runtime_section_{serial}");
                             let first=format!("{base}_first");let count=format!("{base}_count");let index=format!("{base}_index");let temp=format!("{base}_values");
