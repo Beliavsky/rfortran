@@ -689,6 +689,10 @@ fn character_copy(name: &str, value: &Expr, len: Expr, shapes: &Shapes, realloca
     let temp = format!("@alloc_char_copy_{serial}");
     let (kind, dims) = shapes[name].clone();
     let (source, rhs_len) = match &value {
+        // A multidimensional heap source is read by linear position.
+        Expr::Ident(n) if axes(n,shapes).is_some_and(|a|a.len()>1) =>
+            (Expr::Call("@allocated_linear_element".into(),vec![id(n),id(&index)]),
+             length(n,shapes).unwrap_or_else(||axes(n,shapes).unwrap().into_iter().reduce(|a,b|bin(BinOp::Mul,a,b)).unwrap())),
         Expr::Ident(n) if matches!(shapes.get(n),Some((TypeSpec::Character(_),d)) if d.len()==1) =>
             (Expr::Index(n.clone(),vec![bin(BinOp::Add,source_lower.clone(),bin(BinOp::Sub,id(&index),int(1)))]), length(n,shapes).unwrap_or(shapes[n].1[0].clone())),
         Expr::Call(tag,a) if tag=="@packed_view" && a.len()==2 => {
@@ -736,8 +740,21 @@ fn character_copy(name: &str, value: &Expr, len: Expr, shapes: &Shapes, realloca
             Stmt::CallSub{name:"@allocate".into(),args:vec![Expr::Call(name.into(),vec![Expr::Call("@heap_bounds".into(),vec![id(&lower),bin(BinOp::Sub,bin(BinOp::Add,id(&lower),count.clone()),int(1))])])]},
         ],else_body:None});
     }
-    let lower=lowers(name,shapes).and_then(|v|v.first().cloned()).unwrap_or(int(1));
-    out.push(Stmt::Do {var:index.clone(),start:int(1),end:count,body:vec![Stmt::AssignIndex {name:name.into(),indices:vec![bin(BinOp::Add,lower,bin(BinOp::Sub,id(&index),int(1)))],value:Expr::Index(temp,vec![id(&index)])}]});
+    // A multidimensional target is written element by element in array
+    // element order, with a subscript for each dimension.
+    let indices=if let Some(target_axes)=axes(name,shapes).filter(|a|a.len()>1) {
+        let target_lowers=lowers(name,shapes).unwrap_or_else(||vec![int(1);target_axes.len()]);
+        let mut ordinal=bin(BinOp::Sub,id(&index),int(1));let mut indices=vec![];
+        for (extent,lower) in target_axes.iter().zip(target_lowers) {
+            indices.push(bin(BinOp::Add,lower,Expr::Call("mod".into(),vec![ordinal.clone(),extent.clone()])));
+            ordinal=bin(BinOp::Div,ordinal,extent.clone());
+        }
+        indices
+    } else {
+        let lower=lowers(name,shapes).and_then(|v|v.first().cloned()).unwrap_or(int(1));
+        vec![bin(BinOp::Add,lower,bin(BinOp::Sub,id(&index),int(1)))]
+    };
+    out.push(Stmt::Do {var:index.clone(),start:int(1),end:count,body:vec![Stmt::AssignIndex {name:name.into(),indices,value:Expr::Index(temp,vec![id(&index)])}]});
     Ok(())
 }
 pub(crate) fn prepare(p: Program) -> Result<Program> {
@@ -1092,6 +1109,14 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
             Expr::Ident(n) if length(n, shapes).is_some() => {
                 check(n, shapes, guards);
                 *e = view(n, shapes);
+            }
+            // A generated multidimensional temporary read with one subscript
+            // is read by linear position.
+            Expr::Index(n, a) | Expr::Call(n, a)
+                if a.len() == 1 && n.starts_with('@') && axes(n, shapes).is_some_and(|axes| axes.len() > 1) =>
+            {
+                *e = Expr::Call("@allocated_linear_element".into(), vec![id(n), a[0].clone()]);
+                return expression(e, shapes, guards, checks, serial);
             }
             Expr::Index(n, a) | Expr::Call(n, a) => {
                 linear_index(n, a, shapes, checks, serial)?;
