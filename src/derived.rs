@@ -368,8 +368,8 @@ impl Lowerer {
                         objects.polymorphic.remove(n);
                     }
                 }
-                if attributes.iter().any(|a| !a.starts_with("intent(") && !matches!(a.as_str(), "parameter" | "save" | "public" | "private")) {
-                    bail!("derived objects currently support INTENT, PARAMETER and SAVE attributes only");
+                if attributes.iter().any(|a| !a.starts_with("intent(") && !matches!(a.as_str(), "parameter" | "save" | "public" | "private" | "optional")) {
+                    bail!("derived objects currently support INTENT, OPTIONAL, PARAMETER and SAVE attributes only");
                 }
                 for n in names {
                     objects.arrays.remove(n);
@@ -574,6 +574,11 @@ impl Lowerer {
         let mut result = vec![];
         for (mut arg, (param, ty)) in args.into_iter().zip(&proc.params) {
             if let Some(ty) = ty {
+                // An omitted OPTIONAL derived argument omits each component.
+                if crate::named_arguments::omitted(&arg) {
+                    result.extend(proc.used_fields[param].iter().map(|_| Expr::Call(crate::named_arguments::OMITTED.into(), vec![])));
+                    continue;
+                }
                 let object = if let Expr::Ident(n) = &arg {
                     // An extension has its parent's components, by name.
                     if objects.get(n).is_some_and(|t| self.extends(t, ty)) {
@@ -621,6 +626,13 @@ impl Lowerer {
                 if objects.contains_key(n) {
                     bail!("derived value `{n}` requires a constructor, derived assignment, or typed procedure argument");
                 }
+            }
+            // PRESENT of an OPTIONAL derived dummy is the presence of its
+            // first component, which is passed with the others.
+            Expr::Call(n, args) if n == "present" && matches!(args.as_slice(), [Expr::Ident(p)] if objects.contains_key(p)) => {
+                let [Expr::Ident(p)] = args.as_slice() else { unreachable!() };
+                let leaf = self.leaves(&objects[p]).into_iter().next().context("PRESENT of a derived dummy requires a component")?;
+                *args = vec![Expr::Ident(format!("{p}%{leaf}"))];
             }
             Expr::Call(n, args) => {
                 self.bound_call(n, args, objects)?;
@@ -674,6 +686,10 @@ impl Lowerer {
             }
             for a in &c.attrs {
                 out.push(Stmt::DummyIntent { name: field.clone(), intent: a.clone() });
+            }
+            // Each component of an OPTIONAL derived dummy is an OPTIONAL dummy.
+            if dummy && attrs.iter().any(|a| a == "optional") {
+                out.push(Stmt::DummyIntent { name: field.clone(), intent: "optional".into() });
             }
             if c.dims.is_empty() {
                 out.push(Stmt::VarDecl {

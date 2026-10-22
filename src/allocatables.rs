@@ -395,8 +395,10 @@ fn logical_shape(
                 if *ar || *br {
                     conform_axes(ad, bd, guards)?;
                 }
-                if *ar != *br && ad.len() > 1 {
-                    bail!("mixing fixed and runtime-sized multidimensional array expressions is not yet supported");
+                // With a fixed and a runtime-sized operand, which conform,
+                // the expression has the runtime-sized operand's shape.
+                if *br && !*ar {
+                    return Ok(b);
                 }
             }
             Ok(a.or(b))
@@ -550,7 +552,8 @@ fn elemental_expression(e: &Expr, shapes: &Shapes) -> bool {
         Expr::Un(UnOp::Neg, a) => elemental_expression(a, shapes) || matches!(**a, Expr::Ident(_)),
         Expr::Call(f, args) if !shapes.contains_key(f) && args.len() == 1
             && (crate::intrinsics::math_arity(f) == Some(1) || matches!(f.as_str(), "abs" | "real" | "dble" | "int" | "nint")) =>
-            matches!(args[0], Expr::Ident(_)) || elemental_expression(&args[0], shapes),
+            // A literal argument, as `dble(2)` for `2.0_dp`, is a scalar.
+            matches!(args[0], Expr::Ident(_) | Expr::IntLit(_) | Expr::RealLit(_)) || elemental_expression(&args[0], shapes),
         _ => false,
     }
 }
@@ -1152,10 +1155,17 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
             if let Stmt::Assign{name,value}=&s {
                 // Earlier lowering can wrap a whole source array in a packed
                 // view; reallocation needs its shape and lower bounds.
-                let value=match value {
-                    Expr::Call(view,a) if view=="@packed_view" && matches!(a.first(),Some(Expr::Ident(n)) if axes(n,&shapes).is_some()) => a[0].clone(),
-                    value => value.clone(),
-                };
+                // This applies inside an expression too, as `2.0 * x` once a dummy `x`
+                // is a view of the caller's array.
+                fn unpack(e:&Expr,shapes:&Shapes)->Expr {
+                    match e {
+                        Expr::Call(view,a) if view=="@packed_view" && matches!(a.first(),Some(Expr::Ident(n)) if axes(n,shapes).is_some()) => a[0].clone(),
+                        Expr::Bin(op,a,b)=>Expr::Bin(op.clone(),Box::new(unpack(a,shapes)),Box::new(unpack(b,shapes))),
+                        Expr::Un(op,a)=>Expr::Un(op.clone(),Box::new(unpack(a,shapes))),
+                        e=>e.clone(),
+                    }
+                }
+                let value=unpack(value,&shapes);
                 if shapes.contains_key(&format!("@heap:{name}")) && axes(name,&shapes).is_some()
                     && !matches!(shapes.get(name),Some((TypeSpec::Character(_)|TypeSpec::CharacterAssumed|TypeSpec::CharacterLength(_),_)))
                     && crate::array_calls::scalar_actual_kind(&value,&shapes).is_err()
@@ -1191,6 +1201,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                     fn packed_operands(e:&mut Expr,shapes:&Shapes) {
                         match e {
                             Expr::Ident(n) if axes(n,shapes).is_some_and(|a|a.len()>1)=>*e=view(n,shapes),
+                            Expr::Ident(n) if shapes.get(n).is_some_and(|(_,d)|d.len()>1)=>*e=Expr::Call("@fixed_packed_view".into(),vec![id(n)]),
                             Expr::Bin(_,a,b)=>{packed_operands(a,shapes);packed_operands(b,shapes);},
                             Expr::Un(_,a)=>packed_operands(a,shapes),
                             Expr::Call(f,args) if !shapes.contains_key(f) && !f.starts_with('@')=>for a in args {packed_operands(a,shapes);},
@@ -1782,4 +1793,100 @@ mod tests {
         ]};
         crate::initialized::instrument(finish(p).unwrap()).unwrap();
     }
+}
+
+/// Assignment to a multidimensional ALLOCATABLE array reallocates it to the
+/// shape of its value. An array-valued function reference inside that value,
+/// as in `y = 2 * f(x) / x`, is first assigned to an ALLOCATABLE temporary of
+/// the same rank, whose shape the reallocation then uses.
+pub(crate) fn hoist_array_results(mut program: Program) -> Result<Program> {
+    type Results = HashMap<String, (TypeSpec, usize)>;
+    fn results(body: &[Stmt], out: &mut Results) {
+        for s in body {
+            match s {
+                Stmt::Function { name, body: inner, .. } => {
+                    let result = match inner.last() {
+                        Some(Stmt::Return(Some(Expr::Ident(r)))) => r.clone(),
+                        _ => name.clone(),
+                    };
+                    if let Some((kind, rank)) = inner.iter().find_map(|s| match s {
+                        Stmt::ArrayDecl { kind, name, dims } if *name == result => Some((kind.clone(), dims.len())),
+                        _ => None,
+                    }) {
+                        out.insert(name.clone(), (kind, rank));
+                    }
+                    results(inner, out);
+                }
+                Stmt::Module { body, .. } | Stmt::Subroutine { body, .. } => results(body, out),
+                _ => {}
+            }
+        }
+    }
+    fn hoist(e: &mut Expr, rank: usize, functions: &Results, serial: &mut usize, out: &mut Vec<(String, TypeSpec, Expr)>) {
+        match e {
+            Expr::Call(f, _) if functions.get(f).is_some_and(|(_, r)| *r == rank) => {
+                let kind = functions[f.as_str()].0.clone();
+                *serial += 1;
+                let temp = format!("@hoisted_result_{serial}");
+                let value = std::mem::replace(e, Expr::Ident(temp.clone()));
+                out.push((temp, kind, value));
+            }
+            Expr::Bin(_, a, b) => {
+                hoist(a, rank, functions, serial, out);
+                hoist(b, rank, functions, serial, out);
+            }
+            Expr::Un(_, a) => hoist(a, rank, functions, serial, out),
+            _ => {}
+        }
+    }
+    fn body(statements: &mut Vec<Stmt>, functions: &Results, serial: &mut usize) {
+        let allocatable: HashMap<String, usize> = statements.iter().filter_map(|s| match s {
+            Stmt::ArrayDecl { name, dims, .. } if dims.len() > 1 && statements.iter().any(|d| matches!(d, Stmt::DummyIntent { name: n, intent } if n == name && intent == "allocatable")) => Some((name.clone(), dims.len())),
+            _ => None,
+        }).collect();
+        let mut declarations = vec![];
+        fn walk(statements: &mut Vec<Stmt>, allocatable: &HashMap<String, usize>, functions: &Results, serial: &mut usize, declarations: &mut Vec<Stmt>) {
+            let mut out = vec![];
+            for mut s in std::mem::take(statements) {
+                match &mut s {
+                    Stmt::Assign { name, value } if allocatable.contains_key(name) && matches!(value, Expr::Bin(..) | Expr::Un(..)) => {
+                        let mut hoisted = vec![];
+                        hoist(value, allocatable[name], functions, serial, &mut hoisted);
+                        for (temp, kind, call) in hoisted {
+                            declarations.push(Stmt::DummyIntent { name: temp.clone(), intent: "allocatable".into() });
+                            declarations.push(Stmt::ArrayDecl { kind, name: temp.clone(), dims: vec![Expr::Ident("@deferred_extent".into()); allocatable[name]] });
+                            out.push(Stmt::Assign { name: temp, value: call });
+                        }
+                    }
+                    Stmt::If { then_body, else_body, .. } => {
+                        walk(then_body, allocatable, functions, serial, declarations);
+                        if let Some(b) = else_body { walk(b, allocatable, functions, serial, declarations); }
+                    }
+                    Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } => walk(body, allocatable, functions, serial, declarations),
+                    Stmt::SelectCase { cases, default, .. } => {
+                        for c in cases { walk(&mut c.body, allocatable, functions, serial, declarations); }
+                        if let Some(b) = default { walk(b, allocatable, functions, serial, declarations); }
+                    }
+                    _ => {}
+                }
+                out.push(s);
+            }
+            *statements = out;
+        }
+        walk(statements, &allocatable, functions, serial, &mut declarations);
+        statements.splice(0..0, declarations);
+        for s in statements.iter_mut() {
+            if let Stmt::Function { body: inner, .. } | Stmt::Subroutine { body: inner, .. } | Stmt::Module { body: inner, .. } = s {
+                body(inner, functions, serial);
+            }
+        }
+    }
+    let mut functions = Results::new();
+    results(&program.body, &mut functions);
+    if functions.values().all(|(_, rank)| *rank < 2) {
+        return Ok(program);
+    }
+    let mut serial = 0;
+    body(&mut program.body, &functions, &mut serial);
+    Ok(program)
 }

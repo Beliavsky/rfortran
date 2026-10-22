@@ -50,6 +50,12 @@ end subroutine work
 end program main
 """, '2\ncd\n')
 
+    def test_elemental_call_with_assumed_length_array_element(self):
+        """An element of a CHARACTER(*) array dummy passed to an ELEMENTAL
+        function with a CHARACTER(*) dummy, as in statistics.f90
+        istat_str_check."""
+        self.check('module m\nimplicit none\ncharacter(len=6), parameter :: labels(3) = ["mean  ","sd    ","median"]\ncontains\nelemental function istat_str(str) result(istat)\ncharacter(len=*), intent(in) :: str\ninteger :: istat\ndo istat=1,size(labels)\n   if (str == labels(istat)) return\nend do\nistat = 0\nend function\nfunction istat_str_check(str) result(istat)\ncharacter(len=*), intent(in) :: str(:)\ninteger :: istat(size(str))\ninteger :: i\ndo i=1,size(str)\n   istat(i) = istat_str(str(i))\n   if (istat(i) == 0) print *, "invalid: ", trim(str(i))\nend do\nend function\nend module\nuse m\ninteger :: a(3), b(2)\na = istat_str_check(["sd    ","median","max   "])\nprint *, a\nb = istat_str_check(["mean","sd  "])\nprint *, b\nend\n', " invalid: max\n 2 3 0\n 1 2\n")
+
     def test_nested_calls_and_block_shadowing(self):
         self.check("""program main
 call outer('abc')

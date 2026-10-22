@@ -553,9 +553,22 @@ impl Lower {
                     }
                     "transpose" => i.dims.reverse(),
                     "sum" | "product" => {
-                        if let Some(dim) = a.get(1).filter(|e| !crate::named_arguments::omitted(e))
-                        {
-                            let dim = crate::parameters::integer_constant(dim)?;
+                        // The DIM argument, by keyword or position. A LOGICAL
+                        // second argument is MASK, as in `sum(x, x > 0)`.
+                        let mut dim = None;
+                        for (position, e) in a.iter().enumerate().skip(1) {
+                            match crate::named_arguments::keyword(e) {
+                                Some(("dim", value)) => dim = Some(value),
+                                Some(_) => {}
+                                None if position == 1 && !crate::named_arguments::omitted(e)
+                                    && !self.info(e, s)?.is_some_and(|i| matches!(i.kind, TypeSpec::Logical)) => dim = Some(e),
+                                None => {}
+                            }
+                        }
+                        if let Some(dim) = dim {
+                            // The rank of a reduction along a runtime DIM is not
+                            // known here.
+                            let Ok(dim) = crate::parameters::integer_constant(dim) else { return Ok(None) };
                             if dim < 1 || dim as usize > i.dims.len() {
                                 bail!("invalid reduction DIM");
                             }

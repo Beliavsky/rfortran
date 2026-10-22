@@ -1483,6 +1483,22 @@ fn expand(
                                     Ok(())
                                 }
                                 views(&mut captured,&shapes)?;
+                                // A section of a fixed-shape array, as `a(:,1)` once a
+                                // specialized procedure's dummy is the caller's array,
+                                // is passed as the constructor of its elements.
+                                if let Some(items)=crate::multidim::fixed_section_elements(&captured,&shapes)? {
+                                    let (Expr::Call(source,_)|Expr::Index(source,_))=&captured else {unreachable!()};
+                                    let section_kind=shapes[source].0.clone();
+                                    *serial+=1;
+                                    let temp=format!("@call_section_{serial}");
+                                    let dims=vec![Expr::IntLit(items.len().to_string())];
+                                    prefix.push(Stmt::ArrayDecl{kind:section_kind.clone(),name:temp.clone(),dims:dims.clone()});
+                                    for (i,value) in items.into_iter().enumerate() {
+                                        prefix.push(Stmt::AssignIndex{name:temp.clone(),indices:vec![Expr::IntLit((i+1).to_string())],value});
+                                    }
+                                    shapes.insert(temp.clone(),(section_kind,dims));
+                                    captured=Expr::Ident(temp);
+                                }
                                 crate::reductions::argument_with_elementals(&mut captured,&shapes,&mut prefix,serial,functions)?
                             };
                             for s in &prefix[start..] {match s {
@@ -1735,6 +1751,7 @@ fn expand(
     result.map_err(|e| crate::source_diagnostics::at(e, statement_location.get()))
 }
 pub fn resolve(mut p: Program) -> Result<Program> {
+    p=crate::allocatables::hoist_array_results(p)?;
     p=crate::input_items::prepare(p)?;
     p=crate::modules::capture(p)?;
     p=crate::heap::automatic_locals(p)?;

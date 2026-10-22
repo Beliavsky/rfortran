@@ -463,11 +463,26 @@ impl Lower {
                 Expr::Bin(_,a,b)=>runtime(a,symbols)||runtime(b,symbols),Expr::Un(_,e)=>runtime(e,symbols),_=>false,
             }
         }
+        // Whether a subscript selects several elements: a section or an
+        // array of indices.
+        fn selects(e:&Expr,symbols:&Symbols)->bool {
+            match e {
+                Expr::Section{..}=>true,
+                Expr::Call(n,_) if n=="@section_subscript"=>true,
+                Expr::Ident(n)=>symbols.get(n).is_some_and(|(_,d)|!d.is_empty()),
+                Expr::Call(n,a)|Expr::Index(n,a)=>symbols.get(n).is_some_and(|(_,d)|!d.is_empty()) && a.iter().any(|e|selects(e,symbols)),
+                Expr::Bin(_,a,b)=>selects(a,symbols)||selects(b,symbols),
+                _=>false,
+            }
+        }
         fn pending(e:&Expr,symbols:&Symbols)->bool {
             match e {
                 Expr::Ident(n)=>symbols.get(n).is_some_and(|(_,d)|d.iter().any(|d|matches!(d,Expr::Ident(n) if n=="@deferred_extent"))) && !symbols.contains_key(&format!("@axes:{n}")),
                 Expr::Section{name,..}=>pending(&Expr::Ident(name.clone()),symbols),
-                Expr::Call(_,a)|Expr::Index(_,a)=>a.iter().any(|e|pending(e,symbols)),Expr::Bin(_,a,b)=>pending(a,symbols)||pending(b,symbols),Expr::Un(_,e)=>pending(e,symbols),_=>false,
+                // A selection from a deferred-shape array, as `xx(irank(:i))`.
+                Expr::Call(n,a)|Expr::Index(n,a)=>pending(&Expr::Ident(n.clone()),symbols) && a.iter().any(|e|selects(e,symbols))
+                    || a.iter().any(|e|pending(e,symbols)),
+                Expr::Bin(_,a,b)=>pending(a,symbols)||pending(b,symbols),Expr::Un(_,e)=>pending(e,symbols),_=>false,
             }
         }
         if array_result && self.defer_calls && args.iter().any(|e|pending(e,symbols)){return Ok(());}
@@ -567,7 +582,8 @@ impl Lower {
                 Expr::Ident(n) => symbols.get(n).is_some_and(|(kind,dims)|
                     matches!(kind,TypeSpec::CharacterAssumed|TypeSpec::CharacterLength(_))
                     || dims.iter().any(|d|crate::parameters::integer_constant(d).is_err())),
-                Expr::Call(_,args)|Expr::Index(_,args)=>args.iter().any(|e|unbound(e,symbols)),
+                // An element of an assumed-length array, as `str(i)`.
+                Expr::Call(n,args)|Expr::Index(n,args)=>unbound(&Expr::Ident(n.clone()),symbols)||args.iter().any(|e|unbound(e,symbols)),
                 Expr::Bin(_,a,b)=>unbound(a,symbols)||unbound(b,symbols),
                 Expr::Un(_,a)=>unbound(a,symbols),
                 Expr::Section{name,lower,upper,stride}=>unbound(&Expr::Ident(name.clone()),symbols)

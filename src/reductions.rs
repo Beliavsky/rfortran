@@ -657,12 +657,36 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
                 // Elemental MERGE: select each element into a temporary array.
                 if !array_element_kind(&first) {bail!("MERGE of arrays currently requires numeric or LOGICAL sources");}
                 let mut extent=None;
+                let mut runtime=None;
                 for arg in args.iter() {
                     if let Some(n)=element(arg,&int(1),symbols)?.1 {
-                        if n<0 {bail!("MERGE of arrays currently requires arrays of known size");}
+                        // A runtime-sized argument, as a mask `x <= 0` of a
+                        // runtime section, gives the result its extent.
+                        if n<0 {
+                            runtime=Some(runtime_extent(arg).context("MERGE of arrays currently requires arrays of known size")?);
+                            continue;
+                        }
                         if extent.is_some_and(|m|m!=n) {bail!("MERGE argument shapes do not conform");}
                         extent=Some(n);
                     }
+                }
+                if let Some(length)=runtime {
+                    if let Some(n)=extent {
+                        prefix.push(Stmt::If{cond:bin(BinOp::Ne,length.clone(),int(n)),then_body:vec![Stmt::CallSub{name:"@error_stop".into(),
+                            args:vec![Expr::Str("MERGE argument shapes do not conform".into())]}],else_body:None});
+                    }
+                    *serial+=1;
+                    let temp=format!("@merge_array_{serial}");let index=format!("@merge_index_{serial}");
+                    let at=|arg:&Expr|element(arg,&Expr::Ident(index.clone()),symbols).map(|(value,_,_)|value);
+                    let (source,other,choose)=(at(&args[0])?,at(&args[1])?,at(&args[2])?);
+                    crate::heap::temporary(first.clone(),temp.clone(),length.clone(),prefix);
+                    prefix.push(Stmt::VarDecl{kind:TypeSpec::Integer(None),names:vec![index.clone()]});
+                    let set=|value|Stmt::AssignIndex{name:temp.clone(),indices:vec![Expr::Ident(index.clone())],value};
+                    prefix.push(Stmt::Do{var:index.clone(),start:int(1),end:length.clone(),body:vec![
+                        Stmt::If{cond:choose,then_body:vec![set(source)],else_body:Some(vec![set(other)])}]});
+                    symbols.insert(temp.clone(),(first,vec![int(1)]));
+                    *e=Expr::Call("@packed_view".into(),vec![Expr::Ident(temp),length]);
+                    return Ok(());
                 }
                 let extent=extent.unwrap();
                 *serial+=1;

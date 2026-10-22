@@ -86,6 +86,19 @@ print *, shape(n), lbound(n), n
 end program
 """, "2 0 3 2 27\n2 2 1 1 7 4 4 4\n")
 
+    def test_rank_two_allocation_from_expressions_of_dummies(self):
+        """A rank-two allocatable local assigned an elemental expression of an
+        assumed-shape dummy whose actual is a fixed or allocatable array."""
+        self.check('module m\nimplicit none\ncontains\nsubroutine s(x)\nreal, intent(in) :: x(:,:)\nreal, allocatable :: y(:,:)\ny = 2.0 * x\nprint *, size(y,1), size(y,2), y\nend subroutine\nend module\nprogram p\nuse m\nimplicit none\nreal :: a(2,3)\nreal, allocatable :: b(:,:)\na = 1.0\ncall s(a)\nallocate(b(1,2))\nb = 3.0\ncall s(b)\ncall t(a)\ncontains\nsubroutine t(x)\nreal, intent(in) :: x(:,:)\nreal, allocatable :: y(:,:)\ny = -x\nprint *, y\nend subroutine\nend program\n', ' 2 3 2.0 2.0 2.0 2.0 2.0 2.0\n 1 2 6.0 6.0\n -1.0 -1.0 -1.0 -1.0 -1.0 -1.0\n')
+
+    def test_rank_two_function_results_and_mixed_operands(self):
+        """A rank-two function result inside an expression assigned to an
+        ALLOCATABLE, and operands that are fixed and runtime-sized, as in
+        statistics.f90 print_stats_ranges_madev."""
+        self.check("module m\nimplicit none\ninteger, parameter :: dp = kind(1.0d0)\ninterface madev\n   module procedure madev_vec, madev_mat\nend interface\ncontains\nfunction madev_vec(xx,nma) result(xdev)\nreal(dp), intent(in) :: xx(:)\ninteger, intent(in) :: nma\nreal(dp) :: xdev(size(xx))\nxdev = xx - nma\nend function\nfunction madev_mat(xx,nma) result(xdev)\nreal(dp), intent(in) :: xx(:,:)\ninteger, intent(in) :: nma\nreal(dp) :: xdev(size(xx,1),size(xx,2))\ninteger :: icol\ndo icol=1,size(xx,2)\n   xdev(:,icol) = madev(xx(:,icol),nma)\nend do\nend function\nsubroutine p(xsignal, nma)\nreal(dp), intent(in) :: xsignal(:,:)\ninteger, intent(in) :: nma\nreal(dp), allocatable :: xmadev(:,:)\ninteger :: j\nxmadev = 2.0_dp * madev(xsignal, nma)/xsignal\ndo j=1,size(xsignal,2)\n   associate (xindep => xmadev(nma:, j))\n   print '(*(f8.3))', xindep, sum(xindep)\n   end associate\nend do\nend subroutine\nend module\nuse m\nreal(dp), allocatable :: a(:,:)\nallocate(a(3,2))\na = reshape([1.0_dp,2.0_dp,4.0_dp,5.0_dp,8.0_dp,10.0_dp],[3,2])\ncall p(a, 1)\nend\n",'   0.000   1.000   1.500   2.500\n   1.600   1.750   1.800   5.150\n')
+        self.check("module m\nimplicit none\ninteger, parameter :: dp = kind(1.0d0)\ninterface madev\n   module procedure madev_vec, madev_mat\nend interface\ncontains\nfunction madev_vec(xx,nma) result(xdev)\nreal(dp), intent(in) :: xx(:)\ninteger, intent(in) :: nma\nreal(dp) :: xdev(size(xx))\nxdev = xx - nma\nend function\nfunction madev_mat(xx,nma) result(xdev)\nreal(dp), intent(in) :: xx(:,:)\ninteger, intent(in) :: nma\nreal(dp) :: xdev(size(xx,1),size(xx,2))\ninteger :: icol\ndo icol=1,size(xx,2)\n   xdev(:,icol) = madev(xx(:,icol),nma)\nend do\nend function\nsubroutine p(xsignal, nma)\nreal(dp), intent(in) :: xsignal(:,:)\ninteger, intent(in) :: nma\nreal(dp), allocatable :: xmadev(:,:)\ninteger :: j\nxmadev = 2.0_dp * madev(xsignal, nma)/xsignal\ndo j=1,size(xsignal,2)\n   associate (xindep => xmadev(nma:, j))\n   print '(*(f8.3))', xindep, sum(xindep)\n   end associate\nend do\nend subroutine\nend module\nuse m\nreal(dp) :: a(3,2)\na = reshape([1.0_dp,2.0_dp,4.0_dp,5.0_dp,8.0_dp,10.0_dp],[3,2])\ncall p(a, 1)\nend\n",'   0.000   1.000   1.500   2.500\n   1.600   1.750   1.800   5.150\n')
+        self.check('module m\ncontains\nsubroutine s(x)\nreal, intent(in) :: x(:,:)\nreal, allocatable :: y(:,:)\ny = 2.0 * x\ny = x + y\nprint *, y\ny = y * x - x\nprint *, y\nend subroutine\nend module\nuse m\nreal :: a(2,3)\ninteger :: i\na = reshape([(real(i),i=1,6)],[2,3])\ncall s(a)\nend\n',' 3.00000000 6.00000000 9.00000000 12.0000000 15.0000000 18.0000000\n 2.00000000 10.0000000 24.0000000 44.0000000 70.0000000 102.000000\n')
+
     def test_procedure_dummies_and_logical_results(self):
         self.check("""module util
 implicit none

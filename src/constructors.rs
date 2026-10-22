@@ -217,7 +217,10 @@ fn expression(e: &mut Expr, shapes: &Shapes) -> Result<()> {
             }
             if let Some(Expr::Ident(name)) = args.first() {
                 if let Some((_, dims)) = shapes.get(name) {
-                    if !dims.is_empty() {
+                    // Extents known only at run time, as of an assumed-shape
+                    // dummy, leave SIZE an inquiry.
+                    let runtime = dims.iter().any(|d| matches!(d, Expr::Ident(n) if n == "@deferred_extent" || n == "@assumed_extent"));
+                    if !dims.is_empty() && !runtime {
                         let value = match args.as_slice() {
                             [_] => dims
                                 .iter()

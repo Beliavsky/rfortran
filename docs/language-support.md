@@ -1185,8 +1185,9 @@ allocatable destinations are allocated or resized as needed. A heap temporary
 preserves overlapping sources, and this runtime path has no 1024-element limit.
 The fixed-extent expansion remains limited to 1024 elements. Runtime-sized
 multidimensional arrays and deferred CHARACTER element lengths remain unsupported
-for CHARACTER MERGE. Numeric and LOGICAL array MERGE also currently
-requires known sizes. Run `python tests/test_character_merge.py` and
+for CHARACTER MERGE. Numeric and LOGICAL array MERGE accepts runtime-sized
+arguments, as in `merge(0.0, 1.0, x <= 0.0)` for an ASSOCIATE name or section
+of an ALLOCATABLE array, and checks that they conform at run time. Run `python tests/test_character_merge.py` and
 `python tests/test_formatted_output.py`. The examples
 `tests/programs/xmerge_char.f90`, `tests/programs/xmerge_char_vec.f90` and
 `tests/programs/xmerge_char_vec_alloc.f90`
@@ -1523,6 +1524,10 @@ makes omitted arguments required. `tests/programs/xstr_int.f90` and
 `tests/test_derived_optional.py` cover omitted and reordered arguments, forwarding
 absent dummies, and component expansion around optional arguments.
 
+A derived-type dummy argument may itself be OPTIONAL, as in
+`type(stretch_param), intent(in), optional :: par`. Its components are passed as
+OPTIONAL arguments, PRESENT(par) tests them, and omitting it omits them all.
+
 Derived-type lowering respects local array declarations and host association:
 array subscripts are not associated with a same-named procedure's arguments.
 Calls that do not use derived arguments or results pass through without argument
@@ -1612,7 +1617,10 @@ Local OPTIONAL functions and subroutines can be specialized for positional and
 named calls, including omitted arguments before later named arguments and
 forwarding an absent optional dummy to another optional dummy. PRESENT
 and simple logical combinations of presence tests select the applicable branches;
-a missing required argument or an unguarded absent-dummy reference is diagnosed.
+a missing required argument is diagnosed. A reference to an absent dummy that
+always executes is diagnosed at compile time; one that may not execute, such as
+`if (n > 0) y = f(x, nacf)` with `n` set only when `nacf` is present, stops the
+program with an error only if it executes.
 Optional functions currently require explicit INTENT(IN) on their arguments.
 Recursive calls reuse the specialization for each argument-presence combination.
 A separate-object optional-argument ABI remains unsupported. Named calls require

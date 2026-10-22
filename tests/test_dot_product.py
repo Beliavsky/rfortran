@@ -238,6 +238,11 @@ end function rev
 end program main
 """, "11 0\n40\n")
 
+    def test_reduction_masks_with_dot_product(self):
+        """SUM and PRODUCT with MASK by keyword or position, in a program
+        using DOT_PRODUCT, as in statistics.f90 diff_tf and win_loss."""
+        self.check("module m\nimplicit none\ninteger, parameter :: dp = kind(1.0d0)\ncontains\nfunction f(xx,tf) result(y)\nreal(dp), intent(in) :: xx(:)\nlogical, intent(in) :: tf(:)\nreal(dp) :: y(4)\ny(1) = sum(xx,mask=tf) - sum(xx,mask=.not. tf)\ny(2) = sum(xx,tf)/max(1,count(tf))\ny(3) = -sum(xx,xx<0.0_dp) + product(xx,mask=xx>0.0_dp)\ny(4) = dot_product(xx,xx)\nend function\nend module\nuse m\nreal(dp) :: a(2,3)\ninteger :: k\na = reshape([(real(k,dp),k=1,6)],[2,3])\nprint '(4f8.2)', f([1.0_dp,-2.0_dp,3.0_dp],[.true.,.false.,.true.])\nprint '(3f8.2)', sum(a,dim=1), sum(a,1,mask=a>2.0_dp)\nprint '(2f8.2)', sum(a,2)\nend\n", '    6.00    2.00    5.00   14.00\n    3.00    7.00   11.00\n    0.00    7.00   11.00\n    9.00   12.00\n')
+
     def test_invalid(self):
         for declaration,expr,message in [
             ("real::a(2,2)","dot_product(a,a)","rank-one"),

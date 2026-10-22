@@ -57,6 +57,15 @@ struct Specializer {
     templates: HashMap<String, Stmt>,
     cache: HashMap<(String, Vec<bool>), String>,
     generated: Vec<Stmt>,
+    // The nesting of the body being specialized, 1 at a procedure's top
+    // level, and whether a top-level statement before the current one may
+    // leave the procedure.
+    nesting: usize,
+    left: bool,
+}
+/// Whether a statement contains RETURN, STOP or ERROR STOP.
+fn leaves(s: &Stmt) -> bool {
+    serde_json::to_string(s).is_ok_and(|t| t.contains("\"Return\"") || t.contains("\"@stop\"") || t.contains("\"@error_stop\""))
 }
 impl Specializer {
     fn call(
@@ -143,7 +152,11 @@ impl Specializer {
         match &mut template {
             Stmt::Function { name, body, .. } | Stmt::Subroutine { name, body, .. } => {
                 *name = variant.clone();
-                self.body(body, &missing, &callee_optional, result.as_ref())?;
+                let saved = (self.nesting, self.left);
+                (self.nesting, self.left) = (0, false);
+                let specialized = self.body(body, &missing, &callee_optional, result.as_ref());
+                (self.nesting, self.left) = saved;
+                specialized?;
                 if let Some(result) = result {
                     body.push(Stmt::Return(Some(result)));
                 }
@@ -229,11 +242,26 @@ impl Specializer {
         optional: &Names,
         result: Option<&Expr>,
     ) -> Result<()> {
+        self.nesting += 1;
+        let outcome = self.statements(body, absent, optional, result);
+        self.nesting -= 1;
+        outcome
+    }
+    fn statements(
+        &mut self,
+        body: &mut Vec<Stmt>,
+        absent: &Names,
+        optional: &Names,
+        result: Option<&Expr>,
+    ) -> Result<()> {
         let statement_location = std::cell::Cell::new(None);
         let result = (|| -> Result<()> {
         let mut output = Vec::new();
         for mut stmt in std::mem::take(body) {
             if let Some(p) = crate::source_diagnostics::statement_offset(&stmt) { statement_location.set(Some(p)); }
+            // Some(true) ends the body after a chosen branch that returns,
+            // Some(false) continues with the next statement.
+            let flow = (|| -> Result<Option<bool>> {
             match &mut stmt {
                 Stmt::If {
                     cond,
@@ -247,13 +275,11 @@ impl Specializer {
                         } else {
                             else_body.take().unwrap_or_default()
                         };
-                        self.body(&mut chosen, absent, optional, result)?;
+                        // The chosen branch always executes.
+                        self.statements(&mut chosen, absent, optional, result)?;
                         let returns = matches!(chosen.last(), Some(Stmt::Return(_)));
                         output.extend(chosen);
-                        if returns {
-                            break;
-                        }
-                        continue;
+                        return Ok(Some(returns));
                     }
                     self.body(then_body, absent, optional, result)?;
                     if let Some(b) = else_body {
@@ -336,7 +362,23 @@ impl Specializer {
                 }
                 _ => {}
             }
+            Ok(None)
+            })();
+            match flow {
+                Ok(Some(true)) => break,
+                Ok(Some(false)) => continue,
+                Ok(None) => {}
+                // Referencing an absent dummy is an error only when the
+                // statement executes, as under `if (n > 0)` with `n` set
+                // only when the argument is present. A reference that
+                // always executes is diagnosed at compile time.
+                Err(e) if e.to_string().contains("absent OPTIONAL dummy") && (self.nesting > 1 || self.left) => {
+                    stmt = Stmt::CallSub { name: "@error_stop".into(), args: vec![Expr::Str(e.to_string())] };
+                }
+                Err(e) => return Err(e),
+            }
             let returns = matches!(stmt, Stmt::Return(_));
+            if self.nesting == 1 && leaves(&stmt) { self.left = true; }
             output.push(stmt);
             if returns {
                 break;
@@ -353,6 +395,8 @@ pub fn resolve(mut program: Program) -> Result<Program> {
         templates: HashMap::new(),
         cache: HashMap::new(),
         generated: vec![],
+        nesting: 0,
+        left: false,
     };
     collect(&mut program.body, &mut pass.templates);
     if pass.templates.is_empty() {

@@ -7,8 +7,57 @@ import tempfile
 import unittest
 from test_record_read import ROOT, COMPILER, build_commands
 from run_ofort_compat import equivalent
+import test_deallocate
 
 class OptionalProcedureTests(unittest.TestCase):
+    check=test_deallocate.Deallocate.check
+
+    def test_optional_derived_dummy(self):
+        """An OPTIONAL derived-type dummy, passed, omitted and forwarded, as in
+        statistics.f90 display_stretch_param."""
+        self.check('module m\nimplicit none\ninteger, parameter :: dp = kind(1.0d0)\ntype :: stretch_param\n   real(dp) :: x1, x2, power=1.0_dp\n   character (len=10) :: normalization\nend type stretch_param\ncontains\nsubroutine display(par,label)\ntype(stretch_param), intent(in), optional :: par\ncharacter(len=*), intent(in), optional :: label\nif (present(label)) print \'(a)\', label\nif (.not. present(par)) then\n   print \'(a)\', "no par"\n   return\nend if\nprint \'(3f8.3,1x,a)\', par%x1, par%x2, par%power, trim(par%normalization)\nend subroutine\nsubroutine stretch(par)\ntype(stretch_param), intent(in) :: par\ncall display(par, label="in stretch")\nend subroutine\nend module\nuse m\ntype(stretch_param) :: p\np = stretch_param(1.0_dp, 2.0_dp, 3.0_dp, "sd")\ncall display(p)\ncall display()\ncall display(label="only label")\ncall stretch(p)\nend\n','   1.000   2.000   3.000 sd\nno par\nonly label\nno par\nin stretch\n   1.000   2.000   3.000 sd\n')
+
+    def test_conditional_references_to_absent_arguments(self):
+        """A reference to an absent OPTIONAL dummy that may not execute is
+        an error only when it does, as in statistics.f90 stat_vec_str_many."""
+        program="""module m
+implicit none
+contains
+function lags(x,n) result(y)
+real, intent(in) :: x(:)
+integer, intent(in) :: n
+real :: y(n)
+y = x(1)
+end function
+function stats(x,nacf) result(y)
+real, intent(in) :: x(:)
+integer, intent(in), optional :: nacf
+real, allocatable :: y(:)
+integer :: n
+n = 0
+if (present(nacf)) n = nacf
+allocate(y(n+1))
+y(1) = sum(x)
+if (n > 0) y(2:n+1) = lags(x,nacf)
+end function
+integer function next(k,stride)
+integer, intent(in) :: k
+integer, intent(in), optional :: stride
+next = k
+if (k < 0) return
+next = k + stride
+end function
+end module
+use m
+print *, stats([1.,2.],2)
+print *, stats([1.,2.])
+print *, next(1,2)
+print *, next(1)
+end
+"""
+        self.check(program.replace("print *, next(1)\n",""),"3.0 1.0 1.0\n3.0\n3\n")
+        self.check(program,error="absent OPTIONAL dummy `stride`")
+
     def test_execution(self):
         source=ROOT / "tests/113_optional_procedures.f90"
         expected=json.loads((ROOT/"tests/expectations.json").read_text(encoding="utf-8"))["cases"][source.stem]["program_stdout"]

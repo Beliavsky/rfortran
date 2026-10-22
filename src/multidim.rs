@@ -1323,7 +1323,10 @@ pub(crate) fn fixed_section_elements(e: &Expr, symbols: &HashMap<String,(TypeSpe
     let (Expr::Call(name,args)|Expr::Index(name,args))=e else {return Ok(None)};
     let Some((_,dims))=symbols.get(name) else {return Ok(None)};
     if !args.iter().any(|e|triplet(e).is_some()) {return Ok(None);}
-    let dims=dims.iter().map(crate::parameters::integer_constant).collect::<Result<Vec<_>>>()?;
+    // Arrays with runtime bounds, such as assumed-shape dummies, are not fixed,
+    // nor are heap arrays, whose declared dimensions describe their storage.
+    if symbols.contains_key(&format!("@axes:{name}")) || dims.len()!=args.len() {return Ok(None);}
+    let Ok(dims)=dims.iter().map(crate::parameters::integer_constant).collect::<Result<Vec<_>>>() else {return Ok(None)};
     let (shape,view)=section_view(name,args,&dims)?;
     let count=total(&shape)?;
     if !(0..=1024).contains(&count) {bail!("function section specialization supports at most 1024 elements");}
