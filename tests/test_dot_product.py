@@ -217,6 +217,27 @@ print *,which(dot_product(i,i)),which(dot_product(m,m))
 end
 ""","8 8\n88 1\n")
 
+    def test_implied_do_with_runtime_bounds(self):
+        self.check("""program main
+implicit none
+print *, func([3, 1, 2]), func([integer ::])
+print *, rev([4, 5, 6])
+contains
+pure function func(ivec) result(j)
+integer, intent(in) :: ivec(:)
+integer :: j, i, n
+n = size(ivec)
+j = dot_product([(i,i=1,n)],ivec)
+end function func
+function rev(v) result(j)
+integer, intent(in) :: v(:)
+integer :: j, i, n
+n = size(v)
+j = dot_product([(i,i=n,1,-1)], v) + sum([(2*i,i=1,n)])
+end function rev
+end program main
+""", "11 0\n40\n")
+
     def test_invalid(self):
         for declaration,expr,message in [
             ("real::a(2,2)","dot_product(a,a)","rank-one"),

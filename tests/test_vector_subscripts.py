@@ -168,6 +168,27 @@ print *,a(idx)
 end program main
 """,[("1\n","10 10",None),("2\n",None,"uninitialized variable `a`")])
 
+    def test_constructor_of_default_integer_expressions(self):
+        """`[i, i+1]` is a default INTEGER constructor in a WRITE with other
+        items, also when the program contains a reduction."""
+        program = """program main
+implicit none
+integer, parameter :: dp = kind(1.0d0)
+real(dp) :: x(3)
+integer :: i
+x = [0.0_dp, 1.0_dp, 2.0_dp]
+i = 1
+print '(f6.2)', dot_product(x, x)
+write (*,"(2f10.4,1x,i10)") x([i,i+1]), 7
+write (*,"(2f10.4)") x([i+1,2*i+1])
+end program main
+"""
+        with tempfile.TemporaryDirectory(prefix="vector-constructor-") as tmp:
+            directory = Path(tmp)
+            source = directory / "constructor.f90"
+            source.write_text(program, encoding="utf-8")
+            self.compare(source, "  5.00\n    0.0000    1.0000          7\n    1.0000    2.0000\n", directory)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

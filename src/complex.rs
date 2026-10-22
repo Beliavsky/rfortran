@@ -421,21 +421,22 @@ impl Lower {
                 if let Expr::Ident(n) = &a[0] {
                     local.insert(n.clone(), Info::scalar(TypeSpec::Integer(None)));
                 }
-                let start = crate::parameters::integer_constant(&a[1])?;
-                let end = crate::parameters::integer_constant(&a[2])?;
-                let step = crate::parameters::integer_constant(&a[3])?;
-                if step == 0 {
-                    bail!("constructor implied-DO stride must not be zero");
-                }
-                let length = if (step > 0 && end >= start) || (step < 0 && end <= start) {
-                    (end - start) / step + 1
-                } else {
-                    0
+                let constant = |e: &Expr| crate::parameters::integer_constant(e).ok();
+                let length = match (constant(&a[1]), constant(&a[2]), constant(&a[3])) {
+                    (_, _, Some(0)) => bail!("constructor implied-DO stride must not be zero"),
+                    (Some(start), Some(end), Some(step)) => int(
+                        if (step > 0 && end >= start) || (step < 0 && end <= start) { (end - start) / step + 1 } else { 0 },
+                    ),
+                    // Bounds known only at run time, as in `[(i, i=1,n)]`.
+                    _ => Expr::Call("max".into(), vec![
+                        Expr::Bin(BinOp::Div, Box::new(add(Expr::Bin(BinOp::Sub, Box::new(a[2].clone()), Box::new(a[1].clone())), a[3].clone())), Box::new(a[3].clone())),
+                        int(0),
+                    ]),
                 };
                 let first = self.info(&a[4], &local)?;
                 Ok(first.map(|i| Info {
                     kind: i.kind,
-                    dims: vec![int(length)],
+                    dims: vec![length],
                 }))
             }
             Expr::Call(n, a) if n == "@array_constructor" => {
@@ -448,7 +449,9 @@ impl Lower {
                     if i.dims.len() > 1 {
                         bail!("array constructor items must be scalar or rank one");
                     }
-                    if kind.as_ref().is_some_and(|k| k != &i.kind) {
+                    // Default INTEGER is INTEGER(4), as in `[i, i+1]`.
+                    let normal = |k: &TypeSpec| match k { TypeSpec::Integer(None) => TypeSpec::Integer(Some(4)), k => k.clone() };
+                    if kind.as_ref().is_some_and(|k| normal(k) != normal(&i.kind)) {
                         bail!("array constructor items must have the same type and kind");
                     }
                     kind = Some(i.kind);
