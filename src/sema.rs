@@ -2280,28 +2280,9 @@ pub fn analyze_with_src(
                     },
                     (TypeSpec::Real, Expr::RealLit(s))
                     | (TypeSpec::DoublePrecision, Expr::RealLit(s)) => match f64::from_str(s) {
-                        Ok(_v) => {
-                            if let TypeSpec::Real = ts {
-                                if settings.wall {
-                                    let v = _v;
-                                    let rounded = format!("{:.6}", v).parse::<f64>().unwrap_or(v);
-                                    if (rounded - v).abs() > 0.0 {
-                                        let span = find_assign_rhs_span(tokens, name, value)
-                                            .unwrap_or(0..0);
-                                        let msg = "real literal exceeds default precision (6 digits), will be rounded".to_string();
-                                        warn_or_error(
-                                            "real_precision_strip",
-                                            msg,
-                                            span,
-                                            settings,
-                                            &mut stderr,
-                                            &file,
-                                            &mut errors,
-                                        );
-                                    }
-                                }
-                            }
-                        }
+                        // Precision advice is checked on typed source
+                        // expressions before lowering, in source_advice.
+                        Ok(_) => {}
                         Err(_) => {
                             let span = find_assign_rhs_span(tokens, name, value).unwrap_or(0..0);
                             let msg = format!("invalid real literal `{}`", s);

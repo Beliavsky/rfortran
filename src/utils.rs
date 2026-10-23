@@ -133,6 +133,11 @@ pub fn print_help() {
     println!("  -Wunchecked-status Warn about status results never inspected or forwarded (opt-in)");
     println!("  -Wtarget-lifetime   Warn about pointers escaping automatic targets");
     println!("  -Waliasing          Warn about conflicting overlapping actual arguments");
+    println!("  -Wconversion        Warn about information-losing implicit numeric conversions (opt-in)");
+    println!("  -Wprecision-loss    Warn about lower-precision work before widening");
+    println!("  -Wpointer-init      Warn about pointer components without default initialization");
+    println!("  -Wdo-subscript      Warn about loop-derived subscript ranges outside fixed bounds");
+    println!("  -Wenum-exhaustive   Warn about SELECT CASE missing declared enumeration values");
     println!("  -Wno-<category>      Disable a warning category");
     println!("  -Werror, --Werror    Treat enabled warnings as errors");
     println!("  -Werror=<category>  Enable a warning category and treat it as an error");

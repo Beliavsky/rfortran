@@ -9,6 +9,8 @@ use crate::sema::SemaSettings;
 use anyhow::{bail, Result};
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
+#[path = "value_warnings.rs"]
+mod value_warnings;
 
 type Names = HashSet<String>;
 #[derive(Clone, Copy, PartialEq)]
@@ -22,6 +24,7 @@ struct Scope {
     parent: Option<usize>,
     kind: ScopeKind,
     names: HashMap<String, usize>,
+    types: HashMap<String, usize>,
     uses: Vec<(String, Option<Vec<String>>, Vec<(String, String)>)>,
     default_public: bool,
     access: HashMap<String, bool>,
@@ -37,6 +40,7 @@ struct Decl {
     dummy: bool,
     result: bool,
     procedure: Option<usize>,
+    nominal: Option<String>,
 }
 struct Procedure<'a> {
     params: Vec<String>,
@@ -60,6 +64,8 @@ struct Analysis<'a> {
     bodies: HashMap<usize, usize>,
     dead: HashSet<usize>,
     warnings: Vec<Advice>,
+    types: Vec<value_warnings::TypeInfo<'a>>,
+    inference: Option<crate::operators::ExpressionTypes>,
 }
 fn root(name: &str) -> &str {
     name.split('%').next().unwrap_or(name)
@@ -148,6 +154,7 @@ impl<'a> Analysis<'a> {
                     }
                 }
                 Stmt::DerivedDecl {
+                    type_name,
                     names,
                     attributes,
                     dims,
@@ -157,7 +164,37 @@ impl<'a> Analysis<'a> {
                         let id = self.declare(scope, n, offset, None);
                         self.decls[id].attrs.extend(attributes.iter().cloned());
                         self.decls[id].dims = dims.clone();
+                        self.decls[id].nominal = Some(type_name.clone());
+                        if attributes.iter().any(|a| a == "parameter")
+                            && self
+                                .statement_tokens(offset)
+                                .iter()
+                                .any(|t| matches!(t.kind, TokenKind::KwEnumerator))
+                        {
+                            self.decls[id].attrs.insert("@warning_enum_member".into());
+                        }
                         declared.push(id);
+                    }
+                }
+                Stmt::DerivedType {
+                    name,
+                    components,
+                    bindings,
+                } => {
+                    let id = self.types.len();
+                    self.scopes[scope].types.insert(name.clone(), id);
+                    self.types.push(value_warnings::TypeInfo {
+                        scope,
+                        name: name.clone(),
+                        components,
+                        enumeration: bindings.iter().any(|(n, _)| n == "@enumeration"),
+                    });
+                }
+                Stmt::Assign { name, value } => {
+                    if let Some(&id) = self.scopes[scope].names.get(name) {
+                        if self.decls[id].attrs.contains("parameter") {
+                            self.decls[id].constant = Some(value.clone());
+                        }
                     }
                 }
                 Stmt::DummyIntent { name, intent } => {
@@ -166,12 +203,19 @@ impl<'a> Analysis<'a> {
                 }
                 Stmt::Use {
                     module,
+                    nature,
                     only,
                     renames,
                     ..
-                } => self.scopes[scope]
-                    .uses
-                    .push((module.clone(), only.clone(), renames.clone())),
+                } => self.scopes[scope].uses.push((
+                    if nature.as_deref() == Some("intrinsic") && module == "iso_fortran_env" {
+                        "@intrinsic_iso_fortran_env".into()
+                    } else {
+                        module.clone()
+                    },
+                    only.clone(),
+                    renames.clone(),
+                )),
                 Stmt::Accessibility { public, names } => {
                     if names.is_empty() {
                         self.scopes[scope].default_public = *public;
@@ -316,6 +360,7 @@ impl<'a> Analysis<'a> {
             parent,
             kind,
             names: HashMap::new(),
+            types: HashMap::new(),
             uses: vec![],
             default_public: true,
             access: HashMap::new(),
@@ -369,6 +414,7 @@ impl<'a> Analysis<'a> {
             dummy: false,
             result: false,
             procedure: None,
+            nominal: None,
         });
         self.scopes[scope].names.insert(name.into(), id);
         id
@@ -516,13 +562,36 @@ impl<'a> Analysis<'a> {
             visiting: &mut HashSet<usize>,
         ) -> Option<()> {
             if let Expr::IntLit(text) = e {
-                if let Some((number, _)) = text.split_once('_') {
-                    *e = Expr::IntLit(number.to_string());
+                if let Some((number, kind)) = text.split_once('_') {
+                    let kind = if kind.parse::<i64>().is_ok() {
+                        Expr::IntLit(kind.into())
+                    } else {
+                        Expr::Ident(kind.into())
+                    };
+                    let kind = a.integer(&kind, scope, visiting)?;
+                    *e = Expr::Call(
+                        "@integer_literal".into(),
+                        vec![Expr::IntLit(number.into()), Expr::IntLit(kind.to_string())],
+                    );
+                }
+                return Some(());
+            }
+            if let Expr::RealLit(text) = e {
+                if let Some((number, kind)) = text.split_once('_') {
+                    let kind = if kind.parse::<i64>().is_ok() {
+                        Expr::IntLit(kind.into())
+                    } else {
+                        Expr::Ident(kind.into())
+                    };
+                    *e = Expr::RealLit(format!("{number}_{}", a.integer(&kind, scope, visiting)?));
                 }
                 return Some(());
             }
             if let Expr::Ident(n) = e {
-                let id = a.resolve(scope, n)?;
+                let Some(id) = a.resolve(scope, n) else {
+                    *e = Expr::IntLit(a.intrinsic_integer(scope, n)?.to_string());
+                    return Some(());
+                };
                 let d = &a.decls[id];
                 let c = d.constant.as_ref()?;
                 if !visiting.insert(id) {
@@ -559,7 +628,7 @@ impl<'a> Analysis<'a> {
             Some(())
         }
         substitute(&mut folded, self, scope, visiting)?;
-        crate::parameters::integer_constant(&folded).ok()
+        crate::parameters::folded_integer_constant(&folded).ok()
     }
     fn divisions(
         &mut self,
@@ -1184,12 +1253,17 @@ pub fn check(
         "unchecked-status",
         "target-lifetime",
         "aliasing",
+        "conversion",
+        "precision-loss",
+        "pointer-init",
+        "do-subscript",
+        "enum-exhaustive",
     ]
     .into_iter()
     .map(|c| {
         let s = if matches!(
             c,
-            "shadow" | "shadow-dummy-argument" | "dead-store" | "unchecked-status"
+            "shadow" | "shadow-dummy-argument" | "dead-store" | "unchecked-status" | "conversion"
         ) {
             &optional
         } else {
@@ -1211,11 +1285,15 @@ pub fn check(
         bodies: HashMap::new(),
         dead: crate::reachability::analyze(program).dead,
         warnings: vec![],
+        types: vec![],
+        inference: crate::operators::ExpressionTypes::new(program).ok(),
     };
     let scope = a.scope(None, ScopeKind::Main, &program.body);
     a.gather(&program.body, scope, &program.contains, 0);
     a.shadows();
     a.walk(&program.body, scope, 0, &[], &HashSet::new());
+    a.pointer_initializers();
+    a.value_walk(&program.body, scope, 0, &HashMap::new());
     a.warnings.sort_by_key(|w| w.span.start);
     a.warnings
         .dedup_by(|x, y| x.category == y.category && x.span == y.span && x.message == y.message);

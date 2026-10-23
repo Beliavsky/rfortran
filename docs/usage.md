@@ -60,6 +60,53 @@ and lifetime diagnostics also identify the related declaration or assignment.
 | `-Wunchecked-status` | No | Local scalar IOSTAT, allocation STAT, and intrinsic status results not inspected or forwarded |
 | `-Wtarget-lifetime` | Yes | Pointer associations escaping a known automatic local target |
 | `-Waliasing` | Yes | Known overlapping actuals when a defined procedure's OUT dummy, or modified INOUT dummy, conflicts with another dummy's reads |
+| `-Wconversion` | No | Potential information loss in implicit numeric assignment/initialization conversions |
+| `-Wprecision-loss` | Yes | Lower-precision literals or calculations subsequently widened to a higher real/complex kind |
+| `-Wpointer-init` | Yes | Derived-type pointer components lacking default initialization |
+| `-Wdo-subscript` | Yes | Loop-derived scalar subscript ranges extending beyond known fixed array bounds |
+| `-Wenum-exhaustive` | Yes | SELECT CASE without CASE DEFAULT missing declared values of an enumeration type or named interoperable enum type |
+
+Conversion advice includes narrowing integer/real/complex kinds, real-to-integer
+assignment, loss of a complex imaginary component, and integer-to-real conversion
+when the real kind cannot represent the integer type's full range. Provably
+exact constants, harmless widening and explicit conversions are exempt. Checks
+cover supported assignments and declaration initializers, including arrays and
+resolved components/function results; unknown types and kinds are skipped.
+Procedure argument type mismatches remain subject to existing interface checks,
+rather than being treated as implicit assignment conversions.
+
+Precision advice explains why `real(real64) :: x; x=sqrt(2.0)` still performs a
+default-real calculation. It also recognizes inexact default-real literals in
+wider expressions and work hidden inside a subsequent widening conversion.
+Exactly representable cases such as `x=1.0`, `x=0.5`, and `x=sqrt(4.0)` are
+suppressed, as are deliberate explicit narrowing conversions. Merely widening
+a stored lower-kind variable is not diagnosed as a new calculation. This replaces
+the former six-decimal-place literal heuristic; binary kind precision is used
+instead. Constant proofs use the implemented integer and REAL(4)/REAL(8) models.
+
+Pointer initialization advice checks each component individually, including
+pointer arrays and pointers to derived types. `=> NULL()` and other explicit
+default initializers suppress it; ALLOCATABLE components and ordinary local
+pointers are outside this category. This diagnoses a risky declaration pattern,
+not proof that every object is subsequently used without initialization.
+
+Loop-subscript advice uses fixed declared bounds of any supported rank, constant
+or enclosing-loop-derived DO ranges, positive/negative strides, simple affine
+subscripts, and recognized IF guards (including early CYCLE/EXIT/RETURN guards).
+It checks reads and writes and uses the last reachable value for constant-stride
+loops. Guard facts apply to the guarded body, without assuming `.AND.` or `.OR.`
+short-circuit evaluation. Unknown bounds, descriptors, general vector/section
+subscripts and relationships beyond interval analysis are not proved. Calls and
+assignments invalidate affected facts conservatively. A reported possible range
+does not prove the access executes on every path; existing constant-bound errors
+and runtime checks remain in place.
+
+Enumeration coverage lists missing enumerators, respects USE/host association
+and renamed types/values, handles case ranges and aliases sharing a value, and
+accepts CASE DEFAULT. Unrestricted integer selectors are exempt. Coverage of
+declared enum values is not a proof that every underlying interoperable integer
+value is covered. Unknown case values suppress this advisory check and leave
+validation to the existing enumeration/type checks.
 
 Dead-store analysis excludes dummy arguments, function results, module variables,
 saved data, pointers, targets, allocatables, volatile/asynchronous data and
@@ -88,10 +135,12 @@ Neither check is a complete proof of storage safety or Fortran conformance.
 Enable all the new advice with, for example:
 
 ```cmd
-rfort -Wall -Wshadow -Wshadow-dummy-argument -Wdead-store -Wunchecked-status check example.f90
+rfort -Wall -Wconversion -Wshadow -Wshadow-dummy-argument -Wdead-store -Wunchecked-status check example.f90
 ```
 
-Regression checks: `python tests/test_source_advice.py`.
+Regression checks: `python tests/test_source_advice.py` and
+`python tests/test_value_warnings.py` (after building the debug compiler, or with
+`RFORT_TEST_COMPILER` set to the desired executable).
 
 `-Wshort-circuit`, enabled by `-Wall`/`--wall`, warns when a logical expression
 combines an intrinsic `ALLOCATED` or `ASSOCIATED` inquiry with an access that

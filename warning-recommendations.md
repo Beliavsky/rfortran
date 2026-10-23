@@ -9,6 +9,25 @@ below; unmarked recommendations remain proposals.
 
 ## Implementation status (2026-10-22)
 
+- **Implemented: `-Wconversion`.** Opt-in; information-losing implicit numeric
+  assignments/initializations, with scoped kinds and exact-constant suppression.
+  Includes narrowing kinds, real-to-integer, complex-component loss and integer
+  values that may exceed the destination real kind's exact-integer precision.
+- **Implemented: `-Wprecision-loss`.** Enabled by `-Wall`; lower-precision
+  literals/calculations widened later, including work inside widening
+  conversions. Exact constants and deliberate explicit narrowing are exempt.
+  Replaces the former six-decimal-place heuristic with typed expression checks.
+- **Implemented: `-Wpointer-init`.** Enabled by `-Wall`; derived-type pointer
+  components without default initialization, checked individually, including
+  arrays and pointers to derived types. Explicit initializers are recognized
+  from original source tokens even when normalization removes NULL().
+- **Implemented: `-Wdo-subscript`.** Enabled by `-Wall`; possible out-of-bounds
+  scalar subscripts derived from DO ranges, fixed bounds, strides, enclosing
+  loops and recognized branch guards. Unknown relationships are skipped;
+  existing hard errors and runtime bounds checks remain intact.
+- **Implemented: `-Wenum-exhaustive`.** Enabled by `-Wall`; SELECT CASE without
+  CASE DEFAULT missing declared enumeration values. Includes both named enum
+  forms, ranges, duplicate-value aliases, and module/host/USE association.
 - **Implemented: `-Wshadow` and `-Wshadow-dummy-argument`.** Separately opt-in;
   lexical host/USE-associated data shadowing, with both declaration locations.
 - **Implemented: `-Wdead-store`.** Opt-in; overwritten ordinary local scalar
@@ -49,6 +68,8 @@ The allocation/association guard example and tests are
 [test_short_circuit_warnings.py](tests/test_short_circuit_warnings.py).
 The scope/value/status/storage checks are covered by
 [test_source_advice.py](tests/test_source_advice.py).
+Typed value, pointer-default, loop-range and enumeration checks are covered by
+[test_value_warnings.py](tests/test_value_warnings.py).
 
 ## Existing rfortran coverage
 

@@ -31,6 +31,11 @@ const CATEGORIES: &[&str] = &[
     "unchecked-status",
     "target-lifetime",
     "aliasing",
+    "conversion",
+    "precision-loss",
+    "pointer-init",
+    "do-subscript",
+    "enum-exhaustive",
 ];
 fn canonical(name: &str) -> &str {
     match name {

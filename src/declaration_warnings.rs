@@ -42,7 +42,7 @@ fn name_span(tokens: &[Token], name: &str) -> Option<Range<usize>> {
 
 // Find the original entity initializer, including pointer => NULL() which the
 // parser removes. Nested commas in bounds, constructors and calls are skipped.
-fn initializer(tokens: &[Token], name: &str) -> Option<Range<usize>> {
+pub(crate) fn initializer(tokens: &[Token], name: &str) -> Option<Range<usize>> {
     let start = tokens.iter().position(|t| matches!(t.kind, TokenKind::DColon))? + 1;
     let mut depth = 0;
     let mut entity = None;
