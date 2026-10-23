@@ -78,10 +78,23 @@ pub(crate) fn write_controls(
             }
         }
     }
-    let mut args = vec![
-        unit.ok_or("WRITE requires UNIT")?,
-        format.ok_or("WRITE currently requires FMT")?,
-    ];
+    let unit = unit.ok_or("WRITE requires UNIT")?;
+    // Without FMT the WRITE is unformatted: [unit, control, status, pos, items].
+    let Some(format) = format else {
+        let (mut control, mut status, mut position) = (String::new(), Expr::IntLit("0".into()), Expr::IntLit("0".into()));
+        for option in options {
+            let Expr::Call(name, mut values) = option else { unreachable!() };
+            match name.trim_start_matches("@write_option:") {
+                "iostat" => { control = "iostat".into(); status = values.remove(0); }
+                "pos" => position = values.remove(0),
+                _ => return Err("unformatted WRITE currently supports UNIT, IOSTAT and POS"),
+            }
+        }
+        let mut args = vec![unit, Expr::Str(control), status, position];
+        args.extend(items);
+        return Ok(Stmt::CallSub { name: "@unformatted_write".into(), args });
+    };
+    let mut args = vec![unit, format];
     args.extend(options);
     args.extend(items);
     Ok(Stmt::CallSub {

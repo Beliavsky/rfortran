@@ -2190,6 +2190,18 @@ to 10000 entries (including loop-index updates). Records are
 read up to 4096 characters. Formatted WRITE with an implied-DO list goes to a
 file as well as to standard output.
 
+Unformatted stream files are opened with `access='stream', form='unformatted'`.
+A READ or WRITE without a format transfers each value as the bytes of its kind,
+with no record markers, as gfortran does: INTEGER kinds 1, 2, 4 and 8, REAL and
+DOUBLE PRECISION, LOGICAL (4 bytes) and CHARACTER (its length in bytes). Items may
+be scalars, expressions such as `size(a)` and `shape(a)`, whole arrays and
+sections (fixed or runtime-sized, including runtime CHARACTER arrays) in array
+element order, implied-DO lists, and derived-type objects and arrays,
+component by component. READ accepts `pos=` (the byte position, counted from 1),
+IOSTAT (negative at end of file) and IOMSG; without IOSTAT, an end of file or
+error stops the program. REWIND repositions the file. COMPLEX values, ERR=,
+END= and unformatted sequential or direct access are not yet supported.
+
 Sequential formatted files support `OPEN(unit=20,file='data.txt',status='old',action='read')`,
 `READ(20,'(a)') text`, `BACKSPACE(20)`, `REWIND(20)`, and `CLOSE(20)`.
 FILE may be a runtime scalar CHARACTER expression. Named files also support

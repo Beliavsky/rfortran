@@ -145,8 +145,14 @@ fn lower_open(mut controls:HashMap<String,Expr>,symbols:&HashMap<String,(TypeSpe
         let destination=newunit.clone().or_else(||controls.remove("unit")).context("OPEN requires UNIT or NEWUNIT")?;
         unit(&destination,symbols)?;
         if newunit.is_some() && !matches!(destination,Expr::Ident(_)) {bail!("NEWUNIT requires an INTEGER variable");}
-        for (key,expected) in [("access","sequential"),("form","formatted"),("position","rewind")] {
-            if let Some(v)=controls.remove(key) {if !matches!(v,Expr::Str(s) if s.trim_end().eq_ignore_ascii_case(expected)) {bail!("OPEN currently supports {key}='{expected}'");}}
+        // Files are opened in binary mode, so a stream connection for
+        // unformatted READ and WRITE needs nothing more.
+        for (key,allowed) in [("access",&["sequential","stream"][..]),("form",&["formatted","unformatted"][..]),("position",&["rewind"][..])] {
+            if let Some(v)=controls.remove(key) {
+                if !matches!(&v,Expr::Str(s) if allowed.iter().any(|a|s.trim_end().eq_ignore_ascii_case(a))) {
+                    bail!("OPEN currently supports {key}={}",allowed.iter().map(|a|format!("'{a}'")).collect::<Vec<_>>().join(" or "));
+                }
+            }
         }
         let status=match controls.remove("status") {Some(Expr::Str(s))=>s.trim_end().to_ascii_lowercase(),None=>"unknown".into(),_=>bail!("OPEN STATUS must currently be constant")};
         let action=match controls.remove("action") {Some(Expr::Str(s))=>s.trim_end().to_ascii_lowercase(),None=>"readwrite".into(),_=>bail!("OPEN ACTION must currently be constant")};
@@ -405,6 +411,21 @@ impl Files {
         let mut options=std::fs::OpenOptions::new();
         options.read(matches!(mode,0|2|3|5)).write(mode!=0).create(matches!(mode,1|2|5)).truncate(matches!(mode,1|2));
         let file=options.open(path).context("OPEN failed")?;self.0.insert(unit,file);self.1.insert(unit,path.into());Ok(unit)
+    }
+    /// Unformatted stream output: 0, or 1 on an error.
+    pub(crate) fn stream_write(&mut self,unit:i64,bytes:&[u8])->i64 {
+        match self.0.get_mut(&unit) {Some(file)=>i64::from(file.write_all(bytes).is_err()),None=>1}
+    }
+    /// Unformatted stream input: 0, -1 at end of file, or 1 on an error.
+    pub(crate) fn stream_read(&mut self,unit:i64,buffer:&mut [u8])->i64 {
+        let Some(file)=self.0.get_mut(&unit) else {return 1};
+        match file.read_exact(buffer) {Ok(())=>0,Err(e) if e.kind()==std::io::ErrorKind::UnexpectedEof=>-1,Err(_)=>1}
+    }
+    /// Position a stream file at byte POS, counted from 1.
+    pub(crate) fn stream_seek(&mut self,unit:i64,position:i64)->i64 {
+        let Some(file)=self.0.get_mut(&unit) else {return 1};
+        if position<1 {return 1;}
+        i64::from(file.seek(SeekFrom::Start((position-1) as u64)).is_err())
     }
     pub(crate) fn input_byte(&mut self,unit:i64)->Result<Option<u8>,()> {
         let mut byte=[0];

@@ -314,7 +314,8 @@ current limits.
 | [OPEN, CLOSE, REWIND, BACKSPACE for sequential formatted files](language-support.md#file-and-standard-input) | F77 or earlier | 🟡 | IOSTAT is set on OPEN failure; other failed file statements stop the program. STATUS='new' does not check that the file is absent | test_file_io.py, test_formatted_output.py, test_statement_forms_io.py |
 | [List-directed WRITE to a file, and WRITE to unit 0 (standard error)](language-support.md#file-and-standard-input) | F77 or earlier | ✅ | List-directed file output: F77; unit 0 for standard error is a processor convention. Items are written as G0 separated by blanks | test_formatted_output.py |
 | [INQUIRE](language-support.md#file-and-standard-input) | F77 or earlier | 🟡 | UNIT/FILE with OPENED, NUMBER, NAME, IOSTAT; not EXIST | test_inquire.py |
-| Unformatted, stream and direct access | Mixed | ❌ | Sequential/direct unformatted access: F77 or earlier; stream access: F2003. |  |
+| [Unformatted stream access](language-support.md#file-and-standard-input) | F2003 | 🟡 | READ and WRITE of INTEGER, REAL, LOGICAL, CHARACTER and derived-type data, POS= on READ, IOSTAT; not COMPLEX | test_stream_io.py |
+| Unformatted sequential and direct access | F77 or earlier | ❌ |  |  |
 | NAMELIST | F90 | ❌ |  |  |
 | [Defined derived-type I/O](language-support.md#file-and-standard-input) | F2003 | ❌ | Defined derived-type I/O: F2003; default component-wise derived-type I/O: F90 (covered above). |  |
 

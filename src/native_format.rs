@@ -50,6 +50,7 @@ extern "C" {
     fn ferror(stream: *mut core::ffi::c_void) -> i32;
     fn tmpfile() -> *mut core::ffi::c_void;
     fn fwrite(data: *const u8, size: usize, count: usize, stream: *mut core::ffi::c_void) -> usize;
+    fn fread(data: *mut u8, size: usize, count: usize, stream: *mut core::ffi::c_void) -> usize;
     fn fseek(stream:*mut core::ffi::c_void,offset:core::ffi::c_long,origin:i32)->i32;
     #[cfg(windows)] fn _fileno(stream:*mut core::ffi::c_void)->i32;
     #[cfg(windows)] fn _ftelli64(stream:*mut core::ffi::c_void)->i64;
@@ -233,6 +234,45 @@ unsafe fn reader_byte(stream:*mut core::ffi::c_void,source:*mut u8,length:usize,
 }
 unsafe fn input_byte(stream:*mut core::ffi::c_void)->Result<Option<u8>,()> {
     let c=fgetc(stream);if c>=0 {Ok(Some(c as u8))}else if ferror(stream)!=0 {Err(())}else{Ok(None)}
+}
+/// Unformatted stream output of one scalar, as the bytes of its kind, from
+/// compiled storage: INTEGER and REAL slots hold 8 bytes, LOGICAL one byte
+/// and CHARACTER `width` bytes. Returns 0, or 1 on an error.
+#[no_mangle]
+pub unsafe extern "C" fn rfort_stream_put(stream:*mut core::ffi::c_void,tag:i64,width:usize,slot:*const u8)->i64 {
+    let mut bytes=[0u8;8];
+    let data:&[u8]=match tag {
+        1=>{bytes=core::ptr::read_unaligned(slot.cast::<i64>()).to_le_bytes();&bytes[..width]}
+        2=>{let value=core::ptr::read_unaligned(slot.cast::<f64>());
+            if width==4 {bytes[..4].copy_from_slice(&(value as f32).to_le_bytes());&bytes[..4]} else {bytes=value.to_le_bytes();&bytes[..]}}
+        3=>{bytes[..4].copy_from_slice(&i32::from(*slot!=0).to_le_bytes());&bytes[..4]}
+        _=>core::slice::from_raw_parts(slot,width),
+    };
+    i64::from(fwrite(data.as_ptr(),1,data.len(),stream)!=data.len())
+}
+/// Unformatted stream input of one scalar into compiled storage. Returns 0,
+/// -1 at end of file, or 1 on an error.
+#[no_mangle]
+pub unsafe extern "C" fn rfort_stream_get(stream:*mut core::ffi::c_void,tag:i64,width:usize,slot:*mut u8)->i64 {
+    let mut bytes=[0u8;8];
+    let buffer:&mut [u8]=if tag==4 {core::slice::from_raw_parts_mut(slot,width)} else {&mut bytes[..width]};
+    let count=fread(buffer.as_mut_ptr(),1,width,stream);
+    if count!=width {return if ferror(stream)!=0 {1} else {-1};}
+    match tag {
+        // Sign-extend from the value's kind.
+        1=>{if bytes[width-1]&0x80!=0 {bytes[width..].fill(0xff);}core::ptr::write_unaligned(slot.cast::<i64>(),i64::from_le_bytes(bytes));}
+        2=>{let value=if width==4 {f64::from(f32::from_le_bytes(bytes[..4].try_into().unwrap()))} else {f64::from_le_bytes(bytes)};
+            core::ptr::write_unaligned(slot.cast::<f64>(),value);}
+        3=>{*slot=u8::from(bytes[..width].iter().any(|b|*b!=0));}
+        _=>{}
+    }
+    0
+}
+/// Position a stream file at byte POS, counted from 1.
+#[no_mangle]
+pub unsafe extern "C" fn rfort_stream_seek(stream:*mut core::ffi::c_void,position:i64)->i64 {
+    if position<1 {return 1;}
+    i64::from(fseek(stream,(position-1) as core::ffi::c_long,0)!=0)
 }
 #[no_mangle]
 pub unsafe extern "C" fn rfort_list_read_next(handle:*mut core::ffi::c_void,kind:i64,width:usize,out:*mut u8)->i64 {

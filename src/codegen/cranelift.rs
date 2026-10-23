@@ -2722,6 +2722,27 @@ fn gen_stmts(
                     let code=file_io::call(module,b,"rfort_list_read_complex_next",&[h,width,re,im],types::I64)?;
                     let status=storage_addr(b,ptr_ty,ints[status]);b.ins().store(MemFlags::new(),code,status,0);continue;
                 }
+                // Unformatted stream transfers of one scalar, and POS.
+                if name=="@stream_put" || name=="@stream_get" || name=="@stream_seek" {
+                    let IExpr::Ident(status)=&args[0] else {anyhow::bail!("invalid stream status");};
+                    let unit=if name=="@stream_get" {&args[2]} else {&args[1]};
+                    let unit=eval_expr(b,ex,ptr_ty,unit,ints,reals,bools,func_meta);let unit=to_i64(b,unit);
+                    let file=file_io::handle(module,b,ptr_ty,dc,unit)?;
+                    let code=if name=="@stream_seek" {
+                        let position=eval_expr(b,ex,ptr_ty,&args[2],ints,reals,bools,func_meta);let position=to_i64(b,position);
+                        file_io::call(module,b,"rfort_stream_seek",&[file,position],types::I64)?
+                    } else {
+                        let value=if name=="@stream_put" {&args[2]} else {&args[1]};
+                        let [IExpr::IntLit(tag),IExpr::IntLit(width)]=&args[3..] else {anyhow::bail!("invalid stream transfer");};
+                        let tag:i64=tag.parse()?;let width:i64=width.parse()?;
+                        let IExpr::Ident(value)=value else {anyhow::bail!("stream transfer requires a variable");};
+                        let slot=match tag {4=>chars.get(value).map(|s|s.0),2=>reals.get(value).copied(),3=>bools.get(value).copied(),_=>ints.get(value).copied()}
+                            .ok_or_else(||anyhow::anyhow!("missing stream transfer storage"))?;
+                        let address=storage_addr(b,ptr_ty,slot);let tag=b.ins().iconst(types::I64,tag);let width=b.ins().iconst(ptr_ty,width);
+                        file_io::call(module,b,if name=="@stream_put" {"rfort_stream_put"} else {"rfort_stream_get"},&[file,tag,width,address],types::I64)?
+                    };
+                    let address=storage_addr(b,ptr_ty,ints[status]);b.ins().store(MemFlags::new(),code,address,0);continue;
+                }
                 if name=="@list_read_next" || name=="@list_read_end" {
                     let h=if name=="@list_read_next" {&args[2]}else{&args[1]};
                     let h=eval_expr(b,ex,ptr_ty,h,ints,reals,bools,func_meta);let h=to_i64(b,h);

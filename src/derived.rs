@@ -1184,8 +1184,9 @@ impl Lowerer {
                     }
                 }
                 Stmt::CallSub { name, args } => {
-                    if matches!(name.as_str(), "@formatted_print" | "@formatted_write_noadvance" | "@write") {
-                        let mut first = if name == "@write" { 2 } else { 1 };
+                    if matches!(name.as_str(), "@formatted_print" | "@formatted_write_noadvance" | "@write" | "@unformatted_read" | "@unformatted_write") {
+                        // Unformatted items follow the unit, control, status and position.
+                        let mut first = match name.as_str() { "@write" => 2, "@unformatted_read" | "@unformatted_write" => 4, _ => 1 };
                         if name == "@write" {
                             while matches!(args.get(first), Some(Expr::Call(n, _)) if n.starts_with("@write_option:")) {
                                 first += 1;

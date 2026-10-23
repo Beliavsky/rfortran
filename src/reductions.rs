@@ -264,6 +264,13 @@ pub(crate) fn argument_with_elementals(e: &mut Expr, shapes: &HashMap<String,(Ty
     }
     Ok((kind,count,length))
 }
+/// Lower a scalar expression, such as a kind-parameterized literal or an
+/// inquiry, as ordinary expressions are lowered.
+pub(crate) fn scalar_value(e: &mut Expr, shapes: &HashMap<String,(TypeSpec,Vec<Expr>)>, prefix: &mut Vec<Stmt>, serial: &mut usize) -> Result<()> {
+    let mut symbols = Symbols::new();
+    symbols.variables = shapes.clone();
+    lower_expr(e, &mut symbols, prefix, serial)
+}
 pub(crate) fn argument_element(e: &Expr, index: &Expr, shapes: &HashMap<String,(TypeSpec,Vec<Expr>)>) -> Result<Expr> {
     let mut symbols=Symbols::new(); symbols.variables=shapes.clone();
     Ok(element(e,index,&symbols)?.0)
@@ -1648,6 +1655,14 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
             }
             if name=="@internal_read" {
                 output.push(crate::input::lower_list_read(args,&symbols.variables,serial)?);
+                continue;
+            }
+            if name=="@unformatted_read" {
+                output.push(crate::unformatted::lower_read(args,&symbols.variables,serial)?);
+                continue;
+            }
+            if name=="@unformatted_write" {
+                output.push(crate::unformatted::lower_write(args,&symbols.variables,serial)?);
                 continue;
             }
             if name=="@formatted_read" || name=="@formatted_read_status" {

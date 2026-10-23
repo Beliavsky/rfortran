@@ -43,7 +43,7 @@ end
             ("write(6,'(a)',unit=6) 'x'",'duplicate WRITE control'),
             ("write(unit=6,'(a)') 'x'",'positional WRITE controls'),
             ("write(fmt='(a)') 'x'",'WRITE requires UNIT'),
-            ("write(unit=6) 'x'",'WRITE currently requires FMT'),
+            ("write(unit=6) 'x'",'units 5 and 6 are formatted'),
             ("write(6,'(a)',advance=*) 'x'",'only WRITE UNIT and FMT'),
             ("write(6,'(a)',unknown=1) 'x'",'unsupported WRITE control'),
         ]:

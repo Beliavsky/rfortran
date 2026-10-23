@@ -1453,6 +1453,48 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         INPUT_LISTS.with(|lists|lists.borrow_mut().insert(h,(unit,crate::list_input::Session::new(),source)));
                         let fr=call_stack.last_mut().unwrap();fr.env_int.insert(handle.clone(),h);fr.env_int.insert(status.clone(),0);idx+=1;continue;
                     }
+                    // Unformatted stream transfers of one scalar value, as the
+                    // bytes of its kind.
+                    if name=="@stream_put" || name=="@stream_get" || name=="@stream_seek" {
+                        let fr=call_stack.last().unwrap().clone();
+                        let eval=|e:&Expr,call_stack:&mut Vec<CallFrame>|eval_expr(e,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack);
+                        let Expr::Ident(status)=&args[0] else {unreachable!()};
+                        let code=if name=="@stream_seek" {
+                            let unit=eval(&args[1],call_stack).0.unwrap();let position=eval(&args[2],call_stack).0.unwrap();
+                            FILES.with(|files|files.borrow_mut().stream_seek(unit,position))
+                        } else {
+                            let (unit,value)=if name=="@stream_put" {(&args[1],&args[2])} else {(&args[2],&args[1])};
+                            let unit=eval(unit,call_stack).0.unwrap();
+                            let [Expr::IntLit(tag),Expr::IntLit(width)]=&args[3..] else {unreachable!()};
+                            let tag:i64=tag.parse().unwrap();let width:usize=width.parse().unwrap();
+                            let Expr::Ident(value)=value else {unreachable!()};
+                            if name=="@stream_put" {
+                                let bytes=match tag {
+                                    1=>fr.env_int[value].to_le_bytes()[..width].to_vec(),
+                                    2=>if width==4 {fr.env_real32[value].to_le_bytes().to_vec()} else {fr.env_real64[value].to_le_bytes().to_vec()},
+                                    3=>(i32::from(fr.env_log[value])).to_le_bytes().to_vec(),
+                                    _=>{let mut text=fr.env_str[value].as_bytes().to_vec();text.resize(width,b' ');text},
+                                };
+                                FILES.with(|files|files.borrow_mut().stream_write(unit,&bytes))
+                            } else {
+                                let mut bytes=vec![0;width];
+                                let code=FILES.with(|files|files.borrow_mut().stream_read(unit,&mut bytes));
+                                if code==0 {
+                                    let frame=call_stack.last_mut().unwrap();
+                                    match tag {
+                                        // Sign-extend from the value's kind.
+                                        1=>{let mut wide=[if bytes[width-1]&0x80!=0 {0xff} else {0};8];wide[..width].copy_from_slice(&bytes);frame.env_int.insert(value.clone(),i64::from_le_bytes(wide));}
+                                        2=>if width==4 {frame.env_real32.insert(value.clone(),f32::from_le_bytes(bytes.try_into().unwrap()));} else {frame.env_real64.insert(value.clone(),f64::from_le_bytes(bytes.try_into().unwrap()));},
+                                        3=>{frame.env_log.insert(value.clone(),bytes.iter().any(|b|*b!=0));}
+                                        _=>{frame.env_str.insert(value.clone(),String::from_utf8_lossy(&bytes).into_owned());}
+                                    }
+                                }
+                                code
+                            }
+                        };
+                        call_stack.last_mut().unwrap().env_int.insert(status.clone(),code);
+                        idx+=1;continue;
+                    }
                     if name=="@list_read_next" || name=="@list_read_complex_next" || name=="@list_read_end" {
                         let fr=call_stack.last().unwrap();let Expr::Ident(h)=&args[if name=="@list_read_next" {2}else if name=="@list_read_complex_next" {3}else{1}] else {unreachable!()};let h=fr.env_int[h];
                         if name=="@list_read_end" {

@@ -78,6 +78,7 @@ pub(crate) fn read_controls(
     let mut option = None;
     let mut named = false;
     let mut message = None;
+    let mut stream_position = None;
     let mut seen = std::collections::HashSet::new();
     for (position, value) in controls.into_iter().enumerate() {
         let (key, value) = match value {
@@ -106,6 +107,8 @@ pub(crate) fn read_controls(
                 unit = Some(if star { int(5) } else { value });
             }
             "fmt" => format = Some(value),
+            // The file position of an unformatted stream READ.
+            "pos" => stream_position = Some(value),
             // Only defined after an error; an input error that IOSTAT does not
             // report stops the program, so IOMSG is never set.
             "iomsg" => message = Some(value),
@@ -121,7 +124,23 @@ pub(crate) fn read_controls(
         }
     }
     let unit = unit.ok_or("READ requires UNIT")?;
-    let format = format.ok_or("READ currently requires FMT")?;
+    // Without FMT the READ is unformatted: [unit, control, status, pos, items].
+    let Some(format) = format else {
+        if option.as_ref().is_some_and(|(key, _)| key != "iostat") {
+            return Err("unformatted READ currently supports UNIT, IOSTAT, IOMSG and POS");
+        }
+        let (control, status) = option.unwrap_or_else(|| (String::new(), int(0)));
+        let mut args = vec![unit, Expr::Str(control), status, stream_position.unwrap_or_else(|| int(0))];
+        args.extend(items);
+        let read = Stmt::CallSub { name: "@unformatted_read".into(), args };
+        return Ok(match message {
+            Some(message) => Stmt::Block { body: vec![read, Stmt::CallSub { name: crate::initialized::MAY_DEFINE.into(), args: vec![message] }] },
+            None => read,
+        });
+    };
+    if stream_position.is_some() {
+        return Err("POS requires an unformatted stream READ");
+    }
     let list = matches!(&format,Expr::Call(n,_) if n=="@write_star");
     if !list && items.is_empty() {
         return Err("empty READ currently requires list-directed FMT='*'");
@@ -249,7 +268,8 @@ fn lower_session_read(
             args: vec![var(&handle), var(&code), unit.clone()],
         },
     ];
-    emit_read_items(items, symbols, serial, &handle, &code, &mut body)?;
+    let source = Source { value: var(&handle), next: "@list_read_next" };
+    emit_read_items(items, symbols, serial, &source, &code, &mut body)?;
     body.push(Stmt::CallSub {
         name: "@list_read_end".into(),
         args: vec![var(&code), var(&handle)],
@@ -277,11 +297,17 @@ fn lower_session_read(
     }
     Ok(Stmt::Block { body })
 }
-fn emit_read_items(
+/// Where READ items come from: a list-directed session handle read with
+/// `@list_read_next`, or an unformatted unit read with `@stream_get`.
+pub(crate) struct Source {
+    pub(crate) value: Expr,
+    pub(crate) next: &'static str,
+}
+pub(crate) fn emit_read_items(
     items: &[Expr],
     symbols: &HashMap<String, (TypeSpec, Vec<Expr>)>,
     serial: &mut usize,
-    handle: &str,
+    handle: &Source,
     code: &str,
     body: &mut Vec<Stmt>,
 ) -> Result<()> {
@@ -365,6 +391,9 @@ fn emit_read_items(
         }
         if let Expr::Call(n, a) = item {
             if n == "@input_complex" {
+                if handle.next == "@stream_get" {
+                    bail!("unformatted I/O currently supports INTEGER, REAL, LOGICAL and CHARACTER values");
+                }
                 *serial += 1;
                 let re = format!("@read_re_{serial}");
                 let im = format!("@read_im_{serial}");
@@ -395,7 +424,7 @@ fn emit_read_items(
                         set(&im, Expr::RealLit("0.0".into())),
                         Stmt::CallSub {
                             name: "@list_read_complex_next".into(),
-                            args: vec![var(code), var(&re), var(&im), var(handle), int(width)],
+                            args: vec![var(code), var(&re), var(&im), handle.value.clone(), int(width)],
                         },
                         branch(
                             equal(code, 0),
@@ -494,7 +523,7 @@ fn emit_read_items(
                 body.push(branch(equal(code, 0), vec![
                     Stmt::VarDecl { kind: TypeSpec::Character(Some(capacity as usize)), names: vec![temp.clone()] },
                     set(&temp, Expr::Str(String::new())),
-                    Stmt::CallSub { name: "@list_read_next".into(), args: vec![var(code), var(&temp), var(handle), int(4), int(capacity)] },
+                    Stmt::CallSub { name: handle.next.into(), args: vec![var(code), var(&temp), handle.value.clone(), int(4), int(capacity)] },
                     branch(equal(code, 0), store),
                     branch(equal(code, -2), vec![set(code, int(0))]),
                 ]));
@@ -512,14 +541,15 @@ fn emit_read_items(
             }
             _ => crate::reductions::elemental_element(item, &var(&index), symbols)?,
         };
-        let (tag, width) = match kind {
+        // Unformatted input transfers the bytes of each value's kind.
+        let (tag, width) = if handle.next == "@stream_get" { crate::unformatted::layout(&kind)? } else { match kind {
             TypeSpec::Integer(k @ (None | Some(1 | 2 | 4 | 8))) => (1, k.unwrap_or(4) as i64),
             TypeSpec::Real => (2, 4),
             TypeSpec::DoublePrecision => (2, 8),
             TypeSpec::Logical => (3, 8),
             TypeSpec::Character(n) => (4, n.unwrap_or(1) as i64),
             _ => bail!("unsupported list-directed READ destination type"),
-        };
+        } };
         let temp = format!("@list_read_value_{serial}");
         let invalidate = Stmt::CallSub {
             name: "@undefine".into(),
@@ -558,8 +588,8 @@ fn emit_read_items(
             },
             set(&temp, initial),
             Stmt::CallSub {
-                name: "@list_read_next".into(),
-                args: vec![var(code), var(&temp), var(handle), int(tag), int(width)],
+                name: handle.next.into(),
+                args: vec![var(code), var(&temp), handle.value.clone(), int(tag), int(width)],
             },
             branch(equal(code, 0), vec![store]),
             branch(

@@ -360,11 +360,14 @@ impl Lower {
                 | Stmt::AssignIndex { value, .. }
                 | Stmt::Return(Some(value)) => self.expression(value, &arrays, &mut prefix)?,
                 // List-directed READ: unit, control, status, then the items.
-                Stmt::CallSub { name, args } if name == "@internal_read" && args.len() > 3 => {
-                    for e in &mut args[..3] {
+                // Unformatted READ and WRITE also have a position.
+                Stmt::CallSub { name, args } if matches!(name.as_str(), "@internal_read" | "@unformatted_read" | "@unformatted_write") => {
+                    let first = if name == "@internal_read" { 3 } else { 4 };
+                    let head = first.min(args.len());
+                    for e in &mut args[..head] {
                         self.expression(e, &arrays, &mut prefix)?;
                     }
-                    for item in &mut args[3..] {
+                    for item in args.iter_mut().skip(first) {
                         self.read_item(item, &arrays, &mut prefix)?;
                     }
                 }

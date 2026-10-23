@@ -1420,9 +1420,11 @@ impl Lower {
                         return Ok(());
                     }
                     Stmt::CallSub { name, args }
-                        if name == "@write" || name == "@formatted_print" =>
+                        if matches!(name.as_str(), "@write" | "@formatted_print" | "@unformatted_read" | "@unformatted_write") =>
                     {
-                        let mut values = args.split_off(if name == "@write" { 2 } else { 1 });
+                        // Unformatted items follow the unit, control, status and position.
+                        let first = match name.as_str() { "@write" => 2, "@formatted_print" => 1, _ => 4 };
+                        let mut values = args.split_off(first.min(args.len()));
                         self.output(&mut values, &mut objects, &mut prefix)?;
                         args.extend(values);
                     }

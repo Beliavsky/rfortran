@@ -113,9 +113,10 @@ pub(crate) fn inquiry(name: &str, args: &[Expr], shapes: &Shapes) -> Result<Opti
         if args.len() != 1 {
             bail!("SHAPE KIND is not yet supported for runtime-sized allocatable arrays");
         }
+        // SHAPE, LBOUND and UBOUND give default INTEGER values.
         return Ok(Some(Expr::Call(
             "@array_constructor".into(),
-            dimensions.into_iter().map(guard).collect(),
+            dimensions.into_iter().map(|d| Expr::Call("int".into(), vec![guard(d)])).collect(),
         )));
     }
     if args.len() > 2 {
@@ -143,7 +144,7 @@ pub(crate) fn inquiry(name: &str, args: &[Expr], shapes: &Shapes) -> Result<Opti
             "@array_constructor".into(),
             dimensions
                 .into_iter()
-                .enumerate().map(|(axis,extent)| guard(bound(axis,extent)))
+                .enumerate().map(|(axis,extent)| Expr::Call("int".into(), vec![guard(bound(axis,extent))]))
                 .collect(),
         )
     };
