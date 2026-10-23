@@ -1447,8 +1447,15 @@ A scalar derived component selected across a record array, such as `xx%date`,
 is a view of the existing component storage with the parent's shape and
 subscripts. This includes nested selections, sections, vector subscripts,
 ELEMENTAL calls, and ordinary array dummy arguments, including writable views.
-The view does not own or copy the parent's allocations. See
-`tests/test_derived_component_views.py`.
+Views can also be assignment targets: `dt%date = dates`,
+`dt(2:)%date = dt(:n-1)%date`, or `dt(indices)%date = dates`. Array values,
+scalar broadcasts and scalar element assignments use the existing intrinsic
+assignment rules. This supports fixed, runtime-allocated and pointer parents,
+nested paths, ranks through 15, and the existing numeric, LOGICAL, CHARACTER
+and fixed array component layouts. Sibling components and their initialization
+state are preserved, and INTENT(IN) components remain read-only. The view does
+not own the parent's allocations. See `tests/test_derived_component_views.py`
+and `tests/test_component_array_assignment.py`.
 
 Ordinary scalar derived-valued function results can be assigned to array
 elements, used as scalar broadcasts, or included in array constructors. Each

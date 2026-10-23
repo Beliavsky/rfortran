@@ -1383,6 +1383,35 @@ impl Lower {
                 continue;
             }
             self.heap_component_assignment(&mut s,&mut objects,&mut prefix,&mut suffix).map_err(|e|crate::source_diagnostics::at(e,offset))?;
+            // Reuse component-array views on the left of assignment too. The
+            // alias is only a name for existing storage, not a new variable.
+            let original = match &s {
+                Stmt::Assign {name,..} | Stmt::AssignIndex {name,..} => Some(name.clone()),
+                _ => None,
+            };
+            if let Some(original) = original {
+                let mut view=Expr::Ident(original.clone());
+                if self.scalar_component_view(&mut view,&mut objects,&mut prefix)
+                    .map_err(|e|crate::source_diagnostics::at(e,offset))? {
+                    let Expr::Ident(alias)=view else {unreachable!()};
+                    match &mut s {
+                        Stmt::Assign {name,..} => *name=alias,
+                        Stmt::AssignIndex {name,indices,..} => {
+                            for index in indices {
+                                // Parser-bound sections can name the complete
+                                // component path or an earlier part reference.
+                                retarget(index,&original,&alias);
+                                for (end,_) in original.match_indices('%') {
+                                    retarget(index,&original[..end],&alias);
+                                }
+                            }
+                            *name=alias;
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+            }
+
             (|| -> Result<()> {
                 match &mut s {
                     Stmt::ArrayDecl{dims,..} => {
@@ -1511,26 +1540,13 @@ impl Lower {
                         }
                         for (f, value) in fields.into_iter().zip(captured) {
                             let target = storage(&name, &f.name);
-                            if let (Some(indices), false) = (&indices, f.dims.is_empty()) {
+                            if let Some(indices) = &indices {
+                                // Bind triplets to the primitive storage and
+                                // include leading axes of array components.
                                 prefix.push(assignment(select(&name, &f, vec![], indices)?, value));
-                                continue;
-                            }
-                            prefix.push(if let Some(indices) = &indices {
-                                let mut indices = indices.clone();
-                                for e in &mut indices {
-                                    retarget(e, &name, &target);
-                                }
-                                Stmt::AssignIndex {
-                                    name: target,
-                                    indices,
-                                    value,
-                                }
                             } else {
-                                Stmt::Assign {
-                                    name: target,
-                                    value,
-                                }
-                            });
+                                prefix.push(Stmt::Assign {name:target,value});
+                            }
                         }
                         return Ok(());
                     }

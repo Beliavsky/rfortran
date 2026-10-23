@@ -102,11 +102,23 @@ and runtime-sized allocations, ranks through 15, nested date/time records,
 local pointer dummy escape, TARGET requirements and local-target lifetime
 checks. General standalone ALLOCATABLE pointer targets remain unsupported.
 
-The current blocker is line 4271, `dt%date = dates`. Reading such a component
-view is supported, but whole-array assignment to it is not. The fifteenth repro,
+The former line-4271 blocker, `dt%date = dates`, is now supported as an
+assignment to a component-array view. The fifteenth repro,
 [tests/programs/xacv_component_array_assignment.f90](tests/programs/xacv_component_array_assignment.f90),
-prints `2024 2025` with gfortran and reports `unknown component date of date_time`
-with rfort.
+prints `2024 2025` with rfort and gfortran. Regression tests in
+`tests/test_component_array_assignment.py` cover array and scalar assignment,
+sections, vectors, overlap, nested paths, ranks through 15, runtime allocation,
+pointer parents, function results, mixed field layouts, sibling preservation,
+initialization checks and INTENT(IN) protection.
+
+The next full-source blocker is line 4281, which contains
+`trim(str(minval(times)))` and `trim(str(maxval(times)))`. The nested reduction
+currently reports `too many arguments to minval_time` after argument flattening.
+The sixteenth repro,
+[tests/programs/xacv_nested_derived_reduction.f90](tests/programs/xacv_nested_derived_reduction.f90),
+extends MINVAL for a two-component time type and nests its derived result in
+an ELEMENTAL CHARACTER-valued STR call. It prints `03:30` with gfortran and
+reproduces the argument-count diagnostic with rfort.
 
 ## Intrinsic calls after extending an intrinsic generic
 

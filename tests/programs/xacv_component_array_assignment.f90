@@ -1,4 +1,4 @@
-! xacv.f90 line 4271: assign to a derived component across a record array.
+! Regression for the former xacv.f90 blocker at line 4271: assign to a derived component across a record array.
 program test
 implicit none
 type :: date_mdy
