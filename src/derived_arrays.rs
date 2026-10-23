@@ -12,6 +12,8 @@ use std::collections::HashMap;
 mod elemental_records;
 #[path = "elemental_record_results.rs"]
 mod elemental_record_results;
+#[path = "record_components.rs"]
+mod record_components;
 
 #[derive(Clone)]
 struct Field {
@@ -21,6 +23,8 @@ struct Field {
     /// Constant extents of an array component; empty for a scalar. Its
     /// storage puts these axes ahead of the axes of the array of records.
     dims: Vec<Expr>,
+    /// A per-element owned numeric allocation, stored as a descriptor handle.
+    heap: Option<(TypeSpec, Vec<Expr>)>,
 }
 fn whole_axes(f: &Field) -> Vec<Expr> {
     f.dims.iter().map(|_| Expr::Section { name: String::new(), lower: None, upper: None, stride: None }).collect()
@@ -188,6 +192,7 @@ impl Lower {
                                             });
                                         }
                                         out.push(Stmt::ArrayDecl { kind: f.kind.clone(), name: field.clone(), dims: dims.clone() });
+                                        if f.heap.is_some() {out.push(Stmt::DummyIntent {name:field.clone(),intent:"@record_slots".into()});}
                                         for a in &attributes {
                                             out.push(Stmt::DummyIntent { name: field.clone(), intent: a.clone() });
                                         }
@@ -267,6 +272,10 @@ impl Lower {
     /// when `copy_back` is given, copy the object back after the statement.
     fn element_temp(&mut self, e: &Expr, objects: &mut Objects, prefix: &mut Vec<Stmt>,
         copy_back: Option<&mut Vec<Stmt>>) -> Result<String> {
+        self.element_storage(e,objects,prefix,copy_back,true)
+    }
+    fn element_storage(&mut self, e: &Expr, objects: &mut Objects, prefix: &mut Vec<Stmt>,
+        copy_back: Option<&mut Vec<Stmt>>, copy_in:bool) -> Result<String> {
         let (object, idx) = self.element(e, objects).context("a type-bound call requires a scalar object or an array element")?;
         let (object, mut idx) = (object.to_owned(), idx.to_vec());
         self.capture_indices(&mut idx, prefix);
@@ -277,11 +286,25 @@ impl Lower {
         objects.insert(temp.clone(), Object { ty: ty.clone(), dims: vec![] });
         self.register_components(&temp, &ty, objects);
         for f in self.fields(&ty)? {
-            prefix.push(Stmt::Assign { name: format!("{temp}%{}", f.name), value: select(&object, &f, vec![], &idx)? });
+            let local = format!("{temp}%{}", f.name);
+            if f.heap.is_some() {
+                prefix.push(Stmt::DummyIntent {name:local.clone(),intent:"@record_heap_local".into()});
+                if copy_in {prefix.push(Stmt::CallSub {name:"@heap_record_load".into(),args:vec![Expr::Ident(local),select(&object,&f,vec![],&idx)?]});}
+            } else if copy_in {
+                prefix.push(Stmt::Assign { name: local, value: select(&object, &f, vec![], &idx)? });
+            }
         }
         if let Some(back) = copy_back {
             for f in self.fields(&ty)? {
-                back.push(assignment(select(&object, &f, vec![], &idx)?, Expr::Ident(format!("{temp}%{}", f.name))));
+                if f.heap.is_some() {
+                    self.serial+=1;let handle=format!("@record_slot_{}",self.serial);
+                    back.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![handle.clone()]});
+                    back.push(Stmt::Assign{name:handle.clone(),value:select(&object,&f,vec![],&idx)?});
+                    back.push(Stmt::CallSub {name:"@heap_record_store".into(),args:vec![Expr::Ident(format!("{temp}%{}",f.name)),Expr::Ident(handle.clone())]});
+                    back.push(assignment(select(&object,&f,vec![],&idx)?,Expr::Ident(handle)));
+                } else {
+                    back.push(assignment(select(&object, &f, vec![], &idx)?, Expr::Ident(format!("{temp}%{}", f.name))));
+                }
             }
         }
         Ok(temp)
@@ -303,6 +326,7 @@ impl Lower {
                                         kind: kind.clone(),
                                         default: None,
                                         dims: vec![],
+                                        heap: None,
                                     });
                                     layout.push((name.clone(), None));
                                 }
@@ -326,10 +350,20 @@ impl Lower {
                                         kind: kind.clone(),
                                         default: value.clone(),
                                         dims: vec![],
+                                        heap: None,
                                     });
                                     layout.push((name.clone(), None));
                                 }
                             }
+                            Stmt::ArrayDecl { kind, name, dims }
+                                if components.iter().any(|c| matches!(c, Stmt::DummyIntent {name:n,intent} if n==name && intent=="allocatable"))
+                                    && matches!(kind,TypeSpec::Integer(_) | TypeSpec::IntegerKind(_) | TypeSpec::Real | TypeSpec::RealKind(_) | TypeSpec::DoublePrecision | TypeSpec::Logical) =>
+                            {
+                                fields.push(Field {name:name.clone(),kind:TypeSpec::Integer(Some(8)),default:Some(Expr::IntLit("0".into())),dims:vec![],heap:Some((kind.clone(),dims.clone()))});
+                                layout.push((name.clone(),None));
+                            }
+                            Stmt::DummyIntent {name,intent} if intent=="allocatable" && components.iter().any(|c|matches!(c,Stmt::ArrayDecl {name:n,kind,..} if n==name && matches!(kind,TypeSpec::Integer(_) | TypeSpec::IntegerKind(_) | TypeSpec::Real | TypeSpec::RealKind(_) | TypeSpec::DoublePrecision | TypeSpec::Logical))) => {}
+                            Stmt::DummyIntent {intent,..} if intent=="@record_slots" => { fields.clear(); break; }
                             // A fixed-size array component; an initialized one
                             // follows its InitializedDecl.
                             Stmt::ArrayDecl { kind, name, dims }
@@ -338,7 +372,7 @@ impl Lower {
                                 match fields.iter_mut().find(|f| &f.name == name && f.dims.is_empty() && f.default.is_some()) {
                                     Some(f) => f.dims = dims.clone(),
                                     None => {
-                                        fields.push(Field { name: name.clone(), kind: kind.clone(), default: None, dims: dims.clone() });
+                                        fields.push(Field { name: name.clone(), kind: kind.clone(), default: None, dims: dims.clone(), heap: None });
                                         layout.push((name.clone(), None));
                                     }
                                 }
@@ -477,6 +511,7 @@ impl Lower {
             if let Some(o) = objects.get(object).filter(|o| !o.dims.is_empty()) {
                 let f = self.fields(&o.ty)?.into_iter().find(|f| f.name == field)
                     .with_context(|| format!("unknown component `{field}` of `{}`", o.ty))?;
+                if f.heap.is_some() {bail!("allocatable component `{field}` requires a scalar parent element");}
                 let object = object.to_owned();
                 *n = storage(&object, field);
                 return Ok(Some((object, f)));
@@ -647,6 +682,9 @@ impl Lower {
     ) -> Result<(Vec<Expr>, bool)> {
         self.expression(&mut e, objects, prefix)?;
         let fields = self.fields(ty)?;
+        if fields.iter().any(|f|f.heap.is_some()) && matches!(&e, Expr::Call(n,_) if n==ty || n=="@array_constructor" || n=="@record_constructor") {
+            bail!("array constructors of records with allocatable components are not yet supported");
+        }
         match e {
             Expr::Call(n, args) if n.starts_with("@complex_array$") && crate::complex::type_kind(ty).is_some() => {
                 if args.len() != 2 { bail!("invalid internal COMPLEX array components"); }
@@ -881,6 +919,7 @@ impl Lower {
         objects: &mut Objects,
         prefix: &mut Vec<Stmt>,
     ) -> Result<()> {
+        self.heap_component_actual(e,objects,prefix,None)?;
         if self.materialize_elemental_result(e, objects, prefix)? { return Ok(()); }
         match e {
             Expr::Ident(n) => self.component(n, objects)?,
@@ -891,6 +930,10 @@ impl Lower {
                     bail!("invalid record component selection");
                 };
                 self.expression(value, objects, prefix)?;
+                let owner=match value {Expr::Ident(n)|Expr::Section{name:n,..}|Expr::Call(n,_)|Expr::Index(n,_)=>Some(n.as_str()),_=>None};
+                if owner.is_some_and(|owner|self.heap_component(owner,&field,objects)) && self.element(value,objects).is_none() {
+                    bail!("allocatable component `{field}` requires a scalar parent element");
+                }
                 let mut component = component;
                 for e in &mut component {
                     self.expression(e, objects, prefix)?;
@@ -1053,6 +1096,7 @@ impl Lower {
             if let Expr::Ident(array) = &item {
                 if let Some(o) = objects.get(array).filter(|o| !o.dims.is_empty()).cloned() {
                     let fields = self.fields(&o.ty)?;
+                    if fields.iter().any(|f|f.heap.is_some()) {bail!("output of a record with allocatable components requires defined I/O");}
                     let (field, offset) = self.shape_field(&o.ty)?;
                     let first = storage(array, &field);
                     self.serial += 1;
@@ -1149,6 +1193,7 @@ impl Lower {
                             bail!("output of derived triplet sections is not yet supported");
                         }
                     }
+                    if self.fields(&o.ty)?.iter().any(|f|f.heap.is_some()) {bail!("output of a record with allocatable components requires defined I/O");}
                     let (parts, array) = self.parts(item, &o.ty, objects, prefix)?;
                     if array {
                         if output_dims.is_empty()
@@ -1248,6 +1293,7 @@ impl Lower {
             }
             let mut prefix = vec![];
             let mut suffix = vec![];
+            self.heap_component_assignment(&mut s,&mut objects,&mut prefix,&mut suffix).map_err(|e|crate::source_diagnostics::at(e,offset))?;
             (|| -> Result<()> {
                 match &mut s {
                     Stmt::ArrayDecl{dims,..} => {
@@ -1271,6 +1317,9 @@ impl Lower {
                                 "SAVED, PARAMETER and POINTER derived arrays are not yet supported"
                             );
                         }
+                        if attributes.iter().any(|a|a=="intent(out)") && self.fields(type_name)?.iter().any(|f|f.heap.is_some()) {
+                            bail!("INTENT(OUT) arrays of records with allocatable components require entry finalization, which is not yet supported");
+                        }
                         for e in dims.iter_mut() {
                             self.expression(e, &mut objects, &mut prefix)?;
                         }
@@ -1289,6 +1338,7 @@ impl Lower {
                                     name: field.clone(),
                                     dims: storage_dims(&f, dims),
                                 });
+                                if f.heap.is_some() && !dummies.contains(n) && !attributes.iter().any(|a|a.starts_with("intent(")) {prefix.push(Stmt::DummyIntent {name:field.clone(),intent:"@record_slots".into()});}
                                 if let (true, Some(value)) = (initialize, &f.default) {
                                     defaults.extend(self.default_fill(n, &f, value, dims.len())?);
                                 }
@@ -1313,6 +1363,9 @@ impl Lower {
                     {
                         let name = name.clone();
                         let o = objects[&name].clone();
+                        if self.fields(&o.ty)?.iter().any(|f|f.heap.is_some()) {
+                            bail!("whole-array assignment of records with allocatable components is not yet supported; assign scalar elements instead");
+                        }
                         let (values, array) =
                             self.parts(value.clone(), &o.ty, &mut objects, &mut prefix)?;
                         let mut indices = match &s {
@@ -1392,6 +1445,7 @@ impl Lower {
                     Stmt::CallSub { name, args }
                         if name == "@allocate" || name == "@deallocate" =>
                     {
+                        for actual in args.iter_mut() {self.heap_component_actual(actual,&mut objects,&mut prefix,Some(&mut suffix))?;}
                         let mut flat = vec![];
                         let mut defaults = vec![];
                         for mut e in std::mem::take(args) {
@@ -1415,6 +1469,9 @@ impl Lower {
                                 }
                                 for f in self.fields(&o.ty)? {
                                     let field = storage(n, &f.name);
+                                    if name=="@deallocate" && f.heap.is_some() {
+                                        prefix.push(Stmt::CallSub{name:"@heap_record_drop_array".into(),args:vec![Expr::Ident(field.clone()),Expr::Call("size".into(),vec![Expr::Ident(field.clone())])]});
+                                    }
                                     flat.push(if let Some(d) = &bounds {
                                         Expr::Call(field.clone(), f.dims.iter().cloned().chain(d.iter().cloned()).collect())
                                     } else {
@@ -1448,6 +1505,9 @@ impl Lower {
                         args.extend(values);
                     }
                     Stmt::CallSub { name, args } => {
+                        if !name.starts_with("@heap_record_") {
+                            for actual in args.iter_mut() {self.heap_component_actual(actual,&mut objects,&mut prefix,Some(&mut suffix))?;}
+                        }
                         self.elemental_actuals(name, args, &mut objects, &mut prefix)?;
                         // A type-bound call on an array element, `call a(i)%m()`,
                         // and an element passed to a scalar derived dummy use a
@@ -1474,6 +1534,7 @@ impl Lower {
                     Stmt::Print { items } => self.output(items, &mut objects, &mut prefix)?,
                     Stmt::Read { args: items } => {
                         for e in items {
+                            self.heap_component_actual(e,&mut objects,&mut prefix,Some(&mut suffix))?;
                             self.expression(e, &mut objects, &mut prefix)?;
                         }
                     }
@@ -1495,6 +1556,11 @@ impl Lower {
                         }
                     }
                     Stmt::Assign { name, value } => {
+                        if let Some((owner,_))=self.element(value,&objects) {
+                            if self.types.get(&objects[owner].ty).is_some_and(|fields|fields.iter().any(|f|f.heap.is_some())) {
+                                *value=Expr::Ident(self.element_temp(value,&mut objects,&mut prefix,None)?);
+                            }
+                        }
                         self.component(name, &objects)?;
                         self.expression(value, &mut objects, &mut prefix)?;
                     }

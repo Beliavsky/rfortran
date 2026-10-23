@@ -274,7 +274,7 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
             (dims.iter().all(|e|matches!(e,Expr::Ident(n) if n=="@deferred_extent"))
               && !params.contains(name)
               && !body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name && intent=="@heap_dummy"))
-              && (passed.contains(name) || name.starts_with("@module$") || ((dims.len()>1 || !array_dummies || runtime_allocate(body,name)) && allocation(body,name,&declared,&functions))
+              && (body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name && intent=="@record_heap_local")) || passed.contains(name) || name.starts_with("@module$") || ((dims.len()>1 || !array_dummies || runtime_allocate(body,name)) && allocation(body,name,&declared,&functions))
                   // Rank-one locals of procedures with array dummies use bounded
                   // storage when ALLOCATEd; one allocated only by assignment needs
                   // runtime storage for its value's extent.
@@ -760,58 +760,63 @@ pub(crate) fn temporary(kind: TypeSpec, name: String, length: Expr, body: &mut V
 
 /// Release procedure/BLOCK locals and expression buffers at scope exit.
 pub(crate) fn cleanup(mut program: Program) -> Program {
-    fn drop(name: &String) -> Stmt {
-        Stmt::CallSub {
-            name: "@heap_drop".into(),
-            args: vec![Expr::Ident(name.clone())],
-        }
+    type Slots = HashMap<String,(Expr,bool)>;
+    fn drop(name: &String, slots:&Slots) -> Stmt {
+        let ordinary=Stmt::CallSub{name:"@heap_drop".into(),args:vec![Expr::Ident(name.clone())]};
+        if let Some((length,heap))=slots.get(name) {
+            let mut body=vec![Stmt::CallSub{name:"@heap_record_drop_array".into(),args:vec![Expr::Ident(name.clone()),length.clone()]}];
+            if *heap {body.push(ordinary);}
+            Stmt::Block{body}
+        } else {ordinary}
     }
-    fn body(statements: &mut Vec<Stmt>, inherited: &[String], loop_boundary: usize) {
+    fn body(statements: &mut Vec<Stmt>, inherited: &[String], loop_boundary: usize,params:&[String], inherited_slots:&Slots) {
         let mut live = inherited.to_vec();
+        let mut slots=inherited_slots.clone();
+        let mut shapes=crate::allocatables::Shapes::new();
+        for s in statements.iter() {
+            if let Stmt::ArrayDecl{name,kind,dims}=s {shapes.insert(name.clone(),(kind.clone(),dims.clone()));}
+        }
+        crate::allocatables::metadata(statements,&mut shapes);
+        for s in statements.iter() {
+            if let Stmt::DummyIntent{name,intent}=s {
+                if intent=="@record_slots" && !params.contains(name) {
+                    let heap=shapes.contains_key(&format!("@heap:{name}"));
+                    let length=crate::allocatables::length(name,&shapes).or_else(||shapes.get(name).map(|(_,dims)| {
+                        let count=dims.iter().map(|d|crate::parameters::integer_constant(d).unwrap_or(0).max(0)).product::<i64>();
+                        Expr::IntLit(count.to_string())
+                    })).unwrap_or_else(||Expr::IntLit("0".into()));
+                    slots.insert(name.clone(),(length,heap));
+                }
+            }
+        }
         let mut out = vec![];
         for mut statement in std::mem::take(statements) {
             match &mut statement {
+                Stmt::DummyIntent{name,intent} if intent=="@record_slots" && slots.get(name).is_some_and(|(_,heap)|!*heap) => {live.push(name.clone());}
                 Stmt::CallSub { name, args } if name == "@heap_bind" => {
-                    if let Some(Expr::Ident(n)) = args.first() {
-                        live.push(n.clone());
-                    }
+                    if let Some(Expr::Ident(n)) = args.first() {live.push(n.clone());}
                 }
-                Stmt::Return(_) => out.extend(live.iter().rev().map(drop)),
-                Stmt::Exit | Stmt::Cycle => {
-                    out.extend(live[loop_boundary..].iter().rev().map(drop))
-                }
-                Stmt::Function { body: b, .. }
-                | Stmt::Subroutine { body: b, .. }
-                | Stmt::Module { body: b, .. } => body(b, &[], 0),
-                Stmt::Block { body: b } => body(b, &live, loop_boundary),
-                Stmt::Do { body: b, .. } | Stmt::DoWhile { body: b, .. } => {
-                    body(b, &live, live.len())
-                }
-                Stmt::If {
-                    then_body,
-                    else_body,
-                    ..
-                } => {
-                    body(then_body, &live, loop_boundary);
-                    if let Some(b) = else_body {
-                        body(b, &live, loop_boundary);
-                    }
+                Stmt::Return(_) => out.extend(live.iter().rev().map(|n|drop(n,&slots))),
+                Stmt::Exit | Stmt::Cycle => out.extend(live[loop_boundary..].iter().rev().map(|n|drop(n,&slots))),
+                Stmt::Function { body: b, params, .. } | Stmt::Subroutine { body: b, params, .. } => body(b,&[],0,params,&Slots::new()),
+                Stmt::Module { body: b, .. } => body(b,&[],0,&[],&Slots::new()),
+                Stmt::Block { body: b } => body(b,&live,loop_boundary,params,&slots),
+                Stmt::Do { body: b, .. } | Stmt::DoWhile { body: b, .. } => body(b,&live,live.len(),params,&slots),
+                Stmt::If { then_body, else_body, .. } => {
+                    body(then_body,&live,loop_boundary,params,&slots);
+                    if let Some(b)=else_body {body(b,&live,loop_boundary,params,&slots);}
                 }
                 Stmt::SelectCase { cases, default, .. } => {
-                    for c in cases {
-                        body(&mut c.body, &live, loop_boundary);
-                    }
-                    if let Some(b) = default {
-                        body(b, &live, loop_boundary);
-                    }
+                    for c in cases {body(&mut c.body,&live,loop_boundary,params,&slots);}
+                    if let Some(b)=default {body(b,&live,loop_boundary,params,&slots);}
                 }
                 _ => {}
             }
             out.push(statement);
         }
-        out.extend(live[inherited.len()..].iter().rev().map(drop));
-        *statements = out;
+        out.extend(live[inherited.len()..].iter().rev().map(|n|drop(n,&slots)));
+        *statements=out;
     }
-    body(&mut program.body, &[], 0);
+    body(&mut program.body,&[],0,&[],&Slots::new());
     program
 }

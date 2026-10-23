@@ -1422,9 +1422,10 @@ such as `type(point) :: hi = point(1, 1)` and passing `s%a` to a `type(point)`
 dummy work as for top-level objects. A component may also be a fixed-size or
 ALLOCATABLE array of a derived type, as in `type(node), allocatable :: nodes(:)`:
 `g%nodes(i)%id`, `g%nodes%w`, sections, ALLOCATE, SIZE, deep copies and passing
-`g` to a procedure all work. Its element type must have scalar intrinsic
-components, and a constructor of the containing type cannot yet give such a
-component. POINTER components of derived type and ALLOCATABLE scalar components
+`g` to a procedure all work. Its element type may also own supported numeric
+or LOGICAL ALLOCATABLE array components, as in a container of independently
+allocated vectors. A constructor of the containing type cannot yet give such
+a component. POINTER components of derived type and ALLOCATABLE scalar components
 (including deferred-length CHARACTER) remain unsupported, and an ALLOCATABLE
 component, like any ALLOCATABLE array, must be allocated (by ALLOCATE or by
 assignment) somewhere before it is referenced.
@@ -1455,8 +1456,33 @@ An element can be passed to a scalar derived dummy (`call bump(a(i), 1.0)`) and
 can call type-bound procedures (`call a(i)%move(dx)`, `a(i)%norm()`); the element
 is copied into a temporary object for the call and, for a subroutine, copied
 back afterwards.
-ALLOCATABLE and POINTER components, array constructors of such types,
-polymorphic arrays, saved arrays, derived PARAMETER arrays, pointers,
+Numeric and LOGICAL ALLOCATABLE array components also work. Each record element
+owns a separate descriptor holding allocation status, extents, lower bounds,
+data and initialization flags. Fixed and runtime-sized parent arrays, component
+ranks through 15, direct component reads/writes, ALLOCATE/DEALLOCATE, scalar
+procedure calls, READ, RANDOM_NUMBER and MOVE_ALLOC are covered. Scalar-element
+intrinsic assignment deep-copies the components; changing or deallocating the
+copy does not affect the source. Component allocations are released when their
+owning outer array is deallocated or leaves scope. Passing array dummies does
+not transfer ownership away from the caller.
+
+The representation currently copies owned component storage when materializing
+a scalar element. Whole-array assignment and array constructors of records with
+ALLOCATABLE components, INTENT(OUT) array dummies of these types, array-valued
+function results of these types, CHARACTER allocatable components, POINTER
+components, intrinsic copies of containers whose array elements own allocations,
+and further arrays of descriptor-owning containers remain unsupported.
+Scalar calls to ELEMENTAL procedures support derived actuals with numeric or
+LOGICAL ALLOCATABLE components and fixed array components, including scalar
+array elements. Their generated component interface preserves ordinary array
+arguments and the source procedure's purity. Array-valued ELEMENTAL calls with
+these records (including scalar record broadcasting) remain unsupported; see
+`tests/programs/xacv_elemental_allocatable_argument.f90`.
+Default output of records with ALLOCATABLE components requires defined I/O,
+as in Fortran. Run `python tests/test_allocatable_record_arrays.py` for
+interpreter/native O0/O2 checks against gfortran.
+
+Polymorphic arrays, saved arrays, derived PARAMETER arrays, pointers,
 finalization and a separate-object record ABI remain unsupported.
 `tests/programs/xset_alloc_derived.f90` and `tests/185_allocated_derived_concat.f90` exercise empty
 and nonempty allocated inputs and replacement of an allocated output.

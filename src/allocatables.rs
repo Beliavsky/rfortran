@@ -1333,6 +1333,20 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                     }
                     continue;
                 }
+                Stmt::CallSub {name,args} if name=="@heap_record_drop_array" => {
+                    expression(&mut args[1],&shapes,&mut guards,checks,serial)?;
+                    out.extend(guards);out.push(s);continue;
+                }
+                Stmt::CallSub {name,args} if name=="@heap_record_load" || name=="@heap_record_store" => {
+                    let Expr::Ident(local)=&args[0] else {bail!("record allocation requires local storage")};
+                    let local=local.clone();
+                    expression(&mut args[1],&shapes,&mut guards,checks,serial)?;
+                    args.push(length(&local,&shapes).context("record allocation requires a heap descriptor")?);
+                    args.push(allocated(&local,&shapes).context("missing record allocation status")?);
+                    args.extend(axes(&local,&shapes).context("missing record allocation shape")?);
+                    args.extend(lowers(&local,&shapes).context("missing record allocation bounds")?);
+                    out.extend(guards);out.push(s);continue;
+                }
                 Stmt::CallSub {name,..} if matches!(name.as_str(), "@module_bind" | "@heap_bind" | "@ptr_bind" | "@heap_drop" | "@heap_free") => {out.push(s);continue;}
                 Stmt::CallSub{name,args} if name=="@heap_allocate" || name=="@heap_resize"=>{
                     for extent in args.iter_mut().skip(2){expression(extent,&shapes,&mut guards,checks,serial)?;}

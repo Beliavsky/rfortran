@@ -50,6 +50,18 @@ impl Lower {
             return Ok(());
         };
         p.signature.reorder(name, args)?;
+        // Source scalar records may contain arrays. Their flattened ABI is an
+        // ordinary procedure with array dummies, not an elemental array call.
+        let array_actual = args.iter().any(|arg| {
+            self.array_shape(arg).is_some() || match arg {
+                Expr::Ident(n) | Expr::Section { name: n, .. } =>
+                    objects.get(n).is_some_and(|o| !o.dims.is_empty()),
+                Expr::Call(n, _) | Expr::Index(n, _) =>
+                    objects.get(n).is_some_and(|o| !o.dims.is_empty())
+                        && self.element(arg, objects).is_none(),
+                _ => false,
+            }
+        });
         for (arg, ty) in args.iter_mut().zip(&p.types) {
             let Some(ty) = ty else { continue };
             if crate::named_arguments::omitted(arg) {
@@ -68,6 +80,14 @@ impl Lower {
             // Pass scalar elements as component storage too. Copying a whole
             // record to a temporary would read unset INTENT(OUT) components.
             let element = self.element(arg, objects).is_some();
+            if self.types.get(ty).is_some_and(|fields| fields.iter().any(|f| !f.dims.is_empty() || f.heap.is_some())) {
+                if array_actual {
+                    bail!("ELEMENTAL derived array actuals currently require scalar primitive components");
+                }
+                // Scalar array elements are materialized by scalar_procedures;
+                // whole scalar records already have component storage.
+                continue;
+            }
             if !array && !element {
                 continue;
             }
@@ -75,11 +95,6 @@ impl Lower {
                 *arg = Expr::Call(n.clone(), indices.clone());
             }
             let fields = self.fields(ty)?;
-            if array && fields.iter().any(|f| !f.dims.is_empty()) {
-                bail!(
-                    "ELEMENTAL derived array actuals currently require scalar primitive components"
-                );
-            }
             let (parts, _) = self.parts(arg.clone(), ty, objects, prefix)?;
             let mut values = vec![Expr::Str(ty.clone())];
             values.extend(

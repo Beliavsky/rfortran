@@ -4,6 +4,8 @@ mod file_io;
 mod characters;
 #[path = "module_data.rs"]
 mod module_data;
+#[path = "record_heap.rs"]
+mod record_heap;
 use anyhow::{bail, Context, Result};
 use cranelift_codegen::{isa, settings};
 use cranelift_object::{ObjectBuilder, ObjectModule};
@@ -2902,6 +2904,12 @@ fn gen_stmts(
                     let one=b.ins().iconst(types::I64,1);let (extent,overflow)=b.ins().sadd_overflow(difference,one);let okay=b.ins().bnot(overflow);file_io::require(module,b,ptr_ty,dc,okay,"allocation extent overflow")?;
                     let zero=b.ins().iconst(types::I64,0);let extent=b.ins().select(empty,zero,extent);
                     for (target,value) in args[..2].iter().zip([lower,extent]) {let IExpr::Ident(n)=target else{bail!("allocation bounds require descriptor fields")};let address=storage_addr(b,ptr_ty,ints[n]);b.ins().store(MemFlags::new(),value,address,0);}
+                    continue;
+                }
+                if name.starts_with("@heap_record_") {
+                    let index=if name=="@heap_record_dispose" {0}else{1};
+                    let value=eval_expr(b,ex,ptr_ty,&args[index],ints,reals,bools,func_meta);let value=to_i64(b,value);
+                    record_heap::emit(module,b,ptr_ty,dc,name,args,value,ints,reals,bools)?;
                     continue;
                 }
                 if name=="@heap_bind" {

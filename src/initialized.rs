@@ -220,6 +220,24 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                 let Expr::Ident(local)=&args[0] else{unreachable!()};
                 let v=&env[local];before.push(Stmt::CallSub{name:"@heap_bind".into(),args:vec![Expr::Ident(v.flag.clone())]});
             }
+            Stmt::CallSub {name,args} if name=="@heap_record_load" || name=="@heap_record_store" => {
+                let Expr::Ident(local)=&args[0] else{unreachable!()};
+                let local=local.clone();
+                let mask=env[&local].flag.clone();
+                if name=="@heap_record_load" {
+                    read(&args[1],env,&mut before,serial)?;
+                    for meta in &args[2..] {let Expr::Ident(n)=meta else{unreachable!()};write(n,None,env,&mut after,serial);}
+                    let variable=env.get_mut(&local).unwrap();variable.state=State::Maybe;variable.elements.clear();
+                } else {
+                    for meta in &args[2..] {read(meta,env,&mut before,serial)?;}
+                    if let Some((n,index))=key(&args[1]) {write(n,index,env,&mut after,serial);}
+                }
+                args.push(Expr::Ident(mask));
+            }
+            Stmt::CallSub {name,args} if name=="@heap_record_dispose" || name=="@heap_record_drop_array" => {
+                if name=="@heap_record_dispose" {read(&args[0],env,&mut before,serial)?;}
+                else {read(&args[1],env,&mut before,serial)?;}
+            }
             Stmt::CallSub {name,args} if name=="@heap_bounds" => {
                 for value in &args[2..]{read(value,env,&mut before,serial)?;}
                 for target in &args[..2]{let Expr::Ident(n)=target else{unreachable!()};write(n,None,env,&mut after,serial);}

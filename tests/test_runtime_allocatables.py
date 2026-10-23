@@ -148,11 +148,15 @@ end
 """, "30 42\n")
 
     def test_same_flat_size_different_shapes(self):
-        for operation in ("print *,a+b", "a=b"):
+        for operation in ("print *,a+b",):
             with self.subTest(operation=operation):
                 self.check("integer,allocatable::a(:,:),b(:,:)\n"
                            "allocate(a(2,3),b(3,2))\na=1\nb=2\n" + operation +
                            "\ndeallocate(a,b)\nend\n", error="shapes do not conform")
+        # A whole ALLOCATABLE assignment reallocates to the RHS shape.
+        self.check("integer,allocatable::a(:,:),b(:,:)\n"
+                   "allocate(a(2,3),b(3,2))\na=1\nb=2\na=b\n"
+                   "print *,shape(a),sum(a)\ndeallocate(a,b)\nend\n", "3 2 12\n")
 
     def test_unallocated_and_repeated_allocation(self):
         for operation, message in (("allocate(a(2,3))", "already allocated"),
@@ -213,9 +217,11 @@ end
 ""","6 6\n8 8\n10 10\n")
 
     def test_unsupported_consumers_rejected(self):
+        self.check("integer,allocatable::a(:,:)\nallocate(a(2,3))\na=2\n"
+                   "print *,a(:,1)\ndeallocate(a)\nend\n", "2 2\n")
         for operation in ("print *,transpose(a)", "print *,sum(a,dim=1)",
                           "print *,sum(a,mask=a>0)",
-                          "print *,a(:,1)", "print *,a(1)"):
+                          "print *,a(1)"):
             with self.subTest(operation=operation):
                 self.reject("integer,allocatable::a(:,:)\nallocate(a(2,3))\na=2\n" +
                             operation + "\ndeallocate(a)\nend\n",

@@ -2,6 +2,14 @@ use crate::ast::{BinOp, CaseItem, Expr, Program, Stmt, TypeSpec, UnOp};
 use std::collections::HashMap;
 
 #[derive(Clone, Debug)]
+struct RecordAllocation {
+    integers: Option<Vec<i64>>,
+    reals: Option<Vec<f64>>,
+    mask: Vec<i64>,
+    metadata: Vec<i64>,
+}
+
+#[derive(Clone, Debug)]
 struct FuncDef {
     params: Vec<String>,
     body: Vec<Stmt>,
@@ -19,6 +27,8 @@ pub(crate) fn interpret_scalars(program: &Program, flags: &std::collections::BTr
 
 fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeMap<String,String>, &mut u64)>)
     -> anyhow::Result<HashMap<String,Expr>> {
+    thread_local! { static RECORD_ALLOCATIONS: std::cell::RefCell<Vec<Option<RecordAllocation>>> = std::cell::RefCell::new(vec![None]); }
+    RECORD_ALLOCATIONS.with(|records| *records.borrow_mut()=vec![None]);
     thread_local! { static RANDOM_STATE: std::cell::Cell<u64> = const { std::cell::Cell::new(1) }; }
     RANDOM_STATE.with(|state| state.set(session.as_ref().map_or(1, |(_, seed)| **seed)));
     thread_local! { static FILES: std::cell::RefCell<crate::file_io::Files> = std::cell::RefCell::new(crate::file_io::Files::default()); }
@@ -1245,6 +1255,44 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         let upper=eval_expr(&args[3],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
                         let extent=i64::try_from((i128::from(upper)-i128::from(lower)+1).max(0)).unwrap_or_else(|_|{eprintln!("Runtime error: allocation extent overflow");std::process::exit(1)});
                         let fr=call_stack.last_mut().unwrap();for (arg,value) in args[..2].iter().zip([lower,extent]){let Expr::Ident(n)=arg else{unreachable!()};fr.env_int.insert(n.clone(),value);}idx+=1;continue;
+                    }
+                    if name.starts_with("@heap_record_") {
+                        let frame=call_stack.last().unwrap().clone();
+                        let position=if name=="@heap_record_dispose" {0}else{1};
+                        let value=eval_expr(&args[position],&frame.env_str,&frame.env_int,&frame.env_real32,&frame.env_real64,&frame.env_log,funcs,call_stack).0.unwrap_or(0);
+                        if name=="@heap_record_dispose" {
+                            RECORD_ALLOCATIONS.with(|records| {if let Some(slot)=records.borrow_mut().get_mut(value as usize) {*slot=None;}});
+                        } else if name=="@heap_record_drop_array" {
+                            let Expr::Ident(array)=&args[0] else{unreachable!()};
+                            let handles=frame.env_int_arrays.get(array).cloned().unwrap_or_default();
+                            RECORD_ALLOCATIONS.with(|records| {let mut records=records.borrow_mut();for handle in handles.iter().take(value.max(0) as usize) {if let Some(slot)=records.get_mut(*handle as usize) {*slot=None;}}});
+                            if let Some(array)=call_stack.last_mut().unwrap().env_int_arrays.get_mut(array) {array.fill(0);}
+                        } else {
+                            let Expr::Ident(local)=&args[0] else{unreachable!()};
+                            let Expr::Ident(mask)=args.last().unwrap() else{unreachable!()};
+                            let metadata=&args[2..args.len()-1];
+                            if name=="@heap_record_load" {
+                                let record=RECORD_ALLOCATIONS.with(|records|records.borrow().get(value as usize).cloned().flatten());
+                                let mut values=vec![0;metadata.len()];
+                                for value in values.iter_mut().skip(2+(metadata.len()-2)/2) {*value=1;}
+                                if let Some(record)=&record {values=record.metadata.clone();}
+                                let frame=call_stack.last_mut().unwrap();
+                                for (i,(target,value)) in metadata.iter().zip(values).enumerate() {
+                                    let Expr::Ident(target)=target else{unreachable!()};
+                                    if i==1 {frame.env_log.insert(target.clone(),value!=0);}else{frame.env_int.insert(target.clone(),value);}
+                                }
+                                if let Some(array)=frame.env_real_arrays.get_mut(local) {*array=record.as_ref().and_then(|r|r.reals.clone()).unwrap_or_default();}
+                                else {frame.env_int_arrays.insert(local.clone(),record.as_ref().and_then(|r|r.integers.clone()).unwrap_or_default());}
+                                frame.env_int_arrays.insert(mask.clone(),record.map(|r|r.mask).unwrap_or_default());
+                            } else {
+                                let Expr::Ident(slot)=&args[1] else{unreachable!()};
+                                let values=metadata.iter().enumerate().map(|(i,target)|{let Expr::Ident(n)=target else{unreachable!()};if i==1 {i64::from(*frame.env_log.get(n).unwrap_or(&false))}else{*frame.env_int.get(n).unwrap_or(&0)}}).collect();
+                                let record=RecordAllocation {integers:frame.env_int_arrays.get(local).cloned(),reals:frame.env_real_arrays.get(local).cloned(),mask:frame.env_int_arrays.get(mask).cloned().unwrap_or_default(),metadata:values};
+                                let handle=RECORD_ALLOCATIONS.with(|records| {let mut records=records.borrow_mut();if value>0 && (value as usize)<records.len() {records[value as usize]=Some(record);value}else if let Some(free)=records.iter().enumerate().skip(1).find_map(|(i,r)|r.is_none().then_some(i)) {records[free]=Some(record);free as i64}else{records.push(Some(record));(records.len()-1) as i64}});
+                                call_stack.last_mut().unwrap().env_int.insert(slot.clone(),handle);
+                            }
+                        }
+                        call_stack.last_mut().unwrap().commit_saved();idx+=1;continue;
                     }
                     if name=="@heap_bind" {idx+=1;continue;}
                     if name=="@heap_allocate" || name=="@heap_resize" || name=="@heap_free" || name=="@heap_drop" {

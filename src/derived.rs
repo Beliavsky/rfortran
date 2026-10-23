@@ -238,7 +238,7 @@ impl Lowerer {
                                     None => fields.push(Component { dims: dims.clone(), ..Component::scalar(n, kind, None) }),
                                 }
                             }
-                            Stmt::DummyIntent { name: n, intent } if intent == "allocatable" || intent == "pointer" => {
+                            Stmt::DummyIntent { name: n, intent } if intent == "allocatable" || intent == "pointer" || intent == "@record_slots" => {
                                 attrs.push((n.clone(), intent.clone()));
                             }
                             Stmt::DummyIntent { intent, .. } => {
@@ -703,6 +703,7 @@ impl Lowerer {
                 continue;
             }
             for a in &c.attrs {
+                if dummy && a=="@record_slots" {continue;}
                 out.push(Stmt::DummyIntent { name: field.clone(), intent: a.clone() });
             }
             // Each component of an OPTIONAL derived dummy is an OPTIONAL dummy.
@@ -734,6 +735,14 @@ impl Lowerer {
         }
         Ok(())
     }
+    fn has_array_components(&self, ty: &str) -> bool {
+        self.types[ty].components.iter().any(|field| !field.dims.is_empty()
+            || field.derived.as_ref().is_some_and(|child| self.has_array_components(child)))
+    }
+    fn owns_record_slots(&self, ty:&str) -> bool {
+        self.types[ty].components.iter().any(|field|field.attrs.iter().any(|a|a=="@record_slots")
+            || field.derived.as_ref().is_some_and(|child|self.owns_record_slots(child)))
+    }
     fn assign(
         &mut self,
         target: &str,
@@ -742,6 +751,10 @@ impl Lowerer {
         objects: &Objects,
         out: &mut Vec<Stmt>,
     ) -> Result<()> {
+        if self.owns_record_slots(ty) {
+            if matches!(&value,Expr::Ident(n) if n==target) {return Ok(());}
+            bail!("intrinsic assignment of containers whose array elements own allocatable components is not yet supported");
+        }
         if let Expr::Call(n, args) = &mut value {
             self.bound_call(n, args, objects)?;
         }
@@ -1285,6 +1298,8 @@ impl Lowerer {
                         .clone();
                     let outer = (self.in_module, self.in_procedure);
                     (self.in_module, self.in_procedure) = (false, true);
+                    let array_record_abi = proc.params.iter().any(|(_, ty)|
+                        ty.as_ref().is_some_and(|ty| self.has_array_components(ty)));
                     let old_params = params.clone();
                     let mut new_params = vec![];
                     for (n, ty) in &proc.params {
@@ -1356,6 +1371,14 @@ impl Lowerer {
                         self.body(body, &objects, &old_params)?;
                         (self.in_module, self.in_procedure) = outer;
                         *params = new_params;
+                        // ELEMENTAL source dummies are scalar records. Their
+                        // component ABI may have array dummies after flattening.
+                        if array_record_abi {
+                            match &mut s {
+                                Stmt::Function { elemental, .. } | Stmt::Subroutine { elemental, .. } => *elemental = false,
+                                _ => unreachable!(),
+                            }
+                        }
                     }
                 }
                 _ => {}

@@ -39,13 +39,31 @@ results, nested calls, OPTIONAL/keywords, self-assignment, impure side effects,
 default initialization, early returns, nested records, and scalar reduction
 arguments.
 
-The next full-source blocker is `date_time_vec_vec` (around lines 538-541): its
+The `date_time_vec_vec` blocker (around lines 538-541) is now fixed: its
 allocatable `dd(:)` component has element type `date_time_vec`, which itself
-owns allocatable `xx(:)` storage. A ninth repro is
-[tests/programs/xacv_nested_allocatable_records.f90](tests/programs/xacv_nested_allocatable_records.f90).
-It prints `2` with gfortran. rfort rejects the type while expanding record array
-components: arrays whose record elements contain ALLOCATABLE or POINTER
-components require per-element descriptors and are not supported yet.
+owns allocatable `xx(:)` storage. The ninth repro,
+[tests/programs/xacv_nested_allocatable_records.f90](tests/programs/xacv_nested_allocatable_records.f90),
+prints `2` with both rfort and gfortran. Owned numeric/LOGICAL component
+descriptors preserve independent allocation, bounds, initialized-element masks,
+deep scalar-element copies and cleanup. Regression tests are in
+`python tests/test_allocatable_record_arrays.py`, including rank-15 descriptors.
+
+The former line-722 blocker, `num_obs(dvec(ivec))`, is now fixed. The actual
+argument is a scalar array element whose record owns an allocatable component.
+The tenth repro,
+[tests/programs/xacv_elemental_allocatable_argument.f90](tests/programs/xacv_elemental_allocatable_argument.f90),
+prints `3` with rfort and gfortran. Scalar ELEMENTAL calls now use the ordinary
+array-component interface after record flattening. Regression tests also cover
+whole scalar actuals, fixed array components, and impure ELEMENTAL INOUT calls.
+Array-valued calls involving these record types remain explicitly unsupported.
+
+The next full-source blocker is
+[tests/programs/xacv_derived_result_array_element.f90](tests/programs/xacv_derived_result_array_element.f90)
+for line 1172 in `month_year_code_vec`:
+`xmy(i) = month_year_code_scalar(text(i))`. It prints `2024 2024 1 2` with
+gfortran. rfort reports `unsupported derived array value of type month_year`:
+the assignment path for an array element does not yet materialize an ordinary
+scalar derived-valued function call.
 
 ## Intrinsic calls after extending an intrinsic generic
 

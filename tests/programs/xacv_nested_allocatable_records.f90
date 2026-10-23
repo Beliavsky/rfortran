@@ -1,4 +1,4 @@
-! xacv.f90 blocker: date_time_vec_vec contains an array of date_time_vec.
+! xacv.f90 regression: date_time_vec_vec contains an array of date_time_vec.
 ! Each date_time_vec owns an independently allocated xx array.
 program test_nested_allocatable_records
 implicit none
