@@ -557,6 +557,11 @@ pub fn associate(pairs: Vec<(String, Expr)>, mut body: Vec<Stmt>) -> Result<Stmt
             for e in expressions(s) {
                 visit_expr(e, &mut |e| match e {
                     Expr::Ident(n) if n == name => *e = selector.clone(),
+                    // A COMPLEX part of an expression selector, as `r%im`.
+                    Expr::Ident(n) if whole.is_none() && matches!(n.strip_prefix(&prefix), Some("re" | "im")) => {
+                        let part = if n.ends_with("%re") { "real" } else { "aimag" };
+                        *e = Expr::Call(part.into(), vec![selector.clone()]);
+                    }
                     Expr::Ident(n) | Expr::Call(n, _) | Expr::Index(n, _) | Expr::Section { name: n, .. }
                         if n == name || n.starts_with(&prefix) =>
                     {

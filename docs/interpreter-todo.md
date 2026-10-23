@@ -15,3 +15,9 @@ goes through CHARACTER temporaries, so programs using them are the most affected
 | `test_character_arrays.py` `test_large_arrays` | CHARACTER arrays of more than 1024 elements, about 1 ms per element operation |
 | `test_deferred_character_arrays.py` `test_assignment_reallocates_to_length_and_size` | Deferred-length arrays with a runtime length use temporaries of 4096 characters per element access (about 20 s) |
 | `test_deferred_character_arrays.py` `test_values_that_refer_to_the_array` | As above |
+
+Output differences, not speed:
+
+| Program or test | Difference |
+|---|---|
+| `print *, z` for a `complex(kind=8)` value | The interpreter prints the parts with single-precision digits, `(1.00000000,-1.00000000)`; compiled programs print double-precision digits as gfortran does |

@@ -409,7 +409,13 @@ retain a complex argument's component kind. Initialization checks apply to each
 component. List-directed input supports scalar and whole-array COMPLEX;
 constant-format input also supports bounded implied-DO lists, with two real
 fields per element. COMPLEX input sections remain unsupported.
-This is an initial subset: kind 16, complex components inside user-defined types, implicit COMPLEX declarations, persistent initialized
+Derived types may have COMPLEX scalar and fixed-size array components, also in
+nested types and in arrays of records: `p%z`, `p%z%im`, `a(i)%z` and
+`aimag(a(i)%z)` work as COMPLEX values, and list-directed output of a whole
+object prints its COMPLEX components in parentheses. An ASSOCIATE name whose
+selector is a COMPLEX expression supports `r%re` and `r%im`.
+
+This is an initial subset: kind 16, default initialization of COMPLEX components, implicit COMPLEX declarations, persistent initialized
 complex locals, and user-defined complex ELEMENTAL procedures are not implemented.
 List-directed array output currently requires fixed extents.
 

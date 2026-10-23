@@ -23,6 +23,8 @@ struct Layout {
     types: HashMap<String, Vec<Stmt>>,
     constants: HashMap<String, Expr>,
     globals: Scope,
+    /// The result type of each function defined in the program.
+    functions: Scope,
 }
 
 fn align(offset: u64, alignment: u64) -> u64 {
@@ -137,9 +139,43 @@ fn declarations(body: &[Stmt], scope: &mut Scope) {
     }
 }
 
-fn collect(body: &[Stmt], types: &mut HashMap<String, Vec<Stmt>>, constants: &mut HashMap<String, Expr>, globals: &mut Scope) {
+/// The result type of a function: its prefix type, or the declaration of its
+/// result variable, named by its final RETURN or by the function.
+fn result_type(name: &str, return_type: &Option<TypeSpec>, body: &[Stmt]) -> Option<Declared> {
+    if let Some(kind) = return_type {
+        return Some(Declared::Intrinsic(kind.clone()));
+    }
+    let result = match body.last() {
+        Some(Stmt::Return(Some(Expr::Ident(r)))) => r.to_ascii_lowercase(),
+        _ => name.to_ascii_lowercase(),
+    };
+    let mut scope = Scope::new();
+    declarations(body, &mut scope);
+    scope.remove(&result)
+}
+fn collect(body: &[Stmt], types: &mut HashMap<String, Vec<Stmt>>, constants: &mut HashMap<String, Expr>, globals: &mut Scope, functions: &mut Scope) {
     for s in body {
+        if let Stmt::Function { name, return_type, body, .. } = s {
+            if let Some(result) = result_type(name, return_type, body) {
+                functions.insert(name.to_ascii_lowercase(), result);
+            }
+        }
         match s {
+            // The kind constants of ISO_FORTRAN_ENV, which is resolved later,
+            // and renamed constants, as `wp => real64`.
+            Stmt::Use { module, renames, .. } => {
+                let intrinsic = module.eq_ignore_ascii_case("iso_fortran_env");
+                let kinds = [("int8", 1), ("int16", 2), ("int32", 4), ("int64", 8), ("real32", 4), ("real64", 8)];
+                if intrinsic {
+                    for (name, value) in kinds { constants.insert(name.into(), Expr::IntLit(value.to_string())); }
+                }
+                for (local, remote) in renames {
+                    let remote = remote.to_ascii_lowercase();
+                    let value = kinds.iter().find(|(n, _)| intrinsic && *n == remote)
+                        .map_or(Expr::Ident(remote.clone()), |(_, v)| Expr::IntLit(v.to_string()));
+                    constants.insert(local.to_ascii_lowercase(), value);
+                }
+            }
             Stmt::DerivedType { name, components, .. } => {
                 types.insert(name.to_ascii_lowercase(), components.clone());
             }
@@ -150,9 +186,9 @@ fn collect(body: &[Stmt], types: &mut HashMap<String, Vec<Stmt>>, constants: &mu
             }
             Stmt::Module { body, .. } => {
                 declarations(body, globals);
-                collect(body, types, constants, globals);
+                collect(body, types, constants, globals, functions);
             }
-            Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } | Stmt::Block { body } => collect(body, types, constants, globals),
+            Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } | Stmt::Block { body } => collect(body, types, constants, globals, functions),
             _ => {}
         }
     }
@@ -187,7 +223,10 @@ impl Layout {
         };
         // A component designator, as `x%r`, names a component, not a variable.
         if base.contains('%') { return; }
-        let Some(declared) = scope.get(&base).or_else(|| self.globals.get(&base)) else { return };
+        // A variable, or the result of a function reference.
+        let declared = scope.get(&base).or_else(|| self.globals.get(&base))
+            .or_else(|| matches!(source, Expr::Call(..)).then(|| self.functions.get(&base)).flatten());
+        let Some(declared) = declared else { return };
         let Some(bits) = self.bits(declared) else { return };
         let bits = Expr::IntLit(bits.to_string());
         *e = match kind {
@@ -201,9 +240,9 @@ pub fn resolve(mut program: Program) -> Result<Program> {
     if !serde_json::to_string(&program.body).is_ok_and(|t| t.to_ascii_lowercase().contains("\"storage_size\"")) {
         return Ok(program);
     }
-    let (mut types, mut constants, mut globals) = (HashMap::new(), HashMap::new(), Scope::new());
-    collect(&program.body, &mut types, &mut constants, &mut globals);
-    let layout = Layout { types, constants, globals };
+    let (mut types, mut constants, mut globals, mut functions) = (HashMap::new(), HashMap::new(), Scope::new(), Scope::new());
+    collect(&program.body, &mut types, &mut constants, &mut globals, &mut functions);
+    let layout = Layout { types, constants, globals, functions };
     layout.rewrite(&mut program.body, &Scope::new());
     Ok(program)
 }

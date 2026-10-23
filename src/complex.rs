@@ -130,9 +130,96 @@ struct Lower {
     free: HashMap<String, Vec<String>>,
     live: Vec<(String, String)>,
 }
+thread_local! {
+    /// The COMPLEX components of each derived type, by component path, such
+    /// as `z` or `inner%z`, with their types and extents.
+    static FIELDS: std::cell::RefCell<HashMap<String, Vec<(String, Info)>>> = std::cell::RefCell::new(HashMap::new());
+    /// All components of each type with COMPLEX components, in order, by
+    /// path, for list-directed output of whole objects.
+    static ORDER: std::cell::RefCell<HashMap<String, Vec<String>>> = std::cell::RefCell::new(HashMap::new());
+}
+/// Record the COMPLEX components of every derived type, including those of
+/// derived components.
+fn complex_fields(body: &[Stmt]) {
+    fn definitions(body: &[Stmt], types: &mut HashMap<String, Vec<Stmt>>) {
+        for s in body {
+            match s {
+                Stmt::DerivedType { name, components, .. } => { types.insert(name.to_ascii_lowercase(), components.clone()); }
+                Stmt::Module { body, .. } | Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } | Stmt::Block { body } => definitions(body, types),
+                _ => {}
+            }
+        }
+    }
+    fn fields(name: &str, types: &HashMap<String, Vec<Stmt>>, depth: usize) -> Vec<(String, Info)> {
+        let Some(components) = types.get(&name.to_ascii_lowercase()) else { return vec![] };
+        let mut out = vec![];
+        for c in components {
+            match c {
+                Stmt::VarDecl { kind, names } if complex_kind(kind).is_some() => {
+                    out.extend(names.iter().map(|n| (n.clone(), Info::scalar(kind.clone()))));
+                }
+                Stmt::ArrayDecl { kind, name, dims } if complex_kind(kind).is_some() => {
+                    out.push((name.clone(), Info { kind: kind.clone(), dims: dims.clone() }));
+                }
+                // Components of a scalar derived component, as `inner%z`.
+                Stmt::DerivedDecl { type_name, names, dims, .. } if dims.is_empty() && depth < 8 => {
+                    for (path, info) in fields(type_name, types, depth + 1) {
+                        out.extend(names.iter().map(|n| (format!("{n}%{path}"), Info { kind: info.kind.clone(), dims: info.dims.clone() })));
+                    }
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+    /// The component paths of a type in order, unless it has a component
+    /// that is an array of a derived type.
+    fn order(name: &str, types: &HashMap<String, Vec<Stmt>>, depth: usize) -> Option<Vec<String>> {
+        let components = types.get(&name.to_ascii_lowercase())?;
+        let mut out = vec![];
+        for c in components {
+            match c {
+                Stmt::VarDecl { names, .. } => out.extend(names.iter().cloned()),
+                Stmt::InitializedDecl { entities, .. } => out.extend(entities.iter().map(|(n, _)| n.clone())),
+                Stmt::ArrayDecl { name, .. } => if !out.contains(name) { out.push(name.clone()) },
+                Stmt::DerivedDecl { type_name, names, dims, .. } if dims.is_empty() && depth < 8 => {
+                    let inner = order(type_name, types, depth + 1)?;
+                    for n in names { out.extend(inner.iter().map(|p| format!("{n}%{p}"))); }
+                }
+                Stmt::DerivedDecl { .. } => return None,
+                _ => {}
+            }
+        }
+        Some(out)
+    }
+    let mut types = HashMap::new();
+    definitions(body, &mut types);
+    let all: HashMap<String, Vec<(String, Info)>> = types.keys().map(|t| (t.clone(), fields(t, &types, 0))).filter(|(_, f)| !f.is_empty()).collect();
+    let orders = all.keys().filter_map(|t| order(t, &types, 0).map(|o| (t.clone(), o))).collect();
+    FIELDS.with(|f| *f.borrow_mut() = all);
+    ORDER.with(|o| *o.borrow_mut() = orders);
+}
 fn declarations(body: &[Stmt], scope: &mut Scope) {
     for stmt in body {
         match stmt {
+            // The COMPLEX components of a scalar derived object, as `p%z`,
+            // and the scalar COMPLEX components of an array of records, as
+            // `a%z`, which have the array's extents.
+            Stmt::DerivedDecl { type_name, names, dims, .. } => {
+                FIELDS.with(|f| if let Some(fields) = f.borrow().get(&type_name.to_ascii_lowercase()) {
+                    for n in names {
+                        // The object's type, under a reserved key.
+                        scope.insert(format!("@object_type:{n}"), Info { kind: TypeSpec::IntegerKind(type_name.to_ascii_lowercase()), dims: dims.clone() });
+                        for (path, info) in fields {
+                            if dims.is_empty() {
+                                scope.insert(format!("{n}%{path}"), Info { kind: info.kind.clone(), dims: info.dims.clone() });
+                            } else if info.dims.is_empty() {
+                                scope.insert(format!("{n}%{path}"), Info { kind: info.kind.clone(), dims: dims.clone() });
+                            }
+                        }
+                    }
+                });
+            }
             Stmt::VarDecl { kind, names } => {
                 for n in names {
                     scope.insert(n.clone(), Info::scalar(kind.clone()));
@@ -157,6 +244,15 @@ fn declarations(body: &[Stmt], scope: &mut Scope) {
             _ => {}
         }
     }
+}
+/// A COMPLEX component of an element of an array of records,
+/// `@record_component:z(a(i))`: the scope key `a%z` and the subscripts.
+fn record_component<'e>(e: &'e Expr, s: &Scope) -> Option<(String, &'e [Expr])> {
+    let Expr::Call(tag, args) = e else { return None };
+    let path = tag.strip_prefix("@record_component:")?;
+    let [Expr::Call(object, indices) | Expr::Index(object, indices)] = args.as_slice() else { return None };
+    let key = format!("{object}%{path}");
+    s.get(&key).filter(|v| complex_kind(&v.kind).is_some() && !v.dims.is_empty()).map(|_| (key, indices.as_slice()))
 }
 fn dims(n: &str, v: &Info) -> Vec<Expr> {
     v.dims
@@ -290,6 +386,10 @@ impl Lower {
     }
     fn info(&self, e: &Expr, s: &Scope) -> Result<Option<Info>> {
         let scalar = |kind| Ok(Some(Info::scalar(kind)));
+        if let Some((key, indices)) = record_component(e, s) {
+            let v = &s[&key];
+            return Ok(Some(Info { kind: v.kind.clone(), dims: selection_dims(&key, indices, v, s, self)? }));
+        }
         match e {
             Expr::Ident(n) => {
                 if let Some((base, field)) = n.rsplit_once('%') {
@@ -748,6 +848,20 @@ impl Lower {
             return Ok(Pair {
                 re,
                 im: real("0.0", k),
+                kind: k,
+                dims: dimensions,
+            });
+        }
+        if let Some((_, indices)) = record_component(&e, s) {
+            let Expr::Call(tag, _) = &e else { unreachable!() };
+            let mut indices = indices.to_vec();
+            self.indices(&mut indices, s, out)?;
+            let Expr::Call(_, element) = &e else { unreachable!() };
+            let (Expr::Call(object, _) | Expr::Index(object, _)) = &element[0] else { unreachable!() };
+            let element = Expr::Call(object.clone(), indices);
+            return Ok(Pair {
+                re: call(&format!("{tag}%re"), vec![element.clone()]),
+                im: call(&format!("{tag}%im"), vec![element]),
                 kind: k,
                 dims: dimensions,
             });
@@ -1465,6 +1579,24 @@ impl Lower {
         }
         Ok(values)
     }
+    /// A whole object of a type with COMPLEX components, as its components in
+    /// order; an array of such records, element by element.
+    fn object_items(&mut self, e: Expr, s: &mut Scope, out: &mut Vec<Stmt>) -> Vec<Expr> {
+        let Expr::Ident(n) = &e else { return vec![e] };
+        let Some(Info { kind: TypeSpec::IntegerKind(ty), dims }) = s.get(&format!("@object_type:{n}")).map(|i| Info { kind: i.kind.clone(), dims: i.dims.clone() }) else { return vec![e] };
+        let Some(order) = ORDER.with(|o| o.borrow().get(&ty).cloned()) else { return vec![e] };
+        if dims.is_empty() {
+            return order.iter().map(|p| id(&format!("{n}%{p}"))).collect();
+        }
+        // A fixed-size rank-one array of records, element by element.
+        let Some(extent) = dims.first().filter(|_| dims.len() == 1)
+            .and_then(|d| crate::parameters::integer_constant(d).ok()).filter(|n| (0..=100).contains(n)) else { return vec![e] };
+        let _ = out;
+        (1..=extent).flat_map(|i| {
+            let element = call(n, vec![int(i)]);
+            order.iter().map(move |p| call(&format!("@record_component:{p}"), vec![element.clone()])).collect::<Vec<_>>()
+        }).collect()
+    }
     fn output(
         &mut self,
         items: &mut Vec<Expr>,
@@ -1475,7 +1607,12 @@ impl Lower {
         let mut values = vec![];
         let mut previous_character = false;
         let mut previous_complex = false;
-        for mut e in std::mem::take(items) {
+        let items_in = std::mem::take(items);
+        let mut expanded = vec![];
+        for e in items_in {
+            expanded.extend(self.object_items(e, s, out));
+        }
+        for mut e in expanded {
             // An I/O implied-DO is a transfer list, not an array constructor.
             // Its items may have different types and its bounds need not be
             // constant. In particular, do not ask info() for a constructor
@@ -1677,7 +1814,18 @@ impl Lower {
             let mut prefix = vec![];
             (||->Result<()>{match &mut stmt {
                 Stmt::Implicit(i) if complex_implicit(i)=>bail!("implicit COMPLEX declarations are not yet supported; declare complex variables explicitly"),
-                Stmt::DerivedType{components,..} if uses_complex(components)=>bail!("COMPLEX components inside user-defined types are not yet supported"),
+                // A COMPLEX component is a component of the COMPLEX type.
+                Stmt::DerivedType{components,..} if uses_complex(components)=>{
+                    for c in components.iter_mut() {
+                        let replacement=match c {
+                            Stmt::VarDecl{kind,names} if complex_kind(kind).is_some()=>Some(Stmt::DerivedDecl{type_name:typename(complex_kind(kind).unwrap()),names:names.clone(),attributes:vec![],polymorphic:false,dims:vec![]}),
+                            Stmt::ArrayDecl{kind,name,dims} if complex_kind(kind).is_some()=>Some(Stmt::DerivedDecl{type_name:typename(complex_kind(kind).unwrap()),names:vec![name.clone()],attributes:vec![],polymorphic:false,dims:dims.clone()}),
+                            Stmt::InitializedDecl{kind,..} if complex_kind(kind).is_some()=>bail!("default initialization of COMPLEX components is not yet supported"),
+                            _=>None,
+                        };
+                        if let Some(r)=replacement {*c=r;}
+                    }
+                }
                 Stmt::VarDecl{kind,names} if complex_kind(kind).is_some()=>{
                     let k=complex_kind(kind).unwrap();for n in names {prefix.push(Stmt::DerivedDecl{type_name:typename(k),names:vec![n.clone()],attributes:attrs.get(n).cloned().unwrap_or_default(),polymorphic:false,dims:vec![]});}return Ok(());
                 },
@@ -1693,6 +1841,16 @@ impl Lower {
                     if let Some(a)=&mut indices{self.indices(a,&mut scope,&mut prefix)?;}
                     let (name,value)=match &mut stmt{Stmt::Assign{name,value}|Stmt::AssignIndex{name,value,..}=>(name,value),_=>unreachable!()};
                     let p=self.pair(value.clone(),&mut scope,&mut prefix)?.converted(k);
+                    // A COMPLEX component of an array of records, as `a(i)%z`,
+                    // is assigned part by part.
+                    if name.contains('%') && !scope[name.as_str()].dims.is_empty() {
+                        let name=name.clone();
+                        for (part,value) in [("re",p.re),("im",p.im)] {
+                            let target=format!("{name}%{part}");
+                            prefix.push(match &indices {Some(indices)=>Stmt::AssignIndex{name:target,indices:indices.clone(),value},None=>Stmt::Assign{name:target,value}});
+                        }
+                        return Ok(());
+                    }
                     prefix.push(if let Some(indices)=indices{Stmt::AssignIndex{name:name.clone(),indices,value:p.pack()}}else{Stmt::Assign{name:name.clone(),value:p.pack()}});return Ok(());
                 },
                 Stmt::Assign{value,..}|Stmt::AssignIndex{value,..}=>self.expression(value,&mut scope,&mut prefix)?,
@@ -1944,6 +2102,7 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
     if !complex && !uses_dot_product(&p.body) {
         return Ok(p);
     }
+    complex_fields(&p.body);
     let mut lower = Lower::default();
     lower.collect(&p.body, &Scope::new())?;
     lower.body(&mut p.body, &Scope::new(), &[])?;

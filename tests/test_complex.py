@@ -26,6 +26,22 @@ class ComplexTests(unittest.TestCase):
                         self.assertEqual(result.stderr,"")
                         self.assertTrue(equivalent(result.stdout,expected),result.stdout)
 
+    def test_components_of_derived_types(self):
+        """COMPLEX scalar and array components, in a nested type, through
+        component designators, %RE and %IM, intrinsics and arguments."""
+        self.check('module m\nimplicit none\ninteger, parameter :: dp = kind(1.0d0)\ntype :: wave\n   real :: amp\n   complex :: z\n   complex(kind=dp) :: zd(2)\nend type\ntype :: outer\n   integer :: id\n   type(wave) :: w\nend type\ncontains\nfunction norm2c(z) result(r)\ncomplex, intent(in) :: z\nreal :: r\nr = abs(z)\nend function\nend module\nprogram p\nuse m\nimplicit none\ntype(wave) :: a\ntype(outer) :: o\na%amp = 2.0\na%z = (3.0, 4.0)\na%zd(1) = cmplx(1.0_dp, -1.0_dp, kind=dp)\na%zd(2) = a%zd(1) * (0.0_dp, 1.0_dp)\nprint *, a%amp, a%z\nprint *, a%z%re, a%z%im, abs(a%z), norm2c(a%z), real(a%z), aimag(a%z)\nprint *, a%zd\na%z = a%z * 2 + conjg(a%z)\nprint *, a%z\no%id = 7\no%w%z = (1.5, -2.5)\no%w%zd = (0.5_dp, 0.25_dp)\nprint *, o%id, o%w%z, o%w%zd(2), o%w%z%im\nend program\n', '   2.00000000                 (3.00000000,4.00000000)\n   3.00000000       4.00000000       5.00000000       5.00000000       3.00000000       4.00000000    \n              (1.0000000000000000,-1.0000000000000000)               (1.0000000000000000,1.0000000000000000)\n             (9.00000000,4.00000000)\n           7            (1.50000000,-2.50000000)             (0.50000000000000000,0.25000000000000000)  -2.50000000    \n')
+
+    def test_components_of_record_arrays_and_whole_objects(self):
+        """COMPLEX components of elements of an array of records, an
+        INTENT(OUT) component argument, and list-directed output of whole
+        objects with COMPLEX components."""
+        self.check('module m\nimplicit none\ntype :: wave\n   real :: amp\n   complex :: z\nend type\ncontains\nsubroutine setz(z)\ncomplex, intent(out) :: z\nz = (0.5, 1.5)\nend subroutine\nend module\nprogram p\nuse m\nimplicit none\ntype(wave) :: a, arr(3)\ninteger :: i\na%amp = 1.0\ncall setz(a%z)\nprint *, a\ndo i = 1, 3\n   arr(i)%amp = i\n   arr(i)%z = cmplx(i, -i)\nend do\nprint *, arr(2)%z, arr(3)%z%im\nprint *, arr\nend program\n', '   1.00000000                (0.500000000,1.50000000)\n            (2.00000000,-2.00000000)  -3.00000000    \n   1.00000000                (1.00000000,-1.00000000)   2.00000000                (2.00000000,-2.00000000)   3.00000000                (3.00000000,-3.00000000)\n')
+
+    def test_associate_with_complex_expression(self):
+        """ofort's xassoc_complex.f90: %IM of an ASSOCIATE name whose
+        selector is a COMPLEX expression, with KIND and STORAGE_SIZE."""
+        self.check('program hello\n  use, intrinsic :: iso_fortran_env, only: wp => real64\n  implicit none\n\n  real(wp) :: x = 0.0_wp\n  real(wp) :: h = 1.0e-50_wp\n\n\n  associate (r => f(cmplx(x, h, kind=wp)))\n    print *, "kind(r):", kind(r)\n    print *, "storage_size(r):", storage_size(r)\n    print *, "r = ", r\n    print *, 1.0_wp / h * r%im  ! the correct result should be 1.0\n    print *, 1.0_wp / h * aimag(r)  ! the correct result should be 1.0\n  end associate\n\ncontains\n\n  complex(wp) function f(x)\n    complex(wp), intent(in) :: x\n    f = sin(x)\n  end function f\n\nend program hello\n', ' kind(r):           8\n storage_size(r):         128\n r =          (0.0000000000000000,1.00000000000000001E-050)\n   1.0000000000000000     \n   1.0000000000000000     \n')
+
     def test_scalar(self):
         self.check("""implicit none
 complex::z,w
