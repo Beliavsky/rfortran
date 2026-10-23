@@ -14,6 +14,8 @@ mod elemental_records;
 mod elemental_record_results;
 #[path = "record_components.rs"]
 mod record_components;
+#[path = "derived_pointers.rs"]
+mod derived_pointers;
 
 #[derive(Clone)]
 struct Field {
@@ -142,6 +144,7 @@ struct Lower {
     /// Ordinary scalar derived-valued functions, materialized once before
     /// splitting their results into array component storage.
     scalar_results: HashMap<String, String>,
+    target_roots: std::collections::HashSet<String>,
     elemental_records: HashMap<String, elemental_records::Procedure>,
     elemental_results: HashMap<String, elemental_record_results::ResultProcedure>,
     elemental_functions: std::collections::HashSet<String>,
@@ -187,7 +190,7 @@ impl Lower {
                                 }
                                 for n in names {
                                     for f in &fields {
-                                        let field = format!("{n}${}", f.name);
+                                        let field = format!("{n}${}", f.name.replace('%', "$"));
                                         // Default initialization of fixed storage; allocated
                                         // storage takes the defaults when it is allocated.
                                         if let (Some(value), true) = (&f.default, attributes.is_empty()) {
@@ -984,6 +987,7 @@ impl Lower {
         objects: &mut Objects,
         prefix: &mut Vec<Stmt>,
     ) -> Result<()> {
+        if self.pointer_inquiry(e, objects, prefix)? { return Ok(()); }
         if self.scalar_component_view(e, objects, prefix)? { return Ok(()); }
         self.heap_component_actual(e,objects,prefix,None)?;
         if self.materialize_elemental_result(e, objects, prefix)? { return Ok(()); }
@@ -1304,6 +1308,20 @@ impl Lower {
     fn body(&mut self, body: &mut Vec<Stmt>, inherited: &Objects) -> Result<()> {
         let mut objects = inherited.clone();
         let outer_shapes = self.array_shapes.clone();
+        let outer_targets = self.target_roots.clone();
+        for statement in body.iter() {
+            if let Stmt::DerivedDecl {names,attributes,..}=statement {
+                for name in names {
+                    if attributes.iter().any(|a|a=="target") {self.target_roots.insert(name.clone());}
+                    else {self.target_roots.remove(name);}
+                }
+            }
+        }
+        for statement in body.iter() {
+            if let Stmt::DummyIntent {name,intent}=statement {
+                if intent=="target" {self.target_roots.insert(name.clone());}
+            }
+        }
         for s in body.iter() {
             match s {
                 Stmt::ArrayDecl { name, dims, .. } => {
@@ -1359,6 +1377,11 @@ impl Lower {
             }
             let mut prefix = vec![];
             let mut suffix = vec![];
+            if self.pointer_statement(&s, &mut objects, &mut prefix)
+                .map_err(|e| crate::source_diagnostics::at(e, offset))? {
+                out.extend(prefix);
+                continue;
+            }
             self.heap_component_assignment(&mut s,&mut objects,&mut prefix,&mut suffix).map_err(|e|crate::source_diagnostics::at(e,offset))?;
             (|| -> Result<()> {
                 match &mut s {
@@ -1377,11 +1400,14 @@ impl Lower {
                         }
                         if attributes
                             .iter()
-                            .any(|a| matches!(a.as_str(), "save" | "parameter" | "pointer"))
+                            .any(|a| matches!(a.as_str(), "save" | "parameter"))
                         {
                             bail!(
-                                "SAVED, PARAMETER and POINTER derived arrays are not yet supported"
+                                "SAVED and PARAMETER derived arrays are not yet supported"
                             );
+                        }
+                        if attributes.iter().any(|a| a == "pointer") {
+                            self.pointer_fields(type_name)?;
                         }
                         if attributes.iter().any(|a|a=="intent(out)") && self.fields(type_name)?.iter().any(|f|f.heap.is_some()) {
                             bail!("INTENT(OUT) arrays of records with allocatable components require entry finalization, which is not yet supported");
@@ -1785,6 +1811,7 @@ impl Lower {
         }
         *body = out;
         self.array_shapes = outer_shapes;
+        self.target_roots = outer_targets;
         Ok(())
     }
 }
@@ -1800,6 +1827,7 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
         layouts: HashMap::new(),
         scalar_procedures: Default::default(),
         scalar_results: HashMap::new(),
+        target_roots: Default::default(),
         elemental_records: HashMap::new(),
         elemental_results: HashMap::new(),
         elemental_functions: Default::default(),
@@ -1814,8 +1842,9 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
     for s in &p.body {
         if let Stmt::Module { body, .. } = s {
             for s in body {
-                if let Stmt::DerivedDecl { type_name, names, dims, .. } = s {
+                if let Stmt::DerivedDecl { type_name, names, dims, attributes, .. } = s {
                     for n in names {
+                        if attributes.iter().any(|a|a=="target") {lower.target_roots.insert(n.clone());}
                         globals.insert(n.clone(), Object { ty: type_name.clone(), dims: dims.clone() });
                         if dims.is_empty() {
                             lower.register_components(n, type_name, &mut globals);

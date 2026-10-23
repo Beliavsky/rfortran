@@ -78,13 +78,35 @@ array dummy arguments. The writable-view reference was checked with gfortran
 `-fcheck=all,no-array-temps` because its ordinary `-fcheck=all` warns about
 array temporaries for these arguments.
 
-The next full-source blocker is line 4154 in `describe_date_time_vec_vec`:
-`type(date_time), pointer :: z(:)`, followed by `z => xx%dd(isym)%xx`.
-Derived-type pointer arrays remain unsupported. The thirteenth repro,
+The former declaration blocker at line 4154 in `describe_date_time_vec_vec`,
+`type(date_time), pointer :: z(:)`, is now supported for types with scalar
+numeric/LOGICAL components, including nested scalar records. The thirteenth
+repro,
 [tests/programs/xacv_derived_array_pointer.f90](tests/programs/xacv_derived_array_pointer.f90),
-isolates the declaration, association and write-through behavior. It prints
-`2 2024 2025` followed by `2024 2030` with gfortran; rfort rejects the pointer
-array declaration.
+prints `2 2024 2025` followed by `2024 2030` with rfort and gfortran.
+`tests/test_derived_array_pointers.py` covers ranks 2, 3 and 15, target identity,
+strided aliases, declared lower bounds, mixed NULLIFY, keyword ASSOCIATED,
+write-through, pointer dummy escape and preservation of uninitialized fields.
+`tests/test_pointer_association.py` also checks ASSOCIATED target sections with
+non-unit lower bounds: their bounds must stay in declared coordinates.
+
+The former association blocker at line 4162, `z => xx%dd(isym)%xx`, now uses
+borrowed allocation descriptors. The pointer shares the record-owned data,
+initialization masks, extents and lower bounds without copying the allocation.
+The fourteenth repro,
+[tests/programs/xacv_owned_component_pointer.f90](tests/programs/xacv_owned_component_pointer.f90),
+prints `2 2024 2025` with rfort and gfortran. Matching-shape component writes
+preserve existing buffers and pointer identity. Tests in
+`tests/test_owned_record_pointers.py` cover bounds, masks, identity, zero-size
+and runtime-sized allocations, ranks through 15, nested date/time records,
+local pointer dummy escape, TARGET requirements and local-target lifetime
+checks. General standalone ALLOCATABLE pointer targets remain unsupported.
+
+The current blocker is line 4271, `dt%date = dates`. Reading such a component
+view is supported, but whole-array assignment to it is not. The fifteenth repro,
+[tests/programs/xacv_component_array_assignment.f90](tests/programs/xacv_component_array_assignment.f90),
+prints `2024 2025` with gfortran and reports `unknown component date of date_time`
+with rfort.
 
 ## Intrinsic calls after extending an intrinsic generic
 

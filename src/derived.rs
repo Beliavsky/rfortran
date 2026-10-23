@@ -368,8 +368,8 @@ impl Lowerer {
                         objects.polymorphic.remove(n);
                     }
                 }
-                if attributes.iter().any(|a| !a.starts_with("intent(") && !matches!(a.as_str(), "parameter" | "save" | "public" | "private" | "optional")) {
-                    bail!("derived objects currently support INTENT, OPTIONAL, PARAMETER and SAVE attributes only");
+                if attributes.iter().any(|a| !a.starts_with("intent(") && !matches!(a.as_str(), "parameter" | "save" | "public" | "private" | "optional" | "target")) {
+                    bail!("derived objects currently support INTENT, OPTIONAL, PARAMETER, SAVE and TARGET attributes only");
                 }
                 for n in names {
                     objects.arrays.remove(n);
@@ -705,6 +705,10 @@ impl Lowerer {
             for a in &c.attrs {
                 if dummy && a=="@record_slots" {continue;}
                 out.push(Stmt::DummyIntent { name: field.clone(), intent: a.clone() });
+            }
+            // A nonpointer subobject of a TARGET object is a valid target too.
+            if attrs.iter().any(|a| a == "target") && !c.pointer() {
+                out.push(Stmt::DummyIntent { name: field.clone(), intent: "target".into() });
             }
             // Each component of an OPTIONAL derived dummy is an OPTIONAL dummy.
             if dummy && attrs.iter().any(|a| a == "optional") {

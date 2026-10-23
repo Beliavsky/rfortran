@@ -13,6 +13,17 @@ class PointerAssociation(unittest.TestCase):
         self.check((ROOT/"tests/135_pointer_association.f90").read_text(encoding="utf-8"),
                    "T 3 15 1 3\n7 8 6\n7 8 6\n8 9 7\n1 2 3\n1 2 3\nF\n")
 
+    def test_associated_section_preserves_declared_lower_bounds(self):
+        self.check("""program main
+implicit none
+integer,target::a(-2:2)
+integer,pointer::p(:)
+a=[1,2,3,4,5]
+p=>a(0:2)
+print *,associated(p,a(0:2)),associated(p,a(-1:1)),size(p)
+end
+""", "T F 3\n")
+
     def test_scalar_alias_and_multiple_nullify(self):
         self.check("""program main
 integer,target::x,y

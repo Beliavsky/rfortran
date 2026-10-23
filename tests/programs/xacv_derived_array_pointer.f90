@@ -1,4 +1,4 @@
-! xacv.f90 line 4154: POINTER array of a derived type.
+! Regression for the former xacv.f90 blocker at line 4154: POINTER array of a derived type.
 program test
 implicit none
 type :: date_time

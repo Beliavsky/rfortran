@@ -225,6 +225,11 @@ impl Lowerer {
     }
 
     fn expr(&mut self, e: &mut Expr, arrays: &Arrays, symbols: &Symbols) -> Result<()> {
+        // ASSOCIATED compares descriptor views in the target's declared
+        // coordinates, just like pointer association. Do not translate its
+        // section bounds into physical one-based array subscripts.
+        if matches!(e, Expr::Call(n, _) if n == "associated") { return Ok(()); }
+
         // Whole-array bounds preserve declarations; expression/section bounds
         // are one-based and are handled after their subscripts are normalized.
         if let Expr::Call(n, args) = e {

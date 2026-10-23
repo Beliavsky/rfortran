@@ -1387,7 +1387,7 @@ direct variable access are disabled for procedures that access pointer storage;
 Cranelift still applies the requested native optimization level.
 
 Pointer declaration initialization, bounds/rank remapping, pointer
-allocation, dynamic or allocatable targets, CHARACTER/derived-type pointers,
+allocation, general dynamic or allocatable targets, CHARACTER/derived scalar pointers,
 INTEGER(16) pointers, pointer
 function arguments and results, host pointer references from unspecialized
 procedures, `INTENT(IN)` pointer dummies,
@@ -1495,7 +1495,32 @@ Default output of records with ALLOCATABLE components requires defined I/O,
 as in Fortran. Run `python tests/test_allocatable_record_arrays.py` for
 interpreter/native O0/O2 checks against gfortran.
 
-Polymorphic arrays, saved arrays, derived PARAMETER arrays, pointers,
+Derived-type pointer arrays support ranks through 15 when their flattened
+components are scalar numeric or LOGICAL fields, including nested scalar
+records. Component descriptors preserve target identity, initialization masks,
+lower bounds and section strides. Fixed TARGET arrays and array components of
+scalar TARGET objects, pointer-to-pointer association, write-through updates,
+NULLIFY, ASSOCIATED (including keywords), and local subroutine POINTER dummies
+are covered by `tests/test_derived_array_pointers.py`. CHARACTER, array-valued
+and owned ALLOCATABLE components in the pointed-to element type remain outside
+this subset.
+
+A derived pointer array can also borrow a whole derived-array allocation owned
+by a scalar element of a TARGET record array, as in `p => v(i)%xx`. Its
+component descriptors alias the owner's data and initialization masks directly;
+there is no temporary array copy. This includes runtime extents, zero-size
+allocations, lower bounds, ranks through 15, nested scalar records, ASSOCIATED
+identity checks, and associations returned through local POINTER dummies.
+TARGET is required on the parent object, and escaping associations to local
+owned targets are rejected. Binding to an unallocated component is a runtime
+error. Matching-shape component updates retain existing data buffers and masks,
+so valid existing pointers continue to refer to the updated allocation.
+`tests/test_owned_record_pointers.py` checks interpreter/native O0/O2 against
+gfortran. General standalone ALLOCATABLE pointer targets and direct subscripted
+or section targets of the owned component remain unsupported; sections can be
+taken from an already associated pointer.
+
+Polymorphic arrays, saved arrays, derived PARAMETER arrays,
 finalization and a separate-object record ABI remain unsupported.
 `tests/programs/xset_alloc_derived.f90` and `tests/185_allocated_derived_concat.f90` exercise empty
 and nonempty allocated inputs and replacement of an allocated output.

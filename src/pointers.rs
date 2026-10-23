@@ -227,6 +227,7 @@ struct Pointer {
     level: usize,
     desc: Descriptor,
     targets: HashSet<String>,
+    record_targets: HashSet<String>,
     borrowed: bool,
 }
 #[derive(Clone)]
@@ -373,6 +374,7 @@ impl Lower {
                             level,
                             desc,
                             targets: HashSet::new(),
+                            record_targets: HashSet::new(),
                             borrowed,
                         },
                     );
@@ -441,9 +443,14 @@ impl Lower {
         Ok(())
     }
     fn targets(&mut self, body: &mut Vec<Stmt>) -> Result<()> {
-        fn collect(body: &mut Vec<Stmt>, edges: &mut Vec<(String, String)>) {
+        fn collect(body: &mut Vec<Stmt>, edges: &mut Vec<(String, String)>, owned: &mut Vec<(String,String,usize)>) {
             for s in body {
                 if let Stmt::CallSub { name, args } = s {
+                    if name=="@record_pointer_associate" {
+                        if let [Expr::Ident(p),handle,Expr::Str(label)]=args.as_slice() {
+                            if let Some(target)=root(handle) {owned.push((p.clone(),target.into(),label.len()));}
+                        }
+                    }
                     if name == "@pointer_associate" {
                         if let [Expr::Ident(p), e] = args.as_slice() {
                             if let Some(n) = root(e) {
@@ -456,13 +463,18 @@ impl Lower {
                 }
                 if !matches!(s, Stmt::Function { .. } | Stmt::Subroutine { .. }) {
                     for b in children(s) {
-                        collect(b, edges);
+                        collect(b, edges, owned);
                     }
                 }
             }
         }
         let mut edges = vec![];
-        collect(body, &mut edges);
+        let mut owned=vec![];
+        collect(body, &mut edges, &mut owned);
+        for (pointer,target,label_len) in owned {
+            self.name_capacity=self.name_capacity.max(label_len);
+            self.pointers.get_mut(&pointer).context("owned target requires a pointer")?.record_targets.insert(target);
+        }
         for _ in 0..=self.pointers.len() {
             for (p, t) in &edges {
                 let targets = if let Some(q) = self.pointers.get(t) {
@@ -470,11 +482,13 @@ impl Lower {
                 } else {
                     HashSet::from([t.clone()])
                 };
+                let record_targets=self.pointers.get(t).map(|q|q.record_targets.clone()).unwrap_or_default();
                 let ptr = self
                     .pointers
                     .get_mut(p)
                     .context("pointer association requires a POINTER variable")?;
                 ptr.targets.extend(targets);
+                ptr.record_targets.extend(record_targets);
             }
         }
         for (p, t) in edges {
@@ -500,6 +514,12 @@ impl Lower {
                 if !same_kind(&ptr.kind, &v.kind) {
                     bail!("type or kind mismatch in pointer association for `{p}`");
                 }
+            }
+        }
+        for (name,pointer) in &self.pointers {
+            for target in &pointer.record_targets {
+                let level=self.vars.get(target).map(|v|v.level).or_else(||self.pointers.get(target).filter(|p|!p.borrowed).map(|p|p.level));
+                if level.is_some_and(|level|level>pointer.level) {bail!("pointer `{name}` cannot outlive local owned TARGET `{target}`");}
             }
         }
         Ok(())
@@ -1361,7 +1381,7 @@ impl Lower {
     }
     fn writable(&self, p: &str, readonly: &HashSet<String>) -> Result<()> {
         if let Some(ptr) = self.pointers.get(p) {
-            if let Some(n) = ptr.targets.iter().find(|n| readonly.contains(*n)) {
+            if let Some(n) = ptr.targets.iter().chain(&ptr.record_targets).find(|n| readonly.contains(*n)) {
                 bail!("cannot modify INTENT(IN) TARGET `{n}` through POINTER `{p}`");
             }
         }
@@ -1602,6 +1622,17 @@ impl Lower {
                     let offset=self.offset(&v,id(&index),&mut body);
                     body.push(Stmt::CallSub{name:"@ptr_store_clear".into(),args:vec![v.flags.clone(),v.flags.clone(),offset,int(0)]});
                     out.push(Stmt::Do{var:index,start:int(1),end:v.count(),body});
+                    continue;
+                }
+                Stmt::CallSub { name, args } if name == "@record_pointer_associate" => {
+                    let [Expr::Ident(p),handle,label] = args.as_slice() else {bail!("invalid owned pointer association")};
+                    if readonly.contains(p) {bail!("cannot change association of INTENT(IN) POINTER `{p}`");}
+                    let pointer=self.pointers.get(p).context("owned association requires POINTER")?.clone();
+                    let mut handle=handle.clone();
+                    self.expr(&mut handle,&mut out)?;
+                    let mut args=vec![handle,label.clone()];
+                    args.extend(pointer.desc.fields().into_iter().map(Expr::Ident));
+                    out.push(Stmt::CallSub{name:"@heap_record_pointer".into(),args});
                     continue;
                 }
                 Stmt::CallSub { name, args } if name == "@pointer_associate" => {

@@ -220,6 +220,10 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                 let Expr::Ident(local)=&args[0] else{unreachable!()};
                 let v=&env[local];before.push(Stmt::CallSub{name:"@heap_bind".into(),args:vec![Expr::Ident(v.flag.clone())]});
             }
+            Stmt::CallSub {name,args} if name=="@heap_record_pointer" => {
+                read(&args[0],env,&mut before,serial)?;
+                for target in &args[2..] {let Expr::Ident(n)=target else{bail!("invalid owned pointer descriptor")};write(n,None,env,&mut after,serial);}
+            }
             Stmt::CallSub {name,args} if name=="@heap_record_load" || name=="@heap_record_store" => {
                 let Expr::Ident(local)=&args[0] else{unreachable!()};
                 let local=local.clone();

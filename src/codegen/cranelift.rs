@@ -2907,7 +2907,7 @@ fn gen_stmts(
                     continue;
                 }
                 if name.starts_with("@heap_record_") {
-                    let index=if name=="@heap_record_dispose" {0}else{1};
+                    let index=if name=="@heap_record_dispose" || name=="@heap_record_pointer" {0}else{1};
                     let value=eval_expr(b,ex,ptr_ty,&args[index],ints,reals,bools,func_meta);let value=to_i64(b,value);
                     record_heap::emit(module,b,ptr_ty,dc,name,args,value,ints,reals,bools)?;
                     continue;

@@ -10,6 +10,12 @@ struct RecordAllocation {
 }
 
 #[derive(Clone, Debug)]
+enum PointerStorage {
+    Frame(usize, String),
+    Record(usize, bool, String),
+}
+
+#[derive(Clone, Debug)]
 struct FuncDef {
     params: Vec<String>,
     body: Vec<Stmt>,
@@ -33,8 +39,8 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
     RANDOM_STATE.with(|state| state.set(session.as_ref().map_or(1, |(_, seed)| **seed)));
     thread_local! { static FILES: std::cell::RefCell<crate::file_io::Files> = std::cell::RefCell::new(crate::file_io::Files::default()); }
     FILES.with(|files| *files.borrow_mut() = crate::file_io::Files::default());
-    thread_local! { static POINTER_STORAGE: std::cell::RefCell<Vec<(usize,String)>> = std::cell::RefCell::new(vec![(usize::MAX,String::new())]); }
-    POINTER_STORAGE.with(|storage|*storage.borrow_mut()=vec![(usize::MAX,String::new())]);
+    thread_local! { static POINTER_STORAGE: std::cell::RefCell<Vec<PointerStorage>> = std::cell::RefCell::new(vec![PointerStorage::Frame(usize::MAX,String::new())]); }
+    POINTER_STORAGE.with(|storage|*storage.borrow_mut()=vec![PointerStorage::Frame(usize::MAX,String::new())]);
     thread_local! {
         static OUTPUT_LISTS: std::cell::RefCell<HashMap<i64,(String,bool,Vec<Expr>)>> = std::cell::RefCell::new(HashMap::new());
         static OUTPUT_SERIAL: std::cell::Cell<i64> = const {std::cell::Cell::new(0)};
@@ -327,7 +333,19 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                 if name=="@ptr_name" || name.starts_with("@ptr_load_") {
                     let handle=eval_expr(&args[0],env_str,env_int,env_real32,env_real64,env_log,funcs,call_stack).0.unwrap();
                     let offset=if name=="@ptr_name" {0}else{eval_expr(&args[1],env_str,env_int,env_real32,env_real64,env_log,funcs,call_stack).0.unwrap()};
-                    let (frame_index,target)=POINTER_STORAGE.with(|storage|storage.borrow().get(handle as usize).expect("invalid pointer storage handle").clone());
+                    let target=POINTER_STORAGE.with(|storage|storage.borrow().get(handle as usize).expect("invalid pointer storage handle").clone());
+                    if let PointerStorage::Record(allocation,mask,label)=&target {
+                        if name=="@ptr_name" {return ValueTuple::from_str(label.clone());}
+                        return RECORD_ALLOCATIONS.with(|records| {
+                            let records=records.borrow();
+                            let record=io_result(records.get(*allocation).and_then(Option::as_ref).ok_or_else(||anyhow::anyhow!("pointer target allocation no longer exists")));
+                            let index=usize::try_from(offset).expect("negative pointer offset");
+                            if *mask {return ValueTuple::from_int(record.mask[index]);}
+                            if let Some(values)=&record.reals {ValueTuple::from_real(values[index])}
+                            else {let value=record.integers.as_ref().unwrap()[index];if name=="@ptr_load_l" {ValueTuple::from_bool(value!=0)} else {ValueTuple::from_int(value)}}
+                        });
+                    }
+                    let PointerStorage::Frame(frame_index,target)=target else {unreachable!()};
                     let fr=&call_stack[frame_index];
                     let target=&target;
                     if name=="@ptr_name" {return ValueTuple::from_str(target.clone());}
@@ -1225,8 +1243,8 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         let handles=POINTER_STORAGE.with(|storage| {
                             let mut storage=storage.borrow_mut();
                             [target,flag].map(|n| {
-                                let handle=if let Some(i)=storage.iter().position(|(f,v)|*f==frame_index && v==n) {i}
-                                    else {storage.push((frame_index,n.clone()));storage.len()-1};
+                                let handle=if let Some(i)=storage.iter().position(|value|matches!(value,PointerStorage::Frame(f,v) if *f==frame_index && v==n)) {i}
+                                    else {storage.push(PointerStorage::Frame(frame_index,n.clone()));storage.len()-1};
                                 handle as i64
                             })
                         });
@@ -1237,10 +1255,25 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                     if let Some(kind)=name.strip_prefix("@ptr_store_") {
                         let fr=call_stack.last().unwrap().clone();
                         let values=args.iter().map(|a|eval_expr(a,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack)).collect::<Vec<_>>();
-                        let ((frame_index,target),(flag_index,flag))=POINTER_STORAGE.with(|storage| {
+                        let (target_storage,flag_storage)=POINTER_STORAGE.with(|storage| {
                             let storage=storage.borrow();
                             (storage[values[0].0.unwrap() as usize].clone(),storage[values[1].0.unwrap() as usize].clone())
                         });
+                        if let PointerStorage::Record(allocation,_,_)=target_storage {
+                            let offset=usize::try_from(values[2].0.unwrap()).expect("negative pointer store offset");
+                            let value=&values[3];
+                            RECORD_ALLOCATIONS.with(|records| {
+                                let mut records=records.borrow_mut();
+                                let record=io_result(records.get_mut(allocation).and_then(Option::as_mut).ok_or_else(||anyhow::anyhow!("pointer target allocation no longer exists")));
+                                if kind=="clear" {record.mask[offset]=0;return;}
+                                if matches!(kind,"r4"|"r8") {let value=value.1.unwrap_or_else(||value.0.unwrap_or(0) as f64);record.reals.as_mut().unwrap()[offset]=if kind=="r4" {value as f32 as f64} else {value};}
+                                else {record.integers.as_mut().unwrap()[offset]=if kind=="l" {i64::from(value.2.unwrap_or(false))}else{value.0.unwrap_or_else(||value.1.unwrap_or(0.0) as i64)};}
+                                record.mask[offset]=1;
+                            });
+                            idx+=1;continue;
+                        }
+                        let PointerStorage::Frame(frame_index,target)=target_storage else {unreachable!()};
+                        let PointerStorage::Frame(flag_index,flag)=flag_storage else {unreachable!()};
                         assert_eq!(frame_index,flag_index);
                         let frame=&mut call_stack[frame_index];
                         let offset=usize::try_from(values[2].0.unwrap()).expect("negative pointer store offset");let value=&values[3];
@@ -1258,9 +1291,27 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                     }
                     if name.starts_with("@heap_record_") {
                         let frame=call_stack.last().unwrap().clone();
-                        let position=if name=="@heap_record_dispose" {0}else{1};
+                        let position=if name=="@heap_record_dispose" || name=="@heap_record_pointer" {0}else{1};
                         let value=eval_expr(&args[position],&frame.env_str,&frame.env_int,&frame.env_real32,&frame.env_real64,&frame.env_log,funcs,call_stack).0.unwrap_or(0);
-                        if name=="@heap_record_dispose" {
+                        if name=="@heap_record_pointer" {
+                            let Expr::Str(label)=&args[1] else{unreachable!()};
+                            let metadata=RECORD_ALLOCATIONS.with(|records|records.borrow().get(value as usize).and_then(Option::as_ref).map(|r|r.metadata.clone()));
+                            let metadata=io_result(metadata.filter(|m|m[1]!=0).ok_or_else(||anyhow::anyhow!("pointer association requires an allocated record component")));
+                            let handles=POINTER_STORAGE.with(|storage| {
+                                let mut storage=storage.borrow_mut();
+                                [false,true].map(|mask| {
+                                    let handle=if let Some(i)=storage.iter().position(|entry|matches!(entry,PointerStorage::Record(id,m,_) if *id==value as usize && *m==mask)) {i}
+                                        else {storage.push(PointerStorage::Record(value as usize,mask,label.clone()));storage.len()-1};
+                                    handle as i64
+                                })
+                            });
+                            let rank=(args.len()-7)/3;
+                            let mut values=vec![handles[0],handles[1],handles[0],1,0];
+                            let mut stride=1;
+                            for axis in 0..rank {let extent=metadata[2+axis];values.extend([metadata[2+rank+axis],extent,stride]);stride*=extent;}
+                            let frame=call_stack.last_mut().unwrap();
+                            for (arg,value) in args[2..].iter().zip(values) {let Expr::Ident(n)=arg else{unreachable!()};frame.env_int.insert(n.clone(),value);}
+                        } else if name=="@heap_record_dispose" {
                             RECORD_ALLOCATIONS.with(|records| {if let Some(slot)=records.borrow_mut().get_mut(value as usize) {*slot=None;}});
                         } else if name=="@heap_record_drop_array" {
                             let Expr::Ident(array)=&args[0] else{unreachable!()};

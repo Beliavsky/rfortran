@@ -114,6 +114,35 @@ pub(super) fn emit(
             .copied()
             .with_context(|| format!("missing record component storage `{n}`"))
     };
+    if name == "@heap_record_pointer" {
+        let rank=(args.len()-7)/3;
+        let IExpr::Str(label)=&args[1] else {bail!("missing owned pointer label")};
+        let handle=pointer(b,ptr,value);
+        let present=b.ins().icmp_imm(IntCC::NotEqual,handle,0);
+        file_io::require(module,b,ptr,dc,present,"pointer association requires an allocated record component")?;
+        let allocated=b.ins().load(types::I64,MemFlags::new(),handle,24);
+        let allocated=b.ins().icmp_imm(IntCC::NotEqual,allocated,0);
+        file_io::require(module,b,ptr,dc,allocated,"pointer association requires an allocated record component")?;
+        let data=b.ins().load(types::I64,MemFlags::new(),handle,0);
+        let mask=b.ins().load(types::I64,MemFlags::new(),handle,8);
+        let mut text=label.as_bytes().to_vec();text.push(0);
+        let label=make_data(module,b,ptr,dc,&text)?;
+        let label=word(b,label);
+        let one=b.ins().iconst(types::I64,1);let zero=b.ins().iconst(types::I64,0);
+        let mut values=vec![data,mask,label,one,zero];
+        let mut stride=one;
+        for axis in 0..rank {
+            let lower=b.ins().load(types::I64,MemFlags::new(),handle,((4+rank+axis)*8) as i32);
+            let extent=b.ins().load(types::I64,MemFlags::new(),handle,((4+axis)*8) as i32);
+            values.extend([lower,extent,stride]);
+            stride=b.ins().imul(stride,extent);
+        }
+        for (arg,value) in args[2..].iter().zip(values) {
+            let IExpr::Ident(n)=arg else{bail!("invalid owned pointer descriptor field")};
+            let address=storage_addr(b,ptr,storage(n)?);b.ins().store(MemFlags::new(),value,address,0);
+        }
+        return Ok(());
+    }
     if name == "@heap_record_dispose" {
         return free_descriptor(module, b, ptr, value);
     }
@@ -221,6 +250,34 @@ pub(super) fn emit(
         let IExpr::Ident(slot) = &args[1] else {
             bail!("record allocation export requires a scalar slot")
         };
+        // Keep existing storage when assignment does not reallocate the
+        // component: pointers into it must retain their target identity.
+        let old=pointer(b,ptr,value);
+        let present=b.ins().icmp_imm(IntCC::NotEqual,old,0);
+        let compare=b.create_block();let replace=b.create_block();let reuse=b.create_block();let complete=b.create_block();
+        b.ins().brif(present,compare,&[],replace,&[]);
+        b.switch_to_block(compare);b.seal_block(compare);
+        let mut same=b.ins().iconst(types::I8,1);
+        for (i,(address,boolean)) in addresses.iter().enumerate() {
+            let previous=b.ins().load(types::I64,MemFlags::new(),old,((i+2)*8) as i32);
+            let current=b.ins().load(if *boolean {types::I8}else{types::I64},MemFlags::new(),*address,0);
+            let current=word(b,current);
+            let equal=b.ins().icmp(IntCC::Equal,previous,current);same=b.ins().band(same,equal);
+        }
+        b.ins().brif(same,reuse,&[],replace,&[]);
+        b.switch_to_block(reuse);b.seal_block(reuse);
+        let length=b.ins().load(types::I64,MemFlags::new(),old,16);
+        let nonempty=b.ins().icmp_imm(IntCC::NotEqual,length,0);
+        let copy=b.create_block();b.ins().brif(nonempty,copy,&[],complete,&[]);
+        b.switch_to_block(copy);b.seal_block(copy);
+        let bytes=b.ins().imul_imm(length,8);let bytes=pointer(b,ptr,bytes);
+        for (offset,cell) in [(0,data_cell),(8,mask_cell)] {
+            let source=b.ins().load(ptr,MemFlags::new(),cell,0);
+            let dest=b.ins().load(types::I64,MemFlags::new(),old,offset);let dest=pointer(b,ptr,dest);
+            file_io::call(module,b,"memcpy",&[dest,source,bytes],ptr)?;
+        }
+        b.ins().jump(complete,&[]);
+        b.switch_to_block(replace);b.seal_block(replace);
         free_descriptor(module, b, ptr, value)?;
         let bytes = b.ins().iconst(ptr, ((metadata.len() + 2) * 8) as i64);
         let handle = file_io::call(module, b, "malloc", &[bytes], ptr)?;
@@ -255,6 +312,8 @@ pub(super) fn emit(
         let handle = word(b, handle);
         let address = storage_addr(b, ptr, storage(slot)?);
         b.ins().store(MemFlags::new(), handle, address, 0);
+        b.ins().jump(complete,&[]);
+        b.switch_to_block(complete);b.seal_block(complete);
     }
     Ok(())
 }
