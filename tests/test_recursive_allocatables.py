@@ -166,10 +166,32 @@ end program main
                     self.assertNotEqual(result.returncode, 0, result.stdout)
                     self.assertIn(error, result.stderr)
 
-    def test_unsupported_array_recursion_and_sections_are_diagnosed(self):
+    def test_sections_of_allocatable_output(self):
+        self.compare(self.module()+'''program main
+use m
+implicit none
+integer::a(2)
+integer,allocatable::result(:)
+a=[1,2]
+call set_alloc_int_vec(a,result)
+print *,result(:)
+end
+''', '1 2\n')
+
+    def test_section_copy_in_recursive_optional_output(self):
+        self.compare(self.module().replace('jj = ii','jj = ii(:)')+'''program main
+use m
+implicit none
+integer::a(2)
+integer,allocatable::result(:)
+a=[1,2]
+call set_alloc_int_vec(a,result,jmin=2)
+print *,result
+end
+''', '2\n')
+
+    def test_unsupported_array_recursion_is_diagnosed(self):
         for module, statements, error in [
-            (self.module(), "call set_alloc_int_vec(a,result)\nprint *,result(:)", "sections of bounded allocatable"),
-            (self.module().replace("jj = ii", "jj = ii(:)"), "call set_alloc_int_vec(a,result,jmin=2)", "sections of bounded allocatable"),
             (self.module().replace("ni = size(ii)", "call set_alloc_int_vec(ii,jj)"), "call set_alloc_int_vec(a,result)", "recursive ALLOCATABLE/POINTER dummy"),
         ]:
             with self.subTest(error=error), tempfile.TemporaryDirectory(prefix="recursive-unsupported-") as tmp:

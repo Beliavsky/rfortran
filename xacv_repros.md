@@ -175,15 +175,27 @@ multidimensional sources, ranks through 15, function evaluation, overlapping
 assignment, component arrays, output/inquiries and PACK. Owned allocatable
 components and constructor implied-DOs remain unsupported.
 
-Finishing derived lowering exposes a later-pass limitation at the earlier source
-line 722: `num_obs(dvec(ivec))`. The twenty-second repro,
+The later-pass blocker at source line 722 is now supported:
+`num_obs(dvec(ivec))`. The twenty-second repro,
 [tests/programs/xacv_elemental_allocatable_component_size.f90](tests/programs/xacv_elemental_allocatable_component_size.f90),
 asks an ELEMENTAL function for the size of an allocatable derived-array component
-of a scalar record selected from an array. Gfortran prints `2`; rfort reports
-`content-dependent CHARACTER results currently require a bounded input array`.
-The same repro fails with the release compiler from before the constructor fix.
-The specialization restriction and its CHARACTER-specific diagnostic are
-inappropriate for this scalar INTEGER result and its runtime component extent.
+of a scalar record selected from an array. Both rfort and gfortran print `2`.
+Numeric/LOGICAL ALLOCATABLE function dummies now use descriptor association,
+retaining allocation status, bounds and caller-owned storage. Early allocation
+checks distinguish descriptor association from array-data reads. Tests in
+`tests/test_allocatable_function_dummies.py` cover unallocated/empty actuals,
+component ranks through 15, element kinds, bounds and writable function dummies.
+
+The full source now reaches line 6550:
+`xdiag(j:j+n1-1) = diag(xx(:,:,i3))`, reporting `array xx requires 2 subscripts`.
+The twenty-third small example,
+[tests/programs/xacv_diag_forall.f90](tests/programs/xacv_diag_forall.f90),
+retains the nested diagonal functions and FORALL used by this code. With input
+`2`, gfortran prints `1 4 5 8`. The smaller example currently stops earlier with
+`FORALL currently requires one array-element or array-section assignment` in
+`diag`; replacing its FORALL by a DO loop lets the standalone example compile.
+It exercises the related diagonal-function lowering path but does not yet
+isolate the full source's exact rank diagnostic.
 
 ## Intrinsic calls after extending an intrinsic generic
 

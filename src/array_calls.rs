@@ -949,27 +949,34 @@ pub(crate) fn specialize_character_function(body:&mut Vec<Stmt>,shapes:&mut Shap
     specialize(body,shapes,&HashSet::new(),&mut constants.clone(),&stable)
 }
 pub(crate) fn check_allocated(s: &Stmt, pending: &HashSet<String>) -> Result<()> {
+    check_allocated_with_interfaces(s,pending,&HashMap::new())
+}
+/// ALLOCATABLE dummy arguments receive descriptors, not reads of array data.
+pub(crate) fn check_allocated_with_interfaces(s:&Stmt,pending:&HashSet<String>,
+    interfaces:&HashMap<String,Vec<usize>>)->Result<()> {
     fn name(n: &str, pending: &HashSet<String>) -> Result<()> {
         if pending.contains(n) {
             bail!("array `{n}` is used before ALLOCATE");
         }
         Ok(())
     }
-    fn expr(e: &Expr, pending: &HashSet<String>) -> Result<()> {
+    fn expr(e: &Expr, pending: &HashSet<String>, interfaces:&HashMap<String,Vec<usize>>) -> Result<()> {
         match e {
             Expr::Call(n,_) if matches!(n.as_str(),"allocated"|"len"|"kind"|"present")=>{},
             Expr::Ident(n) => name(n, pending)?,
             Expr::Call(n, args) | Expr::Index(n, args) => {
                 name(n, pending)?;
-                for a in args {
-                    expr(a, pending)?;
+                for (i,a) in args.iter().enumerate() {
+                    if matches!(e,Expr::Call(..)) && matches!(a,Expr::Ident(_))
+                        && interfaces.get(n).is_some_and(|positions|positions.contains(&i)) {continue;}
+                    expr(a, pending, interfaces)?;
                 }
             }
             Expr::Bin(_, a, b) => {
-                expr(a, pending)?;
-                expr(b, pending)?;
+                expr(a, pending, interfaces)?;
+                expr(b, pending, interfaces)?;
             }
-            Expr::Un(_, a) => expr(a, pending)?,
+            Expr::Un(_, a) => expr(a, pending, interfaces)?,
             Expr::Section {
                 name: n,
                 lower,
@@ -978,7 +985,7 @@ pub(crate) fn check_allocated(s: &Stmt, pending: &HashSet<String>) -> Result<()>
             } => {
                 name(n, pending)?;
                 for a in [lower, upper, stride].into_iter().flatten() {
-                    expr(a, pending)?;
+                    expr(a, pending, interfaces)?;
                 }
             }
             _ => {}
@@ -988,7 +995,7 @@ pub(crate) fn check_allocated(s: &Stmt, pending: &HashSet<String>) -> Result<()>
     match s {
         Stmt::Assign { name: n, value } => {
             name(n, pending)?;
-            expr(value, pending)?;
+            expr(value, pending, interfaces)?;
         }
         Stmt::AssignIndex {
             name: n,
@@ -997,20 +1004,20 @@ pub(crate) fn check_allocated(s: &Stmt, pending: &HashSet<String>) -> Result<()>
         } => {
             name(n, pending)?;
             for e in indices {
-                expr(e, pending)?;
+                expr(e, pending, interfaces)?;
             }
-            expr(value, pending)?;
+            expr(value, pending, interfaces)?;
         }
         Stmt::CallSub { name: n, .. } if n == "@allocate" || n=="@deallocate" => {}
         Stmt::CallSub { args, .. } | Stmt::Read { args } | Stmt::Print { items: args } => {
             for e in args {
-                expr(e, pending)?;
+                expr(e, pending, interfaces)?;
             }
         }
-        Stmt::Return(Some(e)) => expr(e, pending)?,
+        Stmt::Return(Some(e)) => expr(e, pending, interfaces)?,
         Stmt::ArrayDecl { dims, .. } => {
             for e in dims {
-                expr(e, pending)?;
+                expr(e, pending, interfaces)?;
             }
         }
         Stmt::SelectCase {
@@ -1018,15 +1025,15 @@ pub(crate) fn check_allocated(s: &Stmt, pending: &HashSet<String>) -> Result<()>
             cases,
             default,
         } => {
-            expr(e, pending)?;
+            expr(e, pending, interfaces)?;
             for c in cases {
                 for s in &c.body {
-                    check_allocated(s, pending)?;
+                    check_allocated_with_interfaces(s, pending, interfaces)?;
                 }
             }
             if let Some(b) = default {
                 for s in b {
-                    check_allocated(s, pending)?;
+                    check_allocated_with_interfaces(s, pending, interfaces)?;
                 }
             }
         }
@@ -1035,34 +1042,34 @@ pub(crate) fn check_allocated(s: &Stmt, pending: &HashSet<String>) -> Result<()>
             then_body,
             else_body,
         } => {
-            expr(cond, pending)?;
+            expr(cond, pending, interfaces)?;
             for s in then_body {
-                check_allocated(s, pending)?;
+                check_allocated_with_interfaces(s, pending, interfaces)?;
             }
             if let Some(b) = else_body {
                 for s in b {
-                    check_allocated(s, pending)?;
+                    check_allocated_with_interfaces(s, pending, interfaces)?;
                 }
             }
         }
         Stmt::Do {
             start, end, body, ..
         } => {
-            expr(start, pending)?;
-            expr(end, pending)?;
+            expr(start, pending, interfaces)?;
+            expr(end, pending, interfaces)?;
             for s in body {
-                check_allocated(s, pending)?;
+                check_allocated_with_interfaces(s, pending, interfaces)?;
             }
         }
         Stmt::DoWhile { cond, body } => {
-            expr(cond, pending)?;
+            expr(cond, pending, interfaces)?;
             for s in body {
-                check_allocated(s, pending)?;
+                check_allocated_with_interfaces(s, pending, interfaces)?;
             }
         }
         Stmt::Block { body } => {
             for s in body {
-                check_allocated(s, pending)?;
+                check_allocated_with_interfaces(s, pending, interfaces)?;
             }
         }
         _ => {}

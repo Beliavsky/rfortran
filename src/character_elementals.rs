@@ -1657,7 +1657,12 @@ pub(crate) fn prepare(mut p: Program) -> Result<(Program, Lower)> {
                                 body.iter().any(|s| matches!(s, Stmt::VarDecl {kind,names} if names.contains(param) && input(kind))
                                     || matches!(s, Stmt::ArrayDecl {kind,name,..} if name == param && input(kind)))
                                 && body.iter().any(|s| matches!(s, Stmt::DummyIntent {name,intent} if name == param && matches!(intent.as_str(),"intent(in)"|"intent(out)"|"intent(inout)")))
-                                && !body.iter().any(|s| matches!(s, Stmt::DummyIntent {name,intent} if name == param && matches!(intent.as_str(), "optional" | "allocatable" | "pointer")))
+                                && !body.iter().any(|s| matches!(s, Stmt::DummyIntent {name,intent} if name == param && matches!(intent.as_str(), "optional" | "pointer")))
+                                // Numeric ALLOCATABLE dummies use the same
+                                // descriptor association as subroutine calls,
+                                // including unallocated actuals and their bounds.
+                                && (!body.iter().any(|s| matches!(s,Stmt::DummyIntent{name,intent} if name==param && intent=="allocatable"))
+                                    || body.iter().any(|s| matches!(s,Stmt::ArrayDecl{name,kind,..} if name==param && numeric(kind))))
                             });
                         let descriptor_call = descriptor.then(|| format!("@array_function${name}"));
                         if let Some(helper) = &descriptor_call {

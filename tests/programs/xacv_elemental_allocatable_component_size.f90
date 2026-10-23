@@ -1,4 +1,4 @@
-! Next lowering blocker exposed by xacv.f90 line 722: NUM_OBS(dvec(ivec)).
+! Regression for the later-pass xacv.f90 line 722 blocker: NUM_OBS(dvec(ivec)).
 module date_vectors_mod
 implicit none
 type :: date_mdy

@@ -1285,7 +1285,17 @@ as assumed-shape, so the function accepts runtime-sized actuals, including the
 ALLOCATABLE components of a derived argument. A procedure with array or derived
 dummies can ALLOCATE a local array with an extent known only at run time, such
 as `allocate(w(size(x)))`.
-Run `python tests/test_allocatable_dummies.py`.
+Numeric and LOGICAL function dummies also retain their allocation descriptors
+with explicit INTENT(IN), INTENT(OUT) or INTENT(INOUT). Unallocated actuals can
+be inspected with ALLOCATED; allocated actuals retain their runtime extents and
+lower bounds. A writable function dummy can allocate, resize or deallocate the
+caller's storage. This also supports scalar ELEMENTAL calls on records with
+allocatable components of derived type: their flattened scalar interface carries
+the component descriptors, so inquiries do not read uninitialized element data.
+Array-valued ELEMENTAL calls with these records retain their existing limits.
+Optional, pointer and CHARACTER function dummies retain their existing
+specialization restrictions. Run `python tests/test_allocatable_dummies.py` and
+`python tests/test_allocatable_function_dummies.py`.
 
 Fixed-length rank-one CHARACTER ALLOCATABLE outputs retain bounded
 specialization. Their capacity is inferred from bounded array inputs or fixed
@@ -1346,7 +1356,7 @@ deallocating an unallocated one instead of stopping. Run
 
 ### ALLOCATABLE function results
 
-ALLOCATABLE array dummies in functions, array transformations, masked/DIM
+Array transformations, masked/DIM
 reductions, reallocation on assignment beyond the cases described above, and mixing fixed and
 runtime-sized multidimensional expressions retain their existing limitations.
 Deferred-length CHARACTER array elements remain unsupported. No public descriptor ABI is provided

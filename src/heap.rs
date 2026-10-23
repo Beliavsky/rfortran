@@ -135,9 +135,7 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
     fn signatures(body: &mut [Stmt], result: &mut HashMap<String, Vec<usize>>) {
         for statement in body {
             match statement {
-                Stmt::Subroutine {
-                    name, params, body, ..
-                } => {
+                Stmt::Subroutine {name,params,body,..} | Stmt::Function {name,params,body,..} => {
                     let positions=params.iter().enumerate().filter_map(|(i,p)|
                     (body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,kind,dims} if name==p&&numeric(kind)&&(!matches!(kind,TypeSpec::Character(_)|TypeSpec::CharacterAssumed)||dims.len()>1 || body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==p && intent=="@deferred_character_array")))))
                      &&body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==p&&intent=="allocatable"))).then_some(i)).collect::<Vec<_>>();
@@ -153,7 +151,7 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
                     result.insert(name.clone(), positions);
                     signatures(body, result);
                 }
-                Stmt::Module { body, .. } | Stmt::Function { body, .. } => signatures(body, result),
+                Stmt::Module { body, .. } => signatures(body, result),
                 _ => {}
             }
         }
@@ -164,6 +162,16 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
         wanted: &mut HashSet<String>,
     ) {
         for statement in body {
+            let mut copy=statement.clone();
+            for expr in crate::procedure_arguments::expressions(&mut copy) {
+                crate::procedure_arguments::visit_expr(expr,&mut |e| {
+                    if let Expr::Call(name,args)=e {
+                        if let Some(positions)=signatures.get(name) {
+                            for &i in positions {if let Some(Expr::Ident(n))=args.get(i) {wanted.insert(n.clone());}}
+                        }
+                    }
+                });
+            }
             match statement {
                 Stmt::CallSub { name, args } => {
                     if let Some(positions) = signatures.get(name) {
@@ -291,18 +299,27 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
         let mut pending:HashSet<_>=arrays.iter().filter(|(n,_)|!n.contains("@module$")).map(|(n,_)|n.clone()).collect();
         let tracked=pending.clone();
         let mut offset=None;
-        for s in body.iter() {match s {
+        for s in body.iter() {
+            let mut copy=s.clone();let mut descriptor_call=false;
+            for expr in crate::procedure_arguments::expressions(&mut copy) {
+                crate::procedure_arguments::visit_expr(expr,&mut |e| {
+                    if let Expr::Call(n,_)=e {descriptor_call |= interfaces.get(n).is_some_and(|p|!p.is_empty());}
+                });
+            }
+            match s {
             Stmt::SourceLocation(p)=>offset=Some(*p),
             Stmt::CallSub{name,args} if name=="@allocate"=>for e in args {match e{Expr::Call(n,_)|Expr::Section{name:n,..}=>{pending.remove(n);},_=>{}}},
             Stmt::CallSub{name,args} if name=="@deallocate"=>for e in args {if let Expr::Ident(n)=e {if tracked.contains(n){pending.insert(n.clone());}}},
             Stmt::Assign{name,value} if tracked.contains(name) && array_valued(value,&declared,&functions)=>{
-                crate::array_calls::check_allocated(&Stmt::Print{items:vec![value.clone()]},&pending).map_err(|e|crate::source_diagnostics::at(e,offset))?;
+                crate::array_calls::check_allocated_with_interfaces(&Stmt::Print{items:vec![value.clone()]},&pending,interfaces).map_err(|e|crate::source_diagnostics::at(e,offset))?;
                 pending.remove(name);
             }
-            Stmt::Assign{..}|Stmt::AssignIndex{..}|Stmt::Print{..}|Stmt::Read{..}=>crate::array_calls::check_allocated(s,&pending).map_err(|e|crate::source_diagnostics::at(e,offset))?,
+            Stmt::Assign{..}|Stmt::AssignIndex{..}|Stmt::Print{..}|Stmt::Read{..}=>crate::array_calls::check_allocated_with_interfaces(s,&pending,interfaces).map_err(|e|crate::source_diagnostics::at(e,offset))?,
             Stmt::CallSub{..}|Stmt::If{..}|Stmt::Do{..}|Stmt::DoWhile{..}|Stmt::SelectCase{..}|Stmt::Block{..}=>break,
             _=>{},
-        }}
+            }
+            if descriptor_call {break;}
+        }
         let module = body
             .iter()
             .filter_map(|s| {
