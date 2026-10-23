@@ -1461,7 +1461,11 @@ Ordinary scalar derived-valued function results can be assigned to array
 elements, used as scalar broadcasts, or included in array constructors. Each
 function call executes once into a scalar temporary before its components are
 copied, including nested scalar, CHARACTER and fixed array components within
-the existing assignment limits. See `tests/test_scalar_record_results.py`.
+the existing assignment limits. Scalar records can also copy individual array
+elements. Nested calls to procedures with derived-array dummies retain their
+source argument count through component flattening, including generic reductions
+inside CHARACTER consumers, keyword/OPTIONAL arguments and ELEMENTAL results.
+See `tests/test_scalar_record_results.py`.
 
 Derived arrays use separate component arrays with a shared shape, supporting
 fixed and allocatable storage, ranks through 15, component defaults, element

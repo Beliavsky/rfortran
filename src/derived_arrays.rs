@@ -124,6 +124,9 @@ struct Procedure {
     result: Option<(String, Object)>,
 }
 type Objects = HashMap<String, Object>;
+// Generated ELEMENTAL calls have evaluated their actuals to determine shape.
+// The marker is consumed by `body` before the call leaves this lowering pass.
+const PREPARED_CALL: &str = "@record_prepared:";
 struct Lower {
     types: HashMap<String, Vec<Field>>,
     procedures: HashMap<String, Procedure>,
@@ -697,6 +700,17 @@ impl Lower {
         prefix: &mut Vec<Stmt>,
     ) -> Result<(Vec<Expr>, bool)> {
         self.expression(&mut e, objects, prefix)?;
+        self.prepared_parts(e, ty, objects, prefix)
+    }
+    /// Split a value whose expressions have already been lowered. Revisiting
+    /// calls would interpret the flattened ABI arguments as source arguments.
+    fn prepared_parts(
+        &mut self,
+        e: Expr,
+        ty: &str,
+        objects: &mut Objects,
+        prefix: &mut Vec<Stmt>,
+    ) -> Result<(Vec<Expr>, bool)> {
         let fields = self.fields(ty)?;
         if fields.iter().any(|f|f.heap.is_some()) && matches!(&e, Expr::Call(n,_) if n==ty || n=="@array_constructor" || n=="@record_constructor") {
             bail!("array constructors of records with allocatable components are not yet supported");
@@ -788,7 +802,7 @@ impl Lower {
                     let omitted = crate::named_arguments::omitted(&arg);
                     match sub {
                         Some(sub) if !omitted => {
-                            let (parts, array) = self.parts(arg, sub, objects, prefix)?;
+                            let (parts, array) = self.prepared_parts(arg, sub, objects, prefix)?;
                             if array {
                                 bail!("component `{c}` of a `{ty}` constructor requires a scalar value");
                             }
@@ -846,7 +860,7 @@ impl Lower {
                         true,
                     ));
                 }
-                self.parts(
+                self.prepared_parts(
                     Expr::Call("@array_constructor".into(), args[1..].to_vec()),
                     ty,
                     objects,
@@ -859,7 +873,7 @@ impl Lower {
                 }
                 let mut values = vec![vec![]; fields.len()];
                 for e in args {
-                    let (parts, array) = self.parts(e, ty, objects, prefix)?;
+                    let (parts, array) = self.prepared_parts(e, ty, objects, prefix)?;
                     if array {
                         bail!("nested derived array constructors are not yet supported");
                     }
@@ -893,6 +907,7 @@ impl Lower {
             _ => bail!("unsupported derived array value of type `{ty}`"),
         }
     }
+    /// Flatten actuals after expression evaluation and ELEMENTAL adaptation.
     fn arguments(
         &mut self,
         name: &str,
@@ -900,18 +915,13 @@ impl Lower {
         objects: &mut Objects,
         prefix: &mut Vec<Stmt>,
     ) -> Result<Option<(String, Object)>> {
-        let Some(p) = self.procedures.get(name).cloned() else {
-            for e in args {
-                self.expression(e, objects, prefix)?;
-            }
-            return Ok(None);
-        };
+        let Some(p) = self.procedures.get(name).cloned() else { return Ok(None) };
         p.signature.reorder(name, args)?;
         args.resize_with(p.signature.params.len(), || {
             Expr::Call(crate::named_arguments::OMITTED.into(), vec![])
         });
         let mut flat = vec![];
-        for (mut e, param) in std::mem::take(args).into_iter().zip(&p.signature.params) {
+        for (e, param) in std::mem::take(args).into_iter().zip(&p.signature.params) {
             if let Some(o) = p.arrays.get(param) {
                 if crate::named_arguments::omitted(&e) {
                     flat.extend(std::iter::repeat_n(e, self.fields(&o.ty)?.len()));
@@ -921,7 +931,7 @@ impl Lower {
                 // association), which only by-reference calls support, and a
                 // scalar variable passes its parts.
                 let simple = |values: &[Expr]| values.iter().all(|v| matches!(v, Expr::Call(..) | Expr::Index(..) | Expr::Ident(_)));
-                let values = match self.parts(e.clone(), &o.ty, objects, prefix) {
+                let values = match self.prepared_parts(e.clone(), &o.ty, objects, prefix) {
                     Ok((values, array)) if array || simple(&values) => values,
                     _ if self.fields(&o.ty)?.iter().all(|f| f.dims.is_empty()) => {
                         // An expression passes its value in a scalar temporary.
@@ -937,7 +947,6 @@ impl Lower {
                 };
                 flat.extend(values);
             } else {
-                self.expression(&mut e, objects, prefix)?;
                 flat.push(e);
             }
         }
@@ -1086,6 +1095,8 @@ impl Lower {
                     }
                     return Ok(());
                 }
+                // Normalize each actual once, before inspecting its resulting
+                // shape or splitting record storage into ABI arguments.
                 for arg in args.iter_mut() {
                     self.expression(arg, objects, prefix)?;
                 }
@@ -1264,7 +1275,7 @@ impl Lower {
                         }
                     }
                     if self.fields(&o.ty)?.iter().any(|f|f.heap.is_some()) {bail!("output of a record with allocatable components requires defined I/O");}
-                    let (parts, array) = self.parts(item, &o.ty, objects, prefix)?;
+                    let (parts, array) = self.prepared_parts(item, &o.ty, objects, prefix)?;
                     if array {
                         if output_dims.is_empty()
                             || output_dims
@@ -1613,8 +1624,15 @@ impl Lower {
                         args.extend(values);
                     }
                     Stmt::CallSub { name, args } => {
+                        let prepared = name.strip_prefix(PREPARED_CALL).map(str::to_owned);
+                        if let Some(original) = &prepared { *name = original.clone(); }
                         if !name.starts_with("@heap_record_") {
                             for actual in args.iter_mut() {self.heap_component_actual(actual,&mut objects,&mut prefix,Some(&mut suffix))?;}
+                        }
+                        if prepared.is_none() {
+                            for actual in args.iter_mut() {
+                                self.expression(actual, &mut objects, &mut prefix)?;
+                            }
                         }
                         self.elemental_actuals(name, args, &mut objects, &mut prefix)?;
                         // A type-bound call on an array element, `call a(i)%m()`,
@@ -1665,7 +1683,10 @@ impl Lower {
                     }
                     Stmt::Assign { name, value } => {
                         if let Some((owner,_))=self.element(value,&objects) {
-                            if self.types.get(&objects[owner].ty).is_some_and(|fields|fields.iter().any(|f|f.heap.is_some())) {
+                            // The scalar record pass cannot refer to flattened
+                            // array elements; give it a scalar record copy.
+                            if objects.get(name).is_some_and(|o|o.dims.is_empty() && o.ty==objects[owner].ty)
+                                || self.types.get(&objects[owner].ty).is_some_and(|fields|fields.iter().any(|f|f.heap.is_some())) {
                                 *value=Expr::Ident(self.element_temp(value,&mut objects,&mut prefix,None)?);
                             }
                         }

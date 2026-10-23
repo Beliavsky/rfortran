@@ -95,7 +95,7 @@ impl Lower {
                 *arg = Expr::Call(n.clone(), indices.clone());
             }
             let fields = self.fields(ty)?;
-            let (parts, _) = self.parts(arg.clone(), ty, objects, prefix)?;
+            let (parts, _) = self.prepared_parts(arg.clone(), ty, objects, prefix)?;
             let mut values = vec![Expr::Str(ty.clone())];
             values.extend(
                 fields

@@ -252,7 +252,7 @@ impl Lower {
         }];
         args.push(Expr::Ident(temp.clone()));
         generated.push(Stmt::CallSub {
-            name: procedure.helper,
+            name: format!("{PREPARED_CALL}{}", procedure.helper),
             args: std::mem::take(args),
         });
         // Process generated storage and the hidden call through the same record

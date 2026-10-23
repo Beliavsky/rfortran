@@ -1,4 +1,4 @@
-! xacv.f90 line 4281: nested STR(MINVAL(times)) after derived-array flattening.
+! Regression for xacv.f90 line 4281: nested STR(MINVAL(times)).
 module nested_derived_reduction_mod
 implicit none
 type :: time_of_day

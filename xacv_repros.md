@@ -111,14 +111,22 @@ sections, vectors, overlap, nested paths, ranks through 15, runtime allocation,
 pointer parents, function results, mixed field layouts, sibling preservation,
 initialization checks and INTENT(IN) protection.
 
-The next full-source blocker is line 4281, which contains
-`trim(str(minval(times)))` and `trim(str(maxval(times)))`. The nested reduction
-currently reports `too many arguments to minval_time` after argument flattening.
+The former line-4281 blocker contains `trim(str(minval(times)))` and
+`trim(str(maxval(times)))`. Nested calls now lower each actual once, keeping
+component flattening separate from expression evaluation.
 The sixteenth repro,
 [tests/programs/xacv_nested_derived_reduction.f90](tests/programs/xacv_nested_derived_reduction.f90),
 extends MINVAL for a two-component time type and nests its derived result in
-an ELEMENTAL CHARACTER-valued STR call. It prints `03:30` with gfortran and
-reproduces the argument-count diagnostic with rfort.
+an ELEMENTAL CHARACTER-valued STR call. It prints `03:30` with rfort and gfortran.
+Tests in `tests/test_scalar_record_results.py` also cover nested numeric consumers,
+keyword/OPTIONAL arguments, constructors, subroutine actuals and ELEMENTAL record
+results, including single evaluation of impure functions.
+
+The next full-source blocker is line 15947: formatted output of `dates(i,:)`.
+The seventeenth repro,
+[tests/programs/xacv_derived_matrix_row_output.f90](tests/programs/xacv_derived_matrix_row_output.f90),
+prints `01/02/2024 03/04/2025` with gfortran. Rfort reports
+`output of derived triplet sections is not yet supported` at the WRITE statement.
 
 ## Intrinsic calls after extending an intrinsic generic
 
