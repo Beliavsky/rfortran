@@ -38,6 +38,7 @@ mod reductions;
 mod initialized;
 mod input;
 mod unformatted;
+mod storage_size;
 mod input_items;
 mod file_io;
 mod output;
@@ -379,7 +380,7 @@ fn lower_program_body(
 ) -> Result<ast::Program> {
     (|| {
         sections::resolve(reductions::resolve(array_calls::resolve(
-            tokenize::resolve(timing_intrinsics::resolve(parameters::resolve(random_seed::resolve(external_calls::resolve_complex(derived::resolve(external_calls::resolve(equivalence::resolve(defining_functions::resolve(transfer::resolve(statement_functions::resolve(program)?)?)?)?)?)?)?)?)?)?)?,
+            tokenize::resolve(timing_intrinsics::resolve(parameters::resolve(random_seed::resolve(external_calls::resolve_complex(derived::resolve(external_calls::resolve(equivalence::resolve(defining_functions::resolve(transfer::resolve(statement_functions::resolve(storage_size::resolve(program)?)?)?)?)?)?)?)?)?)?)?)?,
         )?)?)
     })()
     .map_err(|error| source_diagnostics::report(error, src, tokens, filename, origins))

@@ -481,6 +481,13 @@ MOLD's type and kind: a REAL X is truncated, or rounded when ROUND is true,
 before it is compared with an INTEGER range. X and MOLD must be scalars and
 ROUND a constant.
 
+`STORAGE_SIZE(A [, KIND])` is the size in bits of an element of A, a constant
+for variables, arrays and array elements of intrinsic or derived type. A derived
+type is laid out as gfortran lays it out: each component at the next multiple of
+its alignment (its size, or 1 for CHARACTER), and the whole padded to the largest
+alignment, so `type :: t; character(3) :: c; integer :: i; end type` has 64 bits.
+Types with ALLOCATABLE or POINTER components are not yet supported.
+
 Assigning an INTEGER value of a wider kind to a narrower variable keeps the
 value's low-order bits, as gfortran does: assigning 130 to an INTEGER(1)
 variable stores -126.

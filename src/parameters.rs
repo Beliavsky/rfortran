@@ -457,14 +457,28 @@ fn evaluate(expr: &Expr, constants: &Constants) -> Result<i64> {
                     format!("`{name}` is not a previously defined integer PARAMETER")
                 }).and_then(|e| evaluate(e, &Constants::new()));
         }
-        Expr::Call(name,args) if matches!(name.as_str(),"floor"|"ceiling") => {
+        // INT of an INTEGER constant converts it to the result kind.
+        Expr::Call(name,args) if name=="int" && !args.is_empty()
+            && matches!(crate::inquiries::model_type(&args[0],&|_|None),Ok(Some(TypeSpec::Integer(_)))) => {
+            let TypeSpec::Integer(Some(bytes))=crate::intrinsics::rounding_kind(name,args)? else {unreachable!()};
+            let value=evaluate(&args[0],constants)?;
+            let limit=1i128<<(u32::from(bytes)*8-1);
+            if i128::from(value) < -limit || i128::from(value) >= limit {bail!("INT result is outside INTEGER range");}
+            Some(value)
+        }
+        // NINT and INT of a REAL constant, as `nint(days_in_year)`, round as
+        // FLOOR and CEILING do; INT of an INTEGER is handled below.
+        Expr::Call(name,args) if matches!(name.as_str(),"floor"|"ceiling")
+            || matches!(name.as_str(),"nint"|"int") && !args.is_empty()
+                && matches!(crate::inquiries::model_type(&args[0],&|_|None),Ok(Some(TypeSpec::Real|TypeSpec::DoublePrecision))) => {
             let kind=crate::intrinsics::rounding_kind(name,args)?;
             let TypeSpec::Integer(Some(bytes))=kind else {unreachable!()};
             let input=crate::inquiries::model_type(&args[0],&|_|None)?;
             if input.as_ref().is_some_and(|k|!matches!(k,TypeSpec::Real|TypeSpec::DoublePrecision)) {bail!("{} A must be REAL or DOUBLE PRECISION",name.to_ascii_uppercase());}
             let value=real_constant(&args[0])?;
             let value=if input==Some(TypeSpec::Real) {(value as f32) as f64} else {value};
-            let rounded=if name=="floor" {value.floor()} else {value.ceil()};
+            // NINT rounds halves away from zero, as `f64::round` does.
+            let rounded=match name.as_str() {"floor"=>value.floor(),"ceiling"=>value.ceil(),"nint"=>value.round(),_=>value.trunc()};
             let limit=2.0f64.powi(i32::from(bytes)*8-1);
             if !rounded.is_finite() || rounded < -limit || rounded >= limit {bail!("{} result is outside INTEGER range",name.to_ascii_uppercase());}
             Some(rounded as i64)

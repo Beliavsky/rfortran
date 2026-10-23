@@ -349,7 +349,8 @@ current limits.
 | [`DOT_PRODUCT`](language-support.md#dot_product) | F90 | ✅ |  | test_dot_product.py |
 | [`MATMUL`](language-support.md#allocatable-arrays-and-pointers) | F90 | 🟡 | Not LOGICAL; a runtime-sized operand must be a whole array, an elemental expression of whole arrays, or a TRANSPOSE or RESHAPE of one | test_complex.py, test_formatted_output.py, test_runtime_matmul.py |
 | [`NORM2`](language-support.md#reductions) | F2008 | ✅ | Computed as `SQRT(SUM(X*X))`, without scaling against overflow | test_more_intrinsics.py |
-| `TRANSFER`, `STORAGE_SIZE`, `IS_CONTIGUOUS` | Mixed | ❌ | TRANSFER: F90; STORAGE_SIZE and IS_CONTIGUOUS: F2008. |  |
+| [`STORAGE_SIZE`](language-support.md#integer-bit-intrinsics) | F2008 | 🟡 | Not types with ALLOCATABLE or POINTER components | test_storage_size.py |
+| `TRANSFER`, `IS_CONTIGUOUS` | Mixed | ❌ | TRANSFER: F90; IS_CONTIGUOUS: F2008. |  |
 | `RANDOM_NUMBER`, [`RANDOM_SEED`](language-support.md#intrinsic-keywords-and-random_seed) | F90 | ✅ |  | test_intrinsic_keywords.py |
 | [`CPU_TIME`, `SYSTEM_CLOCK`, `DATE_AND_TIME`](language-support.md#cpu_time-system_clock-and-date_and_time) | Mixed | ✅ | SYSTEM_CLOCK and DATE_AND_TIME: F90; CPU_TIME: F95. | test_timing.py, test_date_and_time.py |
 | [`GET_COMMAND_ARGUMENT`, `GET_ENVIRONMENT_VARIABLE`](language-support.md#command-line-and-environment) | F2003 | ✅ |  | test_command_argument.py, test_environment.py |

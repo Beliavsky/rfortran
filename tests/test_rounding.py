@@ -65,6 +65,12 @@ end function
 end
 """,'12 23\n')
 
+    def test_parameter_initializers(self):
+        """NINT and INT of REAL and INTEGER constants in PARAMETER
+        initializers, as `usual_days_in_year = nint(days_in_year)`."""
+        self.check('integer, parameter :: dp = kind(1.0d0), n0 = 5\nreal(kind=dp), parameter :: days_in_year = 365.25_dp\ninteger, parameter :: usual = nint(days_in_year), a = int(2.7), b = floor(-2.5), c = ceiling(2.1d0)\ninteger, parameter :: e = nint(-2.5), f = nint(2.5), g = int(-2.7), h = int(n0+2), k = int(-3_8, kind=2)\ninteger(kind=8), parameter :: big = nint(days_in_year, kind=8)\ninteger :: v(usual - 360)\nprint *, usual, a, b, c, e, f, g, h, k, big, size(v)\nend\n',' 365 2 -3 3 -3 3 -2 7 -3 365 5\n')
+        self.reject('integer, parameter :: v = nint(1.0e10)\nprint *, v\nend\n', 'NINT result is outside INTEGER range')
+
     def test_real_kind_rounding(self):
         self.check("""real::x
 real(8)::y
