@@ -747,6 +747,20 @@ impl Lowerer {
         self.types[ty].components.iter().any(|field|field.attrs.iter().any(|a|a=="@record_slots")
             || field.derived.as_ref().is_some_and(|child|self.owns_record_slots(child)))
     }
+    fn value_type<'a>(&'a self, value: &Expr, objects: &'a Objects) -> Option<&'a str> {
+        match value {
+            Expr::Ident(n) => objects.get(n).map(String::as_str),
+            Expr::Call(n, args) => {
+                if let Some((name, _)) = self.types.get_key_value(n) { return Some(name); }
+                if let Some((_, ty)) = self.procedures.get(n).and_then(|p| p.result.as_ref()) { return Some(ty); }
+                if n == "merge" && !self.procedures.contains_key(n) {
+                    return args.first().and_then(|v| self.value_type(v, objects));
+                }
+                None
+            }
+            _ => None,
+        }
+    }
     fn assign(
         &mut self,
         target: &str,
@@ -791,6 +805,29 @@ impl Lowerer {
                     name: format!("@derived_result_{n}"),
                     args,
                 });
+                return Ok(());
+            }
+            if n == "merge" && !self.procedures.contains_key(n) && !objects.arrays.contains(n) {
+                let [first, second, mask] = args.as_slice() else {
+                    bail!("MERGE expects TSOURCE, FSOURCE and MASK");
+                };
+                if let (Some(first), Some(second)) = (self.value_type(first, objects), self.value_type(second, objects)) {
+                    if first != second { bail!("MERGE sources must have the same derived type: `{first}` and `{second}`"); }
+                }
+                // Select the complete record rather than applying MERGE to
+                // each component. Array/ALLOCATABLE/POINTER components keep
+                // their ordinary derived-assignment semantics this way.
+                let mut mask = mask.clone();
+                self.expression(&mut mask, objects, out)?;
+                self.serial += 1;
+                let condition = format!("@derived_merge_mask_{}", self.serial);
+                out.push(Stmt::VarDecl { kind: TypeSpec::Logical, names: vec![condition.clone()] });
+                out.push(Stmt::Assign { name: condition.clone(), value: mask });
+                let mut yes = vec![];
+                let mut no = vec![];
+                self.assign(target, ty, first.clone(), objects, &mut yes)?;
+                self.assign(target, ty, second.clone(), objects, &mut no)?;
+                out.push(when(Expr::Ident(condition), yes, Some(no)));
                 return Ok(());
             }
         }

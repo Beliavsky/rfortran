@@ -889,8 +889,14 @@ impl Lower {
                     true,
                 ))
             }
-            Expr::Call(n, args) if self.scalar_results.contains_key(&n) => {
-                if self.scalar_results[&n] != ty {
+            Expr::Call(n, args) if self.scalar_results.contains_key(&n)
+                || n=="merge" && args.len()==3 && self.array_shape(&args[2]).is_none()
+                    && !args[..2].iter().any(|arg| match arg {
+                        Expr::Ident(n) | Expr::Section {name:n,..} | Expr::Call(n,_) | Expr::Index(n,_) =>
+                            objects.get(n).is_some_and(|o|!o.dims.is_empty()),
+                        _ => false,
+                    }) => {
+                if self.scalar_results.get(&n).is_some_and(|result| result != ty) {
                     bail!("derived result type mismatch: expected `{ty}`, got `{}`", self.scalar_results[&n]);
                 }
                 self.serial += 1;
@@ -1101,6 +1107,16 @@ impl Lower {
                     self.expression(arg, objects, prefix)?;
                 }
                 self.elemental_actuals(n, args, objects, prefix)?;
+                // MERGE has scalar record actuals when its sources are array
+                // elements. Preserve their values before scalar record lowering
+                // removes the original arrays in favor of component storage.
+                if n=="merge" && args.len()==3 {
+                    for actual in &mut args[..2] {
+                        if self.element(actual, objects).is_some() {
+                            *actual = Expr::Ident(self.element_temp(actual, objects, prefix, None)?);
+                        }
+                    }
+                }
                 // An element passed to a function's scalar derived dummy.
                 if self.scalar_procedures.contains(n.as_str()) {
                     for a in args.iter_mut() {

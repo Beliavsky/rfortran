@@ -1206,6 +1206,17 @@ of an ALLOCATABLE array, and checks that they conform at run time. Run `python t
 `tests/programs/xmerge_char_vec_alloc.f90`
 exercise scalar and array masks.
 
+`MERGE` also accepts scalar derived-type sources with a scalar LOGICAL mask,
+including constructors, function results, array elements, nested calls and
+keyword arguments. The sources must have the same derived type. The mask is
+evaluated once before assigning the selected whole record, preserving existing
+assignment behavior for nested, CHARACTER, fixed-array, ALLOCATABLE and POINTER
+components. Scalar results can be passed to typed procedure arguments, included
+in array constructors or broadcast to derived arrays. This also works inside
+PURE/ELEMENTAL procedures; existing ELEMENTAL call support can apply such a
+procedure to record arrays. Direct array-valued derived sources and array masks
+for derived `MERGE` remain unsupported. See `tests/test_derived_merge.py`.
+
 ### Runtime allocation
 
 Automatic arrays, procedure locals such as `real :: w(n)` or `integer :: a(0:n, m)`

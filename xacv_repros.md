@@ -131,13 +131,22 @@ triplets and vector selections without copying whole component arrays. Tests in
 record/component order, nested records, array components, ranks through 15,
 initialization/bounds checks and single evaluation of subscript expressions.
 
-With section output lowered, the next full-source blocker comes from the scalar
-derived-type pass at line 1046: `tmin = merge(t1,t2,t2>t1)`. The eighteenth repro,
+The former scalar derived-type blocker at line 1046 is now supported:
+`tmin = merge(t1,t2,t2>t1)`. The eighteenth repro,
 [tests/programs/xacv_derived_merge.f90](tests/programs/xacv_derived_merge.f90),
-preserves the ELEMENTAL function and overloaded comparison. Gfortran prints
-`3 30 0`; rfort reports `derived assignment to tmin requires a value of type
-time_of_day` at the assignment. The lower source line reflects a later compiler
-pass, rather than a regression to the earlier section-output blocker.
+preserves the ELEMENTAL function and overloaded comparison and prints `3 30 0`
+with rfort and gfortran. Scalar MERGE selects the complete record after evaluating
+its mask once, reusing derived assignment for supported component kinds. Tests
+in `tests/test_derived_merge.py` cover aliases, nested records, managed components,
+array elements, scalar broadcasts, constructors, procedures and invalid types.
+
+The next full-source blocker is line 1854:
+`call set_alloc(pack(dates,is_weekday(dates)),week_dates)`. The nineteenth repro,
+[tests/programs/xacv_pack_derived_array.f90](tests/programs/xacv_pack_derived_array.f90),
+passes PACK of an allocated record array and an ELEMENTAL mask to an
+allocatable-output subroutine. Gfortran prints `1 3`; rfort reports a derived
+assignment error for the generated scalar `@record_actual_5` at the CALL.
+PACK needs to retain its record-array type/rank through component lowering.
 
 ## Intrinsic calls after extending an intrinsic generic
 

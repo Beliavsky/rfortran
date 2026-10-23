@@ -1,4 +1,4 @@
-! xacv.f90 line 1046: MERGE of derived values inside an ELEMENTAL function.
+! Regression for xacv.f90 line 1046: derived MERGE in an ELEMENTAL function.
 module time_merge_mod
 implicit none
 type :: time_of_day
