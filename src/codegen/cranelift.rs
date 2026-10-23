@@ -4079,11 +4079,12 @@ impl CraneliftBackend {
                 }
                 enum RetSlot {
                     I(ir::StackSlot),
+                    Bool(ir::StackSlot),
                     F64(ir::StackSlot),
                 }
                 let ret_slot: Option<RetSlot> = match rt {
                     crate::ast::TypeSpec::Referenced { .. } | crate::ast::TypeSpec::CharacterLength(_) | crate::ast::TypeSpec::CharacterAssumed | crate::ast::TypeSpec::RealKind(_) | crate::ast::TypeSpec::LogicalKind(_) | crate::ast::TypeSpec::IntegerKind(_) | crate::ast::TypeSpec::Complex(_) => unreachable!("unresolved numeric kind"),
-                    TypeSpec::Integer(_) | TypeSpec::Logical => {
+                    TypeSpec::Integer(_) => {
                         let ss = b.create_sized_stack_slot(ir::StackSlotData::new(
                             ir::StackSlotKind::ExplicitSlot,
                             8,
@@ -4094,6 +4095,14 @@ impl CraneliftBackend {
                         b.ins().store(ir::MemFlags::new(), z, addr, 0);
                         ints.insert(f.name.clone(), ss.into());
                         Some(RetSlot::I(ss))
+                    }
+                    TypeSpec::Logical => {
+                        let ss=b.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,1,0));
+                        let addr=b.ins().stack_addr(ptr_ty,ss,0);
+                        let zero=b.ins().iconst(types::I8,0);
+                        b.ins().store(ir::MemFlags::new(),zero,addr,0);
+                        bools.insert(f.name.clone(),ss.into());
+                        Some(RetSlot::Bool(ss))
                     }
                     TypeSpec::Real => {
                         let ss = b.create_sized_stack_slot(ir::StackSlotData::new(
@@ -4157,6 +4166,12 @@ impl CraneliftBackend {
                                 let addr = b.ins().stack_addr(ptr_ty, ss, 0);
                                 let rv = b.ins().load(types::F64, ir::MemFlags::new(), addr, 0);
                                 b.ins().return_(&[rv]);
+                            }
+                            RetSlot::Bool(ss) => {
+                                let addr=b.ins().stack_addr(ptr_ty,ss,0);
+                                let value=b.ins().load(types::I8,ir::MemFlags::new(),addr,0);
+                                let value=b.ins().uextend(types::I64,value);
+                                b.ins().return_(&[value]);
                             }
                         }
                     } else {

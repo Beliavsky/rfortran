@@ -240,7 +240,11 @@ pub(crate) fn elemental_element(e: &Expr, index: &Expr, shapes: &HashMap<String,
 /// Materialize an array expression before a specialized procedure call, using
 /// the same constructor/PACK lowering as ordinary expressions.
 pub(crate) fn argument(e: &mut Expr, shapes: &HashMap<String,(TypeSpec,Vec<Expr>)>, prefix: &mut Vec<Stmt>, serial: &mut usize) -> Result<(TypeSpec,i64,Expr)> {
-    argument_with_elementals(e,shapes,prefix,serial,&HashMap::new())
+    // Allocation lowering carries procedure return types in the shape table.
+    // Preserve them when materializing an ELEMENTAL array expression.
+    let functions=shapes.iter().filter_map(|(name,(kind,_))|
+        name.strip_prefix("@elemental:").map(|name|(name.to_owned(),kind.clone()))).collect();
+    argument_with_elementals(e,shapes,prefix,serial,&functions)
 }
 pub(crate) fn argument_with_elementals(e: &mut Expr, shapes: &HashMap<String,(TypeSpec,Vec<Expr>)>, prefix: &mut Vec<Stmt>, serial: &mut usize, functions:&HashMap<String,TypeSpec>) -> Result<(TypeSpec,i64,Expr)> {
     let mut symbols = Symbols::new();

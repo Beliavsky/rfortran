@@ -14,6 +14,8 @@ mod elemental_records;
 mod elemental_record_results;
 #[path = "record_components.rs"]
 mod record_components;
+#[path = "record_pack.rs"]
+mod record_pack;
 #[path = "derived_pointers.rs"]
 mod derived_pointers;
 
@@ -147,6 +149,8 @@ struct Lower {
     /// Ordinary scalar derived-valued functions, materialized once before
     /// splitting their results into array component storage.
     scalar_results: HashMap<String, String>,
+    /// Known scalar results, including intrinsic-type mask functions.
+    scalar_functions: std::collections::HashSet<String>,
     target_roots: std::collections::HashSet<String>,
     elemental_records: HashMap<String, elemental_records::Procedure>,
     elemental_results: HashMap<String, elemental_record_results::ResultProcedure>,
@@ -443,6 +447,11 @@ impl Lower {
                             Some(Stmt::Return(Some(Expr::Ident(n)))) => n,
                             _ => name,
                         };
+                        if !body.iter().any(|s| match s {
+                            Stmt::ArrayDecl{name,dims,..} => name==n && !dims.is_empty(),
+                            Stmt::DerivedDecl{names,dims,..} => names.contains(n) && !dims.is_empty(),
+                            _ => false,
+                        }) { self.scalar_functions.insert(name.clone()); }
                         if let Some(ty) = body.iter().find_map(|s| match s {
                             Stmt::DerivedDecl { type_name, names, dims, .. }
                                 if dims.is_empty() && names.contains(n) => Some(type_name.clone()),
@@ -1101,10 +1110,24 @@ impl Lower {
                     }
                     return Ok(());
                 }
+                let intrinsic_pack = n=="pack" && !self.procedures.contains_key(n)
+                    && !self.scalar_results.contains_key(n) && !self.scalar_procedures.contains(n);
+                if intrinsic_pack {
+                    crate::named_arguments::Signature {
+                        params: vec!["array".into(),"mask".into(),"vector".into()],
+                        optional: ["vector".into()].into_iter().collect(),
+                    }.reorder(n, args)?;
+                }
                 // Normalize each actual once, before inspecting its resulting
                 // shape or splitting record storage into ABI arguments.
                 for arg in args.iter_mut() {
                     self.expression(arg, objects, prefix)?;
+                }
+                if intrinsic_pack {
+                    if let Some(result) = self.pack_records(args, objects, prefix)? {
+                        *e = Expr::Ident(result);
+                        return Ok(());
+                    }
                 }
                 self.elemental_actuals(n, args, objects, prefix)?;
                 // MERGE has scalar record actuals when its sources are array
@@ -1886,6 +1909,7 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
         layouts: HashMap::new(),
         scalar_procedures: Default::default(),
         scalar_results: HashMap::new(),
+        scalar_functions: Default::default(),
         target_roots: Default::default(),
         elemental_records: HashMap::new(),
         elemental_results: HashMap::new(),

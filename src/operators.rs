@@ -902,9 +902,18 @@ impl Resolver {
                                     },
                                 _=>Ty::Unknown,
                             },
-                            "pack" => match arg_types.first() {
-                                Some(Ty::Array(element, _)) => Ty::Array(element.clone(), 1),
-                                _ => Ty::Unknown,
+                            "pack" => {
+                                let mask=args.iter().position(|a|crate::named_arguments::keyword(a).is_some_and(|(key,_)|key=="mask")).unwrap_or(1);
+                                if let Some(mask)=arg_types.get(mask) {
+                                    let mask=if let Ty::Array(t,_)=mask {t.as_ref()} else {mask};
+                                    if !matches!(mask,Ty::Unknown | Ty::Scalar(TypeSpec::Logical | TypeSpec::LogicalKind(_))) {
+                                        bail!("PACK MASK must be LOGICAL");
+                                    }
+                                }
+                                match arg_types.first() {
+                                    Some(Ty::Array(element,_))=>Ty::Array(element.clone(),1),
+                                    _=>Ty::Unknown,
+                                }
                             },
                             "int" | "nint" | "floor" | "ceiling" | "real" | "dble" => {
                                 let kind = match args.get(1) {

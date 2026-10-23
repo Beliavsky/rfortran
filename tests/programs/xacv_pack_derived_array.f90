@@ -1,4 +1,4 @@
-! xacv.f90 line 1854: PACK of records passed to an allocatable-output routine.
+! Regression for xacv.f90 line 1854: PACK passed to an allocatable-output routine.
 module pack_dates_mod
 implicit none
 type :: date_mdy

@@ -140,13 +140,25 @@ its mask once, reusing derived assignment for supported component kinds. Tests
 in `tests/test_derived_merge.py` cover aliases, nested records, managed components,
 array elements, scalar broadcasts, constructors, procedures and invalid types.
 
-The next full-source blocker is line 1854:
+The former full-source blocker at line 1854 is now supported:
 `call set_alloc(pack(dates,is_weekday(dates)),week_dates)`. The nineteenth repro,
 [tests/programs/xacv_pack_derived_array.f90](tests/programs/xacv_pack_derived_array.f90),
 passes PACK of an allocated record array and an ELEMENTAL mask to an
-allocatable-output subroutine. Gfortran prints `1 3`; rfort reports a derived
-assignment error for the generated scalar `@record_actual_5` at the CALL.
-PACK needs to retain its record-array type/rank through component lowering.
+allocatable-output subroutine. Both rfort and gfortran print `1 3`.
+PACK retains its record-array type/rank through component lowering and gathers
+selected records using one captured mask. Tests in `tests/test_derived_pack.py`
+cover source ranks through 15, sections, constructors, nested records, fixed array
+components, runtime VECTOR tails, empty selections, mask shape/type checks and
+single evaluation. Related fixes preserve ELEMENTAL result metadata during
+allocatable assignment and return native LOGICAL literal function results correctly.
+Owned allocatable record components remain unsupported for PACK.
+
+The next full-source blocker is the internal list-directed READ at line 2124:
+`read (text,*,iostat=ierr_read) (dummy,i=1,nskip_col_),date`. The twentieth repro,
+[tests/programs/xacv_read_derived_record.f90](tests/programs/xacv_read_derived_record.f90),
+skips two fields before reading a record with three integer components. Gfortran
+prints `1 2 2024`; rfort reports `derived value` followed by the record name and
+`requires a constructor, derived assignment, or typed procedure argument` at READ.
 
 ## Intrinsic calls after extending an intrinsic generic
 

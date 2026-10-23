@@ -1155,6 +1155,18 @@ results remain unsupported. Rank-one runtime PACK results can also be passed to
 specialized INTENT(IN) array dummies, including nested PACK arguments; dummy
 SIZE/LBOUND/UBOUND use the logical result extent. Run
 `python tests/test_runtime_pack.py` and `python tests/test_recursive_allocatables.py`.
+Derived-type PACK supports ARRAY ranks through 15, runtime extents, sections,
+constructors, scalar or conformable LOGICAL masks, and an optional runtime-sized
+rank-one VECTOR of the same type. It preserves column-major element order,
+evaluates the mask once, and reads only selected records plus the required VECTOR
+tail. Nested records and fixed-size component arrays are supported; records with
+owned ALLOCATABLE components are rejected. Negative-stride PACK sections currently
+require explicit lower and upper bounds. Assignment to records with CHARACTER
+array components currently requires an explicitly allocated destination. User-defined
+procedures named PACK retain their usual dispatch. Run `python tests/test_derived_pack.py`.
+Allocatable assignment also retains ELEMENTAL result type metadata, and native
+LOGICAL function results correctly return literal truth values.
+
 UNPACK supports a rank-one VECTOR, fixed-shape LOGICAL MASK and scalar or
 conformable FIELD of the same type/kind as VECTOR. Both intrinsics preserve
 array-element order and check at runtime that VECTOR has enough elements.
