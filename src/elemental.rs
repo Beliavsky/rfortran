@@ -77,15 +77,18 @@ pub(crate) fn inline_character(
 
 pub fn validate_subroutine(name: &str, params: &[String], body: &[Stmt]) -> Result<()> {
     for param in params {
-        if body.iter().any(|s| matches!(s, Stmt::ArrayDecl { name, .. } if name == param)) {
+        if body.iter().any(|s| matches!(s, Stmt::ArrayDecl { name, .. } if name == param)
+            || matches!(s, Stmt::DerivedDecl { names, dims, .. } if names.contains(param) && !dims.is_empty())) {
             return Err(crate::source_diagnostics::declaration(body,param,None,format!("ELEMENTAL subroutine `{name}` requires scalar dummy arguments")));
         }
-        if !body.iter().any(|s| matches!(s, Stmt::VarDecl { kind, names } if names.contains(param)
-            && (numeric(kind) || matches!(kind, TypeSpec::Logical | TypeSpec::Character(_) | TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed)))) {
+        if !body.iter().any(|s| matches!(s, Stmt::VarDecl { kind, names } if names.contains(param) && scalar(kind))
+            || matches!(s, Stmt::DerivedDecl { names, dims, .. } if names.contains(param) && dims.is_empty())) {
             return Err(crate::source_diagnostics::declaration(body,param,None,format!("ELEMENTAL dummy `{param}` requires a supported explicitly declared scalar type")));
         }
-        let attributes: Vec<_> = body.iter().filter_map(|s| match s {
-            Stmt::DummyIntent { name, intent } if name == param => Some(intent.as_str()), _ => None,
+        let attributes: Vec<_> = body.iter().flat_map(|s| match s {
+            Stmt::DummyIntent { name, intent } if name == param => vec![intent.as_str()],
+            Stmt::DerivedDecl { names, attributes, .. } if names.contains(param) => attributes.iter().map(String::as_str).collect(),
+            _ => vec![],
         }).collect();
         if attributes.iter().filter(|a| a.starts_with("intent(")).count() != 1 {
             return Err(crate::source_diagnostics::declaration(body,param,None,format!("ELEMENTAL dummy `{param}` requires one explicit INTENT")));
@@ -98,7 +101,8 @@ pub fn validate_subroutine(name: &str, params: &[String], body: &[Stmt]) -> Resu
         match e {
             Expr::Call(n, args) if n == "present" => {
                 let [Expr::Ident(param)] = args.as_slice() else { bail!("PRESENT requires an OPTIONAL dummy argument"); };
-                if !params.contains(param) || !body.iter().any(|s| matches!(s, Stmt::DummyIntent { name, intent } if name == param && intent == "optional")) {
+                if !params.contains(param) || !body.iter().any(|s| matches!(s, Stmt::DummyIntent { name, intent } if name == param && intent == "optional")
+                    || matches!(s, Stmt::DerivedDecl { names, attributes, .. } if names.contains(param) && attributes.iter().any(|a| a == "optional"))) {
                     bail!("PRESENT requires an OPTIONAL dummy argument");
                 }
             }

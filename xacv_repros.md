@@ -22,11 +22,19 @@ broadcasting in both orders, numeric/CHARACTER results, ranks through 15,
 runtime shape conformance and uninitialized-component behavior are covered by
 `python tests/test_elemental_operators.py`.
 
-The next full-source blocker is the derived-type `INTENT(OUT)` dummy in
-`set_time_of_day`, around line 940. A seventh repro is
-[tests/programs/xacv_elemental_derived_out.f90](tests/programs/xacv_elemental_derived_out.f90).
-It fails with rfort and prints `9 30 0` with gfortran. A scalar call suffices;
-ELEMENTAL subroutine dummy validation is the immediate limitation.
+The derived-type `INTENT(OUT)` dummy in `set_time_of_day`, around line 940,
+is now supported. The seventh repro,
+[tests/programs/xacv_elemental_derived_out.f90](tests/programs/xacv_elemental_derived_out.f90),
+prints `9 30 0` with rfort and gfortran. Regression tests in
+`python tests/test_elemental_derived_subroutines.py` cover scalar and array
+OUT/INOUT, OPTIONAL derived dummies, keywords, nested scalar records, sections,
+and writable array elements without premature reads of unset components.
+
+The next full-source blocker is the derived-type result of ELEMENTAL function
+`tod_int`, at line 958. An eighth repro is
+[tests/programs/xacv_elemental_derived_result.f90](tests/programs/xacv_elemental_derived_result.f90).
+It prints `9 30 45` with gfortran, while rfort diagnoses
+`ELEMENTAL function tod_int requires an explicitly declared supported scalar result`.
 
 ## Intrinsic calls after extending an intrinsic generic
 

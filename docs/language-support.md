@@ -1882,8 +1882,11 @@ and derived-valued elemental results retain their existing limitations.
 Run `python tests/test_elemental_operators.py` and
 `python tests/test_character_operators.py` for interpreter, native O0/O2 and
 gfortran comparisons. `tests/programs/xacv_elemental_derived_comparison.f90`
-now prints `T`. Derived-type dummy arguments to ELEMENTAL subroutines remain
-unsupported; `tests/programs/xacv_elemental_derived_out.f90` is a small repro.
+now prints `T`. Derived-type dummy arguments to ELEMENTAL subroutines also
+work for supported scalar records and constant rank-one record arrays;
+`tests/programs/xacv_elemental_derived_out.f90` prints `9 30 0`. Derived-valued
+ELEMENTAL function results remain unsupported; see
+`tests/programs/xacv_elemental_derived_result.f90`.
 
 ### Generic and elemental dispatch
 
@@ -1942,7 +1945,11 @@ ELEMENTAL implies PURE unless IMPURE is specified; PURE restrictions are checked
 IMPURE ELEMENTAL functions and subroutines may perform external I/O and other
 supported side effects. Either prefix order (`impure elemental` or `elemental
 impure`) is accepted. Supported dummy types
-include INTEGER, REAL, DOUBLE PRECISION, LOGICAL, and CHARACTER. Assumed
+include INTEGER, REAL, DOUBLE PRECISION, LOGICAL, CHARACTER, and supported
+scalar derived types. Derived dummies retain their INTENT and OPTIONAL
+attributes when expanded into components. Scalar array-element outputs do not
+read the previous component values, and INOUT updates are copied back even
+when the procedure returns early. Assumed
 CHARACTER dummy lengths are specialized to each scalar actual argument, with
 normal assignment padding and truncation.
 
@@ -1952,7 +1959,9 @@ module are covered by the regression tests. Positional and named scalar calls
 are supported, including through supported generic interfaces. Numeric and
 LOGICAL array actuals with constant rank-one extents are also supported for
 ELEMENTAL subroutines: constructors, supported array expressions, whole arrays,
-and constant sections. Scalar inputs are broadcast; writable actuals must be
+and constant sections. Derived-type arrays with scalar primitive components,
+including nested scalar records, use the same expansion. Scalar inputs are
+broadcast; writable actuals must be
 arrays or sections when any actual is an array. Calls run in array element order,
 preserving impure I/O and side effects. Output sections need not be initialized.
 Mismatched extents and calls to impure procedures from PURE or FORALL contexts
@@ -1961,6 +1970,10 @@ CHARACTER array actuals, and the separate allocatable setters remain outside
 this subset. Unsupported actual expressions and mismatched types produce
 diagnostics. Explicit-length CHARACTER dummies currently require matching actual
 lengths.
+
+`python tests/test_elemental_derived_subroutines.py` checks derived OUT/INOUT,
+OPTIONAL/PRESENT, keywords, array and section calls, nested records, and
+scalar array-element outputs against gfortran and interpreter/native O0/O2.
 
 `tests/126_impure_elemental.f90` and `python tests/test_impure_elemental.py`
 check constructors, writable arrays and sections, OPTIONAL/named arguments,

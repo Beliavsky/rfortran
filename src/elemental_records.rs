@@ -65,19 +65,22 @@ impl Lower {
                 }
                 _ => false,
             };
-            if !array {
+            // Pass scalar elements as component storage too. Copying a whole
+            // record to a temporary would read unset INTENT(OUT) components.
+            let element = self.element(arg, objects).is_some();
+            if !array && !element {
                 continue;
             }
+            if let Expr::Index(n, indices) = arg {
+                *arg = Expr::Call(n.clone(), indices.clone());
+            }
             let fields = self.fields(ty)?;
-            if fields.iter().any(|f| !f.dims.is_empty()) {
+            if array && fields.iter().any(|f| !f.dims.is_empty()) {
                 bail!(
                     "ELEMENTAL derived array actuals currently require scalar primitive components"
                 );
             }
-            let (parts, array) = self.parts(arg.clone(), ty, objects, prefix)?;
-            if !array {
-                bail!("ELEMENTAL record actual must be an array");
-            }
+            let (parts, _) = self.parts(arg.clone(), ty, objects, prefix)?;
             let mut values = vec![Expr::Str(ty.clone())];
             values.extend(
                 fields

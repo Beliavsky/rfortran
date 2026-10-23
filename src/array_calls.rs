@@ -1390,6 +1390,7 @@ fn expand(
                 let mut absent = HashSet::new();
                 let mut prefix = vec![];
                 let mut undefine = vec![];
+                let mut copy_back = vec![];
                 let mut shape_checks = Vec::new();
                 for (i, p) in r.params.iter().enumerate() {
                     local.remove(&format!("@extent:{p}"));
@@ -1443,7 +1444,7 @@ fn expand(
                     let pointer_target=local.contains_key(&format!("@target:{p}")) && r.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if intent=="pointer" && r.params.contains(name)));
                     if pointer_target && !matches!(actual,Expr::Ident(a) if shapes.contains_key(&format!("@target:{a}"))) {bail!("escaping POINTER association requires a TARGET actual for `{p}`");}
                     if intent != "intent(in)"
-                        && matches!(actual,Expr::Ident(n) if readonly.contains(n))
+                        && matches!(actual,Expr::Ident(n) | Expr::Index(n,_) | Expr::Call(n,_) if readonly.contains(n))
                     {
                         bail!("cannot pass PARAMETER or INTENT(IN) variable as writable argument `{p}`");
                     }
@@ -1643,6 +1644,26 @@ fn expand(
                             value: actual.clone(),
                         });
                         names.insert(p.clone(), temp);
+                    } else if r.elemental && matches!(actual, Expr::Call(n, _) | Expr::Index(n, _) if shapes.get(n).is_some_and(|(_,d)| !d.is_empty())) {
+                        // A flattened record element passes writable component
+                        // storage. Capture subscripts once, without reading OUT.
+                        let (Expr::Call(array,indices) | Expr::Index(array,indices)) = actual else { unreachable!() };
+                        let mut captured = vec![];
+                        for index in indices {
+                            *serial += 1;
+                            let temp = format!("@elemental_subscript_{serial}");
+                            prefix.push(Stmt::VarDecl {kind:TypeSpec::Integer(None),names:vec![temp.clone()]});
+                            prefix.push(Stmt::Assign {name:temp.clone(),value:index.clone()});
+                            captured.push(Expr::Ident(temp));
+                        }
+                        *serial += 1;
+                        let temp = format!("@elemental_component_{serial}");
+                        prefix.push(Stmt::VarDecl {kind,names:vec![temp.clone()]});
+                        if intent != "intent(out)" {
+                            prefix.push(Stmt::Assign {name:temp.clone(),value:Expr::Index(array.clone(),captured.clone())});
+                        }
+                        copy_back.push(Stmt::AssignIndex {name:array.clone(),indices:captured,value:Expr::Ident(temp.clone())});
+                        names.insert(p.clone(),temp);
                     } else {
                         let Expr::Ident(a) = actual else {
                             bail!("writable dummy `{p}` requires a variable");
@@ -1734,6 +1755,7 @@ fn expand(
                 // must not rebase array temporaries while their actual values
                 // are still being materialized in the association prefix.
                 prefix.push(Stmt::Block { body: cloned });
+                prefix.extend(copy_back);
                 *s = Stmt::Block { body: prefix };
                 continue;
             }

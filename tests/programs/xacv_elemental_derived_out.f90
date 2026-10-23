@@ -1,5 +1,5 @@
-! Next xacv.f90 blocker: set_time_of_day, around line 940.
-! A scalar call already requires support for a derived ELEMENTAL OUT dummy.
+! xacv.f90 regression: set_time_of_day, around line 940.
+! A derived ELEMENTAL OUT dummy must accept an unset scalar record.
 module elemental_time_mod
 implicit none
 type :: time_of_day

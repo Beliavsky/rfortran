@@ -359,7 +359,7 @@ impl Lower {
                 | Stmt::Subroutine {
                     name, params, body, ..
                 } => {
-                    if matches!(s, Stmt::Function { elemental: true, .. }) {
+                    if matches!(s, Stmt::Function { elemental: true, .. } | Stmt::Subroutine { elemental: true, .. }) {
                         self.collect_elemental(name, params, body);
                     }
                     let arrays: Objects = body
@@ -1440,6 +1440,7 @@ impl Lower {
                         args.extend(values);
                     }
                     Stmt::CallSub { name, args } => {
+                        self.elemental_actuals(name, args, &mut objects, &mut prefix)?;
                         // A type-bound call on an array element, `call a(i)%m()`,
                         // and an element passed to a scalar derived dummy use a
                         // temporary object copied back after the call.

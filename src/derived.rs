@@ -435,7 +435,7 @@ impl Lowerer {
                             // Even an unused ELEMENTAL input supplies shape and
                             // conformance information. Preserve one component,
                             // while avoiding reads of other unused components.
-                            if selected.is_empty() && matches!(s, Stmt::Function { elemental: true, .. }) {
+                            if selected.is_empty() && matches!(s, Stmt::Function { elemental: true, .. } | Stmt::Subroutine { elemental: true, .. }) {
                                 selected.extend(carrier);
                             }
                             used_fields.insert(p.clone(), selected);
