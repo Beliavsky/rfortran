@@ -16,6 +16,8 @@ mod elemental_record_results;
 mod record_components;
 #[path = "record_pack.rs"]
 mod record_pack;
+#[path = "record_constructors.rs"]
+mod record_constructors;
 #[path = "derived_pointers.rs"]
 mod derived_pointers;
 
@@ -882,10 +884,9 @@ impl Lower {
                 }
                 let mut values = vec![vec![]; fields.len()];
                 for e in args {
-                    let (parts, array) = self.prepared_parts(e, ty, objects, prefix)?;
-                    if array {
-                        bail!("nested derived array constructors are not yet supported");
-                    }
+                    // An array-valued item contributes all of its records in
+                    // array element order, just as for intrinsic constructors.
+                    let (parts, _) = self.prepared_parts(e, ty, objects, prefix)?;
                     for (out, e) in values.iter_mut().zip(parts) {
                         out.push(e);
                     }
@@ -1015,6 +1016,7 @@ impl Lower {
         if self.scalar_component_view(e, objects, prefix)? { return Ok(()); }
         self.heap_component_actual(e,objects,prefix,None)?;
         if self.materialize_elemental_result(e, objects, prefix)? { return Ok(()); }
+        if self.constructor_records(e, objects, prefix)? { return Ok(()); }
         match e {
             Expr::Ident(n) => self.component(n, objects)?,
             Expr::Call(n, args) if n.starts_with("@record_component:") => {

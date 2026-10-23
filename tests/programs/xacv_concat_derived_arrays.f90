@@ -1,4 +1,4 @@
-! xacv.f90 line 2603: concatenate derived arrays as an INTENT(IN) actual.
+! Regression for xacv.f90 line 2603: concatenate arrays as an INTENT(IN) actual.
 module concat_dates_mod
 implicit none
 type :: date_mdy

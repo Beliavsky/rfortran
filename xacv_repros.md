@@ -163,14 +163,27 @@ components in declaration order without reading the old record value. Tests in
 constant formats, shared input sessions, runtime implied-DOs and input status.
 Components with ALLOCATABLE or POINTER attributes still require defined I/O.
 
-The next full-source blocker is line 2603:
+The former full-source blocker at line 2603 is now supported:
 `call unique_dates_vec([xx,yy],zz)`. The twenty-first repro,
 [tests/programs/xacv_concat_derived_arrays.f90](tests/programs/xacv_concat_derived_arrays.f90),
 concatenates two assumed-shape record arrays as an INTENT(IN) actual and copies
-the result to an allocatable output. Gfortran prints `2 2024 2025`; rfort reports
-`derived assignment to` a generated `@record_actual` temporary `requires a value
-of type date_mdy` at the CALL. The array constructor must preserve the array
-shape and flatten each array-valued item into consecutive records.
+the result to an allocatable output. Both rfort and gfortran print `2 2024 2025`.
+Constructors gather complete records with shared column-major indexing rather
+than treating each array-valued item as one scalar. Tests in
+`tests/test_derived_constructors.py` cover mixed/nested/empty items, runtime
+multidimensional sources, ranks through 15, function evaluation, overlapping
+assignment, component arrays, output/inquiries and PACK. Owned allocatable
+components and constructor implied-DOs remain unsupported.
+
+Finishing derived lowering exposes a later-pass limitation at the earlier source
+line 722: `num_obs(dvec(ivec))`. The twenty-second repro,
+[tests/programs/xacv_elemental_allocatable_component_size.f90](tests/programs/xacv_elemental_allocatable_component_size.f90),
+asks an ELEMENTAL function for the size of an allocatable derived-array component
+of a scalar record selected from an array. Gfortran prints `2`; rfort reports
+`content-dependent CHARACTER results currently require a bounded input array`.
+The same repro fails with the release compiler from before the constructor fix.
+The specialization restriction and its CHARACTER-specific diagnostic are
+inappropriate for this scalar INTEGER result and its runtime component extent.
 
 ## Intrinsic calls after extending an intrinsic generic
 

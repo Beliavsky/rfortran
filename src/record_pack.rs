@@ -30,7 +30,8 @@ fn fail(cond: Expr, message: &str) -> Stmt {
     }
 }
 
-struct Input {
+pub(super) struct Input {
+    scalar: bool,
     name: String,
     ty: String,
     // An axis is either a scalar subscript or (first, stride, extent, vector).
@@ -38,6 +39,22 @@ struct Input {
     dims: Vec<Expr>,
 }
 impl Input {
+    pub(super) fn scalar(name: String, ty: String) -> Self {
+        Self {
+            name,
+            ty,
+            scalar: true,
+            axes: vec![],
+            dims: vec![],
+        }
+    }
+    pub(super) fn length(&self) -> Expr {
+        self.dims
+            .iter()
+            .cloned()
+            .reduce(|a, b| bin(BinOp::Mul, a, b))
+            .unwrap_or(int(1))
+    }
     fn at(&self, ordinal: Expr) -> (Vec<Expr>, Vec<Expr>) {
         let mut offset = bin(BinOp::Sub, ordinal, int(1));
         let (mut indices, mut mask) = (vec![], vec![]);
@@ -71,7 +88,7 @@ impl Input {
 }
 
 impl Lower {
-    fn pack_object(&self, value: &Expr, objects: &Objects) -> Option<Object> {
+    pub(super) fn pack_object(&self, value: &Expr, objects: &Objects) -> Option<Object> {
         match value {
             Expr::Ident(n) => objects.get(n).cloned(),
             Expr::Section { name, .. } => objects.get(name).map(|o| Object {
@@ -114,6 +131,9 @@ impl Lower {
                 ty: n.clone(),
                 dims: vec![],
             }),
+            Expr::Call(n, _) if self.procedures.get(n).is_some_and(|p| p.result.is_some()) => {
+                self.procedures[n].result.as_ref().map(|(_, o)| o.clone())
+            }
             Expr::Call(n, _) => self.scalar_results.get(n).map(|ty| Object {
                 ty: ty.clone(),
                 dims: vec![],
@@ -122,7 +142,7 @@ impl Lower {
         }
     }
 
-    fn pack_input(
+    pub(super) fn pack_input(
         &mut self,
         value: &Expr,
         info: Object,
@@ -159,44 +179,13 @@ impl Lower {
             Expr::Call(n, args) | Expr::Index(n, args) if objects.contains_key(n) => {
                 (n.clone(), args.clone())
             }
-            Expr::Call(tag, args)
-                if tag == "@array_constructor" || tag == "@record_constructor" =>
-            {
-                let count = if tag == "@record_constructor" {
-                    args.len() - 1
-                } else {
-                    args.len()
-                };
-                self.serial += 1;
-                let name = format!("@record_pack_constructor_{}", self.serial);
-                let (parts, _) = self.prepared_parts(value.clone(), &info.ty, objects, prefix)?;
-                for (field, value) in self.fields(&info.ty)?.iter().zip(parts) {
-                    let storage = storage(&name, &field.name);
-                    prefix.push(Stmt::ArrayDecl {
-                        kind: field.kind.clone(),
-                        name: storage.clone(),
-                        dims: vec![int(count as i64)],
-                    });
-                    if count > 0 {
-                        prefix.push(assign(&storage, value));
-                    }
-                }
-                objects.insert(
-                    name.clone(),
-                    Object {
-                        ty: info.ty.clone(),
-                        dims: vec![int(count as i64)],
-                    },
-                );
-                (
-                    name,
-                    vec![Expr::Section {
-                        name: String::new(),
-                        lower: None,
-                        upper: None,
-                        stride: None,
-                    }],
-                )
+            Expr::Call(tag, _) if tag == "@array_constructor" || tag == "@record_constructor" => {
+                let mut value = value.clone();
+                self.constructor_records(&mut value, objects, prefix)?;
+                let info = self
+                    .pack_object(&value, objects)
+                    .context("invalid record constructor")?;
+                return self.pack_input(&value, info, objects, prefix);
             }
             _ => bail!("PACK ARRAY requires supported record-array storage"),
         };
@@ -269,6 +258,7 @@ impl Lower {
             axes.push((first, Some((step, id(&extent_name), vector))));
         }
         Ok(Input {
+            scalar: false,
             name,
             ty: info.ty,
             axes,
@@ -276,7 +266,7 @@ impl Lower {
         })
     }
 
-    fn pack_copy(
+    pub(super) fn pack_copy(
         &mut self,
         source: &Input,
         fields: &[Field],
@@ -321,10 +311,20 @@ impl Lower {
             if matches!(component_loop, Some((_, 0))) {
                 continue;
             }
+            let from_name = if source.scalar {
+                format!("{}%{}", source.name, field.name)
+            } else {
+                storage(&source.name, &field.name)
+            };
+            let value = if from.is_empty() {
+                id(&from_name)
+            } else {
+                Expr::Index(from_name, from)
+            };
             let set = Stmt::AssignIndex {
                 name: storage(target, &field.name),
                 indices: to,
-                value: Expr::Index(storage(&source.name, &field.name), from),
+                value,
             };
             body.push(if let Some((var, count)) = component_loop {
                 Stmt::Do {

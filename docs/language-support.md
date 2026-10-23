@@ -1490,6 +1490,20 @@ source argument count through component flattening, including generic reductions
 inside CHARACTER consumers, keyword/OPTIONAL arguments and ELEMENTAL results.
 See `tests/test_scalar_record_results.py`.
 
+Derived array constructors concatenate scalar and array-valued items, including
+mixed or nested constructors, typed empty constructors, sections, vector
+selections and function results. Each array item contributes its records in
+column-major order, with source ranks through 15 and fixed or runtime extents.
+Results work in assignment, read-only procedure arguments, output, inquiries and
+PACK; overlapping assignment captures the RHS before writing the destination.
+Nested scalar components and fixed array components retain their record layout.
+Known extents remain fixed; dynamic sizes use allocated temporary storage. Run
+`python tests/test_derived_constructors.py` for interpreter/native O0/O2 and
+gfortran comparisons. Owned ALLOCATABLE components and derived constructor
+implied-DOs remain unsupported. Negative-stride sections currently require
+explicit lower and upper bounds, as in derived PACK. Other component assignment
+and inquiry limitations described in this section still apply.
+
 Derived arrays use separate component arrays with a shared shape, supporting
 fixed and allocatable storage, ranks through 15, component defaults, element
 access such as `x(i)%id`, constructors, assignment, and list-directed/formatted
