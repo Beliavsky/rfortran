@@ -139,6 +139,9 @@ struct Lower {
     /// Procedures with a scalar derived dummy, which an array element is
     /// passed to through a temporary object.
     scalar_procedures: std::collections::HashSet<String>,
+    /// Ordinary scalar derived-valued functions, materialized once before
+    /// splitting their results into array component storage.
+    scalar_results: HashMap<String, String>,
     elemental_records: HashMap<String, elemental_records::Procedure>,
     elemental_results: HashMap<String, elemental_record_results::ResultProcedure>,
     elemental_functions: std::collections::HashSet<String>,
@@ -151,6 +154,9 @@ struct Lower {
 /// A field of a nested derived component, `p%x`, is stored as `p$x`.
 fn storage(object: &str, field: &str) -> String {
     let field = field.replace('%', "$");
+    if let Some(prefix) = object.strip_prefix("@record_view:") {
+        return format!("{prefix}${field}");
+    }
     if object.contains('%') {
         format!("{object}${field}")
     } else {
@@ -431,6 +437,13 @@ impl Lower {
                             Some(Stmt::Return(Some(Expr::Ident(n)))) => n,
                             _ => name,
                         };
+                        if let Some(ty) = body.iter().find_map(|s| match s {
+                            Stmt::DerivedDecl { type_name, names, dims, .. }
+                                if dims.is_empty() && names.contains(n) => Some(type_name.clone()),
+                            _ => None,
+                        }) {
+                            self.scalar_results.insert(name.clone(), ty);
+                        }
                         arrays.get(n).cloned().map(|o| (n.clone(), o))
                     } else {
                         None
@@ -859,6 +872,21 @@ impl Lower {
                     true,
                 ))
             }
+            Expr::Call(n, args) if self.scalar_results.contains_key(&n) => {
+                if self.scalar_results[&n] != ty {
+                    bail!("derived result type mismatch: expected `{ty}`, got `{}`", self.scalar_results[&n]);
+                }
+                self.serial += 1;
+                let temp = format!("@scalar_record_result_{}", self.serial);
+                prefix.push(Stmt::DerivedDecl {
+                    type_name: ty.into(), names: vec![temp.clone()],
+                    attributes: vec![], polymorphic: false, dims: vec![],
+                });
+                prefix.push(Stmt::Assign { name: temp.clone(), value: Expr::Call(n, args) });
+                objects.insert(temp.clone(), Object { ty: ty.into(), dims: vec![] });
+                self.register_components(&temp, ty, objects);
+                Ok((fields.iter().map(|f| Expr::Ident(format!("{temp}%{}", f.name))).collect(), false))
+            }
             _ => bail!("unsupported derived array value of type `{ty}`"),
         }
     }
@@ -913,12 +941,50 @@ impl Lower {
         *args = flat;
         Ok(p.result)
     }
+    /// A scalar derived component selected across a record array is a view
+    /// of the existing component arrays, with the parent's shape/subscripts.
+    /// The alias has no storage and must never acquire ownership of it.
+    fn scalar_component_view(&mut self, e: &mut Expr, objects: &mut Objects,
+        prefix: &mut Vec<Stmt>) -> Result<bool> {
+        let (mut parent, field) = match e {
+            Expr::Ident(n) => match n.rsplit_once('%') {
+                Some((parent, field)) => (Expr::Ident(parent.into()), field.to_owned()),
+                None => return Ok(false),
+            },
+            Expr::Call(tag, args) if tag.starts_with("@record_component:") && args.len() == 1 =>
+                (args[0].clone(), tag[18..].to_owned()),
+            _ => return Ok(false),
+        };
+        let mut evaluation = vec![];
+        self.expression(&mut parent, objects, &mut evaluation)?;
+        let owner = match &parent {
+            Expr::Ident(n) | Expr::Section {name:n,..} | Expr::Call(n,_) | Expr::Index(n,_) => n,
+            _ => return Ok(false),
+        };
+        let Some(object) = objects.get(owner).filter(|o| !o.dims.is_empty()).cloned() else { return Ok(false) };
+        let mut ty = object.ty.clone();
+        for component in field.split('%') {
+            let Some(child) = self.scalar_components.get(&ty).into_iter().flatten()
+                .find(|(name,_)| name == component).map(|(_,ty)| ty.clone()) else { return Ok(false) };
+            ty = child;
+        }
+        let alias = format!("@record_view:{}", storage(owner, &field));
+        objects.insert(alias.clone(), Object {ty, dims:object.dims});
+        match &mut parent {
+            Expr::Ident(n) | Expr::Section {name:n,..} | Expr::Call(n,_) | Expr::Index(n,_) => *n = alias,
+            _ => unreachable!(),
+        }
+        prefix.extend(evaluation);
+        *e = parent;
+        Ok(true)
+    }
     fn expression(
         &mut self,
         e: &mut Expr,
         objects: &mut Objects,
         prefix: &mut Vec<Stmt>,
     ) -> Result<()> {
+        if self.scalar_component_view(e, objects, prefix)? { return Ok(()); }
         self.heap_component_actual(e,objects,prefix,None)?;
         if self.materialize_elemental_result(e, objects, prefix)? { return Ok(()); }
         match e {
@@ -1733,6 +1799,7 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
         dummies: vec![],
         layouts: HashMap::new(),
         scalar_procedures: Default::default(),
+        scalar_results: HashMap::new(),
         elemental_records: HashMap::new(),
         elemental_results: HashMap::new(),
         elemental_functions: Default::default(),

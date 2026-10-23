@@ -1,4 +1,4 @@
-! xacv.f90 blocker at line 1172: a scalar derived result assigned to an array element.
+! Regression for the former xacv.f90 blocker at line 1172: a scalar derived result assigned to an array element.
 module month_year_result_mod
 implicit none
 type :: month_year

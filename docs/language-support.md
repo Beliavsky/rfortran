@@ -1443,6 +1443,19 @@ saved local objects need scalar components. Run
 
 ### Arrays of derived type
 
+A scalar derived component selected across a record array, such as `xx%date`,
+is a view of the existing component storage with the parent's shape and
+subscripts. This includes nested selections, sections, vector subscripts,
+ELEMENTAL calls, and ordinary array dummy arguments, including writable views.
+The view does not own or copy the parent's allocations. See
+`tests/test_derived_component_views.py`.
+
+Ordinary scalar derived-valued function results can be assigned to array
+elements, used as scalar broadcasts, or included in array constructors. Each
+function call executes once into a scalar temporary before its components are
+copied, including nested scalar, CHARACTER and fixed array components within
+the existing assignment limits. See `tests/test_scalar_record_results.py`.
+
 Derived arrays use separate component arrays with a shared shape, supporting
 fixed and allocatable storage, ranks through 15, component defaults, element
 access such as `x(i)%id`, constructors, assignment, and list-directed/formatted

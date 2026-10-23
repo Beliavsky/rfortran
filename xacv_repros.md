@@ -57,13 +57,34 @@ array-component interface after record flattening. Regression tests also cover
 whole scalar actuals, fixed array components, and impure ELEMENTAL INOUT calls.
 Array-valued calls involving these record types remain explicitly unsupported.
 
-The next full-source blocker is
-[tests/programs/xacv_derived_result_array_element.f90](tests/programs/xacv_derived_result_array_element.f90)
-for line 1172 in `month_year_code_vec`:
-`xmy(i) = month_year_code_scalar(text(i))`. It prints `2024 2024 1 2` with
-gfortran. rfort reports `unsupported derived array value of type month_year`:
-the assignment path for an array element does not yet materialize an ordinary
-scalar derived-valued function call.
+The former line-1172 blocker in `month_year_code_vec`,
+`xmy(i) = month_year_code_scalar(text(i))`, is now fixed. The eleventh repro,
+[tests/programs/xacv_derived_result_array_element.f90](tests/programs/xacv_derived_result_array_element.f90),
+prints `2024 2024 1 2` with rfort and gfortran. Ordinary scalar derived-valued
+function calls are materialized once before splitting their components for
+array assignment. `tests/test_scalar_record_results.py` also checks side
+effects, scalar broadcasts, constructor items, keywords, self-referencing
+arguments, multidimensional targets and nested/CHARACTER/fixed array components.
+
+The former line-2560 blocker,
+`call groups_alloc(yyyymmdd(xx%date),ipos)`, is now fixed. Selecting a scalar
+derived component across a record array creates a view of its primitive
+component storage. The twelfth repro,
+[tests/programs/xacv_nested_component_array.f90](tests/programs/xacv_nested_component_array.f90),
+prints `2024 2025` with rfort and gfortran. Tests in
+`tests/test_derived_component_views.py` cover nested selections, sections,
+vector subscripts, multidimensional parents, array assignments and writable
+array dummy arguments. The writable-view reference was checked with gfortran
+`-fcheck=all,no-array-temps` because its ordinary `-fcheck=all` warns about
+array temporaries for these arguments.
+
+The next full-source blocker is line 4154 in `describe_date_time_vec_vec`:
+`type(date_time), pointer :: z(:)`, followed by `z => xx%dd(isym)%xx`.
+Derived-type pointer arrays remain unsupported. The thirteenth repro,
+[tests/programs/xacv_derived_array_pointer.f90](tests/programs/xacv_derived_array_pointer.f90),
+isolates the declaration, association and write-through behavior. It prints
+`2 2024 2025` followed by `2024 2030` with gfortran; rfort rejects the pointer
+array declaration.
 
 ## Intrinsic calls after extending an intrinsic generic
 
