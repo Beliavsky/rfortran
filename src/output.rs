@@ -149,6 +149,11 @@ pub(crate) fn integer(e: &Expr, symbols: &Symbols) -> bool {
         Expr::Ident(n) => {
             matches!(symbols.get(n), Some((TypeSpec::Integer(None | Some(1 | 2 | 4 | 8)), dims)) if dims.is_empty())
         }
+        Expr::Call(n, args) | Expr::Index(n, args)
+            if matches!(symbols.get(n), Some((TypeSpec::Integer(None | Some(1 | 2 | 4 | 8)), dims)) if !dims.is_empty() && dims.len()==args.len()) =>
+        {
+            args.iter().all(|e| integer(e, symbols))
+        }
         Expr::Un(UnOp::Neg, a) => integer(a, symbols),
         Expr::Bin(BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow, a, b) => {
             integer(a, symbols) && integer(b, symbols)

@@ -1165,6 +1165,44 @@ impl Lower {
         }
         Ok(())
     }
+    /// Transfer each primitive component of one record, expanding fixed array
+    /// components before proceeding to the next record.
+    fn output_fields(&mut self, array: &str, ty: &str, indices: &[Expr],
+        prefix: &mut Vec<Stmt>) -> Result<Vec<Expr>> {
+        let fields = self.fields(ty)?;
+        if fields.iter().any(|f| f.heap.is_some()) {
+            bail!("output of a record with allocatable components requires defined I/O");
+        }
+        let mut items = vec![];
+        for f in &fields {
+            if f.dims.is_empty() {
+                items.push(Expr::Index(storage(array, &f.name), indices.to_vec()));
+                continue;
+            }
+            // An array component: its elements in array element order.
+            self.serial += 1;
+            let inner = format!("@record_output_{}", self.serial);
+            prefix.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![inner.clone()] });
+            let mut ordinal = Expr::Bin(crate::ast::BinOp::Sub, Box::new(Expr::Ident(inner.clone())), Box::new(Expr::IntLit("1".into())));
+            let mut subscripts = vec![];
+            let mut total = 1i64;
+            for d in &f.dims {
+                let extent = crate::parameters::integer_constant(d)?.max(0);
+                total *= extent;
+                let extent = Expr::IntLit(extent.to_string());
+                subscripts.push(Expr::Bin(crate::ast::BinOp::Add,
+                    Box::new(Expr::Call("mod".into(), vec![ordinal.clone(), extent.clone()])),
+                    Box::new(Expr::IntLit("1".into()))));
+                ordinal = Expr::Bin(crate::ast::BinOp::Div, Box::new(ordinal), Box::new(extent));
+            }
+            subscripts.extend(indices.iter().cloned());
+            items.push(Expr::Call("@output_implied_do".into(), vec![
+                Expr::Ident(inner), Expr::IntLit("1".into()), Expr::IntLit(total.to_string()), Expr::IntLit("1".into()),
+                Expr::Index(storage(array, &f.name), subscripts),
+            ]));
+        }
+        Ok(items)
+    }
     fn output(
         &mut self,
         items: &mut Vec<Expr>,
@@ -1176,8 +1214,6 @@ impl Lower {
             self.expression(&mut item, objects, prefix)?;
             if let Expr::Ident(array) = &item {
                 if let Some(o) = objects.get(array).filter(|o| !o.dims.is_empty()).cloned() {
-                    let fields = self.fields(&o.ty)?;
-                    if fields.iter().any(|f|f.heap.is_some()) {bail!("output of a record with allocatable components requires defined I/O");}
                     let (field, offset) = self.shape_field(&o.ty)?;
                     let first = storage(array, &field);
                     self.serial += 1;
@@ -1218,96 +1254,66 @@ impl Lower {
                         count,
                         Expr::IntLit("1".into()),
                     ];
-                    for f in &fields {
-                        if f.dims.is_empty() {
-                            args.push(Expr::Index(storage(array, &f.name), indices.clone()));
-                            continue;
-                        }
-                        // An array component: its elements in array element order.
-                        self.serial += 1;
-                        let inner = format!("@record_output_{}", self.serial);
-                        prefix.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![inner.clone()] });
-                        let mut ordinal = Expr::Bin(crate::ast::BinOp::Sub, Box::new(Expr::Ident(inner.clone())), Box::new(Expr::IntLit("1".into())));
-                        let mut subscripts = vec![];
-                        let mut total = 1i64;
-                        for d in &f.dims {
-                            let extent = crate::parameters::integer_constant(d)?.max(0);
-                            total *= extent;
-                            let extent = Expr::IntLit(extent.to_string());
-                            subscripts.push(Expr::Bin(crate::ast::BinOp::Add,
-                                Box::new(Expr::Call("mod".into(), vec![ordinal.clone(), extent.clone()])),
-                                Box::new(Expr::IntLit("1".into()))));
-                            ordinal = Expr::Bin(crate::ast::BinOp::Div, Box::new(ordinal), Box::new(extent));
-                        }
-                        subscripts.extend(indices.iter().cloned());
-                        args.push(Expr::Call("@output_implied_do".into(), vec![
-                            Expr::Ident(inner), Expr::IntLit("1".into()), Expr::IntLit(total.to_string()), Expr::IntLit("1".into()),
-                            Expr::Index(storage(array, &f.name), subscripts),
-                        ]));
-                    }
+                    args.extend(self.output_fields(array, &o.ty, &indices, prefix)?);
                     expanded.push(Expr::Call("@output_implied_do".into(), args));
                     continue;
                 }
             }
-            if let Expr::Call(array, _) = &item {
+            if let Expr::Call(array, _) | Expr::Index(array, _) | Expr::Section { name: array, .. } = &item {
                 if let Some(o) = objects.get(array).filter(|o| !o.dims.is_empty()).cloned() {
-                    let mut output_dims = vec![];
-                    let Expr::Call(_, args) = &item else {
-                        unreachable!()
+                    let mut indices = match &item {
+                        Expr::Call(_, args) | Expr::Index(_, args) => args.clone(),
+                        Expr::Section { lower, upper, stride, .. } => vec![Expr::Section {
+                            name: String::new(), lower: lower.clone(), upper: upper.clone(), stride: stride.clone(),
+                        }],
+                        _ => unreachable!(),
                     };
-                    for arg in args {
-                        if let Some(d) = self.array_shape(arg) {
-                            for dimension in d {
-                                if let Expr::Call(tag, a) = &dimension {
-                                    if tag == "@declared_bounds" {
-                                        let lower = crate::parameters::integer_constant(&a[0])?;
-                                        let upper = crate::parameters::integer_constant(&a[1])?;
-                                        output_dims.push(Expr::IntLit(
-                                            (upper - lower + 1).max(0).to_string(),
-                                        ));
-                                        continue;
-                                    }
-                                }
-                                output_dims.push(dimension);
-                            }
-                        } else if matches!(arg,Expr::Call(tag,_) if tag=="@section_subscript") {
-                            bail!("output of derived triplet sections is not yet supported");
-                        }
-                    }
-                    if self.fields(&o.ty)?.iter().any(|f|f.heap.is_some()) {bail!("output of a record with allocatable components requires defined I/O");}
-                    let (parts, array) = self.prepared_parts(item, &o.ty, objects, prefix)?;
-                    if array {
-                        if output_dims.is_empty()
-                            || output_dims
-                                .iter()
-                                .any(|e| crate::parameters::integer_constant(e).is_err())
-                        {
-                            bail!("output of runtime-sized derived vector selections is not yet supported");
-                        }
+                    if indices.len() != o.dims.len() { bail!("derived array output requires {} subscripts", o.dims.len()); }
+                    // Capture bounds and vectors once, before iterating records
+                    // or components; a subscript may contain an impure call.
+                    self.capture_indices(&mut indices, prefix);
+                    let (field, offset) = self.shape_field(&o.ty)?;
+                    let source = storage(array, &field);
+                    let mut loops = vec![];
+                    for (axis, index) in indices.iter_mut().enumerate() {
+                        let section = match &*index {
+                            Expr::Section { .. } => Some(index.clone()),
+                            Expr::Call(tag, args) if tag=="@section_subscript" => args.first().cloned(),
+                            _ => None,
+                        };
+                        let vector = self.array_shape(index).is_some_and(|dims| !dims.is_empty());
+                        let vector = vector && section.is_none();
+                        if section.is_none() && !vector { continue; }
                         self.serial += 1;
-                        let temp = format!("@record_output_selection_{}", self.serial);
-                        for (field, value) in self.fields(&o.ty)?.into_iter().zip(parts) {
-                            let name = storage(&temp, &field.name);
-                            prefix.push(Stmt::ArrayDecl {
-                                kind: field.kind.clone(),
-                                name: name.clone(),
-                                dims: storage_dims(&field, &output_dims),
-                            });
-                            prefix.push(Stmt::Assign { name, value });
-                        }
-                        objects.insert(
-                            temp.clone(),
-                            Object {
-                                ty: o.ty,
-                                dims: output_dims,
-                            },
-                        );
-                        let mut items = vec![Expr::Ident(temp)];
-                        self.output(&mut items, objects, prefix)?;
-                        expanded.extend(items);
-                    } else {
-                        expanded.extend(parts);
+                        let name = format!("@record_output_axis_{}", self.serial);
+                        prefix.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![name.clone()] });
+                        let (first, last, step) = if let Some(Expr::Section { lower, upper, stride, .. }) = section {
+                            let step = stride.map(|s| *s).unwrap_or(Expr::IntLit("1".into()));
+                            let bound = |n: &str| Expr::Call(n.into(), vec![Expr::Ident(source.clone()), Expr::IntLit((axis+offset+1).to_string())]);
+                            // Omitted bounds are the declared bounds regardless
+                            // of the sign of the stride.
+                            (lower.map(|s| *s).unwrap_or_else(|| bound("lbound")),
+                             upper.map(|s| *s).unwrap_or_else(|| bound("ubound")), step)
+                        } else {
+                            (Expr::IntLit("1".into()), Expr::Call("size".into(), vec![index.clone()]), Expr::IntLit("1".into()))
+                        };
+                        *index = if vector {
+                            let Expr::Ident(vector) = index else { bail!("derived output vector requires captured storage"); };
+                            Expr::Index(vector.clone(), vec![Expr::Ident(name.clone())])
+                        } else { Expr::Ident(name.clone()) };
+                        let mut controls = [first, last, step];
+                        self.capture_indices(&mut controls, prefix);
+                        let [first, last, step] = controls;
+                        loops.push((name, first, last, step));
                     }
+                    let mut values = self.output_fields(array, &o.ty, &indices, prefix)?;
+                    // Axis one varies fastest, so wrap its loop first.
+                    for (name, first, last, step) in loops {
+                        let mut args = vec![Expr::Ident(name), first, last, step];
+                        args.extend(values);
+                        values = vec![Expr::Call("@output_implied_do".into(), args)];
+                    }
+                    expanded.extend(values);
                     continue;
                 }
             }

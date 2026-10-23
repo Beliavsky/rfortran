@@ -1476,6 +1476,11 @@ effects in ordinary functions and also works for PURE functions. Components may
 be numeric, LOGICAL and fixed-length CHARACTER scalars, fixed-size arrays of
 those (`a(i)%pos(2)`, `a(i)%pos`, `a(i)%tag(1:2)`), and scalars of a derived type
 with such components (`a(i)%center%x`, `a%center%x`), with their defaults.
+Output also accepts derived-array rows, columns, triplets and Cartesian vector
+selections, including runtime bounds/strides and ranks through 15. Each selected
+record transfers its components before the next record; fixed array components
+transfer in array element order. Subscript expressions are captured once, and
+unselected elements are not read. See `tests/test_derived_section_output.py`.
 An element can be passed to a scalar derived dummy (`call bump(a(i), 1.0)`) and
 can call type-bound procedures (`call a(i)%move(dx)`, `a(i)%norm()`); the element
 is copied into a temporary object for the call and, for a subroutine, copied

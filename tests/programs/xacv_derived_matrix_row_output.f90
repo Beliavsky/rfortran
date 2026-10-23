@@ -1,4 +1,4 @@
-! xacv.f90 line 15947: formatted output of a row of derived records.
+! Regression for xacv.f90 line 15947: formatted output of derived records.
 program test
 implicit none
 type :: date_mdy

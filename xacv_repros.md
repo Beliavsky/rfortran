@@ -122,11 +122,22 @@ Tests in `tests/test_scalar_record_results.py` also cover nested numeric consume
 keyword/OPTIONAL arguments, constructors, subroutine actuals and ELEMENTAL record
 results, including single evaluation of impure functions.
 
-The next full-source blocker is line 15947: formatted output of `dates(i,:)`.
+The former line-15947 blocker is formatted output of `dates(i,:)`.
 The seventeenth repro,
 [tests/programs/xacv_derived_matrix_row_output.f90](tests/programs/xacv_derived_matrix_row_output.f90),
-prints `01/02/2024 03/04/2025` with gfortran. Rfort reports
-`output of derived triplet sections is not yet supported` at the WRITE statement.
+prints `01/02/2024 03/04/2025` with rfort and gfortran. Direct output loops handle
+triplets and vector selections without copying whole component arrays. Tests in
+`tests/test_derived_section_output.py` cover runtime bounds/strides, nonunit bounds,
+record/component order, nested records, array components, ranks through 15,
+initialization/bounds checks and single evaluation of subscript expressions.
+
+With section output lowered, the next full-source blocker comes from the scalar
+derived-type pass at line 1046: `tmin = merge(t1,t2,t2>t1)`. The eighteenth repro,
+[tests/programs/xacv_derived_merge.f90](tests/programs/xacv_derived_merge.f90),
+preserves the ELEMENTAL function and overloaded comparison. Gfortran prints
+`3 30 0`; rfort reports `derived assignment to tmin requires a value of type
+time_of_day` at the assignment. The lower source line reflects a later compiler
+pass, rather than a regression to the earlier section-output blocker.
 
 ## Intrinsic calls after extending an intrinsic generic
 
