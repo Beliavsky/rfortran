@@ -924,7 +924,7 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
         }
     }
     for stmt in body.iter_mut() {
-        if let Stmt::Function {name,..} | Stmt::Subroutine {name,..} = stmt {
+        if let Stmt::Function {name,..} | Stmt::Subroutine {name,..} | Stmt::GenericInterface {name,..} = stmt {
             constants.insert(format!("@model_procedure:{name}"),Expr::Logical(true));
         }
     }
@@ -1307,6 +1307,15 @@ fn typed_constructor(kind:&TypeSpec,items:Vec<Expr>)->Result<Expr> {
 const LOCAL_ARRAY: &str = "@local_array:";
 
 fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
+    if let Expr::Call(name,args)=expr {
+        if constants.contains_key(&format!("@model_procedure:{name}")) {
+            // A visible user procedure/generic can extend an intrinsic name.
+            // Resolve constants in its actuals, but preserve argument keywords
+            // and intrinsic-looking calls until overload selection has run.
+            for arg in args {rewrite_expr(arg,constants)?;}
+            return Ok(());
+        }
+    }
     if let Expr::Call(name,args)=expr {
         if name=="@conditional" {
             // Preserve the full choice for static checking. Constant evaluators

@@ -230,7 +230,7 @@ end program main
             ("call s(1,2,3,b=4)", routine, "too many arguments"),
             ("print *,f(b=2,a=1,a=3)", function, "duplicate argument `a`"),
             ("print *,f(a=1)", function, "missing required argument `b`"),
-            ("call missing(x=1)", "", "known explicit procedure interface"),
+            ("call missing(x=1)", "", "requires an explicit interface"),
             ("print *,sqrt(y=1.0)", "", "unknown keyword `y`"),
             ("print *,array(i=1)", "", "keyword arguments cannot be used in array subscripts"),
             ("call s(dest=1)", "subroutine s(dest)\ninteger,intent(out)::dest\ndest=1\nend subroutine s", "writable argument"),

@@ -8,6 +8,9 @@ use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec, UnOp};
 use anyhow::{bail, Context, Result};
 use std::collections::{HashMap, HashSet};
 
+#[path = "intrinsic_generics.rs"]
+mod intrinsic_generics;
+
 #[derive(Clone, Debug, PartialEq)]
 enum Ty {
     Derived(String),
@@ -150,6 +153,7 @@ struct Procedure {
 }
 #[derive(Default)]
 struct Resolver {
+    intrinsic_fallback: std::cell::Cell<bool>,
     procedures: HashMap<String, Procedure>,
     duplicate_procedures: HashSet<String>,
     module_procedures: HashSet<String>,
@@ -558,19 +562,10 @@ impl Resolver {
                 self.procedures[*target].signature.reorder(name, actuals)?;
                 Ok(Some((*target).clone()))
             },
-            // REPEAT may be extended by a user generic. Only a valid intrinsic
-            // signature can fall back; unrelated type/rank errors remain errors.
-            [] if !subroutine && name == "repeat" => {
-                let signature = crate::named_arguments::intrinsic(name).unwrap();
-                let slots = signature.associate(name, actuals)?;
-                if matches!(&args[slots[0].unwrap()], Ty::Scalar(TypeSpec::Character(_)))
-                    && matches!(&args[slots[1].unwrap()], Ty::Scalar(TypeSpec::Integer(_))) {
-                    signature.reorder(name, actuals)?;
-                    Ok(None)
-                } else {
-                    bail!("no matching specific procedure for generic `{name}` with argument types {args:?}")
-                }
-            },
+            // An intrinsic generic is extended, rather than replaced. Keep
+            // user matches/ambiguities first and validate the intrinsic path
+            // only when none of the visible user specifics matches.
+            [] if !subroutine && intrinsic_generics::arguments(name, actuals, args)?.is_some() => Ok(None),
             [] if crate::named_arguments::has_keywords(actuals)
                 && association_errors.len() == candidates.len()
                 && !association_errors.is_empty()
@@ -625,6 +620,9 @@ impl Resolver {
         vars.get(name).cloned().unwrap_or(Ty::Unknown)
     }
     fn expression(&self, e: &mut Expr, vars: &Vars, visible: &Bindings) -> Result<Ty> {
+        self.expression_impl(e, vars, visible, false)
+    }
+    fn expression_impl(&self, e: &mut Expr, vars: &Vars, visible: &Bindings, intrinsic: bool) -> Result<Ty> {
         if let Some(kind)=crate::empty_constructors::kind(e)? {
             return Ok(Ty::Array(Box::new(scalar(&kind)),1));
         }
@@ -786,9 +784,19 @@ impl Resolver {
                     let p=&self.procedures[n];
                     return Ok(if p.elemental {elemental_result(p.result.clone(),&arg_types)} else {p.result.clone()});
                 }
-                if self.components.contains_key(n) {
+                if visible.contains_key(&format!("generic:{n}")) {
+                    // Infer with intrinsic keyword order, without changing the
+                    // source actuals needed by the owning intrinsic lowerer.
+                    // This also gives enclosing user generics the correct
+                    // result kind and rank for nested intrinsic calls.
+                    if let Some(canonical) = intrinsic_generics::arguments(n, args, &arg_types)? {
+                        self.intrinsic_fallback.set(true);
+                        return self.expression_impl(&mut Expr::Call(n.clone(), canonical), vars, &Bindings::new(), true);
+                    }
+                }
+                if self.components.contains_key(n) && !intrinsic {
                     Ty::Derived(n.clone())
-                } else if let Some(p) = self.procedures.get(n) {
+                } else if let Some(p) = self.procedures.get(n).filter(|_| !intrinsic) {
                     p.result.clone()
                 } else if let Some((object, binding)) = n.split_once('%') {
                     if let Some(Ty::Derived(ty)) = vars.get(object) {
@@ -1209,7 +1217,9 @@ pub fn resolve(mut program: Program) -> Result<Program> {
         }
     }
     resolver.body(&mut program.body, &Vars::new(), &Bindings::new())?;
-    Ok(program)
+    // Deferred calls are now unambiguously intrinsic; normalize their controls
+    // before array actuals are materialized by later procedure lowering.
+    if resolver.intrinsic_fallback.get() {crate::parameters::resolve_constants(program)} else {Ok(program)}
 }
 
 #[cfg(test)]

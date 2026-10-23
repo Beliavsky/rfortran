@@ -2030,6 +2030,24 @@ including ONLY lists, renaming, reexports and generic interface extensions.
 PUBLIC/PRIVATE access and local shadowing are checked. Procedures with the same
 name in different modules retain distinct identities.
 
+Extending an intrinsic generic retains its built-in alternatives. For example,
+a module may define `MAX` for a date type and still use `max(1,mod_year)`.
+User-defined specifics are selected first; unmatched calls to known intrinsic
+functions use the intrinsic path. Ambiguous user specifics remain errors.
+The shared fallback checks type/kind/rank rules for MIN/MAX, reductions,
+numeric conversions and REPEAT; other known functions retain their ordinary
+intrinsic validation and backend limits. No argument conversion is introduced
+to make a user-defined specific match.
+
+Constant processing preserves user keywords until selection. Intrinsic keyword
+order is used to infer nested result kinds/ranks, then the selected built-in
+call is normalized for later lowering. Variadic MIN/MAX, reduction DIM/MASK,
+and conversion KIND keywords are covered. Existing limits on materializing
+some DIM-reduction results as procedure actuals remain unchanged.
+Run `python tests/test_intrinsic_generics.py` and
+`python tests/test_repeat_generic.py`; the four `tests/programs/xacv_*_intrinsic.f90`
+examples exercise both built-in and derived-type calls with gfortran comparisons.
+
 INTEGER, REAL, LOGICAL and fixed-length CHARACTER data use shared storage across
 calls, including supported fixed arrays and runtime-allocated numeric arrays.
 Allocation status, shape and initialization checks persist across procedures.
