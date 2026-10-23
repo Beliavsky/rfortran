@@ -36,6 +36,11 @@ const CATEGORIES: &[&str] = &[
     "pointer-init",
     "do-subscript",
     "enum-exhaustive",
+    "implicit-interface",
+    "intrinsic-shadow",
+    "underflow",
+    "empty-case",
+    "unused-label",
 ];
 fn canonical(name: &str) -> &str {
     match name {

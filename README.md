@@ -254,7 +254,8 @@ allowed. Saved source is syntax-checked with gfortran when available.
 Warnings (`-Wall`, `-Wunused`, `-Wformat`, `-Wimplicit-typing`, `-Wunreachable-code`,
 `-Woptional-argument`, `-Wshort-circuit`, `-Wimplicit-save`, `-Winteger-division`,
 `-Wtarget-lifetime`, `-Waliasing`, `-Wprecision-loss`, `-Wpointer-init`,
-`-Wdo-subscript`, `-Wenum-exhaustive`, opt-in `-Wconversion`, `-Wmissing-intent`, `-Wshadow`,
+`-Wdo-subscript`, `-Wenum-exhaustive`, `-Wunderflow`, `-Wempty-case`,
+`-Wunused-label`, opt-in `-Wimplicit-interface`, `-Wintrinsic-shadow`, `-Wconversion`, `-Wmissing-intent`, `-Wshadow`,
 `-Wshadow-dummy-argument`, `-Wdead-store`, `-Wunchecked-status`, `-Werror`), multi-file
 builds, separate compilation with `-c`, and the `.rmod` module interface files
 are described in [docs/usage.md](docs/usage.md).

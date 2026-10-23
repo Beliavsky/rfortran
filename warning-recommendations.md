@@ -9,6 +9,21 @@ below; unmarked recommendations remain proposals.
 
 ## Implementation status (2026-10-22)
 
+- **Implemented: `-Wimplicit-interface`.** Opt-in; calls without a known
+  explicit interface. Recognized mandatory-interface cases are errors regardless
+  of warning settings; this is partial language-constraint checking.
+- **Implemented: `-Wintrinsic-shadow`.** Opt-in; user procedures sharing known
+  intrinsic names, excluding ordinary data declarations.
+- **Implemented: `-Wunderflow`.** Enabled by `-Wall`; supported nonzero constant
+  values rounding to zero in REAL(4)/REAL(8), excluding surviving subnormals.
+- **Implemented: `-Wempty-case`.** Enabled by `-Wall`; reversed constant INTEGER,
+  CHARACTER (with blank padding), and enumeration CASE ranges.
+- **Implemented: `-Wunused-label`.** Enabled by `-Wall`; unreferenced labels per
+  program unit, recognizing supported GO TO, DO, FORMAT and I/O references.
+  Dynamic formats conservatively suppress unused FORMAT-label advice.
+  These five categories are covered by
+  [test_call_syntax_warnings.py](tests/test_call_syntax_warnings.py).
+
 - **Implemented: `-Wconversion`.** Opt-in; information-losing implicit numeric
   assignments/initializations, with scoped kinds and exact-constant suppression.
   Includes narrowing kinds, real-to-integer, complex-component loss and integer

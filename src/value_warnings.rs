@@ -5,6 +5,8 @@
 //! Numeric information loss, pointer defaults, loop ranges, and finite enums.
 use super::*;
 use crate::ast::{CaseItem, UnOp};
+#[path = "numeric_syntax_warnings.rs"]
+mod syntax;
 
 pub(super) struct TypeInfo<'a> {
     pub scope: usize,
@@ -50,6 +52,9 @@ impl Number {
 type Intervals = HashMap<usize, (i64, i64)>;
 
 impl<'a> Analysis<'a> {
+    pub(super) fn syntax_value_checks(&mut self, body: &'a [Stmt], scope: usize, offset: usize) {
+        self.syntax_checks(body, scope, offset);
+    }
     pub(super) fn intrinsic_integer(&self, scope: usize, name: &str) -> Option<i64> {
         let s = &self.scopes[scope];
         for (module, only, renames) in &s.uses {
@@ -85,7 +90,7 @@ impl<'a> Analysis<'a> {
         }
         s.parent.and_then(|p| self.intrinsic_integer(p, name))
     }
-    fn type_lookup(&self, scope: usize, name: &str) -> Option<usize> {
+    pub(super) fn type_lookup(&self, scope: usize, name: &str) -> Option<usize> {
         fn find(
             a: &Analysis<'_>,
             scope: usize,
@@ -161,7 +166,7 @@ impl<'a> Analysis<'a> {
     }
     // Resolve the declared type/shape of a component without confusing its
     // spelling with a same-named entity in another derived type.
-    fn data_type(
+    pub(super) fn data_type(
         &self,
         scope: usize,
         name: &str,
@@ -362,7 +367,7 @@ impl<'a> Analysis<'a> {
                     }
                     "sqrt" | "exp" | "log" | "log10" | "sin" | "cos" | "tan" | "asin" | "acos"
                     | "atan" | "conjg" | "aint" | "anint" | "@unary_plus" | "sum" | "product"
-                    | "maxval" | "minval" | "norm2" => return input,
+                    | "maxval" | "minval" | "norm2" | "tiny" | "huge" => return input,
                     _ => {}
                 }
                 // Share the compiler's intrinsic/generic inference for the

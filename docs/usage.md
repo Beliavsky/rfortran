@@ -65,6 +65,34 @@ and lifetime diagnostics also identify the related declaration or assignment.
 | `-Wpointer-init` | Yes | Derived-type pointer components lacking default initialization |
 | `-Wdo-subscript` | Yes | Loop-derived scalar subscript ranges extending beyond known fixed array bounds |
 | `-Wenum-exhaustive` | Yes | SELECT CASE without CASE DEFAULT missing declared values of an enumeration type or named interoperable enum type |
+| `-Wimplicit-interface` | No | Calls lacking a known explicit interface; module/internal procedures, interface blocks, generics and known intrinsics are exempt |
+| `-Wintrinsic-shadow` | No | Defined or declared user procedures sharing a known intrinsic procedure name; ordinary data names are exempt |
+| `-Wunderflow` | Yes | Supported nonzero constant expressions or assignments rounding to zero in REAL(4)/REAL(8) |
+| `-Wempty-case` | Yes | Reversed constant INTEGER, CHARACTER or enumeration CASE ranges |
+| `-Wunused-label` | Yes | Unreferenced statement labels within each program unit, including FORMAT labels |
+
+Interface advice distinguishes optional warnings from language requirements.
+Keyword calls without an explicit interface are errors. When a procedure body
+is available, supported mandatory-interface cases (such as OPTIONAL or
+assumed-shape dummies, ELEMENTAL procedures, or array-valued results) are also
+errors, even without warning flags. `-Wno-implicit-interface` does not suppress
+these errors. Unknown external interfaces get opt-in advice; this is not complete
+validation of every Fortran explicit-interface requirement.
+
+Underflow proofs cover supported constant arithmetic, selected intrinsic calls,
+named constants and narrowing assignments. Nonzero subnormal values and exact
+zero are exempt. Uncertain cancellation and values near halfway rounding
+boundaries are skipped. Inquiry arguments are not treated as evaluated values.
+These checks do not predict runtime underflow in nonconstant calculations.
+
+Empty CASE advice compares CHARACTER constants with Fortran blank padding;
+open or unresolved bounds are skipped. The diagnostic does not add native
+support for CHARACTER CASE ranges, which remains a separate limitation.
+Unused-label advice recognizes GO TO, labeled DO, FORMAT and supported I/O
+branch references within each program unit. Dynamic format expressions suppress
+unused FORMAT-label advice when use cannot be established statically.
+
+Regression checks: `python tests/test_call_syntax_warnings.py`.
 
 Conversion advice includes narrowing integer/real/complex kinds, real-to-integer
 assignment, loss of a complex imaginary component, and integer-to-real conversion

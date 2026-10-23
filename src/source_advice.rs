@@ -9,6 +9,8 @@ use crate::sema::SemaSettings;
 use anyhow::{bail, Result};
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
+#[path = "call_label_warnings.rs"]
+mod call_label_warnings;
 #[path = "value_warnings.rs"]
 mod value_warnings;
 
@@ -43,6 +45,8 @@ struct Decl {
     nominal: Option<String>,
 }
 struct Procedure<'a> {
+    name: String,
+    elemental: bool,
     params: Vec<String>,
     scope: usize,
     body: &'a [Stmt],
@@ -66,6 +70,7 @@ struct Analysis<'a> {
     warnings: Vec<Advice>,
     types: Vec<value_warnings::TypeInfo<'a>>,
     inference: Option<crate::operators::ExpressionTypes>,
+    interface_errors: Vec<Advice>,
 }
 fn root(name: &str) -> &str {
     name.split('%').next().unwrap_or(name)
@@ -155,6 +160,7 @@ impl<'a> Analysis<'a> {
                 }
                 Stmt::DerivedDecl {
                     type_name,
+                    polymorphic,
                     names,
                     attributes,
                     dims,
@@ -165,6 +171,9 @@ impl<'a> Analysis<'a> {
                         self.decls[id].attrs.extend(attributes.iter().cloned());
                         self.decls[id].dims = dims.clone();
                         self.decls[id].nominal = Some(type_name.clone());
+                        if *polymorphic {
+                            self.decls[id].attrs.insert("@polymorphic".into());
+                        }
                         if attributes.iter().any(|a| a == "parameter")
                             && self
                                 .statement_tokens(offset)
@@ -189,6 +198,10 @@ impl<'a> Analysis<'a> {
                         components,
                         enumeration: bindings.iter().any(|(n, _)| n == "@enumeration"),
                     });
+                }
+                Stmt::GenericInterface { name, .. } => {
+                    let id = self.declare(scope, name, offset, None);
+                    self.decls[id].attrs.insert("@generic".into());
                 }
                 Stmt::Assign { name, value } => {
                     if let Some(&id) = self.scopes[scope].names.get(name) {
@@ -245,6 +258,17 @@ impl<'a> Analysis<'a> {
                     let child = self.scope(parent, ScopeKind::Procedure, body);
                     self.decls[id].procedure = Some(self.procedures.len());
                     self.procedures.push(Procedure {
+                        name: name.clone(),
+                        elemental: matches!(
+                            s,
+                            Stmt::Function {
+                                elemental: true,
+                                ..
+                            } | Stmt::Subroutine {
+                                elemental: true,
+                                ..
+                            }
+                        ),
                         params: params.clone(),
                         scope: child,
                         body,
@@ -500,6 +524,7 @@ impl<'a> Analysis<'a> {
             if !n.starts_with('@') {
                 if let Some(id) = self.resolve(scope, n) {
                     if self.decls[id].procedure.is_some()
+                        || self.decls[id].attrs.contains("@generic")
                         || self.decls[id].attrs.contains("external")
                     {
                         return true;
@@ -1258,12 +1283,23 @@ pub fn check(
         "pointer-init",
         "do-subscript",
         "enum-exhaustive",
+        "implicit-interface",
+        "intrinsic-shadow",
+        "underflow",
+        "empty-case",
+        "unused-label",
     ]
     .into_iter()
     .map(|c| {
         let s = if matches!(
             c,
-            "shadow" | "shadow-dummy-argument" | "dead-store" | "unchecked-status" | "conversion"
+            "shadow"
+                | "shadow-dummy-argument"
+                | "dead-store"
+                | "unchecked-status"
+                | "conversion"
+                | "implicit-interface"
+                | "intrinsic-shadow"
         ) {
             &optional
         } else {
@@ -1272,9 +1308,7 @@ pub fn check(
         (c, crate::unused::selected(c, false, s, options))
     })
     .collect::<HashMap<_, _>>();
-    if !controls.values().any(|c| c.0) {
-        return Ok(());
-    }
+    let advice_enabled = controls.values().any(|c| c.0);
     let mut a = Analysis {
         src,
         tokens: crate::lexer::lex(src),
@@ -1286,14 +1320,26 @@ pub fn check(
         dead: crate::reachability::analyze(program).dead,
         warnings: vec![],
         types: vec![],
-        inference: crate::operators::ExpressionTypes::new(program).ok(),
+        inference: advice_enabled
+            .then(|| crate::operators::ExpressionTypes::new(program).ok())
+            .flatten(),
+        interface_errors: vec![],
     };
     let scope = a.scope(None, ScopeKind::Main, &program.body);
     a.gather(&program.body, scope, &program.contains, 0);
-    a.shadows();
-    a.walk(&program.body, scope, 0, &[], &HashSet::new());
-    a.pointer_initializers();
-    a.value_walk(&program.body, scope, 0, &HashMap::new());
+    a.call_checks(&program.body, scope, 0);
+    if !advice_enabled && a.interface_errors.is_empty() {
+        return Ok(());
+    }
+    if advice_enabled {
+        a.shadows();
+        a.walk(&program.body, scope, 0, &[], &HashSet::new());
+        a.pointer_initializers();
+        a.value_walk(&program.body, scope, 0, &HashMap::new());
+        a.syntax_value_checks(&program.body, scope, 0);
+        a.unused_labels(&program.body, 0);
+        a.intrinsic_shadows();
+    }
     a.warnings.sort_by_key(|w| w.span.start);
     a.warnings
         .dedup_by(|x, y| x.category == y.category && x.span == y.span && x.message == y.message);
@@ -1326,9 +1372,19 @@ pub fn check(
             (fallback, span.start.min(src.len())..span.end.min(src.len()))
         }
     };
+    let required_failed = a.interface_errors.iter().any(|w| w.span.start < own_len);
     let mut failed = false;
-    for w in a.warnings {
-        let (enabled, error) = controls[w.category];
+    for (w, required) in a
+        .warnings
+        .into_iter()
+        .map(|w| (w, false))
+        .chain(a.interface_errors.into_iter().map(|w| (w, true)))
+    {
+        let (enabled, error) = if required {
+            (true, true)
+        } else {
+            controls[w.category]
+        };
         if !enabled || w.span.start >= own_len {
             continue;
         }
@@ -1355,6 +1411,9 @@ pub fn check(
         failed |= error;
     }
     if failed {
+        if required_failed {
+            bail!("explicit procedure interface required");
+        }
         bail!("source advice warnings treated as errors");
     }
     Ok(())

@@ -138,6 +138,11 @@ pub fn print_help() {
     println!("  -Wpointer-init      Warn about pointer components without default initialization");
     println!("  -Wdo-subscript      Warn about loop-derived subscript ranges outside fixed bounds");
     println!("  -Wenum-exhaustive   Warn about SELECT CASE missing declared enumeration values");
+    println!("  -Wimplicit-interface  Warn about calls lacking explicit interfaces (opt-in)");
+    println!("  -Wintrinsic-shadow  Warn about user procedures shadowing intrinsics (opt-in)");
+    println!("  -Wunderflow         Warn about nonzero constants rounding to zero");
+    println!("  -Wempty-case        Warn about reversed constant CASE ranges");
+    println!("  -Wunused-label      Warn about unreferenced statement labels");
     println!("  -Wno-<category>      Disable a warning category");
     println!("  -Werror, --Werror    Treat enabled warnings as errors");
     println!("  -Werror=<category>  Enable a warning category and treat it as an error");
