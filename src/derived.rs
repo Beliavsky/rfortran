@@ -1110,13 +1110,26 @@ impl Lowerer {
     /// A derived object in an output list stands for its components in
     /// declaration order, nested derived components included.
     fn output_items(&mut self, items: &mut Vec<Expr>, objects: &Objects, prefix: &mut Vec<Stmt>) -> Result<()> {
+        self.transfer_items(items, objects, prefix, false)
+    }
+    /// Input expands writable component designators, never a record temporary.
+    fn transfer_items(&mut self, items: &mut Vec<Expr>, objects: &Objects,
+        prefix: &mut Vec<Stmt>, input: bool) -> Result<()> {
+        let marker = if input { "@input_implied_do" } else { "@output_implied_do" };
         let mut out = vec![];
         for e in std::mem::take(items) {
             match e {
+                Expr::Call(n, mut args) if input && matches!(n.as_str(), "@input_implied_do" | "@output_implied_do") => {
+                    let mut values = args.split_off(4);
+                    self.transfer_items(&mut values, objects, prefix, input)?;
+                    args.extend(values);
+                    out.push(Expr::Call(marker.into(), args));
+                }
                 Expr::Ident(n) if objects.contains_key(&n) => {
                     let ty = objects[&n].clone();
                     if self.has_dynamic_component(&ty) {
-                        bail!("output of derived object `{n}` with an ALLOCATABLE or POINTER component requires defined input/output");
+                        let direction = if input { "input" } else { "output" };
+                        bail!("{direction} of derived object `{n}` with an ALLOCATABLE or POINTER component requires defined input/output");
                     }
                     // The fields `c$f` of an array component `c` of derived
                     // type are written element by element.
@@ -1135,7 +1148,7 @@ impl Lowerer {
                         }
                         let dims = self.leaf_component(&ty, &leaves[i]).map(|c| c.dims.clone()).unwrap_or_default();
                         let extents = dims.iter().map(crate::parameters::integer_constant).collect::<Result<Vec<_>>>()
-                            .context("output of a derived array component requires constant extents")?;
+                            .context("I/O of a derived array component requires constant extents")?;
                         self.serial += 1;
                         let index = format!("@derived_output_{}", self.serial);
                         prefix.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![index.clone()] });
@@ -1151,7 +1164,7 @@ impl Lowerer {
                         let count: i64 = extents.iter().map(|e| (*e).max(0)).product();
                         let mut args = vec![Expr::Ident(index), Expr::IntLit("1".into()), Expr::IntLit(count.to_string()), Expr::IntLit("1".into())];
                         args.extend(leaves[i..j].iter().map(|leaf| Expr::Index(format!("{n}%{leaf}"), subscripts.clone())));
-                        out.push(Expr::Call("@output_implied_do".into(), args));
+                        out.push(Expr::Call(marker.into(), args));
                         i = j;
                     }
                 }
@@ -1251,12 +1264,18 @@ impl Lowerer {
                     }
                 }
                 Stmt::Read { args: items } => {
+                    self.transfer_items(items, &objects, &mut prefix, true)?;
                     for e in items {
                         self.expression(e, &objects, &mut prefix)?;
                     }
                 }
                 Stmt::CallSub { name, args } => {
-                    if matches!(name.as_str(), "@formatted_print" | "@formatted_write_noadvance" | "@write" | "@unformatted_read" | "@unformatted_write") {
+                    if let Some(first) = crate::input::transfer_start(name) {
+                        let mut items = args.split_off(first.min(args.len()));
+                        self.transfer_items(&mut items, &objects, &mut prefix, true)?;
+                        args.extend(items);
+                    }
+                    if matches!(name.as_str(), "@formatted_print" | "@formatted_write_noadvance" | "@write" | "@unformatted_write") {
                         // Unformatted items follow the unit, control, status and position.
                         let mut first = match name.as_str() { "@write" => 2, "@unformatted_read" | "@unformatted_write" => 4, _ => 1 };
                         if name == "@write" {

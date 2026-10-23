@@ -2440,8 +2440,18 @@ both forms of READ, such as `read(s(i),'(i8)') k`. Run
 `python tests/test_list_read.py` for interpreter/native O0/O2 checks against
 gfortran, including `tests/io/write_read.f90`, a copy of `xwrite_read.f90`.
 
+Default derived-type input expands scalar records into writable components in
+declaration order, including nested records and fixed-size component arrays.
+List-directed READ supports these records on standard input, connected files,
+and scalar CHARACTER internal files; constant-format READ supports them too.
+Records can be mixed with primitive items and runtime list-directed implied-DOs
+in a single input session, retaining null fields, repetition counts, slash
+termination and IOSTAT handling. Records with ALLOCATABLE or POINTER components
+require defined I/O and are rejected. Run `python tests/test_derived_read.py`.
+
 This is not yet complete Fortran input support: CHARACTER internal-file arrays,
-COMPLEX section destinations, vector subscripts, derived-type input and defined I/O,
+COMPLEX section destinations, vector subscripts, whole derived-array destinations
+in formatted/list-directed READ and defined I/O,
 DECIMAL='COMMA', IOMSG and combined status controls remain unsupported.
 
 The format may also be a runtime scalar CHARACTER expression, including a

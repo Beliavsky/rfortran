@@ -1,4 +1,4 @@
-! xacv.f90 line 2124: internal list-directed READ after skipped fields.
+! Regression for xacv.f90 line 2124: READ of a record after skipped fields.
 module read_date_mod
 implicit none
 type :: date_mdy

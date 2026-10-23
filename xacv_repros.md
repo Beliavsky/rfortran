@@ -153,12 +153,24 @@ single evaluation. Related fixes preserve ELEMENTAL result metadata during
 allocatable assignment and return native LOGICAL literal function results correctly.
 Owned allocatable record components remain unsupported for PACK.
 
-The next full-source blocker is the internal list-directed READ at line 2124:
+The former internal list-directed READ blocker at line 2124 is now supported:
 `read (text,*,iostat=ierr_read) (dummy,i=1,nskip_col_),date`. The twentieth repro,
 [tests/programs/xacv_read_derived_record.f90](tests/programs/xacv_read_derived_record.f90),
-skips two fields before reading a record with three integer components. Gfortran
-prints `1 2 2024`; rfort reports `derived value` followed by the record name and
-`requires a constructor, derived assignment, or typed procedure argument` at READ.
+skips two fields before reading a record with three integer components. Both
+rfort and gfortran print `1 2 2024`. Scalar record input now expands writable
+components in declaration order without reading the old record value. Tests in
+`tests/test_derived_read.py` cover nested records, fixed array components,
+constant formats, shared input sessions, runtime implied-DOs and input status.
+Components with ALLOCATABLE or POINTER attributes still require defined I/O.
+
+The next full-source blocker is line 2603:
+`call unique_dates_vec([xx,yy],zz)`. The twenty-first repro,
+[tests/programs/xacv_concat_derived_arrays.f90](tests/programs/xacv_concat_derived_arrays.f90),
+concatenates two assumed-shape record arrays as an INTENT(IN) actual and copies
+the result to an allocatable output. Gfortran prints `2 2024 2025`; rfort reports
+`derived assignment to` a generated `@record_actual` temporary `requires a value
+of type date_mdy` at the CALL. The array constructor must preserve the array
+shape and flatten each array-valued item into consecutive records.
 
 ## Intrinsic calls after extending an intrinsic generic
 

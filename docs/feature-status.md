@@ -258,6 +258,7 @@ current limits.
 | [Defined assignment (`interface assignment(=)`)](language-support.md#type-bound-procedures-and-generics) | F90 | ✅ | To a whole variable, not to an element or component | test_derived_type_features.py |
 | [Functions declared with a derived-type prefix (`type(t) function f()`)](language-support.md#other-statement-forms) | F90 | ✅ |  | test_syntax_forms.py |
 | [Output of a whole derived object (`print *, obj`)](language-support.md#derived-type-components) | F90 | ✅ | Not with ALLOCATABLE or POINTER components, which need defined I/O | test_derived_type_features.py |
+| [Default input of a scalar derived object](language-support.md#file-and-standard-input) | F90 | ✅ | List-directed and constant-format READ; nested records and fixed component arrays. ALLOCATABLE or POINTER components need defined I/O | test_derived_read.py |
 | [Derived-type named constants, SAVE and initialized objects](language-support.md#derived-type-components) | F90 | ✅ | Scalar components | test_derived_type_features.py |
 | [Type extension (EXTENDS)](language-support.md#type-extension) | F2003 | 🟡 | Without dynamic dispatch: a binding called through a CLASS dummy cannot be overridden | test_derived_type_features.py |
 | [TYPEOF declarations](language-support.md#typeof-and-classof-declarations) | F2023 | 🟡 | Supported intrinsic and derived types, components, array elements, USE/host association and CHARACTER lengths; existing storage/type limitations apply | test_referenced_types.py |

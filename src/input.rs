@@ -9,6 +9,16 @@ use std::collections::HashMap;
 #[path = "input_radix.rs"]
 mod radix;
 
+/// Number of controls preceding writable transfer items in canonical READ calls.
+pub(crate) fn transfer_start(name: &str) -> Option<usize> {
+    match name {
+        "@internal_read" => Some(3),
+        "@formatted_read" => Some(2),
+        "@formatted_read_status" | "@unformatted_read" => Some(4),
+        _ => None,
+    }
+}
+
 /// Distinguish input implied-DOs from constructor/output implied-DOs before
 /// expression lowering; an input list may contain unrelated element types.
 /// Also give internal READ and WRITE statements whose unit is a CHARACTER
