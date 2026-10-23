@@ -1885,8 +1885,9 @@ gfortran comparisons. `tests/programs/xacv_elemental_derived_comparison.f90`
 now prints `T`. Derived-type dummy arguments to ELEMENTAL subroutines also
 work for supported scalar records and constant rank-one record arrays;
 `tests/programs/xacv_elemental_derived_out.f90` prints `9 30 0`. Derived-valued
-ELEMENTAL function results remain unsupported; see
-`tests/programs/xacv_elemental_derived_result.f90`.
+ELEMENTAL function results also work for supported scalar records and fixed
+rank-one array calls; `tests/programs/xacv_elemental_derived_result.f90` prints
+`9 30 45`.
 
 ### Generic and elemental dispatch
 
@@ -1902,6 +1903,23 @@ reallocation, empty CHARACTER RESHAPE results, PAD/ORDER and ranks through 15.
 ELEMENTAL functions support explicitly declared numeric, LOGICAL, and CHARACTER
 scalar results and input dummies. Supported scalar derived-type INTENT(IN)
 dummies are expanded into their needed components for scalar or array calls.
+Derived-type scalar results with scalar primitive components (including nested
+scalar records) support scalar and constant rank-one array calls. These calls
+are evaluated once into result storage through a hidden elemental subroutine;
+self-assignment, nested calls, scalar broadcasting, OPTIONAL/named inputs,
+constructors, constant sections, vector subscripts, empty arrays, early RETURN,
+and default component initialization are covered. IMPURE calls retain one call
+per element in array element order. Scalar reductions such as SUM, COUNT and
+DOT_PRODUCT remain scalar when supplied as arguments.
+
+Derived-valued elemental results currently share the subroutine expansion's
+limitations: runtime-sized and multidimensional array calls, CHARACTER
+components in array results, array components, and ALLOCATABLE/POINTER
+components are outside this subset. An ELEMENTAL result itself cannot be
+ALLOCATABLE or POINTER.
+Run `python tests/test_elemental_derived_results.py` for interpreter/native
+O0/O2 checks with gfortran comparisons.
+
 CHARACTER results and CHARACTER input dummies
 are specialized into local buffers for each call. Assumed lengths follow the
 actual argument, and result lengths such as `len(a)+len(b)` resolve using those

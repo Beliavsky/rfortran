@@ -1,4 +1,4 @@
-! Next xacv.f90 blocker: tod_int, around line 958.
+! xacv.f90 regression: ELEMENTAL derived result in tod_int, around line 958.
 module elemental_time_result_mod
 implicit none
 type :: time_of_day

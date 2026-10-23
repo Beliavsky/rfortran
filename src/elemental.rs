@@ -190,8 +190,13 @@ pub fn validate(
     if !result_kind(name, declared, body)
         .as_ref()
         .is_some_and(scalar)
+        && !body.iter().any(|s| matches!(s, Stmt::DerivedDecl { names, dims, .. } if names.iter().any(|n| n == result) && dims.is_empty()))
     {
         return Err(crate::source_diagnostics::declaration(body,result,None,format!("ELEMENTAL function `{name}` requires an explicitly declared supported scalar result")));
+    }
+    if body.iter().any(|s| matches!(s, Stmt::DerivedDecl { names, attributes, .. } if names.iter().any(|n| n == result)
+        && attributes.iter().any(|a| matches!(a.as_str(), "allocatable" | "pointer")))) {
+        return Err(crate::source_diagnostics::declaration(body,result,None,format!("ELEMENTAL function `{name}` result cannot be ALLOCATABLE or POINTER")));
     }
     for param in params {
         if !body.iter().any(

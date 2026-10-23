@@ -30,11 +30,22 @@ prints `9 30 0` with rfort and gfortran. Regression tests in
 OUT/INOUT, OPTIONAL derived dummies, keywords, nested scalar records, sections,
 and writable array elements without premature reads of unset components.
 
-The next full-source blocker is the derived-type result of ELEMENTAL function
-`tod_int`, at line 958. An eighth repro is
-[tests/programs/xacv_elemental_derived_result.f90](tests/programs/xacv_elemental_derived_result.f90).
-It prints `9 30 45` with gfortran, while rfort diagnoses
-`ELEMENTAL function tod_int requires an explicitly declared supported scalar result`.
+The derived-type result of ELEMENTAL function `tod_int`, at line 958, is now
+supported. The eighth repro,
+[tests/programs/xacv_elemental_derived_result.f90](tests/programs/xacv_elemental_derived_result.f90),
+prints `9 30 45` with both rfort and gfortran. Regression tests in
+`python tests/test_elemental_derived_results.py` cover scalar and fixed-vector
+results, nested calls, OPTIONAL/keywords, self-assignment, impure side effects,
+default initialization, early returns, nested records, and scalar reduction
+arguments.
+
+The next full-source blocker is `date_time_vec_vec` (around lines 538-541): its
+allocatable `dd(:)` component has element type `date_time_vec`, which itself
+owns allocatable `xx(:)` storage. A ninth repro is
+[tests/programs/xacv_nested_allocatable_records.f90](tests/programs/xacv_nested_allocatable_records.f90).
+It prints `2` with gfortran. rfort rejects the type while expanding record array
+components: arrays whose record elements contain ALLOCATABLE or POINTER
+components require per-element descriptors and are not supported yet.
 
 ## Intrinsic calls after extending an intrinsic generic
 

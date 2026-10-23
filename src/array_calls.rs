@@ -15,12 +15,25 @@ struct Routine {
     body: Vec<Stmt>,
 }
 
+// A scalar reduction consumes an array without making its caller elemental.
+// PARAMETER processing gives logical reductions private names and preserves
+// an omitted DIM as @no_dim when MASK is supplied.
+fn scalar_reduction(name: &str, args: &[Expr]) -> bool {
+    matches!(name, "sum" | "product" | "minval" | "maxval" | "all" | "any" | "count"
+        | "@count_default" | "@count_i8" | "@any_reduction" | "@all_reduction")
+        && (args.len() == 1 || args.len() == 3 && matches!(&args[1],Expr::Call(n,_) if n=="@no_dim"))
+}
+
 fn array_actual(e: &Expr, shapes: &Shapes) -> bool {
     match e {
         Expr::Ident(name) => shapes.get(name).is_some_and(|(_,dims)|!dims.is_empty()),
         Expr::Section {..} => true,
         Expr::Un(_,a) => array_actual(a,shapes),
         Expr::Bin(_,a,b) => array_actual(a,shapes)||array_actual(b,shapes),
+        Expr::Call(name,args) if !shapes.contains_key(name)
+            && (matches!(name.as_str(), "size" | "dot_product")
+                || scalar_reduction(name,args)
+                || matches!(name.as_str(), "lbound" | "ubound") && args.len() == 2) => false,
         Expr::Call(name,args) if !shapes.contains_key(name) => {
             matches!(name.as_str(),"@array_constructor"|"@matrix_view"|"@packed_view"|"reshape"|"pack")
                 || args.iter().any(|a|array_actual(a,shapes))
@@ -197,6 +210,17 @@ pub(crate) fn scalar_actual_kind(e: &Expr, shapes: &Shapes) -> Result<TypeSpec> 
         Expr::Call(n,args) if n=="@allocated_extent"=>scalar_actual_kind(&args[1],shapes),
         Expr::Call(n,_) if matches!(n.as_str(),"@heap_bound"|"@heap_lower_bound"|"@heap_upper_bound")=>Ok(TypeSpec::Integer(Some(8))),
         Expr::Call(n,args) if n=="size" || matches!(n.as_str(),"lbound"|"ubound") && args.len()==2=>Ok(TypeSpec::Integer(None)),
+        Expr::Call(n,args) if !shapes.contains_key(n) && scalar_reduction(n,args) => {
+            Ok(match n.as_str() {
+                "count"|"@count_default"=>TypeSpec::Integer(None),
+                "@count_i8"=>TypeSpec::Integer(Some(8)),
+                "all"|"any"|"@all_reduction"|"@any_reduction"=>TypeSpec::Logical,
+                _=>crate::reductions::elemental_element(&args[0],&Expr::IntLit("1".into()),shapes)?.2,
+            })
+        },
+        Expr::Call(n,args) if n=="dot_product" && !shapes.contains_key(n) && args.len()==2 => {
+            Ok(crate::reductions::elemental_element(&args[0],&Expr::IntLit("1".into()),shapes)?.2)
+        },
         // A substring of a scalar CHARACTER variable, with a constant length
         // when its bounds are constant.
         Expr::Section { name, lower, upper, stride: None } if matches!(shapes.get(name), Some((TypeSpec::Character(_), dims)) if dims.is_empty()) => {

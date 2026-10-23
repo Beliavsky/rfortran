@@ -10,6 +10,8 @@ use std::collections::HashMap;
 
 #[path = "elemental_records.rs"]
 mod elemental_records;
+#[path = "elemental_record_results.rs"]
+mod elemental_record_results;
 
 #[derive(Clone)]
 struct Field {
@@ -134,6 +136,8 @@ struct Lower {
     /// passed to through a temporary object.
     scalar_procedures: std::collections::HashSet<String>,
     elemental_records: HashMap<String, elemental_records::Procedure>,
+    elemental_results: HashMap<String, elemental_record_results::ResultProcedure>,
+    elemental_functions: std::collections::HashSet<String>,
     /// Type-bound procedure names of each type.
     bindings: HashMap<String, std::collections::HashSet<String>>,
 }
@@ -359,6 +363,9 @@ impl Lower {
                 | Stmt::Subroutine {
                     name, params, body, ..
                 } => {
+                    if matches!(s, Stmt::Function { elemental: true, .. }) {
+                        self.elemental_functions.insert(name.clone());
+                    }
                     if matches!(s, Stmt::Function { elemental: true, .. } | Stmt::Subroutine { elemental: true, .. }) {
                         self.collect_elemental(name, params, body);
                     }
@@ -874,6 +881,7 @@ impl Lower {
         objects: &mut Objects,
         prefix: &mut Vec<Stmt>,
     ) -> Result<()> {
+        if self.materialize_elemental_result(e, objects, prefix)? { return Ok(()); }
         match e {
             Expr::Ident(n) => self.component(n, objects)?,
             Expr::Call(n, args) if n.starts_with("@record_component:") => {
@@ -1660,8 +1668,11 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
         layouts: HashMap::new(),
         scalar_procedures: Default::default(),
         elemental_records: HashMap::new(),
+        elemental_results: HashMap::new(),
+        elemental_functions: Default::default(),
         bindings: HashMap::new(),
     };
+    lower.prepare_elemental_results(&mut p.body);
     lower.expand_array_components(&mut p.body)?;
     lower.collect(&p.body)?;
     // Module objects have unique names after module association, so every
