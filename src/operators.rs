@@ -172,6 +172,18 @@ fn elemental_result(result:Ty,arguments:&[Ty])->Ty {
     if let Some(rank)=arguments.iter().find_map(|t|if let Ty::Array(_,rank)=t {Some(*rank)}else{None}) {Ty::Array(Box::new(result),rank)} else {result}
 }
 
+fn elemental_match(params: &[Ty], arguments: &[Ty]) -> bool {
+    let mut array_rank = None;
+    params.len() == arguments.len() && params.iter().zip(arguments).all(|(param, actual)| {
+        let actual = if let Ty::Array(element, rank) = actual {
+            if array_rank.is_some_and(|previous| previous != *rank) {return false;}
+            array_rank = Some(*rank);
+            element.as_ref()
+        } else {actual};
+        param == actual
+    })
+}
+
 /// Reuse generic-resolution type inference for intrinsic input validation.
 pub(crate) struct ExpressionTypes(Resolver);
 impl ExpressionTypes {
@@ -516,16 +528,22 @@ impl Resolver {
             }
         }
         if !defined_operator(op) && (intrinsic_operator(op,args)
-            || (!visible.contains_key(op) && !args.iter().any(|a|matches!(a,Ty::Derived(_))))
+            || (!visible.contains_key(op) && !args.iter().any(|a|matches!(element(a),Ty::Derived(_))))
             || args.iter().any(|a|!known_type(a))) {
             return Ok(None);
         }
-        let matches: Vec<_> = visible
+        let mut matches: Vec<_> = visible
             .get(op)
             .into_iter()
             .flatten()
             .filter(|name| self.procedures[*name].args == args)
             .collect();
+        if matches.is_empty() {
+            matches = visible.get(op).into_iter().flatten().filter(|name| {
+                let p = &self.procedures[*name];
+                p.elemental && elemental_match(&p.args, args)
+            }).collect();
+        }
         match matches.as_slice() {
             [name] => Ok(Some((*name).clone())),
             [] => bail!("no matching operator({op}) for operand types {args:?}"),
@@ -551,7 +569,10 @@ impl Resolver {
             if p.subroutine != subroutine { continue; }
             match p.signature.associate(name, actuals) {
                 Ok(slots) if p.args.iter().zip(&slots).all(|(ty, slot)| slot.is_none_or(|i| ty == &args[i])) => matches.push(n),
-                Ok(slots) if p.elemental && p.args.iter().zip(&slots).all(|(ty,slot)|slot.is_none_or(|i|ty==&args[i] || matches!(&args[i],Ty::Array(element,_) if &**element==ty)))=>lifted.push(n),
+                Ok(slots) if p.elemental && {
+                    let (params,actuals):(Vec<_>,Vec<_>)=p.args.iter().zip(&slots).filter_map(|(ty,slot)|slot.map(|i|(ty.clone(),args[i].clone()))).unzip();
+                    elemental_match(&params, &actuals)
+                }=>lifted.push(n),
                 Ok(_) => {},
                 Err(error) => association_errors.push(error),
             }
@@ -734,13 +755,15 @@ impl Resolver {
                 // Preserve the array actuals: ordinary function lowering selects
                 // the supported ABI or specializes read-only array arguments.
                 *name = target.clone();
-                return Ok(self.procedures[&target].result.clone());
+                let p = &self.procedures[&target];
+                return Ok(if p.elemental {elemental_result(p.result.clone(), &types)} else {p.result.clone()});
             }
             if name == "@unary_plus" {
                 let ty = self.expression(&mut args[0], vars, visible)?;
                 if let Some(target) = self.select("+", &[ty.clone()], visible)? {
                     *name = target.clone();
-                    return Ok(self.procedures[&target].result.clone());
+                    let p = &self.procedures[&target];
+                    return Ok(if p.elemental {elemental_result(p.result.clone(), &[ty])} else {p.result.clone()});
                 }
                 *e = args.remove(0);
                 return Ok(ty);
@@ -797,7 +820,7 @@ impl Resolver {
                 if self.components.contains_key(n) && !intrinsic {
                     Ty::Derived(n.clone())
                 } else if let Some(p) = self.procedures.get(n).filter(|_| !intrinsic) {
-                    p.result.clone()
+                    if p.elemental {elemental_result(p.result.clone(), &arg_types)} else {p.result.clone()}
                 } else if let Some((object, binding)) = n.split_once('%') {
                     if let Some(Ty::Derived(ty)) = vars.get(object) {
                         self.methods
@@ -941,7 +964,8 @@ impl Resolver {
                 if let Some(name) =
                     self.select(bin_name(op), &[left.clone(), right.clone()], visible)?
                 {
-                    let ty = self.procedures[&name].result.clone();
+                    let p = &self.procedures[&name];
+                    let ty = if p.elemental {elemental_result(p.result.clone(), &[left, right])} else {p.result.clone()};
                     *e = Expr::Call(name, vec![(**a).clone(), (**b).clone()]);
                     ty
                 } else {
@@ -955,7 +979,8 @@ impl Resolver {
                     UnOp::Not => ".not.",
                 };
                 if let Some(name) = self.select(name, &[ty.clone()], visible)? {
-                    let result = self.procedures[&name].result.clone();
+                    let p = &self.procedures[&name];
+                    let result = if p.elemental {elemental_result(p.result.clone(), &[ty])} else {p.result.clone()};
                     *e = Expr::Call(name, vec![(**a).clone()]);
                     result
                 } else {
@@ -1329,6 +1354,30 @@ mod tests {
             let error = lower(&source).unwrap_err().to_string();
             assert!(error.contains(message), "expected {message}: {error}");
         }
+    }
+
+    #[test]
+    fn elemental_operators_infer_rank_from_either_operand() {
+        use super::*;
+        let record = Ty::Derived("record".into());
+        let logical = scalar(&TypeSpec::Logical);
+        let mut resolver = Resolver::default();
+        resolver.procedures.insert("compare".into(), Procedure {
+            signature: crate::named_arguments::Signature {params:vec!["a".into(),"b".into()],optional:HashSet::new()},
+            args:vec![record.clone(),record.clone()],result:logical.clone(),
+            inputs:true,subroutine:false,array_specialization:false,elemental:true,
+        });
+        let bindings = Bindings::from([(">".into(),vec!["compare".into()])]);
+        for rank in 1..=15 {
+            let array = Ty::Array(Box::new(record.clone()),rank);
+            for types in [[array.clone(),record.clone()],[record.clone(),array.clone()],[array.clone(),array]] {
+                let vars = Vars::from([("a".into(),types[0].clone()),("b".into(),types[1].clone())]);
+                let mut expression = Expr::Bin(BinOp::Gt,Box::new(Expr::Ident("a".into())),Box::new(Expr::Ident("b".into())));
+                assert_eq!(resolver.expression(&mut expression,&vars,&bindings).unwrap(),Ty::Array(Box::new(logical.clone()),rank));
+                assert!(matches!(expression,Expr::Call(ref name,_) if name=="compare"));
+            }
+        }
+        assert!(resolver.select(">",&[Ty::Array(Box::new(record.clone()),1),Ty::Array(Box::new(record),2)],&bindings).is_err());
     }
 
     #[test]

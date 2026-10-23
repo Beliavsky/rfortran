@@ -13,12 +13,20 @@ and run with rfort as well. They are regression fixtures in
 The whole derived-type array-element assignment repro still fails and is
 retained as a standalone example of the remaining limitation.
 
-The next full-source blocker observed in `xacv.f90` is at line 1494:
-`ascending = all(vec(2:) > vec(:n-1))`. Overloaded `>` on derived-type arrays
-is rejected during operator selection. This is separate from intrinsic generic
-fallback and from whole-element assignment. A sixth standalone repro is
-[tests/programs/xacv_elemental_derived_comparison.f90](tests/programs/xacv_elemental_derived_comparison.f90).
-It currently fails with rfort and compiles and prints `T` with gfortran.
+The former array-operator blocker at line 1494,
+`ascending = all(vec(2:) > vec(:n-1))`, is now fixed for supported elemental
+operators. The sixth repro,
+[tests/programs/xacv_elemental_derived_comparison.f90](tests/programs/xacv_elemental_derived_comparison.f90),
+compiles and prints `T` with rfort and gfortran. Array comparisons, scalar
+broadcasting in both orders, numeric/CHARACTER results, ranks through 15,
+runtime shape conformance and uninitialized-component behavior are covered by
+`python tests/test_elemental_operators.py`.
+
+The next full-source blocker is the derived-type `INTENT(OUT)` dummy in
+`set_time_of_day`, around line 940. A seventh repro is
+[tests/programs/xacv_elemental_derived_out.f90](tests/programs/xacv_elemental_derived_out.f90).
+It fails with rfort and prints `9 30 0` with gfortran. A scalar call suffices;
+ELEMENTAL subroutine dummy validation is the immediate limitation.
 
 ## Intrinsic calls after extending an intrinsic generic
 

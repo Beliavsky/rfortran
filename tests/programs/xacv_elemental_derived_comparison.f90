@@ -1,5 +1,5 @@
 ! Reduced from xacv.f90 line 1494: ALL of an overloaded array comparison.
-! Remaining blocker after restoring intrinsic generic alternatives.
+! Regression for elemental array dispatch after intrinsic generic resolution.
 module acv_comparison_repro
 implicit none
 type :: date_type

@@ -8,6 +8,9 @@ use crate::ast::{Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
 
+#[path = "elemental_records.rs"]
+mod elemental_records;
+
 #[derive(Clone)]
 struct Field {
     name: String,
@@ -130,6 +133,7 @@ struct Lower {
     /// Procedures with a scalar derived dummy, which an array element is
     /// passed to through a temporary object.
     scalar_procedures: std::collections::HashSet<String>,
+    elemental_records: HashMap<String, elemental_records::Procedure>,
     /// Type-bound procedure names of each type.
     bindings: HashMap<String, std::collections::HashSet<String>>,
 }
@@ -355,6 +359,9 @@ impl Lower {
                 | Stmt::Subroutine {
                     name, params, body, ..
                 } => {
+                    if matches!(s, Stmt::Function { elemental: true, .. }) {
+                        self.collect_elemental(name, params, body);
+                    }
                     let arrays: Objects = body
                         .iter()
                         .flat_map(|s| match s {
@@ -958,6 +965,10 @@ impl Lower {
                     }
                     return Ok(());
                 }
+                for arg in args.iter_mut() {
+                    self.expression(arg, objects, prefix)?;
+                }
+                self.elemental_actuals(n, args, objects, prefix)?;
                 // An element passed to a function's scalar derived dummy.
                 if self.scalar_procedures.contains(n.as_str()) {
                     for a in args.iter_mut() {
@@ -1647,6 +1658,7 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
         dummies: vec![],
         layouts: HashMap::new(),
         scalar_procedures: Default::default(),
+        elemental_records: HashMap::new(),
         bindings: HashMap::new(),
     };
     lower.expand_array_components(&mut p.body)?;

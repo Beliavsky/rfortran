@@ -154,6 +154,10 @@ end program main
             ("pure integer function f(i)\ninteger,intent(in)::i\nf=g(i)\nend function f\nimpure elemental integer function g(i)\ninteger,intent(in)::i\ng=i\nend function g", "impure or unknown procedure"),
             ("integer::a(2),i\nforall(i=1:2) a(i)=f(i)\ncontains\nimpure elemental integer function f(i)\ninteger,intent(in)::i\nf=i\nend function f\nend", "FORALL cannot call impure"),
         ]:
+            # Keep an explicit interface so these cases reach purity checking,
+            # rather than the earlier ELEMENTAL interface-requirement error.
+            if message in ("impure or unknown subroutine", "impure or unknown procedure"):
+                source = "module purity_context\ncontains\n" + source + "\nend module purity_context\n"
             with self.subTest(message=message), tempfile.TemporaryDirectory(prefix="pure-context-") as tmp:
                 path = Path(tmp) / "main.f90"
                 path.write_text(source, encoding="utf-8")

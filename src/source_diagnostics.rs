@@ -165,6 +165,8 @@ pub(crate) fn declaration(
             }
             Stmt::VarDecl { names, .. } => attribute.is_none() && names.iter().any(|n| n == name),
             Stmt::ArrayDecl { name: n, .. } => attribute.is_none() && n == name,
+            Stmt::DerivedDecl { names, attributes, .. } => names.iter().any(|n| n == name)
+                && attribute.is_none_or(|a| attributes.iter().any(|attr| attr == a)),
             _ => false,
         };
         if matches {

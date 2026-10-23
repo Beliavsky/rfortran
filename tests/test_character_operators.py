@@ -37,6 +37,15 @@ print *,'['//s//']'
 end
 """, '[a bc      ]\n')
 
+    def test_elemental_character_array_operands(self):
+        self.check(MODULE + """use strings
+character(len=2)::a(2)
+a=['a ','b ']
+print '(2(a,1x))',a+'x'
+print '(2(a,1x))','x'+a
+end
+""", 'ax bx\nxa xb\n')
+
     def test_cannot_replace_intrinsic_arithmetic(self):
         invalid=MODULE.replace('character(*),intent(in)::a,b','integer,intent(in)::a,b').replace('character(len=len(a)+len(b))::out','integer::out').replace('out=trim(a)//trim(b)','out=a+b')
         self.reject(invalid+'use strings\nprint *,1+2\nend\n','cannot replace an intrinsic operation')

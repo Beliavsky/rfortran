@@ -1861,6 +1861,30 @@ specialization and unrestricted array-result ABIs remain unsupported. `tests/pro
 `python tests/test_array_operators.py` for interpreter/native O0/O2 checks and
 gfortran comparisons.
 
+Overloaded operators backed by ELEMENTAL functions also accept arrays. Scalar
+operands broadcast on either side; unary operators preserve the operand shape.
+Array operands must have the same rank and conform in every dimension, including
+runtime checks for allocated arrays whose total sizes happen to be equal.
+Intrinsic-spelling operators and user-defined dot operators use the same dispatch.
+Supported numeric, LOGICAL and CHARACTER results work with ordinary assignments,
+output, nested calls and reductions such as `ANY` and `ALL`.
+
+Derived-type inputs use supported scalar primitive components, including nested
+scalar records supported by the existing record layout. Only needed components
+are forwarded, so unrelated uninitialized components are not read. A completely
+unused record input retains a representative component for shape checking.
+Fixed arrays through rank 15, sections, vector subscripts, empty arrays and
+runtime-sized vectors/matrices are tested. Direct elemental function calls use
+the same argument/result shape handling, and impure operator calls retain their
+per-element effects. Record array components, ALLOCATABLE/POINTER components,
+and derived-valued elemental results retain their existing limitations.
+
+Run `python tests/test_elemental_operators.py` and
+`python tests/test_character_operators.py` for interpreter, native O0/O2 and
+gfortran comparisons. `tests/programs/xacv_elemental_derived_comparison.f90`
+now prints `T`. Derived-type dummy arguments to ELEMENTAL subroutines remain
+unsupported; `tests/programs/xacv_elemental_derived_out.f90` is a small repro.
+
 ### Generic and elemental dispatch
 
 `tests/205_util_families.f90` and `python tests/test_remaining_util.py` cover
@@ -1873,7 +1897,9 @@ reallocation, empty CHARACTER RESHAPE results, PAD/ORDER and ranks through 15.
 ### ELEMENTAL functions
 
 ELEMENTAL functions support explicitly declared numeric, LOGICAL, and CHARACTER
-scalar results and input dummies. CHARACTER results and CHARACTER input dummies
+scalar results and input dummies. Supported scalar derived-type INTENT(IN)
+dummies are expanded into their needed components for scalar or array calls.
+CHARACTER results and CHARACTER input dummies
 are specialized into local buffers for each call. Assumed lengths follow the
 actual argument, and result lengths such as `len(a)+len(b)` resolve using those
 lengths. Fixed-length input dummies may consume the leading part of a longer

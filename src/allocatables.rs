@@ -465,7 +465,8 @@ fn logical_shape(
                 }
                 return Ok(None);
             }
-            if crate::intrinsics::math_arity(n).is_some()
+            if shapes.contains_key(&format!("@elemental:{n}"))
+                || crate::intrinsics::math_arity(n).is_some()
                 || crate::intrinsics::integer_rounding(n) || crate::intrinsics::real_predicate(n)
                 || crate::bit_intrinsics::keys(n).is_some()
                 || matches!(
@@ -1793,7 +1794,9 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
     // Function specialization can already have lowered allocation blocks.
     // Continue its numbering when finishing the enclosing program.
     let mut serial=crate::subroutines::maximum_serial(&p.body,&["@alloc_"]);
-    lower(&mut p.body, &Shapes::new(), &mut serial, &mut checks)?;
+    let elemental_shapes: Shapes = crate::elemental::functions(&p).into_iter()
+        .map(|(name, kind)| (format!("@elemental:{name}"), (kind, vec![]))).collect();
+    lower(&mut p.body, &elemental_shapes, &mut serial, &mut checks)?;
     p.body.extend(checks);
     Ok(p)
 }

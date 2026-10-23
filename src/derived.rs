@@ -427,16 +427,18 @@ impl Lowerer {
                                     .keys()
                                     .any(|b| used.contains(&format!("{p}%{b}")));
                             let leaves = self.leaves(ty);
-                            used_fields.insert(
-                                p.clone(),
-                                leaves
-                                    .into_iter()
-                                    .filter(|leaf| {
-                                        all || leaf.match_indices('%').map(|(i, _)| &leaf[..i]).chain(std::iter::once(leaf.as_str()))
-                                            .any(|prefix| used.contains(&format!("{p}%{prefix}")))
-                                    })
-                                    .collect(),
-                            );
+                            let carrier = leaves.first().cloned();
+                            let mut selected: Vec<_> = leaves.into_iter().filter(|leaf| {
+                                all || leaf.match_indices('%').map(|(i, _)| &leaf[..i]).chain(std::iter::once(leaf.as_str()))
+                                    .any(|prefix| used.contains(&format!("{p}%{prefix}")))
+                            }).collect();
+                            // Even an unused ELEMENTAL input supplies shape and
+                            // conformance information. Preserve one component,
+                            // while avoiding reads of other unused components.
+                            if selected.is_empty() && matches!(s, Stmt::Function { elemental: true, .. }) {
+                                selected.extend(carrier);
+                            }
+                            used_fields.insert(p.clone(), selected);
                         }
                     }
                     self.procedures.insert(
@@ -578,6 +580,22 @@ impl Lowerer {
                 if crate::named_arguments::omitted(&arg) {
                     result.extend(proc.used_fields[param].iter().map(|_| Expr::Call(crate::named_arguments::OMITTED.into(), vec![])));
                     continue;
+                }
+                if let Expr::Call(tag, fields) = &arg {
+                    if tag == "@elemental_record" {
+                        if !matches!(fields.first(), Some(Expr::Str(actual)) if actual == ty) {
+                            bail!("ELEMENTAL derived argument `{param}` requires type `{ty}`");
+                        }
+                        for field in &proc.used_fields[param] {
+                            let mut value = fields[1..].iter().find_map(|e| match e {
+                                Expr::Call(tag, values) if tag == &format!("@record_field:{field}") => values.first().cloned(),
+                                _ => None,
+                            }).with_context(|| format!("missing ELEMENTAL record component `{field}`"))?;
+                            self.expression(&mut value, objects, prefix)?;
+                            result.push(value);
+                        }
+                        continue;
+                    }
                 }
                 let object = if let Expr::Ident(n) = &arg {
                     // An extension has its parent's components, by name.

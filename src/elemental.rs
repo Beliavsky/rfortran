@@ -177,9 +177,10 @@ pub fn validate(
     };
     if body
         .iter()
-        .any(|s| matches!(s,Stmt::ArrayDecl{name,..} if params.contains(name) || name == result))
+        .any(|s| matches!(s,Stmt::ArrayDecl{name,..} if params.contains(name) || name == result)
+            || matches!(s,Stmt::DerivedDecl{names,dims,..} if !dims.is_empty() && names.iter().any(|name|params.contains(name)||name==result)))
     {
-        let target=body.iter().find_map(|s|match s {Stmt::ArrayDecl{name,..} if params.contains(name)||name==result=>Some(name.as_str()),_=>None}).unwrap();
+        let target=body.iter().find_map(|s|match s {Stmt::ArrayDecl{name,..} if params.contains(name)||name==result=>Some(name.as_str()),Stmt::DerivedDecl{names,dims,..} if !dims.is_empty()=>names.iter().find(|name|params.contains(name)||*name==result).map(String::as_str),_=>None}).unwrap();
         return Err(crate::source_diagnostics::declaration(body,target,None,format!("ELEMENTAL function `{name}` requires scalar dummy arguments and a scalar result")));
     }
     if !result_kind(name, declared, body)
@@ -190,18 +191,23 @@ pub fn validate(
     }
     for param in params {
         if !body.iter().any(
-            |s| matches!(s,Stmt::VarDecl{kind,names} if names.contains(param) && scalar(kind)),
+            |s| matches!(s,Stmt::VarDecl{kind,names} if names.contains(param) && scalar(kind))
+                || matches!(s,Stmt::DerivedDecl{names,dims,..} if names.contains(param) && dims.is_empty()),
         ) {
             return Err(crate::source_diagnostics::declaration(body,param,None,format!("ELEMENTAL dummy argument `{param}` requires an explicitly declared supported scalar type")));
         }
         // NEXT/PREVIOUS are intrinsic elemental functions with an OUT STAT.
         // The private scalar implementation is expanded before the numeric ABI.
         let enum_stat = name.starts_with("@enumeration_step_") && param=="stat";
-        if !body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name == param && (intent == "intent(in)" || enum_stat && intent=="intent(out)"))) {
+        let attributes: Vec<&str> = body.iter().flat_map(|s| match s {
+            Stmt::DummyIntent { name, intent } if name == param => vec![intent.as_str()],
+            Stmt::DerivedDecl { names, attributes, .. } if names.contains(param) => attributes.iter().map(String::as_str).collect(),
+            _ => vec![],
+        }).collect();
+        if !attributes.iter().any(|a| *a == "intent(in)" || enum_stat && *a == "intent(out)") {
             return Err(crate::source_diagnostics::declaration(body,param,None,format!("ELEMENTAL function dummy argument `{param}` requires INTENT(IN)")));
         }
-        if body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name == param && intent != "intent(in)" && intent != "optional" && !intent.starts_with('@') && !(enum_stat && intent=="intent(out)"))) {
-            let attribute=body.iter().find_map(|s|match s {Stmt::DummyIntent{name,intent} if name==param&&intent!="intent(in)"&&intent!="optional"&&!intent.starts_with('@')=>Some(intent.as_str()),_=>None}).unwrap();
+        if let Some(attribute) = attributes.iter().copied().find(|a| *a != "intent(in)" && *a != "optional" && !a.starts_with('@') && !(enum_stat && *a == "intent(out)")) {
             let message=format!("attribute `{attribute}` on dummy argument `{param}` is not yet supported in ELEMENTAL function `{name}`");
             return Err(crate::source_diagnostics::declaration(body,param,Some(attribute),message));
         }
