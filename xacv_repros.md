@@ -186,8 +186,8 @@ checks distinguish descriptor association from array-data reads. Tests in
 `tests/test_allocatable_function_dummies.py` cover unallocated/empty actuals,
 component ranks through 15, element kinds, bounds and writable function dummies.
 
-The full source now reaches line 6550:
-`xdiag(j:j+n1-1) = diag(xx(:,:,i3))`, reporting `array xx requires 2 subscripts`.
+The former full-source blocker at line 6550 is now supported:
+`xdiag(j:j+n1-1) = diag(xx(:,:,i3))` reported `array xx requires 2 subscripts`.
 The twenty-third small example,
 [tests/programs/xacv_diag_forall.f90](tests/programs/xacv_diag_forall.f90),
 retains the nested diagonal functions and FORALL used by this code. With input
@@ -196,6 +196,26 @@ retains the nested diagonal functions and FORALL used by this code. With input
 `diag`; replacing its FORALL by a DO loop lets the standalone example compile.
 It exercises the related diagonal-function lowering path but does not yet
 isolate the full source's exact rank diagnostic.
+
+The twenty-fourth repro isolates that exact diagnostic and is now a regression:
+[tests/programs/xacv_function_dummy_descriptor_shadow.f90](tests/programs/xacv_function_dummy_descriptor_shadow.f90).
+It needs no FORALL, derived types, array-valued results or runtime input. A main
+program declares an unrelated rank-two ALLOCATABLE array `xx`; a module function
+has its own rank-three dummy also named `xx`, and passes `xx(:,:,1)` to a function
+with a rank-two dummy. Both rfort and gfortran now print `7`. Previously, renaming
+only the main-program `xx` to `unrelated` avoided the incorrect rank diagnostic.
+Function-argument preparation inherited the main-program descriptor metadata
+even after replacing the binding with the function's local declaration.
+
+`character_elementals::Lower::body` now clears inherited metadata for locally
+declared names before loading their own declarations and attributes. Bindings
+actually inherited from a host retain their descriptors. The regression suite
+`tests/test_function_scope_metadata.py` checks the exact repro, scalar shadowing,
+dummy ranks through 15, local allocation bounds, CHARACTER dummy lengths and
+inherited arrays in BLOCKs,
+using the interpreter, native code at -O0/-O2 and gfortran as a reference.
+The full source now advances to `ALLOCATABLE output specialization requires a
+bounded rank-one array input or fixed local array`; this is a separate blocker.
 
 ## Intrinsic calls after extending an intrinsic generic
 

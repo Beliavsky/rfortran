@@ -289,7 +289,7 @@ end subroutine
 
     def test_unsupported_host_definition_paths_are_rejected(self):
         for statement,extra,message in [
-            ('read(*,*) x','','READ into host-associated'),
+            ('read(*,*) x','','READ definitions of host-associated objects'),
             ('call random_number(x)','','ordinary subroutines'),
             ('call setter(x)','subroutine setter(y)\ninteger,intent(out)::y\ny=2\nend subroutine\n','writable dummy'),
         ]:

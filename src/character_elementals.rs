@@ -1225,16 +1225,27 @@ impl Lower {
         let statement_location = std::cell::Cell::new(None);
         let result = (|| -> Result<()> {
         let mut symbols = inherited.clone();
+        // A local declaration shadows the complete binding, including its
+        // descriptor and CHARACTER-length metadata. Retain host metadata only
+        // for names actually inherited by this scope; reload local attributes
+        // below after inserting the local declarations.
+        let declared:std::collections::HashSet<_>=body.iter().flat_map(|s|match s {
+            Stmt::VarDecl{names,..}=>names.clone(),
+            Stmt::ArrayDecl{name,..}=>vec![name.clone()],
+            _=>vec![],
+        }).collect();
+        symbols.retain(|key,_| {
+            let owner=key.strip_prefix('@').and_then(|key|key.split_once(':')).map(|(_,owner)|owner);
+            !declared.contains(key) && !owner.is_some_and(|name|declared.contains(name))
+        });
         for s in body.iter() {
             match s {
                 Stmt::VarDecl { kind, names } => {
                     for n in names {
-                        symbols.remove(&format!("@function_readonly:{n}"));
                         symbols.insert(n.clone(), (kind.clone(), vec![]));
                     }
                 }
                 Stmt::ArrayDecl { kind, name, dims } => {
-                    symbols.remove(&format!("@function_readonly:{name}"));
                     symbols.insert(name.clone(), (kind.clone(), dims.clone()));
                 }
                 _ => {}

@@ -60,13 +60,12 @@ print *, '['//b//']'
 end program main
 """, "[x][ab   ][ab      ]\n[ab   ]\n[abxx ]\n[abxxab  ]\n[abxxa]\n[        ]\n[  z!    ]")
 
-    def test_invalid_lengths_and_unsupported_storage(self):
+    def test_invalid_lengths(self):
         cases = [
             ("integer :: n\ncharacter(len=n) :: x", "runtime-dependent lengths"),
             ("character(len=1.5) :: x", "constant INTEGER"),
             ("character(len=2147483647) :: x", "too large"),
             ("character(len=1/0) :: x", "division by zero"),
-            ("character(len=2) :: x(2,2)", "rank one"),
         ]
         with tempfile.TemporaryDirectory(prefix="bad-character-length-") as tmp:
             path=Path(tmp)/"main.f90"
@@ -76,6 +75,16 @@ end program main
                     result=subprocess.run([COMPILER,"check",path],capture_output=True,text=True,timeout=30)
                     self.assertNotEqual(result.returncode,0)
                     self.assertIn(message,result.stderr)
+
+    def test_rank_two_character_storage(self):
+        self.check_program('''implicit none
+character(len=2) :: x(2,2)
+x='ab'
+x(2,1)='z'
+print '(a)', '['//x(2,1)//']'
+print *,size(x)
+end
+''', '[z ]\n4')
 
     def test_trim_removes_spaces_only(self):
         self.check_program("program main\ncharacter(4) :: a,b\na='x\t '\nb=trim(a)//'!'\nprint *, '['//b//']'\nend program main\n", "[x\t! ]")
