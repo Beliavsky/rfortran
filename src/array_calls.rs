@@ -1316,6 +1316,21 @@ pub(crate) fn character_constructor(actual:&mut Expr, shapes:&Shapes, prefix:&mu
     Ok(Some((kind,count,Expr::IntLit(count.to_string()))))
 }
 
+// A declaration shadows the whole inherited binding, not just its type.
+// Keep host metadata only for names actually inherited by the callee.
+fn shadow_declarations(body:&[Stmt],shapes:&mut Shapes) {
+    let declared:HashSet<_>=body.iter().flat_map(|s|match s {
+        Stmt::VarDecl{names,..}=>names.clone(),
+        Stmt::ArrayDecl{name,..}=>vec![name.clone()],
+        _=>vec![],
+    }).collect();
+    shapes.retain(|key,_| {
+        let owner=key.strip_prefix('@').and_then(|key|key.split_once(':')).map(|(_,owner)|owner);
+        !declared.contains(key) && !owner.is_some_and(|name|declared.contains(name))
+    });
+    crate::allocatables::metadata(body,shapes);
+}
+
 fn expand(
     body: &mut Vec<Stmt>,
     inherited: &Shapes,
@@ -1328,6 +1343,7 @@ fn expand(
     let statement_location = std::cell::Cell::new(None);
     let result = (|| -> Result<()> {
     let mut inherited=if body.iter().any(|s|matches!(s,Stmt::DummyIntent{intent,..} if intent=="@native_recursive")) {Shapes::new()} else {inherited.clone()};
+    shadow_declarations(body,&mut inherited);
     for s in body.iter() {
         if let Stmt::DummyIntent{name,intent}=s {
             if matches!(intent.as_str(),"pointer"|"target") {inherited.insert(format!("@{intent}:{name}"),(TypeSpec::Logical,vec![]));}
@@ -1436,6 +1452,7 @@ fn expand(
                         .collect(),
                 )?;
                 let mut local = shapes.clone();
+                shadow_declarations(&r.body,&mut local);
                 for p in &r.params {for key in ["@pointer","@target","@heap","@extent","@allocated","@axes","@lowers","@axis_limits"] {local.remove(&format!("{key}:{p}"));}}
                 for d in &r.body {
                     match d {

@@ -194,7 +194,7 @@ pub unsafe extern "C" fn rfort_file_endfile(stream:*mut core::ffi::c_void)->i32 
     0
 }
 #[no_mangle]
-pub unsafe extern "C" fn rfort_file_open_dynamic(slots:*mut *mut core::ffi::c_void,names:*mut *const u8,actions:*mut i64,requested:i64,path:*const u8,length:usize,mode:i64,newunit:i64)->i64 {
+pub unsafe extern "C" fn rfort_file_open_dynamic(slots:*mut *mut core::ffi::c_void,names:*mut *const u8,actions:*mut i64,requested:i64,path:*const u8,length:usize,mode:i64,newunit:i64,append:i64)->i64 {
     let mut length=length;while length>0 && *path.add(length-1)==b' ' {length-=1;}
     if length==0 || core::slice::from_raw_parts(path,length).contains(&0) {return i64::MIN;}
     let unit=if newunit!=0 {
@@ -208,6 +208,10 @@ pub unsafe extern "C" fn rfort_file_open_dynamic(slots:*mut *mut core::ffi::c_vo
     let flags=match mode {0=>b"rb\0".as_ptr(),1=>b"wb\0".as_ptr(),2=>b"w+b\0".as_ptr(),3|4|5|6=>b"r+b\0".as_ptr(),_=>{free(name.cast());return i64::MIN;}};
     let mut file=fopen(name,flags);if file.is_null() && matches!(mode,5|6) {file=fopen(name,b"w+b\0".as_ptr());}
     if file.is_null() {free(name.cast());return i64::MIN;}
+    if append!=0 && fseek(file,0,2)!=0 {
+        extern "C" {fn fclose(stream:*mut core::ffi::c_void)->i32;}
+        fclose(file);free(name.cast());return i64::MIN;
+    }
     *slots.add(index)=file;*names.add(index)=name;*actions.add(index)=file_inquiry::action(mode);unit
 }
 #[no_mangle]

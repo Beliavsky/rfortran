@@ -669,6 +669,111 @@ is saved in `target/acv-repros/xacv-inquire-release.txt` (ignored). The release
 inquiry suite passes in the interpreter, native O0/O2 and gfortran; its log is
 `target/inquire-release-tests.txt` (ignored).
 
+### OPEN append positioning (now a regression)
+
+Standalone repro: [xacv_open_append.f90](tests/programs/xacv_open_append.f90).
+It creates a file containing `first`, reopens it with the same OPEN controls as
+`xacv.f90:15203`, appends `second`, then reads both records and deletes the file.
+
+```cmd
+rf.bat tests\programs\xacv_open_append.f90 --run
+```
+
+Expected output, also verified with gfortran:
+
+```text
+first
+second
+```
+
+The shared lowering and both runtimes now support initial append positioning.
+The native runtime seeks after opening, rather than using C append mode, so a
+subsequent REWIND permits ordinary reads and overwriting. Failure to seek is an
+OPEN error and does not publish a connection or assign NEWUNIT.
+`python tests/test_open_position.py` covers fixed units and NEWUNIT, existing
+and missing files, replace semantics, read-only opens at EOF, unformatted stream
+files, scratch files, ASIS/REWIND, subsequent positioning and IOSTAT/IOMSG.
+Run the standalone program in a scratch directory: it creates and deletes
+`rfort_open_append_test.tmp` in its working directory.
+
+The rebuilt release passes this OPEN in `rfort check xacv.f90`. The next
+diagnostic is at line 14210, on the continued `sump = (((( &` assignment:
+
+```text
+read of uninitialized variable `@matrix_alloc_xx_0_length` before assignment
+```
+
+This names compiler-generated allocation-length storage. The full-source check
+log is `target/acv-repros/xacv-open-position-release.txt` (ignored).
+All nine positioning tests pass with the rebuilt release in the interpreter,
+native O0/O2 and gfortran; results are saved in
+`target/open-position-release-tests.txt` (ignored).
+
+### Scalar/matrix name collision through an elemental call (now a regression)
+
+Standalone repro:
+[xacv_scalar_matrix_name_collision.f90](tests/programs/xacv_scalar_matrix_name_collision.f90).
+It reduces the `calck1` failure at original line 14210 to an elemental function
+calling an elemental subroutine. The subroutine assigns a local scalar `xx`
+before using it; the main program independently declares an allocatable
+rank-two matrix also called `xx`.
+
+```cmd
+rf.bat tests\programs\xacv_scalar_matrix_name_collision.f90 --run
+```
+
+Expected output, verified with gfortran `-std=f2018 -Wall -fcheck=all` without
+warnings:
+
+```text
+  1.2500
+```
+
+Before the fix, both native compilation and interpreter execution rejected line 18:
+
+```fortran
+answer = xx + 1d0
+```
+
+```text
+read of uninitialized variable `@matrix_alloc_xx_0_length` before assignment
+```
+
+Two controls compile and run with rfort, each printing the expected result:
+renaming only the main program's matrix to `matrix`, or removing ELEMENTAL from
+both procedures. These controls implicate array metadata leaking across scopes
+during elemental-call lowering. The two source entities named `xx` are separate
+and both are initialized in the repro.
+The call-expansion pass now removes an inherited binding and all owner-tagged
+metadata when a local declaration shadows it, then reloads that scope's own
+metadata. This happens both when entering a scope and before associating a
+specialized callee's arguments, so stale caller descriptors cannot be used
+while specializing the callee body. The repro now prints the expected result.
+`python tests/test_array_scope_metadata.py` checks caller matrices of different
+intrinsic types/ranks, local fixed arrays, scalar dummies, pointer metadata,
+assumed-shape argument extents and genuine uninitialized scalar reads.
+An extracted copy of the original Bessel module also passes the source check.
+The rebuilt release passes the original scope collision in full object
+compilation of `xacv.f90`. The next diagnostic is at line 4965:
+
+```fortran
+write (*,*) (trim(words(i)) // " ",i=1,nread_)
+```
+
+```text
+read of uninitialized variable `@alloc_block_215` before assignment
+```
+
+This is a separate generated-storage diagnostic on CHARACTER implied-DO output.
+The full-source log is `target/acv-repros/xacv-scope-release.txt` (ignored).
+All 151 scope, elemental, module, pointer and allocation tests pass against the
+rebuilt release, including interpreter and native O0/O2 checks with gfortran
+references. The nine OPEN-position tests also pass. Logs are
+`target/scope-metadata-release-tests.txt` and
+`target/scope-metadata-open-tests.txt` (ignored); all 132 Rust unit tests pass.
+Validation and control sources are saved under
+`target/acv-repros/matrix-scalar-shadow/` (ignored), including `report.json`.
+
 ## Intrinsic calls after extending an intrinsic generic
 
 `date_mdy_mod` in `xacv.f90` extends MAX, MINVAL, MAXVAL and INT for

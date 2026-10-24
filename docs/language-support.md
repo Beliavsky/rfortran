@@ -2159,6 +2159,14 @@ Run `python tests/test_character_elemental.py` for interpreter/native O0/O2
 checks with gfortran comparisons. The main suite includes
 `tests/143_character_elemental.f90`, matching `xchar_plus_char.f90`.
 
+Local declarations and dummy arguments in specialized calls keep their own
+array shape, allocation and pointer metadata. A scalar local may share a name
+with an unrelated caller matrix, including through nested elemental calls.
+Assumed-shape associations retain their actual extents, and BLOCK scopes retain
+inherited descriptors for names they do not redeclare. Run
+`python tests/test_array_scope_metadata.py` for the scope-collision regression
+and checks of scalar, fixed-array and pointer bindings.
+
 ### ELEMENTAL subroutines and purity
 
 Scalar calls to ELEMENTAL subroutines support explicit INTENT(IN), INTENT(OUT),
@@ -2517,7 +2525,16 @@ STATUS='unknown', ACTION='readwrite' combination opens or creates a file;
 STATUS='unknown' also accepts ACTION='write' or 'read', and STATUS='new'
 accepts ACTION='write' or 'readwrite' (without checking that the file is
 absent). CLOSE accepts STATUS='keep' or 'delete'.
-POSITION='rewind' is supported. Formatted and list-directed WRITE go to a
+OPEN accepts constant POSITION='asis', 'rewind' or 'append'. For a new
+connection, ASIS and REWIND start at the beginning; APPEND positions at the end
+after opening or creating the file. APPEND does not force later writes to the
+end: REWIND, BACKSPACE and stream positioning retain their usual behavior.
+POSITION='append' also works with ACTION='read' and unformatted stream files.
+STATUS='replace' still discards existing contents before positioning; an empty
+scratch file starts at the same position for all three values. Reopening an
+already connected unit remains unsupported. Run `python tests/test_open_position.py`
+for interpreter/native O0/O2 comparisons with gfortran.
+Formatted and list-directed WRITE go to a
 connected unit; list-directed file output writes a blank, then each item as G0
 separated by blanks, which list-directed READ reads back. Unit 0 writes to
 standard error unless a file is connected to it. Explicit units are

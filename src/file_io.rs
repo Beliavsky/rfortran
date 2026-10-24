@@ -122,6 +122,16 @@ pub(crate) fn lower(
 }
 
 fn lower_open(mut controls:HashMap<String,Expr>,symbols:&HashMap<String,(TypeSpec,Vec<Expr>)>,serial:&mut usize,checked:bool)->Result<Open> {
+    // POSITION affects the initial position only; subsequent REWIND/READ/WRITE
+    // must retain their ordinary semantics (unlike the C append stream mode).
+    let append=match controls.remove("position") {
+        None=>false,
+        Some(Expr::Str(s))=>match s.trim_end().to_ascii_lowercase().as_str() {
+            "append"=>true,"asis"|"rewind"=>false,
+            _=>bail!("OPEN POSITION must be 'asis', 'rewind' or 'append'"),
+        },
+        _=>bail!("OPEN POSITION must currently be constant"),
+    };
     if matches!(controls.get("status"),Some(Expr::Str(s)) if s.trim_end().eq_ignore_ascii_case("scratch")) {
         if controls.contains_key("file") { bail!("scratch OPEN must not specify FILE"); }
         let newunit=controls.remove("newunit");
@@ -144,7 +154,7 @@ fn lower_open(mut controls:HashMap<String,Expr>,symbols:&HashMap<String,(TypeSpe
         if newunit.is_some() && !matches!(destination,Expr::Ident(_)) {bail!("NEWUNIT requires an INTEGER variable");}
         // Files are opened in binary mode, so a stream connection for
         // unformatted READ and WRITE needs nothing more.
-        for (key,allowed) in [("access",&["sequential","stream"][..]),("form",&["formatted","unformatted"][..]),("position",&["rewind"][..])] {
+        for (key,allowed) in [("access",&["sequential","stream"][..]),("form",&["formatted","unformatted"][..])] {
             if let Some(v)=controls.remove(key) {
                 if !matches!(&v,Expr::Str(s) if allowed.iter().any(|a|s.trim_end().eq_ignore_ascii_case(a))) {
                     bail!("OPEN currently supports {key}={}",allowed.iter().map(|a|format!("'{a}'")).collect::<Vec<_>>().join(" or "));
@@ -158,7 +168,7 @@ fn lower_open(mut controls:HashMap<String,Expr>,symbols:&HashMap<String,(TypeSpe
             ("new","write")=>1,("new","readwrite")=>2,_=>bail!("unsupported OPEN STATUS/ACTION combination")};
         let path=controls.remove("file").context("OPEN requires FILE")?;
         if !matches!(crate::array_calls::scalar_actual_kind(&path,symbols)?,TypeSpec::Character(_)) {bail!("FILE requires scalar CHARACTER");}
-        let mut args=vec![destination.clone(),path,Expr::IntLit(mode.to_string()),Expr::IntLit(i64::from(newunit.is_some()).to_string())];
+        let mut args=vec![destination.clone(),path,Expr::IntLit(mode.to_string()),Expr::IntLit(i64::from(newunit.is_some()).to_string()),Expr::IntLit(i64::from(append).to_string())];
         // With IOSTAT the raw result, a unit or a failure code, goes to a
         // temporary that the caller tests.
         let name=if checked {"@file_open_try"} else {"@file_open_dynamic"};
@@ -416,13 +426,15 @@ impl Files {
         Ok(String::from_utf8(bytes).unwrap())
     }
 
-    pub(crate) fn open_dynamic(&mut self,requested:Option<i64>,path:&str,mode:i64)->Result<i64> {
+    pub(crate) fn open_dynamic(&mut self,requested:Option<i64>,path:&str,mode:i64,append:bool)->Result<i64> {
         let path=path.trim_end();if path.is_empty() || path.contains('\0') {bail!("invalid FILE name");}
         let unit=match requested {Some(unit)=>unit,None=>(-1033..=-10).rev().find(|u|!self.0.contains_key(u)).context("no free NEWUNIT file slots")?};
         Self::valid(unit)?;if self.0.contains_key(&unit) {bail!("OPEN on an already connected unit is not yet supported");}
         let mut options=std::fs::OpenOptions::new();
         options.read(matches!(mode,0|2|3|5)).write(mode!=0).create(matches!(mode,1|2|5|6)).truncate(matches!(mode,1|2));
-        let file=options.open(path).context("OPEN failed")?;self.0.insert(unit,file);self.1.insert(unit,path.into());self.2.insert(unit,inquiry::action(mode));Ok(unit)
+        let mut file=options.open(path).context("OPEN failed")?;
+        if append {file.seek(SeekFrom::End(0)).context("OPEN could not position at end of file")?;}
+        self.0.insert(unit,file);self.1.insert(unit,path.into());self.2.insert(unit,inquiry::action(mode));Ok(unit)
     }
     /// Unformatted stream output: 0, or 1 on an error.
     pub(crate) fn stream_write(&mut self,unit:i64,bytes:&[u8])->i64 {
