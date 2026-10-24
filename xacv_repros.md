@@ -846,8 +846,82 @@ read of uninitialized variable `@alloc_block_4156` before assignment
 ```
 
 The full-source log is
-`target/acv-repros/xacv-character-output-release.txt` (ignored). This is the next
-blocker; full-source compilation has not yet succeeded.
+`target/acv-repros/xacv-character-output-release.txt` (ignored). This was the next
+blocker before the SELECT CASE fix below; full-source compilation had not yet succeeded.
+
+
+### Scalar function call inside SELECT CASE (now a regression)
+
+Standalone repro:
+[xacv_median_select_case.f90](tests/programs/xacv_median_select_case.f90).
+It reduces the `stat_vec_str` call at original line 20064 to a CHARACTER
+SELECT CASE whose median branch calls a scalar-valued array-input function.
+The median copies its input and calls a subroutine with an INTENT(OUT) result;
+only the original zero/one/two-item median path is retained. The test passes
+`[2.0_dp,4.0_dp]` and should print `3.00`.
+
+```cmd
+rf.bat tests\programs\xacv_median_select_case.f90 --run
+```
+
+Before the fix, both native compilation and interpreter execution rejected line 13:
+
+```fortran
+   xstat=median(xx)
+```
+
+```text
+read of uninitialized variable `@sub_local_3` before assignment
+```
+
+The generated name differs from `@alloc_block_4156` in the full source.
+The repro also failed with the complete original `median_sub` body. gfortran
+`-std=f2018 -Wall -fcheck=all` compiles the reduced repro without warnings and
+prints `3.00`.
+
+Controls narrow the problem to the function call inside SELECT CASE:
+
+- Replacing SELECT CASE with the unconditional `xstat=median(xx)` makes both
+  rfort modes print `3.00`.
+- Initializing `xmed` before calling `median_sub` does not remove the error.
+- Removing early returns from `median_sub` does not remove the error.
+- Removing the work array and nested subroutine, and computing
+  `xmed=sum(xx)/size(xx)` directly, still gives the same diagnostic in the
+  caller's case branch.
+
+The array-call expansion pass visited IF branches and loops but did not visit
+SELECT CASE branches. This left a generated function-helper call unexpanded,
+so initialization checking saw a read of its unset result temporary. The pass
+now expands each case and default body with the surrounding scope's array
+metadata. The reduced repro prints `3.00` in native and interpreter modes.
+
+`tests/test_select_case_calls.py` covers the median and direct scalar results,
+nested cases, runtime array descriptors, branch-local side effects,
+array-valued results, subroutine output arguments and rejection of uninitialized
+inputs. A Rust regression also checks initialization after expansion.
+
+Original repro validation, control sources and results are under
+`target/acv-repros/median-result/` (ignored), including `report.json`,
+`probes.json` and `controls.json`.
+
+All eight focused SELECT CASE tests pass against the rebuilt release (six new
+procedure-call tests and two existing case-range tests), including interpreter
+and native O0/O2 checks with gfortran comparisons. The 48 adjacent array,
+function, scope and CHARACTER-output tests also pass, as do all 133 Rust unit
+tests. Validation logs are `target/median-select-release-tests.txt`,
+`target/median-select-adjacent-tests.txt` and
+`target/median-select-rust-tests.txt` (ignored).
+
+An isolated copy with the complete original `median_sub` implementation also
+passes in both rfort modes and gfortran: inputs `[2,4]`, `[5,1,3]` and `[8,2,6,4]`
+produce `3.00`, `3.00` and `5.00`. Its source and results are saved as
+`target/acv-repros/median-result/original_subroutine_fixed.f90` and
+`original_subroutine_fixed_report.json` (ignored).
+
+The full `rfort -c xacv.f90` verification was stopped after 15 minutes without a
+diagnostic. Its output log is `target/acv-repros/xacv-select-case-release.txt`
+(ignored). Full-source compilation remains unverified; no next blocker was
+identified by this run.
 
 ## Intrinsic calls after extending an intrinsic generic
 

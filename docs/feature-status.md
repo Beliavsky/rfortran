@@ -169,7 +169,7 @@ Found on 2026-10-21, fixed:
 | [Named loops, EXIT and CYCLE](language-support.md#do-loops) | F90 | ✅ |  | test_named_loops.py |
 | [DO CONCURRENT](language-support.md#do-loops) | Mixed | 🟡 | DO CONCURRENT: F2008; locality specifiers: F2018; REDUCE: F2023. Sequential; F2023 REDUCE for scalar and fixed-size explicit-shape intrinsic arrays; no other locality specifiers or type specification | test_statement_forms_io.py, test_concurrent_reduce.py |
 | [Labelled DO (`do 10 i = ...`)](language-support.md#do-loops) | F77 or earlier | ✅ |  | test_statement_forms_io.py |
-| [SELECT CASE](language-support.md#select-case-ranges) | F90 | 🟡 | INTEGER values and ranges, CHARACTER values; CHARACTER ranges are not supported | test_case_ranges.py |
+| [SELECT CASE](language-support.md#select-case-ranges) | F90 | 🟡 | INTEGER values and ranges, CHARACTER values; CHARACTER ranges are not supported. Array procedure calls specialize within nested case and default branches | test_case_ranges.py, test_select_case_calls.py |
 | BLOCK construct | F2008 | ✅ |  | testsuite, test_named_constructs.py |
 | [EXIT from a named BLOCK, IF, SELECT CASE or ASSOCIATE](language-support.md#other-statement-forms) | F2008 | ✅ |  | test_named_constructs.py |
 | [ASSOCIATE](language-support.md#associate) | F2003 | 🟡 | Selectors whose value the block changes are rejected | test_associate.py |

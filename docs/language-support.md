@@ -658,6 +658,13 @@ arithmetic selectors work in native builds, including selectors made constant
 by optimization. CHARACTER ranges remain unsupported. Run
 `python tests/test_case_ranges.py` for interpreter/native O0/O2 and gfortran checks.
 
+Supported array-input functions, array-valued functions and array-argument
+subroutines are specialized inside every CASE and CASE DEFAULT branch, including
+nested SELECT CASE constructs. Calls remain in their selected branch and use
+the surrounding scope's array descriptors. Run
+`python tests/test_select_case_calls.py` for interpreter/native O0/O2 checks
+with gfortran comparisons, including the reduced `xacv.f90` median call.
+
 ### ASSOCIATE
 
 ASSOCIATE replaces each associate name by its selector inside the block, so a

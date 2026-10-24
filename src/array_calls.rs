@@ -1885,6 +1885,14 @@ fn expand(
                     expand(b, &shapes, routines, functions, function_lower, active, serial)?;
                 }
             }
+            Stmt::SelectCase { cases, default, .. } => {
+                for case in cases {
+                    expand(&mut case.body, &shapes, routines, functions, function_lower, active, serial)?;
+                }
+                if let Some(body) = default {
+                    expand(body, &shapes, routines, functions, function_lower, active, serial)?;
+                }
+            }
             _ => {}
         }
     }
@@ -1976,6 +1984,11 @@ mod tests {
         let tokens = crate::lexer::lex(source);
         let p = crate::parser::parse_with_src(source, &tokens, "array_calls.f90").unwrap();
         crate::reductions::resolve(super::resolve(crate::parameters::resolve(p)?)?)
+    }
+    #[test]
+    fn scalar_function_in_select_case_preserves_result_storage() {
+        let p=lower(include_str!("../tests/programs/xacv_median_select_case.f90")).unwrap();
+        crate::initialized::instrument(p).unwrap();
     }
     #[test]
     fn rejects_unsupported_or_invalid_array_calls() {
