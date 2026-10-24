@@ -774,6 +774,81 @@ references. The nine OPEN-position tests also pass. Logs are
 Validation and control sources are saved under
 `target/acv-repros/matrix-scalar-shadow/` (ignored), including `report.json`.
 
+### Allocatable CHARACTER implied-DO output storage (now a regression)
+
+Standalone repro:
+[xacv_allocatable_character_implied_do.f90](tests/programs/xacv_allocatable_character_implied_do.f90).
+It reduces `read_words_line` at original line 4965 to a subroutine with an
+assumed-length allocatable CHARACTER output. Both branches allocate `words`;
+the positive branch fills every element, then makes the second word distinct.
+The implied-DO prints the populated array after the branches.
+
+```cmd
+rf.bat tests\programs\xacv_allocatable_character_implied_do.f90 --run
+```
+
+Expected output, verified with gfortran `-std=f2018 -Wall -fcheck=all` without
+warnings:
+
+```text
+ alpha beta
+```
+
+Before the fix, both native compilation and interpreter execution rejected line 21:
+
+```fortran
+write(*,*) (trim(words(i)) // ' ', i=1,nread)
+```
+
+```text
+read of uninitialized variable `@alloc_block_5` before assignment
+```
+
+The temporary's serial number differs from `@alloc_block_215` in the full
+source. Initializing `i=1` immediately before this WRITE is a useful control:
+it made both rfort modes run, but they incorrectly printed `alpha alpha`.
+Initializing the implied-DO index beforehand should not be necessary and does
+not change the expected output. This points to materialization of `words(i)`
+before loop initialization, followed by reuse of the first item across iterations.
+The fix expands output implied-DOs before CHARACTER temporary materialization
+and function expansion, so each indexed item is evaluated after the loop index
+is assigned. Both modes now print `alpha beta`, including with `i=1` or `i=9`
+set before the WRITE. Uninitialized-element checks remain active.
+
+`tests/test_character_output_implied_do.py` also covers PRINT, formatted/internal
+WRITE, constant and variable file units, nested and reverse loops, empty loops,
+zero steps, per-iteration function calls, once-only function-valued bounds and
+unit capture before output-item evaluation, and output inside SELECT CASE in
+array-valued functions. Procedure-local validation now discovers declarations
+generated inside case branches. The suite compares interpreter and native O0/O2
+results with gfortran where applicable.
+
+Validation ran in an isolated temporary directory. Results and the initialized
+index control are saved under `target/acv-repros/character-implied-do-storage/`
+(ignored), including `report.json`.
+
+All 11 focused tests pass against the rebuilt release, including interpreter
+and native O0/O2 runs with gfortran references. The 60 adjacent output and scope
+tests also pass, as do all 132 Rust unit tests. Logs are
+`target/character-implied-do-release-final.txt`,
+`target/character-output-release-tests.txt` and
+`target/character-output-rust-tests.txt` (ignored).
+
+The rebuilt release passes the original output blocker and stops later at
+`xacv.f90:20064:37`:
+
+```fortran
+case (stat_labels(iimedian))   ; xstat = median(xx)
+```
+
+```text
+read of uninitialized variable `@alloc_block_4156` before assignment
+```
+
+The full-source log is
+`target/acv-repros/xacv-character-output-release.txt` (ignored). This is the next
+blocker; full-source compilation has not yet succeeded.
+
 ## Intrinsic calls after extending an intrinsic generic
 
 `date_mdy_mod` in `xacv.f90` extends MAX, MINVAL, MAXVAL and INT for

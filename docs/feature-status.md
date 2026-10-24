@@ -302,7 +302,7 @@ current limits.
 
 | Feature | Introduced | Status | Notes | Tests |
 |---|---|---|---|---|
-| [List-directed output](language-support.md#list-directed-output) | F77 or earlier | ✅ | REAL values are printed with the shortest exact digits, not gfortran's fixed width | test_logical_list_output.py |
+| [List-directed output](language-support.md#list-directed-output) | F77 or earlier | ✅ | REAL values are printed with the shortest exact digits, not gfortran's fixed width. CHARACTER implied-DO items evaluate per iteration, including allocatable storage and supported function calls | test_logical_list_output.py, test_character_output_implied_do.py |
 | [Formatted output: A, I, F, L, X, `/`, `:`, I0, F0.d](language-support.md#formatted-output) | Mixed | ✅ | Core descriptors: F77 or earlier; zero-width I0 and F0.d output: F95. | test_write.py, test_runtime_formats.py, test_formatted_output.py |
 | [E, ES, EN, D and G edit descriptors, including Ew.dEe, G0 and G0.d](language-support.md#formatted-output) | Mixed | ✅ | E/D/G: F77 or earlier; ES/EN: F90; G0/G0.d: F2008; G0.d for INTEGER/LOGICAL/CHARACTER: F2018. | test_formatted_output.py |
 | [B, O, Z edit descriptors](language-support.md#formatted-output) | F90 | ✅ | In the interpreter, a negative value of a non-default INTEGER kind uses the default kind's bits | test_formatted_output.py |

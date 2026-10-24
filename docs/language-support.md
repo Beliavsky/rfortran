@@ -2457,6 +2457,16 @@ and embedded in `rfort`; no separate runtime installation is needed. Use
 
 ### List-directed output
 
+List-directed PRINT/WRITE implied-DOs evaluate CHARACTER array elements,
+substrings, concatenations and supported CHARACTER function calls inside each
+iteration, including allocatable CHARACTER storage. Nested loops, runtime
+bounds, reverse steps and empty loops are supported. Loop controls are evaluated
+once on entry; zero-iteration loops do not evaluate their items. A variable
+external unit is captured before evaluating output items. These rules also apply
+to the supported formatted and internal WRITE paths. Run
+`python tests/test_character_output_implied_do.py` for interpreter/native O0/O2
+checks with gfortran comparisons.
+
 List-directed LOGICAL output uses `T` and `F` for scalar values, array elements,
 expressions and procedure results. CHARACTER strings containing `.TRUE.` or
 `.FALSE.` retain their spelling. Run `python tests/test_logical_list_output.py`

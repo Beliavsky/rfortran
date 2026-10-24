@@ -147,7 +147,7 @@ pub(crate) fn integer(e: &Expr, symbols: &Symbols) -> bool {
         Expr::Call(n,a) if n=="@conditional"=>integer(&a[1],symbols),
         // Inquiries lowered after argument association retain their allocation
         // guard. Its logical status and name do not change the value's type.
-        Expr::Call(n,_) if matches!(symbols.get(&format!("@elemental:{n}")),Some((TypeSpec::Integer(_),_)))=>true,
+        Expr::Call(n,_) if ["@elemental", "@constructor_function"].iter().any(|tag|matches!(symbols.get(&format!("{tag}:{n}")),Some((TypeSpec::Integer(_),_))))=>true,
         Expr::Call(n,a) if n=="@allocated_extent"=>a.get(1).is_some_and(|e|integer(e,symbols)),
         Expr::Call(n,a) if n=="@heap_bound"=>a.len()==3 && a[..2].iter().all(|e|integer(e,symbols)),
         Expr::Call(n,a) if matches!(n.as_str(),"@heap_lower_bound"|"@heap_upper_bound")=>a.len()==2 && a.iter().all(|e|integer(e,symbols)),
@@ -415,7 +415,7 @@ fn emit(
     Ok(())
 }
 
-/// Expand formatted implied-DOs before CHARACTER arrays become scalar slots.
+/// Expand output implied-DOs before expressions acquire CHARACTER temporaries.
 /// Each value is copied into a statement-local list, then formatted together.
 pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> Result<crate::ast::Program> {
     fn ready(e:&Expr,symbols:&Symbols)->bool {
@@ -446,6 +446,53 @@ pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> Result<crat
         let mut location = None;
         for stmt in body.iter_mut() {
             if let Some(offset)=crate::source_diagnostics::statement_offset(&*stmt) {location=Some(offset);}
+            // Materializing an indexed item before its implied-DO assigns the
+            // index reads an unset value (or repeats a stale value). Expose the
+            // control flow before allocation and CHARACTER expression lowering.
+            if let Stmt::CallSub{name,args}=stmt {
+                if name=="@write" && matches!(&args[1],Expr::Call(n,_) if n=="@list_directed")
+                    && args[2..].iter().any(contains_implied_do)
+                    && args[2..].iter().all(|e|ready(e,&symbols))
+                    && !args[2..].iter().any(|e|matches!(e,Expr::Call(n,_) if n.starts_with("@write_option:")))
+                {
+                    if crate::parameters::integer_constant(&args[0]).ok()==Some(6) {
+                        *stmt=Stmt::Print{items:args[2..].to_vec()};
+                    } else if crate::file_io::unit(&args[0],&symbols).is_ok() {
+                        // File lists already use this G0 format. A variable
+                        // unit can select stdout, whose character spacing is
+                        // handled by the fragment printer instead.
+                        let mut file_args=args.clone();
+                        file_args[1]=Expr::Str("(*(1x,g0))".into());
+                        if crate::parameters::integer_constant(&args[0]).is_ok() {
+                            *args=file_args;
+                        } else {
+                            *serial+=1;
+                            let unit=format!("@list_output_unit_{serial}");
+                            let source=args[0].clone();
+                            file_args[0]=id(&unit);
+                            let mut local=symbols.clone();
+                            local.insert(unit.clone(),(TypeSpec::Integer(Some(8)),vec![]));
+                            let mut file_body=vec![Stmt::CallSub{name:"@write".into(),args:file_args}];
+                            scope(&mut file_body,&local,serial)?;
+                            let stdout=lower(&args[2..],&symbols,serial)
+                                .map_err(|e|crate::source_diagnostics::at(e,location))?;
+                            *stmt=Stmt::Block{body:vec![
+                                Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![unit.clone()]},
+                                assign(&unit,source),
+                                Stmt::If{cond:bin(BinOp::Eq,id(&unit),int(6)),then_body:vec![stdout],else_body:Some(file_body)},
+                            ]};
+                            continue;
+                        }
+                    }
+                }
+            }
+            if let Stmt::Print{items}=stmt {
+                if items.iter().any(contains_implied_do) && items.iter().all(|e|ready(e,&symbols)) {
+                    *stmt=lower(items,&symbols,serial)
+                        .map_err(|e|crate::source_diagnostics::at(e,location))?;
+                    continue;
+                }
+            }
             let mut internal = None;
             let mut unit_check = None;
             let mut control_prefix = vec![];
@@ -571,8 +618,9 @@ pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> Result<crat
         }
         Ok(())
     }
-    let functions:Symbols=crate::elemental::functions(&program).into_iter()
+    let mut functions:Symbols=crate::elemental::functions(&program).into_iter()
         .map(|(name,kind)|(format!("@elemental:{name}"),(kind,vec![]))).collect();
+    functions.extend(crate::constructor_expressions::function_shapes(&program));
     scope(&mut program.body, &functions, &mut 0)?;
     Ok(program)
 }
@@ -641,8 +689,9 @@ pub(crate) fn prepare_character_views(mut program:crate::ast::Program)->Result<c
         *body=out;
         Ok(())
     }
-    let functions:Symbols=crate::elemental::functions(&program).into_iter()
+    let mut functions:Symbols=crate::elemental::functions(&program).into_iter()
         .map(|(name,kind)|(format!("@elemental:{name}"),(kind,vec![]))).collect();
+    functions.extend(crate::constructor_expressions::function_shapes(&program));
     scope(&mut program.body,&functions,&mut 0)?;
     prepare_formatted(program)
 }

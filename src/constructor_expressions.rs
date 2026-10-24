@@ -527,7 +527,7 @@ impl Lower {
         }
     }
 }
-pub(crate) fn resolve(mut p: Program) -> Result<Program> {
+pub(crate) fn function_shapes(p:&Program) -> Shapes {
     fn functions(body: &[Stmt], shapes: &mut Shapes) {
         for s in body {
             match s {
@@ -551,6 +551,11 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
     }
     let mut shapes = Shapes::new();
     functions(&p.body, &mut shapes);
+    shapes
+}
+
+pub(crate) fn resolve(mut p: Program) -> Result<Program> {
+    let shapes=function_shapes(&p);
     Lower { serial: 0 }.scope(&mut p.body, &shapes)?;
     Ok(p)
 }

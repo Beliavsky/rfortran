@@ -1902,6 +1902,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
     p=crate::internal_procedures::resolve(p)?;
     p=crate::optional::resolve(p)?;
     p=crate::recursive_arrays::resolve(p)?;
+    p=crate::output::prepare_formatted(p)?;
     let (prepared,mut function_lower)=crate::character_elementals::prepare(p)?;
     p=prepared;
     p=crate::output::prepare_formatted(p)?;

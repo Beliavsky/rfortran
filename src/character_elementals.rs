@@ -1429,6 +1429,14 @@ fn validate_locals(
                 Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } | Stmt::Block { body } => {
                     declarations(body, locals)
                 }
+                Stmt::SelectCase { cases, default, .. } => {
+                    for case in cases {
+                        declarations(&case.body, locals);
+                    }
+                    if let Some(body) = default {
+                        declarations(body, locals);
+                    }
+                }
                 _ => {}
             }
         }
