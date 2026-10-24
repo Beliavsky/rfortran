@@ -8,6 +8,109 @@ from test_record_read import ROOT
 class CharacterAllocatableDummies(unittest.TestCase):
     check = test_deallocate.Deallocate.check
 
+    def test_local_output_with_bounded_input(self):
+        source = (ROOT/'tests/programs/xacv_character_allocatable_output.f90').read_text()
+        self.check(source, '2 20\nmin|max\n')
+        self.check(source.replace('subroutine set_alloc(xx,yy)',
+                                  'pure subroutine set_alloc(xx,yy)'),
+                   '2 20\nmin|max\n')
+
+    def test_local_output_generic_optional_input(self):
+        self.check('''module local_output_mod
+implicit none
+interface copy
+module procedure copy_character
+end interface
+contains
+subroutine labels(input)
+character(*),optional,intent(in)::input(:)
+character(20),allocatable::output(:)
+integer::n
+if(present(input)) then
+call copy(input,output,n)
+else
+call copy(["min","max"],output,n)
+end if
+print *,allocated(output),n,len(output)
+print '(a)',trim(output(1))//'|'//trim(output(2))
+end subroutine
+subroutine copy_character(input,output,n)
+character(*),intent(in)::input(:)
+character(*),allocatable,intent(out)::output(:)
+integer,optional,intent(out)::n
+allocate(output(size(input)))
+output=input
+if(present(n)) n=size(output)
+end subroutine
+end module
+program main
+use local_output_mod
+implicit none
+call labels()
+call labels(["mean","sd  "])
+end
+''', 'T 2 20\nmin|max\nT 2 20\nmean|sd\n')
+
+    def test_function_local_output_keeps_result_independent(self):
+        source = '''module local_function_output_mod
+implicit none
+contains
+pure integer function label_count() result(n)
+character(20),allocatable::words(:)
+call copy(['min','max'],words)
+n=size(words)
+end function
+pure subroutine copy(input,output)
+character(*),intent(in)::input(:)
+character(*),allocatable,intent(out)::output(:)
+allocate(output(size(input)))
+output=input
+end subroutine
+end module
+program main
+use local_function_output_mod
+implicit none
+print *,label_count(),label_count()
+end
+'''
+        for pure in (True, False):
+            with self.subTest(pure=pure):
+                self.check(source if pure else source.replace('pure integer', 'integer'),
+                           '2 2\n')
+
+    def test_local_output_reallocation_empty_and_character_lengths(self):
+        for width in (0, 1, 20):
+            with self.subTest(width=width):
+                self.check(f'''module local_copy_mod
+implicit none
+contains
+subroutine caller()
+character({width}),allocatable::output(:)
+allocate(output(1))
+output='old'
+call copy(['min','max'],output)
+print *,allocated(output),size(output),len(output)
+print *,len_trim(output(1))
+call copy([character(3)::],output)
+print *,allocated(output),size(output)
+call copy(['x'],output)
+print *,size(output),len_trim(output(1))
+end subroutine
+subroutine copy(input,output)
+character(*),intent(in)::input(:)
+character(*),allocatable,intent(out)::output(:)
+allocate(output(size(input)))
+output=input
+end subroutine
+end module
+program main
+use local_copy_mod
+implicit none
+call caller()
+call caller()
+end
+''', (f'T 2 {width}\n{min(width,3)}\nT 0\n1 {min(width,1)}\n')*2)
+
     def test_xacv_read_words(self):
         self.check((ROOT/'tests/programs/xacv_read_words_allocatable.f90').read_text(),
                    '3\nalpha\nbeta\ngamma\n')

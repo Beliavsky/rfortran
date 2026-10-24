@@ -132,15 +132,13 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
                 | TypeSpec::CharacterAssumed
         )
     }
-    fn signatures(body: &mut [Stmt], result: &mut HashMap<String, Vec<usize>>) {
+    fn signatures(body: &mut [Stmt], result: &mut HashMap<String, Vec<usize>>, all: &mut HashMap<String, Vec<usize>>) {
         for statement in body {
             match statement {
                 Stmt::Subroutine {name,params,body,..} | Stmt::Function {name,params,body,..} => {
-                    // Keep the existing bounded CHARACTER result/copy path
-                    // when an input array or fixed local supplies its capacity.
-                    // Otherwise the output may be sized entirely by runtime
-                    // input (for example a count read from a file), and must
-                    // borrow the caller's heap descriptor instead.
+                    // Preserve bounded CHARACTER function-result specialization,
+                    // but track every ALLOCATABLE dummy when selecting storage
+                    // for ordinary caller locals.
                     let bounded_character_output=body.iter().any(|s|match s {
                         Stmt::ArrayDecl{name,dims,..} if dims.len()==1=>{
                             if params.contains(name) {
@@ -148,9 +146,11 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
                             } else {crate::parameters::integer_constant(&dims[0]).is_ok()}
                         },_=>false,
                     });
-                    let positions=params.iter().enumerate().filter_map(|(i,p)|
-                    (body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,kind,dims} if name==p&&numeric(kind)&&(!matches!(kind,TypeSpec::Character(_)|TypeSpec::CharacterAssumed)||dims.len()>1 || !bounded_character_output || body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==p && intent=="@deferred_character_array")))))
+                    let all_positions=params.iter().enumerate().filter_map(|(i,p)|
+                    (body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,kind,..} if name==p&&numeric(kind)))
                      &&body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==p&&intent=="allocatable"))).then_some(i)).collect::<Vec<_>>();
+                    let positions=all_positions.iter().copied().filter(|&i|body.iter().any(|s|
+                        matches!(s,Stmt::ArrayDecl{name,kind,dims} if name==&params[i] && (!matches!(kind,TypeSpec::Character(_)|TypeSpec::CharacterAssumed)||dims.len()>1 || !bounded_character_output || body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==&params[i] && intent=="@deferred_character_array")))))).collect::<Vec<_>>();
                     for &i in &positions {
                         body.insert(
                             0,
@@ -161,9 +161,10 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
                         );
                     }
                     result.insert(name.clone(), positions);
-                    signatures(body, result);
+                    all.insert(name.clone(), all_positions);
+                    signatures(body, result, all);
                 }
-                Stmt::Module { body, .. } => signatures(body, result),
+                Stmt::Module { body, .. } => signatures(body, result, all),
                 _ => {}
             }
         }
@@ -220,11 +221,13 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
         }
     }
     let mut interfaces = HashMap::new();
-    signatures(&mut program.body, &mut interfaces);
+    let mut local_interfaces = HashMap::new();
+    signatures(&mut program.body, &mut interfaces, &mut local_interfaces);
     fn visit(
         body: &mut Vec<Stmt>,
         params: &[String],
         interfaces: &HashMap<String, Vec<usize>>,
+        local_interfaces: &HashMap<String, Vec<usize>>,
         inherited_functions: &HashSet<String>,
     ) -> Result<()> {
         // Result rank is independent of the ranks of the actual arguments.
@@ -246,6 +249,15 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
         }
         let mut passed = HashSet::new();
         actuals(body, interfaces, &mut passed);
+        let mut local_actuals = HashSet::new();
+        actuals(body, local_interfaces, &mut local_actuals);
+        // A function result has its own bounded/heap result policy. Ordinary
+        // locals passed as ALLOCATABLE actuals need descriptors even when the
+        // callee has a bounded CHARACTER copy implementation.
+        if let Some(Stmt::Return(Some(Expr::Ident(result))))=body.last() {
+            local_actuals.remove(result);
+        }
+        passed.extend(local_actuals);
         let declared: HashSet<String> = body.iter().filter_map(|s| match s {
             Stmt::ArrayDecl { name, .. } => Some(name.clone()),
             _ => None,
@@ -442,31 +454,31 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
                         // declaration until function-call lowering supplies it.
                         body.insert(0,Stmt::DummyIntent{name:result,intent:"@heap_dummy".into()});
                     }
-                    visit(body, params, interfaces, &functions)?
+                    visit(body, params, interfaces, local_interfaces, &functions)?
                 }
                 Stmt::Subroutine { body, params, .. } => {
-                    visit(body, params, interfaces, &functions)?
+                    visit(body, params, interfaces, local_interfaces, &functions)?
                 }
                 Stmt::Module { body, .. }
                 | Stmt::Block { body }
                 | Stmt::Do { body, .. }
-                | Stmt::DoWhile { body, .. } => visit(body, &[], interfaces, &functions)?,
+                | Stmt::DoWhile { body, .. } => visit(body, &[], interfaces, local_interfaces, &functions)?,
                 Stmt::If {
                     then_body,
                     else_body,
                     ..
                 } => {
-                    visit(then_body, &[], interfaces, &functions)?;
+                    visit(then_body, &[], interfaces, local_interfaces, &functions)?;
                     if let Some(b) = else_body {
-                        visit(b, &[], interfaces, &functions)?;
+                        visit(b, &[], interfaces, local_interfaces, &functions)?;
                     }
                 }
                 Stmt::SelectCase { cases, default, .. } => {
                     for c in cases {
-                        visit(&mut c.body, &[], interfaces, &functions)?;
+                        visit(&mut c.body, &[], interfaces, local_interfaces, &functions)?;
                     }
                     if let Some(b) = default {
-                        visit(b, &[], interfaces, &functions)?;
+                        visit(b, &[], interfaces, local_interfaces, &functions)?;
                     }
                 }
                 _ => {}
@@ -492,7 +504,7 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
     }
     let mut functions = HashSet::new();
     module_results(&program.body, &mut functions);
-    visit(&mut program.body, &[], &interfaces, &functions)?;
+    visit(&mut program.body, &[], &interfaces, &local_interfaces, &functions)?;
     Ok(program)
 }
 

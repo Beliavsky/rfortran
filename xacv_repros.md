@@ -375,8 +375,41 @@ General ALLOCATABLE pointer targets, writable ordinary pointer actuals and
 automatic reallocation of an unallocated destination from a pointer expression
 remain separate limitations. Initial reference runs and controls are recorded
 in `target/acv-repros/pointer-expression/report.json` (ignored).
-The full source now reports `array cstats_indep_ is used before ALLOCATE` at
+The full source then reported `array cstats_indep_ is used before ALLOCATE` at
 line 21084, `call set_alloc(["min","max"],cstats_indep_)`.
+
+The thirtieth repro isolates that local CHARACTER allocatable output and is now a regression:
+[tests/programs/xacv_character_allocatable_output.f90](tests/programs/xacv_character_allocatable_output.f90).
+A module procedure declares an unallocated local `character(len=20)` array and
+passes it to an ALLOCATABLE INTENT(OUT) dummy. The callee explicitly allocates
+and fills the output; the caller is not required to allocate it beforehand.
+
+```cmd
+rf.bat tests/programs/xacv_character_allocatable_output.f90 --run
+```
+
+Native and interpreter modes now agree with gfortran (`-std=f2018 -Wall -fcheck=all`)
+and print:
+
+```text
+2 20
+min|max
+```
+
+Storage selection now records all supported ALLOCATABLE dummy positions when
+selecting descriptors for ordinary caller locals, including bounded CHARACTER
+copy routines. Function results retain their separate bounded/heap storage
+policy. This fixes both the unallocated-local diagnostic and the related
+preallocated-local `ALLOCATABLE dummy requires an ALLOCATABLE actual` error.
+`tests/test_character_allocatable_dummies.py` checks pure and ordinary copying,
+generic/optional interfaces, reallocation, empty inputs, element lengths 0/1/20
+and repeated local calls in interpreter and native O0/O2 modes against gfortran.
+Existing CHARACTER function-result tests verify the bounded result path.
+Initial controls and reference runs are saved in
+`target/acv-repros/character-allocatable-output/report.json` (ignored).
+The full source now reaches line 24134,
+`forall (icol=1:size(xx,2)) xacf(:,icol) = acf_vec(xx(:,icol),nlags)`, reporting
+`FORALL bounds and stride must be scalar INTEGER expressions`.
 
 ## Intrinsic calls after extending an intrinsic generic
 
