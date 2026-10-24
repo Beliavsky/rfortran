@@ -1082,8 +1082,12 @@ CHARACTER lengths, empty arrays and repeated allocation regressions.
 Numeric reductions (`SUM`, `PRODUCT`, `MINVAL`, `MAXVAL`) accept `ARRAY=`,
 `DIM=`, and `MASK=` keywords, including reordered keywords. Masks may be scalar
 LOGICAL values or conformable LOGICAL arrays/expressions. A constant `DIM` reduces
-one axis of a fixed-shape array, preserving the other axes in order; without
-DIM the whole array is reduced. Runtime DIM remains unsupported.
+one axis of a fixed-shape or runtime-sized array, preserving the other axes in
+order; without DIM the whole array is reduced. ALLOCATABLE arrays and supported
+assumed-shape dummies/sections use their active extents, through rank 15. Runtime
+DIM remains unsupported. Earlier procedure-call specialization can still reject
+DIM results from runtime-sized arrays passed directly as actual arguments; assign the result to an
+ALLOCATABLE array first in those cases.
 A LOGICAL array in the second position is the MASK. Empty/all-false integer extrema
 use the argument kind's largest/smallest representable values.
 Run `python tests/test_masked_reductions.py` for interpreter/native O0/O2 checks
@@ -1092,8 +1096,12 @@ and comparison with gfortran when installed.
 `IANY`, `IALL` and `IPARITY` reduce INTEGER arrays with IOR, IAND and IEOR, and
 `PARITY` reduces a LOGICAL array with .NEQV.; they take DIM and MASK as the
 numeric reductions do. `NORM2(X [, DIM])` is `SQRT(SUM(X*X [, DIM]))`, without
-the scaling that avoids overflow for very large elements. Run
-`python tests/test_more_intrinsics.py`.
+the scaling that avoids overflow for very large elements. The shared runtime
+DIM path also supports these reductions and NORM2. Run
+`python tests/test_more_intrinsics.py` and `python tests/test_runtime_dim_reductions.py`.
+The latter compares interpreter/native O0/O2 results with gfortran and covers
+all axes, kinds, masks, empty slices, nested reductions, result assignment,
+sections, non-default bounds, ranks through 15, and allocation/shape errors.
 
 Logical reductions `COUNT`, `ANY`, and `ALL` accept `MASK=` and `DIM=` keywords.
 `COUNT` supports constant `KIND=4` (default) and `KIND=8`; `ANY` and `ALL` return
@@ -1174,9 +1182,9 @@ conformable FIELD of the same type/kind as VECTOR. Both intrinsics preserve
 array-element order and check at runtime that VECTOR has enough elements.
 CHARACTER arrays remain unsupported. Run `python tests/test_pack_unpack.py`.
 
-MINLOC/MAXLOC support fixed-shape numeric arrays and rank-one runtime-sized
-ones, such as ALLOCATABLE arrays and their elemental expressions, with DIM
-omitted or 1; FINDLOC also supports LOGICAL arrays. Optional constant DIM reduces rank, or omitting DIM returns one position
+MINLOC/MAXLOC support fixed-shape and runtime-sized numeric arrays through
+rank 15, including supported ALLOCATABLE arrays, dummies, sections and elemental
+expressions; FINDLOC also supports LOGICAL arrays. Optional constant DIM reduces rank, or omitting DIM returns one position
 per source dimension. MASK may be scalar or conformable LOGICAL; runtime scalar
 BACK selects the last matching location instead of the first. Empty selections
 return zeros. KIND=4 and KIND=8 are supported. FINDLOC VALUE must currently have
@@ -1368,9 +1376,10 @@ deallocating an unallocated one instead of stopping. Run
 
 ### ALLOCATABLE function results
 
-Array transformations, masked/DIM
-reductions, reallocation on assignment beyond the cases described above, and mixing fixed and
-runtime-sized multidimensional expressions retain their existing limitations.
+Array transformations, reallocation on assignment beyond the cases described
+above, and mixing fixed and runtime-sized multidimensional expressions retain
+their existing limitations. Numeric/LOGICAL masked and constant-DIM reductions
+use the active extents of supported runtime arrays, as described under reductions.
 Deferred-length CHARACTER array elements remain unsupported. No public descriptor ABI is provided
 for separate-object module interfaces.
 Zero and negative allocation extents produce allocated empty arrays.

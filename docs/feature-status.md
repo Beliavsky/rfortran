@@ -343,14 +343,14 @@ current limits.
 | [`BGE`, `BGT`, `BLE`, `BLT`](language-support.md#integer-bit-intrinsics) | F2008 | ✅ |  | test_syntax_forms.py |
 | [`POPCNT`, `POPPAR`, `LEADZ`, `TRAILZ`, `DSHIFTL`, `DSHIFTR`, `BIT_SIZE`](language-support.md#integer-bit-intrinsics) | Mixed | ✅ | BIT_SIZE: F90; the other listed procedures: F2008. | test_more_intrinsics.py |
 | `SHIFTL`, `SHIFTR`, `SHIFTA`, `MASKL`, `MASKR`, `MERGE_BITS` | F2008 | ❌ |  |  |
-| [Reductions](language-support.md#reductions) (`SUM`, `PRODUCT`, `MAXVAL`, `MINVAL`, `COUNT`, `ANY`, `ALL`) | F90 | ✅ | DIM must be constant | test_masked_reductions.py, test_dim_reductions.py |
-| [`IANY`, `IALL`, `IPARITY`, `PARITY`](language-support.md#reductions) | F2008 | ✅ | DIM must be constant | test_more_intrinsics.py |
-| [Locations](language-support.md#array-transformations-and-locations) (`MAXLOC`, `MINLOC`, `FINDLOC`) | Mixed | ✅ | MAXLOC/MINLOC: F90; FINDLOC: F2008. Runtime-sized ARRAY must be rank one | test_locations.py |
+| [Reductions](language-support.md#reductions) (`SUM`, `PRODUCT`, `MAXVAL`, `MINVAL`, `COUNT`, `ANY`, `ALL`) | F90 | ✅ | Fixed/runtime extents through rank 15; DIM must be constant | test_masked_reductions.py, test_dim_reductions.py, test_runtime_dim_reductions.py |
+| [`IANY`, `IALL`, `IPARITY`, `PARITY`](language-support.md#reductions) | F2008 | ✅ | Fixed/runtime extents through rank 15; DIM must be constant | test_more_intrinsics.py, test_runtime_dim_reductions.py |
+| [Locations](language-support.md#array-transformations-and-locations) (`MAXLOC`, `MINLOC`, `FINDLOC`) | Mixed | ✅ | MAXLOC/MINLOC: F90; FINDLOC: F2008. Runtime extents through rank 15; DIM must be constant | test_locations.py, test_runtime_dim_reductions.py |
 | [Array transformations](language-support.md#array-transformations-and-locations) (`PACK`, `UNPACK`, `SPREAD`, `RESHAPE`, `TRANSPOSE`, `CSHIFT`, `EOSHIFT`) | F90 | ✅ | DIM and NCOPIES must be constant. Derived PACK supports runtime arrays through rank 15 and VECTOR; owned allocatable components remain unsupported | test_pack_unpack.py, test_derived_pack.py, test_spread.py, test_reshape_options.py |
 | `MERGE` | F90 | 🟡 | Numeric, LOGICAL and fixed-length CHARACTER sources; CHARACTER also supports runtime-sized rank-one arrays and allocatable assignment; fixed CHARACTER expansion limited to 1024 elements. Scalar derived sources with scalar masks, including inside ELEMENTAL procedures; direct derived-array sources/array masks remain unsupported | test_character_merge.py, test_formatted_output.py, test_derived_merge.py |
 | [`DOT_PRODUCT`](language-support.md#dot_product) | F90 | ✅ |  | test_dot_product.py |
 | [`MATMUL`](language-support.md#allocatable-arrays-and-pointers) | F90 | 🟡 | Not LOGICAL; a runtime-sized operand must be a whole array, an elemental expression of whole arrays, or a TRANSPOSE or RESHAPE of one | test_complex.py, test_formatted_output.py, test_runtime_matmul.py |
-| [`NORM2`](language-support.md#reductions) | F2008 | ✅ | Computed as `SQRT(SUM(X*X))`, without scaling against overflow | test_more_intrinsics.py |
+| [`NORM2`](language-support.md#reductions) | F2008 | ✅ | Computed as `SQRT(SUM(X*X))`, without scaling against overflow; runtime array extents supported with constant DIM | test_more_intrinsics.py, test_runtime_dim_reductions.py |
 | [`STORAGE_SIZE`](language-support.md#integer-bit-intrinsics) | F2008 | 🟡 | Not types with ALLOCATABLE or POINTER components | test_storage_size.py |
 | `TRANSFER`, `IS_CONTIGUOUS` | Mixed | ❌ | TRANSFER: F90; IS_CONTIGUOUS: F2008. |  |
 | `RANDOM_NUMBER`, [`RANDOM_SEED`](language-support.md#intrinsic-keywords-and-random_seed) | F90 | ✅ |  | test_intrinsic_keywords.py |

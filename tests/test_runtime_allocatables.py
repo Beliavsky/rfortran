@@ -219,9 +219,9 @@ end
     def test_unsupported_consumers_rejected(self):
         self.check("integer,allocatable::a(:,:)\nallocate(a(2,3))\na=2\n"
                    "print *,a(:,1)\ndeallocate(a)\nend\n", "2 2\n")
-        for operation in ("print *,transpose(a)", "print *,sum(a,dim=1)",
-                          "print *,sum(a,mask=a>0)",
-                          "print *,a(1)"):
+        self.check("integer,allocatable::a(:,:)\nallocate(a(2,3))\na=2\n"
+                   "print *,sum(a,dim=1),sum(a,mask=a>0)\nend\n", "4 4 4 12\n")
+        for operation in ("print *,transpose(a)", "print *,a(1)"):
             with self.subTest(operation=operation):
                 self.reject("integer,allocatable::a(:,:)\nallocate(a(2,3))\na=2\n" +
                             operation + "\ndeallocate(a)\nend\n",

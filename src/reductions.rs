@@ -25,7 +25,7 @@ impl std::ops::DerefMut for Symbols {
 }
 fn int(n: i64) -> Expr { Expr::IntLit(n.to_string()) }
 fn bin(op: BinOp, a: Expr, b: Expr) -> Expr { Expr::Bin(op, Box::new(a), Box::new(b)) }
-fn reduction(name: &str) -> bool { matches!(name.to_ascii_lowercase().as_str(), "sum" | "product" | "minval" | "maxval" | "iany" | "iall" | "iparity" | "parity" | "any" | "all" | "count" | "@count_i8" | "@count_default" | "@any_reduction" | "@all_reduction") }
+pub(crate) fn reduction(name: &str) -> bool { matches!(name.to_ascii_lowercase().as_str(), "sum" | "product" | "minval" | "maxval" | "iany" | "iall" | "iparity" | "parity" | "any" | "all" | "count" | "@count_i8" | "@count_default" | "@any_reduction" | "@all_reduction") }
 fn array_element_kind(kind: &TypeSpec) -> bool { matches!(kind, TypeSpec::Integer(_) | TypeSpec::Real | TypeSpec::DoublePrecision | TypeSpec::Logical) }
 fn numeric_minmax(name:&str,symbols:&Symbols)->bool {
     matches!(name,"min"|"max") && !symbols.contains_key(name) && !symbols.procedures.contains(name)
@@ -316,14 +316,15 @@ fn lower_location(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, s
     for i in [0,1,3,5] { lower_expr(&mut args[i],symbols,prefix,serial)?; }
     let find = name == "@findloc";
     let dim = !matches!(&args[2],Expr::Call(tag,_) if tag == "@no_dim");
-    let stride = constant(&args[6])?.max(1);
+    let stride = Expr::Call("max".into(),vec![args[6].clone(),int(1)]);
     // A runtime rank-one ARRAY has a runtime extent and source shape [-1].
     let axis_len = args[7].clone();
     let Expr::Call(_,source_dims) = &args[8] else { unreachable!() };
-    let source_dims = source_dims.iter().map(constant).collect::<Result<Vec<_>>>()?;
+    let source_dims = source_dims.clone();
     let Expr::Call(_,result_dims) = &args[9] else { unreachable!() };
     let scalar = result_dims.is_empty();
-    let output_len = result_dims.iter().try_fold(1i64,|n,d| n.checked_mul(constant(d)?).context("location result extent overflow"))?;
+    let runtime=matches!(&args[9],Expr::Call(tag,_) if tag=="@runtime_location_result_shape") && dim && !scalar;
+    let output_len = result_dims.iter().cloned().reduce(|a,b|bin(BinOp::Mul,a,b)).unwrap_or(int(1));
     let result_kind = TypeSpec::Integer(Some(constant(&args[4])? as u8));
     *serial += 1;
     let temp = format!("@location_result_{serial}");
@@ -338,11 +339,17 @@ fn lower_location(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, s
     let assign = |n: &str,value| Stmt::Assign {name:n.into(),value};
     let source_index = if dim {
         let ordinal = bin(BinOp::Sub,id(&outer),int(1));
-        bin(BinOp::Add,int(1),bin(BinOp::Add,Expr::Call("modulo".into(),vec![ordinal.clone(),int(stride)]),bin(BinOp::Add,bin(BinOp::Mul,bin(BinOp::Div,ordinal,int(stride)),bin(BinOp::Mul,int(stride),axis_len.clone())),bin(BinOp::Mul,bin(BinOp::Sub,id(&index),int(1)),int(stride)))))
+        bin(BinOp::Add,int(1),bin(BinOp::Add,Expr::Call("modulo".into(),vec![ordinal.clone(),stride.clone()]),bin(BinOp::Add,bin(BinOp::Mul,bin(BinOp::Div,ordinal,stride.clone()),bin(BinOp::Mul,stride.clone(),axis_len.clone())),bin(BinOp::Mul,bin(BinOp::Sub,id(&index),int(1)),stride.clone()))))
     } else { id(&index) };
     let (value,_,kind) = element(&args[0],&source_index,symbols)?;
     if !find && kind == TypeSpec::Logical { bail!("MINLOC/MAXLOC ARRAY must be numeric"); }
-    let (mask,_,mask_kind) = element(&args[3],&source_index,symbols)?;
+    let (mask,mask_count,mask_kind) = element(&args[3],&source_index,symbols)?;
+    if let Some(mask_count)=mask_count {
+        let (_,source_count,_)=element(&args[0],&int(1),symbols)?;
+        let source_len=runtime_extent(&args[0]).unwrap_or_else(||int(source_count.unwrap()));
+        let mask_len=runtime_extent(&args[3]).unwrap_or_else(||int(mask_count));
+        prefix.push(shape_guard(source_len,mask_len));
+    }
     if mask_kind != TypeSpec::Logical { bail!("location MASK must be LOGICAL"); }
     let (_,back_len,back_kind) = element(&args[5],&int(1),symbols)?;
     if back_len.is_some() || back_kind != TypeSpec::Logical { bail!("location BACK must be scalar LOGICAL"); }
@@ -357,7 +364,8 @@ fn lower_location(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, s
         prefix.push(assign(&sought,args[1].clone()));
     }
     if scalar { prefix.push(Stmt::VarDecl {kind:result_kind.clone(),names:vec![temp.clone()]}); }
-    else { prefix.push(Stmt::ArrayDecl {kind:result_kind.clone(),name:temp.clone(),dims:vec![int(output_len)]}); }
+    else if runtime {crate::heap::temporary(result_kind.clone(),temp.clone(),output_len.clone(),prefix);}
+    else { prefix.push(Stmt::ArrayDecl {kind:result_kind.clone(),name:temp.clone(),dims:vec![output_len.clone()]}); }
     let first = bin(BinOp::Eq,id(&position),int(0));
     let update = if find {
         bin(BinOp::And,bin(if kind == TypeSpec::Logical {BinOp::Eqv} else {BinOp::Eq},id(&item),id(&sought)),bin(BinOp::Or,first,id(&back)))
@@ -369,21 +377,21 @@ fn lower_location(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, s
     body.push(Stmt::Do {var:index.clone(),start:int(1),end:axis_len,body:vec![Stmt::If {cond:mask,then_body:vec![assign(&item,value),Stmt::If {cond:update,then_body:if find {vec![assign(&position,id(&index))]} else {vec![assign(&position,id(&index)),assign(&best,id(&item))]},else_body:None}],else_body:None}]});
     if dim {
         body.push(if scalar { assign(&temp,id(&position)) } else { Stmt::AssignIndex {name:temp.clone(),indices:vec![id(&outer)],value:id(&position)} });
-        prefix.push(Stmt::Do {var:outer,start:int(1),end:int(output_len),body});
+        prefix.push(Stmt::Do {var:outer,start:int(1),end:output_len.clone(),body});
     } else {
-        let mut stride = 1;
+        let mut stride = int(1);
         for (axis,extent) in source_dims.iter().enumerate() {
-            let coordinate = if *extent < 0 { id(&position) } else {
-                bin(BinOp::Add,int(1),Expr::Call("modulo".into(),vec![bin(BinOp::Div,bin(BinOp::Sub,id(&position),int(1)),int(stride.max(1))),int((*extent).max(1))]))
+            let coordinate = if constant(extent).ok().is_some_and(|n|n<0) { id(&position) } else {
+                bin(BinOp::Add,int(1),Expr::Call("modulo".into(),vec![bin(BinOp::Div,bin(BinOp::Sub,id(&position),int(1)),stride.clone()),Expr::Call("max".into(),vec![extent.clone(),int(1)])]))
             };
             let set = |value| Stmt::AssignIndex {name:temp.clone(),indices:vec![int(axis as i64+1)],value};
             body.push(Stmt::If {cond:bin(BinOp::Eq,id(&position),int(0)),then_body:vec![set(int(0))],else_body:Some(vec![set(coordinate)])});
-            stride *= extent;
+            stride = bin(BinOp::Mul,stride,Expr::Call("max".into(),vec![extent.clone(),int(1)]));
         }
         prefix.extend(body);
     }
-    symbols.insert(temp.clone(),(result_kind,if scalar {vec![]} else {vec![int(output_len)]}));
-    *e = Expr::Ident(temp);
+    symbols.insert(temp.clone(),(result_kind,if scalar {vec![]} else {vec![if runtime {int(1)}else{output_len.clone()}]}));
+    *e = if runtime {Expr::Call("@packed_view".into(),vec![Expr::Ident(temp),output_len])}else{Expr::Ident(temp)};
     Ok(())
 }
 
@@ -1027,24 +1035,24 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             let item_name = format!("@reduction_item_{serial}");
             let outer_name = format!("@reduction_outer_{serial}");
             let output_name = format!("@reduction_array_{serial}");
+            let runtime_dim = args.len()==5 && matches!(&args[4],Expr::Call(tag,_) if tag=="@runtime_reduction_shape");
             let dim_reduction = if args.len() == 5 {
-                let stride = constant(&args[2])?;
-                let axis_len = constant(&args[3])?;
                 let Expr::Call(_, dims) = &args[4] else { unreachable!() };
-                let output_len = dims.iter().try_fold(1i64, |n,d| n.checked_mul(constant(d)?).context("reduction result extent overflow"))?;
-                Some((stride, axis_len, output_len))
+                let output_len = dims.iter().cloned().reduce(|a,b|bin(BinOp::Mul,a,b)).unwrap_or(int(1));
+                Some((args[2].clone(), args[3].clone(), output_len))
             } else { None };
-            let index = if let Some((stride, axis_len, _)) = dim_reduction {
+            let scalar_dim=args.len()==5 && matches!(&args[4],Expr::Call(_,dims) if dims.is_empty());
+            let index = if let Some((stride, axis_len, _)) = dim_reduction.as_ref().filter(|_|!scalar_dim) {
                 let ordinal = bin(BinOp::Sub, Expr::Ident(outer_name.clone()), int(1));
+                let divisor=Expr::Call("max".into(),vec![stride.clone(),int(1)]);
                 let offset = bin(BinOp::Add,
-                    Expr::Call("mod".into(), vec![ordinal.clone(), int(stride.max(1))]),
-                    bin(BinOp::Mul, bin(BinOp::Div, ordinal, int(stride.max(1))), int(stride.checked_mul(axis_len).context("reduction stride overflow")?)));
-                bin(BinOp::Add, int(1), bin(BinOp::Add, offset, bin(BinOp::Mul, bin(BinOp::Sub, Expr::Ident(index_name.clone()), int(1)), int(stride))))
+                    Expr::Call("mod".into(), vec![ordinal.clone(), divisor.clone()]),
+                    bin(BinOp::Mul, bin(BinOp::Div, ordinal, divisor), bin(BinOp::Mul,stride.clone(),axis_len.clone())));
+                bin(BinOp::Add, int(1), bin(BinOp::Add, offset, bin(BinOp::Mul, bin(BinOp::Sub, Expr::Ident(index_name.clone()), int(1)), stride.clone())))
             } else { Expr::Ident(index_name.clone()) };
             let (value, count, kind) = element(&args[0], &index, symbols)?;
             let count = count.context("reduction argument must be an array")?;
             let dynamic_end = runtime_extent(&args[0]);
-            if dynamic_end.is_some() && args.len()!=1 { bail!("runtime PACK reductions with DIM or MASK are not yet supported"); }
             let name = match name.as_str() {
                 "@count_default" => "count", "@any_reduction" => "any", "@all_reduction" => "all", _ => name.as_str()
             }.to_ascii_lowercase();
@@ -1070,7 +1078,7 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             prefix.push(Stmt::VarDecl { kind: kind.clone(), names: vec![item_name.clone()] });
             prefix.push(Stmt::VarDecl { kind: result_kind.clone(), names: vec![acc_name.clone()] });
             symbols.insert(acc_name.clone(), (result_kind.clone(), vec![]));
-            let loop_start = prefix.len();
+            let mut loop_start = prefix.len();
             prefix.push(Stmt::Assign { name: acc_name.clone(), value: identity });
             let acc = Expr::Ident(acc_name.clone());
             let item = Expr::Ident(item_name.clone());
@@ -1098,18 +1106,35 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             if let Some(mask) = args.get(1) {
                 let (condition, mask_count, mask_kind) = element(mask, &index, symbols)?;
                 if !matches!(mask_kind, TypeSpec::Logical) { bail!("{name}: MASK must be LOGICAL"); }
-                if mask_count.is_some_and(|n| n != count) { bail!("{name}: MASK shape does not conform to ARRAY"); }
+                if mask_count.is_some_and(|n| n >= 0 && count >= 0 && n != count) { bail!("{name}: MASK shape does not conform to ARRAY"); }
+                if let Some(mask_count)=mask_count {
+                    if runtime_extent(mask).is_some() || runtime_extent(&args[0]).is_some() {
+                        let source_len=runtime_extent(&args[0]).unwrap_or_else(||int(count));
+                        let mask_len=runtime_extent(mask).unwrap_or_else(||int(mask_count));
+                        // Evaluate conformance once, outside the per-slice loops.
+                        prefix.insert(loop_start,shape_guard(source_len,mask_len));
+                        loop_start+=1;
+                    }
+                }
                 body = vec![Stmt::If { cond: condition, then_body: body, else_body: None }];
             }
-            prefix.push(Stmt::Do { var: index_name, start: int(1), end: dynamic_end.unwrap_or_else(|| int(dim_reduction.map_or(count, |(_,n,_)| n))), body });
+            let end=dim_reduction.as_ref().map(|(_,n,_)|n.clone()).or(dynamic_end).unwrap_or_else(||int(count));
+            prefix.push(Stmt::Do { var: index_name, start: int(1), end, body });
             if let Some((_, _, output_len)) = dim_reduction {
                 let mut body = prefix.split_off(loop_start);
-                body.push(Stmt::AssignIndex { name: output_name.clone(), indices: vec![Expr::Ident(outer_name.clone())], value: acc });
-                prefix.push(Stmt::VarDecl { kind: TypeSpec::Integer(None), names: vec![outer_name.clone()] });
-                prefix.push(Stmt::ArrayDecl { kind: result_kind.clone(), name: output_name.clone(), dims: vec![int(output_len)] });
-                prefix.push(Stmt::Do { var: outer_name, start: int(1), end: int(output_len), body });
-                symbols.insert(output_name.clone(), (result_kind, vec![int(output_len)]));
-                *e = Expr::Ident(output_name);
+                let scalar=matches!(&args[4],Expr::Call(_,dims) if dims.is_empty());
+                if scalar {
+                    prefix.extend(body);
+                    *e=acc;
+                } else {
+                    body.push(Stmt::AssignIndex { name: output_name.clone(), indices: vec![Expr::Ident(outer_name.clone())], value: acc });
+                    prefix.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![outer_name.clone()] });
+                    if runtime_dim {crate::heap::temporary(result_kind.clone(),output_name.clone(),output_len.clone(),prefix);}
+                    else {prefix.push(Stmt::ArrayDecl { kind: result_kind.clone(), name: output_name.clone(), dims: vec![output_len.clone()] });}
+                    prefix.push(Stmt::Do { var: outer_name, start: int(1), end: output_len.clone(), body });
+                    symbols.insert(output_name.clone(), (result_kind, vec![if runtime_dim {int(1)} else {output_len.clone()}]));
+                    *e = if runtime_dim {Expr::Call("@packed_view".into(),vec![Expr::Ident(output_name),output_len])} else {Expr::Ident(output_name)};
+                }
             } else { *e = acc; }
         }
         Expr::Call(name, args) if name == "len" => {

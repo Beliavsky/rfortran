@@ -431,40 +431,10 @@ fn logical_shape(
                     }
                 }
             }
-            let dynamic = result
-                .as_ref()
-                .is_some_and(|(dims, runtime)| *runtime && dims.len() > 1);
-            let reduction = matches!(
-                n.as_str(),
-                "sum"
-                    | "product"
-                    | "minval"
-                    | "maxval"
-                    | "iany" | "iall" | "iparity" | "parity"
-                    | "any"
-                    | "all"
-                    | "count"
-                    | "@count_default"
-                    | "@count_i8"
-                    | "@any_reduction"
-                    | "@all_reduction"
-            );
-            if reduction {
-                if dynamic
-                    && args.len() > 1
-                    && matches!(n.as_str(), "sum" | "product" | "minval" | "maxval" | "iany" | "iall" | "iparity" | "parity")
-                {
-                    bail!("masked or DIM reductions on runtime-sized multidimensional arrays are not yet supported");
-                }
-                if dynamic
-                    && args
-                        .get(1)
-                        .is_some_and(|d| !matches!(d,Expr::Call(tag,_) if tag=="@no_dim"))
-                {
-                    bail!("reductions with DIM on runtime-sized multidimensional arrays are not yet supported");
-                }
-                return Ok(None);
-            }
+            let dynamic = result.as_ref().is_some_and(|(dims, runtime)| *runtime && dims.len() > 1);
+            // Runtime DIM results are materialized with their own descriptors
+            // before ordinary shape checking. Scalar reductions have no shape.
+            if crate::reductions::reduction(n) {return Ok(None);}
             if shapes.contains_key(&format!("@elemental:{n}"))
                 || crate::intrinsics::math_arity(n).is_some()
                 || crate::intrinsics::integer_rounding(n) || crate::intrinsics::real_predicate(n)
@@ -1144,6 +1114,83 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
         }
         Ok(())
     }
+    fn runtime_reduction(e: &mut Expr, shapes: &mut Shapes, prefix: &mut Vec<Stmt>, checks: &mut Vec<Stmt>, serial: &mut usize) -> Result<()> {
+        let Expr::Call(name,args)=e else {return Ok(())};
+        let location=matches!(name.as_str(),"@minloc"|"@maxloc"|"@findloc");
+        if !(crate::reductions::reduction(name)||location) || shapes.contains_key(name) {return Ok(());}
+        let Some((dims,true))=logical_shape(&args[0],shapes,prefix)? else {return Ok(())};
+        let mut axis=None;
+        let dim_slot=if location {2} else {1};
+        if (location || args.len()==3) && !matches!(&args[dim_slot],Expr::Call(tag,_) if tag=="@no_dim") {
+            // In the positional (ARRAY, MASK) form the second argument is LOGICAL.
+            let positional_mask=location || matches!(name.as_str(),"sum"|"product"|"minval"|"maxval"|"iany"|"iall"|"iparity");
+            let mask=positional_mask && (matches!(&args[dim_slot],Expr::Call(tag,_) if tag=="@array_constructor" || tag=="@typed_constructor")
+                || crate::reductions::elemental_element(&args[dim_slot],&int(1),shapes)
+                    .is_ok_and(|(_,_,k)|k==TypeSpec::Logical));
+            if mask {let mask_slot=if location {3}else{2};args[mask_slot]=std::mem::replace(&mut args[dim_slot],Expr::Call("@no_dim".into(),vec![]));}
+            else {
+                let dim=crate::parameters::integer_constant(&args[dim_slot]).context("reduction DIM must currently be a constant INTEGER; use MASK= for masks")?;
+                if dim<1 || dim as usize>dims.len() {bail!("{name}: DIM must be between 1 and {}",dims.len());}
+                axis=Some(dim as usize-1);
+            }
+        }
+        let mask=if location {Some(&args[3])} else if args.len()==3 {Some(&args[2])} else {None};
+        if let Some(mask)=mask {
+            if dims.len()!=1 && matches!(mask,Expr::Call(tag,_) if tag=="@array_constructor" || tag=="@typed_constructor") {
+                bail!("{name}: MASK shape does not conform to ARRAY");
+            }
+            if let Some((mask_dims,_))=logical_shape(mask,shapes,prefix)? {conform_axes(&dims,&mask_dims,prefix)?;}
+        }
+        if !location && args.len()==3 {args.remove(1);}
+        fn fixed_operands(e:&mut Expr,shapes:&Shapes) {
+            match e {
+                Expr::Ident(n) if axes(n,shapes).is_none() && shapes.get(n).is_some_and(|(_,d)|d.len()>1)=>
+                    *e=Expr::Call("@fixed_packed_view".into(),vec![id(n)]),
+                Expr::Bin(_,a,b)=>{fixed_operands(a,shapes);fixed_operands(b,shapes);},
+                Expr::Un(_,a)=>fixed_operands(a,shapes),
+                Expr::Call(n,a) if !n.starts_with('@') && !shapes.contains_key(n)=>for e in a {fixed_operands(e,shapes);},
+                _=>{},
+            }
+        }
+        for arg in args.iter_mut() {
+            expression(arg,shapes,prefix,checks,serial)?;
+            fixed_operands(arg,shapes);
+        }
+        let result_dims=axis.map(|axis| {let mut d=dims.clone();d.remove(axis);d});
+        if location {
+            let stride=axis.map_or(int(1),|axis|dims[..axis].iter().cloned().reduce(|a,b|bin(BinOp::Mul,a,b)).unwrap_or(int(1)));
+            let length=axis.map_or_else(||dims.iter().cloned().reduce(|a,b|bin(BinOp::Mul,a,b)).unwrap(),|axis|dims[axis].clone());
+            args.extend([stride,length,Expr::Call("@location_source_shape".into(),dims.clone()),
+                Expr::Call("@runtime_location_result_shape".into(),result_dims.clone().unwrap_or_else(||vec![int(dims.len() as i64)]))]);
+        } else if let Some(axis)=axis {
+            let stride=dims[..axis].iter().cloned().reduce(|a,b|bin(BinOp::Mul,a,b)).unwrap_or(int(1));
+            if args.len()==1 {args.push(Expr::Logical(true));}
+            args.extend([stride,dims[axis].clone(),Expr::Call("@runtime_reduction_shape".into(),result_dims.clone().unwrap())]);
+        }
+        let start=prefix.len();
+        crate::reductions::scalar_value(e,shapes,prefix,serial)?;
+        fn register(body:&[Stmt],shapes:&mut Shapes) {
+            for s in body {match s {
+                Stmt::ArrayDecl{kind,name,dims}=>{shapes.insert(name.clone(),(kind.clone(),dims.clone()));},
+                Stmt::VarDecl{kind,names}=>for n in names {shapes.insert(n.clone(),(kind.clone(),vec![]));},
+                _=>{},
+            }}
+            metadata(body,shapes);
+        }
+        register(&prefix[start..],shapes);
+        if let (Some(dims),Expr::Call(tag,a))=(result_dims, &mut *e) {
+            if tag=="@packed_view" {if let Expr::Ident(n)=&a[0] {
+                let names=dims.iter().enumerate().map(|(i,_)|format!("{n}$axis{i}")).collect::<Vec<_>>();
+                prefix.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:names.clone()});
+                for (n,d) in names.iter().zip(dims) {prefix.push(assign(n,d));}
+                let attr=Stmt::DummyIntent{name:n.clone(),intent:format!("@bounded_shape:{}",names.join(":"))};
+                metadata(std::slice::from_ref(&attr),shapes);prefix.push(attr);
+                // Keep the owner visible to the following rank/shape checks.
+                *e=id(n);
+            }}
+        }
+        Ok(())
+    }
     fn lower(
         body: &mut Vec<Stmt>,
         inherited: &Shapes,
@@ -1179,6 +1226,19 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
         for mut s in std::mem::take(body) {
             if let Some(p) = crate::source_diagnostics::statement_offset(&s) { statement_location.set(Some(p)); }
             let mut guards = vec![];
+            // Materialize runtime reductions while their logical axes are still
+            // available. The shared reducer consumes flat storage and explicit
+            // stride/axis/result extents, just as for fixed-size arrays.
+            let mut reduction_prefix=vec![];
+            for e in crate::procedure_arguments::expressions(&mut s) {
+                let mut error = None;
+                crate::procedure_arguments::visit_expr(e, &mut |e| {
+                    if error.is_some() {return;}
+                    if let Err(err)=runtime_reduction(e,&mut shapes,&mut reduction_prefix,checks,serial) {error=Some(err);}
+                });
+                if let Some(err)=error {return Err(err);}
+            }
+            if matches!(s,Stmt::DoWhile{..}) {guards.append(&mut reduction_prefix);} else {out.append(&mut reduction_prefix);}
             // Intrinsic assignment to a whole heap-backed numeric/LOGICAL array
             // (re)allocates it to the shape of an array-valued right-hand side.
             if let Stmt::Assign{name,value}=&s {
@@ -1807,7 +1867,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
     let mut checks = vec![];
     // Function specialization can already have lowered allocation blocks.
     // Continue its numbering when finishing the enclosing program.
-    let mut serial=crate::subroutines::maximum_serial(&p.body,&["@alloc_"]);
+    let mut serial=crate::subroutines::maximum_serial(&p.body,&["@alloc_","@reduction_","@location_"]);
     let elemental_shapes: Shapes = crate::elemental::functions(&p).into_iter()
         .map(|(name, kind)| (format!("@elemental:{name}"), (kind, vec![]))).collect();
     lower(&mut p.body, &elemental_shapes, &mut serial, &mut checks)?;

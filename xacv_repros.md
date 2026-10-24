@@ -503,9 +503,52 @@ initialization sharing, readonly/lifetime errors and unallocated targets against
 gfortran in interpreter and native O0/O2 modes.
 The original fixed TARGET control still works. Initial controls and reference runs are saved in
 `target/acv-repros/allocatable-pointer-target/report.json` (ignored).
-The full source now passes pointer association and reports
-`masked or DIM reductions on runtime-sized multidimensional arrays are not yet supported`
-at line 16994, `write (*,fmt_cr) "min",minval(xx,dim=1)`.
+The next diagnostic was at line 16994,
+`write (*,fmt_cr) "min",minval(xx,dim=1)`. This DIM-reduction limitation is now
+covered by the regression below.
+
+## Runtime-sized DIM reductions
+
+[tests/programs/xacv_runtime_dim_reduction.f90](tests/programs/xacv_runtime_dim_reduction.f90)
+is a self-contained regression for `MINVAL(xx,DIM=1)` at line 16994. It allocates
+a matrix using runtime extents and prints column minima, row maxima and column
+sums:
+
+```text
+11 21 31
+31 32
+23 43 63
+```
+
+```cmd
+rf.bat tests/programs/xacv_runtime_dim_reduction.f90 --run
+```
+
+The fix preserves logical axes before flat storage lowering and reuses the
+shared reduction implementation. Numeric, logical and integer-bit reductions,
+NORM2 and MINLOC/MAXLOC/FINDLOC now accept supported runtime-sized arrays through
+rank 15 with a constant DIM. Tests cover all axes, empty slices, masks and
+uninitialized masked-out elements, kinds, location ties/BACK, non-default bounds,
+sections, assumed-shape dummies and result assignment in interpreter and native
+O0/O2 modes, with gfortran comparisons. Run
+`python tests/test_runtime_dim_reductions.py`. Runtime-valued DIM remains
+unsupported; CSHIFT/EOSHIFT/SPREAD retain their separate fixed-shape restrictions.
+Earlier call specialization can still reject a DIM result from a runtime-sized array passed directly
+to a procedure; assigning it to an ALLOCATABLE temporary first avoids that path.
+
+The next full-source diagnostic is now at line 16965:
+
+```fortran
+if (all(dates(2:) < dates(:nread-1))) then
+```
+
+```text
+runtime PACK results are not yet supported as arguments to `date_mdy_lt`
+```
+
+The overloaded comparison passes runtime array views to an elemental procedure;
+this is a separate call-specialization limitation exposed after the DIM blocker
+was removed.
 
 ## Intrinsic calls after extending an intrinsic generic
 
