@@ -1755,6 +1755,15 @@ array/CHARACTER and type-bound procedure calls use the existing procedure
 lowering. Common math intrinsics and RANDOM_NUMBER(HARVEST=...) also accept names;
 existing intrinsic keyword support remains available.
 
+INTEGER, REAL, DOUBLE PRECISION and LOGICAL multidimensional expressions passed
+to INTENT(IN) array dummies retain their type, kind, rank and active shape. Fixed-shape expressions
+use fixed temporaries; runtime-sized expressions use owned heap descriptors.
+Comparisons, arithmetic, logical operations, supported elemental calls and
+scalar broadcasting are supported through rank 15, including empty arrays and
+runtime shape checks. This applies to positional and named calls and optional
+dummies. Run `python tests/test_multidimensional_expression_arguments.py` for
+interpreter/native O0/O2 checks against gfortran.
+
 Unknown keywords, duplicate arguments, positional arguments after keywords and
 missing required arguments are compile errors. Named procedure calls currently
 require a known definition in the source group; external interface-only declarations

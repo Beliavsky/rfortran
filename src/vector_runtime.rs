@@ -311,17 +311,21 @@ fn shape(e: &Expr, s: &Shapes) -> Result<Option<(TypeSpec, Vec<Expr>)>> {
         Expr::Call(n, a)
             if crate::intrinsics::math_arity(n).is_some() || crate::intrinsics::integer_rounding(n) || crate::intrinsics::real_predicate(n) || matches!(
                 n.as_str(),
-                "abs" | "int" | "mod" | "modulo" | "sign" | "real" | "dble"
+                "abs" | "int" | "mod" | "modulo" | "sign" | "real" | "dble" | "min" | "max"
             ) =>
         {
-            let Some((mut kind, d)) = shape(&a[0], s)? else {
+            let Some((mut kind, mut d)) = shape(&a[0], s)? else {
                 return Ok(None);
             };
+            for arg in &a[1..] {
+                let Some((_,dims))=shape(arg,s)? else {return Ok(None)};
+                if d.is_empty() {d=dims;}
+            }
             if crate::intrinsics::integer_rounding(n) {kind=crate::intrinsics::rounding_kind(n,a)?;}
-            else if n == "int" { kind = TypeSpec::Integer(None); }
+            else if n == "int" { kind = TypeSpec::Integer(a.get(1).map(|e|constant(e).and_then(|k|u8::try_from(k).ok()).context("INT KIND must be a constant integer")).transpose()?); }
             else if crate::intrinsics::real_predicate(n) {kind=TypeSpec::Logical;}
             else if n == "dble" { kind = TypeSpec::DoublePrecision; }
-            else if n == "real" { kind = TypeSpec::Real; }
+            else if n == "real" { kind = if a.get(1).and_then(constant)==Some(8) {TypeSpec::DoublePrecision}else{TypeSpec::Real}; }
             Ok(Some((kind, d)))
         }
         Expr::Call(n,a) if s.contains_key(&format!("@elemental_function:{n}"))=>{
@@ -1269,6 +1273,13 @@ pub(super) fn specialize_expression(e:&mut Expr, shapes:&mut Shapes, prefix:&mut
     lower.expression(e,shapes,prefix)?;
     *serial=lower.serial;
     Ok(())
+}
+
+/// Query the full shape before a compound actual is flattened by reductions.
+pub(super) fn argument_expression_shape(e:&Expr, shapes:&Shapes, functions:&HashMap<String,TypeSpec>)->Result<Option<(TypeSpec,Vec<Expr>)>> {
+    let mut symbols=shapes.clone();
+    for (name,kind) in functions {symbols.insert(format!("@elemental_function:{name}"),(kind.clone(),vec![]));}
+    shape(e,&symbols)
 }
 
 /// Reuse Cartesian section indexing and owned expression buffers for an

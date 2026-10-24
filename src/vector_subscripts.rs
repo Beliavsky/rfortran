@@ -1282,6 +1282,9 @@ pub(crate) fn specialize(body:&mut Vec<Stmt>, shapes:&crate::allocatables::Shape
 pub(crate) fn specialize_expression(e:&mut Expr, shapes:&mut crate::allocatables::Shapes, prefix:&mut Vec<Stmt>, serial:&mut usize)->Result<()> {
     runtime::specialize_expression(e,shapes,prefix,serial)
 }
+pub(crate) fn argument_expression_shape(e:&Expr, shapes:&crate::allocatables::Shapes, functions:&HashMap<String,TypeSpec>)->Result<Option<(TypeSpec,Vec<Expr>)>> {
+    runtime::argument_expression_shape(e,shapes,functions)
+}
 
 /// Apply a private scalar implementation over descriptor-backed actuals.
 pub(crate) fn elemental_function(e:&mut Expr, shapes:&mut crate::allocatables::Shapes,

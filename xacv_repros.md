@@ -277,6 +277,41 @@ the whole input array provided controls. Initial failing results and controls
 are saved in the ignored build directory at
 `target/acv-repros/read-classification/report.json`.
 
+The twenty-seventh repro isolates the former `good` argument mismatch at line 25805:
+[tests/programs/xacv_runtime_logical_mask_actual.f90](tests/programs/xacv_runtime_logical_mask_actual.f90).
+It passes `abs(xx-bad_value)>1.0e-10_dp` as an optional rank-two LOGICAL
+INTENT(IN) argument, with `xx` an allocated DOUBLE PRECISION matrix. No generic
+interface, derived type, CHARACTER argument or file input is needed.
+
+```cmd
+rf.bat tests/programs/xacv_runtime_logical_mask_actual.f90 --run
+```
+
+Gfortran with `-std=f2018 -Wall -fcheck=all` prints `2 2 3`: the matrix extents
+and the number of true mask elements. Native rfort and its interpreter now print
+the same result. Previously they reported `type or rank mismatch for good` at
+the call, while passing the same expression via an allocated LOGICAL matrix
+worked. Both actual arguments have the same Fortran type, kind and rank.
+
+Positional calls, required dummies, direct comparisons without ABS and fixed
+matrix inputs now work too. Multidimensional expression actuals are evaluated
+into owned arrays of the correct type, kind and rank using ordinary array
+assignment, before argument association. Fixed extents use fixed storage;
+runtime extents use heap descriptors. Shape inference follows elemental calls
+and scalar broadcasting, including scalar-first MIN/MAX and kind conversions.
+The shared runtime assignment path also recognizes elemental MIN/MAX.
+
+`tests/test_multidimensional_expression_arguments.py` checks the repro and its
+controls, integer kinds 1/2/4/8, REAL/DOUBLE PRECISION, LOGICAL expressions,
+user-defined elemental results, ranks through 15, empty arrays, nonunit source
+bounds, forwarding, repeated calls and runtime shape mismatch checks. Valid
+cases run in the interpreter, at -O0/-O2 and with gfortran as reference.
+Initial failing results are recorded in the ignored build directory at
+`target/acv-repros/good-mask/report.json`.
+The full source advances to `runtime PACK results are not yet supported as
+arguments to @optional_65`, reported at line 25198 on the `print_square_matrix`
+call involving `corr_mat(xx)` and `labels(:size(xx,2))`.
+
 ## Intrinsic calls after extending an intrinsic generic
 
 `date_mdy_mod` in `xacv.f90` extends MAX, MINVAL, MAXVAL and INT for

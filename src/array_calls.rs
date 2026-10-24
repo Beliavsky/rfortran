@@ -1493,11 +1493,30 @@ fn expand(
                         }
                         if allocatable && !matches!(actual,Expr::Ident(_)) {bail!("ALLOCATABLE dummy `{p}` requires an ALLOCATABLE variable");}
                         let mut captured=actual.clone();
+                        // A multidimensional expression needs an actual of its
+                        // own rank, not a flat reduction buffer. Reuse ordinary
+                        // array assignment to evaluate it into owned storage.
+                        if intent=="intent(in)" && matches!(&captured,Expr::Bin(..)|Expr::Un(..)|Expr::Call(..)) {
+                            if let Some((kind,axes))=crate::vector_subscripts::argument_expression_shape(&captured,&shapes,functions)? {
+                                if axes.len()>1 && matches!(kind,TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision|TypeSpec::Logical) {
+                                    *serial+=1;let temp=format!("@array_call_expression_{serial}");
+                                    if axes.iter().all(|e|crate::parameters::integer_constant(e).is_ok()) {
+                                        prefix.push(Stmt::ArrayDecl{kind:kind.clone(),name:temp.clone(),dims:axes.clone()});
+                                        shapes.insert(temp.clone(),(kind,axes));
+                                    } else {
+                                        crate::heap::unallocated_result(kind,temp.clone(),axes.len(),&mut prefix,&mut shapes)?;
+                                        prefix.push(Stmt::CallSub{name:"@allocate".into(),args:vec![Expr::Call(temp.clone(),axes)]});
+                                    }
+                                    prefix.push(Stmt::Assign{name:temp.clone(),value:captured});
+                                    captured=Expr::Ident(temp);
+                                }
+                            }
+                        }
                         // This is an optional rank hint, not expression validation.
                         // Runtime sections and generated selectors are checked by
                         // the materializer below and need not have a fixed shape.
                         let expression_shape=crate::multidim::fixed_actual_shape(actual,&shapes).ok().flatten();
-                        let (actual_kind,actual_dims,length) = if let Expr::Ident(a)=actual {
+                        let (actual_kind,actual_dims,length) = if let Expr::Ident(a)=&captured {
                             let (k,d)=shapes.get(a).context("undeclared array argument")?;
                             (k.clone(),d.clone(),crate::allocatables::length(a,&shapes))
                         } else {

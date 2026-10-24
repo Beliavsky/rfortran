@@ -471,7 +471,7 @@ fn logical_shape(
                 || crate::bit_intrinsics::keys(n).is_some()
                 || matches!(
                     n.as_str(),
-                    "abs" | "mod" | "modulo" | "sign" | "real" | "int" | "dble"
+                    "abs" | "mod" | "modulo" | "sign" | "real" | "int" | "dble" | "min" | "max"
                 )
             {
                 return Ok(result);
