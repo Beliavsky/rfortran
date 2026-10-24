@@ -15,7 +15,17 @@ struct Symbols {
     character_functions: HashMap<String,Vec<Option<usize>>>,
     procedures: HashSet<String>,
 }
-impl Symbols { fn new() -> Self { Self::default() } }
+impl Symbols {
+    fn new() -> Self { Self::default() }
+    fn from_shapes(shapes: &HashMap<String,(TypeSpec,Vec<Expr>)>) -> Self {
+        Self {
+            variables: shapes.clone(),
+            elementals: shapes.iter().filter_map(|(name,(kind,_))|
+                name.strip_prefix("@elemental:").map(|name|(name.to_owned(),kind.clone()))).collect(),
+            ..Self::default()
+        }
+    }
+}
 impl std::ops::Deref for Symbols {
     type Target=HashMap<String,(TypeSpec,Vec<Expr>)>;
     fn deref(&self) -> &Self::Target { &self.variables }
@@ -232,8 +242,7 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
 }
 /// Select scalar storage without materializing or reading an OUT actual.
 pub(crate) fn elemental_element(e: &Expr, index: &Expr, shapes: &HashMap<String,(TypeSpec,Vec<Expr>)>) -> Result<(Expr,Option<i64>,TypeSpec)> {
-    let mut symbols=Symbols::new();
-    symbols.variables=shapes.clone();
+    let symbols=Symbols::from_shapes(shapes);
     element(e,index,&symbols)
 }
 
@@ -247,9 +256,8 @@ pub(crate) fn argument(e: &mut Expr, shapes: &HashMap<String,(TypeSpec,Vec<Expr>
     argument_with_elementals(e,shapes,prefix,serial,&functions)
 }
 pub(crate) fn argument_with_elementals(e: &mut Expr, shapes: &HashMap<String,(TypeSpec,Vec<Expr>)>, prefix: &mut Vec<Stmt>, serial: &mut usize, functions:&HashMap<String,TypeSpec>) -> Result<(TypeSpec,i64,Expr)> {
-    let mut symbols = Symbols::new();
-    symbols.variables = shapes.clone();
-    symbols.elementals=functions.clone();
+    let mut symbols = Symbols::from_shapes(shapes);
+    symbols.elementals.extend(functions.iter().map(|(n,k)|(n.clone(),k.clone())));
     if matches!(e,Expr::Section {..}) { *e=Expr::Call("@array_constructor".into(),vec![e.clone()]); }
     lower_expr(e,&mut symbols,prefix,serial)?;
     let backing = if let Expr::Call(n,a)=e { if n=="@packed_view" {&a[0]} else {&*e} } else {&*e};
@@ -271,12 +279,11 @@ pub(crate) fn argument_with_elementals(e: &mut Expr, shapes: &HashMap<String,(Ty
 /// Lower a scalar expression, such as a kind-parameterized literal or an
 /// inquiry, as ordinary expressions are lowered.
 pub(crate) fn scalar_value(e: &mut Expr, shapes: &HashMap<String,(TypeSpec,Vec<Expr>)>, prefix: &mut Vec<Stmt>, serial: &mut usize) -> Result<()> {
-    let mut symbols = Symbols::new();
-    symbols.variables = shapes.clone();
+    let mut symbols = Symbols::from_shapes(shapes);
     lower_expr(e, &mut symbols, prefix, serial)
 }
 pub(crate) fn argument_element(e: &Expr, index: &Expr, shapes: &HashMap<String,(TypeSpec,Vec<Expr>)>) -> Result<Expr> {
-    let mut symbols=Symbols::new(); symbols.variables=shapes.clone();
+    let symbols=Symbols::from_shapes(shapes);
     Ok(element(e,index,&symbols)?.0)
 }
 

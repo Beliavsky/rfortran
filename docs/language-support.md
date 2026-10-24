@@ -22,6 +22,7 @@ gfortran when it is installed. Run the tests after `cargo build --bin rfort`.
   - [Declaration diagnostics](#declaration-diagnostics)
 - [Numeric types and intrinsics](#numeric-types-and-intrinsics)
   - [Numeric kinds and expression semantics](#numeric-kinds-and-expression-semantics)
+  - [Comparisons](#comparisons)
   - [COMPLEX](#complex)
   - [Integer and real inquiries](#integer-and-real-inquiries)
   - [Integer bit intrinsics](#integer-bit-intrinsics)
@@ -387,6 +388,33 @@ integer precision. Module imports, host association and separate PARAMETER
 statements use the same constant resolution. Constant arrays still have the
 existing rank-one limits; COMPLEX constants support the subset described below.
 Derived-type named constants are not implemented. Run `python tests/test_named_constants.py`.
+
+### Comparisons
+
+INTEGER and REAL operands support `==`, `/=`, `<`, `<=`, `>` and `>=`, and
+the dotted spellings `.eq.`, `.ne.`, `.lt.`, `.le.`, `.gt.` and `.ge.`.
+CHARACTER uses the same operators with blank padding of shorter operands.
+COMPLEX supports equality and inequality; ordered COMPLEX comparisons are
+rejected. LOGICAL equivalence uses `.eqv.` and `.neqv.`.
+
+Supported scalar and array forms include scalar broadcasting in either order,
+array-to-array comparisons, scalar array-element operands, assumed-shape
+dummies, runtime-sized storage, sections and automatic LOGICAL result arrays.
+Generated subscript/bound helpers retain their result types during array
+expression and output lowering; scalar array elements keep their bounds checks.
+Multidimensional CHARACTER copies preserve linear storage coordinates.
+
+Derived types can overload all six relational operators through explicit
+interfaces. ELEMENTAL comparison procedures apply to scalar, array and mixed
+scalar/array operands, including inside ALL/ANY/COUNT and assignments.
+
+Run `python tests/test_array_comparisons.py` for comparisons against gfortran in
+the interpreter and native O0/O2 builds. Coverage includes INTEGER kinds 1/2/4/8,
+REAL and COMPLEX kinds 4/8, default LOGICAL and CHARACTER, mixed numeric types,
+blank padding, all six derived-type comparisons, empty arrays and ranks through
+15. General storage and declaration restrictions elsewhere on this page still
+apply. `tests/test_elemental_operators.py` covers additional overloaded operator
+cases, including higher-rank derived arrays.
 
 ### COMPLEX
 
@@ -822,8 +850,8 @@ declaration initialization, scalar fills, whole-array copies, constant element
 indices, runtime element indexing, constant sections (including strides), and
 elementwise substring assignment.
 All source values are captured before overlapping destinations are written.
-Array comparisons support scalar broadcasting and ALL/ANY without DIM;
-list-directed PRINT, whole-array SIZE and LEN are supported. Initialization is
+Array comparisons support scalar broadcasting; their LOGICAL results use the
+ordinary reductions, including constant-DIM ALL/ANY/COUNT. List-directed PRINT, whole-array SIZE and LEN are supported. Initialization is
 tracked per element, with diagnostics naming the original array and its storage
 element number. Partial substring writes still require initialized elements.
 
@@ -1102,6 +1130,13 @@ DIM path also supports these reductions and NORM2. Run
 The latter compares interpreter/native O0/O2 results with gfortran and covers
 all axes, kinds, masks, empty slices, nested reductions, result assignment,
 sections, non-default bounds, ranks through 15, and allocation/shape errors.
+
+Known ELEMENTAL functions also retain their result types when runtime array
+expressions are lowered inside reductions. This includes overloaded derived-type
+comparisons such as `all(dates(2:) < dates(:n-1))`, nested numeric elemental calls,
+and numeric/LOGICAL elemental expressions used as masks or location inputs.
+Run `python tests/test_runtime_elemental_reductions.py` for interpreter/native
+O0/O2 checks, including pure/impure procedures and empty arrays.
 
 Logical reductions `COUNT`, `ANY`, and `ALL` accept `MASK=` and `DIM=` keywords.
 `COUNT` supports constant `KIND=4` (default) and `KIND=8`; `ANY` and `ALL` return

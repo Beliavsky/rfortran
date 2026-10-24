@@ -536,7 +536,7 @@ unsupported; CSHIFT/EOSHIFT/SPREAD retain their separate fixed-shape restriction
 Earlier call specialization can still reject a DIM result from a runtime-sized array passed directly
 to a procedure; assigning it to an ALLOCATABLE temporary first avoids that path.
 
-The next full-source diagnostic is now at line 16965:
+After the DIM fix, the full source reported this diagnostic at line 16965:
 
 ```fortran
 if (all(dates(2:) < dates(:nread-1))) then
@@ -546,9 +546,85 @@ if (all(dates(2:) < dates(:nread-1))) then
 runtime PACK results are not yet supported as arguments to `date_mdy_lt`
 ```
 
-The overloaded comparison passes runtime array views to an elemental procedure;
-this is a separate call-specialization limitation exposed after the DIM blocker
-was removed.
+The overloaded comparison passes runtime array views to an elemental procedure.
+The early reduction pass was dropping the procedure's ELEMENTAL result-type
+metadata, so it treated the call as an unsupported ordinary array call. That
+metadata is now preserved and the repro below is a regression test.
+
+[tests/programs/xacv_runtime_derived_comparison.f90](tests/programs/xacv_runtime_derived_comparison.f90)
+reproduces the error with a one-field derived type, an elemental overloaded `<`,
+and an allocated array of three descending values. Expected output is `T`;
+gfortran `-std=f2018 -Wall -fcheck=all` compiles it without warnings and produces
+that output. Both rfort native O0/O2 builds and interpreter mode now compile it
+and produce the same output.
+
+```cmd
+rf.bat tests/programs/xacv_runtime_derived_comparison.f90 --run
+```
+
+The scalar comparison `dates(2) < dates(1)` succeeds. Printing the elemental
+array comparison or the direct `date_mdy_lt(dates(2:),dates(:nread-1))` call also
+succeeds and produces `T T`. ALL around either form now succeeds too.
+`python tests/test_runtime_elemental_reductions.py` also checks ANY/COUNT/PARITY,
+empty sections, numeric result kinds, nested calls, DIM reductions, masks,
+locations and IMPURE ELEMENTAL functions against gfortran in both rfort modes.
+Initial controls and reference results are saved in
+`target/acv-repros/runtime-derived-comparison/report.json` (ignored).
+
+After the date-comparison fix, the full source reported
+`unsupported expression in numeric array reduction` at line 21187. This is now
+covered by the regression below:
+
+```fortran
+xmask = xindep <= thresh(1)
+```
+
+[tests/programs/xacv_runtime_array_scalar_comparison.f90](tests/programs/xacv_runtime_array_scalar_comparison.f90)
+is a self-contained repro using runtime-allocated actual arguments, assumed-shape
+REAL dummy arrays and an automatic LOGICAL result array. Both rfort modes now
+compile it and print `T T F`, matching gfortran `-std=f2018 -Wall -fcheck=all`.
+The generated checked-subscript function for `thresh(1)` now retains its integer
+result type during scalarization. The same type metadata is retained by output
+lowering and the other public array-expression helpers.
+
+```cmd
+rf.bat tests/programs/xacv_runtime_array_scalar_comparison.f90 --run
+```
+
+Replacing `thresh(1)` with the literal `2d0` works. Reading `thresh(1)` into a
+scalar local first and then comparing also works:
+
+```fortran
+bound = thresh(1)
+xmask = xindep <= bound
+```
+
+A control doing the original comparison directly in the main program, with a
+fixed-size LOGICAL destination, also compiles. These controls narrowed the
+failure to the scalar array-element operand within the specialized
+array-expression path, rather than to the comparison operator itself.
+`python tests/test_array_comparisons.py` now checks the supported intrinsic
+comparison operators across built-in types and all six overloaded derived-type
+relations, with scalar/array operands, sections, runtime dummies, blank padding,
+empty arrays, and ranks through 15. Related fixes preserve packed CHARACTER copy
+coordinates and query COMPLEX section extents without reading array values.
+Initial controls and
+reference results are saved in
+`target/acv-repros/runtime-array-scalar-comparison/report.json` (ignored).
+
+The rebuilt release passes these comparison failures in the full source. The
+next diagnostic is now at line 15482:
+
+```fortran
+inquire (file=xfile,exist=tf)
+```
+
+```text
+inquire: unsupported I/O control `exist`
+```
+
+This is reported by the later I/O-control lowering pass. The release diagnostic
+is saved in `target/acv-repros/xacv-comparisons-release.txt` (ignored).
 
 ## Intrinsic calls after extending an intrinsic generic
 

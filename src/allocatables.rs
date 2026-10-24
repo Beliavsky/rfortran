@@ -458,7 +458,7 @@ fn logical_shape(
 fn linear_index(
     name: &str,
     indices: &mut Vec<Expr>,
-    shapes: &Shapes,
+    shapes: &mut Shapes,
     checks: &mut Vec<Stmt>,
     serial: &mut usize,
 ) -> Result<()> {
@@ -497,6 +497,8 @@ fn linear_index(
     }
     body.push(Stmt::Return(Some(id(&offset))));
     checks.push(Stmt::Function{name:function.clone(),params,pure:true,elemental:true,return_type:Some(TypeSpec::Integer(Some(8))),body});
+    // Scalarizing an array expression must retain the checked offset's type.
+    shapes.insert(format!("@elemental:{function}"),(TypeSpec::Integer(Some(8)),vec![]));
     let offset=Expr::Call(function,actuals);
     *indices = vec![offset];
     Ok(())
@@ -670,7 +672,10 @@ fn character_copy(name: &str, value: &Expr, len: Expr, shapes: &Shapes, realloca
             (Expr::Index(n.clone(),vec![bin(BinOp::Add,source_lower.clone(),bin(BinOp::Sub,id(&index),int(1)))]), length(n,shapes).unwrap_or(shapes[n].1[0].clone())),
         Expr::Call(tag,a) if tag=="@packed_view" && a.len()==2 => {
             let Expr::Ident(n)=&a[0] else { bail!("CHARACTER array view requires array storage"); };
-            (Expr::Index(n.clone(),vec![bin(BinOp::Add,source_lower.clone(),bin(BinOp::Sub,id(&index),int(1)))]),a[1].clone())
+            let element=if axes(n,shapes).is_some_and(|d|d.len()>1) {
+                Expr::Call("@allocated_linear_element".into(),vec![id(n),id(&index)])
+            } else {Expr::Index(n.clone(),vec![bin(BinOp::Add,source_lower.clone(),bin(BinOp::Sub,id(&index),int(1)))])};
+            (element,a[1].clone())
         }
         Expr::Section { name:n, lower, upper, stride } if matches!(shapes.get(n),Some((TypeSpec::Character(_),d)) if d.len()==1) => {
             let step=stride.as_deref().map(crate::parameters::integer_constant).transpose()?.unwrap_or(1);
@@ -976,7 +981,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
     }
     fn expression(
         e: &mut Expr,
-        shapes: &Shapes,
+        shapes: &mut Shapes,
         guards: &mut Vec<Stmt>,
         checks: &mut Vec<Stmt>,
         serial: &mut usize,
@@ -1000,6 +1005,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                 let value=if upper{bin(BinOp::Sub,bin(BinOp::Add,id(lower),id(extent)),int(1))}else{id(lower)};
                 checks.push(Stmt::Function{name:name.into(),params:vec![lower.into(),extent.into()],return_type:Some(TypeSpec::Integer(Some(8))),pure:true,elemental:true,body:vec![Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![lower.into(),extent.into()]},Stmt::DummyIntent{name:lower.into(),intent:"intent(in)".into()},Stmt::DummyIntent{name:extent.into(),intent:"intent(in)".into()},Stmt::If{cond:bin(BinOp::Eq,id(extent),int(0)),then_body:vec![Stmt::Return(Some(int(if upper{0}else{1})))],else_body:None},Stmt::Return(Some(value))]});
             }
+            shapes.insert(format!("@elemental:{name}"),(TypeSpec::Integer(Some(8)),vec![]));
             *e=Expr::Call(name.into(),args[..2].to_vec());return Ok(());
         }}
         if matches!(e, Expr::Bin(..) | Expr::Call(..)) {
@@ -1281,7 +1287,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                     let mut statements=vec![];
                     let rhs_axes=logical_shape(&value,&shapes,&mut statements)?.map(|v|v.0);
                     let source_lower=if let Expr::Ident(n)=&value {lowers(n,&shapes)} else {None};
-                    expression(&mut value,&shapes,&mut statements,checks,serial)?;
+                    expression(&mut value, &mut shapes,&mut statements,checks,serial)?;
                     if let Expr::Ident(n)=&value {
                         if shapes.get(n).is_some_and(|(_,d)|d.len()>1) {value=Expr::Call("@fixed_packed_view".into(),vec![id(n)]);}
                     }
@@ -1394,13 +1400,13 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                     continue;
                 }
                 Stmt::CallSub {name,args} if name=="@heap_record_drop_array" => {
-                    expression(&mut args[1],&shapes,&mut guards,checks,serial)?;
+                    expression(&mut args[1], &mut shapes,&mut guards,checks,serial)?;
                     out.extend(guards);out.push(s);continue;
                 }
                 Stmt::CallSub {name,args} if name=="@heap_record_load" || name=="@heap_record_store" => {
                     let Expr::Ident(local)=&args[0] else {bail!("record allocation requires local storage")};
                     let local=local.clone();
-                    expression(&mut args[1],&shapes,&mut guards,checks,serial)?;
+                    expression(&mut args[1], &mut shapes,&mut guards,checks,serial)?;
                     args.push(length(&local,&shapes).context("record allocation requires a heap descriptor")?);
                     args.push(allocated(&local,&shapes).context("missing record allocation status")?);
                     args.extend(axes(&local,&shapes).context("missing record allocation shape")?);
@@ -1409,7 +1415,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                 }
                 Stmt::CallSub {name,..} if matches!(name.as_str(), "@module_bind" | "@heap_bind" | "@ptr_bind" | "@heap_drop" | "@heap_free") => {out.push(s);continue;}
                 Stmt::CallSub{name,args} if name=="@heap_allocate" || name=="@heap_resize"=>{
-                    for extent in args.iter_mut().skip(2){expression(extent,&shapes,&mut guards,checks,serial)?;}
+                    for extent in args.iter_mut().skip(2){expression(extent, &mut shapes,&mut guards,checks,serial)?;}
                     out.extend(guards);out.push(s);continue;
                 }
                 Stmt::CallSub { name, args } if name == "@allocate" => {
@@ -1436,7 +1442,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                                 id(&flag),
                                 &format!("array `{n}` is already allocated"),
                             ));
-                            let limits = &shapes[&format!("@axis_limits:{n}")].1;
+                            let limits = shapes[&format!("@axis_limits:{n}")].1.clone();
                             for (axis, ((state, extent), limit)) in
                                 axes.iter().zip(dims).zip(limits).enumerate()
                             {
@@ -1446,11 +1452,11 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                                 let mut extent = extent.clone();
                                 if let Expr::Call(tag,bounds)=&mut extent {if tag=="@heap_bounds" {
                                     let lower=lowers(n,&shapes).context("explicit allocation bounds require runtime storage")?[axis].clone();
-                                    for value in bounds.iter_mut(){expression(value,&shapes,&mut out,checks,serial)?;}
+                                    for value in bounds.iter_mut(){expression(value, &mut shapes,&mut out,checks,serial)?;}
                                     out.push(Stmt::CallSub{name:"@heap_bounds".into(),args:vec![lower,id(state),bounds[0].clone(),bounds[1].clone()]});
-                                }else{expression(&mut extent,&shapes,&mut out,checks,serial)?;out.push(assign(state,Expr::Call("max".into(),vec![int(0),extent])));}}
+                                }else{expression(&mut extent, &mut shapes,&mut out,checks,serial)?;out.push(assign(state,Expr::Call("max".into(),vec![int(0),extent])));}}
                                 else{
-                                    expression(&mut extent, &shapes, &mut out, checks, serial)?;
+                                    expression(&mut extent, &mut shapes, &mut out, checks, serial)?;
                                     out.push(assign(state,Expr::Call("max".into(), vec![int(0), extent])));
                                     if let Some(lower)=lowers(n,&shapes) {if let Expr::Ident(lower)=&lower[axis]{out.push(assign(lower,int(1)));}}
                                 }
@@ -1476,7 +1482,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                             bail!("ALLOCATABLE output currently supports rank one");
                         };
                         let mut extent = extent.clone();
-                        expression(&mut extent, &shapes, &mut out, checks, serial)?;
+                        expression(&mut extent, &mut shapes, &mut out, checks, serial)?;
                         out.push(fail(
                             id(&flag),
                             &format!("array `{n}` is already allocated"),
@@ -1519,7 +1525,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                             conform_axes(&axes, &rhs, &mut out)?;
                         }
                     }
-                    expression(value, &shapes, &mut out, checks, serial)?;
+                    expression(value, &mut shapes, &mut out, checks, serial)?;
                     let len = length(name, &shapes).unwrap();
                     let flag = allocated(name, &shapes).unwrap();
                     if !reallocate {
@@ -1669,10 +1675,10 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                             conform_axes(lhs, &rhs, &mut guards)?;
                         }
                     }
-                    expression(value, &shapes, &mut guards, checks, serial)?;
+                    expression(value, &mut shapes, &mut guards, checks, serial)?;
                 }
                 Stmt::Return(Some(value)) => {
-                    expression(value, &shapes, &mut guards, checks, serial)?
+                    expression(value, &mut shapes, &mut guards, checks, serial)?
                 }
                 Stmt::AssignIndex {
                     name,
@@ -1701,7 +1707,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                             let mut statements=vec![fail(Expr::Un(UnOp::Not,Box::new(allocated(name,&shapes).unwrap())),&format!("assignment to unallocated array `{name}`")),Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![first.clone(),count.clone(),index.clone()]},
                                 assign(&first,lo),assign(&count,Expr::Call("max".into(),vec![int(0),bin(BinOp::Div,bin(BinOp::Add,bin(BinOp::Sub,hi,id(&first)),int(step)),int(step))]))];
                             let mut rhs=value.clone();
-                            expression(&mut rhs,&shapes,&mut statements,checks,serial)?;
+                            expression(&mut rhs, &mut shapes,&mut statements,checks,serial)?;
                             let (element,shape,kind)=crate::reductions::elemental_element(&rhs,&id(&index),&shapes)?;
                             if shape.is_some() {
                                 let dims=logical_shape(&rhs,&shapes,&mut statements)?.context("section assignment requires an array shape")?.0;
@@ -1718,7 +1724,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                             out.extend(statements);continue;
                         }
                     }
-                    linear_index(name, indices, &shapes, checks, serial)?;
+                    linear_index(name, indices, &mut shapes, checks, serial)?;
                     if let Some(flag) = allocated(name, &shapes) {
                         guards.push(fail(
                             Expr::Un(UnOp::Not, Box::new(flag)),
@@ -1726,21 +1732,21 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                         ));
                     }
                     for e in indices {
-                        expression(e, &shapes, &mut guards, checks, serial)?;
+                        expression(e, &mut shapes, &mut guards, checks, serial)?;
                     }
-                    expression(value, &shapes, &mut guards, checks, serial)?;
+                    expression(value, &mut shapes, &mut guards, checks, serial)?;
                 }
                 Stmt::CallSub { name, .. } if name == "@undefine" => {}
                 Stmt::CallSub { name, args } if name == "random_number" && args.len() == 1 => {
                     if let Expr::Index(n, indices) | Expr::Call(n, indices) = &mut args[0] {
                         if axes(n, &shapes).is_some() {
-                            linear_index(n, indices, &shapes, checks, serial)?;
+                            linear_index(n, indices, &mut shapes, checks, serial)?;
                             guards.push(fail(
                                 Expr::Un(UnOp::Not, Box::new(allocated(n, &shapes).unwrap())),
                                 &format!("RANDOM_NUMBER destination `{n}` is unallocated"),
                             ));
                             for e in indices {
-                                expression(e, &shapes, &mut guards, checks, serial)?;
+                                expression(e, &mut shapes, &mut guards, checks, serial)?;
                             }
                             out.extend(guards);
                             out.push(s);
@@ -1784,12 +1790,12 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                         continue;
                     }
                     for e in args {
-                        expression(e, &shapes, &mut guards, checks, serial)?;
+                        expression(e, &mut shapes, &mut guards, checks, serial)?;
                     }
                 }
                 Stmt::CallSub { args, .. } | Stmt::Print { items: args } | Stmt::Read { args } => {
                     for e in args {
-                        expression(e, &shapes, &mut guards, checks, serial)?;
+                        expression(e, &mut shapes, &mut guards, checks, serial)?;
                     }
                 }
                 Stmt::If {
@@ -1797,7 +1803,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                     then_body,
                     else_body,
                 } => {
-                    expression(cond, &shapes, &mut guards, checks, serial)?;
+                    expression(cond, &mut shapes, &mut guards, checks, serial)?;
                     lower(then_body, &shapes, serial, checks)?;
                     scoped(then_body, &shapes);
                     if let Some(b) = else_body {
@@ -1808,13 +1814,13 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                 Stmt::Do {
                     start, end, body, ..
                 } => {
-                    expression(start, &shapes, &mut guards, checks, serial)?;
-                    expression(end, &shapes, &mut guards, checks, serial)?;
+                    expression(start, &mut shapes, &mut guards, checks, serial)?;
+                    expression(end, &mut shapes, &mut guards, checks, serial)?;
                     lower(body, &shapes, serial, checks)?;
                     scoped(body, &shapes);
                 }
                 Stmt::DoWhile { cond, body } => {
-                    expression(cond, &shapes, &mut guards, checks, serial)?;
+                    expression(cond, &mut shapes, &mut guards, checks, serial)?;
                     lower(body, &shapes, serial, checks)?;
                     if !guards.is_empty() {
                         guards.push(Stmt::If {
@@ -1844,7 +1850,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                     cases,
                     default,
                 } => {
-                    expression(expr, &shapes, &mut guards, checks, serial)?;
+                    expression(expr, &mut shapes, &mut guards, checks, serial)?;
                     for c in cases {
                         lower(&mut c.body, &shapes, serial, checks)?;
                         scoped(&mut c.body, &shapes);

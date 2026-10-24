@@ -216,6 +216,10 @@ pub(crate) fn scalar_actual_kind(e: &Expr, shapes: &Shapes) -> Result<TypeSpec> 
                 _=>None,
             }))
         }
+        Expr::Call(n,args) if shapes.contains_key(&format!("@elemental:{n}")) => {
+            for arg in args {scalar_actual_kind(arg,shapes)?;}
+            Ok(shapes[&format!("@elemental:{n}")].0.clone())
+        },
         Expr::Call(n,args) if n=="@allocated_extent"=>scalar_actual_kind(&args[1],shapes),
         Expr::Call(n,_) if matches!(n.as_str(),"@heap_bound"|"@heap_lower_bound"|"@heap_upper_bound")=>Ok(TypeSpec::Integer(Some(8))),
         Expr::Call(n,args) if n=="size" || matches!(n.as_str(),"lbound"|"ubound") && args.len()==2=>Ok(TypeSpec::Integer(None)),
@@ -304,7 +308,25 @@ fn rewrite(
                 *e=a[1].clone();return Ok(());
             }}
             let Some(Expr::Ident(array)) = args.first() else {
-                bail!("SIZE currently requires a whole array");
+                let source=args.first().context("SIZE requires ARRAY")?;
+                if let Some((_,dims))=crate::vector_subscripts::argument_expression_shape(source,shapes,&HashMap::new())? {
+                    if dims.is_empty() {bail!("SIZE argument must be an array");}
+                    let value=match args.as_slice() {
+                        [_]=>dims.iter().cloned().reduce(|a,b|Expr::Bin(crate::ast::BinOp::Mul,Box::new(a),Box::new(b))).unwrap(),
+                        [_,dim]=>{
+                            let axis=crate::parameters::integer_constant(dim).context("SIZE dimension must currently be constant")?;
+                            if axis<1 || axis as usize>dims.len() {bail!("SIZE dimension must be between 1 and {}",dims.len());}
+                            dims[axis as usize-1].clone()
+                        },
+                        _=>bail!("SIZE expects an array and optional dimension"),
+                    };
+                    let owner=match source {Expr::Section{name,..}|Expr::Call(name,_)|Expr::Index(name,_)=>Some(name),_=>None};
+                    *e=if let Some((owner,flag))=owner.and_then(|n|crate::allocatables::allocated(n,shapes).map(|flag|(n,flag))) {
+                        Expr::Call("@allocated_extent".into(),vec![flag,value,Expr::Str(owner.clone())])
+                    } else {value};
+                    return Ok(());
+                }
+                bail!("SIZE currently requires an array with a known shape");
             };
             let (_, dims) = shapes
                 .get(array)

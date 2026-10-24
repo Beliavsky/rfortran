@@ -147,6 +147,7 @@ pub(crate) fn integer(e: &Expr, symbols: &Symbols) -> bool {
         Expr::Call(n,a) if n=="@conditional"=>integer(&a[1],symbols),
         // Inquiries lowered after argument association retain their allocation
         // guard. Its logical status and name do not change the value's type.
+        Expr::Call(n,_) if matches!(symbols.get(&format!("@elemental:{n}")),Some((TypeSpec::Integer(_),_)))=>true,
         Expr::Call(n,a) if n=="@allocated_extent"=>a.get(1).is_some_and(|e|integer(e,symbols)),
         Expr::Call(n,a) if n=="@heap_bound"=>a.len()==3 && a[..2].iter().all(|e|integer(e,symbols)),
         Expr::Call(n,a) if matches!(n.as_str(),"@heap_lower_bound"|"@heap_upper_bound")=>a.len()==2 && a.iter().all(|e|integer(e,symbols)),
@@ -570,7 +571,9 @@ pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> Result<crat
         }
         Ok(())
     }
-    scope(&mut program.body, &Symbols::new(), &mut 0)?;
+    let functions:Symbols=crate::elemental::functions(&program).into_iter()
+        .map(|(name,kind)|(format!("@elemental:{name}"),(kind,vec![]))).collect();
+    scope(&mut program.body, &functions, &mut 0)?;
     Ok(program)
 }
 
@@ -638,6 +641,8 @@ pub(crate) fn prepare_character_views(mut program:crate::ast::Program)->Result<c
         *body=out;
         Ok(())
     }
-    scope(&mut program.body,&Symbols::new(),&mut 0)?;
+    let functions:Symbols=crate::elemental::functions(&program).into_iter()
+        .map(|(name,kind)|(format!("@elemental:{name}"),(kind,vec![]))).collect();
+    scope(&mut program.body,&functions,&mut 0)?;
     prepare_formatted(program)
 }
