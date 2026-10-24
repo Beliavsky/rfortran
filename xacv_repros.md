@@ -612,8 +612,8 @@ Initial controls and
 reference results are saved in
 `target/acv-repros/runtime-array-scalar-comparison/report.json` (ignored).
 
-The rebuilt release passes these comparison failures in the full source. The
-next diagnostic is now at line 15482:
+The rebuilt release passed these comparison failures in the full source. Before
+the inquiry changes below, its next diagnostic was at line 15482:
 
 ```fortran
 inquire (file=xfile,exist=tf)
@@ -625,6 +625,49 @@ inquire: unsupported I/O control `exist`
 
 This is reported by the later I/O-control lowering pass. The release diagnostic
 is saved in `target/acv-repros/xacv-comparisons-release.txt` (ignored).
+
+### INQUIRE file existence (now a regression)
+
+Standalone repro: [xacv_inquire_exist.f90](tests/programs/xacv_inquire_exist.f90).
+It retains the contained `file_exists` function from the original code, creates
+a scratch file, checks its existence, deletes it, then checks again.
+
+```cmd
+rf.bat tests\programs\xacv_inquire_exist.f90 --run
+```
+
+Expected output (verified with gfortran using `-std=f2018 -Wall -fcheck=all`):
+
+```text
+ T
+ F
+```
+
+The original release rejected line 19, `inquire(file=xfile, exist=tf)`, with
+`inquire: unsupported I/O control ` followed by the control name `exist`.
+The shared lowering and runtimes now support EXIST, ACTION, NAMED, IOMSG and
+ERR alongside the existing inquiry controls. `python tests/test_inquire.py`
+checks the repro and inquiry states in the interpreter, native O0/O2 and gfortran.
+The original failure was verified in an isolated temporary directory;
+results are saved in `target/acv-repros/inquire-exist/report.json` (ignored).
+When running the reference program manually, use a scratch directory: it creates
+and deletes `rfort_inquire_exist_test.tmp` there.
+
+The rebuilt release passes the inquiry lowering in `rfort check xacv.f90`.
+The next diagnostic is at line 15203:
+
+```fortran
+open (unit=iunit,file=xfile,action="write",position="append",iostat=ierr)
+```
+
+```text
+OPEN currently supports position='rewind'
+```
+
+This is a later lowering pass despite the earlier source line. The check log
+is saved in `target/acv-repros/xacv-inquire-release.txt` (ignored). The release
+inquiry suite passes in the interpreter, native O0/O2 and gfortran; its log is
+`target/inquire-release-tests.txt` (ignored).
 
 ## Intrinsic calls after extending an intrinsic generic
 

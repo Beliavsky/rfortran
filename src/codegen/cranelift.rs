@@ -2637,20 +2637,21 @@ fn gen_stmts(
                 }
                 if matches!(name.as_str(),"@file_inquire_unit"|"@file_inquire_file") {
                     let mut destinations=vec![];
-                    for dest in &args[..3] {
+                    for dest in &args[..5] {
                         let IExpr::Ident(dest)=dest else {anyhow::bail!("INQUIRE requires INTEGER output storage")};
                         let slot=ints.get(dest).ok_or_else(||anyhow::anyhow!("INQUIRE requires INTEGER output storage"))?;
                         destinations.push(storage_addr(b,ptr_ty,*slot));
                     }
-                    let dest=characters::view(module,b,ptr_ty,dc,chars,ints,&args[3])?;
+                    let dest=characters::view(module,b,ptr_ty,dc,chars,ints,&args[5])?;
                     let (unit,path,length)=if name=="@file_inquire_file" {
-                        let source=characters::view(module,b,ptr_ty,dc,chars,ints,&args[4])?;
+                        let source=characters::view(module,b,ptr_ty,dc,chars,ints,&args[7])?;
                         (b.ins().iconst(types::I64,0),source.address,source.length)
                     } else {
-                        let value=eval_expr(b,ex,ptr_ty,&args[4],ints,reals,bools,func_meta);let unit=to_i64(b,value);
+                        let value=eval_expr(b,ex,ptr_ty,&args[7],ints,reals,bools,func_meta);let unit=to_i64(b,value);
                         (unit,b.ins().iconst(ptr_ty,0),b.ins().iconst(ptr_ty,0))
                     };
-                    let code=file_io::inquire(module,b,ptr_ty,&[unit,path,length,destinations[1],destinations[2],dest.address,dest.length])?;
+                    let action=characters::view(module,b,ptr_ty,dc,chars,ints,&args[6])?;
+                    let code=file_io::inquire(module,b,ptr_ty,&[unit,path,length,destinations[1],destinations[2],destinations[3],destinations[4],dest.address,dest.length,action.address,action.length])?;
                     b.ins().store(MemFlags::new(),code,destinations[0],0);
                     continue;
                 }
@@ -3660,6 +3661,8 @@ impl CraneliftBackend {
         obj.define_data(file_units, &file_data)?;
         let file_names=obj.declare_data(".rfort.file_names",Linkage::Local,true,false)?;
         obj.define_data(file_names,&file_data)?;
+        let file_actions=obj.declare_data(".rfort.file_actions",Linkage::Local,true,false)?;
+        obj.define_data(file_actions,&file_data)?;
         let random_state = obj.declare_data(".f90c.random_state", Linkage::Local, true, false)?;
         let mut random_data = DataDescription::new();
         random_data.define(1u64.to_le_bytes().to_vec().into_boxed_slice());

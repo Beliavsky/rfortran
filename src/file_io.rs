@@ -46,18 +46,15 @@ pub(crate) fn lower(
         };
         if !matches!(
             key.as_str(),
-            "unit" | "newunit" | "file" | "status" | "action" | "access" | "form" | "name" | "opened" | "number" | "iostat" | "position" | "iomsg" | "err"
+            "unit" | "newunit" | "file" | "status" | "action" | "access" | "form" | "name" | "opened" | "number" | "exist" | "named" | "iostat" | "position" | "iomsg" | "err"
         ) {
             bail!("{operation}: unsupported I/O control `{key}`");
         }
-        if operation=="inquire" && !matches!(key.as_str(),"unit"|"file"|"name"|"opened"|"number"|"iostat") {bail!("INQUIRE: unsupported I/O control `{key}`");}
+        if operation=="inquire" && !matches!(key.as_str(),"unit"|"file"|"name"|"opened"|"number"|"exist"|"named"|"action"|"iostat"|"iomsg") {bail!("INQUIRE: unsupported I/O control `{key}`");}
         if operation != "open" && operation!="inquire" && !matches!(key.as_str(), "unit" | "iostat" | "iomsg" | "err") && !(operation=="close" && key=="status") {
             bail!("{} currently supports UNIT, IOSTAT, IOMSG and ERR{}", operation.to_uppercase(), if operation == "close" { " and STATUS" } else { "" });
         }
-        if operation == "inquire" && matches!(key.as_str(), "iomsg" | "err") {
-            bail!("INQUIRE: unsupported I/O control `{key}`");
-        }
-        if operation=="open" && matches!(key.as_str(),"name"|"opened"|"number"|"err") {bail!("OPEN: unsupported I/O control `{key}`");}
+        if operation=="open" && matches!(key.as_str(),"name"|"opened"|"number"|"exist"|"named"|"err") {bail!("OPEN: unsupported I/O control `{key}`");}
         if controls.insert(key.clone(), value).is_some() {
             bail!("{operation}: duplicate {key} control");
         }
@@ -156,7 +153,7 @@ fn lower_open(mut controls:HashMap<String,Expr>,symbols:&HashMap<String,(TypeSpe
         }
         let status=match controls.remove("status") {Some(Expr::Str(s))=>s.trim_end().to_ascii_lowercase(),None=>"unknown".into(),_=>bail!("OPEN STATUS must currently be constant")};
         let action=match controls.remove("action") {Some(Expr::Str(s))=>s.trim_end().to_ascii_lowercase(),None=>"readwrite".into(),_=>bail!("OPEN ACTION must currently be constant")};
-        let mode=match (status.as_str(),action.as_str()) {("old","read")=>0,("replace","write")=>1,("replace","readwrite")=>2,("old","readwrite")=>3,("old","write")=>4,("unknown","readwrite"|"write")=>5,("unknown","read")=>0,
+        let mode=match (status.as_str(),action.as_str()) {("old","read")=>0,("replace","write")=>1,("replace","readwrite")=>2,("old","readwrite")=>3,("old","write")=>4,("unknown","readwrite")=>5,("unknown","write")=>6,("unknown","read")=>0,
             // NEW does not yet check that the file is absent.
             ("new","write")=>1,("new","readwrite")=>2,_=>bail!("unsupported OPEN STATUS/ACTION combination")};
         let path=controls.remove("file").context("OPEN requires FILE")?;
@@ -208,62 +205,74 @@ fn lower_inquiry(mut controls:HashMap<String,Expr>,symbols:&HashMap<String,(Type
     let unit=controls.remove("unit");let file=controls.remove("file");
     if unit.is_some()==file.is_some() {bail!("INQUIRE requires exactly one of UNIT or FILE");}
     let by_file=file.is_some();let selector=file.or(unit).unwrap();
-    fn character(e:&Expr,symbols:&HashMap<String,(TypeSpec,Vec<Expr>)>)->bool {
-        match e {
-            Expr::Str(_)=>true,
-            Expr::Ident(n)=>matches!(symbols.get(n),Some((TypeSpec::Character(_),d)) if d.is_empty()),
-            Expr::Bin(crate::ast::BinOp::Concat,a,b)=>character(a,symbols)&&character(b,symbols),
-            Expr::Call(n,a) if matches!(n.as_str(),"trim"|"adjustl"|"adjustr") && a.len()==1=>character(&a[0],symbols),
-            _=>false,
-        }
-    }
-    let kind=if by_file && character(&selector,symbols) {TypeSpec::Character(None)} else {
-        crate::array_calls::scalar_actual_kind(&selector,symbols).context("INQUIRE selector must be a scalar expression")?
-    };
+    let kind=crate::array_calls::scalar_actual_kind(&selector,symbols)
+        .context("INQUIRE selector must be a scalar expression")?;
     if if by_file {!matches!(kind,TypeSpec::Character(_))} else {!matches!(kind,TypeSpec::Integer(_))} {
         bail!("INQUIRE {} requires a scalar {} expression",if by_file {"FILE"}else{"UNIT"},if by_file {"CHARACTER"}else{"INTEGER"});
     }
     for (key,value) in &controls {
         let Expr::Ident(n)=value else {bail!("INQUIRE {} requires a writable scalar variable",key.to_ascii_uppercase());};
-        let valid=symbols.get(n).is_some_and(|(kind,dims)|dims.is_empty() && match key.as_str() {
-            "name"=>matches!(kind,TypeSpec::Character(_)),"opened"=>*kind==TypeSpec::Logical,
+        let expected=match key.as_str(){"name"|"action"|"iomsg"=>"CHARACTER","opened"|"exist"|"named"=>"LOGICAL",_=>"INTEGER"};
+        let valid=symbols.get(n).is_some_and(|(kind,dims)|dims.is_empty() && match expected {
+            "CHARACTER"=>matches!(kind,TypeSpec::Character(_)),"LOGICAL"=>*kind==TypeSpec::Logical,
             _=>matches!(kind,TypeSpec::Integer(None|Some(1|2|4|8))),
         });
-        if !valid {bail!("INQUIRE {} requires a writable scalar {} variable",key.to_ascii_uppercase(),match key.as_str(){"name"=>"CHARACTER","opened"=>"LOGICAL",_=>"INTEGER"});}
+        if !valid {bail!("INQUIRE {} requires a writable scalar {} variable",key.to_ascii_uppercase(),expected);}
     }
     *serial+=1;
-    let names:Vec<String>=["status","number","opened","name"].iter().map(|key|format!("@inquire_{key}_{serial}")).collect();
+    let keys=["iostat","number","opened","exist","named","name","action"];
+    let names:Vec<String>=keys.iter().map(|key|format!("@inquire_{key}_{serial}")).collect();
     let id=|i:usize|Expr::Ident(names[i].clone());let int=|n:i64|Expr::IntLit(n.to_string());
-    let name=controls.remove("name").unwrap_or_else(||id(3));
-    let length=if name==id(3) {0} else {
-        let Expr::Ident(n)=&name else {unreachable!()};let TypeSpec::Character(length)=symbols[n].0 else {unreachable!()};length.unwrap_or(1)
-    };
-    let mut body=vec![Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:names[..3].to_vec()}];
-    if name==id(3) {body.push(Stmt::VarDecl{kind:TypeSpec::Character(Some(0)),names:vec![names[3].clone()]});}
-    body.push(Stmt::CallSub{name:if by_file {"@file_inquire_file"}else{"@file_inquire_unit"}.into(),args:vec![id(0),id(1),id(2),name,selector,int(length as i64)]});
-    if let Some(dest)=controls.remove("iostat") {
-        let Expr::Ident(name)=dest else {unreachable!()};body.push(Stmt::Assign{name,value:id(0)});
-    } else {
-        body.push(Stmt::If{cond:Expr::Bin(crate::ast::BinOp::Ne,Box::new(id(0)),Box::new(int(0))),then_body:vec![Stmt::CallSub{name:"@error_stop".into(),args:vec![Expr::Str("INQUIRE failed".into())]}],else_body:None});
+    let name_length=controls.get("name").map(|e|{let Expr::Ident(n)=e else {unreachable!()};let TypeSpec::Character(l)=symbols[n].0 else {unreachable!()};l.unwrap_or(1)}).unwrap_or(0);
+    let mut body=vec![Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:names[..5].to_vec()},
+        Stmt::VarDecl{kind:TypeSpec::Character(Some(name_length)),names:vec![names[5].clone()]},
+        Stmt::VarDecl{kind:TypeSpec::Character(Some(9)),names:vec![names[6].clone()]}];
+    let mut args:Vec<Expr>=(0..7).map(id).collect();
+    args.extend([selector,int(name_length as i64),int(9)]);
+    body.push(Stmt::CallSub{name:if by_file {"@file_inquire_file"}else{"@file_inquire_unit"}.into(),args});
+    let handled=controls.contains_key("iostat");
+    if let Some(Expr::Ident(name))=controls.remove("iostat") {body.push(Stmt::Assign{name,value:id(0)});}
+    let mut failure=vec![];
+    if let Some(Expr::Ident(name))=controls.remove("iomsg") {
+        failure.push(Stmt::Assign{name:name.clone(),value:Expr::Str("INQUIRE failed: filesystem inquiry error".into())});
+        for (code,text) in [(1,"INQUIRE failed: invalid unit number"),(2,"INQUIRE failed: invalid file name")] {
+            failure.push(Stmt::If{cond:Expr::Bin(crate::ast::BinOp::Eq,Box::new(id(0)),Box::new(int(code))),then_body:vec![Stmt::Assign{name:name.clone(),value:Expr::Str(text.into())}],else_body:None});
+        }
+        body.push(Stmt::CallSub{name:crate::initialized::MAY_DEFINE.into(),args:vec![Expr::Ident(name)]});
     }
-    if let Some(Expr::Ident(name))=controls.remove("number") {body.push(Stmt::Assign{name,value:id(1)});}
-    if let Some(Expr::Ident(name))=controls.remove("opened") {body.push(Stmt::Assign{name,value:Expr::Bin(crate::ast::BinOp::Ne,Box::new(id(2)),Box::new(int(0)))});}
+    // IOMSG alone does not suppress error termination.
+    if !handled {failure.push(Stmt::CallSub{name:"@error_stop".into(),args:vec![Expr::Str("INQUIRE failed".into())]});}
+    let mut success=vec![];
+    for (i,key) in keys.iter().enumerate().skip(1) {
+        if let Some(Expr::Ident(name))=controls.remove(*key) {
+            let value=if (2..=4).contains(&i) {Expr::Bin(crate::ast::BinOp::Ne,Box::new(id(i)),Box::new(int(0)))} else {id(i)};
+            success.push(Stmt::Assign{name,value});
+        }
+    }
+    body.push(Stmt::If{cond:Expr::Bin(crate::ast::BinOp::Ne,Box::new(id(0)),Box::new(int(0))),then_body:failure,else_body:Some(success)});
     Ok(Stmt::Block{body})
 }
 
 #[derive(Default)]
-pub(crate) struct Files(HashMap<i64, std::fs::File>, HashMap<i64,String>);
+pub(crate) struct Files(HashMap<i64, std::fs::File>, HashMap<i64,String>, HashMap<i64,i64>);
 impl Files {
-    pub(crate) fn inquire(&self,unit:Option<i64>,path:Option<&str>)->(i64,i64,i64,String) {
+    pub(crate) fn inquire(&self,unit:Option<i64>,path:Option<&str>)->(i64,i64,i64,i64,i64,String,String) {
         if let Some(path)=path {
-            if path.as_bytes().contains(&0) {return (1,-1,0,String::new());}
+            let (status,exists)=inquiry::exists(path.as_bytes());
+            if status!=0 {return (status,-1,0,0,0,String::new(),String::new());}
             let found=self.1.iter().find(|(unit,name)|self.0.contains_key(unit) && inquiry::same_name(path.as_bytes(),name.as_bytes()));
-            return match found {Some((unit,name))=>(0,*unit,1,name.clone()),None=>(0,-1,0,String::new())};
+            let (number,opened,action)=match found {Some((unit,_))=>(*unit,1,*self.2.get(unit).unwrap_or(&1)),None=>(-1,0,0)};
+            return (0,number,opened,exists,1,path.trim_end_matches(' ').into(),inquiry::action_text(action).into());
         }
         let unit=unit.unwrap();
-        if inquiry::invalid_unit(unit) {return (1,-1,0,String::new());}
-        if matches!(unit,5|6) {return (0,unit,1,if unit==5 {"stdin"}else{"stdout"}.into());}
-        if inquiry::index(unit).is_some_and(|index|self.0.contains_key(&inquiry::unit(index))) {(0,unit,1,self.1.get(&unit).cloned().unwrap_or_default())}else{(0,-1,0,String::new())}
+        if inquiry::invalid_unit(unit) {return (1,-1,0,0,0,String::new(),String::new());}
+        if matches!(unit,0|5|6) && !self.0.contains_key(&unit) {
+            return (0,unit,1,1,1,match unit {0=>"stderr",5=>"stdin",_=>"stdout"}.into(),inquiry::action_text(if unit==5 {1}else{2}).into());
+        }
+        if inquiry::index(unit).is_some_and(|i|self.0.contains_key(&inquiry::unit(i))) {
+            let name=self.1.get(&unit).cloned().unwrap_or_default();
+            (0,unit,1,1,i64::from(!name.is_empty()),name,inquiry::action_text(*self.2.get(&unit).unwrap_or(&3)).into())
+        } else {(0,-1,0,i64::from(unit>=0 && inquiry::index(unit).is_some()),0,String::new(),"UNDEFINED".into())}
     }
     fn valid(unit: i64) -> Result<()> {
         if (!(0..1024).contains(&unit) && !(-1033..=-10).contains(&unit)) || matches!(unit, 5 | 6) {
@@ -280,12 +289,14 @@ impl Files {
             let file = std::fs::File::open(path.unwrap()).context("OPEN failed")?;
             self.0.insert(unit, file);
             self.1.insert(unit,path.unwrap().into());
+            self.2.insert(unit,1);
             return Ok(());
         }
         // CLOSE on an unconnected unit is a successful no-op.
         if op == "@file_close" || op == "@file_close_delete" {
             let connected=self.0.remove(&unit).is_some();
             let name=self.1.remove(&unit);
+            self.2.remove(&unit);
             if op == "@file_close_delete" && connected {
                 if let Some(name)=name.filter(|n|!n.is_empty()) {std::fs::remove_file(name.trim_end()).context("CLOSE could not delete the file")?;}
             }
@@ -349,6 +360,7 @@ impl Files {
         }
         self.0.insert(unit,result.context("could not create scratch file")?);
         self.1.remove(&unit);
+        self.2.insert(unit,3);
         Ok(unit)
     }
     pub(crate) fn name(&self, unit:i64)->Result<String> {
@@ -409,8 +421,8 @@ impl Files {
         let unit=match requested {Some(unit)=>unit,None=>(-1033..=-10).rev().find(|u|!self.0.contains_key(u)).context("no free NEWUNIT file slots")?};
         Self::valid(unit)?;if self.0.contains_key(&unit) {bail!("OPEN on an already connected unit is not yet supported");}
         let mut options=std::fs::OpenOptions::new();
-        options.read(matches!(mode,0|2|3|5)).write(mode!=0).create(matches!(mode,1|2|5)).truncate(matches!(mode,1|2));
-        let file=options.open(path).context("OPEN failed")?;self.0.insert(unit,file);self.1.insert(unit,path.into());Ok(unit)
+        options.read(matches!(mode,0|2|3|5)).write(mode!=0).create(matches!(mode,1|2|5|6)).truncate(matches!(mode,1|2));
+        let file=options.open(path).context("OPEN failed")?;self.0.insert(unit,file);self.1.insert(unit,path.into());self.2.insert(unit,inquiry::action(mode));Ok(unit)
     }
     /// Unformatted stream output: 0, or 1 on an error.
     pub(crate) fn stream_write(&mut self,unit:i64,bytes:&[u8])->i64 {

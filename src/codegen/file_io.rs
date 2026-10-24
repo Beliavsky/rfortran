@@ -114,7 +114,8 @@ pub(super) fn inquire(module:&mut ObjectModule,b:&mut FunctionBuilder,ptr:ir::Ty
     anyhow::ensure!(ptr==types::I64,"file I/O currently requires a 64-bit target");
     let units=table(b,module,ptr,".rfort.file_units")?;
     let names=table(b,module,ptr,".rfort.file_names")?;
-    let mut args=vec![units,names];args.extend_from_slice(arguments);
+    let actions=table(b,module,ptr,".rfort.file_actions")?;
+    let mut args=vec![units,names,actions];args.extend_from_slice(arguments);
     call(module,b,"rfort_file_inquire",&args,types::I64)
 }
 pub(super) fn newunit(module:&mut ObjectModule,b:&mut FunctionBuilder,ptr:ir::Type,dc:&mut u32)->Result<ir::Value> {
@@ -126,12 +127,15 @@ pub(super) fn newunit(module:&mut ObjectModule,b:&mut FunctionBuilder,ptr:ir::Ty
     let names=table(b,module,ptr,".rfort.file_names")?;
     let offset=b.ins().imul_imm(index,8);let address=b.ins().iadd(names,offset);
     let zero=b.ins().iconst(ptr,0);b.ins().store(MemFlags::new(),zero,address,0);
+    let actions=table(b,module,ptr,".rfort.file_actions")?;let address=b.ins().iadd(actions,offset);
+    let action=b.ins().iconst(types::I64,3);b.ins().store(MemFlags::new(),action,address,0);
     Ok(unit)
 }
 /// OPEN a file; unless `checked`, a failure is returned as a negative code.
 pub(super) fn open_dynamic(module:&mut ObjectModule,b:&mut FunctionBuilder,ptr:ir::Type,dc:&mut u32,requested:ir::Value,path:ir::Value,length:ir::Value,mode:ir::Value,newunit:ir::Value,checked:bool)->Result<ir::Value> {
     let slots=table(b,module,ptr,".rfort.file_units")?;let names=table(b,module,ptr,".rfort.file_names")?;
-    let unit=call(module,b,"rfort_file_open_dynamic",&[slots,names,requested,path,length,mode,newunit],types::I64)?;
+    let actions=table(b,module,ptr,".rfort.file_actions")?;
+    let unit=call(module,b,"rfort_file_open_dynamic",&[slots,names,actions,requested,path,length,mode,newunit],types::I64)?;
     if !checked {return Ok(unit);}
     let okay=b.ins().icmp_imm(IntCC::NotEqual,unit,i64::MIN+1);require(module,b,ptr,dc,okay,"OPEN on an already connected unit is not yet supported")?;
     let okay=b.ins().icmp_imm(IntCC::NotEqual,unit,i64::MIN+2);require(module,b,ptr,dc,okay,"file units must be in 0..1023, excluding preconnected units 5 and 6")?;
@@ -266,6 +270,8 @@ pub(super) fn operation(
         let (index,_)=unit_index(b,unit);let base=table(b,module,ptr,".rfort.file_names")?;
         let offset=b.ins().imul_imm(index,8);let address=b.ins().iadd(base,offset);
         b.ins().store(MemFlags::new(),path,address,0);
+        let actions=table(b,module,ptr,".rfort.file_actions")?;let address=b.ins().iadd(actions,offset);
+        let action=b.ins().iconst(types::I64,if op=="@file_scratch" {3}else{1});b.ins().store(MemFlags::new(),action,address,0);
         return Ok(());
     }
     if op == "@file_close" || op == "@file_close_delete" {

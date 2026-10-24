@@ -120,32 +120,52 @@ pub unsafe extern "C" fn rfort_file_name(source:*const u8, destination:*mut u8, 
 
 #[no_mangle]
 pub unsafe extern "C" fn rfort_file_inquire(
-    slots:*const *mut core::ffi::c_void, names:*const *const u8, unit:i64,
-    path:*const u8,path_length:usize,number:*mut i64,opened:*mut i64,
-    destination:*mut u8,length:usize,
+    slots:*const *mut core::ffi::c_void, names:*const *const u8, actions:*const i64,unit:i64,
+    path:*const u8,path_length:usize,number:*mut i64,opened:*mut i64,exists:*mut i64,named:*mut i64,
+    destination:*mut u8,length:usize,action_destination:*mut u8,action_length:usize,
 )->i64 {
-    *number=-1;*opened=0;
-    let mut source=core::ptr::null();let mut status=0;
+    *number=-1;*opened=0;*exists=0;*named=0;
+    let mut source=core::ptr::null();let mut status=0;let mut action=0;
     if !path.is_null() {
-        let path=core::slice::from_raw_parts(path,path_length);
-        if path.contains(&0) {status=1;} else {
+        let path_slice=file_inquiry::trim(core::slice::from_raw_parts(path,path_length));
+        (status,*exists)=file_inquiry::exists(path_slice);
+        if status==0 {
+            *named=1;
             for i in 0..2048 {
                 let name=*names.add(i);
                 if !(*slots.add(i)).is_null() && !name.is_null() {
                     let mut n=0;while *name.add(n)!=0 {n+=1;}
-                    if file_inquiry::same_name(path,core::slice::from_raw_parts(name,n)) {
-                        *number=file_inquiry::unit(i);*opened=1;source=name;break;
+                    if file_inquiry::same_name(path_slice,core::slice::from_raw_parts(name,n)) {
+                        *number=file_inquiry::unit(i);*opened=1;action=*actions.add(i);break;
                     }
                 }
             }
+            // FILE inquiry returns the supplied name even if not connected.
+            let copy=length.min(path_slice.len());
+            core::ptr::copy_nonoverlapping(path, destination,copy);
+            core::ptr::write_bytes(destination.add(copy),b' ',length-copy);
+            *destination.add(length)=0;
+        } else {rfort_file_name(source,destination,length);}
+    } else {
+        if file_inquiry::invalid_unit(unit) {status=1;}
+        else {
+            let index=file_inquiry::index(unit);
+            *exists=i64::from(unit>=0 && index.is_some());
+            if let Some(index)=index.filter(|i|!(*slots.add(*i)).is_null()) {
+                *number=unit;*opened=1;*exists=1;source=*names.add(index);*named=i64::from(!source.is_null());action=*actions.add(index);
+            } else if matches!(unit,0|5|6) {
+                *number=unit;*opened=1;*named=1;
+                source=match unit {0=>b"stderr\0".as_ptr(),5=>b"stdin\0".as_ptr(),_=>b"stdout\0".as_ptr()};
+                action=if unit==5 {1}else{2};
+            }
         }
-    } else if file_inquiry::invalid_unit(unit) {status=1;}
-    else if unit==5 || unit==6 {
-        *number=unit;*opened=1;source=if unit==5 {b"stdin\0".as_ptr()}else{b"stdout\0".as_ptr()};
-    } else if let Some(index)=file_inquiry::index(unit) {
-        if !(*slots.add(index)).is_null() {*number=unit;*opened=1;source=*names.add(index);}
+        rfort_file_name(source,destination,length);
     }
-    rfort_file_name(source,destination,length);
+    let text=file_inquiry::action_text(action).as_bytes();
+    let copy=action_length.min(text.len());
+    core::ptr::copy_nonoverlapping(text.as_ptr(),action_destination,copy);
+    core::ptr::write_bytes(action_destination.add(copy),b' ',action_length-copy);
+    *action_destination.add(action_length)=0;
     status
 }
 
@@ -174,7 +194,7 @@ pub unsafe extern "C" fn rfort_file_endfile(stream:*mut core::ffi::c_void)->i32 
     0
 }
 #[no_mangle]
-pub unsafe extern "C" fn rfort_file_open_dynamic(slots:*mut *mut core::ffi::c_void,names:*mut *const u8,requested:i64,path:*const u8,length:usize,mode:i64,newunit:i64)->i64 {
+pub unsafe extern "C" fn rfort_file_open_dynamic(slots:*mut *mut core::ffi::c_void,names:*mut *const u8,actions:*mut i64,requested:i64,path:*const u8,length:usize,mode:i64,newunit:i64)->i64 {
     let mut length=length;while length>0 && *path.add(length-1)==b' ' {length-=1;}
     if length==0 || core::slice::from_raw_parts(path,length).contains(&0) {return i64::MIN;}
     let unit=if newunit!=0 {
@@ -185,10 +205,10 @@ pub unsafe extern "C" fn rfort_file_open_dynamic(slots:*mut *mut core::ffi::c_vo
     if !(*slots.add(index)).is_null() {return i64::MIN+1;}
     let name=malloc(length+1).cast::<u8>();if name.is_null() {return i64::MIN;}
     core::ptr::copy_nonoverlapping(path,name,length);*name.add(length)=0;
-    let flags=match mode {0=>b"rb\0".as_ptr(),1=>b"wb\0".as_ptr(),2=>b"w+b\0".as_ptr(),3|4|5=>b"r+b\0".as_ptr(),_=>{free(name.cast());return i64::MIN;}};
-    let mut file=fopen(name,flags);if file.is_null() && mode==5 {file=fopen(name,b"w+b\0".as_ptr());}
+    let flags=match mode {0=>b"rb\0".as_ptr(),1=>b"wb\0".as_ptr(),2=>b"w+b\0".as_ptr(),3|4|5|6=>b"r+b\0".as_ptr(),_=>{free(name.cast());return i64::MIN;}};
+    let mut file=fopen(name,flags);if file.is_null() && matches!(mode,5|6) {file=fopen(name,b"w+b\0".as_ptr());}
     if file.is_null() {free(name.cast());return i64::MIN;}
-    *slots.add(index)=file;*names.add(index)=name;unit
+    *slots.add(index)=file;*names.add(index)=name;*actions.add(index)=file_inquiry::action(mode);unit
 }
 #[no_mangle]
 pub unsafe extern "C" fn rfort_format_end_file(pointer:*mut core::ffi::c_void,stream:*mut core::ffi::c_void)->i32 {

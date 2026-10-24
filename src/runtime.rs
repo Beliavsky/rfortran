@@ -1497,15 +1497,17 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                     }
                     if matches!(name.as_str(),"@file_inquire_unit"|"@file_inquire_file") {
                         let fr=call_stack.last().unwrap().clone();
-                        let value=eval_expr(&args[4],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack);
-                        let (status,number,opened,mut text)=FILES.with(|files|files.borrow().inquire(value.0,value.3.as_deref()));
+                        let value=eval_expr(&args[7],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack);
+                        let (status,number,opened,exists,named,text,action)=FILES.with(|files|files.borrow().inquire(value.0,value.3.as_deref()));
                         let frame=call_stack.last_mut().unwrap();
-                        for (arg,value) in args[..3].iter().zip([status,number,opened]) {
+                        for (arg,value) in args[..5].iter().zip([status,number,opened,exists,named]) {
                             let Expr::Ident(dest)=arg else {unreachable!()};frame.env_int.insert(dest.clone(),value);
                         }
-                        let Expr::Ident(dest)=&args[3] else {unreachable!()};
-                        let Expr::IntLit(length)=&args[5] else {unreachable!()};let length:usize=length.parse().unwrap();
-                        text.truncate(length);text.push_str(&" ".repeat(length-text.len()));frame.env_str.insert(dest.clone(),text);
+                        for (i,mut text) in [(5,text),(6,action)] {
+                            let Expr::Ident(dest)=&args[i] else {unreachable!()};
+                            let Expr::IntLit(length)=&args[i+3] else {unreachable!()};let length:usize=length.parse().unwrap();
+                            text.truncate(length);text.push_str(&" ".repeat(length-text.len()));frame.env_str.insert(dest.clone(),text);
+                        }
                         idx+=1;continue;
                     }
                     if name=="@file_open_dynamic" || name=="@file_open_try" {

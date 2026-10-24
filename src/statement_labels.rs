@@ -567,7 +567,52 @@ fn unresolved_end(body: &[Stmt]) -> bool {
     })
 }
 
+/// Expose INQUIRE ERR= as an ordinary transfer before label resolution.
+fn inquiry_errors(body: &mut [Stmt], temps: &mut Vec<String>) -> Result<()> {
+    for stmt in body {
+        match stmt {
+            Stmt::CallSub{name,args} if name=="@io_inquire" => {
+                let errors:Vec<usize>=args.iter().enumerate().filter_map(|(i,a)|
+                    matches!(a,Expr::Call(n,_) if n=="@io_spec:err").then_some(i)).collect();
+                if errors.len()>1 {bail!("inquire: duplicate err control");}
+                if let Some(&index)=errors.first() {
+                    let Expr::Call(_,values)=args.remove(index) else {unreachable!()};
+                    let [target]=values.as_slice() else {bail!("invalid INQUIRE ERR label");};
+                    number(target)?;
+                    let statuses:Vec<&Expr>=args.iter().filter_map(|a|match a {
+                        Expr::Call(n,v) if n=="@io_spec:iostat" && v.len()==1=>Some(&v[0]),_=>None,
+                    }).collect();
+                    if statuses.len()>1 {bail!("inquire: duplicate iostat control");}
+                    let status=if let Some(value)=statuses.first() {(*value).clone()} else {
+                        let temp=format!("@inquire_err_status_{}",temps.len());temps.push(temp.clone());
+                        args.push(Expr::Call("@io_spec:iostat".into(),vec![Expr::Ident(temp.clone())]));
+                        Expr::Ident(temp)
+                    };
+                    let statements=vec![stmt.clone(),Stmt::If{
+                        cond:Expr::Bin(BinOp::Ne,Box::new(status),Box::new(Expr::IntLit("0".into()))),
+                        then_body:vec![Stmt::CallSub{name:"@goto".into(),args:vec![target.clone()]}],else_body:None}];
+                    *stmt=Stmt::Block{body:statements};
+                }
+            }
+            Stmt::If{then_body,else_body,..}=>{
+                inquiry_errors(then_body,temps)?;
+                if let Some(body)=else_body {inquiry_errors(body,temps)?;}
+            }
+            Stmt::Do{body,..}|Stmt::DoWhile{body,..}|Stmt::Block{body}=>inquiry_errors(body,temps)?,
+            Stmt::SelectCase{cases,default,..}=>{
+                for case in cases {inquiry_errors(&mut case.body,temps)?;}
+                if let Some(body)=default {inquiry_errors(body,temps)?;}
+            }
+            _=>{}
+        }
+    }
+    Ok(())
+}
+
 fn unit(body: &mut Vec<Stmt>) -> Result<()> {
+    let mut inquiry_temps=vec![];
+    inquiry_errors(body,&mut inquiry_temps)?;
+    if !inquiry_temps.is_empty() {body.insert(0,Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:inquiry_temps});}
     let mut labels = HashSet::new();
     let mut targets = vec![];
     collect(body, &mut labels, &mut targets)?;

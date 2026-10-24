@@ -34,7 +34,7 @@ fn input_destinations(stmts: &[IStmt]) -> std::collections::HashSet<String> {
                 if let Some(IExpr::Ident(id))=args.first() {names.insert(id.clone());}
             }
             IStmt::Call(name,args) if matches!(name.as_str(),"@file_inquire_unit"|"@file_inquire_file"|"@environment_query"|"@argument_query"|"@cwd_query")=>{
-                let count=if matches!(name.as_str(),"@environment_query"|"@argument_query") {3} else if name=="@cwd_query" {2} else {4};
+                let count=if matches!(name.as_str(),"@environment_query"|"@argument_query") {3} else if name=="@cwd_query" {2} else {7};
                 for arg in &args[..count] {if let IExpr::Ident(id)=arg {names.insert(id.clone());}}
             }
             IStmt::Call(name,args) if name=="@list_read_complex_next" => {for arg in &args[..3] {if let IExpr::Ident(id)=arg {names.insert(id.clone());}}}

@@ -2606,17 +2606,28 @@ negative unit and supports up to 1024 simultaneous scratch connections.
 item through format reversion; an empty list writes an empty record. Writes
 replace subsequent records at the current position. Scratch files are deleted
 on close. `INQUIRE` accepts exactly one of `UNIT=` or `FILE=`, with any
-combination of scalar-variable outputs `OPENED=`, `NUMBER=`, `NAME=` and
-`IOSTAT=`. Controls may be reordered; UNIT may also be positional. Unit queries
-recognize preconnected units 5 and 6 and scratch NEWUNIT connections. Unconnected
-units and filenames return OPENED false, NUMBER -1 and IOSTAT zero. Invalid
-queries return a nonzero IOSTAT, or stop with an error when IOSTAT is omitted.
-Named connections return their OPEN path in NAME, padded or truncated to the
-destination's declared length; scratch and unconnected queries fill NAME with
-blanks (NAME is undefined by Fortran for an unnamed/unconnected unit).
-Filename lookup ignores trailing blanks and compares normalized absolute paths;
-distinct hard-link names are not equated. Run `python tests/test_inquire.py` for
-interpreter/native O0/O2 checks against gfortran, including connection changes.
+combination of scalar-variable outputs `EXIST=`, `OPENED=`, `NAMED=`, `NUMBER=`,
+`NAME=`, `ACTION=`, `IOSTAT=` and `IOMSG=`, plus an `ERR=` statement label.
+Controls may be reordered; UNIT may also be positional. Unit queries recognize
+preconnected units 0, 5 and 6 and scratch NEWUNIT connections. `EXIST` tests
+filesystem existence for FILE queries independently of connection state: a
+closed file can exist with OPENED false. A missing file is a successful inquiry.
+Unconnected queries return OPENED false, NUMBER -1 and IOSTAT zero. Unit existence
+reflects the supported unit range and active NEWUNIT connections.
+`NAMED` distinguishes named connections from scratch connections. FILE queries
+return the supplied filename in NAME, padded or truncated to the destination
+length. NAME is undefined by Fortran for an unnamed or unconnected unit; rfort
+fills it with blanks. `ACTION` reports READ, WRITE or READWRITE from the connection,
+and UNDEFINED when unconnected. Filenames ignore trailing blanks and connection
+lookup compares normalized absolute paths; distinct hard-link names are not equated.
+Invalid queries set a nonzero IOSTAT and, if supplied, an explanatory IOMSG.
+IOMSG is unchanged on success. ERR transfers after status/message assignment;
+without IOSTAT or ERR an inquiry error terminates execution. Forward and backward
+ERR labels use the existing statement-label machinery. Run
+`python tests/test_inquire.py` for interpreter/native O0/O2 checks against gfortran,
+including connection changes, scratch files, access modes and error branches.
+Other inquiry properties, including SIZE and the separate IOLENGTH form, remain
+unsupported.
 `(A)` READ destinations may also be dynamically indexed local CHARACTER elements.
 
 External list-directed WRITE, file ADVANCE controls, and IOSTAT on OPEN/CLOSE

@@ -107,6 +107,149 @@ end
         self.check('logical::opened\ninquire(unit=-1,opened=opened)\nend\n',
                    error='INQUIRE failed',reference=False)
 
+    def test_xacv_file_exists(self):
+        with tempfile.TemporaryDirectory(prefix='inquire existence ') as tmp:
+            program=(ROOT/'tests/programs/xacv_inquire_exist.f90').read_text()
+            program=program.replace("'rfort_inquire_exist_test.tmp'",literal(Path(tmp)/'exist.tmp'))
+            self.check(program,'T\nF\n')
+
+    def test_existence_named_and_action(self):
+        with tempfile.TemporaryDirectory(prefix='inquire properties ') as tmp:
+            path=Path(tmp)/'data.txt'
+            self.check(f'''implicit none
+character(512)::path,name
+character(12)::action
+character(4)::short
+logical::exists,opened,named
+integer::u,ios
+path={literal(path)}
+inquire(file=path,exist=exists,opened=opened,named=named,name=name,action=action)
+print *,exists,opened,named,trim(name)==trim(path),trim(action)=='UNDEFINED'
+open(newunit=u,file=path,status='replace',action='write')
+inquire(unit=u,exist=exists,opened=opened,named=named,name=name,action=action,iostat=ios)
+print *,exists,opened,named,trim(name)==trim(path),trim(action)=='WRITE',ios
+inquire(file=path,action=short)
+print *,short=='WRIT'
+close(u)
+inquire(file=path,exist=exists,opened=opened,named=named)
+print *,exists,opened,named
+open(20,file=path,status='old',action='read')
+inquire(file=path,action=action)
+print *,trim(action)=='READ'
+close(20)
+open(20,file=path,status='old',action='readwrite')
+inquire(unit=20,action=action)
+print *,trim(action)=='READWRITE'
+close(20)
+open(20,file=path,status='unknown',action='write')
+inquire(unit=20,action=action)
+print *,trim(action)=='WRITE'
+close(20,status='delete')
+inquire(file=path,exist=exists)
+print *,exists
+open(20,file=path,status='unknown',action='write')
+inquire(file=path,exist=exists,action=action)
+print *,exists,trim(action)=='WRITE'
+close(20,status='delete')
+end
+''','F F T T T\nT T T T T 0\nT\nT F T\nT\nT\nT\nF\nT T\n')
+
+    def test_scratch_preconnected_and_unconnected(self):
+        self.check('''implicit none
+integer::u,ios
+logical::exists,opened,named
+character(9)::action
+inquire(unit=20,exist=exists,opened=opened)
+print *,exists,opened
+open(newunit=u,status='scratch')
+inquire(unit=u,exist=exists,opened=opened,named=named,action=action)
+print *,exists,opened,named,action=='READWRITE'
+close(u)
+inquire(unit=u,exist=exists,opened=opened)
+print *,exists,opened
+inquire(unit=5,exist=exists,opened=opened,action=action,iostat=ios)
+print *,exists,opened,trim(action)=='READ',ios
+inquire(unit=6,exist=exists,opened=opened,action=action)
+print *,exists,opened,trim(action)=='WRITE'
+inquire(unit=0,exist=exists,opened=opened,action=action)
+print *,exists,opened,trim(action)=='WRITE'
+end
+''','T F\nT T F T\nF F\nT T T 0\nT T T\nT T T\n')
+
+    def test_iomsg_and_err(self):
+        self.check('''implicit none
+integer::ios,u
+character(80)::message
+logical::exists
+message='unchanged'
+inquire(unit=20,exist=exists,iostat=ios,iomsg=message,err=100)
+print *,ios,trim(message)=='unchanged'
+u=-1
+inquire(unit=u,iostat=ios,iomsg=message,err=100)
+error stop 'missed ERR transfer'
+100 print *,ios/=0,len_trim(message)>0
+message='unchanged'
+inquire(unit=u,iostat=ios,iomsg=message)
+print *,ios/=0,len_trim(message)>0
+inquire(unit=u,iomsg=message,err=200)
+error stop 'missed ERR without IOSTAT'
+200 print *,len_trim(message)>0
+end
+''','0 T\nT T\nT T\nT\n')
+
+    def test_err_in_procedure_and_loop(self):
+        self.check('''program main
+implicit none
+integer::ios,k
+logical::handled
+character(80)::message
+ do k=1,2
+    call query(-1,ios,message,handled)
+    print *,handled,ios/=0,len_trim(message)>0
+ end do
+contains
+subroutine query(u,ios,message,handled)
+integer,intent(in)::u
+integer,intent(out)::ios
+character(*),intent(out)::message
+logical,intent(out)::handled
+inquire(unit=u,iostat=ios,iomsg=message,err=100)
+handled=.false.
+return
+100 handled=.true.
+end subroutine
+end program
+''','T T T\nT T T\n')
+
+    def test_backward_err(self):
+        self.check('''implicit none
+integer::u,attempts,ios
+attempts=0
+u=-1
+100 attempts=attempts+1
+if (attempts==2) u=20
+inquire(unit=u,iostat=ios,err=100)
+print *,attempts,ios
+end
+''','2 0\n')
+
+    def test_iomsg_does_not_handle_error(self):
+        self.check("character(50)::message\ninquire(unit=-1,iomsg=message)\nend\n",
+                   error='INQUIRE failed',reference=False)
+
+    def test_empty_filename_and_short_iomsg(self):
+        self.check('''logical::exists
+integer::ios,u
+character(7)::message
+inquire(file='',exist=exists,iostat=ios)
+print *,exists,ios
+u=-1
+message='???????'
+inquire(unit=u,iostat=ios,iomsg=message)
+print *,ios/=0,len_trim(message)>0,message/='???????'
+end
+''','F 0\nT T T\n')
+
     def test_validation(self):
         for controls,message in [
             ('opened=opened','exactly one'),
@@ -120,9 +263,17 @@ end
             ('unit=1.0,opened=opened','INTEGER'),
             ('file=20,opened=opened','CHARACTER'),
             ('unit=20,iostat=n(1)','writable scalar'),
+            ('unit=20,exist=n','LOGICAL'),
+            ('unit=20,named=n','LOGICAL'),
+            ('unit=20,action=n','CHARACTER'),
+            ('unit=20,iomsg=n','CHARACTER'),
+            ('unit=20,exist=opened,exist=opened','duplicate exist'),
+            ('unit=20,err=999','undefined statement label'),
         ]:
             with self.subTest(controls=controls):
                 self.reject('integer::n\nlogical::opened\ninquire('+controls+')\nend\n',message)
+        self.reject('logical::ios\ninquire(unit=20,iostat=ios,err=100)\n100 continue\nend\n','INTEGER')
+        self.reject('integer::ios\ninquire(unit=20,iostat=ios,iostat=ios,err=100)\n100 continue\nend\n','duplicate iostat')
         self.reject('pure subroutine f()\nlogical::opened\ninquire(unit=20,opened=opened)\nend subroutine\n',
                     'PURE procedure cannot perform external I/O')
 
