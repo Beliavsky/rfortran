@@ -239,9 +239,43 @@ The existing bounded CHARACTER result/copy paths remain available.
 counts, empty results, forwarding, repeated allocation, nonunit bounds,
 INTENT(INOUT), INTENT(OUT) deallocation on entry, zero-length elements and a
 runtime extent of 4097. It compares interpreter and -O0/-O2 native output with
-gfortran. The full source advances to `READ into vector-subscript selections is
-not yet supported`, reported at line 16948 on
-`call set_alloc((dates(:nread)),dates)`.
+gfortran. After this fix, the full source reached the former diagnostic
+`READ into vector-subscript selections is not yet supported`, reported at line
+16948 on `call set_alloc((dates(:nread)),dates)`, fixed below.
+
+The twenty-sixth repro isolates this former misleading READ diagnostic:
+[tests/programs/xacv_read_named_module_section.f90](tests/programs/xacv_read_named_module_section.f90).
+It has no READ statements, derived types, OPTIONAL arguments or vector
+subscripts. It passes a rank-one triplet section to an ordinary copying
+subroutine in a module named `read_copy_mod`. Gfortran with
+`-std=f2018 -Wall -fcheck=all` prints `1 2 3`.
+
+```cmd
+rf.bat tests/programs/xacv_read_named_module_section.f90 --run
+```
+
+Native rfort and its interpreter now print `1 2 3` too. Previously, renaming only
+`read_copy_mod` to `copy_mod` avoided the error. The vector passes classified any
+generated call whose name started with `@` and contained `read` as input.
+Module-qualified user procedure names could meet that test too; the rejected
+argument was an ordinary triplet section. The full-source diagnostic reached
+this guard with sections of the flattened month/day/year component arrays
+passed to `set_alloc`, rather than READ items.
+
+Both vector passes now use `input::transfer_start` to identify canonical READ
+operations and distinguish their transfer items from control arguments. User
+procedure names no longer affect READ classification. The regression suite
+`tests/test_read_call_classification.py` covers module/procedure names containing
+`read`, fixed and runtime vector actuals, writable triplet sections and retained
+diagnostics for genuine READs with unsupported vector destinations, using the
+interpreter, native -O0/-O2 and gfortran for valid source.
+The full source now reaches line 25805, calling `print_stats` with
+`good=abs(xx-bad_value) > 1.0d-10`, and reports `type or rank mismatch for good`.
+
+Renaming the module, putting `read` in the procedure name instead, and passing
+the whole input array provided controls. Initial failing results and controls
+are saved in the ignored build directory at
+`target/acv-repros/read-classification/report.json`.
 
 ## Intrinsic calls after extending an intrinsic generic
 

@@ -1140,9 +1140,8 @@ impl Lower {
                         }
                         result.extend(prefix);result.push(stmt);continue;
                     }
-                    if name.starts_with('@')
-                        && name.contains("read")
-                        && args.iter().any(|e| contains(e, &s))
+                    if crate::input::transfer_start(name)
+                        .is_some_and(|start|args.iter().skip(start).any(|e|contains(e,&s)))
                     {
                         bail!("READ into vector-subscript selections is not yet supported");
                     }

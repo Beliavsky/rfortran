@@ -1088,8 +1088,9 @@ impl Lowerer {
                             validate_actual(name, i, &scope.procedures)?;
                         }
                     }
-                    for e in args {
-                        if name.contains("read") && name.starts_with('@') && contains(e, &scope)? {
+                    let read_start=crate::input::transfer_start(name);
+                    for (i,e) in args.iter_mut().enumerate() {
+                        if read_start.is_some_and(|start|i>=start) && contains(e, &scope)? {
                             bail!("READ into vector-subscript selections is not yet supported");
                         }
                         if name == "@write" {
