@@ -1392,7 +1392,10 @@ CHARACTER input concatenation and allocation case from `xutil.f90`.
 ### Pointer association
 
 Scalar and deferred-shape numeric or LOGICAL pointers of ranks 1 through 15
-support `p => x` with fixed `TARGET` storage. The same descriptor lowering handles
+support `p => x` with fixed `TARGET` storage. Deferred-shape arrays also support
+allocated `ALLOCATABLE, TARGET` storage of the supported numeric/LOGICAL kinds,
+including runtime extents and lower bounds. Association to an unallocated array
+is a runtime error. The same descriptor lowering handles
 every rank. Descriptors contain the storage and initialization addresses, an
 association state, an origin offset, and per-dimension lower bounds, extents,
 and strides. The interpreter represents addresses with checked storage handles.
@@ -1403,7 +1406,12 @@ reduce rank. Noncontiguous and negative-stride views use the original storage.
 Pointer-to-pointer association copies the descriptor. Reassociation can change
 the shape and total element count, and there is no pointer-specific 4096-element
 limit. Whole-array and section assignments snapshot array right-hand sides to
-preserve overlapping aliases; temporary capacity is bounded by known targets.
+preserve overlapping aliases; snapshots use runtime storage for heap targets.
+Matching-shape updates of an allocated target preserve its existing associations.
+As in Fortran, a deallocated or reallocated target requires pointer reassociation
+before further access. `tests/test_allocatable_pointer_targets.py` checks
+whole/section targets, allocation bounds, empty arrays, strides, shared
+initialization masks and local procedure dummy arguments against gfortran.
 
 `NULLIFY`, `p => NULL()`, and `ASSOCIATED(p)` are supported; the two-argument
 form is described under [ASSOCIATE](#associate).
@@ -1439,7 +1447,7 @@ direct variable access are disabled for procedures that access pointer storage;
 Cranelift still applies the requested native optimization level.
 
 Pointer declaration initialization, bounds/rank remapping, pointer
-allocation, general dynamic or allocatable targets, CHARACTER/derived scalar pointers,
+allocation, ALLOCATABLE scalar targets, CHARACTER/derived scalar pointers,
 INTEGER(16) pointers, pointer
 dummy function arguments and results, host pointer references from unspecialized
 procedures, `INTENT(IN)` pointer dummies,
@@ -1580,7 +1588,7 @@ interpreter/native O0/O2 checks against gfortran.
 Derived-type pointer arrays support ranks through 15 when their flattened
 components are scalar numeric or LOGICAL fields, including nested scalar
 records. Component descriptors preserve target identity, initialization masks,
-lower bounds and section strides. Fixed TARGET arrays and array components of
+lower bounds and section strides. Fixed or ALLOCATABLE TARGET arrays and array components of
 scalar TARGET objects, pointer-to-pointer association, write-through updates,
 NULLIFY, ASSOCIATED (including keywords), and local subroutine POINTER dummies
 are covered by `tests/test_derived_array_pointers.py`. CHARACTER, array-valued
@@ -1598,8 +1606,7 @@ owned targets are rejected. Binding to an unallocated component is a runtime
 error. Matching-shape component updates retain existing data buffers and masks,
 so valid existing pointers continue to refer to the updated allocation.
 `tests/test_owned_record_pointers.py` checks interpreter/native O0/O2 against
-gfortran. General standalone ALLOCATABLE pointer targets and direct subscripted
-or section targets of the owned component remain unsupported; sections can be
+gfortran. Direct subscripted or section targets of the owned component remain unsupported; sections can be
 taken from an already associated pointer.
 
 Polymorphic arrays, saved arrays, derived PARAMETER arrays,
@@ -2368,7 +2375,11 @@ this alongside multidimensional, empty and runtime-sized array items.
 
 Formatted PRINT/WRITE to standard output support nested implied-DO lists with
 runtime INTEGER bounds and positive/negative steps. Controls are evaluated once
-on entry to each implied-DO. Transfer values, including CHARACTER substrings,
+on entry to each implied-DO. Scalar SIZE/LBOUND/UBOUND inquiries retain their
+integer type after allocation checks are inserted, including output that mixes
+runtime-allocated local arrays with assumed-shape arguments. Allocation guards
+remain active, and invalid formatted implied-DO controls report the PRINT/WRITE
+source line. Transfer values, including CHARACTER substrings,
 are copied into a statement-local list before formatting. Memory use scales
 with the list's item count and CHARACTER lengths.
 Finite nested format groups and a final unlimited-repeat group such as

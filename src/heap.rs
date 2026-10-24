@@ -306,7 +306,7 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
             (dims.iter().all(|e|matches!(e,Expr::Ident(n) if n=="@deferred_extent"))
               && !params.contains(name)
               && !body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name && intent=="@heap_dummy"))
-              && (body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name && intent=="@record_heap_local")) || passed.contains(name) || name.starts_with("@module$") || ((dims.len()>1 || !array_dummies || runtime_allocate(body,name)) && allocation(body,name,&declared,&functions))
+              && (body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name && matches!(intent.as_str(),"@record_heap_local"|"target"))) || passed.contains(name) || name.starts_with("@module$") || ((dims.len()>1 || !array_dummies || runtime_allocate(body,name)) && allocation(body,name,&declared,&functions))
                   // Rank-one locals of procedures with array dummies use bounded
                   // storage when ALLOCATEd; one allocated only by assignment needs
                   // runtime storage for its value's extent.

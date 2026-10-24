@@ -186,6 +186,8 @@ struct Variable {
     length: Option<String>,
     /// Logical dimensions of descriptor-backed storage, before flattening.
     active_shape: Option<Vec<String>>,
+    active_lower: Option<Vec<String>>,
+    allocated: Option<String>,
     heap: bool,
 }
 #[derive(Clone)]
@@ -429,6 +431,8 @@ impl Lower {
                                         .and_then(|rest| rest.split_once(':')).map(|(length, _)| length.to_string())
                                 }),
                                 active_shape: attrs.iter().find_map(|(n,i)| (n==&name).then(||i.strip_prefix("@bounded_shape:")).flatten()).map(|s|s.split(':').map(str::to_owned).collect()),
+                                active_lower: attrs.iter().find_map(|(n,i)| (n==&name).then(||i.strip_prefix("@bounded_lower:")).flatten()).map(|s|s.split(':').map(str::to_owned).collect()),
+                                allocated: attrs.iter().find_map(|(n,i)| (n==&name).then(||i.strip_prefix("@bounded:")).flatten()).and_then(|s|s.split_once(':').map(|(_,flag)|flag.to_owned())),
                                 heap: has("@heap"),
                             },
                         );
@@ -510,8 +514,8 @@ impl Lower {
                 if !v.target {
                     bail!("pointer association target `{n}` requires TARGET attribute");
                 }
-                if v.allocatable {
-                    bail!("pointer association to ALLOCATABLE storage is not yet supported");
+                if v.allocatable && v.allocated.is_none() {
+                    bail!("ALLOCATABLE pointer targets require a supported array descriptor");
                 }
                 if v.level > ptr.level {
                     bail!("pointer `{p}` cannot outlive local TARGET `{n}`");
@@ -546,13 +550,13 @@ impl Lower {
             axes: d.axes.clone(),
             limit: d.limit.clone(),
             kind: ptr.kind.clone(),
-            capacity: ptr
+            capacity: if ptr.targets.iter().any(|n|self.vars.get(n).is_some_and(|v|v.heap)) {0} else {ptr
                 .targets
                 .iter()
                 .filter_map(|n| self.vars.get(n))
                 .map(|v| v.dims.iter().product::<i64>())
                 .max()
-                .unwrap_or(0),
+                .unwrap_or(0)},
         }
     }
     fn storage_view(
@@ -569,6 +573,9 @@ impl Lower {
         if !numeric(&v.kind) {
             bail!("pointer array expressions require numeric or LOGICAL storage");
         }
+        if let Some(flag)=&v.allocated {
+            out.push(require(id(flag),format!("pointer target `{n}` is unallocated")));
+        }
         let d = self.descriptor(0);
         self.initialize(&d, out);
         out.push(Stmt::CallSub {
@@ -583,7 +590,9 @@ impl Lower {
         for (i, extent) in dims.iter().enumerate() {
             let extent=match &v.length {Some(length) if dims.len()==1=>id(length),_=>extent.clone()};
             axes.push(Axis {
-                lower: int(if original_bounds { v.lower.get(i).copied().unwrap_or(1) } else { 1 }),
+                // Heap subscripts still use allocation coordinates here;
+                // fixed-array subscripts were normalized by array_bounds.
+                lower: if original_bounds || v.heap {v.active_lower.as_ref().and_then(|dims|dims.get(i)).map(|n|id(n)).unwrap_or_else(||int(v.lower.get(i).copied().unwrap_or(1)))} else {int(1)},
                 extent: extent.clone(),
                 stride: stride.clone(),
             });
@@ -1042,6 +1051,8 @@ impl Lower {
                         allocatable: false,
                         length: None,
                         active_shape: None,
+                        active_lower: None,
+                        allocated: None,
                         heap: false,
                     },
                 );

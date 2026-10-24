@@ -816,6 +816,8 @@ impl Lowerer {
         scope: &mut Scope,
         output: &mut Vec<Stmt>,
     ) -> Result<()> {
+        // Keep target identity and its original section coordinates.
+        if matches!(e,Expr::Call(n,_) if n=="associated") {return Ok(());}
         if let Expr::Call(n, args) = e {
             if matches!(
                 n.as_str(),

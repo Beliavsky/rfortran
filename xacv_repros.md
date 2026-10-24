@@ -100,7 +100,8 @@ preserve existing buffers and pointer identity. Tests in
 `tests/test_owned_record_pointers.py` cover bounds, masks, identity, zero-size
 and runtime-sized allocations, ranks through 15, nested date/time records,
 local pointer dummy escape, TARGET requirements and local-target lifetime
-checks. General standalone ALLOCATABLE pointer targets remain unsupported.
+checks. Standalone ALLOCATABLE TARGET arrays are covered by the thirty-third
+regression below.
 
 The former line-4271 blocker, `dt%date = dates`, is now supported as an
 assignment to a component-array view. The fifteenth repro,
@@ -371,7 +372,7 @@ bare pointers, strides, reassociation, empty sections, numeric kinds, LOGICAL
 comparisons, ranks 2/3/15, explicitly allocated destinations and runtime errors
 against gfortran in interpreter and native O0/O2 modes.
 
-General ALLOCATABLE pointer targets, writable ordinary pointer actuals and
+Writable ordinary pointer actuals and
 automatic reallocation of an unallocated destination from a pointer expression
 remain separate limitations. Initial reference runs and controls are recorded
 in `target/acv-repros/pointer-expression/report.json` (ignored).
@@ -429,9 +430,82 @@ accepted by its purity check. The runtime allocation guards are preserved.
 and allocated inputs, SIZE/LBOUND/UBOUND controls, negative strides, keyword
 arguments with default integer kind, empty rows/columns, and unallocated
 inquiries, alongside the existing snapshot and invalid-control tests.
-The full source now passes this FORALL and reports
+The full source then passed this FORALL and reported
 `output implied-DO bounds and step require supported scalar INTEGER expressions`.
-That next diagnostic currently has no source location.
+That diagnostic originally had no source location.
+
+The thirty-second repro isolates that output implied-DO diagnostic and is now a regression:
+[tests/programs/xacv_output_implied_do_bound.f90](tests/programs/xacv_output_implied_do_bound.f90).
+A procedure copies an assumed-shape CHARACTER argument into a runtime-allocated
+local array, then combines implied-DO output from both arrays in one WRITE.
+This mixed local/dummy pattern also appears in `print_many_stats_vec_str`,
+which prints `cstats_indep_` and `cstats` together.
+
+```cmd
+rf.bat tests/programs/xacv_output_implied_do_bound.f90 --run
+```
+
+Both native and interpreter modes now agree with gfortran
+(`-std=f2018 -Wall -fcheck=all`) and print `min max min max`.
+Output's scalar-integer classifier recognizes allocation-checked extents and
+lower/upper bound helpers without discarding their runtime guards. SIZE,
+LBOUND and UBOUND controls can therefore survive delayed argument association.
+Formatted implied-DO validation errors now retain the enclosing statement's
+source location; generated array-view implied-DO errors do likewise.
+
+Original controls, which still work in both rfort modes and gfortran:
+
+- Replace `allocate(local(n))` with the fixed `allocate(local(2))`.
+- Store `size(local)` in a scalar INTEGER and use that variable as the bound.
+- Split the two implied-DOs into separate WRITE statements (two output lines).
+
+A simple numeric SIZE bound, a single CHARACTER implied-DO, and output of a whole
+allocated CHARACTER array also work in isolation. The mixed array combination
+remains in the regression. `tests/test_formatted_implied_do.py` checks the repro,
+runtime formats, PRINT and WRITE, numeric/LOGICAL element types and kinds,
+LBOUND/UBOUND, negative strides, empty inputs, unallocated-array errors and the
+line number of invalid controls at native O0/O2 and in the interpreter against
+gfortran. Initial controls and reference runs are saved in
+`target/acv-repros/output-implied-do-bound/report.json` (ignored).
+The full source then passed this output and reported
+`pointer association to ALLOCATABLE storage is not yet supported`.
+
+The thirty-third repro isolates that pointer target limitation and is now a regression:
+[tests/programs/xacv_allocatable_pointer_target.f90](tests/programs/xacv_allocatable_pointer_target.f90).
+It retains the `ret_use => zret(i1:)` association from original line 25825.
+The main program declares `zret` with both ALLOCATABLE and TARGET, allocates
+three elements, associates a pointer with the last two, and updates the first
+selected element through the pointer. It nullifies the pointer before freeing
+the target, avoiding any use of a dangling association.
+
+```cmd
+rf.bat tests/programs/xacv_allocatable_pointer_target.f90 --run
+```
+
+Both rfort modes now agree with gfortran (`-std=f2018 -Wall -fcheck=all`) and
+print, ignoring real formatting:
+
+```text
+2
+20 3
+1 20 3
+```
+
+Both whole allocations and sections now borrow the target's data and
+initialization mask. TARGET arrays retain runtime extents and lower bounds;
+unallocated association is guarded at runtime. Heap-backed pointer expressions
+use runtime snapshot storage for overlap safety. ASSOCIATED keeps its original
+target section instead of comparing against a vector-selection copy.
+`tests/test_allocatable_pointer_targets.py` checks numeric/LOGICAL kinds,
+derived arrays with scalar numeric fields, ranks through 15, non-default bounds,
+strides, zero extents, matching-shape target updates, returned associations,
+initialization sharing, readonly/lifetime errors and unallocated targets against
+gfortran in interpreter and native O0/O2 modes.
+The original fixed TARGET control still works. Initial controls and reference runs are saved in
+`target/acv-repros/allocatable-pointer-target/report.json` (ignored).
+The full source now passes pointer association and reports
+`masked or DIM reductions on runtime-sized multidimensional arrays are not yet supported`
+at line 16994, `write (*,fmt_cr) "min",minval(xx,dim=1)`.
 
 ## Intrinsic calls after extending an intrinsic generic
 

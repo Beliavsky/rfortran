@@ -877,6 +877,8 @@ impl Lower {
         Ok(e.clone())
     }
     fn expression(&mut self, e: &mut Expr, s: &mut Shapes, out: &mut Vec<Stmt>) -> Result<()> {
+        // ASSOCIATED inspects target identity, not a copied section value.
+        if matches!(e,Expr::Call(n,_) if n=="associated") {return Ok(());}
         // Rank-one triplets use a dedicated AST node; use the same captured
         // selection machinery as multidimensional triplets when they vary.
         if let Expr::Section{name,..}=&*e {

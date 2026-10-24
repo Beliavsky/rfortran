@@ -145,6 +145,11 @@ pub fn contains_implied_do(e: &Expr) -> bool {
 pub(crate) fn integer(e: &Expr, symbols: &Symbols) -> bool {
     match e {
         Expr::Call(n,a) if n=="@conditional"=>integer(&a[1],symbols),
+        // Inquiries lowered after argument association retain their allocation
+        // guard. Its logical status and name do not change the value's type.
+        Expr::Call(n,a) if n=="@allocated_extent"=>a.get(1).is_some_and(|e|integer(e,symbols)),
+        Expr::Call(n,a) if n=="@heap_bound"=>a.len()==3 && a[..2].iter().all(|e|integer(e,symbols)),
+        Expr::Call(n,a) if matches!(n.as_str(),"@heap_lower_bound"|"@heap_upper_bound")=>a.len()==2 && a.iter().all(|e|integer(e,symbols)),
         Expr::IntLit(_) => true,
         Expr::Ident(n) => {
             matches!(symbols.get(n), Some((TypeSpec::Integer(None | Some(1 | 2 | 4 | 8)), dims)) if dims.is_empty())
@@ -161,8 +166,9 @@ pub(crate) fn integer(e: &Expr, symbols: &Symbols) -> bool {
         Expr::Call(n, args) if matches!(n.as_str(), "min" | "max" | "mod" | "abs") => {
             !args.is_empty() && args.iter().all(|e| integer(e, symbols))
         }
-        Expr::Call(n, args) if matches!(n.as_str(), "size" | "len" | "len_trim" | "int") => {
-            args.len() == 1 || n == "size" && args.len() == 2 && integer(&args[1], symbols)
+        Expr::Call(n, args) if matches!(n.as_str(), "size" | "len" | "len_trim" | "int" | "lbound" | "ubound") => {
+            args.len() == 1 && !matches!(n.as_str(),"lbound"|"ubound")
+                || matches!(n.as_str(),"size"|"lbound"|"ubound") && args.len() == 2 && integer(&args[1], symbols)
         }
         _ => false,
     }
@@ -436,7 +442,9 @@ pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> Result<crat
             }
         }
         crate::allocatables::metadata(body,&mut symbols);
+        let mut location = None;
         for stmt in body.iter_mut() {
+            if let Some(offset)=crate::source_diagnostics::statement_offset(&*stmt) {location=Some(offset);}
             let mut internal = None;
             let mut unit_check = None;
             let mut control_prefix = vec![];
@@ -516,7 +524,7 @@ pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> Result<crat
                     &mut Vec::new(),
                     &mut inner,
                     Some(&handle),
-                )?;
+                ).map_err(|e|crate::source_diagnostics::at(e,location))?;
                 inner.push(if let Some((target,length))=internal {
                     Stmt::CallSub {name:"@internal_format_end".into(),args:vec![id(&target),id(&handle),int(length as i64)]}
                 } else if let Some(unit)=unit_check {
@@ -576,7 +584,9 @@ pub(crate) fn prepare_character_views(mut program:crate::ast::Program)->Result<c
             Stmt::VarDecl{kind,names}=>for n in names {symbols.insert(n.clone(),(kind.clone(),vec![]));},_=>{}
         }}
         let mut out=vec![];
+        let mut location=None;
         for mut s in std::mem::take(body) {
+            if let Some(offset)=crate::source_diagnostics::statement_offset(&s) {location=Some(offset);}
             let items=match &mut s {
                 Stmt::Print{items}=>Some(items.as_mut_slice()),
                 Stmt::CallSub{name,args} if matches!(name.as_str(),"@formatted_print"|"@formatted_write_noadvance")=>Some(&mut args[1..]),
@@ -617,7 +627,7 @@ pub(crate) fn prepare_character_views(mut program:crate::ast::Program)->Result<c
                 }
             }
             match &mut s {
-                Stmt::Print{items} if items.iter().any(contains_implied_do)=>s=lower(items,&symbols,serial)?,
+                Stmt::Print{items} if items.iter().any(contains_implied_do)=>s=lower(items,&symbols,serial).map_err(|e|crate::source_diagnostics::at(e,location))?,
                 Stmt::Block{body}|Stmt::Do{body,..}|Stmt::DoWhile{body,..}=>scope(body,&symbols,serial)?,
                 Stmt::If{then_body,else_body,..}=>{scope(then_body,&symbols,serial)?;if let Some(body)=else_body {scope(body,&symbols,serial)?;}},
                 Stmt::Subroutine{body,..}|Stmt::Function{body,..}|Stmt::Module{body,..}=>scope(body,&symbols,serial)?,
