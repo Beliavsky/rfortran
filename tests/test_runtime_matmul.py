@@ -66,6 +66,52 @@ end program
             "54.0 7.0 10.0 15.0 22.0\n5.81117665E+16 6.18366198E+16 1.43806096E+17 1.53023792E+17\n"
             "-40.0 -43.0 -100.0 -106.0 -40.0\n58.0\n")
 
+    def test_mixture_section_reproducer(self):
+        from test_record_read import ROOT
+        self.check((ROOT / 'tests/programs/xmix_matmul_section.f90').read_text(),
+                   '17 29 30 42')
+
+    def test_strided_sections_and_overlap(self):
+        self.check("""implicit none
+integer,allocatable :: a(:,:), b(:,:), v(:)
+integer :: i,j,n
+n=4
+allocate(a(-1:2,0:3),b(2,2),v(-2:1))
+do j=0,3
+do i=-1,2
+a(i,j)=i+2+10*j
+end do
+end do
+b=reshape([1,0,0,1],[2,2])
+v=[1,2,3,4]
+print *,matmul(a(2:-1:-2,3:0:-2),b)
+print *,matmul(a(-1:2:2,0:3:2),v(-2:1:2))
+print *,matmul(v(-2:1:2),a(-1:2:2,0:3:2))
+a(-1:2:2,0:3:2)=matmul(a(2:-1:-2,3:0:-2),b)
+print *,a(-1:2:2,0:3:2)
+end
+""", '34 32 14 12 64 72 10 90 34 32 14 12')
+
+    def test_selector_evaluated_once(self):
+        self.check("""implicit none
+integer,allocatable :: a(:,:,:),v(:)
+integer :: calls
+allocate(a(2,2,2),v(2))
+a=2
+v=3
+calls=0
+print *,matmul(a(:,:,next_index()),v)
+print *,calls
+contains
+integer function next_index()
+calls=calls+1
+next_index=1
+end function
+end
+""", '12 12 1', reference=False)
+        # This asserts rfort's single-evaluation contract. The installed
+        # gfortran evaluates this scalar section selector twice.
+
     def test_nonconforming_shapes_stop(self):
         self.check("""program m7
 real, allocatable :: a(:,:), b(:,:)

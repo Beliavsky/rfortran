@@ -4,8 +4,8 @@
 
 //! MATMUL of ALLOCATABLE, assumed-shape and other runtime-sized arrays.
 //!
-//! A product whose arguments are whole arrays, at least one without a
-//! constant shape, is computed before its statement into an ALLOCATABLE
+//! Runtime-sized products and products with section operands are computed
+//! before their statement into an ALLOCATABLE
 //! temporary of the result's rank, which then replaces the call. The extents
 //! come from SIZE and the subscripts start at each argument's LBOUND. The
 //! inner extents are checked at run time, and the temporary is deallocated
@@ -158,12 +158,21 @@ impl Lowering<'_> {
         Some(id(&result))
     }
 
-    // The rank and type of an array expression built from whole arrays with
+    // The rank and type of an array expression built from whole arrays or triplet sections with
     // elemental operations, TRANSPOSE and RESHAPE, and whether it has a
     // runtime shape.
     fn shape(&self, e: &Expr) -> Option<(usize, TypeSpec, bool)> {
         match e {
             Expr::Ident(n) => self.arrays.get(n).map(|a| (a.rank, a.kind.clone(), a.runtime)),
+            Expr::Section { name, .. } => self.arrays.get(name)
+                .filter(|a| a.rank == 1).map(|a| (1, a.kind.clone(), true)),
+            Expr::Call(n, args) | Expr::Index(n, args) if self.arrays.contains_key(n) => {
+                let array = &self.arrays[n];
+                if args.len() != array.rank { return None; }
+                let rank = args.iter().filter(|e| matches!(e, Expr::Section { .. })
+                    || matches!(e, Expr::Call(tag, _) if tag == "@section_subscript")).count();
+                (rank > 0).then(|| (rank, array.kind.clone(), true))
+            }
             Expr::Bin(op, a, b) if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow) => {
                 match (self.shape(a), self.shape(b)) {
                     (Some(x), Some(y)) => (x.0 == y.0).then(|| Some((x.0, result_kind(&x.1, &y.1)?, x.2 || y.2))).flatten(),
@@ -187,6 +196,9 @@ impl Lowering<'_> {
     fn extents(&self, e: &Expr) -> Option<Vec<Expr>> {
         match e {
             Expr::Ident(n) => Some((1..=self.arrays.get(n)?.rank).map(|d| call("size", vec![id(n), int(d as i64)])).collect()),
+            Expr::Section { .. } => Some(vec![call("size", vec![e.clone(), int(1)])]),
+            Expr::Call(n, _) | Expr::Index(n, _) if self.arrays.contains_key(n) =>
+                Some((1..=self.shape(e)?.0).map(|d| call("size", vec![e.clone(), int(d as i64)])).collect()),
             Expr::Bin(_, a, b) => match (self.shape(a), self.shape(b)) {
                 (Some(x), _) if x.2 || self.shape(b).is_none() => self.extents(a),
                 (_, Some(_)) => self.extents(b),
@@ -207,6 +219,38 @@ impl Lowering<'_> {
         }
     }
 
+    fn capture_integer(&mut self, e: &mut Expr) {
+        if crate::parameters::integer_constant(e).is_ok() { return; }
+        *self.serial += 1;
+        let name = format!("@matmul_selector_{}", self.serial);
+        self.declarations.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![name.clone()] });
+        self.before.push(set(&name, e.clone()));
+        *e = id(&name);
+    }
+
+    fn capture_selectors(&mut self, e: &mut Expr) {
+        match e {
+            Expr::Section { lower, upper, stride, .. } => {
+                for bound in [lower, upper, stride].into_iter().flatten() { self.capture_integer(bound); }
+            }
+            Expr::Call(n, args) | Expr::Index(n, args) if self.arrays.contains_key(n) => {
+                for arg in args {
+                    if matches!(arg, Expr::Section { .. }) {
+                        self.capture_selectors(arg);
+                    } else if let Expr::Call(tag, items) = arg {
+                        if tag == "@section_subscript" {
+                            for item in items { self.capture_selectors(item); }
+                        } else { self.capture_integer(arg); }
+                    } else { self.capture_integer(arg); }
+                }
+            }
+            Expr::Call(_, args) | Expr::Index(_, args) => for arg in args { self.capture_selectors(arg); },
+            Expr::Bin(_, a, b) => { self.capture_selectors(a); self.capture_selectors(b); }
+            Expr::Un(_, a) => self.capture_selectors(a),
+            _ => {}
+        }
+    }
+
     // A whole-array argument, or an expression assigned to an ALLOCATABLE
     // temporary that the product then reads.
     fn operand(&mut self, e: &Expr) -> Option<(String, Array)> {
@@ -214,6 +258,10 @@ impl Lowering<'_> {
             return self.arrays.get(n).map(|a| (n.clone(), a.clone()));
         }
         let (rank, kind, runtime) = self.shape(e)?;
+        // Extent inquiries and the copy must use the same evaluated selectors.
+        let mut captured = e.clone();
+        self.capture_selectors(&mut captured);
+        let e = &captured;
         let transpose = matches!(e, Expr::Call(n, args) if n == "transpose" && matches!(args.as_slice(), [Expr::Ident(_)]));
         let extents = if transpose { vec![] } else { self.extents(e)? };
         *self.serial += 1;
