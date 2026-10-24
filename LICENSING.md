@@ -16,6 +16,7 @@ the author recorded in this repository's Git history.
 - `src/array_bounds.rs`
 - `src/derived.rs`
 - `src/driver.rs`
+- `src/command_time.rs`
 - `src/file_io.rs`
 - `src/codegen/file_io.rs`
 - `src/codegen/characters.rs`

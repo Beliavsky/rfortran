@@ -9,6 +9,15 @@ useful for locating expensive passes, but its times are not comparable with an
 optimized gfortran installation. Compare the same sources, flags and outcome:
 time to a diagnostic is not time to a successfully generated object file.
 
+## Command timings
+
+Use `rf.bat --time -c xacv.f90` (or `rfort --time -c xacv.f90`) for a
+concise compilation and overall wall-clock summary on stderr. With `--run`,
+execution is timed separately. Compilation includes linking unless `-c` is
+specified. Failed phases are marked; the child program exit status is preserved.
+The overall time includes rfort startup, but excludes wrapper startup/rebuilds.
+Repeat measurements with the same inputs, flags and compiler build.
+
 ## Optional pass timings
 
 Set `RFORT_TIME_PASSES=1` to report compiler pass start/end times on standard

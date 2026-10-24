@@ -128,6 +128,9 @@ pub struct Cli {
         help = "Run after building (only applies if no subcommand)"
     )]
     pub run: bool,
+
+    #[structopt(long, global = true, help = "Report compilation, execution and overall elapsed time on stderr")]
+    pub time: bool,
 }
 
 #[derive(Debug, StructOpt, Clone)]

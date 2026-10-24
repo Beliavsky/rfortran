@@ -262,6 +262,22 @@ fn shape(e: &Expr, s: &Shapes) -> Result<Option<(TypeSpec, Vec<Expr>)>> {
             vec![],
         ))),
         Expr::Call(n, a) if n == "@vector_subscript" => shape(&a[0], s),
+        Expr::Call(n, a) if n == "reshape" && !s.contains_key(n) => {
+            let dims = crate::multidim::reshape_shape(a)?;
+            crate::multidim::reshape_order(a, dims.len())?;
+            let Some((kind, _)) = shape(&a[0], s)? else { return Ok(None); };
+            Ok(Some((kind, dims.into_iter().map(int).collect())))
+        }
+        Expr::Call(n, a) if n == "matmul" && a.len() == 2 && !s.contains_key(n) => {
+            let (Some((ak, ad)), Some((bk, bd))) = (shape(&a[0], s)?, shape(&a[1], s)?) else { return Ok(None); };
+            let dims = match (ad.as_slice(), bd.as_slice()) {
+                ([rows, _], [_, cols]) => vec![rows.clone(), cols.clone()],
+                ([rows, _], [_]) => vec![rows.clone()],
+                ([_], [_, cols]) => vec![cols.clone()],
+                _ => bail!("MATMUL requires rank-one or rank-two arrays, with at least one rank-two operand"),
+            };
+            Ok(Some((super::merge(ak, bk), dims)))
+        }
         Expr::Call(n, a) if n == "@array_constructor" => {
             let mut dims = vec![];
             let mut kind = TypeSpec::Integer(None);

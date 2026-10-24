@@ -74,6 +74,7 @@ pub fn build(
     force_link: bool,
     cli: &Cli,
 ) -> Result<()> {
+    let mut timing = crate::command_time::Phase::new(cli.time, "Compilation");
     if inputs.is_empty() {
         bail!("No input files supplied");
     }
@@ -160,16 +161,21 @@ pub fn build(
         if run {
             bail!("No main program to run");
         }
+        timing.finish(true);
         return Ok(());
     }
     linker::link(&objects, &exe, cli)?;
+    timing.finish(true);
     if run {
-        let status = std::process::Command::new(exe.canonicalize()?)
+        let executable = exe.canonicalize()?;
+        let mut execution = crate::command_time::Phase::new(cli.time, "Execution");
+        let status = std::process::Command::new(executable)
             .args(&cli.run_args)
             .status()
             .context("running compiled program")?;
+        execution.finish(status.success());
         if !status.success() {
-            std::process::exit(status.code().unwrap_or(1));
+            return Err(crate::command_time::ProgramExit(status.code().unwrap_or(1)).into());
         }
     }
     Ok(())

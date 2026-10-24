@@ -122,6 +122,20 @@ few regression tests exercise it, it can be orders of magnitude slower on loops,
 and it can produce results that differ from the compiled program. Prefer the
 native build (`rfort --run`) when correctness matters.
 
+### Command timing
+
+Use `rfort --time -c example.f90` to time compilation, or
+`rf.bat --time example.f90 --run` to time both compilation and execution.
+The summary goes to stderr; program output on stdout is unchanged.
+Compilation includes source processing and linking (object generation with `-c`).
+Execution covers launching and waiting for the built program. Overall time starts
+at entry to rfort and includes command setup; it excludes batch startup and any
+compiler rebuild performed by `rfort.bat`. Times are monotonic wall-clock seconds.
+Failed phases are marked `(failed)`; execution is omitted when the build fails,
+and the program's exit code is preserved. Other subcommands report overall time;
+`emit-obj` also reports compilation time. Detailed pass profiling remains available
+separately through `RFORT_TIME_PASSES=1`.
+
 ### Interactive scalar sessions
 
 Start a REPL with `rfort repl` (or `rf.bat repl` on Windows):

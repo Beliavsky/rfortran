@@ -20,6 +20,7 @@ mod heap_characters;
 mod random_seed;
 mod timing;
 mod compile_profile;
+mod command_time;
 mod calendar;
 mod environment;
 mod timing_intrinsics;
@@ -120,11 +121,15 @@ struct BuildArtifact {
 }
 
 fn main() -> Result<()> {
+    let started = std::time::Instant::now();
     // Windows' small default main-thread stack is insufficient for the AST
     // traversals needed by valid high-rank array expressions.
-    match std::thread::Builder::new().name("rfort".into()).stack_size(32*1024*1024).spawn(compiler_main)?.join() {
+    match std::thread::Builder::new().name("rfort".into()).stack_size(32*1024*1024).spawn(move || compiler_main(started))?.join() {
         // Report as returning the error from main would, with user names.
         Ok(Err(error))=>{
+            if let Some(exit) = error.downcast_ref::<command_time::ProgramExit>() {
+                std::process::exit(exit.0);
+            }
             eprintln!("Error: {}", source_diagnostics::user_names(&format!("{error:?}")));
             std::process::exit(1);
         }
@@ -133,10 +138,11 @@ fn main() -> Result<()> {
     }
 }
 
-fn compiler_main() -> Result<()> {
+fn compiler_main(started: std::time::Instant) -> Result<()> {
     env_logger::init();
     let args = cli::Cli::from_command_line().normalize();
 
+    let _overall = command_time::Overall::new(args.time, started);
     unused::validate_options(&args.warnings)?;
 
     if args.help {
@@ -207,7 +213,7 @@ fn compiler_main() -> Result<()> {
                     for e in errs {
                         eprintln!("{}", e);
                     }
-                    std::process::exit(1);
+                    anyhow::bail!("compilation failed");
                 }
             }
         }
@@ -262,7 +268,7 @@ fn compiler_main() -> Result<()> {
                     }
                 }
                 if has_error || settings.werror {
-                    std::process::exit(1);
+                    anyhow::bail!("compilation failed");
                 }
             }
             if !any_err { initialized::instrument_with_origins(program, &src, input.file_name().and_then(|name| name.to_str()).unwrap_or("<unknown>"), &prepared.origins)?; }
@@ -275,7 +281,9 @@ fn compiler_main() -> Result<()> {
             driver::build(&inputs, out.or_else(|| args.out.clone()), run || args.run, false, &args)?;
         }
         cli::Command::EmitObj { input, out } => {
+            let mut timing = command_time::Phase::new(args.time, "Compilation");
             let art = compile_to_object(&input, &out, args.wall, args.werror, &args, false, None)?;
+            timing.finish(true);
             if !args.quiet {
                 println!("Wrote object: {}", art.object.display());
             }
