@@ -1963,6 +1963,14 @@ calls, including `xfind .in. xdata`, and to numeric, LOGICAL and CHARACTER resul
 Nested forwarding, keyword calls, empty arrays and supported constant CHARACTER
 sections are covered by `python tests/test_forward_array_results.py`.
 
+An array-valued function result can itself be an actual argument to another
+procedure inside an assumed-shape wrapper. Function lowering completes before
+the outer call associates its arguments, retaining the result's type, rank and
+active shape. Nested functions, OPTIONAL variants, genuine PACK inputs, empty
+results and repeated calls are covered by
+`python tests/test_nested_array_function_arguments.py`, with interpreter/native
+O0/O2 checks against gfortran. A function is evaluated once before its consumer.
+
 Bounded function arguments and fixed-shape results support ranks 1 through 15,
 independently of PURE; argument and result ranks may differ. This includes
 numeric, LOGICAL and fixed-length CHARACTER arrays. Each dimension is preserved

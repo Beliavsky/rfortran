@@ -1290,6 +1290,7 @@ fn expand(
     inherited: &Shapes,
     routines: &HashMap<String, Routine>,
     functions: &HashMap<String,TypeSpec>,
+    function_lower: &crate::character_elementals::Lower,
     active: &mut Vec<String>,
     serial: &mut usize,
 ) -> Result<()> {
@@ -1351,6 +1352,13 @@ fn expand(
     }
     for s in body.iter_mut() {
         if let Some(p) = crate::source_diagnostics::statement_offset(&s) { statement_location.set(Some(p)); }
+        // Function calls exposed by binding an assumed-shape wrapper still
+        // need their own argument association. Let the alternating function
+        // pass evaluate them before capturing the outer call's actuals.
+        if matches!(&*s,Stmt::CallSub{name,..} if routines.contains_key(name))
+            && function_lower.contains_calls(std::slice::from_ref(&*s)) {
+            continue;
+        }
         if let Stmt::CallSub { name, args } = s {
             if let Some(r) = routines.get(name) {
 
@@ -1361,7 +1369,7 @@ fn expand(
                 if r.elemental {
                     if let Some(mut expanded)=elemental_array_call(name,args,r,&shapes,&readonly,serial,functions)? {
                         let Stmt::Block {body}=&mut expanded else {unreachable!()};
-                        expand(body,&shapes,routines,functions,active,serial)?;
+                        expand(body,&shapes,routines,functions,function_lower,active,serial)?;
                         *s=expanded;
                         continue;
                     }
@@ -1798,7 +1806,7 @@ fn expand(
                     }
                 }
                 active.push(name.clone());
-                expand(&mut cloned, &call_shapes, routines, functions, active, serial)?;
+                expand(&mut cloned, &call_shapes, routines, functions, function_lower, active, serial)?;
                 active.pop();
                 crate::subroutines::inline_returns(&mut cloned,serial)?;
                 // Dummy bounds belong to the callee scope. In particular they
@@ -1816,15 +1824,15 @@ fn expand(
             | Stmt::Subroutine { body, .. }
             | Stmt::Block { body }
             | Stmt::Do { body, .. }
-            | Stmt::DoWhile { body, .. } => expand(body, &shapes, routines, functions, active, serial)?,
+            | Stmt::DoWhile { body, .. } => expand(body, &shapes, routines, functions, function_lower, active, serial)?,
             Stmt::If {
                 then_body,
                 else_body,
                 ..
             } => {
-                expand(then_body, &shapes, routines, functions, active, serial)?;
+                expand(then_body, &shapes, routines, functions, function_lower, active, serial)?;
                 if let Some(b) = else_body {
-                    expand(b, &shapes, routines, functions, active, serial)?;
+                    expand(b, &shapes, routines, functions, function_lower, active, serial)?;
                 }
             }
             _ => {}
@@ -1885,13 +1893,13 @@ pub fn resolve(mut p: Program) -> Result<Program> {
     let mut routines = HashMap::new();
     collect(&mut p.body, &mut routines);
     let mut call_serial=0;
-    expand(&mut p.body, &Shapes::new(), &routines, &functions, &mut vec![], &mut call_serial)?;
+    expand(&mut p.body, &Shapes::new(), &routines, &functions, &function_lower, &mut vec![], &mut call_serial)?;
     // Expanding a descriptor-backed function can expose further function calls
     // in its helper body. Alternate the two passes until those calls are bound.
     for pass in 0..128 {
         p=function_lower.finish(p)?;
         p=crate::constructors::prepare_arguments(p)?;
-        expand(&mut p.body, &Shapes::new(), &routines, &functions, &mut vec![], &mut call_serial)?;
+        expand(&mut p.body, &Shapes::new(), &routines, &functions, &function_lower, &mut vec![], &mut call_serial)?;
         if !function_lower.contains_calls(&p.body) {break;}
         if pass==127 {bail!("array/function call specialization did not converge after 128 passes");}
     }

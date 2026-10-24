@@ -308,9 +308,47 @@ bounds, forwarding, repeated calls and runtime shape mismatch checks. Valid
 cases run in the interpreter, at -O0/-O2 and with gfortran as reference.
 Initial failing results are recorded in the ignored build directory at
 `target/acv-repros/good-mask/report.json`.
-The full source advances to `runtime PACK results are not yet supported as
+The next former blocker was `runtime PACK results are not yet supported as
 arguments to @optional_65`, reported at line 25198 on the `print_square_matrix`
-call involving `corr_mat(xx)` and `labels(:size(xx,2))`.
+call involving `corr_mat(xx)` and `labels(:size(xx,2))`, now fixed below.
+
+The twenty-eighth repro isolates that nested function call and is now a regression:
+[tests/programs/xacv_nested_runtime_array_function.f90](tests/programs/xacv_nested_runtime_array_function.f90).
+It contains no PACK, labels, formatted output or correlation calculation. The
+three procedures retain the relevant structure: `outer` takes an assumed-shape
+matrix, `make_matrix` returns an automatic matrix with shape derived from that
+input, and `consume` accepts the result as an assumed-shape argument.
+
+```cmd
+rf.bat tests/programs/xacv_nested_runtime_array_function.f90 --run
+```
+
+Gfortran with `-std=f2018 -Wall -fcheck=all` prints `2 2 4`, the result shape
+and sum. Rfort's native and interpreter modes now print the same result.
+Previously, the call inside `outer` failed with the runtime-PACK diagnostic;
+calling directly from main or assigning the result to a local array first worked.
+Removing OPTIONAL did not avoid the original error.
+
+An isolated diagnostic compiler confirmed that the full-source `@optional_65`
+is `statistics_mod::corr_mat` with its optional `good` omitted. The rejected
+argument is a runtime `@packed_view` of `xx`, not an explicit PACK result.
+The original error occurred while passing `xx` into `corr_mat`, before the outer
+`print_square_matrix` call could consume its result. Initial tracing lives under
+`target/acv-repros/diagnostic-compiler`. Reference runs and controls are recorded in
+`target/acv-repros/runtime-pack-call/report.json` (ignored build directory).
+
+The subroutine expansion pass now defers argument association when a known
+function call remains in the actuals. The existing alternating function pass
+first evaluates that call with the wrapper's bound descriptors, then outer
+association uses the resulting array. The runtime-PACK validation itself is
+unchanged. `tests/test_nested_array_function_arguments.py` checks the repro,
+fixed/empty inputs, required and OPTIONAL interfaces, two nested function levels,
+array expressions containing results, genuine PACK inputs, single evaluation,
+changing result shapes, and INTEGER,
+REAL, DOUBLE PRECISION and LOGICAL results through rank 15 against gfortran.
+The full source now reaches line 25856, `mean(ret_use**2)`, reporting that
+reduction extents and section bounds must be constant integers because
+`@deferred_extent` is not a previously defined integer PARAMETER.
 
 ## Intrinsic calls after extending an intrinsic generic
 
