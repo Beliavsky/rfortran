@@ -407,9 +407,31 @@ and repeated local calls in interpreter and native O0/O2 modes against gfortran.
 Existing CHARACTER function-result tests verify the bounded result path.
 Initial controls and reference runs are saved in
 `target/acv-repros/character-allocatable-output/report.json` (ignored).
-The full source now reaches line 24134,
+The full source then reached line 24134,
 `forall (icol=1:size(xx,2)) xacf(:,icol) = acf_vec(xx(:,icol),nlags)`, reporting
 `FORALL bounds and stride must be scalar INTEGER expressions`.
+
+The thirty-first repro isolates that FORALL bound and is now a regression:
+[tests/programs/xacv_forall_size_bound.f90](tests/programs/xacv_forall_size_bound.f90).
+A pure matrix-valued function uses `size(xx,2)` as the column-loop bound and
+calls a pure vector-valued function on each column section. A runtime-sized
+allocated matrix supplies the actual input.
+
+```cmd
+rf.bat tests/programs/xacv_forall_size_bound.f90 --run
+```
+
+Interpreter and native O0/O2 output agrees with gfortran: `1 2 3 4 5 6`.
+FORALL's scalar-integer classifier now recognizes the integer value inside
+an allocation-checked inquiry, and the bound helper used for LBOUND/UBOUND is
+accepted by its purity check. The runtime allocation guards are preserved.
+`tests/test_runtime_forall.py` covers pure and ordinary array functions, fixed
+and allocated inputs, SIZE/LBOUND/UBOUND controls, negative strides, keyword
+arguments with default integer kind, empty rows/columns, and unallocated
+inquiries, alongside the existing snapshot and invalid-control tests.
+The full source now passes this FORALL and reports
+`output implied-DO bounds and step require supported scalar INTEGER expressions`.
+That next diagnostic currently has no source location.
 
 ## Intrinsic calls after extending an intrinsic generic
 

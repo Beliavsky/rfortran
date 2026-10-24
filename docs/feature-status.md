@@ -197,7 +197,7 @@ Found on 2026-10-21, fixed:
 | [Vector subscripts](language-support.md#vector-subscripts) | F90 | ✅ | Not in READ or WHERE | test_vector_subscripts.py |
 | Whole-array arithmetic and elemental intrinsics | F90 | ✅ |  |  |
 | [WHERE, ELSEWHERE, nested WHERE](language-support.md#where-and-logical-arrays) | Mixed | 🟡 | WHERE and unmasked ELSEWHERE: F90; nesting and masked ELSEWHERE: F95. Section and CHARACTER destinations are not supported | test_where.py, test_nested_where.py |
-| [FORALL](language-support.md#forall) | F95 | ✅ | One assignment per FORALL | test_multi_forall.py, test_forall_functions.py |
+| [FORALL](language-support.md#forall) | F95 | ✅ | One assignment per FORALL; runtime controls include scalar descriptor-backed array inquiries | test_multi_forall.py, test_forall_functions.py, test_runtime_forall.py |
 | [Empty arrays](language-support.md#empty-arrays) | F90 | ✅ |  | test_empty_matrices.py |
 | `SIZE`, `SHAPE`, `LBOUND`, `UBOUND` | F90 | ✅ |  | test_bound_inquiries.py |
 

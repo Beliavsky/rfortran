@@ -265,6 +265,10 @@ impl Lowerer {
                     return matches!(kind, TypeSpec::Integer(_));
                 }
                 match n.as_str() {
+                    // Allocation checks preserve the scalar integer inquiry
+                    // value; their status/name operands are not array bounds.
+                    "@allocated_extent" => args.get(1).is_some_and(|e| self.integer_expr(e, shapes)),
+                    "@heap_bound" => args.len() == 3 && args[..2].iter().all(|e| self.integer_expr(e, shapes)),
                     "size" | "len" | "count" | "@count_default" | "@count_i8" => true,
                     "lbound" | "ubound" => args.len() == 2,
                     "int" | "nint" | "floor" | "ceiling" => args
@@ -897,7 +901,7 @@ impl Lowerer {
                         || crate::intrinsics::purity(n) == Some(crate::intrinsics::Purity::Pure)
                         || matches!(
                             n.as_str(),
-                            "@section_subscript" | "@array_constructor" | "@typed_constructor" | "@packed_view" | "@allocated_extent"
+                            "@section_subscript" | "@array_constructor" | "@typed_constructor" | "@packed_view" | "@allocated_extent" | "@heap_bound"
                                 | "@integer_literal" | "@no_dim" | "@no_mask" | "@no_kind" | "@any_reduction" | "@all_reduction" | "@count_default" | "@count_i8"
                                 | "@unary_plus"
                                 | "abs"

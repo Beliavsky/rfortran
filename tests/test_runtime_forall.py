@@ -7,6 +7,71 @@ class RuntimeForall(unittest.TestCase):
     check=test_deallocate.Deallocate.check
     reject=test_deallocate.Deallocate.reject
 
+    def test_xacv_size_bound_array_function(self):
+        source=(Path(__file__).parent/'programs/xacv_forall_size_bound.f90').read_text()
+        for variant,program in {
+            'original':source,
+            'ordinary':source.replace('pure function column_prefixes', 'function column_prefixes'),
+            'fixed':source.replace('double precision,allocatable::xx(:,:)',
+                                   'double precision::xx(2,3)').replace('allocate(xx(n,3))',''),
+        }.items():
+            with self.subTest(variant=variant):
+                self.check(program,'1 2 3 4 5 6\n')
+
+    def test_descriptor_inquiries_as_bounds_and_stride(self):
+        source='''module inquiry_forall_mod
+implicit none
+contains
+pure function copy_columns(x) result(y)
+integer,intent(in)::x(:,:)
+integer::y(size(x,1),size(x,2)),j
+forall(j=LOWER:UPPER:STRIDE) y(:,j)=x(:,j)
+end function
+end module
+program main
+use inquiry_forall_mod
+implicit none
+integer,allocatable::x(:,:)
+integer::n
+n=2
+allocate(x(n,3))
+x=reshape([1,2,3,4,5,6],[2,3])
+print *,copy_columns(x)
+end
+'''
+        for lo,hi,step in [('1','size(x,2)','1'),
+                           ('lbound(x,2)','ubound(x,2)','1'),
+                           ('size(x,2)','lbound(x,2)','-1'),
+                           ('1','size(x,dim=2,kind=kind(1))','size(x,1)-1')]:
+            with self.subTest(lower=lo,upper=hi,stride=step):
+                self.check(source.replace('LOWER',lo).replace('UPPER',hi).replace('STRIDE',step),
+                           '1 2 3 4 5 6\n')
+
+    def test_size_bound_empty_array_function_result(self):
+        source=(Path(__file__).parent/'programs/xacv_forall_size_bound.f90').read_text()
+        source=source.replace('xx=reshape([1d0,2d0,3d0,4d0,5d0,6d0],[2,3])','xx=1d0')
+        source=source.replace('print *,column_prefixes(xx,n)',
+                              'print *,size(column_prefixes(xx,n))')
+        for variant,program in {
+            'empty_columns':source.replace('allocate(xx(n,3))','allocate(xx(n,0))'),
+            'empty_rows':source.replace('n=2','n=0'),
+        }.items():
+            with self.subTest(variant=variant):
+                self.check(program,'0\n')
+
+    def test_inquiry_bound_preserves_unallocated_check(self):
+        source='''implicit none
+integer,allocatable::a(:)
+integer::b(2),i,n
+read *,n
+if(n>0) allocate(a(n))
+forall(i=1:size(a)) b(i)=i
+print *,b
+end
+'''
+        self.check(source,'1 2\n',data='2\n')
+        self.check(source,error='unallocated array',data='0\n',reference=False)
+
     def test_diagonal_and_overlap(self):
         self.check((Path(__file__).parent/'193_runtime_forall.f90').read_text(),'4 3 2 1 99\n1 4\n')
 

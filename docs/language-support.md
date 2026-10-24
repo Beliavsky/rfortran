@@ -1056,7 +1056,9 @@ overlapping assignments such as swapping matrix columns. Captures run after
 procedure argument specialization when assumed-shape dummy extents were unknown
 in the original template. Runtime scalar INTEGER bounds and strides, including
 negative strides, are supported for fixed destinations and descriptor-backed
-numeric or LOGICAL destinations. Controls are evaluated
+numeric or LOGICAL destinations. Scalar SIZE, LBOUND and UBOUND inquiries on
+descriptor-backed arrays can supply bounds and strides, including inside
+array-valued functions. Their allocation checks remain active. Controls are evaluated
 once, and duplicate destination elements cause a runtime error. The enclosing
 index variables keep their original values. Constant triplets retain their
 existing compile-time expansion and destination checks. Existing limits remain:
