@@ -206,7 +206,7 @@ Found on 2026-10-21, fixed:
 | Feature | Introduced | Status | Notes | Tests |
 |---|---|---|---|---|
 | [ALLOCATABLE arrays with runtime bounds](language-support.md#runtime-allocation) | F90 | ✅ | Numeric and LOGICAL; CHARACTER arrays use bounded storage | test_runtime_allocatables.py, test_heap_allocations.py |
-| [ALLOCATABLE dummy arguments](language-support.md#allocatable-dummy-arguments) | F2003 | 🟡 | Numeric/LOGICAL subroutine and function descriptors retain allocation status and bounds, including unallocated actuals and writable outputs. CHARACTER and optional function dummies retain restrictions | test_allocatable_dummies.py, test_allocatable_function_dummies.py |
+| [ALLOCATABLE dummy arguments](language-support.md#allocatable-dummy-arguments) | F2003 | 🟡 | Numeric/LOGICAL subroutine and function descriptors retain allocation status and bounds. CHARACTER outputs without a bounded input/local capacity also use runtime descriptors; bounded copies/results and optional function dummies retain restrictions | test_allocatable_dummies.py, test_allocatable_function_dummies.py, test_character_allocatable_dummies.py |
 | [ALLOCATABLE function results](language-support.md#allocatable-function-results) | F2003 | 🟡 | Assigning a result to an unallocated ALLOCATABLE array is rejected | test_numeric_allocatable_results.py |
 | ALLOCATABLE scalars | F2003 | ❌ |  |  |
 | [Reallocation on assignment](language-support.md#reallocation-on-assignment) | F2003 | 🟡 | CHARACTER arrays rank one only; a multidimensional expression cannot mix fixed-size and runtime-sized arrays | test_allocatable_reallocation.py, test_runtime_allocatables.py |

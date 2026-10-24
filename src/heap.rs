@@ -136,8 +136,20 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
         for statement in body {
             match statement {
                 Stmt::Subroutine {name,params,body,..} | Stmt::Function {name,params,body,..} => {
+                    // Keep the existing bounded CHARACTER result/copy path
+                    // when an input array or fixed local supplies its capacity.
+                    // Otherwise the output may be sized entirely by runtime
+                    // input (for example a count read from a file), and must
+                    // borrow the caller's heap descriptor instead.
+                    let bounded_character_output=body.iter().any(|s|match s {
+                        Stmt::ArrayDecl{name,dims,..} if dims.len()==1=>{
+                            if params.contains(name) {
+                                !body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name&&intent=="allocatable"))
+                            } else {crate::parameters::integer_constant(&dims[0]).is_ok()}
+                        },_=>false,
+                    });
                     let positions=params.iter().enumerate().filter_map(|(i,p)|
-                    (body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,kind,dims} if name==p&&numeric(kind)&&(!matches!(kind,TypeSpec::Character(_)|TypeSpec::CharacterAssumed)||dims.len()>1 || body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==p && intent=="@deferred_character_array")))))
+                    (body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,kind,dims} if name==p&&numeric(kind)&&(!matches!(kind,TypeSpec::Character(_)|TypeSpec::CharacterAssumed)||dims.len()>1 || !bounded_character_output || body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==p && intent=="@deferred_character_array")))))
                      &&body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==p&&intent=="allocatable"))).then_some(i)).collect::<Vec<_>>();
                     for &i in &positions {
                         body.insert(
@@ -287,7 +299,7 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
                   // storage when ALLOCATEd; one allocated only by assignment needs
                   // runtime storage for its value's extent.
                   || (array_dummies && allocation(body,name,&declared,&functions) && !allocate_statement(body,name)) || dims.len()>1 && body.iter().any(|s|matches!(s,Stmt::CallSub{name:call,args} if call=="@deallocate"&&args.iter().any(|e|matches!(e,Expr::Ident(n) if n==name)))))
-              && numeric(kind) && (!matches!(kind,TypeSpec::Character(_)) || dims.len()>1 || runtime_allocate(body,name) || body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name && intent=="@deferred_character_array"))
+              && numeric(kind) && (!matches!(kind,TypeSpec::Character(_)) || passed.contains(name) || dims.len()>1 || runtime_allocate(body,name) || body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name && intent=="@deferred_character_array"))
                   || array_assignment(body,name,&declared,&functions)
                   || body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name&&intent=="@automatic")))
               && body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name&&intent=="allocatable")))

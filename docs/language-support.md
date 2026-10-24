@@ -1297,9 +1297,18 @@ Optional, pointer and CHARACTER function dummies retain their existing
 specialization restrictions. Run `python tests/test_allocatable_dummies.py` and
 `python tests/test_allocatable_function_dummies.py`.
 
-Fixed-length rank-one CHARACTER ALLOCATABLE outputs retain bounded
-specialization. Their capacity is inferred from bounded array inputs or fixed
-locals. They support ALLOCATED, SIZE, element access, scalar filling and
+Rank-one CHARACTER ALLOCATABLE dummies without a bounded array input or fixed
+local supplying capacity use the caller's heap descriptor. Assumed-length
+dummies retain the actual element length, while allocation extents and lower
+bounds can be read or computed at runtime. INTENT(OUT) deallocates an allocated
+actual on entry; INTENT(INOUT) shares allocation and deallocation with the caller.
+Empty results, forwarding and repeated calls are supported. Run
+`python tests/test_character_allocatable_dummies.py` for interpreter/native
+O0/O2 checks against gfortran.
+
+Fixed-length rank-one CHARACTER outputs with bounded array inputs or fixed
+locals retain their existing capacity specialization. They support ALLOCATED,
+SIZE, element access, scalar filling and
 conformable whole-array or constant-stride section copying, including padding
 and truncation when element lengths differ. Fixed-length multidimensional
 CHARACTER arrays also have runtime heap storage,

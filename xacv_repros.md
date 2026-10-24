@@ -214,8 +214,34 @@ actually inherited from a host retain their descriptors. The regression suite
 dummy ranks through 15, local allocation bounds, CHARACTER dummy lengths and
 inherited arrays in BLOCKs,
 using the interpreter, native code at -O0/-O2 and gfortran as a reference.
-The full source now advances to `ALLOCATABLE output specialization requires a
-bounded rank-one array input or fixed local array`; this is a separate blocker.
+The next former blocker was `ALLOCATABLE output specialization requires a
+bounded rank-one array input or fixed local array`, now supported below.
+
+The twenty-fifth repro isolates this former blocker and is now a regression:
+[tests/programs/xacv_read_words_allocatable.f90](tests/programs/xacv_read_words_allocatable.f90).
+It reduces `read_words_line`, defined at line 4935 and called at line 25771 as
+`read_words_line(iu,cstats_levels)`. The procedure reads a count from a line,
+allocates an assumed-length CHARACTER output array, and reads the words into it.
+The main program uses a scratch file, so no input or external data is needed.
+
+```cmd
+rf.bat tests/programs/xacv_read_words_allocatable.f90 --run
+```
+
+Native rfort, its interpreter and gfortran with `-std=f2018 -fcheck=all` now
+print four lines: `3`, `alpha`, `beta`, `gamma`. CHARACTER allocatable dummies
+without an input array or fixed local supplying a storage bound now borrow the
+caller's heap descriptor. Caller arrays passed to these dummies also receive
+heap storage, including ones initially allocated to a small constant extent.
+The existing bounded CHARACTER result/copy paths remain available.
+
+`tests/test_character_allocatable_dummies.py` checks the exact repro, optional
+counts, empty results, forwarding, repeated allocation, nonunit bounds,
+INTENT(INOUT), INTENT(OUT) deallocation on entry, zero-length elements and a
+runtime extent of 4097. It compares interpreter and -O0/-O2 native output with
+gfortran. The full source advances to `READ into vector-subscript selections is
+not yet supported`, reported at line 16948 on
+`call set_alloc((dates(:nread)),dates)`.
 
 ## Intrinsic calls after extending an intrinsic generic
 
