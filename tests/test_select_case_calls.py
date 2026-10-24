@@ -126,6 +126,51 @@ end function
 end
 ''', 'uninitialized variable')
 
+    def test_vectors_exposed_inside_specialized_branches(self):
+        self.check('''implicit none
+integer::x(3),idx(2),choice,y
+x=[10,20,30]
+idx=[3,1]
+do choice=1,2
+   call choose(choice,x,idx,y)
+   print *,y
+end do
+contains
+subroutine choose(choice,x,idx,y)
+integer,intent(in)::choice,x(:),idx(:)
+integer,intent(out)::y
+select case(choice)
+case(1)
+   if(size(idx)>0)then
+      y=sum(x(idx))
+   else
+      y=0
+   end if
+case default
+   y=sum(x(idx)+1)
+end select
+end subroutine
+end
+''', '40\n42\n')
+
+    def test_vector_loop_condition_after_argument_specialization(self):
+        self.check('''implicit none
+integer::x(3),idx(2)
+x=[10,20,30]
+idx=[3,1]
+call update(x,idx)
+print *,x
+contains
+subroutine update(x,idx)
+integer,intent(inout)::x(:)
+integer,intent(in)::idx(:)
+do while(sum(x(idx))<100)
+   x(idx)=x(idx)+10
+end do
+end subroutine
+end
+''', '40 20 60\n')
+
 
 if __name__ == '__main__':
     unittest.main()

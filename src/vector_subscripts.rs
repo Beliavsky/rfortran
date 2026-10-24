@@ -23,8 +23,10 @@ struct Info {
 #[derive(Clone, Default)]
 struct Scope {
     variables: HashMap<String, Variable>,
-    functions: HashMap<String, TypeSpec>,
-    procedures: HashMap<String, Vec<String>>,
+    // Signatures are immutable while lowering a program. Sharing them avoids
+    // cloning all module interfaces for every generated block and branch.
+    functions: std::sync::Arc<HashMap<String, TypeSpec>>,
+    procedures: std::sync::Arc<HashMap<String, Vec<String>>>,
 }
 fn int(n: i64) -> Expr {
     Expr::IntLit(n.to_string())
@@ -1274,7 +1276,7 @@ pub fn resolve(program: Program) -> Result<Program> {
 pub(crate) fn finish(program: Program) -> Result<Program> {
     resolve_inner(program, true)
 }
-pub(crate) fn specialize(body:&mut Vec<Stmt>, shapes:&crate::allocatables::Shapes, procedures:HashMap<String,Vec<String>>, serial:&mut usize)->Result<()> {
+pub(crate) fn specialize(body:&mut Vec<Stmt>, shapes:&crate::allocatables::Shapes, procedures:std::sync::Arc<HashMap<String,Vec<String>>>, serial:&mut usize)->Result<()> {
     // Fixed selections were handled by the first pass. Revisit a scope when
     // call specialization or runtime descriptors can expose additional sections.
     // Call specialization can reveal runtime selectors on fixed storage too;
@@ -1316,7 +1318,7 @@ fn resolve_inner(mut program: Program, after_calls: bool) -> Result<Program> {
                         })
                     });
                     if let Some(kind) = kind {
-                        scope.functions.insert(name.clone(), kind);
+                        std::sync::Arc::make_mut(&mut scope.functions).insert(name.clone(), kind);
                     }
                 }
                 Stmt::Module { body, .. } => functions(body, scope),
@@ -1325,7 +1327,7 @@ fn resolve_inner(mut program: Program, after_calls: bool) -> Result<Program> {
         }
     }
     let mut scope = Scope::default();
-    scope.procedures = procedures;
+    scope.procedures = std::sync::Arc::new(procedures);
     functions(&program.body, &mut scope);
     Lowerer {
         serial: serial_start(&program.body),

@@ -19,6 +19,7 @@ mod heap;
 mod heap_characters;
 mod random_seed;
 mod timing;
+mod compile_profile;
 mod calendar;
 mod environment;
 mod timing_intrinsics;
@@ -379,9 +380,23 @@ fn lower_program_body(
     origins: Option<&[source_diagnostics::SourceOrigin]>,
 ) -> Result<ast::Program> {
     (|| {
-        sections::resolve(reductions::resolve(array_calls::resolve(
-            tokenize::resolve(timing_intrinsics::resolve(parameters::resolve(random_seed::resolve(external_calls::resolve_complex(derived::resolve(external_calls::resolve(equivalence::resolve(defining_functions::resolve(transfer::resolve(statement_functions::resolve(storage_size::resolve(program)?)?)?)?)?)?)?)?)?)?)?)?,
-        )?)?)
+        let program = program;
+        let program = compile_profile::run("storage_size::resolve", || storage_size::resolve(program))?;
+        let program = compile_profile::run("statement_functions::resolve", || statement_functions::resolve(program))?;
+        let program = compile_profile::run("transfer::resolve", || transfer::resolve(program))?;
+        let program = compile_profile::run("defining_functions::resolve", || defining_functions::resolve(program))?;
+        let program = compile_profile::run("equivalence::resolve", || equivalence::resolve(program))?;
+        let program = compile_profile::run("external_calls::resolve", || external_calls::resolve(program))?;
+        let program = compile_profile::run("derived::resolve", || derived::resolve(program))?;
+        let program = compile_profile::run("external_calls::resolve_complex", || external_calls::resolve_complex(program))?;
+        let program = compile_profile::run("random_seed::resolve", || random_seed::resolve(program))?;
+        let program = compile_profile::run("parameters::resolve", || parameters::resolve(program))?;
+        let program = compile_profile::run("timing_intrinsics::resolve", || timing_intrinsics::resolve(program))?;
+        let program = compile_profile::run("tokenize::resolve", || tokenize::resolve(program))?;
+        let program = compile_profile::run("array_calls::resolve", || array_calls::resolve(program))?;
+        let program = compile_profile::run("reductions::resolve", || reductions::resolve(program))?;
+        let program = compile_profile::run("sections::resolve", || sections::resolve(program))?;
+        Ok(program)
     })()
     .map_err(|error| source_diagnostics::report(error, src, tokens, filename, origins))
 }
@@ -402,7 +417,7 @@ fn compile_to_object(
     let mut settings = settings_from_src;
     settings.wall |= wall;
     settings.werror |= werror;
-    let parse_result = parser::parse_with_src(&src, &tokens, input.to_str().unwrap_or("<unknown>"));
+    let parse_result = compile_profile::run("parse", || parser::parse_with_src(&src, &tokens, input.to_str().unwrap_or("<unknown>")));
     let program = match parse_result {
         Ok(p) => p,
         Err(errs) => {
@@ -412,7 +427,7 @@ fn compile_to_object(
             return Err(anyhow::anyhow!("parse failed"));
         }
     };
-    let prepared = prepare_program(program, &src, &tokens, input, origins, &settings, args)?;
+    let prepared = compile_profile::run("prepare_program", || prepare_program(program, &src, &tokens, input, origins, &settings, args))?;
     let src = &prepared.source;
     let tokens = lexer::lex(src);
     let program = lower_program_body(prepared.program.clone(), src, &tokens,
@@ -443,7 +458,7 @@ fn compile_to_object(
         }
         external_calls(&program.body, &mut empty_obj_exports);
     }
-    let sema_errs = sema::analyze_with_src(
+    let sema_errs = compile_profile::run("sema", || sema::analyze_with_src(
         &program,
         &src,
         &tokens,
@@ -451,7 +466,7 @@ fn compile_to_object(
         &settings,
         &empty_obj_exports,
         allow_undefined,
-    );
+    ));
     if !sema_errs.is_empty() {
         let mut has_error = false;
         for e in &sema_errs {
@@ -467,8 +482,8 @@ fn compile_to_object(
             return Err(anyhow::anyhow!("compile failed"));
         }
     }
-    let program = initialized::instrument_with_origins(program, &src, input.file_name().and_then(|name| name.to_str()).unwrap_or("<unknown>"), &prepared.origins)?;
-    let lowered = ir::lower_to_ir_with_debug(&program, args.debug_ir)?;
+    let program = compile_profile::run("initialized", || initialized::instrument_with_origins(program, &src, input.file_name().and_then(|name| name.to_str()).unwrap_or("<unknown>"), &prepared.origins))?;
+    let lowered = compile_profile::run("ir", || ir::lower_to_ir_with_debug(&program, args.debug_ir))?;
     let has_program = lowered.has_program;
     if !args.quiet {
         if !lowered.defines_modules.is_empty() { eprintln!("Defines modules: {}", lowered.defines_modules.join(", ")); }

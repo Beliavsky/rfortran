@@ -923,6 +923,14 @@ diagnostic. Its output log is `target/acv-repros/xacv-select-case-release.txt`
 (ignored). Full-source compilation remains unverified; no next blocker was
 identified by this run.
 
+A later compile-time investigation added opt-in pass timings and shared
+immutable interface tables during specialization/vector lowering. The updated
+release was stopped after 600 seconds in `vector_subscripts::finish`, still
+without a diagnostic or object. Full-source compilation and the next functional
+blocker remain unverified. See [compiler performance](docs/compiler-performance.md)
+and `target/acv-repros/compile-performance/report.json` (ignored) for commands,
+pass measurements and limits. The median repro and the regression suite pass.
+
 ## Intrinsic calls after extending an intrinsic generic
 
 `date_mdy_mod` in `xacv.f90` extends MAX, MINVAL, MAXVAL and INT for

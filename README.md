@@ -62,6 +62,9 @@ Build from the repository root:
 cargo build --release --bin rfort
 ```
 
+For large-source compilation profiling, see
+[compiler performance and optional pass timings](docs/compiler-performance.md).
+
 This creates `target/release/rfort.exe` on Windows and `target/release/rfort`
 on Linux/macOS. Put the executable in a directory on `PATH`. The native driver
 handles compilation and linking, including multiple source files, without a

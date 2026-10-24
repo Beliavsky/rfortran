@@ -452,8 +452,9 @@ enum Axis {
 #[derive(Default)]
 struct Lower {
     serial: usize,
-    procedures: HashMap<String, Vec<String>>,
+    procedures: std::sync::Arc<HashMap<String, Vec<String>>>,
     force: bool,
+    shallow: bool,
 }
 impl Lower {
     fn scalar(&mut self, role: &str, value: Expr, out: &mut Vec<Stmt>, s: &mut Shapes) -> Expr {
@@ -1011,6 +1012,9 @@ impl Lower {
         }
         Ok(())
     }
+    fn child(&mut self, body: &mut Vec<Stmt>, inherited: &Shapes, params: &[String]) -> Result<()> {
+        if self.shallow { Ok(()) } else { self.body(body, inherited, params) }
+    }
     fn body(&mut self, body: &mut Vec<Stmt>, inherited: &Shapes, params: &[String]) -> Result<()> {
         let statement_location = std::cell::Cell::new(None);
         let result = (|| -> Result<()> {
@@ -1196,9 +1200,9 @@ impl Lower {
                     else_body,
                 } => {
                     self.expression(cond, &mut s, &mut prefix)?;
-                    self.body(then_body, &s, &[])?;
+                    self.child(then_body, &s, &[])?;
                     if let Some(b) = else_body {
-                        self.body(b, &s, &[])?;
+                        self.child(b, &s, &[])?;
                     }
                 }
                 Stmt::Do {
@@ -1206,11 +1210,11 @@ impl Lower {
                 } => {
                     self.expression(start, &mut s, &mut prefix)?;
                     self.expression(end, &mut s, &mut prefix)?;
-                    self.body(body, &s, &[])?;
+                    self.child(body, &s, &[])?;
                 }
                 Stmt::DoWhile { cond, body } => {
                     self.expression(cond, &mut s, &mut prefix)?;
-                    self.body(body, &s, &[])?;
+                    self.child(body, &s, &[])?;
                     if !prefix.is_empty() {
                         let (decls, mut evaluate): (Vec<_>, Vec<_>) =
                             prefix.into_iter().partition(|s| {
@@ -1232,9 +1236,9 @@ impl Lower {
                         *cond = Expr::Logical(true);
                     }
                 }
-                Stmt::Block { body } | Stmt::Module { body, .. } => self.body(body, &s, &[])?,
+                Stmt::Block { body } | Stmt::Module { body, .. } => self.child(body, &s, &[])?,
                 Stmt::Function { body, params, .. } | Stmt::Subroutine { body, params, .. } => {
-                    self.body(body, &s, params)?
+                    self.child(body, &s, params)?
                 }
                 Stmt::SelectCase {
                     expr,
@@ -1243,10 +1247,10 @@ impl Lower {
                 } => {
                     self.expression(expr, &mut s, &mut prefix)?;
                     for c in cases {
-                        self.body(&mut c.body, &s, &[])?;
+                        self.child(&mut c.body, &s, &[])?;
                     }
                     if let Some(b) = default {
-                        self.body(b, &s, &[])?;
+                        self.child(b, &s, &[])?;
                     }
                 }
                 _ => {}
@@ -1262,16 +1266,18 @@ impl Lower {
         result.map_err(|e| crate::source_diagnostics::at(e, statement_location.get()))
     }
 }
-pub(super) fn specialize(body:&mut Vec<Stmt>, shapes:&Shapes, procedures:HashMap<String,Vec<String>>, serial:&mut usize)->Result<()> {
+pub(super) fn specialize(body:&mut Vec<Stmt>, shapes:&Shapes, procedures:std::sync::Arc<HashMap<String,Vec<String>>>, serial:&mut usize)->Result<()> {
     let inherited_serial=shapes.keys().filter(|n|n.contains("@vector_")).filter_map(|n|n.rsplit('_').next()?.parse::<usize>().ok()).max().unwrap_or(0);
-    let mut lower=Lower{serial:(*serial).max(inherited_serial).max(super::serial_start(body)),procedures,force:false};
+    // array_calls::expand visits child scopes itself. Revisiting the entire
+    // subtree at each ancestor makes specialization quadratic in nesting depth.
+    let mut lower=Lower{serial:(*serial).max(inherited_serial).max(super::serial_start(body)),procedures,force:false,shallow:true};
     lower.body(body,shapes,&[])?;
     *serial=lower.serial;
     Ok(())
 }
 pub(super) fn specialize_expression(e:&mut Expr, shapes:&mut Shapes, prefix:&mut Vec<Stmt>, serial:&mut usize)->Result<()> {
     let inherited_serial=shapes.keys().filter(|n|n.contains("@vector_")).filter_map(|n|n.rsplit('_').next()?.parse::<usize>().ok()).max().unwrap_or(0);
-    let mut lower=Lower{serial:(*serial).max(inherited_serial),procedures:HashMap::new(),force:false};
+    let mut lower=Lower{serial:(*serial).max(inherited_serial),procedures:std::sync::Arc::default(),force:false,shallow:false};
     lower.expression(e,shapes,prefix)?;
     *serial=lower.serial;
     Ok(())
@@ -1313,8 +1319,9 @@ pub(super) fn elemental_function(
         .unwrap_or(0);
     let mut lower = Lower {
         serial: (*serial).max(inherited_serial),
-        procedures: HashMap::new(),
+        procedures: std::sync::Arc::default(),
         force: false,
+        shallow: false,
     };
     let dims = dims
         .iter()
@@ -1598,8 +1605,9 @@ pub(super) fn resolve(
     signatures(&p.body, &mut symbols);
     Lower {
         serial: super::serial_start(&p.body),
-        procedures: procedures.clone(),
+        procedures: std::sync::Arc::new(procedures.clone()),
         force: false,
+        shallow: false,
     }
     .body(&mut p.body, &symbols, &[])?;
     section_helpers(&mut p.body);

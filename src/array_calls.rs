@@ -734,6 +734,7 @@ fn specialize(
     constants: &mut HashMap<String, Expr>,
     stable: &HashSet<String>,
 ) -> Result<()> {
+    let _work=crate::compile_profile::Work::new("array_calls.specialize");
     let statement_location = std::cell::Cell::new(None);
     let result = (|| -> Result<()> {
     crate::allocatables::prepare_matrices(body, shapes, constants)?;
@@ -1335,6 +1336,7 @@ fn expand(
     body: &mut Vec<Stmt>,
     inherited: &Shapes,
     routines: &HashMap<String, Routine>,
+    procedures: &std::sync::Arc<HashMap<String,Vec<String>>>,
     functions: &HashMap<String,TypeSpec>,
     function_lower: &crate::character_elementals::Lower,
     active: &mut Vec<String>,
@@ -1342,6 +1344,7 @@ fn expand(
 ) -> Result<()> {
     let statement_location = std::cell::Cell::new(None);
     let result = (|| -> Result<()> {
+    let environment_work=crate::compile_profile::Work::new("array_calls.environment");
     let mut inherited=if body.iter().any(|s|matches!(s,Stmt::DummyIntent{intent,..} if intent=="@native_recursive")) {Shapes::new()} else {inherited.clone()};
     shadow_declarations(body,&mut inherited);
     for s in body.iter() {
@@ -1385,8 +1388,11 @@ fn expand(
         }
     }
     crate::allocatables::metadata(body,&mut shapes);
-    let procedures=routines.iter().map(|(n,r)| (n.clone(),r.params.iter().map(|p|r.body.iter().find_map(|s|match s {Stmt::DummyIntent{name,intent} if name==p && intent.starts_with("intent(")=>Some(intent.clone()),_=>None}).unwrap_or_default()).collect())).collect();
-    crate::vector_subscripts::specialize(body,&shapes,procedures,serial)?;
+
+    drop(environment_work);
+    let vector_work=crate::compile_profile::Work::new("array_calls.vector");
+    crate::vector_subscripts::specialize(body,&shapes,procedures.clone(),serial)?;
+    drop(vector_work);
     for s in body.iter() {match s {
         Stmt::ArrayDecl{kind,name,dims}=>{shapes.insert(name.clone(),(kind.clone(),dims.clone()));},
         Stmt::VarDecl{kind,names}=>for n in names {shapes.insert(n.clone(),(kind.clone(),vec![]));},_=>{}
@@ -1408,6 +1414,7 @@ fn expand(
         }
         if let Stmt::CallSub { name, args } = s {
             if let Some(r) = routines.get(name) {
+                let _work=crate::compile_profile::Work::new("array_calls.inline");
 
                 if r.elemental { crate::elemental::validate_subroutine(name, &r.params, &r.body)?; }
                 if active.contains(name) {
@@ -1416,7 +1423,7 @@ fn expand(
                 if r.elemental {
                     if let Some(mut expanded)=elemental_array_call(name,args,r,&shapes,&readonly,serial,functions)? {
                         let Stmt::Block {body}=&mut expanded else {unreachable!()};
-                        expand(body,&shapes,routines,functions,function_lower,active,serial)?;
+                        expand(body,&shapes,routines,procedures,functions,function_lower,active,serial)?;
                         *s=expanded;
                         continue;
                     }
@@ -1856,7 +1863,7 @@ fn expand(
                     }
                 }
                 active.push(name.clone());
-                expand(&mut cloned, &call_shapes, routines, functions, function_lower, active, serial)?;
+                expand(&mut cloned, &call_shapes, routines, procedures, functions, function_lower, active, serial)?;
                 active.pop();
                 crate::subroutines::inline_returns(&mut cloned,serial)?;
                 // Dummy bounds belong to the callee scope. In particular they
@@ -1874,23 +1881,23 @@ fn expand(
             | Stmt::Subroutine { body, .. }
             | Stmt::Block { body }
             | Stmt::Do { body, .. }
-            | Stmt::DoWhile { body, .. } => expand(body, &shapes, routines, functions, function_lower, active, serial)?,
+            | Stmt::DoWhile { body, .. } => expand(body, &shapes, routines, procedures, functions, function_lower, active, serial)?,
             Stmt::If {
                 then_body,
                 else_body,
                 ..
             } => {
-                expand(then_body, &shapes, routines, functions, function_lower, active, serial)?;
+                expand(then_body, &shapes, routines, procedures, functions, function_lower, active, serial)?;
                 if let Some(b) = else_body {
-                    expand(b, &shapes, routines, functions, function_lower, active, serial)?;
+                    expand(b, &shapes, routines, procedures, functions, function_lower, active, serial)?;
                 }
             }
             Stmt::SelectCase { cases, default, .. } => {
                 for case in cases {
-                    expand(&mut case.body, &shapes, routines, functions, function_lower, active, serial)?;
+                    expand(&mut case.body, &shapes, routines, procedures, functions, function_lower, active, serial)?;
                 }
                 if let Some(body) = default {
-                    expand(body, &shapes, routines, functions, function_lower, active, serial)?;
+                    expand(body, &shapes, routines, procedures, functions, function_lower, active, serial)?;
                 }
             }
             _ => {}
@@ -1901,26 +1908,26 @@ fn expand(
     result.map_err(|e| crate::source_diagnostics::at(e, statement_location.get()))
 }
 pub fn resolve(mut p: Program) -> Result<Program> {
-    p=crate::allocatables::hoist_array_results(p)?;
-    p=crate::input_items::prepare(p)?;
-    p=crate::modules::capture(p)?;
-    p=crate::heap::automatic_locals(p)?;
-    p=crate::heap::prepare(p)?;
-    p=crate::modules::prepare_globals(p)?;
-    p=crate::internal_procedures::resolve(p)?;
-    p=crate::optional::resolve(p)?;
-    p=crate::recursive_arrays::resolve(p)?;
-    p=crate::output::prepare_formatted(p)?;
-    let (prepared,mut function_lower)=crate::character_elementals::prepare(p)?;
+    p = crate::compile_profile::run("crate::allocatables::hoist_array_results", || crate::allocatables::hoist_array_results(p))?;
+    p = crate::compile_profile::run("crate::input_items::prepare", || crate::input_items::prepare(p))?;
+    p = crate::compile_profile::run("crate::modules::capture", || crate::modules::capture(p))?;
+    p = crate::compile_profile::run("crate::heap::automatic_locals", || crate::heap::automatic_locals(p))?;
+    p = crate::compile_profile::run("crate::heap::prepare", || crate::heap::prepare(p))?;
+    p = crate::compile_profile::run("crate::modules::prepare_globals", || crate::modules::prepare_globals(p))?;
+    p = crate::compile_profile::run("crate::internal_procedures::resolve", || crate::internal_procedures::resolve(p))?;
+    p = crate::compile_profile::run("crate::optional::resolve", || crate::optional::resolve(p))?;
+    p = crate::compile_profile::run("crate::recursive_arrays::resolve", || crate::recursive_arrays::resolve(p))?;
+    p = crate::compile_profile::run("crate::output::prepare_formatted", || crate::output::prepare_formatted(p))?;
+    let (prepared,mut function_lower)=crate::compile_profile::run("character_elementals::prepare", || crate::character_elementals::prepare(p))?;
     p=prepared;
-    p=crate::output::prepare_formatted(p)?;
-    p=crate::constructor_expressions::resolve(p)?;
-    p = crate::pointers::prepare(p)?;
-    p = crate::constructors::prepare_arguments(p)?;
-    p = crate::allocatables::prepare(p)?;
-    p = crate::modules::bind_descriptors(p)?;
-    p = crate::vector_subscripts::resolve(p)?;
-    p = crate::array_bounds::resolve(p)?;
+    p = crate::compile_profile::run("crate::output::prepare_formatted", || crate::output::prepare_formatted(p))?;
+    p = crate::compile_profile::run("crate::constructor_expressions::resolve", || crate::constructor_expressions::resolve(p))?;
+    p = crate::compile_profile::run("crate::pointers::prepare", || crate::pointers::prepare(p))?;
+    p = crate::compile_profile::run("crate::constructors::prepare_arguments", || crate::constructors::prepare_arguments(p))?;
+    p = crate::compile_profile::run("crate::allocatables::prepare", || crate::allocatables::prepare(p))?;
+    p = crate::compile_profile::run("crate::modules::bind_descriptors", || crate::modules::bind_descriptors(p))?;
+    p = crate::compile_profile::run("crate::vector_subscripts::resolve", || crate::vector_subscripts::resolve(p))?;
+    p = crate::compile_profile::run("crate::array_bounds::resolve", || crate::array_bounds::resolve(p))?;
     crate::elemental::validate_program(&p)?;
     fn collect(body: &mut Vec<Stmt>, routines: &mut HashMap<String, Routine>) {
         body.retain_mut(|s| match s {
@@ -1951,30 +1958,31 @@ pub fn resolve(mut p: Program) -> Result<Program> {
     let functions=crate::elemental::functions(&p);
     let mut routines = HashMap::new();
     collect(&mut p.body, &mut routines);
+    let procedures=std::sync::Arc::new(routines.iter().map(|(n,r)| (n.clone(),r.params.iter().map(|p|r.body.iter().find_map(|s|match s {Stmt::DummyIntent{name,intent} if name==p && intent.starts_with("intent(")=>Some(intent.clone()),_=>None}).unwrap_or_default()).collect())).collect());
     let mut call_serial=0;
-    expand(&mut p.body, &Shapes::new(), &routines, &functions, &function_lower, &mut vec![], &mut call_serial)?;
+    crate::compile_profile::run("array_calls::expand", || expand(&mut p.body, &Shapes::new(), &routines, &procedures, &functions, &function_lower, &mut vec![], &mut call_serial))?;
     // Expanding a descriptor-backed function can expose further function calls
     // in its helper body. Alternate the two passes until those calls are bound.
     for pass in 0..128 {
-        p=function_lower.finish(p)?;
-        p=crate::constructors::prepare_arguments(p)?;
-        expand(&mut p.body, &Shapes::new(), &routines, &functions, &function_lower, &mut vec![], &mut call_serial)?;
+        p=crate::compile_profile::run("character_elementals::finish", || function_lower.finish(p))?;
+        p = crate::compile_profile::run("crate::constructors::prepare_arguments", || crate::constructors::prepare_arguments(p))?;
+        crate::compile_profile::run("array_calls::expand", || expand(&mut p.body, &Shapes::new(), &routines, &procedures, &functions, &function_lower, &mut vec![], &mut call_serial))?;
         if !function_lower.contains_calls(&p.body) {break;}
         if pass==127 {bail!("array/function call specialization did not converge after 128 passes");}
     }
     // Writable assumed-length CHARACTER dummies have concrete storage only
     // after call-site specialization. Capture their internal output lists now.
-    p = crate::output::prepare_formatted(p)?;
-    p = crate::pointers::resolve(p)?;
-    p = crate::modules::bind_descriptors(p)?;
-    p = crate::modules::finish_bounds(p)?;
-    p = crate::vector_subscripts::finish(p)?;
-    p = crate::allocatables::finish(p)?;
-    p = crate::output::prepare_character_views(p)?;
-    p = crate::constructors::resolve(p)?;
-    p = crate::multidim::prepare_character_storage(p)?;
-    let p = crate::heap_characters::resolve(p)?;
-    let p = crate::character_arrays::resolve(p)?;
+    p = crate::compile_profile::run("crate::output::prepare_formatted", || crate::output::prepare_formatted(p))?;
+    p = crate::compile_profile::run("crate::pointers::resolve", || crate::pointers::resolve(p))?;
+    p = crate::compile_profile::run("crate::modules::bind_descriptors", || crate::modules::bind_descriptors(p))?;
+    p = crate::compile_profile::run("crate::modules::finish_bounds", || crate::modules::finish_bounds(p))?;
+    p = crate::compile_profile::run("crate::vector_subscripts::finish", || crate::vector_subscripts::finish(p))?;
+    p = crate::compile_profile::run("crate::allocatables::finish", || crate::allocatables::finish(p))?;
+    p = crate::compile_profile::run("crate::output::prepare_character_views", || crate::output::prepare_character_views(p))?;
+    p = crate::compile_profile::run("crate::constructors::resolve", || crate::constructors::resolve(p))?;
+    p = crate::compile_profile::run("crate::multidim::prepare_character_storage", || crate::multidim::prepare_character_storage(p))?;
+    let p = crate::compile_profile::run("crate::heap_characters::resolve", || crate::heap_characters::resolve(p))?;
+    let p = crate::compile_profile::run("crate::character_arrays::resolve", || crate::character_arrays::resolve(p))?;
     crate::multidim::resolve(crate::function_arrays::resolve(crate::substrings::resolve(p)?)?)
 }
 
