@@ -1421,6 +1421,13 @@ pointer loses its association on entry without undefining the target's data.
 Targets for escaping associations must be caller-owned `TARGET` variables;
 associations to storage in a narrower BLOCK or call scope are rejected.
 
+Numeric and LOGICAL pointer arrays and expressions involving them can be passed
+to ordinary read-only `INTENT(IN)` array dummies of supported local procedures,
+including scalar-result functions. Owned temporaries preserve active extents,
+rank, element order and kinds. This includes empty sections and ranks 1–15;
+unassociated accesses and shape mismatches remain runtime errors.
+Run `python tests/test_pointer_expression_arguments.py` for regression checks.
+
 The native descriptor is currently lowered to scalar local fields. Procedure
 calls still use specialization; a general descriptor calling convention and
 pointer ALLOCATE remain future work. Numeric ALLOCATABLE heap storage is
@@ -1431,10 +1438,10 @@ Cranelift still applies the requested native optimization level.
 Pointer declaration initialization, bounds/rank remapping, pointer
 allocation, general dynamic or allocatable targets, CHARACTER/derived scalar pointers,
 INTEGER(16) pointers, pointer
-function arguments and results, host pointer references from unspecialized
+dummy function arguments and results, host pointer references from unspecialized
 procedures, `INTENT(IN)` pointer dummies,
 pointer association in PURE procedures, READ through pointers, and passing
-pointers to ordinary subroutine dummies remain unsupported.
+pointers to writable ordinary subroutine dummies remain unsupported.
 
 Run `python tests/test_pointer_association.py` for interpreter/native O0/O2
 checks with gfortran comparisons. `tests/135_pointer_association.f90` tests the

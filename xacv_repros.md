@@ -346,9 +346,37 @@ fixed/empty inputs, required and OPTIONAL interfaces, two nested function levels
 array expressions containing results, genuine PACK inputs, single evaluation,
 changing result shapes, and INTEGER,
 REAL, DOUBLE PRECISION and LOGICAL results through rank 15 against gfortran.
-The full source now reaches line 25856, `mean(ret_use**2)`, reporting that
+The full source then reached line 25856, `mean(ret_use**2)`, reporting that
 reduction extents and section bounds must be constant integers because
 `@deferred_extent` is not a previously defined integer PARAMETER.
+
+The twenty-ninth repro isolates that pointer-expression argument and is now a regression:
+[tests/programs/xacv_pointer_expression_actual.f90](tests/programs/xacv_pointer_expression_actual.f90).
+It retains a pure scalar `mean` function with an ordinary assumed-shape
+INTENT(IN) dummy and the actual `ret_use**2`. A pointer selects elements 2 and 3
+of a fixed TARGET array containing `[1,2,3]`. The target deliberately needs no
+allocation, avoiding the separate unsupported ALLOCATABLE-target association.
+
+```cmd
+rf.bat tests/programs/xacv_pointer_expression_actual.f90 --run
+```
+
+Both rfort modes now print `6.500`, agreeing with gfortran. Pointer expressions
+use owned array temporaries with runtime extents before ordinary read-only
+argument association. Bare pointer arrays can also supply ordinary INTENT(IN)
+array dummies. Pointer assignment views retain heap temporaries' logical shape
+instead of treating their flattened backing declaration as the actual shape.
+`tests/test_pointer_expression_arguments.py` checks pure and ordinary functions,
+bare pointers, strides, reassociation, empty sections, numeric kinds, LOGICAL
+comparisons, ranks 2/3/15, explicitly allocated destinations and runtime errors
+against gfortran in interpreter and native O0/O2 modes.
+
+General ALLOCATABLE pointer targets, writable ordinary pointer actuals and
+automatic reallocation of an unallocated destination from a pointer expression
+remain separate limitations. Initial reference runs and controls are recorded
+in `target/acv-repros/pointer-expression/report.json` (ignored).
+The full source now reports `array cstats_indep_ is used before ALLOCATE` at
+line 21084, `call set_alloc(["min","max"],cstats_indep_)`.
 
 ## Intrinsic calls after extending an intrinsic generic
 

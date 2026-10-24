@@ -50,6 +50,15 @@ fn runtime_actual_axes(e:&Expr,shapes:&Shapes)->Option<Vec<Expr>> {
         _=>None,
     }
 }
+fn pointer_array_actual(e:&Expr,shapes:&Shapes)->bool {
+    let pointer=|n:&str|shapes.contains_key(&format!("@pointer:{n}")) && shapes.get(n).is_some_and(|(_,dims)|!dims.is_empty());
+    match e {
+        Expr::Ident(n)|Expr::Section{name:n,..}=>pointer(n),
+        Expr::Call(n,args)|Expr::Index(n,args)=>pointer(n)||args.iter().any(|e|pointer_array_actual(e,shapes)),
+        Expr::Bin(_,a,b)=>pointer_array_actual(a,shapes)||pointer_array_actual(b,shapes),
+        Expr::Un(_,a)=>pointer_array_actual(a,shapes),_=>false,
+    }
+}
 // Expand array calls before ordinary scalar specialization. Keeping this in a
 // separate function also limits the stack frame of the recursive `expand` pass.
 fn elemental_array_call(name: &str, args: &[Expr], routine: &Routine, shapes: &Shapes, readonly: &HashSet<String>, serial: &mut usize, functions: &HashMap<String,TypeSpec>) -> Result<Option<Stmt>> {
@@ -1479,7 +1488,8 @@ fn expand(
                         if intent=="intent(out)" {undefine.push(Stmt::CallSub{name:"@nullify".into(),args:vec![actual.clone()]});}
                         continue;
                     }
-                    if matches!(actual,Expr::Ident(a) if shapes.contains_key(&format!("@pointer:{a}"))) {bail!("POINTER actuals currently require POINTER dummy arguments");}
+                    let pointer_actual=matches!(actual,Expr::Ident(a) if shapes.contains_key(&format!("@pointer:{a}")));
+                    if pointer_actual && (intent!="intent(in)" || dims.is_empty() || r.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==p&&intent=="allocatable"))) {bail!("POINTER actuals currently require POINTER dummy arguments");}
                     let pointer_target=local.contains_key(&format!("@target:{p}")) && r.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if intent=="pointer" && r.params.contains(name)));
                     if pointer_target && !matches!(actual,Expr::Ident(a) if shapes.contains_key(&format!("@target:{a}"))) {bail!("escaping POINTER association requires a TARGET actual for `{p}`");}
                     if intent != "intent(in)"
@@ -1501,12 +1511,13 @@ fn expand(
                         }
                         if allocatable && !matches!(actual,Expr::Ident(_)) {bail!("ALLOCATABLE dummy `{p}` requires an ALLOCATABLE variable");}
                         let mut captured=actual.clone();
-                        // A multidimensional expression needs an actual of its
-                        // own rank, not a flat reduction buffer. Reuse ordinary
-                        // array assignment to evaluate it into owned storage.
-                        if intent=="intent(in)" && matches!(&captured,Expr::Bin(..)|Expr::Un(..)|Expr::Call(..)) {
+                        // Multidimensional and pointer expressions need their
+                        // active shape, not a flat constant-bound reduction
+                        // buffer. Evaluate them into owned array storage.
+                        let pointer_expression=pointer_array_actual(&captured,&shapes);
+                        if intent=="intent(in)" && (pointer_expression || matches!(&captured,Expr::Bin(..)|Expr::Un(..)|Expr::Call(..))) {
                             if let Some((kind,axes))=crate::vector_subscripts::argument_expression_shape(&captured,&shapes,functions)? {
-                                if axes.len()>1 && matches!(kind,TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision|TypeSpec::Logical) {
+                                if (axes.len()>1 || pointer_expression && !axes.is_empty()) && matches!(kind,TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision|TypeSpec::Logical) {
                                     *serial+=1;let temp=format!("@array_call_expression_{serial}");
                                     if axes.iter().all(|e|crate::parameters::integer_constant(e).is_ok()) {
                                         prefix.push(Stmt::ArrayDecl{kind:kind.clone(),name:temp.clone(),dims:axes.clone()});

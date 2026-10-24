@@ -214,7 +214,7 @@ Found on 2026-10-21, fixed:
 | [ALLOCATE with SOURCE=, MOLD=, STAT=, ERRMSG=](language-support.md#move_alloc-and-allocate-options) | Mixed | ✅ | STAT: F90; SOURCE and ERRMSG: F2003; MOLD: F2008. | test_allocation_options.py |
 | Typed ALLOCATE (`allocate(character(len=5) :: s)`) | F2003 | ❌ |  |  |
 | [DEALLOCATE](language-support.md#deallocate) | F90 | ✅ |  | test_deallocate.py, test_syntax_forms.py |
-| [POINTER association with TARGET](language-support.md#pointer-association) | Mixed | ✅ | POINTER/TARGET: F90; ranks above 7: F2008. Ranks 0–15, sections, strides | test_pointer_association.py, test_pointer_descriptors.py |
+| [POINTER association with TARGET](language-support.md#pointer-association) | Mixed | ✅ | POINTER/TARGET: F90; ranks above 7: F2008. Ranks 0–15, sections, strides; numeric/LOGICAL array expressions as ordinary INTENT(IN) actuals | test_pointer_association.py, test_pointer_descriptors.py, test_pointer_expression_arguments.py |
 | NULLIFY, `NULL()`, ASSOCIATED with one or two arguments | Mixed | ✅ | NULLIFY and ASSOCIATED: F90; NULL(): F95. | test_associate.py |
 | ALLOCATE of a POINTER | F90 | ❌ |  |  |
 | Pointer bounds remapping | F2003 | ❌ |  |  |

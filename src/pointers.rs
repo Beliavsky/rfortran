@@ -184,6 +184,9 @@ struct Variable {
     /// The variable holding the current extent of a rank-one ALLOCATABLE,
     /// whose storage has its largest extent.
     length: Option<String>,
+    /// Logical dimensions of descriptor-backed storage, before flattening.
+    active_shape: Option<Vec<String>>,
+    heap: bool,
 }
 #[derive(Clone)]
 struct Axis {
@@ -425,6 +428,8 @@ impl Lower {
                                     (n == &name).then(|| i.strip_prefix("@bounded:")).flatten()
                                         .and_then(|rest| rest.split_once(':')).map(|(length, _)| length.to_string())
                                 }),
+                                active_shape: attrs.iter().find_map(|(n,i)| (n==&name).then(||i.strip_prefix("@bounded_shape:")).flatten()).map(|s|s.split(':').map(str::to_owned).collect()),
+                                heap: has("@heap"),
                             },
                         );
                     }
@@ -570,20 +575,19 @@ impl Lower {
             name: "@ptr_bind".into(),
             args: vec![id(&d.data), id(&d.flags), id(&d.name), id(n)],
         });
-        let mut stride = 1i64;
+        let capacity=if v.heap {0}else{v.dims.iter().try_fold(1i64,|n,d|n.checked_mul((*d).max(0)).context("array stride overflow"))?};
+        let dims=v.active_shape.as_ref().map(|dims|dims.iter().map(|n|id(n)).collect::<Vec<_>>())
+            .unwrap_or_else(||v.dims.iter().map(|d|int(*d)).collect());
+        let mut stride = int(1);
         let mut axes = vec![];
-        for (i, &extent) in v.dims.iter().enumerate() {
+        for (i, extent) in dims.iter().enumerate() {
+            let extent=match &v.length {Some(length) if dims.len()==1=>id(length),_=>extent.clone()};
             axes.push(Axis {
-                lower: int(if original_bounds { v.lower[i] } else { 1 }),
-                extent: match &v.length {
-                    Some(length) if v.dims.len() == 1 => id(length),
-                    _ => int(extent),
-                },
-                stride: int(stride),
+                lower: int(if original_bounds { v.lower.get(i).copied().unwrap_or(1) } else { 1 }),
+                extent: extent.clone(),
+                stride: stride.clone(),
             });
-            stride = stride
-                .checked_mul(extent.max(0))
-                .context("array stride overflow")?;
+            stride = mul(stride,extent);
         }
         Ok(View {
             data: id(&d.data),
@@ -592,7 +596,7 @@ impl Lower {
             origin: int(0),
             axes,
             kind: v.kind,
-            capacity: stride,
+            capacity,
             limit: None,
         })
     }
@@ -1037,6 +1041,8 @@ impl Lower {
                         target: false,
                         allocatable: false,
                         length: None,
+                        active_shape: None,
+                        heap: false,
                     },
                 );
                 return self.array(&id(&temp), out);
