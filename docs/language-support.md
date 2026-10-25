@@ -2623,6 +2623,14 @@ runtime error. Continuations, semicolon separators, and single-line IF statement
 are supported. Run `python tests/test_empty_read.py` for interpreter/native
 O0/O2 checks with gfortran comparisons.
 
+Empty formatted reads such as `READ(unit,'(A)')` also work, including FORMAT
+labels and `IOSTAT=`/`END=` handling. Constant formats use the existing format
+parser: leading slash descriptors advance additional records and a colon
+terminates format processing when the input list is empty. No field is parsed
+or converted. Runtime CHARACTER format strings support `(A)`, with invalid
+formats diagnosed through the existing record-reader checks. Constant-format
+empty reads of scalar internal CHARACTER files leave their contents unchanged.
+
 READ accepts named `UNIT=` and `FMT=` controls, including reordered keywords.
 `END=label` on a list-directed or scalar CHARACTER formatted READ branches
 at EOF to a following labelled statement in the same or an enclosing statement

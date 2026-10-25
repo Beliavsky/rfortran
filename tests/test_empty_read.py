@@ -86,6 +86,58 @@ end subroutine discard
 end program main
 """, "0 0\nT\n", data="discarded\n")
 
+    def test_formatted_skips_and_format_controls(self):
+        self.check("""implicit none
+integer :: u,ios
+character(8) :: text
+open(newunit=u,status='scratch',form='formatted')
+write(u,'(a)') 'header','one','two','three','four','five','six'
+rewind(u)
+read(u,'(a)')
+read(u,'(a)') text
+print *,trim(text)
+read(u,'(/)')
+read(u,'(a)') text
+print *,trim(text)
+read(u,'(:,/)')
+read(u,'(a)') text
+print *,trim(text)
+read(u,'(i5)',iostat=ios)
+print *,ios<0
+close(u)
+end
+""", 'one four six T')
+
+    def test_formatted_stdin_labels_and_runtime_format(self):
+        self.check("""implicit none
+integer :: ios
+character(8) :: fmt
+character(4) :: text
+fmt='(A)'
+read(*,fmt,iostat=ios)
+print *,ios==0
+read(*,100)
+100 format(a)
+read(*,'(a)') text
+print *,text
+read(*,'(a)',end=200)
+error stop 'expected EOF branch'
+200 print *, 'done'
+end
+""", 'T kept done', data='discard\nignored\nkept\n')
+
+    def test_empty_formatted_internal_file(self):
+        self.check("""implicit none
+character(5) :: line
+integer :: ios
+line='hello'
+read(line,'(a)',iostat=ios)
+print *,ios==0,line
+read(line,'(/)',iostat=ios)
+print *,ios==0
+end
+""", 'T hello T')
+
     def test_invalid_controls_and_pure_io(self):
         for declarations, statement, message in [
             ("integer::ios", "read(20,*,unknown=ios)", "only the IOSTAT control"),

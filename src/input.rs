@@ -152,9 +152,6 @@ pub(crate) fn read_controls(
         return Err("POS requires an unformatted stream READ");
     }
     let list = matches!(&format,Expr::Call(n,_) if n=="@write_star");
-    if !list && items.is_empty() {
-        return Err("empty READ currently requires list-directed FMT='*'");
-    }
     let empty = items.is_empty();
     let mut args = vec![unit];
     if !list {
@@ -166,7 +163,7 @@ pub(crate) fn read_controls(
         args.extend([Expr::Str(control), value]);
     }
     args.extend(items);
-    let name = if empty {
+    let name = if empty && list {
         "@empty_read"
     } else if list {
         "@internal_read"
@@ -806,9 +803,16 @@ pub(crate) fn lower_field_read(
     let code = format!("@field_status_{serial}");
     let widest = records.iter().flatten().map(|f| f.3).max().unwrap_or(1);
     let iostat = !control.is_empty();
-    let read_record = |index: usize| if !internal {
+    let read_record = |index: usize| if !internal && items.is_empty() {
+        Stmt::CallSub { name: "@read_record_status".into(),
+            args: vec![var(&code), var(&buffer), int(0), unit.clone()] }
+    } else if !internal {
         Stmt::CallSub { name: "@formatted_read_status".into(),
             args: vec![unit.clone(), Expr::Str("(a)".into()), Expr::Str("iostat".into()), var(&code), var(&buffer)] }
+    } else if items.is_empty() {
+        // With no transfer, an internal file has no external record position
+        // to advance and its contents remain unchanged.
+        set(&code, int(0))
     } else if index == 0 {
         set(&buffer, unit.clone())
     } else {
@@ -861,7 +865,7 @@ pub(crate) fn lower_field_read(
         nested = segment;
     }
     let mut body = vec![
-        Stmt::VarDecl { kind: TypeSpec::Character(Some(FIELD_RECORD.max(record_length))), names: vec![buffer.clone()] },
+        Stmt::VarDecl { kind: TypeSpec::Character(Some(if items.is_empty() && !internal {0} else {FIELD_RECORD.max(record_length)})), names: vec![buffer.clone()] },
         Stmt::VarDecl { kind: TypeSpec::Character(Some(widest)), names: vec![field] },
         Stmt::VarDecl { kind: TypeSpec::Integer(None), names: vec![code.clone()] },
         set(&code, int(0)),
@@ -883,6 +887,20 @@ pub(crate) fn lower_record_read(
     symbols: &HashMap<String, (TypeSpec, Vec<Expr>)>,
     serial: &mut usize,
 ) -> Result<Stmt> {
+    if args.len() == 4 {
+        // Runtime (A) formats use the existing validated record reader with a
+        // zero-length destination: consume a record without transferring data.
+        *serial += 1;
+        let discard = format!("@formatted_discard_{serial}");
+        let mut local = symbols.clone();
+        local.insert(discard.clone(), (TypeSpec::Character(Some(0)), vec![]));
+        let mut transfer = args.to_vec();
+        transfer.push(var(&discard));
+        return Ok(Stmt::Block { body: vec![
+            Stmt::VarDecl { kind: TypeSpec::Character(Some(0)), names: vec![discard] },
+            lower_record_read(&transfer, &local, serial)?,
+        ] });
+    }
     let [unit, format, Expr::Str(control), status, Expr::Ident(dest)] = args else {
         bail!("formatted READ requires one writable scalar CHARACTER variable");
     };
