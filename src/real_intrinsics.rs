@@ -11,10 +11,11 @@ pub const NAMES: &[&str] = &[
     "nearest",
     "spacing",
     "rrspacing",
+    "@ieee_value",
 ];
 pub fn keys(name: &str) -> Option<&'static [&'static str]> {
     Some(match name {
-        "scale" | "set_exponent" => &["x", "i"],
+        "scale" | "set_exponent" | "@ieee_value" => &["x", "i"],
         "nearest" => &["x", "s"],
         "fraction" | "exponent" | "spacing" | "rrspacing" => &["x"],
         _ => return None,

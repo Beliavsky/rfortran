@@ -153,6 +153,7 @@ struct Procedure {
 }
 #[derive(Default)]
 struct Resolver {
+    module_objects: Vars,
     intrinsic_fallback: std::cell::Cell<bool>,
     procedures: HashMap<String, Procedure>,
     duplicate_procedures: HashSet<String>,
@@ -365,6 +366,7 @@ impl Resolver {
                     self.collect(body)?;
                 }
                 Stmt::Module { body, .. } => {
+                    self.module_objects.extend(declarations(body, &Vars::new()).into_iter().filter(|(name, _)| name.starts_with("@module$")));
                     for s in body {
                         if let Stmt::Function { name, .. } | Stmt::Subroutine { name, .. } = s {
                             self.module_procedures.insert(name.clone());
@@ -638,7 +640,7 @@ impl Resolver {
                     .unwrap_or(Ty::Unknown);
             }
         }
-        vars.get(name).cloned().unwrap_or(Ty::Unknown)
+        vars.get(name).or_else(|| self.module_objects.get(name)).cloned().unwrap_or(Ty::Unknown)
     }
     fn expression(&self, e: &mut Expr, vars: &Vars, visible: &Bindings) -> Result<Ty> {
         self.expression_impl(e, vars, visible, false)

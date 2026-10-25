@@ -4,7 +4,7 @@ This compiler is a fork of [SirPigari/f90c](https://github.com/SirPigari/f90c).
 The combined compiler is distributed under GPLv3; see [LICENSE](LICENSE).
 Upstream source and files containing upstream source remain subject to GPLv3.
 
-The following original Rust modules and C runtime adapter added in this fork are additionally
+The following original Rust modules, Fortran intrinsic-module definitions and C runtime adapter added in this fork are additionally
 available under the [MIT license](LICENSE-MIT). Each carries an
 `SPDX-License-Identifier: MIT` header and a copyright notice for Beliavsky,
 the author recorded in this repository's Git history.
@@ -43,6 +43,7 @@ the author recorded in this repository's Git history.
 - `src/named_arguments.rs`
 - `src/output.rs`
 - `src/parameters.rs`
+- `src/ieee_arithmetic.f90`
 - `src/purity.rs`
 - `src/do_steps.rs`
 - `src/reductions.rs`

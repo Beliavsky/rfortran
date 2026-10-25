@@ -452,7 +452,7 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
     fn handle_intrinsic(name: &str, args: &[ValueTuple]) -> Option<ValueTuple> {
         if let Some((op,kind))=crate::real_intrinsics::decode(name) {
             let x=to_real(args.first()?)?;
-            let i=if matches!(op,"scale"|"set_exponent") {to_int(args.get(1)?)?} else {0};
+            let i=if matches!(op,"scale"|"set_exponent"|"@ieee_value") {to_int(args.get(1)?)?} else {0};
             let s=if op=="nearest" {to_real(args.get(1)?)?} else {0.0};
             if op=="nearest" && s==0.0 {eprintln!("Runtime error: NEAREST S must not be zero");std::process::exit(1);}
             let value=crate::float_model::evaluate(crate::real_intrinsics::opcode(op),kind,x,i,s);

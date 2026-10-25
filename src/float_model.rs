@@ -111,9 +111,9 @@ pub fn nearest(x: f64, s: f64, kind: u8) -> f64 {
     }
     value(if (x > 0.0) == (s > 0.0) { b + 1 } else { b - 1 }, kind)
 }
-/// Opcodes: SCALE, FRACTION, EXPONENT, SET_EXPONENT, NEAREST, SPACING, RRSPACING.
+/// Opcodes: SCALE, FRACTION, EXPONENT, SET_EXPONENT, NEAREST, SPACING, RRSPACING, IEEE_VALUE.
 pub fn evaluate(op: i64, kind: u8, x: f64, i: i64, s: f64) -> f64 {
-    let x = value(bits(x, kind), kind);
+    let x = if op == 7 { 0.0 } else { value(bits(x, kind), kind) };
     match op {
         0 => scale(x, i, kind),
         1 => fraction(x, kind),
@@ -137,6 +137,24 @@ pub fn evaluate(op: i64, kind: u8, x: f64, i: i64, s: f64) -> f64 {
             if kind == 4 { 24 } else { 53 },
             kind,
         ),
+        7 => {
+            let (fraction, exponent, sign) = if kind == 4 { (23, 255u64, 1u64 << 31) } else { (52, 2047u64, 1u64 << 63) };
+            let inf = exponent << fraction;
+            let pattern = match i {
+                1 => inf | 1, // signaling NaN (conversion may quiet it)
+                2 => inf | (1 << (fraction - 1)),
+                3 => sign | inf,
+                4 => sign | ((exponent / 2) << fraction),
+                5 => sign | 1,
+                6 => sign,
+                7 => 0,
+                8 => 1,
+                9 => (exponent / 2) << fraction,
+                10 => inf,
+                _ => return f64::NAN,
+            };
+            value(pattern, kind)
+        }
         _ => f64::NAN,
     }
 }

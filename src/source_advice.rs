@@ -221,8 +221,8 @@ impl<'a> Analysis<'a> {
                     renames,
                     ..
                 } => self.scopes[scope].uses.push((
-                    if nature.as_deref() == Some("intrinsic") && module == "iso_fortran_env" {
-                        "@intrinsic_iso_fortran_env".into()
+                    if nature.as_deref() == Some("intrinsic") && matches!(module.as_str(), "iso_fortran_env" | "ieee_arithmetic") {
+                        format!("@intrinsic_{module}")
                     } else {
                         module.clone()
                     },
@@ -1325,8 +1325,20 @@ pub fn check(
             .flatten(),
         interface_errors: vec![],
     };
+    // Module procedure interfaces must be available before the lowering pass
+    // injects their implementations, including renamed and re-exported USEs.
+    let mut ieee_body = crate::parameters::ieee_module_body()?;
+    ieee_body.retain(|s| matches!(s, Stmt::GenericInterface { .. } | Stmt::Accessibility { .. }));
+    ieee_body.insert(0, Stmt::SourceLocation(src.len()));
+    let ieee = vec![Stmt::Module { name: "@intrinsic_ieee_arithmetic".into(), body: ieee_body }];
+    let intrinsic_scope = a.scope(None, ScopeKind::Main, &ieee);
+    a.gather(&ieee, intrinsic_scope, &[], src.len());
     let scope = a.scope(None, ScopeKind::Main, &program.body);
     a.gather(&program.body, scope, &program.contains, 0);
+    if !a.modules.contains_key("ieee_arithmetic") {
+        let ieee_scope = a.modules["@intrinsic_ieee_arithmetic"];
+        a.modules.insert("ieee_arithmetic".into(), ieee_scope);
+    }
     a.call_checks(&program.body, scope, 0);
     if !advice_enabled && a.interface_errors.is_empty() {
         return Ok(());

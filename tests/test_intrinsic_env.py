@@ -97,7 +97,7 @@ end program main
     def test_diagnostics(self):
         cases=[
             ("use, intrinsic :: missing", "intrinsic module `missing` is not yet supported"),
-            ("use, non_intrinsic :: iso_fortran_env", "NON_INTRINSIC module"),
+            ("use, non_intrinsic :: iso_fortran_env", "module interface `iso_fortran_env.rmod` not found"),
             ("use, typo :: iso_fortran_env", "unknown USE module nature"),
             ("use, intrinsic :: iso_fortran_env, only: bogus", "not a public entity"),
             ("use iso_fortran_env, only: int32\ninteger(int64)::x\nx=1\nprint *,x", "not accessible"),

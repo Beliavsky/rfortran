@@ -2359,9 +2359,27 @@ COMPILER_VERSION and COMPILER_OPTIONS. WRITE to ERROR_UNIT is not yet
 supported. The intrinsics IS_IOSTAT_END and IS_IOSTAT_EOR test an IOSTAT value. USE, INTRINSIC :: ISO_FORTRAN_ENV, ordinary USE and USE :: forms support
 ONLY lists, host association and re-export through user modules. Explicit
 INTRINSIC selects the built-in module even if a user module has the same name;
-NON_INTRINSIC requires a user module in the source group or a saved `.rmod` interface. Other intrinsic
-modules and other ISO_FORTRAN_ENV entities are not yet implemented.
+NON_INTRINSIC requires a user module in the source group or a saved `.rmod` interface. Other ISO_FORTRAN_ENV entities are not yet implemented.
 Run `python tests/test_intrinsic_env.py`.
+
+IEEE_ARITHMETIC (Fortran 2003) supports REAL kinds 4 and 8 through the elemental
+functions IEEE_VALUE, IEEE_IS_NAN, IEEE_IS_FINITE, IEEE_IS_NORMAL and IEEE_UNORDERED.
+IEEE_CLASS_TYPE and the named class constants for signaling/quiet NaNs, signed
+infinities, normal/subnormal values and signed zeros are available; DENORMAL and
+SUBNORMAL spellings denote the same classes. IEEE_VALUE constructs representative
+bit patterns without division by zero or invalid arithmetic. Signaling NaNs may
+be quieted by the compiler's intermediate real-kind conversions.
+Scalar and array arguments, keyword arguments, ONLY/renaming, host association,
+module re-export and calls from PURE procedures use the ordinary module machinery.
+Both ordinary USE and USE, INTRINSIC are supported.
+
+This is a partial implementation: IEEE_CLASS, class comparisons, support inquiries,
+rounding modes, exception flags/control and the other IEEE procedures are not yet
+provided. Class-component privacy is not yet enforced. These functions are not yet
+supported in constant initialization expressions. An existing unrelated limitation
+in WHERE assignment to allocatable arrays can overwrite unselected elements;
+use an explicit element loop for that case.
+Run `python tests/test_ieee_arithmetic.py`.
 
 ## Input and output
 

@@ -158,7 +158,7 @@ Found on 2026-10-21, fixed:
 | [`SELECTED_INT_KIND`, `SELECTED_REAL_KIND`, `SELECTED_CHAR_KIND`, `KIND`](language-support.md#declaration-initialization), and kind expressions such as `real(kind(0d0))` | Mixed | ✅ | KIND, SELECTED_INT_KIND and SELECTED_REAL_KIND: F90; SELECTED_CHAR_KIND: F2003. A CHARACTER kind other than ASCII is accepted but stored as ASCII | test_initializers_and_kinds.py |
 | [ISO_FORTRAN_ENV](language-support.md#intrinsic-modules) | F2003 | 🟡 | Module: F2003; named kind constants such as INT64 and REAL128: F2008. No `ATOMIC_*`, `LOCK_TYPE`, `EVENT_TYPE` or `STAT_*` entities | test_intrinsic_env.py, test_intrinsic_rewrites.py |
 | ISO_C_BINDING | F2003 | ❌ |  |  |
-| IEEE_ARITHMETIC and other IEEE modules | F2003 | ❌ |  |  |
+| [IEEE_ARITHMETIC](language-support.md#intrinsic-modules) | F2003 | 🟡 | REAL kinds 4/8: VALUE, IS_NAN, IS_FINITE, IS_NORMAL, UNORDERED and class constants; no rounding/exception controls or other IEEE modules | test_ieee_arithmetic.py |
 
 ## Control flow
 

@@ -18,7 +18,7 @@ pub(crate) fn resolve_intrinsic_modules(program: &mut Program) -> Result<()> {
     let user_modules: HashSet<String> = program.body.iter().filter_map(|s| {
         if let Stmt::Module { name, .. } = s { Some(name.clone()) } else { None }
     }).collect();
-    fn visit(body: &mut [Stmt], modules: &HashSet<String>, needed: &mut bool) -> Result<()> {
+    fn visit(body: &mut [Stmt], modules: &HashSet<String>, needed: &mut HashSet<String>) -> Result<()> {
         let statement_location = std::cell::Cell::new(None);
         let result = (|| -> Result<()> {
         for stmt in body {
@@ -32,13 +32,14 @@ pub(crate) fn resolve_intrinsic_modules(program: &mut Program) -> Result<()> {
                             false
                         }
                         Some(other) => bail!("unknown USE module nature `{other}`; expected INTRINSIC or NON_INTRINSIC"),
-                        None => module.eq_ignore_ascii_case("iso_fortran_env") && !modules.contains(module),
+                        None => matches!(module.as_str(), "iso_fortran_env" | "ieee_arithmetic") && !modules.contains(module),
                     };
                     if intrinsic {
-                        if !module.eq_ignore_ascii_case("iso_fortran_env") { bail!("intrinsic module `{module}` is not yet supported"); }
-                        *module = INTERNAL.into();
+                        if !matches!(module.as_str(), "iso_fortran_env" | "ieee_arithmetic") { bail!("intrinsic module `{module}` is not yet supported"); }
+                        needed.insert(module.clone());
+                        *module = format!("@intrinsic_{module}");
                         if let Some(names) = only { for name in names { name.make_ascii_lowercase(); } }
-                        *needed = true;
+
                     }
                 }
                 Stmt::Module { body, .. } | Stmt::Function { body, .. }
@@ -59,9 +60,9 @@ pub(crate) fn resolve_intrinsic_modules(program: &mut Program) -> Result<()> {
             })();
         result.map_err(|e| crate::source_diagnostics::at(e, statement_location.get()))
     }
-    let mut needed = false;
+    let mut needed = HashSet::new();
     visit(&mut program.body, &user_modules, &mut needed)?;
-    if needed && !user_modules.contains(INTERNAL) {
+    if needed.contains("iso_fortran_env") && !user_modules.contains(INTERNAL) {
         let mut body: Vec<Stmt> = [("int8",1), ("int16",2), ("int32",4), ("int64",8),
                     ("real32",4), ("real64",8), ("real128",-1),
                     ("logical8",-2), ("logical16",-2), ("logical32",4), ("logical64",-1), ("real16",-2),
@@ -75,7 +76,35 @@ pub(crate) fn resolve_intrinsic_modules(program: &mut Program) -> Result<()> {
         body.extend(intrinsic_module_source()?);
         program.body.insert(0, Stmt::Module { name: INTERNAL.into(), body });
     }
+    if needed.contains("ieee_arithmetic") {
+        let body = ieee_module_body()?;
+        program.body.insert(0, Stmt::Module { name: "@intrinsic_ieee_arithmetic".into(), body });
+    }
     Ok(())
+}
+
+pub(crate) fn ieee_module_body() -> Result<Vec<Stmt>> {
+    let source = include_str!("ieee_arithmetic.f90");
+    let tokens = crate::lexer::lex(source);
+    let parsed = crate::parser::parse_with_src(source, &tokens, "<ieee_arithmetic>")
+        .map_err(|_| anyhow::anyhow!("internal error: IEEE_ARITHMETIC source does not parse"))?;
+    let Some(Stmt::Module { mut body, .. }) = parsed.body.into_iter().next() else { unreachable!() };
+    fn lower(body: &mut Vec<Stmt>) {
+        body.retain(|s| !matches!(s, Stmt::SourceLocation(_)));
+        for s in body {
+            if let Stmt::Assign { value, .. } = s {
+                crate::procedure_arguments::visit_expr(value, &mut |e| {
+                    if let Expr::Call(name, _) = e {
+                        if name == "ieee_bits4" { *name = "@model:@ieee_value:4".into(); }
+                        if name == "ieee_bits8" { *name = "@model:@ieee_value:8".into(); }
+                    }
+                });
+            }
+            for child in crate::procedure_arguments::children(s) { lower(child); }
+        }
+    }
+    lower(&mut body);
+    Ok(body)
 }
 
 // ISO_FORTRAN_ENV entities that are simplest to state in Fortran.
@@ -886,7 +915,7 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
     for stmt in body.iter() {
         if let Stmt::Use { module, only, .. } = stmt {
             if let Some(imports) = modules.get(&module.to_ascii_lowercase()) {
-                constants.extend(imports.iter().filter(|(name, _)| only.as_ref().is_none_or(|names| names.iter().any(|n| n == model_metadata_name(name))))
+                constants.extend(imports.iter().filter(|(name, _)| only.as_ref().is_none_or(|names| names.iter().any(|n| { let entity = model_metadata_name(name); n == entity || entity.strip_prefix(n.as_str()).is_some_and(|tail| tail.starts_with('%')) })))
                     .map(|(n, value)| (n.clone(), value.clone())));
             }
         }
