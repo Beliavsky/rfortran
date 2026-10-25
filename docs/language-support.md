@@ -1213,8 +1213,12 @@ assignments are supported. Runtime DIM and CHARACTER arrays remain unsupported.
 Run `python tests/test_cshift.py` for interpreter/native O0/O2 checks and a
 gfortran comparison.
 
-TRANSPOSE accepts fixed-shape numeric or LOGICAL rank-two arrays, including
-sections and expressions. The MATRIX keyword and PURE usage are supported.
+TRANSPOSE accepts fixed-shape and runtime-sized numeric or LOGICAL rank-two
+arrays, including supported sections and expressions. Runtime results are
+materialized with reversed extents before assignment or procedure argument
+association; overlapping assignment, nondefault bounds and empty arrays are
+supported. The MATRIX keyword and PURE usage are supported.
+Run `python tests/test_runtime_transpose.py` for runtime coverage.
 Run `python tests/test_matrix_transforms.py` for TRANSPOSE and array-valued
 CSHIFT checks in the interpreter and native O0/O2 builds, plus gfortran comparison.
 
@@ -1224,11 +1228,12 @@ removed. Vacated elements use BOUNDARY, or zero/false when it is omitted.
 Sections, overlapping assignments and PURE usage are supported; runtime DIM
 and CHARACTER arrays remain unsupported. Run `python tests/test_eoshift.py`.
 
-SPREAD supports numeric/LOGICAL scalar and fixed-shape array sources with constant
-DIM and NCOPIES. It inserts the replication dimension at DIM; zero or negative
-NCOPIES produces an empty result. Sections, nested calls, constructors, overlapping
-assignments and PURE usage are supported. Runtime DIM/NCOPIES and CHARACTER
-sources remain unsupported. Run `python tests/test_spread.py`.
+SPREAD supports numeric/LOGICAL scalar, fixed-shape and runtime-sized array
+sources with constant DIM and constant or runtime NCOPIES. It inserts the
+replication dimension at DIM; zero or negative NCOPIES produces an empty result. Sections, nested calls, constructors, overlapping
+assignments and PURE usage are supported. Runtime results can be passed directly
+to assumed-shape procedures. Runtime DIM and CHARACTER sources remain unsupported.
+Run `python tests/test_spread.py` and `python tests/test_runtime_spread.py`.
 
 PACK supports fixed-shape numeric/LOGICAL arrays with scalar or conformable
 LOGICAL masks. A supplied rank-one VECTOR sets the result length and supplies

@@ -262,6 +262,19 @@ fn shape(e: &Expr, s: &Shapes) -> Result<Option<(TypeSpec, Vec<Expr>)>> {
             vec![],
         ))),
         Expr::Call(n, a) if n == "@vector_subscript" => shape(&a[0], s),
+        Expr::Call(n,a) if n == "spread" && a.len()==3 && !s.contains_key(n) => {
+            let Some((kind,mut dims))=shape(&a[0],s)? else {return Ok(None);};
+            let dim=constant(&a[1]).context("SPREAD DIM must currently be a constant INTEGER")?;
+            if dim<1 || dim as usize>dims.len()+1 {bail!("SPREAD DIM must be between 1 and {}",dims.len()+1);}
+            dims.insert(dim as usize-1,Expr::Call("max".into(),vec![a[2].clone(),int(0)]));
+            Ok(Some((kind,dims)))
+        }
+        Expr::Call(n, a) if n == "transpose" && a.len() == 1 && !s.contains_key(n) => {
+            let Some((kind, mut dims)) = shape(&a[0], s)? else { return Ok(None); };
+            if dims.len() != 2 { bail!("TRANSPOSE MATRIX must be a rank-two array"); }
+            dims.reverse();
+            Ok(Some((kind, dims)))
+        }
         Expr::Call(n, a) if n == "reshape" && !s.contains_key(n) => {
             let Some(Expr::Call(tag,dims))=a.get(1) else {bail!("RESHAPE SHAPE must currently be an array constructor");};
             if tag!="@array_constructor" || dims.is_empty() || dims.len()>15 {bail!("RESHAPE SHAPE must contain 1 through 15 extents");}
@@ -902,6 +915,7 @@ impl Lower {
     fn reshape_element(&mut self,e:&Expr,index:Expr,s:&Shapes,out:&mut Vec<Stmt>)->Result<Expr> {
         if let Expr::Ident(n)=e {
             let axes=axes(n,s)?;
+            if axes.is_empty() {return Ok(e.clone());}
             let mut offset=bin(BinOp::Sub,index,int(1));
             let mut indices=vec![];
             for (lower,extent) in axes {
@@ -911,7 +925,70 @@ impl Lower {
             }
             return Ok(Expr::Index(n.clone(),indices));
         }
+        match e {
+            Expr::Bin(op,a,b) => return Ok(bin(op.clone(),self.reshape_element(a,index.clone(),s,out)?,self.reshape_element(b,index,s,out)?)),
+            Expr::Un(op,a) => return Ok(Expr::Un(op.clone(),Box::new(self.reshape_element(a,index,s,out)?))),
+            Expr::Call(n,a) if n == "@packed_view" && a.len()==2 => return self.reshape_element(&a[0],index,s,out),
+            _ => {}
+        }
         self.element(e,index,s,out)
+    }
+    fn spread(&mut self,e:&mut Expr,s:&mut Shapes,out:&mut Vec<Stmt>)->Result<()> {
+        let Expr::Call(name,args)=e else {return Ok(());};
+        if name!="spread" || s.contains_key(name) || args.len()!=3 {return Ok(());}
+        let Some((kind,source_dims))=shape(&args[0],s)? else {return Ok(());};
+        if (!source_dims.is_empty() || s.contains_key("@where_scope")) && constant(&args[2]).is_some() && source_dims.iter().all(|d|constant(d).is_some()) {return Ok(());}
+        let dim=constant(&args[1]).context("SPREAD DIM must currently be a constant INTEGER")?;
+        if dim<1 || dim as usize>source_dims.len()+1 {bail!("SPREAD DIM must be between 1 and {}",source_dims.len()+1);}
+        if source_dims.len()>=15 {bail!("SPREAD result rank must not exceed 15");}
+        if !crate::output::integer(&args[2],s) || shape(&args[2],s)?.is_some_and(|(_,d)|!d.is_empty()) {bail!("SPREAD NCOPIES must be scalar INTEGER");}
+        if source_dims.is_empty() {
+            self.serial+=1;
+            let scalar=format!("@vector_runtime_spread_source_{}",self.serial);
+            out.push(Stmt::VarDecl{kind:kind.clone(),names:vec![scalar.clone()]});
+            out.push(assign(&scalar,args[0].clone()));
+            s.insert(scalar.clone(),(kind.clone(),vec![]));
+            args[0]=id(&scalar);
+        }
+        let mut dims=vec![];
+        for d in source_dims {dims.push(self.scalar("spread_extent",d,out,s));}
+        let copies=if let Some(n)=constant(&args[2]) {int(n.max(0))} else {self.scalar("spread_copies",Expr::Call("max".into(),vec![args[2].clone(),int(0)]),out,s)};
+        let axis=dim as usize-1;
+        dims.insert(axis,copies);
+        let result=self.buffer(kind,&dims,out,s)?;
+        let vars=self.loop_vars(&dims,out,s);
+        let mut index=int(1);
+        let mut stride=int(1);
+        for (i,d) in dims.iter().enumerate() {
+            if i==axis {continue;}
+            index=bin(BinOp::Add,index,bin(BinOp::Mul,bin(BinOp::Sub,id(&vars[i]),int(1)),stride.clone()));
+            stride=bin(BinOp::Mul,stride,d.clone());
+        }
+        let mut body=vec![];
+        let value=self.reshape_element(&args[0],index,s,&mut body)?;
+        body.push(Stmt::AssignIndex{name:result.clone(),indices:vars.iter().map(|n|id(n)).collect(),value});
+        out.extend(self.nest(&vars,&dims,body));
+        *e=id(&result);
+        Ok(())
+    }
+    fn transpose(&mut self,e:&mut Expr,s:&mut Shapes,out:&mut Vec<Stmt>)->Result<()> {
+        let Expr::Call(name,args)=e else {return Ok(());};
+        if name!="transpose" || s.contains_key(name) || args.len()!=1 {return Ok(());}
+        let Some((kind,source_dims))=shape(&args[0],s)? else {return Ok(());};
+        if source_dims.len()!=2 {bail!("TRANSPOSE MATRIX must be a rank-two array");}
+        if source_dims.iter().all(|d|constant(d).is_some()) {return Ok(());}
+        let rows=self.scalar("transpose_rows",source_dims[0].clone(),out,s);
+        let cols=self.scalar("transpose_cols",source_dims[1].clone(),out,s);
+        let dims=vec![cols,rows.clone()];
+        let result=self.buffer(kind,&dims,out,s)?;
+        let vars=self.loop_vars(&dims,out,s);
+        let index=bin(BinOp::Add,id(&vars[1]),bin(BinOp::Mul,bin(BinOp::Sub,id(&vars[0]),int(1)),rows));
+        let mut body=vec![];
+        let value=self.reshape_element(&args[0],index,s,&mut body)?;
+        body.push(Stmt::AssignIndex{name:result.clone(),indices:vars.iter().map(|n|id(n)).collect(),value});
+        out.extend(self.nest(&vars,&dims,body));
+        *e=id(&result);
+        Ok(())
     }
     fn reshape(&mut self,e:&mut Expr,s:&mut Shapes,out:&mut Vec<Stmt>)->Result<()> {
         let Expr::Call(name,_)=e else {return Ok(());};
@@ -1061,6 +1138,8 @@ impl Lower {
             Expr::Un(_, a) => self.expression(a, s, out)?,
             _ => {}
         }
+        self.spread(e,s,out)?;
+        self.transpose(e,s,out)?;
         self.reshape(e,s,out)?;
         // CHARACTER array operations must be scalarized while their element
         // types are still visible, before the final storage passes flatten them.
@@ -1125,6 +1204,9 @@ impl Lower {
         if body.iter().any(
             |stmt| matches!(stmt,Stmt::CallSub{name,..} if name=="@where" || name=="@elsewhere"),
         ) {
+            // Fixed transformations inside WHERE are materialized by the WHERE
+            // pass, which controls which assignments are subject to its mask.
+            s.insert("@where_scope".into(),(TypeSpec::Logical,vec![]));
             for stmt in body.iter() {
                 if match stmt {
                     Stmt::Assign { value, .. } => contains(value, &s),

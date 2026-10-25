@@ -38,7 +38,7 @@ fn array_valued(e: &Expr, arrays: &HashSet<String>, functions: &HashSet<String>)
     match e {
         Expr::Ident(n) => arrays.contains(n),
         Expr::Section { .. } => true,
-        Expr::Call(n, _) if n == "@array_constructor" || functions.contains(n) => true,
+        Expr::Call(n, _) if n == "@array_constructor" || n == "spread" || functions.contains(n) => true,
         // A section or vector subscript of a local array.
         Expr::Call(n, args) if arrays.contains(n) => args.iter().any(|a| {
             matches!(a, Expr::Call(t, _) if t == "@section_subscript") || array_valued(a, arrays, functions)
