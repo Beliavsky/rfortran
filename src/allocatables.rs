@@ -639,13 +639,14 @@ fn runtime_character_items(value: &Expr, shapes: &Shapes, target: &str, serial: 
     Ok(Some(Expr::Call("@packed_view".into(),vec![id(&values),id(&total)])))
 }
 // Capture the active elements before writing, including when the arrays overlap.
-fn character_copy(name: &str, value: &Expr, len: Expr, shapes: &Shapes, reallocate: bool,
+fn character_copy(name: &str, value: &Expr, len: Expr, shapes: &Shapes, reallocate: bool, rhs_axes: Option<Vec<Expr>>,
                   serial: &mut usize, out: &mut Vec<Stmt>) -> Result<()> {
-    let source_lower = match value {
+    let source_lowers = match value {
         Expr::Ident(n) => lowers(n,shapes),
         Expr::Call(tag,args) if tag=="@packed_view" => args.first().and_then(|e|if let Expr::Ident(n)=e {lowers(n,shapes)}else{None}),
         _ => None,
-    }.and_then(|v|v.first().cloned()).unwrap_or(int(1));
+    };
+    let source_lower=source_lowers.as_ref().and_then(|v|v.first().cloned()).unwrap_or(int(1));
     let mut value=value.clone();
     if let Some(items)=runtime_character_items(&value,shapes,name,serial,out)? {value=items;}
     let mut local=shapes.clone();
@@ -663,17 +664,29 @@ fn character_copy(name: &str, value: &Expr, len: Expr, shapes: &Shapes, realloca
     let index = format!("@alloc_char_index_{serial}");
     let temp = format!("@alloc_char_copy_{serial}");
     let (kind, dims) = shapes[name].clone();
+    fn character_element(n:&str,index:&str,shapes:&Shapes)->Expr {
+        if axes(n,shapes).is_some_and(|a|a.len()>1) {return Expr::Call("@allocated_linear_element".into(),vec![id(n),id(index)]);}
+        let dims=&shapes[n].1;
+        let bounds=lowers(n,shapes).unwrap_or_else(||vec![int(1);dims.len()]);
+        let mut ordinal=bin(BinOp::Sub,id(index),int(1));let mut indices=vec![];
+        for (d,lower) in dims.iter().zip(bounds) {
+            let divisor=Expr::Call("max".into(),vec![d.clone(),int(1)]);
+            indices.push(bin(BinOp::Add,lower,Expr::Call("modulo".into(),vec![ordinal.clone(),divisor.clone()])));
+            ordinal=bin(BinOp::Div,ordinal,divisor);
+        }
+        Expr::Index(n.into(),indices)
+    }
     let (source, rhs_len) = match &value {
         // A multidimensional heap source is read by linear position.
-        Expr::Ident(n) if axes(n,shapes).is_some_and(|a|a.len()>1) =>
-            (Expr::Call("@allocated_linear_element".into(),vec![id(n),id(&index)]),
-             length(n,shapes).unwrap_or_else(||axes(n,shapes).unwrap().into_iter().reduce(|a,b|bin(BinOp::Mul,a,b)).unwrap())),
+        Expr::Ident(n) if axes(n,shapes).is_some_and(|a|a.len()>1) || shapes.get(n).is_some_and(|(_,d)|d.len()>1) =>
+            (character_element(n,&index,shapes),
+             length(n,shapes).unwrap_or_else(||shapes[n].1.iter().cloned().reduce(|a,b|bin(BinOp::Mul,a,b)).unwrap())),
         Expr::Ident(n) if matches!(shapes.get(n),Some((TypeSpec::Character(_),d)) if d.len()==1) =>
             (Expr::Index(n.clone(),vec![bin(BinOp::Add,source_lower.clone(),bin(BinOp::Sub,id(&index),int(1)))]), length(n,shapes).unwrap_or(shapes[n].1[0].clone())),
         Expr::Call(tag,a) if tag=="@packed_view" && a.len()==2 => {
             let Expr::Ident(n)=&a[0] else { bail!("CHARACTER array view requires array storage"); };
-            let element=if axes(n,shapes).is_some_and(|d|d.len()>1) {
-                Expr::Call("@allocated_linear_element".into(),vec![id(n),id(&index)])
+            let element=if axes(n,shapes).is_some_and(|d|d.len()>1) || shapes.get(n).is_some_and(|(_,d)|d.len()>1) {
+                character_element(n,&index,shapes)
             } else {Expr::Index(n.clone(),vec![bin(BinOp::Add,source_lower.clone(),bin(BinOp::Sub,id(&index),int(1)))])};
             (element,a[1].clone())
         }
@@ -714,9 +727,26 @@ fn character_copy(name: &str, value: &Expr, len: Expr, shapes: &Shapes, realloca
         out.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![lower.clone()]});
         out.push(assign(&lower,source_lower));
         let flag=allocated(name,shapes).context("CHARACTER assignment requires allocation state")?;
-        out.push(Stmt::If{cond:bin(BinOp::Or,Expr::Un(UnOp::Not,Box::new(flag.clone())),bin(BinOp::Ne,len.clone(),count.clone())),then_body:vec![
+        let mut changed=bin(BinOp::Ne,len.clone(),count.clone());
+        let allocation=if let Some(target)=axes(name,shapes).filter(|a|a.len()>1) {
+            let rhs=rhs_axes.context("multidimensional CHARACTER assignment requires a known shape")?;
+            if rhs.len()!=target.len() {bail!("CHARACTER assignment ranks do not conform");}
+            let mut captured=vec![];
+            for (axis,(extent,old)) in rhs.into_iter().zip(target).enumerate() {
+                let field=format!("@alloc_char_axis_{serial}_{axis}");
+                out.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![field.clone()]});
+                out.push(assign(&field,extent));
+                changed=bin(BinOp::Or,changed,bin(BinOp::Ne,old,id(&field)));
+                let lower_field=format!("@alloc_char_axis_lower_{serial}_{axis}");
+                out.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![lower_field.clone()]});
+                out.push(assign(&lower_field,source_lowers.as_ref().and_then(|v|v.get(axis)).cloned().unwrap_or(int(1))));
+                captured.push(Expr::Call("@heap_bounds".into(),vec![id(&lower_field),bin(BinOp::Sub,bin(BinOp::Add,id(&lower_field),id(&field)),int(1))]));
+            }
+            captured
+        }else{vec![Expr::Call("@heap_bounds".into(),vec![id(&lower),bin(BinOp::Sub,bin(BinOp::Add,id(&lower),count.clone()),int(1))])]};
+        out.push(Stmt::If{cond:bin(BinOp::Or,Expr::Un(UnOp::Not,Box::new(flag.clone())),changed),then_body:vec![
             Stmt::If{cond:flag,then_body:vec![Stmt::CallSub{name:"@deallocate".into(),args:vec![id(name)]}],else_body:None},
-            Stmt::CallSub{name:"@allocate".into(),args:vec![Expr::Call(name.into(),vec![Expr::Call("@heap_bounds".into(),vec![id(&lower),bin(BinOp::Sub,bin(BinOp::Add,id(&lower),count.clone()),int(1))])])]},
+            Stmt::CallSub{name:"@allocate".into(),args:vec![Expr::Call(name.into(),allocation)]},
         ],else_body:None});
     }
     // A multidimensional target is written element by element in array
@@ -1503,10 +1533,11 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                     }
                 }
                 Stmt::Assign { name, value } if length(name, &shapes).is_some() => {
+                    let character_axes=if matches!(shapes[name].0,TypeSpec::Character(_)) {logical_shape(value,&shapes,&mut vec![])?.map(|v|v.0)}else{None};
                     // A heap-backed rank-one numeric/LOGICAL array is (re)allocated
                     // to the extent of an array-valued right-hand side.
                     let reallocate = shapes.contains_key(&format!("@heap:{name}"))
-                        && axes(name, &shapes).is_some_and(|a| a.len() == 1)
+                        && axes(name, &shapes).is_some_and(|a| a.len() == 1 || character_axes.as_ref().is_some_and(|rhs|rhs.len()==a.len()))
                         && crate::array_calls::scalar_actual_kind(value, &shapes).is_err();
                     // A reallocated target takes the bounds of a whole array source.
                     let source_lower = match &*value {
@@ -1536,7 +1567,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                     }
                     if matches!(shapes[name].0, TypeSpec::Character(_)) {
                         let mut copied=vec![];
-                        character_copy(name, value, len, &shapes, reallocate, serial, &mut copied)?;
+                        character_copy(name, value, len, &shapes, reallocate, character_axes, serial, &mut copied)?;
                         // Generated element accesses still use Fortran lower bounds.
                         // Normalize them even for scalar broadcast, which does not
                         // reallocate an already allocated destination.

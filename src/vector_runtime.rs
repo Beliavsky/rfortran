@@ -943,27 +943,60 @@ impl Lower {
         self.serial+=1;
         let n=format!("@vector_runtime_control_{}",self.serial);
         out.push(Stmt::VarDecl{kind:kind.clone(),names:vec![n.clone()]});
+        if matches!(kind,TypeSpec::Character(_)) {self.preserve_character_length(&e,&n,s,out);}
         out.push(assign(&n,e));
         s.insert(n.clone(),(kind,vec![]));
         id(&n)
+    }
+    fn character_length(e:&Expr,s:&Shapes)->Result<Expr> {
+        let name=match e {Expr::Ident(n)|Expr::Index(n,_)|Expr::Section{name:n,..}=>Some(n),_=>None};
+        if let Some((_,v))=name.and_then(|n|s.get(&format!("@character_spec_length:{n}"))) {
+            if let Some(length)=v.first() {return Ok(length.clone());}
+        }
+        if let Expr::Call(tag,a)=e {if tag=="@packed_view" {return Self::character_length(&a[0],s);}}
+        match shape(e,s)? {Some((TypeSpec::Character(n),_))=>Ok(int(n.unwrap_or(1) as i64)),_=>bail!("CHARACTER expression requires a known element length")}
+    }
+    fn conform_character_lengths(a:&Expr,b:&Expr,s:&Shapes,out:&mut Vec<Stmt>,label:&str)->Result<()> {
+        let (a,b)=(Self::character_length(a,s)?,Self::character_length(b,s)?);
+        if let (Some(a),Some(b))=(constant(&a),constant(&b)) {
+            if a!=b {bail!("{label} CHARACTER lengths must match");}
+        }else{out.push(error(bin(BinOp::Ne,a,b),format!("{label} CHARACTER lengths must match")));}
+        Ok(())
+    }
+    fn preserve_character_length(&mut self,source:&Expr,target:&str,s:&mut Shapes,out:&mut Vec<Stmt>) {
+        let name=match source {Expr::Ident(n)|Expr::Index(n,_)|Expr::Section{name:n,..}=>Some(n),Expr::Call(tag,a) if tag=="@packed_view"=>match a.first(){Some(Expr::Ident(n))=>Some(n),_=>None},_=>None};
+        if let Some((_,values))=name.and_then(|n|s.get(&format!("@character_spec_length:{n}"))).cloned() {
+            if let Some(value)=values.first() {
+                let length=self.capture_scalar(value.clone(),TypeSpec::Integer(Some(8)),s,out);
+                if let Expr::Ident(n)=length {
+                    out.push(Stmt::DummyIntent{name:target.into(),intent:format!("@character_spec_length:{n}")});
+                    s.insert(format!("@character_spec_length:{target}"),(TypeSpec::Integer(Some(8)),vec![id(&n)]));
+                }
+            }
+        }
     }
     fn unpack(&mut self,e:&mut Expr,s:&mut Shapes,out:&mut Vec<Stmt>)->Result<()> {
         let Expr::Call(name,args)=e else {return Ok(());};
         if name!="unpack" || s.contains_key(name) || args.len()!=3 {return Ok(());}
         let (Some((kind,vd)),Some((mk,md)),Some((fk,fd)))=(shape(&args[0],s)?,shape(&args[1],s)?,shape(&args[2],s)?) else {return Ok(());};
-        if vd.iter().chain(&md).chain(&fd).all(|d|constant(d).is_some()) {return Ok(());}
+        if !matches!(kind,TypeSpec::Character(_)) && vd.iter().chain(&md).chain(&fd).all(|d|constant(d).is_some()) {return Ok(());}
         if vd.len()!=1 {bail!("UNPACK VECTOR must be a rank-one array");}
         if md.is_empty() || mk!=TypeSpec::Logical {bail!("UNPACK MASK must be a LOGICAL array");}
-        if !crate::pointers::same_kind(&kind,&fk) {bail!("UNPACK VECTOR and FIELD must have the same type and kind");}
-        if matches!(kind,TypeSpec::Character(_)|TypeSpec::CharacterAssumed|TypeSpec::CharacterLength(_)) {bail!("runtime UNPACK CHARACTER arrays are not yet supported");}
+        if matches!((&kind,&fk),(TypeSpec::Character(_),TypeSpec::Character(_))) {
+            Self::conform_character_lengths(&args[0],&args[2],s,out,"UNPACK VECTOR and FIELD")?;
+        }else if !crate::pointers::same_kind(&kind,&fk) {bail!("UNPACK VECTOR and FIELD must have the same type and kind");}
         let length=self.scalar("unpack_length",vd[0].clone(),out,s);
         let mut dims=vec![];
         for d in md {dims.push(self.scalar("unpack_extent",d,out,s));}
-        if fd.is_empty() {args[2]=self.capture_scalar(args[2].clone(),kind.clone(),s,out);}else{
+        if fd.is_empty() {args[2]=self.capture_scalar(args[2].clone(),fk,s,out);}else{
             if fd.len()!=dims.len() {bail!("UNPACK FIELD shape must match MASK");}
             for (a,b) in fd.iter().zip(&dims) {out.push(error(bin(BinOp::Ne,a.clone(),b.clone()),"UNPACK FIELD shape must match MASK".into()));}
         }
+        let start=out.len();
         let result=self.buffer(kind,&dims,out,s)?;
+        let mut allocation=out.split_off(start);
+        self.preserve_character_length(&args[0],&result,s,out);
+        out.append(&mut allocation);
         let vars=self.loop_vars(&dims,out,s);
         let cursor=self.capture_scalar(int(0),TypeSpec::Integer(Some(8)),s,out);
         let Expr::Ident(cursor_name)=&cursor else {unreachable!()};
@@ -996,8 +1029,7 @@ impl Lower {
         for arg in &args[1..if endoff {3}else{2}] {
             if let Some((_,d))=shape(arg,s)? {runtime_control |= d.iter().any(|d|constant(d).is_none());}
         }
-        if !runtime_control && source_dims.iter().all(|d|constant(d).is_some()) {return Ok(());}
-        if matches!(kind,TypeSpec::Character(_)|TypeSpec::CharacterAssumed|TypeSpec::CharacterLength(_)) {bail!("runtime {label} CHARACTER arrays are not yet supported");}
+        if !matches!(kind,TypeSpec::Character(_)) && !runtime_control && source_dims.iter().all(|d|constant(d).is_some()) {return Ok(());}
         let dim=constant(&args[if endoff {3}else{2}]).with_context(||format!("{label} DIM must currently be a constant INTEGER"))?;
         if dim<1 || dim as usize>source_dims.len() {bail!("{label} DIM must be between 1 and {}",source_dims.len());}
         let axis=dim as usize-1;
@@ -1011,7 +1043,11 @@ impl Lower {
             let control=if i==1 {"SHIFT"}else{"BOUNDARY"};
             let Some((ck,cd))=shape(&args[i],s)? else {return Ok(());};
             if i==1 && !matches!(ck,TypeSpec::Integer(_)) {bail!("{label} SHIFT must be INTEGER");}
-            if i==2 && !crate::pointers::same_kind(&kind,&ck) {bail!("EOSHIFT BOUNDARY and ARRAY must have the same type and kind");}
+            if i==2 {
+                if matches!((&kind,&ck),(TypeSpec::Character(_),TypeSpec::Character(_))) {
+                    Self::conform_character_lengths(&args[0],&args[i],s,out,"EOSHIFT ARRAY and BOUNDARY")?;
+                }else if !crate::pointers::same_kind(&kind,&ck) {bail!("EOSHIFT BOUNDARY and ARRAY must have the same type and kind");}
+            }
             if cd.is_empty() {args[i]=self.capture_scalar(args[i].clone(),ck,s,out);} else {
                 if cd.len()!=expected.len() {bail!("{label} {control} shape must match ARRAY with DIM removed");}
                 for (actual,wanted) in cd.iter().zip(&expected) {
@@ -1019,7 +1055,11 @@ impl Lower {
                 }
             }
         }
+        let start=out.len();
         let result=self.buffer(kind.clone(),&dims,out,s)?;
+        let mut allocation=out.split_off(start);
+        self.preserve_character_length(&args[0],&result,s,out);
+        out.append(&mut allocation);
         let vars=self.loop_vars(&dims,out,s);
         let mut slice=int(1);let mut stride=int(1);
         for (i,d) in dims.iter().enumerate() {
@@ -1050,7 +1090,7 @@ impl Lower {
         if endoff {
             let mut vacant=vec![];
             let boundary=if default_boundary {match kind {
-                TypeSpec::Logical=>Expr::Logical(false),TypeSpec::Real=>Expr::RealLit("0.0".into()),TypeSpec::DoublePrecision=>Expr::RealLit("0.0d0".into()),_=>int(0)
+                TypeSpec::Logical=>Expr::Logical(false),TypeSpec::Real=>Expr::RealLit("0.0".into()),TypeSpec::DoublePrecision=>Expr::RealLit("0.0d0".into()),TypeSpec::Character(_)=>Expr::Str(String::new()),_=>int(0)
             }}else{self.reshape_element(&args[2],slice,s,&mut vacant)?};
             vacant.push(store(boundary));
             // Check before adding SHIFT: extreme INTEGER(8) values must not overflow.
@@ -1241,7 +1281,11 @@ impl Lower {
                 let kind = s[&n].0.clone();
                 let capacity = selection_capacity(&n, a, s);
                 let (selected, dims) = self.indices(&n, a, s, out, false)?;
+                let start=out.len();
                 let result = self.buffer_capacity(kind, &dims, capacity, out, s)?;
+                let mut allocation=out.split_off(start);
+                self.preserve_character_length(&id(&n),&result,s,out);
+                out.append(&mut allocation);
                 let vars = self.loop_vars(&dims, out, s);
                 out.extend(self.nest(
                     &vars,

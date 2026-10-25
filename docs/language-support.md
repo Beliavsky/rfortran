@@ -1206,11 +1206,10 @@ apply. Run `python tests/test_dot_product.py`; the numbered suite includes
 
 ### Array transformations and locations
 
-CSHIFT supports fixed-shape and runtime-sized numeric and LOGICAL arrays with
-constant DIM. INTEGER
-SHIFT may be scalar or an array shaped like ARRAY with DIM removed, with runtime
+CSHIFT supports fixed-shape and runtime-sized numeric, LOGICAL and CHARACTER arrays with
+constant DIM. INTEGER SHIFT may be scalar or an array shaped like ARRAY with DIM removed, with runtime
 values in either case. Sections, array expressions, empty arrays and overlapping
-assignments are supported. Runtime DIM and CHARACTER arrays remain unsupported.
+assignments are supported. Runtime DIM remains unsupported.
 Run `python tests/test_cshift.py` for interpreter/native O0/O2 checks and a
 gfortran comparison.
 
@@ -1223,12 +1222,12 @@ Run `python tests/test_runtime_transpose.py` for runtime coverage.
 Run `python tests/test_matrix_transforms.py` for TRANSPOSE and array-valued
 CSHIFT checks in the interpreter and native O0/O2 builds, plus gfortran comparison.
 
-EOSHIFT supports fixed-shape and runtime-sized numeric and LOGICAL arrays with
+EOSHIFT supports fixed-shape and runtime-sized numeric, LOGICAL and CHARACTER arrays with
 constant DIM.
 SHIFT and optional BOUNDARY may be scalar or arrays shaped like ARRAY with DIM
-removed. Vacated elements use BOUNDARY, or zero/false when it is omitted.
+removed. Vacated elements use BOUNDARY, or zero/false/blanks when it is omitted.
 Sections, overlapping assignments and PURE usage are supported; runtime DIM
-and CHARACTER arrays remain unsupported. Runtime CSHIFT/EOSHIFT results support
+remains unsupported. Runtime CSHIFT/EOSHIFT results support
 assignment and direct procedure arguments, including nondefault bounds, supported
 sections, empty arrays and overlapping assignment. Array SHIFT and BOUNDARY
 arguments are checked against ARRAY's shape with DIM removed. Extreme INTEGER(8)
@@ -1272,8 +1271,23 @@ and FIELD arrays, supported sections, direct procedure arguments, empty arrays
 and overlapping assignment are supported. Array FIELD shape is checked against
 MASK, and VECTOR must have enough elements for the true MASK elements; extra
 VECTOR elements are ignored. Elements are consumed in Fortran array-element
-order. CHARACTER arrays remain unsupported.
+order. CHARACTER VECTOR and FIELD must have matching element lengths.
 Run `python tests/test_pack_unpack.py` and `python tests/test_runtime_unpack.py`.
+
+CHARACTER CSHIFT, EOSHIFT and UNPACK preserve element lengths and trailing blanks.
+EOSHIFT's omitted boundary fills with blanks; supplied CHARACTER boundaries
+must match ARRAY's element length. Fixed-length arrays (including runtime-sized
+multidimensional arrays) and supported deferred-length rank-one arrays work with
+assignment, sections, overlap and procedure arguments. Deferred-length operands
+are supported as whole arrays or sections. Runtime length checks use
+the actual deferred length, not its storage capacity. Zero-length elements and
+empty arrays are supported. The existing deferred CHARACTER storage-capacity
+limits still apply. Multidimensional allocatable CHARACTER assignment reallocates
+when the shape changes, preserves existing lower bounds when it does not, and
+uses a whole-array source's lower bounds when reallocation is required.
+Run `python tests/test_character_transforms.py` for coverage; the deferred-length
+interpreter case has a longer timeout because its bounded CHARACTER temporaries
+are slower than native execution.
 
 MINLOC/MAXLOC support fixed-shape and runtime-sized numeric arrays through
 rank 15, including supported ALLOCATABLE arrays, dummies, sections and elemental

@@ -165,6 +165,14 @@ fn runtime_shape(e: &Expr, arrays: &[String], declared: &[String]) -> Option<(Ex
             let count=left.as_ref().or(right.as_ref())?.1.clone();
             Some((Expr::Bin(crate::ast::BinOp::Add,Box::new(left.map_or_else(||length(a),|v|v.0)),Box::new(right.map_or_else(||length(b),|v|v.0))),count))
         }
+        Expr::Call(n,args) if matches!(n.as_str(),"cshift"|"eoshift"|"unpack") => {
+            let argument=|position:usize,key:&str| args.iter().find_map(|a|crate::named_arguments::keyword(a).filter(|(k,_)|*k==key).map(|(_,v)|v)).or_else(||args.get(position).filter(|a|crate::named_arguments::keyword(a).is_none()));
+            let source=argument(0,if n=="unpack" {"vector"}else{"array"})?;
+            let (width,count)=runtime_shape(source,arrays,declared)?;
+            let count=if n=="unpack" {Expr::Call("size".into(),vec![argument(1,"mask")?.clone()])} else {count};
+            Some((width,count))
+        }
+        Expr::Section{name,..} if declared.contains(name) || arrays.contains(name) => Some((length(&Expr::Ident(name.clone())),Expr::Call("size".into(),vec![e.clone()]))),
         Expr::Ident(n) if declared.contains(n) || arrays.contains(n) => Some((length(e), size(n))),
         _ => shape(e).and_then(|(length, size)| size.map(|size| (int(length), int(size)))),
     }
