@@ -2469,7 +2469,11 @@ with blanks, and reports record overflow. PURE and ELEMENTAL procedures may
 write local CHARACTER variables and writable dummy arguments; INTENT(IN),
 nonlocal destinations and external I/O remain protected. This subset supports
 one record. The internal file may also be an element of a CHARACTER array, such
-as `write(names(i),'(i8)') i`; whole arrays as internal files, IOSTAT and other
+as `write(names(i),'(i8)') i`, including multidimensional arrays and allocatable
+components such as `write(self%columns(i),"('C',i0)") i`. Element subscripts are
+captured before formatting, and the completed record is copied back through
+checked array assignment. See `tests/programs/xinternal_write_element.f90`.
+Whole arrays as internal files, IOSTAT and other
 WRITE control options remain unsupported. List-directed internal WRITE (`write(s,*) n`) writes each
 item as G0 after a blank.
 `tests/programs/xstr_real.f90`, `tests/172_internal_write.f90`, and

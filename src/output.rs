@@ -491,6 +491,35 @@ pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> Result<crat
             let mut internal = None;
             let mut unit_check = None;
             let mut control_prefix = vec![];
+            let mut internal_store = None;
+            // Format into a scalar record, then copy it back through the usual
+            // checked array assignment. Capture subscripts before output items
+            // are evaluated, and never read the destination's old contents.
+            if let Stmt::CallSub {name,args}=stmt {
+                if name=="@write" {
+                    if let Expr::Index(array,indices)|Expr::Call(array,indices)=&args[0] {
+                        if let Some((TypeSpec::Character(length),dims))=symbols.get(array) {
+                            if !dims.is_empty() && indices.len()==dims.len() && indices.iter().all(|e|integer(e,&symbols)) {
+                                *serial+=1;
+                                let target=format!("@internal_record_{serial}");
+                                let kind=TypeSpec::Character(*length);
+                                let array=array.clone();
+                                let mut captured=vec![];
+                                for (axis,index) in indices.iter().enumerate() {
+                                    let n=format!("@internal_index_{serial}_{axis}");
+                                    control_prefix.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![n.clone()]});
+                                    control_prefix.push(assign(&n,index.clone()));
+                                    captured.push(id(&n));
+                                }
+                                control_prefix.push(Stmt::VarDecl{kind:kind.clone(),names:vec![target.clone()]});
+                                internal_store=Some(Stmt::AssignIndex{name:array,indices:captured,value:id(&target)});
+                                symbols.insert(target.clone(),(kind,vec![]));
+                                args[0]=id(&target);
+                            }
+                        }
+                    }
+                }
+            }
             let selected = if let Stmt::CallSub { name, args } = stmt {
                 if name=="@write" && matches!(&args[0],Expr::Ident(n) if matches!(symbols.get(n),Some((TypeSpec::Character(_),dims)) if dims.is_empty())) {
                     let Expr::Ident(target)=&args[0] else {unreachable!()};
@@ -580,6 +609,7 @@ pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> Result<crat
                 } else {
                     Stmt::CallSub {name:"@format_end".into(),args:vec![id(&handle)]}
                 });
+                if let Some(store)=internal_store {inner.push(store);}
                 *stmt = Stmt::Block { body: inner };
                 continue;
             }

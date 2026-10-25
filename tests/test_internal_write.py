@@ -7,6 +7,37 @@ class InternalWrite(unittest.TestCase):
     check=test_deallocate.Deallocate.check
     reject=test_deallocate.Deallocate.reject
 
+    def test_allocatable_component_element(self):
+        self.check((ROOT/'tests/programs/xinternal_write_element.f90').read_text(),
+                   '[C1      ]\n[C2      ]\n[C3      ]\n')
+
+    def test_multidimensional_elements_and_runtime_format(self):
+        self.check("""implicit none
+character(6)::a(-1:0,2),fmt
+integer::i,j
+a='keep'
+i=0
+j=2
+fmt='(i3)'
+write(a(i,j),fmt) 7
+print '(a)', '['//a(-1,1)//']', '['//a(0,2)//']'
+write(a(-1,1),"('hi')")
+print '(a)', '['//a(-1,1)//']'
+end
+""", '[keep  ]\n[  7   ]\n[hi    ]\n')
+
+    def test_element_reads_old_value_and_checks_bounds(self):
+        self.check("""character(8)::a(2)
+integer::i
+a=['old     ','keep    ']
+i=1
+write(a(i),'(a,a)') trim(a(i)),'!'
+print '(a)', '['//a(1)//']', '['//a(2)//']'
+end
+""", '[old!    ]\n[keep    ]\n')
+        self.check("character(2)::a(2)\ninteger::i\ni=3\nwrite(a(i),'(i1)') 1\nend\n",
+                   error='out of bounds')
+
     def test_str_real_reproducer(self):
         self.check((ROOT/'tests/programs/xstr_real.f90').read_text(encoding='utf-8'),'1.2500\n1.25\n')
 
