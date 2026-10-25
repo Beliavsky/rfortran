@@ -1399,6 +1399,12 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         let (message,code)=match args.as_slice() {
                             [Expr::Str(message)]=>(message.clone(),i32::from(name=="@error_stop")),
                             [Expr::IntLit(value)]=>{let code=value.parse::<i32>().unwrap_or_else(|_|{eprintln!("Runtime error: {keyword} integer code must fit default INTEGER");std::process::exit(1)});(code.to_string(),code)},
+                            [expression]=>{
+                                let fr=call_stack.last().unwrap().clone();
+                                let value=eval_expr(expression,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack);
+                                let message=value.3.unwrap_or_else(||{eprintln!("Runtime error: {keyword} requires a scalar CHARACTER code or constant default INTEGER");std::process::exit(1)});
+                                (message,i32::from(name=="@error_stop"))
+                            },
                             _=>{eprintln!("Runtime error: {keyword} currently requires a CHARACTER or default INTEGER constant");std::process::exit(1)},
                         };
                         eprintln!("{keyword} {message}");std::process::exit(code);

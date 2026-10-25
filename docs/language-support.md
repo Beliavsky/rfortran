@@ -680,8 +680,14 @@ the pointer is associated with the same elements in the same order. Run
 ERROR STOP is permitted in PURE and implicitly pure ELEMENTAL procedures,
 as in Fortran 2018. Its code expression is checked for impure calls, and
 unconditional error termination ends definite-assignment analysis for that path.
-Plain STOP remains forbidden in pure procedures. The existing stop-code support
-accepts CHARACTER and default INTEGER constants. `tests/programs/xpure_error_stop.f90`,
+Plain STOP remains forbidden in pure procedures. ERROR STOP accepts scalar
+CHARACTER expressions, including runtime variables, concatenations, substrings,
+array elements and supported function results, as well as default INTEGER constants.
+The message is evaluated when the statement executes; CHARACTER error termination
+returns status 1. Runtime INTEGER codes and QUIET are not yet supported.
+`tests/programs/xerror_stop_character.f90` and `python tests/test_runtime_error_stop.py`
+cover runtime messages in interpreted and native execution.
+`tests/programs/xpure_error_stop.f90`,
 `tests/173_pure_error_stop.f90`, and `python tests/test_pure_error_stop.py`
 cover successful guards, error termination and integer exit statuses.
 

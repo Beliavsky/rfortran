@@ -1843,7 +1843,7 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                     }
                 }
             }
-            if name=="@error_stop" && !matches!(args.as_slice(),[Expr::Str(_)]) {
+            if name=="@error_stop" && !matches!(args.as_slice(),[code] if character_capacity(code,&symbols)?.is_some()) {
                 let [code]=args.as_slice() else {bail!("ERROR STOP requires one stop code");};
                 let code=crate::parameters::integer_constant(code).context("ERROR STOP currently requires a CHARACTER or default INTEGER constant")?;
                 let code=i32::try_from(code).context("ERROR STOP integer code must fit default INTEGER")?;

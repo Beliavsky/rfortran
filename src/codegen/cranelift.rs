@@ -3056,16 +3056,17 @@ fn gen_stmts(
                 if name == "@error_stop" || name == "@stop" {
                     let keyword=if name=="@stop" {"STOP"} else {"ERROR STOP"};
                     let (message,exit_code)=match args.as_slice() {
-                        [IExpr::Str(message)]=>(message.clone(),i32::from(name=="@error_stop")),
+                        [message] if is_character_output(message,chars)=>(message.clone(),i32::from(name=="@error_stop")),
                         [IExpr::IntLit(code)]=>{
                             let code=code.parse::<i32>().map_err(|_|anyhow::anyhow!("{keyword} integer code must fit default INTEGER"))?;
-                            (code.to_string(),code)
+                            (IExpr::Str(code.to_string()),code)
                         },
                         _=>anyhow::bail!("{keyword} currently requires a CHARACTER or default INTEGER constant"),
                     };
-                    let message=format!("{keyword} {message}\n");let pointer=make_data(module,b,ptr_ty,dc,message.as_bytes())?;
+                    let message=IExpr::Bin(crate::ast::BinOp::Concat,Box::new(IExpr::Bin(crate::ast::BinOp::Concat,Box::new(IExpr::Str(format!("{keyword} "))),Box::new(message))),Box::new(IExpr::Str("\n".into())));
+                    let text=characters::view(module,b,ptr_ty,dc,chars,ints,&message)?;let pointer=text.address;
                     let mut sig=module.make_signature();sig.params.extend([ir::AbiParam::new(types::I32),ir::AbiParam::new(ptr_ty),ir::AbiParam::new(types::I32)]);sig.returns.push(ir::AbiParam::new(types::I32));
-                    let id=module.declare_function(if cfg!(windows) { "_write" } else { "rfort_write" },Linkage::Import,&sig)?;let function=module.declare_func_in_func(id,b.func);let fd=b.ins().iconst(types::I32,2);let len=b.ins().iconst(types::I32,message.len() as i64);b.ins().call(function,&[fd,pointer,len]);
+                    let id=module.declare_function(if cfg!(windows) { "_write" } else { "rfort_write" },Linkage::Import,&sig)?;let function=module.declare_func_in_func(id,b.func);let fd=b.ins().iconst(types::I32,2);let len=b.ins().ireduce(types::I32,text.length);b.ins().call(function,&[fd,pointer,len]);
                     let mut sig=module.make_signature();sig.params.push(ir::AbiParam::new(types::I32));let id=module.declare_function("exit",Linkage::Import,&sig)?;let function=module.declare_func_in_func(id,b.func);let code=b.ins().iconst(types::I32,exit_code as i64);b.ins().call(function,&[code]);b.ins().trap(ir::TrapCode::unwrap_user(1));return Ok(true);
                 }
                 if name.eq_ignore_ascii_case("random_seed") && !func_meta.contains_key(name) {
