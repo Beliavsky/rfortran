@@ -946,8 +946,10 @@ impl Lower {
                 });
                 crate::allocatables::metadata(prefix,symbols);
             }
+            // Heap locals keep descriptor storage when a fixed-shape call is
+            // expanded inline; their one-element declarations are placeholders.
             body.retain(|s| {
-                !matches!(s, Stmt::DummyIntent { intent,.. } if !intent.starts_with("@bounded") && !intent.starts_with("@character_spec_length:"))
+                !matches!(s, Stmt::DummyIntent { intent,.. } if !intent.starts_with("@bounded") && !intent.starts_with("@character_spec_length:") && !matches!(intent.as_str(), "@heap" | "@heap_readonly"))
                     && !matches!(s,Stmt::Implicit(_))
                     && !matches!(s,Stmt::VarDecl{names,..} if names.is_empty())
                     && !matches!(s,Stmt::ArrayDecl{name,..} if bound.contains(name))

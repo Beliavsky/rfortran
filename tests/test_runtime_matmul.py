@@ -13,6 +13,40 @@ import test_deallocate
 class RuntimeMatmul(unittest.TestCase):
     check = test_deallocate.Deallocate.check
 
+    def test_correlation_function(self):
+        from pathlib import Path
+        source = (Path(__file__).parent / 'programs/xcorr_mat_function.f90').read_text()
+        self.check(source, "1 1 1 1\n")
+
+    def test_fixed_call_heap_temporaries(self):
+        # Fixed call-site shapes select function inlining, but MATMUL locals
+        # still own runtime descriptors rather than fixed backing arrays.
+        template = """module m
+implicit none
+contains
+function gram(x) result(y)
+KIND,intent(in)::x(:,:)
+KIND::y(size(x,2),size(x,2))
+y=matmul(transpose(x),x)
+end function
+end module
+program main
+use m
+implicit none
+KIND::x(-1:1,4:5),empty(0,2)
+integer::i
+x(:,4)=[1,2,3]
+x(:,5)=[3,2,1]
+do i=1,3
+print *,gram(x)
+end do
+print *,gram(empty)
+end
+"""
+        for kind in ['integer', 'real', 'double precision']:
+            with self.subTest(kind=kind):
+                self.check(template.replace('KIND', kind), "14 10 10 14\n"*3+"0 0 0 0\n")
+
     def test_runtime_sized_products(self):
         self.check("""program m4
 implicit none
