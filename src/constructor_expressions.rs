@@ -349,6 +349,9 @@ impl Lower {
                 _ => {}
             }
         }
+        // Heap declarations use a one-element storage placeholder. Retain the
+        // descriptor's active extents before folding SIZE in implied-DO bounds.
+        crate::allocatables::metadata(statements, &mut shapes);
         let mut out = vec![];
         let mut offset = None;
         for mut s in std::mem::take(statements) {

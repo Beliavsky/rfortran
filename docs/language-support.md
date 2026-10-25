@@ -982,6 +982,10 @@ or a final shape mismatch produce a runtime error.
 Runtime-bound constructors can also be ordinary expression values, including
 arithmetic, reductions, procedure arguments, and control expressions. Their
 storage grows at runtime, so these uses do not need a compile-time capacity.
+`SIZE` bounds use heap arrays' active extents, including multidimensional
+`SIZE(array, dim)` and sizes that change after reallocation. This also applies
+to constructors passed to `PACK`; run `python tests/test_pack_runtime_constructor.py`
+for constructor, mask, empty-result, and reallocation checks.
 Nested loops, runtime strides, zero-trip ranges, and whole-array items in array
 element order are supported. Bounds and items are evaluated once at their
 respective evaluation sites; constructor indices retain local scope. Fixed-length
