@@ -1236,13 +1236,17 @@ CHARACTER arrays remain unsupported. Run `python tests/test_pack_unpack.py`.
 
 MINLOC/MAXLOC support fixed-shape and runtime-sized numeric arrays through
 rank 15, including supported ALLOCATABLE arrays, dummies, sections and elemental
-expressions; FINDLOC also supports LOGICAL arrays. Optional constant DIM reduces rank, or omitting DIM returns one position
+expressions; FINDLOC also supports LOGICAL and CHARACTER arrays, including fixed
+and runtime extents and allocatable components. Optional constant DIM reduces rank, or omitting DIM returns one position
 per source dimension. MASK may be scalar or conformable LOGICAL; runtime scalar
 BACK selects the last matching location instead of the first. Empty selections
 return zeros. KIND=4 and KIND=8 are supported. FINDLOC VALUE must currently have
-the same type/kind as ARRAY. Use MASK= when omitting DIM; the positional MASK-only
-form, runtime DIM, CHARACTER arrays and runtime-sized PACK inputs remain outside
-this subset. Run `python tests/test_locations.py`.
+the same type/kind as ARRAY. CHARACTER lengths may differ: comparison pads the
+shorter operand with blanks, preserving nonblank suffixes in VALUE. CHARACTER
+searches support sections, empty arrays, MASK, BACK, DIM, KIND and keyword arguments.
+Use MASK= when omitting DIM; the positional MASK-only form, runtime DIM,
+deferred CHARACTER lengths and runtime-sized PACK inputs remain outside this
+subset. Run `python tests/test_locations.py` and `python tests/test_character_findloc.py`.
 
 ## ALLOCATABLE arrays and pointers
 

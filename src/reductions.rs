@@ -37,6 +37,7 @@ fn int(n: i64) -> Expr { Expr::IntLit(n.to_string()) }
 fn bin(op: BinOp, a: Expr, b: Expr) -> Expr { Expr::Bin(op, Box::new(a), Box::new(b)) }
 pub(crate) fn reduction(name: &str) -> bool { matches!(name.to_ascii_lowercase().as_str(), "sum" | "product" | "minval" | "maxval" | "iany" | "iall" | "iparity" | "parity" | "any" | "all" | "count" | "@count_i8" | "@count_default" | "@any_reduction" | "@all_reduction") }
 fn array_element_kind(kind: &TypeSpec) -> bool { matches!(kind, TypeSpec::Integer(_) | TypeSpec::Real | TypeSpec::DoublePrecision | TypeSpec::Logical) }
+fn selectable_element_kind(kind: &TypeSpec) -> bool { array_element_kind(kind) || matches!(kind,TypeSpec::Character(_)) }
 fn numeric_minmax(name:&str,symbols:&Symbols)->bool {
     matches!(name,"min"|"max") && !symbols.contains_key(name) && !symbols.procedures.contains(name)
 }
@@ -85,10 +86,13 @@ fn shape_guard(a: Expr,b: Expr) -> Stmt {
 
 // Produce a scalar expression for element `index`, its shape, and its type.
 fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i64>, TypeSpec)> {
+    if let Some(length)=character_capacity(e,symbols)? {
+        return Ok((e.clone(),None,TypeSpec::Character(Some(length))));
+    }
     if let Some((value,count)) = crate::multidim::view_element(e,index) {
         let Expr::Index(name,_) = &value else {unreachable!()};
         let kind=symbols.get(name).context("undefined section source")?.0.clone();
-        if !array_element_kind(&kind) { bail!("array sections currently require numeric or LOGICAL arrays"); }
+        if !selectable_element_kind(&kind) { bail!("unsupported array section element type"); }
         return Ok((value,Some(count),kind));
     }
     match e {
@@ -137,7 +141,7 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
         }
         Expr::Ident(name) | Expr::Section { name, .. } => {
             let (kind, dims) = symbols.get(name).with_context(|| format!("undefined reduction argument `{name}`"))?;
-            if !array_element_kind(kind) { bail!("reductions require numeric or LOGICAL arrays"); }
+            if !selectable_element_kind(kind) { bail!("unsupported array element type"); }
             if dims.is_empty() && matches!(e, Expr::Ident(_)) { return Ok((e.clone(), None, kind.clone())); }
             if dims.len() != 1 { bail!("reductions currently require one-dimensional arrays"); }
             let extent = constant(&dims[0])?;
@@ -178,7 +182,7 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
             let (arg, len, kind) = element(&args[0], index, symbols)?;
             if len.is_some() || !matches!(kind, TypeSpec::Integer(_)) { bail!("array subscript must be scalar INTEGER"); }
             let kind = symbols[name].0.clone();
-            if !array_element_kind(&kind) { bail!("reductions require numeric or LOGICAL arrays"); }
+            if !selectable_element_kind(&kind) { bail!("unsupported array element type"); }
             Ok((Expr::Index(name.clone(), vec![arg]), None, kind))
         }
         Expr::Call(name,args) if symbols.elementals.contains_key(name) => {
@@ -210,7 +214,7 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
             if args.len() != 2 { bail!("{name} requires two arguments"); }
             let (a, alen, kind) = element(&args[0], index, symbols)?;
             let (b, blen, other) = element(&args[1], index, symbols)?;
-            if !same_kind(&kind,&other) || matches!(kind, TypeSpec::Logical) { bail!("{name} arguments must have the same numeric type and kind"); }
+            if !same_kind(&kind,&other) || !array_element_kind(&kind) || matches!(kind, TypeSpec::Logical) { bail!("{name} arguments must have the same numeric type and kind"); }
             if let (Some(a),Some(b)) = (alen,blen) { if a != b { bail!("{name} argument shapes do not conform"); } }
             Ok((Expr::Call(name.clone(),vec![a,b]),alen.or(blen),kind))
         }
@@ -320,8 +324,18 @@ fn lower_assignment_value(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<
 // temporaries do not inflate every recursive stack frame on Windows debug builds.
 fn lower_location(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, serial: &mut usize) -> Result<()> {
     let Expr::Call(name,args) = e else { unreachable!() };
-    for i in [0,1,3,5] { lower_expr(&mut args[i],symbols,prefix,serial)?; }
     let find = name == "@findloc";
+    // Fixed CHARACTER arrays have already become scalar storage at this pass.
+    // Do not rebuild them as a late CHARACTER array constructor: that would
+    // miss the storage-lowering pass. Select the existing scalar values instead.
+    let mut character_values=if find {match &args[0] {
+        Expr::Call(n,a) if n=="@array_constructor" && !a.is_empty()
+            && a.iter().all(|e|character_capacity(e,symbols).ok().flatten().is_some())=>Some(a.clone()),
+        _=>None,
+    }}else{None};
+    if let Some(values)=&mut character_values {for e in values {lower_expr(e,symbols,prefix,serial)?;}}
+    else {lower_expr(&mut args[0],symbols,prefix,serial)?;}
+    for i in [1,3,5] { lower_expr(&mut args[i],symbols,prefix,serial)?; }
     let dim = !matches!(&args[2],Expr::Call(tag,_) if tag == "@no_dim");
     let stride = Expr::Call("max".into(),vec![args[6].clone(),int(1)]);
     // A runtime rank-one ARRAY has a runtime extent and source shape [-1].
@@ -348,11 +362,13 @@ fn lower_location(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, s
         let ordinal = bin(BinOp::Sub,id(&outer),int(1));
         bin(BinOp::Add,int(1),bin(BinOp::Add,Expr::Call("modulo".into(),vec![ordinal.clone(),stride.clone()]),bin(BinOp::Add,bin(BinOp::Mul,bin(BinOp::Div,ordinal,stride.clone()),bin(BinOp::Mul,stride.clone(),axis_len.clone())),bin(BinOp::Mul,bin(BinOp::Sub,id(&index),int(1)),stride.clone()))))
     } else { id(&index) };
-    let (value,_,kind) = element(&args[0],&source_index,symbols)?;
-    if !find && kind == TypeSpec::Logical { bail!("MINLOC/MAXLOC ARRAY must be numeric"); }
+    let (value,source_count,kind) = if let Some(values)=&character_values {
+        let width=character_capacity(&values[0],symbols)?.unwrap();
+        (values[0].clone(),Some(values.len() as i64),TypeSpec::Character(Some(width)))
+    }else{element(&args[0],&source_index,symbols)?};
+    if !find && (!array_element_kind(&kind) || kind == TypeSpec::Logical) { bail!("MINLOC/MAXLOC ARRAY must be numeric"); }
     let (mask,mask_count,mask_kind) = element(&args[3],&source_index,symbols)?;
     if let Some(mask_count)=mask_count {
-        let (_,source_count,_)=element(&args[0],&int(1),symbols)?;
         let source_len=runtime_extent(&args[0]).unwrap_or_else(||int(source_count.unwrap()));
         let mask_len=runtime_extent(&args[3]).unwrap_or_else(||int(mask_count));
         prefix.push(shape_guard(source_len,mask_len));
@@ -364,24 +380,46 @@ fn lower_location(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, s
     prefix.push(Stmt::VarDecl {kind:TypeSpec::Logical,names:vec![back.clone()]});
     prefix.push(assign(&back,args[5].clone()));
     prefix.push(Stmt::VarDecl {kind:kind.clone(),names:if find {vec![item.clone()]} else {vec![item.clone(),best.clone()]}});
+    let character=matches!(kind,TypeSpec::Character(_));
+    symbols.insert(item.clone(),(kind.clone(),vec![]));
+    let capture_character=|name:&str,value:Expr,kind:&TypeSpec| {
+        if let TypeSpec::Character(width)=kind {
+            Stmt::CallSub{name:"@character_assign".into(),args:vec![id(name),value,int(width.unwrap_or(1) as i64)]}
+        }else{assign(name,value)}
+    };
     if find {
         let (_,len,value_kind) = element(&args[1],&int(1),symbols)?;
-        if len.is_some() || !same_kind(&kind,&value_kind) { bail!("FINDLOC VALUE must be scalar with the same type and kind as ARRAY"); }
-        prefix.push(Stmt::VarDecl {kind:kind.clone(),names:vec![sought.clone()]});
-        prefix.push(assign(&sought,args[1].clone()));
+        // CHARACTER length is not kind: retain VALUE's full length so a
+        // longer nonblank suffix cannot be truncated into a false match.
+        if len.is_some() || !(same_kind(&kind,&value_kind) || character && matches!(value_kind,TypeSpec::Character(_))) { bail!("FINDLOC VALUE must be scalar with the same type and kind as ARRAY"); }
+        symbols.insert(sought.clone(),(value_kind.clone(),vec![]));
+        prefix.push(Stmt::VarDecl {kind:value_kind.clone(),names:vec![sought.clone()]});
+        prefix.push(capture_character(&sought,args[1].clone(),&value_kind));
     }
     if scalar { prefix.push(Stmt::VarDecl {kind:result_kind.clone(),names:vec![temp.clone()]}); }
     else if runtime {crate::heap::temporary(result_kind.clone(),temp.clone(),output_len.clone(),prefix);}
     else { prefix.push(Stmt::ArrayDecl {kind:result_kind.clone(),name:temp.clone(),dims:vec![output_len.clone()]}); }
     let first = bin(BinOp::Eq,id(&position),int(0));
+    let mut comparisons=vec![];
     let update = if find {
-        bin(BinOp::And,bin(if kind == TypeSpec::Logical {BinOp::Eqv} else {BinOp::Eq},id(&item),id(&sought)),bin(BinOp::Or,first,id(&back)))
+        let equal=if character {
+            lower_character_comparison(BinOp::Eq,&id(&item),&id(&sought),symbols,&mut comparisons,serial)?.unwrap()
+        } else {bin(if kind == TypeSpec::Logical {BinOp::Eqv} else {BinOp::Eq},id(&item),id(&sought))};
+        bin(BinOp::And,equal,bin(BinOp::Or,first,id(&back)))
     } else {
         bin(BinOp::Or,first,bin(BinOp::Or,bin(if name == "@minloc" {BinOp::Lt} else {BinOp::Gt},id(&item),id(&best)),bin(BinOp::And,id(&back),bin(BinOp::Eq,id(&item),id(&best)))))
     };
     let mut body = vec![assign(&position,int(0))];
     if !find { body.push(assign(&best,int(0))); }
-    body.push(Stmt::Do {var:index.clone(),start:int(1),end:axis_len,body:vec![Stmt::If {cond:mask,then_body:vec![assign(&item,value),Stmt::If {cond:update,then_body:if find {vec![assign(&position,id(&index))]} else {vec![assign(&position,id(&index)),assign(&best,id(&item))]},else_body:None}],else_body:None}]});
+    let mut selected=if let Some(values)=character_values {
+        values.into_iter().enumerate().map(|(i,value)|Stmt::If {
+            cond:bin(BinOp::Eq,source_index.clone(),int(i as i64+1)),
+            then_body:vec![capture_character(&item,value,&kind)],else_body:None,
+        }).collect()
+    }else{vec![capture_character(&item,value,&kind)]};
+    selected.append(&mut comparisons);
+    selected.push(Stmt::If {cond:update,then_body:if find {vec![assign(&position,id(&index))]} else {vec![assign(&position,id(&index)),assign(&best,id(&item))]},else_body:None});
+    body.push(Stmt::Do {var:index.clone(),start:int(1),end:axis_len,body:vec![Stmt::If {cond:mask,then_body:selected,else_body:None}]});
     if dim {
         body.push(if scalar { assign(&temp,id(&position)) } else { Stmt::AssignIndex {name:temp.clone(),indices:vec![id(&outer)],value:id(&position)} });
         prefix.push(Stmt::Do {var:outer,start:int(1),end:output_len.clone(),body});
@@ -1058,6 +1096,7 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
                 bin(BinOp::Add, int(1), bin(BinOp::Add, offset, bin(BinOp::Mul, bin(BinOp::Sub, Expr::Ident(index_name.clone()), int(1)), stride.clone())))
             } else { Expr::Ident(index_name.clone()) };
             let (value, count, kind) = element(&args[0], &index, symbols)?;
+            if !array_element_kind(&kind) {bail!("{name} currently requires numeric or LOGICAL arrays");}
             let count = count.context("reduction argument must be an array")?;
             let dynamic_end = runtime_extent(&args[0]);
             let name = match name.as_str() {

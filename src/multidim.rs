@@ -393,6 +393,15 @@ impl Lowerer {
         match e {
             Expr::Ident(n) => self.check_association(n)?,
             Expr::Call(n,_) if matches!(n.as_str(),"@minloc" | "@maxloc" | "@findloc") => {
+                // CHARACTER storage lowering can revisit an already normalized
+                // location intrinsic with a flat constructor. Keep its original
+                // rank, DIM stride and result shape instead of deriving rank one.
+                if let Expr::Call(_,args)=e {
+                    if args.len()==10 {
+                        for i in [0,1,3,5] {self.expression(&mut args[i],shapes)?;}
+                        return Ok(());
+                    }
+                }
                 let result_dims = self.shape(e,shapes)?.unwrap_or_default();
                 let Expr::Call(_,args) = e else { unreachable!() };
                 let Some(dims) = self.shape(&args[0],shapes)? else {
@@ -412,6 +421,7 @@ impl Lowerer {
                 }
                 let (stride,axis_len) = if matches!(&args[2],Expr::Call(tag,_) if tag == "@no_dim") { (1,count) } else {
                     let axis = crate::parameters::integer_constant(&args[2])? as usize - 1;
+                    if axis>=dims.len() {bail!("location DIM must be between 1 and {}",dims.len());}
                     (total(&dims[..axis])?,dims[axis])
                 };
                 for i in [0,1,3,5] { self.expression(&mut args[i],shapes)?; }

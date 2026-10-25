@@ -254,9 +254,15 @@ fn expression(e: Expr, arrays: &Arrays) -> Result<Value> {
                     let Value::Array(items)=&values[0] else {unreachable!()};
                     Value::Scalar(Expr::IntLit(items.len().to_string()))
                 } else if matches!(n.as_str(),"sum"|"product"|"maxval"|"minval"|"maxloc"|"minloc"|"count"|"any"|"all"
-                    |"@maxloc"|"@minloc"|"@count_default"|"@count")
+                    |"@maxloc"|"@minloc"|"@findloc"|"@count_default"|"@count")
                     && values.iter().any(|v|matches!(v,Value::Array(_))) {
-                    Value::Scalar(Expr::Call(n, values.into_iter().map(Value::expr).collect()))
+                    let args=values.into_iter().enumerate().map(|(i,v)| {
+                        if n=="@findloc" && i==0 && matches!(&v,Value::Array(a) if a.is_empty()) {
+                            // Keep the type of an empty CHARACTER selection.
+                            Expr::Call("@packed_view".into(),vec![Expr::Str(String::new()),Expr::IntLit("0".into())])
+                        } else {v.expr()}
+                    }).collect();
+                    Value::Scalar(Expr::Call(n,args))
                 } else if let Some(count)=values.iter().find_map(|v|if let Value::Array(v)=v {Some(v.len())} else {None}) {
                     if !matches!(n.as_str(),"index"|"scan"|"verify"|"len_trim"|"ichar"|"iachar"|"adjustl"|"adjustr") {
                         bail!("CHARACTER array arguments to `{n}` are not yet supported");
