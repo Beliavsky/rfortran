@@ -1151,11 +1151,11 @@ CHARACTER lengths, empty arrays and repeated allocation regressions.
 
 Numeric reductions (`SUM`, `PRODUCT`, `MINVAL`, `MAXVAL`) accept `ARRAY=`,
 `DIM=`, and `MASK=` keywords, including reordered keywords. Masks may be scalar
-LOGICAL values or conformable LOGICAL arrays/expressions. A constant `DIM` reduces
+LOGICAL values or conformable LOGICAL arrays/expressions. A constant or runtime `DIM` reduces
 one axis of a fixed-shape or runtime-sized array, preserving the other axes in
 order; without DIM the whole array is reduced. ALLOCATABLE arrays and supported
 assumed-shape dummies/sections use their active extents, through rank 15. Runtime
-DIM remains unsupported. Earlier procedure-call specialization can still reject
+DIM is evaluated once and checked against the source rank. Earlier procedure-call specialization can still reject
 DIM results from runtime-sized arrays passed directly as actual arguments; assign the result to an
 ALLOCATABLE array first in those cases.
 A LOGICAL array in the second position is the MASK. Empty/all-false integer extrema
@@ -1168,7 +1168,8 @@ and comparison with gfortran when installed.
 numeric reductions do. `NORM2(X [, DIM])` is `SQRT(SUM(X*X [, DIM]))`, without
 the scaling that avoids overflow for very large elements. The shared runtime
 DIM path also supports these reductions and NORM2. Run
-`python tests/test_more_intrinsics.py` and `python tests/test_runtime_dim_reductions.py`.
+`python tests/test_more_intrinsics.py`, `python tests/test_runtime_dim_reductions.py`,
+and `python tests/test_variable_dim_reductions.py`.
 The latter compares interpreter/native O0/O2 results with gfortran and covers
 all axes, kinds, masks, empty slices, nested reductions, result assignment,
 sections, non-default bounds, ranks through 15, and allocation/shape errors.
@@ -1182,9 +1183,9 @@ O0/O2 checks, including pure/impure procedures and empty arrays.
 
 Logical reductions `COUNT`, `ANY`, and `ALL` accept `MASK=` and `DIM=` keywords.
 `COUNT` supports constant `KIND=4` (default) and `KIND=8`; `ANY` and `ALL` return
-LOGICAL. Whole-array and constant-DIM reductions support logical arrays,
+LOGICAL. Whole-array and constant or runtime DIM reductions support logical arrays,
 sections, and relational array expressions. Empty inputs yield 0, false, and
-true respectively. Runtime DIM remains unsupported. Run `python tests/test_logical_reductions.py` for interpreter,
+true respectively. Run `python tests/test_logical_reductions.py` for interpreter,
 native O0/O2, and gfortran comparison checks.
 
 ### DOT_PRODUCT
@@ -1292,14 +1293,14 @@ are slower than native execution.
 MINLOC/MAXLOC support fixed-shape and runtime-sized numeric arrays through
 rank 15, including supported ALLOCATABLE arrays, dummies, sections and elemental
 expressions; FINDLOC also supports LOGICAL and CHARACTER arrays, including fixed
-and runtime extents and allocatable components. Optional constant DIM reduces rank, or omitting DIM returns one position
+and runtime extents and allocatable components. Optional constant or runtime DIM reduces rank, or omitting DIM returns one position
 per source dimension. MASK may be scalar or conformable LOGICAL; runtime scalar
 BACK selects the last matching location instead of the first. Empty selections
 return zeros. KIND=4 and KIND=8 are supported. FINDLOC VALUE must currently have
 the same type/kind as ARRAY. CHARACTER lengths may differ: comparison pads the
 shorter operand with blanks, preserving nonblank suffixes in VALUE. CHARACTER
 searches support sections, empty arrays, MASK, BACK, DIM, KIND and keyword arguments.
-Use MASK= when omitting DIM; the positional MASK-only form, runtime DIM,
+Use MASK= when omitting DIM; the positional MASK-only form,
 deferred CHARACTER lengths and runtime-sized PACK inputs remain outside this
 subset. Run `python tests/test_locations.py` and `python tests/test_character_findloc.py`.
 

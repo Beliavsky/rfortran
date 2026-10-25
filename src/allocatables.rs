@@ -1169,9 +1169,13 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
         let Expr::Call(name,args)=e else {return Ok(())};
         let location=matches!(name.as_str(),"@minloc"|"@maxloc"|"@findloc");
         if !(crate::reductions::reduction(name)||location) || shapes.contains_key(name) {return Ok(());}
-        let Some((dims,true))=logical_shape(&args[0],shapes,prefix)? else {return Ok(())};
-        let mut axis=None;
         let dim_slot=if location {2} else {1};
+        let has_dim=(location || args.len()==3)
+            && !matches!(&args[dim_slot],Expr::Call(tag,_) if tag=="@no_dim");
+        let Some((dims,runtime_source))=logical_shape(&args[0],shapes,prefix)? else {return Ok(())};
+        if !runtime_source && (!has_dim || crate::parameters::integer_constant(&args[dim_slot]).is_ok()) {return Ok(());}
+        let mut axis=None;
+        let mut dynamic_axis=None;
         if (location || args.len()==3) && !matches!(&args[dim_slot],Expr::Call(tag,_) if tag=="@no_dim") {
             // In the positional (ARRAY, MASK) form the second argument is LOGICAL.
             let positional_mask=location || matches!(name.as_str(),"sum"|"product"|"minval"|"maxval"|"iany"|"iall"|"iparity");
@@ -1180,9 +1184,33 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                     .is_ok_and(|(_,_,k)|k==TypeSpec::Logical));
             if mask {let mask_slot=if location {3}else{2};args[mask_slot]=std::mem::replace(&mut args[dim_slot],Expr::Call("@no_dim".into(),vec![]));}
             else {
-                let dim=crate::parameters::integer_constant(&args[dim_slot]).context("reduction DIM must currently be a constant INTEGER; use MASK= for masks")?;
-                if dim<1 || dim as usize>dims.len() {bail!("{name}: DIM must be between 1 and {}",dims.len());}
-                axis=Some(dim as usize-1);
+                if let Ok(dim)=crate::parameters::integer_constant(&args[dim_slot]) {
+                    if dim<1 || dim as usize>dims.len() {bail!("{name}: DIM must be between 1 and {}",dims.len());}
+                    axis=Some(dim as usize-1);
+                } else {
+                    let mut dim_model=args[dim_slot].clone();
+                    crate::procedure_arguments::visit_expr(&mut dim_model,&mut |e| {
+                        if let Expr::Call(n,_) = e {
+                            let key=format!("@function_result:{n}");
+                            if shapes.contains_key(&key) { *e=id(&key); }
+                        }
+                    });
+                    if !matches!(crate::inquiries::model_type(&dim_model, &|n|
+                        shapes.get(n).map(|(k,d)|(k.clone(),d.len())))?, Some(TypeSpec::Integer(_)))
+                        || logical_shape(&dim_model,shapes,prefix)?.is_some() {
+                        bail!("{name}: DIM must be a scalar INTEGER");
+                    }
+                    *serial+=1;
+                    let dim_name=format!("@reduction_dim_{serial}");
+                    prefix.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![dim_name.clone()]});
+                    prefix.push(assign(&dim_name,args[dim_slot].clone()));
+                    shapes.insert(dim_name.clone(),(TypeSpec::Integer(Some(8)),vec![]));
+                    let dim=id(&dim_name);
+                    prefix.push(Stmt::If{cond:bin(BinOp::Or,bin(BinOp::Lt,dim.clone(),int(1)),bin(BinOp::Gt,dim.clone(),int(dims.len() as i64))),
+                        then_body:vec![Stmt::CallSub{name:"@error_stop".into(),args:vec![Expr::Str(format!("{name}: DIM must be between 1 and {}",dims.len()))]}],else_body:None});
+                    args[dim_slot]=dim.clone();
+                    dynamic_axis=Some(dim);
+                }
             }
         }
         let mask=if location {Some(&args[3])} else if args.len()==3 {Some(&args[2])} else {None};
@@ -1207,16 +1235,38 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
             expression(arg,shapes,prefix,checks,serial)?;
             fixed_operands(arg,shapes);
         }
-        let result_dims=axis.map(|axis| {let mut d=dims.clone();d.remove(axis);d});
+        let mut result_dims=axis.map(|axis| {let mut d=dims.clone();d.remove(axis);d});
+        let mut stride=axis.map_or(int(1),|axis|dims[..axis].iter().cloned().reduce(|a,b|bin(BinOp::Mul,a,b)).unwrap_or(int(1)));
+        let mut length=axis.map_or_else(||dims.iter().cloned().reduce(|a,b|bin(BinOp::Mul,a,b)).unwrap(),|axis|dims[axis].clone());
+        if let Some(dim)=dynamic_axis {
+            // Select the stride, reduced extent and remaining axes once. The
+            // shared reduction loop is independent of rank and selected DIM.
+            *serial+=1;
+            let stride_name=format!("@reduction_stride_{serial}");
+            let length_name=format!("@reduction_length_{serial}");
+            let axes=(0..dims.len()-1).map(|i|format!("@reduction_axis_{serial}_{i}")).collect::<Vec<_>>();
+            let mut names=vec![stride_name.clone(),length_name.clone()];names.extend(axes.clone());
+            prefix.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:names.clone()});
+            for n in names {shapes.insert(n,(TypeSpec::Integer(Some(8)),vec![]));}
+            prefix.push(assign(&stride_name,int(1)));
+            prefix.push(assign(&length_name,dims[0].clone()));
+            for (n,d) in axes.iter().zip(dims.iter().skip(1)) {prefix.push(assign(n,d.clone()));}
+            let mut current_stride=dims[0].clone();
+            for selected in 1..dims.len() {
+                let mut body=vec![assign(&stride_name,current_stride.clone()),assign(&length_name,dims[selected].clone())];
+                for (n,d) in axes.iter().zip(dims.iter().enumerate().filter_map(|(i,d)|(i!=selected).then_some(d))) {body.push(assign(n,d.clone()));}
+                prefix.push(Stmt::If{cond:bin(BinOp::Eq,dim.clone(),int(selected as i64+1)),then_body:body,else_body:None});
+                current_stride=bin(BinOp::Mul,current_stride,dims[selected].clone());
+            }
+            stride=id(&stride_name);length=id(&length_name);
+            result_dims=Some(axes.iter().map(|n|id(n)).collect());
+        }
         if location {
-            let stride=axis.map_or(int(1),|axis|dims[..axis].iter().cloned().reduce(|a,b|bin(BinOp::Mul,a,b)).unwrap_or(int(1)));
-            let length=axis.map_or_else(||dims.iter().cloned().reduce(|a,b|bin(BinOp::Mul,a,b)).unwrap(),|axis|dims[axis].clone());
             args.extend([stride,length,Expr::Call("@location_source_shape".into(),dims.clone()),
                 Expr::Call("@runtime_location_result_shape".into(),result_dims.clone().unwrap_or_else(||vec![int(dims.len() as i64)]))]);
-        } else if let Some(axis)=axis {
-            let stride=dims[..axis].iter().cloned().reduce(|a,b|bin(BinOp::Mul,a,b)).unwrap_or(int(1));
+        } else if result_dims.is_some() {
             if args.len()==1 {args.push(Expr::Logical(true));}
-            args.extend([stride,dims[axis].clone(),Expr::Call("@runtime_reduction_shape".into(),result_dims.clone().unwrap())]);
+            args.extend([stride,length,Expr::Call("@runtime_reduction_shape".into(),result_dims.clone().unwrap())]);
         }
         let start=prefix.len();
         crate::reductions::scalar_value(e,shapes,prefix,serial)?;
@@ -1920,8 +1970,15 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
     // Function specialization can already have lowered allocation blocks.
     // Continue its numbering when finishing the enclosing program.
     let mut serial=crate::subroutines::maximum_serial(&p.body,&["@alloc_","@reduction_","@location_"]);
-    let elemental_shapes: Shapes = crate::elemental::functions(&p).into_iter()
+    let mut elemental_shapes: Shapes = crate::elemental::functions(&p).into_iter()
         .map(|(name, kind)| (format!("@elemental:{name}"), (kind, vec![]))).collect();
+    for stmt in &p.body {
+        if let Stmt::Function{name,return_type,body,..}=stmt {
+            if let Some(kind)=crate::elemental::result_kind(name,return_type,body) {
+                elemental_shapes.insert(format!("@function_result:{name}"),(kind,vec![]));
+            }
+        }
+    }
     lower(&mut p.body, &elemental_shapes, &mut serial, &mut checks)?;
     p.body.extend(checks);
     Ok(p)
