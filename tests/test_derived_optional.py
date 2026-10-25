@@ -9,6 +9,19 @@ class DerivedOptional(unittest.TestCase):
     check=test_deallocate.Deallocate.check
     reject=test_deallocate.Deallocate.reject
 
+    def test_generic_derived_result_with_optional_character(self):
+        source=(ROOT/"tests/programs/xderived_optional_character.f90").read_text(encoding="utf-8")
+        self.check(source,"1\n4\n8\n4\n")
+        self.check(source.replace("function copy(", "pure function copy("),"1\n4\n8\n4\n")
+        # TYPE and CLASS dummies store their INTENT on the declaration.
+        # Both must survive early constant resolution for generic selection.
+        self.check(source.replace("class(box),intent(in)::self", "type(box),intent(in)::self")
+                   .replace("contains\nprocedure :: copy", "")
+                   .replace("x%copy()", "copy_box(x)")
+                   .replace("x%copy(how='all')", "copy_box(x,how='all')")
+                   .replace("x%copy('rows','any')", "copy_box(x,'rows','any')"),
+                   "1\n4\n8\n4\n")
+
     def test_reproducer(self):
         source=(ROOT/"tests/programs/xstr_int.f90").read_text(encoding="utf-8")
         self.check(source,"7\n")

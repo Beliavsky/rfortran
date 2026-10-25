@@ -66,7 +66,13 @@ pub(crate) fn inline_character(
     let character_array_input=body.iter().any(|s|matches!(s,Stmt::ArrayDecl{kind,name,..} if character(kind)&&params.contains(name)));
     // Keep existing scalar fixed-length procedures without INTENT on the
     // numeric ABI path; this expansion requires explicitly read-only inputs.
-    let readonly=params.iter().all(|p|body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==p&&intent=="intent(in)")));
+    let readonly=params.iter().all(|p|body.iter().any(|s| match s {
+        Stmt::DummyIntent{name,intent} => name==p && intent=="intent(in)",
+        // Derived dummies retain their attributes on the declaration until
+        // component lowering; recognize the same INTENT before that pass.
+        Stmt::DerivedDecl{names,attributes,..} => names.contains(p) && attributes.iter().any(|a|a=="intent(in)"),
+        _ => false,
+    }));
     result_kind(name,declared,body).as_ref().is_some_and(character)
         || ((elemental || array_result || character_array_input || readonly) && body.iter().any(|s| match s {
             Stmt::VarDecl {kind,names} => character(kind)&&names.iter().any(|n|params.contains(n)),
