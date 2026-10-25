@@ -262,6 +262,11 @@ fn shape(e: &Expr, s: &Shapes) -> Result<Option<(TypeSpec, Vec<Expr>)>> {
             vec![],
         ))),
         Expr::Call(n, a) if n == "@vector_subscript" => shape(&a[0], s),
+        Expr::Call(n,a) if n=="unpack" && a.len()==3 && !s.contains_key(n) => {
+            let (Some((kind,_)),Some((_,dims)))=(shape(&a[0],s)?,shape(&a[1],s)?) else {return Ok(None);};
+            Ok(Some((kind,dims)))
+        }
+        Expr::Call(n,a) if matches!(n.as_str(),"cshift"|"eoshift") && !s.contains_key(n) => shape(&a[0],s),
         Expr::Call(n,a) if n == "spread" && a.len()==3 && !s.contains_key(n) => {
             let Some((kind,mut dims))=shape(&a[0],s)? else {return Ok(None);};
             let dim=constant(&a[1]).context("SPREAD DIM must currently be a constant INTEGER")?;
@@ -933,6 +938,129 @@ impl Lower {
         }
         self.element(e,index,s,out)
     }
+    // Capture scalar controls once, including when an empty result has no iterations.
+    fn capture_scalar(&mut self,e:Expr,kind:TypeSpec,s:&mut Shapes,out:&mut Vec<Stmt>)->Expr {
+        self.serial+=1;
+        let n=format!("@vector_runtime_control_{}",self.serial);
+        out.push(Stmt::VarDecl{kind:kind.clone(),names:vec![n.clone()]});
+        out.push(assign(&n,e));
+        s.insert(n.clone(),(kind,vec![]));
+        id(&n)
+    }
+    fn unpack(&mut self,e:&mut Expr,s:&mut Shapes,out:&mut Vec<Stmt>)->Result<()> {
+        let Expr::Call(name,args)=e else {return Ok(());};
+        if name!="unpack" || s.contains_key(name) || args.len()!=3 {return Ok(());}
+        let (Some((kind,vd)),Some((mk,md)),Some((fk,fd)))=(shape(&args[0],s)?,shape(&args[1],s)?,shape(&args[2],s)?) else {return Ok(());};
+        if vd.iter().chain(&md).chain(&fd).all(|d|constant(d).is_some()) {return Ok(());}
+        if vd.len()!=1 {bail!("UNPACK VECTOR must be a rank-one array");}
+        if md.is_empty() || mk!=TypeSpec::Logical {bail!("UNPACK MASK must be a LOGICAL array");}
+        if !crate::pointers::same_kind(&kind,&fk) {bail!("UNPACK VECTOR and FIELD must have the same type and kind");}
+        if matches!(kind,TypeSpec::Character(_)|TypeSpec::CharacterAssumed|TypeSpec::CharacterLength(_)) {bail!("runtime UNPACK CHARACTER arrays are not yet supported");}
+        let length=self.scalar("unpack_length",vd[0].clone(),out,s);
+        let mut dims=vec![];
+        for d in md {dims.push(self.scalar("unpack_extent",d,out,s));}
+        if fd.is_empty() {args[2]=self.capture_scalar(args[2].clone(),kind.clone(),s,out);}else{
+            if fd.len()!=dims.len() {bail!("UNPACK FIELD shape must match MASK");}
+            for (a,b) in fd.iter().zip(&dims) {out.push(error(bin(BinOp::Ne,a.clone(),b.clone()),"UNPACK FIELD shape must match MASK".into()));}
+        }
+        let result=self.buffer(kind,&dims,out,s)?;
+        let vars=self.loop_vars(&dims,out,s);
+        let cursor=self.capture_scalar(int(0),TypeSpec::Integer(Some(8)),s,out);
+        let Expr::Ident(cursor_name)=&cursor else {unreachable!()};
+        let mut index=int(1);let mut stride=int(1);
+        for (v,d) in vars.iter().zip(&dims) {
+            index=bin(BinOp::Add,index,bin(BinOp::Mul,bin(BinOp::Sub,id(v),int(1)),stride.clone()));
+            stride=bin(BinOp::Mul,stride,d.clone());
+        }
+        let mut body=vec![];
+        let mask=self.reshape_element(&args[1],index.clone(),s,&mut body)?;
+        let mut selected=vec![assign(cursor_name,bin(BinOp::Add,cursor.clone(),int(1))),error(bin(BinOp::Gt,cursor.clone(),length),"UNPACK VECTOR has too few elements for MASK".into())];
+        let value=self.reshape_element(&args[0],cursor,s,&mut selected)?;
+        let store=|value|Stmt::AssignIndex{name:result.clone(),indices:vars.iter().map(|n|id(n)).collect(),value};
+        selected.push(store(value));
+        let mut rejected=vec![];
+        let value=self.reshape_element(&args[2],index,s,&mut rejected)?;
+        rejected.push(store(value));
+        body.push(Stmt::If{cond:mask,then_body:selected,else_body:Some(rejected)});
+        out.extend(self.nest(&vars,&dims,body));
+        *e=id(&result);
+        Ok(())
+    }
+    fn shift(&mut self,e:&mut Expr,s:&mut Shapes,out:&mut Vec<Stmt>)->Result<()> {
+        let Expr::Call(name,args)=e else {return Ok(());};
+        if !matches!(name.as_str(),"cshift"|"eoshift") || s.contains_key(name) {return Ok(());}
+        let endoff=name=="eoshift";
+        let label=name.to_ascii_uppercase();
+        let Some((kind,source_dims))=shape(&args[0],s)? else {return Ok(());};
+        let mut runtime_control=false;
+        for arg in &args[1..if endoff {3}else{2}] {
+            if let Some((_,d))=shape(arg,s)? {runtime_control |= d.iter().any(|d|constant(d).is_none());}
+        }
+        if !runtime_control && source_dims.iter().all(|d|constant(d).is_some()) {return Ok(());}
+        if matches!(kind,TypeSpec::Character(_)|TypeSpec::CharacterAssumed|TypeSpec::CharacterLength(_)) {bail!("runtime {label} CHARACTER arrays are not yet supported");}
+        let dim=constant(&args[if endoff {3}else{2}]).with_context(||format!("{label} DIM must currently be a constant INTEGER"))?;
+        if dim<1 || dim as usize>source_dims.len() {bail!("{label} DIM must be between 1 and {}",source_dims.len());}
+        let axis=dim as usize-1;
+        let mut dims=vec![];
+        for d in source_dims {dims.push(self.scalar("shift_extent",d,out,s));}
+        let mut expected=dims.clone();expected.remove(axis);
+        let mut controls=vec![1];
+        let default_boundary=endoff && matches!(&args[2],Expr::Call(n,_) if n=="@no_boundary");
+        if endoff && !default_boundary {controls.push(2);}
+        for i in controls {
+            let control=if i==1 {"SHIFT"}else{"BOUNDARY"};
+            let Some((ck,cd))=shape(&args[i],s)? else {return Ok(());};
+            if i==1 && !matches!(ck,TypeSpec::Integer(_)) {bail!("{label} SHIFT must be INTEGER");}
+            if i==2 && !crate::pointers::same_kind(&kind,&ck) {bail!("EOSHIFT BOUNDARY and ARRAY must have the same type and kind");}
+            if cd.is_empty() {args[i]=self.capture_scalar(args[i].clone(),ck,s,out);} else {
+                if cd.len()!=expected.len() {bail!("{label} {control} shape must match ARRAY with DIM removed");}
+                for (actual,wanted) in cd.iter().zip(&expected) {
+                    out.push(error(bin(BinOp::Ne,actual.clone(),wanted.clone()),format!("{label} {control} shape must match ARRAY with DIM removed")));
+                }
+            }
+        }
+        let result=self.buffer(kind.clone(),&dims,out,s)?;
+        let vars=self.loop_vars(&dims,out,s);
+        let mut slice=int(1);let mut stride=int(1);
+        for (i,d) in dims.iter().enumerate() {
+            if i==axis {continue;}
+            slice=bin(BinOp::Add,slice,bin(BinOp::Mul,bin(BinOp::Sub,id(&vars[i]),int(1)),stride.clone()));
+            stride=bin(BinOp::Mul,stride,d.clone());
+        }
+        let mut body=vec![];
+        let amount=self.reshape_element(&args[1],slice.clone(),s,&mut body)?;
+        let amount=self.scalar("shift_amount",amount,&mut body,s);
+        let coordinate=id(&vars[axis]);
+        let extent=dims[axis].clone();
+        let shifted=if endoff {bin(BinOp::Add,coordinate.clone(),amount.clone())} else {
+            let divisor=Expr::Call("max".into(),vec![extent.clone(),int(1)]);
+            let reduced=Expr::Call("modulo".into(),vec![amount.clone(),divisor.clone()]);
+            bin(BinOp::Add,int(1),Expr::Call("modulo".into(),vec![bin(BinOp::Add,bin(BinOp::Sub,coordinate.clone(),int(1)),reduced),divisor]))
+        };
+        let mut index=int(1);let mut stride=int(1);
+        for (i,d) in dims.iter().enumerate() {
+            let c=if i==axis {shifted.clone()}else{id(&vars[i])};
+            index=bin(BinOp::Add,index,bin(BinOp::Mul,bin(BinOp::Sub,c,int(1)),stride.clone()));
+            stride=bin(BinOp::Mul,stride,d.clone());
+        }
+        let mut selected=vec![];
+        let value=self.reshape_element(&args[0],index,s,&mut selected)?;
+        let store=|value|Stmt::AssignIndex{name:result.clone(),indices:vars.iter().map(|n|id(n)).collect(),value};
+        selected.push(store(value));
+        if endoff {
+            let mut vacant=vec![];
+            let boundary=if default_boundary {match kind {
+                TypeSpec::Logical=>Expr::Logical(false),TypeSpec::Real=>Expr::RealLit("0.0".into()),TypeSpec::DoublePrecision=>Expr::RealLit("0.0d0".into()),_=>int(0)
+            }}else{self.reshape_element(&args[2],slice,s,&mut vacant)?};
+            vacant.push(store(boundary));
+            // Check before adding SHIFT: extreme INTEGER(8) values must not overflow.
+            let valid=bin(BinOp::And,bin(BinOp::Ge,amount.clone(),bin(BinOp::Sub,int(1),coordinate.clone())),bin(BinOp::Le,amount,bin(BinOp::Sub,extent,coordinate)));
+            body.push(Stmt::If{cond:valid,then_body:selected,else_body:Some(vacant)});
+        }else{body.extend(selected);}
+        out.extend(self.nest(&vars,&dims,body));
+        *e=id(&result);
+        Ok(())
+    }
     fn spread(&mut self,e:&mut Expr,s:&mut Shapes,out:&mut Vec<Stmt>)->Result<()> {
         let Expr::Call(name,args)=e else {return Ok(());};
         if name!="spread" || s.contains_key(name) || args.len()!=3 {return Ok(());}
@@ -1138,6 +1266,8 @@ impl Lower {
             Expr::Un(_, a) => self.expression(a, s, out)?,
             _ => {}
         }
+        self.unpack(e,s,out)?;
+        self.shift(e,s,out)?;
         self.spread(e,s,out)?;
         self.transpose(e,s,out)?;
         self.reshape(e,s,out)?;

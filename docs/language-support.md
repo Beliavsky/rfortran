@@ -1206,7 +1206,8 @@ apply. Run `python tests/test_dot_product.py`; the numbered suite includes
 
 ### Array transformations and locations
 
-CSHIFT supports fixed-shape numeric and LOGICAL arrays and constant DIM. INTEGER
+CSHIFT supports fixed-shape and runtime-sized numeric and LOGICAL arrays with
+constant DIM. INTEGER
 SHIFT may be scalar or an array shaped like ARRAY with DIM removed, with runtime
 values in either case. Sections, array expressions, empty arrays and overlapping
 assignments are supported. Runtime DIM and CHARACTER arrays remain unsupported.
@@ -1222,11 +1223,17 @@ Run `python tests/test_runtime_transpose.py` for runtime coverage.
 Run `python tests/test_matrix_transforms.py` for TRANSPOSE and array-valued
 CSHIFT checks in the interpreter and native O0/O2 builds, plus gfortran comparison.
 
-EOSHIFT supports fixed-shape numeric and LOGICAL arrays with constant DIM.
+EOSHIFT supports fixed-shape and runtime-sized numeric and LOGICAL arrays with
+constant DIM.
 SHIFT and optional BOUNDARY may be scalar or arrays shaped like ARRAY with DIM
 removed. Vacated elements use BOUNDARY, or zero/false when it is omitted.
 Sections, overlapping assignments and PURE usage are supported; runtime DIM
-and CHARACTER arrays remain unsupported. Run `python tests/test_eoshift.py`.
+and CHARACTER arrays remain unsupported. Runtime CSHIFT/EOSHIFT results support
+assignment and direct procedure arguments, including nondefault bounds, supported
+sections, empty arrays and overlapping assignment. Array SHIFT and BOUNDARY
+arguments are checked against ARRAY's shape with DIM removed. Extreme INTEGER(8)
+shifts are handled without adding an out-of-range EOSHIFT offset to an index.
+Run `python tests/test_eoshift.py` and `python tests/test_runtime_shifts.py`.
 
 SPREAD supports numeric/LOGICAL scalar, fixed-shape and runtime-sized array
 sources with constant DIM and constant or runtime NCOPIES. It inserts the
@@ -1259,10 +1266,14 @@ procedures named PACK retain their usual dispatch. Run `python tests/test_derive
 Allocatable assignment also retains ELEMENTAL result type metadata, and native
 LOGICAL function results correctly return literal truth values.
 
-UNPACK supports a rank-one VECTOR, fixed-shape LOGICAL MASK and scalar or
-conformable FIELD of the same type/kind as VECTOR. Both intrinsics preserve
-array-element order and check at runtime that VECTOR has enough elements.
-CHARACTER arrays remain unsupported. Run `python tests/test_pack_unpack.py`.
+UNPACK supports a rank-one VECTOR, fixed-shape or runtime-sized LOGICAL MASK
+and scalar or conformable FIELD of the same type/kind as VECTOR. Runtime VECTOR
+and FIELD arrays, supported sections, direct procedure arguments, empty arrays
+and overlapping assignment are supported. Array FIELD shape is checked against
+MASK, and VECTOR must have enough elements for the true MASK elements; extra
+VECTOR elements are ignored. Elements are consumed in Fortran array-element
+order. CHARACTER arrays remain unsupported.
+Run `python tests/test_pack_unpack.py` and `python tests/test_runtime_unpack.py`.
 
 MINLOC/MAXLOC support fixed-shape and runtime-sized numeric arrays through
 rank 15, including supported ALLOCATABLE arrays, dummies, sections and elemental
