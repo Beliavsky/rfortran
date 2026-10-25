@@ -811,6 +811,7 @@ pub fn hoist(body: &mut Vec<Stmt>) { hoist_kind(body,false); }
 pub(crate) fn hoist_vectors(body:&mut Vec<Stmt>) { hoist_kind(body,true); }
 fn hoist_kind(body:&mut Vec<Stmt>,vectors:bool) {
     fn walk(body: &mut Vec<Stmt>, declarations: &mut Vec<Stmt>, vectors:bool) {
+        let character_locals=body.iter().filter_map(|s|match s {Stmt::VarDecl{names,..}=>Some(names.iter().filter(|n|n.starts_with("@character_")).cloned()),_=>None}).flatten().collect::<std::collections::HashSet<_>>();
         let local_arrays=body.iter().filter_map(|s|match s {Stmt::ArrayDecl{name,..}=>Some(name.clone()),_=>None}).collect::<std::collections::HashSet<_>>();
         let mut output = Vec::new();
         for mut s in std::mem::take(body) {
@@ -818,7 +819,10 @@ fn hoist_kind(body:&mut Vec<Stmt>,vectors:bool) {
                 || matches!(&s,Stmt::ArrayDecl{name,..} if name.starts_with("@vector_") || name.starts_with("@record_array_value_") || name.starts_with("@record_vector_index_") || name.starts_with("@record$@record_output_selection_"))
                 || matches!(&s,Stmt::DummyIntent{name,..} if local_arrays.contains(name) && (name.starts_with("@vector_") || name.starts_with("@record_array_value_") || name.starts_with("@record_vector_index_") || name.starts_with("@record$@record_output_selection_")));
             if vector_declaration || !vectors && (matches!(&s, Stmt::VarDecl {names,..} if names.iter().all(|n|n.starts_with("@pointer_") || n.starts_with("@substring_") || n.starts_with("@character_") || n.starts_with("@vector_") || n.starts_with("@reduction_")))
-                || matches!(&s, Stmt::ArrayDecl {name,..} if name.starts_with("@pointer_") || name.starts_with("@vector_") || name.starts_with("@reduction_")))
+                || matches!(&s, Stmt::ArrayDecl {name,..} if name.starts_with("@pointer_") || name.starts_with("@vector_") || name.starts_with("@reduction_"))
+                // Move allocation and length attributes with generated CHARACTER
+                // storage, so later renaming cannot separate the two.
+                || matches!(&s, Stmt::DummyIntent{name,..} if character_locals.contains(name)))
             {
                 declarations.push(s);
                 continue;
