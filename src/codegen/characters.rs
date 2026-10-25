@@ -11,7 +11,23 @@ use cranelift_frontend::FunctionBuilder;
 use cranelift_object::ObjectModule;
 use std::collections::HashMap;
 
-type Characters = HashMap<String, (super::Storage, usize)>;
+// Keep storage lifetime with the character symbol table so expression
+// temporaries use the same policy as declarations. Procedure buffers remain
+// per invocation; only main-program buffers may use static storage.
+pub(super) struct Characters {
+    pub(super) main: bool,
+    values: HashMap<String, (super::Storage, usize)>,
+}
+impl Characters {
+    pub(super) fn new(main: bool) -> Self { Self { main, values: HashMap::new() } }
+}
+impl std::ops::Deref for Characters {
+    type Target = HashMap<String, (super::Storage, usize)>;
+    fn deref(&self) -> &Self::Target { &self.values }
+}
+impl std::ops::DerefMut for Characters {
+    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.values }
+}
 type Integers = HashMap<String, super::Storage>;
 pub(super) struct View {
     pub(super) address: ir::Value,
@@ -40,9 +56,8 @@ pub(super) fn view(
             let capacity = source.capacity.checked_mul(count)
                 .filter(|n| *n < i32::MAX as usize)
                 .context("REPEAT result is too large")?;
-            let slot = b.create_sized_stack_slot(ir::StackSlotData::new(
-                ir::StackSlotKind::ExplicitSlot, capacity.max(1) as u32, 0));
-            let address = b.ins().stack_addr(ptr, slot, 0);
+            let storage = super::fixed_storage(b, module, capacity.max(1), chars.main)?;
+            let address = super::storage_addr(b, ptr, storage);
             let head = b.create_block();
             let copy = b.create_block();
             let done = b.create_block();
@@ -166,12 +181,8 @@ pub(super) fn view(
                 .checked_add(right.capacity)
                 .filter(|n| *n < i32::MAX as usize)
                 .context("CHARACTER concatenation is too large")?;
-            let slot = b.create_sized_stack_slot(ir::StackSlotData::new(
-                ir::StackSlotKind::ExplicitSlot,
-                capacity.max(1) as u32,
-                0,
-            ));
-            let address = b.ins().stack_addr(ptr, slot, 0);
+            let storage = super::fixed_storage(b, module, capacity.max(1), chars.main)?;
+            let address = super::storage_addr(b, ptr, storage);
             call(
                 module,
                 b,
@@ -213,8 +224,8 @@ pub(super) fn view(
             b.ins().brif(space,head,&[next.into()],done,&[offset.into()]);
             b.seal_block(head);b.switch_to_block(done);b.seal_block(done);
             let offset=b.block_params(done)[0];
-            let slot=b.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,source.capacity.max(1) as u32,0));
-            let address=b.ins().stack_addr(ptr,slot,0);
+            let storage=super::fixed_storage(b,module,source.capacity.max(1),chars.main)?;
+            let address=super::storage_addr(b,ptr,storage);
             let (from,to,count,padding,tail)=if left {
                 let count=b.ins().isub(source.length,offset);
                 let from=b.ins().iadd(source.address,offset);let tail=b.ins().iadd(address,count);
@@ -290,10 +301,10 @@ pub(super) fn assign(
     Ok(())
 }
 
-pub(super) fn terminated(module: &mut ObjectModule, b: &mut FunctionBuilder, ptr: ir::Type, source: View) -> Result<ir::Value> {
+pub(super) fn terminated(module: &mut ObjectModule, b: &mut FunctionBuilder, ptr: ir::Type, source: View, main: bool) -> Result<ir::Value> {
     let size = source.capacity.checked_add(1).and_then(|n| u32::try_from(n).ok()).context("CHARACTER output is too large")?;
-    let slot = b.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot, size, 0));
-    let address = b.ins().stack_addr(ptr, slot, 0);
+    let storage = super::fixed_storage(b, module, size as usize, main)?;
+    let address = super::storage_addr(b, ptr, storage);
     call(module, b, "memcpy", &[address, source.address, source.length], ptr)?;
     let end = b.ins().iadd(address, source.length);
     let zero = b.ins().iconst(types::I8, 0);

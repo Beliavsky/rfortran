@@ -716,6 +716,12 @@ and [ELEMENTAL functions](#elemental-functions). Runtime-dependent explicit leng
 CHARACTER functions outside those subsets remain unsupported and produce
 diagnostics. Bounded deferred-length scalar assignment is described below.
 
+Large fixed CHARACTER storage in the main program, including generated
+concatenation, REPEAT, adjustment, and output buffers, uses static storage
+rather than enlarging the native stack frame. Native procedure buffers remain
+per invocation. `python tests/test_large_character_storage.py` checks large
+strings, multiple buffers, and recursive local storage.
+
 CHARACTER declarations accept per-entity lengths, for example
 `character(2) :: a*3, b, c*(n+1)`. An entity length overrides the shared length
 without changing its neighbors. Scalar PARAMETER entities also accept `*(*)`.

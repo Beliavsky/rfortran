@@ -80,8 +80,14 @@ fn heap_cell(b:&mut FunctionBuilder,ptr:ir::Type,storage:Storage)->Result<ir::Va
 }
 fn array_storage(b: &mut FunctionBuilder, module: &mut ObjectModule, len: usize, main: bool) -> Result<Storage> {
     let size = len.checked_mul(8).ok_or_else(|| anyhow::anyhow!("array size overflow"))?;
+    fixed_storage(b, module, size, main)
+}
+
+fn fixed_storage(b: &mut FunctionBuilder, module: &mut ObjectModule, size: usize, main: bool) -> Result<Storage> {
     if main && size > 8192 {
-        // Main-program fixed arrays have program lifetime; keep large ones off the stack.
+        // Main-program storage has program lifetime, including locals of
+        // inlined procedures. Large CHARACTER buffers need the same treatment
+        // as numeric arrays, otherwise CSV routines can exhaust the stack.
         let name = format!(".f90c.array.{}", GLOBAL_STR_ID.fetch_add(1, Ordering::Relaxed));
         let id = module.declare_data(&name, Linkage::Local, true, false)?;
         let mut data = DataDescription::new();
@@ -1154,7 +1160,7 @@ fn eval_expr(
     }
 }
 
-fn is_character_output(e: &IExpr, chars: &HashMap<String, (Storage, usize)>) -> bool {
+fn is_character_output(e: &IExpr, chars: &characters::Characters) -> bool {
     match e {
         IExpr::Str(_) => true,
         IExpr::Ident(name) => chars.contains_key(name),
@@ -1283,7 +1289,7 @@ fn print_expr(
     ints: &HashMap<String, Storage>,
     reals: &HashMap<String, Storage>,
     bools: &HashMap<String, Storage>,
-    chars: &HashMap<String, (Storage, usize)>,
+    chars: &characters::Characters,
     real_kind: &HashMap<String, bool>,
     i128_last: &HashMap<String, String>,
     func_meta: &HashMap<String, FuncMeta>,
@@ -1937,7 +1943,7 @@ fn gen_stmts(
     ints: &mut HashMap<String, Storage>,
     reals: &mut HashMap<String, Storage>,
     bools: &mut HashMap<String, Storage>,
-    chars: &mut HashMap<String, (Storage, usize)>,
+    chars: &mut characters::Characters,
     real_kind: &mut HashMap<String, bool>,
     i128_vars: &mut HashSet<String>,
     i128_last: &mut HashMap<String, String>,
@@ -1970,7 +1976,7 @@ fn gen_stmts(
                     }
                     if character {
                         let source = characters::view(module, b, ptr_ty, dc, chars, ints, e)?;
-                        let text = characters::terminated(module, b, ptr_ty, source)?;
+                        let text = characters::terminated(module, b, ptr_ty, source, chars.main)?;
                         ex.call_printf(b, &[ex.fmt_s, text]);
                     } else { print_expr(
                         b, ex, ptr_ty, module, dc, ints, reals, bools, chars, real_kind, i128_last,
@@ -2076,13 +2082,10 @@ fn gen_stmts(
                     }
                     crate::ast::TypeSpec::Character(len_opt) => {
                         let len = len_opt.unwrap_or(1);
-                        let ss = b.create_sized_stack_slot(ir::StackSlotData::new(
-                            ir::StackSlotKind::ExplicitSlot,
-                            (len + 1) as u32,
-                            0,
-                        ));
-                        chars.insert(name.clone(), (ss.into(), len));
-                        let address=b.ins().stack_addr(ptr_ty,ss,0);
+                        let size = len.checked_add(1).context("CHARACTER storage size overflow")?;
+                        let storage = fixed_storage(b, module, size, current_fn.is_none())?;
+                        chars.insert(name.clone(), (storage, len));
+                        let address=storage_addr(b,ptr_ty,storage);
                         let pointer=b.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,8,0));
                         let value=if ptr_ty==types::I64 {address} else {b.ins().uextend(types::I64,address)};
                         b.ins().stack_store(value,pointer,0);
@@ -4022,7 +4025,7 @@ impl CraneliftBackend {
                 let mut ints = HashMap::new();
                 let mut reals = HashMap::new();
                 let mut bools = HashMap::new();
-                let mut chars = HashMap::new();
+                let mut chars = characters::Characters::new(false);
                 let mut real_kind = HashMap::new();
                 let mut i128_vars = HashSet::new();
                 let mut i128_last = HashMap::new();
@@ -4224,7 +4227,7 @@ impl CraneliftBackend {
                 let mut ints = HashMap::new();
                 let mut reals = HashMap::new();
                 let mut bools = HashMap::new();
-                let mut chars = HashMap::new();
+                let mut chars = characters::Characters::new(true);
                 let mut real_kind = HashMap::new();
                 let mut i128_vars = HashSet::new();
                 let mut i128_last = HashMap::new();
