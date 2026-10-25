@@ -132,6 +132,7 @@ type Objects = HashMap<String, Object>;
 // The marker is consumed by `body` before the call leaves this lowering pass.
 const PREPARED_CALL: &str = "@record_prepared:";
 struct Lower {
+    constructor_components: HashMap<String, Vec<String>>,
     types: HashMap<String, Vec<Field>>,
     procedures: HashMap<String, Procedure>,
     serial: usize,
@@ -186,6 +187,16 @@ impl Lower {
         for s in body.iter_mut() {
             match s {
                 Stmt::DerivedType { name, components, .. } => {
+                    let mut original = vec![];
+                    for c in components.iter() {
+                        let names = match c {
+                            Stmt::VarDecl { names, .. } | Stmt::DerivedDecl { names, .. } => names.clone(),
+                            Stmt::ArrayDecl { name, .. } => vec![name.clone()],
+                            Stmt::InitializedDecl { entities, .. } => entities.iter().map(|(n,_)|n.clone()).collect(),
+                            _ => vec![],
+                        };
+                        for n in names { if !original.contains(&n) { original.push(n); } }
+                    }
                     let mut out = vec![];
                     let mut arrays = vec![];
                     let mut scalars = vec![];
@@ -227,6 +238,7 @@ impl Lower {
                     }
                     *components = out;
                     if !arrays.is_empty() {
+                        self.constructor_components.insert(name.clone(), original);
                         self.array_components.insert(name.clone(), arrays);
                     }
                     if !scalars.is_empty() {
@@ -1012,6 +1024,7 @@ impl Lower {
         objects: &mut Objects,
         prefix: &mut Vec<Stmt>,
     ) -> Result<()> {
+        if self.expand_component_constructor(e, objects, prefix)? { return Ok(()); }
         if self.pointer_inquiry(e, objects, prefix)? { return Ok(()); }
         if self.scalar_component_view(e, objects, prefix)? { return Ok(()); }
         self.heap_component_actual(e,objects,prefix,None)?;
@@ -1901,6 +1914,7 @@ impl Lower {
 }
 pub(crate) fn resolve(mut p: Program) -> Result<Program> {
     let mut lower = Lower {
+        constructor_components: HashMap::new(),
         types: HashMap::new(),
         procedures: HashMap::new(),
         serial: 0,

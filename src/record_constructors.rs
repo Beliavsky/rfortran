@@ -22,6 +22,44 @@ fn set(n: &str, value: Expr) -> Stmt {
 }
 
 impl Lower {
+    /// Keep scalar structure constructors in step with the field-wise storage
+    /// used for their derived-type array components.
+    pub(super) fn expand_component_constructor(
+        &mut self, value: &mut Expr, objects: &mut Objects, prefix: &mut Vec<Stmt>,
+    ) -> Result<bool> {
+        let Expr::Call(ty, args) = value else { return Ok(false); };
+        let Some(components) = self.constructor_components.get(ty).cloned() else { return Ok(false); };
+        let arrays = self.array_components[ty].clone();
+        crate::named_arguments::Signature {
+            params: components.clone(),
+            // The scalar constructor pass diagnoses missing required fields;
+            // omitted allocatables and default-initialized fields stay omitted.
+            optional: components.iter().cloned().collect(),
+        }.reorder(ty, args)?;
+        args.resize_with(components.len(), || Expr::Call(crate::named_arguments::OMITTED.into(), vec![]));
+        let mut expanded = vec![];
+        for (component, mut arg) in components.into_iter().zip(std::mem::take(args)) {
+            if let Some((_, array)) = arrays.iter().find(|(n,_)| n == &component) {
+                if crate::named_arguments::omitted(&arg)
+                    || matches!(&arg, Expr::Call(n, a) if n == "null" && a.is_empty())
+                {
+                    expanded.extend(self.fields(&array.ty)?.iter().map(|_|arg.clone()));
+                } else {
+                    if self.fields(&array.ty)?.iter().any(|f| f.heap.is_some()) {
+                        bail!("structure constructors with derived array components whose elements own allocatable components are not yet supported");
+                    }
+                    let (parts, _) = self.parts(arg, &array.ty, objects, prefix)?;
+                    expanded.extend(parts);
+                }
+            } else {
+                self.expression(&mut arg, objects, prefix)?;
+                expanded.push(arg);
+            }
+        }
+        *args = expanded;
+        Ok(true)
+    }
+
     /// Capture each item once, then append its records in column-major order.
     /// A scalar item contributes one record; an array contributes SIZE(item).
     pub(super) fn constructor_records(

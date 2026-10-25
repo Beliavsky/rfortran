@@ -1626,8 +1626,12 @@ ALLOCATABLE array of a derived type, as in `type(node), allocatable :: nodes(:)`
 `g%nodes(i)%id`, `g%nodes%w`, sections, ALLOCATE, SIZE, deep copies and passing
 `g` to a procedure all work. Its element type may also own supported numeric
 or LOGICAL ALLOCATABLE array components, as in a container of independently
-allocated vectors. A constructor of the containing type cannot yet give such
-a component. POINTER components of derived type and ALLOCATABLE scalar components
+allocated vectors. Structure constructors accept derived-type array components
+with positional or keyword arguments, including sections, empty arrays and
+omitted or NULL() allocatable components. These constructor arguments currently
+require element types without their own ALLOCATABLE components.
+See `tests/programs/xderived_array_component_constructor.f90`.
+POINTER components of derived type and ALLOCATABLE scalar components
 (including deferred-length CHARACTER) remain unsupported, and an ALLOCATABLE
 component, like any ALLOCATABLE array, must be allocated (by ALLOCATE or by
 assignment) somewhere before it is referenced.
