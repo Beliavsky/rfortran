@@ -411,6 +411,12 @@ Operator: String = {
     NOT => ".not.".into(), EQV => ".eqv.".into(), NEQV => ".neqv.".into(),
 };
 GenericName: String = {
+    <name:Ident> LPAREN EQ RPAREN =>? {
+        if !name.eq_ignore_ascii_case("assignment") {
+            return Err(lalrpop_util::ParseError::User { error: "expected ASSIGNMENT(=)" });
+        }
+        Ok("operator(=)".into())
+    },
     <n:Ident> => n,
     KW_OPERATOR LPAREN <op:Operator> RPAREN => format!("operator({op})"),
 };

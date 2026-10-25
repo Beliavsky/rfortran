@@ -11,6 +11,14 @@ use std::collections::{HashMap, HashSet};
 type Symbols = HashMap<String, String>; // local spelling -> defining module/name
 type Modules = HashMap<String, Symbols>;
 
+fn generic_declared(body: &[Stmt], name: &str) -> bool {
+    body.iter().any(|s| match s {
+        Stmt::GenericInterface { name: n, .. } => n == name,
+        Stmt::OperatorInterface { operator, .. } => format!("operator({operator})") == name,
+        _ => false,
+    })
+}
+
 fn declared(body: &[Stmt]) -> HashSet<String> {
     let mut names = HashSet::new();
     for s in body {
@@ -66,7 +74,6 @@ fn imported(body: &[Stmt], modules: &Modules) -> Result<Symbols> {
                 for name in aliases {
                 if let Some(previous) = selected.insert(name.clone(), origin.clone()) {
                     if previous != *origin
-                        && !name.starts_with("operator(")
                         && !(previous.starts_with("generic:") && origin.starts_with("generic:"))
                     {
                         bail!("ambiguous imported name `{name}` from `{previous}` and `{origin}`");
@@ -140,9 +147,7 @@ impl Validator {
         for n in imports.keys() {
             if locals.contains(n)
                 && !(imports[n].starts_with("generic:")
-                    && body
-                        .iter()
-                        .any(|s| matches!(s, Stmt::GenericInterface { name, .. } if name == n)))
+                    && generic_declared(body, n))
             {
                 bail!("local declaration `{n}` conflicts with a USE-associated entity");
             }
@@ -316,9 +321,7 @@ pub fn validate(program: &Program) -> Result<()> {
             validator.module_names.extend(local.iter().cloned());
             let mut symbols = imported(body, &validator.modules)?;
             for n in local {
-                let generic = body
-                    .iter()
-                    .any(|s| matches!(s, Stmt::GenericInterface { name, .. } if name == &n));
+                let generic = generic_declared(body, &n);
                 symbols.insert(
                     n.clone(),
                     format!("{}{name}::{n}", if generic { "generic:" } else { "" }),

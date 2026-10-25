@@ -490,32 +490,44 @@ impl Resolver {
         merge(&mut visible, &self.type_operators);
         merge(&mut visible, &self.local_bindings(body)?);
         for s in body {
-            if let Stmt::Use { module, only, .. } = s {
+            if let Stmt::Use { module, only, renames, .. } = s {
                 if let Some(exported) = self.exports.get(module) {
-                    let selected = exported
-                        .iter()
-                        .filter(|(op, _)| {
-                            only.as_ref()
-                                .is_none_or(|names| names.contains(&export_name(op)))
-                        })
-                        .map(|(op, names)| (op.clone(), names.clone()))
-                        .collect();
+                    let mut selected = Bindings::new();
+                    for (op, procedures) in exported {
+                        let remote = export_name(op);
+                        if only.as_ref().is_some_and(|names| !names.contains(&remote)) { continue; }
+                        let mut aliases = renames.iter().filter_map(|(local,n)| (n == &remote).then_some(local.clone())).collect::<Vec<_>>();
+                        if aliases.is_empty() || only.as_ref().is_some_and(|names| names.iter().filter(|n| *n == &remote).count() > aliases.len()) {
+                            aliases.push(remote);
+                        }
+                        for alias in aliases {
+                            let key = if op.starts_with("generic:") {format!("generic:{alias}")} else {
+                                alias.strip_prefix("operator(").and_then(|s|s.strip_suffix(')')).unwrap_or(&alias).to_owned()
+                            };
+                            merge(&mut selected, &Bindings::from([(key, procedures.clone())]));
+                        }
+                    }
                     merge(&mut visible, &selected);
                 }
             }
         }
         for (key, names) in &visible {
-            if let Some(generic) = key.strip_prefix("generic:") {
-                for (i, a) in names.iter().enumerate() {
-                    for b in &names[i + 1..] {
-                        let a = &self.procedures[a];
-                        let b = &self.procedures[b];
+            for (i, a) in names.iter().enumerate() {
+                for b in &names[i + 1..] {
+                    let a = &self.procedures[a];
+                    let b = &self.procedures[b];
+                    if let Some(generic) = key.strip_prefix("generic:") {
                         if a.subroutine != b.subroutine {
                             bail!("generic `{generic}` cannot mix functions and subroutines");
                         }
                         if a.args == b.args {
                             bail!("ambiguous generic `{generic}`: duplicate argument types in associated procedures");
                         }
+                    } else if a.args == b.args {
+                        if key == "=" {
+                            bail!("ambiguous assignment(=): duplicate argument types in associated procedures");
+                        }
+                        bail!("ambiguous operator({key}): duplicate operand types in associated procedures");
                     }
                 }
             }

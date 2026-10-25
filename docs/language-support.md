@@ -2420,6 +2420,15 @@ including ONLY lists, renaming, reexports and generic interface extensions.
 PUBLIC/PRIVATE access and local shadowing are checked. Procedures with the same
 name in different modules retain distinct identities.
 
+Named generic procedures, defined operators and defined assignment can merge
+across USE-associated modules and local interface extensions. ONLY imports,
+renamed generics/operators and public re-exports retain all accessible specific
+procedures; importing the same specific through multiple paths does not duplicate
+it. ASSIGNMENT(=) is accepted in ONLY and PUBLIC/PRIVATE lists. Duplicate argument
+or operand signatures in the merged interface are diagnosed, including unused
+operator and assignment interfaces. Regression coverage is in
+`tests/test_interface_merging.py`.
+
 Extending an intrinsic generic retains its built-in alternatives. For example,
 a module may define `MAX` for a date type and still use `max(1,mod_year)`.
 User-defined specifics are selected first; unmatched calls to known intrinsic

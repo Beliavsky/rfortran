@@ -11,6 +11,7 @@ type Names = HashMap<String, String>;
 struct Module {
     local: Names,
     exports: Names,
+    generics: HashSet<String>,
 }
 fn canonical(module: &str, name: &str) -> String {
     format!("@module${}${name}", module.replace('@', "_"))
@@ -61,6 +62,7 @@ fn imports(body: &[Stmt], modules: &HashMap<String, Module>) -> Result<Names> {
                 }
             }
             for (_, remote) in renames {
+                if remote.starts_with("operator(") { continue; }
                 if !definition.exports.contains_key(remote) {
                     bail!("`{remote}` is not a public entity of module `{module}` in USE");
                 }
@@ -84,6 +86,7 @@ fn imports(body: &[Stmt], modules: &HashMap<String, Module>) -> Result<Names> {
                     aliases.push(remote);
                 }
                 for name in aliases {
+                    let target = if definition.generics.contains(remote) { name } else { target };
                     if let Some(previous) = names.insert(name.clone(), target.clone()) {
                         if previous != *target {
                             bail!("ambiguous imported name `{name}`");
@@ -311,7 +314,9 @@ fn scope(
                             }
                         }
                     }
-                    renames.clear();
+                    // Generic association merges specific procedures under the
+                    // local spelling; preserve those aliases for the resolver.
+                    renames.retain(|(_, remote)| definition.generics.contains(remote) || remote.starts_with("operator("));
                 }
             }
             Stmt::Assign { name, value } => {
@@ -621,7 +626,8 @@ pub(crate) fn associate(mut program: Program) -> Result<Program> {
                 }
             }
             exports.retain(|n, _| access.get(n).copied().unwrap_or(default));
-            modules.insert(name.clone(), Module { local, exports });
+            let generics = exports.iter().filter_map(|(n,target)| (n == target).then_some(n.clone())).collect();
+            modules.insert(name.clone(), Module { local, exports, generics });
         }
     }
     // Preserve operator interfaces: their spelling is an operation, not a data name.
