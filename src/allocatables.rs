@@ -547,6 +547,21 @@ pub(crate) fn view(name: &str, shapes: &Shapes) -> Expr {
         .map(|n| Expr::Call("@packed_view".into(), vec![id(name), n]))
         .unwrap_or(id(name))
 }
+/// Recover storage identity only from the canonical whole-array value view.
+/// A section or computed expression is not an allocatable actual argument.
+pub(crate) fn whole_storage_view(value: &Expr, shapes: &Shapes) -> Option<Expr> {
+    let Expr::Call(tag, values) = value else { return None; };
+    if tag != "@packed_view" { return None; }
+    match values.as_slice() {
+        [Expr::Ident(array), Expr::Ident(extent)]
+            if allocated(array, shapes).is_some()
+                && matches!(length(array, shapes),
+                    Some(Expr::Ident(expected)) if expected == *extent) =>
+        { Some(Expr::Ident(array.clone())) }
+        _ => None,
+    }
+}
+
 pub(crate) fn deallocation_targets(args: &[Expr]) -> Result<Vec<String>> {
     if args.is_empty() {
         bail!("DEALLOCATE requires at least one ALLOCATABLE object");

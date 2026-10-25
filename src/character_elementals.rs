@@ -540,6 +540,12 @@ impl Lower {
             }
             let mut actuals = args.clone();
             for (param,actual) in routine.params.iter().zip(&mut actuals) {
+                if routine.body.iter().any(|s| matches!(s, Stmt::DummyIntent{name,intent}
+                    if name == param && intent == "allocatable")) {
+                    if let Some(storage) = crate::allocatables::whole_storage_view(actual, symbols) {
+                        *actual = storage;
+                    }
+                }
                 if routine.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==param && matches!(intent.as_str(),"intent(out)"|"intent(inout)"))) {
                     let Expr::Ident(name)=actual else {bail!("writable function dummy `{param}` requires a whole variable actual");};
                     if symbols.contains_key(&format!("@function_readonly:{name}")) {bail!("cannot pass INTENT(IN) variable as writable function argument `{param}`");}

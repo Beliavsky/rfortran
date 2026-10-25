@@ -1496,6 +1496,11 @@ fn expand(
                         absent.insert(p.clone());
                         continue;
                     };
+                    let recovered_actual = if r.body.iter().any(|s| matches!(s,
+                        Stmt::DummyIntent {name, intent} if name == p && intent == "allocatable")) {
+                        crate::allocatables::whole_storage_view(actual, &shapes)
+                    } else { None };
+                    let actual = recovered_actual.as_ref().unwrap_or(actual);
                     let (mut kind, dims) = local
                         .get(p)
                         .context("dummy argument must be declared")?
