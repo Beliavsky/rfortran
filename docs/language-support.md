@@ -1117,12 +1117,16 @@ before the branch executes; each assignment captures selected RHS values before
 writing its destination. Inactive elemental RHS expressions are not evaluated.
 Non-elemental reductions still evaluate their complete array argument.
 
-This WHERE subset supports nested constructs and statically known multidimensional
-shapes, with whole-array numeric or LOGICAL destinations. Inner masks evaluate
+This WHERE subset supports nested constructs and fixed or runtime-sized
+multidimensional arrays, with whole-array numeric or LOGICAL destinations.
+Runtime masks and assignment snapshots use active descriptor extents and retain
+nondefault lower bounds; mismatched shapes are checked before assignment.
+Allocatable destinations retain their allocation and shape. Inner masks evaluate
 elemental expressions only where the enclosing mask is active; ELSEWHERE never
 reactivates elements excluded by that enclosing mask. Section destinations and
 CHARACTER destinations remain unsupported. Run `python tests/test_nested_where.py`
-for nested mask, shape, and uninitialized-element checks.
+for nested mask, shape, and uninitialized-element checks. Run
+`python tests/test_runtime_where.py` for runtime arrays and type-bound NaN filling.
 
 ### FORALL
 

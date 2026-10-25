@@ -1353,6 +1353,85 @@ impl Lower {
         }
         Ok(())
     }
+    // Scalarize elemental expressions before array-expression materialization:
+    // excluded WHERE elements must never be evaluated.
+    fn where_element(&mut self, e:&Expr, index:Expr, s:&Shapes, out:&mut Vec<Stmt>)->Result<Expr> {
+        match e {
+            Expr::Bin(op,a,b)=>Ok(bin(op.clone(),self.where_element(a,index.clone(),s,out)?,self.where_element(b,index,s,out)?)),
+            Expr::Un(op,a)=>Ok(Expr::Un(op.clone(),Box::new(self.where_element(a,index,s,out)?))),
+            Expr::Call(n,a) if s.contains_key(&format!("@elemental_function:{n}"))
+                || crate::intrinsics::math_arity(n).is_some() || crate::intrinsics::real_predicate(n)
+                || matches!(n.as_str(),"abs"|"int"|"real"|"dble"|"mod"|"modulo"|"sign"|"min"|"max") => {
+                Ok(Expr::Call(n.clone(),a.iter().map(|a|self.where_element(a,index.clone(),s,out)).collect::<Result<_>>()?))
+            }
+            _=>self.reshape_element(e,index,s,out),
+        }
+    }
+    fn where_body(&mut self, body:&[Stmt], s:&mut Shapes, dims:&[Expr], parent:Option<&str>)->Result<Vec<Stmt>> {
+        let mut out=vec![];
+        let length=self.scalar("where_length",product(dims),&mut out,s);
+        let index=self.loop_vars(&[length.clone()],&mut out,s).remove(0);
+        let active=self.buffer(TypeSpec::Logical,&[length.clone()],&mut out,s)?;
+        let remaining=self.buffer(TypeSpec::Logical,&[length.clone()],&mut out,s)?;
+        let item=|n:&str|Expr::Index(n.into(),vec![id(&index)]);
+        let set=|n:&str,value|Stmt::AssignIndex{name:n.into(),indices:vec![id(&index)],value};
+        let loop_body=|body|Stmt::Do{var:index.clone(),start:int(1),end:length.clone(),body};
+        let conditional=|cond,then_body|Stmt::If{cond,then_body,else_body:None};
+        let mut first=true;
+        for stmt in body {
+            match stmt {
+                Stmt::SourceLocation(_)=>out.push(stmt.clone()),
+                Stmt::CallSub{name,args} if name=="@where" || name=="@elsewhere"=>{
+                    let mut evaluate=vec![];
+                    let value=if let Some(mask)=args.first() {
+                        let (kind,md)=shape(mask,s)?.context("unknown WHERE mask shape")?;
+                        if kind!=TypeSpec::Logical || md.is_empty() {bail!("WHERE mask must be a LOGICAL array");}
+                        Self::where_conform(&md,dims,&mut out,"WHERE mask shapes do not conform")?;
+                        self.where_element(mask,id(&index),s,&mut evaluate)?
+                    }else{Expr::Logical(true)};
+                    evaluate.push(set(&active,value));
+                    let eligible=if first {parent.map(item)}else{Some(item(&remaining))};
+                    let mut capture=if let Some(cond)=eligible.clone() {
+                        vec![set(&active,Expr::Logical(false)),conditional(cond,evaluate)]
+                    }else{evaluate};
+                    let not_active=Expr::Un(crate::ast::UnOp::Not,Box::new(item(&active)));
+                    capture.push(set(&remaining,eligible.map_or(not_active.clone(),|e|bin(BinOp::And,e,not_active))));
+                    out.push(loop_body(capture));
+                    first=false;
+                }
+                Stmt::Assign{name,value}=>{
+                    let (kind,td)=shape(&id(name),s)?.context("WHERE destination must be a declared array")?;
+                    if td.is_empty() {bail!("WHERE destination must be an array");}
+                    if matches!(kind,TypeSpec::Character(_)|TypeSpec::CharacterLength(_)|TypeSpec::CharacterAssumed) {
+                        bail!("WHERE currently requires a whole numeric or LOGICAL array destination");
+                    }
+                    if s.contains_key(&format!("@readonly:{name}")) {bail!("cannot assign to INTENT(IN) or PARAMETER array `{name}`");}
+                    Self::where_conform(&td,dims,&mut out,"WHERE destination shape does not conform to mask")?;
+                    let (rhs_kind,rd)=shape(value,s)?.context("unknown WHERE assignment shape")?;
+                    if !rd.is_empty() {Self::where_conform(&rd,dims,&mut out,"WHERE assignment shapes do not conform")?;}
+                    if matches!(kind,TypeSpec::Logical)!=matches!(rhs_kind,TypeSpec::Logical) {bail!("WHERE assignment has incompatible numeric/LOGICAL types");}
+                    let temp=self.buffer(kind,&[length.clone()],&mut out,s)?;
+                    let mut evaluate=vec![];
+                    let scalar=self.where_element(value,id(&index),s,&mut evaluate)?;
+                    evaluate.push(set(&temp,scalar));
+                    out.push(loop_body(vec![conditional(item(&active),evaluate)]));
+                    let Expr::Index(target,indices)=self.reshape_element(&id(name),id(&index),s,&mut vec![])? else {bail!("WHERE destination must be an array");};
+                    out.push(loop_body(vec![conditional(item(&active),vec![Stmt::AssignIndex{name:target,indices,value:item(&temp)}])]));
+                }
+                Stmt::Block{body}=>out.extend(self.where_body(body,s,dims,Some(&active))?),
+                _=>bail!("WHERE currently supports whole-array assignments and nested WHERE; section destinations are not yet supported"),
+            }
+        }
+        Ok(out)
+    }
+    fn where_conform(actual:&[Expr],expected:&[Expr],out:&mut Vec<Stmt>,message:&str)->Result<()> {
+        if actual.len()!=expected.len() {bail!("{message}");}
+        for (a,b) in actual.iter().zip(expected) {
+            if let (Some(a),Some(b))=(constant(a),constant(b)) {if a!=b {bail!("{message}");}}
+            else {out.push(error(bin(BinOp::Ne,a.clone(),b.clone()),message.into()));}
+        }
+        Ok(())
+    }
     fn child(&mut self, body: &mut Vec<Stmt>, inherited: &Shapes, params: &[String]) -> Result<()> {
         if self.shallow { Ok(()) } else { self.body(body, inherited, params) }
     }
@@ -1374,6 +1453,32 @@ impl Lower {
                 .is_some_and(|(_, d)| !d.is_empty() && axes(p, &s).is_err())
         }) {
             return Ok(());
+        }
+        if let Some(Stmt::CallSub{name,args})=body.iter().find(|stmt|!matches!(stmt,Stmt::SourceLocation(_))) {
+            if name=="@where" {
+                if let Some((_,dims))=args.first().map(|e|shape(e,&s)).transpose()?.flatten() {
+                    if dims.iter().any(|d|constant(d).is_none()) {
+                        fn ready(body:&[Stmt],s:&Shapes)->Result<bool> {
+                            for stmt in body {
+                                match stmt {
+                                    Stmt::Assign{value,..} if shape(value,s)?.is_none()=>return Ok(false),
+                                    Stmt::CallSub{name,args} if name=="@where" || name=="@elsewhere"=>{
+                                        if let Some(e)=args.first() {if shape(e,s)?.is_none() {return Ok(false);}}
+                                    }
+                                    Stmt::Block{body} if !ready(body,s)?=>return Ok(false),
+                                    _=>{}
+                                }
+                            }
+                            Ok(true)
+                        }
+                        // Specialization may precede availability of function
+                        // signatures. Preserve the construct for the next pass.
+                        if !ready(body,&s)? {return Ok(());}
+                        *body=self.where_body(body,&mut s,&dims,None)?;
+                        return Ok(());
+                    }
+                }
+            }
         }
         if body.iter().any(
             |stmt| matches!(stmt,Stmt::CallSub{name,..} if name=="@where" || name=="@elsewhere"),
@@ -1915,6 +2020,7 @@ pub(super) fn resolve(
                     name,
                     return_type,
                     body,
+                    elemental,
                     ..
                 } => {
                     let result = match body.last() {
@@ -1934,6 +2040,7 @@ pub(super) fn resolve(
                         symbols.insert(format!("@array_function:{name}"),(TypeSpec::Logical,vec![]));
                     }
                     if let Some(kind) = kind {
+                        if *elemental {symbols.insert(format!("@elemental_function:{name}"),(kind.clone(),vec![]));}
                         symbols.insert(format!("@function:{name}"), (kind, vec![]));
                     }
                     signatures(body, symbols);
