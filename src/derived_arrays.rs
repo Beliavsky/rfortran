@@ -248,7 +248,18 @@ impl Lower {
                 }
                 Stmt::Module { body, .. }
                 | Stmt::Function { body, .. }
-                | Stmt::Subroutine { body, .. } => self.expand_array_components(body)?,
+                | Stmt::Subroutine { body, .. }
+                | Stmt::Block { body }
+                | Stmt::Do { body, .. }
+                | Stmt::DoWhile { body, .. } => self.expand_array_components(body)?,
+                Stmt::If { then_body, else_body, .. } => {
+                    self.expand_array_components(then_body)?;
+                    if let Some(body) = else_body { self.expand_array_components(body)?; }
+                }
+                Stmt::SelectCase { cases, default, .. } => {
+                    for case in cases { self.expand_array_components(&mut case.body)?; }
+                    if let Some(body) = default { self.expand_array_components(body)?; }
+                }
                 _ => {}
             }
         }
@@ -529,6 +540,10 @@ impl Lower {
                     if let Some(b) = else_body {
                         self.collect(b)?;
                     }
+                }
+                Stmt::SelectCase { cases, default, .. } => {
+                    for case in cases { self.collect(&case.body)?; }
+                    if let Some(body) = default { self.collect(body)?; }
                 }
                 _ => {}
             }
@@ -1797,6 +1812,11 @@ impl Lower {
                         self.expression(cond, &mut objects, &mut prefix)?;
                         self.body(body, &objects)?;
                     }
+                    Stmt::SelectCase { expr, cases, default } => {
+                        self.expression(expr, &mut objects, &mut prefix)?;
+                        for case in cases { self.body(&mut case.body, &objects)?; }
+                        if let Some(body) = default { self.body(body, &objects)?; }
+                    }
                     Stmt::Block { body } | Stmt::Module { body, .. } => {
                         self.body(body, &objects)?
                     }
@@ -1893,6 +1913,10 @@ impl Lower {
                                             Stmt::Do { body, .. }
                                             | Stmt::DoWhile { body, .. }
                                             | Stmt::Block { body } => returns(body, result),
+                                            Stmt::SelectCase { cases, default, .. } => {
+                                                for case in cases { returns(&mut case.body, result); }
+                                                if let Some(body) = default { returns(body, result); }
+                                            }
                                             _ => {}
                                         }
                                     }

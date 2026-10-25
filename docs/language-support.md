@@ -1708,6 +1708,9 @@ back afterwards. Explicit arguments of bound calls also accept derived-array
 elements, including renamed bindings, keyword arguments, and calls whose receiver
 is itself an array element. Subscripts are evaluated once before copying the
 selected element. See `tests/programs/xbound_derived_element_actual.f90`.
+Derived-array operations are lowered in SELECT CASE selectors, case bodies and
+CASE DEFAULT, including nested selections and early returns from array-valued
+functions. See `tests/programs/xderived_array_select_case.f90`.
 Numeric and LOGICAL ALLOCATABLE array components also work. Each record element
 owns a separate descriptor holding allocation status, extents, lower bounds,
 data and initialization flags. Fixed and runtime-sized parent arrays, component
