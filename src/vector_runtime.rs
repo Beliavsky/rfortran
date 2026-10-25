@@ -263,10 +263,11 @@ fn shape(e: &Expr, s: &Shapes) -> Result<Option<(TypeSpec, Vec<Expr>)>> {
         ))),
         Expr::Call(n, a) if n == "@vector_subscript" => shape(&a[0], s),
         Expr::Call(n, a) if n == "reshape" && !s.contains_key(n) => {
-            let dims = crate::multidim::reshape_shape(a)?;
+            let Some(Expr::Call(tag,dims))=a.get(1) else {bail!("RESHAPE SHAPE must currently be an array constructor");};
+            if tag!="@array_constructor" || dims.is_empty() || dims.len()>15 {bail!("RESHAPE SHAPE must contain 1 through 15 extents");}
             crate::multidim::reshape_order(a, dims.len())?;
             let Some((kind, _)) = shape(&a[0], s)? else { return Ok(None); };
-            Ok(Some((kind, dims.into_iter().map(int).collect())))
+            Ok(Some((kind, dims.clone())))
         }
         Expr::Call(n, a) if n == "matmul" && a.len() == 2 && !s.contains_key(n) => {
             let (Some((ak, ad)), Some((bk, bd))) = (shape(&a[0], s)?, shape(&a[1], s)?) else { return Ok(None); };
@@ -676,7 +677,7 @@ impl Lower {
                 self.serial += 1;
                 let result = format!("@vector_runtime_constructor_{}", self.serial);
                 out.push(Stmt::VarDecl {
-                    kind: TypeSpec::Integer(Some(8)),
+                    kind: shape(e,s)?.context("unknown constructor element type")?.0,
                     names: vec![result.clone()],
                 });
                 let mut offset = int(0);
@@ -897,6 +898,72 @@ impl Lower {
         }
         Ok(e.clone())
     }
+    // Select an element in Fortran array-element order, retaining lower bounds.
+    fn reshape_element(&mut self,e:&Expr,index:Expr,s:&Shapes,out:&mut Vec<Stmt>)->Result<Expr> {
+        if let Expr::Ident(n)=e {
+            let axes=axes(n,s)?;
+            let mut offset=bin(BinOp::Sub,index,int(1));
+            let mut indices=vec![];
+            for (lower,extent) in axes {
+                let divisor=Expr::Call("max".into(),vec![extent.clone(),int(1)]);
+                indices.push(bin(BinOp::Add,lower,Expr::Call("modulo".into(),vec![offset.clone(),divisor.clone()])));
+                offset=bin(BinOp::Div,offset,divisor);
+            }
+            return Ok(Expr::Index(n.clone(),indices));
+        }
+        self.element(e,index,s,out)
+    }
+    fn reshape(&mut self,e:&mut Expr,s:&mut Shapes,out:&mut Vec<Stmt>)->Result<()> {
+        let Expr::Call(name,_)=e else {return Ok(());};
+        if name!="reshape" || s.contains_key(name) {return Ok(());}
+        let Some((kind,dimensions))=shape(e,s)? else {return Ok(());};
+        let Expr::Call(_,args)=e else {unreachable!()};
+        let Some((_,source_dims))=shape(&args[0],s)? else {return Ok(());};
+        if source_dims.is_empty() {bail!("RESHAPE SOURCE must be an array");}
+        if dimensions.iter().chain(&source_dims).all(|d|constant(d).is_some()) {return Ok(());}
+        let order=crate::multidim::reshape_order(args,dimensions.len())?;
+        let mut dims=vec![];
+        for d in dimensions {
+            if !crate::output::integer(&d,s) {bail!("RESHAPE SHAPE extents must be scalar INTEGER");}
+            let extent=self.scalar("reshape_extent",d,out,s);
+            out.push(error(bin(BinOp::Lt,extent.clone(),int(0)),"RESHAPE SHAPE extents must be nonnegative".into()));
+            dims.push(extent);
+        }
+        let count=self.scalar("reshape_source_count",product(&source_dims),out,s);
+        let total=self.scalar("reshape_count",product(&dims),out,s);
+        let pad=if matches!(&args[2],Expr::Call(n,_) if n=="@no_pad") {None} else {
+            let Some((pk,pd))=shape(&args[2],s)? else {return Ok(());};
+            if pd.is_empty() {bail!("RESHAPE PAD must be an array");}
+            if !crate::pointers::same_kind(&kind,&pk) {bail!("RESHAPE SOURCE and PAD must have the same type and kind");}
+            Some(self.scalar("reshape_pad_count",product(&pd),out,s))
+        };
+        let short=bin(BinOp::Lt,count.clone(),total);
+        out.push(error(if let Some(n)=&pad {bin(BinOp::And,short,bin(BinOp::Eq,n.clone(),int(0)))}else{short},
+            "RESHAPE requires enough SOURCE elements or a nonempty PAD".into()));
+        let result=self.buffer(kind,&dims,out,s)?;
+        let vars=self.loop_vars(&dims,out,s);
+        let mut ordinal=int(0);
+        let mut stride=int(1);
+        for axis in order {
+            ordinal=bin(BinOp::Add,ordinal,bin(BinOp::Mul,bin(BinOp::Sub,id(&vars[axis]),int(1)),stride.clone()));
+            stride=bin(BinOp::Mul,stride,dims[axis].clone());
+        }
+        let index=bin(BinOp::Add,ordinal,int(1));
+        let mut source_body=vec![];
+        let value=self.reshape_element(&args[0],index.clone(),s,&mut source_body)?;
+        let store=|value|Stmt::AssignIndex{name:result.clone(),indices:vars.iter().map(|n|id(n)).collect(),value};
+        source_body.push(store(value));
+        let body=if let Some(pad_count)=pad {
+            let mut padding=vec![];
+            let pi=bin(BinOp::Add,int(1),Expr::Call("modulo".into(),vec![bin(BinOp::Sub,bin(BinOp::Sub,index.clone(),count.clone()),int(1)),Expr::Call("max".into(),vec![pad_count,int(1)])]));
+            let value=self.reshape_element(&args[2],pi,s,&mut padding)?;
+            padding.push(store(value));
+            vec![Stmt::If{cond:bin(BinOp::Le,index,count),then_body:source_body,else_body:Some(padding)}]
+        }else{source_body};
+        out.extend(self.nest(&vars,&dims,body));
+        *e=id(&result);
+        Ok(())
+    }
     fn expression(&mut self, e: &mut Expr, s: &mut Shapes, out: &mut Vec<Stmt>) -> Result<()> {
         // ASSOCIATED inspects target identity, not a copied section value.
         if matches!(e,Expr::Call(n,_) if n=="associated") {return Ok(());}
@@ -994,6 +1061,7 @@ impl Lower {
             Expr::Un(_, a) => self.expression(a, s, out)?,
             _ => {}
         }
+        self.reshape(e,s,out)?;
         // CHARACTER array operations must be scalarized while their element
         // types are still visible, before the final storage passes flatten them.
         if let Expr::Bin(op,a,b)=e {

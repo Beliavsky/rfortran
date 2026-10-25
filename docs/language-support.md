@@ -994,11 +994,17 @@ with gfortran comparisons; the Cargo suite includes
 ### RESHAPE, MOD and MODULO
 
 `RESHAPE(SOURCE, SHAPE, PAD, ORDER)` accepts numeric/LOGICAL array expressions
-and a constant SHAPE constructor, including zero extents. Optional PAD supplies
+and a SHAPE constructor whose extents may be evaluated at runtime, including
+zero extents. Runtime-sized SOURCE arrays and allocatable function results are
+supported. Optional PAD supplies
 repeated elements when SOURCE is too short and must have the same type and kind.
 Optional ORDER is a constant permutation of the result dimensions specifying
 which dimension varies fastest during filling. Keywords may be reordered; extra
-SOURCE elements are ignored. Runtime SHAPE/ORDER vectors remain unsupported.
+SOURCE elements are ignored. Runtime extents must be nonnegative; a short SOURCE
+requires nonempty PAD. SHAPE supplied as a runtime array variable and runtime
+ORDER vectors remain unsupported. `tests/programs/xreshape_runtime_shape.f90`
+reproduces concatenated array inputs reshaped into an allocatable function result.
+Run `python tests/test_runtime_reshape.py` for runtime extents and ordering checks.
 Run `python tests/test_reshape_options.py` for padding and fill-order checks.
 `MOD` and `MODULO` accept
 conformable numeric array arguments and scalar expansion, preserving element
