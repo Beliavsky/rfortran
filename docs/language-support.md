@@ -2052,9 +2052,22 @@ named calls, and another CHARACTER array function's result are supported as
 actuals. The input arrays need not have equal extents. Fixed-length array dummies
 currently require the actual element length to match; explicit-shape dummies
 require matching extents. Scalar INTEGER constant actuals can supply result
-extents. Runtime-dependent result extents, nonunit declaration bounds in these calls,
-POINTER/ALLOCATABLE array dummies and deferred-length array results remain
-unsupported. Read-only array actuals are copied and must be initialized.
+extents. In this bounded specialization path, runtime-dependent result extents,
+nonunit declaration bounds, POINTER/ALLOCATABLE array dummies and deferred-length
+array results remain unsupported. Read-only array actuals are copied and must
+be initialized.
+
+Non-elemental functions with fixed CHARACTER element lengths can also return
+runtime-sized arrays through a caller-owned heap descriptor. This path supports
+ALLOCATABLE results, runtime-sized assumed-shape inputs, explicit or assignment
+allocation, empty results, and repeated calls without the 1024-element bound.
+Arguments require explicit INTENT declarations; OPTIONAL and POINTER dummies
+and ALLOCATABLE CHARACTER dummies still use the existing restricted path.
+Results can be assigned to allocatable or conforming fixed arrays, printed,
+queried, or forwarded to another procedure. Fixed destinations check the shape
+and preserve CHARACTER padding/truncation. See
+`tests/programs/xunion_character_result.f90` and
+`python tests/test_runtime_character_results.py`.
 
 CHARACTER FORALL assignments to fixed rank-one arrays with lower bound one
 now use the existing

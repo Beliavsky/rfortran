@@ -1677,7 +1677,10 @@ pub(crate) fn prepare(mut p: Program) -> Result<(Program, Lower)> {
                         let input = |kind: &TypeSpec| numeric(kind) || matches!(kind, TypeSpec::Character(_) | TypeSpec::CharacterAssumed);
                         let character_array_input=body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,..} if params.contains(name)))
                             && !body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,..} if name==&result));
-                        let descriptor = !*elemental && (numeric(&kind) || character_array_input && matches!(kind,TypeSpec::Character(_)|TypeSpec::CharacterLength(_)))
+                        let character_array_result = body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,..} if name==&result))
+                            && matches!(kind,TypeSpec::Character(_));
+                        let descriptor = !*elemental && (numeric(&kind) || character_array_result
+                            || character_array_input && matches!(kind,TypeSpec::Character(_)|TypeSpec::CharacterLength(_)))
                             && params.iter().all(|param| {
                                 body.iter().any(|s| matches!(s, Stmt::VarDecl {kind,names} if names.contains(param) && input(kind))
                                     || matches!(s, Stmt::ArrayDecl {kind,name,..} if name == param && input(kind)))
@@ -1723,7 +1726,9 @@ pub(crate) fn prepare(mut p: Program) -> Result<(Program, Lower)> {
                                             _=>{},
                                         }}
                                     }
-                                    result_assignments(&mut helper_body,&result);
+                                    // CHARACTER assignments already retain their descriptor
+                                    // and active element width in the character-array pass.
+                                    if numeric(&kind) {result_assignments(&mut helper_body,&result);}
                                 }
                                 if !allocatable {
                                     helper_body.push(Stmt::DummyIntent{name:result.clone(),intent:"allocatable".into()});

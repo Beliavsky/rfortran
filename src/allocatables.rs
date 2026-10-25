@@ -1772,6 +1772,41 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                         }
                     }
                     expression(value, &mut shapes, &mut guards, checks, serial)?;
+                    // A fixed CHARACTER destination can consume a descriptor
+                    // result too. Extract its elements before heap CHARACTER
+                    // storage is converted to character-code arrays.
+                    if let Some((kind @ TypeSpec::Character(_),dims))=shapes.get(name).cloned() {
+                        if !dims.is_empty() {
+                            if let Expr::Call(tag,args)=value {
+                                if tag=="@packed_view" && args.len()==2
+                                    && matches!(&args[0],Expr::Ident(n) if shapes.contains_key(&format!("@heap:{n}"))) {
+                                    let count=dims.iter().cloned().reduce(|a,b|bin(BinOp::Mul,a,b)).unwrap();
+                                    guards.push(fail(bin(BinOp::Ne,args[1].clone(),count.clone()),"CHARACTER array assignment shapes do not conform"));
+                                    *serial+=1;let index=format!("@fixed_character_result_index_{serial}");
+                                    let mut ordinal=bin(BinOp::Sub,id(&index),int(1));
+                                    let mut indices=vec![];
+                                    for extent in dims {
+                                        let divisor=Expr::Call("max".into(),vec![extent,int(1)]);
+                                        indices.push(bin(BinOp::Add,int(1),Expr::Call("modulo".into(),vec![ordinal.clone(),divisor.clone()])));
+                                        ordinal=bin(BinOp::Div,ordinal,divisor);
+                                    }
+                                    let snapshot=format!("@fixed_character_result_values_{serial}");
+                                    // Snapshot the RHS before writing, including when a
+                                    // borrowed descriptor aliases the fixed destination.
+                                    let mut copied=vec![Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![index.clone()]},
+                                        Stmt::ArrayDecl{kind,name:snapshot.clone(),dims:vec![count.clone()]},
+                                        Stmt::Do{var:index.clone(),start:int(1),end:count.clone(),body:vec![Stmt::AssignIndex{
+                                            name:snapshot.clone(),indices:vec![id(&index)],value:Expr::Call("@allocated_linear_element".into(),vec![args[0].clone(),id(&index)]),
+                                        }]},
+                                        Stmt::Do{var:index.clone(),start:int(1),end:count,body:vec![Stmt::AssignIndex{
+                                            name:name.clone(),indices,value:Expr::Index(snapshot,vec![id(&index)]),
+                                        }]}];
+                                    lower(&mut copied,&shapes,serial,checks)?;
+                                    out.extend(guards);out.extend(copied);continue;
+                                }
+                            }
+                        }
+                    }
                 }
                 Stmt::Return(Some(value)) => {
                     expression(value, &mut shapes, &mut guards, checks, serial)?

@@ -446,7 +446,7 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
             match s {
                 Stmt::Function { name, body, params, .. } => {
                     let result=match body.last() {Some(Stmt::Return(Some(Expr::Ident(n))))=>n.clone(),_=>name.clone()};
-                    if body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,kind,..} if name==&result && matches!(kind,TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision|TypeSpec::Logical)))
+                    if body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,kind,..} if name==&result && matches!(kind,TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision|TypeSpec::Logical|TypeSpec::Character(_))))
                         && body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==&result && intent=="allocatable"))
                         && !body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==&result && intent=="@heap_dummy")) {
                         // The hidden output dummy borrows caller-owned result
