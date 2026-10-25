@@ -810,6 +810,19 @@ dummy arguments, function results and module variables are not yet supported,
 nor are constructors with array sections or implied DO loops whose length is
 set at run time. Programs using runtime-length arrays are slow in the
 interpreter (`rfort run`); see [interpreter-todo.md](interpreter-todo.md).
+Scalar derived objects may also contain deferred-length allocatable CHARACTER
+array components. Their element length accompanies the component storage when
+the object is passed to a procedure, including writable dummies. Component
+assignment and record copying retain the logical length; a length change
+reallocates storage after capturing the source. Explicit allocation, empty
+arrays, zero-length elements and deallocation are supported. This component
+path currently uses a checked 4096-character limit per element. Run
+`python tests/test_deferred_character_components.py`; the small standalone
+repro is `tests/programs/xdeferred_character_component.f90`.
+Some function specializations still require bounded CHARACTER array inputs;
+support for a component in a subroutine does not remove that separate limit.
+Local deferred arrays also support overlapping concatenation assignments such
+as `w = w // '!'`.
 `x%len` and `x%kind` are LEN(x) and KIND(x). Procedure and module
 storage and host association, READ into a deferred-length destination, REPEAT
 with a runtime count in other contexts, and MAX and MIN of CHARACTER values

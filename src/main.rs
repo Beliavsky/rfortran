@@ -87,6 +87,7 @@ mod referenced_types;
 mod extensions;
 mod data_statements;
 mod deferred_arrays;
+mod deferred_character_components;
 mod procedure_arguments;
 mod intrinsic_rewrites;
 mod matmul_runtime;

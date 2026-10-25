@@ -297,6 +297,16 @@ impl Lowerer {
                             bail!("component `{}` cannot be both ALLOCATABLE and POINTER", f.name);
                         }
                     }
+                    let mut lengths=vec![];
+                    for f in &mut fields {
+                        if crate::substrings::deferred(&f.kind) && !f.dims.is_empty() && f.allocatable() {
+                            let length=format!("@deferred_length_{}",f.name);
+                            lengths.push(Component::scalar(&length,&TypeSpec::Integer(Some(8)),Some(Expr::IntLit("0".into()))));
+                            f.kind=TypeSpec::Character(Some(4096));
+                            f.attrs.push(format!("@deferred_array_length:{length}"));
+                        }
+                    }
+                    fields.extend(lengths);
                     let mut names = HashSet::new();
                     for f in &fields {
                         if !names.insert(f.name.clone()) {
@@ -704,6 +714,12 @@ impl Lowerer {
             }
             for a in &c.attrs {
                 if dummy && a=="@record_slots" {continue;}
+                if let Some(length)=a.strip_prefix("@deferred_array_length:") {
+                    let length=format!("{name}%{length}");
+                    out.push(Stmt::DummyIntent{name:field.clone(),intent:format!("@character_spec_length:{length}")});
+                    out.push(Stmt::DummyIntent{name:field.clone(),intent:format!("@deferred_array_length:{length}")});
+                    continue;
+                }
                 out.push(Stmt::DummyIntent { name: field.clone(), intent: a.clone() });
             }
             // A nonpointer subobject of a TARGET object is a valid target too.
@@ -837,6 +853,7 @@ impl Lowerer {
             Absent,
         }
         let fields = self.types[ty].components.clone();
+        let constructor=matches!(&value,Expr::Call(n,_) if n==ty);
         let sources: Vec<Source> =
             match value {
                 // The parent part `c%parent` of an extended object is `c`.
@@ -871,6 +888,9 @@ impl Lowerer {
         let mut writes = vec![];
         let mut arrays = vec![];
         for (field, source) in fields.iter().zip(sources) {
+            // The component assignment computes its deferred length. A
+            // constructor's synthetic default must not overwrite that length.
+            if constructor && field.name.starts_with("@deferred_length_") {continue;}
             let to = format!("{target}%{}", field.name);
             if let Some(sub) = &field.derived {
                 let value = match source {
@@ -1455,7 +1475,7 @@ impl Lowerer {
 pub fn resolve(program: Program) -> Result<Program> {
     let program = crate::allocation_options::resolve(resolve_types(program)?)?;
     crate::simple::validate_calls(&program)?;
-    Ok(program)
+    crate::deferred_character_components::resolve(program)
 }
 fn resolve_types(mut program: Program) -> Result<Program> {
     program=crate::input::prepare_formatted(program);

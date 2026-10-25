@@ -159,7 +159,13 @@ fn runtime_shape(e: &Expr, arrays: &[String], declared: &[String]) -> Option<(Ex
         return Some((typed.unwrap_or_else(|| length(&values[0])), count));
     }
     match e {
-        Expr::Ident(n) => Some((length(e), size(n))),
+        Expr::Bin(crate::ast::BinOp::Concat,a,b)=>{
+            let left=runtime_shape(a,arrays,declared);
+            let right=runtime_shape(b,arrays,declared);
+            let count=left.as_ref().or(right.as_ref())?.1.clone();
+            Some((Expr::Bin(crate::ast::BinOp::Add,Box::new(left.map_or_else(||length(a),|v|v.0)),Box::new(right.map_or_else(||length(b),|v|v.0))),count))
+        }
+        Expr::Ident(n) if declared.contains(n) || arrays.contains(n) => Some((length(e), size(n))),
         _ => shape(e).and_then(|(length, size)| size.map(|size| (int(length), int(size)))),
     }
 }
