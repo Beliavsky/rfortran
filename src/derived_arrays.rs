@@ -159,7 +159,7 @@ struct Lower {
     elemental_results: HashMap<String, elemental_record_results::ResultProcedure>,
     elemental_functions: std::collections::HashSet<String>,
     /// Type-bound procedure names of each type.
-    bindings: HashMap<String, std::collections::HashSet<String>>,
+    bindings: HashMap<String, HashMap<String, String>>,
 }
 /// Storage of one field of an array of records. An array component `c` of a
 /// scalar object `g` is stored as the ordinary array components `c$field`,
@@ -298,6 +298,28 @@ impl Lower {
             && self.array_shape(i).is_none()))
             .then_some((n.as_str(), idx.as_slice()))
     }
+    /// Recognize bound calls before scalar derived lowering resolves their names.
+    fn scalar_record_call(&self, name: &str, objects: &Objects) -> bool {
+        if let Some((owner, method)) = name.rsplit_once('%') {
+            return objects.get(owner)
+                .and_then(|o| self.bindings.get(&o.ty))
+                .and_then(|bindings| bindings.get(method))
+                .is_some_and(|target| self.scalar_procedures.contains(target));
+        }
+        self.scalar_procedures.contains(name)
+    }
+    fn scalar_record_actual(&mut self, arg: &mut Expr, objects: &mut Objects,
+        prefix: &mut Vec<Stmt>, copy_back: Option<&mut Vec<Stmt>>) -> Result<()> {
+        // Keywords retain their wrappers until the bound call is resolved.
+        let actual = match arg {
+            Expr::Call(tag, values) if tag.starts_with("@keyword:") && values.len() == 1 => &mut values[0],
+            _ => arg,
+        };
+        if self.element(actual, objects).is_some() {
+            *actual = Expr::Ident(self.element_temp(actual, objects, prefix, copy_back)?);
+        }
+        Ok(())
+    }
     /// Copy an element of an array of records into a new scalar object, and,
     /// when `copy_back` is given, copy the object back after the statement.
     fn element_temp(&mut self, e: &Expr, objects: &mut Objects, prefix: &mut Vec<Stmt>,
@@ -418,7 +440,7 @@ impl Lower {
                     self.types.insert(name.clone(), fields);
                     self.layouts.insert(name.clone(), layout);
                     if let Stmt::DerivedType { bindings, .. } = s {
-                        self.bindings.insert(name.clone(), bindings.iter().map(|(b, _)| b.clone()).filter(|b| !b.starts_with('@')).collect());
+                        self.bindings.insert(name.clone(), bindings.iter().filter(|(b, _)| !b.starts_with('@')).cloned().collect());
                     }
                 }
                 Stmt::Function {
@@ -1049,9 +1071,12 @@ impl Lower {
                 }
                 // A type-bound function of an array element, `a(i)%f(...)`.
                 let binding = self.element(value, objects).map(|(n, _)| objects[n].ty.clone())
-                    .is_some_and(|ty| self.bindings.get(&ty).is_some_and(|b| b.contains(&field)));
+                    .is_some_and(|ty| self.bindings.get(&ty).is_some_and(|b| b.contains_key(&field)));
                 if binding {
                     let temp = self.element_temp(value, objects, prefix, None)?;
+                    for actual in &mut component {
+                        self.scalar_record_actual(actual, objects, prefix, None)?;
+                    }
                     *e = Expr::Call(format!("{temp}%{field}"), component);
                     return Ok(());
                 }
@@ -1156,11 +1181,9 @@ impl Lower {
                     }
                 }
                 // An element passed to a function's scalar derived dummy.
-                if self.scalar_procedures.contains(n.as_str()) {
+                if self.scalar_record_call(n, objects) {
                     for a in args.iter_mut() {
-                        if self.element(a, objects).is_some() {
-                            *a = Expr::Ident(self.element_temp(a, objects, prefix, None)?);
-                        }
+                        self.scalar_record_actual(a, objects, prefix, None)?;
                     }
                 }
                 if let Some((_, o)) = self.arguments(n, args, objects, prefix)? {
@@ -1702,12 +1725,10 @@ impl Lower {
                             let element = args.remove(0);
                             let temp = self.element_temp(&element, &mut objects, &mut prefix, Some(&mut suffix))?;
                             *name = format!("{temp}%{method}");
-                        } else if self.scalar_procedures.contains(name.as_str()) {
+                        }
+                        if self.scalar_record_call(name, &objects) {
                             for a in args.iter_mut() {
-                                if self.element(a, &objects).is_some() {
-                                    let temp = self.element_temp(a, &mut objects, &mut prefix, Some(&mut suffix))?;
-                                    *a = Expr::Ident(temp);
-                                }
+                                self.scalar_record_actual(a, &mut objects, &mut prefix, Some(&mut suffix))?;
                             }
                         }
                         if self

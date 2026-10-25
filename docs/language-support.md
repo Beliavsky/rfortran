@@ -1704,7 +1704,10 @@ unselected elements are not read. See `tests/test_derived_section_output.py`.
 An element can be passed to a scalar derived dummy (`call bump(a(i), 1.0)`) and
 can call type-bound procedures (`call a(i)%move(dx)`, `a(i)%norm()`); the element
 is copied into a temporary object for the call and, for a subroutine, copied
-back afterwards.
+back afterwards. Explicit arguments of bound calls also accept derived-array
+elements, including renamed bindings, keyword arguments, and calls whose receiver
+is itself an array element. Subscripts are evaluated once before copying the
+selected element. See `tests/programs/xbound_derived_element_actual.f90`.
 Numeric and LOGICAL ALLOCATABLE array components also work. Each record element
 owns a separate descriptor holding allocation status, extents, lower bounds,
 data and initialization flags. Fixed and runtime-sized parent arrays, component
