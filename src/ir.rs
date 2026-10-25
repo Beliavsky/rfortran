@@ -1077,7 +1077,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
         final_folded
     }
 
-    fn eliminate_dead_code_final(stmts: Vec<IStmt>, func_name: Option<&str>) -> Vec<IStmt> {
+    fn eliminate_dead_code_final(stmts: Vec<IStmt>, func_name: Option<&str>, params: &[String]) -> Vec<IStmt> {
         let mut all_uses = std::collections::HashSet::new();
         let mut function_names = std::collections::HashSet::new();
         let mut function_return_vars = std::collections::HashSet::new();
@@ -1185,6 +1185,9 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
         needed_vars.extend(function_names);
         needed_vars.extend(function_return_vars);
         needed_vars.extend(loop_critical);
+        // Dummy declarations define the native call ABI even when their values
+        // become unused after OPTIONAL specialization or constant folding.
+        needed_vars.extend(params.iter().cloned());
 
         let mut result = Vec::new();
         for (_idx, stmt) in stmts.into_iter().enumerate() {
@@ -2473,7 +2476,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
 
     for func in &mut funcs {
         if has_pointer_access(&func.body) {continue;}
-        func.body = eliminate_dead_code_final(func.body.clone(), Some(&func.name));
+        func.body = eliminate_dead_code_final(func.body.clone(), Some(&func.name), &func.params);
     }
 
     for func in &mut funcs {
@@ -2578,7 +2581,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                     }
                 }
             }
-            func.body = eliminate_dead_code_final(new_body, Some(&func.name));
+            func.body = eliminate_dead_code_final(new_body, Some(&func.name), &func.params);
         }
     }
 
@@ -2655,7 +2658,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                     other => new_body.push(other),
                 }
             }
-            func.body = eliminate_dead_code_final(new_body, Some(&func.name));
+            func.body = eliminate_dead_code_final(new_body, Some(&func.name), &func.params);
         }
     }
     // Keep computed accumulators: an unrelated constant array does not prove their value.

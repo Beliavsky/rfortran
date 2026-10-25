@@ -1421,6 +1421,11 @@ impl Lowerer {
                         if has_return(body) {
                             fn plain(body: &mut [Stmt]) {
                                 for s in body {
+                                    // Internal procedures own their RETURN statements;
+                                    // converting the host's result ABI must not alter them.
+                                    if matches!(s, Stmt::Function { .. } | Stmt::Subroutine { .. }) {
+                                        continue;
+                                    }
                                     if let Stmt::Return(value) = s {
                                         *value = None;
                                     }
