@@ -7,6 +7,7 @@ use crate::ast::{Expr, Program, Stmt};
 use anyhow::{bail, Result};
 use std::collections::{HashMap, HashSet};
 
+#[derive(Clone)]
 struct Procedure { pure: bool, intents: Option<Vec<String>>, optional: Vec<bool> }
 fn intents(params: &[String], body: &[Stmt]) -> Vec<String> {
     params.iter().map(|p| body.iter().find_map(|s| match s {
@@ -48,7 +49,7 @@ pub fn validate(program: &Program) -> Result<()> {
         }
         Ok(())
     }
-    fn check(body: &[Stmt], inherited: &HashSet<String>, readonly: &HashSet<String>, known: &HashMap<String, Procedure>, inherited_characters: &HashSet<String>) -> Result<()> {
+    fn check(body: &[Stmt], inherited: &HashSet<String>, readonly: &HashSet<String>, known: &HashMap<String, Procedure>, inherited_characters: &HashSet<String>, host_objects: &HashSet<String>) -> Result<()> {
         let statement_location = std::cell::Cell::new(None);
         let result = (|| -> Result<()> {
         let mut locals = inherited.clone();
@@ -75,6 +76,12 @@ pub fn validate(program: &Program) -> Result<()> {
             }
         }
         let writable_locals=locals.clone();
+        // Host arrays are data references, not unknown procedure calls. Their
+        // visibility does not make them writable from this PURE procedure.
+        locals.extend(host_objects.iter().cloned());
+        for statement in body {
+            if let Stmt::Function {name,..} | Stmt::Subroutine {name,..} = statement { locals.remove(name); }
+        }
         for statement in body {if let Stmt::DummyIntent {name,intent}=statement {
             if intent=="@module_host" {locals.insert(name.clone());}
         }}
@@ -192,19 +199,19 @@ pub fn validate(program: &Program) -> Result<()> {
                 }
                 Stmt::Return(Some(e)) => expression(e, &locals, known)?,
                 Stmt::If { cond, then_body, else_body } => {
-                    expression(cond, &locals, known)?; check(then_body, &locals, readonly, known, &characters)?;
-                    if let Some(body) = else_body { check(body, &locals, readonly, known, &characters)?; }
+                    expression(cond, &locals, known)?; check(then_body, &writable_locals, readonly, known, &characters, host_objects)?;
+                    if let Some(body) = else_body { check(body, &writable_locals, readonly, known, &characters, host_objects)?; }
                 }
                 Stmt::Do { var, start, end, body } => {
                     writable(var)?; expression(start, &locals, known)?; expression(end, &locals, known)?;
-                    check(body, &locals, readonly, known, &characters)?;
+                    check(body, &writable_locals, readonly, known, &characters, host_objects)?;
                 }
-                Stmt::DoWhile { cond, body } => { expression(cond, &locals, known)?; check(body, &locals, readonly, known, &characters)?; }
-                Stmt::Block { body } => check(body, &locals, readonly, known, &characters)?,
+                Stmt::DoWhile { cond, body } => { expression(cond, &locals, known)?; check(body, &writable_locals, readonly, known, &characters, host_objects)?; }
+                Stmt::Block { body } => check(body, &writable_locals, readonly, known, &characters, host_objects)?,
                 Stmt::SelectCase { expr, cases, default } => {
                     expression(expr, &locals, known)?;
-                    for case in cases { check(&case.body, &locals, readonly, known, &characters)?; }
-                    if let Some(body) = default { check(body, &locals, readonly, known, &characters)?; }
+                    for case in cases { check(&case.body, &writable_locals, readonly, known, &characters, host_objects)?; }
+                    if let Some(body) = default { check(body, &writable_locals, readonly, known, &characters, host_objects)?; }
                 }
                 _ => {}
             }
@@ -213,8 +220,18 @@ pub fn validate(program: &Program) -> Result<()> {
             })();
         result.map_err(|e| crate::source_diagnostics::at(e, statement_location.get()))
     }
-    fn walk(body: &[Stmt], known: &HashMap<String, Procedure>, inherited_characters: &HashSet<String>) -> Result<()> {
+    fn walk(body: &[Stmt], known: &HashMap<String, Procedure>, inherited_characters: &HashSet<String>, inherited_objects: &HashSet<String>) -> Result<()> {
         let mut characters=inherited_characters.clone();
+        let mut objects=inherited_objects.clone();
+        for stmt in body {
+            match stmt {
+                Stmt::VarDecl {names,..} => objects.extend(names.iter().cloned()),
+                Stmt::ArrayDecl {name,..} => { objects.insert(name.clone()); },
+                Stmt::InitializedDecl {entities,..} => objects.extend(entities.iter().map(|(n,_)|n.clone())),
+                Stmt::Function {name,..} | Stmt::Subroutine {name,..} => { objects.remove(name); },
+                _ => {},
+            }
+        }
         for stmt in body {
             match stmt {
                 Stmt::VarDecl {kind,names} if matches!(kind,crate::ast::TypeSpec::Character(_) | crate::ast::TypeSpec::CharacterAssumed | crate::ast::TypeSpec::CharacterLength(_)) => characters.extend(names.iter().cloned()),
@@ -223,13 +240,25 @@ pub fn validate(program: &Program) -> Result<()> {
             }
         }
         for stmt in body {
+            // Internal interfaces belong to their host. Do not add them to
+            // the global table: unrelated hosts may use the same helper name.
+            let local_known = match stmt {
+                Stmt::Function { body, .. } | Stmt::Subroutine { body, .. }
+                    if body.iter().any(|s| matches!(s, Stmt::Function { .. } | Stmt::Subroutine { .. })) => {
+                    let mut scoped = known.clone();
+                    procedures(body, &mut scoped);
+                    Some(scoped)
+                }
+                _ => None,
+            };
+            let known = local_known.as_ref().unwrap_or(known);
             match stmt {
                 Stmt::Function { name, pure: true, elemental, return_type, params, body, .. } => {
                     if *elemental { crate::elemental::validate(name,params,return_type,body)?; }
                     let mut locals: HashSet<String> = params.iter().cloned().collect();
                     locals.insert(name.clone());
                     let readonly=params.iter().filter(|p|!(name.starts_with("@enumeration_step_") && p.as_str()=="stat")).cloned().collect();
-                    check(body, &locals, &readonly, known, &characters)?;
+                    check(body, &locals, &readonly, known, &characters, &objects)?;
                 }
                 Stmt::Subroutine { name, pure: true, elemental, params, body, .. } => {
                     if *elemental { crate::elemental::validate_subroutine(name,params,body)?; }
@@ -238,10 +267,15 @@ pub fn validate(program: &Program) -> Result<()> {
                         bail!("PURE subroutine dummy arguments require an explicit INTENT");
                     }
                     let readonly = params.iter().zip(&declared).filter(|(_, i)| i.as_str() == "intent(in)").map(|(p, _)| p.clone()).collect();
-                    check(body, &params.iter().cloned().collect(), &readonly, known, &characters)?;
+                    check(body, &params.iter().cloned().collect(), &readonly, known, &characters, &objects)?;
                 }
-                Stmt::Module { body, .. } => walk(body, known, &characters)?,
+                Stmt::Module { body, .. } => walk(body, known, &characters, &objects)?,
                 _ => {}
+            }
+            // A contained PURE procedure must itself be checked, even when
+            // its host is impure or the contained procedure is never called.
+            if let Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } = stmt {
+                walk(body, known, &characters, &objects)?;
             }
         }
         Ok(())
@@ -252,7 +286,7 @@ pub fn validate(program: &Program) -> Result<()> {
     })]);
     known.insert("tokenize".into(),Procedure{pure:true,intents:Some(vec!["intent(in)".into(),"intent(in)".into(),"intent(out)".into(),"intent(out)".into()]),optional:vec![false,false,false,true]});
     procedures(&program.body, &mut known);
-    walk(&program.body, &known, &HashSet::new())
+    walk(&program.body, &known, &HashSet::new(), &HashSet::new())
 }
 
 #[cfg(test)]
