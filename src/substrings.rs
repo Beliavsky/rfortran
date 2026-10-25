@@ -578,7 +578,7 @@ fn dynamic_expression(e: &mut Expr, scope: &mut DynamicScope, output: &mut Vec<S
         }
         Expr::Call(n, args) => {
             for e in args.iter_mut() { dynamic_expression(e, scope, output, serial)?; }
-            if !matches!(n.as_str(), "trim" | "@substring") && args.iter().any(runtime_character) {
+            if !matches!(n.as_str(), "trim" | "adjustl" | "adjustr" | "@substring") && args.iter().any(runtime_character) {
                 bail!("`{n}` does not yet support runtime-length CHARACTER arguments");
             }
         }
