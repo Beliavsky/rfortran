@@ -706,6 +706,10 @@ impl Lower {
                 id(&result)
             }
             Expr::Call(n, a) if n == "@typed_constructor" && a.len() == 1 => int(0),
+            // Argument association retains a packed array's active length in
+            // a view. Shape/capture uses that length; element access still uses
+            // the underlying storage and its lower bound.
+            Expr::Call(n, a) if n == "@packed_view" && a.len() == 2 => self.element(&a[0], index, s, out)?,
             Expr::Call(n, a) if n == "@vector_subscript" => self.element(&a[0], index, s, out)?,
             _ => bail!("this vector subscript expression is not yet supported"),
         })

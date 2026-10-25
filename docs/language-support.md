@@ -1020,6 +1020,16 @@ capacity is available, or heap storage for runtime descriptor-backed sources.
 Vector actual arguments are materialized for known INTENT(IN) subroutine dummies;
 association with writable dummies is rejected.
 
+Runtime-sized INTEGER selectors passed through assumed-shape dummy arguments
+retain their active length, including results of PACK. These selectors can be
+used for reads and assignments, including Cartesian selections on multiple axes
+and selection of allocatable components in a derived-type constructor.
+`tests/programs/xpacked_vector_subscript.f90` is a reduced DataFrame example.
+Run `python tests/test_packed_vector_subscripts.py` for active lengths, empty and
+repeated indices, overlap, bounds checks, and intrinsic/derived element types.
+Known gaps include runtime-sized selectors on explicit-lower-bound source arrays
+and automatic COMPLEX result arrays in this procedure-specialization path.
+
 Constant invalid indices and duplicate assignment indices are compile errors;
 dynamic indices are checked against the original bounds before any writes, and
 dynamic duplicate destinations cause a runtime error. Duplicate indices remain
