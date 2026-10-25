@@ -658,6 +658,13 @@ arithmetic selectors work in native builds, including selectors made constant
 by optimization. CHARACTER ranges remain unsupported. Run
 `python tests/test_case_ranges.py` for interpreter/native O0/O2 and gfortran checks.
 
+CHARACTER selectors may be fixed or deferred-length variables, literals,
+substrings, concatenations, and supported CHARACTER-valued expressions. The
+selector is evaluated once; comparisons use its active length and Fortran blank
+padding, including empty strings. Run
+`python tests/test_select_character_expressions.py` for native O0/O2,
+interpreter, and gfortran comparisons.
+
 Supported array-input functions, array-valued functions and array-argument
 subroutines are specialized inside every CASE and CASE DEFAULT branch, including
 nested SELECT CASE constructs. Calls remain in their selected branch and use

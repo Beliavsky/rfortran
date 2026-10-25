@@ -791,6 +791,21 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
             }
             Stmt::SelectCase { expr, cases, default } => {
                 dynamic_expression(expr, &mut scope, &mut prefix, serial)?;
+                // Native SELECT CASE dispatch requires a storage-backed selector.
+                // Capture CHARACTER expressions once, copying their active length
+                // and blank-padding the buffer so comparisons ignore spare capacity.
+                if !matches!(expr, Expr::Ident(_)) {
+                    if let Some(cap) = capacity(expr, &scope) {
+                        *serial += 1;
+                        let name = format!("@character_selector_{serial}");
+                        scope.characters.insert(name.clone(), cap);
+                        scope.symbols.insert(name.clone(), (TypeSpec::Character(Some(cap)), vec![]));
+                        prefix.push(Stmt::VarDecl {kind: TypeSpec::Character(Some(cap)), names: vec![name.clone()]});
+                        prefix.push(Stmt::CallSub {name: "@character_assign".into(),
+                            args: vec![ident(&name), expr.clone(), int(cap)]});
+                        *expr = ident(&name);
+                    }
+                }
                 for c in cases { dynamic_body(&mut c.body, &scope, local, serial)?; }
                 if let Some(b) = default { dynamic_body(b, &scope, local, serial)?; }
             }

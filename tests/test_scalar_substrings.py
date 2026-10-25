@@ -120,13 +120,25 @@ end
                     self.assertIn('substring bounds are outside CHARACTER length', result.stderr)
                     self.assertEqual(result.stdout, '')
 
+    def test_deferred_adjustl(self):
+        program = """implicit none
+character(:),allocatable::s
+s=' a '
+print *, '['//adjustl(s)//']',len(adjustl(s))
+end
+"""
+        with tempfile.TemporaryDirectory(prefix="deferred-adjustl-") as tmp:
+            directory = Path(tmp)
+            source = directory / 'main.f90'
+            source.write_text(program)
+            self.compare(source, '[a  ] 3\n', directory)
+
     def test_deferred_length_diagnostics(self):
         cases = [
             ('character(:)::s', "s='x'", 'requires ALLOCATABLE'),
             ('character(:),allocatable::s', 'print *,s', 'uninitialized variable `s`'),
             ('character(:),allocatable::s\ninteger::i', "s='abcd'(i:3)", 'uninitialized variable `i`'),
             ('character(:),allocatable::s\nreal::i', "i=1.0\ns='abcd'(i:3)", 'scalar INTEGER'),
-            ('character(:),allocatable::s', "s=' a '\nprint *,adjustl(s)", 'runtime-length CHARACTER arguments'),
         ]
         with tempfile.TemporaryDirectory(prefix="deferred-diagnostics-") as tmp:
             directory = Path(tmp)
