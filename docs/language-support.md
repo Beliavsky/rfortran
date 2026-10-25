@@ -2432,6 +2432,15 @@ writes flush stdout, so prompts appear before a following READ. A final
 nonadvancing write leaves stdout without an added newline, including at STOP.
 ADVANCE cannot be used with list-directed (`*`) formats.
 
+External formatted WRITE also accepts ADVANCE with literal or runtime values.
+Successive nonadvancing writes append fragments to the current record; an
+advancing WRITE (including an empty list-directed WRITE) finishes it. Literal
+and runtime formats, numeric/character items, and implied-DO output use the same
+formatter as stdout. Terminate the final record with an advancing WRITE;
+cross-statement positioning with T/TL edit descriptors is not tracked.
+Run `python tests/test_file_nonadvancing.py` for CSV record assembly and readback,
+runtime controls, empty fragments and slash descriptors.
+
 Formatted internal WRITE to a scalar CHARACTER buffer supports literal or runtime
 format strings, INTEGER/REAL/LOGICAL/CHARACTER items, arrays and implied-DO lists.
 The same parser and descriptors are used for standard output. Each statement
@@ -2690,8 +2699,7 @@ Other inquiry properties, including SIZE and the separate IOLENGTH form, remain
 unsupported.
 `(A)` READ destinations may also be dynamically indexed local CHARACTER elements.
 
-External list-directed WRITE, file ADVANCE controls, and IOSTAT on OPEN/CLOSE
-or positioning operations remain unsupported.
+Formatted external WRITE controls other than ADVANCE remain unsupported.
 Connections are shared within a
 compiled source group. Native file I/O currently requires a 64-bit target.
 Run `python tests/test_read_comments.py` for interpreter/native O0/O2 and

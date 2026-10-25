@@ -1624,15 +1624,23 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                         }
                         continue;
                     }
-                    if matches!(&args[1],Expr::Call(n,_) if n=="@list_directed") || options {
-                        if crate::parameters::integer_constant(&args[0]).is_ok() {bail!("external file WRITE currently requires an explicit format without control options");}
-                        prefix.push(crate::output::require_stdout(args[0].clone()));
+                    if matches!(&args[1],Expr::Call(n,_) if n=="@list_directed") {
+                        bail!("list-directed WRITE does not support control options here; ADVANCE requires an explicit format");
                     } else {
-                    let mut file_body=formatted_capture(args[1].clone(),&args[2..],int(1),&symbols,serial)?;
+                    let mut first=2;
+                    let mut advance=int(1);
+                    while let Some(Expr::Call(option,values))=args.get(first) {
+                        let Some(option)=option.strip_prefix("@write_option:") else {break;};
+                        if option!="advance" {bail!("unsupported WRITE control `{option}`");}
+                        advance=advance_control(&values[0],&symbols.variables,&mut prefix,serial)?;
+                        first+=1;
+                    }
+                    output.append(&mut prefix);
+                    let mut file_body=formatted_capture(args[1].clone(),&args[first..],advance.clone(),&symbols,serial)?;
                     if let Some(Stmt::CallSub{name, args:end})=file_body.last_mut() {if name=="@format_end" {*name="@format_end_file".into();end.push(args[0].clone());}}
                     if crate::parameters::integer_constant(&args[0]).is_ok() {output.push(Stmt::Block{body:file_body});}
                     else {
-                        let stdout=formatted_capture(args[1].clone(),&args[2..],int(1),&symbols,serial)?;
+                        let stdout=formatted_capture(args[1].clone(),&args[first..],advance,&symbols,serial)?;
                         output.push(Stmt::If{cond:bin(BinOp::Eq,args[0].clone(),int(6)),then_body:vec![Stmt::Block{body:stdout}],else_body:Some(vec![Stmt::Block{body:file_body}])});
                     }
                         continue;

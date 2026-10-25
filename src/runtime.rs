@@ -1689,15 +1689,16 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                             let destination=if internal {Some((args[0].clone(),args[2].clone()))} else {None};
                             let file=if name=="@format_end_file" {Some(args[1].clone())}else{None};
                             let mut args=vec![Expr::Str(format)];args.extend(items);
-                            if let Some(unit)=file {args.push(unit);exec_stmts(&[Stmt::CallSub{name:"@file_formatted_record".into(),args}],funcs,call_stack);idx+=1;continue;}
+                            if let Some(unit)=file {args.push(unit);exec_stmts(&[Stmt::CallSub{name:if advance {"@file_formatted_record"} else {"@file_formatted_fragment"}.into(),args}],funcs,call_stack);idx+=1;continue;}
                             if let Some((target,length))=destination {args.extend([target,length]);}
                             exec_stmts(&[Stmt::CallSub {name:if internal {"@internal_formatted_record"} else if advance {"@formatted_print"} else {"@formatted_write_noadvance"}.into(),args}],funcs,call_stack);
                         }
                         idx+=1;continue;
                     }
-                    if name == "@formatted_print" || name == "@formatted_write_noadvance" || name=="@internal_formatted_record" || name=="@file_formatted_record" {
+                    if name == "@formatted_print" || name == "@formatted_write_noadvance" || name=="@internal_formatted_record" || name=="@file_formatted_record" || name=="@file_formatted_fragment" {
                         let internal=name=="@internal_formatted_record";
-                        let external=name=="@file_formatted_record";
+                        let external=name=="@file_formatted_record" || name=="@file_formatted_fragment";
+                        let advance=name!="@formatted_write_noadvance" && name!="@file_formatted_fragment";
                         let end=args.len()-if internal {2} else if external {1}else {0};
                         let fr=call_stack.last().unwrap().clone();
                         // A whole array item, as the result of MAXLOC, gives its elements.
@@ -1753,7 +1754,7 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         let mut bytes=Vec::new();
                         let rendered=crate::format_spec::render_with(format.as_bytes(),items.len(),&|i,f|{
                             match &items[i] {(_,Some(s))=>f(crate::format_spec::Value::Character(s.as_bytes())),(v,None)=>f(*v)}
-                        },&mut |b|bytes.push(b),name!="@formatted_write_noadvance");
+                        },&mut |b|bytes.push(b),advance);
                         if let Err(e)=rendered {eprintln!("Runtime error: invalid output format: {e}"); std::process::exit(1)}
                         let mut output=String::from_utf8_lossy(&bytes).into_owned();
                         if internal {
@@ -1767,8 +1768,8 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         }
                         if external {
                             let unit=eval_expr(&args[end],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
-                            let output=output.strip_suffix('\n').unwrap_or(&output);
-                            io_result(FILES.with(|files|files.borrow_mut().write_record(unit,output)));idx+=1;continue;
+                            let output=if advance {output.strip_suffix('\n').unwrap_or(&output)} else {&output};
+                            io_result(FILES.with(|files|files.borrow_mut().write_fragment(unit,output,advance)));idx+=1;continue;
                         }
                         print!("{output}");
                         if name == "@formatted_write_noadvance" {

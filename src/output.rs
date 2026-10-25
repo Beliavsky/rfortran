@@ -119,11 +119,6 @@ fn assign(n: &str, value: Expr) -> Stmt {
         value,
     }
 }
-pub(crate) fn require_stdout(unit: Expr) -> Stmt {
-    Stmt::If {cond:bin(BinOp::Ne,unit,int(6)),then_body:vec![Stmt::CallSub {
-        name:"@error_stop".into(),args:vec![Expr::Str("this WRITE requires standard output unit 6; external file WRITE currently supports only (A) without control options".into())],
-    }],else_body:None}
-}
 fn fragment(e: Expr) -> Stmt {
     Stmt::CallSub {
         name: "@print_fragment".into(),

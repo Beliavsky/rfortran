@@ -379,14 +379,21 @@ impl Files {
         Ok(self.1.get(&unit).cloned().unwrap_or_default())
     }
     pub(crate) fn write_record(&mut self, unit:i64, text:&str)->Result<()> {
+        self.write_fragment(unit,text,true)
+    }
+    pub(crate) fn write_fragment(&mut self, unit:i64, text:&str, advance:bool)->Result<()> {
         Self::valid(unit)?;
         // Unit 0 is preconnected to standard error unless a file is opened on it.
         if unit==0 && !self.0.contains_key(&0) {
-            eprintln!("{text}");
+            eprint!("{text}");
+            if advance {eprintln!();}
+            std::io::stderr().flush()?;
             return Ok(());
         }
         let file=self.0.get_mut(&unit).context("file unit is not connected")?;
-        file.write_all(text.as_bytes())?;file.write_all(b"\n")?;
+        file.write_all(text.as_bytes())?;
+        if advance {file.write_all(b"\n")?;}
+        file.flush()?;
         let position=file.stream_position()?;file.set_len(position)?;
         Ok(())
     }
