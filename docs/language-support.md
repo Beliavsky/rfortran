@@ -71,6 +71,7 @@ gfortran when it is installed. Run the tests after `cargo build --bin rfort`.
   - [Type extension](#type-extension)
   - [Derived arguments and OPTIONAL](#derived-arguments-and-optional)
 - [Procedures](#procedures)
+  - [C interoperability](#c-interoperability)
   - [External procedures and separate compilation](#external-procedures-and-separate-compilation)
   - [Named arguments](#named-arguments)
   - [OPTIONAL arguments](#optional-arguments)
@@ -1887,6 +1888,55 @@ rewriting. `tests/programs/xivec_shadow.f90` and `tests/test_derived_shadowing.p
 behavior, including comparisons with and without an unrelated derived type.
 
 ## Procedures
+
+### C interoperability
+
+Native compilation supports a scalar subset of Fortran 2003 C interoperability:
+
+- `USE ISO_C_BINDING`, including `INTRINSIC`, `ONLY`, and renaming. Supported
+  kind constants are `C_SIGNED_CHAR`, `C_SHORT`, `C_INT`, `C_LONG`, `C_LONG_LONG`,
+  `C_INT8_T`, `C_INT16_T`, `C_INT32_T`, `C_INT64_T`, `C_INT_LEAST8_T` through
+  `C_INT_LEAST64_T`, `C_SIZE_T`, `C_INTPTR_T`, `C_FLOAT`, and `C_DOUBLE`.
+  Values reflect the compiler host ABI; in particular `C_LONG` is 4 on Windows
+  and 8 on supported 64-bit Unix hosts.
+- Scalar INTEGER kinds 1, 2, 4, 8 and REAL kinds 4, 8 in `BIND(C)` functions
+  and subroutines. Without NAME, the C label is the lowercase Fortran procedure
+  name. `BIND(C, NAME="label")` accepts a literal, case-sensitive C symbol.
+  Both RESULT/BIND clause orders and no-argument subroutines are accepted.
+- Scalar `VALUE` dummies, including the separate `VALUE :: x` statement.
+  Changes to a VALUE dummy affect only its local copy, including calls from
+  Fortran. Non-VALUE scalar dummies use C pointers and support `INTENT(IN)`,
+  `INTENT(OUT)`, `INTENT(INOUT)`, or omitted INTENT.
+- Explicit interfaces to imported C functions/subroutines, with local USE or
+  IMPORT declarations for numeric kinds; module procedure exports and module
+  dependencies compiled separately using `.rmod` interfaces.
+
+Adapters convert between C storage widths and rfort's private representation;
+C callers do not receive rfort's initialization descriptors. Callers must supply
+compatible C declarations and use the same architecture and ABI as rfort.
+C interoperability requires native code: use `rfort file.f90 --run` rather than
+`rfort run file.f90`. Compile C separately and pass its object to rfort for linking.
+
+The runnable example `tests/c_interop/scalar.f90` exports
+`int AddMixed(int, float)` and `void bump_values(int *, double *)`.
+On Windows with Clang and rfort on PATH:
+
+```cmd
+clang --target=x86_64-pc-windows-msvc -c tests\c_interop\caller.c -o target\c-caller.obj
+rfort tests\c_interop\scalar.f90 target\c-caller.obj -o target\c-example.exe --run
+```
+
+The C main checks both calls and exits zero on success. On Linux/macOS, compile
+`caller.c` with the host C compiler and pass its `.o` file to rfort instead.
+Run `python tests/test_c_interop.py` for native C-to-Fortran and Fortran-to-C tests
+at O0/O2. The tests require Clang on Windows, or a host C compiler on Unix.
+The current implementation has been verified on Windows x64.
+
+Not yet implemented: C-interoperable arrays/descriptors, CHARACTER, LOGICAL,
+COMPLEX, derived-type layouts, global variable bindings, OPTIONAL/POINTER/
+ALLOCATABLE dummies, `C_PTR`/`C_FUNPTR`, `C_LOC`, `C_F_POINTER`, `C_FUNLOC`,
+`C_F_PROCPOINTER`, callbacks, and other ISO_C_BINDING entities. Acceptance of a
+`TYPE, BIND(C)` header does not establish a C-compatible structure layout.
 
 ### External procedures and separate compilation
 

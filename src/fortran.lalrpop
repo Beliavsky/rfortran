@@ -19,6 +19,7 @@ extern {
         KW_ONLY => TokenKind::KwOnly,
         ATTR_STMT => TokenKind::AttrStatement(<String>),
         PROC_DECL => TokenKind::ProcedureDeclaration(<String>),
+        BIND_SPEC => TokenKind::BindSpec(<String>),
         END_INTERFACE_NAME => TokenKind::EndInterfaceName(<String>),
         END_UNIT_NAME => TokenKind::EndUnitName(<String>),
         BARE_END => TokenKind::BareEnd,
@@ -275,20 +276,21 @@ ProcedureModifier: (Option<bool>,bool,bool) = {
 };
 
 FunctionDef: Stmt = {
-    KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN KW_RESULT LPAREN <result: Ident> RPAREN <body:ProcedureBody> <_end: FunctionEnd> => crate::ast::function_with_result(name, params, result, body),
-    KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN <body:ProcedureBody> <_end: FunctionEnd> => Stmt::Function { name, params, return_type: None, body, pure: false, elemental:false },
+    KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN KW_RESULT LPAREN <result: Ident> RPAREN <binding:BIND_SPEC?> <body:ProcedureBody> <_end: FunctionEnd> => crate::c_interop::bind_procedure(crate::ast::function_with_result(name, params, result, body),binding),
+    KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN <binding:BIND_SPEC> KW_RESULT LPAREN <result:Ident> RPAREN <body:ProcedureBody> <_end:FunctionEnd> => crate::c_interop::bind_procedure(crate::ast::function_with_result(name,params,result,body),Some(binding)),
+    KW_FUNCTION <name: Ident> LPAREN <params: ParamList> RPAREN <binding:BIND_SPEC?> <body:ProcedureBody> <_end: FunctionEnd> => crate::c_interop::bind_procedure(Stmt::Function { name, params, return_type: None, body, pure: false, elemental:false },binding),
 };
 
 SubrDef: Stmt = {
-    <pos:@L> <prefix: FunctionPrefix> KW_SUBROUTINE <name: Ident> LPAREN <params: ParamList> RPAREN <mut body:ProcedureBody> <_end: SubroutineEnd> => {
+    <pos:@L> <prefix: FunctionPrefix> KW_SUBROUTINE <name: Ident> LPAREN <params: ParamList> RPAREN <binding:BIND_SPEC?> <mut body:ProcedureBody> <_end: SubroutineEnd> => {
         if prefix.2 { body.insert(0,crate::simple::marker()); }
         body.insert(0,Stmt::SourceLocation(pos));
-        Stmt::Subroutine { name, params, body, pure: prefix.0, elemental: prefix.1 }
+        crate::c_interop::bind_procedure(Stmt::Subroutine { name, params, body, pure: prefix.0, elemental: prefix.1 },binding)
     },
-    <pos:@L> <prefix: FunctionPrefix> KW_SUBROUTINE <name: Ident> <mut body:ProcedureBody> <_end: SubroutineEnd> => {
+    <pos:@L> <prefix: FunctionPrefix> KW_SUBROUTINE <name: Ident> <binding:BIND_SPEC?> <mut body:ProcedureBody> <_end: SubroutineEnd> => {
         if prefix.2 { body.insert(0,crate::simple::marker()); }
         body.insert(0,Stmt::SourceLocation(pos));
-        Stmt::Subroutine { name, params: vec![], body, pure: prefix.0, elemental: prefix.1 }
+        crate::c_interop::bind_procedure(Stmt::Subroutine { name, params: vec![], body, pure: prefix.0, elemental: prefix.1 },binding)
     },
 };
 
@@ -1109,7 +1111,7 @@ PreFuncDeclData: Vec<Stmt> = {
     // implicit typing; parser::resolve_dimension_statements supplies it.
     KW_DIMENSION DCOLON? <entities:DimensionEntities> => entities.into_iter()
         .map(|(name,dims)| Stmt::ArrayDecl{kind:TypeSpec::IntegerKind("@dimension".into()),name,dims}).collect(),
-    <declaration:PROC_DECL> => crate::ast::procedure_declaration(&declaration),
+    <declaration:PROC_DECL> =>? crate::c_interop::interface_declaration(&declaration).map_err(|error|lalrpop_util::ParseError::User{error}),
     // SAVE alone saves every local variable; data_statements lowers both forms.
     KW_SAVE_ALL => vec![Stmt::DummyIntent { name: crate::data_statements::SAVE_ALL.into(), intent: "save".into() }],
     <attr:ATTR_STMT> DCOLON? <names:IdentList> =>? crate::ast::attribute_statement(&attr, None, names)
@@ -1134,7 +1136,7 @@ PreFuncDeclData: Vec<Stmt> = {
                 if matches!(attr.to_ascii_lowercase().as_str(), "public" | "private") {
                     declarations.push(Stmt::Accessibility {public: attr.eq_ignore_ascii_case("public"), names:vec![name.clone()]});
                 }
-                if attr.to_ascii_lowercase().starts_with("intent(") || matches!(attr.to_ascii_lowercase().as_str(), "optional" | "allocatable" | "parameter" | "pointer" | "target" | "external") {
+                if attr.to_ascii_lowercase().starts_with("intent(") || matches!(attr.to_ascii_lowercase().as_str(), "optional" | "allocatable" | "parameter" | "pointer" | "target" | "external" | "value") {
                     declarations.push(Stmt::DummyIntent { name: name.clone(), intent: attr.to_ascii_lowercase() });
                 }
             }

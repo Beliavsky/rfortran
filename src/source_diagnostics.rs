@@ -210,6 +210,15 @@ fn range(error: &LocatedError, src: &str, tokens: &[Token]) -> Range<usize> {
             return token.span.clone();
         }
     }
+    // A retained interface body can point inside a collapsed declaration token.
+    // Locate its source word rather than jumping to the next outer statement.
+    if tokens.iter().any(|t| t.span.start < start && t.span.contains(&start)
+        && matches!(t.kind, TokenKind::ProcedureDeclaration(_))) {
+        let line_end = src[start..].find('\n').map_or(src.len(), |n| start + n);
+        if let Some(token) = crate::lexer::lex(&src[start..line_end]).first() {
+            return start + token.span.start..start + token.span.end;
+        }
+    }
     tokens
         .iter()
         .find(|t| t.span.start >= start)

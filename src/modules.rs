@@ -470,6 +470,7 @@ fn scope(
                     // declarations, which shadow same-named module entities.
                     let mut result_scope=host.clone();
                     for local in declarations(body) {result_scope.remove(&local);}
+                    result_scope.extend(imports(body, modules)?);
                     kind(ty, &result_scope);
                 }
                 scope(

@@ -208,6 +208,15 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
         let mut after = Vec::new();
         if let Stmt::SourceLocation(offset)=&stmt {location=Some(*offset);}
         (|| -> Result<()> {match &mut stmt {
+            Stmt::CallSub {name,args} if name=="@c_invoke" => {
+                let Expr::Str(encoded)=&args[0] else {bail!("invalid C adapter metadata")};
+                let sig:crate::c_interop::Signature=serde_json::from_str(encoded)?;
+                for (arg,value) in sig.args.iter().zip(&args[1..]) {
+                    if arg.input {read(value,env,&mut before,serial)?;}
+                    if arg.output {if let Expr::Ident(n)=value {write(n,None,env,&mut after,serial);}}
+                }
+                if sig.result.is_some() {if let Some(Expr::Ident(n))=args.last(){write(n,None,env,&mut after,serial);}}
+            }
             Stmt::CallSub {name,args} if name=="@module_bind" => {
                 let [Expr::Ident(local),Expr::Str(key),Expr::Str(initializer)]=args.as_slice() else {unreachable!()};
                 let initial:crate::modules::Storage=serde_json::from_str(initializer)?;

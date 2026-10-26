@@ -6,6 +6,8 @@ mod characters;
 mod module_data;
 #[path = "record_heap.rs"]
 mod record_heap;
+#[path = "c_interop.rs"]
+mod c_interop;
 use anyhow::{bail, Context, Result};
 use cranelift_codegen::{isa, settings};
 use cranelift_object::{ObjectBuilder, ObjectModule};
@@ -2911,6 +2913,11 @@ fn gen_stmts(
                     for (target,value) in args[..2].iter().zip([lower,extent]) {let IExpr::Ident(n)=target else{bail!("allocation bounds require descriptor fields")};let address=storage_addr(b,ptr_ty,ints[n]);b.ins().store(MemFlags::new(),value,address,0);}
                     continue;
                 }
+                if name=="@c_export" {continue;}
+                if name=="@c_invoke" {
+                    c_interop::invoke(module,b,ptr_ty,args,ints,reals,bools)?;
+                    continue;
+                }
                 if name.starts_with("@heap_record_") {
                     let index=if name=="@heap_record_dispose" || name=="@heap_record_pointer" {0}else{1};
                     let value=eval_expr(b,ex,ptr_ty,&args[index],ints,reals,bools,func_meta);let value=to_i64(b,value);
@@ -3869,6 +3876,7 @@ impl CraneliftBackend {
             .map(|f| f.name.clone())
             .unwrap_or_else(|| "main".into());
         let is_real_main = entry_func_name == "main" && !module.funcs.is_empty();
+        let c_symbols=c_interop::symbols(module);
         for (idx, f) in module.funcs.iter().enumerate() {
             if idx == 0 && is_real_main {
                 continue;
@@ -3906,8 +3914,10 @@ impl CraneliftBackend {
             }
             // Module procedures and generated specializations are private to
             // this object; their definitions are carried in the .rmod file.
-            let linkage=if f.name.starts_with('@') || f.name == "__f90c_init" {Linkage::Local} else {Linkage::Export};
-            let fid = obj.declare_function(&f.name, linkage, &ctx.func.signature)?;
+            let linkage=if f.name.starts_with('@') || f.name.starts_with("rfort$@module$") || f.name == "__f90c_init" {Linkage::Local} else {Linkage::Export};
+            let private_c_adapter=c_symbols.contains(&f.name);
+            let symbol=if private_c_adapter {format!(".rfort.c_impl.{}",f.name)}else{f.name.clone()};
+            let fid = obj.declare_function(&symbol, if private_c_adapter{Linkage::Local}else{linkage}, &ctx.func.signature)?;
             obj.clear_context(&mut ctx);
             func_ids.insert(f.name.clone(), fid);
         }
@@ -4280,6 +4290,7 @@ impl CraneliftBackend {
             obj.define_function(main_id, &mut ctx_main)?;
             obj.clear_context(&mut ctx_main);
         }
+        c_interop::exports(&mut obj,module,isa.pointer_type(),&func_ids,self.module_owners.as_ref())?;
         let objf = obj.finish();
         Ok(objf.emit()?)
     }

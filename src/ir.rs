@@ -11,7 +11,7 @@ fn has_pointer_access(body: &[IStmt]) -> bool {
         }
     }
     body.iter().any(|s| match s {
-        IStmt::Call(n,args)=>n=="@saved_bind" || n=="@module_bind" || n.starts_with("@heap_") || n.starts_with("@ptr_") || args.iter().any(access),
+        IStmt::Call(n,args)=>n=="@c_invoke" || n=="@saved_bind" || n=="@module_bind" || n.starts_with("@heap_") || n.starts_with("@ptr_") || args.iter().any(access),
         IStmt::AssignExpr(_,expr)=>access(expr),
         IStmt::Do { body, .. } | IStmt::DoWhile { body, .. } | IStmt::Block { body } => has_pointer_access(body),
         IStmt::If { then_body, else_body, .. } => has_pointer_access(then_body) || else_body.as_ref().is_some_and(|b|has_pointer_access(b)),

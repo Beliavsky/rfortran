@@ -1289,6 +1289,10 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         let extent=i64::try_from((i128::from(upper)-i128::from(lower)+1).max(0)).unwrap_or_else(|_|{eprintln!("Runtime error: allocation extent overflow");std::process::exit(1)});
                         let fr=call_stack.last_mut().unwrap();for (arg,value) in args[..2].iter().zip([lower,extent]){let Expr::Ident(n)=arg else{unreachable!()};fr.env_int.insert(n.clone(),value);}idx+=1;continue;
                     }
+                    if name=="@c_invoke" {
+                        eprintln!("Runtime error: C interoperability requires native compilation; use --run instead of the interpreter");
+                        std::process::exit(1);
+                    }
                     if name.starts_with("@heap_record_") {
                         let frame=call_stack.last().unwrap().clone();
                         let position=if name=="@heap_record_dispose" || name=="@heap_record_pointer" {0}else{1};

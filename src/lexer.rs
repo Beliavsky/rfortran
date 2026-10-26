@@ -278,6 +278,7 @@ pub enum TokenKind {
     // A whole procedure declaration: an unnamed or ABSTRACT interface block,
     // or a PROCEDURE(interface) statement, encoded as `form|entities`.
     ProcedureDeclaration(String),
+    BindSpec(String),
     #[token("%")]
     Percent,
     #[token("=>")]
@@ -641,7 +642,10 @@ fn procedure_declarations(tokens: &mut Vec<Token>, input: &str) {
             if let Some(last) = closed {
                 let form = if abstract_head { "abstract" } else { "interface" };
                 out.push(Token {
-                    kind: TokenKind::ProcedureDeclaration(format!("{form}|{}", entities.join(","))),
+                    kind: TokenKind::ProcedureDeclaration(if tokens[index..=last].iter().any(|t|matches!(t.kind,TokenKind::BindSpec(_))) {
+                        let begin=index+usize::from(abstract_head)+1;
+                        format!("c_interface|{}|{}", tokens[begin].span.start, &input[tokens[begin].span.start..tokens[cursor].span.start])
+                    } else {format!("{form}|{}", entities.join(","))}),
                     span: tokens[index].span.start..tokens[last].span.end,
                 });
                 index = last + 1;
@@ -1375,7 +1379,7 @@ pub fn lex(input: &str) -> Vec<Token> {
     for index in 0..tokens.len() {
         let TokenKind::Ident(word) = &tokens[index].kind else { continue };
         let word = word.to_ascii_lowercase();
-        if !matches!(word.as_str(), "intent" | "optional" | "pointer" | "target" | "allocatable" | "external" | "intrinsic" | "save")
+        if !matches!(word.as_str(), "intent" | "optional" | "pointer" | "target" | "allocatable" | "external" | "intrinsic" | "save" | "value")
             || !statement_head(&tokens, input, index) {
             continue;
         }
@@ -1411,6 +1415,7 @@ pub fn lex(input: &str) -> Vec<Token> {
             tokens[index].kind = TokenKind::AttrStatement(word);
         }
     }
+    crate::c_interop::binding_tokens(&mut tokens, input);
     procedure_declarations(&mut tokens, input);
     // Distinct name tokens keep optional END DO names and named transfers from
     // consuming an identifier on the following logical statement.

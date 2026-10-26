@@ -108,7 +108,7 @@ pub(crate) fn visit_expr(e: &mut Expr, f: &mut dyn FnMut(&mut Expr)) {
 
 /// Rename every use of `from` (as a procedure, variable or declared entity)
 /// to `to`, including inside nested bodies.
-fn rename(body: &mut [Stmt], from: &str, to: &str) {
+pub(crate) fn rename(body: &mut [Stmt], from: &str, to: &str) {
     for s in body.iter_mut() {
         match s {
             Stmt::Assign { name, .. } | Stmt::AssignIndex { name, .. } | Stmt::CallSub { name, .. }

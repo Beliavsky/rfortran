@@ -82,6 +82,9 @@ fn twin(name: &str, params: &[String], body: &[Stmt], kind: &TypeSpec) -> Option
         }
     }
     let mut body = body.to_vec();
+    // The generated Fortran calling adapter is not a second C definition.
+    body.retain(|s| !matches!(s, Stmt::DummyIntent { name, .. }
+        if name == crate::c_interop::BIND || name == "@c_definition"));
     result(&mut body, name);
     if !body.iter().any(|s| matches!(s, Stmt::VarDecl { names, .. } if names.iter().any(|n| n == RESULT))) {
         body.insert(0, Stmt::VarDecl { kind: kind.clone(), names: vec![RESULT.into()] });

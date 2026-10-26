@@ -462,7 +462,7 @@ pub fn attribute_statement(attr: &str, argument: Option<String>, names: Vec<Stri
         ("external", None) => "external".to_string(),
         ("intrinsic", None) => return Ok(vec![]),
         ("save", None) => "save".to_string(),
-        (attr @ ("optional" | "pointer" | "target" | "allocatable"), None) => attr.to_string(),
+        (attr @ ("optional" | "pointer" | "target" | "allocatable" | "value"), None) => attr.to_string(),
         _ => return Err("invalid attribute specification statement"),
     };
     Ok(names.into_iter().map(|name| Stmt::DummyIntent { name, intent: attribute.clone() }).collect())

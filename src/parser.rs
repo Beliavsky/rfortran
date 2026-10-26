@@ -293,6 +293,7 @@ fn human_token(tok: &TokenKind) -> String {
         TokenKind::KwTypeof => "keyword typeof".into(),
         TokenKind::KwClassof => "keyword classof".into(),
         TokenKind::KwProcedure => "keyword procedure".into(),
+        TokenKind::BindSpec(_) => "BIND(C) specification".into(),
         TokenKind::KwInterface => "keyword interface".into(),
         TokenKind::KwOperator => "keyword operator".into(),
         TokenKind::KwKind => "keyword kind".into(),

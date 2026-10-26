@@ -185,7 +185,7 @@ impl Loader {
                 .find(|p| p.is_file());
             let Some(path) = path else {
                 self.visiting.remove(name);
-                if matches!(name, "iso_fortran_env" | "ieee_arithmetic") && !required {
+                if matches!(name, "iso_fortran_env" | "ieee_arithmetic" | "iso_c_binding") && !required {
                     return Ok(None);
                 }
                 if !required && matches!(name, "iso_c_binding" | "ieee_arithmetic" | "ieee_exceptions" | "ieee_features") {

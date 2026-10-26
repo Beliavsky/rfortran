@@ -1435,7 +1435,7 @@ fn run(mut p: Program, complex_phase: bool) -> Result<Program> {
         for s in body {
             match s {
                 Stmt::Subroutine { name, body, .. } | Stmt::Function { name, body, .. } => {
-                    if !top || contains.contains(name) {
+                    if !top || contains.contains(name) || body.iter().any(|s| matches!(s,Stmt::DummyIntent{name,..} if name==crate::c_interop::BIND)) {
                         out.insert(name.clone());
                     }
                     others(body, false, contains, out);
@@ -1465,7 +1465,7 @@ fn run(mut p: Program, complex_phase: bool) -> Result<Program> {
             Stmt::Function { name, params, body, elemental, pure, return_type } => (name, params, body, *elemental || *pure, Some(return_type)),
             _ => continue,
         };
-        if p.contains.contains(name) || name.starts_with(PREFIX) {
+        if p.contains.contains(name) || name.starts_with(PREFIX) || body.iter().any(|s| matches!(s,Stmt::DummyIntent{name,..} if name==crate::c_interop::BIND)) {
             continue;
         }
         let base = name.strip_prefix(DERIVED_RESULT).unwrap_or(name);
@@ -1626,4 +1626,13 @@ fn run(mut p: Program, complex_phase: bool) -> Result<Program> {
         p.body.retain(|s| !matches!(s, Stmt::Subroutine { name, .. } if name.starts_with(PREFIX) && !used.contains(name)));
     }
     Ok(p)
+}
+
+/// An adapter for a resolved scalar BIND(C) definition.
+pub(crate) fn c_entry(name:&str, params:&[String], body:&[Stmt], result:Option<&TypeSpec>) -> Result<Stmt> {
+    let clean=body.iter().filter(|s|!matches!(s,Stmt::DummyIntent{intent,..} if intent=="value")).cloned().collect::<Vec<_>>();
+    let body=clean.as_slice();
+    let mut scope=Scope::new(None);scope.declare(body,params);
+    let args=dummies(params,body,&scope).context("BIND(C) requires supported scalar numeric declarations")?;
+    Ok(entry_point(name,params,body,&args,&scope,result).0)
 }

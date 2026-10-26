@@ -61,6 +61,7 @@ mod allocation_bounds;
 mod optional;
 mod recursive_arrays;
 mod external_calls;
+mod c_interop;
 mod equivalence;
 mod statement_functions;
 mod defining_functions;
@@ -389,7 +390,7 @@ fn lower_program_body(
     origins: Option<&[source_diagnostics::SourceOrigin]>,
 ) -> Result<ast::Program> {
     (|| {
-        let program = program;
+        let program = c_interop::prepare(program)?;
         let program = compile_profile::run("storage_size::resolve", || storage_size::resolve(program))?;
         let program = compile_profile::run("statement_functions::resolve", || statement_functions::resolve(program))?;
         let program = compile_profile::run("transfer::resolve", || transfer::resolve(program))?;
@@ -400,6 +401,7 @@ fn lower_program_body(
         let program = compile_profile::run("external_calls::resolve_complex", || external_calls::resolve_complex(program))?;
         let program = compile_profile::run("random_seed::resolve", || random_seed::resolve(program))?;
         let program = compile_profile::run("parameters::resolve", || parameters::resolve(program))?;
+        let program = c_interop::resolve(program)?;
         let program = compile_profile::run("timing_intrinsics::resolve", || timing_intrinsics::resolve(program))?;
         let program = compile_profile::run("tokenize::resolve", || tokenize::resolve(program))?;
         let program = compile_profile::run("array_calls::resolve", || array_calls::resolve(program))?;

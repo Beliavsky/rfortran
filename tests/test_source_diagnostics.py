@@ -127,7 +127,7 @@ end function good
         """Errors found while loading modules, after parsing and while lowering
         name the statement that caused them."""
         cases=[
-            ('program main\nuse iso_c_binding\nend program\n',2,'intrinsic module `iso_c_binding`'),
+            ('program main\nuse ieee_features\nend program\n',2,'intrinsic module `ieee_features`'),
             ('module m\nuse ieee_exceptions\nend module m\nprogram main\nuse m\nend program\n',2,'intrinsic module `ieee_exceptions`'),
             ('program main\ninteger,allocatable::a(:)\na=[3,1,2]\nprint *,maxloc(a,dim=2)\nend program\n',4,'DIM must be between 1 and 1'),
             ("module m\ncharacter(len=:),allocatable::names(:)\nend module m\nprogram main\nuse m\nallocate(character(len=3)::names(2))\nend program\n",6,'requires deferred-length CHARACTER scalars'),

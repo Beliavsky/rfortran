@@ -32,10 +32,10 @@ pub(crate) fn resolve_intrinsic_modules(program: &mut Program) -> Result<()> {
                             false
                         }
                         Some(other) => bail!("unknown USE module nature `{other}`; expected INTRINSIC or NON_INTRINSIC"),
-                        None => matches!(module.as_str(), "iso_fortran_env" | "ieee_arithmetic") && !modules.contains(module),
+                        None => matches!(module.as_str(), "iso_fortran_env" | "ieee_arithmetic" | "iso_c_binding") && !modules.contains(module),
                     };
                     if intrinsic {
-                        if !matches!(module.as_str(), "iso_fortran_env" | "ieee_arithmetic") { bail!("intrinsic module `{module}` is not yet supported"); }
+                        if !matches!(module.as_str(), "iso_fortran_env" | "ieee_arithmetic" | "iso_c_binding") { bail!("intrinsic module `{module}` is not yet supported"); }
                         needed.insert(module.clone());
                         *module = format!("@intrinsic_{module}");
                         if let Some(names) = only { for name in names { name.make_ascii_lowercase(); } }
@@ -75,6 +75,9 @@ pub(crate) fn resolve_intrinsic_modules(program: &mut Program) -> Result<()> {
             }).collect();
         body.extend(intrinsic_module_source()?);
         program.body.insert(0, Stmt::Module { name: INTERNAL.into(), body });
+    }
+    if needed.contains("iso_c_binding") {
+        program.body.insert(0,Stmt::Module{name:"@intrinsic_iso_c_binding".into(),body:crate::c_interop::module_body()});
     }
     if needed.contains("ieee_arithmetic") {
         let body = ieee_module_body()?;
