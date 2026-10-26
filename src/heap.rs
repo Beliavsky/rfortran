@@ -311,7 +311,7 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
                   // storage when ALLOCATEd; one allocated only by assignment needs
                   // runtime storage for its value's extent.
                   || (array_dummies && allocation(body,name,&declared,&functions) && !allocate_statement(body,name)) || dims.len()>1 && body.iter().any(|s|matches!(s,Stmt::CallSub{name:call,args} if call=="@deallocate"&&args.iter().any(|e|matches!(e,Expr::Ident(n) if n==name)))))
-              && numeric(kind) && (!matches!(kind,TypeSpec::Character(_)) || passed.contains(name) || dims.len()>1 || runtime_allocate(body,name) || body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name && intent=="@deferred_character_array"))
+              && numeric(kind) && (!matches!(kind,TypeSpec::Character(_)) || body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name && intent=="@record_heap_local")) || passed.contains(name) || dims.len()>1 || runtime_allocate(body,name) || body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name && intent=="@deferred_character_array"))
                   || array_assignment(body,name,&declared,&functions)
                   || body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name&&intent=="@automatic")))
               && body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name&&intent=="allocatable")))

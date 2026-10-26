@@ -1727,21 +1727,26 @@ an explicit keyword argument. See
 Derived-array operations are lowered in SELECT CASE selectors, case bodies and
 CASE DEFAULT, including nested selections and early returns from array-valued
 functions. See `tests/programs/xderived_array_select_case.f90`.
-Numeric and LOGICAL ALLOCATABLE array components also work. Each record element
-owns a separate descriptor holding allocation status, extents, lower bounds,
+Numeric, LOGICAL and fixed-length CHARACTER ALLOCATABLE array components also
+work. Each record element owns a separate descriptor holding allocation status, extents, lower bounds,
 data and initialization flags. Fixed and runtime-sized parent arrays, component
 ranks through 15, direct component reads/writes, ALLOCATE/DEALLOCATE, scalar
 procedure calls, READ, RANDOM_NUMBER and MOVE_ALLOC are covered. Scalar-element
 intrinsic assignment deep-copies the components; changing or deallocating the
 copy does not affect the source. Component allocations are released when their
 owning outer array is deallocated or leaves scope. Passing array dummies does
-not transfer ownership away from the caller.
+not transfer ownership away from the caller. Character components retain their
+Fortran element extents while owned buffers count character codes; copying and
+deallocation preserve independent storage. See
+`tests/test_character_record_allocations.py`. Operations on individual components
+copy back only that component, so allocating or deallocating multiple components
+of one parent in a statement does not overwrite sibling allocations.
 
 The representation currently copies owned component storage when materializing
 a scalar element. Whole-array assignment and array constructors of records with
 ALLOCATABLE components, INTENT(OUT) array dummies of these types, array-valued
-function results of these types, CHARACTER allocatable components, POINTER
-components, intrinsic copies of containers whose array elements own allocations,
+function results of these types, deferred-length CHARACTER allocatable
+components, POINTER components, intrinsic copies of containers whose array elements own allocations,
 and further arrays of descriptor-owning containers remain unsupported.
 Scalar calls to ELEMENTAL procedures support derived actuals with numeric or
 LOGICAL ALLOCATABLE components and fixed array components, including scalar

@@ -29,7 +29,7 @@ struct Field {
     /// Constant extents of an array component; empty for a scalar. Its
     /// storage puts these axes ahead of the axes of the array of records.
     dims: Vec<Expr>,
-    /// A per-element owned numeric allocation, stored as a descriptor handle.
+    /// A per-element owned intrinsic allocation, stored as a descriptor handle.
     heap: Option<(TypeSpec, Vec<Expr>)>,
 }
 fn whole_axes(f: &Field) -> Vec<Expr> {
@@ -335,10 +335,10 @@ impl Lower {
     /// when `copy_back` is given, copy the object back after the statement.
     fn element_temp(&mut self, e: &Expr, objects: &mut Objects, prefix: &mut Vec<Stmt>,
         copy_back: Option<&mut Vec<Stmt>>) -> Result<String> {
-        self.element_storage(e,objects,prefix,copy_back,true)
+        self.element_storage(e,objects,prefix,copy_back,true,None)
     }
     fn element_storage(&mut self, e: &Expr, objects: &mut Objects, prefix: &mut Vec<Stmt>,
-        copy_back: Option<&mut Vec<Stmt>>, copy_in:bool) -> Result<String> {
+        copy_back: Option<&mut Vec<Stmt>>, copy_in:bool, component: Option<&str>) -> Result<String> {
         let (object, idx) = self.element(e, objects).context("a type-bound call requires a scalar object or an array element")?;
         let (object, mut idx) = (object.to_owned(), idx.to_vec());
         self.capture_indices(&mut idx, prefix);
@@ -348,7 +348,7 @@ impl Lower {
         prefix.push(Stmt::DerivedDecl { type_name: ty.clone(), names: vec![temp.clone()], attributes: vec![], polymorphic: false, dims: vec![] });
         objects.insert(temp.clone(), Object { ty: ty.clone(), dims: vec![] });
         self.register_components(&temp, &ty, objects);
-        for f in self.fields(&ty)? {
+        for f in self.fields(&ty)?.into_iter().filter(|f| component.is_none_or(|c| f.name == c || f.name.starts_with(&format!("{c}%")))) {
             let local = format!("{temp}%{}", f.name);
             if f.heap.is_some() {
                 prefix.push(Stmt::DummyIntent {name:local.clone(),intent:"@record_heap_local".into()});
@@ -358,7 +358,7 @@ impl Lower {
             }
         }
         if let Some(back) = copy_back {
-            for f in self.fields(&ty)? {
+            for f in self.fields(&ty)?.into_iter().filter(|f| component.is_none_or(|c| f.name == c || f.name.starts_with(&format!("{c}%")))) {
                 if f.heap.is_some() {
                     self.serial+=1;let handle=format!("@record_slot_{}",self.serial);
                     back.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![handle.clone()]});
@@ -420,12 +420,12 @@ impl Lower {
                             }
                             Stmt::ArrayDecl { kind, name, dims }
                                 if components.iter().any(|c| matches!(c, Stmt::DummyIntent {name:n,intent} if n==name && intent=="allocatable"))
-                                    && matches!(kind,TypeSpec::Integer(_) | TypeSpec::IntegerKind(_) | TypeSpec::Real | TypeSpec::RealKind(_) | TypeSpec::DoublePrecision | TypeSpec::Logical) =>
+                                    && matches!(kind,TypeSpec::Integer(_) | TypeSpec::IntegerKind(_) | TypeSpec::Real | TypeSpec::RealKind(_) | TypeSpec::DoublePrecision | TypeSpec::Logical | TypeSpec::Character(_) | TypeSpec::CharacterLength(_)) =>
                             {
                                 fields.push(Field {name:name.clone(),kind:TypeSpec::Integer(Some(8)),default:Some(Expr::IntLit("0".into())),dims:vec![],heap:Some((kind.clone(),dims.clone()))});
                                 layout.push((name.clone(),None));
                             }
-                            Stmt::DummyIntent {name,intent} if intent=="allocatable" && components.iter().any(|c|matches!(c,Stmt::ArrayDecl {name:n,kind,..} if n==name && matches!(kind,TypeSpec::Integer(_) | TypeSpec::IntegerKind(_) | TypeSpec::Real | TypeSpec::RealKind(_) | TypeSpec::DoublePrecision | TypeSpec::Logical))) => {}
+                            Stmt::DummyIntent {name,intent} if intent=="allocatable" && components.iter().any(|c|matches!(c,Stmt::ArrayDecl {name:n,kind,..} if n==name && matches!(kind,TypeSpec::Integer(_) | TypeSpec::IntegerKind(_) | TypeSpec::Real | TypeSpec::RealKind(_) | TypeSpec::DoublePrecision | TypeSpec::Logical | TypeSpec::Character(_) | TypeSpec::CharacterLength(_)))) => {}
                             Stmt::DummyIntent {intent,..} if intent=="@record_slots" => { fields.clear(); break; }
                             // A fixed-size array component; an initialized one
                             // follows its InitializedDecl.

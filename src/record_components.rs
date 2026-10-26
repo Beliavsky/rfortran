@@ -44,7 +44,7 @@ impl Lower {
         }
         let element = element.clone();
         let indices = component_subscripts(args);
-        let temp = self.element_temp(&element, objects, prefix, suffix)?;
+        let temp = self.element_storage(&element, objects, prefix, suffix, true, Some(&field))?;
         *e = if indices.is_empty() {
             Expr::Ident(format!("{temp}%{field}"))
         } else {
@@ -81,7 +81,7 @@ impl Lower {
                     source = Expr::Ident(self.element_temp(&source, objects, prefix, None)?);
                 }
                 let target =
-                    self.element_storage(&element, objects, prefix, Some(suffix), false)?;
+                    self.element_storage(&element, objects, prefix, Some(suffix), false, None)?;
                 *s = Stmt::Assign {
                     name: target,
                     value: source,
@@ -102,7 +102,7 @@ impl Lower {
         if self.element(&element, objects).is_none() {
             bail!("allocatable record components require scalar parent subscripts");
         }
-        let temp = self.element_temp(&element, objects, prefix, Some(suffix))?;
+        let temp = self.element_storage(&element, objects, prefix, Some(suffix), true, Some(&field))?;
         *s = if component.is_empty() {
             Stmt::Assign {
                 name: format!("{temp}%{field}"),

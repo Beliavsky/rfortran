@@ -259,6 +259,35 @@ impl Lower {
                         .context("invalid CHARACTER descriptor")?;
                     *intent = format!("@bounded:@character_heap_bytes${name}:{flag}");
                 }
+                // Record descriptors own the underlying character-code buffers.
+                // Their length counts codes, while public shape metadata still
+                // counts Fortran character elements.
+                Stmt::CallSub { name, args }
+                    if matches!(name.as_str(), "@heap_record_load" | "@heap_record_store")
+                        && matches!(args.first(),Some(Expr::Ident(n)) if arrays.contains_key(n)) =>
+                {
+                    let Expr::Ident(n) = &args[0] else { unreachable!() };
+                    let bytes = id(&format!("@character_heap_bytes${n}"));
+                    let width = self.stride(n, arrays[n]);
+                    let length = std::mem::replace(&mut args[2], bytes.clone());
+                    let load = name == "@heap_record_load";
+                    if !load {
+                        let Expr::Ident(bytes_name) = &bytes else { unreachable!() };
+                        prefix.push(Stmt::Assign {
+                            name: bytes_name.clone(),
+                            value: bin(BinOp::Mul, length.clone(), width.clone()),
+                        });
+                    }
+                    result.extend(prefix);
+                    result.push(stmt);
+                    if load {
+                        let Expr::Ident(length) = length else {
+                            anyhow::bail!("CHARACTER record allocation requires a length field");
+                        };
+                        result.push(Stmt::Assign { name: length, value: bin(BinOp::Div, bytes, width) });
+                    }
+                    continue;
+                }
                 Stmt::CallSub { name, args }
                     if matches!(name.as_str(), "@heap_allocate" | "@heap_resize")
                         && matches!(args.first(),Some(Expr::Ident(n)) if arrays.contains_key(n)) =>
