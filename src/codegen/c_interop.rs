@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Beliavsky
-//! Convert scalar C storage to/from the private 64-bit rfort ABI.
+//! Convert numeric C storage to/from the private 64-bit rfort ABI.
 use super::*;
 use crate::c_interop::Signature;
 use cranelift_codegen::ir::types;
@@ -73,6 +73,140 @@ fn as_word(b: &mut FunctionBuilder, v: ir::Value) -> ir::Value {
         b.ins().uextend(types::I64, v)
     }
 }
+fn allocate(
+    m: &mut ObjectModule,
+    b: &mut FunctionBuilder,
+    ptr: ir::Type,
+    dc: &mut u32,
+    count: ir::Value,
+    width: i64,
+) -> Result<ir::Value> {
+    let safe = b.ins().icmp_imm(
+        ir::condcodes::IntCC::UnsignedLessThanOrEqual,
+        count,
+        i64::MAX / width,
+    );
+    file_io::require(m, b, ptr, dc, safe, "C array size overflow")?;
+    let bytes = b.ins().imul_imm(count, width);
+    let empty = b.ins().icmp_imm(ir::condcodes::IntCC::Equal, bytes, 0);
+    let one = b.ins().iconst(ptr, 1);
+    let bytes = b.ins().select(empty, one, bytes);
+    let data = file_io::call(m, b, "malloc", &[bytes], ptr)?;
+    let okay = b.ins().icmp_imm(ir::condcodes::IntCC::NotEqual, data, 0);
+    file_io::require(m, b, ptr, dc, okay, "C array allocation failed")?;
+    Ok(data)
+}
+fn dispose(
+    m: &mut ObjectModule,
+    b: &mut FunctionBuilder,
+    ptr: ir::Type,
+    data: ir::Value,
+) -> Result<()> {
+    let mut sig = m.make_signature();
+    sig.params.push(ir::AbiParam::new(ptr));
+    let id = m.declare_function("free", Linkage::Import, &sig)?;
+    let f = m.declare_func_in_func(id, b.func);
+    b.ins().call(f, &[data]);
+    Ok(())
+}
+fn elements(
+    b: &mut FunctionBuilder,
+    count: ir::Value,
+    mut action: impl FnMut(&mut FunctionBuilder, ir::Value) -> Result<()>,
+) -> Result<()> {
+    let head = b.create_block();
+    let body = b.create_block();
+    let done = b.create_block();
+    b.append_block_param(head, types::I64);
+    let zero = b.ins().iconst(types::I64, 0);
+    b.ins().jump(head, &[zero.into()]);
+    b.switch_to_block(head);
+    let i = b.block_params(head)[0];
+    let more = b.ins().icmp(ir::condcodes::IntCC::SignedLessThan, i, count);
+    b.ins().brif(more, body, &[], done, &[]);
+    b.switch_to_block(body);
+    b.seal_block(body);
+    action(b, i)?;
+    let next = b.ins().iadd_imm(i, 1);
+    b.ins().jump(head, &[next.into()]);
+    b.seal_block(head);
+    b.switch_to_block(done);
+    b.seal_block(done);
+    Ok(())
+}
+fn element(b: &mut FunctionBuilder, base: ir::Value, i: ir::Value, width: i64) -> ir::Value {
+    let offset = b.ins().imul_imm(i, width);
+    b.ins().iadd(base, offset)
+}
+fn copy_array(
+    m: &mut ObjectModule,
+    b: &mut FunctionBuilder,
+    ptr: ir::Type,
+    dc: &mut u32,
+    count: ir::Value,
+    c: ir::Value,
+    local: ir::Value,
+    flags: Option<ir::Value>,
+    kind: &TypeSpec,
+    to_c: bool,
+) -> Result<()> {
+    let width = i64::from(c_type(kind)?.bytes());
+    elements(b, count, |b, i| {
+        let c = element(b, c, i, width);
+        let local = element(b, local, i, 8);
+        let flag = flags.map(|f| element(b, f, i, 8));
+        if to_c {
+            if let Some(f) = flag {
+                let ready = b.ins().load(types::I64, ir::MemFlags::new(), f, 0);
+                let ready = b.ins().icmp_imm(ir::condcodes::IntCC::NotEqual, ready, 0);
+                file_io::require(
+                    m,
+                    b,
+                    ptr,
+                    dc,
+                    ready,
+                    "read of uninitialized C array argument element",
+                )?;
+            }
+            let v = b.ins().load(wide(kind), ir::MemFlags::new(), local, 0);
+            let v = narrow(b, v, kind)?;
+            b.ins().store(ir::MemFlags::new(), v, c, 0);
+        } else {
+            let v = b.ins().load(c_type(kind)?, ir::MemFlags::new(), c, 0);
+            let v = widen(b, v, kind);
+            b.ins().store(ir::MemFlags::new(), v, local, 0);
+            if let Some(f) = flag {
+                let one = b.ins().iconst(types::I64, 1);
+                b.ins().store(ir::MemFlags::new(), one, f, 0);
+            }
+        }
+        Ok(())
+    })
+}
+
+fn bound(b: &mut FunctionBuilder, e: &crate::ast::Expr, values: &[ir::Value]) -> Result<ir::Value> {
+    use crate::ast::{BinOp, Expr, UnOp};
+    Ok(match e {
+        Expr::IntLit(n) => b.ins().iconst(types::I64, n.parse::<i64>()?),
+        Expr::Ident(n) => values[n.parse::<usize>()?],
+        Expr::Un(UnOp::Neg, a) => {
+            let a = bound(b, a, values)?;
+            b.ins().ineg(a)
+        }
+        Expr::Bin(op, a, c) => {
+            let a = bound(b, a, values)?;
+            let c = bound(b, c, values)?;
+            match op {
+                BinOp::Add => b.ins().iadd(a, c),
+                BinOp::Sub => b.ins().isub(a, c),
+                BinOp::Mul => b.ins().imul(a, c),
+                BinOp::Div => b.ins().sdiv(a, c),
+                _ => bail!("unsupported C array bound operator"),
+            }
+        }
+        _ => bail!("unsupported C array bound"),
+    })
+}
 pub(super) fn invoke(
     m: &mut ObjectModule,
     b: &mut FunctionBuilder,
@@ -81,6 +215,7 @@ pub(super) fn invoke(
     ints: &HashMap<String, Storage>,
     reals: &HashMap<String, Storage>,
     bools: &HashMap<String, Storage>,
+    dc: &mut u32,
 ) -> Result<()> {
     let IExpr::Str(encoded) = &args[0] else {
         bail!("missing C invocation metadata")
@@ -98,7 +233,27 @@ pub(super) fn invoke(
     };
     let mut values = vec![];
     let mut outputs = vec![];
-    for (arg, actual) in s.args.iter().zip(&args[1..]) {
+    let mut arrays = vec![];
+    let mut actuals = args[1..].iter();
+    for arg in &s.args {
+        let actual = actuals.next().context("missing C argument")?;
+        if !arg.dims.is_empty() {
+            let mut fields = vec![];
+            for e in std::iter::once(actual).chain(actuals.by_ref().take(3)) {
+                let address = storage_addr(b, ptr, storage(e)?);
+                fields.push(b.ins().load(types::I64, ir::MemFlags::new(), address, 0));
+            }
+            let [data, flags, _label, count] = fields[..] else {
+                bail!("invalid C array descriptor")
+            };
+            let c = allocate(m, b, ptr, dc, count, i64::from(c_type(&arg.kind)?.bytes()))?;
+            if arg.input {
+                copy_array(m, b, ptr, dc, count, c, data, Some(flags), &arg.kind, true)?;
+            }
+            values.push(c);
+            arrays.push((c, data, flags, count, arg));
+            continue;
+        }
         let local = storage_addr(b, ptr, storage(actual)?);
         if arg.value {
             let value = b.ins().load(wide(&arg.kind), ir::MemFlags::new(), local, 0);
@@ -125,6 +280,12 @@ pub(super) fn invoke(
         let value = widen(b, value, k);
         let local = storage_addr(b, ptr, storage(args.last().unwrap())?);
         b.ins().store(ir::MemFlags::new(), value, local, 0);
+    }
+    for (c, data, flags, count, arg) in arrays {
+        if arg.output {
+            copy_array(m, b, ptr, dc, count, c, data, Some(flags), &arg.kind, false)?;
+        }
+        dispose(m, b, ptr, c)?;
     }
     for (cell, local, k) in outputs {
         let value = b.ins().load(c_type(&k)?, ir::MemFlags::new(), cell, 0);
@@ -178,7 +339,66 @@ pub(super) fn exports(
             let label = make_data(m, &mut b, ptr, &mut dc, b"C argument\0")?;
             let label = as_word(&mut b, label);
             let one = b.ins().iconst(types::I64, 1);
+            let mut bounds = vec![];
+            for (arg, value) in s.args.iter().zip(&passed) {
+                let v =
+                    if matches!(arg.kind, TypeSpec::Integer(_)) && arg.dims.is_empty() && arg.input
+                    {
+                        let v = if arg.value {
+                            *value
+                        } else {
+                            b.ins()
+                                .load(c_type(&arg.kind)?, ir::MemFlags::new(), *value, 0)
+                        };
+                        widen(&mut b, v, &arg.kind)
+                    } else {
+                        b.ins().iconst(types::I64, 0)
+                    };
+                bounds.push(v);
+            }
+            let mut arrays = vec![];
             for (arg, value) in s.args.iter().zip(passed) {
+                if !arg.dims.is_empty() {
+                    let mut count = one;
+                    for d in &arg.dims {
+                        let (lo, hi) = match d {
+                            crate::ast::Expr::Call(n, a) if n == "@declared_bounds" => (
+                                bound(&mut b, &a[0], &bounds)?,
+                                bound(&mut b, &a[1], &bounds)?,
+                            ),
+                            _ => (one, bound(&mut b, d, &bounds)?),
+                        };
+                        let empty = b.ins().icmp(ir::condcodes::IntCC::SignedLessThan, hi, lo);
+                        let (extent, overflow) = b.ins().ssub_overflow(hi, lo);
+                        let (extent, more_overflow) = b.ins().sadd_overflow(extent, one);
+                        let overflow = b.ins().bor(overflow, more_overflow);
+                        let okay = b.ins().bnot(overflow);
+                        let okay = b.ins().bor(empty, okay);
+                        file_io::require(m, &mut b, ptr, &mut dc, okay, "C array extent overflow")?;
+                        let zero = b.ins().iconst(types::I64, 0);
+                        let extent = b.ins().select(empty, zero, extent);
+                        let (total, overflow) = b.ins().smul_overflow(count, extent);
+                        let okay = b.ins().bnot(overflow);
+                        file_io::require(m, &mut b, ptr, &mut dc, okay, "C array size overflow")?;
+                        count = total;
+                    }
+                    let data = allocate(m, &mut b, ptr, &mut dc, count, 8)?;
+                    let flags = allocate(m, &mut b, ptr, &mut dc, count, 8)?;
+                    let ready = b.ins().iconst(types::I64, i64::from(arg.input));
+                    elements(&mut b, count, |b, i| {
+                        let f = element(b, flags, i, 8);
+                        b.ins().store(ir::MemFlags::new(), ready, f, 0);
+                        Ok(())
+                    })?;
+                    if arg.input {
+                        copy_array(
+                            m, &mut b, ptr, &mut dc, count, value, data, None, &arg.kind, false,
+                        )?;
+                    }
+                    actuals.extend([data, flags, label, count]);
+                    arrays.push((data, flags, value, count, arg));
+                    continue;
+                }
                 let cell = address(&mut b, ptr);
                 let flag = address(&mut b, ptr);
                 let input = if arg.value {
@@ -219,6 +439,24 @@ pub(super) fn exports(
             };
             let target = m.declare_func_in_func(ids[&f.name], b.func);
             b.ins().call(target, &actuals);
+            for (data, flags, target, count, arg) in arrays {
+                if arg.output {
+                    copy_array(
+                        m,
+                        &mut b,
+                        ptr,
+                        &mut dc,
+                        count,
+                        target,
+                        data,
+                        Some(flags),
+                        &arg.kind,
+                        true,
+                    )?;
+                }
+                dispose(m, &mut b, ptr, data)?;
+                dispose(m, &mut b, ptr, flags)?;
+            }
             for (cell, target, k) in outputs {
                 let v = b.ins().load(wide(&k), ir::MemFlags::new(), cell, 0);
                 let v = narrow(&mut b, v, &k)?;

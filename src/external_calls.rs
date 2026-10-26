@@ -1628,11 +1628,11 @@ fn run(mut p: Program, complex_phase: bool) -> Result<Program> {
     Ok(p)
 }
 
-/// An adapter for a resolved scalar BIND(C) definition.
+/// An adapter for a resolved numeric BIND(C) definition.
 pub(crate) fn c_entry(name:&str, params:&[String], body:&[Stmt], result:Option<&TypeSpec>) -> Result<Stmt> {
     let clean=body.iter().filter(|s|!matches!(s,Stmt::DummyIntent{intent,..} if intent=="value")).cloned().collect::<Vec<_>>();
     let body=clean.as_slice();
     let mut scope=Scope::new(None);scope.declare(body,params);
-    let args=dummies(params,body,&scope).context("BIND(C) requires supported scalar numeric declarations")?;
+    let args=dummies(params,body,&scope).context("BIND(C) requires supported numeric declarations")?;
     Ok(entry_point(name,params,body,&args,&scope,result).0)
 }

@@ -1631,6 +1631,29 @@ impl Lower {
                     if !self.pointers[name].borrowed {self.initialize(&self.pointers[name].desc, &mut out);}
                     continue;
                 }
+                Stmt::CallSub { name, args } if name == "@c_array_bind" => {
+                    let v=self.view(&args[4],false,&mut out)?.context("C array argument requires numeric storage")?;
+                    let count=v.count();
+                    let mut stride=int(1);
+                    for axis in &v.axes {
+                        let trivial=bin(BinOp::Le,axis.extent.clone(),int(1));
+                        let contiguous=bin(BinOp::Eq,axis.stride.clone(),stride.clone());
+                        let empty=bin(BinOp::Eq,count.clone(),int(0));
+                        out.push(require(bin(BinOp::Or,empty,bin(BinOp::Or,trivial,contiguous)),
+                            "C array argument must be contiguous".into()));
+                        stride=mul(stride,axis.extent.clone());
+                    }
+                    // The view may be a packed section supplied by ordinary
+                    // procedure argument lowering. Its origin is in elements.
+                    let offset=mul(v.origin.clone(),int(8));
+                    let data=bin(BinOp::Add,v.data.clone(),offset.clone());
+                    let flags=bin(BinOp::Add,v.flags.clone(),offset);
+                    for (target,value) in args[..4].iter().zip([data,flags,v.name.clone(),count]) {
+                        let Expr::Ident(n)=target else {bail!("invalid C array descriptor")};
+                        out.push(Stmt::Assign{name:n.clone(),value});
+                    }
+                    continue;
+                }
                 Stmt::CallSub { name, args } if name == "@borrowed_out" => {
                     let v=self.view(&args[0],false,&mut out)?.context("missing borrowed output descriptor")?;
                     let index=self.fresh();
@@ -1866,7 +1889,14 @@ pub fn resolve(mut p: Program) -> Result<Program> {
             temporaries: vec![],
         };
         lower.declarations(body, 0)?;
-        if !lower.pointers.is_empty() {
+        fn c_arrays(body: &mut Vec<Stmt>) -> bool {
+            body.iter_mut().any(|s| {
+                matches!(s,Stmt::CallSub{name,..} if name=="@c_array_bind")
+                    || (!matches!(s,Stmt::Function{..}|Stmt::Subroutine{..})
+                        && children(s).into_iter().any(c_arrays))
+            })
+        }
+        if !lower.pointers.is_empty() || c_arrays(body) {
             lower.targets(body)?;
             lower.body(body, &HashSet::new())?;
             body.splice(0..0, std::mem::take(&mut lower.temporaries));

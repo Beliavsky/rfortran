@@ -353,8 +353,15 @@ impl Lowerer {
                 }
             }
         }
+        let c_binding=body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,..} if name==crate::c_interop::BIND));
         for s in body.iter_mut() {
             match s {
+                // Native C adapters normalize these bounds after association
+                // and constant folding; preserve the original dummy bounds.
+                Stmt::ArrayDecl { name,kind,dims } if c_binding && params.contains(name) => {
+                    arrays.remove(name);
+                    symbols.insert(name.clone(),(kind.clone(),dims.clone()));
+                }
                 Stmt::ArrayDecl { name, kind, dims } => {
                     arrays.remove(name);
                     if let Some(a) =

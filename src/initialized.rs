@@ -211,7 +211,13 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
             Stmt::CallSub {name,args} if name=="@c_invoke" => {
                 let Expr::Str(encoded)=&args[0] else {bail!("invalid C adapter metadata")};
                 let sig:crate::c_interop::Signature=serde_json::from_str(encoded)?;
-                for (arg,value) in sig.args.iter().zip(&args[1..]) {
+                let mut values=args[1..].iter();
+                for arg in &sig.args {
+                    let value=values.next().context("missing C adapter argument")?;
+                    if !arg.dims.is_empty() {
+                        for field in std::iter::once(value).chain(values.by_ref().take(3)) {read(field,env,&mut before,serial)?;}
+                        continue;
+                    }
                     if arg.input {read(value,env,&mut before,serial)?;}
                     if arg.output {if let Expr::Ident(n)=value {write(n,None,env,&mut after,serial);}}
                 }

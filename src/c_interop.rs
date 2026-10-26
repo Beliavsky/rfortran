@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Beliavsky
-//! Scalar C interoperability, with explicit adapters around rfort's private ABI.
+//! Numeric C interoperability, with explicit adapters around rfort's private ABI.
 use crate::ast::{Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -13,6 +13,8 @@ pub struct Arg {
     pub value: bool,
     pub input: bool,
     pub output: bool,
+    #[serde(default)]
+    pub dims: Vec<Expr>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Signature {
@@ -37,9 +39,44 @@ fn kinds(body: &[Stmt]) -> HashMap<String, TypeSpec> {
                 .iter()
                 .map(|(n, _)| (n.clone(), kind.clone()))
                 .collect(),
+            Stmt::ArrayDecl { kind, name, .. } => vec![(name.clone(), kind.clone())],
             _ => vec![],
         })
         .collect()
+}
+fn explicit_dimension(e: &Expr) -> bool {
+    match e {
+        Expr::Ident(n) => n != "@assumed_extent" && n != "@deferred_extent",
+        Expr::Call(_, args) => args.iter().all(explicit_dimension),
+        _ => true,
+    }
+}
+fn dimensions(body: &[Stmt], n: &str) -> Vec<Expr> {
+    body.iter().find_map(|s| match s {
+        Stmt::ArrayDecl { name, dims, .. } if name == n => Some(dims.clone()),
+        _ => None,
+    }).unwrap_or_default()
+}
+
+// Serialize bounds using parameter positions, so module/procedure renaming
+// cannot leave stale names in backend metadata.
+fn bound(e: &Expr, params: &[String], args: &[Arg]) -> Result<Expr> {
+    use crate::ast::{BinOp, UnOp};
+    Ok(match e {
+        Expr::IntLit(_) => e.clone(),
+        Expr::Ident(n) => {
+            let i = params.iter().position(|p| p == n)
+                .with_context(|| format!("unsupported BIND(C) array bound `{n}`"))?;
+            if !args[i].dims.is_empty() || !args[i].input || !matches!(args[i].kind, TypeSpec::Integer(_)) {
+                bail!("BIND(C) array bounds require input scalar INTEGER arguments");
+            }
+            Expr::Ident(i.to_string())
+        }
+        Expr::Bin(op @ (BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div), a, b) =>
+            Expr::Bin(op.clone(), Box::new(bound(a, params, args)?), Box::new(bound(b, params, args)?)),
+        Expr::Un(UnOp::Neg, a) => Expr::Un(UnOp::Neg, Box::new(bound(a, params, args)?)),
+        _ => bail!("unsupported BIND(C) array bound expression"),
+    })
 }
 pub fn module_body() -> Vec<Stmt> {
     let long = if cfg!(windows) {
@@ -277,14 +314,19 @@ pub fn prepare(mut p: Program) -> Result<Program> {
             (|| ->Result<()> {match s {
                 Stmt::Function{name,params,body,..}|Stmt::Subroutine{name,params,body,..}=> {
                     if let Some(symbol)=body.iter().find_map(|s|match s {Stmt::DummyIntent{name,intent} if name==BIND=>Some(intent.clone()),_=>None}) {
-                        if body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,..} if params.contains(name))) {bail!("BIND(C) array dummies are not yet supported; use scalar numeric arguments");}
+                        for n in params.iter() {
+                            let ds=dimensions(body,n);
+                            if !ds.is_empty() && attr(body,n,"value") {bail!("VALUE is not allowed on BIND(C) array dummies");}
+                            if !ds.iter().all(explicit_dimension) {bail!("BIND(C) array dummies currently require explicit shape; assumed-shape and assumed-size arrays are not yet supported");}
+                        }
                         let ks=kinds(body);
                         let result=if function {Some(body.iter().rev().find_map(|s|match s {Stmt::Return(Some(Expr::Ident(n)))=>Some(n.clone()),_=>None}).unwrap_or_else(||name.clone()))}else{None};
-                        let args=params.iter().map(|n|Ok(Arg{kind:ks.get(n).cloned().with_context(||format!("BIND(C) dummy `{n}` requires an explicit numeric type"))?,value:attr(body,n,"value"),input:!attr(body,n,"intent(out)"),output:!attr(body,n,"value")&&!attr(body,n,"intent(in)")})).collect::<Result<Vec<_>>>()?;
+                        let args=params.iter().map(|n|Ok(Arg{kind:ks.get(n).cloned().with_context(||format!("BIND(C) dummy `{n}` requires an explicit numeric type"))?,value:attr(body,n,"value"),input:!attr(body,n,"intent(out)"),output:!attr(body,n,"value")&&!attr(body,n,"intent(in)"),dims:dimensions(body,n)})).collect::<Result<Vec<_>>>()?;
                         if params.iter().any(|n|attr(body,n,"value")&&(attr(body,n,"intent(out)")||attr(body,n,"intent(inout)"))) {bail!("VALUE is incompatible with INTENT(OUT) or INTENT(INOUT)");}
                         if params.iter().any(|n|["optional","pointer","allocatable"].iter().any(|a|attr(body,n,a))) {bail!("BIND(C) OPTIONAL, POINTER and ALLOCATABLE dummies are not yet supported");}
+                        if result.as_ref().is_some_and(|n|!dimensions(body,n).is_empty()) {bail!("BIND(C) function results must be scalar");}
                         let result_kind=result.as_ref().map(|n|ks.get(n).cloned().context("BIND(C) function result requires an explicit numeric type")).transpose()?;
-                        if args.iter().any(|a|matches!(a.kind,TypeSpec::Character(_)|TypeSpec::CharacterLength(_)|TypeSpec::CharacterAssumed|TypeSpec::Logical|TypeSpec::LogicalKind(_)|TypeSpec::Complex(_))) || result_kind.as_ref().is_some_and(|k|matches!(k,TypeSpec::Character(_)|TypeSpec::CharacterLength(_)|TypeSpec::CharacterAssumed|TypeSpec::Logical|TypeSpec::LogicalKind(_)|TypeSpec::Complex(_))) {bail!("BIND(C) currently supports scalar INTEGER and REAL arguments and results; this type is not yet supported");}
+                        if args.iter().any(|a|matches!(a.kind,TypeSpec::Character(_)|TypeSpec::CharacterLength(_)|TypeSpec::CharacterAssumed|TypeSpec::Logical|TypeSpec::LogicalKind(_)|TypeSpec::Complex(_))) || result_kind.as_ref().is_some_and(|k|matches!(k,TypeSpec::Character(_)|TypeSpec::CharacterLength(_)|TypeSpec::CharacterAssumed|TypeSpec::Logical|TypeSpec::LogicalKind(_)|TypeSpec::Complex(_))) {bail!("BIND(C) currently supports INTEGER and REAL arguments and scalar results; this type is not yet supported");}
                         let signature=Signature{symbol,args,result:result_kind};
                         body.insert(0,Stmt::DummyIntent{name:"@c_definition".into(),intent:serde_json::to_string(&(signature,params.clone(),result))?});
                     }
@@ -296,11 +338,15 @@ pub fn prepare(mut p: Program) -> Result<Program> {
                         for (i,n) in params.iter().enumerate() {
                             let kind=ks.get(n).cloned().with_context(||format!("BIND(C) dummy `{n}` requires an explicit numeric type"))?;
                             let value=attr(&original,n,"value");let input=!attr(&original,n,"intent(out)");let output=!value&&!attr(&original,n,"intent(in)");
+                            let dims=dimensions(&original,n);
+                            if !dims.is_empty() {
+                                values.push(id(n));args.push(Arg{kind,value,input,output,dims});continue;
+                            }
                             let temp=format!("@c_argument_{i}");
                             before.push(Stmt::VarDecl{kind:kind.clone(),names:vec![temp.clone()]});
                             if input {before.push(Stmt::Assign{name:temp.clone(),value:id(n)});}
                             if output {after.push(Stmt::Assign{name:n.clone(),value:id(&temp)});}
-                            values.push(id(&temp));args.push(Arg{kind,value,input,output});
+                            values.push(id(&temp));args.push(Arg{kind,value,input,output,dims});
                         }
                         let result_kind=result.as_ref().map(|n|ks.get(n).cloned().context("BIND(C) function result requires an explicit numeric type")).transpose()?;
                         let signature=Signature{symbol,args,result:result_kind};
@@ -308,6 +354,9 @@ pub fn prepare(mut p: Program) -> Result<Program> {
                         if let Some(n)=&result {call.push(id(n));}
                         // Preserve declarations, USE and interface metadata; remove the old terminal RETURN.
                         body.retain(|s|!matches!(s,Stmt::Return(_)));
+                        for n in params.iter().filter(|n|attr(&original,n,"value")) {
+                            body.push(Stmt::DummyIntent{name:n.clone(),intent:"intent(in)".into()});
+                        }
                         body.extend(before);body.push(Stmt::CallSub{name:"@c_invoke".into(),args:call});body.extend(after);
                         if let Some(n)=result {body.push(Stmt::Return(Some(id(&n))));}
                     }
@@ -315,7 +364,9 @@ pub fn prepare(mut p: Program) -> Result<Program> {
                         let original=body.clone();let ks=kinds(&original);
                         for n in params.iter().filter(|n|attr(&original,n,"value")&&!attr(&original,n,"intent(in)")) {
                             let copy=format!("@c_value${n}");
+                            let bounds=body.iter().filter_map(|s| match s {Stmt::ArrayDecl{name,dims,..}=>Some((name.clone(),dims.clone())),_=>None}).collect::<HashMap<_,_>>();
                             crate::procedure_arguments::rename(body,n,&copy);
+                            for s in body.iter_mut() {if let Stmt::ArrayDecl{name,dims,..}=s {if let Some(original)=bounds.get(name) {*dims=original.clone();}}}
                             body.retain(|s|!matches!(s,Stmt::DummyIntent{name,intent} if name==&copy&&(intent=="value"||intent.starts_with("intent("))));
                             body.insert(0,Stmt::VarDecl{kind:ks[n].clone(),names:vec![n.clone()]});
                             body.insert(1,Stmt::DummyIntent{name:n.clone(),intent:"value".into()});
@@ -350,15 +401,20 @@ pub fn resolve(mut p: Program) -> Result<Program> {
             _ => None,
         })
         .collect();
-    fn invocations(body: &mut Vec<Stmt>, ks: &HashMap<String, TypeSpec>) -> Result<()> {
-        for s in body {
+    fn invocations(body: &mut Vec<Stmt>, inherited: &HashMap<String, TypeSpec>) -> Result<()> {
+        let mut ks=inherited.clone();ks.extend(kinds(body));
+        let mut out=vec![];
+        for mut stmt in std::mem::take(body) {
+            let s=&mut stmt;
             if let Stmt::CallSub { name, args } = s {
                 if name == "@c_invoke" {
                     let Expr::Str(encoded) = &args[0] else {
                         unreachable!()
                     };
                     let mut sig: Signature = serde_json::from_str(encoded)?;
-                    for (arg, actual) in sig.args.iter_mut().zip(&args[1..]) {
+                    let original=args.clone();
+                    let mut passed=vec![];
+                    for (i,(arg, actual)) in sig.args.iter_mut().zip(&original[1..]).enumerate() {
                         let Expr::Ident(n) = actual else {
                             bail!("C adapter requires local numeric storage")
                         };
@@ -366,6 +422,13 @@ pub fn resolve(mut p: Program) -> Result<Program> {
                             .get(n)
                             .cloned()
                             .context("missing C adapter argument type")?;
+                        if arg.dims.is_empty() {passed.push(actual.clone());} else {
+                            let fields=(0..4).map(|j|format!("{n}$c_{i}_{j}")).collect::<Vec<_>>();
+                            out.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:fields.clone()});
+                            let mut bind=fields.iter().map(|n|id(n)).collect::<Vec<_>>();bind.push(actual.clone());
+                            out.push(Stmt::CallSub{name:"@c_array_bind".into(),args:bind});
+                            passed.extend(fields.iter().map(|n|id(n)));
+                        }
                     }
                     if sig.result.is_some() {
                         let Some(Expr::Ident(n)) = args.last() else {
@@ -378,15 +441,18 @@ pub fn resolve(mut p: Program) -> Result<Program> {
                         );
                     }
                     validate(&sig)?;
-                    args[0] = Expr::Str(serde_json::to_string(&sig)?);
+                    if sig.result.is_some() {passed.push(original.last().unwrap().clone());}
+                    *args=vec![Expr::Str(serde_json::to_string(&sig)?)];args.extend(passed);
                 }
             }
             if !matches!(s, Stmt::Function { .. } | Stmt::Subroutine { .. }) {
                 for b in crate::procedure_arguments::children(s) {
-                    invocations(b, ks)?;
+                    invocations(b, &ks)?;
                 }
             }
+            out.push(stmt);
         }
+        *body=out;
         Ok(())
     }
     fn walk(
@@ -427,6 +493,16 @@ pub fn resolve(mut p: Program) -> Result<Program> {
                                 if sig.result.is_none() {
                                     bail!("missing BIND(C) function result type");
                                 }
+                            }
+                            for (i,n) in original_params.iter().enumerate() {
+                                sig.args[i].dims=dimensions(body,n);
+                            }
+                            let resolved=sig.args.clone();
+                            for arg in &mut sig.args {
+                                arg.dims=arg.dims.iter().map(|d| match d {
+                                    Expr::Call(tag,a) if tag=="@declared_bounds" => Ok(Expr::Call(tag.clone(),vec![bound(&a[0],&original_params,&resolved)?,bound(&a[1],&original_params,&resolved)?])),
+                                    _ => bound(d,&original_params,&resolved),
+                                }).collect::<Result<_>>()?;
                             }
                             validate(&sig)?;
                             let native = if name.starts_with(crate::external_calls::PREFIX) {
@@ -479,6 +555,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
         }
         Ok(())
     }
+    invocations(&mut p.body,&HashMap::new())?;
     let mut added = vec![];
     walk(&mut p.body, &mut added, &existing, &mut HashMap::new())?;
     for s in added {
@@ -506,7 +583,7 @@ fn validate(s: &Signature) -> Result<()> {
     if s.args.iter().any(|a| !supported(&a.kind))
         || s.result.as_ref().is_some_and(|k| !supported(k))
     {
-        bail!("BIND(C) currently supports scalar INTEGER kinds 1, 2, 4, 8 and REAL kinds 4, 8; CHARACTER, LOGICAL, COMPLEX and derived types are not yet supported");
+        bail!("BIND(C) currently supports INTEGER kinds 1, 2, 4, 8 and REAL kinds 4, 8; CHARACTER, LOGICAL, COMPLEX and derived types are not yet supported");
     }
     Ok(())
 }

@@ -2915,7 +2915,7 @@ fn gen_stmts(
                 }
                 if name=="@c_export" {continue;}
                 if name=="@c_invoke" {
-                    c_interop::invoke(module,b,ptr_ty,args,ints,reals,bools)?;
+                    c_interop::invoke(module,b,ptr_ty,args,ints,reals,bools,dc)?;
                     continue;
                 }
                 if name.starts_with("@heap_record_") {

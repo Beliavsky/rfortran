@@ -1,4 +1,4 @@
-"""Native scalar C interoperability in both directions (O0 and O2)."""
+"""Native numeric C interoperability in both directions (O0 and O2)."""
 import ctypes
 import os
 from pathlib import Path
@@ -19,7 +19,7 @@ class CInterop(unittest.TestCase):
         self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
         return result
 
-    def mixed(self, fortran, c, expected=''):
+    def mixed(self, fortran, c, expected='', status=0, error=''):
         if not C_COMPILER:
             self.skipTest('a C compiler is required')
         with tempfile.TemporaryDirectory(prefix='rfort-c-') as temp:
@@ -30,9 +30,12 @@ class CInterop(unittest.TestCase):
             self.command([C_COMPILER, *flags, '-c', 'test.c', '-o', 'support_c.obj'], d)
             for opt in (0, 2):
                 with self.subTest(opt=opt):
-                    p = self.command([COMPILER, '-O', opt, 'test.f90', 'support_c.obj', '-o', 'program.exe', '--run'], d)
+                    p = self.command([COMPILER, '-O', opt, 'test.f90', 'support_c.obj', '-o', 'program.exe', '--run'], d, expected=status)
                     self.assertTrue(equivalent(p.stdout, expected), p.stdout)
-                    self.assertEqual(p.stderr, '')
+                    if error:
+                        self.assertIn(error, p.stderr)
+                    else:
+                        self.assertEqual(p.stderr, '')
 
     def test_import_value_and_reference(self):
         self.mixed('''program test
@@ -98,6 +101,171 @@ print *,echo({literal}_{kind})
 end
 ''', f'{ctype} c_echo({ctype} x) {{return x;}}\n', literal+'\n')
 
+    def test_matrix_example(self):
+        self.mixed((ROOT/'tests/c_interop/arrays.f90').read_text(),
+                   (ROOT/'tests/c_interop/array_caller.c').read_text())
+
+    def test_explicit_array_widths(self):
+        cases = [('c_int8_t', 'signed char'), ('c_int16_t', 'short'),
+                 ('c_int', 'int'), ('c_int64_t', 'long long'),
+                 ('c_float', 'float'), ('c_double', 'double')]
+        for kind, ctype in cases:
+            with self.subTest(kind=kind):
+                ftype = 'real' if kind in ('c_float', 'c_double') else 'integer'
+                declarations = f"integer(c_int),value::n\n{ftype}({kind}),intent(in)::x(n)\n{ftype}({kind}),intent(out)::y(n)"
+                self.mixed(f'''program test
+use iso_c_binding
+implicit none
+interface
+subroutine transform(n,x,y) bind(c,name="c_transform")
+use iso_c_binding
+{declarations}
+end subroutine
+end interface
+{ftype}({kind})::x(3),y(3)
+x=[-2,4,7]
+call transform(3,x,y)
+print *,y
+end
+''', f'void c_transform(int n,const {ctype} *x,{ctype} *y) {{for(int i=0;i<n;++i)y[i]=x[i]*2;}}', '-4 8 14\n')
+                self.mixed(f'''subroutine transform(n,x,y) bind(c,name="f_transform")
+use iso_c_binding
+implicit none
+{declarations}
+integer::i
+do i=1,n
+ y(i)=2*x(i)
+end do
+end subroutine
+''', f'''extern void f_transform(int,const {ctype}*,{ctype}*);
+int main(void) {{ {ctype} x[3]={{-2,4,7}},y[3]={{0}};
+f_transform(3,x,y);return y[0]==-4&&y[1]==8&&y[2]==14?0:1;}}
+''')
+
+    def test_multidimensional_array_order_and_lower_bounds(self):
+        self.mixed('''subroutine transform(n,x) bind(c,name="matrix")
+use iso_c_binding
+implicit none
+integer(c_int),intent(in)::n
+real(c_float),intent(inout)::x(0:1,-1:n-2)
+integer::i,j
+do j=-1,n-2
+ do i=0,1
+  x(i,j)=x(i,j)+10*i+100*j
+ end do
+end do
+end subroutine
+''', '''extern void matrix(const int*,float*);
+int main(void) {int n=3;float x[6]={1,2,3,4,5,6};
+matrix(&n,x);float expected[6]={-99,-88,3,14,105,116};
+for(int i=0;i<6;++i)if(x[i]!=expected[i])return 1;return 0;}
+''')
+        self.mixed('''program test
+use iso_c_binding
+implicit none
+interface
+subroutine matrix(n,x) bind(c,name="c_matrix")
+use iso_c_binding
+integer(c_int),value::n
+real(c_double),intent(inout)::x(2,n)
+end subroutine
+end interface
+real(c_double)::x(2,3)
+x=reshape([1,2,3,4,5,6],[2,3])
+call matrix(3,x)
+print *,x
+end
+''', '''void c_matrix(int n,double *x) {for(int j=0;j<n;++j)for(int i=0;i<2;++i)x[i+2*j]+=10*i+100*j;}
+''', '1 12 103 114 205 216\n')
+
+    def test_array_import_result_and_allocated_actual(self):
+        self.mixed('''program test
+use iso_c_binding
+implicit none
+interface
+function total(n,x) result(r) bind(c,name="c_total")
+use iso_c_binding
+integer(c_int),value::n
+real(c_double),intent(in)::x(n)
+real(c_double)::r
+end function
+subroutine fill(n,x) bind(c,name="c_fill")
+use iso_c_binding
+integer(c_int),value::n
+real(c_double),intent(out)::x(n)
+end subroutine
+end interface
+real(c_double),allocatable::x(:)
+allocate(x(4))
+call fill(4,x)
+print *,x,total(4,x)
+end
+''', '''void c_fill(int n,double *x) {for(int i=0;i<n;++i)x[i]=i+1;}
+double c_total(int n,const double *x) {double s=0;for(int i=0;i<n;++i)s+=x[i];return s;}
+''', '1 2 3 4 10\n')
+
+    def test_rank_three_array_export(self):
+        self.mixed('''subroutine cube(x) bind(c)
+use iso_c_binding
+implicit none
+integer(c_int),intent(inout)::x(2,2,2)
+integer::i,j,k
+do k=1,2
+ do j=1,2
+  do i=1,2
+   x(i,j,k)=x(i,j,k)+i+10*j+100*k
+  end do
+ end do
+end do
+end subroutine
+''', '''extern void cube(int*);
+int main(void) {int x[8]={0};cube(x);int k=0;
+for(int z=1;z<=2;++z)for(int y=1;y<=2;++y)for(int i=1;i<=2;++i)
+if(x[k++]!=i+10*y+100*z)return 1;return 0;}
+''')
+
+    def test_zero_size_arrays(self):
+        self.mixed('''subroutine empty(n,x) bind(c)
+use iso_c_binding
+implicit none
+integer(c_int),value::n
+real(c_float),intent(inout)::x(n)
+x=x+1
+end subroutine
+''', '''extern void empty(int,float*);
+int main(void) {float x=42;empty(0,&x);return x==42?0:1;}
+''')
+
+    def test_array_input_initialization_guard(self):
+        self.mixed('''program test
+use iso_c_binding
+implicit none
+interface
+subroutine consume(x) bind(c)
+use iso_c_binding
+integer(c_int),intent(in)::x(2)
+end subroutine
+end interface
+integer(c_int)::x(2)
+x(1)=1
+call consume(x)
+end
+''', 'void consume(const int *x) {(void)x;}\n',
+                   status=1, error='uninitialized C array argument element')
+
+    def test_array_allocation_overflow_guard(self):
+        self.mixed('''subroutine huge(n,x) bind(c)
+use iso_c_binding
+implicit none
+integer(c_int64_t),value::n
+real(c_double),intent(inout)::x(n)
+x=x+1
+end subroutine
+''', '''#include <limits.h>
+extern void huge(long long,double*);
+int main(void) {double x=0;huge(LLONG_MAX,&x);return 0;}
+''', status=1, error='C array size overflow')
+
     def test_numeric_kind_constants(self):
         source = '''use iso_c_binding, only: c_int,c_long,c_size_t,c_float,c_double
 implicit none
@@ -121,10 +289,20 @@ integer(c_int),value::x
 integer(c_int)::r
 r=x+1
 end function
+subroutine fill(n,x) bind(c,name="SharedFill")
+integer(c_int),value::n
+integer(c_int),intent(out)::x(n)
+integer::i
+do i=1,n
+ x(i)=i
+end do
+end subroutine
 end module
 '''
         self.mixed(source, '''extern int SharedC(int);
-int main(void) {return SharedC(4)==5 ? 0 : 1;}
+extern void SharedFill(int,int*);
+int main(void) {int x[3]={0};SharedFill(3,x);
+return SharedC(4)==5 && x[0]==1 && x[2]==3 ? 0 : 1;}
 ''')
         with tempfile.TemporaryDirectory() as temp:
             d = Path(temp)
@@ -182,6 +360,8 @@ end program
     def test_rejected_features_and_standard(self):
         cases = [
             ('integer,intent(in)::x(:)', 'array dummies'),
+            ('integer,intent(in)::x(*)', 'assumed-size'),
+            ('integer,value::x(2)', 'VALUE is not allowed'),
             ('integer,optional::x', 'OPTIONAL'),
             ('integer,value,intent(out)::x', 'VALUE is incompatible'),
             ('character(len=1)::x', 'not yet supported'),

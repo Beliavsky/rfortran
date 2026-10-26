@@ -1891,7 +1891,7 @@ behavior, including comparisons with and without an unrelated derived type.
 
 ### C interoperability
 
-Native compilation supports a scalar subset of Fortran 2003 C interoperability:
+Native compilation supports a subset of Fortran 2003 C interoperability:
 
 - `USE ISO_C_BINDING`, including `INTRINSIC`, `ONLY`, and renaming. Supported
   kind constants are `C_SIGNED_CHAR`, `C_SHORT`, `C_INT`, `C_LONG`, `C_LONG_LONG`,
@@ -1903,6 +1903,12 @@ Native compilation supports a scalar subset of Fortran 2003 C interoperability:
   and subroutines. Without NAME, the C label is the lowercase Fortran procedure
   name. `BIND(C, NAME="label")` accepts a literal, case-sensitive C symbol.
   Both RESULT/BIND clause orders and no-argument subroutines are accepted.
+- Explicit-shape INTEGER and REAL array dummies, with any supported rank,
+  in both call directions. Extents may depend on input scalar INTEGER arguments,
+  including `VALUE` arguments. Nondefault lower bounds and zero extents are
+  supported. C receives a pointer to contiguous elements in Fortran column-major
+  order, with conversion for each element's declared kind. Array dummies cannot
+  have `VALUE`; `INTENT` controls copying and output initialization tracking.
 - Scalar `VALUE` dummies, including the separate `VALUE :: x` statement.
   Changes to a VALUE dummy affect only its local copy, including calls from
   Fortran. Non-VALUE scalar dummies use C pointers and support `INTENT(IN)`,
@@ -1926,13 +1932,20 @@ clang --target=x86_64-pc-windows-msvc -c tests\c_interop\caller.c -o target\c-ca
 rfort tests\c_interop\scalar.f90 target\c-caller.obj -o target\c-example.exe --run
 ```
 
-The C main checks both calls and exits zero on success. On Linux/macOS, compile
+The C main checks both calls and exits zero on success. A matrix example is
+provided in `tests/c_interop/arrays.f90` and `tests/c_interop/array_caller.c`;
+compile and link those files in the same way. On Linux/macOS, compile
 `caller.c` with the host C compiler and pass its `.o` file to rfort instead.
 Run `python tests/test_c_interop.py` for native C-to-Fortran and Fortran-to-C tests
 at O0/O2. The tests require Clang on Windows, or a host C compiler on Unix.
 The current implementation has been verified on Windows x64.
 
-Not yet implemented: C-interoperable arrays/descriptors, CHARACTER, LOGICAL,
+Array adapters currently require contiguous actual storage. Assumed-size and
+assumed-shape C dummies, descriptor-based C interfaces, and array function results
+are not yet supported. Exported array bounds support integer literals, input
+scalar INTEGER arguments, unary minus, and arithmetic `+`, `-`, `*`, `/`.
+
+Not yet implemented: CHARACTER, LOGICAL,
 COMPLEX, derived-type layouts, global variable bindings, OPTIONAL/POINTER/
 ALLOCATABLE dummies, `C_PTR`/`C_FUNPTR`, `C_LOC`, `C_F_POINTER`, `C_FUNLOC`,
 `C_F_PROCPOINTER`, callbacks, and other ISO_C_BINDING entities. Acceptance of a
