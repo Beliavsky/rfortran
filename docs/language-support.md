@@ -1909,6 +1909,15 @@ Native compilation supports a subset of Fortran 2003 C interoperability:
   supported. C receives a pointer to contiguous elements in Fortran column-major
   order, with conversion for each element's declared kind. Array dummies cannot
   have `VALUE`; `INTENT` controls copying and output initialization tracking.
+- Assumed-size INTEGER and REAL array dummies such as `x(*)`, `x(3,*)`,
+  and `x(0:2,-1:*)`, in both call directions. C exports access C-width elements
+  directly, so a separate argument named `n` is never treated as a hidden length.
+  Leading dimensions retain their bounds checks; callers are responsible for
+  supplying sufficient storage and initialized C input. Bounded sections are
+  supported, as are inquiries on known dimensions and `LBOUND` on the last.
+  Whole-array operations, `SIZE`/`UBOUND` of the last dimension, and sections
+  missing their last upper bound are rejected. C storage can be forwarded to
+  another compatible C interface without conversion or ownership transfer.
 - Scalar `VALUE` dummies, including the separate `VALUE :: x` statement.
   Changes to a VALUE dummy affect only its local copy, including calls from
   Fortran. Non-VALUE scalar dummies use C pointers and support `INTENT(IN)`,
@@ -1934,15 +1943,21 @@ rfort tests\c_interop\scalar.f90 target\c-caller.obj -o target\c-example.exe --r
 
 The C main checks both calls and exits zero on success. A matrix example is
 provided in `tests/c_interop/arrays.f90` and `tests/c_interop/array_caller.c`;
-compile and link those files in the same way. On Linux/macOS, compile
+compile and link those files in the same way. The assumed-size example in
+`tests/c_interop/assumed_size.f90` and `assumed_size_caller.c` tests an input
+array function, output array subroutine, and zero-count calls. On Linux/macOS, compile
 `caller.c` with the host C compiler and pass its `.o` file to rfort instead.
 Run `python tests/test_c_interop.py` for native C-to-Fortran and Fortran-to-C tests
 at O0/O2. The tests require Clang on Windows, or a host C compiler on Unix.
 The current implementation has been verified on Windows x64.
 
-Array adapters currently require contiguous actual storage. Assumed-size and
-assumed-shape C dummies, descriptor-based C interfaces, and array function results
-are not yet supported. Exported array bounds support integer literals, input
+Array adapters currently require contiguous actual storage. Assumed-shape C
+dummies, descriptor-based C interfaces, and array function results are not yet
+supported. Fortran-to-C adapters stage known actual storage and assume that C
+fully defines any output-only array; C writes cannot be individually tracked.
+Pass a bounded section when C accesses only part of an actual array, especially
+if its remaining elements are undefined. Assumed-size C exports do not have a
+final upper-bound or initialization mask. Exported array bounds support integer literals, input
 scalar INTEGER arguments, unary minus, and arithmetic `+`, `-`, `*`, `/`.
 
 Not yet implemented: CHARACTER, LOGICAL,

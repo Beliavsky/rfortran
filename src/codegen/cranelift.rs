@@ -864,7 +864,9 @@ fn eval_expr(
                 let base=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);
                 let base=to_i64(b,base);
                 let offset=eval_expr(b,ex,ptr_ty,&args[1],ints,reals,bools,func_meta);
-                let offset=to_i64(b,offset);let bytes=b.ins().imul_imm(offset,8);let address=b.ins().iadd(base,bytes);
+                let offset=to_i64(b,offset);
+                if let Some(tag)=kind.strip_prefix("c_") {return c_interop::raw_load(b,base,offset,tag);}
+                let bytes=b.ins().imul_imm(offset,8);let address=b.ins().iadd(base,bytes);
                 return match kind {
                     "r4"|"r8"=>CgVal::F64(b.ins().load(ir::types::F64,MemFlags::new(),address,0)),
                     "l"=>{let value=b.ins().load(ir::types::I8,MemFlags::new(),address,0);CgVal::Bool(b.ins().icmp_imm(ir::condcodes::IntCC::NotEqual,value,0))},
@@ -3125,6 +3127,12 @@ fn gen_stmts(
                     let mut text=target.as_bytes().to_vec();text.push(0);let address=make_data(module,b,ptr_ty,dc,&text)?;
                     let destination=storage_addr(b,ptr_ty,ints[label]);b.ins().store(MemFlags::new(),address,destination,0);
                     continue;
+                }
+                if let Some(tag)=name.strip_prefix("@ptr_store_c_") {
+                    let base=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);let base=to_i64(b,base);
+                    let index=eval_expr(b,ex,ptr_ty,&args[2],ints,reals,bools,func_meta);let index=to_i64(b,index);
+                    let value=eval_expr(b,ex,ptr_ty,&args[3],ints,reals,bools,func_meta);
+                    c_interop::raw_store(b,base,index,value,tag)?;continue;
                 }
                 if let Some(kind)=name.strip_prefix("@ptr_store_") {
                     let base=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);let base=to_i64(b,base);

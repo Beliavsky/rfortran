@@ -1240,6 +1240,7 @@ fn entry_point(name: &str, params: &[String], body: &[Stmt], dummies: &[(TypeSpe
         declarations.push(integers(locals));
         setup.push(assign(&state, int(1)));
         setup.push(assign(&origin, int(0)));
+        let raw_c=body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==p && intent=="@c_storage"));
         let mut stride = int(1);
         let mut assumed = false;
         for (d, [lower, extent, axis_stride]) in dims.iter().zip(&axes) {
@@ -1248,11 +1249,16 @@ fn entry_point(name: &str, params: &[String], body: &[Stmt], dummies: &[(TypeSpe
                 _ => (int(1), d.clone()),
             };
             entry.push(assign(lower, lo));
-            entry.push(assign(axis_stride, stride));
+            entry.push(assign(axis_stride, stride.clone()));
             if matches!(&hi, Expr::Ident(n) if n == "@assumed_extent") {
                 // The rest of the actual array, whose last column may be
                 // partial; each element offset is checked against it.
                 assumed = true;
+                if raw_c {
+                    // A C pointer carries no total extent. Zero is a sentinel,
+                    // never a bound: pointer lowering omits only this upper test.
+                    entry.push(assign(extent,int(0)));continue;
+                }
                 let divisor = call("max", vec![id(axis_stride), int(1)]);
                 let rounded = bin(BinOp::Sub, bin(BinOp::Add, id(&passed[3]), divisor.clone()), int(1));
                 entry.push(assign(extent, bin(BinOp::Div, rounded, divisor)));
@@ -1262,9 +1268,9 @@ fn entry_point(name: &str, params: &[String], body: &[Stmt], dummies: &[(TypeSpe
             }
             stride = bin(BinOp::Mul, id(axis_stride), id(extent));
         }
-        if assumed {
+        if assumed && !raw_c {
             declarations.push(Stmt::DummyIntent { name: p.clone(), intent: format!("@borrowed_limit:{}", passed[3]) });
-        } else if !dims.is_empty() {
+        } else if !dims.is_empty() && !raw_c {
             entry.push(Stmt::If {
                 cond: bin(BinOp::Gt, stride, id(&passed[3])),
                 then_body: vec![Stmt::CallSub {
@@ -1301,7 +1307,7 @@ fn entry_point(name: &str, params: &[String], body: &[Stmt], dummies: &[(TypeSpe
         }
         declarations.push(Stmt::DummyIntent { name: p.clone(), intent: "pointer".into() });
         declarations.push(Stmt::DummyIntent { name: p.clone(), intent: format!("@borrowed_descriptor:{}", descriptor.join(",")) });
-        if native.iter().any(|s| matches!(s, Stmt::DummyIntent { name, intent } if name == p && intent == "intent(out)")) {
+        if !raw_c && native.iter().any(|s| matches!(s, Stmt::DummyIntent { name, intent } if name == p && intent == "intent(out)")) {
             entry.push(Stmt::CallSub { name: "@borrowed_out".into(), args: vec![id(p)] });
         }
         scope.borrowed.insert(
@@ -1634,5 +1640,11 @@ pub(crate) fn c_entry(name:&str, params:&[String], body:&[Stmt], result:Option<&
     let body=clean.as_slice();
     let mut scope=Scope::new(None);scope.declare(body,params);
     let args=dummies(params,body,&scope).context("BIND(C) requires supported numeric declarations")?;
-    Ok(entry_point(name,params,body,&args,&scope,result).0)
+    let mut native=body.to_vec();
+    for (p,(_,dims)) in params.iter().zip(&args) {
+        if crate::c_interop::assumed_size(dims) {
+            native.insert(0,Stmt::DummyIntent{name:p.clone(),intent:"@c_storage".into()});
+        }
+    }
+    Ok(entry_point(name,params,&native,&args,&scope,result).0)
 }

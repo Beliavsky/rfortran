@@ -1568,13 +1568,25 @@ fn expand(
                         continue;
                     }
                     let pointer_actual=matches!(actual,Expr::Ident(a) if shapes.contains_key(&format!("@pointer:{a}")));
-                    if pointer_actual && (intent!="intent(in)" || dims.is_empty() || r.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==p&&intent=="allocatable"))) {bail!("POINTER actuals currently require POINTER dummy arguments");}
+                    let c_adapter=r.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==crate::c_interop::IMPORT && intent=="true") || matches!(s,Stmt::CallSub{name,..} if name=="@c_invoke"));
+                    let c_array=!dims.is_empty() && c_adapter;
+                    if pointer_actual && !c_adapter && (intent!="intent(in)" || dims.is_empty() || r.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==p&&intent=="allocatable"))) {bail!("POINTER actuals currently require POINTER dummy arguments");}
                     let pointer_target=local.contains_key(&format!("@target:{p}")) && r.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if intent=="pointer" && r.params.contains(name)));
                     if pointer_target && !matches!(actual,Expr::Ident(a) if shapes.contains_key(&format!("@target:{a}"))) {bail!("escaping POINTER association requires a TARGET actual for `{p}`");}
                     if intent != "intent(in)"
                         && matches!(actual,Expr::Ident(n) | Expr::Index(n,_) | Expr::Call(n,_) if readonly.contains(n))
                     {
                         bail!("cannot pass PARAMETER or INTENT(IN) variable as writable argument `{p}`");
+                    }
+                    if pointer_actual && c_array {
+                        // The C adapter binds this view directly. Do not read
+                        // or pack an assumed-size actual whose extent is unknown.
+                        let Expr::Ident(a)=actual else {unreachable!()};
+                        let (actual_kind,actual_dims)=&shapes[a];
+                        if !crate::pointers::same_kind(actual_kind,&kind) || actual_dims.len()!=dims.len() {
+                            bail!("type or rank mismatch for C array dummy `{p}`");
+                        }
+                        names.insert(p.clone(),a.clone());continue;
                     }
                     if !dims.is_empty() {
                         let allocatable=r.body.iter().any(|s|matches!(s,Stmt::DummyIntent {name,intent} if name==p && intent=="allocatable"));
@@ -1738,6 +1750,7 @@ fn expand(
                             }
                             let actual_axes=runtime_axes.as_ref().unwrap_or(&actual_dims);
                             for (formal,actual) in dims.iter().zip(actual_axes) {
+                                if crate::c_interop::assumed_extent(formal) {continue;}
                                 shape_checks.push((p.clone(),formal.clone(),actual.clone()));
                             }
                         }

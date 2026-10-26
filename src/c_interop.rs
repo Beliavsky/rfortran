@@ -44,12 +44,19 @@ fn kinds(body: &[Stmt]) -> HashMap<String, TypeSpec> {
         })
         .collect()
 }
-fn explicit_dimension(e: &Expr) -> bool {
-    match e {
-        Expr::Ident(n) => n != "@assumed_extent" && n != "@deferred_extent",
-        Expr::Call(_, args) => args.iter().all(explicit_dimension),
-        _ => true,
-    }
+pub fn assumed_extent(e: &Expr) -> bool {
+    matches!(e,Expr::Ident(n) if n=="@assumed_extent")
+        || matches!(e,Expr::Call(n,a) if n=="@declared_bounds" && a.get(1).is_some_and(assumed_extent))
+}
+pub fn assumed_size(dims: &[Expr]) -> bool {
+    dims.last().is_some_and(assumed_extent)
+}
+fn interoperable_dimensions(dims: &[Expr]) -> bool {
+    dims.iter().enumerate().all(|(i,d)| match d {
+        Expr::Ident(n) if n=="@deferred_extent" => false,
+        Expr::Call(n,a) if n=="@declared_bounds" => a.len()==2 && !matches!(&a[1],Expr::Ident(n) if n=="@deferred_extent") && (!assumed_extent(d) || i+1==dims.len()),
+        _ => !assumed_extent(d) || i+1==dims.len(),
+    })
 }
 fn dimensions(body: &[Stmt], n: &str) -> Vec<Expr> {
     body.iter().find_map(|s| match s {
@@ -58,11 +65,25 @@ fn dimensions(body: &[Stmt], n: &str) -> Vec<Expr> {
     }).unwrap_or_default()
 }
 
+fn association_extent(d: &Expr) -> Expr {
+    use crate::ast::BinOp;
+    if let Expr::Call(tag,a)=d {
+        if tag=="@declared_bounds" {
+            if assumed_extent(&a[1]) {return a[1].clone();}
+            let difference=Expr::Bin(BinOp::Sub,Box::new(a[1].clone()),Box::new(a[0].clone()));
+            let extent=Expr::Bin(BinOp::Add,Box::new(difference),Box::new(Expr::IntLit("1".into())));
+            return Expr::Call("max".into(),vec![extent,Expr::IntLit("0".into())]);
+        }
+    }
+    d.clone()
+}
+
 // Serialize bounds using parameter positions, so module/procedure renaming
 // cannot leave stale names in backend metadata.
 fn bound(e: &Expr, params: &[String], args: &[Arg]) -> Result<Expr> {
     use crate::ast::{BinOp, UnOp};
     Ok(match e {
+        Expr::Ident(n) if n=="@assumed_extent" => e.clone(),
         Expr::IntLit(_) => e.clone(),
         Expr::Ident(n) => {
             let i = params.iter().position(|p| p == n)
@@ -317,7 +338,7 @@ pub fn prepare(mut p: Program) -> Result<Program> {
                         for n in params.iter() {
                             let ds=dimensions(body,n);
                             if !ds.is_empty() && attr(body,n,"value") {bail!("VALUE is not allowed on BIND(C) array dummies");}
-                            if !ds.iter().all(explicit_dimension) {bail!("BIND(C) array dummies currently require explicit shape; assumed-shape and assumed-size arrays are not yet supported");}
+                            if !interoperable_dimensions(&ds) {bail!("BIND(C) array dummies require explicit shape or assumed size; assumed-shape arrays are not yet supported");}
                         }
                         let ks=kinds(body);
                         let result=if function {Some(body.iter().rev().find_map(|s|match s {Stmt::Return(Some(Expr::Ident(n)))=>Some(n.clone()),_=>None}).unwrap_or_else(||name.clone()))}else{None};
@@ -352,6 +373,16 @@ pub fn prepare(mut p: Program) -> Result<Program> {
                         let signature=Signature{symbol,args,result:result_kind};
                         let mut call=vec![Expr::Str(serde_json::to_string(&signature)?)];call.extend(values);
                         if let Some(n)=&result {call.push(id(n));}
+                        // Imported C receives a pointer to the first element;
+                        // dummy lower bounds have no indexing role in this stub.
+                        // Association checks compare extents, not bound syntax.
+                        for s in body.iter_mut() {
+                            if let Stmt::ArrayDecl{name,dims,..}=s {
+                                if params.contains(name) {
+                                    for d in dims {*d=association_extent(d);}
+                                }
+                            }
+                        }
                         // Preserve declarations, USE and interface metadata; remove the old terminal RETURN.
                         body.retain(|s|!matches!(s,Stmt::Return(_)));
                         for n in params.iter().filter(|n|attr(&original,n,"value")) {
@@ -471,6 +502,9 @@ pub fn resolve(mut p: Program) -> Result<Program> {
                 } => {
                     let ks = kinds(body);
                     invocations(body, &ks)?;
+                    // Resolve contained C interfaces before cloning this
+                    // definition into a native export entry point.
+                    walk(body, out, existing, seen)?;
                     if !attr(body, IMPORT, "true") {
                         if let Some(encoded) = body.iter().find_map(|s| match s {
                             Stmt::DummyIntent { name, intent } if name == "@c_definition" => {
@@ -544,7 +578,6 @@ pub fn resolve(mut p: Program) -> Result<Program> {
                             }
                         }
                     }
-                    walk(body, out, existing, seen)?;
                 }
                 _ => {
                     for b in crate::procedure_arguments::children(s) {

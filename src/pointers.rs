@@ -91,6 +91,14 @@ fn promote(a: TypeSpec, b: TypeSpec) -> TypeSpec {
         a
     }
 }
+fn c_suffix(k: &TypeSpec) -> &'static str {
+    match k {
+        TypeSpec::Integer(Some(1))=>"c_i1",TypeSpec::Integer(Some(2))=>"c_i2",
+        TypeSpec::Integer(Some(8))=>"c_i8",TypeSpec::Integer(_)=>"c_i4",
+        TypeSpec::Real=>"c_r4",TypeSpec::DoublePrecision=>"c_r8",
+        _=>unreachable!("validated C numeric type"),
+    }
+}
 fn suffix(k: &TypeSpec) -> &'static str {
     match k {
         TypeSpec::Real => "r4",
@@ -234,6 +242,7 @@ struct Pointer {
     targets: HashSet<String>,
     record_targets: HashSet<String>,
     borrowed: bool,
+    c_storage: bool,
 }
 #[derive(Clone)]
 struct View {
@@ -245,6 +254,8 @@ struct View {
     kind: TypeSpec,
     capacity: i64,
     limit: Option<String>,
+    c_storage: bool,
+    unknown_last: bool,
 }
 impl View {
     fn count(&self) -> Expr {
@@ -381,6 +392,7 @@ impl Lower {
                             targets: HashSet::new(),
                             record_targets: HashSet::new(),
                             borrowed,
+                            c_storage:has("@c_storage"),
                         },
                     );
                 } else {
@@ -550,6 +562,8 @@ impl Lower {
             axes: d.axes.clone(),
             limit: d.limit.clone(),
             kind: ptr.kind.clone(),
+            c_storage:ptr.c_storage,
+            unknown_last:ptr.c_storage,
             capacity: if ptr.targets.iter().any(|n|self.vars.get(n).is_some_and(|v|v.heap)) {0} else {ptr
                 .targets
                 .iter()
@@ -607,6 +621,8 @@ impl Lower {
             kind: v.kind,
             capacity,
             limit: None,
+            c_storage:false,
+            unknown_last:false,
         })
     }
     fn section(
@@ -638,6 +654,9 @@ impl Lower {
                 ..
             } = s
             {
+                if v.unknown_last && dim+1==v.axes.len() && upper.is_none() {
+                    bail!("assumed-size array section requires an explicit final upper bound");
+                }
                 let mut lo = lower.as_deref().cloned().unwrap_or(a.lower.clone());
                 let mut hi = upper
                     .as_deref()
@@ -687,7 +706,7 @@ impl Lower {
                     bin(
                         BinOp::And,
                         bin(BinOp::Ge, x.clone(), a.lower.clone()),
-                        bin(BinOp::Le, x, upper.clone()),
+                        if v.unknown_last && dim+1==v.axes.len() {Expr::Logical(true)}else{bin(BinOp::Le, x, upper.clone())},
                     )
                 };
                 out.push(Stmt::If {
@@ -722,7 +741,7 @@ impl Lower {
                     bin(
                         BinOp::And,
                         bin(BinOp::Ge, e.clone(), a.lower.clone()),
-                        bin(BinOp::Le, e.clone(), upper),
+                        if v.unknown_last && dim+1==v.axes.len() {Expr::Logical(true)}else{bin(BinOp::Le, e.clone(), upper)},
                     ),
                     format!(
                         "pointer `{label}` subscript outside bounds in dimension {}",
@@ -737,6 +756,7 @@ impl Lower {
         }
         v.origin = origin;
         v.axes = axes;
+        v.unknown_last=false;
         Ok(v)
     }
     fn view(&mut self, e: &Expr, association: bool, out: &mut Vec<Stmt>) -> Result<Option<View>> {
@@ -799,7 +819,7 @@ impl Lower {
     fn read(&mut self, v: &View, offset: Expr, out: &mut Vec<Stmt>) -> Expr {
         let offset = self.integer(offset, out);
         Self::check_limit(v, &offset, out);
-        out.push(Stmt::CallSub {
+        if !v.c_storage {out.push(Stmt::CallSub {
             name: "@check_initialized".into(),
             args: vec![
                 call("@ptr_load_i", vec![v.flags.clone(), offset.clone()]),
@@ -809,11 +829,11 @@ impl Lower {
                 ),
                 add(offset.clone(), int(1)),
             ],
-        });
+        });}
         self.temp(
             v.kind.clone(),
             call(
-                &format!("@ptr_load_{}", suffix(&v.kind)),
+                &format!("@ptr_load_{}", if v.c_storage {c_suffix(&v.kind)}else{suffix(&v.kind)}),
                 vec![v.data.clone(), offset],
             ),
             out,
@@ -822,7 +842,7 @@ impl Lower {
     fn store(&self, v: &View, offset: Expr, value: Expr, out: &mut Vec<Stmt>) {
         Self::check_limit(v, &offset, out);
         out.push(Stmt::CallSub {
-            name: format!("@ptr_store_{}", suffix(&v.kind)),
+            name: format!("@ptr_store_{}", if v.c_storage {c_suffix(&v.kind)}else{suffix(&v.kind)}),
             args: vec![v.data.clone(), v.flags.clone(), offset, value],
         });
     }
@@ -909,8 +929,13 @@ impl Lower {
         if v.axes.is_empty() {
             bail!("pointer array inquiry requires an array");
         }
+        if v.unknown_last && n!="lbound" {
+            if args.len()!=2 || crate::parameters::integer_constant(&args[1]).ok().is_some_and(|dim|dim==v.axes.len() as i64) {
+                bail!("assumed-size array has no known final extent for {n}");
+            }
+        }
         let mut vals = vec![];
-        for a in &v.axes {
+        for (i,a) in v.axes.iter().enumerate() {
             if matches!(n, "lbound" | "ubound") {
                 let result = self.integer(int(if n == "lbound" { 1 } else { 0 }), out);
                 let Expr::Ident(dest) = &result else {
@@ -922,7 +947,7 @@ impl Lower {
                     add(a.lower.clone(), sub(a.extent.clone(), int(1)))
                 };
                 out.push(Stmt::If {
-                    cond: bin(BinOp::Gt, a.extent.clone(), int(0)),
+                    cond: if v.unknown_last && i+1==v.axes.len() {Expr::Logical(true)}else{bin(BinOp::Gt, a.extent.clone(), int(0))},
                     then_body: vec![assign(dest, bound)],
                     else_body: None,
                 });
@@ -949,6 +974,10 @@ impl Lower {
         }
         self.expr(&mut dim, out)?;
         let dim = self.integer(dim, out);
+        if v.unknown_last && n!="lbound" {
+            out.push(require(bin(BinOp::Lt,dim.clone(),int(v.axes.len() as i64)),
+                format!("assumed-size array has no known final extent for {n}")));
+        }
         out.push(require(
             bin(
                 BinOp::And,
@@ -1060,6 +1089,7 @@ impl Lower {
             }
         }
         if let Some(v) = self.view(e, false, out)? {
+            if v.unknown_last {bail!("whole assumed-size array requires a bounded section");}
             if v.axes.is_empty() {
                 return Ok(None);
             }
@@ -1416,6 +1446,7 @@ impl Lower {
         let v = self
             .view(dest, false, out)?
             .context("pointer assignment requires an array or POINTER")?;
+        if v.unknown_last {bail!("whole assumed-size array assignment requires a bounded section");}
         if v.axes.is_empty() {
             let mut value = value.clone();
             self.expr(&mut value, out)?;
@@ -1614,7 +1645,7 @@ impl Lower {
                         intent.as_str(),
                         "pointer" | "target" | "@pointer_readonly_target"
                     ) || intent.starts_with("@pointer_bounds:") || intent.starts_with("@borrowed_descriptor:")
-                        || intent.starts_with("@borrowed_limit:") =>
+                        || intent.starts_with("@borrowed_limit:") || intent=="@c_storage" =>
                 {
                     continue
                 }
@@ -1645,9 +1676,13 @@ impl Lower {
                     }
                     // The view may be a packed section supplied by ordinary
                     // procedure argument lowering. Its origin is in elements.
-                    let offset=mul(v.origin.clone(),int(8));
+                    let width=if v.c_storage {match v.kind {TypeSpec::Integer(Some(k))=>i64::from(k),TypeSpec::Integer(None)|TypeSpec::Real=>4,_=>8}}else{8};
+                    let offset=mul(v.origin.clone(),int(width));
                     let data=bin(BinOp::Add,v.data.clone(),offset.clone());
-                    let flags=bin(BinOp::Add,v.flags.clone(),offset);
+                    let flags=if v.c_storage {int(0)}else{bin(BinOp::Add,v.flags.clone(),offset)};
+                    // Negative count denotes C-width storage, which already has
+                    // the callee's representation and needs no staging buffer.
+                    let count=if v.c_storage {int(-1)}else{count};
                     for (target,value) in args[..4].iter().zip([data,flags,v.name.clone(),count]) {
                         let Expr::Ident(n)=target else {bail!("invalid C array descriptor")};
                         out.push(Stmt::Assign{name:n.clone(),value});

@@ -142,6 +142,172 @@ int main(void) {{ {ctype} x[3]={{-2,4,7}},y[3]={{0}};
 f_transform(3,x,y);return y[0]==-4&&y[1]==8&&y[2]==14?0:1;}}
 ''')
 
+    def test_assumed_size_array_widths(self):
+        cases = [('c_int8_t', 'signed char'), ('c_int16_t', 'short'),
+                 ('c_int', 'int'), ('c_int64_t', 'long long'),
+                 ('c_float', 'float'), ('c_double', 'double')]
+        for kind, ctype in cases:
+            with self.subTest(kind=kind):
+                ftype = 'real' if kind in ('c_float', 'c_double') else 'integer'
+                self.mixed(f'''subroutine change(x,howmany) bind(c,name="f_change")
+use iso_c_binding
+implicit none
+integer(c_int),value,intent(in)::howmany
+{ftype}({kind}),intent(inout)::x(*)
+integer::j
+do j=1,howmany
+ x(j)=2*x(j)
+end do
+end subroutine
+''', f'''extern void f_change({ctype}*,int);
+int main(void) {{{ctype} x[4]={{-2,4,7,99}};
+f_change(x,3);return x[0]==-4 && x[1]==8 && x[2]==14 && x[3]==99 ? 0:1;}}
+''')
+                self.mixed(f'''program test
+use iso_c_binding
+implicit none
+interface
+subroutine change(howmany,x) bind(c,name="c_change")
+use iso_c_binding
+integer(c_int),value::howmany
+{ftype}({kind}),intent(inout)::x(*)
+end subroutine
+end interface
+{ftype}({kind})::x(4)
+x=[-2,4,7,99]
+call change(3,x)
+print *,x
+end
+''', f'void c_change(int n,{ctype} *x) {{for(int i=0;i<n;++i)x[i]*=2;}}', '-4 8 14 99\n')
+
+    def test_assumed_size_multidimensional_and_sections(self):
+        self.mixed('''subroutine change(x,columns) bind(c)
+use iso_c_binding
+implicit none
+integer(c_int),value,intent(in)::columns
+real(c_float),intent(inout)::x(0:1,-2:*)
+integer::i,j
+do j=-2,columns-3
+ do i=0,1
+  x(i,j)=x(i,j)+10*i+100*j
+ end do
+end do
+x(:, -2:-1)=x(:, -2:-1)+1
+end subroutine
+''', '''extern void change(float*,int);
+int main(void) {float x[6]={1,2,3,4,5,6};change(x,2);
+float want[6]={-198,-187,-96,-85,5,6};
+for(int i=0;i<6;++i)if(x[i]!=want[i])return 1;return 0;}
+''')
+        self.mixed('''program test
+use iso_c_binding
+implicit none
+interface
+subroutine change(x,n) bind(c,name="c_change_matrix")
+use iso_c_binding
+integer(c_int),value::n
+integer(c_int),intent(inout)::x(0:1,-2:*)
+end subroutine
+end interface
+integer(c_int)::x(2,3)
+x=reshape([1,2,3,4,5,6],[2,3])
+call change(x,2)
+print *,x
+end
+''', '''void c_change_matrix(int *x,int n) {for(int i=0;i<2*n;++i)x[i]+=10;}
+''', '11 12 13 14 5 6\n')
+
+    def test_assumed_size_function_and_output(self):
+        self.mixed((ROOT/'tests/c_interop/assumed_size.f90').read_text(),
+                   (ROOT/'tests/c_interop/assumed_size_caller.c').read_text())
+
+    def test_assumed_size_rank_three_and_inquiries(self):
+        self.mixed('''subroutine cube(x,last,which) bind(c)
+use iso_c_binding
+implicit none
+integer(c_int),value,intent(in)::last,which
+integer(c_int),intent(inout)::x(2,3,*)
+integer::i,j,k
+if (size(x,which)/=3) stop 1
+if (ubound(x,1)/=2) stop 2
+if (lbound(x,3)/=1) stop 3
+do k=1,last
+ do j=1,3
+  do i=1,2
+   x(i,j,k)=i+10*j+100*k
+  end do
+ end do
+end do
+end subroutine
+''', '''extern void cube(int*,int,int);
+int main(void) {int x[12]={0};cube(x,2,2);int k=0;
+for(int z=1;z<=2;++z)for(int y=1;y<=3;++y)for(int i=1;i<=2;++i)
+if(x[k++]!=i+10*y+100*z)return 1;return 0;}
+''')
+
+    def test_assumed_size_forwards_to_c(self):
+        self.mixed('''subroutine forward(x,howmany) bind(c)
+use iso_c_binding
+implicit none
+integer(c_int),value,intent(in)::howmany
+real(c_float),intent(inout)::x(*)
+interface
+subroutine bump(x,n) bind(c,name="c_bump")
+use iso_c_binding
+integer(c_int),value::n
+real(c_float),intent(inout)::x(*)
+end subroutine
+end interface
+call bump(x,howmany)
+end subroutine
+''', '''extern void forward(float*,int);
+void c_bump(float *x,int n) {for(int i=0;i<n;++i)x[i]+=0.5f;}
+int main(void) {float x[3]={1,2,99};forward(x,2);
+return x[0]==1.5f && x[1]==2.5f && x[2]==99 ? 0:1;}
+''')
+
+    def test_fortran_caller_of_assumed_size_binding(self):
+        source = '''module m
+use iso_c_binding
+implicit none
+contains
+subroutine twice(x,howmany) bind(c)
+integer(c_int),value,intent(in)::howmany
+real(c_float),intent(inout)::x(*)
+integer::j
+do j=1,howmany
+ x(j)=2*x(j)
+end do
+end subroutine
+end module
+program test
+use m
+implicit none
+real(c_float)::x(3)
+x=[1,2,99]
+call twice(x,2)
+print *,x
+end
+'''
+        with tempfile.TemporaryDirectory() as temp:
+            d=Path(temp)
+            (d/'test.f90').write_text(source)
+            for mode in (['run'], []):
+                with self.subTest(mode=mode):
+                    args=[COMPILER,*mode,'test.f90']+([] if mode else ['-o','program.exe','--run'])
+                    p=self.command(args,d)
+                    self.assertTrue(equivalent(p.stdout,'2 4 99\n'),p.stdout)
+
+    def test_assumed_size_rejects_unknown_extent_operations(self):
+        for statement in ('print *,size(x)', 'print *,size(x,2)',
+                          'print *,shape(x)', 'print *,x', 'x=1', 'x(:,:)=1'):
+            with self.subTest(statement=statement), tempfile.TemporaryDirectory() as temp:
+                d=Path(temp)
+                (d/'test.f90').write_text('subroutine invalid(x) bind(c)\ninteger::x(2,*)\n'+statement+'\nend subroutine\n')
+                p=subprocess.run([COMPILER,'-c','test.f90'],cwd=d,capture_output=True,text=True,timeout=90)
+                self.assertNotEqual(p.returncode,0,p.stdout+p.stderr)
+                self.assertIn('assumed-size',p.stderr)
+
     def test_multidimensional_array_order_and_lower_bounds(self):
         self.mixed('''subroutine transform(n,x) bind(c,name="matrix")
 use iso_c_binding
@@ -360,7 +526,6 @@ end program
     def test_rejected_features_and_standard(self):
         cases = [
             ('integer,intent(in)::x(:)', 'array dummies'),
-            ('integer,intent(in)::x(*)', 'assumed-size'),
             ('integer,value::x(2)', 'VALUE is not allowed'),
             ('integer,optional::x', 'OPTIONAL'),
             ('integer,value,intent(out)::x', 'VALUE is incompatible'),

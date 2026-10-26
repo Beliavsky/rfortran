@@ -44,6 +44,53 @@ fn narrow(b: &mut FunctionBuilder, v: ir::Value, k: &TypeSpec) -> Result<ir::Val
         b.ins().ireduce(dest, v)
     })
 }
+fn raw_kind(tag: &str) -> TypeSpec {
+    match tag {
+        "i1" => TypeSpec::Integer(Some(1)),
+        "i2" => TypeSpec::Integer(Some(2)),
+        "i4" => TypeSpec::Integer(Some(4)),
+        "i8" => TypeSpec::Integer(Some(8)),
+        "r4" => TypeSpec::Real,
+        "r8" => TypeSpec::DoublePrecision,
+        _ => unreachable!("validated C array element type"),
+    }
+}
+pub(super) fn raw_load(
+    b: &mut FunctionBuilder,
+    base: ir::Value,
+    index: ir::Value,
+    tag: &str,
+) -> CgVal {
+    let kind = raw_kind(tag);
+    let t = c_type(&kind).unwrap();
+    let at = element(b, base, index, i64::from(t.bytes()));
+    let v = b.ins().load(t, ir::MemFlags::new(), at, 0);
+    let v = widen(b, v, &kind);
+    if wide(&kind) == types::F64 {
+        CgVal::F64(v)
+    } else {
+        CgVal::I64(v)
+    }
+}
+pub(super) fn raw_store(
+    b: &mut FunctionBuilder,
+    base: ir::Value,
+    index: ir::Value,
+    value: CgVal,
+    tag: &str,
+) -> Result<()> {
+    let kind = raw_kind(tag);
+    let t = c_type(&kind)?;
+    let at = element(b, base, index, i64::from(t.bytes()));
+    let v = if wide(&kind) == types::F64 {
+        to_f64(b, value)
+    } else {
+        to_i64(b, value)
+    };
+    let v = narrow(b, v, &kind)?;
+    b.ins().store(ir::MemFlags::new(), v, at, 0);
+    Ok(())
+}
 fn signature(m: &ObjectModule, s: &Signature, ptr: ir::Type) -> Result<ir::Signature> {
     let mut sig = m.make_signature();
     for a in &s.args {
@@ -246,10 +293,25 @@ pub(super) fn invoke(
             let [data, flags, _label, count] = fields[..] else {
                 bail!("invalid C array descriptor")
             };
+            let direct = b.create_block();
+            let convert = b.create_block();
+            let done = b.create_block();
+            b.append_block_param(done, ptr);
+            let raw = b.ins().icmp_imm(ir::condcodes::IntCC::Equal, count, -1);
+            b.ins().brif(raw, direct, &[], convert, &[]);
+            b.switch_to_block(direct);
+            b.seal_block(direct);
+            b.ins().jump(done, &[data.into()]);
+            b.switch_to_block(convert);
+            b.seal_block(convert);
             let c = allocate(m, b, ptr, dc, count, i64::from(c_type(&arg.kind)?.bytes()))?;
             if arg.input {
                 copy_array(m, b, ptr, dc, count, c, data, Some(flags), &arg.kind, true)?;
             }
+            b.ins().jump(done, &[c.into()]);
+            b.switch_to_block(done);
+            b.seal_block(done);
+            let c = b.block_params(done)[0];
             values.push(c);
             arrays.push((c, data, flags, count, arg));
             continue;
@@ -282,10 +344,19 @@ pub(super) fn invoke(
         b.ins().store(ir::MemFlags::new(), value, local, 0);
     }
     for (c, data, flags, count, arg) in arrays {
+        let release = b.create_block();
+        let done = b.create_block();
+        let owned = b.ins().icmp_imm(ir::condcodes::IntCC::NotEqual, count, -1);
+        b.ins().brif(owned, release, &[], done, &[]);
+        b.switch_to_block(release);
+        b.seal_block(release);
         if arg.output {
             copy_array(m, b, ptr, dc, count, c, data, Some(flags), &arg.kind, false)?;
         }
         dispose(m, b, ptr, c)?;
+        b.ins().jump(done, &[]);
+        b.switch_to_block(done);
+        b.seal_block(done);
     }
     for (cell, local, k) in outputs {
         let value = b.ins().load(c_type(&k)?, ir::MemFlags::new(), cell, 0);
@@ -358,6 +429,11 @@ pub(super) fn exports(
             }
             let mut arrays = vec![];
             for (arg, value) in s.args.iter().zip(passed) {
+                if crate::c_interop::assumed_size(&arg.dims) {
+                    let zero = b.ins().iconst(types::I64, 0);
+                    actuals.extend([value, zero, label, zero]);
+                    continue;
+                }
                 if !arg.dims.is_empty() {
                     let mut count = one;
                     for d in &arg.dims {
