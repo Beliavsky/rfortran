@@ -980,7 +980,18 @@ impl Lower {
         objects: &mut Objects,
         prefix: &mut Vec<Stmt>,
     ) -> Result<Option<(String, Object)>> {
-        let Some(p) = self.procedures.get(name).cloned() else { return Ok(None) };
+        // Bound calls still retain their receiver here. Associate source-level
+        // keywords before the array dummies become separate component arrays;
+        // scalar derived lowering will insert and validate the receiver later.
+        let bound = name.rsplit_once('%').and_then(|(owner, method)| {
+            objects.get(owner).and_then(|o| self.bindings.get(&o.ty))
+                .and_then(|bindings| bindings.get(method))
+        });
+        let Some(mut p) = self.procedures.get(bound.map_or(name, String::as_str)).cloned()
+            else { return Ok(None) };
+        if bound.is_some() && !p.signature.params.is_empty() {
+            p.signature.params.remove(0);
+        }
         p.signature.reorder(name, args)?;
         args.resize_with(p.signature.params.len(), || {
             Expr::Call(crate::named_arguments::OMITTED.into(), vec![])
@@ -1092,7 +1103,9 @@ impl Lower {
                     for actual in &mut component {
                         self.scalar_record_actual(actual, objects, prefix, None)?;
                     }
-                    *e = Expr::Call(format!("{temp}%{field}"), component);
+                    let name = format!("{temp}%{field}");
+                    self.arguments(&name, &mut component, objects, prefix)?;
+                    *e = Expr::Call(name, component);
                     return Ok(());
                 }
                 if let Expr::Section { name, lower, upper, stride } = value {

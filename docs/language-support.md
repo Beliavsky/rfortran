@@ -1708,6 +1708,11 @@ back afterwards. Explicit arguments of bound calls also accept derived-array
 elements, including renamed bindings, keyword arguments, and calls whose receiver
 is itself an array element. Subscripts are evaluated once before copying the
 selected element. See `tests/programs/xbound_derived_element_actual.f90`.
+Bound procedure calls also associate positional and keyword derived-array
+arguments before splitting their component storage, including renamed bindings,
+sections and omitted or forwarded OPTIONAL arrays. The implicit receiver is not
+an explicit keyword argument. See
+`tests/programs/xbound_derived_array_keywords.f90`.
 Derived-array operations are lowered in SELECT CASE selectors, case bodies and
 CASE DEFAULT, including nested selections and early returns from array-valued
 functions. See `tests/programs/xderived_array_select_case.f90`.
