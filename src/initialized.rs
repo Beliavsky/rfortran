@@ -386,6 +386,19 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
             Stmt::If { cond, then_body, else_body } => {
                 read(cond, env, &mut before, serial)?;
                 let mut a = env.clone(); let mut b = env.clone();
+                // Reads of heap storage under a runtime condition may never
+                // execute (for example IF (ALLOCATED(x)) PRINT *, x). Preserve
+                // the initialization mask and check only on the path taken.
+                if !matches!(cond, Expr::Logical(_)) {
+                    for branch in [&mut a, &mut b] {
+                        for v in branch.values_mut().filter(|v| v.heap_length.is_some()) {
+                            if v.state == State::No { v.state = State::Maybe; }
+                            for state in v.elements.values_mut() {
+                                if *state == State::No { *state = State::Maybe; }
+                            }
+                        }
+                    }
+                }
                 // A branch that cannot run is removed rather than left
                 // without the instrumentation that code generation expects.
                 if !matches!(cond, Expr::Logical(false)) { flow(then_body, &mut a, result, serial)?; } else { then_body.clear(); }

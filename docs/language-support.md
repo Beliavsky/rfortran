@@ -1489,8 +1489,22 @@ Fixed-length CHARACTER assignment pads or truncates to the declared length;
 substring reads and writes are supported. Deferred-length CHARACTER scalars
 continue to use the existing bounded string implementation and its limits.
 
-This is initial scalar support. Scalar ALLOCATABLE dummy arguments and function
-results, scalar derived-type allocation/components, explicit SAVE on intrinsic
+Intrinsic scalar ALLOCATABLE dummy arguments in subroutines and functions
+share allocation status, storage and initialization state with the caller.
+An unallocated actual is permitted. INTENT(OUT) deallocates an allocated actual
+on entry; INTENT(INOUT), or no INTENT, permits allocation, assignment and
+deallocation visible to the caller. INTENT(IN) permits reads and inquiries but
+rejects modification. OPTIONAL presence is independent of allocation status.
+Numeric, LOGICAL, COMPLEX and fixed/assumed-length CHARACTER scalar dummies
+are supported; actual arguments must match type, kind and scalar rank.
+Ordinary scalar arguments continue to receive scalar values. Generic dispatch
+uses the original scalar rank, before descriptor lowering.
+
+Try `rf.bat xalloc_scalar_dummy.f90 --run`, or run
+`python tests/test_allocatable_scalar_dummies.py` after building the compiler.
+
+This is partial scalar support. Scalar ALLOCATABLE function results,
+scalar derived-type allocation/components, explicit SAVE on intrinsic
 allocatable scalars, and allocatable scalar DO control variables remain
 unsupported. Existing host-association restrictions for allocatable storage
 also remain. Ordinary scalar dummy arguments do not gain ALLOCATABLE semantics.

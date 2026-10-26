@@ -6,7 +6,26 @@
 use crate::ast::{Expr, Stmt, TypeSpec};
 use anyhow::{ensure, Result};
 use std::collections::{HashMap, HashSet};
+#[derive(Default)]
+struct Procedures {
+    names: HashSet<String>,
+    descriptors: HashMap<String, HashSet<usize>>,
+}
+impl Procedures {
+    fn contains(&self, name: &str) -> bool {
+        self.names.contains(name)
+    }
+}
 type Symbols = HashMap<String, (TypeSpec, usize)>;
+fn value_kind(name: &str, symbols: &Symbols) -> TypeSpec {
+    match &symbols[name].0 {
+        TypeSpec::CharacterAssumed => TypeSpec::CharacterLength(Box::new(Expr::Call(
+            "len".into(),
+            vec![Expr::Ident(name.into())],
+        ))),
+        kind => kind.clone(),
+    }
+}
 fn element(name: &str) -> Expr {
     Expr::Call(name.into(), vec![Expr::IntLit("1".into())])
 }
@@ -37,7 +56,7 @@ fn fold_models(
     scalars: &HashSet<String>,
     symbols: &Symbols,
     types: &crate::operators::ExpressionTypes,
-    users: &HashSet<String>,
+    users: &Procedures,
 ) -> Result<()> {
     if let Expr::Call(name, args) = e {
         if !users.contains(name)
@@ -73,17 +92,19 @@ fn fold_models(
     }
     Ok(())
 }
-fn value(e: &mut Expr, scalars: &HashSet<String>, users: &HashSet<String>) {
+fn value(e: &mut Expr, scalars: &HashSet<String>, users: &Procedures) {
     match e {
         Expr::Ident(n) if scalars.contains(n) => *e = element(n),
         Expr::Call(n, args)
             if !users.contains(n)
                 && (n == "allocated"
+                    || n == "present"
                     || n == "kind"
                     || n == "len"
                     || crate::inquiries::numeric_model(n)
                     || matches!(n.as_str(), "huge" | "tiny")) => {}
-        Expr::Call(_, args) | Expr::Index(_, args) => {
+        Expr::Call(name, args) => call_values(name, args, scalars, users),
+        Expr::Index(_, args) => {
             for a in args {
                 value(a, scalars, users);
             }
@@ -123,6 +144,31 @@ fn value(e: &mut Expr, scalars: &HashSet<String>, users: &HashSet<String>) {
         _ => {}
     }
 }
+// ALLOCATABLE dummies receive the descriptor, ordinary scalar dummies
+// receive its element. Keep the source signature until after generic dispatch.
+fn call_values(name: &str, args: &mut [Expr], scalars: &HashSet<String>, users: &Procedures) {
+    for (i, arg) in args.iter_mut().enumerate() {
+        if !users.descriptors.get(name).is_some_and(|p| p.contains(&i)) {
+            value(arg, scalars, users);
+        }
+    }
+}
+fn check_call(
+    name: &str,
+    args: &[Expr],
+    scalars: &HashSet<String>,
+    users: &Procedures,
+) -> Result<()> {
+    if let Some(positions) = users.descriptors.get(name) {
+        for &i in positions {
+            if let Some(arg) = args.get(i) {
+                ensure!(crate::named_arguments::omitted(arg) || matches!(arg, Expr::Ident(n) if scalars.contains(n)),
+                    "ALLOCATABLE scalar dummy argument {} of `{name}` requires an ALLOCATABLE scalar actual", i + 1);
+            }
+        }
+    }
+    Ok(())
+}
 pub(crate) fn resolve(mut program: crate::ast::Program) -> Result<crate::ast::Program> {
     fn needed(statements: &mut [Stmt]) -> bool {
         let mut candidates = HashSet::new();
@@ -160,10 +206,9 @@ pub(crate) fn resolve(mut program: crate::ast::Program) -> Result<crate::ast::Pr
     fn body(
         statements: &mut Vec<Stmt>,
         inherited: &HashSet<String>,
-        params: &[String],
         inherited_types: &Symbols,
         types: &crate::operators::ExpressionTypes,
-        users: &HashSet<String>,
+        users: &Procedures,
     ) -> Result<()> {
         let mut symbols = inherited_types.clone();
         let constants = statements
@@ -251,13 +296,7 @@ pub(crate) fn resolve(mut program: crate::ast::Program) -> Result<crate::ast::Pr
                         _ => None,
                     });
                     // Deferred CHARACTER scalars already have their own length-aware lowering.
-                    if kind.is_some_and(|k| {
-                        !crate::substrings::deferred(k) && !matches!(k, TypeSpec::CharacterAssumed)
-                    }) {
-                        ensure!(
-                            !params.contains(name),
-                            "ALLOCATABLE scalar dummy arguments are not yet supported"
-                        );
+                    if kind.is_some_and(|k| !crate::substrings::deferred(k)) {
                         local.insert(name.clone());
                         scalars.insert(name.clone());
                     }
@@ -273,7 +312,19 @@ pub(crate) fn resolve(mut program: crate::ast::Program) -> Result<crate::ast::Pr
                 continue;
             }
             let result = (|| -> Result<()> {
+                if let Stmt::CallSub { name, args } = &stmt {
+                    check_call(name, args, &scalars, users)?;
+                }
                 for e in crate::procedure_arguments::expressions(&mut stmt) {
+                    let mut checked = Ok(());
+                    crate::procedure_arguments::visit_expr(e, &mut |expr| {
+                        if checked.is_ok() {
+                            if let Expr::Call(name, args) = expr {
+                                checked = check_call(name, args, &scalars, users);
+                            }
+                        }
+                    });
+                    checked?;
                     fold_models(e, &scalars, &symbols, types, users)?;
                 }
                 if let Stmt::Function { name, body, .. } = &stmt {
@@ -340,7 +391,7 @@ pub(crate) fn resolve(mut program: crate::ast::Program) -> Result<crate::ast::Pr
                         stmt = Stmt::Block {
                             body: vec![
                                 Stmt::VarDecl {
-                                    kind: symbols[name].0.clone(),
+                                    kind: value_kind(name, &symbols),
                                     names: vec![temp.clone()],
                                 },
                                 Stmt::Assign {
@@ -425,7 +476,7 @@ pub(crate) fn resolve(mut program: crate::ast::Program) -> Result<crate::ast::Pr
                                 let mut source = values[0].clone();
                                 value(&mut source, &scalars, users);
                                 output.push(Stmt::VarDecl {
-                                    kind: symbols[&targets[0]].0.clone(),
+                                    kind: value_kind(&targets[0], &symbols),
                                     names: vec![temp.clone()],
                                 });
                                 output.push(Stmt::Assign {
@@ -497,17 +548,15 @@ pub(crate) fn resolve(mut program: crate::ast::Program) -> Result<crate::ast::Pr
                         if name == "@deallocate"
                             || name.eq_ignore_ascii_case("move_alloc")
                             || name == "@module_bind" => {}
-                    Stmt::Function {
-                        params, body: b, ..
+                    Stmt::CallSub { name, args } if users.contains(name) => {
+                        call_values(name, args, &scalars, users);
                     }
-                    | Stmt::Subroutine {
-                        params, body: b, ..
-                    } => {
-                        body(b, &scalars, params, &symbols, types, users)?;
+                    Stmt::Function { body: b, .. } | Stmt::Subroutine { body: b, .. } => {
+                        body(b, &scalars, &symbols, types, users)?;
                         return Ok(());
                     }
                     Stmt::Module { body: b, .. } => {
-                        body(b, inherited, &[], inherited_types, types, users)?;
+                        body(b, inherited, inherited_types, types, users)?;
                         return Ok(());
                     }
                     _ => {
@@ -517,7 +566,7 @@ pub(crate) fn resolve(mut program: crate::ast::Program) -> Result<crate::ast::Pr
                     }
                 }
                 for b in crate::procedure_arguments::children(&mut stmt) {
-                    body(b, &scalars, &[], &symbols, types, users)?;
+                    body(b, &scalars, &symbols, types, users)?;
                 }
                 Ok(())
             })();
@@ -527,17 +576,29 @@ pub(crate) fn resolve(mut program: crate::ast::Program) -> Result<crate::ast::Pr
         *statements = output;
         Ok(())
     }
-    fn collect_users(statements: &mut [Stmt], users: &mut HashSet<String>) {
+    fn collect_users(statements: &mut [Stmt], users: &mut Procedures) {
         for s in statements {
-            if let Stmt::Function { name, .. } | Stmt::Subroutine { name, .. } = s {
-                users.insert(name.clone());
+            if let Stmt::Function {
+                name, params, body, ..
+            }
+            | Stmt::Subroutine {
+                name, params, body, ..
+            } = s
+            {
+                users.names.insert(name.clone());
+                let positions = params.iter().enumerate().filter_map(|(i, p)| {
+                    let scalar = body.iter().any(|s| matches!(s, Stmt::VarDecl { kind, names } if names.contains(p) && !crate::substrings::deferred(kind)))
+                        && !body.iter().any(|s| matches!(s, Stmt::ArrayDecl { name, .. } if name == p));
+                    (scalar && body.iter().any(|s| matches!(s, Stmt::DummyIntent { name, intent } if name == p && intent == "allocatable"))).then_some(i)
+                }).collect();
+                users.descriptors.insert(name.clone(), positions);
             }
             for child in crate::procedure_arguments::children(s) {
                 collect_users(child, users);
             }
         }
     }
-    let mut users = HashSet::new();
+    let mut users = Procedures::default();
     collect_users(&mut program.body, &mut users);
     let types = crate::operators::ExpressionTypes::new(&program)?;
     // USE association has assigned module objects unique names. Their original
@@ -578,13 +639,6 @@ pub(crate) fn resolve(mut program: crate::ast::Program) -> Result<crate::ast::Pr
             }
         }
     }
-    body(
-        &mut program.body,
-        &global_scalars,
-        &[],
-        &globals,
-        &types,
-        &users,
-    )?;
+    body(&mut program.body, &global_scalars, &globals, &types, &users)?;
     Ok(program)
 }

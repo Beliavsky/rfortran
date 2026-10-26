@@ -267,7 +267,6 @@ end
         self.check("integer,parameter::n=4\ncharacter(n),allocatable::s\nallocate(s,source='abcd')\nprint *,s\nend\n",'abcd\n')
 
     def test_unsupported_scalar_descriptors_diagnosed(self):
-        self.reject('program p\ncontains\nsubroutine f(x)\ninteger,allocatable::x\nend subroutine\nend program\n','scalar dummy arguments are not yet supported')
         self.reject('program p\nprint *,f()\ncontains\nfunction f() result(x)\ninteger,allocatable::x\nx=1\nend function\nend program\n','scalar function results are not yet supported')
 
     def test_pointer_target(self):
