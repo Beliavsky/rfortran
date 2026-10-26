@@ -1644,18 +1644,18 @@ fn expand(
                                     Ok(())
                                 }
                                 views(&mut captured,&shapes)?;
-                                // A section of a fixed-shape array, as `a(:,1)` once a
-                                // specialized procedure's dummy is the caller's array,
-                                // is passed as the constructor of its elements.
-                                if let Some(items)=crate::multidim::fixed_section_elements(&captured,&shapes)? {
+                                // Copy fixed sections with a loop, not one AST node per element.
+                                let index=format!("@call_section_index_{}",*serial+1);
+                                if let Some((count,value))=crate::multidim::fixed_section_element(&captured,&Expr::Ident(index.clone()),&shapes)? {
                                     let (Expr::Call(source,_)|Expr::Index(source,_))=&captured else {unreachable!()};
                                     let section_kind=shapes[source].0.clone();
                                     *serial+=1;
                                     let temp=format!("@call_section_{serial}");
-                                    let dims=vec![Expr::IntLit(items.len().to_string())];
+                                    let dims=vec![Expr::IntLit(count.to_string())];
                                     prefix.push(Stmt::ArrayDecl{kind:section_kind.clone(),name:temp.clone(),dims:dims.clone()});
-                                    for (i,value) in items.into_iter().enumerate() {
-                                        prefix.push(Stmt::AssignIndex{name:temp.clone(),indices:vec![Expr::IntLit((i+1).to_string())],value});
+                                    if count>0 {
+                                        prefix.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![index.clone()]});
+                                        prefix.push(Stmt::Do{var:index.clone(),start:Expr::IntLit("1".into()),end:Expr::IntLit(count.to_string()),body:vec![Stmt::AssignIndex{name:temp.clone(),indices:vec![Expr::Ident(index)],value}]});
                                     }
                                     shapes.insert(temp.clone(),(section_kind,dims));
                                     captured=Expr::Ident(temp);

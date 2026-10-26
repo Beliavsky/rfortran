@@ -2159,6 +2159,12 @@ Run `python tests/test_scalar_array_functions.py` and
 
 ### Forwarded array-valued function calls
 
+Numeric and LOGICAL fixed-shape sections passed to specialized INTENT(IN)
+subroutine dummies are copied by runtime loops rather than per-element source
+expansion. This includes multidimensional columns, strided and reversed sections,
+and empty sections, without the former 1024-element section limit. See
+`python tests/test_large_section_arguments.py`.
+
 Supported array-valued functions can be called from procedures with assumed-shape
 arguments. Function expansion waits for procedure association to supply the
 actual extents and CHARACTER lengths. This applies to named and defined-operator

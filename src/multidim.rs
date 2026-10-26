@@ -1363,6 +1363,27 @@ pub(crate) fn fixed_section_elements(e: &Expr, symbols: &HashMap<String,(TypeSpe
     Ok(Some(items))
 }
 
+// Select one element without expanding the section into a compile-time list.
+// Keep original-rank subscripts until the storage-flattening pass.
+pub(crate) fn fixed_section_element(e: &Expr, index: &Expr, symbols: &HashMap<String,(TypeSpec,Vec<Expr>)>) -> Result<Option<(i64,Expr)>> {
+    let (Expr::Call(name,args)|Expr::Index(name,args))=e else {return Ok(None)};
+    let Some((_,dims))=symbols.get(name) else {return Ok(None)};
+    if !args.iter().any(|e|triplet(e).is_some()) || symbols.contains_key(&format!("@axes:{name}")) || dims.len()!=args.len() {return Ok(None);}
+    let Ok(dims)=dims.iter().map(crate::parameters::integer_constant).collect::<Result<Vec<_>>>() else {return Ok(None)};
+    let (shape,view)=section_view(name,args,&dims)?;
+    let count=total(&shape)?;
+    // No element is read for an empty section; avoid dividing by a zero extent.
+    if count==0 {return Ok(Some((0,int(0))));}
+    let (Expr::Index(_,offset),_)=view_element(&view,index).unwrap() else {unreachable!()};
+    let mut ordinal=bin(BinOp::Sub,offset[0].clone(),int(1));
+    let mut indices=vec![];
+    for extent in dims {
+        indices.push(bin(BinOp::Add,Expr::Call("mod".into(),vec![ordinal.clone(),int(extent)]),int(1)));
+        ordinal=bin(BinOp::Div,ordinal,int(extent));
+    }
+    Ok(Some((count,Expr::Index(name.clone(),indices))))
+}
+
 pub(crate) fn fixed_actual_shape(e:&Expr,symbols:&HashMap<String,(TypeSpec,Vec<Expr>)>)->Result<Option<Vec<i64>>> {
     let shapes=symbols.iter().filter_map(|(name,(_,dims))| {
         if dims.is_empty() {return None;}
