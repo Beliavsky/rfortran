@@ -678,6 +678,12 @@ impl Lowerer {
                 self.expression(b, objects, prefix)?;
             }
             Expr::Un(_, a) => self.expression(a, objects, prefix)?,
+            Expr::Section { name, lower, upper, stride } => {
+                self.component(name, objects)?;
+                for bound in [lower, upper, stride].into_iter().flatten() {
+                    self.expression(bound, objects, prefix)?;
+                }
+            }
             Expr::Index(n, args) => {
                 self.component(n, objects)?;
                 for a in args {

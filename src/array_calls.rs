@@ -1615,7 +1615,7 @@ fn expand(
                         // the materializer below and need not have a fixed shape.
                         let expression_shape=crate::multidim::fixed_actual_shape(actual,&shapes).ok().flatten();
                         let (actual_kind,actual_dims,length) = if let Expr::Ident(a)=&captured {
-                            let (k,d)=shapes.get(a).context("undeclared array argument")?;
+                            let (k,d)=shapes.get(a).with_context(||format!("undeclared array argument `{a}` for dummy `{p}` in `{name}`"))?;
                             (k.clone(),d.clone(),crate::allocatables::length(a,&shapes))
                         } else {
                             if intent!="intent(in)" {bail!("writable array dummy `{p}` requires a whole-array actual argument");}

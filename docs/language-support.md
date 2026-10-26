@@ -2167,6 +2167,11 @@ buffered before destination writes to preserve overlapping and reversed sections
 scalar right-hand sides are evaluated once. See
 `python tests/test_large_section_assignments.py`.
 
+Calls with derived-type arguments are lowered inside section lower bounds,
+upper bounds, and strides, including sections used in derived constructors.
+`python tests/test_derived_section_bound_calls.py` checks these calls with
+allocatable components, empty/reversed sections and repeated assignments.
+
 Numeric and LOGICAL fixed-shape sections passed to specialized INTENT(IN)
 subroutine dummies are copied by runtime loops rather than per-element source
 expansion. This includes multidimensional columns, strided and reversed sections,
