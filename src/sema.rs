@@ -1668,6 +1668,17 @@ pub fn analyze_with_src(
                             settings,
                         );
                     }
+                    Stmt::SelectCase { expr, cases, default } => {
+                        walk_reads_in_expr(expr, read_vars);
+                        for branch in cases.iter().map(|case| &case.body).chain(default.iter()) {
+                            inner(
+                                branch, fname, is_function, declared_ret, local,
+                                fn_map, external_fn_ret, find_ident_span, errors,
+                                has_path, stderr, file, type_span_map, params,
+                                local_param_intent, assigned, read_vars, settings,
+                            );
+                        }
+                    }
                     Stmt::DoWhile { cond, body } => {
                         walk_reads_in_expr(cond, read_vars);
                         inner(

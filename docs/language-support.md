@@ -672,6 +672,12 @@ the surrounding scope's array descriptors. Run
 `python tests/test_select_case_calls.py` for interpreter/native O0/O2 checks
 with gfortran comparisons, including the reduced `xacv.f90` median call.
 
+Function-result assignments inside CASE and CASE DEFAULT branches are included
+in semantic checks, including nested blocks and selections. Assignment type
+checking also visits these branches. See
+`tests/programs/xselect_case_function_result.f90` and
+`tests/test_select_case_function_result.py`.
+
 ### ASSOCIATE
 
 ASSOCIATE replaces each associate name by its selector inside the block, so a
