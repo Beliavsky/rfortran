@@ -13,6 +13,13 @@ pub fn numeric_model(name: &str) -> bool {
 /// These inquiries describe a type, and do not evaluate the argument's value.
 pub fn model_value(name: &str, kind: &TypeSpec) -> Result<Expr> {
     let int = |n: i64| Expr::IntLit(n.to_string());
+    if name == "huge" {
+        if let TypeSpec::Integer(bytes) = kind {
+            let value=int(integer_huge(*bytes)?);
+            return Ok(Expr::Call("@integer_literal".into(),vec![value,int(i64::from(bytes.unwrap_or(4)))]));
+        }
+        if !matches!(kind,TypeSpec::Real|TypeSpec::DoublePrecision) {bail!("HUGE requires an INTEGER or REAL argument");}
+    }
     if let TypeSpec::Integer(bytes) = kind {
         if !matches!(name, "digits" | "radix" | "range" | "bit_size") {
             bail!("{} requires a REAL argument", name.to_ascii_uppercase());
@@ -44,6 +51,14 @@ pub fn model_value(name: &str, kind: &TypeSpec) -> Result<Expr> {
             if matches!(name,"digits" | "radix" | "range") { "an INTEGER or REAL" } else { "a REAL" }),
     };
     Ok(match name {
+        "huge" | "tiny" => {
+            let value=match (name,double) {
+                ("huge",true)=>f64::MAX,("huge",false)=>f32::MAX as f64,
+                (_,true)=>f64::MIN_POSITIVE,(_,false)=>f32::MIN_POSITIVE as f64,
+            };
+            let value=Expr::RealLit(value.to_string());
+            if double {Expr::Call("dble".into(),vec![value])} else {value}
+        }
         "epsilon" => {
             let value = Expr::RealLit(if double { f64::EPSILON } else { f32::EPSILON as f64 }.to_string());
             if double { Expr::Call("dble".into(), vec![value]) } else { value }
@@ -79,6 +94,12 @@ pub fn model_type(e: &Expr, lookup: &impl Fn(&str) -> Option<(TypeSpec,usize)>) 
             if let Some(kinds)=kinds.into_iter().collect::<Option<Vec<_>>>() {
                 Some(crate::bit_intrinsics::result_kind(name,&kinds)?)
             } else {None}
+        },
+        Expr::Call(n,a) if matches!(n.as_str(),"@packed_view"|"@matrix_view"|"@fixed_packed_view"|"@allocated_linear_element") && !a.is_empty() => model_type(&a[0],lookup)?,
+        Expr::Call(n,a) if matches!(n.as_str(),"huge"|"tiny") && lookup(n).is_none() && a.len()==1 => {
+            let kind=model_type(&a[0],lookup)?;
+            if let Some(kind)=&kind {model_value(n,kind)?;}
+            kind
         },
         Expr::Ident(n) => lookup(n).map(|(kind,_)|kind),
         Expr::Section {name,lower,upper,stride} => {

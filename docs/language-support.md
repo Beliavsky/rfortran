@@ -463,8 +463,13 @@ also accept typed scalar or array variables without reading their values.
 `KIND` reports declared integer kinds correctly, including `kind(huge(i8))`.
 INTEGER(16) HUGE is diagnosed rather than truncated; TINY still requires REAL.
 Run `python tests/test_integer_huge.py` for interpreter/native O0/O2 and gfortran
-comparison checks. General variable expressions as HUGE arguments and typed
-variable inquiries inside PARAMETER initializers remain outside this subset.
+comparison checks. Executable HUGE/TINY also accept supported numeric expressions
+and specialized array views, preserving kind without reading array elements or
+requiring nonempty storage. KIND of their results preserves the input kind.
+Related numeric-model inquiries also recognize these views. Run
+`python tests/test_array_model_inquiries.py` for empty/uninitialized array dummy
+and expression checks. Typed variable inquiries inside PARAMETER initializers
+remain outside this subset.
 
 `EPSILON`, `DIGITS`, `RADIX`, `PRECISION`, `RANGE`, `MINEXPONENT`, and
 `MAXEXPONENT` support REAL kinds 4 and 8. `DIGITS`, `RADIX`, and `RANGE` also

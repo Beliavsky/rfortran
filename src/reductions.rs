@@ -801,12 +801,12 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             symbols.insert(temp.clone(),(kind,vec![]));
             *e = Expr::Ident(temp);
         }
-        Expr::Call(name,args) if name == "kind" && args.len() == 1 && !matches!(&args[0],Expr::Ident(_)) && !matches!(&args[0],Expr::Call(n,_) if n == "huge") => {
+        Expr::Call(name,args) if name == "kind" && args.len() == 1 && !matches!(&args[0],Expr::Ident(_)) => {
             let argument = match &args[0] {
                 Expr::Call(n,inner) if matches!(n.as_str(),"sum" | "product" | "minval" | "maxval") && !inner.is_empty() => &inner[0],
                 other => other,
             };
-            let (_,_,kind) = element(argument,&int(1),symbols)?;
+            let kind=if let Some(kind)=crate::inquiries::model_type(argument,&|n|symbols.get(n).map(|(k,d)|(k.clone(),d.len())))? {kind} else {element(argument,&int(1),symbols)?.2};
             *e = int(match kind { TypeSpec::Integer(k) => k.unwrap_or(4) as i64, TypeSpec::DoublePrecision => 8, _ => 4 });
         }
         Expr::Call(name, args) if name == "@array_constructor" => {
@@ -1195,11 +1195,12 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             };
             *e = int(length as i64);
         }
-        Expr::Call(name, args) if crate::inquiries::numeric_model(name) && !symbols.contains_key(name) && !symbols.procedures.contains(name) => {
+        Expr::Call(name, args) if (crate::inquiries::numeric_model(name) || matches!(name.as_str(),"huge"|"tiny")) && !symbols.contains_key(name) && !symbols.procedures.contains(name) => {
             let [arg] = args.as_slice() else { bail!("{name} expects one argument"); };
             let kind=crate::inquiries::model_type(arg,&|n|symbols.get(n).map(|(k,d)|(k.clone(),d.len())))?
                 .with_context(||format!("{name}: unsupported or undefined inquiry argument type"))?;
             *e=crate::inquiries::model_value(name,&kind)?;
+            return lower_expr_impl(e,symbols,prefix,serial,expand_elementals);
         }
         // SHAPE, LBOUND and UBOUND of an array of known shape, by keyword or
         // position, as array actual arguments.
@@ -1235,42 +1236,12 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             }
             for a in args.iter_mut() { lower_expr_impl(a, symbols, prefix, serial, expand_elementals)?; }
         }
-        Expr::Call(name, args) if matches!(name.as_str(), "tiny" | "huge" | "kind" | "size") => {
-            if name == "kind" && args.len() == 1 {
-                if let Expr::Call(inquiry, inner) = &args[0] {
-                    if inquiry == "huge" {
-                        let [Expr::Ident(n)] = inner.as_slice() else { bail!("HUGE currently requires a typed variable or supported literal"); };
-                        let (kind, _) = symbols.get(n).context("undefined inquiry argument")?;
-                        match kind {
-                            TypeSpec::Integer(bytes) => { crate::inquiries::integer_huge(*bytes)?; },
-                            TypeSpec::Real | TypeSpec::DoublePrecision => {},
-                            _ => bail!("HUGE requires an INTEGER or REAL argument"),
-                        }
-                        args[0] = Expr::Ident(n.clone());
-                    }
-                }
-            }
+        Expr::Call(name, args) if matches!(name.as_str(), "kind" | "size") => {
             let [Expr::Ident(n)] = args.as_slice() else { bail!("{name} currently requires a typed variable or supported literal"); };
             let (kind,dims)=symbols.get(n).context("undefined inquiry argument")?;
-            if name == "huge" {
-                if let TypeSpec::Integer(bytes) = kind {
-                    let value = crate::inquiries::integer_huge(*bytes)?;
-                    let kind = kind.clone();
-                    *serial += 1;
-                    let temp = format!("@integer_huge_{serial}");
-                    prefix.push(Stmt::VarDecl { kind: kind.clone(), names: vec![temp.clone()] });
-                    prefix.push(Stmt::Assign { name: temp.clone(), value: int(value) });
-                    symbols.insert(temp.clone(), (kind, vec![]));
-                    *e = Expr::Ident(temp);
-                    return Ok(());
-                }
-            }
-            let double=matches!(kind,TypeSpec::DoublePrecision);
-            *e=match name.as_str() {
-                "size" => { if dims.len()!=1 {bail!("SIZE requires a rank-one array");} dims[0].clone() },
-                "kind"=>int(match kind { TypeSpec::Integer(bytes) => i64::from(bytes.unwrap_or(4)), _ => if double {8} else {4} }),
-                _=> { if !matches!(kind,TypeSpec::Real|TypeSpec::DoublePrecision) { if name=="huge" {bail!("HUGE requires an INTEGER or REAL argument");} bail!("{name} requires a REAL argument");} let v=if name=="tiny" {if double {f64::MIN_POSITIVE} else {f32::MIN_POSITIVE as f64}} else {if double {f64::MAX} else {f32::MAX as f64}}; let lit=Expr::RealLit(v.to_string()); if double {Expr::Call("dble".into(),vec![lit])} else {lit} }
-            };
+            *e=if name=="size" {
+                if dims.len()!=1 {bail!("SIZE requires a rank-one array");} dims[0].clone()
+            } else {int(match kind {TypeSpec::Integer(bytes)=>i64::from(bytes.unwrap_or(4)),TypeSpec::DoublePrecision=>8,_=>4})};
         }
         Expr::Call(tag, _) if matches!(tag.as_str(),"@matrix_view" | "@packed_view") => {},
         Expr::Call(name, args) | Expr::Index(name, args) => {
