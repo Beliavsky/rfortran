@@ -1450,6 +1450,54 @@ with unset elements; reads remain checked per element. Module allocations persis
 across procedure calls. Heap-backed procedure/BLOCK locals and expression buffers
 are released on normal scope exit, including RETURN, EXIT and CYCLE.
 
+### ALLOCATABLE scalars
+
+Intrinsic allocatable scalar locals and module variables support INTEGER,
+REAL, LOGICAL, COMPLEX, and fixed-length CHARACTER storage. Explicit allocation,
+`ALLOCATED`, deallocation, allocation on intrinsic assignment, `MOVE_ALLOC`,
+and the supported `SOURCE=`, `MOLD=`, `STAT=` and `ERRMSG=` options reuse the
+existing allocation descriptors. Scalar values retain their original type,
+kind and rank during generic resolution and when passed to ordinary scalar
+dummy arguments. Supported numeric/LOGICAL pointer association also works with scalar
+ALLOCATABLE TARGETs.
+
+```fortran
+integer, allocatable :: x
+print *, allocated(x)       ! F
+allocate(x)
+print *, allocated(x)       ! T; x's value is still undefined
+x = 42
+print *, x
+! Releasing storage also releases its initialization state.
+deallocate(x)
+x = 17                     ! Intrinsic assignment allocates x again.
+print *, allocated(x), x    ! T 17
+```
+
+Allocation status and value initialization are checked separately. A definite
+read before allocation or initialization is rejected at compile time. When
+control flow makes the state uncertain, native execution and the interpreter
+check it at runtime. Reallocating after DEALLOCATE does not restore an old
+value. Local storage is cleaned up on procedure exit; module storage persists.
+Type inquiries such as KIND, HUGE and DIGITS do not read the stored value.
+
+SOURCE is evaluated once before any objects in that ALLOCATE statement become
+allocated. MOLD supplies type information without reading its value, including
+when the mold is an unallocated scalar. SOURCE/MOLD scalar rank, type and kind
+are checked when known; fixed CHARACTER lengths must match when determinable.
+Fixed-length CHARACTER assignment pads or truncates to the declared length;
+substring reads and writes are supported. Deferred-length CHARACTER scalars
+continue to use the existing bounded string implementation and its limits.
+
+This is initial scalar support. Scalar ALLOCATABLE dummy arguments and function
+results, scalar derived-type allocation/components, explicit SAVE on intrinsic
+allocatable scalars, and allocatable scalar DO control variables remain
+unsupported. Existing host-association restrictions for allocatable storage
+also remain. Ordinary scalar dummy arguments do not gain ALLOCATABLE semantics.
+
+Run `python tests/test_allocatable_scalars.py` after building the compiler, or
+try `rf.bat xalloc_scalar.f90 --run` for the allocation-state example above.
+
 ### ALLOCATABLE dummy arguments
 
 Numeric and LOGICAL ALLOCATABLE subroutine dummies support ranks 1 through 15
@@ -2863,6 +2911,59 @@ the existing limits of
 The native formatting runtime is written in Rust, built with the compiler,
 and embedded in `rfort`; no separate runtime installation is needed. Use
 `rfort link` when linking emitted objects so it supplies this runtime.
+
+### NAMELIST
+
+NAMELIST declarations and external `READ(unit,nml=group)` /
+`WRITE(unit,nml=group)` support intrinsic INTEGER, REAL, LOGICAL, COMPLEX and
+fixed-length CHARACTER scalars and fixed-size arrays. A visible group may also
+occupy the positional format slot, as in `write(unit,group)`. Use explicit
+`NML=group` when supplying status or message controls. Repeated NAMELIST
+statements extend a group. Groups declared in a host scope can be used by its
+internal procedures. `UNIT`, `NML`, `IOSTAT` and `IOMSG` keywords can be reordered.
+
+```fortran
+integer :: n, unit, status
+real :: values(3)
+character(100) :: message
+namelist /settings/ n, values
+n = 3
+values = [1.0, 2.0, 3.0]
+open(newunit=unit, status="scratch")
+write(unit, nml=settings)
+rewind(unit)
+read(unit, nml=settings, iostat=status, iomsg=message)
+close(unit)
+```
+
+Input recognizes case-insensitive group/member names, `!` comments, quoted
+strings with doubled quotes, multiline values, repetition counts and null
+values. Omitted members and null array entries retain their previous values
+and initialization state. Array values follow Fortran element order; input
+such as `values(2)=4.0` assigns the selected element. Element designators
+support ranks through 15, with rank and bounds checks. Ordinary CHARACTER
+scalar variables can also serve as internal input files. Unknown names, bad
+conversions, invalid designators, array overruns and disconnected units report
+positive IOSTAT values; end of file reports a negative value. IOMSG is defined
+on an error and left unchanged on success. An error without IOSTAT stops
+execution. These behaviors are shared by native execution and the interpreter.
+
+Within the input limits below, output uses quoted CHARACTER values and enough
+REAL digits for round trips;
+its whitespace and record layout need not match another compiler's output.
+Tests read rfort output with gfortran and gfortran output with rfort.
+
+This is partial NAMELIST support. Members currently require explicit intrinsic
+declarations. Internal output, array sections/CHARACTER
+substrings in input designators, ALLOCATABLE/POINTER members, derived-type
+objects and USE association of group names remain unsupported. Controls other
+than UNIT/NML/IOSTAT/IOMSG (including DELIM, ERR and END) are rejected. The
+scanner currently accepts non-NUL ASCII input and limits each scalar token to
+4096 bytes, reporting an error rather than truncating it. CHARACTER output
+currently requires a literal declared length no greater than 4000.
+
+Run `python tests/test_namelist.py` after building the compiler. The example
+`xnamelist.f90` demonstrates a scratch-file round trip.
 
 ### List-directed output
 

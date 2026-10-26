@@ -83,6 +83,9 @@ pub(crate) fn read_controls(
     controls: Vec<Expr>,
     items: Vec<Expr>,
 ) -> std::result::Result<Stmt, &'static str> {
+    if controls.iter().any(|e| matches!(e,Expr::Call(n,_) if n=="@read_control:nml")) {
+        return crate::namelists::controls(controls, items, true);
+    }
     let mut unit = None;
     let mut format = None;
     let mut option = None;

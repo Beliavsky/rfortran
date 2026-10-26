@@ -40,6 +40,9 @@ mod sections;
 mod reductions;
 mod initialized;
 mod input;
+mod namelists;
+mod allocatable_scalars;
+mod namelist_input;
 mod unformatted;
 mod storage_size;
 mod input_items;
@@ -400,6 +403,7 @@ fn lower_program_body(
     origins: Option<&[source_diagnostics::SourceOrigin]>,
 ) -> Result<ast::Program> {
     (|| {
+        let program = namelists::resolve(program)?;
         let program = c_pointers::prepare(program)?;
         let program = c_interop::prepare(program)?;
         let program = compile_profile::run("storage_size::resolve", || storage_size::resolve(program))?;

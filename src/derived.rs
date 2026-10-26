@@ -1524,6 +1524,7 @@ fn resolve_types(mut program: Program) -> Result<Program> {
     program = crate::named_arguments::resolve(program, true)?;
     program = crate::intrinsic_rewrites::resolve(program)?;
     program = crate::matmul_runtime::resolve(program)?;
+    program = crate::allocatable_scalars::resolve(program)?;
     program = crate::complex::resolve(program)?;
     program = crate::derived_arrays::resolve(program)?;
     let mut lower = Lowerer {

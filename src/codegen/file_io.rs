@@ -105,7 +105,7 @@ fn unit_index(b: &mut FunctionBuilder, unit:ir::Value)->(ir::Value,ir::Value) {
     let mapped=b.ins().iadd_imm(negative,1024);
     (b.ins().select(positive,unit,mapped),b.ins().bor(positive,valid_negative))
 }
-fn table(b: &mut FunctionBuilder,module:&mut ObjectModule,ptr:ir::Type,name:&str)->Result<ir::Value> {
+pub(super) fn table(b: &mut FunctionBuilder,module:&mut ObjectModule,ptr:ir::Type,name:&str)->Result<ir::Value> {
     let id=module.declare_data(name,Linkage::Local,true,false)?;
     let global=module.declare_data_in_func(id,b.func);
     Ok(b.ins().global_value(ptr,global))

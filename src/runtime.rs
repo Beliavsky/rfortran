@@ -46,6 +46,8 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
         static OUTPUT_SERIAL: std::cell::Cell<i64> = const {std::cell::Cell::new(0)};
     }
     thread_local! {static INPUT_LISTS:std::cell::RefCell<HashMap<i64,(i64,crate::list_input::Session,Option<(Vec<u8>,usize)>)>>=std::cell::RefCell::new(HashMap::new());}
+    thread_local! {static NAMELISTS:std::cell::RefCell<HashMap<i64,(i64,crate::namelist_input::Session,Option<(Vec<u8>,usize)>)>>=std::cell::RefCell::new(HashMap::new());}
+    NAMELISTS.with(|lists|lists.borrow_mut().clear());
     INPUT_LISTS.with(|lists|lists.borrow_mut().clear());
     OUTPUT_LISTS.with(|lists|lists.borrow_mut().clear());
     OUTPUT_SERIAL.with(|serial|serial.set(0));
@@ -1563,6 +1565,37 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         let unit=eval_expr(&args[0],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
                         let path=match args.get(1) {Some(Expr::Str(path))=>Some(path.as_str()),_=>None};
                         io_result(FILES.with(|files| files.borrow_mut().operation(name,unit,path)));
+                        idx+=1;continue;
+                    }
+                    if matches!(name.as_str(),"@nml_begin"|"@nml_internal_begin"|"@nml_next"|"@nml_end"|"@nml_record"|"@nml_layout") {
+                        let fr=call_stack.last().unwrap().clone();
+                        let eval=|e:&Expr,stack:&mut Vec<CallFrame>|eval_expr(e,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,stack);
+                        if name=="@nml_begin" || name=="@nml_internal_begin" {
+                            let [Expr::Ident(handle),Expr::Ident(status),unit,group]=args.as_slice() else {unreachable!()};
+                            let value=eval(unit,call_stack);let group=eval(group,call_stack).3.unwrap();
+                            let internal=name=="@nml_internal_begin";let unit=if internal {0}else{value.0.unwrap()};
+                            let source=if internal {Some((value.3.unwrap().into_bytes(),0usize))}else{None};
+                            let h=OUTPUT_SERIAL.with(|s|{let n=s.get()+1;s.set(n);n});
+                            NAMELISTS.with(|lists|lists.borrow_mut().insert(h,(unit,crate::namelist_input::Session::new(group.as_bytes()),source)));
+                            let fr=call_stack.last_mut().unwrap();fr.env_int.insert(handle.clone(),h);fr.env_int.insert(status.clone(),0);
+                        }else if name=="@nml_layout" {
+                            let Expr::Ident(status)=&args[0] else {unreachable!()};let Expr::Ident(index)=&args[1] else {unreachable!()};
+                            let values=args.iter().map(|e|eval(e,call_stack).0.unwrap()).collect::<Vec<_>>();let mut item=values[1];
+                            let code=NAMELISTS.with(|lists|lists.borrow_mut().get_mut(&values[2]).unwrap().1.layout(&mut item,values[0],values[3],values[4],values[5],values[6]));
+                            let fr=call_stack.last_mut().unwrap();fr.env_int.insert(status.clone(),code);fr.env_int.insert(index.clone(),item);
+                        }else if name=="@nml_next" {
+                            let [Expr::Ident(status),Expr::Ident(index),Expr::Ident(field),Expr::Ident(token),handle]=args.as_slice() else {unreachable!()};
+                            let h=eval(handle,call_stack).0.unwrap();let mut f=vec![b' ';128];let mut t=vec![b' ';4096];let mut index_value=0;
+                            let code=NAMELISTS.with(|lists|{let mut lists=lists.borrow_mut();let (unit,session,source)=lists.get_mut(&h).unwrap();FILES.with(|files|session.next(&mut f,&mut t,&mut index_value,||if let Some((text,offset))=source {let c=text.get(*offset).copied();*offset+=usize::from(c.is_some());Ok(c)}else{files.borrow_mut().input_byte(*unit)}))});
+                            let fr=call_stack.last_mut().unwrap();fr.env_int.insert(status.clone(),code);fr.env_int.insert(index.clone(),index_value);
+                            fr.env_str.insert(field.clone(),String::from_utf8(f).unwrap());fr.env_str.insert(token.clone(),String::from_utf8(t).unwrap());
+                        }else if name=="@nml_end" {
+                            let h=eval(&args[0],call_stack).0.unwrap();NAMELISTS.with(|lists|lists.borrow_mut().remove(&h));
+                        }else {
+                            let Expr::Ident(status)=&args[0] else {unreachable!()};let unit=eval(&args[1],call_stack).0.unwrap();let text=eval(&args[2],call_stack).3.unwrap();
+                            let code=if unit==6 {use std::io::Write;let mut out=std::io::stdout().lock();i64::from(writeln!(out,"{text}").and_then(|_|out.flush()).is_err())}else{FILES.with(|files|i64::from(files.borrow_mut().write_record(unit,&text).is_err()))};
+                            call_stack.last_mut().unwrap().env_int.insert(status.clone(),code);
+                        }
                         idx+=1;continue;
                     }
                     if name=="@list_read_begin" || name=="@list_read_internal_begin" {

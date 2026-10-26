@@ -748,6 +748,14 @@ impl Checker<'_> {
                     }
                 }
                 Stmt::CallSub { name, args } => {
+                    if matches!(name.as_str(),"@namelist_read"|"@namelist_write") {
+                        if matches!(args.get(3),Some(Expr::Ident(_))) {self.feature("iomsg",offset);}
+                        if name=="@namelist_read" && matches!(args.first(),Some(Expr::Ident(unit)) if body.iter().any(|s|match s {
+                            Stmt::VarDecl{kind:TypeSpec::Character(_)|TypeSpec::CharacterLength(_),names}=>names.contains(unit),
+                            Stmt::InitializedDecl{kind:TypeSpec::Character(_)|TypeSpec::CharacterLength(_),entities,..}=>entities.iter().any(|(n,_)|n==unit),
+                            _=>false,
+                        })) {self.require("internal NAMELIST input",2003,offset);}
+                    }
                     if self.c_pointer_names.contains(name) && (args.len()>3 || args.iter().any(|a|crate::named_arguments::keyword(a).is_some_and(|(k,_)|k=="lower"))) {
                         self.require("C_F_POINTER LOWER argument",2023,offset);
                     }

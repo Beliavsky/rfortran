@@ -2744,6 +2744,56 @@ fn gen_stmts(
                     let address=storage_addr(b,ptr_ty,ints[dest]);b.ins().store(MemFlags::new(),handle,address,0);
                     let address=storage_addr(b,ptr_ty,ints[status]);b.ins().store(MemFlags::new(),code,address,0);continue;
                 }
+                if matches!(name.as_str(),"@nml_begin"|"@nml_internal_begin"|"@nml_next"|"@nml_end"|"@nml_record"|"@nml_layout") {
+                    if name=="@nml_begin" || name=="@nml_internal_begin" {
+                        let [IExpr::Ident(handle),IExpr::Ident(status),unit,group]=args.as_slice() else {anyhow::bail!("invalid NAMELIST begin");};
+                        let group=characters::view(module,b,ptr_ty,dc,chars,ints,group)?;
+                        let zero=b.ins().iconst(ptr_ty,0);
+                        let (file,source,length,code)=if name=="@nml_internal_begin" {
+                            let view=characters::view(module,b,ptr_ty,dc,chars,ints,unit)?;(zero,view.address,view.length,zero)
+                        }else{
+                            let unit=eval_expr(b,ex,ptr_ty,unit,ints,reals,bools,func_meta);let unit=to_i64(b,unit);
+                            let (file,code)=file_io::read_handle(module,b,ptr_ty,unit)?;(file,zero,zero,code)
+                        };
+                        let okay=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,code,0);
+                        let create=b.create_block();let done=b.create_block();b.append_block_param(done,ptr_ty);b.append_block_param(done,types::I64);
+                        b.ins().brif(okay,create,&[],done,&[zero.into(),code.into()]);b.switch_to_block(create);b.seal_block(create);
+                        let h=file_io::call(module,b,"rfort_nml_begin",&[file,source,length,group.address,group.length],ptr_ty)?;
+                        let failed=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,h,0);let failed=b.ins().uextend(types::I64,failed);
+                        b.ins().jump(done,&[h.into(),failed.into()]);b.switch_to_block(done);b.seal_block(done);
+                        let h=b.block_params(done)[0];let code=b.block_params(done)[1];
+                        let address=storage_addr(b,ptr_ty,ints[handle]);b.ins().store(MemFlags::new(),h,address,0);
+                        let address=storage_addr(b,ptr_ty,ints[status]);b.ins().store(MemFlags::new(),code,address,0);
+                    }else if name=="@nml_layout" {
+                        let IExpr::Ident(status)=&args[0] else {unreachable!()};let IExpr::Ident(index)=&args[1] else {unreachable!()};
+                        let address=storage_addr(b,ptr_ty,ints[index]);
+                        let h=eval_expr(b,ex,ptr_ty,&args[2],ints,reals,bools,func_meta);let h=to_i64(b,h);
+                        let code=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);let code=to_i64(b,code);
+                        let mut values=vec![h,address,code];
+                        for e in &args[3..] {let value=eval_expr(b,ex,ptr_ty,e,ints,reals,bools,func_meta);values.push(to_i64(b,value));}
+                        let code=file_io::call(module,b,"rfort_nml_layout",&values,types::I64)?;
+                        let address=storage_addr(b,ptr_ty,ints[status]);b.ins().store(MemFlags::new(),code,address,0);
+                    }else if name=="@nml_next" {
+                        let [IExpr::Ident(status),IExpr::Ident(index),field,token,handle]=args.as_slice() else {anyhow::bail!("invalid NAMELIST next");};
+                        let h=eval_expr(b,ex,ptr_ty,handle,ints,reals,bools,func_meta);let h=to_i64(b,h);
+                        let index=storage_addr(b,ptr_ty,ints[index]);
+                        let field=characters::view(module,b,ptr_ty,dc,chars,ints,field)?;
+                        let token=characters::view(module,b,ptr_ty,dc,chars,ints,token)?;
+                        let code=file_io::call(module,b,"rfort_nml_next",&[h,index,field.address,field.length,token.address,token.length],types::I64)?;
+                        let address=storage_addr(b,ptr_ty,ints[status]);b.ins().store(MemFlags::new(),code,address,0);
+                    }else if name=="@nml_end" {
+                        let h=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);let h=to_i64(b,h);
+                        file_io::call(module,b,"rfort_nml_end",&[h],types::I64)?;
+                    }else{
+                        let IExpr::Ident(status)=&args[0] else {anyhow::bail!("invalid NAMELIST output status");};
+                        let unit=eval_expr(b,ex,ptr_ty,&args[1],ints,reals,bools,func_meta);let unit=to_i64(b,unit);
+                        let view=characters::view(module,b,ptr_ty,dc,chars,ints,&args[2])?;
+                        let slots=file_io::table(b,module,ptr_ty,".rfort.file_units")?;
+                        let code=file_io::call(module,b,"rfort_nml_record",&[slots,unit,view.address,view.length],types::I64)?;
+                        let address=storage_addr(b,ptr_ty,ints[status]);b.ins().store(MemFlags::new(),code,address,0);
+                    }
+                    continue;
+                }
                 if name=="@list_read_complex_next" {
                     let [IExpr::Ident(status),IExpr::Ident(re),IExpr::Ident(im),handle,width]=args.as_slice() else {anyhow::bail!("invalid COMPLEX READ");};
                     let h=eval_expr(b,ex,ptr_ty,handle,ints,reals,bools,func_meta);let h=to_i64(b,h);

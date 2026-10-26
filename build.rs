@@ -3,7 +3,7 @@ fn main() {
     println!("cargo:rerun-if-changed=src/fortran.lalrpop");
     println!("cargo:rerun-if-changed=build.rs");
     lalrpop::process_root().unwrap();
-    for file in ["src/native_format.rs", "src/c_descriptor.rs", "src/timing.rs", "src/calendar.rs", "src/environment.rs", "src/format_spec.rs", "src/record_input.rs", "src/list_input.rs", "src/character_input.rs", "src/file_inquiry.rs"] {
+    for file in ["src/native_format.rs", "src/c_descriptor.rs", "src/timing.rs", "src/calendar.rs", "src/environment.rs", "src/format_spec.rs", "src/record_input.rs", "src/list_input.rs", "src/namelist_input.rs", "src/namelist_native.rs", "src/character_input.rs", "src/file_inquiry.rs"] {
         println!("cargo:rerun-if-changed={file}");
     }
     let out =

@@ -1415,6 +1415,7 @@ pub fn lex(input: &str) -> Vec<Token> {
             tokens[index].kind = TokenKind::AttrStatement(word);
         }
     }
+    crate::namelists::tokens(&mut tokens, input);
     crate::c_interop::binding_tokens(&mut tokens, input);
     procedure_declarations(&mut tokens, input);
     // Distinct name tokens keep optional END DO names and named transfers from

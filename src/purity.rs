@@ -149,7 +149,7 @@ pub fn validate(program: &Program) -> Result<()> {
                     }
                     for arg in &args[1..] {expression(arg,&locals,known)?;}
                 }
-                Stmt::CallSub {name,..} if matches!(name.as_str(), "@formatted_read" | "@formatted_read_status" | "@read_record" | "@read_record_status") || name.starts_with("@io_") || name.starts_with("@file_") => bail!("PURE procedure cannot perform external I/O"),
+                Stmt::CallSub {name,..} if matches!(name.as_str(), "@formatted_read" | "@formatted_read_status" | "@read_record" | "@read_record_status" | "@nml_begin" | "@nml_record") || name.starts_with("@io_") || name.starts_with("@file_") => bail!("PURE procedure cannot perform external I/O"),
                 Stmt::CallSub {name,args} if name == "@where" || name == "@elsewhere" => {
                     for e in args { expression(e,&locals,known)?; }
                 }

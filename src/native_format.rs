@@ -37,6 +37,8 @@ mod environment;
 mod format_spec;
 mod record_input;
 mod list_input;
+mod namelist_input;
+mod namelist_native;
 mod character_input;
 mod file_inquiry;
 use format_spec::GroupParser;

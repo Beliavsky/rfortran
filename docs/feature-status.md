@@ -209,7 +209,7 @@ Found on 2026-10-21, fixed:
 | [ALLOCATABLE arrays with runtime bounds](language-support.md#runtime-allocation) | F90 | ✅ | Numeric and LOGICAL; CHARACTER arrays use bounded storage | test_runtime_allocatables.py, test_heap_allocations.py |
 | [ALLOCATABLE dummy arguments](language-support.md#allocatable-dummy-arguments) | F2003 | 🟡 | Numeric/LOGICAL subroutine and function descriptors retain allocation status and bounds. CHARACTER calls support runtime descriptors, including local outputs with bounded input arrays; bounded CHARACTER function results and optional function dummies retain restrictions | test_allocatable_dummies.py, test_allocatable_function_dummies.py, test_character_allocatable_dummies.py |
 | [ALLOCATABLE function results](language-support.md#allocatable-function-results) | F2003 | 🟡 | Assigning a result to an unallocated ALLOCATABLE array is rejected | test_numeric_allocatable_results.py |
-| ALLOCATABLE scalars | F2003 | ❌ |  |  |
+| [ALLOCATABLE scalars](language-support.md#allocatable-scalars) | F2003 | 🟡 | Intrinsic local and module variables: explicit allocation, allocation on assignment, allocation inquiries/options, MOVE_ALLOC, and separate allocation/initialization checks. Scalar ALLOCATABLE dummies/results, explicit SAVE and DO control variables remain unsupported; deferred CHARACTER retains its existing limits | test_allocatable_scalars.py |
 | [Reallocation on assignment](language-support.md#reallocation-on-assignment) | F2003 | 🟡 | CHARACTER arrays rank one only; a multidimensional expression cannot mix fixed-size and runtime-sized arrays | test_allocatable_reallocation.py, test_runtime_allocatables.py |
 | [MOVE_ALLOC](language-support.md#move_alloc-and-allocate-options) | F2003 | ✅ | Copies the data | test_allocation_options.py |
 | [ALLOCATE with SOURCE=, MOLD=, STAT=, ERRMSG=](language-support.md#move_alloc-and-allocate-options) | Mixed | ✅ | STAT: F90; SOURCE and ERRMSG: F2003; MOLD: F2008. | test_allocation_options.py |
@@ -319,7 +319,7 @@ current limits.
 | [INQUIRE](language-support.md#file-and-standard-input) | F77 or earlier; ACTION F90; IOMSG F2003 | 🟡 | UNIT/FILE with EXIST, OPENED, NAMED, NUMBER, NAME, ACTION, IOSTAT, IOMSG and ERR; other properties and IOLENGTH pending | test_inquire.py |
 | [Unformatted stream access](language-support.md#file-and-standard-input) | F2003 | 🟡 | READ and WRITE of INTEGER, REAL, LOGICAL, CHARACTER and derived-type data, POS= on READ, IOSTAT; not COMPLEX | test_stream_io.py |
 | Unformatted sequential and direct access | F77 or earlier | ❌ |  |  |
-| NAMELIST | F90 | ❌ |  |  |
+| [NAMELIST](language-support.md#namelist) | Mixed | 🟡 | External NAMELIST: F90; internal input and IOMSG: F2003. Intrinsic scalars/fixed arrays, element designators, partial updates, repetitions/nulls, IOSTAT/IOMSG. Internal output, sections, allocatable/pointer/derived objects and USE-associated groups remain unsupported | test_namelist.py |
 | [Defined derived-type I/O](language-support.md#file-and-standard-input) | F2003 | ❌ | Defined derived-type I/O: F2003; default component-wise derived-type I/O: F90 (covered above). |  |
 
 ## Intrinsic procedures

@@ -341,6 +341,15 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                     let Expr::Ident(dest)=arg else {unreachable!()};write(dest,None,env,&mut after,serial);
                 }
             }
+            Stmt::CallSub{name,args} if name=="@nml_layout" => {
+                for arg in args.iter() {read(arg,env,&mut before,serial)?;}
+                for arg in &args[..2] {let Expr::Ident(dest)=arg else {unreachable!()};write(dest,None,env,&mut after,serial);}
+            }
+            Stmt::CallSub{name,args} if matches!(name.as_str(),"@nml_begin"|"@nml_internal_begin"|"@nml_next"|"@nml_record") => {
+                let count=if name=="@nml_next" {4}else if name=="@nml_record" {1}else{2};
+                for arg in &args[count..] {read(arg,env,&mut before,serial)?;}
+                for arg in &args[..count] {let Expr::Ident(dest)=arg else {unreachable!()};write(dest,None,env,&mut after,serial);}
+            }
             Stmt::CallSub{name,args} if name=="@list_read_complex_next" => {
                 for arg in &args[3..] {read(arg,env,&mut before,serial)?;}
                 for arg in &args[..3] {let Expr::Ident(dest)=arg else {unreachable!()};write(dest,None,env,&mut after,serial);}

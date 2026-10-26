@@ -1590,7 +1590,7 @@ impl Lower {
                                 for intent in attributes.iter().filter(|a| {
                                     matches!(
                                         a.as_str(),
-                                        "allocatable" | "optional" | "pointer" | "target"
+                                        "allocatable" | "optional" | "pointer" | "target" | "@scalar_heap"
                                     ) || a.starts_with("intent(")
                                 }) {
                                     prefix.push(Stmt::DummyIntent {
@@ -1672,6 +1672,17 @@ impl Lower {
                             } else {
                                 prefix.push(Stmt::Assign {name:target,value});
                             }
+                        }
+                        return Ok(());
+                    }
+                    Stmt::CallSub{name,args} if name==crate::initialized::COPY_INITIALIZATION
+                        && matches!(args.as_slice(),[Expr::Ident(to),Expr::Ident(from)] if objects.get(to).is_some_and(|o|!o.dims.is_empty()) && objects.get(from).is_some_and(|o|!o.dims.is_empty())) => {
+                        let [Expr::Ident(to),Expr::Ident(from)]=args.as_slice() else {unreachable!()};
+                        let target=&objects[to];let source=&objects[from];
+                        if target.ty!=source.ty {bail!("initialization transfer requires matching derived types");}
+                        for field in self.fields(&target.ty)? {
+                            if field.heap.is_some() {bail!("initialization transfer of owned array components is not yet supported");}
+                            prefix.push(Stmt::CallSub{name:name.clone(),args:vec![Expr::Ident(storage(to,&field.name)),Expr::Ident(storage(from,&field.name))]});
                         }
                         return Ok(());
                     }

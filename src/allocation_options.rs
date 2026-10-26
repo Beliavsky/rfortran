@@ -69,7 +69,7 @@ fn status(stat: Option<&Expr>, errmsg: Option<&Expr>, code: i64, message: &str) 
     Ok(out)
 }
 
-fn allocate(args: &[Expr], ranks: &Ranks) -> Result<Option<Vec<Stmt>>> {
+pub(crate) fn allocate(args: &[Expr], ranks: &Ranks) -> Result<Option<Vec<Stmt>>> {
     let mut objects = vec![];
     let (mut stat, mut errmsg, mut source, mut mold) = (None, None, None, None);
     for a in args {
@@ -153,7 +153,7 @@ fn deallocate(args: &[Expr], ranks: &Ranks) -> Result<Option<Vec<Stmt>>> {
     Ok(Some(vec![when(any(unallocated), status(stat, errmsg, 1, "array is not allocated")?, Some(body))]))
 }
 
-fn move_alloc(args: &[Expr], ranks: &Ranks) -> Result<Vec<Stmt>> {
+pub(crate) fn move_alloc(args: &[Expr], ranks: &Ranks) -> Result<Vec<Stmt>> {
     let mut from = None;
     let mut to = None;
     for (i, a) in args.iter().enumerate() {
