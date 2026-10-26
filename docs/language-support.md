@@ -1967,6 +1967,29 @@ Fortran 2018 assumed-shape C descriptors:
 - Explicit interfaces to imported C functions/subroutines, with local USE or
   IMPORT declarations for numeric kinds; module procedure exports and module
   dependencies compiled separately using `.rmod` interfaces.
+- Opaque scalar `TYPE(C_PTR)` variables, named constants initialized to
+  `C_NULL_PTR`, assignment, procedure arguments and function results.
+  `BIND(C)` pointer arguments support both `VALUE` (`void *`) and by-reference
+  (`void **`) passing. `C_ASSOCIATED` accepts one or two C pointers; two null
+  pointers are not associated. Intrinsic keywords, USE renaming, re-exports and
+  host association are supported. Pointer arithmetic, direct comparisons and
+  numeric assignment conversions are rejected.
+- `C_F_POINTER(CPTR, FPTR [, SHAPE, LOWER])` associates numeric Fortran pointers
+  with C storage, including scalars and array ranks 1–15. SHAPE and LOWER can be
+  rank-one INTEGER array expressions or variables; SHAPE is required exactly
+  when FPTR is an array. LOWER is a Fortran 2023 feature and defaults to all ones.
+  Null CPTR disassociates FPTR. Zero extents are supported, and shape lengths,
+  negative extents and size overflow are checked. Association borrows C storage
+  without copying it or taking ownership; the C owner controls its lifetime.
+- `C_LOC(X)` for initialized, contiguous numeric TARGET or associated POINTER
+  storage. Private Fortran storage initially requires `INTEGER(C_INT64_T)` or
+  `REAL(C_DOUBLE)`, whose eight-byte representation matches C. A numeric pointer
+  associated by C_F_POINTER can expose any supported C numeric kind. Narrower
+  private kinds are diagnosed because their internal representation differs;
+  no temporary address is returned. Empty targets are rejected.
+  Nonpointer dummy arguments that may be copied by a procedure adapter are
+  currently rejected by C_LOC; direct C assumed-shape/assumed-size views are
+  supported. This preserves address identity with the caller's storage.
 
 Adapters convert between C storage widths and rfort's private representation;
 C callers do not receive rfort's initialization descriptors. Callers must supply
@@ -2024,9 +2047,21 @@ scalar INTEGER arguments, unary minus, and arithmetic `+`, `-`, `*`, `/`.
 
 Not yet implemented: CHARACTER, LOGICAL,
 COMPLEX, derived-type layouts, global variable bindings, OPTIONAL/POINTER/
-ALLOCATABLE dummies, `C_PTR`/`C_FUNPTR`, `C_LOC`, `C_F_POINTER`, `C_FUNLOC`,
+ALLOCATABLE dummies, C_PTR arrays/components, `C_FUNPTR`, `C_FUNLOC`,
 `C_F_PROCPOINTER`, callbacks, and other ISO_C_BINDING entities. Acceptance of a
 `TYPE, BIND(C)` header does not establish a C-compatible structure layout.
+
+Pointers associated with C storage currently cannot also be associated with
+private Fortran pointer storage using `=>`; such mixtures are diagnosed. These
+numeric C pointer operations require native compilation. Run
+`python tests/test_c_pointers.py` for C buffer sharing, pointer arguments/results,
+null checks, numeric kinds, ranks and diagnostics at O0/O2. A runnable buffer
+example is `tests/c_interop/pointers.f90` with `pointer_buffer.c`:
+
+```cmd
+clang --target=x86_64-pc-windows-msvc -c tests\c_interop\pointer_buffer.c -o target\pointer-buffer.obj
+rfort tests\c_interop\pointers.f90 target\pointer-buffer.obj --run
+```
 
 ### External procedures and separate compilation
 

@@ -63,6 +63,7 @@ mod optional;
 mod recursive_arrays;
 mod external_calls;
 mod c_interop;
+mod c_pointers;
 mod equivalence;
 mod statement_functions;
 mod defining_functions;
@@ -399,6 +400,7 @@ fn lower_program_body(
     origins: Option<&[source_diagnostics::SourceOrigin]>,
 ) -> Result<ast::Program> {
     (|| {
+        let program = c_pointers::prepare(program)?;
         let program = c_interop::prepare(program)?;
         let program = compile_profile::run("storage_size::resolve", || storage_size::resolve(program))?;
         let program = compile_profile::run("statement_functions::resolve", || statement_functions::resolve(program))?;

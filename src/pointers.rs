@@ -393,7 +393,7 @@ impl Lower {
                             targets: HashSet::new(),
                             record_targets: HashSet::new(),
                             borrowed,
-                            c_storage:has("@c_storage") || has("@c_descriptor"),
+                            c_storage:has("@c_storage") || has("@c_descriptor") || has("@c_pointer_storage"),
                             unknown_last:has("@c_storage"),
                         },
                     );
@@ -1372,6 +1372,9 @@ impl Lower {
     fn expr(&mut self, e: &mut Expr, out: &mut Vec<Stmt>) -> Result<()> {
         if let Expr::Call(n, args) = e {
             if !self.functions.contains(n) {
+                if n == "@c_loc" {
+                    let args=args.clone(); return self.c_loc(e,&args,out);
+                }
                 if n == "associated" {
                     let args = args.clone();
                     return self.associated(e, &args, out);
@@ -1568,6 +1571,70 @@ impl Lower {
         });
         Ok(())
     }
+    fn c_vector(&mut self, e: &Expr, rank: usize, label: &str, out: &mut Vec<Stmt>) -> Result<Vec<Expr>> {
+        let a=self.array(e,out)?.with_context(||format!("C_F_POINTER {label} requires a rank-one INTEGER array"))?;
+        if a.shape.len()!=1 || !matches!(a.kind,TypeSpec::Integer(_)) {bail!("C_F_POINTER {label} requires a rank-one INTEGER array");}
+        out.push(require(bin(BinOp::Eq,a.shape[0].clone(),int(rank as i64)),format!("C_F_POINTER {label} size must equal FPTR rank")));
+        let index=self.fresh();out.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![index.clone()]});
+        let mut reads=a.reads;crate::procedure_arguments::rename(&mut reads,"@pointer_element",&index);
+        let mut value=a.value;crate::subroutines::expr(&mut value,&HashMap::from([("@pointer_element".into(),index.clone())]));
+        let mut result=vec![];
+        for i in 0..rank {out.push(assign(&index,int(i as i64+1)));out.extend(reads.clone());result.push(self.integer(value.clone(),out));}
+        Ok(result)
+    }
+    fn c_f_pointer(&mut self, args: &[Expr], readonly: &HashSet<String>, out: &mut Vec<Stmt>) -> Result<()> {
+        let [address,Expr::Ident(name),shape,lower]=args else{bail!("invalid C_F_POINTER arguments");};
+        let p=self.pointers.get(name).context("C_F_POINTER FPTR must have POINTER attribute")?.clone();
+        if readonly.contains(name) {bail!("cannot change association of INTENT(IN) POINTER `{name}`");}
+        if !p.c_storage || matches!(p.kind,TypeSpec::Logical) {bail!("C_F_POINTER currently requires a numeric pointer");}
+        let rank=p.desc.axes.len();
+        let missing=|e:&Expr,n:&str|matches!(e,Expr::Call(tag,_) if tag==n);
+        let extents=if rank==0 {
+            if !missing(shape,"@no_c_shape") || !missing(lower,"@no_c_lower") {bail!("C_F_POINTER SHAPE and LOWER are not permitted for a scalar FPTR");}
+            vec![]
+        }else{
+            if missing(shape,"@no_c_shape") {bail!("C_F_POINTER array FPTR requires SHAPE");}
+            self.c_vector(shape,rank,"SHAPE",out)?
+        };
+        let lowers=if missing(lower,"@no_c_lower") {vec![int(1);rank]}else{self.c_vector(lower,rank,"LOWER",out)?};
+        let mut address=address.clone();self.expr(&mut address,out)?;
+        let address=self.integer(call("@c_pointer_address",vec![address]),out);
+        let width=match p.kind {TypeSpec::Integer(Some(k))=>i64::from(k),TypeSpec::Integer(None)|TypeSpec::Real=>4,_=>8};
+        let mut stride=int(width);
+        for ((a,extent),lower) in p.desc.axes.iter().zip(extents).zip(lowers) {
+            out.push(require(bin(BinOp::Ge,extent.clone(),int(0)),"C_F_POINTER SHAPE contains a negative extent".into()));
+            out.push(require(bin(BinOp::Le,extent.clone(),bin(BinOp::Div,int(i64::MAX),call("max",vec![stride.clone(),int(1)]))),"C_F_POINTER array size overflow".into()));
+            out.push(Stmt::If{cond:bin(BinOp::Gt,extent.clone(),int(0)),then_body:vec![require(bin(BinOp::Le,lower.clone(),sub(int(i64::MAX),sub(extent.clone(),int(1)))),"C_F_POINTER upper bound overflow".into())],else_body:None});
+            out.push(assign(match &a.lower {Expr::Ident(n)=>n,_=>unreachable!()},lower));
+            out.push(assign(match &a.extent {Expr::Ident(n)=>n,_=>unreachable!()},extent.clone()));
+            out.push(assign(match &a.stride {Expr::Ident(n)=>n,_=>unreachable!()},stride.clone()));
+            stride=self.integer(mul(stride,extent),out);
+        }
+        for (n,value) in [(&p.desc.data,address.clone()),(&p.desc.flags,int(0)),(&p.desc.name,int(0)),(&p.desc.origin,int(0))] {out.push(assign(n,value));}
+        out.push(assign(&p.desc.state,call("merge",vec![int(1),int(0),bin(BinOp::Ne,address,int(0))])));
+        Ok(())
+    }
+    fn c_loc(&mut self, e: &mut Expr, args: &[Expr], out: &mut Vec<Stmt>) -> Result<()> {
+        let [actual]=args else{bail!("C_LOC requires one argument");};
+        let name=root(actual).context("C_LOC requires a TARGET or associated POINTER variable")?;
+        if !self.pointers.contains_key(name) && !self.vars.get(name).is_some_and(|v|v.target) {bail!("C_LOC argument `{name}` requires TARGET or POINTER attribute");}
+        let v=self.view(actual,true,out)?.context("C_LOC requires numeric target storage")?;
+        if matches!(v.kind,TypeSpec::Logical) {bail!("C_LOC currently supports numeric targets");}
+        if !v.c_storage && !matches!(v.kind,TypeSpec::Integer(Some(8))|TypeSpec::DoublePrecision) {bail!("C_LOC of private Fortran storage currently requires INTEGER(C_INT64_T) or REAL(C_DOUBLE); narrower kinds use a different internal representation");}
+        out.push(require(bin(BinOp::Gt,v.count(),int(0)),"C_LOC requires a nonempty target".into()));
+        let mut stride=int(if v.c_storage {match v.kind {TypeSpec::Integer(Some(k))=>i64::from(k),TypeSpec::Integer(None)|TypeSpec::Real=>4,_=>8}}else{1});
+        for a in &v.axes {
+            out.push(require(bin(BinOp::Or,bin(BinOp::Le,a.extent.clone(),int(1)),bin(BinOp::Eq,a.stride.clone(),stride.clone())),"C_LOC currently requires contiguous storage".into()));
+            stride=mul(stride,a.extent.clone());
+        }
+        if !v.c_storage {
+            let index=self.fresh();out.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![index.clone()]});
+            let mut body=vec![];let offset=self.offset(&v,id(&index),&mut body);self.read(&v,offset,&mut body);
+            out.push(Stmt::Do{var:index,start:int(1),end:v.count(),body});
+        }
+        *e=call("@c_pointer_address",vec![add(v.data,mul(v.origin,int(if v.c_storage {1}else{8})))]);
+        Ok(())
+    }
     fn associate(
         &mut self,
         p: &str,
@@ -1595,6 +1662,7 @@ impl Lower {
                 if !same_kind(&ptr.kind, &q.kind) {
                     bail!("type or kind mismatch in pointer association for `{p}`");
                 }
+                if ptr.c_storage != q.c_storage {bail!("association between C storage and private Fortran pointer storage is not yet supported");}
                 let source = q.desc.fields();
                 for (dest, source) in ptr.desc.fields().into_iter().zip(source) {
                     out.push(assign(&dest, id(&source)));
@@ -1611,6 +1679,7 @@ impl Lower {
         if !same_kind(&ptr.kind, &v.kind) {
             bail!("type or kind mismatch in pointer association for `{p}`");
         }
+        if ptr.c_storage != v.c_storage {bail!("association between C storage and private Fortran pointer storage is not yet supported");}
         // Snapshot all source metadata before changing the destination (p=>p(...)).
         let mut values = vec![v.data, v.flags, v.name, int(1), v.origin];
         for a in v.axes {
@@ -1647,7 +1716,7 @@ impl Lower {
                         intent.as_str(),
                         "pointer" | "target" | "@pointer_readonly_target"
                     ) || intent.starts_with("@pointer_bounds:") || intent.starts_with("@borrowed_descriptor:")
-                        || intent.starts_with("@borrowed_limit:") || intent=="@c_storage" || intent=="@c_descriptor" =>
+                        || intent.starts_with("@borrowed_limit:") || intent=="@c_storage" || intent=="@c_descriptor" || intent=="@c_pointer_storage" =>
                 {
                     continue
                 }
@@ -1663,6 +1732,9 @@ impl Lower {
                 Stmt::ArrayDecl { name, .. } if self.pointers.contains_key(name) => {
                     if !self.pointers[name].borrowed {self.initialize(&self.pointers[name].desc, &mut out);}
                     continue;
+                }
+                Stmt::CallSub { name, args } if name == "@c_f_pointer" => {
+                    self.c_f_pointer(args, &readonly, &mut out)?; continue;
                 }
                 Stmt::CallSub { name, args } if name == "@c_desc_bind" => {
                     let v=self.view(args.last().unwrap(),false,&mut out)?.context("C descriptor requires array storage")?;
@@ -1945,7 +2017,9 @@ pub fn resolve(mut p: Program) -> Result<Program> {
         lower.declarations(body, 0)?;
         fn c_arrays(body: &mut Vec<Stmt>) -> bool {
             body.iter_mut().any(|s| {
-                matches!(s,Stmt::CallSub{name,..} if name=="@c_array_bind" || name=="@c_desc_bind")
+                let mut address=false;
+                for e in crate::procedure_arguments::expressions(s) {crate::procedure_arguments::visit_expr(e,&mut |e| {if matches!(e,Expr::Call(n,_) if n=="@c_loc") {address=true;}});}
+                address || matches!(s,Stmt::CallSub{name,..} if name=="@c_array_bind" || name=="@c_desc_bind" || name=="@c_f_pointer")
                     || (!matches!(s,Stmt::Function{..}|Stmt::Subroutine{..})
                         && children(s).into_iter().any(c_arrays))
             })

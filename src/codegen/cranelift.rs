@@ -860,6 +860,16 @@ fn eval_expr(
                 let call = b.ins().call(ex.clock_count, &[kind]);
                 return CgVal::I64(b.inst_results(call)[0]);
             }
+            if lname=="@c_associated" {
+                let a=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);let a=to_i64(b,a);
+                let mut yes=b.ins().icmp_imm(ir::condcodes::IntCC::NotEqual,a,0);
+                if let Some(e)=args.get(1) {let other=eval_expr(b,ex,ptr_ty,e,ints,reals,bools,func_meta);let other=to_i64(b,other);let same=b.ins().icmp(ir::condcodes::IntCC::Equal,a,other);yes=b.ins().band(yes,same);}
+                return CgVal::I64(b.ins().uextend(types::I64,yes));
+            }
+            if lname=="@c_pointer_address" {
+                let v=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);
+                return CgVal::I64(to_i64(b,v));
+            }
             if lname=="@c_desc_extent" || lname=="@c_desc_stride" {
                 let base=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);let base=to_i64(b,base);
                 let axis=eval_expr(b,ex,ptr_ty,&args[1],ints,reals,bools,func_meta);let axis=to_i64(b,axis);

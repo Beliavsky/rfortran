@@ -151,6 +151,17 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
         funcs: &HashMap<String, FuncDef>,
         call_stack: &mut Vec<CallFrame>,
     ) -> ValueTuple {
+        if let Expr::Call(n,args)=e {
+            if n=="@c_associated" {
+                let a=eval_expr(&args[0],env_str,env_int,env_real32,env_real64,env_log,funcs,call_stack).0.unwrap_or(0);
+                let b=args.get(1).map(|e|eval_expr(e,env_str,env_int,env_real32,env_real64,env_log,funcs,call_stack).0.unwrap_or(0));
+                return ValueTuple::from_int(i64::from(a!=0 && b.is_none_or(|b|b==a)));
+            }
+        }
+        if matches!(e, Expr::Call(n,_) if n=="@c_pointer_address") {
+            eprintln!("Runtime error: C interoperability requires native compilation; use --run instead of the interpreter");
+            std::process::exit(1);
+        }
         match e {
             Expr::Section { .. } => unreachable!("array sections must be resolved before interpretation"),
             Expr::IntLit(s) => ValueTuple::from_int(parse_i64_lossy(s)),

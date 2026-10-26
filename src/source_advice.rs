@@ -221,7 +221,7 @@ impl<'a> Analysis<'a> {
                     renames,
                     ..
                 } => self.scopes[scope].uses.push((
-                    if nature.as_deref() == Some("intrinsic") && matches!(module.as_str(), "iso_fortran_env" | "ieee_arithmetic") {
+                    if nature.as_deref() == Some("intrinsic") && matches!(module.as_str(), "iso_fortran_env" | "ieee_arithmetic" | "iso_c_binding") {
                         format!("@intrinsic_{module}")
                     } else {
                         module.clone()
@@ -1331,6 +1331,11 @@ pub fn check(
     ieee_body.retain(|s| matches!(s, Stmt::GenericInterface { .. } | Stmt::Accessibility { .. }));
     ieee_body.insert(0, Stmt::SourceLocation(src.len()));
     let ieee = vec![Stmt::Module { name: "@intrinsic_ieee_arithmetic".into(), body: ieee_body }];
+    let mut c_body = crate::c_pointers::interface_body();
+    c_body.insert(0, Stmt::SourceLocation(src.len()));
+    let c_binding = vec![Stmt::Module { name: "@intrinsic_iso_c_binding".into(), body: c_body }];
+    let c_scope = a.scope(None, ScopeKind::Main, &c_binding);
+    a.gather(&c_binding, c_scope, &[], src.len());
     let intrinsic_scope = a.scope(None, ScopeKind::Main, &ieee);
     a.gather(&ieee, intrinsic_scope, &[], src.len());
     let scope = a.scope(None, ScopeKind::Main, &program.body);
@@ -1338,6 +1343,10 @@ pub fn check(
     if !a.modules.contains_key("ieee_arithmetic") {
         let ieee_scope = a.modules["@intrinsic_ieee_arithmetic"];
         a.modules.insert("ieee_arithmetic".into(), ieee_scope);
+    }
+    if !a.modules.contains_key("iso_c_binding") {
+        let c_scope = a.modules["@intrinsic_iso_c_binding"];
+        a.modules.insert("iso_c_binding".into(), c_scope);
     }
     a.call_checks(&program.body, scope, 0);
     if !advice_enabled && a.interface_errors.is_empty() {

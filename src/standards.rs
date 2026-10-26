@@ -214,6 +214,7 @@ struct Checker<'a> {
     headers: HashSet<usize>,
     modules: HashMap<String, HashSet<String>>,
     env_names: HashSet<String>,
+    c_pointer_names: HashSet<String>,
     module_env: HashMap<String, HashSet<String>>,
 }
 impl Checker<'_> {
@@ -544,6 +545,16 @@ impl Checker<'_> {
             },
         );
         let previous_env = std::mem::replace(&mut self.env_names, scope_env);
+        let mut c_pointer_names = self.c_pointer_names.clone();
+        for s in body {
+            if let Stmt::Use { module, only, renames, .. } = s {
+                if module == "iso_c_binding" {
+                    if only.as_ref().is_none_or(|a|a.iter().any(|n|n=="c_f_pointer")) && !renames.iter().any(|(_,r)|r=="c_f_pointer") {c_pointer_names.insert("c_f_pointer".into());}
+                    c_pointer_names.extend(renames.iter().filter(|(_,r)|r=="c_f_pointer").map(|(l,_)|l.clone()));
+                }
+            }
+        }
+        let previous_c_pointers = std::mem::replace(&mut self.c_pointer_names, c_pointer_names);
         let names = self.scope_names(body, inherited);
         let arrays = body
             .iter()
@@ -737,6 +748,9 @@ impl Checker<'_> {
                     }
                 }
                 Stmt::CallSub { name, args } => {
+                    if self.c_pointer_names.contains(name) && (args.len()>3 || args.iter().any(|a|crate::named_arguments::keyword(a).is_some_and(|(k,_)|k=="lower"))) {
+                        self.require("C_F_POINTER LOWER argument",2023,offset);
+                    }
                     if name=="@concurrent_reduce" {self.require("DO CONCURRENT REDUCE",2023,offset);}
                     let format = match name.as_str() {
                         "@formatted_print" | "@formatted_write_noadvance" => args.first(),
@@ -805,6 +819,7 @@ impl Checker<'_> {
             }
         }
         self.env_names = previous_env;
+        self.c_pointer_names = previous_c_pointers;
     }
 }
 
@@ -828,6 +843,7 @@ pub(crate) fn check(
         headers: HashSet::new(),
         modules: HashMap::new(),
         env_names: HashSet::new(),
+        c_pointer_names: HashSet::new(),
         module_env: HashMap::new(),
     };
     for s in &program.body {

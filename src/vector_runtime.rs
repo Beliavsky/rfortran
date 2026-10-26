@@ -1583,7 +1583,7 @@ impl Lower {
                     }
                 }
                 // Association must retain the original TARGET and its aliasing.
-                Stmt::CallSub { name, .. } if matches!(name.as_str(),"@pointer_associate"|"@c_desc_bind"|"@c_array_bind") => {},
+                Stmt::CallSub { name, .. } if matches!(name.as_str(),"@pointer_associate"|"@c_desc_bind"|"@c_array_bind"|"@c_f_pointer") => {},
                 Stmt::CallSub { name, args } => {
                     for (i, e) in args.iter().enumerate() {
                         if contains_vector(e, &s) {
