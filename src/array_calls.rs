@@ -1505,6 +1505,30 @@ fn expand(
                         crate::allocatables::whole_storage_view(actual, &shapes)
                     } else { None };
                     let actual = recovered_actual.as_ref().unwrap_or(actual);
+                    // TRIM has a runtime length, not the default CHARACTER
+                    // length one. Capture its operand once and carry its logical
+                    // length separately from the bounded storage capacity.
+                    let mut trimmed = None;
+                    if let Expr::Call(n, values) = actual {
+                        if n == "trim" && values.len() == 1
+                            && intents.get(p).is_some_and(|intent| intent == "intent(in)")
+                            && matches!(local.get(p), Some((TypeSpec::CharacterAssumed, dims)) if dims.is_empty()) {
+                            if let TypeSpec::Character(width) = scalar_actual_kind(&values[0], &shapes)? {
+                                *serial += 1;
+                                let value = format!("@trim_actual_{serial}");
+                                let length = format!("@trim_length_{serial}");
+                                let kind = TypeSpec::Character(Some(width.unwrap_or(1)));
+                                prefix.push(Stmt::VarDecl {kind:kind.clone(),names:vec![value.clone()]});
+                                prefix.push(Stmt::Assign {name:value.clone(),value:values[0].clone()});
+                                prefix.push(Stmt::VarDecl {kind:TypeSpec::Integer(Some(8)),names:vec![length.clone()]});
+                                prefix.push(Stmt::Assign {name:length.clone(),value:Expr::Call("len_trim".into(),vec![Expr::Ident(value.clone())])});
+                                shapes.insert(value.clone(), (kind, vec![]));
+                                shapes.insert(format!("@character_spec_length:{value}"), (TypeSpec::Integer(Some(8)), vec![Expr::Ident(length)]));
+                                trimmed = Some(Expr::Ident(value));
+                            }
+                        }
+                    }
+                    let actual = trimmed.as_ref().unwrap_or(actual);
                     let (mut kind, dims) = local
                         .get(p)
                         .context("dummy argument must be declared")?
@@ -1856,6 +1880,36 @@ fn expand(
                 }
                 cloned.retain(|s| !matches!(s,Stmt::ArrayDecl{name,..} if r.params.contains(name))
                     && !matches!(s,Stmt::VarDecl {names,..} if names.is_empty()));
+                // Preserve dependent local lengths before constant-length
+                // specialization folds LEN to the physical storage width.
+                let lengths: HashMap<_,_> = r.params.iter().filter_map(|p|
+                    local.get(&format!("@character_spec_length:{p}"))
+                        .and_then(|(_,v)|v.first()).map(|v|(p.clone(),v.clone()))).collect();
+                let types = local.iter().map(|(n,(k,_))|(n.clone(),k.clone())).collect();
+                let mut entry = vec![];
+                for stmt in &mut cloned {
+                    let (kind, names) = match stmt {
+                        Stmt::VarDecl {kind,names} => (kind,names.clone()),
+                        Stmt::ArrayDecl {kind,name,..} => (kind,vec![name.clone()]),
+                        _ => continue,
+                    };
+                    if let TypeSpec::CharacterLength(expr) = kind {
+                        let mut dynamic = expr.as_ref().clone();
+                        crate::character_spec::dynamic_lengths(&mut dynamic, &lengths);
+                        if &dynamic != expr.as_ref() {
+                            let (value,capacity) = crate::character_spec::bounded(&dynamic,&types,&HashMap::new())?;
+                            *serial += 1;
+                            let length = format!("@actual_local_length_{serial}");
+                            entry.push(Stmt::VarDecl {kind:TypeSpec::Integer(Some(8)),names:vec![length.clone()]});
+                            entry.push(Stmt::Assign {name:length.clone(),value});
+                            *kind = TypeSpec::Character(Some(capacity));
+                            for name in names {
+                                entry.push(Stmt::DummyIntent {name,intent:format!("@character_spec_length:{length}")});
+                            }
+                        }
+                    }
+                }
+                cloned.splice(0..0,entry);
                 let stable = stable(&cloned);
                 specialize(
                     &mut cloned,

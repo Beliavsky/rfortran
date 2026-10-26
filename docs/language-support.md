@@ -2005,6 +2005,16 @@ isolates the local `mod_text` declaration from `util.f90:read_vec_real`.
 Run `python tests/test_dummy_character_lengths.py` for interpreter/native O0/O2
 checks and gfortran comparisons.
 
+TRIM expressions passed to assumed-length INTENT(IN) CHARACTER dummies retain
+their runtime length separately from storage capacity. Their operands are
+captured once. Dependent local lengths such as `character(len=len(s)) :: t`
+and bounded arithmetic on that length preserve the logical length, including
+runtime empty strings and forwarding to another procedure. Constant zero-length
+actuals with guarded out-of-range substring references remain a separate
+compile-time checking limitation. See
+`tests/programs/xtrim_actual_local_length.f90` and
+`tests/test_trim_actual_local_length.py`.
+
 ### Scalar CHARACTER functions
 
 Ordinary scalar CHARACTER functions defined in the source group now specialize
