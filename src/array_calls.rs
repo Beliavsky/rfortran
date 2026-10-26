@@ -1346,6 +1346,10 @@ fn expand(
     let result = (|| -> Result<()> {
     let environment_work=crate::compile_profile::Work::new("array_calls.environment");
     let mut inherited=if body.iter().any(|s|matches!(s,Stmt::DummyIntent{intent,..} if intent=="@native_recursive")) {Shapes::new()} else {inherited.clone()};
+    // Scalar actual checking needs the same known ELEMENTAL result types as
+    // array expression lowering, including within native recursive scopes.
+    inherited.extend(functions.iter().map(|(name, kind)|
+        (format!("@elemental:{name}"), (kind.clone(), vec![]))));
     shadow_declarations(body,&mut inherited);
     for s in body.iter() {
         if let Stmt::DummyIntent{name,intent}=s {

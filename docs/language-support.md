@@ -2293,6 +2293,10 @@ inherited descriptors for names they do not redeclare. Run
 `python tests/test_array_scope_metadata.py` for the scope-collision regression
 and checks of scalar, fixed-array and pointer bindings.
 
+Scalar actual expressions in specialized ELEMENTAL procedure calls retain known
+ELEMENTAL function result types, including nested calls and arithmetic or logical
+expressions. See `tests/programs/xelemental_function_actual.f90`.
+
 ### ELEMENTAL subroutines and purity
 
 Scalar calls to ELEMENTAL subroutines support explicit INTENT(IN), INTENT(OUT),
