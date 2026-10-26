@@ -1522,7 +1522,15 @@ impl Lower {
                     // Array-valued calls are materialized by the function pass
                     // between specialization rounds. Preserve the assignment
                     // until its RHS type/shape is available instead of guessing.
-                    if shape(value,&s)?.is_none() {result.push(stmt);continue;}
+                    if shape(value,&s)?.is_none() {
+                        // The result can be unknown while its section operands
+                        // already have descriptors. Capture those operands so
+                        // the reduction/function pass can resolve the result.
+                        self.expression(value,&mut s,&mut prefix)?;
+                        result.extend(prefix);
+                        result.push(stmt);
+                        continue;
+                    }
                     let capacity = selection_capacity(name, indices, &s);
                     let (selected, dims) =
                         self.indices(name, indices, &mut s, &mut prefix, true)?;

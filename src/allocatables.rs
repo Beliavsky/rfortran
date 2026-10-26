@@ -1339,7 +1339,22 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                 });
                 if let Some(err)=error {return Err(err);}
             }
+            let reduced_section_assignment=!reduction_prefix.is_empty() && matches!(&s,
+                Stmt::AssignIndex{indices,..} if indices.iter().any(|e|
+                    matches!(e,Expr::Section{..}) || matches!(e,Expr::Call(n,_) if n=="@section_subscript")));
             if matches!(s,Stmt::DoWhile{..}) {guards.append(&mut reduction_prefix);} else {out.append(&mut reduction_prefix);}
+            // Section lowering deferred this assignment while the reduction's
+            // result shape was unknown. Revisit it now that runtime_reduction
+            // has registered the result axes, before scalar index flattening.
+            if reduced_section_assignment {
+                let mut assignment=vec![s.clone()];
+                crate::vector_subscripts::specialize(&mut assignment,&shapes,Default::default(),serial)?;
+                if assignment.len()!=1 || !matches!(assignment.first(),Some(Stmt::AssignIndex{..})) {
+                    lower(&mut assignment,&shapes,serial,checks)?;
+                    out.extend(assignment);
+                    continue;
+                }
+            }
             // Intrinsic assignment to a whole heap-backed numeric/LOGICAL array
             // (re)allocates it to the shape of an array-valued right-hand side.
             if let Stmt::Assign{name,value}=&s {

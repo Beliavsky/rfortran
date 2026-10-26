@@ -2159,6 +2159,12 @@ Run `python tests/test_scalar_array_functions.py` and
 
 ### Forwarded array-valued function calls
 
+Runtime reduction results can be assigned directly to sections of allocatable
+arrays and derived-type components. Section operands are captured before the
+reduction, and destination-section lowering resumes once the result axes are
+known. This covers DIM, runtime DIM, masks and scalar-result broadcasting; see
+`python tests/test_section_reduction_assignment.py`.
+
 Large fixed-shape numeric and LOGICAL section assignments with scalar or
 array-expression right-hand sides use runtime loops rather than one generated
 statement per element. Literal constructor assignments retain their existing
