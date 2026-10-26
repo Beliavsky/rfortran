@@ -22,6 +22,11 @@ USE = re.compile(r"^\s*use\s*(?:,\s*(?:non_)?intrinsic\s*::\s*|::\s*)?(\w+)", re
 PROGRAM = re.compile(r"^\s*program\s+\w+", re.I | re.M)
 
 
+def comparison_output(run):
+    """Normalize only this run's executable path; retain raw output in reports."""
+    return run['stdout'].replace(run['command'][0], '<executable>')
+
+
 def invoke(command, cwd, timeout):
     started = time.perf_counter()
     try:
@@ -43,6 +48,7 @@ def write_report(result, report):
     lines = ['# DataFrame compiler comparison', '', f'Sources: `{root}`', '',
              'Fresh isolated builds; rfort default -O2, gfortran -O0 -fcheck=all. Run timeout: '+str(result.get("run_timeout", 30))+' seconds.',
              'Successful execution alone is not proof of correctness. Random outputs are not compared across compilers.', '',
+             'Output comparison normalizes each run\'s exact executable path to `<executable>`; recorded stdout remains unchanged.', '',
              '| Program | rfort result | gfortran | First rfort diagnostic |', '|---|---|---|---|']
     for case in result['cases']:
         error = case.get('rfort',{}).get('compile',{}).get('stderr','')
@@ -146,7 +152,7 @@ def main():
         elif rr['returncode']!=0: status='rfort_run_failed'
         elif gc['returncode']!=0 or gr is None or gr['returncode']!=0: status='reference_failed'
         elif stochastic: status='ran_random_output_not_compared'
-        elif equivalent(rr['stdout'],gr['stdout']): status='matched_reference'
+        elif equivalent(comparison_output(rr),comparison_output(gr)): status='matched_reference'
         else: status='output_mismatch'
         case['status']=status
         result['cases'].append(case)
