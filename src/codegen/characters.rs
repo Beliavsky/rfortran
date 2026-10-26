@@ -46,16 +46,31 @@ pub(super) fn view(
 ) -> Result<View> {
     match expr {
         IExpr::Call(name, args) if name == "repeat" && args.len() == 2 => {
-            let IExpr::IntLit(count) = &args[1] else {
-                bail!("native REPEAT currently requires a constant INTEGER NCOPIES");
-            };
-            let count: i64 = count.parse()?;
-            if count < 0 { bail!("REPEAT NCOPIES must be nonnegative"); }
-            let count = usize::try_from(count).context("REPEAT NCOPIES is too large")?;
             let source = view(module, b, ptr, dc, chars, ints, &args[0])?;
-            let capacity = source.capacity.checked_mul(count)
-                .filter(|n| *n < i32::MAX as usize)
-                .context("REPEAT result is too large")?;
+            let (count, capacity) = if let IExpr::IntLit(count) = &args[1] {
+                let count: i64 = count.parse()?;
+                if count < 0 { bail!("REPEAT NCOPIES must be nonnegative"); }
+                let capacity=source.capacity.checked_mul(usize::try_from(count)?).filter(|n|*n<i32::MAX as usize).context("REPEAT result is too large")?;
+                (b.ins().iconst(ptr,count),capacity)
+            } else {
+                let IExpr::Ident(count)=&args[1] else {bail!("runtime REPEAT NCOPIES must be captured in INTEGER storage");};
+                let slot=ints.get(count).context("missing REPEAT count storage")?;
+                let address=super::storage_addr(b,ptr,*slot);
+                let count=b.ins().load(types::I64,MemFlags::new(),address,0);
+                let count=if ptr==types::I64 {count} else {b.ins().ireduce(ptr,count)};
+                let nonnegative=b.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual,count,0);
+                super::file_io::require(module,b,ptr,dc,nonnegative,"REPEAT NCOPIES must be nonnegative")?;
+                let empty=b.ins().icmp_imm(IntCC::Equal,source.length,0);
+                let one=b.ins().iconst(ptr,1);
+                let divisor=b.ins().select(empty,one,source.length);
+                let limit=b.ins().iconst(ptr,crate::substrings::FALLBACK_CAPACITY as i64);
+                let limit=b.ins().udiv(limit,divisor);
+                let bounded=b.ins().icmp(IntCC::UnsignedLessThanOrEqual,count,limit);
+                let valid=b.ins().bor(empty,bounded);
+                super::file_io::require(module,b,ptr,dc,valid,"REPEAT result exceeds its expression buffer")?;
+                let zero=b.ins().iconst(ptr,0);
+                (b.ins().select(empty,zero,count),crate::substrings::FALLBACK_CAPACITY)
+            };
             let storage = super::fixed_storage(b, module, capacity.max(1), chars.main)?;
             let address = super::storage_addr(b, ptr, storage);
             let head = b.create_block();
@@ -66,7 +81,7 @@ pub(super) fn view(
             b.ins().jump(head, &[zero.into()]);
             b.switch_to_block(head);
             let index = b.block_params(head)[0];
-            let finished = b.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, index, count as i64);
+            let finished = b.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, index, count);
             b.ins().brif(finished, done, &[], copy, &[]);
             b.switch_to_block(copy);
             b.seal_block(copy);
@@ -78,7 +93,7 @@ pub(super) fn view(
             b.seal_block(head);
             b.switch_to_block(done);
             b.seal_block(done);
-            Ok(View { address, length: b.ins().imul_imm(source.length, count as i64), capacity })
+            Ok(View { address, length: b.ins().imul(source.length, count), capacity })
         }
         IExpr::Call(name, args) if name == "@substring" => {
             let [source, IExpr::IntLit(start), IExpr::IntLit(length)] = args.as_slice() else {

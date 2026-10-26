@@ -883,9 +883,10 @@ support for a component in a subroutine does not remove that separate limit.
 Local deferred arrays also support overlapping concatenation assignments such
 as `w = w // '!'`.
 `x%len` and `x%kind` are LEN(x) and KIND(x). Procedure and module
-storage and host association, READ into a deferred-length destination, REPEAT
-with a runtime count in other contexts, and MAX and MIN of CHARACTER values
-remain unsupported. Other intrinsic/procedure calls with runtime-length CHARACTER
+storage and host association, READ into a deferred-length destination, and
+MAX and MIN of CHARACTER values retain restrictions. Runtime-count REPEAT
+supports a 4096-character expression buffer, with checked counts and lengths;
+constant-count REPEAT retains its statically sized storage. Other intrinsic/procedure calls with runtime-length CHARACTER
 arguments are diagnosed unless implemented for this subset (such as TRIM).
 Runtime substring conditions are reevaluated on each loop iteration,
 including after CYCLE. The scalar substring tests compare interpreter and native
@@ -1517,8 +1518,27 @@ and numeric model inquiries use the result type without evaluating the function.
 A function result remains an expression: materializing it does not permit ALLOCATED(f()) or its use as
 an ALLOCATABLE or writable variable actual. Deferred-length CHARACTER results
 retain the existing length-aware backend and its bounded-string restrictions.
-Recursive allocatable scalar results and nonconstant explicit CHARACTER result
-lengths remain unsupported by this new descriptor path.
+Explicit CHARACTER result lengths can depend on scalar dummy arguments or
+supported specification expressions. The length is captured once on entry;
+assignment pads or truncates to that declared length, including length zero
+when the length expression is negative. LEN queries use a separate length-only
+helper so each actual argument is evaluated once. Runtime result values use the
+existing 4096-character expression-buffer bound and report an error when it is
+exceeded; fixed lengths known at compile time retain statically sized storage.
+
+Direct and mutual recursion support numeric, LOGICAL, COMPLEX, fixed-length
+CHARACTER and explicit runtime-length CHARACTER allocatable scalar results.
+Each invocation owns its allocation and initialization state. A checked value
+buffer transfers the result through the native recursive-array interface before
+local storage is released. CHARACTER values use character-code buffers; string
+assignment and decoding avoid repeated copies of the full bounded buffer.
+Recursive calls retain the existing argument restrictions of that native
+interface. Deferred-length CHARACTER results keep their separate backend,
+including its recursive-call restriction. Direct recursion requires an explicit
+RESULT name, as in `recursive function fact(n) result(y)`.
+
+Run `python tests/test_scalar_result_extensions.py` or try
+`rf.bat xalloc_scalar_recursive.f90 --run` for both extensions.
 
 Try `rf.bat xalloc_scalar_result.f90 --run`, or run
 `python tests/test_allocatable_scalar_results.py` after building the compiler.

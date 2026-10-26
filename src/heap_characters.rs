@@ -234,6 +234,25 @@ impl Lower {
         for mut stmt in std::mem::take(body) {
             let mut prefix = vec![];
             match &mut stmt {
+                Stmt::CallSub{name,args} if name=="@scalar_character_from_codes" => {
+                    fn storage(e:&Expr)->Option<String> {match e {
+                        Expr::Ident(n)=>Some(n.clone()),
+                        Expr::Call(tag,args) if tag=="@packed_view"=>args.first().and_then(storage),
+                        _=>None,
+                    }}
+                    let [target,source,length]=args.as_slice() else {anyhow::bail!("invalid scalar CHARACTER result buffer");};
+                    let target=storage(target).with_context(||format!("invalid CHARACTER result target: {target:?}"))?;
+                    let source=storage(source).with_context(||format!("invalid CHARACTER result codes: {source:?}"))?;
+                    anyhow::ensure!(arrays.contains_key(&target),"CHARACTER result requires owned scalar storage");
+                    self.serial+=1;let index=format!("@character_result_decode_{}",self.serial);
+                    prefix.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![index.clone()]});
+                    prefix.push(Stmt::Do{var:index.clone(),start:int(1),end:Expr::Call("max".into(),vec![length.clone(),int(1)]),body:vec![Stmt::If {
+                        cond:bin(BinOp::Le,id(&index),length.clone()),
+                        then_body:vec![Stmt::AssignIndex{name:target.clone(),indices:vec![id(&index)],value:Expr::Index(source.clone(),vec![id(&index)])}],
+                        else_body:Some(vec![Stmt::AssignIndex{name:target.clone(),indices:vec![id(&index)],value:int(32)}])
+                    }]});
+                    result.extend(prefix);continue;
+                }
                 Stmt::ArrayDecl { name, kind, .. } if arrays.contains_key(name) => {
                     *kind = TypeSpec::Integer(Some(8));
                     prefix.push(Stmt::DummyIntent {

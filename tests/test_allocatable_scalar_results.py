@@ -347,23 +347,6 @@ end function
 end program
 ''', error='unallocated result of function')
 
-    def test_recursive_result_is_diagnosed(self):
-        self.reject('''program p
-implicit none
-print *,f(3)
-contains
-recursive function f(n) result(y)
-integer,intent(in)::n
-integer,allocatable::y
-if(n==0) then
-y=1
-else
-y=n*f(n-1)
-end if
-end function
-end program
-''', 'recursive ALLOCATABLE scalar function results are not yet supported')
-
     def test_type_inquiries_do_not_evaluate_results(self):
         self.check('''program p
 implicit none

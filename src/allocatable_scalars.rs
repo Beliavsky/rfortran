@@ -10,6 +10,7 @@ use std::collections::{HashMap, HashSet};
 struct Procedures {
     names: HashSet<String>,
     descriptors: HashMap<String, HashSet<usize>>,
+    serial: std::cell::Cell<usize>,
 }
 impl Procedures {
     fn contains(&self, name: &str) -> bool {
@@ -356,6 +357,42 @@ pub(crate) fn resolve(mut program: crate::ast::Program) -> Result<crate::ast::Pr
                             );
                         }
                         value(rhs, &scalars, users);
+                        if !matches!(&symbols[name].0, TypeSpec::CharacterAssumed) {
+                            // Evaluate and convert the scalar before allocation;
+                            // no one-element constructor or vector lowering is needed.
+                            let serial = users.serial.get() + 1;
+                            users.serial.set(serial);
+                            let temp = format!("@allocatable_scalar_assignment_{serial}");
+                            output.push(Stmt::VarDecl {
+                                kind: symbols[name].0.clone(),
+                                names: vec![temp.clone()],
+                            });
+                            output.push(Stmt::Assign {
+                                name: temp.clone(),
+                                value: rhs.clone(),
+                            });
+                            let target = name.clone();
+                            output.push(Stmt::If {
+                                cond: Expr::Un(
+                                    crate::ast::UnOp::Not,
+                                    Box::new(Expr::Call(
+                                        "allocated".into(),
+                                        vec![Expr::Ident(target.clone())],
+                                    )),
+                                ),
+                                then_body: vec![Stmt::CallSub {
+                                    name: "@allocate".into(),
+                                    args: vec![element(&target)],
+                                }],
+                                else_body: None,
+                            });
+                            stmt = Stmt::AssignIndex {
+                                name: target,
+                                indices: vec![Expr::IntLit("1".into())],
+                                value: Expr::Ident(temp),
+                            };
+                            return Ok(());
+                        }
                         *rhs = Expr::Call("@array_constructor".into(), vec![rhs.clone()]);
                     }
                     Stmt::AssignIndex {
@@ -540,7 +577,8 @@ pub(crate) fn resolve(mut program: crate::ast::Program) -> Result<crate::ast::Pr
                     Stmt::CallSub { name, .. }
                         if name == "@deallocate"
                             || name.eq_ignore_ascii_case("move_alloc")
-                            || name == "@module_bind" => {}
+                            || name == "@module_bind"
+                            || name == "@scalar_character_from_codes" => {}
                     Stmt::CallSub { name, args } if users.contains(name) => {
                         call_values(name, args, &scalars, users);
                     }
@@ -582,7 +620,8 @@ pub(crate) fn resolve(mut program: crate::ast::Program) -> Result<crate::ast::Pr
                 let positions = params.iter().enumerate().filter_map(|(i, p)| {
                     let scalar = body.iter().any(|s| matches!(s, Stmt::VarDecl { kind, names } if names.contains(p) && !crate::substrings::deferred(kind)))
                         && !body.iter().any(|s| matches!(s, Stmt::ArrayDecl { name, .. } if name == p));
-                    (scalar && body.iter().any(|s| matches!(s, Stmt::DummyIntent { name, intent } if name == p && intent == "allocatable"))).then_some(i)
+                    ((scalar && body.iter().any(|s| matches!(s, Stmt::DummyIntent { name, intent } if name == p && intent == "allocatable")))
+                        || body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==p && intent=="@scalar_result_value_dummy"))).then_some(i)
                 }).collect();
                 users.descriptors.insert(name.clone(), positions);
             }

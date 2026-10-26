@@ -1,10 +1,7 @@
 """Intrinsic REPEAT fallback, user overloads, and native CHARACTER results."""
-import subprocess
-import tempfile
-from pathlib import Path
 import unittest
 import test_deallocate
-from test_record_read import ROOT, COMPILER
+from test_record_read import ROOT
 
 MODULE = (ROOT/'tests/programs/xrepeat_intrinsic.f90').read_text(encoding='utf-8').split('program xrepeat_intrinsic')[0]
 
@@ -71,13 +68,9 @@ end
             with self.subTest(expression=expression):
                 self.reject(MODULE+'use repeat_mod\nprint *,'+expression+'\nend\n',message)
 
-    def test_native_runtime_count_reports_limitation(self):
-        with tempfile.TemporaryDirectory(prefix='repeat-runtime-') as tmp:
-            source=Path(tmp)/'example.f90'
-            source.write_text(MODULE+"use repeat_mod\ninteger::n\nread(*,*) n\nprint *,repeat('x',n)\nend\n",encoding='utf-8')
-            result=subprocess.run([COMPILER,'emit-obj',source,Path(tmp)/'example.obj'],capture_output=True,text=True,timeout=60)
-            self.assertNotEqual(result.returncode,0)
-            self.assertIn('constant INTEGER NCOPIES',result.stderr)
+    def test_native_runtime_count(self):
+        self.check(MODULE+"use repeat_mod\ninteger::n\nread(*,*) n\nprint *,repeat('x',n)\nend\n",
+                   'xxx\n',data='3\n')
 
 
 if __name__ == '__main__':

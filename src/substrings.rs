@@ -236,7 +236,7 @@ pub fn resolve(mut program: Program) -> Result<Program> {
 pub(crate) const ALLOCATE_CHARACTER: &str = "@allocate_character";
 /// Storage of a deferred-length CHARACTER whose largest value is not known at
 /// compile time; a longer value stops the program.
-const FALLBACK_CAPACITY: usize = 4096;
+pub(crate) const FALLBACK_CAPACITY: usize = 4096;
 
 pub(crate) fn deferred(kind: &TypeSpec) -> bool {
     matches!(kind, TypeSpec::CharacterLength(e) if matches!(e.as_ref(), Expr::Ident(n) if n == "@deferred_character"))
@@ -402,6 +402,20 @@ fn dynamic_expression(e: &mut Expr, scope: &mut DynamicScope, output: &mut Vec<S
         bail!("deferred CHARACTER host association in procedures is not yet supported");
     }
     match e {
+        Expr::Call(n, args) if n == "repeat" && args.len() == 2 && !scope.procedures.contains(n)
+            && crate::parameters::integer_constant(&args[1]).is_err() => {
+            dynamic_expression(&mut args[0], scope, output, serial)?;
+            dynamic_expression(&mut args[1], scope, output, serial)?;
+            let copies = capture(args[1].clone(), scope, output, serial);
+            let size = logical_length(&args[0], scope, output, serial)?;
+            let size = capture(size, scope, output, serial);
+            output.push(Stmt::If {cond:binary(BinOp::Lt,copies.clone(),int(0)),then_body:vec![Stmt::CallSub {
+                name:"@error_stop".into(),args:vec![Expr::Str("REPEAT NCOPIES must be nonnegative".into())]}],else_body:None});
+            output.push(Stmt::If {cond:binary(BinOp::Gt,size.clone(),int(0)),then_body:vec![Stmt::If {
+                cond:binary(BinOp::Gt,copies.clone(),binary(BinOp::Div,int(FALLBACK_CAPACITY),size)),
+                then_body:vec![Stmt::CallSub {name:"@error_stop".into(),args:vec![Expr::Str(format!("REPEAT result exceeds its {FALLBACK_CAPACITY}-character expression buffer"))]}],else_body:None}],else_body:None});
+            args[1] = copies;
+        }
         Expr::Call(n, args) if n == "allocated" && args.len() == 1 && matches!(&args[0], Expr::Ident(n) if scope.lengths.contains_key(n)) => {
             let Expr::Ident(n) = &args[0] else { unreachable!() };
             if scope.procedure { bail!("deferred CHARACTER host association in procedures is not yet supported"); }

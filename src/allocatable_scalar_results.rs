@@ -6,7 +6,12 @@
 use crate::ast::{Expr, Program, Stmt, TypeSpec, UnOp};
 use crate::procedure_arguments::{children, expressions, visit_expr};
 use anyhow::{ensure, Result};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+
+#[derive(Clone)]
+struct RuntimeCharacter {
+    query: String,
+}
 
 fn result(name: &str, body: &[Stmt]) -> String {
     match body.last() {
@@ -41,7 +46,146 @@ fn returns(body: &mut [Stmt]) {
     }
 }
 
-fn collect(body: &mut [Stmt], found: &mut HashMap<String, (TypeSpec, usize)>) -> Result<()> {
+// Recursive calls transport the scalar value through a nonallocatable
+// one-element result buffer. Allocation state stays local to each invocation;
+// the existing recursive array ABI borrows the caller's checked value buffer.
+fn recursive_returns(
+    body: &mut [Stmt],
+    result: &str,
+    output: &str,
+    function: &str,
+    character: Option<&Expr>,
+    length_output: Option<&str>,
+) {
+    for s in body {
+        if matches!(s, Stmt::Function { .. } | Stmt::Subroutine { .. }) {
+            continue;
+        }
+        if matches!(s, Stmt::Return(_)) {
+            let mut copy = vec![Stmt::If {
+                cond: Expr::Un(
+                    UnOp::Not,
+                    Box::new(Expr::Call(
+                        "allocated".into(),
+                        vec![Expr::Ident(result.into())],
+                    )),
+                ),
+                then_body: vec![Stmt::CallSub {
+                    name: "@error_stop".into(),
+                    args: vec![Expr::Str(format!(
+                        "unallocated result of function `{function}`"
+                    ))],
+                }],
+                else_body: None,
+            }];
+            if let Some(field) = length_output {
+                copy.push(Stmt::Assign {
+                    name: field.into(),
+                    value: character.unwrap().clone(),
+                });
+            }
+            if let Some(length) = character {
+                let index = format!("@recursive_character_index${output}");
+                copy.push(Stmt::VarDecl {
+                    kind: TypeSpec::Integer(Some(8)),
+                    names: vec![index.clone()],
+                });
+                copy.push(Stmt::Do {
+                    var: index.clone(),
+                    start: Expr::IntLit("1".into()),
+                    end: length.clone(),
+                    body: vec![Stmt::AssignIndex {
+                        name: output.into(),
+                        indices: vec![Expr::Ident(index.clone())],
+                        value: Expr::Call(
+                            "iachar".into(),
+                            vec![Expr::Section {
+                                name: result.into(),
+                                lower: Some(Box::new(Expr::Ident(index.clone()))),
+                                upper: Some(Box::new(Expr::Ident(index))),
+                                stride: None,
+                            }],
+                        ),
+                    }],
+                });
+            } else {
+                copy.push(Stmt::AssignIndex {
+                    name: output.into(),
+                    indices: vec![Expr::IntLit("1".into())],
+                    value: Expr::Ident(result.into()),
+                });
+            }
+            copy.push(Stmt::Return(None));
+            *s = Stmt::Block { body: copy };
+            continue;
+        }
+        for b in children(s) {
+            recursive_returns(b, result, output, function, character, length_output);
+        }
+    }
+}
+fn recursive_procedures(body: &mut [Stmt]) -> HashSet<String> {
+    fn graph(body: &mut [Stmt], edges: &mut HashMap<String, HashSet<String>>) {
+        fn calls(body: &mut [Stmt], names: &mut HashSet<String>) {
+            for s in body {
+                if matches!(s, Stmt::Function { .. } | Stmt::Subroutine { .. }) {
+                    continue;
+                }
+                if let Stmt::CallSub { name, .. } = s {
+                    names.insert(name.clone());
+                }
+                for e in expressions(s) {
+                    visit_expr(e, &mut |e| {
+                        if let Expr::Call(n, _) = e {
+                            names.insert(n.clone());
+                        }
+                    });
+                }
+                for b in children(s) {
+                    calls(b, names);
+                }
+            }
+        }
+        for s in body {
+            if let Stmt::Function { name, body, .. } | Stmt::Subroutine { name, body, .. } = s {
+                let mut names = HashSet::new();
+                calls(body, &mut names);
+                edges.insert(name.clone(), names);
+            }
+            for b in children(s) {
+                graph(b, edges);
+            }
+        }
+    }
+    fn reaches(
+        from: &str,
+        target: &str,
+        edges: &HashMap<String, HashSet<String>>,
+        seen: &mut HashSet<String>,
+    ) -> bool {
+        seen.insert(from.into())
+            && edges.get(from).is_some_and(|next| {
+                next.iter()
+                    .any(|n| n == target || reaches(n, target, edges, seen))
+            })
+    }
+    let mut edges = HashMap::new();
+    graph(body, &mut edges);
+    edges
+        .keys()
+        .filter(|n| reaches(n, n, &edges, &mut HashSet::new()))
+        .cloned()
+        .collect()
+}
+fn collect(
+    body: &mut [Stmt],
+    found: &mut HashMap<String, (TypeSpec, usize)>,
+    characters: &mut HashMap<String, RuntimeCharacter>,
+    queries: &mut Vec<Stmt>,
+    cycles: &HashSet<String>,
+    recursive_functions: &mut HashSet<String>,
+    recursive_characters: &mut HashMap<String, usize>,
+) -> Result<()> {
     for s in body {
         if let Stmt::Function {
             name,
@@ -72,32 +216,46 @@ fn collect(body: &mut [Stmt], found: &mut HashMap<String, (TypeSpec, usize)>) ->
                 // Deferred strings already have a length-aware result lowering.
                 if crate::substrings::deferred(&kind) {
                     for b in children(s) {
-                        collect(b, found)?;
+                        collect(
+                            b,
+                            found,
+                            characters,
+                            queries,
+                            cycles,
+                            recursive_functions,
+                            recursive_characters,
+                        )?;
                     }
                     continue;
                 }
-                let mut recursive = false;
-                fn calls(body: &mut [Stmt], name: &str, recursive: &mut bool) {
-                    for s in body {
-                        for e in expressions(s) {
-                            visit_expr(e, &mut |e| {
-                                *recursive |= matches!(e, Expr::Call(n, _) if n == name)
-                            });
+                let recursive = cycles.contains(name);
+                if recursive && output == *name {
+                    fn direct(body: &mut [Stmt], name: &str) -> bool {
+                        let mut found = false;
+                        for s in body {
+                            if matches!(s, Stmt::Function { .. } | Stmt::Subroutine { .. }) {
+                                continue;
+                            }
+                            for e in expressions(s) {
+                                visit_expr(e, &mut |e| {
+                                    found |= matches!(e,Expr::Call(n,_) if n==name)
+                                });
+                            }
+                            for b in children(s) {
+                                found |= direct(b, name);
+                            }
                         }
-                        for b in children(s) {
-                            calls(b, name, recursive);
-                        }
+                        found
                     }
-                }
-                calls(body, name, &mut recursive);
-                if recursive {
-                    return Err(at_result(
-                        anyhow::anyhow!(
-                            "recursive ALLOCATABLE scalar function results are not yet supported"
-                        ),
-                        body,
-                        &output,
-                    ));
+                    if direct(body, name) {
+                        return Err(at_result(
+                            anyhow::anyhow!(
+                                "direct recursion requires an explicit RESULT variable"
+                            ),
+                            body,
+                            &output,
+                        ));
+                    }
                 }
                 let constants = body
                     .iter()
@@ -112,10 +270,229 @@ fn collect(body: &mut [Stmt], found: &mut HashMap<String, (TypeSpec, usize)>) ->
                     .flatten()
                     .filter_map(|(n, e)| e.as_ref().map(|e| (n.clone(), e.clone())))
                     .collect();
-                let kind = crate::parameters::concrete_kind_with(kind, &constants)
-                    .map_err(|e| at_result(e, body, &output))?;
-                found.insert(name.clone(), (kind, params.len()));
+                let kind = match crate::parameters::concrete_kind_with(kind.clone(), &constants) {
+                    Ok(kind) => kind,
+                    Err(error) => {
+                        let TypeSpec::CharacterLength(mut length) = kind else {
+                            return Err(at_result(error, body, &output));
+                        };
+                        visit_expr(&mut length, &mut |e| {
+                            if let Expr::Ident(n) = e {
+                                if let Some(value) = constants.get(n) {
+                                    *e = value.clone();
+                                }
+                            }
+                        });
+                        let field = format!("@scalar_result_length${name}");
+                        let query = format!("@scalar_result_length_query${name}");
+                        let mut declarations = vec![];
+                        for s in body.iter() {
+                            match s {
+                                Stmt::VarDecl { kind, names } => {
+                                    let names = names
+                                        .iter()
+                                        .filter(|n| params.contains(n))
+                                        .cloned()
+                                        .collect::<Vec<_>>();
+                                    if !names.is_empty() {
+                                        declarations.push(Stmt::VarDecl {
+                                            kind: kind.clone(),
+                                            names,
+                                        });
+                                    }
+                                }
+                                Stmt::ArrayDecl { name, .. } if params.contains(name) => {
+                                    declarations.push(s.clone())
+                                }
+                                Stmt::DummyIntent { name, intent }
+                                    if params.contains(name) && !intent.starts_with("intent(") =>
+                                {
+                                    declarations.push(s.clone())
+                                }
+                                Stmt::InitializedDecl { attributes, .. }
+                                    if attributes.iter().any(|a| a == "parameter") =>
+                                {
+                                    declarations.push(s.clone())
+                                }
+                                _ => {}
+                            }
+                        }
+                        for param in params.iter() {
+                            declarations.push(Stmt::DummyIntent {
+                                name: param.clone(),
+                                intent: "intent(in)".into(),
+                            });
+                        }
+                        declarations.push(Stmt::Return(Some(Expr::Call(
+                            "max".into(),
+                            vec![Expr::IntLit("0".into()), (*length).clone()],
+                        ))));
+                        queries.push(Stmt::Function {
+                            name: query.clone(),
+                            params: params.clone(),
+                            body: declarations,
+                            return_type: Some(TypeSpec::Integer(None)),
+                            pure: true,
+                            elemental: false,
+                        });
+                        characters.insert(name.clone(), RuntimeCharacter { query });
+                        for s in body.iter_mut() {
+                            if let Stmt::VarDecl { kind, names } = s {
+                                if names.contains(&output) {
+                                    *kind = TypeSpec::Character(Some(
+                                        crate::substrings::FALLBACK_CAPACITY,
+                                    ));
+                                }
+                            }
+                        }
+                        body.splice(
+                            0..0,
+                            [
+                                Stmt::VarDecl {
+                                    kind: TypeSpec::Integer(Some(8)),
+                                    names: vec![field.clone()],
+                                },
+                                Stmt::DummyIntent {
+                                    name: field.clone(),
+                                    intent: "intent(out)".into(),
+                                },
+                                Stmt::DummyIntent {
+                                    name: output.clone(),
+                                    intent: format!("@character_spec_length:{field}"),
+                                },
+                            ],
+                        );
+                        let entry = body
+                            .iter()
+                            .position(|s| {
+                                matches!(
+                                    s,
+                                    Stmt::Assign { .. }
+                                        | Stmt::AssignIndex { .. }
+                                        | Stmt::CallSub { .. }
+                                        | Stmt::Print { .. }
+                                        | Stmt::Read { .. }
+                                        | Stmt::If { .. }
+                                        | Stmt::Do { .. }
+                                        | Stmt::DoWhile { .. }
+                                        | Stmt::Block { .. }
+                                        | Stmt::Return(_)
+                                )
+                            })
+                            .unwrap_or(body.len());
+                        body.splice(entry..entry, [
+                            Stmt::Assign {name:field.clone(),value:Expr::Call("max".into(),vec![Expr::IntLit("0".into()),*length])},
+                            Stmt::If {cond:Expr::Bin(crate::ast::BinOp::Gt,Box::new(Expr::Ident(field.clone())),Box::new(Expr::IntLit(crate::substrings::FALLBACK_CAPACITY.to_string()))),
+                                then_body:vec![Stmt::CallSub {name:"@error_stop".into(),args:vec![Expr::Str(format!("CHARACTER result of `{name}` exceeds its {}-character expression buffer",crate::substrings::FALLBACK_CAPACITY))]}],else_body:None},
+                        ]);
+                        TypeSpec::Character(Some(crate::substrings::FALLBACK_CAPACITY))
+                    }
+                };
+                found.insert(name.clone(), (kind.clone(), params.len()));
+                if recursive {
+                    let character = if let TypeSpec::Character(capacity) = &kind {
+                        Some(capacity.unwrap_or(1))
+                    } else {
+                        None
+                    };
+                    if let Some(capacity) = character {
+                        recursive_characters.insert(name.clone(), capacity);
+                    }
+                    recursive_functions.insert(name.clone());
+                    let buffer = format!("@recursive_scalar_result${name}");
+                    // Also normalize an implicit final return in functions
+                    // which use their name rather than a RESULT clause.
+                    if !matches!(body.last(), Some(Stmt::Return(_))) {
+                        body.push(Stmt::Return(None));
+                    }
+                    let length = character.map(|capacity| {
+                        if characters.contains_key(name) {
+                            Expr::Ident(format!("@scalar_result_length${name}"))
+                        } else {
+                            Expr::IntLit(capacity.to_string())
+                        }
+                    });
+                    let length_output = characters
+                        .contains_key(name)
+                        .then(|| format!("@scalar_result_length${name}_out"));
+                    if let Some(out) = &length_output {
+                        let field = format!("@scalar_result_length${name}");
+                        body.retain(|s|!matches!(s,Stmt::DummyIntent{name,intent} if name==&field && intent=="intent(out)"));
+                        body.splice(
+                            0..0,
+                            [
+                                Stmt::VarDecl {
+                                    kind: TypeSpec::Integer(Some(8)),
+                                    names: vec![out.clone()],
+                                },
+                                Stmt::DummyIntent {
+                                    name: out.clone(),
+                                    intent: "intent(out)".into(),
+                                },
+                            ],
+                        );
+                    }
+                    recursive_returns(
+                        body,
+                        &output,
+                        &buffer,
+                        name,
+                        length.as_ref(),
+                        length_output.as_deref(),
+                    );
+                    body.splice(
+                        0..0,
+                        [
+                            Stmt::ArrayDecl {
+                                kind: if character.is_some() {
+                                    TypeSpec::Integer(Some(8))
+                                } else {
+                                    kind.clone()
+                                },
+                                name: buffer.clone(),
+                                dims: vec![Expr::IntLit(character.unwrap_or(1).max(1).to_string())],
+                            },
+                            Stmt::DummyIntent {
+                                name: buffer.clone(),
+                                intent: "intent(out)".into(),
+                            },
+                            Stmt::DummyIntent {
+                                name: buffer.clone(),
+                                intent: "@scalar_result_value_dummy".into(),
+                            },
+                        ],
+                    );
+                    if character.is_some() {
+                        body.retain(|s|!matches!(s,Stmt::DummyIntent{name,intent} if name==&buffer && intent=="@scalar_result_value_dummy"));
+                    }
+                    params.push(buffer);
+                    if let Some(field) = length_output {
+                        params.push(field);
+                    }
+                    *s = Stmt::Subroutine {
+                        name: name.clone(),
+                        params: params.clone(),
+                        body: std::mem::take(body),
+                        pure: *pure,
+                        elemental: false,
+                    };
+                    for b in children(s) {
+                        collect(
+                            b,
+                            found,
+                            characters,
+                            queries,
+                            cycles,
+                            recursive_functions,
+                            recursive_characters,
+                        )?;
+                    }
+                    continue;
+                }
                 params.push(output.clone());
+                if characters.contains_key(name) {
+                    params.push(format!("@scalar_result_length${name}"));
+                }
                 body.insert(
                     0,
                     Stmt::DummyIntent {
@@ -134,7 +511,15 @@ fn collect(body: &mut [Stmt], found: &mut HashMap<String, (TypeSpec, usize)>) ->
             }
         }
         for b in children(s) {
-            collect(b, found)?;
+            collect(
+                b,
+                found,
+                characters,
+                queries,
+                cycles,
+                recursive_functions,
+                recursive_characters,
+            )?;
         }
     }
     Ok(())
@@ -143,6 +528,9 @@ fn collect(body: &mut [Stmt], found: &mut HashMap<String, (TypeSpec, usize)>) ->
 struct Calls {
     functions: HashMap<String, (TypeSpec, usize)>,
     serial: usize,
+    characters: HashMap<String, RuntimeCharacter>,
+    recursive_functions: HashSet<String>,
+    recursive_characters: HashMap<String, usize>,
 }
 
 fn fold_inquiries(
@@ -151,6 +539,7 @@ fn fold_inquiries(
     types: &crate::operators::ExpressionTypes,
     functions: &HashMap<String, (TypeSpec, usize)>,
     procedures: &HashMap<String, Vec<usize>>,
+    characters: &HashMap<String, RuntimeCharacter>,
 ) -> Result<()> {
     let mut symbols = inherited.clone();
     for s in body.iter() {
@@ -177,6 +566,7 @@ fn fold_inquiries(
         types: &crate::operators::ExpressionTypes,
         functions: &HashMap<String, (TypeSpec, usize)>,
         procedures: &HashMap<String, Vec<usize>>,
+        characters: &HashMap<String, RuntimeCharacter>,
     ) -> Result<()> {
         if let Expr::Call(name, args) = e {
             if args.len() == 1
@@ -202,6 +592,12 @@ fn fold_inquiries(
                 });
                 if found {
                     if name == "len" {
+                        if let Expr::Call(function, actuals) = &args[0] {
+                            if let Some(spec) = characters.get(function) {
+                                *e = Expr::Call(spec.query.clone(), actuals.clone());
+                                return Ok(());
+                            }
+                        }
                         fn length(
                             e: &Expr,
                             symbols: &HashMap<String, (TypeSpec, usize)>,
@@ -257,14 +653,14 @@ fn fold_inquiries(
         match e {
             Expr::Call(_, args) | Expr::Index(_, args) => {
                 for e in args {
-                    expr(e, symbols, types, functions, procedures)?;
+                    expr(e, symbols, types, functions, procedures, characters)?;
                 }
             }
             Expr::Bin(_, a, b) => {
-                expr(a, symbols, types, functions, procedures)?;
-                expr(b, symbols, types, functions, procedures)?;
+                expr(a, symbols, types, functions, procedures, characters)?;
+                expr(b, symbols, types, functions, procedures, characters)?;
             }
-            Expr::Un(_, e) => expr(e, symbols, types, functions, procedures)?,
+            Expr::Un(_, e) => expr(e, symbols, types, functions, procedures, characters)?,
             _ => {}
         }
         Ok(())
@@ -275,11 +671,11 @@ fn fold_inquiries(
             offset = Some(*p);
         }
         for e in expressions(s) {
-            expr(e, &symbols, types, functions, procedures)
+            expr(e, &symbols, types, functions, procedures, characters)
                 .map_err(|e| crate::source_diagnostics::at(e, offset))?;
         }
         for b in children(s) {
-            fold_inquiries(b, &symbols, types, functions, procedures)?;
+            fold_inquiries(b, &symbols, types, functions, procedures, characters)?;
         }
     }
     Ok(())
@@ -306,10 +702,74 @@ impl Calls {
                         Expr::Call(crate::named_arguments::OMITTED.into(), vec![])
                     });
                     actuals.push(Expr::Ident(temp.clone()));
+                    if self.characters.contains_key(name) {
+                        let length = format!("{temp}_length");
+                        declarations.push(Stmt::VarDecl {
+                            kind: TypeSpec::Integer(Some(8)),
+                            names: vec![length.clone()],
+                        });
+                        declarations.push(Stmt::DummyIntent {
+                            name: temp.clone(),
+                            intent: format!("@character_spec_length:{length}"),
+                        });
+                        actuals.push(Expr::Ident(length));
+                    }
+                    if let Some(capacity) = self.recursive_characters.get(name) {
+                        let codes = format!("{temp}_codes");
+                        declarations.push(Stmt::ArrayDecl {
+                            kind: TypeSpec::Integer(Some(8)),
+                            name: codes.clone(),
+                            dims: vec![Expr::IntLit(capacity.max(&1).to_string())],
+                        });
+                        actuals[*count] = Expr::Ident(codes);
+                    }
+                    if self.recursive_functions.contains(name)
+                        && !self.recursive_characters.contains_key(name)
+                    {
+                        prefix.push(Stmt::If {
+                            cond: Expr::Call("allocated".into(), vec![Expr::Ident(temp.clone())]),
+                            then_body: vec![Stmt::CallSub {
+                                name: "@deallocate".into(),
+                                args: vec![Expr::Ident(temp.clone())],
+                            }],
+                            else_body: None,
+                        });
+                        prefix.push(Stmt::CallSub {
+                            name: "@allocate".into(),
+                            args: vec![Expr::Ident(temp.clone())],
+                        });
+                    }
                     prefix.push(Stmt::CallSub {
                         name: name.clone(),
                         args: actuals,
                     });
+                    if let Some(capacity) = self.recursive_characters.get(name) {
+                        prefix.push(Stmt::If {
+                            cond: Expr::Call("allocated".into(), vec![Expr::Ident(temp.clone())]),
+                            then_body: vec![Stmt::CallSub {
+                                name: "@deallocate".into(),
+                                args: vec![Expr::Ident(temp.clone())],
+                            }],
+                            else_body: None,
+                        });
+                        prefix.push(Stmt::CallSub {
+                            name: "@allocate".into(),
+                            args: vec![Expr::Ident(temp.clone())],
+                        });
+                        let length = if self.characters.contains_key(name) {
+                            Expr::Ident(format!("{temp}_length"))
+                        } else {
+                            Expr::IntLit(capacity.to_string())
+                        };
+                        prefix.push(Stmt::CallSub {
+                            name: "@scalar_character_from_codes".into(),
+                            args: vec![
+                                Expr::Ident(temp.clone()),
+                                Expr::Ident(format!("{temp}_codes")),
+                                length,
+                            ],
+                        });
+                    }
                     prefix.push(Stmt::If {
                         cond: Expr::Un(
                             UnOp::Not,
@@ -424,7 +884,26 @@ pub(crate) fn resolve(mut program: Program) -> Result<Program> {
     variable_arguments(&mut program.body, &mut variables);
     let types = crate::operators::ExpressionTypes::new(&program)?;
     let mut functions = HashMap::new();
-    collect(&mut program.body, &mut functions)?;
+    let mut characters = HashMap::new();
+    let mut queries = vec![];
+    let cycles = recursive_procedures(&mut program.body);
+    let mut recursive_functions = HashSet::new();
+    let mut recursive_characters = HashMap::new();
+    collect(
+        &mut program.body,
+        &mut functions,
+        &mut characters,
+        &mut queries,
+        &cycles,
+        &mut recursive_functions,
+        &mut recursive_characters,
+    )?;
+    for query in &queries {
+        if let Stmt::Function { name, .. } = query {
+            program.contains.push(name.clone());
+        }
+    }
+    program.body.extend(queries);
     if !functions.is_empty() {
         // Materializing an expression must not make it a legal variable actual
         // for ALLOCATED, an ALLOCATABLE dummy, or a writable dummy.
@@ -478,10 +957,14 @@ pub(crate) fn resolve(mut program: Program) -> Result<Program> {
             &types,
             &functions,
             &variables,
+            &characters,
         )?;
         Calls {
             functions,
             serial: 0,
+            characters,
+            recursive_functions,
+            recursive_characters,
         }
         .unit(&mut program.body);
     }
