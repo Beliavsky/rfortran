@@ -1971,6 +1971,25 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                         prefix.push(Stmt::Assign{name:scalar.clone(),value:value.clone()});
                         Some(scalar)
                     } else {None};
+                    // Large sections must not generate one declaration and assignment
+                    // per element. Buffer the entire RHS before writing the destination
+                    // so overlapping and reversed sections retain Fortran semantics.
+                    if count>1024 && constructor.is_none() {
+                        *serial+=1;
+                        let index=format!("@section_assign_index_{serial}");
+                        let buffer=format!("@section_assign_buffer_{serial}");
+                        let ix=Expr::Ident(index.clone());
+                        prefix.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![index.clone()]});
+                        let item=if let Some(scalar)=&scalar {Expr::Ident(scalar.clone())} else {
+                            prefix.push(Stmt::ArrayDecl{kind:kind.clone(),name:buffer.clone(),dims:vec![int(count)]});
+                            let value=element(value,&ix,&symbols)?.0;
+                            prefix.push(Stmt::Do{var:index.clone(),start:int(1),end:int(count),body:vec![Stmt::AssignIndex{name:buffer.clone(),indices:vec![ix.clone()],value}]});
+                            Expr::Index(buffer,vec![ix.clone()])
+                        };
+                        let (target,_,_)=element(section,&ix,&symbols)?;
+                        let Expr::Index(_,indices)=target else {unreachable!()};
+                        writes.push(Stmt::Do{var:index,start:int(1),end:int(count),body:vec![Stmt::AssignIndex{name:name.clone(),indices,value:item}]});
+                    } else {
                     // Capture all RHS elements before any destination write, including
                     // overlapping/reversed sections. Constant destinations retain exact
                     // definite-initialization information.
@@ -1986,6 +2005,7 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                         let (target,_,_)=element(section,&int(i),&symbols)?;
                         let Expr::Index(_,indices)=target else {unreachable!()};
                         writes.push(Stmt::AssignIndex{name:name.clone(),indices,value:Expr::Ident(temp)});
+                    }
                     }
                     prefix.extend(writes);
                     stmt=Stmt::Block{body:std::mem::take(&mut prefix)};

@@ -2159,6 +2159,14 @@ Run `python tests/test_scalar_array_functions.py` and
 
 ### Forwarded array-valued function calls
 
+Large fixed-shape numeric and LOGICAL section assignments with scalar or
+array-expression right-hand sides use runtime loops rather than one generated
+statement per element. Literal constructor assignments retain their existing
+element expansion. Array right-hand sides are
+buffered before destination writes to preserve overlapping and reversed sections;
+scalar right-hand sides are evaluated once. See
+`python tests/test_large_section_assignments.py`.
+
 Numeric and LOGICAL fixed-shape sections passed to specialized INTENT(IN)
 subroutine dummies are copied by runtime loops rather than per-element source
 expansion. This includes multidimensional columns, strided and reversed sections,
