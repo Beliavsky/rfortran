@@ -266,9 +266,6 @@ end
 ''','1234567890123 1.25 T T\n')
         self.check("integer,parameter::n=4\ncharacter(n),allocatable::s\nallocate(s,source='abcd')\nprint *,s\nend\n",'abcd\n')
 
-    def test_unsupported_scalar_descriptors_diagnosed(self):
-        self.reject('program p\nprint *,f()\ncontains\nfunction f() result(x)\ninteger,allocatable::x\nx=1\nend function\nend program\n','scalar function results are not yet supported')
-
     def test_pointer_target(self):
         self.check('integer,allocatable,target::x\ninteger,pointer::p\nx=3\np=>x\np=7\nprint *,x,p,associated(p,x)\nend\n','7 7 T\n')
 

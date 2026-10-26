@@ -1503,8 +1503,27 @@ uses the original scalar rank, before descriptor lowering.
 Try `rf.bat xalloc_scalar_dummy.f90 --run`, or run
 `python tests/test_allocatable_scalar_dummies.py` after building the compiler.
 
-This is partial scalar support. Scalar ALLOCATABLE function results,
-scalar derived-type allocation/components, explicit SAVE on intrinsic
+Intrinsic scalar ALLOCATABLE function results support INTEGER, REAL, LOGICAL,
+COMPLEX and constant-length CHARACTER. Functions can allocate explicitly, use
+SOURCE/MOLD, or allocate by intrinsic assignment; calls can appear in scalar
+expressions, constructors and ordinary input arguments. Each call uses separate
+caller-owned storage and initialization state, with automatic cleanup. Repeated
+calls, early RETURN, OPTIONAL/keyword arguments, generic resolution, PURE
+functions and separately compiled module procedures are supported. DO WHILE
+conditions reevaluate result calls at every iteration, including after CYCLE.
+Reading an unallocated result reports the function name; reading an allocated
+but undefined result retains initialization checks. KIND, fixed-length LEN,
+and numeric model inquiries use the result type without evaluating the function.
+A function result remains an expression: materializing it does not permit ALLOCATED(f()) or its use as
+an ALLOCATABLE or writable variable actual. Deferred-length CHARACTER results
+retain the existing length-aware backend and its bounded-string restrictions.
+Recursive allocatable scalar results and nonconstant explicit CHARACTER result
+lengths remain unsupported by this new descriptor path.
+
+Try `rf.bat xalloc_scalar_result.f90 --run`, or run
+`python tests/test_allocatable_scalar_results.py` after building the compiler.
+
+This is partial scalar support. Scalar derived-type allocation/components, explicit SAVE on intrinsic
 allocatable scalars, and allocatable scalar DO control variables remain
 unsupported. Existing host-association restrictions for allocatable storage
 also remain. Ordinary scalar dummy arguments do not gain ALLOCATABLE semantics.

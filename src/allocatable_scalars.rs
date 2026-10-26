@@ -200,6 +200,7 @@ pub(crate) fn resolve(mut program: crate::ast::Program) -> Result<crate::ast::Pr
         }
         false
     }
+    program = crate::allocatable_scalar_results::resolve(program)?;
     if !needed(&mut program.body) {
         return Ok(program);
     }
@@ -326,14 +327,6 @@ pub(crate) fn resolve(mut program: crate::ast::Program) -> Result<crate::ast::Pr
                     });
                     checked?;
                     fold_models(e, &scalars, &symbols, types, users)?;
-                }
-                if let Stmt::Function { name, body, .. } = &stmt {
-                    let result = match body.last() {
-                        Some(Stmt::Return(Some(Expr::Ident(n)))) => n,
-                        _ => name,
-                    };
-                    ensure!(!body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==result && intent=="allocatable"))
-                        || body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,..} if name==result)),"ALLOCATABLE scalar function results are not yet supported");
                 }
                 match &mut stmt {
                     Stmt::VarDecl { kind, names } => {

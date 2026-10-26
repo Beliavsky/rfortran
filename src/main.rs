@@ -42,6 +42,7 @@ mod initialized;
 mod input;
 mod namelists;
 mod allocatable_scalars;
+mod allocatable_scalar_results;
 mod namelist_input;
 mod unformatted;
 mod storage_size;
