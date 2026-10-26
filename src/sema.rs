@@ -160,11 +160,12 @@ fn warn_or_error(
     span: std::ops::Range<usize>,
     settings: &SemaSettings,
     stderr: &mut codespan_reporting::term::termcolor::StandardStream,
-    file: &codespan_reporting::files::SimpleFile<&str, &str>,
+    file: &crate::source_diagnostics::SourceFile<'_>,
     errors: &mut Vec<CompileError>,
 ) {
     use codespan_reporting::diagnostic::{Diagnostic, Label};
-    use codespan_reporting::term::{emit_to_io_write, Config};
+    use codespan_reporting::term::Config;
+    use crate::source_diagnostics::emit_mapped as emit_to_io_write;
     let kn = kind_name.to_ascii_lowercase();
 
     if settings.allow.contains(&kn) {
@@ -191,12 +192,13 @@ fn report_error(
     message: &str,
     span: std::ops::Range<usize>,
     stderr: &mut codespan_reporting::term::termcolor::StandardStream,
-    file: &codespan_reporting::files::SimpleFile<&str, &str>,
+    file: &crate::source_diagnostics::SourceFile<'_>,
     errors: &mut Vec<CompileError>,
     silent_undefined: bool,
 ) {
     use codespan_reporting::diagnostic::{Diagnostic, Label};
-    use codespan_reporting::term::{emit_to_io_write, Config};
+    use codespan_reporting::term::Config;
+    use crate::source_diagnostics::emit_mapped as emit_to_io_write;
 
     let is_undefined = message.ends_with("@UNDEFINED");
     let clean_message = if is_undefined {
@@ -225,12 +227,13 @@ fn report_error_with_note(
     note_message: &str,
     note_span: std::ops::Range<usize>,
     stderr: &mut codespan_reporting::term::termcolor::StandardStream,
-    file: &codespan_reporting::files::SimpleFile<&str, &str>,
+    file: &crate::source_diagnostics::SourceFile<'_>,
     errors: &mut Vec<CompileError>,
     silent_undefined: bool,
 ) {
     use codespan_reporting::diagnostic::{Diagnostic, Label};
-    use codespan_reporting::term::{emit_to_io_write, Config};
+    use codespan_reporting::term::Config;
+    use crate::source_diagnostics::emit_mapped as emit_to_io_write;
 
     let is_undefined = message.ends_with("@UNDEFINED");
     let clean_message = if is_undefined {
@@ -264,6 +267,19 @@ pub fn analyze_with_src(
     settings: &SemaSettings,
     linked_obj_exports: &HashSet<String>,
     silent_undefined: bool,
+) -> Vec<CompileError> {
+    analyze_with_origins(program, src, tokens, filename, settings, linked_obj_exports, silent_undefined, None)
+}
+
+pub fn analyze_with_origins(
+    program: &Program,
+    src: &str,
+    tokens: &[Token],
+    filename: &str,
+    settings: &SemaSettings,
+    linked_obj_exports: &HashSet<String>,
+    silent_undefined: bool,
+    origins: Option<&[crate::source_diagnostics::SourceOrigin]>,
 ) -> Vec<CompileError> {
     let mut sym: HashMap<String, TypeSpec> = HashMap::new();
     let mut errors: Vec<CompileError> = Vec::new();
@@ -327,10 +343,10 @@ pub fn analyze_with_src(
         None
     }
 
-    use codespan_reporting::files::SimpleFile;
+    use crate::source_diagnostics::SourceFile as SimpleFile;
     use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
     let mut stderr = StandardStream::stderr(ColorChoice::Auto);
-    let file = SimpleFile::new(filename, src);
+    let file = SimpleFile::new(filename, src, origins);
     for stmt in &program.body {
         match stmt {
             Stmt::VarDecl { kind, names } => {
@@ -532,7 +548,7 @@ pub fn analyze_with_src(
         loop_depth: usize,
         tokens: &[Token],
         stderr: &mut codespan_reporting::term::termcolor::StandardStream,
-        file: &codespan_reporting::files::SimpleFile<&str, &str>,
+        file: &crate::source_diagnostics::SourceFile<'_>,
         errors: &mut Vec<CompileError>,
     ) {
         match stmt {
@@ -966,7 +982,8 @@ pub fn analyze_with_src(
         };
 
         use codespan_reporting::diagnostic::{Diagnostic, Label};
-        use codespan_reporting::term::{emit_to_io_write, Config};
+        use codespan_reporting::term::Config;
+    use crate::source_diagnostics::emit_mapped as emit_to_io_write;
         if let Some(decl_span) = decl_span_opt {
             let msg = format!(
                 "undefined variable `{}` (declared in an inner BLOCK)@UNDEFINED",
@@ -1348,7 +1365,7 @@ pub fn analyze_with_src(
         tokens: &[Token],
         errors: &mut Vec<CompileError>,
         stderr: &mut codespan_reporting::term::termcolor::StandardStream,
-        file: &codespan_reporting::files::SimpleFile<&str, &str>,
+        file: &crate::source_diagnostics::SourceFile<'_>,
         type_span_map: &HashMap<String, std::ops::Range<usize>>,
         settings: &SemaSettings,
         program_level_reads: &HashSet<String>,
@@ -1483,7 +1500,7 @@ pub fn analyze_with_src(
             errors: &mut Vec<CompileError>,
             has_path: &mut bool,
             stderr: &mut codespan_reporting::term::termcolor::StandardStream,
-            file: &codespan_reporting::files::SimpleFile<&str, &str>,
+            file: &crate::source_diagnostics::SourceFile<'_>,
             type_span_map: &HashMap<String, std::ops::Range<usize>>,
             params: &Vec<String>,
             local_param_intent: &HashMap<String, ParamIntent>,
@@ -1884,7 +1901,7 @@ pub fn analyze_with_src(
         param_intent_map: &HashMap<String, ParamIntent>,
         find_ident_span: &dyn Fn(&str) -> std::ops::Range<usize>,
         stderr: &mut codespan_reporting::term::termcolor::StandardStream,
-        file: &codespan_reporting::files::SimpleFile<&str, &str>,
+        file: &crate::source_diagnostics::SourceFile<'_>,
         errors: &mut Vec<CompileError>,
         settings: &SemaSettings,
     ) {
@@ -1904,7 +1921,7 @@ pub fn analyze_with_src(
             param_intent_map: &HashMap<String, ParamIntent>,
             find_ident_span: &dyn Fn(&str) -> std::ops::Range<usize>,
             stderr: &mut codespan_reporting::term::termcolor::StandardStream,
-            file: &codespan_reporting::files::SimpleFile<&str, &str>,
+            file: &crate::source_diagnostics::SourceFile<'_>,
             errors: &mut Vec<CompileError>,
             settings: &SemaSettings,
         ) {
@@ -1984,7 +2001,7 @@ pub fn analyze_with_src(
             param_intent_map: &HashMap<String, ParamIntent>,
             find_ident_span: &dyn Fn(&str) -> std::ops::Range<usize>,
             stderr: &mut codespan_reporting::term::termcolor::StandardStream,
-            file: &codespan_reporting::files::SimpleFile<&str, &str>,
+            file: &crate::source_diagnostics::SourceFile<'_>,
             errors: &mut Vec<CompileError>,
             settings: &SemaSettings,
         ) -> HashSet<String> {

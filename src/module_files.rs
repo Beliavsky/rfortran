@@ -264,6 +264,7 @@ pub(crate) fn prepare(
         vec![SourceOrigin {
             name: filename.display().to_string(),
             range: 0..source.len(),
+            source: None, offset: 0,
         }]
     });
     let mut own = HashMap::new();
@@ -330,6 +331,7 @@ pub(crate) fn prepare(
                 combined_origins.push(SourceOrigin {
                     name: origin.name.clone(),
                     range: origin.range.start + offset..origin.range.end + offset,
+                    ..origin.clone()
                 });
             }
         }

@@ -878,8 +878,8 @@ pub(crate) fn check(
         {
             (
                 origin.name.as_str(),
-                &source[origin.range.clone()],
-                offset - origin.range.start..end.min(origin.range.end) - origin.range.start,
+                origin.source(source),
+                origin.span(offset..end),
             )
         } else {
             (filename, source, offset..end)

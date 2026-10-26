@@ -1368,7 +1368,7 @@ pub fn check(
     let fallback = files.add(filename, src);
     let ids = origins
         .iter()
-        .map(|o| files.add(o.name.as_str(), &src[o.range.clone()]))
+        .map(|o| files.add(o.name.as_str(), o.source(src)))
         .collect::<Vec<_>>();
     let locate = |span: Range<usize>| {
         if let Some((i, o)) = origins
@@ -1378,7 +1378,7 @@ pub fn check(
         {
             (
                 ids[i],
-                span.start - o.range.start..span.end.min(o.range.end) - o.range.start,
+                o.span(span),
             )
         } else {
             (fallback, span.start.min(src.len())..span.end.min(src.len()))

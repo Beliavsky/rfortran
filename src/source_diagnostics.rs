@@ -20,6 +20,56 @@ pub(crate) struct LocatedError {
 pub(crate) struct SourceOrigin {
     pub name: String,
     pub range: Range<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub offset: usize,
+}
+fn is_zero(n: &usize) -> bool { *n == 0 }
+impl SourceOrigin {
+    pub fn source<'a>(&'a self, expanded: &'a str) -> &'a str {
+        self.source.as_deref().unwrap_or(&expanded[self.range.clone()])
+    }
+    pub fn position(&self, p: usize) -> usize { p.saturating_sub(self.range.start) + self.offset }
+    pub fn span(&self, span: Range<usize>) -> Range<usize> {
+        self.position(span.start)..self.position(span.end.min(self.range.end))
+    }
+}
+
+/// Parser and semantic diagnostics can have labels in several included files.
+pub(crate) struct SourceFile<'a> {
+    name: &'a str,
+    source: &'a str,
+    origins: Option<&'a [SourceOrigin]>,
+}
+impl<'a> SourceFile<'a> {
+    pub fn new(name: &'a str, source: &'a str, origins: Option<&'a [SourceOrigin]>) -> Self {
+        Self { name, source, origins }
+    }
+    pub fn source(&self) -> &str { self.source }
+}
+pub(crate) fn emit_mapped(
+    writer: &mut impl std::io::Write,
+    config: &codespan_reporting::term::Config,
+    file: &SourceFile<'_>,
+    diagnostic: &codespan_reporting::diagnostic::Diagnostic<()>,
+) -> Result<(), codespan_reporting::files::Error> {
+    use codespan_reporting::{diagnostic::Label, files::SimpleFiles};
+    let mut files = SimpleFiles::new();
+    let fallback = files.add(file.name, file.source);
+    let origins = file.origins.unwrap_or(&[]);
+    let ids = origins.iter().map(|o| files.add(o.name.as_str(), o.source(file.source))).collect::<Vec<_>>();
+    let labels = diagnostic.labels.iter().map(|label| {
+        let (id, range) = origins.iter().enumerate().find(|(_,o)| o.range.contains(&label.range.start)
+            || label.range.start == file.source.len() && o.range.end == file.source.len())
+            .map_or((fallback,label.range.clone()), |(i,o)| (ids[i],o.span(label.range.clone())));
+        Label { style: label.style, file_id: id, range, message: label.message.clone() }
+    }).collect();
+    let mapped = codespan_reporting::diagnostic::Diagnostic {
+        severity: diagnostic.severity, code: diagnostic.code.clone(), message: diagnostic.message.clone(),
+        labels, notes: diagnostic.notes.clone(),
+    };
+    codespan_reporting::term::emit_to_io_write(writer, config, &files, &mapped)
 }
 
 /// Check source declarations before backend specialization can obscure a
@@ -255,8 +305,8 @@ pub(crate) fn report(
             .find(|origin| origin.range.contains(&span.start))
     }) {
         name = &origin.name;
-        source = &src[origin.range.clone()];
-        span = span.start - origin.range.start..span.end.min(origin.range.end) - origin.range.start;
+        source = origin.source(src);
+        span = origin.span(span);
     }
     let message = user_names(&located.message);
     let diagnostic = Diagnostic::error()

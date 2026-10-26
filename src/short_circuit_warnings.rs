@@ -405,8 +405,8 @@ pub fn check(program: &Program, src: &str, own_len: usize, filename: &str,
         if *offset >= own_len { continue; }
         let span = a.span(*offset, name);
         let (file, source, span) = if let Some(origin) = origins.iter().find(|o| o.range.contains(&span.start)) {
-            (origin.name.as_str(), &src[origin.range.clone()],
-                span.start-origin.range.start..span.end.min(origin.range.end)-origin.range.start)
+            (origin.name.as_str(), origin.source(src),
+                origin.span(span))
         } else { (filename, src, span) };
         let state = if *query == "allocated" { "allocation" } else { "association" };
         let diagnostic = if error { Diagnostic::error() } else { Diagnostic::warning() }

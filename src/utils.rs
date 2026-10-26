@@ -40,10 +40,9 @@ pub const FIXED_FORM_EXTENSIONS: &[&str] = &["f", "for", "ftn", "f77", "fpp"];
 
 /// Read a Fortran source, converting fixed source form to free form. The
 /// conversion keeps every line on its line number, so diagnostics need no map.
-pub fn read_source(path: &Path, cli: &crate::cli::Cli) -> Result<String> {
-    let fixed = cli.is_fixed_form(path);
+pub(crate) fn read_source_unit(path: &Path, cli: &crate::cli::Cli, fixed: bool, preprocess: bool) -> Result<String> {
     // Preprocessor conditionals come first; their lines become blank.
-    let preprocessed = if !cli.nocpp && (cli.cpp || crate::preprocess::by_extension(path)) {
+    let preprocessed = if preprocess {
         let text = read_file_to_string(path)?;
         let defined = crate::preprocess::definitions(&cli.defines)?;
         let text = crate::preprocess::preprocess(&text, &defined, fixed)
@@ -115,7 +114,7 @@ pub fn print_help() {
     println!("\nOptions:");
     println!("  --verbose            Show build progress and toolchain commands");
     println!("  -c, --compile-only   Emit an object without linking");
-    println!("  -I <directory>       Search for rfort .rmod module interfaces (repeatable)");
+    println!("  -I <directory>       Search for INCLUDE files and .rmod module interfaces (repeatable)");
     println!("  -J <directory>       Write module interfaces here and search this directory");
     println!("  -Wall, --Wall        Enable common warnings (some advice remains opt-in)");
     println!("  -std=<revision>     Check implemented features: f90, f95, f2003, f2008, f2018, f2023");

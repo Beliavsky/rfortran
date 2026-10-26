@@ -195,8 +195,8 @@ pub fn check(program: &Program, src: &str, tokens: &[Token], filename: &str,
         let (enabled, error) = controls[warning.category];
         if !enabled { continue; }
         let (file, source, span) = if let Some(origin) = origins.unwrap_or(&[]).iter().find(|o| o.range.contains(&warning.span.start)) {
-            (origin.name.as_str(), &src[origin.range.clone()],
-                warning.span.start-origin.range.start..warning.span.end.min(origin.range.end)-origin.range.start)
+            (origin.name.as_str(), origin.source(src),
+                origin.span(warning.span))
         } else { (filename, src, warning.span) };
         let diagnostic = if error { Diagnostic::error() } else { Diagnostic::warning() }
             .with_message(format!("{} [{}]", warning.message, warning.category))

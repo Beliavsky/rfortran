@@ -59,8 +59,9 @@ fn combine(sources: &[PathBuf], output: &Path, inputs: &[PathBuf], cli: &Cli) ->
         let source = source.canonicalize()?;
         text.push_str(&format!("! Source: {}\n", source.display()));
         let start=text.len();
-        text.push_str(&utils::read_source(&source, cli)?);
-        origins.push(crate::source_diagnostics::SourceOrigin{name:source.display().to_string(),range:start..text.len()});
+        let input = crate::source_includes::read(&source, cli)?;
+        text.push_str(&input.text);
+        origins.extend(input.origins.into_iter().map(|mut o| { o.range = o.range.start+start..o.range.end+start; o }));
         text.push('\n');
     }
     fs::write(output, text).with_context(|| format!("writing {}", output.display()))?;

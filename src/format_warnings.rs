@@ -450,8 +450,8 @@ pub(crate) fn check(
         {
             (
                 o.name.as_str(),
-                &src[o.range.clone()],
-                span.start - o.range.start..span.end.min(o.range.end) - o.range.start,
+                o.source(src),
+                o.span(span),
             )
         } else {
             (filename, src, span)

@@ -8,6 +8,7 @@ mod driver;
 mod codegen;
 mod errors;
 mod source_diagnostics;
+mod source_includes;
 mod standards;
 mod ir;
 mod intrinsics;
@@ -168,7 +169,8 @@ fn compiler_main(started: std::time::Instant) -> Result<()> {
         cli::Command::Repl => repl::run(&args)?,
         cli::Command::ReplEval { input } => repl::evaluate(&input)?,
         cli::Command::Lex { input, out } => {
-            let src = utils::read_source(&input, &args)?;
+            let source_input = source_includes::read(&input, &args)?;
+            let src = source_input.text;
             let tokens = lexer::lex(&src);
             let mut serialized = String::new();
             let mut longest_token = 0;
@@ -196,11 +198,12 @@ fn compiler_main(started: std::time::Instant) -> Result<()> {
             }
         }
         cli::Command::Parse { input, out } => {
-            let src = utils::read_source(&input, &args)?;
+            let source_input = source_includes::read(&input, &args)?;
+            let src = source_input.text;
             let tokens = lexer::lex(&src);
-            match parser::parse_with_src(&src, &tokens, input.to_str().unwrap_or("<unknown>")) {
+            match parser::parse_with_origins(&src, &tokens, input.to_str().unwrap_or("<unknown>"), Some(&source_input.origins)) {
                 Ok(p) => {
-                    standards::check(&p, &src, &tokens, input.to_str().unwrap_or("<unknown>"), None, args.standard, args.werror)?;
+                    standards::check(&p, &src, &tokens, input.to_str().unwrap_or("<unknown>"), Some(&source_input.origins), args.standard, args.werror)?;
                     if let Some(out_path) = out {
                         let serialized = serde_json::to_string_pretty(&p)?;
                         std::fs::write(&out_path, serialized)?;
@@ -220,17 +223,19 @@ fn compiler_main(started: std::time::Instant) -> Result<()> {
             }
         }
         cli::Command::Check { input } => {
-            let src = utils::read_source(&input, &args)?;
+            let source_input = source_includes::read(&input, &args)?;
+            let src = source_input.text;
             let tokens = lexer::lex(&src);
             let settings_from_src = sema::parse_directives(&src);
             let mut settings = settings_from_src;
             settings.wall |= args.wall;
             settings.werror |= args.werror;
             let mut any_err = false;
-            let program = match parser::parse_with_src(
+            let program = match parser::parse_with_origins(
                 &src,
                 &tokens,
                 input.to_str().unwrap_or("<unknown>"),
+                Some(&source_input.origins),
             ) {
                 Ok(p) => p,
                 Err(errs) => {
@@ -245,14 +250,14 @@ fn compiler_main(started: std::time::Instant) -> Result<()> {
                     }
                 }
             };
-            let prepared = prepare_program(program, &src, &tokens, &input, None, &settings, &args)?;
+            let prepared = prepare_program(program, &src, &tokens, &input, Some(&source_input.origins), &settings, &args)?;
             let src = &prepared.source;
             let tokens = lexer::lex(src);
             let program = lower_program_body(prepared.program.clone(), src, &tokens,
                 input.to_str().unwrap_or("<unknown>"), Some(&prepared.origins))?;
             suppress_legacy_unused(&mut settings);
             let empty_obj_exports = std::collections::HashSet::new();
-            let sema_errs = sema::analyze_with_src(
+            let sema_errs = sema::analyze_with_origins(
                 &program,
                 &src,
                 &tokens,
@@ -260,6 +265,7 @@ fn compiler_main(started: std::time::Instant) -> Result<()> {
                 &settings,
                 &empty_obj_exports,
                 false,
+                Some(&prepared.origins),
             );
             if !sema_errs.is_empty() {
                 let mut has_error = false;
@@ -291,16 +297,18 @@ fn compiler_main(started: std::time::Instant) -> Result<()> {
             }
         }
         cli::Command::Run { input } => {
-            let src = utils::read_source(&input, &args)?;
+            let source_input = source_includes::read(&input, &args)?;
+            let src = source_input.text;
             let tokens = lexer::lex(&src);
             let settings_from_src = sema::parse_directives(&src);
             let mut settings = settings_from_src;
             settings.wall |= args.wall;
             settings.werror |= args.werror;
-            let program = match parser::parse_with_src(
+            let program = match parser::parse_with_origins(
                 &src,
                 &tokens,
                 input.to_str().unwrap_or("<unknown>"),
+                Some(&source_input.origins),
             ) {
                 Ok(p) => p,
                 Err(errs) => {
@@ -310,14 +318,14 @@ fn compiler_main(started: std::time::Instant) -> Result<()> {
                     anyhow::bail!("parse failed");
                 }
             };
-            let prepared = prepare_program(program, &src, &tokens, &input, None, &settings, &args)?;
+            let prepared = prepare_program(program, &src, &tokens, &input, Some(&source_input.origins), &settings, &args)?;
             let src = &prepared.source;
             let tokens = lexer::lex(src);
             let program = lower_program_body(prepared.program.clone(), src, &tokens,
                 input.to_str().unwrap_or("<unknown>"), Some(&prepared.origins))?;
             suppress_legacy_unused(&mut settings);
             let empty_obj_exports = std::collections::HashSet::new();
-            let sema_errs = sema::analyze_with_src(
+            let sema_errs = sema::analyze_with_origins(
                 &program,
                 &src,
                 &tokens,
@@ -325,6 +333,7 @@ fn compiler_main(started: std::time::Instant) -> Result<()> {
                 &settings,
                 &empty_obj_exports,
                 false,
+                Some(&prepared.origins),
             );
             if !sema_errs.is_empty() {
                 for e in &sema_errs {
@@ -422,13 +431,15 @@ fn compile_to_object(
     origins: Option<&[source_diagnostics::SourceOrigin]>,
 ) -> Result<BuildArtifact> {
     // A combined source was converted file by file already.
-    let src = if origins.is_some() { utils::read_file_to_string(input)? } else { utils::read_source(input, args)? };
+    let source_input = if let Some(origins) = origins { source_includes::Input { text: utils::read_file_to_string(input)?, origins: origins.to_vec() } } else { source_includes::read(input, args)? };
+    let src = source_input.text;
+    let origins = Some(source_input.origins.as_slice());
     let tokens = lexer::lex(&src);
     let settings_from_src = sema::parse_directives(&src);
     let mut settings = settings_from_src;
     settings.wall |= wall;
     settings.werror |= werror;
-    let parse_result = compile_profile::run("parse", || parser::parse_with_src(&src, &tokens, input.to_str().unwrap_or("<unknown>")));
+    let parse_result = compile_profile::run("parse", || parser::parse_with_origins(&src, &tokens, input.to_str().unwrap_or("<unknown>"), Some(&source_input.origins)));
     let program = match parse_result {
         Ok(p) => p,
         Err(errs) => {
@@ -469,7 +480,7 @@ fn compile_to_object(
         }
         external_calls(&program.body, &mut empty_obj_exports);
     }
-    let sema_errs = compile_profile::run("sema", || sema::analyze_with_src(
+    let sema_errs = compile_profile::run("sema", || sema::analyze_with_origins(
         &program,
         &src,
         &tokens,
@@ -477,6 +488,7 @@ fn compile_to_object(
         &settings,
         &empty_obj_exports,
         allow_undefined,
+        Some(&prepared.origins),
     ));
     if !sema_errs.is_empty() {
         let mut has_error = false;

@@ -555,7 +555,7 @@ pub(crate) fn instrument_with_origins(program: Program, source: &str, filename: 
                         *message=message.split_once(':').unwrap().1.to_owned();
                         if let Some(offset)=position {
                             let (text,offset,file)=if let Some(origin)=origins.iter().find(|o|o.range.contains(&offset)) {
-                                (&source[origin.range.clone()],offset-origin.range.start,origin.name.as_str())
+                                (origin.source(source),origin.position(offset),origin.name.as_str())
                             }else {(source,offset,filename)};
                             let line=text.as_bytes()[..offset.min(text.len())].iter().filter(|&&b|b==b'\n').count()+1;
                             let file=std::path::Path::new(file).file_name().and_then(|n|n.to_str()).unwrap_or(file);
@@ -568,7 +568,7 @@ pub(crate) fn instrument_with_origins(program: Program, source: &str, filename: 
                         let (source, offset, filename) = if let Some(origin) = origins.iter().find(|o| o.range.contains(&offset)) {
                             let filename = std::path::Path::new(&origin.name).file_name()
                                 .and_then(|n| n.to_str()).unwrap_or(&origin.name);
-                            (&source[origin.range.clone()], offset - origin.range.start, filename)
+                            (origin.source(source), origin.position(offset), filename)
                         } else { (source, offset, filename) };
                         let line = source.as_bytes()[..offset.min(source.len())].iter().filter(|&&b| b == b'\n').count() + 1;
                         if args.len() == 2 { args.push(Expr::Str(String::new())); }

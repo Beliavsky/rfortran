@@ -500,17 +500,25 @@ pub fn parse_with_src(
     tokens: &[Token],
     filename: &str,
 ) -> Result<Program, Vec<CompileError>> {
+    parse_with_origins(src, tokens, filename, None)
+}
+
+pub fn parse_with_origins(
+    src: &str,
+    tokens: &[Token],
+    filename: &str,
+    origins: Option<&[crate::source_diagnostics::SourceOrigin]>,
+) -> Result<Program, Vec<CompileError>> {
     use codespan_reporting::diagnostic::{Diagnostic, Label};
-    use codespan_reporting::files::SimpleFile;
+    use crate::source_diagnostics::{SourceFile as SimpleFile, emit_mapped as emit_to_io_write};
     use codespan_reporting::term::{
-        emit_to_io_write,
         termcolor::{ColorChoice, StandardStream},
         Config,
     };
 
     let mut errs: Vec<CompileError> = Vec::new();
 
-    let file = SimpleFile::new(filename, src);
+    let file = SimpleFile::new(filename, src, origins);
     let mut stderr = StandardStream::stderr(ColorChoice::Auto);
 
     for t in tokens {

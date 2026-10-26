@@ -828,9 +828,8 @@ pub fn check(
         {
             (
                 origin.name.as_str(),
-                &src[origin.range.clone()],
-                d.span.start - origin.range.start
-                    ..d.span.end.min(origin.range.end) - origin.range.start,
+                origin.source(src),
+                origin.span(d.span.clone()),
             )
         } else {
             (filename, src, d.span.clone())

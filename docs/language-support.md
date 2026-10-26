@@ -10,6 +10,7 @@ gfortran when it is installed. Run the tests after `cargo build --bin rfort`.
 ## Contents
 
 - [Source form and declarations](#source-form-and-declarations)
+  - [INCLUDE lines](#include-lines)
   - [Preprocessor conditionals](#preprocessor-conditionals)
   - [Declarations without `::`](#declarations-without-)
   - [DIMENSION declarations and SHAPE](#dimension-declarations-and-shape)
@@ -134,6 +135,39 @@ preserve, such as a statement starting before column 7; `-Werror` makes these
 warnings errors.
 
 Run `python tests/test_fixed_form.py` for the checks.
+
+### INCLUDE lines
+
+Fortran `INCLUDE 'filename'` and `INCLUDE "filename"` insert source text before
+parsing. Includes can contain declarations, executable statements, or program
+units; nested and repeated includes are supported. Relative paths are searched
+beside the including file, then in the working directory, then in repeatable
+`-I directory` search paths. Absolute filenames are also accepted. Included files
+inherit the enclosing source's fixed/free form and source-form options, regardless
+of their extension. Filenames may use doubled quote delimiters and a trailing
+Fortran comment is allowed.
+
+An INCLUDE occupies a complete source line, outside a continued statement.
+Cycles, missing files, malformed lines, and nesting beyond 128 files produce
+errors. Compile-time errors, warnings, and initialization runtime errors retain
+the original filenames and line numbers, including parent lines after an include.
+The same handling applies to native builds, `run`, `check`, `parse`, and separate
+module compilation.
+
+Preprocessor conditionals are applied to the outer file first, so an INCLUDE in
+an excluded branch is ignored. Text inserted by Fortran INCLUDE is not itself
+preprocessed. C-preprocessor `#include` remains unsupported.
+
+```fortran
+implicit none
+include 'constants.inc'
+print *, n
+end
+```
+
+With `integer, parameter :: n = 7` in `constants.inc`, run this using
+`rfort main.f90 --run`, or `rfort -I includes main.f90 --run` when the include
+file is in `includes`. Run `python tests/test_include.py` for the regression tests.
 
 ### Preprocessor conditionals
 
