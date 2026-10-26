@@ -11,6 +11,7 @@ pub(super) struct ResultProcedure {
     signature: crate::named_arguments::Signature,
     ty: String,
     helper: String,
+    kinds: Vec<Option<TypeSpec>>,
 }
 
 impl Lower {
@@ -46,6 +47,20 @@ impl Lower {
                             signature: crate::named_arguments::Signature::new(params, body),
                             ty,
                             helper: helper.clone(),
+                            kinds: params
+                                .iter()
+                                .map(|p| {
+                                    body.iter().find_map(|s| match s {
+                                        Stmt::VarDecl { kind, names } if names.contains(p) => {
+                                            Some(kind.clone())
+                                        }
+                                        Stmt::ArrayDecl { kind, name, .. } if name == p => {
+                                            Some(kind.clone())
+                                        }
+                                        _ => None,
+                                    })
+                                })
+                                .collect(),
                         },
                     );
                     if matches!(body.last(), Some(Stmt::Return(Some(Expr::Ident(n)))) if n == &result)
@@ -250,11 +265,109 @@ impl Lower {
             polymorphic: false,
             dims: dims.clone(),
         }];
-        args.push(Expr::Ident(temp.clone()));
-        generated.push(Stmt::CallSub {
-            name: format!("{PREPARED_CALL}{}", procedure.helper),
-            args: std::mem::take(args),
-        });
+        let owned = self.fields(&procedure.ty)?.iter().any(|f| f.heap.is_some());
+        if owned && !dims.is_empty() {
+            // Scalarize before record argument flattening: each invocation owns
+            // an independent result and receives ordinary scalar record actuals.
+            let index = format!("@owned_elemental_index_{}", self.serial);
+            generated.push(Stmt::VarDecl {
+                kind: TypeSpec::Integer(Some(8)),
+                names: vec![index.clone()],
+            });
+            let mut scalar_args = vec![];
+            for (position, arg) in std::mem::take(args).into_iter().enumerate() {
+                if crate::named_arguments::omitted(&arg) {
+                    scalar_args.push(arg);
+                    continue;
+                }
+                if let Some(info) = self.pack_object(&arg, objects) {
+                    if info.dims.is_empty() {
+                        scalar_args.push(self.capture_elemental_record(
+                            arg,
+                            info.ty,
+                            &mut generated,
+                        ));
+                    } else {
+                        let input = self.pack_input(&arg, info, objects, prefix)?;
+                        if input.dims.len() != 1 {
+                            bail!("ELEMENTAL owned record results require rank-one actuals");
+                        }
+                        generated.push(Stmt::If {
+                            cond: Expr::Bin(
+                                crate::ast::BinOp::Ne,
+                                Box::new(input.length()),
+                                Box::new(dims[0].clone()),
+                            ),
+                            then_body: vec![Stmt::CallSub {
+                                name: "@error_stop".into(),
+                                args: vec![Expr::Str("ELEMENTAL argument shape mismatch".into())],
+                            }],
+                            else_body: None,
+                        });
+                        scalar_args.push(input.element(Expr::Ident(index.clone())));
+                    }
+                } else if let Some(shape) = self.result_actual_shape(&arg, objects)? {
+                    if shape.len() != 1 {
+                        bail!("ELEMENTAL owned record results require rank-one actuals");
+                    }
+                    let kind = procedure.kinds[position]
+                        .clone()
+                        .context("missing ELEMENTAL intrinsic dummy type")?;
+                    self.serial += 1;
+                    let actual = format!("@owned_elemental_actual_{}", self.serial);
+                    generated.push(Stmt::ArrayDecl {
+                        kind,
+                        name: actual.clone(),
+                        dims: shape
+                            .iter()
+                            .map(|d| {
+                                crate::vector_subscripts::fixed_extent(d)
+                                    .map_or_else(|| d.clone(), |n| Expr::IntLit(n.to_string()))
+                            })
+                            .collect(),
+                    });
+                    generated.push(Stmt::Assign {
+                        name: actual.clone(),
+                        value: arg,
+                    });
+                    generated.push(Stmt::If {
+                        cond: Expr::Bin(
+                            crate::ast::BinOp::Ne,
+                            Box::new(Expr::Call("size".into(), vec![Expr::Ident(actual.clone())])),
+                            Box::new(dims[0].clone()),
+                        ),
+                        then_body: vec![Stmt::CallSub {
+                            name: "@error_stop".into(),
+                            args: vec![Expr::Str("ELEMENTAL argument shape mismatch".into())],
+                        }],
+                        else_body: None,
+                    });
+                    scalar_args.push(Expr::Call(actual, vec![Expr::Ident(index.clone())]));
+                } else {
+                    scalar_args.push(self.capture_elemental_scalar(
+                        arg,
+                        procedure.kinds[position].clone(),
+                        &mut generated,
+                    )?);
+                }
+            }
+            scalar_args.push(Expr::Call(temp.clone(), vec![Expr::Ident(index.clone())]));
+            generated.push(Stmt::Do {
+                var: index,
+                start: Expr::IntLit("1".into()),
+                end: dims[0].clone(),
+                body: vec![Stmt::CallSub {
+                    name: format!("{PREPARED_CALL}{}", procedure.helper),
+                    args: scalar_args,
+                }],
+            });
+        } else {
+            args.push(Expr::Ident(temp.clone()));
+            generated.push(Stmt::CallSub {
+                name: format!("{PREPARED_CALL}{}", procedure.helper),
+                args: std::mem::take(args),
+            });
+        }
         // Process generated storage and the hidden call through the same record
         // expansion as source declarations. No function body is duplicated.
         self.body(&mut generated, objects)?;

@@ -14,6 +14,8 @@ mod elemental_records;
 mod elemental_record_results;
 #[path = "record_components.rs"]
 mod record_components;
+#[path = "owned_record_arrays.rs"]
+mod owned_record_arrays;
 #[path = "record_pack.rs"]
 mod record_pack;
 #[path = "record_constructors.rs"]
@@ -1607,7 +1609,8 @@ impl Lower {
                         let name = name.clone();
                         let o = objects[&name].clone();
                         if self.fields(&o.ty)?.iter().any(|f|f.heap.is_some()) {
-                            bail!("whole-array assignment of records with allocatable components is not yet supported; assign scalar elements instead");
+                            self.owned_array_assignment(&s, &mut objects, &mut prefix)?;
+                            return Ok(());
                         }
                         let (values, array) =
                             self.parts(value.clone(), &o.ty, &mut objects, &mut prefix)?;
@@ -1745,6 +1748,7 @@ impl Lower {
                                 self.expression(actual, &mut objects, &mut prefix)?;
                             }
                         }
+                        if self.owned_elemental_call(name,args,&mut objects,&mut prefix)? {return Ok(());}
                         self.elemental_actuals(name, args, &mut objects, &mut prefix)?;
                         // A type-bound call on an array element, `call a(i)%m()`,
                         // and an element passed to a scalar derived dummy use a

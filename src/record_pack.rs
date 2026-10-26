@@ -36,7 +36,7 @@ pub(super) struct Input {
     ty: String,
     // An axis is either a scalar subscript or (first, stride, extent, vector).
     axes: Vec<(Expr, Option<(Expr, Expr, bool)>)>,
-    dims: Vec<Expr>,
+    pub(super) dims: Vec<Expr>,
 }
 impl Input {
     pub(super) fn scalar(name: String, ty: String) -> Self {
@@ -54,6 +54,9 @@ impl Input {
             .cloned()
             .reduce(|a, b| bin(BinOp::Mul, a, b))
             .unwrap_or(int(1))
+    }
+    pub(super) fn element(&self, ordinal: Expr) -> Expr {
+        if self.scalar { id(&self.name) } else { Expr::Call(self.name.clone(), self.at(ordinal).0) }
     }
     fn at(&self, ordinal: Expr) -> (Vec<Expr>, Vec<Expr>) {
         let mut offset = bin(BinOp::Sub, ordinal, int(1));

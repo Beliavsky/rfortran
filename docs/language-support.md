@@ -1743,17 +1743,30 @@ copy back only that component, so allocating or deallocating multiple components
 of one parent in a statement does not overwrite sibling allocations.
 
 The representation currently copies owned component storage when materializing
-a scalar element. Whole-array assignment and array constructors of records with
-ALLOCATABLE components, INTENT(OUT) array dummies of these types, array-valued
-function results of these types, deferred-length CHARACTER allocatable
-components, POINTER components, intrinsic copies of containers whose array elements own allocations,
-and further arrays of descriptor-owning containers remain unsupported.
-Scalar calls to ELEMENTAL procedures support derived actuals with numeric or
-LOGICAL ALLOCATABLE components and fixed array components, including scalar
-array elements. Their generated component interface preserves ordinary array
-arguments and the source procedure's purity. Array-valued ELEMENTAL calls with
-these records (including scalar record broadcasting) remain unsupported; see
-`tests/programs/xacv_elemental_allocatable_argument.f90`.
+a scalar element. Whole-array and section assignment to conforming record arrays
+now deep-copy through a temporary before changing destination allocations. This
+preserves overlapping sources, scalar broadcasting, empty arrays, and independent
+component ownership. Automatic reallocation of the outer destination array is
+not yet implemented by this path; its storage must already have the required shape.
+
+ELEMENTAL functions returning records with owned components support scalar
+broadcasting and constant rank-one array arguments/results. Each scalar call
+creates independent result components. ELEMENTAL subroutines accept record-array
+actuals, including writable elements and rank-one intrinsic array arguments;
+scalar numeric and record expressions are evaluated once, and array conformance
+is checked.
+See `tests/programs/xowned_record_elemental.f90` and
+`tests/test_owned_record_array_operations.py`.
+
+Array constructors of records with ALLOCATABLE components, INTENT(OUT) array
+dummies of these types, general array-valued function results of these types,
+deferred-length CHARACTER allocatable components, POINTER components, intrinsic
+copies of containers whose array elements own allocations, and further arrays of
+descriptor-owning containers remain unsupported. Array-valued ELEMENTAL functions
+with intrinsic results and owned-record arguments also remain unsupported.
+Scalar calls to ELEMENTAL procedures continue to support derived actuals with
+ALLOCATABLE components and fixed array components, including scalar array elements.
+Their generated component interface preserves ordinary array arguments and purity.
 Default output of records with ALLOCATABLE components requires defined I/O,
 as in Fortran. Run `python tests/test_allocatable_record_arrays.py` for
 interpreter/native O0/O2 checks against gfortran.
