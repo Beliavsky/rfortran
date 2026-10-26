@@ -1891,7 +1891,8 @@ behavior, including comparisons with and without an unrelated derived type.
 
 ### C interoperability
 
-Native compilation supports a subset of Fortran 2003 C interoperability:
+Native compilation supports a subset of Fortran 2003 C interoperability and
+Fortran 2018 assumed-shape C descriptors:
 
 - `USE ISO_C_BINDING`, including `INTRINSIC`, `ONLY`, and renaming. Supported
   kind constants are `C_SIGNED_CHAR`, `C_SHORT`, `C_INT`, `C_LONG`, `C_LONG_LONG`,
@@ -1922,6 +1923,13 @@ Native compilation supports a subset of Fortran 2003 C interoperability:
   Changes to a VALUE dummy affect only its local copy, including calls from
   Fortran. Non-VALUE scalar dummies use C pointers and support `INTENT(IN)`,
   `INTENT(OUT)`, `INTENT(INOUT)`, or omitted INTENT.
+- Assumed-shape INTEGER and REAL array dummies of ranks 1–15, in both call
+  directions, using `CFI_cdesc_t`. Nondefault Fortran lower bounds, zero extents,
+  and strided or reversed sections are supported. Descriptors carry extents and
+  signed byte strides; C exports access C-width storage directly. Fortran-to-C
+  adapters convert private storage while preserving section strides and copy
+  output elements back with their initialization flags. Forwarded C storage
+  remains a direct view.
 - Explicit interfaces to imported C functions/subroutines, with local USE or
   IMPORT declarations for numeric kinds; module procedure exports and module
   dependencies compiled separately using `.rmod` interfaces.
@@ -1951,9 +1959,29 @@ Run `python tests/test_c_interop.py` for native C-to-Fortran and Fortran-to-C te
 at O0/O2. The tests require Clang on Windows, or a host C compiler on Unix.
 The current implementation has been verified on Windows x64.
 
-Array adapters currently require contiguous actual storage. Assumed-shape C
-dummies, descriptor-based C interfaces, and array function results are not yet
-supported. Fortran-to-C adapters stage known actual storage and assume that C
+For descriptor interfaces, compile C with rfortran's own
+`include/ISO_Fortran_binding.h`. The header and embedded runtime provide
+`CFI_CDESC_T`, numeric type constants, `CFI_establish`, `CFI_address`, and
+`CFI_is_contiguous`. This is rfortran's descriptor ABI; descriptor layouts and
+type codes from another compiler are not interchangeable. The initial subset
+supports `CFI_attribute_other` only. Descriptor version, rank, type, element size,
+extents, stride arithmetic, and null storage are checked before use. A C callee
+cannot change the metadata of these nonallocatable, nonpointer descriptors.
+
+The descriptor example is `tests/c_interop/descriptors.f90` with
+`tests/c_interop/descriptor_caller.c`:
+
+```cmd
+clang --target=x86_64-pc-windows-msvc -I include -c tests\c_interop\descriptor_caller.c -o target\c-descriptor.obj
+rfort tests\c_interop\descriptors.f90 target\c-descriptor.obj -o target\c-descriptor.exe --run
+python tests/test_c_descriptors.py
+```
+
+Plain-pointer array adapters (explicit-shape and assumed-size interfaces) still
+require contiguous actual storage. Array function results, assumed-rank C
+dummies, the CONTIGUOUS attribute on assumed-shape C dummies, allocation-changing
+descriptors, and the remaining CFI routines are not yet supported.
+Fortran-to-C adapters assume that C
 fully defines any output-only array; C writes cannot be individually tracked.
 Pass a bounded section when C accesses only part of an actual array, especially
 if its remaining elements are undefined. Assumed-size C exports do not have a

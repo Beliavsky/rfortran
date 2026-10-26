@@ -63,7 +63,7 @@ pub(super) fn raw_load(
 ) -> CgVal {
     let kind = raw_kind(tag);
     let t = c_type(&kind).unwrap();
-    let at = element(b, base, index, i64::from(t.bytes()));
+    let at = element(b, base, index, 1);
     let v = b.ins().load(t, ir::MemFlags::new(), at, 0);
     let v = widen(b, v, &kind);
     if wide(&kind) == types::F64 {
@@ -80,8 +80,7 @@ pub(super) fn raw_store(
     tag: &str,
 ) -> Result<()> {
     let kind = raw_kind(tag);
-    let t = c_type(&kind)?;
-    let at = element(b, base, index, i64::from(t.bytes()));
+    let at = element(b, base, index, 1);
     let v = if wide(&kind) == types::F64 {
         to_f64(b, value)
     } else {
@@ -90,6 +89,10 @@ pub(super) fn raw_store(
     let v = narrow(b, v, &kind)?;
     b.ins().store(ir::MemFlags::new(), v, at, 0);
     Ok(())
+}
+fn descriptor_type(k:&TypeSpec)->Result<i64> {
+    Ok((if matches!(k,TypeSpec::Real|TypeSpec::DoublePrecision) {2}else{1})
+        + (i64::from(c_type(k)?.bytes())<<8))
 }
 fn signature(m: &ObjectModule, s: &Signature, ptr: ir::Type) -> Result<ir::Signature> {
     let mut sig = m.make_signature();
@@ -281,14 +284,28 @@ pub(super) fn invoke(
     let mut values = vec![];
     let mut outputs = vec![];
     let mut arrays = vec![];
+    let mut descriptors=vec![];
     let mut actuals = args[1..].iter();
     for arg in &s.args {
         let actual = actuals.next().context("missing C argument")?;
         if !arg.dims.is_empty() {
             let mut fields = vec![];
-            for e in std::iter::once(actual).chain(actuals.by_ref().take(3)) {
+            let descriptor=crate::c_interop::assumed_shape(&arg.dims);
+            let extra=if descriptor {3+2*arg.dims.len()}else{3};
+            for e in std::iter::once(actual).chain(actuals.by_ref().take(extra)) {
                 let address = storage_addr(b, ptr, storage(e)?);
                 fields.push(b.ins().load(types::I64, ir::MemFlags::new(), address, 0));
+            }
+            if descriptor {
+                let rank=arg.dims.len();
+                let slot=b.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,(2*rank*8) as u32,3));
+                for (i,v) in fields[4..].iter().enumerate() {b.ins().stack_store(*v,slot,(i*8) as i32);}
+                let shape=b.ins().stack_addr(ptr,slot,0);
+                let rank=b.ins().iconst(types::I64,rank as i64);
+                let typ=b.ins().iconst(types::I64,descriptor_type(&arg.kind)?);
+                let input=b.ins().iconst(types::I64,i64::from(arg.input));
+                let d=file_io::call(m,b,"rfort_c_prepare",&[fields[0],fields[1],rank,typ,fields[3],input,shape],ptr)?;
+                values.push(d);descriptors.push((d,arg.output));continue;
             }
             let [data, flags, _label, count] = fields[..] else {
                 bail!("invalid C array descriptor")
@@ -342,6 +359,10 @@ pub(super) fn invoke(
         let value = widen(b, value, k);
         let local = storage_addr(b, ptr, storage(args.last().unwrap())?);
         b.ins().store(ir::MemFlags::new(), value, local, 0);
+    }
+    for (d,output) in descriptors {
+        let output=b.ins().iconst(types::I64,i64::from(output));
+        file_io::call(m,b,"rfort_c_release",&[d,output],types::I32)?;
     }
     for (c, data, flags, count, arg) in arrays {
         let release = b.create_block();
@@ -429,6 +450,14 @@ pub(super) fn exports(
             }
             let mut arrays = vec![];
             for (arg, value) in s.args.iter().zip(passed) {
+                if crate::c_interop::assumed_shape(&arg.dims) {
+                    let typ=b.ins().iconst(types::I64,descriptor_type(&arg.kind)?);
+                    let rank=b.ins().iconst(types::I64,arg.dims.len() as i64);
+                    file_io::call(m,&mut b,"rfort_c_validate",&[value,typ,rank],types::I32)?;
+                    let base=b.ins().load(ptr,ir::MemFlags::new(),value,0);
+                    let zero=b.ins().iconst(types::I64,0);
+                    actuals.extend([base,value,label,zero]);continue;
+                }
                 if crate::c_interop::assumed_size(&arg.dims) {
                     let zero = b.ins().iconst(types::I64, 0);
                     actuals.extend([value, zero, label, zero]);

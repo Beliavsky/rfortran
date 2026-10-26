@@ -1086,6 +1086,7 @@ impl Lowerer {
                         }
                     }
                 }
+                Stmt::CallSub { name, .. } if matches!(name.as_str(),"@c_desc_bind"|"@c_array_bind") => {},
                 Stmt::CallSub { name, args } => {
                     for (i, e) in args.iter().enumerate() {
                         if contains(e, &scope)? {
@@ -1227,18 +1228,7 @@ fn procedure_intents(body: &[Stmt]) -> HashMap<String, Vec<String>> {
                     name.clone(),
                     params
                         .iter()
-                        .map(|p| {
-                            body.iter()
-                                .find_map(|s| {
-                                    if let Stmt::DummyIntent { name, intent } = s {
-                                        (name == p && intent.starts_with("intent("))
-                                            .then(|| intent.clone())
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .unwrap_or_default()
-                        })
+                        .map(|p|crate::c_interop::association_intent(body,p))
                         .collect(),
                 );
                 result.extend(procedure_intents(body));
@@ -1257,7 +1247,7 @@ fn validate_actual(
     procedures: &HashMap<String, Vec<String>>,
 ) -> Result<()> {
     if let Some(intents) = procedures.get(name) {
-        if intents.get(index).is_none_or(|i| i != "intent(in)") {
+        if intents.get(index).is_none_or(|i| i.strip_prefix("@c_descriptor:").unwrap_or(i) != "intent(in)") {
             bail!("vector-subscript actual argument cannot be associated with writable dummy argument {} of `{name}`",index+1);
         }
     } else if !name.starts_with('@')

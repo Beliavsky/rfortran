@@ -243,6 +243,7 @@ struct Pointer {
     record_targets: HashSet<String>,
     borrowed: bool,
     c_storage: bool,
+    unknown_last: bool,
 }
 #[derive(Clone)]
 struct View {
@@ -392,7 +393,8 @@ impl Lower {
                             targets: HashSet::new(),
                             record_targets: HashSet::new(),
                             borrowed,
-                            c_storage:has("@c_storage"),
+                            c_storage:has("@c_storage") || has("@c_descriptor"),
+                            unknown_last:has("@c_storage"),
                         },
                     );
                 } else {
@@ -563,7 +565,7 @@ impl Lower {
             limit: d.limit.clone(),
             kind: ptr.kind.clone(),
             c_storage:ptr.c_storage,
-            unknown_last:ptr.c_storage,
+            unknown_last:ptr.unknown_last,
             capacity: if ptr.targets.iter().any(|n|self.vars.get(n).is_some_and(|v|v.heap)) {0} else {ptr
                 .targets
                 .iter()
@@ -1645,7 +1647,7 @@ impl Lower {
                         intent.as_str(),
                         "pointer" | "target" | "@pointer_readonly_target"
                     ) || intent.starts_with("@pointer_bounds:") || intent.starts_with("@borrowed_descriptor:")
-                        || intent.starts_with("@borrowed_limit:") || intent=="@c_storage" =>
+                        || intent.starts_with("@borrowed_limit:") || intent=="@c_storage" || intent=="@c_descriptor" =>
                 {
                     continue
                 }
@@ -1662,10 +1664,26 @@ impl Lower {
                     if !self.pointers[name].borrowed {self.initialize(&self.pointers[name].desc, &mut out);}
                     continue;
                 }
+                Stmt::CallSub { name, args } if name == "@c_desc_bind" => {
+                    let v=self.view(args.last().unwrap(),false,&mut out)?.context("C descriptor requires array storage")?;
+                    if v.unknown_last {bail!("assumed-size array requires a bounded section for an assumed-shape C interface");}
+                    let bytes=if v.c_storage {1}else{8};
+                    let offset=mul(v.origin.clone(),int(bytes));
+                    let data=add(v.data.clone(),offset.clone());
+                    let flags=if v.c_storage {int(0)}else{add(v.flags.clone(),offset)};
+                    let mut fields=vec![data,flags,v.name.clone(),int(i64::from(v.c_storage))];
+                    for a in &v.axes {fields.extend([a.extent.clone(),mul(a.stride.clone(),int(bytes))]);}
+                    if fields.len()+1!=args.len() {bail!("C descriptor argument rank mismatch");}
+                    for (target,value) in args.iter().zip(fields) {
+                        let Expr::Ident(n)=target else{bail!("invalid C descriptor fields")};
+                        out.push(assign(n,value));
+                    }
+                    continue;
+                }
                 Stmt::CallSub { name, args } if name == "@c_array_bind" => {
                     let v=self.view(&args[4],false,&mut out)?.context("C array argument requires numeric storage")?;
                     let count=v.count();
-                    let mut stride=int(1);
+                    let mut stride=int(if v.c_storage {match v.kind {TypeSpec::Integer(Some(k))=>i64::from(k),TypeSpec::Integer(None)|TypeSpec::Real=>4,_=>8}}else{1});
                     for axis in &v.axes {
                         let trivial=bin(BinOp::Le,axis.extent.clone(),int(1));
                         let contiguous=bin(BinOp::Eq,axis.stride.clone(),stride.clone());
@@ -1675,8 +1693,9 @@ impl Lower {
                         stride=mul(stride,axis.extent.clone());
                     }
                     // The view may be a packed section supplied by ordinary
-                    // procedure argument lowering. Its origin is in elements.
-                    let width=if v.c_storage {match v.kind {TypeSpec::Integer(Some(k))=>i64::from(k),TypeSpec::Integer(None)|TypeSpec::Real=>4,_=>8}}else{8};
+                    // procedure argument lowering. Raw C origins use bytes;
+                    // private Fortran origins use eight-byte element slots.
+                    let width=if v.c_storage {1}else{8};
                     let offset=mul(v.origin.clone(),int(width));
                     let data=bin(BinOp::Add,v.data.clone(),offset.clone());
                     let flags=if v.c_storage {int(0)}else{bin(BinOp::Add,v.flags.clone(),offset)};
@@ -1926,7 +1945,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
         lower.declarations(body, 0)?;
         fn c_arrays(body: &mut Vec<Stmt>) -> bool {
             body.iter_mut().any(|s| {
-                matches!(s,Stmt::CallSub{name,..} if name=="@c_array_bind")
+                matches!(s,Stmt::CallSub{name,..} if name=="@c_array_bind" || name=="@c_desc_bind")
                     || (!matches!(s,Stmt::Function{..}|Stmt::Subroutine{..})
                         && children(s).into_iter().any(c_arrays))
             })

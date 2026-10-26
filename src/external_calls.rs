@@ -1240,15 +1240,22 @@ fn entry_point(name: &str, params: &[String], body: &[Stmt], dummies: &[(TypeSpe
         declarations.push(integers(locals));
         setup.push(assign(&state, int(1)));
         setup.push(assign(&origin, int(0)));
-        let raw_c=body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==p && intent=="@c_storage"));
-        let mut stride = int(1);
+        let descriptor=body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==p && intent=="@c_descriptor"));
+        let raw_c=descriptor || body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==p && intent=="@c_storage"));
+        let width=match kind {TypeSpec::Integer(Some(k))=>i64::from(*k),TypeSpec::Integer(None)|TypeSpec::Real=>4,_=>8};
+        let mut stride = int(if raw_c {width}else{1});
         let mut assumed = false;
-        for (d, [lower, extent, axis_stride]) in dims.iter().zip(&axes) {
+        for (axis,(d, [lower, extent, axis_stride])) in dims.iter().zip(&axes).enumerate() {
             let (lo, hi) = match d {
                 Expr::Call(tag, a) if tag == "@declared_bounds" => (a[0].clone(), a[1].clone()),
                 _ => (int(1), d.clone()),
             };
             entry.push(assign(lower, lo));
+            if descriptor {
+                entry.push(assign(extent,call("@c_desc_extent",vec![id(&passed[1]),int(axis as i64)])));
+                entry.push(assign(axis_stride,call("@c_desc_stride",vec![id(&passed[1]),int(axis as i64)])));
+                continue;
+            }
             entry.push(assign(axis_stride, stride.clone()));
             if matches!(&hi, Expr::Ident(n) if n == "@assumed_extent") {
                 // The rest of the actual array, whose last column may be
@@ -1639,10 +1646,17 @@ pub(crate) fn c_entry(name:&str, params:&[String], body:&[Stmt], result:Option<&
     let clean=body.iter().filter(|s|!matches!(s,Stmt::DummyIntent{intent,..} if intent=="value")).cloned().collect::<Vec<_>>();
     let body=clean.as_slice();
     let mut scope=Scope::new(None);scope.declare(body,params);
-    let args=dummies(params,body,&scope).context("BIND(C) requires supported numeric declarations")?;
+    let mut validation=body.to_vec();
+    for s in &mut validation {if let Stmt::ArrayDecl{dims,..}=s {if crate::c_interop::assumed_shape(dims) {*dims=vec![int(1);dims.len()];}}}
+    let mut args=dummies(params,&validation,&scope).context("BIND(C) requires supported numeric declarations")?;
+    for (p,(_,dims)) in params.iter().zip(&mut args) {
+        if let Some(original)=body.iter().find_map(|s|match s {Stmt::ArrayDecl{name,dims,..} if name==p=>Some(dims),_=>None}) {*dims=original.clone();}
+    }
     let mut native=body.to_vec();
     for (p,(_,dims)) in params.iter().zip(&args) {
-        if crate::c_interop::assumed_size(dims) {
+        if crate::c_interop::assumed_shape(dims) {
+            native.insert(0,Stmt::DummyIntent{name:p.clone(),intent:"@c_descriptor".into()});
+        }else if crate::c_interop::assumed_size(dims) {
             native.insert(0,Stmt::DummyIntent{name:p.clone(),intent:"@c_storage".into()});
         }
     }

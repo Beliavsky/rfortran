@@ -65,6 +65,7 @@ macro_rules! feature {
 const FEATURES: &[Feature] = &[
     feature!("pure", "PURE procedures", 1995),
     feature!("c_binding", "C procedure bindings", 2003),
+    feature!("c_descriptor", "assumed-shape C bindings", 2018),
     feature!("simple", "SIMPLE procedures", 2023),
     feature!("multiple_subscripts", "multiple subscripts and subscript triplets", 2023),
     feature!("elemental", "ELEMENTAL procedures", 1995),
@@ -681,7 +682,10 @@ impl Checker<'_> {
                         self.feature("rank", offset);
                     }
                 }
-                Stmt::DummyIntent { name, .. } if name==crate::c_interop::BIND => self.feature("c_binding",offset),
+                Stmt::DummyIntent { name, .. } if name==crate::c_interop::BIND => {
+                    self.feature("c_binding",offset);
+                    if body.iter().any(|s|matches!(s,Stmt::ArrayDecl{dims,..} if crate::c_interop::assumed_shape(dims))) {self.feature("c_descriptor",offset);}
+                },
                 Stmt::DummyIntent { name, intent } => match intent.as_str() {
                     "@simple_interface" => self.feature("simple", offset),
                     "allocatable" if component => self.feature("allocatable_component", offset),

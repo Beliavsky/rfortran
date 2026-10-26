@@ -27,7 +27,7 @@ class CInterop(unittest.TestCase):
             (d/'test.f90').write_text(fortran)
             (d/'test.c').write_text(c)
             flags = ['--target=x86_64-pc-windows-msvc'] if os.name == 'nt' and 'clang' in Path(C_COMPILER).name else []
-            self.command([C_COMPILER, *flags, '-c', 'test.c', '-o', 'support_c.obj'], d)
+            self.command([C_COMPILER, *flags, '-I', ROOT/'include', '-c', 'test.c', '-o', 'support_c.obj'], d)
             for opt in (0, 2):
                 with self.subTest(opt=opt):
                     p = self.command([COMPILER, '-O', opt, 'test.f90', 'support_c.obj', '-o', 'program.exe', '--run'], d, expected=status)
@@ -525,7 +525,7 @@ end program
 
     def test_rejected_features_and_standard(self):
         cases = [
-            ('integer,intent(in)::x(:)', 'array dummies'),
+            ('integer,contiguous,intent(in)::x(:)', 'CONTIGUOUS'),
             ('integer,value::x(2)', 'VALUE is not allowed'),
             ('integer,optional::x', 'OPTIONAL'),
             ('integer,value,intent(out)::x', 'VALUE is incompatible'),
@@ -574,7 +574,8 @@ use iso_c_binding
 interface
 function f(x) bind(c)
 import :: c_int
-integer(c_int)::x(:),f
+integer(c_int),optional::x(:)
+integer(c_int)::f
 end function
 end interface
 end program
@@ -585,7 +586,7 @@ end program
             p = subprocess.run([COMPILER, '-c', 'test.f90'], cwd=d,
                                capture_output=True, text=True, timeout=30)
             self.assertNotEqual(p.returncode, 0)
-            self.assertIn('array dummies', p.stderr)
+            self.assertIn('OPTIONAL', p.stderr)
             self.assertIn('test.f90:4:', p.stderr)
 
     def test_bind_remains_a_contextual_identifier(self):

@@ -1045,6 +1045,7 @@ DeclaredDimension: Expr = {
     COLON => Expr::Ident("@deferred_extent".into()),
     <e:RhsExpr> => e,
     <lower:RhsExpr> COLON <upper:RhsExpr> => Expr::Call("@declared_bounds".into(),vec![lower,upper]),
+    <lower:RhsExpr> COLON => Expr::Call("@declared_bounds".into(),vec![lower,Expr::Ident("@deferred_extent".into())]),
     <lower:RhsExpr> COLON STAR => Expr::Call("@declared_bounds".into(),vec![lower,Expr::Ident("@assumed_extent".into())]),
 };
 
@@ -1136,7 +1137,7 @@ PreFuncDeclData: Vec<Stmt> = {
                 if matches!(attr.to_ascii_lowercase().as_str(), "public" | "private") {
                     declarations.push(Stmt::Accessibility {public: attr.eq_ignore_ascii_case("public"), names:vec![name.clone()]});
                 }
-                if attr.to_ascii_lowercase().starts_with("intent(") || matches!(attr.to_ascii_lowercase().as_str(), "optional" | "allocatable" | "parameter" | "pointer" | "target" | "external" | "value") {
+                if attr.to_ascii_lowercase().starts_with("intent(") || matches!(attr.to_ascii_lowercase().as_str(), "optional" | "allocatable" | "parameter" | "pointer" | "target" | "external" | "value" | "contiguous") {
                     declarations.push(Stmt::DummyIntent { name: name.clone(), intent: attr.to_ascii_lowercase() });
                 }
             }

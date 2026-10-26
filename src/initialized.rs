@@ -215,7 +215,7 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                 for arg in &sig.args {
                     let value=values.next().context("missing C adapter argument")?;
                     if !arg.dims.is_empty() {
-                        for field in std::iter::once(value).chain(values.by_ref().take(3)) {read(field,env,&mut before,serial)?;}
+                        for field in std::iter::once(value).chain(values.by_ref().take(if crate::c_interop::assumed_shape(&arg.dims) {3+2*arg.dims.len()}else{3})) {read(field,env,&mut before,serial)?;}
                         continue;
                     }
                     if arg.input {read(value,env,&mut before,serial)?;}

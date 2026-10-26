@@ -51,12 +51,32 @@ pub fn assumed_extent(e: &Expr) -> bool {
 pub fn assumed_size(dims: &[Expr]) -> bool {
     dims.last().is_some_and(assumed_extent)
 }
+pub fn assumed_shape(dims: &[Expr]) -> bool {
+    !dims.is_empty() && dims.iter().all(|d|match d {
+        Expr::Ident(n)=>n=="@deferred_extent",
+        Expr::Call(n,a)=>n=="@declared_bounds" && matches!(a.get(1),Some(Expr::Ident(n)) if n=="@deferred_extent"),
+        _=>false,
+    })
+}
 fn interoperable_dimensions(dims: &[Expr]) -> bool {
+    if assumed_shape(dims) {return true;}
     dims.iter().enumerate().all(|(i,d)| match d {
         Expr::Ident(n) if n=="@deferred_extent" => false,
         Expr::Call(n,a) if n=="@declared_bounds" => a.len()==2 && !matches!(&a[1],Expr::Ident(n) if n=="@deferred_extent") && (!assumed_extent(d) || i+1==dims.len()),
         _ => !assumed_extent(d) || i+1==dims.len(),
     })
+}
+pub fn descriptor_parameter(body:&[Stmt],param:&str)->bool {
+    body.iter().any(|s|matches!(s,Stmt::CallSub{name,args} if name=="@c_desc_bind" && matches!(args.last(),Some(Expr::Ident(n)) if n==param)))
+}
+/// Vector lowering must leave descriptor actuals as views, not packed arrays.
+pub fn association_intent(body:&[Stmt],param:&str)->String {
+    let intent=body.iter().find_map(|s|match s {
+        Stmt::DummyIntent{name,intent} if name==param && intent.starts_with("intent(")=>Some(intent.clone()),_=>None,
+    }).unwrap_or_default();
+    if descriptor_parameter(body,param) {
+        format!("@c_descriptor:{intent}")
+    }else{intent}
 }
 fn dimensions(body: &[Stmt], n: &str) -> Vec<Expr> {
     body.iter().find_map(|s| match s {
@@ -83,7 +103,7 @@ fn association_extent(d: &Expr) -> Expr {
 fn bound(e: &Expr, params: &[String], args: &[Arg]) -> Result<Expr> {
     use crate::ast::{BinOp, UnOp};
     Ok(match e {
-        Expr::Ident(n) if n=="@assumed_extent" => e.clone(),
+        Expr::Ident(n) if n=="@assumed_extent" || n=="@deferred_extent" => e.clone(),
         Expr::IntLit(_) => e.clone(),
         Expr::Ident(n) => {
             let i = params.iter().position(|p| p == n)
@@ -337,8 +357,10 @@ pub fn prepare(mut p: Program) -> Result<Program> {
                     if let Some(symbol)=body.iter().find_map(|s|match s {Stmt::DummyIntent{name,intent} if name==BIND=>Some(intent.clone()),_=>None}) {
                         for n in params.iter() {
                             let ds=dimensions(body,n);
+                            if ds.len()>15 {bail!("BIND(C) array rank exceeds 15");}
+                            if assumed_shape(&ds) && attr(body,n,"contiguous") {bail!("CONTIGUOUS BIND(C) array dummies are not yet supported");}
                             if !ds.is_empty() && attr(body,n,"value") {bail!("VALUE is not allowed on BIND(C) array dummies");}
-                            if !interoperable_dimensions(&ds) {bail!("BIND(C) array dummies require explicit shape or assumed size; assumed-shape arrays are not yet supported");}
+                            if !interoperable_dimensions(&ds) {bail!("BIND(C) array dummies require explicit shape, assumed size, or assumed shape");}
                         }
                         let ks=kinds(body);
                         let result=if function {Some(body.iter().rev().find_map(|s|match s {Stmt::Return(Some(Expr::Ident(n)))=>Some(n.clone()),_=>None}).unwrap_or_else(||name.clone()))}else{None};
@@ -379,7 +401,7 @@ pub fn prepare(mut p: Program) -> Result<Program> {
                         for s in body.iter_mut() {
                             if let Stmt::ArrayDecl{name,dims,..}=s {
                                 if params.contains(name) {
-                                    for d in dims {*d=association_extent(d);}
+                                    if assumed_shape(dims) {*dims=vec![id("@deferred_extent");dims.len()];}else{for d in dims {*d=association_extent(d);}}
                                 }
                             }
                         }
@@ -454,10 +476,11 @@ pub fn resolve(mut p: Program) -> Result<Program> {
                             .cloned()
                             .context("missing C adapter argument type")?;
                         if arg.dims.is_empty() {passed.push(actual.clone());} else {
-                            let fields=(0..4).map(|j|format!("{n}$c_{i}_{j}")).collect::<Vec<_>>();
+                            let descriptor=assumed_shape(&arg.dims);
+                            let fields=(0..if descriptor {4+2*arg.dims.len()}else{4}).map(|j|format!("{n}$c_{i}_{j}")).collect::<Vec<_>>();
                             out.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:fields.clone()});
                             let mut bind=fields.iter().map(|n|id(n)).collect::<Vec<_>>();bind.push(actual.clone());
-                            out.push(Stmt::CallSub{name:"@c_array_bind".into(),args:bind});
+                            out.push(Stmt::CallSub{name:if descriptor {"@c_desc_bind"}else{"@c_array_bind"}.into(),args:bind});
                             passed.extend(fields.iter().map(|n|id(n)));
                         }
                     }

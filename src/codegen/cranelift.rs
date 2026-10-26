@@ -860,6 +860,15 @@ fn eval_expr(
                 let call = b.ins().call(ex.clock_count, &[kind]);
                 return CgVal::I64(b.inst_results(call)[0]);
             }
+            if lname=="@c_desc_extent" || lname=="@c_desc_stride" {
+                let base=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);let base=to_i64(b,base);
+                let axis=eval_expr(b,ex,ptr_ty,&args[1],ints,reals,bools,func_meta);let axis=to_i64(b,axis);
+                let word=i64::from(ptr_ty.bytes());
+                let offset=b.ins().imul_imm(axis,3*word);
+                let offset=b.ins().iadd_imm(offset,2*word+8+if lname=="@c_desc_extent" {word}else{2*word});
+                let address=b.ins().iadd(base,offset);
+                return CgVal::I64(b.ins().load(types::I64,MemFlags::new(),address,0));
+            }
             if let Some(kind) = lname.strip_prefix("@ptr_load_") {
                 let base=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);
                 let base=to_i64(b,base);

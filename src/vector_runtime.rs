@@ -1583,7 +1583,7 @@ impl Lower {
                     }
                 }
                 // Association must retain the original TARGET and its aliasing.
-                Stmt::CallSub { name, .. } if name=="@pointer_associate" => {},
+                Stmt::CallSub { name, .. } if matches!(name.as_str(),"@pointer_associate"|"@c_desc_bind"|"@c_array_bind") => {},
                 Stmt::CallSub { name, args } => {
                     for (i, e) in args.iter().enumerate() {
                         if contains_vector(e, &s) {
@@ -1615,6 +1615,15 @@ impl Lower {
                     for (i,e) in args.iter_mut().enumerate() {
                         let intent=self.procedures.get(name).and_then(|v|v.get(i)).cloned()
                             .or_else(||(name=="random_number" && i==0).then(||"intent(out)".into()));
+                        if let Some(intent)=intent.as_deref().and_then(|i|i.strip_prefix("@c_descriptor:")) {
+                            let root=match &*e {Expr::Ident(n)|Expr::Call(n,_)|Expr::Index(n,_)=>Some(n),Expr::Section{name,..}=>Some(name),_=>None};
+                            if let Some(n)=root.filter(|n|s.get(*n).is_some_and(|(_,d)|!d.is_empty())) {
+                                if !contains_vector(e,&s) {
+                                    if intent!="intent(in)" && s.contains_key(&format!("@readonly:{n}")) {bail!("cannot pass a section of PARAMETER or INTENT(IN) array `{n}` as a writable C argument");}
+                                    continue;
+                                }
+                            }
+                        }
                         if intent.as_deref().is_some_and(|i|i!="intent(in)") {
                             // Rank-one triplets use Section rather than Call
                             // in the AST. Retain writable storage and copy back

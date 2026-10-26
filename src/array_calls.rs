@@ -1484,6 +1484,7 @@ fn expand(
                     local.insert(format!("@optional:{p}"),(TypeSpec::Logical,vec![]));
                 }
                 let mut names = HashMap::new();
+                let mut c_views=HashMap::new();
                 let mut borrowed_widths=HashSet::new();
                 let mut absent = HashSet::new();
                 let mut prefix = vec![];
@@ -1574,9 +1575,28 @@ fn expand(
                     let pointer_target=local.contains_key(&format!("@target:{p}")) && r.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if intent=="pointer" && r.params.contains(name)));
                     if pointer_target && !matches!(actual,Expr::Ident(a) if shapes.contains_key(&format!("@target:{a}"))) {bail!("escaping POINTER association requires a TARGET actual for `{p}`");}
                     if intent != "intent(in)"
-                        && matches!(actual,Expr::Ident(n) | Expr::Index(n,_) | Expr::Call(n,_) if readonly.contains(n))
+                        && matches!(actual,Expr::Ident(n) | Expr::Index(n,_) | Expr::Call(n,_) | Expr::Section{name:n,..} if readonly.contains(n))
                     {
                         bail!("cannot pass PARAMETER or INTENT(IN) variable as writable argument `{p}`");
+                    }
+                    if c_array && crate::c_interop::assumed_shape(&dims) {
+                        let view=match actual {
+                            Expr::Ident(n)=>shapes.get(n).map(|(k,d)| {
+                                let rank=runtime_actual_axes(actual,&shapes).or_else(||crate::allocatables::axes(n,&shapes)).map_or(d.len(),|a|a.len());
+                                (n,k,rank)
+                            }),
+                            Expr::Section{name,..}=>shapes.get(name).map(|(k,_)|(name,k,1)),
+                            Expr::Call(n,a)|Expr::Index(n,a)=>shapes.get(n).filter(|(_,d)|!d.is_empty()).map(|(k,_)|{
+                                let rank=a.iter().filter(|a|matches!(a,Expr::Section{..}) || matches!(a,Expr::Call(n,_) if n=="@section_subscript")).count();
+                                (n,k,rank)
+                            }),
+                            _=>None,
+                        };
+                        if let Some((_,actual_kind,rank))=view {
+                            if !crate::pointers::same_kind(actual_kind,&kind) || rank!=dims.len() {bail!("type or rank mismatch for C descriptor dummy `{p}`");}
+                            *serial+=1;let anchor=format!("@c_view_actual_{serial}");
+                            names.insert(p.clone(),anchor.clone());c_views.insert(anchor,actual.clone());continue;
+                        }
                     }
                     if pointer_actual && c_array {
                         // The C adapter binds this view directly. Do not read
@@ -1932,6 +1952,15 @@ fn expand(
                     &stable,
                 )?;
                 crate::subroutines::rename(&mut cloned, &names, &r.params, serial)?;
+                fn bind_c_views(body:&mut Vec<Stmt>,views:&HashMap<String,Expr>) {
+                    for s in body {
+                        if let Stmt::CallSub{name,args}=s {
+                            if name=="@c_desc_bind" {if let Some(Expr::Ident(n))=args.last() {if let Some(view)=views.get(n) {*args.last_mut().unwrap()=view.clone();}}}
+                        }
+                        for child in crate::procedure_arguments::children(s) {bind_c_views(child,views);}
+                    }
+                }
+                bind_c_views(&mut cloned,&c_views);
                 let mut call_shapes = shapes.clone();
                 for statement in &prefix {
                     if let Stmt::VarDecl { kind, names } = statement {
@@ -2034,7 +2063,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
     let functions=crate::elemental::functions(&p);
     let mut routines = HashMap::new();
     collect(&mut p.body, &mut routines);
-    let procedures=std::sync::Arc::new(routines.iter().map(|(n,r)| (n.clone(),r.params.iter().map(|p|r.body.iter().find_map(|s|match s {Stmt::DummyIntent{name,intent} if name==p && intent.starts_with("intent(")=>Some(intent.clone()),_=>None}).unwrap_or_default()).collect())).collect());
+    let procedures=std::sync::Arc::new(routines.iter().map(|(n,r)| (n.clone(),r.params.iter().map(|p|crate::c_interop::association_intent(&r.body,p)).collect())).collect());
     let mut call_serial=0;
     crate::compile_profile::run("array_calls::expand", || expand(&mut p.body, &Shapes::new(), &routines, &procedures, &functions, &function_lower, &mut vec![], &mut call_serial))?;
     // Expanding a descriptor-backed function can expose further function calls

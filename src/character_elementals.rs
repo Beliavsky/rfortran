@@ -498,7 +498,7 @@ impl Lower {
         }
         if !args.iter().any(|e|pending(e,symbols)) {
             for (param,actual) in routine.params.iter().zip(args.iter_mut()) {
-                if routine.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==param && intent=="intent(in)"))
+                if !crate::c_interop::descriptor_parameter(&routine.body,param) && routine.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==param && intent=="intent(in)"))
                     && !routine.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==param && matches!(intent.as_str(),"target"|"pointer"|"allocatable"))) {
                     crate::vector_subscripts::specialize_expression(actual,symbols,prefix,&mut self.serial)?;
                 }
@@ -540,6 +540,18 @@ impl Lower {
             }
             let mut actuals = args.clone();
             for (param,actual) in routine.params.iter().zip(&mut actuals) {
+                let c_descriptor=crate::c_interop::descriptor_parameter(&routine.body,param);
+                if c_descriptor {
+                    // Keep C descriptor actuals as views. The call adapter
+                    // captures bounds once and preserves strides and copy-out.
+                    let writable=routine.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==param && matches!(intent.as_str(),"intent(out)"|"intent(inout)")));
+                    let root=match actual {Expr::Ident(n)|Expr::Call(n,_)|Expr::Index(n,_)=>Some(n.as_str()),Expr::Section{name,..}=>Some(name.as_str()),_=>None};
+                    if writable {
+                        let Some(n)=root.filter(|n|symbols.get(*n).is_some_and(|(_,d)|!d.is_empty())) else {bail!("writable C descriptor argument `{param}` requires an array variable or section");};
+                        if symbols.contains_key(&format!("@function_readonly:{n}")) {bail!("cannot pass INTENT(IN) variable as writable function argument `{param}`");}
+                    }
+                    continue;
+                }
                 if routine.body.iter().any(|s| matches!(s, Stmt::DummyIntent{name,intent}
                     if name == param && intent == "allocatable")) {
                     if let Some(storage) = crate::allocatables::whole_storage_view(actual, symbols) {
