@@ -440,6 +440,12 @@ impl Lower {
         let Expr::Call(name, args) = e else {
             return Ok(());
         };
+        // The parser also represents array subscripts as calls. In particular,
+        // an implicit function-name result is a local array, not a recursive
+        // call to the function whose name it shares.
+        if symbols.get(name).is_some_and(|(_, dims)| !dims.is_empty()) {
+            return Ok(());
+        }
         let Some(routine) = self.routines.get(name).cloned() else {
             return Ok(());
         };

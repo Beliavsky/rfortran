@@ -75,6 +75,9 @@ class PolymorphicComponents(unittest.TestCase):
     def test_minimal_fixture(self):
         self.check((ROOT/'tests/programs/xpolymorphic_allocatable_component.f90').read_text(),'T')
 
+    def test_array_binding_result(self):
+        self.check((ROOT/'tests/programs/xpolymorphic_component_array_result.f90').read_text(),'2 4')
+
     def test_typed_allocation_dispatch_select_and_deallocate(self):
         self.check(program("""print *,allocated(box%item)
 allocate(first::box%item)

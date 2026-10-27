@@ -81,7 +81,7 @@ The two current compiler gaps are recorded individually in the manifest:
 
 | Case | First blocker |
 |---|---|
-| `workshop-abstract-framework` | Array-valued deferred binding result lowering |
+| `workshop-abstract-framework` | False uninitialized read when a binding's array result replaces its input |
 | `markus-classes_geom` | DIMENSION attribute on a local derived-type array |
 
 Leair section 9 now passes unchanged: PRIVATE component/binding declarations,
@@ -114,11 +114,17 @@ ALLOCATABLE component storage/allocation. Both compilers run
 dynamic scalar bindings, SOURCE/MOLD (including CLASS dummies), copies,
 INTENT(IN/OUT), allocation lifetimes and module compilation.
 
-Its next failure occurs while lowering the array-valued `evaluate_oscillator`
-binding; the current diagnostic incorrectly calls it a CHARACTER function.
-`tests/programs/xpolymorphic_component_array_result.f90` reproduces that failure;
-gfortran prints `2, 4`. CASE pairs and complex-expression disambiguation remain
-covered by `tests/test_select_case_lists.py`.
+Array-valued `evaluate_oscillator` binding lowering now passes the previous
+argument-count failure. `tests/programs/xpolymorphic_component_array_result.f90`
+prints `2, 4` with both compilers. Function-name array results are treated as
+local array storage; `tests/test_forward_array_results.py` also checks reads
+from multidimensional numeric, LOGICAL and CHARACTER results.
+
+The next failure is a false uninitialized read of `xend`, which is assigned
+before it becomes an input to a binding whose result replaces it.
+`tests/programs/xpolymorphic_component_array_self_assignment.f90` reduces this
+case; gfortran prints `2, 4`. CASE pairs and complex-expression disambiguation
+remain covered by `tests/test_select_case_lists.py`.
 
 These are first failures, not a claim that fixing one will make its entire
 example pass. The suite deliberately preserves upstream code so it can expose

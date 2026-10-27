@@ -142,8 +142,8 @@
       "features": "abstract bindings and polymorphic allocatable components",
       "known_failure": {
         "phase": "compile",
-        "pattern": "wrong\\ argument\\ count\\ for\\ CHARACTER\\ function\\ `evaluate_oscillator`",
-        "reason": "Array-valued deferred binding result lowering"
+        "pattern": "read\\ of\\ uninitialized\\ variable\\ `xend`\\ before\\ assignment",
+        "reason": "Aliased input/output array in polymorphic binding assignment"
       },
       "notices": [
         "workshop-LICENSE"

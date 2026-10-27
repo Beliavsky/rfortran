@@ -2159,16 +2159,21 @@ existing record-slot copy restrictions.
 
 Storage is a private type tag plus concrete allocation descriptors inside the
 owner, using the concrete types known in the compilation source group. It is
-not a public cross-compiler descriptor ABI. Array-valued binding results,
-polymorphic component arrays, CLASS(*) components, payload layouts containing
-further polymorphic allocatable components (including recursive types), and
-owner constructors supplying the polymorphic component remain unsupported.
+not a public cross-compiler descriptor ABI. Supported array-valued bindings
+use the existing function-result lowering. Function-name result subscripts
+refer to the local result array rather than recursively invoking the function.
+Assigning a binding's array result back to an input array currently produces a
+false diagnostic about an uninitialized read. Polymorphic component arrays,
+CLASS(*) components, payload layouts containing further polymorphic allocatable
+components (including recursive types), and owner constructors supplying the
+polymorphic component remain unsupported.
 Access through an unallocated component reports a runtime error.
 
 Run `python tests/test_polymorphic_components.py`. The basic example is
-`tests/programs/xpolymorphic_allocatable_component.f90`; the remaining
-array-result binding blocker is isolated in
-`tests/programs/xpolymorphic_component_array_result.f90`.
+`tests/programs/xpolymorphic_allocatable_component.f90`;
+`tests/programs/xpolymorphic_component_array_result.f90` prints `2, 4`.
+The remaining self-assignment blocker is isolated in
+`tests/programs/xpolymorphic_component_array_self_assignment.f90`.
 
 ### Scalar polymorphic ALLOCATABLE objects
 

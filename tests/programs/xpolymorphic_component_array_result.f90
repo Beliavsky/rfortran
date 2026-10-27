@@ -1,4 +1,4 @@
-! Reduced next blocker: array-valued deferred binding through an owned component.
+! Regression: array-valued deferred binding through an owned component.
 module component_array_result
 implicit none
 type,abstract::base

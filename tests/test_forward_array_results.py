@@ -35,6 +35,37 @@ class ForwardArrayResults(unittest.TestCase):
     def test_repro(self):
         self.check((Path(__file__).resolve().parent/'179_character_membership_forward.f90').read_text(encoding='utf-8'),'F T F\n')
 
+    def test_implicit_array_result_subscripts(self):
+        for kind, values, expected in (
+            ('integer', '1,2,3,4', '1 2 3 1'),
+            ('real', '1.,2.,3.,4.', '1 2 3 1'),
+            ('logical', '.true.,.false.,.false.,.false.', 'T F F T'),
+            ('character(len=2)', '"ab","cd","ef","gh"', 'abcdefab'),
+        ):
+            with self.subTest(kind=kind):
+                assignments='\n'.join(f'a({i%2+1},{i//2+1})={value}'
+                                      for i,value in enumerate(values.split(',')))
+                self.check(f'''program main
+implicit none
+{kind}::a(2,2),b(2,2)
+{assignments}
+call work(a,b)
+print *,b
+contains
+subroutine work(x,y)
+{kind},intent(in)::x(:,:)
+{kind},intent(out)::y(:,:)
+y=copy(x)
+end subroutine
+function copy(x)
+{kind},intent(in)::x(:,:)
+{kind}::copy(size(x,1),size(x,2))
+copy=x
+copy(2,2)=copy(1,1)
+end function
+end
+''',expected)
+
     def test_multiple_forwarding_keyword_calls_and_lengths(self):
         self.check(MODULE+"""program main
 use membership_forward_mod
