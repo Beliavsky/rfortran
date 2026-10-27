@@ -124,7 +124,7 @@ Found on 2026-10-21, fixed:
 | [Named IF, SELECT CASE, BLOCK and ASSOCIATE constructs](language-support.md#other-statement-forms) | Mixed | ✅ | Named IF/SELECT CASE: F90; ASSOCIATE: F2003; BLOCK: F2008. Names after END, ELSE and CASE are not checked against the construct name | test_named_constructs.py |
 | [Case-insensitive names](language-support.md#other-statement-forms) | F90 | ✅ | Upper/lowercase equivalence is standardized in F90. | test_syntax_forms.py |
 | [Declarations without `::`](language-support.md#declarations-without-) | F77 or earlier | ✅ | Attributes and initializers still need `::` | test_declarations_without_colons.py |
-| [DIMENSION attribute](language-support.md#dimension-declarations-and-shape) | F90 | ✅ |  | test_dimension_attribute.py |
+| [DIMENSION attribute](language-support.md#dimension-declarations-and-shape) | F90 | ✅ | Intrinsic, TYPE and CLASS declarations; also TYPEOF/CLASSOF (F2023). Entity bounds override the attribute; existing type/shape execution limits still apply | test_dimension_attribute.py, test_referenced_types.py |
 | [INTENT](language-support.md#intent-spellings) | F90 | ✅ |  |  |
 | [PARAMETER attribute and statement](language-support.md#parameter-statements) | Mixed | ✅ | PARAMETER statement: F77; attribute: F90. Derived-type named constants need scalar components | test_parameter_statements.py, test_named_constants.py, test_derived_type_features.py |
 | [Declaration initialization](language-support.md#declaration-initialization) | F90 | 🟡 | Saved arrays of INTEGER, REAL, DOUBLE PRECISION, LOGICAL and CHARACTER are supported; saved CHARACTER arrays are limited to 1024 elements | test_main_initialization.py, test_saved_locals.py, test_initializers_and_kinds.py |

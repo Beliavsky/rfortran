@@ -82,7 +82,7 @@ The remaining compiler gap is recorded in the manifest:
 
 | Case | First blocker |
 |---|---|
-| `markus-classes_geom` | DIMENSION attribute on a local derived-type array |
+| `markus-classes_geom` | Pointer association to a polymorphic component of a record-array element |
 
 Leair section 9 now passes unchanged: PRIVATE component/binding declarations,
 accessibility checks, the procedure name `print`, and the constructor result
@@ -128,6 +128,12 @@ with both compilers. Regression tests also check output-owner defaults and
 allocation lifetimes, and retain real uninitialized-read diagnostics at
 procedure entry. CASE pairs and complex-expression disambiguation remain
 covered by `tests/test_select_case_lists.py`.
+
+The `classes_geom` declaration using `type(list_of_objects), dimension(2)` now
+parses. DIMENSION attributes share the entity-bound representation for intrinsic,
+derived, polymorphic and referenced types. The example next stops at
+`list(1)%object => rect`; the reduced case is
+`tests/programs/xpolymorphic_pointer_array_component.f90`.
 
 These are first failures, not a claim that fixing one will make its entire
 example pass. The suite deliberately preserves upstream code so it can expose

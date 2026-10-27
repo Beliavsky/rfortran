@@ -199,8 +199,8 @@
       "features": "abstract types, polymorphic pointers and dynamic dispatch",
       "known_failure": {
         "phase": "compile",
-        "pattern": "unexpected\\ integer\\ literal\\ 2",
-        "reason": "DIMENSION attribute for a local derived-type array"
+        "pattern": "unexpected '=>'",
+        "reason": "Pointer association to a polymorphic component of a record-array element"
       },
       "notices": []
     }

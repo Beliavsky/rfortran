@@ -212,12 +212,25 @@ O0/O2 checks with gfortran comparisons.
 
 ### DIMENSION declarations and SHAPE
 
-Intrinsic type declarations accept `DIMENSION(...)` alongside attributes such
+Intrinsic, `TYPE(...)`, `CLASS(...)`, `TYPEOF(...)`, and `CLASSOF(...)`
+declarations accept `DIMENSION(...)` alongside attributes such
 as `INTENT`, `OPTIONAL`, `ALLOCATABLE`, `PARAMETER`, and `SAVE`. Bounds apply to
 each entity; an entity's own array declarator overrides the attribute's bounds.
 For example, `integer, dimension(2,3) :: a,b` declares two matrices, and
 `integer, dimension(:), intent(in) :: nn` declares an assumed-shape argument.
 These forms use the same supported array operations as per-entity bounds.
+For example, `type(point), dimension(2) :: x,y(3)` is equivalent to
+`type(point) :: x(2),y(3)`. Recognition is contextual: an entity or procedure
+named `dimension` remains an ordinary identifier.
+
+Parser comparisons cover intrinsic and derived types, polymorphic and
+referenced types, ranks through 15, explicit and runtime bounds, assumed/deferred
+shape, assumed size and assumed rank, both attribute orders, and declarations in
+main programs, modules, procedures and derived-type components. Existing
+semantic/backend limits on particular type/shape combinations apply equally to
+both forms; recognizing a CLASS array declaration does not add general
+polymorphic-array execution support. Labeled specification statements retain
+their existing parser limitation.
 
 `SHAPE` supports fixed-size numeric/LOGICAL array variables and sections,
 specialized array arguments, and supported runtime allocatable arrays. Fixed-size inquiries do

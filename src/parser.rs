@@ -48,6 +48,56 @@ mod tests {
     }
 
     #[test]
+    fn dimension_attribute_and_entity_forms_have_identical_trees() {
+        fn normalize(value: &mut serde_json::Value) {
+            match value {
+                serde_json::Value::Array(items) => {
+                    items.retain(|item| item.get("SourceLocation").is_none());
+                    for item in items { normalize(item); }
+                }
+                serde_json::Value::Object(fields) => {
+                    for value in fields.values_mut() { normalize(value); }
+                }
+                _ => {}
+            }
+        }
+        let parse = |source: &str| {
+            let program=super::parse_with_src(source,&crate::lexer::lex(source),"dimension.f90")
+                .unwrap_or_else(|error|panic!("{source}\n{error:?}"));
+            let mut tree=serde_json::to_value(program).unwrap();
+            normalize(&mut tree);
+            tree
+        };
+        let prefix="implicit none\ninteger,parameter::n=2\ntype t\ninteger::v\nend type\ninteger::mold\n";
+        for kind in ["integer", "real(kind=8)", "double precision", "complex", "logical",
+            "character(len=3)", "type(t)", "class(t)", "class(*)", "typeof(mold)", "classof(mold)"] {
+            for shape in ["n+1", "-1:n,2:3", ":,:,+n", "0:,*", "..", "1,1,1,1,1,1,1,1,1,1,1,1,1,1,1"] {
+                for attrs in ["", ",pointer", ",intent(in)"] {
+                    let entity=format!("{kind}{attrs}::a({shape}),b(4)");
+                    for attribute in [format!("{kind}{attrs},dimension({shape})::a,b(4)"),
+                        format!("{kind},dimension({shape}){attrs}::a,b(4)")] {
+                        for scope in 0..4 {
+                            // Compare declaration syntax independently of each
+                            // scope's subsequent semantic shape restrictions.
+                            let wrap=|declaration:&str| match scope {
+                                0=>format!("program p\n{prefix}{declaration}\nend"),
+                                1=>format!("module m\n{prefix}{declaration}\nend module"),
+                                2=>format!("subroutine f(a,b)\n{prefix}{declaration}\nend subroutine"),
+                                _=>format!("module m\n{prefix}type holder\n{declaration}\nend type\nend module"),
+                            };
+                            assert_eq!(parse(&wrap(&attribute)),parse(&wrap(&entity)),"{attribute}, scope {scope}");
+                        }
+                    }
+                }
+            }
+            for attrs in ["dimension()", "dimension(2),dimension(3)"] {
+                let source=format!("program p\n{prefix}{kind},{attrs}::a\nend");
+                assert!(super::parse_with_src(&source,&crate::lexer::lex(&source),"invalid.f90").is_err(),"{source}");
+            }
+        }
+    }
+
+    #[test]
     fn impure_elemental_prefixes_and_contextual_identifiers() {
         for prefix in ["impure elemental", "elemental impure", "IMPURE &\n ELEMENTAL"] {
             let source=format!("{prefix} subroutine f(i)\ninteger,intent(in)::i\nprint *,i\nend subroutine f");
@@ -196,7 +246,10 @@ mod tests {
         assert!(body.iter().any(|s|matches!(s,Stmt::CallSub{name,args} if name==crate::extensions::EXTENDS
             && matches!(args.as_slice(),[crate::ast::Expr::Ident(c),crate::ast::Expr::Ident(p)] if c=="child" && p=="base"))));
         let source="module m\ntype, abstract :: base\nend type\nend module m";
-        assert!(super::parse_with_src(source,&crate::lexer::lex(source),"abstract.f90").is_err());
+        let program=super::parse_with_src(source,&crate::lexer::lex(source),"abstract.f90").unwrap();
+        let Stmt::Module{body,..}=&program.body[0] else {panic!("module missing")};
+        assert!(body.iter().any(|s|matches!(s,Stmt::CallSub{name,args} if name==crate::abstract_types::ABSTRACT
+            && matches!(args.as_slice(),[crate::ast::Expr::Ident(n)] if n=="base"))));
     }
 
     #[test]

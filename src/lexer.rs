@@ -53,11 +53,19 @@ mod tests {
     fn dimension_is_contextual_to_declaration_attributes() {
         for source in ["integer, dimension(2,3) :: a,b",
             "real(kind=8), intent(in), DIMENSION(:,:) :: a",
+            "type(t), dimension(2) :: a",
+            "class(t), allocatable, dimension(:,:) :: a",
+            "typeof(mold), dimension(2) :: a",
+            "classof(mold), dimension(:), pointer :: a",
+            "100 type(t), dimension(2) :: a",
+            "100 integer, dimension(2) :: a; real,dimension(3)::b",
             "double precision, & ! comment\n & dimension(2) :: a"] {
-            assert_eq!(lex(source).iter().filter(|t| matches!(t.kind, TokenKind::KwDimension)).count(), 1);
+            let expected=if source.contains(';') {2} else {1};
+            assert_eq!(lex(source).iter().filter(|t| matches!(t.kind, TokenKind::KwDimension)).count(), expected,"{source}");
         }
         for source in ["integer :: x, dimension(2)", "integer x, dimension(2)", "dimension=2",
             "call dimension(x)", "x=dimension(y)", "call f(x,dimension=y)",
+            "type(t) :: dimension(2)", "type, extends(dimension) :: t",
             "integer :: x\ncall f(x,dimension)"] {
             assert!(!lex(source).iter().any(|t| matches!(t.kind, TokenKind::KwDimension)), "{source}");
         }
@@ -1059,18 +1067,22 @@ pub fn lex(input: &str) -> Vec<Token> {
         }
         index += 1;
     }
-    // DIMENSION is a keyword only in the attribute part of an intrinsic
+    // DIMENSION is a keyword only in the attribute part of a
     // type declaration. Variables and procedures named dimension stay identifiers.
     let mut declaration = false;
     let mut depth = 0;
     for i in 0..tokens.len() {
-        if i == 0 || !same_statement(&input[tokens[i-1].span.end..tokens[i].span.start]) {
+        if statement_head(&tokens,input,i) {
             let mut end = i+1;
             while end < tokens.len() && same_statement(&input[tokens[end-1].span.end..tokens[end].span.start]) {
                 end += 1;
             }
-            declaration = matches!(tokens[i].kind, TokenKind::KwInteger | TokenKind::KwReal | TokenKind::KwComplex
+            let type_head = matches!(tokens[i].kind, TokenKind::KwInteger | TokenKind::KwReal | TokenKind::KwComplex
                 | TokenKind::KwDouble | TokenKind::KwCharacter | TokenKind::KwLogical)
+                // These contextual type keywords are classified later.
+                || matches!(&tokens[i].kind, TokenKind::Ident(n) if matches!(n.as_str(),"type"|"class"|"typeof"|"classof")
+                    && matches!(tokens.get(i+1).map(|t|&t.kind),Some(TokenKind::LParen)));
+            declaration = type_head
                 && tokens[i..end].iter().any(|t| matches!(t.kind,TokenKind::DColon));
             depth = 0;
         }

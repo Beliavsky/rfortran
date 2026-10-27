@@ -11,6 +11,26 @@ class ReferencedTypes(unittest.TestCase):
     check=shared.Fortran2023.check
     reject=shared.Fortran2023.reject
 
+    def test_dimension_attribute_and_entity_forms(self):
+        for declarations in (
+            'typeof(mold),dimension(2)::a,b(3)\ntypeof(i),dimension(2,2)::x',
+            'typeof(mold)::a(2),b(3)\ntypeof(i)::x(2,2)',
+        ):
+            with self.subTest(declarations=declarations):
+                self.check('''implicit none
+type item
+integer::value
+end type
+type(item)::mold
+integer::i
+'''+declarations+'''
+a%value=2
+b%value=3
+x=4
+print *,size(a),size(b),sum(a%value),sum(b%value),sum(x)
+end
+''',' 2 3 4 9 16\n')
+
     def test_examples(self):
         for name,expected in [('xtypeof.f90'," 2 T 5\nready\n"),('xclassof.f90'," 7\n")]:
             with self.subTest(name=name):self.check((ROOT/'tests/programs'/name).read_text(),expected)
