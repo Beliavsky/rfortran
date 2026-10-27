@@ -1,4 +1,4 @@
-! Repro: assigning an array result back to its initialized input array.
+! Regression: assigning an array result back to its initialized input array.
 module component_array_result
 implicit none
 type,abstract::base

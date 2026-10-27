@@ -2162,8 +2162,11 @@ owner, using the concrete types known in the compilation source group. It is
 not a public cross-compiler descriptor ABI. Supported array-valued bindings
 use the existing function-result lowering. Function-name result subscripts
 refer to the local result array rather than recursively invoking the function.
-Assigning a binding's array result back to an input array currently produces a
-false diagnostic about an uninitialized read. Polymorphic component arrays,
+An initialized input array can receive a binding's array result. Generated
+dispatch helpers preserve the enclosing procedure's current state rather than
+applying its INTENT(OUT) semantics a second time. Actual procedure entry still
+undefines output storage, releases output allocations, and applies derived-type
+defaults. Polymorphic component arrays,
 CLASS(*) components, payload layouts containing further polymorphic allocatable
 components (including recursive types), and owner constructors supplying the
 polymorphic component remain unsupported.
@@ -2172,8 +2175,8 @@ Access through an unallocated component reports a runtime error.
 Run `python tests/test_polymorphic_components.py`. The basic example is
 `tests/programs/xpolymorphic_allocatable_component.f90`;
 `tests/programs/xpolymorphic_component_array_result.f90` prints `2, 4`.
-The remaining self-assignment blocker is isolated in
-`tests/programs/xpolymorphic_component_array_self_assignment.f90`.
+`tests/programs/xpolymorphic_component_array_self_assignment.f90` also prints
+`2, 4`, with the result replacing its input array.
 
 ### Scalar polymorphic ALLOCATABLE objects
 

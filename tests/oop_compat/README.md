@@ -73,15 +73,15 @@ Other resources from the supplied list remain candidates, not tested coverage:
 
 ## Checkpoint (2026-10-27)
 
-All nine examples compile and run with gfortran. Seven match rfort's output:
+All nine examples compile and run with gfortran. Eight match rfort's output:
 Leair sections 5, 7, and 9, the book's `mytype` and polymorphism examples,
-the FortranCon moving-average example, and Markus's `abstract_point` example.
+the FortranCon moving-average and abstract-framework examples, and Markus's
+`abstract_point` example.
 
-The two current compiler gaps are recorded individually in the manifest:
+The remaining compiler gap is recorded in the manifest:
 
 | Case | First blocker |
 |---|---|
-| `workshop-abstract-framework` | False uninitialized read when a binding's array result replaces its input |
 | `markus-classes_geom` | DIMENSION attribute on a local derived-type array |
 
 Leair section 9 now passes unchanged: PRIVATE component/binding declarations,
@@ -107,7 +107,7 @@ pointers borrow concrete TARGET variables, and binding calls use the target's
 dynamic type. `tests/test_polymorphic_pointers.py` covers reassociation, shared
 aliases, SELECT TYPE views, forwarding, association inquiries and module files.
 
-The abstract-framework example now passes CASE-list parsing and polymorphic
+The abstract-framework example now passes unchanged, including CASE-list parsing and polymorphic
 ALLOCATABLE component storage/allocation. Both compilers run
 `tests/programs/xpolymorphic_allocatable_component.f90` and print `T`.
 `tests/test_polymorphic_components.py` checks owning scalar/nested containers,
@@ -120,11 +120,14 @@ prints `2, 4` with both compilers. Function-name array results are treated as
 local array storage; `tests/test_forward_array_results.py` also checks reads
 from multidimensional numeric, LOGICAL and CHARACTER results.
 
-The next failure is a false uninitialized read of `xend`, which is assigned
-before it becomes an input to a binding whose result replaces it.
-`tests/programs/xpolymorphic_component_array_self_assignment.f90` reduces this
-case; gfortran prints `2, 4`. CASE pairs and complex-expression disambiguation
-remain covered by `tests/test_select_case_lists.py`.
+The binding's array result can replace its initialized input, as in the
+framework's `xend` update. Generated dispatch helpers preserve current storage
+instead of repeating the enclosing procedure's INTENT(OUT) initialization.
+`tests/programs/xpolymorphic_component_array_self_assignment.f90` prints `2, 4`
+with both compilers. Regression tests also check output-owner defaults and
+allocation lifetimes, and retain real uninitialized-read diagnostics at
+procedure entry. CASE pairs and complex-expression disambiguation remain
+covered by `tests/test_select_case_lists.py`.
 
 These are first failures, not a claim that fixing one will make its entire
 example pass. The suite deliberately preserves upstream code so it can expose

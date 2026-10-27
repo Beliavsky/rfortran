@@ -78,6 +78,41 @@ class PolymorphicComponents(unittest.TestCase):
     def test_array_binding_result(self):
         self.check((ROOT/'tests/programs/xpolymorphic_component_array_result.f90').read_text(),'2 4')
 
+    def test_array_binding_result_replaces_input(self):
+        self.check((ROOT/'tests/programs/xpolymorphic_component_array_self_assignment.f90').read_text(),'2 4')
+
+    def test_binding_capture_preserves_allocated_output(self):
+        source=(ROOT/'tests/programs/xpolymorphic_component_array_self_assignment.f90').read_text()
+        source=source.replace('real,intent(out)::y(:)','real,allocatable,intent(out)::y(:)')
+        source=source.replace('y=x\n','allocate(y(size(x)))\ny=x\n')
+        source=source.replace('real::y(2)','real,allocatable::y(:)')
+        source=source.replace('call box%apply','allocate(y(5))\ny=99\ncall box%apply')
+        self.check(source,'2 4')
+
+    def test_binding_capture_preserves_real_intent_out_semantics(self):
+        source=(ROOT/'tests/programs/xpolymorphic_component_array_self_assignment.f90').read_text()
+        # The caller's assigned value is still undefined on entry to APPLY.
+        for initialization in ('','y(1)=x(1)\n'):
+            with self.subTest(initialization=initialization):
+                uninitialized=source.replace('y=x\n',initialization).replace('call box%apply','y=99\ncall box%apply')
+                self.reject(uninitialized,'read of uninitialized variable `y`')
+
+    def test_binding_capture_preserves_initialized_output_owner(self):
+        self.check(program('''allocate(second::box%item)
+call reset(box)
+print *,box%total()
+call reset(box)
+print *,box%total()
+contains
+subroutine reset(x)
+type(holder),intent(out)::x
+print *,allocated(x%item),x%label
+allocate(first::x%item)
+x%label=40
+print *,x%label+x%item%score()
+end subroutine
+'''),'F 9\n47\n47\nF 9\n47\n47')
+
     def test_typed_allocation_dispatch_select_and_deallocate(self):
         self.check(program("""print *,allocated(box%item)
 allocate(first::box%item)

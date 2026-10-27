@@ -1032,7 +1032,20 @@ impl Lower<'_> {
                 args.push(id(n));
             }
             for mut declaration in d.clone() {
-                if let Stmt::DerivedDecl {attributes,..}=&mut declaration {attributes.push("@referenced_type".into());}
+                // Captures refer to the enclosing activation's current state.
+                // INTENT(OUT) already took effect on entry to that activation;
+                // repeating it here would undefine an assigned array (or
+                // deallocate an owned component) before evaluating this statement.
+                match &mut declaration {
+                    Stmt::DummyIntent {intent,..} if intent=="intent(out)" => *intent="intent(inout)".into(),
+                    Stmt::DerivedDecl {attributes,..} => {
+                        for attribute in attributes.iter_mut() {
+                            if attribute=="intent(out)" {*attribute="intent(inout)".into();}
+                        }
+                        attributes.push("@referenced_type".into());
+                    }
+                    _ => {}
+                }
                 body.push(declaration);
             }
             if pure
