@@ -172,7 +172,7 @@ end program
 
     def test_unsupported_storage_diagnostics(self):
         self.reject(program('allocate(circle::x)').replace('allocatable :: x','allocatable,save :: x'),
-                    'SAVED or POINTER runtime polymorphic objects')
+                    'SAVED runtime polymorphic objects')
         self.reject(program('allocate(circle::x)').replace('allocatable :: x','allocatable :: x(:)'),
                     'runtime polymorphic ALLOCATABLE arrays')
 

@@ -7,11 +7,13 @@
 use super::*;
 use crate::ast::{BinOp, CaseBlock, TypeSpec};
 use std::collections::BTreeMap;
+mod pointers;
 
 #[derive(Clone)]
 struct Object {
     kind: String,
     polymorphic: bool,
+    pointer: bool,
     readonly: bool,
     dummy: bool,
     output: bool,
@@ -219,14 +221,22 @@ impl Lower<'_> {
         let vars = super::objects(body, &Objects::new());
         let mut runtime = Runtime::new();
         for (n, v) in &vars {
-            if !v.polymorphic || !v.attrs.iter().any(|a| a == "allocatable") {
+            if !v.polymorphic || !v.attrs.iter().any(|a| a == "allocatable" || a == "pointer") {
                 continue;
             }
+            let pointer = v.attrs.iter().any(|a| a == "pointer");
             if v.rank != 0 {
+                if pointer {bail!("runtime polymorphic POINTER arrays are not yet supported");}
                 bail!("runtime polymorphic ALLOCATABLE arrays are not yet supported");
             }
-            if v.attrs.iter().any(|a| a == "save" || a == "pointer") {
-                bail!("SAVED or POINTER runtime polymorphic objects are not yet supported");
+            if pointer && v.kind == "*" {
+                bail!("unlimited polymorphic POINTER descriptors are not yet supported");
+            }
+            if pointer && params.contains(n) {
+                bail!("polymorphic POINTER dummy descriptors are not yet supported; use a nonpointer CLASS dummy to borrow the target");
+            }
+            if v.attrs.iter().any(|a| a == "save") {
+                bail!("SAVED runtime polymorphic objects are not yet supported");
             }
             if params.contains(n) && v.attrs.iter().any(|a| a == "optional") {
                 bail!("OPTIONAL polymorphic ALLOCATABLE dummy arguments are not yet supported");
@@ -248,15 +258,17 @@ impl Lower<'_> {
                 Object {
                     kind: v.kind.clone(),
                     polymorphic: true,
+                    pointer,
                     readonly: v.attrs.iter().any(|a| a == "intent(in)"),
                     dummy: params.contains(n),
                     output: params.contains(n) && v.attrs.iter().any(|a| a == "intent(out)"),
                     tag: format!("{stem}$tag"),
-                    variants: kinds
-                        .into_iter()
-                        .enumerate()
-                        .map(|(i, k)| (k, format!("{stem}$storage{i}")))
-                        .collect(),
+                    variants: if pointer {
+                        pointers::targets(n, &declared, &v.kind, self.defs, body)
+                    } else {
+                        kinds.into_iter().enumerate()
+                            .map(|(i,k)|(k,format!("{stem}$storage{i}"))).collect()
+                    },
                 },
             );
         }
@@ -273,9 +285,9 @@ impl Lower<'_> {
                 Stmt::Module { body, .. } => {
                     if super::objects(body, &Objects::new())
                         .values()
-                        .any(|v| v.polymorphic && v.attrs.iter().any(|a| a == "allocatable"))
+                        .any(|v| v.polymorphic && v.attrs.iter().any(|a| a == "allocatable" || a == "pointer"))
                     {
-                        bail!("module polymorphic ALLOCATABLE objects are not yet supported");
+                        bail!("module polymorphic ALLOCATABLE or POINTER objects are not yet supported");
                     }
                     self.scope(body, &declared, &mut vec![], false)?;
                 }
@@ -318,6 +330,7 @@ impl Lower<'_> {
                 });
             }
             for (kind, name) in &object.variants {
+                if object.pointer { continue; }
                 let mut attrs = vec!["allocatable".into(), "@scalar_heap".into()];
                 if object.dummy {
                     attrs.push(
@@ -789,6 +802,8 @@ impl Lower<'_> {
                 continue;
             }
             let lowered=(||->Result<Vec<Stmt>> {
+                if let Some(lowered)=self.pointer_statement(&s,vars,decls)? { return Ok(lowered); }
+                self.pointer_inquiries(&mut s,vars,decls)?;
                 self.calls(&mut s,vars)?;
                 if let Stmt::CallSub{name,args}=&s {
                     if matches!(name.as_str(),"@allocate"|"@allocate_derived_type"|"@deallocate") {
@@ -797,6 +812,7 @@ impl Lower<'_> {
                 }
                 if let Stmt::Assign{name,value}=&s {
                     if let Some(object)=vars.get(name) {
+                        if object.pointer {bail!("whole-object assignment through a polymorphic POINTER is not yet supported");}
                         if object.readonly {bail!("cannot define INTENT(IN) polymorphic object `{name}`");}
                         if !object.polymorphic {bail!("whole-object assignment of a SELECT TYPE associate requires ordinary derived assignment");}
                         let (mut prefix,value,local)=self.evaluate_source(value,vars,decls,pure)?;
@@ -809,7 +825,7 @@ impl Lower<'_> {
                     if let Expr::Call(n,a)=e {
                         if n=="allocated"&&a.len()==1 {
                             let actual=match &a[0] {Expr::Call(k,v) if k=="@keyword:array"&&v.len()==1=>&v[0],e=>e};
-                            if let Expr::Ident(v)=actual {if let Some(o)=vars.get(v) {*e=Expr::Bin(BinOp::Ne,Box::new(id(&o.tag)),Box::new(int(0)));}}
+                            if let Expr::Ident(v)=actual {if let Some(o)=vars.get(v).filter(|o|!o.pointer) {*e=Expr::Bin(BinOp::Ne,Box::new(id(&o.tag)),Box::new(int(0)));}}
                         }
                     }
                 });}
@@ -818,6 +834,19 @@ impl Lower<'_> {
                     let Stmt::SelectCase{expr,cases:guards,default}=&s else {unreachable!()};
                     let (selector,alias)=selection(expr).unwrap();
                     let object=&vars[selector];
+                    // An associate name retains the selected target even if
+                    // the original pointer is reassociated inside the guard.
+                    let mut prefix=vec![];
+                    let mut local_decls=decls.clone();
+                    let snapshot=if object.pointer {
+                        self.serial+=1;
+                        let tag=format!("@polymorphic_selection{}",self.serial);
+                        let declaration=Stmt::VarDecl{kind:TypeSpec::Integer(None),names:vec![tag.clone()]};
+                        local_decls.insert(tag.clone(),vec![declaration.clone()]);
+                        prefix.push(declaration);
+                        prefix.push(Stmt::Assign{name:tag.clone(),value:id(&object.tag)});
+                        Some(tag)
+                    } else {None};
                     let mut branches=vec![];
                     for (kind,_) in &object.variants {
                         let mut best=None;
@@ -829,14 +858,16 @@ impl Lower<'_> {
                         }
                         let mut local=vars.clone();
                         let mut view=object.clone();
+                        if let Some(tag)=&snapshot {view.tag=tag.clone();}
                         let mut branch=if let Some((class,guard_kind,body))=best {
                             view.kind=guard_kind.into(); view.polymorphic=class; body
                         } else {default.clone().unwrap_or_default()};
                         local.insert(alias.into(),view);
-                        self.body(&mut branch,&local,decls,pure)?;
+                        self.body(&mut branch,&local,&local_decls,pure)?;
                         branches.push(branch);
                     }
-                    return Ok(vec![cases(object,branches,failure(format!("SELECT TYPE on unallocated polymorphic object `{selector}`")))]);
+                    prefix.push(cases(object,branches,failure(if object.pointer {format!("SELECT TYPE on unassociated polymorphic pointer `{selector}`")} else {format!("SELECT TYPE on unallocated polymorphic object `{selector}`")})));
+                    return Ok(prefix);
                 }
                 // Evaluate runtime-dependent conditions at their original
                 // control point, never move EXIT/CYCLE into a helper procedure.
@@ -917,7 +948,7 @@ impl Lower<'_> {
             return Ok(vec![cases(
                 o,
                 bodies,
-                failure(format!("use of unallocated polymorphic object `{n}`")),
+                failure(if o.pointer {format!("use of unassociated polymorphic pointer `{n}`")} else {format!("use of unallocated polymorphic object `{n}`")}),
             )]);
         }
         self.serial += 1;
@@ -928,7 +959,7 @@ impl Lower<'_> {
         for (n, _, storage) in chosen.iter() {
             let object = used.iter().find(|(v, _)| *v == n).unwrap().1;
             params.push(n.clone());
-            args.push(Expr::Call(storage.clone(), vec![int(1)]));
+            args.push(if object.pointer {id(storage)} else {Expr::Call(storage.clone(), vec![int(1)])});
             body.push(Stmt::DerivedDecl {
                 type_name: object.kind.clone(),
                 names: vec![n.clone()],
@@ -1002,7 +1033,12 @@ impl Lower<'_> {
 pub(super) fn resolve(mut program: Program, defs: &Definitions) -> Result<Program> {
     fn needed(body: &[Stmt]) -> bool {
         for s in body {
-            if matches!(s,Stmt::DerivedDecl{polymorphic:true,attributes,..} if attributes.iter().any(|a|a=="allocatable"))
+            if let Stmt::DummyIntent {name,intent} = s {
+                if matches!(intent.as_str(),"pointer"|"allocatable") && body.iter().any(|s|matches!(s,Stmt::DerivedDecl {polymorphic:true,names,..} if names.contains(name))) {
+                    return true;
+                }
+            }
+            if matches!(s,Stmt::DerivedDecl{polymorphic:true,attributes,..} if attributes.iter().any(|a|a=="allocatable" || a=="pointer"))
             {
                 return true;
             }

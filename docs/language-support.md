@@ -73,6 +73,7 @@ gfortran when it is installed. Run the tests after `cargo build --bin rfort`.
   - [ABSTRACT types and DEFERRED bindings](#abstract-types-and-deferred-bindings)
   - [Scalar polymorphic ALLOCATABLE objects](#scalar-polymorphic-allocatable-objects)
   - [Scalar polymorphic allocatable dummy arguments](#scalar-polymorphic-allocatable-dummy-arguments)
+  - [Scalar polymorphic POINTER objects](#scalar-polymorphic-pointer-objects)
   - [Scalar dynamic binding dispatch](#scalar-dynamic-binding-dispatch)
   - [SELECT TYPE](#select-type)
   - [Derived arguments and OPTIONAL](#derived-arguments-and-optional)
@@ -2243,6 +2244,43 @@ Existing record storage and result restrictions still apply.
 Run `python tests/test_polymorphic_allocatable_dummies.py`. The standalone
 factory example is `tests/programs/xpolymorphic_allocatable_dummies.f90`.
 
+### Scalar polymorphic POINTER objects
+
+Local scalar `CLASS(parent), POINTER` variables can associate with compatible
+concrete scalar TARGET variables, including targets in a module. Binding calls
+select the target's dynamic type, including inherited, overridden and deferred
+bindings implemented by concrete extensions. Calls and component assignments
+borrow target storage; association and NULLIFY never copy or deallocate it.
+
+```fortran
+class(shape), pointer :: p
+type(circle), target :: c
+p => c
+print *, p%area()
+```
+
+Runtime reassociation in branches and loops, pointer-to-pointer association,
+ASSOCIATED (with optional TARGET and keyword arguments), NULLIFY, SELECT TYPE,
+and forwarding to ordinary nonpointer CLASS dummies are supported. Pointer
+assignment preserves the selected target independently of later reassociation
+of the source pointer. SELECT TYPE associate names likewise retain their
+selected target until the construct ends. Guard views retain their declared
+static type for generic selection while CLASS binding calls use dynamic type.
+Separate POINTER and TARGET attribute statements are accepted. Module types
+and bindings can come from separately compiled `.rmod` files. Unassociated
+binding/component access reports a runtime error.
+
+This implementation uses private target-identity tags over visible concrete
+scalar TARGET variables. It does not define a public pointer descriptor ABI.
+Polymorphic pointer dummies/results, pointer arrays, CLASS(*) pointers,
+ALLOCATE/DEALLOCATE through these pointers, allocatable/component/array-element
+targets, saved or module pointer objects, and whole-object assignment through
+polymorphic pointers remain unsupported. Internal procedures retain their
+existing host-capture limits.
+
+Run `python tests/test_polymorphic_pointers.py`. A standalone example is
+`tests/programs/xpolymorphic_pointer.f90`.
+
 ### Scalar dynamic binding dispatch
 
 Ordinary passed-object bindings dispatch through scalar `CLASS(parent)` dummies
@@ -2274,6 +2312,8 @@ Polymorphic arrays, CLASS(*), CLASSOF dispatch,
 POINTER/VALUE CLASS dummies, and generic interfaces containing
 specialized CLASS specifics remain unsupported. NOPASS and named PASS arguments
 retain their existing limitations.
+Local scalar polymorphic pointer receivers can borrow the concrete targets
+described in [scalar polymorphic POINTER objects](#scalar-polymorphic-pointer-objects).
 Scalar ALLOCATABLE CLASS dummies use the runtime descriptor path described above.
 Other record storage and result forms retain existing backend restrictions.
 
@@ -2284,7 +2324,7 @@ Run `python tests/test_dynamic_dispatch.py`; the standalone example is
 
 Fortran 2003 scalar `SELECT TYPE` is supported for `CLASS(parent)` dummy
 arguments of specific Fortran procedures and local scalar polymorphic
-allocatables described above. `TYPE IS(child)` matches exactly;
+allocatables and pointer objects described above. `TYPE IS(child)` matches exactly;
 `CLASS IS(parent)` matches that type and its extensions. Exact matches take
 precedence, then the most specific matching CLASS guard, irrespective of
 source order. `CLASS DEFAULT` handles remaining types; without it, a selector

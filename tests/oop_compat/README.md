@@ -73,16 +73,15 @@ Other resources from the supplied list remain candidates, not tested coverage:
 
 ## Checkpoint (2026-10-27)
 
-All nine examples compile and run with gfortran. Six match rfort's output:
+All nine examples compile and run with gfortran. Seven match rfort's output:
 Leair sections 5, 7, and 9, the book's `mytype` and polymorphism examples, and
-the FortranCon moving-average example.
+the FortranCon moving-average example, and Markus's `abstract_point` example.
 
-The three current compiler gaps are recorded individually in the manifest:
+The two current compiler gaps are recorded individually in the manifest:
 
 | Case | First blocker |
 |---|---|
 | `workshop-abstract-framework` | SELECT CASE list parsing |
-| `markus-abstract_point` | Binding dispatch through a polymorphic pointer |
 | `markus-classes_geom` | DIMENSION attribute on a local derived-type array |
 
 Leair section 9 now passes unchanged: PRIVATE component/binding declarations,
@@ -102,6 +101,11 @@ The book's polymorphism example now passes unchanged, including intrinsic
 TYPE IS guards for CLASS(*), derived CLASS IS dispatch, and CLASS DEFAULT.
 `tests/test_select_type_intrinsic.py` also covers kind and CHARACTER length
 matching, writable aliases, forwarding, and separate module compilation.
+
+Markus's abstract-point example now passes unchanged. Local scalar polymorphic
+pointers borrow concrete TARGET variables, and binding calls use the target's
+dynamic type. `tests/test_polymorphic_pointers.py` covers reassociation, shared
+aliases, SELECT TYPE views, forwarding, association inquiries and module files.
 
 These are first failures, not a claim that fixing one will make its entire
 example pass. The suite deliberately preserves upstream code so it can expose

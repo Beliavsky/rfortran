@@ -191,11 +191,6 @@
         }
       ],
       "features": "abstract types, polymorphic pointers and dynamic dispatch",
-      "known_failure": {
-        "phase": "compile",
-        "pattern": "cannot\\ determine\\ dynamic\\ type\\ of\\ CLASS\\ object\\ `p`\\ for\\ binding\\ dispatch",
-        "reason": "Polymorphic pointer receiver dispatch"
-      },
       "notices": []
     },
     {
