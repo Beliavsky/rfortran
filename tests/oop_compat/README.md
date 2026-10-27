@@ -71,28 +71,28 @@ Other resources from the supplied list remain candidates, not tested coverage:
 - Tiziano Mueller's constructors/patterns presentation, linked from the Discourse index: inspect complete companion examples and their license before adding.
 - Leair Parts 2-4: linked lists, parameterized types, and defined I/O remain future coverage. Part 2 companion sources contain restrictive NVIDIA notices; they are not vendored here. The old PGI article URLs redirect, so stable mirrors/archives are needed.
 
-## Initial checkpoint (2026-10-27)
+## Checkpoint (2026-10-27)
 
-All nine examples compile and run with gfortran. Three match rfort's output:
-Leair sections 5 and 7, and the book's `mytype` example.
+All nine examples compile and run with gfortran. Four match rfort's output:
+Leair sections 5, 7, and 9, and the book's `mytype` example.
 
-The six current compiler gaps are recorded individually in the manifest:
+The five current compiler gaps are recorded individually in the manifest:
 
 | Case | First blocker |
 |---|---|
-| `leair-9` | Derived constructor result using the function name instead of RESULT(name) |
 | `workshop-moving-average` | False uninitialized-read diagnostic during IEEE_VALUE lowering |
 | `workshop-abstract-framework` | SELECT CASE list parsing |
 | `book-polymorphism` | SELECT TYPE intrinsic type guard |
 | `markus-abstract_point` | Binding dispatch through a polymorphic pointer |
 | `markus-classes_geom` | DIMENSION attribute on a local derived-type array |
 
-PRIVATE component and binding declarations, accessibility checks, and the
-procedure name `print` now pass. Leair section 9 reaches a separate constructor
-result bug, reproduced by `tests/programs/xprivate_constructor_result.f90`:
-gfortran prints `7`; rfort rejects assignment of the returned derived value.
-Using an explicit `RESULT(name)` works in the focused privacy tests. This next
-blocker is also present when component privacy is removed.
+Leair section 9 now passes unchanged: PRIVATE component/binding declarations,
+accessibility checks, the procedure name `print`, and the constructor result
+using its function name are supported. The focused regression
+`tests/programs/xprivate_constructor_result.f90` prints `7` with both compilers.
+`tests/test_module_function_results.py` covers function-name and explicit RESULT
+variables, typed headers, import aliases/re-export, forwarding, intrinsic array
+results and separate module compilation.
 
 These are first failures, not a claim that fixing one will make its entire
 example pass. The suite deliberately preserves upstream code so it can expose

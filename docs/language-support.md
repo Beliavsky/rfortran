@@ -1911,7 +1911,12 @@ the existing assignment limits. Scalar records can also copy individual array
 elements. Nested calls to procedures with derived-array dummies retain their
 source argument count through component flattening, including generic reductions
 inside CHARACTER consumers, keyword/OPTIONAL arguments and ELEMENTAL results.
-See `tests/test_scalar_record_results.py`.
+Module functions may use either their function name or an explicit `RESULT`
+variable for the returned value, including derived-type and intrinsic array
+results. Typed function headers, renamed/re-exported USE association and
+separate `.rmod` compilation preserve the result identity.
+See `tests/test_scalar_record_results.py` and
+`tests/test_module_function_results.py`.
 
 Derived array constructors concatenate scalar and array-valued items, including
 mixed or nested constructors, typed empty constructors, sections, vector

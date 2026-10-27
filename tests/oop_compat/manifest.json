@@ -116,11 +116,6 @@
         }
       ],
       "features": "private components and constructors",
-      "known_failure": {
-        "phase": "compile",
-        "pattern": "derived\\ assignment\\ to\\ `sh`\\ requires\\ a\\ value\\ of\\ type\\ `shape`",
-        "reason": "Derived function result using the function name instead of RESULT(name); privacy parsing and checks now pass"
-      },
       "notices": []
     },
     {

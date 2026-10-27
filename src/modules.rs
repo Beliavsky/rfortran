@@ -465,9 +465,15 @@ fn scope(
                 for param in params.iter() {
                     host.remove(param);
                 }
-                let implicit_result = body
-                    .iter()
-                    .any(|s| matches!(s,Stmt::VarDecl {names,..} if names.contains(&original)));
+                // The function-name result is a local data object, but it
+                // must keep the procedure's canonical identity after module
+                // association. This applies to every result declaration form.
+                let implicit_result = body.iter().any(|s| match s {
+                    Stmt::VarDecl { names, .. } | Stmt::DerivedDecl { names, .. } => names.contains(&original),
+                    Stmt::ArrayDecl { name, .. } => name == &original,
+                    Stmt::InitializedDecl { entities, .. } => entities.iter().any(|(n,_)|n==&original),
+                    _ => false,
+                });
                 if let Some(ty) = return_type {
                     // Result specifications see the procedure's dummy/local
                     // declarations, which shadow same-named module entities.
