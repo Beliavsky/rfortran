@@ -15,6 +15,31 @@ struct Routine {
     body: Vec<Stmt>,
 }
 
+// Scalar element dummies alias their original storage during array-call
+// expansion. In particular, parent and dynamic views of one record must not
+// acquire independent copy-in/copy-out temporaries.
+fn bind_scalar_views(body:&mut Vec<Stmt>, views:&HashMap<String,Expr>)->Result<()> {
+    if views.is_empty() {return Ok(());}
+    body.retain(|s|!matches!(s,Stmt::DummyIntent{name,..} if views.contains_key(name)));
+    for s in body {
+        for e in crate::procedure_arguments::expressions(s) {
+            crate::procedure_arguments::visit_expr(e,&mut |e| {
+                if let Expr::Ident(n)=e {if let Some(view)=views.get(n) {*e=view.clone();}}
+            });
+        }
+        if let Stmt::Assign{name,value}=s {
+            if let Some(Expr::Index(array,indices))=views.get(name) {
+                *s=Stmt::AssignIndex{name:array.clone(),indices:indices.clone(),value:value.clone()};
+            }
+        }
+        if matches!(s,Stmt::Do{var,..} if views.contains_key(var)) {
+            bail!("an array-element dummy used as a DO variable is not yet supported");
+        }
+        for b in crate::procedure_arguments::children(s) {bind_scalar_views(b,views)?;}
+    }
+    Ok(())
+}
+
 // A scalar reduction consumes an array without making its caller elemental.
 // PARAMETER processing gives logical reductions private names and preserves
 // an omitted DIM as @no_dim when MASK is supplied.
@@ -1485,6 +1510,7 @@ fn expand(
                 }
                 let mut names = HashMap::new();
                 let mut c_views=HashMap::new();
+                let mut scalar_views=HashMap::new();
                 let mut borrowed_widths=HashSet::new();
                 let mut absent = HashSet::new();
                 let mut prefix = vec![];
@@ -1825,6 +1851,22 @@ fn expand(
                             value: actual.clone(),
                         });
                         names.insert(p.clone(), temp);
+                    } else if !r.elemental && matches!(actual, Expr::Call(n, _) | Expr::Index(n, _) if shapes.get(n).is_some_and(|(_,d)| !d.is_empty())) {
+                        let (Expr::Call(array,indices) | Expr::Index(array,indices))=actual else {unreachable!()};
+                        let mut captured=vec![];
+                        for index in indices {
+                            *serial+=1;
+                            let temporary=format!("@scalar_view_index_{serial}");
+                            prefix.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![temporary.clone()]});
+                            prefix.push(Stmt::Assign{name:temporary.clone(),value:index.clone()});
+                            captured.push(Expr::Ident(temporary));
+                        }
+                        *serial+=1;
+                        let alias=format!("@scalar_view_{serial}");
+                        let view=Expr::Index(array.clone(),captured);
+                        if intent=="intent(out)" {undefine.push(Stmt::CallSub{name:"@undefine".into(),args:vec![view.clone()]});}
+                        names.insert(p.clone(),alias.clone());
+                        scalar_views.insert(alias,view);
                     } else if r.elemental && matches!(actual, Expr::Call(n, _) | Expr::Index(n, _) if shapes.get(n).is_some_and(|(_,d)| !d.is_empty())) {
                         // A flattened record element passes writable component
                         // storage. Capture subscripts once, without reading OUT.
@@ -1952,6 +1994,7 @@ fn expand(
                     &stable,
                 )?;
                 crate::subroutines::rename(&mut cloned, &names, &r.params, serial)?;
+                bind_scalar_views(&mut cloned,&scalar_views)?;
                 fn bind_c_views(body:&mut Vec<Stmt>,views:&HashMap<String,Expr>) {
                     for s in body {
                         if let Stmt::CallSub{name,args}=s {

@@ -592,9 +592,9 @@ impl Lowerer {
                     continue;
                 }
                 if let Expr::Call(tag, fields) = &arg {
-                    if tag == "@elemental_record" {
-                        if !matches!(fields.first(), Some(Expr::Str(actual)) if actual == ty) {
-                            bail!("ELEMENTAL derived argument `{param}` requires type `{ty}`");
+                    if tag == "@elemental_record" || tag == "@borrowed_record" {
+                        if !matches!(fields.first(), Some(Expr::Str(actual)) if actual == ty || (tag == "@borrowed_record" && self.extends(actual, ty))) {
+                            bail!("derived argument `{param}` requires type `{ty}`");
                         }
                         for field in &proc.used_fields[param] {
                             let mut value = fields[1..].iter().find_map(|e| match e {

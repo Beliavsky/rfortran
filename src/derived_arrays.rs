@@ -328,8 +328,24 @@ impl Lower {
             Expr::Call(tag, values) if tag.starts_with("@keyword:") && values.len() == 1 => &mut values[0],
             _ => arg,
         };
-        if self.element(actual, objects).is_some() {
-            *actual = Expr::Ident(self.element_temp(actual, objects, prefix, copy_back)?);
+        if let Some((object, indices)) = self.element(actual, objects) {
+            let (object, mut indices) = (object.to_owned(), indices.to_vec());
+            let ty = objects[&object].ty.clone();
+            let fields = self.fields(&ty)?;
+            if fields.iter().all(|f| f.heap.is_none()) {
+                // Borrow primitive component designators directly. Copying an
+                // entire element reads unrelated undefined fields and breaks
+                // aliasing when the same element supplies parent/dynamic views.
+                self.capture_indices(&mut indices, prefix);
+                let mut values = vec![Expr::Str(ty)];
+                for f in fields {
+                    values.push(Expr::Call(format!("@record_field:{}", f.name),
+                        vec![select(&object, &f, vec![], &indices)?]));
+                }
+                *actual = Expr::Call("@borrowed_record".into(), values);
+            } else {
+                *actual = Expr::Ident(self.element_temp(actual, objects, prefix, copy_back)?);
+            }
         }
         Ok(())
     }

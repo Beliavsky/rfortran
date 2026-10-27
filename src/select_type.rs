@@ -10,6 +10,7 @@ use crate::lexer::{Token, TokenKind};
 use crate::procedure_arguments::{children, expressions, visit_expr};
 use anyhow::{bail, Context, Result};
 use std::collections::{HashMap, HashSet};
+mod runtime;
 const SELECT: &str = "@select_type";
 
 pub(crate) fn tokens(tokens: &mut Vec<Token>, source: &str) {
@@ -566,8 +567,12 @@ impl Lowerer {
                 actuals.push(actual.clone());
                 continue;
             }
-            let Expr::Ident(n) = actual else {
-                bail!("polymorphic call specialization currently requires a scalar variable actual for `{dummy}`");
+            let (n, element) = match actual {
+                Expr::Ident(n) => (n, false),
+                Expr::Call(n, indices) | Expr::Index(n, indices)
+                    if vars.get(n).is_some_and(|o| !o.polymorphic && o.rank == indices.len())
+                        && indices.iter().all(|e| matches!(e, Expr::IntLit(_))) => (n, true),
+                _ => bail!("polymorphic call specialization currently requires a scalar variable actual for `{dummy}`"),
             };
             if vars
                 .get(n)
@@ -585,7 +590,7 @@ impl Lowerer {
                 let obj = vars
                     .get(n)
                     .context("CLASS dummy requires a derived-type actual")?;
-                if obj.rank != 0 {
+                if obj.rank != 0 && !element {
                     bail!("scalar CLASS dummy `{dummy}` requires a scalar actual");
                 }
                 if obj.polymorphic {
@@ -1234,6 +1239,7 @@ fn bound_dispatch_needed(body: &[Stmt], inherited: &Objects, defs: &Definitions)
 pub(crate) fn resolve(mut program: Program) -> Result<Program> {
     let mut defs = Definitions::default();
     defs.collect(&program.body);
+    program = runtime::resolve(program, &defs)?;
     if !needed(&program.body)
         && (defs.bound_targets.is_empty()
             || !bound_dispatch_needed(&program.body, &Objects::new(), &defs))

@@ -537,6 +537,10 @@ Stmt: Stmt = {
     },
     KW_ERROR KW_STOP <arg: RhsExpr> => Stmt::CallSub { name: "@error_stop".into(), args: vec![arg] },
     KW_ALLOCATE LPAREN <args: CallArgList> RPAREN => Stmt::CallSub { name: "@allocate".into(), args },
+    KW_ALLOCATE LPAREN <kind:Ident> DCOLON <args:CallArgList> RPAREN => {
+        let mut typed=vec![Expr::Ident(kind)]; typed.extend(args);
+        Stmt::CallSub{name:"@allocate_derived_type".into(),args:typed}
+    },
     // ALLOCATE(CHARACTER(LEN=n) :: s) of a deferred-length CHARACTER scalar.
     KW_ALLOCATE LPAREN KW_CHARACTER LPAREN KW_LEN EQ <length:RhsExpr> RPAREN DCOLON <objects: CallArgList> RPAREN => {
         let mut args = vec![length];

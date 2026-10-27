@@ -71,6 +71,7 @@ gfortran when it is installed. Run the tests after `cargo build --bin rfort`.
   - [Type-bound procedures and generics](#type-bound-procedures-and-generics)
   - [Type extension](#type-extension)
   - [ABSTRACT types and DEFERRED bindings](#abstract-types-and-deferred-bindings)
+  - [Scalar polymorphic ALLOCATABLE objects](#scalar-polymorphic-allocatable-objects)
   - [Scalar dynamic binding dispatch](#scalar-dynamic-binding-dispatch)
   - [SELECT TYPE](#select-type)
   - [Derived arguments and OPTIONAL](#derived-arguments-and-optional)
@@ -2032,8 +2033,9 @@ component `c%shape` names the inherited part, so `c%shape%x` is `c%x` and
 dummy when `shape` is concrete, or to a `class(shape)` dummy, and calls its
 inherited bindings. Scalar CLASS dummy
 calls support overridden binding dispatch as described below. ABSTRACT types
-and DEFERRED bindings are supported. CLASS(*) and polymorphic ALLOCATABLE
-objects remain unsupported. Scalar SELECT TYPE is also supported.
+and DEFERRED bindings are supported. Local scalar polymorphic ALLOCATABLE
+objects and scalar SELECT TYPE are supported as described below; CLASS(*)
+remains unsupported.
 
 ### ABSTRACT types and DEFERRED bindings
 
@@ -2082,13 +2084,63 @@ before `-std=f2003` reject ABSTRACT types and DEFERRED bindings.
 
 This builds on scalar type specialization, with the existing limits on actual
 arguments, storage and results. NOPASS, named PASS arguments, parameterized
-derived types, CLASS(*) and runtime polymorphic allocation remain unsupported.
+derived types and CLASS(*) remain unsupported. Local scalar polymorphic
+allocation is supported as described below.
 Procedure-dummy interface comparison and nonconstant specification-expression
 compatibility remain limited; this is not complete validation of every Fortran
 procedure characteristic.
 
 Run `python tests/test_abstract_types.py`; the standalone example is
 `tests/programs/xabstract_shapes.f90`.
+
+### Scalar polymorphic ALLOCATABLE objects
+
+Local scalar `CLASS(type), ALLOCATABLE` objects can change dynamic type at
+runtime. The declared type may be ABSTRACT. Typed ALLOCATE requires a concrete
+extension of the declared type; untyped ALLOCATE uses the declared type when
+that type is concrete.
+
+```fortran
+class(shape), allocatable :: x
+allocate(circle :: x)
+print *, allocated(x), x%area()
+select type (s => x)
+type is (circle)
+   s%radius = 3.0
+end select
+deallocate(x)
+allocate(rectangle :: x)
+print *, x%area()
+deallocate(x)
+```
+
+`ALLOCATED`, `DEALLOCATE`, exact TYPE IS guards, most-specific CLASS IS guards,
+and CLASS DEFAULT are supported. Components can be assigned through guards;
+overridden functions and subroutines see the current dynamic object. Ordinary
+scalar CLASS dummy procedures can receive an allocated object, including
+forwarding through other procedures. Runtime-dependent IF/DO WHILE conditions
+are evaluated at their original control points. Reallocation reapplies default
+component initialization. Invalid double allocation, deallocation, and access
+to an unallocated object stop with a runtime error. Compile-time allocation diagnostics retain source
+locations.
+
+Internally each object has a runtime integer type tag and concrete allocation
+descriptors. Only the selected concrete storage is allocated. Runtime branches
+call private concrete procedure specializations; this does not define a public
+polymorphic descriptor ABI or runtime vtable ABI. Plain record element arguments
+borrow primitive component storage directly, preserving writes and avoiding
+reads of unrelated undefined components.
+
+This first implementation does not support polymorphic arrays, CLASS(*),
+ALLOCATABLE polymorphic dummy arguments/results, saved or module polymorphic
+objects, SOURCE=/MOLD=/STAT=/ERRMSG= on polymorphic allocation, polymorphic
+intrinsic assignment, or runtime polymorphic values in counted DO bounds.
+Existing derived-type component, result and procedure-interface restrictions
+still apply. POINTER association and CLASSOF declarations do not acquire
+runtime polymorphic descriptor support from this feature.
+
+Run `python tests/test_polymorphic_allocatable.py`. The standalone example is
+`tests/programs/xpolymorphic_allocatable.f90`.
 
 ### Scalar dynamic binding dispatch
 
@@ -2117,7 +2169,7 @@ parent component as nonpolymorphic, so it does not call the override again.
 Dispatch uses private call-site type specialization with borrowed component
 views, rather than a public runtime vtable/descriptor ABI. It currently requires
 simple scalar variable actuals and the default first passed-object dummy.
-Polymorphic arrays, CLASS(*), runtime polymorphic allocation, CLASSOF dispatch,
+Polymorphic arrays, CLASS(*), CLASSOF dispatch,
 POINTER/ALLOCATABLE/VALUE CLASS dummies, and generic interfaces containing
 specialized CLASS specifics remain unsupported. NOPASS and named PASS arguments
 retain their existing limitations.
@@ -2129,7 +2181,8 @@ Run `python tests/test_dynamic_dispatch.py`; the standalone example is
 ### SELECT TYPE
 
 Fortran 2003 scalar `SELECT TYPE` is supported for `CLASS(parent)` dummy
-arguments of specific Fortran procedures. `TYPE IS(child)` matches exactly;
+arguments of specific Fortran procedures and local scalar polymorphic
+allocatables described above. `TYPE IS(child)` matches exactly;
 `CLASS IS(parent)` matches that type and its extensions. Exact matches take
 precedence, then the most specific matching CLASS guard, irrespective of
 source order. `CLASS DEFAULT` handles remaining types; without it, a selector
@@ -2160,9 +2213,10 @@ separately compiled `.rmod` modules are supported. Named constructs and local
 BLOCK declarations are accepted. Guard and component diagnostics include
 source locations; SELECT TYPE requires `-std=f2003` or later.
 
-This implementation specializes calls for simple named scalar variable actuals;
-it does not add a public runtime polymorphic ABI. Array selectors, CLASS(*),
-polymorphic allocation, POINTER/ALLOCATABLE/VALUE CLASS dummies, expression
+Procedure calls use private specializations, while local polymorphic allocatables
+select their concrete storage at runtime. Neither defines a public runtime
+polymorphic ABI. Array selectors, CLASS(*),
+POINTER/ALLOCATABLE/VALUE CLASS dummies, expression
 actuals, and generic interfaces containing specialized CLASS specifics remain
 unsupported. Ordinary scalar binding calls through narrowed CLASS views use
 the actual type's override; exact TYPE IS views use that concrete type's binding.
