@@ -378,6 +378,9 @@ fn scope(
                 cases,
                 default,
             } => {
+                let alias = crate::select_type::selection(expr).map(|(selector,alias)| (selector.to_owned(),alias.to_owned()));
+                let mut branch_names = names.clone();
+                if let Some((selector,alias)) = alias { if selector != alias {branch_names.remove(&alias);} }
                 expression(expr, &names);
                 for case in cases {
                     for item in &mut case.items {
@@ -389,10 +392,10 @@ fn scope(
                             }
                         }
                     }
-                    scope(&mut case.body, &names, None, modules, objects, None)?;
+                    scope(&mut case.body, &branch_names, None, modules, objects, None)?;
                 }
                 if let Some(body) = default {
-                    scope(body, &names, None, modules, objects, None)?;
+                    scope(body, &branch_names, None, modules, objects, None)?;
                 }
             }
             Stmt::Module { name, body } => {

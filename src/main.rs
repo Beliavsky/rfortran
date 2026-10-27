@@ -1,3 +1,4 @@
+mod select_type;
 mod assumed_rank;
 use crate::codegen::Backend;
 use anyhow::Result;

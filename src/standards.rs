@@ -671,6 +671,7 @@ impl Checker<'_> {
                     dims,
                     ..
                 } => {
+                    if crate::assumed_rank::assumed(dims) {self.feature("assumed_rank",offset);}
                     if *polymorphic {
                         self.feature("polymorphic", offset);
                     }
@@ -818,6 +819,7 @@ impl Checker<'_> {
                     default,
                 } => {
                     if matches!(expr,Expr::Call(n,_) if n=="@select_rank") {self.feature("assumed_rank",offset);}
+                    if matches!(expr,Expr::Call(n,_) if n=="@select_type") {self.require("SELECT TYPE",2003,offset);}
                     self.expr(expr, offset, &names);
                     for case in cases {
                         self.body(&case.body, &names, offset, pure, component, dummies);

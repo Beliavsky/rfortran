@@ -691,9 +691,9 @@ statement list. Assigned GOTO and the arithmetic IF are not supported.
 
 ### Assumed-rank arguments and SELECT RANK
 
-Fortran 2018 assumed-rank intrinsic dummies can be declared with `x(..)` or
-`dimension(..)`. A specific internal or module procedure can receive a scalar
-or an array through rank 15. `SELECT RANK` selects a rank-specific block:
+Fortran 2018 assumed-rank intrinsic and nonpolymorphic derived-type dummies
+can be declared with `x(..)` or `dimension(..)`. A specific internal or module
+procedure can receive a scalar or an array through rank 15. `SELECT RANK` selects a rank-specific block:
 
 ```fortran
 subroutine describe(x)
@@ -712,7 +712,11 @@ end subroutine
 ```
 
 Numeric, LOGICAL and supported CHARACTER actuals work, including runtime-sized
-arrays and supported sections. `select rank(a => x)` gives a branch-local
+arrays and supported sections. Nonpolymorphic derived arguments use the same
+rank specialization: scalar/fixed-size components, runtime-sized arrays,
+strided sections, and supported allocatable components retain the existing
+derived-type storage behavior. Constructor actuals and separately compiled
+module types are supported. `select rank(a => x)` gives a branch-local
 associate name; writable branches retain the dummy's INTENT and update the
 actual. Multiple assumed-rank dummies, forwarding to another specific
 assumed-rank procedure, keyword association, and guarded OPTIONAL arguments are
@@ -731,13 +735,14 @@ printed, subscripted or assigned directly.
 Fortran calls specialize a source procedure for the actual ranks before the
 usual array/initialization lowering. Combined source files and separately
 compiled `.rmod` module interfaces work; this is not a public assumed-rank
-separate-object ABI. Assumed-rank BIND(C) descriptors, derived-type/polymorphic
-dummies, generic interfaces containing assumed-rank specifics, and whole
-assumed-size actuals/RANK(*) dispatch remain unsupported. RANK(*) guards can be
-parsed and checked, but the corresponding assumed-size calls are unsupported.
+separate-object ABI. Assumed-rank BIND(C) descriptors, polymorphic dummies,
+generic interfaces containing assumed-rank specifics, and whole assumed-size
+actuals/RANK(*) dispatch remain unsupported. RANK(*) guards can be parsed and checked, but the corresponding assumed-size calls are unsupported.
 Other inquiry/storage forms retain the restrictions of the existing array
-backend. Run `python tests/test_assumed_rank.py`; the standalone example is
-`tests/programs/xassumed_rank.f90`.
+backend. Run `python tests/test_assumed_rank.py` and
+`python tests/test_assumed_rank_derived.py`. Standalone examples are
+`tests/programs/xassumed_rank.f90` and
+`tests/programs/xassumed_rank_derived.f90`.
 
 ### SELECT CASE ranges
 
@@ -2024,7 +2029,55 @@ component `c%shape` names the inherited part, so `c%shape%x` is `c%x` and
 dispatch yet: a CLASS dummy is treated as its declared type, so a type-bound call
 through a CLASS dummy is rejected at compile time when an extension overrides
 that binding, rather than calling the parent's procedure. ABSTRACT types,
-CLASS(*), SELECT TYPE and polymorphic ALLOCATABLE objects are not yet supported.
+CLASS(*) and polymorphic ALLOCATABLE objects are not yet supported. Scalar
+SELECT TYPE is supported as described below.
+
+### SELECT TYPE
+
+Fortran 2003 scalar `SELECT TYPE` is supported for `CLASS(parent)` dummy
+arguments of specific Fortran procedures. `TYPE IS(child)` matches exactly;
+`CLASS IS(parent)` matches that type and its extensions. Exact matches take
+precedence, then the most specific matching CLASS guard, irrespective of
+source order. `CLASS DEFAULT` handles remaining types; without it, a selector
+with no matching guard executes no branch.
+
+```fortran
+subroutine change(x)
+class(base), intent(inout) :: x
+select type (v => x)
+type is (child)
+   v%extra = v%extra + 1
+class is (base)
+   print *, v%value
+class default
+   print *, "other type"
+end select
+end subroutine
+```
+
+Associate names borrow the caller's storage, including supported allocatable
+components. Without an associate name, the selector itself has the guard's
+type within that branch. Outside the selection it retains its declared type,
+so generic resolution still uses the declared parent. INTENT(IN) assignments
+are rejected, and INTENT(OUT) default initialization uses the complete dynamic
+type once. Keyword/OPTIONAL association, multiple selectors, nested selections,
+forwarding to specific procedures, scalar intrinsic function results and
+separately compiled `.rmod` modules are supported. Named constructs and local
+BLOCK declarations are accepted. Guard and component diagnostics include
+source locations; SELECT TYPE requires `-std=f2003` or later.
+
+This implementation specializes calls for simple named scalar variable actuals;
+it does not add a public runtime polymorphic ABI. Array selectors, CLASS(*),
+polymorphic allocation, POINTER/ALLOCATABLE/VALUE CLASS dummies, expression
+actuals, and generic interfaces containing specialized CLASS specifics remain
+unsupported. Existing restrictions on overridden type-bound dispatch through
+CLASS views remain; exact TYPE IS views can use ordinary concrete bindings.
+Type-bound procedures which themselves contain or forward to SELECT TYPE/CLASS
+specializations remain unsupported.
+Other record storage forms retain the existing derived-type restrictions.
+
+Run `python tests/test_select_type.py`. The standalone example is
+`tests/programs/xselect_type.f90`.
 
 ### TYPEOF and CLASSOF declarations
 

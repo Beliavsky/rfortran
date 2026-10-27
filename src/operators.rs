@@ -186,6 +186,7 @@ fn elemental_match(params: &[Ty], arguments: &[Ty]) -> bool {
 }
 
 /// Reuse generic-resolution type inference for intrinsic input validation.
+pub(crate) enum ExpressionElement { Intrinsic(TypeSpec), Derived(String) }
 pub(crate) struct ExpressionTypes(Resolver);
 impl ExpressionTypes {
     pub(crate) fn new(program: &Program) -> Result<Self> {
@@ -193,20 +194,29 @@ impl ExpressionTypes {
         resolver.collect(&program.body)?;
         Ok(Self(resolver))
     }
-    pub(crate) fn kind_rank(&self, expression: &Expr, declarations: &HashMap<String, (TypeSpec, usize)>) -> Result<Option<(TypeSpec, usize)>> {
-        let vars = declarations.iter().map(|(name, (kind, rank))| {
+    /// Reuse expression resolution for intrinsic and derived actuals, retaining
+    /// type identity through sections, components and function results.
+    pub(crate) fn type_rank(&self, expression: &Expr, declarations: &HashMap<String, (TypeSpec, usize)>, derived: &HashMap<String, (String, usize)>) -> Result<Option<(ExpressionElement, usize)>> {
+        let mut vars: Vars = declarations.iter().map(|(name, (kind, rank))| {
             let element = scalar(kind);
             (name.clone(), if *rank == 0 { element } else { Ty::Array(Box::new(element), *rank) })
         }).collect();
+        for (name, (kind, rank)) in derived {
+            let element = Ty::Derived(kind.clone());
+            vars.insert(name.clone(), if *rank == 0 { element } else { Ty::Array(Box::new(element), *rank) });
+        }
         let ty = self.0.expression(&mut expression.clone(), &vars, &Bindings::new())?;
-        Ok(match ty {
-            Ty::Scalar(kind) => Some((kind, 0)),
-            Ty::Array(element, rank) => match *element {
-                Ty::Scalar(kind) => Some((kind, rank)),
-                _ => None,
-            },
+        let (element, rank) = match ty { Ty::Array(element, rank) => (*element, rank), element => (element, 0) };
+        Ok(match element {
+            Ty::Derived(name) => Some((ExpressionElement::Derived(name), rank)),
+            Ty::Scalar(kind) => Some((ExpressionElement::Intrinsic(kind), rank)),
             _ => None,
         })
+    }
+    pub(crate) fn kind_rank(&self, expression: &Expr, declarations: &HashMap<String, (TypeSpec, usize)>) -> Result<Option<(TypeSpec, usize)>> {
+        Ok(self.type_rank(expression, declarations, &HashMap::new())?.and_then(|(element, rank)| {
+            if let ExpressionElement::Intrinsic(kind) = element { Some((kind, rank)) } else { None }
+        }))
     }
 }
 

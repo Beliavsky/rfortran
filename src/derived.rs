@@ -1443,6 +1443,14 @@ impl Lowerer {
                             plain(body);
                         }
                         self.body(body, &objects, &old_params)?;
+                        // Unused INTENT(IN) record fields are omitted from the
+                        // flattened ABI. They must not retain OPTIONAL metadata
+                        // for names which are no longer procedure parameters.
+                        body.retain(|s| !matches!(s,Stmt::DummyIntent{name,intent}
+                            if intent=="optional" && !new_params.contains(name)
+                                && proc.params.iter().any(|(p,ty)|ty.is_some()
+                                    && name.strip_prefix(p).is_some_and(|tail|tail.starts_with('%')))));
+
                         (self.in_module, self.in_procedure) = outer;
                         for n in self.field_names(result, ty) {
                             new_params.push(n.clone());
@@ -1460,6 +1468,14 @@ impl Lowerer {
                         };
                     } else {
                         self.body(body, &objects, &old_params)?;
+                        // Unused INTENT(IN) record fields are omitted from the
+                        // flattened ABI. They must not retain OPTIONAL metadata
+                        // for names which are no longer procedure parameters.
+                        body.retain(|s| !matches!(s,Stmt::DummyIntent{name,intent}
+                            if intent=="optional" && !new_params.contains(name)
+                                && proc.params.iter().any(|(p,ty)|ty.is_some()
+                                    && name.strip_prefix(p).is_some_and(|tail|tail.starts_with('%')))));
+
                         (self.in_module, self.in_procedure) = outer;
                         *params = new_params;
                         // ELEMENTAL source dummies are scalar records. Their
@@ -1499,6 +1515,7 @@ fn resolve_types(mut program: Program) -> Result<Program> {
     crate::imports::validate(&program)?;
     program=crate::modules::associate(program)?;
     program=crate::assumed_rank::resolve(program)?;
+    program=crate::select_type::resolve(program)?;
     program=crate::multiple_subscripts::resolve(program)?;
     program=crate::concurrent_reduce::resolve(program)?;
     crate::simple::validate(&program)?;

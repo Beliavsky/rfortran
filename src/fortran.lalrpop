@@ -132,6 +132,9 @@ extern {
         KW_SELECT => TokenKind::KwSelect,
         KW_CASE => TokenKind::KwCase,
         KW_RANK => TokenKind::KwRank,
+        KW_TYPE_IS => TokenKind::KwTypeIs,
+        KW_CLASS_IS => TokenKind::KwClassIs,
+        KW_CLASS_DEFAULT => TokenKind::KwClassDefault,
         DOTDOT => TokenKind::DotDot,
         KW_DEFAULT => TokenKind::KwDefault,
         KW_BLOCK => TokenKind::KwBlock,
@@ -1258,6 +1261,8 @@ NameableConstruct: Stmt = {
         }
         Stmt::SelectCase { expr: e, cases: blocks, default }
     },
+    KW_SELECT KW_TYPE LPAREN <selector:RankSelector> RPAREN <blocks:TypeBlocks> KW_END KW_SELECT =>?
+        crate::select_type::construct(selector, blocks).map_err(|error| lalrpop_util::ParseError::User { error }),
     KW_SELECT KW_RANK LPAREN <selector:RankSelector> RPAREN <blocks:RankBlocks> KW_END KW_SELECT =>?
         crate::assumed_rank::construct(selector, blocks).map_err(|error| lalrpop_util::ParseError::User { error }),
     KW_BLOCK <body: Stmts> KW_END KW_BLOCK => Stmt::Block { body },
@@ -1354,4 +1359,13 @@ RankBlock: CaseOrDefault = {
     KW_RANK KW_DEFAULT <body:Stmts> => CaseOrDefault::Default(body),
     KW_RANK LPAREN <rank:RhsExpr> RPAREN <body:Stmts> => CaseOrDefault::Case(CaseBlock {items:vec![CaseItem::Single(rank)],body}),
     KW_RANK LPAREN STAR RPAREN <body:Stmts> => CaseOrDefault::Case(CaseBlock {items:vec![CaseItem::Single(Expr::Ident("@rank_star".into()))],body}),
+};
+
+TypeBlocks: Vec<CaseOrDefault> = { TypeBlock* => <> };
+TypeBlock: CaseOrDefault = {
+    KW_CLASS_DEFAULT <body:Stmts> => CaseOrDefault::Default(body),
+    KW_TYPE_IS LPAREN <name:Ident> RPAREN <body:Stmts> => CaseOrDefault::Case(CaseBlock {
+        items:vec![CaseItem::Single(Expr::Call("@type_is".into(),vec![Expr::Ident(name)]))],body}),
+    KW_CLASS_IS LPAREN <name:Ident> RPAREN <body:Stmts> => CaseOrDefault::Case(CaseBlock {
+        items:vec![CaseItem::Single(Expr::Call("@class_is".into(),vec![Expr::Ident(name)]))],body}),
 };

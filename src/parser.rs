@@ -285,6 +285,9 @@ fn human_expected(name: &str) -> String {
 fn human_token(tok: &TokenKind) -> String {
     match tok {
         TokenKind::KwRank => "keyword rank".into(),
+        TokenKind::KwTypeIs => "TYPE IS".into(),
+        TokenKind::KwClassIs => "CLASS IS".into(),
+        TokenKind::KwClassDefault => "CLASS DEFAULT".into(),
         TokenKind::DotDot => "'..'".into(),
         TokenKind::KwComplex => "keyword complex".into(),
         TokenKind::ComplexOpen => "'('".into(),

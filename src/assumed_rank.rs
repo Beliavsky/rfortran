@@ -12,7 +12,27 @@ use std::collections::{HashMap, HashSet};
 
 const ASSUMED: &str = "@assumed_rank";
 const SELECT: &str = "@select_rank";
-type Types = HashMap<String, (TypeSpec, usize)>;
+#[derive(Clone, Default)]
+struct Types {
+    intrinsic: HashMap<String, (TypeSpec, usize)>,
+    derived: HashMap<String, (String, usize)>,
+}
+impl Types {
+    fn new() -> Self {
+        Self::default()
+    }
+}
+impl std::ops::Deref for Types {
+    type Target = HashMap<String, (TypeSpec, usize)>;
+    fn deref(&self) -> &Self::Target {
+        &self.intrinsic
+    }
+}
+impl std::ops::DerefMut for Types {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.intrinsic
+    }
+}
 type Constants = HashMap<String, Expr>;
 
 pub(crate) fn assumed(dims: &[Expr]) -> bool {
@@ -98,10 +118,12 @@ fn declarations(body: &[Stmt], inherited: &Types) -> Types {
         match s {
             Stmt::VarDecl { kind, names } => {
                 for n in names {
+                    types.derived.remove(n);
                     types.insert(n.clone(), (kind.clone(), 0));
                 }
             }
             Stmt::ArrayDecl { kind, name, dims } => {
+                types.derived.remove(name);
                 types.insert(name.clone(), (kind.clone(), dims.len()));
                 if dims
                     .iter()
@@ -110,8 +132,38 @@ fn declarations(body: &[Stmt], inherited: &Types) -> Types {
                     types.insert(format!("@assumed_size:{name}"), (kind.clone(), dims.len()));
                 }
             }
+            Stmt::DerivedDecl {
+                type_name,
+                names,
+                dims,
+                attributes,
+                ..
+            } => {
+                for n in names {
+                    types.intrinsic.remove(n);
+                    if dims
+                        .iter()
+                        .any(|d| matches!(d,Expr::Ident(n) if n=="@assumed_extent"))
+                    {
+                        types.insert(
+                            format!("@assumed_size:{n}"),
+                            (TypeSpec::Logical, dims.len()),
+                        );
+                    }
+                    types
+                        .derived
+                        .insert(n.clone(), (type_name.clone(), dims.len()));
+                    if attributes
+                        .iter()
+                        .any(|a| matches!(a.as_str(), "allocatable" | "pointer"))
+                    {
+                        types.insert(format!("@descriptor:{n}"), (TypeSpec::Logical, 0));
+                    }
+                }
+            }
             Stmt::InitializedDecl { kind, entities, .. } => {
                 for (n, _) in entities {
+                    types.derived.remove(n);
                     types.insert(n.clone(), (kind.clone(), 0));
                 }
             }
@@ -211,28 +263,55 @@ fn collect(
                 } => {
                     let mut dummies = vec![];
                     for s in body {
-                        if let Stmt::ArrayDecl {
-                            name: dummy, dims, ..
-                        } = s
-                        {
-                            if assumed(dims) {
-                                if dims.len() != 1 {
-                                    bail!(
-                                        "assumed-rank declaration `{dummy}` must contain only (..)"
-                                    );
+                        let (names, dims) = match s {
+                            Stmt::ArrayDecl { name, dims, .. } => (vec![name.clone()], dims),
+                            Stmt::DerivedDecl {
+                                names,
+                                dims,
+                                polymorphic,
+                                ..
+                            } => {
+                                if assumed(dims) && *polymorphic {
+                                    bail!("polymorphic assumed-rank dummies are not yet supported");
                                 }
-                                let position=params.iter().position(|p|p==dummy).with_context(||format!("assumed-rank entity `{dummy}` must be a dummy argument"))?;
-                                if *elemental {
-                                    bail!("ELEMENTAL procedure `{name}` cannot have an assumed-rank dummy");
-                                }
-                                if body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==dummy && intent=="value")) {
-                    bail!("assumed-rank dummy `{dummy}` cannot have VALUE");
-                }
-                                if body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent:_} if name==crate::c_interop::BIND)) {
-                    bail!("assumed-rank BIND(C) descriptors are not yet supported");
-                }
-                                dummies.push((position, dummy.clone()));
+                                (names.clone(), dims)
                             }
+                            _ => continue,
+                        };
+                        if !assumed(dims) {
+                            continue;
+                        }
+                        for dummy in names {
+                            if dims.len() != 1 {
+                                bail!("assumed-rank declaration `{dummy}` must contain only (..)");
+                            }
+                            let position =
+                                params.iter().position(|p| p == &dummy).with_context(|| {
+                                    format!(
+                                        "assumed-rank entity `{dummy}` must be a dummy argument"
+                                    )
+                                })?;
+                            if *elemental {
+                                bail!("ELEMENTAL procedure `{name}` cannot have an assumed-rank dummy");
+                            }
+                            if body.iter().any(|s| match s {
+                                Stmt::DummyIntent { name: n, intent } => {
+                                    n == &dummy && intent == "value"
+                                }
+                                Stmt::DerivedDecl {
+                                    names, attributes, ..
+                                } => {
+                                    names.contains(&dummy)
+                                        && attributes.iter().any(|a| a == "value")
+                                }
+                                _ => false,
+                            }) {
+                                bail!("assumed-rank dummy `{dummy}` cannot have VALUE");
+                            }
+                            if body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,..} if name==crate::c_interop::BIND)) {
+                                bail!("assumed-rank BIND(C) descriptors are not yet supported");
+                            }
+                            dummies.push((position, dummy));
                         }
                     }
                     if !dummies.is_empty() {
@@ -253,8 +332,12 @@ fn collect(
                 Stmt::ArrayDecl { name, dims, .. } if assumed(dims) && !params.contains(name) => {
                     bail!("assumed-rank entity `{name}` must be a dummy argument")
                 }
-                Stmt::DerivedDecl { dims, .. } if assumed(dims) => {
-                    bail!("assumed-rank derived-type dummies are not yet supported")
+                Stmt::DerivedDecl { names, dims, .. } if assumed(dims) => {
+                    for name in names {
+                        if !params.contains(name) {
+                            bail!("assumed-rank entity `{name}` must be a dummy argument");
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -289,10 +372,10 @@ fn validate_expr(
     templates: &HashMap<String, Template>,
 ) -> Result<()> {
     match e {
-        Expr::Ident(n) if assumed.contains(n) => {
+        Expr::Ident(n) if assumed.contains(n.split('%').next().unwrap_or(n)) => {
             bail!("assumed-rank dummy `{n}` requires SELECT RANK before accessing its value")
         }
-        Expr::Call(n, _) if assumed.contains(n) => {
+        Expr::Call(n, _) if assumed.contains(n.split('%').next().unwrap_or(n)) => {
             bail!("assumed-rank dummy `{n}` cannot be subscripted outside a rank-specific block")
         }
         Expr::Call(n, args) => {
@@ -320,7 +403,9 @@ fn validate_expr(
                 validate_expr(value, assumed, templates)?;
             }
         }
-        Expr::Index(n, _) | Expr::Section { name: n, .. } if assumed.contains(n) => {
+        Expr::Index(n, _) | Expr::Section { name: n, .. }
+            if assumed.contains(n.split('%').next().unwrap_or(n)) =>
+        {
             bail!("assumed-rank dummy `{n}` cannot be subscripted outside a rank-specific block")
         }
         Expr::Bin(_, a, b) => {
@@ -400,9 +485,13 @@ fn validate(
                 }
                 Stmt::GenericInterface{procedures,..} if procedures.iter().any(|n|templates.contains_key(n))=>
                     bail!("generic interfaces containing assumed-rank procedures are not yet supported; call the specific procedure"),
-                Stmt::Assign{name,..}|Stmt::AssignIndex{name,..} if assumed.contains(name)=>bail!("assumed-rank dummy `{name}` requires SELECT RANK before assignment"),
+                Stmt::Assign{name,..}|Stmt::AssignIndex{name,..} if assumed.contains(name.split('%').next().unwrap_or(name))=>bail!("assumed-rank dummy `{name}` requires SELECT RANK before assignment"),
                 Stmt::ArrayDecl{name,dims,..} if super::assumed_rank::assumed(dims)=>{
                     if !assumed.contains(name) {bail!("assumed-rank entity `{name}` must be a dummy argument");}
+                    return Ok(());
+                },
+                Stmt::DerivedDecl{names,dims,..} if super::assumed_rank::assumed(dims)=>{
+                    for name in names { if !assumed.contains(name) {bail!("assumed-rank entity `{name}` must be a dummy argument");} }
                     return Ok(());
                 },
                 Stmt::CallSub{name,args}=>validate_expr(&Expr::Call(name.clone(),args.clone()),assumed,templates)?,
@@ -436,6 +525,38 @@ fn intrinsic_kind(kind: TypeSpec, constants: &Constants) -> Option<TypeSpec> {
         other => other,
     })
 }
+// Component references carry their complete name (`object%field`) in the
+// source AST. Renaming the associate itself must also rename that prefix.
+fn rename_associate(body: &mut [Stmt], from: &str, to: &str) {
+    crate::procedure_arguments::rename(body, from, to);
+    fn component(n: &mut String, from: &str, to: &str) {
+        if n.strip_prefix(from)
+            .is_some_and(|tail| tail.starts_with('%'))
+        {
+            *n = format!("{to}{}", &n[from.len()..]);
+        }
+    }
+    for s in body {
+        match s {
+            Stmt::Assign { name, .. }
+            | Stmt::AssignIndex { name, .. }
+            | Stmt::CallSub { name, .. } => component(name, from, to),
+            _ => {}
+        }
+        for e in expressions(s) {
+            crate::procedure_arguments::visit_expr(e, &mut |e| match e {
+                Expr::Ident(n)
+                | Expr::Call(n, _)
+                | Expr::Index(n, _)
+                | Expr::Section { name: n, .. } => component(n, from, to),
+                _ => {}
+            });
+        }
+        for b in children(s) {
+            rename_associate(b, from, to);
+        }
+    }
+}
 fn discard_actuals(args: &mut Vec<Expr>, discarded: Option<&Vec<usize>>) {
     if let Some(discarded) = discarded {
         let mut i = 0;
@@ -449,14 +570,15 @@ fn discard_actuals(args: &mut Vec<Expr>, discarded: Option<&Vec<usize>>) {
 fn uses(body: &[Stmt], name: &str) -> bool {
     let mut body = body.to_vec();
     for s in &mut body {
-        if matches!(s,Stmt::Assign{name:n,..}|Stmt::AssignIndex{name:n,..}|Stmt::Do{var:n,..} if n==name)
+        if matches!(s,Stmt::Assign{name:n,..}|Stmt::AssignIndex{name:n,..}|Stmt::Do{var:n,..} if n.split('%').next()==Some(name))
         {
             return true;
         }
         let mut found = false;
         let mut inspect = |e: &mut Expr| {
             crate::procedure_arguments::visit_expr(e, &mut |e| {
-                if matches!(e,Expr::Ident(n)|Expr::Index(n,_)|Expr::Section{name:n,..} if n==name) {
+                if matches!(e,Expr::Ident(n)|Expr::Index(n,_)|Expr::Call(n,_)|Expr::Section{name:n,..} if n.split('%').next()==Some(name))
+                {
                     found = true;
                 }
             })
@@ -498,7 +620,7 @@ struct Lowerer {
 impl Lowerer {
     fn rank(&self, e: &Expr, types: &Types) -> Result<usize> {
         self.types
-            .kind_rank(e, types)?
+            .type_rank(e, types, &types.derived)?
             .map(|(_, rank)| rank)
             .context("cannot determine actual argument rank for assumed-rank call")
     }
@@ -513,7 +635,23 @@ impl Lowerer {
         let constants = constants(body, &template.constants);
         for (i, dummy) in &template.dummies {
             if let Some(actual) = args.get(*i).filter(|a| !crate::named_arguments::omitted(a)) {
-                if let Some((actual_kind, _)) = self.types.kind_rank(actual, types)? {
+                let inferred = self.types.type_rank(actual, types, &types.derived)?;
+                let derived = match &inferred {
+                    Some((crate::operators::ExpressionElement::Derived(n), _)) => Some(n),
+                    _ => None,
+                };
+                if let Some((formal, _)) = declared.derived.get(dummy) {
+                    if !matches!(derived, Some(actual) if actual == formal) {
+                        bail!("type or kind mismatch for assumed-rank dummy `{dummy}` of `{name}`");
+                    }
+                    continue;
+                }
+                if derived.is_some() {
+                    bail!("type or kind mismatch for assumed-rank dummy `{dummy}` of `{name}`");
+                }
+                if let Some((crate::operators::ExpressionElement::Intrinsic(actual_kind), _)) =
+                    inferred
+                {
                     let formal_kind = declared
                         .get(dummy)
                         .context("missing assumed-rank dummy declaration")?
@@ -579,8 +717,63 @@ impl Lowerer {
             }
             _ => unreachable!(),
         };
+        // A declaration may share (..) among several dummies which acquire
+        // different ranks at one call site. Give each its own concrete shape.
+        *body = std::mem::take(body)
+            .into_iter()
+            .flat_map(|s| {
+                if let Stmt::DerivedDecl {
+                    type_name,
+                    names,
+                    attributes,
+                    polymorphic,
+                    dims,
+                } = &s
+                {
+                    if assumed(dims) {
+                        return names
+                            .iter()
+                            .map(|n| Stmt::DerivedDecl {
+                                type_name: type_name.clone(),
+                                names: vec![n.clone()],
+                                attributes: attributes.clone(),
+                                polymorphic: *polymorphic,
+                                dims: dims.clone(),
+                            })
+                            .collect::<Vec<_>>();
+                    }
+                }
+                vec![s]
+            })
+            .collect();
+        let separate_attributes: Vec<_> = body
+            .iter()
+            .filter_map(|s| {
+                if let Stmt::DummyIntent { name, intent } = s {
+                    Some((name.clone(), intent.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect();
         for ((_, dummy), rank) in template.dummies.iter().zip(&ranks) {
             for s in body.iter_mut() {
+                if let Stmt::DerivedDecl {
+                    names,
+                    dims,
+                    attributes,
+                    ..
+                } = s
+                {
+                    if names.contains(dummy) {
+                        for (name, attr) in &separate_attributes {
+                            if name == dummy && !attributes.contains(attr) {
+                                attributes.push(attr.clone());
+                            }
+                        }
+                        *dims = vec![Expr::Ident("@deferred_extent".into()); *rank];
+                    }
+                }
                 if let Stmt::ArrayDecl { kind, name, dims } = s {
                     if name == dummy {
                         if *rank == 0 {
@@ -595,6 +788,17 @@ impl Lowerer {
                 }
             }
         }
+        // The derived lowering expands attributes from the declaration onto
+        // component dummies; a separate OPTIONAL for the removed record name
+        // must not survive as an attribute of a nonexistent flattened dummy.
+        let derived_dummies: HashSet<_> = template
+            .dummies
+            .iter()
+            .filter(|(_, n)| declared.derived.contains_key(n))
+            .map(|(_, n)| n.clone())
+            .collect();
+        body.retain(|s| !matches!(s, Stmt::DummyIntent { name, intent }
+            if derived_dummies.contains(name) && matches!(intent.as_str(), "optional" | "intent(in)" | "intent(out)" | "intent(inout)" | "target")));
         // SELECT RANK is resolved before branches with incompatible ranks reach
         // generic resolution, shape analysis or initialization instrumentation.
         let known = template
@@ -622,7 +826,7 @@ impl Lowerer {
                 .map(|i| template.params[*i].clone())
                 .collect();
             body.retain_mut(|s| match s {
-                Stmt::VarDecl { names, .. } => {
+                Stmt::VarDecl { names, .. } | Stmt::DerivedDecl { names, .. } => {
                     names.retain(|n| !omitted.contains(n));
                     !names.is_empty()
                 }
@@ -673,7 +877,7 @@ impl Lowerer {
                     }
                     let mut chosen = chosen.or_else(|| default.take()).unwrap_or_default();
                     if alias != selector {
-                        crate::procedure_arguments::rename(&mut chosen, &alias, &selector);
+                        rename_associate(&mut chosen, &alias, &selector);
                     }
                     self.select(&mut chosen, ranks, &constants)?;
                     // Keep branch declarations local instead of leaking them into
@@ -695,6 +899,7 @@ impl Lowerer {
             if n == "rank"
                 && !self.procedures.contains(n)
                 && !types.contains_key(n)
+                && !types.derived.contains_key(n)
                 && !types.contains_key(&format!("@procedure:{n}"))
             {
                 let signature = crate::named_arguments::Signature {
@@ -840,7 +1045,9 @@ fn needed(body: &[Stmt], procedures: &mut HashSet<String>) -> bool {
                 dims,
                 ..
             } => expr(e) || assumed(dims) || dims.iter().any(expr),
-            Stmt::ArrayDecl { dims, .. } => assumed(dims) || dims.iter().any(expr),
+            Stmt::ArrayDecl { dims, .. } | Stmt::DerivedDecl { dims, .. } => {
+                assumed(dims) || dims.iter().any(expr)
+            }
             Stmt::Print { items }
             | Stmt::CallSub { args: items, .. }
             | Stmt::Read { args: items } => items.iter().any(expr),

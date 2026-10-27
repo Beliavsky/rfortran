@@ -412,6 +412,9 @@ pub enum TokenKind {
     #[token("case", ignore(ascii_case))]
     KwCase,
     KwRank,
+    KwTypeIs,
+    KwClassIs,
+    KwClassDefault,
     // Contextual keyword in CASE DEFAULT; otherwise a valid identifier.
     KwDefault,
     #[token("block", ignore(ascii_case))]
@@ -1419,6 +1422,7 @@ pub fn lex(input: &str) -> Vec<Token> {
         }
     }
     crate::assumed_rank::tokens(&mut tokens, input);
+    crate::select_type::tokens(&mut tokens, input);
     crate::namelists::tokens(&mut tokens, input);
     crate::c_interop::binding_tokens(&mut tokens, input);
     procedure_declarations(&mut tokens, input);
@@ -1464,12 +1468,12 @@ pub fn lex(input: &str) -> Vec<Token> {
             TokenKind::KwIf|TokenKind::KwSelect|TokenKind::KwBlock|TokenKind::KwAssociate => index>0
                 && matches!(tokens[index-1].kind,TokenKind::KwEnd)
                 && same_statement(&input[tokens[index-1].span.end..tokens[index].span.start]),
-            TokenKind::KwElse|TokenKind::KwDefault => true,
+            TokenKind::KwElse|TokenKind::KwDefault|TokenKind::KwClassDefault => true,
             TokenKind::KwThen => (0..index).rev().find(|&i| statement_head(&tokens,input,i))
                 .is_some_and(|i| matches!(tokens[i].kind,TokenKind::KwElseIf|TokenKind::KwElse)
                     || matches!(&tokens[i].kind,TokenKind::Ident(n) if n.eq_ignore_ascii_case("elseif"))),
             TokenKind::RParen => (0..index).rev().find(|&i| statement_head(&tokens,input,i))
-                .is_some_and(|i| matches!(tokens[i].kind,TokenKind::KwCase|TokenKind::KwRank)),
+                .is_some_and(|i| matches!(tokens[i].kind,TokenKind::KwCase|TokenKind::KwRank|TokenKind::KwTypeIs|TokenKind::KwClassIs)),
             _ => false,
         };
         if named && tokens.get(index+2).is_none_or(|t| !same_statement(&input[tokens[index+1].span.end..t.span.start])) {
