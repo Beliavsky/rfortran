@@ -1,3 +1,4 @@
+mod assumed_rank;
 use crate::codegen::Backend;
 use anyhow::Result;
 use cranelift_codegen::settings::{self, Configurable, Flags};

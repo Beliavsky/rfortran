@@ -173,7 +173,8 @@ Found on 2026-10-21, fixed:
 | BLOCK construct | F2008 | ✅ |  | testsuite, test_named_constructs.py |
 | [EXIT from a named BLOCK, IF, SELECT CASE or ASSOCIATE](language-support.md#other-statement-forms) | F2008 | ✅ |  | test_named_constructs.py |
 | [ASSOCIATE](language-support.md#associate) | F2003 | 🟡 | Selectors whose value the block changes are rejected | test_associate.py |
-| SELECT TYPE, SELECT RANK | Mixed | ❌ | SELECT TYPE: F2003; SELECT RANK: F2018. |  |
+| SELECT TYPE | F2003 | ❌ |  |  |
+| [SELECT RANK](language-support.md#assumed-rank-arguments-and-select-rank) | F2018 | 🟡 | Rank 0–15/default branches, aliases and named constructs for intrinsic assumed-rank dummies; no assumed-size RANK(*) dispatch or polymorphism | test_assumed_rank.py |
 | [GOTO](language-support.md#goto) | F77 or earlier | 🟡 | Forward to a label in the same or an enclosing statement list, or backward to a label earlier in the same list; not into a construct | test_goto_and_real_output.py |
 | [Computed GOTO](language-support.md#goto) | F77 or earlier | ✅ |  |  |
 | Assigned GOTO, arithmetic IF | F77 or earlier | ❌ |  |  |
@@ -187,6 +188,7 @@ Found on 2026-10-21, fixed:
 | Explicit-shape arrays, ranks 1–15 | Mixed | ✅ | Explicit-shape arrays: F77 or earlier; maximum rank increased from 7 to 15 in F2008. | test_vector_ranks.py |
 | [Explicit lower bounds](language-support.md#explicit-array-bounds) | F77 or earlier | ✅ | Constant bounds | test_explicit_bounds.py |
 | Assumed-shape dummies `x(:)` | F90 | ✅ |  | test_function_arrays.py |
+| [Assumed-rank dummies `x(..)`](language-support.md#assumed-rank-arguments-and-select-rank) | F2018 | 🟡 | Intrinsic specific Fortran procedures, forwarding, runtime arrays/sections and .rmod module calls; no C descriptor ABI, derived/polymorphic types or generic interfaces | test_assumed_rank.py |
 | [Assumed-size dummies `x(*)`](language-support.md#external-procedures-and-separate-compilation) | F77 or earlier | 🟡 | Numeric and LOGICAL dummies of external procedures | test_external_calls.py |
 | [Array element actuals for array dummies (sequence association)](language-support.md#external-procedures-and-separate-compilation) | F77 or earlier | 🟡 | Numeric and LOGICAL dummies of external procedures | test_external_calls.py |
 | [TRANSFER](language-support.md#external-procedures-and-separate-compilation) | F90 | 🟡 | Only a REAL array to a COMPLEX array of the same kind, with SIZE, as an actual argument of a CALL | test_external_calls.py |

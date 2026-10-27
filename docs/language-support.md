@@ -689,6 +689,56 @@ such as a computed GOTO into the middle of a statement range that a later
 GOTO repeats, are compiled as a loop over the labelled segments of the
 statement list. Assigned GOTO and the arithmetic IF are not supported.
 
+### Assumed-rank arguments and SELECT RANK
+
+Fortran 2018 assumed-rank intrinsic dummies can be declared with `x(..)` or
+`dimension(..)`. A specific internal or module procedure can receive a scalar
+or an array through rank 15. `SELECT RANK` selects a rank-specific block:
+
+```fortran
+subroutine describe(x)
+real, intent(in) :: x(..)
+select rank(x)
+rank(0)
+   print *, "scalar", x
+rank(1)
+   print *, "vector", size(x), sum(x)
+rank(2)
+   print *, "matrix", shape(x), sum(x)
+rank default
+   print *, "other rank", rank(x)
+end select
+end subroutine
+```
+
+Numeric, LOGICAL and supported CHARACTER actuals work, including runtime-sized
+arrays and supported sections. `select rank(a => x)` gives a branch-local
+associate name; writable branches retain the dummy's INTENT and update the
+actual. Multiple assumed-rank dummies, forwarding to another specific
+assumed-rank procedure, keyword association, and guarded OPTIONAL arguments are
+supported. Functions also use the existing scalar-result and array-call
+lowering, with its existing restrictions. Named constructs and integer named
+constant guards are accepted. `RANK(A)` and `RANK(A=...)` work for ordinary
+scalar/array expressions as well as assumed-rank inputs, without reading the
+object's value. `-std=f2008` and earlier reject the new syntax.
+
+The source checker rejects duplicate/out-of-range guards, VALUE and ELEMENTAL
+assumed-rank dummies, declarations outside dummy arguments, and direct value
+access outside a rank-specific block. A RANK DEFAULT associate remains
+assumed-rank: it can be used in supported inquiries or forwarded, but cannot be
+printed, subscripted or assigned directly.
+
+Fortran calls specialize a source procedure for the actual ranks before the
+usual array/initialization lowering. Combined source files and separately
+compiled `.rmod` module interfaces work; this is not a public assumed-rank
+separate-object ABI. Assumed-rank BIND(C) descriptors, derived-type/polymorphic
+dummies, generic interfaces containing assumed-rank specifics, and whole
+assumed-size actuals/RANK(*) dispatch remain unsupported. RANK(*) guards can be
+parsed and checked, but the corresponding assumed-size calls are unsupported.
+Other inquiry/storage forms retain the restrictions of the existing array
+backend. Run `python tests/test_assumed_rank.py`; the standalone example is
+`tests/programs/xassumed_rank.f90`.
+
 ### SELECT CASE ranges
 
 Integer `SELECT CASE` accepts comma-separated values and inclusive ranges using

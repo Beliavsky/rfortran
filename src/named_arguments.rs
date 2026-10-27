@@ -113,6 +113,7 @@ pub(crate) fn intrinsic(name: &str) -> Option<Signature> {
         name if crate::real_intrinsics::keys(name).is_some() => crate::real_intrinsics::keys(name).unwrap(),
         name if crate::bit_intrinsics::keys(name).is_some() => crate::bit_intrinsics::keys(name).unwrap(),
         "bit_size" => &["i"],
+        "rank" => &["a"],
         name if crate::inquiries::numeric_model(name) => &["x"],
         name if crate::intrinsics::real_predicate(name) => &["x"],
         "atan2" | "atan2d" | "atan2pi" => &["y", "x"],

@@ -131,6 +131,8 @@ extern {
         KW_MODULE => TokenKind::KwModule,
         KW_SELECT => TokenKind::KwSelect,
         KW_CASE => TokenKind::KwCase,
+        KW_RANK => TokenKind::KwRank,
+        DOTDOT => TokenKind::DotDot,
         KW_DEFAULT => TokenKind::KwDefault,
         KW_BLOCK => TokenKind::KwBlock,
         KW_ASSOCIATE => TokenKind::KwAssociate,
@@ -1041,6 +1043,7 @@ DimList: Vec<Expr> = {
     <mut v:DimList> COMMA <d:DeclaredDimension> => { v.push(d); v },
 };
 DeclaredDimension: Expr = {
+    DOTDOT => Expr::Ident("@assumed_rank".into()),
     STAR => Expr::Ident("@assumed_extent".into()),
     COLON => Expr::Ident("@deferred_extent".into()),
     <e:RhsExpr> => e,
@@ -1255,6 +1258,8 @@ NameableConstruct: Stmt = {
         }
         Stmt::SelectCase { expr: e, cases: blocks, default }
     },
+    KW_SELECT KW_RANK LPAREN <selector:RankSelector> RPAREN <blocks:RankBlocks> KW_END KW_SELECT =>?
+        crate::assumed_rank::construct(selector, blocks).map_err(|error| lalrpop_util::ParseError::User { error }),
     KW_BLOCK <body: Stmts> KW_END KW_BLOCK => Stmt::Block { body },
     KW_ASSOCIATE LPAREN <pairs: AssociationList> RPAREN <body: Stmts> KW_END KW_ASSOCIATE =>?
         crate::ast::associate(pairs, body).map_err(|error| lalrpop_util::ParseError::User { error }),
@@ -1336,4 +1341,17 @@ LoopEnd: () = { KW_END KW_DO => (), KW_ENDDO => () };
 ProcedureBody: Vec<Stmt> = {
     <body:Stmts> => body,
     <mut body:Stmts> KW_CONTAINS <contained:FuncList> => {body.extend(contained);body},
+};
+
+RankSelector: (String, String) = {
+    <n:Ident> => (n.clone(), n),
+    <alias:Ident> ARROW <n:Ident> => (alias, n),
+};
+RankBlocks: Vec<CaseOrDefault> = {
+    RankBlock* => <>,
+};
+RankBlock: CaseOrDefault = {
+    KW_RANK KW_DEFAULT <body:Stmts> => CaseOrDefault::Default(body),
+    KW_RANK LPAREN <rank:RhsExpr> RPAREN <body:Stmts> => CaseOrDefault::Case(CaseBlock {items:vec![CaseItem::Single(rank)],body}),
+    KW_RANK LPAREN STAR RPAREN <body:Stmts> => CaseOrDefault::Case(CaseBlock {items:vec![CaseItem::Single(Expr::Ident("@rank_star".into()))],body}),
 };

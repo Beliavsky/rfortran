@@ -123,6 +123,7 @@ const FEATURES: &[Feature] = &[
     feature!("newunit", "NEWUNIT specifiers", 2008),
     feature!("rank", "arrays of rank greater than seven", 2008),
     feature!("error_stop", "ERROR STOP", 2008),
+    feature!("assumed_rank", "assumed-rank dummy arguments and SELECT RANK", 2018),
     feature!("pure_error_stop", "ERROR STOP in a PURE procedure", 2018),
 ];
 fn intrinsic_year(name: &str) -> Option<u16> {
@@ -714,6 +715,7 @@ impl Checker<'_> {
                 },
                 Stmt::VarDecl { kind, .. } => self.typ(kind, offset),
                 Stmt::ArrayDecl { kind, dims, .. } => {
+                    if crate::assumed_rank::assumed(dims) {self.feature("assumed_rank",offset);}
                     self.typ(kind, offset);
                     if dims.len() > 7 {
                         self.feature("rank", offset);
@@ -815,6 +817,7 @@ impl Checker<'_> {
                     cases,
                     default,
                 } => {
+                    if matches!(expr,Expr::Call(n,_) if n=="@select_rank") {self.feature("assumed_rank",offset);}
                     self.expr(expr, offset, &names);
                     for case in cases {
                         self.body(&case.body, &names, offset, pure, component, dummies);

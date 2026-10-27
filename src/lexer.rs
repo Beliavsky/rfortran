@@ -411,6 +411,7 @@ pub enum TokenKind {
     KwSelect,
     #[token("case", ignore(ascii_case))]
     KwCase,
+    KwRank,
     // Contextual keyword in CASE DEFAULT; otherwise a valid identifier.
     KwDefault,
     #[token("block", ignore(ascii_case))]
@@ -454,6 +455,8 @@ pub enum TokenKind {
     Slash,
     #[token("*")]
     Star,
+    #[token("..")]
+    DotDot,
     #[token("::")]
     DColon,
     #[token(":")]
@@ -1415,6 +1418,7 @@ pub fn lex(input: &str) -> Vec<Token> {
             tokens[index].kind = TokenKind::AttrStatement(word);
         }
     }
+    crate::assumed_rank::tokens(&mut tokens, input);
     crate::namelists::tokens(&mut tokens, input);
     crate::c_interop::binding_tokens(&mut tokens, input);
     procedure_declarations(&mut tokens, input);
@@ -1465,7 +1469,7 @@ pub fn lex(input: &str) -> Vec<Token> {
                 .is_some_and(|i| matches!(tokens[i].kind,TokenKind::KwElseIf|TokenKind::KwElse)
                     || matches!(&tokens[i].kind,TokenKind::Ident(n) if n.eq_ignore_ascii_case("elseif"))),
             TokenKind::RParen => (0..index).rev().find(|&i| statement_head(&tokens,input,i))
-                .is_some_and(|i| matches!(tokens[i].kind,TokenKind::KwCase)),
+                .is_some_and(|i| matches!(tokens[i].kind,TokenKind::KwCase|TokenKind::KwRank)),
             _ => false,
         };
         if named && tokens.get(index+2).is_none_or(|t| !same_statement(&input[tokens[index+1].span.end..t.span.start])) {
