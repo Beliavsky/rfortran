@@ -238,7 +238,7 @@ impl Lowerer {
                                     None => fields.push(Component { dims: dims.clone(), ..Component::scalar(n, kind, None) }),
                                 }
                             }
-                            Stmt::DummyIntent { name: n, intent } if intent == "allocatable" || intent == "pointer" || intent == "@record_slots" => {
+                            Stmt::DummyIntent { name: n, intent } if intent == "allocatable" || intent == "pointer" || intent == "@record_slots" || intent == "@scalar_heap" => {
                                 attrs.push((n.clone(), intent.clone()));
                             }
                             Stmt::DummyIntent { intent, .. } => {

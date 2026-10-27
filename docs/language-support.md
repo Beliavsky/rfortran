@@ -71,6 +71,7 @@ gfortran when it is installed. Run the tests after `cargo build --bin rfort`.
   - [Type-bound procedures and generics](#type-bound-procedures-and-generics)
   - [Type extension](#type-extension)
   - [ABSTRACT types and DEFERRED bindings](#abstract-types-and-deferred-bindings)
+  - [Scalar polymorphic ALLOCATABLE components](#scalar-polymorphic-allocatable-components)
   - [Scalar polymorphic ALLOCATABLE objects](#scalar-polymorphic-allocatable-objects)
   - [Scalar polymorphic allocatable dummy arguments](#scalar-polymorphic-allocatable-dummy-arguments)
   - [Scalar polymorphic POINTER objects](#scalar-polymorphic-pointer-objects)
@@ -2127,6 +2128,47 @@ procedure characteristic.
 
 Run `python tests/test_abstract_types.py`; the standalone example is
 `tests/programs/xabstract_shapes.f90`.
+
+### Scalar polymorphic ALLOCATABLE components
+
+Scalar derived objects, including nested scalar containers, can own
+`CLASS(parent), ALLOCATABLE` scalar components. Their dynamic types may extend
+an ABSTRACT parent. Typed allocation, SOURCE= and MOLD=, ALLOCATED, DEALLOCATE,
+SELECT TYPE associate names, scalar-valued dynamic bindings and ordinary CLASS
+procedure forwarding use the existing polymorphic allocation machinery.
+
+```fortran
+type container
+   class(shape), allocatable :: item
+end type
+type(container) :: box
+allocate(circle :: box%item)
+print *, box%item%area()
+deallocate(box%item)
+```
+
+SOURCE= can copy a concrete object, another runtime polymorphic component, or
+an ordinary CLASS dummy specialized to its concrete type. Concrete types can
+be defined in later modules; source USE ONLY and privacy checks remain in
+force. INTENT(IN) on the owner protects its components, and INTENT(OUT)
+releases previous allocations and applies defaults. Local ownership follows
+scope lifetime. Simple owner assignment makes independent copies of supported
+payload storage. SOURCE= also copies payloads with owned intrinsic arrays;
+owner assignment of payloads that themselves own allocations retains the
+existing record-slot copy restrictions.
+
+Storage is a private type tag plus concrete allocation descriptors inside the
+owner, using the concrete types known in the compilation source group. It is
+not a public cross-compiler descriptor ABI. Array-valued binding results,
+polymorphic component arrays, CLASS(*) components, payload layouts containing
+further polymorphic allocatable components (including recursive types), and
+owner constructors supplying the polymorphic component remain unsupported.
+Access through an unallocated component reports a runtime error.
+
+Run `python tests/test_polymorphic_components.py`. The basic example is
+`tests/programs/xpolymorphic_allocatable_component.f90`; the remaining
+array-result binding blocker is isolated in
+`tests/programs/xpolymorphic_component_array_result.f90`.
 
 ### Scalar polymorphic ALLOCATABLE objects
 

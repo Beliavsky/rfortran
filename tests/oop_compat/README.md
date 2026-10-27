@@ -81,7 +81,7 @@ The two current compiler gaps are recorded individually in the manifest:
 
 | Case | First blocker |
 |---|---|
-| `workshop-abstract-framework` | Polymorphic ALLOCATABLE derived-type component |
+| `workshop-abstract-framework` | Array-valued deferred binding result lowering |
 | `markus-classes_geom` | DIMENSION attribute on a local derived-type array |
 
 Leair section 9 now passes unchanged: PRIVATE component/binding declarations,
@@ -107,12 +107,18 @@ pointers borrow concrete TARGET variables, and binding calls use the target's
 dynamic type. `tests/test_polymorphic_pointers.py` covers reassociation, shared
 aliases, SELECT TYPE views, forwarding, association inquiries and module files.
 
-The abstract-framework example now parses its `CASE (EULER, HEUN)` list. Its
-next blocker is the `class(ode_system_data), allocatable :: ode_system`
-component. `tests/programs/xpolymorphic_allocatable_component.f90` is a small
-reproducer; gfortran compiles it and prints `T`. CASE pairs, signed labels,
-ranges, continuations and complex-expression disambiguation are covered by
-`tests/test_select_case_lists.py`.
+The abstract-framework example now passes CASE-list parsing and polymorphic
+ALLOCATABLE component storage/allocation. Both compilers run
+`tests/programs/xpolymorphic_allocatable_component.f90` and print `T`.
+`tests/test_polymorphic_components.py` checks owning scalar/nested containers,
+dynamic scalar bindings, SOURCE/MOLD (including CLASS dummies), copies,
+INTENT(IN/OUT), allocation lifetimes and module compilation.
+
+Its next failure occurs while lowering the array-valued `evaluate_oscillator`
+binding; the current diagnostic incorrectly calls it a CHARACTER function.
+`tests/programs/xpolymorphic_component_array_result.f90` reproduces that failure;
+gfortran prints `2, 4`. CASE pairs and complex-expression disambiguation remain
+covered by `tests/test_select_case_lists.py`.
 
 These are first failures, not a claim that fixing one will make its entire
 example pass. The suite deliberately preserves upstream code so it can expose

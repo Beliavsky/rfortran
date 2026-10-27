@@ -57,10 +57,12 @@ pub(super) fn declaration(
             names: vec![name.into()],
         }
     } else {
+        let mut attributes=attrs.to_vec();
+        attributes.push("@referenced_type".into());
         Stmt::DerivedDecl {
             type_name: kind.into(),
             names: vec![name.into()],
-            attributes: attrs.to_vec(),
+            attributes,
             polymorphic,
             dims: vec![],
         }

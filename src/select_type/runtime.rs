@@ -8,12 +8,14 @@ use super::*;
 use crate::ast::{BinOp, CaseBlock, TypeSpec};
 use std::collections::BTreeMap;
 mod pointers;
+mod components;
 
 #[derive(Clone)]
 struct Object {
     kind: String,
     polymorphic: bool,
     pointer: bool,
+    member: bool,
     readonly: bool,
     dummy: bool,
     output: bool,
@@ -218,7 +220,7 @@ impl Lower<'_> {
         pure: bool,
     ) -> Result<()> {
         let declared = declarations(body, parent);
-        let vars = super::objects(body, &Objects::new());
+        let vars = self.defs.component_objects(super::objects(body, &Objects::new()));
         let mut runtime = Runtime::new();
         for (n, v) in &vars {
             if !v.polymorphic || !v.attrs.iter().any(|a| a == "allocatable" || a == "pointer") {
@@ -252,13 +254,15 @@ impl Lower<'_> {
                 .collect();
             kinds.sort();
             self.serial += 1;
-            let stem = format!("@polymorphic{}", self.serial);
+            let member = n.contains('%');
+            let stem = if member {components::stem(n)} else {format!("@polymorphic{}", self.serial)};
             runtime.insert(
                 n.clone(),
                 Object {
                     kind: v.kind.clone(),
                     polymorphic: true,
                     pointer,
+                    member,
                     readonly: v.attrs.iter().any(|a| a == "intent(in)"),
                     dummy: params.contains(n),
                     output: params.contains(n) && v.attrs.iter().any(|a| a == "intent(out)"),
@@ -314,6 +318,7 @@ impl Lower<'_> {
         }
         let mut storage = vec![];
         for object in runtime.values() {
+            if object.member { continue; }
             storage.push(Stmt::VarDecl {
                 kind: TypeSpec::Integer(None),
                 names: vec![object.tag.clone()],
@@ -331,7 +336,7 @@ impl Lower<'_> {
             }
             for (kind, name) in &object.variants {
                 if object.pointer { continue; }
-                let mut attrs = vec!["allocatable".into(), "@scalar_heap".into()];
+                let mut attrs = vec!["allocatable".into(), "@scalar_heap".into(), "@referenced_type".into()];
                 if object.dummy {
                     attrs.push(
                         if object.readonly {
@@ -380,6 +385,7 @@ impl Lower<'_> {
             .unwrap_or(cleaned.len());
         let mut entry = vec![];
         for object in runtime.values() {
+            if object.member { continue; }
             if !object.dummy {
                 entry.push(set(&object.tag, 0));
             } else if object.output {
@@ -630,6 +636,28 @@ impl Lower<'_> {
                     failure(format!("unallocated polymorphic SOURCE or MOLD `{n}` has no usable dynamic value or concrete type"))
                 };
                 return Ok(vec![cases(from, branches, default)]);
+            }
+        }
+        // An ordinary CLASS dummy receives its concrete type during the
+        // following call-site specialization pass. Preserve an exact TYPE IS
+        // choice until then instead of treating its declared parent as dynamic.
+        if let Expr::Ident(n) = source {
+            if let Some(base)=decls.get(n).and_then(|ds|ds.iter().find_map(|s|match s {
+                Stmt::DerivedDecl {type_name,polymorphic:true,dims,..} if dims.is_empty()=>Some(type_name),
+                _=>None,
+            })) {
+                let alias="@polymorphic_source_view";
+                let mut blocks=vec![];
+                for (kind,_) in &object.variants {
+                    if self.defs.distance(kind,base).is_some() {
+                        blocks.push(CaseOrDefault::Case(CaseBlock {
+                            items:vec![CaseItem::Single(Expr::Call("@type_is".into(),vec![id(kind)]))],
+                            body:self.transfer(to,object,kind,copy.then(||id(alias)),assignment)?,
+                        }));
+                    }
+                }
+                blocks.push(CaseOrDefault::Default(failure(format!("unsupported or incompatible dynamic type in polymorphic SOURCE/MOLD `{n}`"))));
+                return Ok(vec![super::construct((alias.into(),n.clone()),blocks).map_err(anyhow::Error::msg)?]);
             }
         }
         let kind = self.source_kind(source, decls)?;
@@ -917,7 +945,7 @@ impl Lower<'_> {
     }
     fn dispatch(
         &mut self,
-        s: Stmt,
+        mut s: Stmt,
         used: &[(&String, &Object)],
         index: usize,
         chosen: &mut Vec<(String, String, String)>,
@@ -958,17 +986,22 @@ impl Lower<'_> {
         let mut body = vec![];
         for (n, _, storage) in chosen.iter() {
             let object = used.iter().find(|(v, _)| *v == n).unwrap().1;
-            params.push(n.clone());
+            let parameter=if n.contains('%') {
+                let parameter=format!("@polymorphic_argument{}_{}",self.serial,params.len());
+                super::rename(std::slice::from_mut(&mut s),n,&parameter);
+                parameter
+            } else {n.clone()};
+            params.push(parameter.clone());
             args.push(if object.pointer {id(storage)} else {Expr::Call(storage.clone(), vec![int(1)])});
             body.push(Stmt::DerivedDecl {
                 type_name: object.kind.clone(),
-                names: vec![n.clone()],
+                names: vec![parameter],
                 attributes: vec![if object.readonly {
                     "intent(in)"
                 } else {
                     "intent(inout)"
                 }
-                .into()],
+                .into(), "@referenced_type".into()],
                 polymorphic: object.polymorphic,
                 dims: vec![],
             });
@@ -998,7 +1031,10 @@ impl Lower<'_> {
                 params.push(n.clone());
                 args.push(id(n));
             }
-            body.extend(d.clone());
+            for mut declaration in d.clone() {
+                if let Stmt::DerivedDecl {attributes,..}=&mut declaration {attributes.push("@referenced_type".into());}
+                body.push(declaration);
+            }
             if pure
                 && !parameter
                 && !d.iter().any(|s| match s {
@@ -1030,7 +1066,7 @@ impl Lower<'_> {
     }
 }
 
-pub(super) fn resolve(mut program: Program, defs: &Definitions) -> Result<Program> {
+pub(super) fn resolve(mut program: Program, defs: &mut Definitions) -> Result<Program> {
     fn needed(body: &[Stmt]) -> bool {
         for s in body {
             if let Stmt::DummyIntent {name,intent} = s {
@@ -1066,10 +1102,12 @@ pub(super) fn resolve(mut program: Program, defs: &Definitions) -> Result<Progra
         }
         false
     }
-    if !needed(&program.body) {
+    let has_components=defs.has_polymorphic_components;
+    if !needed(&program.body) && !has_components {
         return Ok(program);
     }
     defs.validate(&program.body, &Objects::new())?;
+    if has_components {components::prepare(&mut program.body,defs)?;}
     let mut signatures = HashMap::new();
     procedures(&program.body, &mut signatures);
     let mut lower = Lower {

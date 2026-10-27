@@ -142,8 +142,8 @@
       "features": "abstract bindings and polymorphic allocatable components",
       "known_failure": {
         "phase": "compile",
-        "pattern": "ALLOCATABLE\\ or\\ POINTER\\ components\\ of\\ derived\\ type\\ are\\ not\\ yet\\ supported",
-        "reason": "Polymorphic ALLOCATABLE derived-type component"
+        "pattern": "wrong\\ argument\\ count\\ for\\ CHARACTER\\ function\\ `evaluate_oscillator`",
+        "reason": "Array-valued deferred binding result lowering"
       },
       "notices": [
         "workshop-LICENSE"

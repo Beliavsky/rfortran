@@ -168,6 +168,8 @@ struct Definitions {
     bound_targets: HashSet<String>,
     abstracts: HashSet<String>,
     fields: HashMap<String, HashMap<String, Option<String>>>,
+    members: HashMap<String, HashMap<String, Object>>,
+    has_polymorphic_components: bool,
     bindings: HashMap<String, HashMap<String, String>>,
 }
 impl Definitions {
@@ -190,6 +192,7 @@ impl Definitions {
                     bindings,
                 } => {
                     let mut fields = HashMap::new();
+                    let mut members = HashMap::new();
                     for s in components {
                         match s {
                             Stmt::VarDecl { names, .. } => {
@@ -206,10 +209,11 @@ impl Definitions {
                                 }
                             }
                             Stmt::DerivedDecl {
-                                type_name, names, ..
+                                type_name, names, attributes, polymorphic, dims
                             } => {
                                 for n in names {
                                     fields.insert(n.clone(), Some(type_name.clone()));
+                                    members.insert(n.clone(), Object {kind:type_name.clone(),polymorphic:*polymorphic,rank:dims.len(),attrs:attributes.clone()});
                                 }
                             }
                             _ => {}
@@ -222,6 +226,8 @@ impl Definitions {
                             .map(|(_, target)| target.clone()),
                     );
                     self.fields.insert(name.clone(), fields);
+                    self.has_polymorphic_components |= members.values().any(|v|v.polymorphic && v.attrs.iter().any(|a|a=="allocatable"));
+                    self.members.insert(name.clone(), members);
                     self.bindings.insert(
                         name.clone(),
                         bindings
@@ -308,7 +314,7 @@ impl Definitions {
         Ok(())
     }
     fn validate(&self, body: &[Stmt], inherited: &Objects) -> Result<()> {
-        let vars = objects(body, inherited);
+        let vars = self.component_objects(objects(body, inherited));
         let mut location = None;
         for s in body {
             if let Some(p) = crate::source_diagnostics::statement_offset(s) {
@@ -1016,7 +1022,7 @@ impl Lowerer {
         Ok(())
     }
     fn body(&mut self, body: &mut [Stmt], inherited: &Objects, dynamic: &Dynamics) -> Result<()> {
-        let vars = objects(body, inherited);
+        let vars = self.defs.component_objects(objects(body, inherited));
         let mut location = None;
         for s in body {
             if let Some(p) = crate::source_diagnostics::statement_offset(s) {
@@ -1290,7 +1296,7 @@ pub(crate) fn resolve(mut program: Program) -> Result<Program> {
     if needed(&program.body) { intrinsic::prepare(&mut program.body, &HashMap::new())?; }
     let mut defs = Definitions::default();
     defs.collect(&program.body);
-    program = runtime::resolve(program, &defs)?;
+    program = runtime::resolve(program, &mut defs)?;
     if !needed(&program.body)
         && (defs.bound_targets.is_empty()
             || !bound_dispatch_needed(&program.body, &Objects::new(), &defs))

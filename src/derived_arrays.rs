@@ -151,6 +151,7 @@ struct Lower {
     /// Procedures with a scalar derived dummy, which an array element is
     /// passed to through a temporary object.
     scalar_procedures: std::collections::HashSet<String>,
+    readonly_params: HashMap<String,Vec<bool>>,
     /// Ordinary scalar derived-valued functions, materialized once before
     /// splitting their results into array component storage.
     scalar_results: HashMap<String, String>,
@@ -207,7 +208,7 @@ impl Lower {
                             Stmt::DerivedDecl { type_name, names, attributes, dims, .. } if !dims.is_empty() => {
                                 let fields = self.fields(&type_name)
                                     .with_context(|| format!("array component of type `{type_name}` in type `{name}`"))?;
-                                if let Some(a) = attributes.iter().find(|a| !matches!(a.as_str(), "allocatable" | "pointer")) {
+                                if let Some(a) = attributes.iter().find(|a| !matches!(a.as_str(), "allocatable" | "pointer" | "@scalar_heap")) {
                                     bail!("attribute `{a}` on a derived array component is not yet supported");
                                 }
                                 for n in names {
@@ -320,6 +321,13 @@ impl Lower {
                 .is_some_and(|target| self.scalar_procedures.contains(target));
         }
         self.scalar_procedures.contains(name)
+    }
+    fn readonly_actual(&self, name:&str, index:usize, objects:&Objects)->bool {
+        let (target,index)=if let Some((owner,method))=name.rsplit_once('%') {
+            let Some(target)=objects.get(owner).and_then(|o|self.bindings.get(&o.ty)).and_then(|b|b.get(method)) else {return false};
+            (target.as_str(),index+1)
+        } else {(name,index)};
+        self.readonly_params.get(target).and_then(|p|p.get(index)).copied().unwrap_or(false)
     }
     fn scalar_record_actual(&mut self, arg: &mut Expr, objects: &mut Objects,
         prefix: &mut Vec<Stmt>, copy_back: Option<&mut Vec<Stmt>>) -> Result<()> {
@@ -444,6 +452,7 @@ impl Lower {
                                 layout.push((name.clone(),None));
                             }
                             Stmt::DummyIntent {name,intent} if intent=="allocatable" && components.iter().any(|c|matches!(c,Stmt::ArrayDecl {name:n,kind,..} if n==name && matches!(kind,TypeSpec::Integer(_) | TypeSpec::IntegerKind(_) | TypeSpec::Real | TypeSpec::RealKind(_) | TypeSpec::DoublePrecision | TypeSpec::Logical | TypeSpec::Character(_) | TypeSpec::CharacterLength(_)))) => {}
+                            Stmt::DummyIntent {intent,..} if intent=="@scalar_heap" => {},
                             Stmt::DummyIntent {intent,..} if intent=="@record_slots" => { fields.clear(); break; }
                             // A fixed-size array component; an initialized one
                             // follows its InitializedDecl.
@@ -532,6 +541,11 @@ impl Lower {
                         if dims.is_empty() && names.iter().any(|n| params.contains(n))))
                     {
                         self.scalar_procedures.insert(name.clone());
+                        self.readonly_params.insert(name.clone(),params.iter().map(|p|body.iter().any(|s|match s {
+                            Stmt::DerivedDecl {names,attributes,..}=>names.contains(p) && attributes.iter().any(|a|a=="intent(in)"),
+                            Stmt::DummyIntent {name,intent}=>name==p && intent=="intent(in)",
+                            _=>false,
+                        })).collect());
                     }
                     if result.is_some() || params.iter().any(|n| arrays.contains_key(n)) {
                         self.procedures.insert(
@@ -1768,7 +1782,10 @@ impl Lower {
                         let prepared = name.strip_prefix(PREPARED_CALL).map(str::to_owned);
                         if let Some(original) = &prepared { *name = original.clone(); }
                         if !name.starts_with("@heap_record_") {
-                            for actual in args.iter_mut() {self.heap_component_actual(actual,&mut objects,&mut prefix,Some(&mut suffix))?;}
+                            for (i,actual) in args.iter_mut().enumerate() {
+                                let back=if self.readonly_actual(name,i,&objects) {None} else {Some(&mut suffix)};
+                                self.heap_component_actual(actual,&mut objects,&mut prefix,back)?;
+                            }
                         }
                         if prepared.is_none() {
                             for actual in args.iter_mut() {
@@ -1786,8 +1803,9 @@ impl Lower {
                             *name = format!("{temp}%{method}");
                         }
                         if self.scalar_record_call(name, &objects) {
-                            for a in args.iter_mut() {
-                                self.scalar_record_actual(a, &mut objects, &mut prefix, Some(&mut suffix))?;
+                            for (i,a) in args.iter_mut().enumerate() {
+                                let back=if self.readonly_actual(name,i,&objects) {None} else {Some(&mut suffix)};
+                                self.scalar_record_actual(a, &mut objects, &mut prefix, back)?;
                             }
                         }
                         if self
@@ -2013,6 +2031,7 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
         dummies: vec![],
         layouts: HashMap::new(),
         scalar_procedures: Default::default(),
+        readonly_params: HashMap::new(),
         scalar_results: HashMap::new(),
         scalar_functions: Default::default(),
         target_roots: Default::default(),
@@ -2022,6 +2041,9 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
         bindings: HashMap::new(),
     };
     lower.prepare_elemental_results(&mut p.body);
+    // Private polymorphic component variants may refer to concrete types from
+    // later modules. Discover their field layouts before expanding owners.
+    lower.collect(&p.body)?;
     lower.expand_array_components(&mut p.body)?;
     lower.collect(&p.body)?;
     // Module objects have unique names after module association, so every

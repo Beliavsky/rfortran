@@ -1383,7 +1383,7 @@ ProcedureBody: Vec<Stmt> = {
 
 RankSelector: (String, String) = {
     <n:Ident> => (n.clone(), n),
-    <alias:Ident> ARROW <n:Ident> => (alias, n),
+    <alias:Ident> ARROW <n:Designator> => (alias, n),
 };
 RankBlocks: Vec<CaseOrDefault> = {
     RankBlock* => <>,
