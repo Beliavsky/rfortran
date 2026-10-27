@@ -1999,7 +1999,7 @@ fn gen_stmts(
                     }
                     if character {
                         let source = characters::view(module, b, ptr_ty, dc, chars, ints, e)?;
-                        let text = characters::terminated(module, b, ptr_ty, source, chars.main)?;
+                        let text = characters::terminated(module, b, ptr_ty, dc, source, chars)?;
                         ex.call_printf(b, &[ex.fmt_s, text]);
                     } else { print_expr(
                         b, ex, ptr_ty, module, dc, ints, reals, bools, chars, real_kind, i128_last,
@@ -2529,9 +2529,17 @@ fn gen_stmts(
                     b.switch_to_block(after_blk);
             }
             IStmt::Call(name, args) => {
+                if name=="@heap_character_bind" || name=="@heap_character_clear" {
+                    let IExpr::Ident(dest)=&args[0] else {bail!("invalid heap CHARACTER binding");};
+                    if name=="@heap_character_bind" {chars.bind(b,ptr_ty,dest,ints);}
+                    else {chars.clear(module,b,ptr_ty,dest)?;}
+                    continue;
+                }
                 if name == "@character_assign" || name=="@character_element_read" {
-                    let [IExpr::Ident(dest), source, _] = args.as_slice() else { anyhow::bail!("invalid CHARACTER assignment"); };
-                    characters::assign(module, b, ptr_ty, dc, chars, ints, dest, source)?;
+                    let [IExpr::Ident(dest), source, length] = args.as_slice() else { anyhow::bail!("invalid CHARACTER assignment"); };
+                    let length=if matches!(length,IExpr::IntLit(n) if n==&crate::substrings::MAX_EXPRESSION_LENGTH.to_string()) {None}
+                        else {let value=eval_expr(b,ex,ptr_ty,length,ints,reals,bools,func_meta);Some(to_i64(b,value))};
+                    characters::assign(module, b, ptr_ty, dc, chars, ints, dest, source, length)?;
                     continue;
                 }
                 if name == "@character_code_store" {
@@ -3567,7 +3575,7 @@ fn gen_stmts(
                                                 let bytes = lit.as_bytes();
                                                 let litp = make_data(module, b, ptr_ty, dc, bytes)?;
                                                 let selp = storage_addr(b, ptr_ty, *ss);
-                                                let sel_length=b.ins().iconst(ptr_ty,*_len as i64);
+                                                let sel_length=characters::view(module,b,ptr_ty,dc,chars,ints,&IExpr::Ident(sid.clone()))?.length;
                                                 let lit_length=b.ins().iconst(ptr_ty,bytes.len() as i64);
                                                 let call = ex.call_character_compare(b, &[selp, sel_length, litp, lit_length]);
                                                 let res = b.inst_results(call)[0];
@@ -3590,7 +3598,7 @@ fn gen_stmts(
                                                     let litp =
                                                         make_data(module, b, ptr_ty, dc, bytes)?;
                                                     let selp = storage_addr(b, ptr_ty, *ss);
-                                                    let sel_length=b.ins().iconst(ptr_ty,*_len as i64);
+                                                    let sel_length=characters::view(module,b,ptr_ty,dc,chars,ints,&IExpr::Ident(sid.clone()))?.length;
                                                 let lit_length=b.ins().iconst(ptr_ty,bytes.len() as i64);
                                                 let call = ex.call_character_compare(b, &[selp, sel_length, litp, lit_length]);
                                                     let res = b.inst_results(call)[0];
@@ -4112,7 +4120,7 @@ impl CraneliftBackend {
                 let mut ints = HashMap::new();
                 let mut reals = HashMap::new();
                 let mut bools = HashMap::new();
-                let mut chars = characters::Characters::new(false);
+                let mut chars = characters::Characters::new();
                 let mut real_kind = HashMap::new();
                 let mut i128_vars = HashSet::new();
                 let mut i128_last = HashMap::new();
@@ -4274,6 +4282,7 @@ impl CraneliftBackend {
                     }
                 }
                 b.finalize();
+                chars.finish(&mut obj, &mut ctx_f.func, ptr_ty)?;
             }
             let fid = *func_ids.get(&f.name).unwrap();
             obj.define_function(fid, &mut ctx_f)?;
@@ -4314,7 +4323,7 @@ impl CraneliftBackend {
                 let mut ints = HashMap::new();
                 let mut reals = HashMap::new();
                 let mut bools = HashMap::new();
-                let mut chars = characters::Characters::new(true);
+                let mut chars = characters::Characters::new();
                 let mut real_kind = HashMap::new();
                 let mut i128_vars = HashSet::new();
                 let mut i128_last = HashMap::new();
@@ -4361,6 +4370,7 @@ impl CraneliftBackend {
                     b.ins().return_(&[z]);
                 }
                 b.finalize();
+                chars.finish(&mut obj, &mut ctx_main.func, ptr_ty)?;
             }
             let main_id =
                 obj.declare_function("main", Linkage::Export, &ctx_main.func.signature)?;

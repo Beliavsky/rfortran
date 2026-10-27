@@ -1426,11 +1426,17 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         };
                         eprintln!("{keyword} {message}");std::process::exit(code);
                     }
+                    if name=="@heap_character_bind" || name=="@heap_character_clear" {
+                        let Expr::Ident(dest)=&args[0] else {unreachable!()};
+                        call_stack.last_mut().unwrap().env_str.insert(dest.clone(),String::new());
+                        idx+=1;continue;
+                    }
                     if name == "@character_assign" || name=="@character_element_read" {
-                        let [Expr::Ident(dest), source, Expr::IntLit(length)] = args.as_slice() else { unreachable!() };
+                        let [Expr::Ident(dest), source, length] = args.as_slice() else { unreachable!() };
                         let fr = call_stack.last().unwrap().clone();
                         let mut text = eval_expr(source, &fr.env_str, &fr.env_int, &fr.env_real32, &fr.env_real64, &fr.env_log, funcs, call_stack).3.unwrap();
-                        let length: usize = length.parse().unwrap();
+                        let length = eval_expr(length, &fr.env_str, &fr.env_int, &fr.env_real32, &fr.env_real64, &fr.env_log, funcs, call_stack).0.unwrap() as usize;
+                        let length = if length==crate::substrings::MAX_EXPRESSION_LENGTH {text.len()} else {length};
                         text.truncate(length);
                         text.extend(std::iter::repeat(' ').take(length - text.len()));
                         call_stack.last_mut().unwrap().env_str.insert(dest.clone(), text);

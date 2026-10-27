@@ -844,12 +844,17 @@ print '(a)', s  ! 23456
 end
 ```
 
-This subset reserves bounded storage inferred from the possible assignment
-sources; it does not implement general heap allocation. When the largest
-length is not known at compile time, as for `s = repeat('ab', n)`, growth such
-as `s = s // 'x'` in a loop, or `allocate(character(len=n) :: s)`, the variable
-has 4096 characters of storage, and a longer value stops the program. ALLOCATE
-with a type specification sets the length; the value is undefined until
+When assignment sources have a known maximum length, this subset can reserve
+that bounded storage. Otherwise main-program and BLOCK-local deferred-length
+scalars use owned heap storage with a runtime length, including
+`s = repeat('ab', n)`, repeated growth such as `s = s // 'x'`, and
+`allocate(character(len=n) :: s)`. Assignment can grow or shrink the allocation,
+including to length zero, and overlapping assignments capture the source before
+replacing the destination. DEALLOCATE releases heap storage. The former
+4096-character scalar limit no longer applies to these locals. The current
+byte-offset representation limits an individual value/expression to
+2,147,483,646 characters; allocation can fail earlier if memory is unavailable.
+ALLOCATE with a type specification sets the length; the value is undefined until
 assigned. A deferred-length variable can be the VALUE of GET_COMMAND_ARGUMENT
 and GET_ENVIRONMENT_VARIABLE, which fill its current length.
 
@@ -884,9 +889,16 @@ Local deferred arrays also support overlapping concatenation assignments such
 as `w = w // '!'`.
 `x%len` and `x%kind` are LEN(x) and KIND(x). Procedure and module
 storage and host association, READ into a deferred-length destination, and
-MAX and MIN of CHARACTER values retain restrictions. Runtime-count REPEAT
-supports a 4096-character expression buffer, with checked counts and lengths;
-constant-count REPEAT retains its statically sized storage. Other intrinsic/procedure calls with runtime-length CHARACTER
+MAX and MIN of CHARACTER values retain restrictions. REPEAT, concatenation,
+ADJUSTL/ADJUSTR and native output temporaries use heap buffers sized to the
+runtime value. REPEAT checks negative counts and excessive result lengths before
+multiplication/allocation, and an empty source takes constant time even with a
+large count. Each native expression site reuses its buffer across loop iterations;
+all such buffers are released on normal procedure returns, including early returns.
+Recursive invocations own separate buffers. Deferred-length arrays and the
+explicit runtime-length function-result path still retain their documented bounds.
+Run `python tests/test_runtime_character_storage.py` for long-string, resizing,
+substring-overlap and buffer-reuse checks. Other intrinsic/procedure calls with runtime-length CHARACTER
 arguments are diagnosed unless implemented for this subset (such as TRIM).
 Runtime substring conditions are reevaluated on each loop iteration,
 including after CYCLE. The scalar substring tests compare interpreter and native

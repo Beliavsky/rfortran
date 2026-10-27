@@ -282,7 +282,7 @@ print *,repeat('ab',n)
 end program
 '''
         self.check(source, error='NCOPIES must be nonnegative', data='-1\n')
-        self.check(source, error='expression buffer', data='2147483647\n')
+        self.check(source, error='too large', data='2147483647\n')
 
     def test_two_recursive_calls_and_repeated_results(self):
         self.check('''program p

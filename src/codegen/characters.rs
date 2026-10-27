@@ -2,25 +2,103 @@
 // Copyright (c) 2026 Beliavsky
 // See LICENSE-MIT in the repository root.
 
-//! Fixed-length scalar CHARACTER assignment, including overlapping sources.
+//! Scalar CHARACTER views, owned runtime buffers and overlapping assignment.
 use super::file_io::call;
 use crate::ir::IExpr;
 use anyhow::{bail, Context, Result};
 use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder, MemFlags};
 use cranelift_frontend::FunctionBuilder;
 use cranelift_object::ObjectModule;
+use cranelift_module::{Linkage, Module};
+use cranelift_codegen::cursor::{Cursor, FuncCursor};
+use std::cell::RefCell;
 use std::collections::HashMap;
 
-// Keep storage lifetime with the character symbol table so expression
-// temporaries use the same policy as declarations. Procedure buffers remain
-// per invocation; only main-program buffers may use static storage.
+// Keep owned buffers with the current invocation. Expression sites can be
+// reevaluated in loops without accumulating allocations or sharing recursion state.
 pub(super) struct Characters {
-    pub(super) main: bool,
     values: HashMap<String, (super::Storage, usize)>,
+    temporaries: RefCell<Vec<ir::StackSlot>>,
+    heap_lengths: HashMap<String, ir::StackSlot>,
 }
 impl Characters {
-    pub(super) fn new(main: bool) -> Self { Self { main, values: HashMap::new() } }
+    pub(super) fn new() -> Self { Self { values: HashMap::new(), temporaries: RefCell::new(Vec::new()), heap_lengths: HashMap::new() } }
 }
+// Each expression site owns a pointer cell in the current invocation. Reusing
+// that cell bounds memory in loops; entry initialization and cleanup on every
+// return also cover conditional evaluation and recursive invocations.
+impl Characters {
+    fn buffer(&self, module: &mut ObjectModule, b: &mut FunctionBuilder,
+              ptr: ir::Type, dc: &mut u32, length: ir::Value) -> Result<ir::Value> {
+        let slot = b.create_sized_stack_slot(ir::StackSlotData::new(
+            ir::StackSlotKind::ExplicitSlot, 8, 3));
+        self.temporaries.borrow_mut().push(slot);
+        let cell = b.ins().stack_addr(ptr, slot, 0);
+        let previous = b.ins().load(ptr, MemFlags::new(), cell, 0);
+        let zero = b.ins().iconst(ptr, 0);
+        let empty = b.ins().icmp(IntCC::Equal, length, zero);
+        let one = b.ins().iconst(ptr, 1);
+        let size = b.ins().select(empty, one, length);
+        let address = call(module, b, "realloc", &[previous, size], ptr)?;
+        let valid = b.ins().icmp_imm(IntCC::NotEqual, address, 0);
+        super::file_io::require(module, b, ptr, dc, valid, "CHARACTER allocation failed")?;
+        b.ins().store(MemFlags::new(), address, cell, 0);
+        Ok(address)
+    }
+
+    pub(super) fn bind(&mut self, b: &mut FunctionBuilder, ptr: ir::Type, name: &str,
+                       ints: &mut Integers) {
+        let cell = b.create_sized_stack_slot(ir::StackSlotData::new(
+            ir::StackSlotKind::ExplicitSlot, 8, 3));
+        self.temporaries.borrow_mut().push(cell);
+        let length = b.create_sized_stack_slot(ir::StackSlotData::new(
+            ir::StackSlotKind::ExplicitSlot, 8, 3));
+        let zero = b.ins().iconst(ptr, 0);
+        b.ins().stack_store(zero, length, 0);
+        self.heap_lengths.insert(name.into(), length);
+        self.values.insert(name.into(), (super::Storage::HeapStack(cell), crate::substrings::MAX_EXPRESSION_LENGTH));
+        ints.insert(format!("@character_pointer:{name}"), super::Storage::Stack(cell));
+    }
+
+    pub(super) fn clear(&self, module: &mut ObjectModule, b: &mut FunctionBuilder,
+                        ptr: ir::Type, name: &str) -> Result<()> {
+        let (super::Storage::HeapStack(cell), _) = self.values[name] else {bail!("invalid heap CHARACTER storage");};
+        let previous = b.ins().stack_load(ptr, cell, 0);
+        free(module, b, ptr, previous)?;
+        let zero = b.ins().iconst(ptr, 0);
+        b.ins().stack_store(zero, cell, 0);
+        b.ins().stack_store(zero, self.heap_lengths[name], 0);
+        Ok(())
+    }
+
+    pub(super) fn finish(&self, module: &mut ObjectModule, function: &mut ir::Function,
+                         ptr: ir::Type) -> Result<()> {
+        let slots = self.temporaries.borrow();
+        if slots.is_empty() { return Ok(()); }
+        let mut signature = module.make_signature();
+        signature.params.push(ir::AbiParam::new(ptr));
+        let id = module.declare_function("free", Linkage::Import, &signature)?;
+        let free = module.declare_func_in_func(id, function);
+        let entry = function.layout.entry_block().context("missing CHARACTER entry block")?;
+        let returns: Vec<_> = function.layout.blocks().flat_map(|block| function.layout.block_insts(block))
+            .filter(|inst| function.dfg.insts[*inst].opcode() == ir::Opcode::Return).collect();
+        let mut cursor = FuncCursor::new(function);
+        cursor.goto_first_inst(entry);
+        let zero = cursor.ins().iconst(types::I64, 0);
+        for slot in slots.iter() {
+            cursor.ins().stack_store(zero, *slot, 0);
+        }
+        for ret in returns {
+            cursor.goto_inst(ret);
+            for slot in slots.iter() {
+                let address = cursor.ins().stack_load(ptr, *slot, 0);
+                cursor.ins().call(free, &[address]);
+            }
+        }
+        Ok(())
+    }
+}
+
 impl std::ops::Deref for Characters {
     type Target = HashMap<String, (super::Storage, usize)>;
     fn deref(&self) -> &Self::Target { &self.values }
@@ -28,6 +106,15 @@ impl std::ops::Deref for Characters {
 impl std::ops::DerefMut for Characters {
     fn deref_mut(&mut self) -> &mut Self::Target { &mut self.values }
 }
+fn free(module: &mut ObjectModule, b: &mut FunctionBuilder, ptr: ir::Type, value: ir::Value) -> Result<()> {
+    let mut signature=module.make_signature();
+    signature.params.push(ir::AbiParam::new(ptr));
+    let id=module.declare_function("free",Linkage::Import,&signature)?;
+    let function=module.declare_func_in_func(id,b.func);
+    b.ins().call(function,&[value]);
+    Ok(())
+}
+
 type Integers = HashMap<String, super::Storage>;
 pub(super) struct View {
     pub(super) address: ir::Value,
@@ -50,7 +137,7 @@ pub(super) fn view(
             let (count, capacity) = if let IExpr::IntLit(count) = &args[1] {
                 let count: i64 = count.parse()?;
                 if count < 0 { bail!("REPEAT NCOPIES must be nonnegative"); }
-                let capacity=source.capacity.checked_mul(usize::try_from(count)?).filter(|n|*n<i32::MAX as usize).context("REPEAT result is too large")?;
+                let capacity=source.capacity.saturating_mul(usize::try_from(count)?).min(crate::substrings::MAX_EXPRESSION_LENGTH);
                 (b.ins().iconst(ptr,count),capacity)
             } else {
                 let IExpr::Ident(count)=&args[1] else {bail!("runtime REPEAT NCOPIES must be captured in INTEGER storage");};
@@ -60,19 +147,21 @@ pub(super) fn view(
                 let count=if ptr==types::I64 {count} else {b.ins().ireduce(ptr,count)};
                 let nonnegative=b.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual,count,0);
                 super::file_io::require(module,b,ptr,dc,nonnegative,"REPEAT NCOPIES must be nonnegative")?;
-                let empty=b.ins().icmp_imm(IntCC::Equal,source.length,0);
-                let one=b.ins().iconst(ptr,1);
-                let divisor=b.ins().select(empty,one,source.length);
-                let limit=b.ins().iconst(ptr,crate::substrings::FALLBACK_CAPACITY as i64);
-                let limit=b.ins().udiv(limit,divisor);
-                let bounded=b.ins().icmp(IntCC::UnsignedLessThanOrEqual,count,limit);
-                let valid=b.ins().bor(empty,bounded);
-                super::file_io::require(module,b,ptr,dc,valid,"REPEAT result exceeds its expression buffer")?;
-                let zero=b.ins().iconst(ptr,0);
-                (b.ins().select(empty,zero,count),crate::substrings::FALLBACK_CAPACITY)
+                (count,crate::substrings::MAX_EXPRESSION_LENGTH)
             };
-            let storage = super::fixed_storage(b, module, capacity.max(1), chars.main)?;
-            let address = super::storage_addr(b, ptr, storage);
+            // A constant count can still multiply a runtime source length.
+            let empty=b.ins().icmp_imm(IntCC::Equal,source.length,0);
+            let one=b.ins().iconst(ptr,1);
+            let divisor=b.ins().select(empty,one,source.length);
+            let limit=b.ins().iconst(ptr,crate::substrings::MAX_EXPRESSION_LENGTH as i64);
+            let limit=b.ins().udiv(limit,divisor);
+            let bounded=b.ins().icmp(IntCC::UnsignedLessThanOrEqual,count,limit);
+            let valid=b.ins().bor(empty,bounded);
+            super::file_io::require(module,b,ptr,dc,valid,"REPEAT result is too large")?;
+            let zero=b.ins().iconst(ptr,0);
+            let count=b.ins().select(empty,zero,count);
+            let length = b.ins().imul(source.length, count);
+            let address = chars.buffer(module, b, ptr, dc, length)?;
             let head = b.create_block();
             let copy = b.create_block();
             let done = b.create_block();
@@ -93,7 +182,7 @@ pub(super) fn view(
             b.seal_block(head);
             b.switch_to_block(done);
             b.seal_block(done);
-            Ok(View { address, length: b.ins().imul(source.length, count), capacity })
+            Ok(View { address, length, capacity })
         }
         IExpr::Call(name, args) if name == "@substring" => {
             let [source, IExpr::IntLit(start), IExpr::IntLit(length)] = args.as_slice() else {
@@ -184,20 +273,22 @@ pub(super) fn view(
                 .context("missing CHARACTER source storage")?;
             Ok(View {
                 address: super::storage_addr(b, ptr, *slot),
-                length: b.ins().iconst(ptr, *length as i64),
+                length: if let Some(slot)=chars.heap_lengths.get(name) {
+                    b.ins().stack_load(ptr, *slot, 0)
+                } else {b.ins().iconst(ptr, *length as i64)},
                 capacity: *length,
             })
         }
         IExpr::Bin(crate::ast::BinOp::Concat, left, right) => {
             let left = view(module, b, ptr, dc, chars, ints, left)?;
             let right = view(module, b, ptr, dc, chars, ints, right)?;
-            let capacity = left
-                .capacity
-                .checked_add(right.capacity)
-                .filter(|n| *n < i32::MAX as usize)
-                .context("CHARACTER concatenation is too large")?;
-            let storage = super::fixed_storage(b, module, capacity.max(1), chars.main)?;
-            let address = super::storage_addr(b, ptr, storage);
+            let capacity = left.capacity.saturating_add(right.capacity)
+                .min(crate::substrings::MAX_EXPRESSION_LENGTH);
+            let length = b.ins().iadd(left.length, right.length);
+            let valid = b.ins().icmp_imm(IntCC::UnsignedLessThanOrEqual,
+                length, crate::substrings::MAX_EXPRESSION_LENGTH as i64);
+            super::file_io::require(module, b, ptr, dc, valid, "CHARACTER concatenation is too large")?;
+            let address = chars.buffer(module, b, ptr, dc, length)?;
             call(
                 module,
                 b,
@@ -215,7 +306,7 @@ pub(super) fn view(
             )?;
             Ok(View {
                 address,
-                length: b.ins().iadd(left.length, right.length),
+                length,
                 capacity,
             })
         }
@@ -239,8 +330,7 @@ pub(super) fn view(
             b.ins().brif(space,head,&[next.into()],done,&[offset.into()]);
             b.seal_block(head);b.switch_to_block(done);b.seal_block(done);
             let offset=b.block_params(done)[0];
-            let storage=super::fixed_storage(b,module,source.capacity.max(1),chars.main)?;
-            let address=super::storage_addr(b,ptr,storage);
+            let address=chars.buffer(module,b,ptr,dc,source.length)?;
             let (from,to,count,padding,tail)=if left {
                 let count=b.ins().isub(source.length,offset);
                 let from=b.ins().iadd(source.address,offset);let tail=b.ins().iadd(address,count);
@@ -294,8 +384,31 @@ pub(super) fn assign(
     ints: &Integers,
     dest: &str,
     expr: &IExpr,
+    requested_length: Option<ir::Value>,
 ) -> Result<()> {
     let source = view(module, b, ptr, dc, chars, ints, expr)?;
+    if let Some(length_slot)=chars.heap_lengths.get(dest) {
+        let length=requested_length.unwrap_or(source.length);
+        let size=b.ins().iadd_imm(length,1);
+        let address=call(module,b,"malloc",&[size],ptr)?;
+        let valid=b.ins().icmp_imm(IntCC::NotEqual,address,0);
+        super::file_io::require(module,b,ptr,dc,valid,"CHARACTER allocation failed")?;
+        let shorter=b.ins().icmp(IntCC::UnsignedLessThan,source.length,length);
+        let count=b.ins().select(shorter,source.length,length);
+        call(module,b,"memcpy",&[address,source.address,count],ptr)?;
+        let tail=b.ins().iadd(address,count);
+        let padding=b.ins().isub(length,count);
+        let space=b.ins().iconst(types::I32,32);
+        call(module,b,"memset",&[tail,space,padding],ptr)?;
+        let end=b.ins().iadd(address,length);
+        let zero=b.ins().iconst(types::I8,0);b.ins().store(MemFlags::new(),zero,end,0);
+        let (super::Storage::HeapStack(cell),_)=chars.values[dest] else {bail!("invalid heap CHARACTER assignment");};
+        let previous=b.ins().stack_load(ptr,cell,0);
+        free(module,b,ptr,previous)?;
+        b.ins().stack_store(address,cell,0);
+        b.ins().stack_store(length,*length_slot,0);
+        return Ok(());
+    }
     let (slot, length) = chars
         .get(dest)
         .context("missing CHARACTER destination storage")?;
@@ -316,10 +429,10 @@ pub(super) fn assign(
     Ok(())
 }
 
-pub(super) fn terminated(module: &mut ObjectModule, b: &mut FunctionBuilder, ptr: ir::Type, source: View, main: bool) -> Result<ir::Value> {
-    let size = source.capacity.checked_add(1).and_then(|n| u32::try_from(n).ok()).context("CHARACTER output is too large")?;
-    let storage = super::fixed_storage(b, module, size as usize, main)?;
-    let address = super::storage_addr(b, ptr, storage);
+pub(super) fn terminated(module: &mut ObjectModule, b: &mut FunctionBuilder, ptr: ir::Type,
+                         dc: &mut u32, source: View, chars: &Characters) -> Result<ir::Value> {
+    let size = b.ins().iadd_imm(source.length, 1);
+    let address = chars.buffer(module, b, ptr, dc, size)?;
     call(module, b, "memcpy", &[address, source.address, source.length], ptr)?;
     let end = b.ins().iadd(address, source.length);
     let zero = b.ins().iconst(types::I8, 0);

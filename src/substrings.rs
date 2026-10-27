@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Beliavsky
 // See LICENSE-MIT in the repository root.
 
-//! Resolve scalar substrings and bounded deferred-length CHARACTER storage.
+//! Resolve scalar substrings and bounded or heap-backed deferred CHARACTER locals.
 use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
@@ -234,9 +234,10 @@ pub fn resolve(mut program: Program) -> Result<Program> {
 
 /// ALLOCATE(CHARACTER(LEN=n) :: s): the length, then the objects.
 pub(crate) const ALLOCATE_CHARACTER: &str = "@allocate_character";
-/// Storage of a deferred-length CHARACTER whose largest value is not known at
-/// compile time; a longer value stops the program.
+/// Bound retained by older runtime-length array/function-result paths.
 pub(crate) const FALLBACK_CAPACITY: usize = 4096;
+/// Current byte-offset representation reserves one byte for a terminator.
+pub(crate) const MAX_EXPRESSION_LENGTH: usize = i32::MAX as usize - 1;
 
 pub(crate) fn deferred(kind: &TypeSpec) -> bool {
     matches!(kind, TypeSpec::CharacterLength(e) if matches!(e.as_ref(), Expr::Ident(n) if n == "@deferred_character"))
@@ -251,6 +252,11 @@ struct DynamicScope {
     procedures: std::collections::HashSet<String>,
     function_results: HashMap<String,TypeSpec>,
     procedure: bool,
+}
+fn declare_character(name: &str, capacity: usize, output: &mut Vec<Stmt>) {
+    let heap = capacity == MAX_EXPRESSION_LENGTH;
+    output.push(Stmt::VarDecl { kind: TypeSpec::Character(Some(if heap {0} else {capacity})), names: vec![name.into()] });
+    if heap { output.push(Stmt::CallSub {name:"@heap_character_bind".into(), args:vec![ident(name)]}); }
 }
 fn allocation_flag(length: &str) -> String { format!("{length}_allocated") }
 fn binary(op: BinOp, a: Expr, b: Expr) -> Expr {
@@ -270,8 +276,8 @@ fn capacity(e: &Expr, scope: &DynamicScope) -> Option<usize> {
     match e {
         Expr::Str(s) => Some(s.len()),
         Expr::Ident(n) | Expr::Section { name: n, .. } => scope.characters.get(n).copied(),
-        Expr::Bin(BinOp::Concat, a, b) => capacity(a, scope)?.checked_add(capacity(b, scope)?),
-        Expr::Call(n,args) if n=="repeat" && args.len()==2 && !scope.procedures.contains(n) => capacity(&args[0],scope)?.checked_mul(usize::try_from(crate::parameters::integer_constant(&args[1]).ok()?.max(0)).ok()?),
+        Expr::Bin(BinOp::Concat, a, b) => Some(capacity(a, scope)?.saturating_add(capacity(b, scope)?).min(MAX_EXPRESSION_LENGTH)),
+        Expr::Call(n,args) if n=="repeat" && args.len()==2 && !scope.procedures.contains(n) => Some(crate::parameters::integer_constant(&args[1]).ok().and_then(|n| capacity(&args[0],scope)?.checked_mul(usize::try_from(n.max(0)).ok()?)).unwrap_or(MAX_EXPRESSION_LENGTH).min(MAX_EXPRESSION_LENGTH)),
         Expr::Call(n, args) if matches!(n.as_str(),"trim"|"adjustl"|"adjustr") && args.len() == 1 => capacity(&args[0], scope),
         Expr::Call(n, args) if matches!(n.as_str(), "char" | "achar") && args.len()==1 => Some(1),
         Expr::Call(n, args) if n == "@literal_substring" => capacity(&args[0], scope),
@@ -281,17 +287,17 @@ fn capacity(e: &Expr, scope: &DynamicScope) -> Option<usize> {
     }
 }
 
-// Infer an upper bound, not a runtime length. Cyclic growth (s=s//'x') cannot
-// be represented by this bounded storage model and is rejected explicitly.
+// Infer an upper bound where possible. MAX_EXPRESSION_LENGTH marks values
+// requiring owned heap storage rather than reserving that many characters.
 fn assignment_capacities(statements: &[Stmt], targets: &[String], scope: &DynamicScope, sizes: &mut Characters) -> Result<()> {
     for statement in statements {
         match statement {
             Stmt::Assign { name, value } if targets.contains(name) => {
-                let size = capacity(value, scope).unwrap_or(FALLBACK_CAPACITY);
+                let size = capacity(value, scope).unwrap_or(MAX_EXPRESSION_LENGTH);
                 *sizes.get_mut(name).unwrap() = sizes[name].max(size);
             }
             Stmt::CallSub { name, args } if name == ALLOCATE_CHARACTER => {
-                let size = crate::parameters::integer_constant(&args[0]).ok().and_then(|n| usize::try_from(n.max(0)).ok()).unwrap_or(FALLBACK_CAPACITY);
+                let size = crate::parameters::integer_constant(&args[0]).ok().and_then(|n| usize::try_from(n.max(0)).ok()).unwrap_or(MAX_EXPRESSION_LENGTH);
                 for object in &args[1..] {
                     if let Expr::Ident(n) = object {
                         if let Some(current) = sizes.get_mut(n) { *current = (*current).max(size); }
@@ -403,7 +409,8 @@ fn dynamic_expression(e: &mut Expr, scope: &mut DynamicScope, output: &mut Vec<S
     }
     match e {
         Expr::Call(n, args) if n == "repeat" && args.len() == 2 && !scope.procedures.contains(n)
-            && crate::parameters::integer_constant(&args[1]).is_err() => {
+            && (crate::parameters::integer_constant(&args[1]).is_err()
+                || capacity(&args[0],scope)==Some(MAX_EXPRESSION_LENGTH)) => {
             dynamic_expression(&mut args[0], scope, output, serial)?;
             dynamic_expression(&mut args[1], scope, output, serial)?;
             let copies = capture(args[1].clone(), scope, output, serial);
@@ -412,8 +419,8 @@ fn dynamic_expression(e: &mut Expr, scope: &mut DynamicScope, output: &mut Vec<S
             output.push(Stmt::If {cond:binary(BinOp::Lt,copies.clone(),int(0)),then_body:vec![Stmt::CallSub {
                 name:"@error_stop".into(),args:vec![Expr::Str("REPEAT NCOPIES must be nonnegative".into())]}],else_body:None});
             output.push(Stmt::If {cond:binary(BinOp::Gt,size.clone(),int(0)),then_body:vec![Stmt::If {
-                cond:binary(BinOp::Gt,copies.clone(),binary(BinOp::Div,int(FALLBACK_CAPACITY),size)),
-                then_body:vec![Stmt::CallSub {name:"@error_stop".into(),args:vec![Expr::Str(format!("REPEAT result exceeds its {FALLBACK_CAPACITY}-character expression buffer"))]}],else_body:None}],else_body:None});
+                cond:binary(BinOp::Gt,copies.clone(),binary(BinOp::Div,int(MAX_EXPRESSION_LENGTH),size)),
+                then_body:vec![Stmt::CallSub {name:"@error_stop".into(),args:vec![Expr::Str("REPEAT result is too large".into())]}],else_body:None}],else_body:None});
             args[1] = copies;
         }
         Expr::Call(n, args) if n == "allocated" && args.len() == 1 && matches!(&args[0], Expr::Ident(n) if scope.lengths.contains_key(n)) => {
@@ -482,7 +489,7 @@ fn dynamic_expression(e: &mut Expr, scope: &mut DynamicScope, output: &mut Vec<S
                 *serial+=1;let buffer=format!("@substring_search_text_{serial}");
                 scope.characters.insert(buffer.clone(),cap);
                 scope.symbols.insert(buffer.clone(),(TypeSpec::Character(Some(cap)),vec![]));
-                output.push(Stmt::VarDecl {kind:TypeSpec::Character(Some(cap)),names:vec![buffer.clone()]});
+                declare_character(&buffer, cap, output);
                 output.push(Stmt::CallSub {name:"@character_assign".into(),args:vec![ident(&buffer),source.clone(),int(cap)]});
                 buffers.push(buffer);
             }
@@ -648,10 +655,10 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
         let mut sizes = targets.iter().map(|n| (n.clone(), scope.characters[n])).collect::<Characters>();
         assignment_capacities(statements, &targets, &scope, &mut sizes)?;
         if targets.iter().all(|n| sizes[n] == scope.characters[n]) { break; }
-        // Growth such as s = s // 'x' uses the fallback storage.
+        // Cyclic growth such as s = s // 'x' requires heap storage.
         if iteration == targets.len() + 1 {
             for name in &targets {
-                if sizes[name] != scope.characters[name] { scope.characters.insert(name.clone(), scope.characters[name].max(FALLBACK_CAPACITY)); }
+                if sizes[name] != scope.characters[name] { scope.characters.insert(name.clone(), MAX_EXPRESSION_LENGTH); }
             }
             break;
         }
@@ -680,7 +687,7 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
                     result.push(Stmt::If {cond:ident(&flag),then_body:stop(format!("ALLOCATE of already allocated CHARACTER `{n}`")),else_body:None});
                     result.push(Stmt::If {cond:binary(BinOp::Gt,saved.clone(),int(cap)),then_body:stop(format!("deferred-length CHARACTER `{n}` would exceed its {cap}-character storage")),else_body:None});
                     // The value is undefined until assigned; blanks fill the storage.
-                    result.push(Stmt::CallSub {name:"@character_assign".into(),args:vec![ident(n),Expr::Str(String::new()),int(cap)]});
+                    result.push(Stmt::CallSub {name:"@character_assign".into(),args:vec![ident(n),Expr::Str(String::new()),if cap==MAX_EXPRESSION_LENGTH {saved.clone()} else {int(cap)}]});
                     result.push(Stmt::Assign {name:flag,value:Expr::Logical(true)});
                     result.push(Stmt::Assign {name:length,value:saved.clone()});
                 }
@@ -693,6 +700,9 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
                     let flag=allocation_flag(&length);
                     result.push(Stmt::If {cond:Expr::Un(crate::ast::UnOp::Not,Box::new(ident(&flag))),
                         then_body:vec![Stmt::CallSub {name:"@error_stop".into(),args:vec![Expr::Str(format!("DEALLOCATE of unallocated CHARACTER `{n}`"))]}],else_body:None});
+                    if scope.characters[&n]==MAX_EXPRESSION_LENGTH {
+                        result.push(Stmt::CallSub {name:"@heap_character_clear".into(),args:vec![ident(&n)]});
+                    }
                     result.push(Stmt::Assign {name:flag,value:Expr::Logical(false)});
                     result.push(Stmt::Assign {name:length,value:int(0)});
                     result.push(Stmt::CallSub {name:"@undefine".into(),args:vec![ident(&n)]});
@@ -701,7 +711,7 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
             }
             Stmt::VarDecl { kind, names } if deferred(kind) => {
                 for name in names {
-                    result.push(Stmt::VarDecl { kind: TypeSpec::Character(Some(scope.characters[name])), names: vec![name.clone()] });
+                    declare_character(name, scope.characters[name], &mut result);
                     result.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![scope.lengths[name].clone()] });
                     let flag = allocation_flag(&scope.lengths[name]);
                     result.push(Stmt::VarDecl { kind: TypeSpec::Logical, names: vec![flag.clone()] });
@@ -719,7 +729,9 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
                     prefix.push(Stmt::If { cond: binary(BinOp::Gt, saved.clone(), int(cap)), then_body: vec![Stmt::CallSub {
                         name: "@error_stop".into(), args: vec![Expr::Str(format!("deferred-length CHARACTER `{name}` would exceed its {cap}-character storage"))] }], else_body: None });
                     result.extend(prefix);
-                    result.push(statement);
+                    if cap==MAX_EXPRESSION_LENGTH {
+                        result.push(Stmt::CallSub {name:"@character_assign".into(),args:vec![ident(name),value.clone(),saved.clone()]});
+                    } else { result.push(statement); }
                     result.push(Stmt::Assign { name: allocation_flag(&length), value: Expr::Logical(true) });
                     result.push(Stmt::Assign { name: length, value: saved });
                     continue;
@@ -742,17 +754,20 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
                         // Snapshot and pad the RHS before modifying any destination bytes.
                         // A bounded buffer then supplies exactly the selected runtime width.
                         *serial+=1;let temp=format!("@dynamic_substring_value_{serial}");
-                        prefix.push(Stmt::VarDecl {kind:TypeSpec::Character(Some(cap)),names:vec![temp.clone()]});
-                        prefix.push(Stmt::CallSub {name:"@character_assign".into(),args:vec![ident(&temp),value.clone(),int(cap)]});
+                        declare_character(&temp, cap, &mut prefix);
+                        let width=if cap==MAX_EXPRESSION_LENGTH {logical_length(&source,&mut scope,&mut prefix,serial)?} else {int(cap)};
+                        prefix.push(Stmt::CallSub {name:"@character_assign".into(),args:vec![ident(&temp),value.clone(),width]});
                         let end=capture(binary(BinOp::Add,start.clone(),size.clone()),&mut scope,&mut prefix,serial);
                         let length=logical_length(&source,&mut scope,&mut prefix,serial)?;
-                        let tail=capture(binary(BinOp::Sub,length,end.clone()),&mut scope,&mut prefix,serial);
+                        let tail=capture(binary(BinOp::Sub,length.clone(),end.clone()),&mut scope,&mut prefix,serial);
                         let slice=|source:Expr,start:Expr,size:Expr|Expr::Call("@dynamic_substring".into(),vec![source,start,size,int(cap)]);
                         let replacement=binary(BinOp::Concat,
                             binary(BinOp::Concat,slice(source.clone(),int(0),start),slice(ident(&temp),int(0),size.clone())),
                             slice(source,end,tail));
                         prefix.push(Stmt::If {cond:binary(BinOp::Gt,size,int(0)),then_body:vec![
-                            unchecked(true),Stmt::Assign {name:name.clone(),value:replacement},unchecked(false)],else_body:None});
+                            unchecked(true),
+                            if cap==MAX_EXPRESSION_LENGTH {Stmt::CallSub {name:"@character_assign".into(),args:vec![ident(name),replacement,length.clone()]}} else {Stmt::Assign {name:name.clone(),value:replacement}},
+                            unchecked(false)],else_body:None});
                         result.extend(prefix);
                         continue;
                     }
@@ -814,7 +829,7 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
                         let name = format!("@character_selector_{serial}");
                         scope.characters.insert(name.clone(), cap);
                         scope.symbols.insert(name.clone(), (TypeSpec::Character(Some(cap)), vec![]));
-                        prefix.push(Stmt::VarDecl {kind: TypeSpec::Character(Some(cap)), names: vec![name.clone()]});
+                        declare_character(&name, cap, &mut prefix);
                         prefix.push(Stmt::CallSub {name: "@character_assign".into(),
                             args: vec![ident(&name), expr.clone(), int(cap)]});
                         *expr = ident(&name);
