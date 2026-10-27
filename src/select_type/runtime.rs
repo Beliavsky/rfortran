@@ -118,9 +118,7 @@ fn declarations(body: &[Stmt], parent: &Declarations) -> Declarations {
     for s in body {
         if let Stmt::DummyIntent { name, intent } = s {
             if let Some(d) = out.get_mut(name) {
-                if !intent.starts_with('@')
-                    && !matches!(intent.as_str(), "save" | "parameter")
-                {
+                if !intent.starts_with('@') && !matches!(intent.as_str(), "save" | "parameter") {
                     d.push(s.clone());
                 }
             }
@@ -294,6 +292,282 @@ impl Lower<'_> {
         *body = storage;
         Ok(())
     }
+    fn transfer(
+        &self,
+        to: &str,
+        object: &Object,
+        kind: &str,
+        value: Option<Expr>,
+        assignment: bool,
+    ) -> Result<Vec<Stmt>> {
+        if self.defs.abstracts.contains(kind) {
+            bail!("cannot allocate ABSTRACT type `{kind}`");
+        }
+        let Some((index, (_, storage))) = object
+            .variants
+            .iter()
+            .enumerate()
+            .find(|(_, (k, _))| k == kind)
+        else {
+            bail!(
+                "allocation or assignment type `{kind}` must extend declared type `{}`",
+                object.kind
+            );
+        };
+        let allocate = vec![
+            Stmt::CallSub {
+                name: "@allocate".into(),
+                args: vec![Expr::Call(storage.clone(), vec![int(1)])],
+            },
+            set(&object.tag, index + 1),
+        ];
+        let mut out = vec![];
+        if assignment {
+            let release = cases(
+                object,
+                object
+                    .variants
+                    .iter()
+                    .map(|(_, s)| {
+                        vec![Stmt::CallSub {
+                            name: "@deallocate".into(),
+                            args: vec![id(s)],
+                        }]
+                    })
+                    .collect(),
+                vec![],
+            );
+            let mut replace = vec![release];
+            replace.extend(allocate);
+            out.push(Stmt::If {
+                cond: Expr::Bin(
+                    BinOp::Ne,
+                    Box::new(id(&object.tag)),
+                    Box::new(int(index + 1)),
+                ),
+                then_body: replace,
+                else_body: None,
+            });
+        } else {
+            out.push(Stmt::If {
+                cond: Expr::Bin(BinOp::Ne, Box::new(id(&object.tag)), Box::new(int(0))),
+                then_body: failure(format!(
+                    "allocation of already allocated polymorphic object `{to}`"
+                )),
+                else_body: None,
+            });
+            out.extend(allocate);
+        }
+        if let Some(value) = value {
+            out.push(Stmt::AssignIndex {
+                name: storage.clone(),
+                indices: vec![int(1)],
+                value,
+            });
+        }
+        Ok(out)
+    }
+    fn source_kind(&self, value: &Expr, decls: &Declarations) -> Result<String> {
+        match value {
+            Expr::Ident(n) => {
+                if let Some(d) = decls.get(n) {
+                    for s in d {
+                        if let Stmt::DerivedDecl {
+                            type_name,
+                            polymorphic: false,
+                            dims,
+                            ..
+                        } = s
+                        {
+                            if dims.is_empty() {
+                                return Ok(type_name.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            Expr::Call(n, _) if self.defs.fields.contains_key(n) => return Ok(n.clone()),
+            _ => {}
+        }
+        bail!("polymorphic allocation and assignment currently require a scalar derived variable or constructor")
+    }
+    fn from_source(
+        &self,
+        to: &str,
+        object: &Object,
+        source: &Expr,
+        copy: bool,
+        assignment: bool,
+        vars: &Runtime,
+        decls: &Declarations,
+    ) -> Result<Vec<Stmt>> {
+        if let Expr::Ident(n) = source {
+            if let Some(from) = vars.get(n) {
+                if assignment && from.tag == object.tag {
+                    return Ok(vec![Stmt::If {
+                        cond: Expr::Bin(BinOp::Eq, Box::new(id(&from.tag)), Box::new(int(0))),
+                        then_body: failure(format!(
+                            "assignment from unallocated polymorphic object `{n}`"
+                        )),
+                        else_body: None,
+                    }]);
+                }
+                let mut branches = vec![];
+                for (kind, storage) in &from.variants {
+                    let value = copy.then(|| Expr::Call(storage.clone(), vec![int(1)]));
+                    branches.push(if self.defs.distance(kind,&object.kind).is_some() {
+                        self.transfer(to,object,kind,value,assignment)?
+                    } else {failure(format!("dynamic type `{kind}` is incompatible with polymorphic destination `{to}`"))});
+                }
+                let default = if !copy && !self.defs.abstracts.contains(&from.kind) {
+                    self.transfer(to, object, &from.kind, None, assignment)?
+                } else {
+                    failure(format!("unallocated polymorphic SOURCE or MOLD `{n}` has no usable dynamic value or concrete type"))
+                };
+                return Ok(vec![cases(from, branches, default)]);
+            }
+        }
+        let kind = self.source_kind(source, decls)?;
+        self.transfer(to, object, &kind, copy.then(|| source.clone()), assignment)
+    }
+    fn evaluate_source(
+        &mut self,
+        source: &Expr,
+        vars: &Runtime,
+        decls: &Declarations,
+        pure: bool,
+    ) -> Result<(Vec<Stmt>, Expr, Declarations)> {
+        if matches!(source, Expr::Ident(_)) {
+            return Ok((vec![], source.clone(), decls.clone()));
+        }
+        let kind = self.source_kind(source, decls)?;
+        self.serial += 1;
+        let temp = format!("@polymorphic_source{}", self.serial);
+        let declaration = Stmt::DerivedDecl {
+            type_name: kind,
+            names: vec![temp.clone()],
+            attributes: vec![],
+            polymorphic: false,
+            dims: vec![],
+        };
+        let mut local = decls.clone();
+        local.insert(temp.clone(), vec![declaration.clone()]);
+        let mut evaluation = vec![Stmt::Assign {
+            name: temp.clone(),
+            value: source.clone(),
+        }];
+        self.body(&mut evaluation, vars, &local, pure)?;
+        let mut prefix = vec![declaration];
+        prefix.extend(evaluation);
+        Ok((prefix, id(&temp), local))
+    }
+    fn allocation(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        vars: &Runtime,
+        decls: &Declarations,
+        pure: bool,
+    ) -> Result<Option<Vec<Stmt>>> {
+        let (kind, args) = if name == "@allocate_derived_type" {
+            let Some(Expr::Ident(kind)) = args.first() else {
+                bail!("invalid derived ALLOCATE type specification");
+            };
+            (Some(kind.as_str()), &args[1..])
+        } else {
+            (None, args)
+        };
+        if !args
+            .iter()
+            .any(|a| matches!(a,Expr::Ident(n) if vars.contains_key(n)))
+        {
+            return Ok(None);
+        }
+        let mut objects = vec![];
+        let mut source = None;
+        let mut mold = None;
+        for a in args {
+            if let Expr::Call(k, v) = a {
+                if let Some(k) = k.strip_prefix("@keyword:") {
+                    if name == "@deallocate" {
+                        bail!("polymorphic DEALLOCATE options are not yet supported");
+                    }
+                    let [value] = v.as_slice() else {
+                        bail!("invalid ALLOCATE option");
+                    };
+                    match k {
+                        "source" => {
+                            if source.replace(value).is_some() {
+                                bail!("duplicate SOURCE= option");
+                            }
+                        }
+                        "mold" => {
+                            if mold.replace(value).is_some() {
+                                bail!("duplicate MOLD= option");
+                            }
+                        }
+                        _ => bail!("polymorphic ALLOCATE option `{k}=` is not yet supported"),
+                    }
+                    continue;
+                }
+            }
+            objects.push(a);
+        }
+        if source.is_some() && mold.is_some() {
+            bail!("ALLOCATE cannot specify both SOURCE= and MOLD=");
+        }
+        if kind.is_some() && (source.is_some() || mold.is_some()) {
+            bail!("ALLOCATE cannot combine a type specification with SOURCE= or MOLD=");
+        }
+        let (mut out, evaluated, local) = if let Some(value) = source {
+            let (prefix, value, local) = self.evaluate_source(value, vars, decls, pure)?;
+            (prefix, Some(value), local)
+        } else {
+            (vec![], None, decls.clone())
+        };
+        for a in objects {
+            let Expr::Ident(n) = a else {
+                bail!("polymorphic allocation currently requires scalar variables");
+            };
+            let Some(object) = vars.get(n) else {
+                bail!(
+                    "mixed polymorphic and nonpolymorphic allocation lists are not yet supported"
+                );
+            };
+            if name == "@deallocate" {
+                out.push(cases(
+                    object,
+                    object
+                        .variants
+                        .iter()
+                        .map(|(_, s)| {
+                            vec![Stmt::CallSub {
+                                name: "@deallocate".into(),
+                                args: vec![id(s)],
+                            }]
+                        })
+                        .collect(),
+                    failure(format!(
+                        "deallocation of unallocated polymorphic object `{n}`"
+                    )),
+                ));
+                out.push(set(&object.tag, 0));
+            } else if let Some(value) = evaluated.as_ref().or(mold) {
+                out.extend(self.from_source(
+                    n,
+                    object,
+                    value,
+                    source.is_some(),
+                    false,
+                    vars,
+                    &local,
+                )?);
+            } else {
+                out.extend(self.transfer(n, object, kind.unwrap_or(&object.kind), None, false)?);
+            }
+        }
+        Ok(Some(out))
+    }
     fn body(
         &mut self,
         body: &mut Vec<Stmt>,
@@ -322,30 +596,15 @@ impl Lower<'_> {
             let lowered=(||->Result<Vec<Stmt>> {
                 if let Stmt::CallSub{name,args}=&s {
                     if matches!(name.as_str(),"@allocate"|"@allocate_derived_type"|"@deallocate") {
-                        let (kind,objects)=if name=="@allocate_derived_type" {
-                            let Some(Expr::Ident(kind))=args.first() else {bail!("invalid derived ALLOCATE type specification");};
-                            (Some(kind.as_str()),&args[1..])
-                        } else {(None,args.as_slice())};
-                        if objects.iter().any(|a|matches!(a,Expr::Ident(n) if vars.contains_key(n))) {
-                            let mut result=vec![];
-                            for a in objects {
-                                let Expr::Ident(n)=a else {bail!("polymorphic allocation currently requires scalar variables without allocation options");};
-                                let Some(o)=vars.get(n) else {bail!("mixed polymorphic and nonpolymorphic allocation lists are not yet supported");};
-                                if name=="@deallocate" {
-                                    let bodies=o.variants.iter().map(|(_,v)|vec![Stmt::CallSub{name:"@deallocate".into(),args:vec![id(v)]}]).collect();
-                                    result.push(cases(o,bodies,failure(format!("deallocation of unallocated polymorphic object `{n}`"))));
-                                    result.push(set(&o.tag,0));
-                                } else {
-                                    let kind=kind.unwrap_or(&o.kind);
-                                    if self.defs.abstracts.contains(kind) {bail!("cannot allocate ABSTRACT type `{kind}`");}
-                                    let Some((i,(_,v)))=o.variants.iter().enumerate().find(|(_, (k,_))|k==kind) else {bail!("ALLOCATE type `{kind}` must extend declared type `{}`",o.kind);};
-                                    result.push(Stmt::If{cond:Expr::Bin(BinOp::Ne,Box::new(id(&o.tag)),Box::new(int(0))),then_body:failure(format!("allocation of already allocated polymorphic object `{n}`")),else_body:None});
-                                    result.push(Stmt::CallSub{name:"@allocate".into(),args:vec![Expr::Call(v.clone(),vec![int(1)])]});
-                                    result.push(set(&o.tag,i+1));
-                                }
-                            }
-                            return Ok(result);
-                        }
+                        if let Some(out)=self.allocation(name,args,vars,decls,pure)? {return Ok(out);}
+                    }
+                }
+                if let Stmt::Assign{name,value}=&s {
+                    if let Some(object)=vars.get(name) {
+                        if !object.polymorphic {bail!("whole-object assignment of a SELECT TYPE associate requires ordinary derived assignment");}
+                        let (mut prefix,value,local)=self.evaluate_source(value,vars,decls,pure)?;
+                        prefix.extend(self.from_source(name,object,&value,true,true,vars,&local)?);
+                        return Ok(prefix);
                     }
                 }
                 // Inquiries do not evaluate the stored value.
@@ -421,7 +680,6 @@ impl Lower<'_> {
                 let used:Vec<_>=vars.iter().filter(|(n,_)|uses(&s,n)).collect();
                 if used.is_empty() {return Ok(vec![s]);}
                 if matches!(s,Stmt::Do{..}) {bail!("polymorphic values in counted DO bounds are not yet supported");}
-                if let Stmt::Assign{name,..}=&s {if vars.contains_key(name){bail!("polymorphic intrinsic assignment is not yet supported; use typed ALLOCATE and component assignment");}}
                 self.dispatch(s,&used,0,&mut vec![],decls,pure,location)
             })().map_err(|e|crate::source_diagnostics::at(e,location))?;
             out.extend(lowered);

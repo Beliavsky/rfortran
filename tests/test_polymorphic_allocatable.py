@@ -170,8 +170,7 @@ print *,a(1)%a
 end program
 """,'7\n')
 
-    def test_unsupported_storage_and_assignment_diagnostics(self):
-        self.reject(program('x=circle()'), 'polymorphic intrinsic assignment is not yet supported')
+    def test_unsupported_storage_diagnostics(self):
         self.reject(program('allocate(circle::x)').replace('allocatable :: x','allocatable,save :: x'),
                     'SAVED or POINTER runtime polymorphic objects')
         self.reject(program('allocate(circle::x)').replace('allocatable :: x','allocatable :: x(:)'),
@@ -206,6 +205,129 @@ end program
             self.assertEqual(result.returncode,0,result.stderr)
             self.assertEqual(result.stdout.split(),['F','T','12.0','27.0','T','12.0','15.0',
                                                    'T','12.0','27.0','T','12.0','15.0','F'])
+
+    def test_source_and_mold(self):
+        self.check(program("""c%radius=4
+allocate(x,source=c)
+print *,x%area()
+allocate(y,mold=x)
+print *,y%area()
+deallocate(x)
+allocate(x,source=y)
+print *,x%area()
+deallocate(x,y)""",'type(circle)::c\nclass(shape),allocatable::y'),'48\n12\n12\n')
+
+    def test_assignment_reallocates_dynamic_type(self):
+        self.check(program("""x=circle(radius=4.0)
+print *,x%area()
+y=x
+select type(y)
+type is(circle)
+y%radius=5
+end select
+print *,x%area(),y%area()
+x=rectangle(width=2.0,height=7.0)
+print *,x%area()
+y=x
+print *,y%area()
+x=x
+print *,x%area()
+deallocate(x,y)""",'class(shape),allocatable::y'),'48\n48 75\n14\n14\n14\n')
+
+    def test_mold_does_not_read_undefined_components(self):
+        source=program("""allocate(x,mold=c)
+select type(x)
+type is(circle)
+x%radius=3
+end select
+print *,x%area()
+deallocate(x)""",'type(circle)::c').replace('real :: radius=2.0','real :: radius')
+        self.check(source,'27\n')
+
+    def test_source_constructor_and_multiple_objects(self):
+        self.check(program("""allocate(x,y,source=circle(radius=3.0))
+print *,x%area(),y%area()
+deallocate(x,y)""",'class(shape),allocatable::y'),'27 27\n')
+
+    def test_unallocated_assignment_source(self):
+        self.check(program('x=y','class(shape),allocatable::y'),
+                   error='unallocated polymorphic SOURCE or MOLD',reference=False)
+
+    def test_invalid_allocation_options(self):
+        self.reject(program('allocate(x,source=circle(),mold=circle())'),
+                    'both SOURCE= and MOLD=')
+        self.reject(program('allocate(x,source=circle(),source=circle())'),
+                    'duplicate SOURCE=')
+
+    def test_source_expression_evaluated_once(self):
+        source=program("""allocate(x,y,source=circle(radius=next_radius()))
+print *,calls,x%area(),y%area()
+deallocate(x,y)""",'class(shape),allocatable::y')
+        source=source.replace('type, abstract :: shape','integer::calls=0\ntype, abstract :: shape')
+        source=source.replace('real function circle_area(self)',"""real function next_radius()
+calls=calls+1
+next_radius=3
+end function
+real function circle_area(self)""")
+        self.check(source,'1 27 27\n')
+
+    def test_assignment_copies_same_type_and_is_independent(self):
+        self.check(program("""c%radius=3
+x=c
+y=x
+c%radius=4
+x=c
+print *,x%area(),y%area()
+deallocate(x,y)""",'type(circle)::c\nclass(shape),allocatable::y'),'48 27\n')
+
+    def test_unallocated_concrete_mold(self):
+        prefix=(ROOT/'tests/programs/xdynamic_dispatch.f90').read_text().split('program test_dynamic_dispatch')[0]
+        self.check(prefix+"""program p
+use dynamic_counters
+class(counter),allocatable::x,y
+allocate(x,mold=y)
+print *,allocated(x),allocated(y),x%get()
+deallocate(x)
+end program
+""",'T F 1\n')
+
+    def test_owned_allocatable_component_copy(self):
+        self.check("""module m
+implicit none
+type::record
+integer::id=0
+real,allocatable::data(:)
+end type
+end module
+program p
+use m
+type(record)::a
+class(record),allocatable::x,y
+allocate(a%data(2))
+a%data=[1.0,2.0]
+a%id=7
+allocate(x,source=a)
+y=x
+a%data=9
+select type(x)
+type is(record)
+x%data(1)=4
+end select
+select type(y)
+type is(record)
+print *,y%id,y%data
+end select
+deallocate(x,y)
+end program
+""",'7 1 2\n')
+
+    def test_constructor_uses_original_dynamic_value(self):
+        self.check(program("""x=circle(radius=2.0)
+x=rectangle(width=x%area(),height=2.0)
+print *,x%area()
+allocate(y,source=circle(radius=x%area()))
+print *,y%area()
+deallocate(x,y)""",'class(shape),allocatable::y'),'24\n1728\n')
 
 if __name__=='__main__':
     unittest.main()

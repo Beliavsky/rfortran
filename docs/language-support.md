@@ -2131,16 +2131,41 @@ polymorphic descriptor ABI or runtime vtable ABI. Plain record element arguments
 borrow primitive component storage directly, preserving writes and avoiding
 reads of unrelated undefined components.
 
-This first implementation does not support polymorphic arrays, CLASS(*),
-ALLOCATABLE polymorphic dummy arguments/results, saved or module polymorphic
-objects, SOURCE=/MOLD=/STAT=/ERRMSG= on polymorphic allocation, polymorphic
-intrinsic assignment, or runtime polymorphic values in counted DO bounds.
+`ALLOCATE(x, SOURCE=value)` allocates with the source's dynamic type and copies
+its value, including supported owned allocatable components. A constructor
+SOURCE expression is evaluated once even with multiple allocation objects.
+`ALLOCATE(x, MOLD=value)` selects the type without reading component values;
+default initialization applies to the new object. An unallocated polymorphic
+MOLD with a concrete declared type uses that declared type.
+
+Intrinsic assignment to an allocatable polymorphic scalar allocates an unset
+destination, retains storage when its dynamic type matches, or deallocates and
+reallocates for a different dynamic type. Copies are independent, self-assignment
+preserves the object, and constructor expressions are evaluated before replacing
+the destination (so they may call methods of the original object).
+
+```fortran
+allocate(x, source=circle(radius=4.0))
+allocate(y, mold=x)  ! circle with default component values
+x = rectangle(width=2.0, height=7.0)
+y = x              ! y becomes a rectangle with a copy of x's value
+```
+
+Sources currently support scalar concrete variables, constructors, and the
+runtime polymorphic locals described here; arbitrary derived-valued function
+results and component/array-element sources are not yet supported by this
+allocation path. This implementation does not support polymorphic arrays,
+CLASS(*), ALLOCATABLE polymorphic dummy arguments/results, saved or module
+polymorphic objects, STAT=/ERRMSG= on polymorphic allocation, whole-object
+assignment to SELECT TYPE associate names, or runtime polymorphic values in
+counted DO bounds.
 Existing derived-type component, result and procedure-interface restrictions
 still apply. POINTER association and CLASSOF declarations do not acquire
 runtime polymorphic descriptor support from this feature.
 
 Run `python tests/test_polymorphic_allocatable.py`. The standalone example is
-`tests/programs/xpolymorphic_allocatable.f90`.
+`tests/programs/xpolymorphic_allocatable.f90`; allocation-source and assignment
+examples are in `tests/programs/xpolymorphic_source.f90`.
 
 ### Scalar dynamic binding dispatch
 
