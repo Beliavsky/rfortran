@@ -603,12 +603,12 @@ Stmt: Stmt = {
     KW_CALL <name: Designator> LPAREN <args: CallArgList> RPAREN => Stmt::CallSub { name, args },
     // A type-bound call on an array element: `call a(i)%m(...)`.
     // The element subscripts share the argument list rule of a call.
-    KW_CALL <id: Designator> LPAREN <sub: CallArgList> RPAREN PERCENT <m:ComponentName> LPAREN <args: CallArgList> RPAREN => {
+    KW_CALL <id: Designator> LPAREN <sub: CallArgList> RPAREN PERCENT <m:ComponentPath> LPAREN <args: CallArgList> RPAREN => {
         let mut all = vec![Expr::Call(id, sub)];
         all.extend(args);
         Stmt::CallSub { name: format!("@element_call:{m}"), args: all }
     },
-    KW_CALL <id: Designator> LPAREN <sub: CallArgList> RPAREN PERCENT <m:ComponentName> =>
+    KW_CALL <id: Designator> LPAREN <sub: CallArgList> RPAREN PERCENT <m:ComponentPath> =>
         Stmt::CallSub { name: format!("@element_call:{m}"), args: vec![Expr::Call(id, sub)] },
     KW_CALL <name: Designator> => Stmt::CallSub { name, args: vec![] },
     // Single-line IF: executes a single statement when condition true, e.g. `if (cond) cycle`
@@ -651,6 +651,8 @@ Stmt: Stmt = {
         Stmt::AssignIndex{name:format!("{id}%{field}"),indices:args,value:rhs}
     },
     <name:Designator> ARROW <target:RhsExpr> => Stmt::CallSub {name:"@pointer_associate".into(),args:vec![Expr::Ident(name),target]},
+    <id:Designator> LPAREN <args:SubscriptList> RPAREN PERCENT <field:ComponentPath> ARROW <target:RhsExpr> =>
+        Stmt::CallSub {name:"@pointer_associate".into(),args:vec![Expr::Call(format!("@record_component:{field}"),vec![crate::ast::section_or_call(id,args)]),target]},
     <id: Designator> LPAREN <args: SubscriptList> RPAREN LPAREN <range: Subscript> RPAREN EQ <rhs: RhsExpr> =>
         Stmt::CallSub {name:"@array_substring_assign".into(), args:vec![crate::ast::section_or_call(id,args),range,rhs]},
     <id: Designator> LPAREN <args: SubscriptList> RPAREN EQ <rhs: RhsExpr> => {

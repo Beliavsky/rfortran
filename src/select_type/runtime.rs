@@ -9,9 +9,11 @@ use crate::ast::{BinOp, CaseBlock, TypeSpec};
 use std::collections::BTreeMap;
 mod pointers;
 mod components;
+mod pointer_components;
 
 #[derive(Clone)]
 struct Object {
+    display: String,
     kind: String,
     polymorphic: bool,
     pointer: bool,
@@ -259,6 +261,11 @@ impl Lower<'_> {
             runtime.insert(
                 n.clone(),
                 Object {
+                    display: body.iter().find_map(|s|match s {
+                        Stmt::CallSub{name,args} if name=="@pointer_component_targets" && args.first()==Some(&id(n))=>
+                            args.last().and_then(|e|if let Expr::Str(label)=e {Some(label.clone())}else{None}),
+                        _=>None,
+                    }).unwrap_or_else(||n.clone()),
                     kind: v.kind.clone(),
                     polymorphic: true,
                     pointer,
@@ -976,7 +983,7 @@ impl Lower<'_> {
             return Ok(vec![cases(
                 o,
                 bodies,
-                failure(if o.pointer {format!("use of unassociated polymorphic pointer `{n}`")} else {format!("use of unallocated polymorphic object `{n}`")}),
+                failure(if o.pointer {format!("use of unassociated polymorphic pointer `{}`",o.display)} else {format!("use of unallocated polymorphic object `{n}`")}),
             )]);
         }
         self.serial += 1;
@@ -1080,6 +1087,7 @@ impl Lower<'_> {
 }
 
 pub(super) fn resolve(mut program: Program, defs: &mut Definitions) -> Result<Program> {
+    pointer_components::prepare(&mut program, defs)?;
     fn needed(body: &[Stmt]) -> bool {
         for s in body {
             if let Stmt::DummyIntent {name,intent} = s {

@@ -20,6 +20,13 @@ pub(super) fn targets(
                         names.entry(p.clone()).or_default().insert(n.clone());
                     }
                 }
+                Stmt::CallSub {name,args} if name=="@pointer_component_targets" => {
+                    if let Some(Expr::Ident(p))=args.first() {
+                        for target in &args[1..] {if let Expr::Ident(n)=target {
+                            names.entry(p.clone()).or_default().insert(n.clone());
+                        }}
+                    }
+                }
                 Stmt::If {
                     then_body,
                     else_body,
@@ -104,6 +111,14 @@ impl Lower<'_> {
         let Stmt::CallSub { name, args } = s else {
             return Ok(None);
         };
+        if name=="@pointer_component_targets" {return Ok(Some(vec![]));}
+        if matches!(name.as_str(),"@pointer_component_load"|"@pointer_component_store") {
+            let [Expr::Ident(p),tag]=args.as_slice() else {bail!("invalid pointer component descriptor transfer");};
+            let object=vars.get(p).filter(|o|o.pointer).context("missing pointer component view")?;
+            return Ok(Some(vec![if name=="@pointer_component_load" {
+                Stmt::Assign{name:object.tag.clone(),value:tag.clone()}
+            } else {pointer_components::assign(tag,id(&object.tag))?}]));
+        }
         if name == "@pointer_associate" {
             let [Expr::Ident(p), target] = args.as_slice() else {
                 return Ok(None);

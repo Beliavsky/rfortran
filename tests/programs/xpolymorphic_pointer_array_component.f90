@@ -1,4 +1,4 @@
-! Reduced next classes_geom blocker: a pointer component in a record-array element.
+! Regression: a polymorphic pointer component in a record-array element.
 program test_pointer_array_component
 implicit none
 type base

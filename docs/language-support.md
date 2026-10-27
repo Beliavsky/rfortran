@@ -75,6 +75,7 @@ gfortran when it is installed. Run the tests after `cargo build --bin rfort`.
   - [Scalar polymorphic ALLOCATABLE objects](#scalar-polymorphic-allocatable-objects)
   - [Scalar polymorphic allocatable dummy arguments](#scalar-polymorphic-allocatable-dummy-arguments)
   - [Scalar polymorphic POINTER objects](#scalar-polymorphic-pointer-objects)
+  - [Scalar polymorphic POINTER components](#scalar-polymorphic-pointer-components)
   - [Scalar dynamic binding dispatch](#scalar-dynamic-binding-dispatch)
   - [SELECT TYPE](#select-type)
   - [Derived arguments and OPTIONAL](#derived-arguments-and-optional)
@@ -2348,6 +2349,42 @@ existing host-capture limits.
 
 Run `python tests/test_polymorphic_pointers.py`. A standalone example is
 `tests/programs/xpolymorphic_pointer.f90`.
+
+### Scalar polymorphic POINTER components
+
+Local records can contain scalar `CLASS(parent), POINTER` components. The
+owners can be scalars or fixed/runtime-allocated record arrays through rank 15,
+including components nested in ordinary scalar records. Module-defined owner
+types and USE aliases are supported.
+
+```fortran
+type entry
+   class(shape), pointer :: object => null()
+end type
+type(entry) :: list(2)
+type(circle), target :: c
+list(1)%object => c
+print *, associated(list(1)%object), list(1)%object%area()
+nullify(list(1)%object)
+```
+
+Each owner element keeps its own association. Reassociation, pointer-to-pointer
+association, ASSOCIATED/NULLIFY, scalar target-component writes and type-bound
+function/subroutine calls reuse the standalone polymorphic pointer machinery.
+Owner assignment copies associations without copying targets. Scalar owner
+subscripts are captured once per reference, and loop conditions reload the
+current association. Destroying an owner never destroys its borrowed target.
+
+This is a private, procedure-local target-identity representation, not a
+portable descriptor interface. Owners as dummy arguments, function results or
+module objects remain unsupported, as do constructors with explicit arguments
+for these owner types, component SELECT TYPE, unlimited/array pointer components and
+the standalone pointers' unsupported target/allocation forms. Such owners must
+remain in the declaring procedure; general escaping owner storage needs a
+component descriptor ABI.
+
+Run `python tests/test_polymorphic_pointer_components.py`. The reduced example
+`tests/programs/xpolymorphic_pointer_array_component.f90` prints `T 7`.
 
 ### Scalar dynamic binding dispatch
 

@@ -73,16 +73,11 @@ Other resources from the supplied list remain candidates, not tested coverage:
 
 ## Checkpoint (2026-10-27)
 
-All nine examples compile and run with gfortran. Eight match rfort's output:
+All nine examples compile and run with gfortran and match rfort's output:
 Leair sections 5, 7, and 9, the book's `mytype` and polymorphism examples,
 the FortranCon moving-average and abstract-framework examples, and Markus's
-`abstract_point` example.
-
-The remaining compiler gap is recorded in the manifest:
-
-| Case | First blocker |
-|---|---|
-| `markus-classes_geom` | Pointer association to a polymorphic component of a record-array element |
+`abstract_point` and `classes_geom` examples. None of these nine cases currently
+has a known-failure exemption in the manifest.
 
 Leair section 9 now passes unchanged: PRIVATE component/binding declarations,
 accessibility checks, the procedure name `print`, and the constructor result
@@ -129,14 +124,17 @@ allocation lifetimes, and retain real uninitialized-read diagnostics at
 procedure entry. CASE pairs and complex-expression disambiguation remain
 covered by `tests/test_select_case_lists.py`.
 
-The `classes_geom` declaration using `type(list_of_objects), dimension(2)` now
-parses. DIMENSION attributes share the entity-bound representation for intrinsic,
-derived, polymorphic and referenced types. The example next stops at
-`list(1)%object => rect`; the reduced case is
-`tests/programs/xpolymorphic_pointer_array_component.f90`.
+The `classes_geom` example also passes unchanged. DIMENSION attributes share
+the entity-bound representation for intrinsic, derived, polymorphic and
+referenced types. Local scalar polymorphic pointer components can store
+independent associations in each owner-array element and dispatch bindings to
+the selected target. `tests/programs/xpolymorphic_pointer_array_component.f90`
+prints `T 7` with both compilers. `tests/test_polymorphic_pointer_components.py`
+covers reassociation, shallow owner copies, nested/module-defined types,
+runtime-allocated owners through rank 15, association inquiries, target writes,
+and the supported interface boundaries.
 
-These are first failures, not a claim that fixing one will make its entire
-example pass. The suite deliberately preserves upstream code so it can expose
+The suite deliberately preserves upstream code so it can expose
 interactions that focused regression tests miss. A gfortran failure is reported
 as a reference failure, rather than automatically blamed on rfort.
 
