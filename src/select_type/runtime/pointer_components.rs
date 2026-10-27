@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Beliavsky
-//! Local record components store pointer identities in the record's own tag
-//! field. Short-lived scalar pointer views reuse ordinary runtime dispatch.
+//! Record components store pointer identities in the record's own tag field.
+//! Explicit-interface specializations borrow their caller's target environment;
+//! short-lived scalar pointer views reuse ordinary runtime dispatch.
 use super::*;
+mod calls;
 
 #[derive(Clone)]
 struct Member {
@@ -92,6 +94,7 @@ struct Scope<'a> {
     targets: Vec<String>,
     serial: &'a mut usize,
     declarations: Vec<Stmt>,
+    pure: bool,
 }
 impl Scope<'_> {
     fn owner(&self, e: &Expr) -> bool {
@@ -202,7 +205,9 @@ impl Scope<'_> {
         self.declarations.push(Stmt::DerivedDecl {
             type_name: member.kind,
             names: vec![proxy.clone()],
-            attributes: vec!["pointer".into(), "@referenced_type".into()],
+            attributes: if self.pure && member.readonly {
+                vec!["pointer".into(), "intent(in)".into(), "@referenced_type".into()]
+            } else {vec!["pointer".into(), "@referenced_type".into()]},
             polymorphic: true,
             dims: vec![],
         });
@@ -325,6 +330,11 @@ impl Scope<'_> {
                         for e in args.iter_mut().skip(1) {self.expression(e,&mut prefix,&mut writes,false)?;}
                     }
                     Stmt::CallSub{name,args} if name=="@nullify" => for e in args {self.expression(e,&mut prefix,&mut writes,true)?;},
+                    Stmt::CallSub{name,args} if name.contains('%') && !name.starts_with('@') => {
+                        let mut designator=Expr::Call(name.clone(),args.clone());
+                        self.expression(&mut designator,&mut prefix,&mut writes,false)?;
+                        if let Expr::Call(target,actuals)=designator {*name=target;*args=actuals;}
+                    }
                     Stmt::CallSub{name,args} if name.starts_with("@element_call:") && !args.is_empty() => {
                         let field=name.trim_start_matches("@element_call:");
                         let mut designator=Expr::Call(format!("@record_component:{field}"),vec![args[0].clone(),Expr::Call("@component_subscripts".into(),args[1..].to_vec())]);
@@ -391,6 +401,7 @@ fn scope(
     parent: &Declarations,
     params: &[String],
     module: bool,
+    pure: bool,
     serial: &mut usize,
 ) -> Result<()> {
     let declared = declarations(body, parent);
@@ -406,7 +417,8 @@ fn scope(
             &mut found,
             &mut HashSet::new(),
         )?;
-        if !found.is_empty() && (module || params.contains(&name)) {
+        let interface = body.iter().any(|s|matches!(s,Stmt::CallSub{name,..} if name==calls::ENVIRONMENT));
+        if !found.is_empty() && (module || (params.contains(&name) && !interface)) {
             bail!("module objects and dummy arguments with polymorphic POINTER components are not yet supported");
         }
         fields.extend(found);
@@ -414,17 +426,17 @@ fn scope(
     for s in body.iter_mut() {
         match s {
             Stmt::Function {
-                name, params, body, ..
+                name, params, body, pure, ..
             } => {
                 if body.iter().any(|s|matches!(s,Stmt::DerivedDecl{names,type_name,..} if names.contains(name) && defs.members.get(type_name).is_some_and(|m|m.values().any(|v|v.polymorphic&&v.attrs.iter().any(|a|a=="pointer"))))) {
                 bail!("function results with polymorphic POINTER components are not yet supported");
             }
-                scope(body, defs, &declared, params, false, serial)?;
+                scope(body, defs, &declared, params, false, *pure, serial)?;
             }
-            Stmt::Subroutine { params, body, .. } => {
-                scope(body, defs, &declared, params, false, serial)?
+            Stmt::Subroutine { params, body, pure, .. } => {
+                scope(body, defs, &declared, params, false, *pure, serial)?
             }
-            Stmt::Module { body, .. } => scope(body, defs, &declared, &[], true, serial)?,
+            Stmt::Module { body, .. } => scope(body, defs, &declared, &[], true, false, serial)?,
             _ => {}
         }
     }
@@ -455,7 +467,9 @@ fn scope(
         }
     }
     let mut candidates = HashSet::new();
-    targets(body, &mut candidates);
+    if let Some(args)=body.iter().find_map(|s|match s {Stmt::CallSub{name,args} if name==calls::ENVIRONMENT=>Some(args),_=>None}) {
+        candidates.extend(args.iter().filter_map(|e|if let Expr::Ident(n)=e {Some(n.clone())}else{None}));
+    } else { targets(body, &mut candidates); }
     let mut candidates: Vec<_> = candidates.into_iter().collect();
     candidates.sort();
     let constructors = defs
@@ -474,6 +488,7 @@ fn scope(
         targets: candidates,
         serial,
         declarations: vec![],
+        pure,
     };
     lower.body(body)?;
     lower.declarations.append(body);
@@ -549,13 +564,20 @@ pub(super) fn prepare(program: &mut Program, defs: &mut Definitions) -> Result<(
     }) {
         return Ok(());
     }
+    calls::prepare(program, defs)?;
     scope(
         &mut program.body,
         defs,
         &Declarations::new(),
         &[],
         false,
+        false,
         &mut 0,
     )?;
+    fn clear(body: &mut Vec<Stmt>) {
+        body.retain(|s|!matches!(s,Stmt::CallSub{name,..} if name==calls::ENVIRONMENT));
+        for s in body {for child in children(s) {clear(child);}}
+    }
+    clear(&mut program.body);
     schemas(&mut program.body, defs)
 }

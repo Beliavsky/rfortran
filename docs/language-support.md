@@ -2355,7 +2355,7 @@ Run `python tests/test_polymorphic_pointers.py`. A standalone example is
 Local records can contain scalar `CLASS(parent), POINTER` components. The
 owners can be scalars or fixed/runtime-allocated record arrays through rank 15,
 including components nested in ordinary scalar records. Module-defined owner
-types and USE aliases are supported.
+types, USE aliases and separately compiled `.rmod` interfaces are supported.
 
 ```fortran
 type entry
@@ -2375,16 +2375,29 @@ Owner assignment copies associations without copying targets. Scalar owner
 subscripts are captured once per reference, and loop conditions reload the
 current association. Destroying an owner never destroys its borrowed target.
 
-This is a private, procedure-local target-identity representation, not a
-portable descriptor interface. Owners as dummy arguments, function results or
-module objects remain unsupported, as do constructors with explicit arguments
-for these owner types, component SELECT TYPE, unlimited/array pointer components and
-the standalone pointers' unsupported target/allocation forms. Such owners must
-remain in the declaring procedure; general escaping owner storage needs a
-component descriptor ABI.
+Owners can also be scalar or array dummy arguments to specific procedures with
+known explicit interfaces, including forwarding, keyword calls and scalar-valued
+functions.
+INTENT(IN) prevents changing the component's association while allowing an
+impure procedure to change its target. INTENT(INOUT) preserves reassociation in
+the caller; INTENT(OUT) applies the owner's default initialization on entry.
+Aliased components continue to refer to the same target across these calls.
+
+The compiler specializes these calls with hidden borrowed TARGET arguments
+alongside the association tags. This private target-environment representation
+does not copy or own targets and is not a portable descriptor ABI. Recursive
+owner procedures, new local TARGET storage in these procedures, owner function
+results and module owner objects remain unsupported, as do generic/type-bound
+owner interfaces, shadowed host targets, external calls without a known interface,
+constructors with explicit arguments for these owner types, component SELECT TYPE,
+unlimited/array pointer components and the standalone pointers' unsupported
+target/allocation forms. General escaping
+owner storage still needs a persistent component descriptor ABI.
 
 Run `python tests/test_polymorphic_pointer_components.py`. The reduced example
 `tests/programs/xpolymorphic_pointer_array_component.f90` prints `T 7`.
+`tests/programs/xpolymorphic_pointer_component_dummy.f90` tests procedure calls,
+target mutation, reassociation and default initialization on INTENT(OUT).
 
 ### Scalar dynamic binding dispatch
 
