@@ -6,9 +6,9 @@
 //! bindings into the extended type. The parent component `c%parent` names
 //! the inherited components themselves, so `c%parent%x` is `c%x`. Each
 //! extended type keeps an `@extends` marker naming its parent, which derived
-//! lowering uses to pass an extended object as its parent type. Dynamic
-//! dispatch is not implemented: derived lowering rejects a type-bound call
-//! through a CLASS dummy that an extension overrides.
+//! lowering uses to pass an extended object as its parent type. Scalar CLASS
+//! calls are specialized by select_type before this pass. Unsupported remaining
+//! polymorphic calls are diagnosed by derived lowering.
 use crate::ast::{Program, Stmt};
 use anyhow::{bail, Result};
 use std::collections::{HashMap, HashSet};

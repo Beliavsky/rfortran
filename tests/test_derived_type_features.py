@@ -735,10 +735,9 @@ print *, a
 end program
 """, ' 2 2\n')
 
-    def test_dynamic_dispatch_is_diagnosed(self):
-        """A binding called through a CLASS dummy that an extension overrides
-        needs dynamic dispatch, which is rejected rather than misdirected."""
-        self.reject("""module zoo
+    def test_dynamic_dispatch_uses_override(self):
+        """A binding through CLASS uses the extended actual's override."""
+        self.check("""module zoo
 implicit none
 type :: animal
   integer :: legs = 4
@@ -770,7 +769,7 @@ b%legs = 2
 call b%speak()
 call talk(b)
 end program
-""", "needs dynamic dispatch")
+""", "chirp 2\nchirp 2\n")
 
 
 if __name__ == "__main__":

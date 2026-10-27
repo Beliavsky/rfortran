@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Beliavsky
 // See LICENSE-MIT in the repository root.
 
-//! Scalar SELECT TYPE with private, call-site dynamic-type specialization.
+//! Scalar SELECT TYPE and bound dispatch with private dynamic-type specialization.
 //! Retain the original declared-type dummy and add borrowed component views:
 //! generic resolution outside a guard must still see the declared parent.
 use crate::ast::{CaseItem, CaseOrDefault, Expr, Program, Stmt};
@@ -158,7 +158,7 @@ struct Definitions {
     parents: HashMap<String, String>,
     bound_targets: HashSet<String>,
     fields: HashMap<String, HashMap<String, Option<String>>>,
-    bindings: HashMap<String, HashSet<String>>,
+    bindings: HashMap<String, HashMap<String, String>>,
 }
 impl Definitions {
     fn collect(&mut self, body: &[Stmt]) {
@@ -209,7 +209,11 @@ impl Definitions {
                     self.fields.insert(name.clone(), fields);
                     self.bindings.insert(
                         name.clone(),
-                        bindings.iter().map(|(n, _)| n.clone()).collect(),
+                        bindings
+                            .iter()
+                            .filter(|(n, _)| !n.starts_with('@'))
+                            .cloned()
+                            .collect(),
                     );
                 }
                 Stmt::Function { body, .. }
@@ -235,6 +239,19 @@ impl Definitions {
             d += 1;
         }
     }
+    fn binding(&self, kind: &str, method: &str) -> Option<String> {
+        let mut kind = kind;
+        let mut seen = HashSet::new();
+        loop {
+            if let Some(target) = self.bindings.get(kind).and_then(|b| b.get(method)) {
+                return Some(target.clone());
+            }
+            if !seen.insert(kind) {
+                return None;
+            }
+            kind = self.parents.get(kind)?;
+        }
+    }
     fn field(&self, ty: &str, name: &str) -> Option<Option<String>> {
         let mut ty = ty;
         let mut seen = HashSet::new();
@@ -242,7 +259,7 @@ impl Definitions {
             if let Some(value) = self.fields.get(ty).and_then(|f| f.get(name)) {
                 return Some(value.clone());
             }
-            if self.bindings.get(ty).is_some_and(|b| b.contains(name)) {
+            if self.bindings.get(ty).is_some_and(|b| b.contains_key(name)) {
                 return Some(None);
             }
             if !seen.insert(ty) {
@@ -473,6 +490,7 @@ struct Lowerer {
     cache: HashMap<(String, Vec<String>), String>,
     extras: HashMap<String, Vec<Extra>>,
     generated: HashMap<String, Vec<Stmt>>,
+    wrappers: HashMap<String, Stmt>,
     names: Vec<(String, String)>,
     serial: usize,
 }
@@ -527,14 +545,14 @@ impl Lowerer {
         let mut kinds = vec![];
         for (position, dummy, formal) in &t.dummies {
             if formal.rank != 0 {
-                bail!("SELECT TYPE specialization currently supports scalar CLASS dummies only (`{dummy}`)");
+                bail!("polymorphic call specialization currently supports scalar CLASS dummies only (`{dummy}`)");
             }
             if formal
                 .attrs
                 .iter()
                 .any(|a| matches!(a.as_str(), "pointer" | "allocatable" | "value"))
             {
-                bail!("SELECT TYPE specialization does not yet support POINTER, ALLOCATABLE or VALUE CLASS dummies");
+                bail!("polymorphic call specialization does not yet support POINTER, ALLOCATABLE or VALUE CLASS dummies");
             }
             let actual = &args[*position];
             if crate::named_arguments::omitted(actual) {
@@ -543,8 +561,18 @@ impl Lowerer {
                 continue;
             }
             let Expr::Ident(n) = actual else {
-                bail!("SELECT TYPE specialization currently requires a scalar variable actual for `{dummy}`");
+                bail!("polymorphic call specialization currently requires a scalar variable actual for `{dummy}`");
             };
+            if vars
+                .get(n)
+                .is_some_and(|v| v.attrs.iter().any(|a| a == "intent(in)"))
+                && formal
+                    .attrs
+                    .iter()
+                    .any(|a| matches!(a.as_str(), "intent(out)" | "intent(inout)"))
+            {
+                bail!("cannot pass INTENT(IN) entity `{n}` to writable CLASS dummy `{dummy}`");
+            }
             let (kind, value) = if let Some(d) = dynamic.get(n) {
                 (d.kind.clone(), d.value.clone())
             } else {
@@ -556,7 +584,7 @@ impl Lowerer {
                 }
                 if obj.polymorphic {
                     bail!(
-                        "cannot determine dynamic type of polymorphic actual `{n}` for SELECT TYPE"
+                        "cannot determine dynamic type of polymorphic actual `{n}` for polymorphic calls"
                     );
                 }
                 (obj.kind.clone(), actual.clone())
@@ -793,12 +821,111 @@ impl Lowerer {
         *body = out;
         Ok(())
     }
+    fn call(
+        &mut self,
+        name: &mut String,
+        args: &mut Vec<Expr>,
+        vars: &Objects,
+        dynamic: &Dynamics,
+    ) -> Result<()> {
+        let mut parent_dynamic = None;
+        if let Some((object, method)) = name.rsplit_once('%') {
+            let mut view = vars.get(object).cloned().map(|v| (v, None));
+            // An explicit parent component is nonpolymorphic. It deliberately
+            // bypasses an override, including dispatch from inside that call.
+            if view.is_none() {
+                if let Some((root, rest)) = object.split_once('%') {
+                    if let Some(declared) = vars.get(root) {
+                        let mut kind = declared.kind.clone();
+                        let mut parent = true;
+                        for component in rest.split('%') {
+                            match self.defs.field(&kind, component) {
+                                Some(Some(next))
+                                    if self.defs.distance(&kind, &next).is_some_and(|d| d > 0) =>
+                                {
+                                    kind = next
+                                }
+                                _ => {
+                                    parent = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if parent {
+                            let root_value = dynamic
+                                .get(root)
+                                .map(|d| d.value.clone())
+                                .unwrap_or_else(|| Expr::Ident(root.into()));
+                            if let Expr::Ident(root_value) = root_value {
+                                let value = Expr::Ident(format!("{root_value}%{rest}"));
+                                let mut obj = declared.clone();
+                                obj.kind = kind;
+                                obj.polymorphic = false;
+                                obj.rank = 0;
+                                view = Some((obj, Some(value)));
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some((declared, parent)) = view {
+                if self.defs.binding(&declared.kind, method).is_some() {
+                    if declared.rank != 0 {
+                        bail!("dynamic binding dispatch currently requires a scalar passed object");
+                    }
+                    let (kind, value) = if let Some(value) = parent {
+                        let Expr::Ident(key) = &value else {
+                            unreachable!()
+                        };
+                        let mut map = dynamic.clone();
+                        map.insert(
+                            key.clone(),
+                            Dynamic {
+                                kind: declared.kind.clone(),
+                                value: value.clone(),
+                            },
+                        );
+                        parent_dynamic = Some(map);
+                        (declared.kind.clone(), value)
+                    } else if let Some(actual) = dynamic.get(object) {
+                        (actual.kind.clone(), actual.value.clone())
+                    } else {
+                        if declared.polymorphic {
+                            bail!("cannot determine dynamic type of CLASS object `{object}` for binding dispatch");
+                        }
+                        (declared.kind.clone(), Expr::Ident(object.into()))
+                    };
+                    let target = self
+                        .defs
+                        .binding(&kind, method)
+                        .with_context(|| format!("type `{kind}` has no binding `{method}`"))?;
+                    if declared.attrs.iter().any(|a| a == "intent(in)")
+                        && self.templates.get(&target).is_some_and(|t| {
+                            t.dummies.iter().any(|(i, _, v)| {
+                                *i == 0
+                                    && v.attrs.iter().any(|a| {
+                                        matches!(a.as_str(), "intent(out)" | "intent(inout)")
+                                    })
+                            })
+                        })
+                    {
+                        bail!("cannot pass INTENT(IN) object `{object}` to a writable passed-object dummy");
+                    }
+                    args.insert(0, value);
+                    *name = target;
+                }
+            }
+        }
+        if self.templates.contains_key(name) {
+            *name =
+                self.specialize(name, args, vars, parent_dynamic.as_ref().unwrap_or(dynamic))?;
+        }
+        Ok(())
+    }
     fn expression(&mut self, e: &mut Expr, vars: &Objects, dynamic: &Dynamics) -> Result<()> {
         match e {
             Expr::Call(n, args) => {
-                if self.templates.contains_key(n) {
-                    *n = self.specialize(n, args, vars, dynamic)?;
-                }
+                self.call(n, args, vars, dynamic)?;
                 for a in args {
                     self.expression(a, vars, dynamic)?;
                 }
@@ -843,9 +970,7 @@ impl Lowerer {
                     bail!("SELECT TYPE selector must be a supported scalar CLASS dummy argument");
                 }
                 if let Stmt::CallSub { name, args } = s {
-                    if self.templates.contains_key(name) {
-                        *name = self.specialize(name, args, &vars, dynamic)?;
-                    }
+                    self.call(name, args, &vars, dynamic)?;
                 }
                 for e in expressions(s) {
                     self.expression(e, &vars, dynamic)?;
@@ -859,6 +984,137 @@ impl Lowerer {
         }
         Ok(())
     }
+    fn binding_wrappers(&mut self) -> Result<()> {
+        let targets = self.defs.bound_targets.iter().cloned().collect::<Vec<_>>();
+        for name in targets {
+            let Some(t) = self.templates.get(&name).cloned() else {
+                continue;
+            };
+            let source = match &t.statement {
+                Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } => body,
+                _ => unreachable!(),
+            };
+            let vars = objects(source, &t.host);
+            let dynamic = t
+                .dummies
+                .iter()
+                .map(|(_, n, v)| {
+                    (
+                        n.clone(),
+                        Dynamic {
+                            kind: v.kind.clone(),
+                            value: Expr::Ident(n.clone()),
+                        },
+                    )
+                })
+                .collect();
+            let mut args = t
+                .params
+                .iter()
+                .map(|n| Expr::Ident(n.clone()))
+                .collect::<Vec<_>>();
+            let target = self.specialize(&name, &mut args, &vars, &dynamic)?;
+            let mut wrapper = t.statement.clone();
+            let body = match &mut wrapper {
+                Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } => body,
+                _ => unreachable!(),
+            };
+            let result = match &t.statement {
+                Stmt::Function { body, .. } => Some(match body.last() {
+                    Some(Stmt::Return(Some(Expr::Ident(n)))) => n.clone(),
+                    _ => name.clone(),
+                }),
+                _ => None,
+            };
+            let keep = |n: &String| t.params.contains(n) || result.as_ref() == Some(n);
+            *body = source
+                .iter()
+                .filter_map(|s| match s {
+                    Stmt::DerivedDecl {
+                        type_name,
+                        names,
+                        polymorphic,
+                        dims,
+                        attributes,
+                    } => {
+                        let names = names
+                            .iter()
+                            .filter(|n| keep(n))
+                            .cloned()
+                            .collect::<Vec<_>>();
+                        if names.is_empty() {
+                            None
+                        } else {
+                            Some(Stmt::DerivedDecl {
+                                type_name: type_name.clone(),
+                                names,
+                                polymorphic: *polymorphic,
+                                dims: dims.clone(),
+                                attributes: attributes
+                                    .iter()
+                                    .map(|a| {
+                                        if a == "intent(out)" {
+                                            "intent(inout)".into()
+                                        } else {
+                                            a.clone()
+                                        }
+                                    })
+                                    .collect(),
+                            })
+                        }
+                    }
+                    Stmt::VarDecl { kind, names } => {
+                        let names = names
+                            .iter()
+                            .filter(|n| keep(n))
+                            .cloned()
+                            .collect::<Vec<_>>();
+                        if names.is_empty() {
+                            None
+                        } else {
+                            Some(Stmt::VarDecl {
+                                kind: kind.clone(),
+                                names,
+                            })
+                        }
+                    }
+                    Stmt::ArrayDecl { name, .. } | Stmt::DummyIntent { name, .. } if keep(name) => {
+                        Some(s.clone())
+                    }
+                    Stmt::InitializedDecl { attributes, .. }
+                        if attributes.iter().any(|a| a == "parameter") =>
+                    {
+                        Some(s.clone())
+                    }
+                    Stmt::Implicit(_) | Stmt::Use { .. } | Stmt::SourceLocation(_) => {
+                        Some(s.clone())
+                    }
+                    _ => None,
+                })
+                .collect();
+            let class_params: HashSet<_> = t.dummies.iter().map(|(_, n, _)| n.clone()).collect();
+            *body=std::mem::take(body).into_iter().flat_map(|s| {
+                if let Stmt::DerivedDecl{type_name,names,attributes,polymorphic,dims}=&s {
+                    return names.iter().map(|n| {
+                        let attrs=if class_params.contains(n){vars[n].attrs.clone()}else{attributes.clone()};
+                        Stmt::DerivedDecl{type_name:type_name.clone(),names:vec![n.clone()],attributes:attrs.into_iter().map(|a|if a=="intent(out)"{"intent(inout)".into()}else{a}).collect(),polymorphic:*polymorphic,dims:dims.clone()}
+                    }).collect::<Vec<_>>();
+                }
+                if matches!(&s,Stmt::DummyIntent{name,intent} if class_params.contains(name) && matches!(intent.as_str(),"optional"|"intent(in)"|"intent(out)"|"intent(inout)"|"target")){vec![]}else{vec![s]}
+            }).collect();
+            if let Some(result) = result {
+                body.push(Stmt::Assign {
+                    name: result.clone(),
+                    value: Expr::Call(target, args),
+                });
+                body.push(Stmt::Return(Some(Expr::Ident(result))));
+            } else {
+                body.push(Stmt::CallSub { name: target, args });
+            }
+            self.wrappers.insert(name, wrapper);
+        }
+        Ok(())
+    }
     fn install(&mut self, body: &mut Vec<Stmt>) {
         let mut out = vec![];
         for mut s in std::mem::take(body) {
@@ -867,8 +1123,8 @@ impl Lowerer {
                     let name = name.clone();
                     // Concrete TYPE IS views can call ordinary existing bindings.
                     // Their original entry point is still named by the type table.
-                    if self.defs.bound_targets.contains(&name) {
-                        out.push(s);
+                    if let Some(wrapper) = self.wrappers.remove(&name) {
+                        out.push(wrapper);
                     }
                     for mut definition in self.generated.remove(&name).unwrap_or_default() {
                         for b in children(&mut definition) {
@@ -888,20 +1144,88 @@ impl Lowerer {
     }
 }
 fn needed(body: &[Stmt]) -> bool {
-    body.iter().any(|s| {
-        if matches!(s,Stmt::SelectCase{expr,..} if selection(expr).is_some()) {
-            return true;
+    // Borrow source bodies here: cloning whole procedures on the fast path is
+    // unnecessary overhead for programs that contain no SELECT TYPE at all.
+    body.iter().any(|s| match s {
+        Stmt::SelectCase {
+            expr,
+            cases,
+            default,
+        } => {
+            selection(expr).is_some()
+                || cases.iter().any(|c| needed(&c.body))
+                || default.as_ref().is_some_and(|b| needed(b))
         }
-        let mut copy = s.clone();
-        children(&mut copy).into_iter().any(|b| needed(b))
+        Stmt::Function { body, .. }
+        | Stmt::Subroutine { body, .. }
+        | Stmt::Module { body, .. }
+        | Stmt::Block { body }
+        | Stmt::Do { body, .. }
+        | Stmt::DoWhile { body, .. } => needed(body),
+        Stmt::If {
+            then_body,
+            else_body,
+            ..
+        } => needed(then_body) || else_body.as_ref().is_some_and(|b| needed(b)),
+        _ => false,
     })
 }
-pub(crate) fn resolve(mut program: Program) -> Result<Program> {
-    if !needed(&program.body) {
-        return Ok(program);
+fn bound_dispatch_needed(body: &[Stmt], inherited: &Objects, defs: &Definitions) -> bool {
+    let vars = objects(body, inherited);
+    for s in body {
+        if let Stmt::CallSub { name, .. } = s {
+            if let Some((object, method)) = name.rsplit_once('%') {
+                if vars
+                    .get(object)
+                    .or_else(|| object.split_once('%').and_then(|(root, _)| vars.get(root)))
+                    .is_some_and(|v| {
+                        v.polymorphic && v.rank == 0 && defs.binding(&v.kind, method).is_some()
+                    })
+                {
+                    return true;
+                }
+            }
+        }
+        let mut copy = s.clone();
+        let mut found = false;
+        for e in expressions(&mut copy) {
+            visit_expr(e, &mut |e| {
+                if let Expr::Call(name, _) = e {
+                    if let Some((object, method)) = name.rsplit_once('%') {
+                        if vars
+                            .get(object)
+                            .or_else(|| object.split_once('%').and_then(|(root, _)| vars.get(root)))
+                            .is_some_and(|v| {
+                                v.polymorphic
+                                    && v.rank == 0
+                                    && defs.binding(&v.kind, method).is_some()
+                            })
+                        {
+                            found = true;
+                        }
+                    }
+                }
+            });
+        }
+        if found
+            || children(&mut copy)
+                .into_iter()
+                .any(|b| bound_dispatch_needed(b, &vars, defs))
+        {
+            return true;
+        }
     }
+    false
+}
+pub(crate) fn resolve(mut program: Program) -> Result<Program> {
     let mut defs = Definitions::default();
     defs.collect(&program.body);
+    if !needed(&program.body)
+        && (defs.bound_targets.is_empty()
+            || !bound_dispatch_needed(&program.body, &Objects::new(), &defs))
+    {
+        return Ok(program);
+    }
     defs.validate(&program.body, &Objects::new())?;
     let mut templates = HashMap::new();
     collect(&program.body, &Objects::new(), &mut templates)?;
@@ -913,7 +1237,7 @@ pub(crate) fn resolve(mut program: Program) -> Result<Program> {
             }
             if matches!(s,Stmt::GenericInterface{procedures,..} if procedures.iter().any(|n|templates.contains_key(n)))
             {
-                return Err(crate::source_diagnostics::at(anyhow::anyhow!("generic interfaces containing SELECT TYPE/CLASS specializations are not yet supported; call the specific procedure"),location));
+                return Err(crate::source_diagnostics::at(anyhow::anyhow!("generic interfaces containing polymorphic call specializations are not yet supported; call the specific procedure"),location));
             }
             let mut s = s.clone();
             for b in children(&mut s) {
@@ -923,30 +1247,18 @@ pub(crate) fn resolve(mut program: Program) -> Result<Program> {
         Ok(())
     }
     check_generics(&program.body, &templates)?;
-    for name in &defs.bound_targets {
-        if let Some(t) = templates.get(name) {
-            let body = match &t.statement {
-                Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } => body,
-                _ => unreachable!(),
-            };
-            let mut invoked = HashSet::new();
-            crate::procedure_arguments::invoked(body, &mut invoked);
-            if needed(body) || invoked.iter().any(|n| templates.contains_key(n)) {
-                bail!("type-bound procedures containing or forwarding to SELECT TYPE/CLASS specializations are not yet supported (`{name}`)");
-            }
-        }
-    }
-
     let mut lower = Lowerer {
         templates,
         defs,
         cache: HashMap::new(),
         extras: HashMap::new(),
         generated: HashMap::new(),
+        wrappers: HashMap::new(),
         names: vec![],
         serial: 0,
     };
     lower.body(&mut program.body, &Objects::new(), &Dynamics::new())?;
+    lower.binding_wrappers()?;
     lower.install(&mut program.body);
     let original: HashSet<_> = program.contains.iter().cloned().collect();
     program

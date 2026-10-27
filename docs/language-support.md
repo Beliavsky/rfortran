@@ -70,6 +70,8 @@ gfortran when it is installed. Run the tests after `cargo build --bin rfort`.
   - [Arrays of derived type](#arrays-of-derived-type)
   - [Type-bound procedures and generics](#type-bound-procedures-and-generics)
   - [Type extension](#type-extension)
+  - [Scalar dynamic binding dispatch](#scalar-dynamic-binding-dispatch)
+  - [SELECT TYPE](#select-type)
   - [Derived arguments and OPTIONAL](#derived-arguments-and-optional)
 - [Procedures](#procedures)
   - [C interoperability](#c-interoperability)
@@ -2025,12 +2027,46 @@ Run `python tests/test_derived_type_features.py`.
 procedures of `shape`; the extension's bindings override the parent's. The parent
 component `c%shape` names the inherited part, so `c%shape%x` is `c%x` and
 `s = c%shape` copies it. An extended object can be passed to a `type(shape)` or
-`class(shape)` dummy, and calls its inherited bindings. There is no dynamic
-dispatch yet: a CLASS dummy is treated as its declared type, so a type-bound call
-through a CLASS dummy is rejected at compile time when an extension overrides
-that binding, rather than calling the parent's procedure. ABSTRACT types,
+`class(shape)` dummy, and calls its inherited bindings. Scalar CLASS dummy
+calls support overridden binding dispatch as described below. ABSTRACT types,
 CLASS(*) and polymorphic ALLOCATABLE objects are not yet supported. Scalar
-SELECT TYPE is supported as described below.
+SELECT TYPE is also supported.
+
+### Scalar dynamic binding dispatch
+
+Ordinary passed-object bindings dispatch through scalar `CLASS(parent)` dummies
+according to the actual object's type. Overridden functions and subroutines,
+inherited implementations, calls through `self`, forwarding through specific
+procedures, multiple CLASS arguments, keyword/OPTIONAL arguments, and separate
+`.rmod` module compilation are supported. A bound procedure may itself use
+SELECT TYPE or forward its passed object to another polymorphic procedure.
+
+```fortran
+subroutine show(x)
+class(shape), intent(in) :: x
+print *, x%area()  ! circle actual calls circle's overridden area
+end subroutine
+```
+
+The passed object's declared type still controls component visibility and
+ordinary generic resolution; knowing the actual type does not expose extra
+components outside a suitable guard. Writable bindings update caller storage.
+INTENT(IN) objects cannot be passed to INTENT(OUT/INOUT) bindings. INTENT(OUT)
+default initialization uses the complete actual type. An explicit parent call
+such as `self%shape%area()` selects the parent's implementation and treats that
+parent component as nonpolymorphic, so it does not call the override again.
+
+Dispatch uses private call-site type specialization with borrowed component
+views, rather than a public runtime vtable/descriptor ABI. It currently requires
+simple scalar variable actuals and the default first passed-object dummy.
+Polymorphic arrays, CLASS(*), runtime polymorphic allocation, CLASSOF dispatch,
+POINTER/ALLOCATABLE/VALUE CLASS dummies, and generic interfaces containing
+specialized CLASS specifics remain unsupported. NOPASS, named PASS arguments,
+ABSTRACT types and DEFERRED bindings retain their existing limitations.
+Other record storage and result forms retain existing backend restrictions.
+
+Run `python tests/test_dynamic_dispatch.py`; the standalone example is
+`tests/programs/xdynamic_dispatch.f90`.
 
 ### SELECT TYPE
 
@@ -2070,10 +2106,8 @@ This implementation specializes calls for simple named scalar variable actuals;
 it does not add a public runtime polymorphic ABI. Array selectors, CLASS(*),
 polymorphic allocation, POINTER/ALLOCATABLE/VALUE CLASS dummies, expression
 actuals, and generic interfaces containing specialized CLASS specifics remain
-unsupported. Existing restrictions on overridden type-bound dispatch through
-CLASS views remain; exact TYPE IS views can use ordinary concrete bindings.
-Type-bound procedures which themselves contain or forward to SELECT TYPE/CLASS
-specializations remain unsupported.
+unsupported. Ordinary scalar binding calls through narrowed CLASS views use
+the actual type's override; exact TYPE IS views use that concrete type's binding.
 Other record storage forms retain the existing derived-type restrictions.
 
 Run `python tests/test_select_type.py`. The standalone example is
