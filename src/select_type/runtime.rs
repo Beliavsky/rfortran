@@ -12,6 +12,9 @@ use std::collections::BTreeMap;
 struct Object {
     kind: String,
     polymorphic: bool,
+    readonly: bool,
+    dummy: bool,
+    output: bool,
     tag: String,
     variants: Vec<(String, String)>,
 }
@@ -147,8 +150,60 @@ fn uses(s: &Stmt, n: &str) -> bool {
             .into_iter()
             .any(|b| b.iter().any(|s| uses(s, n)))
 }
+#[derive(Clone)]
+struct Procedure {
+    signature: crate::named_arguments::Signature,
+    dummies: HashMap<usize, (String, String)>,
+}
+fn procedures(body: &[Stmt], out: &mut HashMap<String, Procedure>) {
+    for s in body {
+        match s {
+            Stmt::Function {
+                name, params, body, ..
+            }
+            | Stmt::Subroutine {
+                name, params, body, ..
+            } => {
+                let vars = super::objects(body, &Objects::new());
+                let dummies = params
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, n)| {
+                        let v = vars.get(n)?;
+                        (v.polymorphic && v.attrs.iter().any(|a| a == "allocatable")).then(|| {
+                            (
+                                i,
+                                (
+                                    v.kind.clone(),
+                                    v.attrs
+                                        .iter()
+                                        .find(|a| a.starts_with("intent("))
+                                        .cloned()
+                                        .unwrap_or_else(|| "intent(inout)".into()),
+                                ),
+                            )
+                        })
+                    })
+                    .collect::<HashMap<_, _>>();
+                if !dummies.is_empty() {
+                    out.insert(
+                        name.clone(),
+                        Procedure {
+                            signature: crate::named_arguments::Signature::new(params, body),
+                            dummies,
+                        },
+                    );
+                }
+                procedures(body, out);
+            }
+            Stmt::Module { body, .. } | Stmt::Block { body } => procedures(body, out),
+            _ => {}
+        }
+    }
+}
 struct Lower<'a> {
     defs: &'a Definitions,
+    procedures: HashMap<String, Procedure>,
     generated: Vec<Stmt>,
     serial: usize,
 }
@@ -157,7 +212,7 @@ impl Lower<'_> {
         &mut self,
         body: &mut Vec<Stmt>,
         parent: &Declarations,
-        params: &[String],
+        params: &mut Vec<String>,
         pure: bool,
     ) -> Result<()> {
         let declared = declarations(body, parent);
@@ -173,8 +228,8 @@ impl Lower<'_> {
             if v.attrs.iter().any(|a| a == "save" || a == "pointer") {
                 bail!("SAVED or POINTER runtime polymorphic objects are not yet supported");
             }
-            if params.contains(n) {
-                bail!("runtime polymorphic ALLOCATABLE dummy arguments are not yet supported");
+            if params.contains(n) && v.attrs.iter().any(|a| a == "optional") {
+                bail!("OPTIONAL polymorphic ALLOCATABLE dummy arguments are not yet supported");
             }
             let mut kinds: Vec<_> = self
                 .defs
@@ -193,6 +248,9 @@ impl Lower<'_> {
                 Object {
                     kind: v.kind.clone(),
                     polymorphic: true,
+                    readonly: v.attrs.iter().any(|a| a == "intent(in)"),
+                    dummy: params.contains(n),
+                    output: params.contains(n) && v.attrs.iter().any(|a| a == "intent(out)"),
                     tag: format!("{stem}$tag"),
                     variants: kinds
                         .into_iter()
@@ -219,12 +277,13 @@ impl Lower<'_> {
                     {
                         bail!("module polymorphic ALLOCATABLE objects are not yet supported");
                     }
-                    self.scope(body, &declared, &[], false)?;
+                    self.scope(body, &declared, &mut vec![], false)?;
                 }
                 _ => {}
             }
         }
         if runtime.is_empty() {
+            self.body(body, &runtime, &declared, pure)?;
             return Ok(());
         }
         let mut cleaned = vec![];
@@ -247,11 +306,33 @@ impl Lower<'_> {
                 kind: TypeSpec::Integer(None),
                 names: vec![object.tag.clone()],
             });
+            if object.dummy {
+                storage.push(Stmt::DummyIntent {
+                    name: object.tag.clone(),
+                    intent: if object.readonly {
+                        "intent(in)"
+                    } else {
+                        "intent(inout)"
+                    }
+                    .into(),
+                });
+            }
             for (kind, name) in &object.variants {
+                let mut attrs = vec!["allocatable".into(), "@scalar_heap".into()];
+                if object.dummy {
+                    attrs.push(
+                        if object.readonly {
+                            "intent(in)"
+                        } else {
+                            "intent(inout)"
+                        }
+                        .into(),
+                    );
+                }
                 storage.push(Stmt::DerivedDecl {
                     type_name: kind.clone(),
                     names: vec![name.clone()],
-                    attributes: vec!["allocatable".into(), "@scalar_heap".into()],
+                    attributes: attrs,
                     polymorphic: false,
                     dims: vec![id("@deferred_extent")],
                 });
@@ -284,12 +365,123 @@ impl Lower<'_> {
                 ) && !matches!(s,Stmt::CallSub{name,..} if name=="@extends")
             })
             .unwrap_or(cleaned.len());
-        cleaned.splice(at..at, runtime.values().map(|o| set(&o.tag, 0)));
+        let mut entry = vec![];
+        for object in runtime.values() {
+            if !object.dummy {
+                entry.push(set(&object.tag, 0));
+            } else if object.output {
+                entry.push(cases(
+                    object,
+                    object
+                        .variants
+                        .iter()
+                        .map(|(_, n)| {
+                            vec![Stmt::CallSub {
+                                name: "@deallocate".into(),
+                                args: vec![id(n)],
+                            }]
+                        })
+                        .collect(),
+                    vec![],
+                ));
+                entry.push(set(&object.tag, 0));
+            }
+        }
+        cleaned.splice(at..at, entry);
+        *params = std::mem::take(params)
+            .into_iter()
+            .flat_map(|n| {
+                if let Some(o) = runtime.get(&n) {
+                    std::iter::once(o.tag.clone())
+                        .chain(o.variants.iter().map(|(_, s)| s.clone()))
+                        .collect::<Vec<_>>()
+                } else {
+                    vec![n]
+                }
+            })
+            .collect();
         self.body(&mut cleaned, &runtime, &declared, pure)?;
         storage.extend(cleaned);
         // Record-array lowering releases automatic allocation descriptors on
         // procedure exit, just as it does for ordinary local allocatables.
         *body = storage;
+        Ok(())
+    }
+    fn arguments(&self, name: &str, args: &mut Vec<Expr>, vars: &Runtime) -> Result<()> {
+        let Some(procedure) = self.procedures.get(name) else {
+            return Ok(());
+        };
+        // Calls have the source interface until this point. Expand one scalar
+        // polymorphic descriptor into its tag and all concrete borrowed arrays.
+        procedure.signature.reorder(name, args)?;
+        let mut expanded = vec![];
+        for (i, arg) in std::mem::take(args).into_iter().enumerate() {
+            if let Some((kind, intent)) = procedure.dummies.get(&i) {
+                let Expr::Ident(actual) = arg else {
+                    bail!("ALLOCATABLE polymorphic dummy requires an allocatable scalar variable");
+                };
+                let object = vars.get(&actual).context(
+                    "ALLOCATABLE polymorphic dummy requires a polymorphic ALLOCATABLE actual",
+                )?;
+                if !object.polymorphic {
+                    bail!("ALLOCATABLE polymorphic dummy requires an ALLOCATABLE actual, not a SELECT TYPE associate");
+                }
+                if &object.kind != kind {
+                    bail!(
+                        "ALLOCATABLE polymorphic actual and dummy must have the same declared type"
+                    );
+                }
+                let mut layout = self
+                    .defs
+                    .fields
+                    .keys()
+                    .filter(|k| {
+                        !self.defs.abstracts.contains(*k) && self.defs.distance(k, kind).is_some()
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                layout.sort();
+                if !layout.iter().eq(object.variants.iter().map(|(k, _)| k)) {
+                    bail!("narrowed SELECT TYPE descriptors are not yet supported as polymorphic ALLOCATABLE actuals");
+                }
+                if object.readonly && intent != "intent(in)" {
+                    bail!("cannot pass INTENT(IN) polymorphic object `{actual}` to a writable ALLOCATABLE dummy");
+                }
+                expanded.push(id(&object.tag));
+                expanded.extend(object.variants.iter().map(|(_, s)| id(s)));
+            } else {
+                expanded.push(arg);
+            }
+        }
+        *args = expanded;
+        Ok(())
+    }
+    fn calls(&self, s: &mut Stmt, vars: &Runtime) -> Result<()> {
+        if let Stmt::CallSub { name, args } = s {
+            if self.procedures.contains_key(name) {
+                self.arguments(name, args, vars)?;
+                *name = format!("@polymorphic_descriptor_call:{name}");
+            }
+        }
+        for e in expressions(s) {
+            let mut error = None;
+            visit_expr(e, &mut |e| {
+                if error.is_none() {
+                    if let Expr::Call(name, args) = e {
+                        if self.procedures.contains_key(name) {
+                            if let Err(e) = self.arguments(name, args, vars) {
+                                error = Some(e);
+                            } else {
+                                *name = format!("@polymorphic_descriptor_call:{name}");
+                            }
+                        }
+                    }
+                }
+            });
+            if let Some(e) = error {
+                return Err(e);
+            }
+        }
         Ok(())
     }
     fn transfer(
@@ -534,6 +726,9 @@ impl Lower<'_> {
                     "mixed polymorphic and nonpolymorphic allocation lists are not yet supported"
                 );
             };
+            if object.readonly {
+                bail!("cannot change allocation status of INTENT(IN) polymorphic object `{n}`");
+            }
             if name == "@deallocate" {
                 out.push(cases(
                     object,
@@ -594,6 +789,7 @@ impl Lower<'_> {
                 continue;
             }
             let lowered=(||->Result<Vec<Stmt>> {
+                self.calls(&mut s,vars)?;
                 if let Stmt::CallSub{name,args}=&s {
                     if matches!(name.as_str(),"@allocate"|"@allocate_derived_type"|"@deallocate") {
                         if let Some(out)=self.allocation(name,args,vars,decls,pure)? {return Ok(out);}
@@ -601,6 +797,7 @@ impl Lower<'_> {
                 }
                 if let Stmt::Assign{name,value}=&s {
                     if let Some(object)=vars.get(name) {
+                        if object.readonly {bail!("cannot define INTENT(IN) polymorphic object `{name}`");}
                         if !object.polymorphic {bail!("whole-object assignment of a SELECT TYPE associate requires ordinary derived assignment");}
                         let (mut prefix,value,local)=self.evaluate_source(value,vars,decls,pure)?;
                         prefix.extend(self.from_source(name,object,&value,true,true,vars,&local)?);
@@ -735,7 +932,12 @@ impl Lower<'_> {
             body.push(Stmt::DerivedDecl {
                 type_name: object.kind.clone(),
                 names: vec![n.clone()],
-                attributes: vec!["intent(inout)".into()],
+                attributes: vec![if object.readonly {
+                    "intent(in)"
+                } else {
+                    "intent(inout)"
+                }
+                .into()],
                 polymorphic: object.polymorphic,
                 dims: vec![],
             });
@@ -766,6 +968,21 @@ impl Lower<'_> {
                 args.push(id(n));
             }
             body.extend(d.clone());
+            if pure
+                && !parameter
+                && !d.iter().any(|s| match s {
+                    Stmt::DummyIntent { intent, .. } => intent.starts_with("intent("),
+                    Stmt::DerivedDecl { attributes, .. } => {
+                        attributes.iter().any(|a| a.starts_with("intent("))
+                    }
+                    _ => false,
+                })
+            {
+                body.push(Stmt::DummyIntent {
+                    name: n.clone(),
+                    intent: "intent(inout)".into(),
+                });
+            }
         }
         if let Some(p) = location {
             body.push(Stmt::SourceLocation(p));
@@ -817,12 +1034,37 @@ pub(super) fn resolve(mut program: Program, defs: &Definitions) -> Result<Progra
         return Ok(program);
     }
     defs.validate(&program.body, &Objects::new())?;
+    let mut signatures = HashMap::new();
+    procedures(&program.body, &mut signatures);
     let mut lower = Lower {
         defs,
+        procedures: signatures,
         generated: vec![],
         serial: 0,
     };
-    lower.scope(&mut program.body, &Declarations::new(), &[], false)?;
+    lower.scope(&mut program.body, &Declarations::new(), &mut vec![], false)?;
     program.body.extend(lower.generated);
+    fn restore(body: &mut [Stmt]) {
+        for s in body {
+            if let Stmt::CallSub { name, .. } = s {
+                if let Some(n) = name.strip_prefix("@polymorphic_descriptor_call:") {
+                    *name = n.into();
+                }
+            }
+            for e in expressions(s) {
+                visit_expr(e, &mut |e| {
+                    if let Expr::Call(name, _) = e {
+                        if let Some(n) = name.strip_prefix("@polymorphic_descriptor_call:") {
+                            *name = n.into();
+                        }
+                    }
+                });
+            }
+            for b in children(s) {
+                restore(b);
+            }
+        }
+    }
+    restore(&mut program.body);
     Ok(program)
 }

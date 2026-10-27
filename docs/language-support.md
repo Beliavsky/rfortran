@@ -72,6 +72,7 @@ gfortran when it is installed. Run the tests after `cargo build --bin rfort`.
   - [Type extension](#type-extension)
   - [ABSTRACT types and DEFERRED bindings](#abstract-types-and-deferred-bindings)
   - [Scalar polymorphic ALLOCATABLE objects](#scalar-polymorphic-allocatable-objects)
+  - [Scalar polymorphic allocatable dummy arguments](#scalar-polymorphic-allocatable-dummy-arguments)
   - [Scalar dynamic binding dispatch](#scalar-dynamic-binding-dispatch)
   - [SELECT TYPE](#select-type)
   - [Derived arguments and OPTIONAL](#derived-arguments-and-optional)
@@ -1624,6 +1625,9 @@ try `rf.bat xalloc_scalar.f90 --run` for the allocation-state example above.
 
 ### ALLOCATABLE dummy arguments
 
+For scalar polymorphic objects, see [scalar polymorphic allocatable dummy
+arguments](#scalar-polymorphic-allocatable-dummy-arguments).
+
 Numeric and LOGICAL ALLOCATABLE subroutine dummies support ranks 1 through 15
 with INTENT(IN), INTENT(OUT) and INTENT(INOUT). The dummy aliases the caller's
 heap descriptor, including its data, extents, lower bounds, allocation status
@@ -2155,7 +2159,8 @@ Sources currently support scalar concrete variables, constructors, and the
 runtime polymorphic locals described here; arbitrary derived-valued function
 results and component/array-element sources are not yet supported by this
 allocation path. This implementation does not support polymorphic arrays,
-CLASS(*), ALLOCATABLE polymorphic dummy arguments/results, saved or module
+CLASS(*), ALLOCATABLE polymorphic results, OPTIONAL polymorphic allocatable
+dummy arguments, saved or module
 polymorphic objects, STAT=/ERRMSG= on polymorphic allocation, whole-object
 assignment to SELECT TYPE associate names, or runtime polymorphic values in
 counted DO bounds.
@@ -2166,6 +2171,52 @@ runtime polymorphic descriptor support from this feature.
 Run `python tests/test_polymorphic_allocatable.py`. The standalone example is
 `tests/programs/xpolymorphic_allocatable.f90`; allocation-source and assignment
 examples are in `tests/programs/xpolymorphic_source.f90`.
+
+### Scalar polymorphic allocatable dummy arguments
+
+Required scalar `CLASS(type), ALLOCATABLE` dummy arguments are supported in
+specific Fortran subroutines and functions, including ABSTRACT declared types.
+The actual must be a scalar polymorphic allocatable variable with the same
+declared type as the dummy. It may be unallocated on entry.
+
+```fortran
+subroutine make_shape(x)
+class(shape), allocatable, intent(out) :: x
+! An allocated actual has already been deallocated on entry.
+allocate(circle :: x)
+end subroutine
+
+subroutine inspect(x)
+class(shape), allocatable, intent(in) :: x
+if (allocated(x)) print *, x%area()
+end subroutine
+```
+
+`INTENT(IN)` preserves allocation status and dynamic type and permits inquiries,
+SELECT TYPE and read-only method calls. Allocation, deallocation, assignment,
+and association with writable dummies are rejected. `INTENT(OUT)` deallocates
+an allocated actual on entry, including supported owned components; the
+procedure can return a new allocation or leave the actual unallocated.
+`INTENT(INOUT)` and omitted INTENT preserve the incoming object and allow
+allocation, deallocation, dynamic-type changes and intrinsic assignment.
+The caller sees the returned allocation status, value and dynamic type.
+
+Forwarding, positional/keyword arguments, multiple descriptor arguments,
+separately compiled `.rmod` modules, pure read-only functions, and impure
+functions that replace allocations are supported. Existing PURE constraints
+still reject polymorphic INTENT(OUT) dummies. Borrowed concrete storage is not
+automatically deallocated when the called procedure returns.
+
+The private lowering passes a mutable type tag and borrowed concrete array
+descriptors, using the existing allocation machinery. This does not establish
+a public polymorphic descriptor ABI. OPTIONAL descriptors, polymorphic arrays,
+CLASS(*), generic selection for these descriptor interfaces, descriptor
+arguments in type-bound calls, recursive allocation-call cycles, and narrowed
+SELECT TYPE views with a different descriptor layout remain unsupported.
+Existing record storage and result restrictions still apply.
+
+Run `python tests/test_polymorphic_allocatable_dummies.py`. The standalone
+factory example is `tests/programs/xpolymorphic_allocatable_dummies.f90`.
 
 ### Scalar dynamic binding dispatch
 
@@ -2195,9 +2246,10 @@ Dispatch uses private call-site type specialization with borrowed component
 views, rather than a public runtime vtable/descriptor ABI. It currently requires
 simple scalar variable actuals and the default first passed-object dummy.
 Polymorphic arrays, CLASS(*), CLASSOF dispatch,
-POINTER/ALLOCATABLE/VALUE CLASS dummies, and generic interfaces containing
+POINTER/VALUE CLASS dummies, and generic interfaces containing
 specialized CLASS specifics remain unsupported. NOPASS and named PASS arguments
 retain their existing limitations.
+Scalar ALLOCATABLE CLASS dummies use the runtime descriptor path described above.
 Other record storage and result forms retain existing backend restrictions.
 
 Run `python tests/test_dynamic_dispatch.py`; the standalone example is
@@ -2241,10 +2293,11 @@ source locations; SELECT TYPE requires `-std=f2003` or later.
 Procedure calls use private specializations, while local polymorphic allocatables
 select their concrete storage at runtime. Neither defines a public runtime
 polymorphic ABI. Array selectors, CLASS(*),
-POINTER/ALLOCATABLE/VALUE CLASS dummies, expression
+POINTER/VALUE CLASS dummies, expression
 actuals, and generic interfaces containing specialized CLASS specifics remain
 unsupported. Ordinary scalar binding calls through narrowed CLASS views use
 the actual type's override; exact TYPE IS views use that concrete type's binding.
+Scalar ALLOCATABLE selectors follow the runtime descriptor path described above.
 Other record storage forms retain the existing derived-type restrictions.
 
 Run `python tests/test_select_type.py`. The standalone example is
