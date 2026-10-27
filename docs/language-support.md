@@ -70,6 +70,7 @@ gfortran when it is installed. Run the tests after `cargo build --bin rfort`.
   - [Arrays of derived type](#arrays-of-derived-type)
   - [Type-bound procedures and generics](#type-bound-procedures-and-generics)
   - [Type extension](#type-extension)
+  - [ABSTRACT types and DEFERRED bindings](#abstract-types-and-deferred-bindings)
   - [Scalar dynamic binding dispatch](#scalar-dynamic-binding-dispatch)
   - [SELECT TYPE](#select-type)
   - [Derived arguments and OPTIONAL](#derived-arguments-and-optional)
@@ -2018,7 +2019,8 @@ the actual arguments, as a generic interface does, and `generic :: operator(+) =
 add` and `generic :: assignment(=) => assign` bind an operator or assignment to
 the type. `interface assignment(=)` with two-argument subroutines defines
 assignment to a whole variable; assignment to an element or a component still
-uses intrinsic assignment. NOPASS and DEFERRED bindings are not yet supported.
+uses intrinsic assignment. DEFERRED bindings are supported as described below;
+NOPASS remains unsupported.
 Run `python tests/test_derived_type_features.py`.
 
 ### Type extension
@@ -2026,11 +2028,67 @@ Run `python tests/test_derived_type_features.py`.
 `type, extends(shape) :: circle` inherits the components and type-bound
 procedures of `shape`; the extension's bindings override the parent's. The parent
 component `c%shape` names the inherited part, so `c%shape%x` is `c%x` and
-`s = c%shape` copies it. An extended object can be passed to a `type(shape)` or
-`class(shape)` dummy, and calls its inherited bindings. Scalar CLASS dummy
-calls support overridden binding dispatch as described below. ABSTRACT types,
-CLASS(*) and polymorphic ALLOCATABLE objects are not yet supported. Scalar
-SELECT TYPE is also supported.
+`s = c%shape` copies it. An extended object can be passed to a `type(shape)`
+dummy when `shape` is concrete, or to a `class(shape)` dummy, and calls its
+inherited bindings. Scalar CLASS dummy
+calls support overridden binding dispatch as described below. ABSTRACT types
+and DEFERRED bindings are supported. CLASS(*) and polymorphic ALLOCATABLE
+objects remain unsupported. Scalar SELECT TYPE is also supported.
+
+### ABSTRACT types and DEFERRED bindings
+
+Fortran 2003 abstract types declare contracts which concrete extensions must
+implement. Deferred bindings use an explicit interface and the default first
+passed-object dummy:
+
+```fortran
+type, abstract :: shape
+contains
+   procedure(area_interface), deferred :: area
+end type
+
+abstract interface
+   real function area_interface(self) result(value)
+      import :: shape
+      class(shape), intent(in) :: self
+   end function
+end interface
+```
+
+A concrete extension supplies `procedure :: area => circle_area`, with a scalar
+`class(circle)` first dummy. Abstract intermediate extensions may leave bindings
+deferred; concrete extensions must implement every remaining deferred binding.
+Inherited concrete implementations can satisfy a contract. Implementations can
+be functions or subroutines, and calls through `class(shape)` use the concrete
+actual's override. Ordinary bindings implemented in the abstract parent may
+call deferred bindings through `self`.
+
+The compiler rejects nonpolymorphic objects, components, constructors and TYPEOF
+objects of abstract type. CLASS dummies remain valid. SELECT TYPE accepts
+`class is(shape)` but rejects `type is(shape)` when `shape` is abstract.
+Deferred bindings outside abstract types, unknown interfaces, and attempts to
+use an abstract interface as an implementation are diagnosed.
+
+Contract checks compare function/subroutine category, argument count and names
+(except the passed-object name), data types/kinds/ranks, INTENT and supported
+OPTIONAL/POINTER/ALLOCATABLE/VALUE/CONTIGUOUS attributes, array shape categories,
+constant explicit extents, and result characteristics. Overrides must preserve
+PURE/SIMPLE requirements and ELEMENTAL status. NON_OVERRIDABLE inherited
+bindings cannot be overridden in these hierarchies. Named constants used for
+kinds are resolved in each procedure's scope. Interface IMPORT declarations,
+USE aliases, private interfaces, and `.rmod` module compilation are supported.
+Contract errors report the binding declaration's source line. Standard modes
+before `-std=f2003` reject ABSTRACT types and DEFERRED bindings.
+
+This builds on scalar type specialization, with the existing limits on actual
+arguments, storage and results. NOPASS, named PASS arguments, parameterized
+derived types, CLASS(*) and runtime polymorphic allocation remain unsupported.
+Procedure-dummy interface comparison and nonconstant specification-expression
+compatibility remain limited; this is not complete validation of every Fortran
+procedure characteristic.
+
+Run `python tests/test_abstract_types.py`; the standalone example is
+`tests/programs/xabstract_shapes.f90`.
 
 ### Scalar dynamic binding dispatch
 
@@ -2061,8 +2119,8 @@ views, rather than a public runtime vtable/descriptor ABI. It currently requires
 simple scalar variable actuals and the default first passed-object dummy.
 Polymorphic arrays, CLASS(*), runtime polymorphic allocation, CLASSOF dispatch,
 POINTER/ALLOCATABLE/VALUE CLASS dummies, and generic interfaces containing
-specialized CLASS specifics remain unsupported. NOPASS, named PASS arguments,
-ABSTRACT types and DEFERRED bindings retain their existing limitations.
+specialized CLASS specifics remain unsupported. NOPASS and named PASS arguments
+retain their existing limitations.
 Other record storage and result forms retain existing backend restrictions.
 
 Run `python tests/test_dynamic_dispatch.py`; the standalone example is

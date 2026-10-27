@@ -249,7 +249,7 @@ pub fn binding_attributes(attributes: &[String]) -> Result<(), &'static str> {
         match a.to_ascii_lowercase().as_str() {
             "public" | "private" | "pass" | "non_overridable" => {}
             "nopass" => return Err("NOPASS type-bound procedures are not yet supported"),
-            "deferred" => return Err("DEFERRED type-bound procedures are not yet supported"),
+            "deferred" => return Err("DEFERRED bindings require an explicit procedure interface"),
             _ => return Err("unknown type-bound procedure attribute"),
         }
     }

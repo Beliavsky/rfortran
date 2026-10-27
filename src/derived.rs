@@ -1514,6 +1514,7 @@ fn resolve_types(mut program: Program) -> Result<Program> {
     crate::parameters::fold_kind_inquiries(&mut program);
     crate::imports::validate(&program)?;
     program=crate::modules::associate(program)?;
+    program=crate::abstract_types::resolve(program)?;
     program=crate::assumed_rank::resolve(program)?;
     program=crate::select_type::resolve(program)?;
     program=crate::multiple_subscripts::resolve(program)?;
@@ -1521,9 +1522,11 @@ fn resolve_types(mut program: Program) -> Result<Program> {
     crate::simple::validate(&program)?;
     program = crate::extensions::resolve(program)?;
     program=crate::referenced_types::resolve(program)?;
+    program=crate::abstract_types::finish(program)?;
     program = crate::procedure_arguments::resolve(program)?;
     program = crate::heap::automatic_derived(program)?;
     crate::imports::validate(&program)?;
+    crate::imports::clear_declarations(&mut program.body);
     crate::referenced_types::clear_provenance(&mut program.body);
     program=crate::tokenize::prepare(program)?;
     program = crate::named_arguments::resolve(program, false)?;

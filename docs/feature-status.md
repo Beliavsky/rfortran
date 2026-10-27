@@ -265,11 +265,11 @@ current limits.
 | [Output of a whole derived object (`print *, obj`)](language-support.md#derived-type-components) | F90 | ✅ | Not with ALLOCATABLE or POINTER components, which need defined I/O | test_derived_type_features.py |
 | [Default input of a scalar derived object](language-support.md#file-and-standard-input) | F90 | ✅ | List-directed and constant-format READ; nested records and fixed component arrays. ALLOCATABLE or POINTER components need defined I/O | test_derived_read.py |
 | [Derived-type named constants, SAVE and initialized objects](language-support.md#derived-type-components) | F90 | ✅ | Scalar components | test_derived_type_features.py |
-| [Type extension (EXTENDS)](language-support.md#type-extension) | F2003 | 🟡 | Inherited components/bindings and scalar CLASS override dispatch; no ABSTRACT types or polymorphic allocation | test_derived_type_features.py |
+| [Type extension (EXTENDS)](language-support.md#type-extension) | F2003 | 🟡 | Inherited components/bindings, ABSTRACT hierarchies and scalar CLASS override dispatch; no runtime polymorphic allocation | test_derived_type_features.py |
 | [TYPEOF declarations](language-support.md#typeof-and-classof-declarations) | F2023 | 🟡 | Supported intrinsic and derived types, components, array elements, USE/host association and CHARACTER lengths; existing storage/type limitations apply | test_referenced_types.py |
 | [CLASSOF declarations](language-support.md#typeof-and-classof-declarations) | F2023 | 🟡 | Scalar derived-type CLASS dummy arguments; no CLASS(*) or polymorphic allocation/dynamic dispatch | test_referenced_types.py |
 | CLASS(*), polymorphic ALLOCATABLE objects | F2003 | ❌ |  |  |
-| ABSTRACT types | F2003 | ❌ |  |  |
+| [ABSTRACT types and DEFERRED bindings](language-support.md#abstract-types-and-deferred-bindings) | F2003 | 🟡 | Concrete implementations, inherited contracts, interface/override checks and scalar CLASS dispatch; default first PASS only, existing polymorphic storage/result limits | test_abstract_types.py |
 | Parameterized derived types | F2003 | ❌ |  |  |
 | Procedure-pointer components | F2003 | ❌ |  |  |
 

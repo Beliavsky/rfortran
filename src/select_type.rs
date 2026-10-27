@@ -157,6 +157,7 @@ fn objects(body: &[Stmt], inherited: &Objects) -> Objects {
 struct Definitions {
     parents: HashMap<String, String>,
     bound_targets: HashSet<String>,
+    abstracts: HashSet<String>,
     fields: HashMap<String, HashMap<String, Option<String>>>,
     bindings: HashMap<String, HashMap<String, String>>,
 }
@@ -164,6 +165,11 @@ impl Definitions {
     fn collect(&mut self, body: &[Stmt]) {
         for s in body {
             match s {
+                Stmt::CallSub { name, args } if name == crate::abstract_types::ABSTRACT => {
+                    if let [Expr::Ident(n)] = args.as_slice() {
+                        self.abstracts.insert(n.clone());
+                    }
+                }
                 Stmt::CallSub { name, args } if name == crate::extensions::EXTENDS => {
                     if let [Expr::Ident(child), Expr::Ident(parent)] = args.as_slice() {
                         self.parents.insert(child.clone(), parent.clone());
@@ -990,6 +996,12 @@ impl Lowerer {
             let Some(t) = self.templates.get(&name).cloned() else {
                 continue;
             };
+            if t.dummies
+                .iter()
+                .any(|(_, _, v)| self.defs.abstracts.contains(&v.kind))
+            {
+                continue;
+            }
             let source = match &t.statement {
                 Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } => body,
                 _ => unreachable!(),
@@ -1125,6 +1137,8 @@ impl Lowerer {
                     // Their original entry point is still named by the type table.
                     if let Some(wrapper) = self.wrappers.remove(&name) {
                         out.push(wrapper);
+                    } else {
+                        out.push(crate::imports::declaration(name.clone()));
                     }
                     for mut definition in self.generated.remove(&name).unwrap_or_default() {
                         for b in children(&mut definition) {
@@ -1259,11 +1273,12 @@ pub(crate) fn resolve(mut program: Program) -> Result<Program> {
     };
     lower.body(&mut program.body, &Objects::new(), &Dynamics::new())?;
     lower.binding_wrappers()?;
+    let wrapper_entries: HashSet<_> = lower.wrappers.keys().cloned().collect();
     lower.install(&mut program.body);
     let original: HashSet<_> = program.contains.iter().cloned().collect();
     program
         .contains
-        .retain(|n| !lower.templates.contains_key(n) || lower.defs.bound_targets.contains(n));
+        .retain(|n| !lower.templates.contains_key(n) || wrapper_entries.contains(n));
     program.contains.extend(
         lower
             .names

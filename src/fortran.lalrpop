@@ -346,10 +346,21 @@ Designator: String = {
 };
 Bindings: Vec<(String,String)> = {
     => vec![],
-    <mut bindings:Bindings> KW_PROCEDURE DCOLON <items:BindingList> => {bindings.extend(items);bindings},
+    <mut bindings:Bindings> <pos:@L> KW_PROCEDURE DCOLON <items:BindingList> => {
+        for (name,_) in &items{bindings.push((format!("@binding_location:{name}"),pos.to_string()));}
+        bindings.extend(items);bindings
+    },
+    <mut bindings:Bindings> <pos:@L> KW_PROCEDURE LPAREN <interface:Ident> RPAREN COMMA <attrs:BindingAttributes> DCOLON <items:DeferredNames> =>? {
+        let items=crate::abstract_types::deferred_bindings(interface,attrs,items)
+            .map_err(|error|lalrpop_util::ParseError::User{error})?;
+        for (name,_) in &items{if !name.starts_with('@'){bindings.push((format!("@binding_location:{name}"),pos.to_string()));}}
+        bindings.extend(items);Ok(bindings)
+    },
     // Accessibility and PASS (the default) do not change how a binding is called.
-    <mut bindings:Bindings> KW_PROCEDURE COMMA <attrs:BindingAttributes> DCOLON <items:BindingList> =>? {
+    <mut bindings:Bindings> <pos:@L> KW_PROCEDURE COMMA <attrs:BindingAttributes> DCOLON <items:BindingList> =>? {
         crate::ast::binding_attributes(&attrs).map_err(|error| lalrpop_util::ParseError::User { error })?;
+        for (name,_) in &items {bindings.push((format!("@binding_location:{name}"),pos.to_string()));}
+        for (name,target) in &items {if attrs.iter().any(|a|a=="non_overridable") {bindings.push((format!("@non_overridable:{name}"),target.clone()));}}
         bindings.extend(items);
         Ok(bindings)
     },
@@ -385,6 +396,10 @@ Bindings: Vec<(String,String)> = {
         bindings.extend(specifics.into_iter().map(|b| (format!("@generic:{name}"), b)));
         Ok(bindings)
     },
+};
+DeferredNames: Vec<String> = {
+    <name:ComponentName> => vec![name],
+    <mut names:DeferredNames> COMMA <name:ComponentName> => {names.push(name);names},
 };
 BindingAttributes: Vec<String> = {
     <a:BindingAttribute> => vec![a],
@@ -1164,8 +1179,8 @@ PreFuncDeclData: Vec<Stmt> = {
 };
 
 // TYPE [[, attributes] ::] name. PUBLIC/PRIVATE become accessibility statements;
-// other attributes (EXTENDS, ABSTRACT, BIND(C), SEQUENCE semantics) are rejected
-// with a specific message until derived-type lowering supports them.
+// EXTENDS and ABSTRACT remain markers for contract and derived-type lowering.
+// Unsupported attributes receive a specific diagnostic.
 TypeDefHead: (String, Vec<Stmt>) = {
     KW_TYPE DCOLON <name:Ident> => (name, vec![]),
     KW_TYPE <name:Ident> => (name, vec![]),
@@ -1180,7 +1195,7 @@ TypeDefHead: (String, Vec<Stmt>) = {
                     let parent = attr[8..attr.len() - 1].to_string();
                     out.push(Stmt::CallSub { name: crate::extensions::EXTENDS.into(), args: vec![Expr::Ident(name.clone()), Expr::Ident(parent)] });
                 }
-                "abstract" => return Err(lalrpop_util::ParseError::User { error: "ABSTRACT derived types are not yet supported" }),
+                "abstract" => out.push(Stmt::CallSub{name:crate::abstract_types::ABSTRACT.into(),args:vec![Expr::Ident(name.clone())]}),
                 _ => return Err(lalrpop_util::ParseError::User { error: "unsupported derived-type attribute" }),
             }
         }

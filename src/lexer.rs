@@ -651,6 +651,9 @@ fn procedure_declarations(tokens: &mut Vec<Token>, input: &str) {
                     kind: TokenKind::ProcedureDeclaration(if tokens[index..=last].iter().any(|t|matches!(t.kind,TokenKind::BindSpec(_))) {
                         let begin=index+usize::from(abstract_head)+1;
                         format!("c_interface|{}|{}", tokens[begin].span.start, &input[tokens[begin].span.start..tokens[cursor].span.start])
+                    } else if abstract_head {
+                        let begin=index+1+1;
+                        format!("abstract_interface|{}|{}",tokens[begin].span.start,&input[tokens[begin].span.start..tokens[cursor].span.start])
                     } else {format!("{form}|{}", entities.join(","))}),
                     span: tokens[index].span.start..tokens[last].span.end,
                 });
@@ -661,6 +664,10 @@ fn procedure_declarations(tokens: &mut Vec<Token>, input: &str) {
         if head && word(tokens.get(index)).as_deref() == Some("procedure")
             && matches!(tokens.get(index + 1).map(|t| &t.kind), Some(TokenKind::LParen)) {
             if let Some((declaration, last)) = procedure_statement(tokens, input, index) {
+                if declaration=="@deferred_binding" {
+                    tokens[index].kind=TokenKind::KwProcedure;
+                    out.push(tokens[index].clone());index+=1;continue;
+                }
                 out.push(Token {
                     kind: TokenKind::ProcedureDeclaration(declaration),
                     span: tokens[index].span.start..tokens[last].span.end,
@@ -702,6 +709,7 @@ fn procedure_statement(tokens: &[Token], input: &str, index: usize) -> Option<(S
             }
             attribute.push_str(&input[tokens[start].span.start..tokens[cursor - 1].span.end].to_ascii_lowercase().replace(' ', ""));
         }
+        if attribute=="deferred" {return Some(("@deferred_binding".into(),index));}
         form.push(attribute);
     }
     if !matches!(kind(cursor), Some(TokenKind::DColon)) { return None; }

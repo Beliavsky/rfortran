@@ -621,6 +621,7 @@ impl Checker<'_> {
                     bindings,
                     ..
                 } => {
+                    if bindings.iter().any(|(n,_)|n.starts_with("@deferred:")) {self.require("DEFERRED bindings",2003,offset);}
                     if let Some((_,tag))=bindings.iter().find(|(n,_)|n=="@enumeration") {self.require(if tag.starts_with("cenum:") {"named enum types"} else {"enumeration types"},2023,offset);}
                     else if !bindings.is_empty() {
                         self.feature("type_bound", offset);
@@ -664,6 +665,7 @@ impl Checker<'_> {
                         self.require("Fortran 2023 ISO_FORTRAN_ENV kind constants", 2023, offset);
                     }
                 }
+                Stmt::CallSub{name,..} if name==crate::abstract_types::ABSTRACT => self.require("ABSTRACT derived types",2003,offset),
                 Stmt::DerivedDecl {
                     names: declared,
                     polymorphic,

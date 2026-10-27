@@ -19,10 +19,17 @@ fn generic_declared(body: &[Stmt], name: &str) -> bool {
     })
 }
 
+const DECLARATION:&str="@procedure_declaration";
+pub(crate) fn declaration(name:String)->Stmt {Stmt::DummyIntent{name,intent:DECLARATION.into()}}
+pub(crate) fn clear_declarations(body:&mut Vec<Stmt>){
+    body.retain(|s|!matches!(s,Stmt::DummyIntent{intent,..} if intent==DECLARATION));
+    for s in body{for b in crate::procedure_arguments::children(s){clear_declarations(b);}}
+}
 fn declared(body: &[Stmt]) -> HashSet<String> {
     let mut names = HashSet::new();
     for s in body {
         match s {
+            Stmt::DummyIntent{name,intent} if intent==DECLARATION=>{names.insert(name.clone());}
             Stmt::VarDecl { names: ns, .. } | Stmt::DerivedDecl { names: ns, .. } => {
                 names.extend(ns.iter().cloned())
             }
@@ -98,6 +105,12 @@ impl Validator {
         Ok(())
     }
     fn procedure(&self,name:&str,visible:&HashSet<String>)->Result<()> {
+        // Type-specialized calls were resolved and access-checked in their
+        // source form. Their private implementation name need not appear in
+        // the caller's USE ONLY list (which still names the source procedure).
+        if name.starts_with("@module$") && name.rsplit_once("$type").is_some_and(|(source,tag)|
+            source.split('$').count()>=3 && !tag.is_empty() && tag.bytes().all(|c|c.is_ascii_digit())) {return Ok(());}
+
         if !visible.contains(name) && crate::intrinsics::purity(name).is_some() {return Ok(());}
         self.name(name,visible)
     }

@@ -252,6 +252,7 @@ pub fn binding_tokens(tokens: &mut Vec<crate::lexer::Token>, input: &str) {
 }
 pub fn interface_declaration(encoded: &str) -> std::result::Result<Vec<Stmt>, &'static str> {
     if let Some(src) = encoded.strip_prefix("namelist|") {return crate::namelists::declaration(src);}
+    if let Some(src)=encoded.strip_prefix("abstract_interface|"){return crate::abstract_types::interface(src);}
     let Some(src) = encoded.strip_prefix("c_interface|") else {
         return Ok(crate::ast::procedure_declaration(encoded));
     };
