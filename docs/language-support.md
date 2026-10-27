@@ -758,6 +758,11 @@ integer expressions; duplicate/overlapping ranges are diagnosed. Literal and
 arithmetic selectors work in native builds, including selectors made constant
 by optimization. CHARACTER ranges remain unsupported. Run
 `python tests/test_case_ranges.py` for interpreter/native O0/O2 and gfortran checks.
+Two-element lists such as `case (EULER, HEUN)` accept named constants and signed
+integer values, including unary `+`. Lists also work in named constructs and
+continued statements. Complex literals retain their expression syntax in case
+bodies and procedure arguments. Run `python tests/test_select_case_lists.py`;
+`tests/programs/xselect_case_list.f90` is a standalone example.
 
 CHARACTER selectors may be fixed or deferred-length variables, literals,
 substrings, concatenations, and supported CHARACTER-valued expressions. The

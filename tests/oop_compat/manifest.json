@@ -142,8 +142,8 @@
       "features": "abstract bindings and polymorphic allocatable components",
       "known_failure": {
         "phase": "compile",
-        "pattern": "unexpected\\ '\\(':",
-        "reason": "SELECT CASE list in the tutorial framework is rejected"
+        "pattern": "ALLOCATABLE\\ or\\ POINTER\\ components\\ of\\ derived\\ type\\ are\\ not\\ yet\\ supported",
+        "reason": "Polymorphic ALLOCATABLE derived-type component"
       },
       "notices": [
         "workshop-LICENSE"

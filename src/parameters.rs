@@ -489,6 +489,7 @@ pub(crate) fn evaluate(expr: &Expr, constants: &Constants) -> Result<i64> {
     let value = match expr {
         Expr::IntLit(s) => s.parse().ok(),
         Expr::Call(tag,args) if tag == "@integer_literal" && args.len() == 2 => return evaluate(&args[0],constants),
+        Expr::Call(tag,args) if tag == "@unary_plus" && args.len() == 1 => return evaluate(&args[0],constants),
         Expr::Ident(name) => {
             return constants
                 .get(&name.to_ascii_lowercase())

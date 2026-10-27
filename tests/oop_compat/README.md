@@ -74,14 +74,14 @@ Other resources from the supplied list remain candidates, not tested coverage:
 ## Checkpoint (2026-10-27)
 
 All nine examples compile and run with gfortran. Seven match rfort's output:
-Leair sections 5, 7, and 9, the book's `mytype` and polymorphism examples, and
+Leair sections 5, 7, and 9, the book's `mytype` and polymorphism examples,
 the FortranCon moving-average example, and Markus's `abstract_point` example.
 
 The two current compiler gaps are recorded individually in the manifest:
 
 | Case | First blocker |
 |---|---|
-| `workshop-abstract-framework` | SELECT CASE list parsing |
+| `workshop-abstract-framework` | Polymorphic ALLOCATABLE derived-type component |
 | `markus-classes_geom` | DIMENSION attribute on a local derived-type array |
 
 Leair section 9 now passes unchanged: PRIVATE component/binding declarations,
@@ -106,6 +106,13 @@ Markus's abstract-point example now passes unchanged. Local scalar polymorphic
 pointers borrow concrete TARGET variables, and binding calls use the target's
 dynamic type. `tests/test_polymorphic_pointers.py` covers reassociation, shared
 aliases, SELECT TYPE views, forwarding, association inquiries and module files.
+
+The abstract-framework example now parses its `CASE (EULER, HEUN)` list. Its
+next blocker is the `class(ode_system_data), allocatable :: ode_system`
+component. `tests/programs/xpolymorphic_allocatable_component.f90` is a small
+reproducer; gfortran compiles it and prints `T`. CASE pairs, signed labels,
+ranges, continuations and complex-expression disambiguation are covered by
+`tests/test_select_case_lists.py`.
 
 These are first failures, not a claim that fixing one will make its entire
 example pass. The suite deliberately preserves upstream code so it can expose

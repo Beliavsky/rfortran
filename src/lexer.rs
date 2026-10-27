@@ -1636,7 +1636,7 @@ pub fn lex(input: &str) -> Vec<Token> {
     for i in 0..normalized.len() {
         if !matches!(normalized[i].kind,TokenKind::LParen){continue;}
         if i>0 && same_statement(&input[normalized[i-1].span.end..normalized[i].span.start])
-            && matches!(normalized[i-1].kind,TokenKind::Ident(_)|TokenKind::RParen|TokenKind::RBracket|TokenKind::KwReal|TokenKind::KwComplex|TokenKind::KwInteger|TokenKind::KwCharacter|TokenKind::KwLogical|TokenKind::KwDimension|TokenKind::KwKind|TokenKind::KwLen|TokenKind::KwIf|TokenKind::KwWhile|TokenKind::KwRead|TokenKind::KwReadEmpty|TokenKind::KwWrite|TokenKind::KwWriteEmpty|TokenKind::KwOperator|TokenKind::KwAllocate|TokenKind::KwDeallocate|TokenKind::KwNullify|TokenKind::KwNone){continue;}
+            && matches!(normalized[i-1].kind,TokenKind::Ident(_)|TokenKind::RParen|TokenKind::RBracket|TokenKind::KwReal|TokenKind::KwComplex|TokenKind::KwInteger|TokenKind::KwCharacter|TokenKind::KwLogical|TokenKind::KwDimension|TokenKind::KwKind|TokenKind::KwLen|TokenKind::KwCase|TokenKind::KwIf|TokenKind::KwWhile|TokenKind::KwRead|TokenKind::KwReadEmpty|TokenKind::KwWrite|TokenKind::KwWriteEmpty|TokenKind::KwOperator|TokenKind::KwAllocate|TokenKind::KwDeallocate|TokenKind::KwNullify|TokenKind::KwNone){continue;}
         let mut end=i+1;
         while end<normalized.len() && !matches!(normalized[end].kind,TokenKind::RParen|TokenKind::LParen|TokenKind::Eq|TokenKind::LBracket) {end+=1;}
         if end>=normalized.len() || !matches!(normalized[end].kind,TokenKind::RParen){continue;}
