@@ -11,6 +11,9 @@ use crate::procedure_arguments::{children, expressions, visit_expr};
 use anyhow::{bail, Context, Result};
 use std::collections::{HashMap, HashSet};
 mod runtime;
+mod intrinsic;
+use crate::ast::TypeSpec;
+pub(crate) use intrinsic::parsed as intrinsic_guard;
 const SELECT: &str = "@select_type";
 
 pub(crate) fn tokens(tokens: &mut Vec<Token>, source: &str) {
@@ -86,11 +89,16 @@ pub(crate) fn selection(e: &Expr) -> Option<(&str, &str)> {
     }
     None
 }
-fn guard(item: &CaseItem) -> Result<(bool, &str)> {
+fn guard(item: &CaseItem) -> Result<(bool, String)> {
     if let CaseItem::Single(Expr::Call(n, a)) = item {
         if matches!(n.as_str(), "@type_is" | "@class_is") {
+            if let [e] = a.as_slice() {
+                if let Some(t) = intrinsic::guard_kind(e)? {
+                    return Ok((false, intrinsic::encode(&t)));
+                }
+            }
             if let [Expr::Ident(t)] = a.as_slice() {
-                return Ok((n == "@class_is", t));
+                return Ok((n == "@class_is", t.clone()));
             }
         }
     }
@@ -127,17 +135,17 @@ fn objects(body: &[Stmt], inherited: &Objects) -> Objects {
                     );
                 }
             }
-            Stmt::VarDecl { names, .. } => {
+            Stmt::VarDecl { names, kind } => {
                 for n in names {
-                    vars.remove(n);
+                    vars.insert(n.clone(), intrinsic::object(kind, 0, vec![]));
                 }
             }
-            Stmt::ArrayDecl { name, .. } => {
-                vars.remove(name);
+            Stmt::ArrayDecl { name, kind, dims } => {
+                vars.insert(name.clone(), intrinsic::object(kind, dims.len(), vec![]));
             }
-            Stmt::InitializedDecl { entities, .. } => {
+            Stmt::InitializedDecl { entities, kind, attributes } => {
                 for (n, _) in entities {
-                    vars.remove(n);
+                    vars.insert(n.clone(), intrinsic::object(kind, 0, attributes.clone()));
                 }
             }
             _ => {}
@@ -348,16 +356,16 @@ impl Definitions {
                         let mut seen = HashSet::new();
                         for c in cases {
                             let (class, kind) = guard(&c.items[0])?;
-                            if !self.fields.contains_key(kind) {
+                            if !self.fields.contains_key(&kind) && intrinsic::decode(&kind).is_none() {
                                 bail!("unknown derived type `{kind}` in SELECT TYPE guard");
                             }
-                            if self.distance(kind, &obj.kind).is_none() {
+                            if obj.kind != "*" && self.distance(&kind, &obj.kind).is_none() {
                                 bail!(
                                     "SELECT TYPE guard `{kind}` must extend declared type `{}`",
                                     obj.kind
                                 );
                             }
-                            if !seen.insert((class, kind)) {
+                            if !seen.insert((class, kind.clone())) {
                                 bail!("duplicate SELECT TYPE guard for `{kind}`");
                             }
                             let mut branch = vars.clone();
@@ -378,6 +386,13 @@ impl Definitions {
                             self.validate(b, &branch)?;
                         }
                         return Ok(());
+                    }
+                }
+                if let Stmt::Print {items} = s {
+                    for item in items {
+                        if matches!(item, Expr::Ident(n) if vars.get(n).is_some_and(|v|v.kind=="*")) {
+                            bail!("unlimited polymorphic output requires a concrete TYPE IS guard");
+                        }
                     }
                 }
                 if let Stmt::Assign { name, .. } | Stmt::AssignIndex { name, .. } = s {
@@ -567,6 +582,20 @@ impl Lowerer {
                 actuals.push(actual.clone());
                 continue;
             }
+            if formal.kind == "*" {
+                if let Some((kind, rank)) = intrinsic::actual(actual, vars)? {
+                    if rank != 0 { bail!("scalar CLASS dummy `{dummy}` requires a scalar actual"); }
+                    if formal.attrs.iter().any(|a| matches!(a.as_str(), "intent(out)" | "intent(inout)")) {
+                        let Expr::Ident(n) = actual else { bail!("writable CLASS dummy `{dummy}` requires a variable actual"); };
+                        if vars.get(n).is_some_and(|v| v.attrs.iter().any(|a| a == "intent(in)" || a == "parameter")) {
+                            bail!("cannot pass read-only entity `{n}` to writable CLASS dummy `{dummy}`");
+                        }
+                    }
+                    kinds.push(intrinsic::encode(&kind));
+                    actuals.push(actual.clone());
+                    continue;
+                }
+            }
             let (n, element) = match actual {
                 Expr::Ident(n) => (n, false),
                 Expr::Call(n, indices) | Expr::Index(n, indices)
@@ -600,7 +629,7 @@ impl Lowerer {
                 }
                 (obj.kind.clone(), actual.clone())
             };
-            if self.defs.distance(&kind, &formal.kind).is_none() {
+            if formal.kind != "*" && self.defs.distance(&kind, &formal.kind).is_none() {
                 bail!(
                     "actual type `{kind}` does not extend CLASS dummy type `{}`",
                     formal.kind
@@ -677,6 +706,10 @@ impl Lowerer {
             let mut local = Dynamics::new();
             let mut extras = vec![];
             for ((position, dummy, formal), kind) in t.dummies.iter().zip(&kinds) {
+                if formal.kind == "*" && intrinsic::decode(kind).is_some() {
+                    local.insert(dummy.clone(), Dynamic {kind:kind.clone(),value:Expr::Ident(dummy.clone())});
+                    continue;
+                }
                 let parameter = format!("{dummy}$dynamic");
                 extras.push(Extra {
                     position: *position,
@@ -694,6 +727,18 @@ impl Lowerer {
                     },
                 );
             }
+            for ((_, dummy, formal), kind) in t.dummies.iter().zip(&kinds) {
+                if formal.kind == "*" {
+                    if intrinsic::decode(kind).is_some() {
+                        body.extend(formal.attrs.iter().map(|a| Stmt::DummyIntent {name: dummy.clone(), intent:a.clone()}));
+                    }
+                    for s in body.iter_mut() {
+                        if matches!(s, Stmt::DerivedDecl {names,..} if names == &vec![dummy.clone()]) {
+                            *s = intrinsic::declaration(kind, dummy, &formal.attrs, false)?;
+                        }
+                    }
+                }
+            }
             self.select(body, &local, &t, &mut extras)?;
             for e in &extras {
                 let (_, original, _) = t.dummies.iter().find(|(i, _, _)| *i == e.position).unwrap();
@@ -701,7 +746,7 @@ impl Lowerer {
                 params.push(e.parameter.clone());
                 // Initialize the complete dynamic object once for INTENT(OUT).
                 // Other views borrow it without repeating default initialization.
-                let attrs = e
+                let attrs: Vec<String> = e
                     .attrs
                     .iter()
                     .map(|a| {
@@ -712,15 +757,12 @@ impl Lowerer {
                         }
                     })
                     .collect();
+                if intrinsic::decode(&e.kind).is_some() {
+                    body.extend(attrs.iter().map(|a| Stmt::DummyIntent {name:e.parameter.clone(), intent:a.clone()}));
+                }
                 body.insert(
                     0,
-                    Stmt::DerivedDecl {
-                        type_name: e.kind.clone(),
-                        names: vec![e.parameter.clone()],
-                        attributes: attrs,
-                        polymorphic: e.polymorphic,
-                        dims: vec![],
-                    },
+                    intrinsic::declaration(&e.kind, &e.parameter, &attrs, e.polymorphic)?,
                 );
             }
             self.extras.insert(unique.clone(), extras);
@@ -772,9 +814,9 @@ impl Lowerer {
                     for c in cases {
                         let (class, kind) = guard(&c.items[0])?;
                         let distance = if class {
-                            self.defs.distance(&actual.kind, kind).map(|d| d + 1)
+                            self.defs.distance(&actual.kind, &kind).map(|d| d + 1)
                         } else {
-                            (actual.kind == kind).then_some(0)
+                            intrinsic::matches(&actual.kind, &kind).then_some(0)
                         };
                         if let Some(distance) = distance {
                             if distance < best {
@@ -802,11 +844,19 @@ impl Lowerer {
                         .unwrap();
                     let mut local = dynamic.clone();
                     let mut selected = if let Some((kind, class, mut branch)) = chosen {
+                        if intrinsic::decode(&kind).is_some() {
+                            let Expr::Ident(view) = &actual.value else { bail!("intrinsic SELECT TYPE view requires scalar storage"); };
+                            rename(&mut branch, &alias, view);
+                            local.insert(view.clone(),actual.clone());
+                            self.select(&mut branch, &local, template, extras)?;
+                            out.push(Stmt::Block {body:branch});
+                            continue;
+                        }
                         let view = format!("{selector}$view{}", extras.len());
                         extras.push(Extra {
                             position,
                             parameter: view.clone(),
-                            kind,
+                            kind: if intrinsic::decode(&kind).is_some() { actual.kind.clone() } else { kind },
                             polymorphic: class,
                             attrs: formal.attrs.clone(),
                             initialize: false,
@@ -1237,6 +1287,7 @@ fn bound_dispatch_needed(body: &[Stmt], inherited: &Objects, defs: &Definitions)
     false
 }
 pub(crate) fn resolve(mut program: Program) -> Result<Program> {
+    if needed(&program.body) { intrinsic::prepare(&mut program.body, &HashMap::new())?; }
     let mut defs = Definitions::default();
     defs.collect(&program.body);
     program = runtime::resolve(program, &defs)?;

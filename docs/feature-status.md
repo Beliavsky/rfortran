@@ -173,7 +173,7 @@ Found on 2026-10-21, fixed:
 | BLOCK construct | F2008 | ✅ |  | testsuite, test_named_constructs.py |
 | [EXIT from a named BLOCK, IF, SELECT CASE or ASSOCIATE](language-support.md#other-statement-forms) | F2008 | ✅ |  | test_named_constructs.py |
 | [ASSOCIATE](language-support.md#associate) | F2003 | 🟡 | Selectors whose value the block changes are rejected | test_associate.py |
-| [SELECT TYPE](language-support.md#select-type) | F2003 | 🟡 | Scalar CLASS(parent) dummies and local polymorphic allocatables: exact/ancestor/default guards, borrowed aliases, forwarding and .rmod calls; no CLASS(*) or array selectors | test_select_type.py |
+| [SELECT TYPE](language-support.md#select-type) | F2003 | 🟡 | Scalar CLASS(parent)/CLASS(*) dummies, intrinsic kind/CHARACTER length guards, and local typed polymorphic allocatables; borrowed aliases, forwarding and .rmod calls; no array selectors or CLASS(*) allocation descriptors | test_select_type.py, test_select_type_intrinsic.py |
 | [SELECT RANK](language-support.md#assumed-rank-arguments-and-select-rank) | F2018 | 🟡 | Rank 0–15/default branches, aliases and named constructs for intrinsic and nonpolymorphic derived-type assumed-rank dummies; no assumed-size RANK(*) dispatch or polymorphism | test_assumed_rank.py, test_assumed_rank_derived.py |
 | [GOTO](language-support.md#goto) | F77 or earlier | 🟡 | Forward to a label in the same or an enclosing statement list, or backward to a label earlier in the same list; not into a construct | test_goto_and_real_output.py |
 | [Computed GOTO](language-support.md#goto) | F77 or earlier | ✅ |  |  |
@@ -269,7 +269,7 @@ current limits.
 | [Type extension (EXTENDS)](language-support.md#type-extension) | F2003 | 🟡 | Inherited components/bindings, ABSTRACT hierarchies and scalar CLASS override dispatch and runtime scalar ALLOCATABLE objects | test_derived_type_features.py |
 | [TYPEOF declarations](language-support.md#typeof-and-classof-declarations) | F2023 | 🟡 | Supported intrinsic and derived types, components, array elements, USE/host association and CHARACTER lengths; existing storage/type limitations apply | test_referenced_types.py |
 | [CLASSOF declarations](language-support.md#typeof-and-classof-declarations) | F2023 | 🟡 | Scalar derived-type CLASS dummy arguments; no CLASS(*) or polymorphic allocation/dynamic dispatch | test_referenced_types.py |
-| CLASS(*) | F2003 | ❌ |  |  |
+| [CLASS(*)](language-support.md#select-type) | F2003 | 🟡 | Scalar procedure dummies with intrinsic/derived actuals and SELECT TYPE narrowing; no unlimited polymorphic allocation descriptors or arrays | test_select_type_intrinsic.py |
 | [Scalar polymorphic ALLOCATABLE objects](language-support.md#scalar-polymorphic-allocatable-objects) | F2003; MOLD F2008 | 🟡 | Local scalar typed/SOURCE=/MOLD= allocation, ALLOCATED, DEALLOCATE, polymorphic assignment/reallocation, SELECT TYPE and overridden calls; scalar variable/constructor sources and required scalar allocatable dummies; no OPTIONAL descriptors, saved/module objects or polymorphic arrays | test_polymorphic_allocatable.py, test_polymorphic_allocatable_dummies.py |
 | [ABSTRACT types and DEFERRED bindings](language-support.md#abstract-types-and-deferred-bindings) | F2003 | 🟡 | Concrete implementations, inherited contracts, interface/override checks and scalar CLASS dispatch; default first PASS only, existing polymorphic storage/result limits | test_abstract_types.py |
 | Parameterized derived types | F2003 | ❌ |  |  |

@@ -73,16 +73,15 @@ Other resources from the supplied list remain candidates, not tested coverage:
 
 ## Checkpoint (2026-10-27)
 
-All nine examples compile and run with gfortran. Five match rfort's output:
-Leair sections 5, 7, and 9, the book's `mytype` example, and the FortranCon
-moving-average example.
+All nine examples compile and run with gfortran. Six match rfort's output:
+Leair sections 5, 7, and 9, the book's `mytype` and polymorphism examples, and
+the FortranCon moving-average example.
 
-The four current compiler gaps are recorded individually in the manifest:
+The three current compiler gaps are recorded individually in the manifest:
 
 | Case | First blocker |
 |---|---|
 | `workshop-abstract-framework` | SELECT CASE list parsing |
-| `book-polymorphism` | SELECT TYPE intrinsic type guard |
 | `markus-abstract_point` | Binding dispatch through a polymorphic pointer |
 | `markus-classes_geom` | DIMENSION attribute on a local derived-type array |
 
@@ -98,6 +97,11 @@ The moving-average example also passes unchanged. IEEE_VALUE keeps its mold's
 type, kind and elemental shape without reading its undefined stored value;
 `tests/test_ieee_value_mold.py` checks scalar/array molds, runtime allocation,
 shape conformance, and preservation of genuine initialization diagnostics.
+
+The book's polymorphism example now passes unchanged, including intrinsic
+TYPE IS guards for CLASS(*), derived CLASS IS dispatch, and CLASS DEFAULT.
+`tests/test_select_type_intrinsic.py` also covers kind and CHARACTER length
+matching, writable aliases, forwarding, and separate module compilation.
 
 These are first failures, not a claim that fixing one will make its entire
 example pass. The suite deliberately preserves upstream code so it can expose

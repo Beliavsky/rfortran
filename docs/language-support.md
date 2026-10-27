@@ -2061,7 +2061,8 @@ dummy when `shape` is concrete, or to a `class(shape)` dummy, and calls its
 inherited bindings. Scalar CLASS dummy
 calls support overridden binding dispatch as described below. ABSTRACT types
 and DEFERRED bindings are supported. Local scalar polymorphic ALLOCATABLE
-objects and scalar SELECT TYPE are supported as described below; CLASS(*)
+objects and scalar SELECT TYPE are supported as described below; unlimited
+polymorphic scalar procedure dummies are also supported. CLASS(*) allocation
 remains unsupported.
 
 ### ABSTRACT types and DEFERRED bindings
@@ -2111,7 +2112,8 @@ before `-std=f2003` reject ABSTRACT types and DEFERRED bindings.
 
 This builds on scalar type specialization, with the existing limits on actual
 arguments, storage and results. NOPASS, named PASS arguments, parameterized
-derived types and CLASS(*) remain unsupported. Local scalar polymorphic
+derived types remain unsupported. Scalar CLASS(*) dummies are described under
+SELECT TYPE. Local scalar polymorphic
 allocation is supported as described below.
 Procedure-dummy interface comparison and nonconstant specification-expression
 compatibility remain limited; this is not complete validation of every Fortran
@@ -2315,16 +2317,27 @@ source locations; SELECT TYPE requires `-std=f2003` or later.
 
 Procedure calls use private specializations, while local polymorphic allocatables
 select their concrete storage at runtime. Neither defines a public runtime
-polymorphic ABI. Array selectors, CLASS(*),
-POINTER/VALUE CLASS dummies, expression
-actuals, and generic interfaces containing specialized CLASS specifics remain
-unsupported. Ordinary scalar binding calls through narrowed CLASS views use
+polymorphic ABI. Scalar `CLASS(*)` procedure dummies also accept intrinsic
+actuals: INTEGER kinds 1/2/4/8, REAL and COMPLEX kinds 4/8, default LOGICAL,
+and CHARACTER. Intrinsic `TYPE IS` guards match type and kind; CHARACTER
+guards require `LEN=*` and retain the actual length in the narrowed view.
+Named kind constants follow USE and host association. Supported scalar
+intrinsic expressions can supply read-only arguments. Writable variable
+actuals and guard aliases share caller storage; INTENT(IN) is retained.
+Derived exact/ancestor guards and CLASS DEFAULT can occur in the same selection.
+
+Array selectors, CLASS(*) allocation descriptors, POINTER/VALUE CLASS dummies,
+and generic interfaces containing specialized CLASS specifics remain
+unsupported. Derived-type actuals retain their scalar-variable restriction.
+Ordinary scalar binding calls through narrowed CLASS views use
 the actual type's override; exact TYPE IS views use that concrete type's binding.
 Scalar ALLOCATABLE selectors follow the runtime descriptor path described above.
 Other record storage forms retain the existing derived-type restrictions.
 
-Run `python tests/test_select_type.py`. The standalone example is
-`tests/programs/xselect_type.f90`.
+Run `python tests/test_select_type.py` and
+`python tests/test_select_type_intrinsic.py`. Standalone examples are
+`tests/programs/xselect_type.f90` and
+`tests/programs/xselect_type_intrinsic.f90`.
 
 ### TYPEOF and CLASSOF declarations
 

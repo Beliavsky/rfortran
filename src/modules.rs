@@ -111,7 +111,7 @@ fn expression(expr: &mut Expr, names: &Names) {
     match expr {
         Expr::Ident(name) => rename(name, names),
         Expr::Call(name, args) | Expr::Index(name, args) => {
-            if name == "@typed_constructor" {
+            if name == "@typed_constructor" || name == "@intrinsic_type" {
                 if let Some(Expr::Str(encoded)) = args.first_mut() {
                     if let Ok(mut ty) = serde_json::from_str::<TypeSpec>(encoded) {
                         kind(&mut ty, names);
@@ -152,7 +152,14 @@ fn expression(expr: &mut Expr, names: &Names) {
 }
 fn kind(kind: &mut TypeSpec, names: &Names) {
     match kind {
-        TypeSpec::IntegerKind(n) | TypeSpec::RealKind(n) | TypeSpec::LogicalKind(n) | TypeSpec::Complex(n) => rename(n, names),
+        TypeSpec::IntegerKind(n) | TypeSpec::RealKind(n) | TypeSpec::LogicalKind(n) | TypeSpec::Complex(n) => {
+            if let Some(encoded) = n.strip_prefix(crate::ast::KIND_EXPRESSION) {
+                if let Ok(mut value) = serde_json::from_str::<Expr>(encoded) {
+                    expression(&mut value, names);
+                    *n = crate::ast::kind_text(value);
+                }
+            } else { rename(n, names); }
+        },
         TypeSpec::CharacterLength(e) | TypeSpec::Referenced {source:e,..} => expression(e, names),
         _ => {}
     }

@@ -137,6 +137,13 @@ end module iso_fortran_env_entities
 const COMPILER_VERSION: &str = concat!("rfort version ", env!("CARGO_PKG_VERSION"));
 
 // Keep a literal's kind explicit until scalar lowering can allocate typed storage.
+// Early type-directed passes need the same literal kind normalization as
+// constant lowering, before choosing a polymorphic procedure specialization.
+pub(crate) fn normalize_literal(expr: &mut Expr, constants: &HashMap<String, Expr>) -> Result<()> {
+    if matches!(expr, Expr::IntLit(_) | Expr::RealLit(_)) { rewrite_expr(expr, constants)?; }
+    Ok(())
+}
+
 pub(crate) fn integer_literal_kind(expr: &Expr) -> Option<u8> {
     match expr {
         Expr::IntLit(_) => Some(4),
@@ -170,7 +177,7 @@ fn kind_number(name: &str, constants: &Constants) -> Result<i64> {
     }
     name.parse().or_else(|_| evaluate(&Expr::Ident(name.into()), constants))
 }
-fn resolve_kind(kind: &mut TypeSpec, constants: &Constants) -> Result<()> {
+pub(crate) fn resolve_kind(kind: &mut TypeSpec, constants: &Constants) -> Result<()> {
     if let TypeSpec::LogicalKind(name)=kind {
         *kind=match kind_number(name,constants)? {
             4=>TypeSpec::Logical,
@@ -477,7 +484,7 @@ pub(crate) fn resolve_constants(mut program: Program) -> Result<Program> {
     Ok(program)
 }
 
-fn evaluate(expr: &Expr, constants: &Constants) -> Result<i64> {
+pub(crate) fn evaluate(expr: &Expr, constants: &Constants) -> Result<i64> {
     let expr=conditional_constant(expr,constants)?;
     let value = match expr {
         Expr::IntLit(s) => s.parse().ok(),

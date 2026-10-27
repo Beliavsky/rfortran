@@ -1397,6 +1397,8 @@ RankBlock: CaseOrDefault = {
 TypeBlocks: Vec<CaseOrDefault> = { TypeBlock* => <> };
 TypeBlock: CaseOrDefault = {
     KW_CLASS_DEFAULT <body:Stmts> => CaseOrDefault::Default(body),
+    KW_TYPE_IS LPAREN <kind:TypeSpec> RPAREN <body:Stmts> => CaseOrDefault::Case(CaseBlock {
+        items:vec![CaseItem::Single(Expr::Call("@type_is".into(),vec![crate::select_type::intrinsic_guard(kind)]))],body}),
     KW_TYPE_IS LPAREN <name:Ident> RPAREN <body:Stmts> => CaseOrDefault::Case(CaseBlock {
         items:vec![CaseItem::Single(Expr::Call("@type_is".into(),vec![Expr::Ident(name)]))],body}),
     KW_CLASS_IS LPAREN <name:Ident> RPAREN <body:Stmts> => CaseOrDefault::Case(CaseBlock {

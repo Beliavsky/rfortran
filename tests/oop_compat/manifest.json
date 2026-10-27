@@ -178,11 +178,6 @@
         }
       ],
       "features": "unlimited polymorphism and SELECT TYPE",
-      "known_failure": {
-        "phase": "compile",
-        "pattern": "unexpected\\ keyword\\ integer",
-        "reason": "SELECT TYPE intrinsic type guard"
-      },
       "notices": [
         "book-LICENSE"
       ]

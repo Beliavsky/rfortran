@@ -824,7 +824,7 @@ impl Lower<'_> {
                         let mut distance=usize::MAX;
                         for c in guards {
                             let (class,guard_kind)=guard(&c.items[0])?;
-                            let d=if class {self.defs.distance(kind,guard_kind).map(|d|d+1)} else {(kind==guard_kind).then_some(0)};
+                            let d=if class {self.defs.distance(kind,&guard_kind).map(|d|d+1)} else {(kind==&guard_kind).then_some(0)};
                             if let Some(d)=d {if d<distance {distance=d;best=Some((class,guard_kind,c.body.clone()));}}
                         }
                         let mut local=vars.clone();

@@ -4170,8 +4170,14 @@ impl CraneliftBackend {
                     let addr = b.ins().stack_addr(ptr_ty, slot, 0);
                     match pk[idx] {
                         ParamKind::I64 => {
-                            b.ins().store(ir::MemFlags::new(), pv, addr, 0);
-                            ints.insert(pname.clone(), slot.into());
+                            if f.body.iter().any(|s| matches!(s, IStmt::DeclVar(TypeSpec::Logical, name, _) if name == pname)) {
+                                let value = b.ins().icmp_imm(ir::condcodes::IntCC::NotEqual, pv, 0);
+                                b.ins().store(ir::MemFlags::new(), value, addr, 0);
+                                bools.insert(pname.clone(), slot.into());
+                            } else {
+                                b.ins().store(ir::MemFlags::new(), pv, addr, 0);
+                                ints.insert(pname.clone(), slot.into());
+                            }
                         }
                         ParamKind::F64 => {
                             b.ins().store(ir::MemFlags::new(), pv, addr, 0);
