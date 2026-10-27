@@ -1,0 +1,233 @@
+{
+  "schema_version": 1,
+  "resources": {
+    "leair-part1": {
+      "url": "https://gist.githubusercontent.com/n-s-k/522f2669979ed6d0582b8e80cf6c95fd/raw/be14ed9126bd40873c00a8c1d702ce77dda53f54/OOP_F2003_Part_1.md",
+      "sha256": "7f7ab18e39ec003447ee98764fafba783c1c4649381439ffbe5f4cbfa83a2f26",
+      "attribution": "Mark Leair, Object-Oriented Programming in Fortran 2003, Part 1; mirror by n-s-k",
+      "license": "No redistribution license identified",
+      "license_url": "https://gist.githubusercontent.com/n-s-k/522f2669979ed6d0582b8e80cf6c95fd/raw/be14ed9126bd40873c00a8c1d702ce77dda53f54/OOP_F2003_Part_1.md"
+    },
+    "workshop-LICENSE": {
+      "url": "https://raw.githubusercontent.com/fortrancon/workshop2020/4bf1740a7cc40e4cf20209a7dd984825e094e6ba/LICENSE",
+      "sha256": "be970d29e98d4c2822e4d4d96556cd6e3ee4174ceb58a50444a01fcb4f44935c",
+      "attribution": "FortranCon 2020 workshop; Arjen Markus",
+      "license": "MIT",
+      "license_url": "https://raw.githubusercontent.com/fortrancon/workshop2020/4bf1740a7cc40e4cf20209a7dd984825e094e6ba/LICENSE"
+    },
+    "workshop-solutions/moving_average.f90": {
+      "url": "https://raw.githubusercontent.com/fortrancon/workshop2020/4bf1740a7cc40e4cf20209a7dd984825e094e6ba/solutions/moving_average.f90",
+      "sha256": "70397ab96c000f106471f30436811e2b589b211472122d698d18d7c53667b022",
+      "attribution": "FortranCon 2020 workshop; Arjen Markus",
+      "license": "MIT",
+      "license_url": "https://raw.githubusercontent.com/fortrancon/workshop2020/4bf1740a7cc40e4cf20209a7dd984825e094e6ba/LICENSE"
+    },
+    "workshop-solutions/abstract_framework.f90": {
+      "url": "https://raw.githubusercontent.com/fortrancon/workshop2020/4bf1740a7cc40e4cf20209a7dd984825e094e6ba/solutions/abstract_framework.f90",
+      "sha256": "a4ae683b5b985d4d28d5ae0e903667bda37fbd148bee1f080ad74dd16b79259a",
+      "attribution": "FortranCon 2020 workshop; Arjen Markus",
+      "license": "MIT",
+      "license_url": "https://raw.githubusercontent.com/fortrancon/workshop2020/4bf1740a7cc40e4cf20209a7dd984825e094e6ba/LICENSE"
+    },
+    "book-LICENSE": {
+      "url": "https://raw.githubusercontent.com/jonaslindemann/modern_fortran_book/4ffe5ec194c50f6fbd222928bfa54c878ca842c3/LICENSE",
+      "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+      "attribution": "Jonas Lindemann and Ola Dahlblom, Modern Fortran in Science and Technology",
+      "license": "GPL-3.0 (repository LICENSE)",
+      "license_url": "https://raw.githubusercontent.com/jonaslindemann/modern_fortran_book/4ffe5ec194c50f6fbd222928bfa54c878ca842c3/LICENSE"
+    },
+    "book-source/oo_programming/mytype_module.f90": {
+      "url": "https://raw.githubusercontent.com/jonaslindemann/modern_fortran_book/4ffe5ec194c50f6fbd222928bfa54c878ca842c3/source/oo_programming/mytype_module.f90",
+      "sha256": "d43f3b83327d0e8833dc07485119e77e970c1e2277bd30fd7b397b6f208b7613",
+      "attribution": "Jonas Lindemann and Ola Dahlblom, Modern Fortran in Science and Technology",
+      "license": "GPL-3.0 (repository LICENSE)",
+      "license_url": "https://raw.githubusercontent.com/jonaslindemann/modern_fortran_book/4ffe5ec194c50f6fbd222928bfa54c878ca842c3/LICENSE"
+    },
+    "book-source/polymorphism/shapes.f90": {
+      "url": "https://raw.githubusercontent.com/jonaslindemann/modern_fortran_book/4ffe5ec194c50f6fbd222928bfa54c878ca842c3/source/polymorphism/shapes.f90",
+      "sha256": "2a5351e81c6f1f209be9484461ea7a67e8a8dffa75c44a85010fe63e47ba4cf2",
+      "attribution": "Jonas Lindemann and Ola Dahlblom, Modern Fortran in Science and Technology",
+      "license": "GPL-3.0 (repository LICENSE)",
+      "license_url": "https://raw.githubusercontent.com/jonaslindemann/modern_fortran_book/4ffe5ec194c50f6fbd222928bfa54c878ca842c3/LICENSE"
+    },
+    "book-source/polymorphism/main.f90": {
+      "url": "https://raw.githubusercontent.com/jonaslindemann/modern_fortran_book/4ffe5ec194c50f6fbd222928bfa54c878ca842c3/source/polymorphism/main.f90",
+      "sha256": "a891d59ec3e3388320f2ff23c159f32e39b30fcd4314cb0b294d9f74ed6c500a",
+      "attribution": "Jonas Lindemann and Ola Dahlblom, Modern Fortran in Science and Technology",
+      "license": "GPL-3.0 (repository LICENSE)",
+      "license_url": "https://raw.githubusercontent.com/jonaslindemann/modern_fortran_book/4ffe5ec194c50f6fbd222928bfa54c878ca842c3/LICENSE"
+    },
+    "markus-abstract_point.f90": {
+      "url": "https://flibs.sourceforge.net/abstract_point.f90",
+      "sha256": "0f422f324a98df66c0c16ef42f2a371a82b19a0f02d48942ad78f9244081ba39",
+      "attribution": "Arjen Markus, Modern Fortran in Practice, chapter 11",
+      "license": "CC-BY-3.0",
+      "license_url": "https://flibs.sourceforge.net/examples_modern_fortran.html"
+    },
+    "markus-classes_geom.f90": {
+      "url": "https://flibs.sourceforge.net/classes_geom.f90",
+      "sha256": "c19eec5cedbd05f11c862b6b972d5acd0c048442aa2ac75bfd43b3b553dcc20e",
+      "attribution": "Arjen Markus, Modern Fortran in Practice, chapter 11",
+      "license": "CC-BY-3.0",
+      "license_url": "https://flibs.sourceforge.net/examples_modern_fortran.html"
+    }
+  },
+  "cases": [
+    {
+      "id": "leair-5",
+      "files": [
+        {
+          "resource": "leair-part1",
+          "name": "shape_mod.f90",
+          "section": 5
+        },
+        {
+          "driver": "drivers/leair5.f90"
+        }
+      ],
+      "features": "type-bound procedures",
+      "notices": []
+    },
+    {
+      "id": "leair-7",
+      "files": [
+        {
+          "resource": "leair-part1",
+          "name": "shape_mod.f90",
+          "section": 7
+        },
+        {
+          "driver": "drivers/leair7.f90"
+        }
+      ],
+      "features": "inheritance and overriding",
+      "notices": []
+    },
+    {
+      "id": "leair-9",
+      "files": [
+        {
+          "resource": "leair-part1",
+          "name": "shape_mod.f90",
+          "section": 9
+        },
+        {
+          "driver": "drivers/leair9.f90"
+        }
+      ],
+      "features": "private components and constructors",
+      "known_failure": {
+        "phase": "compile",
+        "pattern": "derived\\ assignment\\ to\\ `sh`\\ requires\\ a\\ value\\ of\\ type\\ `shape`",
+        "reason": "Derived function result using the function name instead of RESULT(name); privacy parsing and checks now pass"
+      },
+      "notices": []
+    },
+    {
+      "id": "workshop-moving-average",
+      "files": [
+        {
+          "resource": "workshop-solutions/moving_average.f90",
+          "name": "moving_average.f90"
+        }
+      ],
+      "features": "allocatable components and type-bound calls",
+      "known_failure": {
+        "phase": "compile",
+        "pattern": "read\\ of\\ uninitialized\\ variable\\ `@array_function_result_1`\\ before\\ assignment",
+        "reason": "IEEE_VALUE argument lowered as an uninitialized read"
+      },
+      "notices": [
+        "workshop-LICENSE"
+      ]
+    },
+    {
+      "id": "workshop-abstract-framework",
+      "files": [
+        {
+          "resource": "workshop-solutions/abstract_framework.f90",
+          "name": "abstract_framework.f90"
+        }
+      ],
+      "features": "abstract bindings and polymorphic allocatable components",
+      "known_failure": {
+        "phase": "compile",
+        "pattern": "unexpected\\ '\\(':",
+        "reason": "SELECT CASE list in the tutorial framework is rejected"
+      },
+      "notices": [
+        "workshop-LICENSE"
+      ]
+    },
+    {
+      "id": "book-type-bound",
+      "files": [
+        {
+          "resource": "book-source/oo_programming/mytype_module.f90",
+          "name": "mytype_module.f90"
+        },
+        {
+          "driver": "drivers/book_mytype.f90"
+        }
+      ],
+      "features": "array components and optional arguments",
+      "notices": [
+        "book-LICENSE"
+      ]
+    },
+    {
+      "id": "book-polymorphism",
+      "files": [
+        {
+          "resource": "book-source/polymorphism/shapes.f90",
+          "name": "shapes.f90"
+        },
+        {
+          "resource": "book-source/polymorphism/main.f90",
+          "name": "main.f90"
+        }
+      ],
+      "features": "unlimited polymorphism and SELECT TYPE",
+      "known_failure": {
+        "phase": "compile",
+        "pattern": "unexpected\\ keyword\\ integer",
+        "reason": "SELECT TYPE intrinsic type guard"
+      },
+      "notices": [
+        "book-LICENSE"
+      ]
+    },
+    {
+      "id": "markus-abstract_point",
+      "files": [
+        {
+          "resource": "markus-abstract_point.f90",
+          "name": "abstract_point.f90"
+        }
+      ],
+      "features": "abstract types, polymorphic pointers and dynamic dispatch",
+      "known_failure": {
+        "phase": "compile",
+        "pattern": "cannot\\ determine\\ dynamic\\ type\\ of\\ CLASS\\ object\\ `p`\\ for\\ binding\\ dispatch",
+        "reason": "Polymorphic pointer receiver dispatch"
+      },
+      "notices": []
+    },
+    {
+      "id": "markus-classes_geom",
+      "files": [
+        {
+          "resource": "markus-classes_geom.f90",
+          "name": "classes_geom.f90"
+        }
+      ],
+      "features": "abstract types, polymorphic pointers and dynamic dispatch",
+      "known_failure": {
+        "phase": "compile",
+        "pattern": "unexpected\\ integer\\ literal\\ 2",
+        "reason": "DIMENSION attribute for a local derived-type array"
+      },
+      "notices": []
+    }
+  ]
+}

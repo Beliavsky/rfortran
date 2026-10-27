@@ -107,6 +107,7 @@ mod complex;
 mod derived_arrays;
 mod operators;
 mod imports;
+mod component_access;
 mod runtime;
 mod repl;
 mod sema;

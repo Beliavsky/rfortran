@@ -346,20 +346,27 @@ Designator: String = {
 };
 Bindings: Vec<(String,String)> = {
     => vec![],
+    <mut bindings:Bindings> KW_PRIVATE => {bindings.push(("@binding_default_access".into(),"@private".into()));bindings},
     <mut bindings:Bindings> <pos:@L> KW_PROCEDURE DCOLON <items:BindingList> => {
         for (name,_) in &items{bindings.push((format!("@binding_location:{name}"),pos.to_string()));}
         bindings.extend(items);bindings
     },
     <mut bindings:Bindings> <pos:@L> KW_PROCEDURE LPAREN <interface:Ident> RPAREN COMMA <attrs:BindingAttributes> DCOLON <items:DeferredNames> =>? {
+        for name in &items {if let Some(access)=attrs.iter().find(|a|a.as_str()=="public" || a.as_str()=="private") {
+            bindings.push((format!("@binding_access:{name}"),format!("@{access}")));
+        }}
         let items=crate::abstract_types::deferred_bindings(interface,attrs,items)
             .map_err(|error|lalrpop_util::ParseError::User{error})?;
         for (name,_) in &items{if !name.starts_with('@'){bindings.push((format!("@binding_location:{name}"),pos.to_string()));}}
         bindings.extend(items);Ok(bindings)
     },
-    // Accessibility and PASS (the default) do not change how a binding is called.
+    // Accessibility is checked before binding specialization.
     <mut bindings:Bindings> <pos:@L> KW_PROCEDURE COMMA <attrs:BindingAttributes> DCOLON <items:BindingList> =>? {
         crate::ast::binding_attributes(&attrs).map_err(|error| lalrpop_util::ParseError::User { error })?;
         for (name,_) in &items {bindings.push((format!("@binding_location:{name}"),pos.to_string()));}
+        for (name,_) in &items {if let Some(access)=attrs.iter().find(|a|a.as_str()=="public" || a.as_str()=="private") {
+            bindings.push((format!("@binding_access:{name}"),format!("@{access}")));
+        }}
         for (name,target) in &items {if attrs.iter().any(|a|a=="non_overridable") {bindings.push((format!("@non_overridable:{name}"),target.clone()));}}
         bindings.extend(items);
         Ok(bindings)
@@ -369,6 +376,9 @@ Bindings: Vec<(String,String)> = {
             return Err(lalrpop_util::ParseError::User { error: "expected PROCEDURE or GENERIC in a type-bound procedure part" });
         }
         crate::ast::binding_attributes(&attrs).map_err(|error| lalrpop_util::ParseError::User { error })?;
+        if let Some(access)=attrs.iter().find(|a|a.as_str()=="public" || a.as_str()=="private") {
+            bindings.push((format!("@binding_access:{name}"),format!("@{access}")));
+        }
         bindings.extend(specifics.into_iter().map(|b| (format!("@generic:{name}"), b)));
         Ok(bindings)
     },
@@ -416,6 +426,10 @@ Binding: (String,String) = {
 };
 Components: Vec<Stmt> = {
     => vec![],
+    <mut body:Components> <pos:@L> KW_PRIVATE => {
+        body.push(Stmt::SourceLocation(pos));
+        body.push(Stmt::Accessibility{public:false,names:vec![]});body
+    },
     <mut body:Components> <decl:PreFuncDecl> => {body.extend(decl);body},
 };
 

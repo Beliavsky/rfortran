@@ -1830,6 +1830,24 @@ regular Cargo regression suite.
 
 ### Derived-type components
 
+Module-defined types support a `private` statement before `contains` to make
+components private by default, and explicit `public`/`private` component
+attributes. Module procedures and their internal procedures retain access;
+USE association, renaming and re-export do not expose private components.
+Nested components, inherited components, array elements/sections, SELECT TYPE
+aliases and TYPEOF/CLASSOF declarations retain the access checks. Diagnostics
+identify the component and its defining module and include the source location.
+Whole-object assignment remains legal; a structure constructor outside the
+module may omit default-initialized private components but cannot explicitly
+supply them. Whole-object intrinsic I/O outside the defining module cannot
+expose private components.
+
+A separate `private` statement after `contains` sets the default accessibility
+of type-bound procedures and named generics. Explicit binding attributes override
+that default; public generics can call private specific bindings. This default
+is independent of component accessibility. See
+`tests/programs/xprivate_components.f90` and `tests/test_private_components.py`.
+
 Scalar derived objects can have array, ALLOCATABLE array and POINTER (scalar or
 array) components. Each component is stored as its own variable, so element and
 section references, ALLOCATE/DEALLOCATE, ALLOCATED/ASSOCIATED, pointer

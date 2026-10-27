@@ -958,6 +958,18 @@ pub fn lex(input: &str) -> Vec<Token> {
         }
         index += 1;
     }
+    // Fortran has no reserved procedure names: a keyword such as PRINT can
+    // name a procedure in a header, CALL, or END FUNCTION/SUBROUTINE name.
+    for i in 1..tokens.len() {
+        if matches!(tokens[i-1].kind, TokenKind::KwFunction | TokenKind::KwSubroutine | TokenKind::KwCall)
+            && same_statement(&input[tokens[i-1].span.end..tokens[i].span.start]) {
+            let word = &input[tokens[i].span.clone()];
+            if word.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
+                && word.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_') {
+                tokens[i].kind = TokenKind::Ident(word.to_ascii_lowercase());
+            }
+        }
+    }
     // IF is a keyword before its condition and after END or ELSE; elsewhere,
     // as in `IF = I - 1` or `A(IF+1)`, it names a variable.
     for i in 0..tokens.len() {

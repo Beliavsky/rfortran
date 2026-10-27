@@ -191,3 +191,20 @@ scalar-integer shape constructor, independently of runtime extent values.
 The full build now passes both `set_alloc` type/rank blockers and currently
 stops at a too-many-arguments error for `ivec`.
 Full `xutil.f90` execution remains a separate acceptance test.
+
+## External OOP tutorial examples
+
+The optional [OOP compatibility suite](../tests/oop_compat/README.md) compares
+checksum-pinned tutorial examples against gfortran in isolated build directories.
+External downloads remain under `target`; attribution, license evidence, source
+order, and known compiler gaps are recorded in its manifest.
+
+```bat
+python tests\run_oop_compat.py --download
+python tests\run_oop_compat.py
+```
+
+The second command uses the verified cache offline. JSON and Markdown reports
+are written to `target/oop-compat/`. Unexpected failures return a nonzero status;
+known gaps require a matching phase and diagnostic. See the suite README for
+case selection, compiler paths, timeouts, licensing, and the initial checkpoint.
