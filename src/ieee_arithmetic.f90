@@ -52,7 +52,8 @@ elemental function ieee_value4(x,class) result(res)
 real(kind=4), intent(in) :: x
 type(ieee_class_type), intent(in) :: class
 real(kind=4) :: res
-res = ieee_bits4(x,class%code)
+! X selects the result kind; its stored value is not an input.
+res = ieee_bits4(0.0_4,class%code)
 end function
 elemental function ieee_is_nan4(x) result(res)
 real(kind=4), intent(in) :: x
@@ -79,7 +80,8 @@ elemental function ieee_value8(x,class) result(res)
 real(kind=8), intent(in) :: x
 type(ieee_class_type), intent(in) :: class
 real(kind=8) :: res
-res = ieee_bits8(x,class%code)
+! X selects the result kind; its stored value is not an input.
+res = ieee_bits8(0.0_8,class%code)
 end function
 elemental function ieee_is_nan8(x) result(res)
 real(kind=8), intent(in) :: x

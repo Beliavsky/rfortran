@@ -8,6 +8,15 @@ import test_deallocate as helpers
 
 
 class IeeeArithmetic(unittest.TestCase):
+    def setUp(self):
+        # Some cases intentionally define a user IEEE_ARITHMETIC module.
+        # Keep their .rmod files out of other cases and the repository root.
+        directory = tempfile.TemporaryDirectory(prefix="ieee-arithmetic-work-")
+        self.addCleanup(directory.cleanup)
+        previous = Path.cwd()
+        self.addCleanup(os.chdir, previous)
+        os.chdir(directory.name)
+
     check = helpers.Deallocate.check
     reject = helpers.Deallocate.reject
 

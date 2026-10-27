@@ -384,7 +384,7 @@ impl Lowerer {
     }
 
     fn expression(&mut self, e: &mut Expr, shapes: &Shapes) -> Result<()> {
-        if matches!(e,Expr::Call(n,_) if crate::real_intrinsics::keys(n).is_some() && !self.functions.contains_key(n) && !shapes.contains_key(n)) {
+        if matches!(e,Expr::Call(n,_) if crate::real_intrinsics::decode(n).is_some() || crate::real_intrinsics::keys(n).is_some() && !self.functions.contains_key(n) && !shapes.contains_key(n)) {
             self.shape(e,shapes)?;
         }
         if matches!(e,Expr::Call(n,_) if self.elementals.contains(n) || matches!(n.as_str(),"mod" | "modulo" | "sign") || matches!(n.as_str(),"min"|"max") && !self.functions.contains_key(n) && !shapes.contains_key(n)) || matches!(e,Expr::Bin(..)) {
@@ -811,6 +811,7 @@ impl Lowerer {
                     || crate::intrinsics::math_arity(n).is_some()
                     || (crate::intrinsics::integer_rounding(n) || crate::intrinsics::real_predicate(n)) && !self.functions.contains_key(n) && !shapes.contains_key(n)
                     || crate::real_intrinsics::keys(n).is_some() && !self.functions.contains_key(n) && !shapes.contains_key(n)
+                    || crate::real_intrinsics::decode(n).is_some()
                     || matches!(n.as_str(),"min"|"max") && !self.functions.contains_key(n) && !shapes.contains_key(n)
                     || matches!(n.as_str(), "abs" | "dble" | "real" | "mod" | "modulo" | "sign") =>
             {

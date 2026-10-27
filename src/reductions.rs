@@ -66,6 +66,7 @@ pub(crate) fn runtime_extent(e: &Expr) -> Option<Expr> {
         // Elemental functions preserve their array arguments' runtime shape.
         // Inquiry and reduction calls, such as SIZE and SUM, remain scalar.
         Expr::Call(n,args) if crate::intrinsics::math_arity(n).is_some()
+            || crate::real_intrinsics::decode(n).is_some()
             || matches!(n.as_str(), "abs" | "real" | "dble" | "int" | "nint" | "mod" | "modulo" | "sign" | "min" | "max"
                 | "len_trim" | "index" | "scan" | "verify" | "ichar" | "iachar") =>
             args.iter().find_map(runtime_extent),
@@ -105,6 +106,7 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
             }
             let public=crate::real_intrinsics::decode(name).map_or(name.as_str(),|(n,_)|n);
             let kind=crate::real_intrinsics::result_kind(public,&kinds)?;
+            if public=="@ieee_value" {values[0]=crate::real_intrinsics::zero(&kind);}
             Ok((Expr::Call(name.clone(),values),shape,kind))
         }
         Expr::Call(name,args) if crate::intrinsics::real_predicate(name) && !symbols.contains_key(name) && !symbols.procedures.contains(name) => {
@@ -1306,9 +1308,15 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
                     let other=runtime_extent(arg).or(element(arg,&int(1),symbols)?.1.map(int));
                     if let Some(other)=other {prefix.push(shape_guard(length.clone(),other));}
                 }
-                *serial+=1;
-                let index=format!("@runtime_elemental_index_{serial}");
-                let temp=format!("@runtime_elemental_values_{serial}");
+                // A prior lowering pass may have supplied a temporary as a
+                // borrowed actual. Do not shadow it when a callee expands a
+                // nested elemental expression with its own serial counter.
+                let (index,temp)=loop {
+                    *serial+=1;
+                    let index=format!("@runtime_elemental_index_{serial}");
+                    let temp=format!("@runtime_elemental_values_{serial}");
+                    if !symbols.contains_key(&index) && !symbols.contains_key(&temp) {break (index,temp);}
+                };
                 let (value,_,kind)=element(e,&Expr::Ident(index.clone()),symbols)?;
                 crate::heap::temporary(kind.clone(),temp.clone(),length.clone(),prefix);
                 prefix.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![index.clone()]});
@@ -1332,6 +1340,14 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
         prefix.push(Stmt::Do{var:index_name,start:int(1),end:int(count),body:vec![Stmt::AssignIndex{name:temp.clone(),indices:vec![index],value}]});
         symbols.insert(temp.clone(),(kind,vec![int(count)]));
         *e=Expr::Ident(temp);
+    }
+    // Shape/type checks above still see the original mold. A scalar IEEE
+    // result does not evaluate its stored value (including undefined X).
+    if let Expr::Call(name,args)=e {
+        if crate::real_intrinsics::ieee_value_tag(name) && !args.is_empty() && !array_valued(&args[0],symbols) {
+            let kind=crate::real_intrinsics::tag_kind(name).unwrap();
+            args[0]=crate::real_intrinsics::zero(&kind);
+        }
     }
     Ok(())
 }

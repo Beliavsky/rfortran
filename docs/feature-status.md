@@ -158,7 +158,7 @@ Found on 2026-10-21, fixed:
 | [`SELECTED_INT_KIND`, `SELECTED_REAL_KIND`, `SELECTED_CHAR_KIND`, `KIND`](language-support.md#declaration-initialization), and kind expressions such as `real(kind(0d0))` | Mixed | ✅ | KIND, SELECTED_INT_KIND and SELECTED_REAL_KIND: F90; SELECTED_CHAR_KIND: F2003. A CHARACTER kind other than ASCII is accepted but stored as ASCII | test_initializers_and_kinds.py |
 | [ISO_FORTRAN_ENV](language-support.md#intrinsic-modules) | F2003 | 🟡 | Module: F2003; named kind constants such as INT64 and REAL128: F2008. No `ATOMIC_*`, `LOCK_TYPE`, `EVENT_TYPE` or `STAT_*` entities | test_intrinsic_env.py, test_intrinsic_rewrites.py |
 | [ISO_C_BINDING and C procedure bindings](language-support.md#c-interoperability) | F2003; descriptors F2018; C_F_POINTER LOWER F2023 | 🟡 | Numeric kinds and native bindings; rank 1–15 numeric CFI descriptors and helpers; scalar C_PTR arguments/results, C_NULL_PTR, C_ASSOCIATED, numeric C_F_POINTER including SHAPE/LOWER, and C_LOC for stable compatible storage. No allocation-changing descriptors, assumed rank, C function pointers, CHARACTER, LOGICAL, COMPLEX or derived layouts | test_c_interop.py, test_c_descriptors.py, test_c_pointers.py |
-| [IEEE_ARITHMETIC](language-support.md#intrinsic-modules) | F2003 | 🟡 | REAL kinds 4/8: VALUE, IS_NAN, IS_FINITE, IS_NORMAL, UNORDERED and class constants; no rounding/exception controls or other IEEE modules | test_ieee_arithmetic.py |
+| [IEEE_ARITHMETIC](language-support.md#intrinsic-modules) | F2003 | 🟡 | REAL kinds 4/8: VALUE (including undefined scalar/array molds), IS_NAN, IS_FINITE, IS_NORMAL, UNORDERED and class constants; no rounding/exception controls or other IEEE modules | test_ieee_arithmetic.py, test_ieee_value_mold.py |
 
 ## Control flow
 

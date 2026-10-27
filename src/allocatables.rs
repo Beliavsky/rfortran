@@ -439,6 +439,7 @@ fn logical_shape(
                 || crate::intrinsics::math_arity(n).is_some()
                 || crate::intrinsics::integer_rounding(n) || crate::intrinsics::real_predicate(n)
                 || crate::bit_intrinsics::keys(n).is_some()
+                || crate::real_intrinsics::keys(n).is_some() || crate::real_intrinsics::decode(n).is_some()
                 || matches!(
                     n.as_str(),
                     "abs" | "mod" | "modulo" | "sign" | "real" | "int" | "dble" | "min" | "max"

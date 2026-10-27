@@ -73,14 +73,14 @@ Other resources from the supplied list remain candidates, not tested coverage:
 
 ## Checkpoint (2026-10-27)
 
-All nine examples compile and run with gfortran. Four match rfort's output:
-Leair sections 5, 7, and 9, and the book's `mytype` example.
+All nine examples compile and run with gfortran. Five match rfort's output:
+Leair sections 5, 7, and 9, the book's `mytype` example, and the FortranCon
+moving-average example.
 
-The five current compiler gaps are recorded individually in the manifest:
+The four current compiler gaps are recorded individually in the manifest:
 
 | Case | First blocker |
 |---|---|
-| `workshop-moving-average` | False uninitialized-read diagnostic during IEEE_VALUE lowering |
 | `workshop-abstract-framework` | SELECT CASE list parsing |
 | `book-polymorphism` | SELECT TYPE intrinsic type guard |
 | `markus-abstract_point` | Binding dispatch through a polymorphic pointer |
@@ -93,6 +93,11 @@ using its function name are supported. The focused regression
 `tests/test_module_function_results.py` covers function-name and explicit RESULT
 variables, typed headers, import aliases/re-export, forwarding, intrinsic array
 results and separate module compilation.
+
+The moving-average example also passes unchanged. IEEE_VALUE keeps its mold's
+type, kind and elemental shape without reading its undefined stored value;
+`tests/test_ieee_value_mold.py` checks scalar/array molds, runtime allocation,
+shape conformance, and preservation of genuine initialization diagnostics.
 
 These are first failures, not a claim that fixing one will make its entire
 example pass. The suite deliberately preserves upstream code so it can expose

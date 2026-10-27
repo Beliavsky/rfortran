@@ -3201,8 +3201,14 @@ functions IEEE_VALUE, IEEE_IS_NAN, IEEE_IS_FINITE, IEEE_IS_NORMAL and IEEE_UNORD
 IEEE_CLASS_TYPE and the named class constants for signaling/quiet NaNs, signed
 infinities, normal/subnormal values and signed zeros are available; DENORMAL and
 SUBNORMAL spellings denote the same classes. IEEE_VALUE constructs representative
-bit patterns without division by zero or invalid arithmetic. Signaling NaNs may
-be quieted by the compiler's intermediate real-kind conversions.
+bit patterns without division by zero or invalid arithmetic. Its X argument
+supplies the result type, kind and elemental shape without reading the stored
+value; an undefined scalar or allocated array is a valid mold. CLASS still
+requires a defined value, and using X as a mold does not initialize it. Fixed
+and runtime-sized arrays retain shape/conformance checks. See
+`tests/programs/xieee_value_mold.f90` and `tests/test_ieee_value_mold.py`.
+Signaling NaNs may be quieted by the compiler's intermediate real-kind
+conversions.
 Scalar and array arguments, keyword arguments, ONLY/renaming, host association,
 module re-export and calls from PURE procedures use the ordinary module machinery.
 Both ordinary USE and USE, INTRINSIC are supported.

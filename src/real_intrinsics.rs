@@ -83,3 +83,25 @@ pub fn tag_kind(tag: &str) -> Option<TypeSpec> {
 pub fn opcode(name: &str) -> i64 {
     NAMES.iter().position(|n| *n == name).unwrap() as i64
 }
+
+/// Specifics of our intrinsic module, after USE/generic resolution. Matching
+/// their defining identity keeps user procedures named IEEE_VALUE unchanged.
+pub(crate) fn ieee_value_kind(name: &str) -> Option<u8> {
+    match name {
+        "@module$_intrinsic_ieee_arithmetic$ieee_value4" => Some(4),
+        "@module$_intrinsic_ieee_arithmetic$ieee_value8" => Some(8),
+        _ => None,
+    }
+}
+pub(crate) fn ieee_value_tag(name: &str) -> bool {
+    matches!(decode(name), Some(("@ieee_value", _)))
+}
+pub(crate) fn zero(kind: &TypeSpec) -> crate::ast::Expr {
+    let zero = crate::ast::Expr::RealLit("0.0".into());
+    // Kind suffixes have already been normalized at this lowering stage.
+    if *kind == TypeSpec::DoublePrecision {
+        crate::ast::Expr::Call("dble".into(), vec![zero])
+    } else {
+        zero
+    }
+}

@@ -51,6 +51,31 @@ end
                     self.assertEqual(result.stderr,"")
                     self.assertTrue(equivalent(result.stdout,"1 4 9 6 2 4.0 [abc][ab ]\n8 9 10"),result.stdout)
 
+    def test_initialized_module_storage_persists(self):
+        program="""module initialized_storage
+integer::x=1
+contains
+subroutine bump()
+x=x+1
+end subroutine
+end module
+program p
+use initialized_storage
+print *,x
+call bump()
+print *,x
+end
+"""
+        with tempfile.TemporaryDirectory(prefix="module-init-") as tmp:
+            directory=Path(tmp)
+            source=directory/"main.f90"
+            source.write_text(program)
+            for command in build_commands(source,directory,cwd=directory):
+                with self.subTest(command=command):
+                    result=subprocess.run(command,cwd=directory,capture_output=True,text=True,timeout=15)
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    self.assertTrue(equivalent(result.stdout,'1 2'),result.stdout)
+
     def test_diagnostics_and_persistent_storage_boundary(self):
         cases=[
             ("integer::x=1,y=x\nprint *,y\nend", "invalid declaration initializer for `y`"),
@@ -58,7 +83,6 @@ end
             ("integer(1)::x=128\nprint *,x\nend", "invalid declaration initializer"),
             ("integer::x=[1,2]\nprint *,x\nend", "scalar declaration initializer cannot be an array"),
             ("integer::x(2)=[1,2,3]\nprint *,x\nend", "nonconforming array assignment"),
-            ("module m\ninteger::x=1\nend module m\nend", "module storage"),
             ("block\ninteger::x=0\nprint *,x\nend block\nend", "module storage"),
         ]
         with tempfile.TemporaryDirectory(prefix="main-init-errors-") as tmp:

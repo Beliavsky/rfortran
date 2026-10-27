@@ -127,11 +127,6 @@
         }
       ],
       "features": "allocatable components and type-bound calls",
-      "known_failure": {
-        "phase": "compile",
-        "pattern": "read\\ of\\ uninitialized\\ variable\\ `@array_function_result_1`\\ before\\ assignment",
-        "reason": "IEEE_VALUE argument lowered as an uninitialized read"
-      },
       "notices": [
         "workshop-LICENSE"
       ]

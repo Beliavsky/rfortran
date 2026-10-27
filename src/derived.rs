@@ -672,6 +672,12 @@ impl Lowerer {
                     );
                 }
                 *args = self.actuals(n, std::mem::take(args), objects, prefix)?;
+                // IEEE_VALUE's X is a mold, not a value input. Preserve it for
+                // elemental shape/type resolution, bypassing wrapper argument
+                // copies; reductions replaces each scalar mold with typed zero.
+                if let Some(kind) = crate::real_intrinsics::ieee_value_kind(n) {
+                    *n = crate::real_intrinsics::tag("@ieee_value",kind);
+                }
             }
             Expr::Bin(_, a, b) => {
                 self.expression(a, objects, prefix)?;
