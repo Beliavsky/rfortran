@@ -36,7 +36,19 @@ fn collect(
                 }
             }
             if owns {
+                if matches!(
+                    s,
+                    Stmt::Function { pure: true, .. } | Stmt::Subroutine { pure: true, .. }
+                ) && params.iter().any(|p| {
+                    vars.get(p).is_some_and(|v| {
+                        v.polymorphic && v.attrs.iter().any(|a| a == "intent(out)")
+                    })
+                }) {
+                    bail!("PURE procedure cannot have a polymorphic INTENT(OUT) dummy");
+                }
+                let declaration = crate::imports::declaration(name.clone());
                 templates.insert(name.clone(), (s, host.into()));
+                kept.push(declaration);
                 continue;
             }
         }
@@ -95,6 +107,8 @@ fn substitute(body: &mut [Stmt], from: &str, to: &str) {
 }
 
 struct Calls {
+    interfaces: Option<crate::operators::OwnerInterfaces>,
+    owner_kinds: HashSet<String>,
     templates: HashMap<String, (Stmt, String)>,
     generated: HashMap<String, Vec<Stmt>>,
     internal: HashSet<String>,
@@ -103,6 +117,70 @@ struct Calls {
     stack: Vec<String>,
 }
 impl Calls {
+    fn concrete(
+        &self,
+        body: &mut Vec<Stmt>,
+        params: &[String],
+        args: &[Expr],
+        scope: &crate::operators::OwnerScope,
+    ) -> Result<()> {
+        let Some(interfaces) = &self.interfaces else {
+            return Ok(());
+        };
+        let mut out = vec![];
+        for s in std::mem::take(body) {
+            if let Stmt::DerivedDecl {
+                type_name,
+                names,
+                attributes,
+                polymorphic: true,
+                dims,
+            } = &s
+            {
+                if self.owner_kinds.contains(type_name) {
+                    for name in names {
+                        let actual = params
+                            .iter()
+                            .position(|p| p == name)
+                            .and_then(|i| args.get(i));
+                        if let Some(actual) = actual.filter(|a| !crate::named_arguments::omitted(a))
+                        {
+                            if interfaces.dynamic(actual, scope) {
+                                bail!("runtime polymorphic owners require a persistent component descriptor interface");
+                            }
+                            let Some((kind, rank)) = interfaces.derived(actual, scope)? else {
+                                bail!("owner dummy `{name}` requires a derived-type actual");
+                            };
+                            if rank != dims.len() || !interfaces.extends(&kind, type_name) {
+                                bail!("owner actual does not match CLASS dummy `{name}`");
+                            }
+                            let mut attributes = attributes.clone();
+                            attributes.push("@referenced_type".into());
+                            out.push(Stmt::DerivedDecl {
+                                type_name: kind,
+                                names: vec![name.clone()],
+                                attributes,
+                                polymorphic: false,
+                                dims: dims.clone(),
+                            });
+                        } else {
+                            out.push(Stmt::DerivedDecl {
+                                type_name: type_name.clone(),
+                                names: vec![name.clone()],
+                                attributes: attributes.clone(),
+                                polymorphic: true,
+                                dims: dims.clone(),
+                            });
+                        }
+                    }
+                    continue;
+                }
+            }
+            out.push(s);
+        }
+        *body = out;
+        Ok(())
+    }
     /// Trace association operands through explicit interfaces. Unrelated TARGET
     /// declarations must not become dispatch alternatives (or value reads).
     fn referenced_targets(
@@ -111,6 +189,7 @@ impl Calls {
         names: &HashMap<String, String>,
         stack: &mut HashSet<String>,
         out: &mut HashSet<String>,
+        scope: &crate::operators::OwnerScope,
     ) -> Result<()> {
         let resolve = |n: &str| names.get(n).cloned().unwrap_or_else(|| n.into());
         let mut call = |name: &str, args: &[Expr]| -> Result<()> {
@@ -133,12 +212,22 @@ impl Calls {
                     for n in super::super::super::objects(body, &Objects::new()).keys() {
                         bindings.remove(n);
                     }
-                    for (p, a) in params.iter().zip(args) {
+                    for (p, a) in params.iter().zip(args.iter()) {
                         if let Expr::Ident(n) = a {
                             bindings.insert(p.clone(), resolve(&n));
                         }
                     }
-                    self.referenced_targets(body, &bindings, stack, out)?;
+                    let mut source = body.clone();
+                    self.concrete(&mut source, params, &args, scope)?;
+                    let nested = self
+                        .interfaces
+                        .as_ref()
+                        .map(|r| r.scope(&source, name))
+                        .unwrap_or_default();
+                    if let Some(r) = &self.interfaces {
+                        r.normalize(&mut source, &nested)?;
+                    }
+                    self.referenced_targets(&source, &bindings, stack, out, &nested)?;
                     stack.remove(name);
                 }
             }
@@ -183,7 +272,7 @@ impl Calls {
                 continue;
             }
             for child in children(&mut s.clone()) {
-                self.referenced_targets(child, names, stack, out)?;
+                self.referenced_targets(child, names, stack, out, scope)?;
             }
         }
         Ok(())
@@ -195,6 +284,7 @@ impl Calls {
         targets: &[(String, String)],
         host: &str,
         locals: &HashSet<String>,
+        scope: &crate::operators::OwnerScope,
     ) -> Result<()> {
         let Some((template, destination)) = self.templates.get(name).cloned() else {
             return Ok(());
@@ -216,7 +306,33 @@ impl Calls {
             _ => unreachable!(),
         };
         crate::named_arguments::Signature::new(params, body).reorder(name, args)?;
+        // Hidden required arguments follow the source arguments, including
+        // explicit placeholders for trailing absent OPTIONAL dummies.
+        args.resize_with(params.len(), || {
+            Expr::Call(crate::named_arguments::OMITTED.into(), vec![])
+        });
+        self.concrete(body, params, args, scope)?;
         let vars = super::super::super::objects(body, &Objects::new());
+        if let Some(interfaces) = &self.interfaces {
+            for (p, actual) in params.iter().zip(args.iter()) {
+                if vars
+                    .get(p)
+                    .is_some_and(|v| self.owner_kinds.contains(&v.kind))
+                    && interfaces.dynamic(actual, scope)
+                {
+                    bail!("runtime polymorphic owners require a persistent component descriptor interface");
+                }
+                if vars.get(p).is_some_and(|v| {
+                    self.owner_kinds.contains(&v.kind)
+                        && v.attrs
+                            .iter()
+                            .any(|a| a == "intent(out)" || a == "intent(inout)")
+                }) && interfaces.readonly(actual, scope)
+                {
+                    bail!("cannot pass INTENT(IN) owner to writable dummy `{p}`");
+                }
+            }
+        }
         let host_references: HashSet<_> = targets
             .iter()
             .filter(|(_, n)| !vars.contains_key(n) && body.iter().any(|s| uses(s, n)))
@@ -291,7 +407,7 @@ impl Calls {
         );
         *name = clone_name.clone();
         self.stack.push(original.clone());
-        self.scope(body, &Declarations::new(), params, clone_name)?;
+        self.scope(body, &Declarations::new(), params, clone_name, &original)?;
         self.stack.pop();
         if self.internal.contains(&original) {
             self.new_internal.push(clone_name.clone());
@@ -308,6 +424,7 @@ impl Calls {
         targets: &[(String, String)],
         host: &str,
         locals: &HashSet<String>,
+        scope: &crate::operators::OwnerScope,
     ) -> Result<()> {
         let mut location = None;
         for s in body {
@@ -325,13 +442,13 @@ impl Calls {
             }
             (|| -> Result<()> {
                 if let Stmt::CallSub { name, args } = s {
-                    self.call(name, args, targets, host, locals)?;
+                    self.call(name, args, targets, host, locals, scope)?;
                 }
                 for e in expressions(s) {
                     let mut error = None;
                     visit_expr(e, &mut |e| {
                         if let Expr::Call(name, args) = e {
-                            if let Err(e) = self.call(name, args, targets, host, locals) {
+                            if let Err(e) = self.call(name, args, targets, host, locals, scope) {
                                 error = Some(e);
                             }
                         }
@@ -341,7 +458,7 @@ impl Calls {
                     }
                 }
                 for child in children(s) {
-                    self.statements(child, targets, host, locals)?;
+                    self.statements(child, targets, host, locals, scope)?;
                 }
                 Ok(())
             })()
@@ -355,7 +472,16 @@ impl Calls {
         parent: &Declarations,
         params: &[String],
         host: &str,
+        origin: &str,
     ) -> Result<()> {
+        let scope = self
+            .interfaces
+            .as_ref()
+            .map(|r| r.scope(body, origin))
+            .unwrap_or_default();
+        if let Some(r) = &self.interfaces {
+            r.normalize(body, &scope)?;
+        }
         let declared = declarations(body, parent);
         let environment = body.iter().find_map(|s| match s {
             Stmt::CallSub { name, args } if name == ENVIRONMENT => Some(args),
@@ -363,7 +489,13 @@ impl Calls {
         });
         let mut referenced = HashSet::new();
         if environment.is_none() {
-            self.referenced_targets(body, &HashMap::new(), &mut HashSet::new(), &mut referenced)?;
+            self.referenced_targets(
+                body,
+                &HashMap::new(),
+                &mut HashSet::new(),
+                &mut referenced,
+                &scope,
+            )?;
         }
         let mut targets = vec![];
         for (n, ds) in &declared {
@@ -406,15 +538,15 @@ impl Calls {
                 }
                 | Stmt::Subroutine {
                     name, body, params, ..
-                } => self.scope(body, &declared, params, name)?,
-                Stmt::Module { name, body, .. } => self.scope(body, &declared, &[], name)?,
+                } => self.scope(body, &declared, params, name, name)?,
+                Stmt::Module { name, body, .. } => self.scope(body, &declared, &[], name, name)?,
                 _ => {}
             }
         }
         let locals = super::super::super::objects(body, &Objects::new())
             .into_keys()
             .collect();
-        self.statements(body, &targets, host, &locals)?;
+        self.statements(body, &targets, host, &locals, &scope)?;
         // Every proxy in this activation uses the same ordered identity table.
         body.insert(
             0,
@@ -427,8 +559,17 @@ impl Calls {
     }
 }
 
-pub(super) fn prepare(program: &mut Program, defs: &Definitions) -> Result<()> {
+pub(super) fn prepare(program: &mut Program, defs: &mut Definitions) -> Result<()> {
+    let source = program.clone();
+    let mut owner_kinds = HashSet::new();
+    for kind in defs.fields.keys() {
+        if owner(defs, kind)? {
+            owner_kinds.insert(kind.clone());
+        }
+    }
     let mut calls = Calls {
+        interfaces: None,
+        owner_kinds,
         templates: HashMap::new(),
         generated: HashMap::new(),
         internal: program.contains.iter().cloned().collect(),
@@ -437,7 +578,15 @@ pub(super) fn prepare(program: &mut Program, defs: &Definitions) -> Result<()> {
         stack: vec![],
     };
     collect(&mut program.body, defs, &mut calls.templates, "")?;
-    calls.scope(&mut program.body, &Declarations::new(), &[], "")?;
+    let owned: HashSet<_> = calls.templates.keys().cloned().collect();
+    if !owned.is_empty() {
+        calls.interfaces = Some(crate::operators::OwnerInterfaces::new(
+            &source,
+            owned.clone(),
+            defs.parents.clone(),
+        )?);
+    }
+    calls.scope(&mut program.body, &Declarations::new(), &[], "", "")?;
     fn attach(body: &mut Vec<Stmt>, host: &str, generated: &mut HashMap<String, Vec<Stmt>>) {
         for s in body.iter_mut() {
             match s {
@@ -455,6 +604,38 @@ pub(super) fn prepare(program: &mut Program, defs: &Definitions) -> Result<()> {
             "nested owner-procedure templates require a persistent component descriptor interface"
         );
     }
+    fn retire(
+        body: &mut [Stmt],
+        owned: &HashSet<String>,
+        interfaces: Option<&crate::operators::OwnerInterfaces>,
+    ) {
+        for s in body {
+            match s {
+                Stmt::GenericInterface { procedures, .. } => {
+                    procedures.retain(|n| !owned.contains(n))
+                }
+                Stmt::DerivedType { name, bindings, .. } => bindings.retain(|(key, n)| {
+                    let generic = key.strip_prefix("@generic:").or_else(|| {
+                        key.strip_prefix("@generic_binding:")
+                            .and_then(|s| s.split_once(':'))
+                            .map(|(g, _)| g)
+                    });
+                    !owned.contains(n)
+                        && !generic
+                            .is_some_and(|g| interfaces.is_some_and(|r| r.owns_generic(name, g)))
+                }),
+                _ => {}
+            }
+            for b in children(s) {
+                retire(b, owned, interfaces);
+            }
+        }
+    }
+    retire(&mut program.body, &owned, calls.interfaces.as_ref());
+    for bindings in defs.bindings.values_mut() {
+        bindings.retain(|_, n| !owned.contains(n));
+    }
+    defs.bound_targets.retain(|n| !owned.contains(n));
     program.contains.extend(calls.new_internal);
     Ok(())
 }

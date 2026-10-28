@@ -10,6 +10,8 @@ use std::collections::{HashMap, HashSet};
 
 #[path = "intrinsic_generics.rs"]
 mod intrinsic_generics;
+mod owner_interfaces;
+pub(crate) use owner_interfaces::{OwnerInterfaces, OwnerScope};
 
 #[derive(Clone, Debug, PartialEq)]
 enum Ty {
@@ -257,6 +259,29 @@ fn bin_name(op: &BinOp) -> &'static str {
 }
 
 impl Resolver {
+    fn collect_exports(&mut self, body: &[Stmt]) -> Result<()> {
+        // Source-order modules can re-export operators brought in by USE.
+        for s in body {
+            if let Stmt::Module { name, body } = s {
+                let mut exports = self.visible(body, &Bindings::new())?;
+                let mut default_public = true;
+                let mut access = HashMap::new();
+                for s in body {
+                    if let Stmt::Accessibility { public, names } = s {
+                        if names.is_empty() {
+                            default_public = *public;
+                        }
+                        for n in names {
+                            access.insert(n.clone(), *public);
+                        }
+                    }
+                }
+                exports.retain(|op, _| *access.get(&export_name(op)).unwrap_or(&default_public));
+                self.exports.insert(name.clone(), exports);
+            }
+        }
+        Ok(())
+    }
     fn collect(&mut self, body: &[Stmt]) -> Result<()> {
         for s in body {
             match s {
@@ -582,6 +607,12 @@ impl Resolver {
         subroutine: bool,
         visible: &Bindings,
     ) -> Result<Option<String>> {
+        self.select_generic_using(name,actuals,args,subroutine,visible,&|_,_,a,b|a==b)
+    }
+    fn select_generic_using(
+        &self, name:&str, actuals:&mut Vec<Expr>, args:&[Ty], subroutine:bool,
+        visible:&Bindings, compatible:&dyn Fn(&str,usize,&Ty,&Ty)->bool,
+    ) -> Result<Option<String>> {
         let Some(candidates) = visible.get(&format!("generic:{name}")) else {
             return Ok(None);
         };
@@ -592,7 +623,7 @@ impl Resolver {
             let p = &self.procedures[n];
             if p.subroutine != subroutine { continue; }
             match p.signature.associate(name, actuals) {
-                Ok(slots) if p.args.iter().zip(&slots).all(|(ty, slot)| slot.is_none_or(|i| ty == &args[i])) => matches.push(n),
+                Ok(slots) if p.args.iter().zip(&slots).enumerate().all(|(position,(ty, slot))| slot.is_none_or(|i| compatible(n,position,ty,&args[i]))) => matches.push(n),
                 Ok(slots) if p.elemental && {
                     let (params,actuals):(Vec<_>,Vec<_>)=p.args.iter().zip(&slots).filter_map(|(ty,slot)|slot.map(|i|(ty.clone(),args[i].clone()))).unzip();
                     elemental_match(&params, &actuals)
@@ -1254,26 +1285,7 @@ pub fn resolve(mut program: Program) -> Result<Program> {
     }
     let mut resolver = Resolver::default();
     resolver.collect(&program.body)?;
-    // Source-order modules can re-export operators brought in by USE.
-    for s in &program.body {
-        if let Stmt::Module { name, body } = s {
-            let mut exports = resolver.visible(body, &Bindings::new())?;
-            let mut default_public = true;
-            let mut access = HashMap::new();
-            for s in body {
-                if let Stmt::Accessibility { public, names } = s {
-                    if names.is_empty() {
-                        default_public = *public;
-                    }
-                    for n in names {
-                        access.insert(n.clone(), *public);
-                    }
-                }
-            }
-            exports.retain(|op, _| *access.get(&export_name(op)).unwrap_or(&default_public));
-            resolver.exports.insert(name.clone(), exports);
-        }
-    }
+    resolver.collect_exports(&program.body)?;
     resolver.body(&mut program.body, &Vars::new(), &Bindings::new())?;
     // Deferred calls are now unambiguously intrinsic; normalize their controls
     // before array actuals are materialized by later procedure lowering.

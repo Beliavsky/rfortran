@@ -235,12 +235,15 @@ pub fn do_concurrent(controls: Vec<Expr>, mask: Option<Expr>, body: Vec<Stmt>) -
 
 /// Resolve each `@generic:name` binding entry, which names a specific
 /// binding of the type, to that binding's procedure.
+/// Retain the binding identity too: aliases may share an implementation but
+/// only one of those bindings may be overridden in an extension.
 pub fn generic_bindings(bindings: Vec<(String, String)>) -> Vec<(String, String)> {
     let specific = |b: &str| bindings.iter().find(|(n, _)| n == b && !n.starts_with('@')).map(|(_, t)| t.clone());
     bindings.iter().map(|(n, t)| match n.starts_with("@generic:") || n.starts_with("@operator:") {
         true => (n.clone(), specific(t).unwrap_or_else(|| t.clone())),
         false => (n.clone(), t.clone()),
-    }).collect()
+    }).chain(bindings.iter().filter_map(|(n,b)|n.strip_prefix("@generic:").map(|g|
+        (format!("@generic_binding:{g}:{b}"),specific(b).unwrap_or_else(||b.clone()))))).collect()
 }
 
 /// Check the attributes of a type-bound procedure binding.

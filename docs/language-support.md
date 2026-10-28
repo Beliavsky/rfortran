@@ -2383,13 +2383,24 @@ impure procedure to change its target. INTENT(INOUT) preserves reassociation in
 the caller; INTENT(OUT) applies the owner's default initialization on entry.
 Aliased components continue to refer to the same target across these calls.
 
+Owners also support scalar type-bound function/subroutine calls, including
+indexed and nested receivers, inherited methods, overrides, calls through
+`self`, and explicit parent calls. Named type-bound and module generics select
+specifics by type, kind, rank and keyword association; OPTIONAL arguments and
+private specifics behind public generics are supported. CLASS owner dummies
+keep their declared type for generic selection and their concrete type for
+binding dispatch, so forwarding through a parent interface still selects the
+child's override. Separate `.rmod`
+compilation preserves these interfaces.
+
 The compiler specializes these calls with hidden borrowed TARGET arguments
 alongside the association tags. This private target-environment representation
 does not copy or own targets and is not a portable descriptor ABI. Recursive
 owner procedures, new local TARGET storage in these procedures, owner function
-results and module owner objects remain unsupported, as do generic/type-bound
-owner interfaces, shadowed host targets, external calls without a known interface,
-constructors with explicit arguments for these owner types, component SELECT TYPE,
+results and module owner objects remain unsupported, as do runtime polymorphic
+owner receivers, shadowed host targets, external calls without a known interface,
+constructors with explicit arguments for these owner types, SELECT TYPE on owner
+dummies or pointer components,
 unlimited/array pointer components and the standalone pointers' unsupported
 target/allocation forms. General escaping
 owner storage still needs a persistent component descriptor ABI.
@@ -2398,6 +2409,9 @@ Run `python tests/test_polymorphic_pointer_components.py`. The reduced example
 `tests/programs/xpolymorphic_pointer_array_component.f90` prints `T 7`.
 `tests/programs/xpolymorphic_pointer_component_dummy.f90` tests procedure calls,
 target mutation, reassociation and default initialization on INTENT(OUT).
+`tests/programs/xpolymorphic_pointer_owner_bindings.f90` tests owner bindings,
+overrides and generics. Run `python tests/test_polymorphic_pointer_owner_bindings.py`
+for the additional interface regressions.
 
 ### Scalar dynamic binding dispatch
 

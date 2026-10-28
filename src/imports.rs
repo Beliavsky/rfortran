@@ -20,9 +20,13 @@ fn generic_declared(body: &[Stmt], name: &str) -> bool {
 }
 
 const DECLARATION:&str="@procedure_declaration";
+const REFERENCE:&str="@procedure_reference";
 pub(crate) fn declaration(name:String)->Stmt {Stmt::DummyIntent{name,intent:DECLARATION.into()}}
+/// A source-validated binding/generic may select a private implementation.
+/// Grant that generated reference visibility without declaring a local entity.
+pub(crate) fn reference(name:String)->Stmt {Stmt::DummyIntent{name,intent:REFERENCE.into()}}
 pub(crate) fn clear_declarations(body:&mut Vec<Stmt>){
-    body.retain(|s|!matches!(s,Stmt::DummyIntent{intent,..} if intent==DECLARATION));
+    body.retain(|s|!matches!(s,Stmt::DummyIntent{intent,..} if intent==DECLARATION||intent==REFERENCE));
     for s in body{for b in crate::procedure_arguments::children(s){clear_declarations(b);}}
 }
 fn declared(body: &[Stmt]) -> HashSet<String> {
@@ -105,6 +109,9 @@ impl Validator {
         Ok(())
     }
     fn procedure(&self,name:&str,visible:&HashSet<String>)->Result<()> {
+        // Owner calls have already resolved the accessible source binding or
+        // generic. Its generated implementation is not a USE ONLY entity.
+        if name.strip_prefix("@pointer_owner_call").is_some_and(|tag|!tag.is_empty() && tag.bytes().all(|c|c.is_ascii_digit())) {return Ok(());}
         // Type-specialized calls were resolved and access-checked in their
         // source form. Their private implementation name need not appear in
         // the caller's USE ONLY list (which still names the source procedure).
@@ -168,6 +175,9 @@ impl Validator {
         let mut visible = inherited.clone();
         visible.extend(locals);
         visible.extend(imports.into_keys());
+        visible.extend(body.iter().filter_map(|s|match s {
+            Stmt::DummyIntent{name,intent} if intent==REFERENCE=>Some(name.clone()),_=>None,
+        }));
         for s in body {
             match s {
                 Stmt::Module { body, .. } => self.body(body, &HashSet::new())?,
