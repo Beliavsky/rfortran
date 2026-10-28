@@ -346,6 +346,13 @@ Designator: String = {
 };
 Bindings: Vec<(String,String)> = {
     => vec![],
+    <mut bindings:Bindings> <pos:@L> <f:Ident> DCOLON? <names:IdentList> =>? {
+        if !f.eq_ignore_ascii_case("final") {
+            return Err(lalrpop_util::ParseError::User {error:"expected FINAL in a final binding"});
+        }
+        bindings.extend(names.into_iter().map(|n|(format!("@final:{pos}"),n)));
+        Ok(bindings)
+    },
     <mut bindings:Bindings> KW_PRIVATE => {bindings.push(("@binding_default_access".into(),"@private".into()));bindings},
     <mut bindings:Bindings> <pos:@L> KW_PROCEDURE DCOLON <items:BindingList> => {
         for (name,_) in &items{bindings.push((format!("@binding_location:{name}"),pos.to_string()));}

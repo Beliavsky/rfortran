@@ -217,8 +217,10 @@ impl Validator {
                     ..
                 } => {
                     self.body(components, &visible)?;
-                    for (_, procedure) in bindings {
-                        self.name(procedure, &visible)?;
+                    for (binding, procedure) in bindings {
+                        // FINAL procedures are accessible wherever their type is,
+                        // even when the module procedure itself is PRIVATE.
+                        if !binding.starts_with("@final:") {self.name(procedure, &visible)?;}
                     }
                 }
                 Stmt::OperatorInterface { procedures, .. }

@@ -1927,6 +1927,38 @@ saved local objects need scalar components. Run
 `python tests/test_derived_array_components.py` and
 `python tests/test_derived_type_features.py`.
 
+### Scalar finalization
+
+A derived type defined in a module can declare `final :: release` (or
+`final release`). The finalizer must be a module subroutine with one scalar,
+nonpolymorphic dummy of that type, without POINTER, ALLOCATABLE, OPTIONAL,
+VALUE or INTENT(OUT). Invalid bindings receive source locations.
+
+Scalar nonpolymorphic objects invoke their finalizers on intrinsic assignment,
+explicit deallocation, INTENT(OUT) entry, and automatic procedure/BLOCK cleanup,
+including RETURN, EXIT and CYCLE through nested blocks. Assignment evaluates
+and preserves the right-hand side before finalizing the destination. Unallocated
+objects are not finalized. MOVE_ALLOC finalizes an allocated destination before
+replacing its allocation; the source allocation moves without finalization.
+The containing object's finalizer precedes finalizers of its nonallocatable
+scalar components. Primitive allocatable components remain available during
+finalization and are subsequently released by normal allocation cleanup.
+
+Saved objects and objects remaining at STOP, ERROR STOP or main-program
+termination are not finalized for that event. Compiler-generated record copies
+are not separately finalized. Private module finalizers remain accessible through
+their public type, including USE ONLY, renaming and separate `.rmod` compilation.
+These lifecycle rules follow [Fortran 2023 section 7.5.6](https://j3-fortran.org/doc/year/24/24-007.pdf).
+
+This initial implementation diagnoses arrays, ELEMENTAL/rank-specific finalizers,
+polymorphic and POINTER objects, type extension involving finalizable types,
+finalizable function results, TYPEOF/CLASSOF of finalizable objects, scalar
+ALLOCATABLE dummies, finalizable allocatable components, defined assignment
+involving finalizable types, and named EXIT/CYCLE or GOTO
+with live finalizable locals. DEALLOCATE STAT/ERRMSG with finalizable objects is
+also unsupported. Run `python tests/test_finalization.py`; a standalone example is
+`tests/programs/xscalar_final.f90`.
+
 ### Arrays of derived type
 
 A scalar derived component selected across a record array, such as `xx%date`,
@@ -2038,7 +2070,8 @@ includes nested scalar components, fixed array defaults, optional and forwarded
 dummies, empty arrays and sections, and parent ranks through 15. Allocatable
 INTENT(OUT) parent arrays release both their components and their outer storage,
 and enter the procedure unallocated. Nonallocatable dummies preserve the caller's
-array bounds and storage. User FINAL procedures remain unsupported.
+array bounds and storage. Scalar FINAL procedures are described above;
+finalization of record arrays remains unsupported.
 See `tests/test_owned_record_intent_out.py` and
 `tests/programs/xowned_record_intent_out.f90`.
 

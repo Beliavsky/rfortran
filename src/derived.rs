@@ -378,7 +378,7 @@ impl Lowerer {
                         objects.polymorphic.remove(n);
                     }
                 }
-                if attributes.iter().any(|a| !a.starts_with("intent(") && !matches!(a.as_str(), "parameter" | "save" | "public" | "private" | "optional" | "target")) {
+                if attributes.iter().any(|a| !a.starts_with("intent(") && a!=crate::finalization::OUTPUT && !matches!(a.as_str(), "parameter" | "save" | "public" | "private" | "optional" | "target")) {
                     bail!("derived objects currently support INTENT, OPTIONAL, PARAMETER, SAVE and TARGET attributes only");
                 }
                 for n in names {
@@ -709,6 +709,7 @@ impl Lowerer {
         out: &mut Vec<Stmt>,
     ) -> Result<()> {
         let intent = attrs.iter().find(|a| a.starts_with("intent("));
+        let final_output = dummy && attrs.iter().any(|a|a==crate::finalization::OUTPUT);
         for c in &self.types[ty].components {
             let field = format!("{name}%{}", c.name);
             if let Some(sub) = &c.derived {
@@ -753,17 +754,30 @@ impl Lowerer {
             if let Some(i) = intent {
                 out.push(Stmt::DummyIntent {
                     name: field.clone(),
-                    intent: i.clone(),
+                    intent: if final_output {"intent(inout)".into()} else {i.clone()},
                 });
+            }
+            let mut initialization = vec![];
+            if final_output {
+                if c.allocatable() {
+                    initialization.push(when(test("allocated",&field),vec![call("@deallocate",vec![Expr::Ident(field.clone())])],None));
+                } else if c.pointer() {
+                    initialization.push(call("@nullify",vec![Expr::Ident(field.clone())]));
+                } else {
+                    initialization.push(call("@undefine",vec![Expr::Ident(field.clone())]));
+                }
             }
             if !dummy || intent.is_some_and(|i| i == "intent(out)") {
                 if let Some(value) = &c.default {
-                    out.push(Stmt::Assign {
-                        name: field,
+                    initialization.push(Stmt::Assign {
+                        name: field.clone(),
                         value: value.clone(),
                     });
                 }
             }
+            if final_output && attrs.iter().any(|a|a=="optional") {
+                out.push(when(test("present",&field),initialization,None));
+            } else {out.extend(initialization);}
         }
         Ok(())
     }
@@ -1534,6 +1548,7 @@ fn resolve_types(mut program: Program) -> Result<Program> {
     crate::component_access::validate(&mut program)?;
     program=crate::abstract_types::resolve(program)?;
     program=crate::assumed_rank::resolve(program)?;
+    program=crate::finalization::resolve(program)?;
     program=crate::select_type::resolve(program)?;
     program=crate::multiple_subscripts::resolve(program)?;
     program=crate::concurrent_reduce::resolve(program)?;

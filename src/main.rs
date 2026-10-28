@@ -93,6 +93,7 @@ mod record_input;
 mod list_input;
 mod character_input;
 mod derived;
+mod finalization;
 mod referenced_types;
 mod extensions;
 mod data_statements;
