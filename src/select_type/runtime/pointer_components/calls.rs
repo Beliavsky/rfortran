@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Beliavsky
-//! Explicit-interface specialization carries a component's target environment
-//! by reference alongside its identity tag. The environment is private to a
-//! call specialization; it is not an external ABI or owning target storage.
+//! Explicit-interface specialization borrows automatic targets alongside the
+//! identity tag. Persistent targets use a shared static-storage identity table
+//! instead; the private environment is not an external ABI or owning storage.
 use super::*;
 
 pub(super) const ENVIRONMENT: &str = "@pointer_component_environment";
@@ -69,7 +69,7 @@ fn collect(
     Ok(())
 }
 
-fn substitute(body: &mut [Stmt], from: &str, to: &str) {
+pub(super) fn substitute(body: &mut [Stmt], from: &str, to: &str) {
     fn name(n: &mut String, from: &str, to: &str) {
         if n == from || n.strip_prefix(from).is_some_and(|s| s.starts_with('%')) {
             *n = format!("{to}{}", &n[from.len()..]);
@@ -107,6 +107,7 @@ fn substitute(body: &mut [Stmt], from: &str, to: &str) {
 }
 
 struct Calls {
+    persistent: Declarations,
     interfaces: Option<crate::operators::OwnerInterfaces>,
     owner_kinds: HashSet<String>,
     templates: HashMap<String, (Stmt, String)>,
@@ -350,6 +351,25 @@ impl Calls {
         if function && !matches!(body.last(), Some(Stmt::Return(Some(_)))) {
             body.push(Stmt::Return(Some(id(clone_name))));
         }
+        let persistent: Vec<_> = targets
+            .iter()
+            .filter(|(_, n)| self.persistent.contains_key(n))
+            .cloned()
+            .collect();
+        for (p, actual) in params.iter().zip(args.iter()) {
+            if vars.get(p).is_some_and(|v| v.attrs.iter().any(|a| a == "target")) {
+                if let Expr::Ident(n) = actual {
+                    if self.persistent.contains_key(n) {
+                        substitute(body, p, n);
+                    }
+                }
+            }
+        }
+        let targets: Vec<_> = targets
+            .iter()
+            .filter(|(_, n)| !self.persistent.contains_key(n))
+            .cloned()
+            .collect();
         let hidden: Vec<_> = targets
             .iter()
             .enumerate()
@@ -402,12 +422,16 @@ impl Calls {
             0,
             Stmt::CallSub {
                 name: ENVIRONMENT.into(),
-                args: hidden.iter().map(|n| id(n)).collect(),
+                args: persistent
+                    .iter()
+                    .map(|(_, n)| id(n))
+                    .chain(hidden.iter().map(|n| id(n)))
+                    .collect(),
             },
         );
         *name = clone_name.clone();
         self.stack.push(original.clone());
-        self.scope(body, &Declarations::new(), params, clone_name, &original)?;
+        self.scope(body, &self.persistent.clone(), params, clone_name, &original)?;
         self.stack.pop();
         if self.internal.contains(&original) {
             self.new_internal.push(clone_name.clone());
@@ -517,8 +541,10 @@ impl Calls {
                 } = s
                 {
                     if dims.is_empty() && has("target") && !has("pointer") && !has("allocatable") {
-                        if environment
-                            .map_or_else(|| referenced.contains(n), |args| args.contains(&id(n)))
+                        if environment.map_or_else(
+                            || self.persistent.contains_key(n) || referenced.contains(n),
+                            |args| args.contains(&id(n)),
+                        )
                         {
                             targets.push((type_name.clone(), n.clone()));
                         } else if environment.is_some()
@@ -547,6 +573,7 @@ impl Calls {
             .into_keys()
             .collect();
         self.statements(body, &targets, host, &locals, &scope)?;
+        body.extend(self.persistent.keys().cloned().map(crate::imports::reference));
         // Every proxy in this activation uses the same ordered identity table.
         body.insert(
             0,
@@ -568,6 +595,7 @@ pub(super) fn prepare(program: &mut Program, defs: &mut Definitions) -> Result<(
         }
     }
     let mut calls = Calls {
+        persistent: persistent::declarations(program),
         interfaces: None,
         owner_kinds,
         templates: HashMap::new(),
@@ -586,7 +614,7 @@ pub(super) fn prepare(program: &mut Program, defs: &mut Definitions) -> Result<(
             defs.parents.clone(),
         )?);
     }
-    calls.scope(&mut program.body, &Declarations::new(), &[], "", "")?;
+    calls.scope(&mut program.body, &calls.persistent.clone(), &[], "", "")?;
     fn attach(body: &mut Vec<Stmt>, host: &str, generated: &mut HashMap<String, Vec<Stmt>>) {
         for s in body.iter_mut() {
             match s {

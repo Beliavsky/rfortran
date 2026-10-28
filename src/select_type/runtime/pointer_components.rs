@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Beliavsky
 //! Record components store pointer identities in the record's own tag field.
-//! Explicit-interface specializations borrow their caller's target environment;
-//! short-lived scalar pointer views reuse ordinary runtime dispatch.
+//! Explicit-interface specializations borrow automatic targets; saved and module
+//! targets use shared persistent identities. Scalar pointer views reuse runtime
+//! dispatch without copying or owning the target storage.
 use super::*;
 mod calls;
+pub(super) mod persistent;
 
 #[derive(Clone)]
 struct Member {
@@ -564,11 +566,13 @@ pub(super) fn prepare(program: &mut Program, defs: &mut Definitions) -> Result<(
     }) {
         return Ok(());
     }
+    persistent::prepare(program)?;
     calls::prepare(program, defs)?;
+    let persistent = persistent::declarations(program);
     scope(
         &mut program.body,
         defs,
-        &Declarations::new(),
+        &persistent,
         &[],
         false,
         false,

@@ -2393,17 +2393,30 @@ binding dispatch, so forwarding through a parent interface still selects the
 child's override. Separate `.rmod`
 compilation preserves these interfaces.
 
-The compiler specializes these calls with hidden borrowed TARGET arguments
-alongside the association tags. This private target-environment representation
-does not copy or own targets and is not a portable descriptor ABI. Recursive
-owner procedures, new local TARGET storage in these procedures, owner function
+Associations to concrete scalar module TARGETs and saved local TARGETs now
+survive procedure return. Saved targets with scalar components retain their
+default/declaration initialization and share storage across call specializations;
+constructor initializers retain local named constants. Owners can read, modify,
+copy and nullify these associations after return. Private module targets remain
+private, initialization checks follow the target, and separate module compilation
+preserves storage identity. INTENT(OUT) resets the owner without destroying its
+saved target.
+
+Static targets use a shared storage-identity table; automatic targets still use
+hidden borrowed TARGET arguments alongside association tags. Neither form copies
+or owns targets, and this is not a portable descriptor ABI. Recursive owner
+procedures, new automatic local TARGET storage in these procedures, owner function
 results and module owner objects remain unsupported, as do runtime polymorphic
 owner receivers, shadowed host targets, external calls without a known interface,
 constructors with explicit arguments for these owner types, SELECT TYPE on owner
 dummies or pointer components,
 unlimited/array pointer components and the standalone pointers' unsupported
 target/allocation forms. General escaping
-owner storage still needs a persistent component descriptor ABI.
+owner storage still needs a general persistent component descriptor ABI.
+
+Run `python tests/test_polymorphic_pointer_persistent.py` for static-target tests.
+`tests/programs/xpolymorphic_pointer_saved_target.f90` exercises association after
+return, shared-target mutation, owner copying and NULLIFY.
 
 Run `python tests/test_polymorphic_pointer_components.py`. The reduced example
 `tests/programs/xpolymorphic_pointer_array_component.f90` prints `T 7`.

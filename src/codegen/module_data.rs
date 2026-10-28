@@ -99,10 +99,16 @@ fn walk(
                 if obj.get_name(&symbol).is_some() {
                     continue;
                 }
-                let owned = owners.contains(module);
+                // Compiler-promoted SAVE targets in main/internal/external
+                // procedures have translation-unit storage. Module procedures
+                // instead retain their real module owner and exported symbol.
+                let private_saved = module == "@pointer_saved";
+                let owned = private_saved || owners.contains(module);
                 let id = obj.declare_data(
                     &symbol,
-                    if owned {
+                    if private_saved {
+                        Linkage::Local
+                    } else if owned {
                         Linkage::Export
                     } else {
                         Linkage::Import

@@ -63,7 +63,7 @@ pub(super) fn targets(
             pending.extend(edges.get(&n).into_iter().flatten().cloned());
         }
     }
-    decls
+    let mut targets: Vec<_> = decls
         .iter()
         .filter(|(n, _)| referenced.contains(*n))
         .filter_map(|(n, ds)| {
@@ -93,7 +93,14 @@ pub(super) fn targets(
                 _ => None,
             })
         })
-        .collect()
+        .collect();
+    // Static storage occupies the same prefix in every borrowed environment.
+    // Do not let the spelling of a generated local TARGET change its identity
+    // when that local is renamed to a hidden dummy at a procedure boundary.
+    targets.sort_by(|(_, a), (_, b)| {
+        (!a.starts_with("@module$"), a).cmp(&(!b.starts_with("@module$"), b))
+    });
+    targets
 }
 fn null(e: &Expr) -> bool {
     matches!(e,Expr::Call(n,a) if n=="null" && a.is_empty())

@@ -1297,15 +1297,24 @@ pub(crate) fn resolve(mut program: Program) -> Result<Program> {
     let mut defs = Definitions::default();
     defs.collect(&program.body);
     program = runtime::resolve(program, &mut defs)?;
+    // Module association has already made these names globally unique. A
+    // persistent target may be reached through a pointer outside its defining
+    // lexical host; its concrete type still belongs to that same storage.
+    let mut globals = Objects::new();
+    for s in &program.body {
+        if let Stmt::Module { body, .. } = s {
+            globals.extend(objects(body, &Objects::new()));
+        }
+    }
     if !needed(&program.body)
         && (defs.bound_targets.is_empty()
-            || !bound_dispatch_needed(&program.body, &Objects::new(), &defs))
+            || !bound_dispatch_needed(&program.body, &globals, &defs))
     {
         return Ok(program);
     }
-    defs.validate(&program.body, &Objects::new())?;
+    defs.validate(&program.body, &globals)?;
     let mut templates = HashMap::new();
-    collect(&program.body, &Objects::new(), &mut templates)?;
+    collect(&program.body, &globals, &mut templates)?;
     fn check_generics(body: &[Stmt], templates: &HashMap<String, Template>) -> Result<()> {
         let mut location = None;
         for s in body {
@@ -1334,7 +1343,7 @@ pub(crate) fn resolve(mut program: Program) -> Result<Program> {
         names: vec![],
         serial: 0,
     };
-    lower.body(&mut program.body, &Objects::new(), &Dynamics::new())?;
+    lower.body(&mut program.body, &globals, &Dynamics::new())?;
     lower.binding_wrappers()?;
     let wrapper_entries: HashSet<_> = lower.wrappers.keys().cloned().collect();
     lower.install(&mut program.body);

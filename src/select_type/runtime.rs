@@ -1137,7 +1137,8 @@ pub(super) fn resolve(mut program: Program, defs: &mut Definitions) -> Result<Pr
         generated: vec![],
         serial: 0,
     };
-    lower.scope(&mut program.body, &Declarations::new(), &mut vec![], false)?;
+    let persistent = pointer_components::persistent::declarations(&program);
+    lower.scope(&mut program.body, &persistent, &mut vec![], false)?;
     program.body.extend(lower.generated);
     fn restore(body: &mut [Stmt]) {
         for s in body {
