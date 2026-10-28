@@ -2417,11 +2417,22 @@ by copying an owner, produces a runtime diagnostic. A conditional owner copy
 whose association selects a supported static target is allowed. General borrowed
 or allocated target descriptors remain future work.
 
+Scalar function results containing these pointer components are supported,
+including explicit RESULT names, implicit function-name results, early RETURN,
+null results, nested scalar wrappers and owner-dummy forwarding. Returned
+associations preserve target identity, dynamic dispatch and initialization
+checks; copying a result does not copy or own its target. Separate compilation
+works with module and saved factory targets. At each return, an association to
+an automatic or other borrowed target produces a runtime diagnostic: this
+implementation currently requires a saved or module target for escaping
+results. Temporary borrowed associations are allowed if cleared or replaced
+before returning. Array-valued owner results remain unsupported.
+
 Static targets use a shared storage-identity table; automatic targets still use
 hidden borrowed TARGET arguments alongside association tags. Neither form copies
 or owns targets, and this is not a portable descriptor ABI. Recursive owner
-procedures, new automatic local TARGET storage in these procedures and owner
-function results remain unsupported, as do runtime polymorphic
+procedures and new automatic local TARGET storage in owner-dummy procedures
+remain unsupported, as do runtime polymorphic
 owner receivers, shadowed host targets, external calls without a known interface,
 constructors with explicit arguments for these owner types, SELECT TYPE on owner
 dummies or pointer components,
@@ -2435,6 +2446,9 @@ return, shared-target mutation, owner copying and NULLIFY.
 Run `python tests/test_polymorphic_pointer_saved_owners.py` for module/SAVE owner
 tests. `tests/programs/xpolymorphic_pointer_saved_owner.f90` tests shared module
 association state and saved owners across separate calls.
+Run `python tests/test_polymorphic_pointer_results.py` for function-result tests.
+`tests/programs/xpolymorphic_pointer_result.f90` demonstrates a factory, shared
+target mutation, dispatch and a null result.
 
 Run `python tests/test_polymorphic_pointer_components.py`. The reduced example
 `tests/programs/xpolymorphic_pointer_array_component.f90` prints `T 7`.

@@ -151,13 +151,15 @@ type(base)::a
 box%object=>a
 end
 ''','must be a compatible concrete scalar TARGET variable')
-        self.reject(HEADER+'''type(entry)::box
+        self.check(HEADER+'''type(entry)::box
+box=make()
+print *,associated(box%object)
 contains
 function make() result(x)
 type(entry)::x
 end function
 end
-''','function results with polymorphic POINTER components')
+''','F')
 
     def test_module_type_and_nested_scalar_components(self):
         self.check(shared.TYPES+'''module entry_types

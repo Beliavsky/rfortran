@@ -101,6 +101,7 @@ struct Scope<'a> {
     declarations: Vec<Stmt>,
     pure: bool,
     static_counts: HashMap<String, usize>,
+    result: Option<String>,
 }
 impl Scope<'_> {
     fn owner(&self, e: &Expr) -> bool {
@@ -331,9 +332,24 @@ impl Scope<'_> {
                         bail!("passing owners with polymorphic POINTER components requires a component descriptor interface, which is not yet supported");
                     }
                 }
-                if let Stmt::Return(Some(value))=&s {if self.owner(value) {
-                    bail!("function results with polymorphic POINTER components are not yet supported");
-                }}
+                // Result associations escape this activation. Only the shared
+                // static prefix has an identity valid in the caller's table.
+                // Check at RETURN, allowing temporary borrowed associations
+                // which are nullified or replaced before returning.
+                if matches!(s, Stmt::Return(_)) {
+                    if let Some(result) = &self.result {
+                        for (key, member) in &self.members {
+                            if key.strip_prefix(result).is_some_and(|s| s.starts_with('%')) {
+                                prefix.push(Stmt::If {
+                                    cond: Expr::Bin(BinOp::Gt, Box::new(id(&member.tag)),
+                                        Box::new(int(*self.static_counts.get(&member.kind).unwrap_or(&0)))),
+                                    then_body: failure("pointer component function result currently requires a saved or module target".into()),
+                                    else_body: None,
+                                });
+                            }
+                        }
+                    }
+                }
                 match &mut s {
                     Stmt::CallSub{name,args} if name=="@pointer_associate" => {
                         if let Some(pointer)=args.first_mut() {self.expression(pointer,&mut prefix,&mut writes,true)?;}
@@ -422,6 +438,7 @@ fn scope(
     params: &[String],
     module: bool,
     pure: bool,
+    result: Option<String>,
     serial: &mut usize,
 ) -> Result<()> {
     let declared = declarations(body, parent);
@@ -459,15 +476,23 @@ fn scope(
             Stmt::Function {
                 name, params, body, pure, ..
             } => {
-                if body.iter().any(|s|matches!(s,Stmt::DerivedDecl{names,type_name,..} if names.contains(name) && defs.members.get(type_name).is_some_and(|m|m.values().any(|v|v.polymorphic&&v.attrs.iter().any(|a|a=="pointer"))))) {
-                bail!("function results with polymorphic POINTER components are not yet supported");
-            }
-                scope(body, defs, &declared, params, false, *pure, serial)?;
+                // Interface preparation may append import provenance after
+                // the parser's final result RETURN.
+                let result = body.iter().rev().find_map(|s| match s {
+                    Stmt::Return(Some(Expr::Ident(n))) => Some(n.clone()),
+                    _ => None,
+                }).unwrap_or_else(|| name.clone());
+                if let Some(v) = super::super::objects(body, &Objects::new()).get(&result) {
+                    if v.rank != 0 && calls::owner(defs, &v.kind)? {
+                        bail!("array function results with polymorphic POINTER components are not yet supported");
+                    }
+                }
+                scope(body, defs, &declared, params, false, *pure, Some(result), serial)?;
             }
             Stmt::Subroutine { params, body, pure, .. } => {
-                scope(body, defs, &declared, params, false, *pure, serial)?
+                scope(body, defs, &declared, params, false, *pure, None, serial)?
             }
-            Stmt::Module { body, .. } => scope(body, defs, &declared, &[], true, false, serial)?,
+            Stmt::Module { body, .. } => scope(body, defs, &declared, &[], true, false, None, serial)?,
             _ => {}
         }
     }
@@ -520,6 +545,7 @@ fn scope(
         serial,
         declarations: vec![],
         pure,
+        result,
         static_counts: defs.fields.keys().map(|kind| {
             let count = globals.values().filter(|v| v.rank == 0 && !v.polymorphic
                 && v.attrs.iter().any(|a| a == "target")
@@ -613,6 +639,7 @@ pub(super) fn prepare(program: &mut Program, defs: &mut Definitions) -> Result<(
         &[],
         false,
         false,
+        None,
         &mut 0,
     )?;
     fn clear(body: &mut Vec<Stmt>) {
