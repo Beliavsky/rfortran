@@ -76,6 +76,52 @@ class OwnedRecordPointers(unittest.TestCase):
     def test_xacv_reproducer(self):
         self.check((ROOT/'tests/programs/xacv_owned_component_pointer.f90').read_text(encoding='utf-8'), '2 2024 2025\n')
 
+    def test_component_descriptor_groups_are_independent(self):
+        self.check('''program test
+implicit none
+type row
+integer::x
+end type
+type owner
+type(row),allocatable::xx(:),xx_more(:)
+integer::unset
+end type
+type(owner),target::v(1)
+type(row),pointer::p(:),q(:)
+allocate(v(1)%xx(-1:0))
+p=>v(1)%xx
+p%x=7
+allocate(v(1)%xx_more(3))
+q=>v(1)%xx_more
+q%x=9
+print *,size(p),sum(p%x),size(q),sum(q%x)
+print *,lbound(p),ubound(p)
+deallocate(v(1)%xx_more)
+nullify(q)
+print *,sum(p%x)
+deallocate(v(1)%xx)
+nullify(p)
+allocate(v(1)%xx(0))
+p=>v(1)%xx
+print *,associated(p),size(p)
+nullify(p)
+end
+''','2 14 3 27\n-1 0\n14\nT 0')
+
+    def test_assignment_allocates_component_before_association(self):
+        types=HEADER.split('use m\nimplicit none\n',1)[0]
+        self.check(types+'''use m
+implicit none
+type(vector),target::v(1)
+type(row),pointer::p(:)
+v(1)%xx=[row(4,1.5,.true.),row(5,2.5,.false.)]
+p=>v(1)%xx
+p(2)%x=9
+print *,p%x,p%r,p%ok
+print *,size(v(1)%xx),associated(p,v(1)%xx)
+end
+''','4 9 1.5 2.5 T F\n2 T')
+
     def test_data_masks_identity_and_bounds(self):
         self.check(HEADER+"""p=>v(1)%xx
 q=>v(1)%xx

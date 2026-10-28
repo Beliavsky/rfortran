@@ -375,7 +375,10 @@ impl Lower {
         prefix.push(Stmt::DerivedDecl { type_name: ty.clone(), names: vec![temp.clone()], attributes: vec![], polymorphic: false, dims: vec![] });
         objects.insert(temp.clone(), Object { ty: ty.clone(), dims: vec![] });
         self.register_components(&temp, &ty, objects);
-        for f in self.fields(&ty)?.into_iter().filter(|f| component.is_none_or(|c| f.name == c || f.name.starts_with(&format!("{c}%")))) {
+        // Derived array components flatten to fields such as `xx$year`.
+        // Their descriptors belong to `xx` just as nested `%` fields do.
+        // Load and write back the entire selected component group.
+        for f in self.fields(&ty)?.into_iter().filter(|f| component.is_none_or(|c| f.name == c || f.name.starts_with(&format!("{c}%")) || f.name.starts_with(&format!("{c}$")))) {
             let local = format!("{temp}%{}", f.name);
             if f.heap.is_some() {
                 prefix.push(Stmt::DummyIntent {name:local.clone(),intent:"@record_heap_local".into()});
@@ -385,7 +388,7 @@ impl Lower {
             }
         }
         if let Some(back) = copy_back {
-            for f in self.fields(&ty)?.into_iter().filter(|f| component.is_none_or(|c| f.name == c || f.name.starts_with(&format!("{c}%")))) {
+            for f in self.fields(&ty)?.into_iter().filter(|f| component.is_none_or(|c| f.name == c || f.name.starts_with(&format!("{c}%")) || f.name.starts_with(&format!("{c}$")))) {
                 if f.heap.is_some() {
                     self.serial+=1;let handle=format!("@record_slot_{}",self.serial);
                     back.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![handle.clone()]});
