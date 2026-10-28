@@ -90,6 +90,85 @@ external compatibility runner.
 On Windows, after building release, also run `python tests/test_batch_sources.py`
 to verify the compatibility wrappers and multi-source fixtures.
 
+## Retaining and investigating native failures
+
+Feature tests using the shared `check` or `reject` helper from
+`tests/test_deallocate.py` retain unexpected failures under
+`target/test-failures`. Set `RFORT_TEST_FAILURE_DIR` to select another directory.
+Passing cases are still cleaned up. This includes assertion failures inside
+unittest subtests, compilation/link failures, launch errors and timeouts.
+
+Each retained case includes the source, objects, executables and other case
+files, plus `failure.json`. That manifest records original and relocated
+commands, working directories, timeouts, exit codes, expected results, input,
+file hashes, and paths to separate stdout/stderr files for every command.
+Temporary outer working directories holding module interfaces or data files
+are also copied. Compiler binaries are identified by path and hash; arbitrary
+external dependencies are not bundled.
+
+To repeat fresh native O0/O2 builds of a standalone deterministic program:
+
+```bat
+python tests/stress_native_output.py tests/programs/native_output/loop.f90 --compiler target/release/rfort.exe --expected-file tests/programs/native_output/loop.txt --iterations 100 --runs-per-build 10 --debug-ir --report target/native-stress/loop.json
+```
+
+`--iterations` controls fresh builds; `--runs-per-build` executes the same
+unchanged image repeatedly. `--opt-level 0` selects one level; repeat the option
+to select several. `--debug-ir` captures the original compiler IR with the build
+output. Without `--expected-file`, the interpreter is run once as the output
+oracle. `--input-file`, `--compile-timeout` and `--run-timeout` are also available.
+The runner uses an isolated working directory; supply a standalone source with
+its dependencies already included.
+
+The first failed check remains a failure. The runner then records additional
+executions of the exact failing image, re-links the original unchanged object
+into a different executable, and records executions of that image. These
+diagnostic commands never overwrite the original object/executable or turn a
+failure into a pass. `--diagnostic-runs` controls their count. Reports are updated
+after every build and the runner exits nonzero on any failure.
+
+An existing executable can be checked without invoking any compiler. For
+example, with GCC available, the following control uses no rfortran code:
+
+```bat
+gcc tests/programs/native_output/control.c -o target/native-output-control.exe
+python tests/stress_native_output.py --executable target/native-output-control.exe --expected-file tests/programs/native_output/control.txt --iterations 1 --runs-per-build 5000 --report target/native-stress/control.json
+```
+
+Existing-executable mode launches the original path and retains a copy of the
+image on failure. It repeats the image for diagnosis, with no re-link step.
+
+### Intermittent empty output: investigation on October 28, 2026
+
+The Windows investigation captured native processes that returned zero with
+empty stdout and stderr. The same unchanged executables produced correct
+output immediately before and after the failing executions.
+
+| Case | Observation |
+| --- | --- |
+| Inherited-constructor loop | Captured at O2; the failing image had already printed correctly seven times. Five diagnostic executions and five executions after re-linking the original object matched. A later 1,000 executions of the original image also matched. |
+| Pointer-owner named-kind overloads | Captured at O2; the same image printed correctly six times before the empty result. Original-image and re-linked-image diagnostic executions matched. |
+| Allocated target with owned array component | 200 fresh native builds and 2,000 executions matched. |
+| Minimal list-directed Fortran output | One empty result in 1,000 executions. |
+| Independent GCC `printf` control | One empty result in 1,000 executions; another retained run failed on execution 505. Five immediate diagnostic executions matched. |
+| GCC `printf` status control | Execution 270 returned zero with empty output. Its `main` returns 17 if `printf` does not report writing three bytes. Five diagnostic executions matched. |
+| Formatted Fortran output, Fortran output followed by FLUSH, Rust `println!` | No failures in 1,000 executions of each control. |
+| C control recording execution in a separate file | No failures in 2,000 executions. |
+
+The independent C reproduction means empty output alone is insufficient
+evidence of a rfortran code-generation defect. It does not establish that every
+observed failure has the same cause. Neither the responsible component nor a
+reliable fix has been identified; successful repetitions and the negative
+FLUSH control are not proof of a fix. Compiler behavior was left unchanged.
+
+The original affected sources and expected outputs are retained in
+`tests/programs/native_output`. Local reports and captured images from this
+investigation are under `target/native-stress`, `target/native-output-isolation`
+and `target/test-failures`; these generated artifacts are ignored by Git.
+
+Run `python tests/test_failure_artifacts.py` to check the retention and
+diagnostic-run behavior, including an injected zero-exit/empty-output failure.
+
 ## External util.f90 procedures
 
 Small drivers track progress toward compiling and running `kind.f90 util.f90

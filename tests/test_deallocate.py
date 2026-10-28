@@ -12,6 +12,7 @@ import unittest
 
 from test_record_read import ROOT, COMPILER, build_commands
 from run_ofort_compat import equivalent
+from failure_artifacts import FailureArtifacts
 
 
 class Deallocate(unittest.TestCase):
@@ -26,37 +27,52 @@ class Deallocate(unittest.TestCase):
             directory = Path(tmp)
             source = directory / "example.f90"
             source.write_text(program, encoding="utf-8")
-            commands = build_commands(source, directory)
-            if not interpreter:
-                # Programs too slow for the interpreter run compiled only.
-                commands = commands[1:]
-            if expected is not None and reference and shutil.which("gfortran"):
-                exe = directory / "reference.exe"
-                result = subprocess.run(["gfortran", f"-std={std}", "-fcheck=all",
-                                         source, "-o", exe], cwd=directory,
-                                        capture_output=True, text=True, timeout=60)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                commands.append([exe])
-            for command in commands:
-                with self.subTest(command=command):
-                    result = subprocess.run(command, input=data, capture_output=True,
-                                            text=True, timeout=15)
+            with FailureArtifacts(directory, self.id(), expected={"stdout":expected,"stderr_contains":error}, input=data) as recorder:
+                # Other feature suites borrow check without inheriting this class.
+                Deallocate._check_program(self, source, directory, recorder, expected, error, data, reference, std, interpreter)
+
+    def _check_program(self, source, directory, recorder, expected, error, data, reference, std, interpreter):
+        commands = build_commands(source, directory, recorder=recorder)
+        if not interpreter:
+            # Programs too slow for the interpreter run compiled only.
+            commands = commands[1:]
+        if expected is not None and reference and shutil.which("gfortran"):
+            exe = directory / "reference.exe"
+            result = recorder.run(["gfortran", f"-std={std}", "-fcheck=all",
+                                     source, "-o", exe], cwd=directory,
+                                    capture_output=True, text=True, timeout=60)
+            if result.returncode:
+                raise AssertionError(recorder.failed(result.stderr))
+            commands.append([exe])
+        for command in commands:
+            with self.subTest(command=command):
+                result = recorder.run(command, input=data, capture_output=True,
+                                        text=True, timeout=15)
+                try:
                     if error is not None:
                         self.assertNotEqual(result.returncode, 0)
                         self.assertIn(error, result.stderr)
                     else:
                         self.assertEqual(result.returncode, 0, result.stderr)
                         self.assertEqual(result.stderr, "")
-                        self.assertTrue(equivalent(result.stdout, expected), result.stdout)
+                        self.assertTrue(equivalent(result.stdout, expected),
+                                        f"expected stdout: {expected!r}; actual stdout: {result.stdout!r}")
+                except AssertionError as failure:
+                    raise AssertionError(recorder.failed(failure)) from failure
 
     def reject(self, program, message):
         with tempfile.TemporaryDirectory(prefix="deallocate-invalid-") as tmp:
-            source = Path(tmp) / "example.f90"
+            directory = Path(tmp)
+            source = directory / "example.f90"
             source.write_text(program, encoding="utf-8")
-            result = subprocess.run([COMPILER, "run", source], capture_output=True,
-                                    text=True, timeout=30)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn(message, result.stderr)
+            with FailureArtifacts(directory, self.id(), expected={"stderr_contains":message}) as recorder:
+                result = recorder.run([COMPILER, "run", source], capture_output=True,
+                                      text=True, timeout=30)
+                try:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(message, result.stderr)
+                except AssertionError as failure:
+                    raise AssertionError(recorder.failed(failure)) from failure
 
     def test_local_array_reallocation(self):
         self.check("""program main
