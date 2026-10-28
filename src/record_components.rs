@@ -5,6 +5,31 @@
 //! Materialize record elements without flattening owned allocations into values.
 use super::*;
 impl Lower {
+    fn heap_component_name(&self,owner:&str,field:&str,objects:&Objects)->Option<String> {
+        let fields=&self.types.get(&objects.get(owner).filter(|o|!o.dims.is_empty())?.ty)?;
+        let folded=field.replace('%',"$");
+        if fields.iter().any(|f|f.heap.is_some() && f.name==folded) {return Some(folded);}
+        fields.iter().any(|f|f.heap.is_some() && (f.name==field || f.name.starts_with(&format!("{field}$")) || f.name.starts_with(&format!("{field}%")))).then(||field.into())
+    }
+    pub(super) fn transport_element_field(&mut self, owner:&str, temp:&str, field:&Field, parent_indices:&[Expr], copy_back:bool, out:&mut Vec<Stmt>)->Result<()> {
+        let local=format!("{temp}%{}",field.name);
+        let mut indices=vec![];
+        for _ in &field.dims {
+            self.serial+=1;
+            let index=format!("@record_transport_index_{}",self.serial);
+            out.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![index.clone()]});
+            indices.push(Expr::Ident(index));
+        }
+        let source=select(owner,field,indices.clone(),parent_indices)?;
+        let target=if indices.is_empty(){Expr::Ident(local.clone())}else{Expr::Call(local.clone(),indices.clone())};
+        let mut body=vec![Stmt::CallSub{name:crate::initialized::TRANSPORT.into(),args:if copy_back{vec![source,target]}else{vec![target,source]}}];
+        for (axis,index) in indices.into_iter().enumerate() {
+            let Expr::Ident(var)=index else{unreachable!()};
+            let bound=|name:&str|Expr::Call(name.into(),vec![Expr::Ident(local.clone()),Expr::IntLit((axis+1).to_string())]);
+            body=vec![Stmt::Do{var,start:bound("lbound"),end:bound("ubound"),body}];
+        }
+        out.extend(body);Ok(())
+    }
     pub(super) fn heap_component(&self, owner: &str, field: &str, objects: &Objects) -> bool {
         objects
             .get(owner)
@@ -39,9 +64,7 @@ impl Lower {
         let Some((owner, _)) = self.element(element, objects) else {
             return Ok(false);
         };
-        if !self.heap_component(owner, &field, objects) {
-            return Ok(false);
-        }
+        let Some(field)=self.heap_component_name(owner,&field,objects) else{return Ok(false);};
         let element = element.clone();
         let indices = component_subscripts(args);
         let temp = self.element_storage(&element, objects, prefix, suffix, true, Some(&field))?;
@@ -91,11 +114,11 @@ impl Lower {
         }
         let Some((owner, field)) = name.match_indices('%').find_map(|(i, _)| {
             let (owner, field) = (&name[..i], &name[i + 1..]);
-            self.heap_component(owner, field, objects).then_some((owner, field))
+            self.heap_component_name(owner, field, objects).map(|field|(owner, field))
         }) else {
             return Ok(());
         };
-        let (owner, field) = (owner.to_owned(), field.to_owned());
+        let (owner, field) = (owner.to_owned(), field);
         let mut parent = indices.clone();
         let component = component_subscripts(&mut parent);
         let element = Expr::Call(owner, parent);

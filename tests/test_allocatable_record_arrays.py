@@ -305,8 +305,8 @@ print *,size(a({unit})%x),sum(a({unit})%x)
 end
 """, '1 42\n')
 
-    def test_container_copy_rejected_until_deep_outer_copy_is_supported(self):
-        self.reject("""program test
+    def test_container_copy_preserves_independent_owned_storage(self):
+        self.check("""program test
 implicit none
 type :: row
 integer,allocatable::x(:)
@@ -316,9 +316,16 @@ type(row),allocatable::rows(:)
 end type
 type(container)::a,b
 allocate(a%rows(2))
+allocate(a%rows(1)%x(-1:0))
+a%rows(1)%x=[3,4]
 b=a
+a%rows(1)%x=9
+print *,lbound(b%rows(1)%x),b%rows(1)%x
+print *,allocated(b%rows(2)%x)
+deallocate(a%rows)
+print *,sum(b%rows(1)%x)
 end
-""", 'intrinsic assignment of containers')
+""", '-1 3 4\nF\n7\n')
 
     def test_allocatable_component_requires_scalar_parent(self):
         self.reject("""program test

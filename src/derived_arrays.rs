@@ -24,6 +24,8 @@ mod record_constructors;
 mod derived_pointers;
 #[path = "record_finalization.rs"]
 mod record_finalization;
+#[path = "record_owned_copy.rs"]
+mod record_owned_copy;
 
 #[derive(Clone)]
 struct Field {
@@ -136,6 +138,7 @@ type Objects = HashMap<String, Object>;
 // The marker is consumed by `body` before the call leaves this lowering pass.
 const PREPARED_CALL: &str = "@record_prepared:";
 struct Lower {
+    component_definitions: HashMap<String, Vec<Stmt>>,
     constructor_components: HashMap<String, Vec<String>>,
     types: HashMap<String, Vec<Field>>,
     procedures: HashMap<String, Procedure>,
@@ -193,6 +196,7 @@ impl Lower {
         for s in body.iter_mut() {
             match s {
                 Stmt::DerivedType { name, components, .. } => {
+                    self.component_definitions.insert(name.clone(),components.clone());
                     let mut original = vec![];
                     for c in components.iter() {
                         let names = match c {
@@ -386,7 +390,7 @@ impl Lower {
                 prefix.push(Stmt::DummyIntent {name:local.clone(),intent:"@record_heap_local".into()});
                 if copy_in {prefix.push(Stmt::CallSub {name:"@heap_record_load".into(),args:vec![Expr::Ident(local),select(&object,&f,vec![],&idx)?]});}
             } else if copy_in {
-                prefix.push(Stmt::Assign { name: local, value: select(&object, &f, vec![], &idx)? });
+                self.transport_element_field(&object,&temp,&f,&idx,false,prefix)?;
             }
         }
         if let Some(back) = copy_back {
@@ -398,7 +402,7 @@ impl Lower {
                     back.push(Stmt::CallSub {name:"@heap_record_store".into(),args:vec![Expr::Ident(format!("{temp}%{}",f.name)),Expr::Ident(handle.clone())]});
                     back.push(assignment(select(&object,&f,vec![],&idx)?,Expr::Ident(handle)));
                 } else {
-                    back.push(assignment(select(&object, &f, vec![], &idx)?, Expr::Ident(format!("{temp}%{}", f.name))));
+                    self.transport_element_field(&object,&temp,&f,&idx,true,back)?;
                 }
             }
         }
@@ -1685,6 +1689,13 @@ impl Lower {
                         self.final_assignment(args,&mut objects,&mut prefix)?;
                         return Ok(());
                     }
+                    Stmt::Assign{name,value:Expr::Ident(source)} if objects.get(name).is_some_and(|o|o.dims.is_empty() && self.needs_owned_copy(&o.ty)) => {
+                        let ty=objects[name].ty.clone();
+                        if objects.get(source).is_some_and(|o|o.ty==ty && o.dims.is_empty()) {
+                            self.copy_owned_container(name,source,&ty,&mut objects,&mut prefix)?;
+                            return Ok(());
+                        }
+                    }
                     Stmt::Assign { name, value } | Stmt::AssignIndex { name, value, .. }
                         if objects.get(name).is_some_and(|o| !o.dims.is_empty()) =>
                     {
@@ -1818,7 +1829,9 @@ impl Lower {
                                         prefix.push(Stmt::CallSub{name:"@heap_record_drop_array".into(),args:vec![Expr::Ident(field.clone()),Expr::Call("size".into(),vec![Expr::Ident(field.clone())])]});
                                     }
                                     flat.push(if let Some(d) = &bounds {
-                                        Expr::Call(field.clone(), f.dims.iter().cloned().chain(d.iter().cloned()).collect())
+                                        let mut dimensions=f.dims.iter().cloned().chain(d.iter().cloned()).collect::<Vec<_>>();
+                                        for dimension in &mut dimensions {retarget(dimension,n,&field);}
+                                        Expr::Call(field.clone(), dimensions)
                                     } else {
                                         Expr::Ident(field.clone())
                                     });
@@ -2093,6 +2106,7 @@ impl Lower {
 }
 pub(crate) fn resolve(mut p: Program) -> Result<Program> {
     let mut lower = Lower {
+        component_definitions: HashMap::new(),
         constructor_components: HashMap::new(),
         types: HashMap::new(),
         procedures: HashMap::new(),

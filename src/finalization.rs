@@ -5,6 +5,8 @@
 use crate::ast::{Expr, Program, Stmt};
 use anyhow::{bail, Context, Result};
 use std::collections::{HashMap, HashSet};
+#[path = "finalization_components.rs"]
+mod owned_components;
 
 pub(crate) const OUTPUT: &str = "@final_intent_out";
 pub(crate) const ARRAY_ASSIGNMENT: &str = "@final_array_assignment";
@@ -102,6 +104,7 @@ impl Lower {
                                         names,
                                         attributes,
                                         dims,
+                                        polymorphic,
                                         ..
                                     } => names
                                         .iter()
@@ -109,7 +112,7 @@ impl Lower {
                                             (
                                                 n.clone(),
                                                 type_name.clone(),
-                                                attributes.clone(),
+                                                attributes.iter().cloned().chain(polymorphic.then(||"@polymorphic".into())).collect(),
                                                 dims.len(),
                                             )
                                         })
@@ -252,14 +255,21 @@ impl Lower {
         }
         for d in self.types.values() {
             for (_, ty, attrs, rank) in &d.components {
+                if self.finalizable.contains(ty) && attrs.iter().any(|a|a=="@polymorphic") && !attrs.iter().any(|a|a=="pointer") {bail!("finalization of polymorphic components is not yet supported");}
                 if self.finalizable.contains(ty)
                     && !attrs.iter().any(|a| a == "pointer")
-                    && (*rank != 0 || attrs.iter().any(|a| a == "allocatable"))
+                    && *rank != 0 && !attrs.iter().any(|a| a == "allocatable")
                 {
-                    bail!("array and ALLOCATABLE components of finalizable type are not yet supported");
+                    bail!("fixed array components of finalizable type are not yet supported");
                 }
             }
         }
+        fn acyclic(ty:&str,types:&HashMap<String,Definition>,active:&mut HashSet<String>)->Result<()> {
+            if !active.insert(ty.into()) {bail!("recursive owned layouts involving finalizable types are not yet supported");}
+            if let Some(d)=types.get(ty) {for (_,t,a,_) in &d.components {if !a.iter().any(|a|a=="pointer") {acyclic(t,types,active)?;}}}
+            active.remove(ty);Ok(())
+        }
+        for ty in &self.finalizable {acyclic(ty,&self.types,&mut HashSet::new())?;}
         for name in &self.assignments {
             if self.routines.get(name).is_some_and(|r|r.body.iter().any(|s|matches!(s,Stmt::DerivedDecl{type_name,names,..} if self.finalizable.contains(type_name)&&names.iter().any(|n|r.params.contains(n))))) {
                 bail!("defined assignment involving finalizable types is not yet supported");
@@ -269,17 +279,17 @@ impl Lower {
     }
     fn components(&self, name: &str, ty: &str, dims: &[Expr], objects: &mut Objects) {
         for (field, t, attrs, rank) in &self.types[ty].components {
-            if *rank == 0 && !attrs.iter().any(|a| a == "pointer" || a == "allocatable") {
+            if !attrs.iter().any(|a| a == "pointer") {
                 let name = format!("{name}%{field}");
                 objects.insert(
                     name.clone(),
                     Object {
                         ty: t.clone(),
                         attrs: attrs.clone(),
-                        dims: dims.to_vec(),
+                        dims: if attrs.iter().any(|a|a=="allocatable") {vec![id("@deferred_extent");*rank]} else {dims.to_vec()},
                     },
                 );
-                if self.types.contains_key(t) {
+                if self.types.contains_key(t) && !attrs.iter().any(|a|a=="allocatable") {
                     self.components(&name, t, dims, objects);
                 }
             }
@@ -301,13 +311,16 @@ impl Lower {
     fn pure(&self, ty: &str, rank: usize) -> bool {
         self.selected(ty, rank)
             .is_none_or(|f| self.routines[&f].pure)
-            && self.types[ty]
+            && self.components_pure(ty)
+    }
+    fn components_pure(&self, ty:&str)->bool {
+        self.types[ty]
                 .components
                 .iter()
                 .filter(|(_, t, a, _)| {
                     !a.iter().any(|a| a == "pointer") && self.finalizable.contains(t)
                 })
-                .all(|(_, t, _, _)| self.pure(t, 0))
+                .all(|(_, t, _, rank)| self.pure(t, *rank))
     }
     fn member(target: Expr, field: &str) -> Expr {
         match target {
@@ -315,17 +328,32 @@ impl Lower {
             e => Expr::Call(format!("@record_component:{field}"), vec![e]),
         }
     }
-    fn scalar_calls(&self, target: Expr, ty: &str) -> Vec<Stmt> {
+    fn component_calls(&mut self, target:Expr, ty:&str)->Vec<Stmt> {
+        let mut out=vec![];
+        // Nonallocatable components precede deallocation of owned components.
+        let components=self.types[ty].components.clone();
+        for owned in [false,true] {
+            for (c,t,attrs,rank) in &components {
+                if attrs.iter().any(|a|a=="pointer") || !self.finalizable.contains(t) || attrs.iter().any(|a|a=="allocatable")!=owned {continue;}
+                let component=Self::member(target.clone(),c);
+                let mut calls=if *rank==0 && !owned {self.scalar_calls(component.clone(),t)} else {
+                    let helper=self.helper(t,*rank);vec![call(&helper,vec![component.clone()])]
+                };
+                if owned {
+                    calls.push(call("@deallocate",vec![component.clone()]));
+                    out.push(guarded(Expr::Call("allocated".into(),vec![component]),calls));
+                } else {out.extend(calls);}
+            }
+        }
+        out
+    }
+    fn scalar_calls(&mut self, target: Expr, ty: &str) -> Vec<Stmt> {
         let mut out = vec![];
         if let Some(f) = self.selected(ty, 0) {
             out.push(crate::imports::reference(f.clone()));
             out.push(call(&f, vec![target.clone()]));
         }
-        for (c, t, attrs, _) in &self.types[ty].components {
-            if !attrs.iter().any(|a| a == "pointer") && self.finalizable.contains(t) {
-                out.extend(self.scalar_calls(Self::member(target.clone(), c), t));
-            }
-        }
+        out.extend(self.component_calls(target,ty));
         out
     }
     fn helper(&mut self, ty: &str, rank: usize) -> String {
@@ -382,12 +410,11 @@ impl Lower {
                     body.extend(loops(vec![call(&f, vec![element.clone()])]));
                 }
             }
-            let mut components = vec![];
-            for (c, t, attrs, _) in &self.types[ty].components {
-                if !attrs.iter().any(|a| a == "pointer") && self.finalizable.contains(t) {
-                    components.extend(self.scalar_calls(Self::member(element.clone(), c), t));
-                }
-            }
+            // Materialize owned component views once per scalar parent. This
+            // preserves their descriptors across child FINAL and deallocation.
+            let components = if self.types[ty].components.iter().any(|(_,t,a,_)|a.iter().any(|a|a=="allocatable")&&self.finalizable.contains(t)) {
+                let f=self.component_helper(ty);vec![call(&f,vec![element.clone()])]
+            } else {self.component_calls(element.clone(),ty)};
             if !components.is_empty() {
                 body.extend(loops(components));
             }
@@ -399,6 +426,18 @@ impl Lower {
             pure: self.pure(ty, rank),
             elemental: false,
         });
+        name
+    }
+    fn component_helper(&mut self,ty:&str)->String {
+        let key=(ty.to_owned(),16);
+        if let Some(n)=self.helpers.get(&key) {return n.clone();}
+        self.serial+=1;
+        let name=format!("@finalize_array_{}",self.serial);
+        self.helpers.insert(key,name.clone());
+        let param="@final_component_owner";
+        let mut body=vec![crate::imports::reference(ty.into()),Stmt::DerivedDecl{type_name:ty.into(),names:vec![param.into()],attributes:vec!["intent(inout)".into()],polymorphic:false,dims:vec![]}];
+        body.extend(self.component_calls(id(param),ty));
+        self.generated.push(Stmt::Subroutine{name:name.clone(),params:vec![param.into()],body,pure:self.components_pure(ty),elemental:false});
         name
     }
     fn finals(&mut self, name: &str, ty: &str, rank: usize) -> Vec<Stmt> {
@@ -583,7 +622,7 @@ impl Lower {
                         crate::named_arguments::Signature{params:vec!["from".into(),"to".into(),"stat".into(),"errmsg".into()],optional:["stat".into(),"errmsg".into()].into_iter().collect()}.reorder(name,args)?;
                         if let Some(Expr::Ident(n))=args.get(1) {if let Some(o)=objects.get(n).filter(|o|self.finalizable.contains(&o.ty)){
                             out.extend(self.finalize(n,o));
-                            if !o.dims.is_empty() {
+                            if !o.dims.is_empty() || n.contains('%') {
                                 let Some(Expr::Ident(from))=args.first() else{bail!("MOVE_ALLOC requires ALLOCATABLE variables")};
                                 if from==n {bail!("MOVE_ALLOC source and destination must differ");}
                                 if !o.has("allocatable") || objects.get(from).is_none_or(|a|!a.has("allocatable")||a.ty!=o.ty||a.dims.len()!=o.dims.len()) {bail!("MOVE_ALLOC requires matching ALLOCATABLE type and rank");}
@@ -733,5 +772,6 @@ pub(crate) fn resolve(mut program: Program) -> Result<Program> {
     extensions(&mut program.body, &lower.finalizable, &descriptor_types)?;
     lower.body(&mut program.body, &Objects::new(), &[], false, &[], 0)?;
     program.body.extend(lower.generated);
+    owned_components::normalize(&mut program, &lower.types)?;
     Ok(program)
 }

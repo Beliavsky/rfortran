@@ -1957,6 +1957,18 @@ Writable section transfers preserve initialization masks, including numeric and
 CHARACTER fields that a finalizer does not read. Transporting an undefined field
 does not define it or suppress errors from a subsequent read.
 
+Owned components of finalizable derived type are supported: both scalar
+ALLOCATABLE components and array components through rank 15. The containing
+object's FINAL procedure runs while its components remain available, followed
+by finalization of nonallocatable scalar components, then finalization and
+deallocation of allocated components. Unallocated components are skipped.
+This also applies to containers without a FINAL procedure of their own,
+nested ownership, array owners passed through scalar procedures, intrinsic
+assignment after an independent RHS snapshot, INTENT(OUT), MOVE_ALLOC,
+explicit deallocation, and procedure/BLOCK exit. Scalar owned components use
+one-element internal descriptors with scalar FINAL dispatch. Copies of containers
+whose children own intrinsic allocations copy the data independently.
+
 Saved objects and objects remaining at STOP, ERROR STOP or main-program
 termination are not finalized for that event. Compiler-generated record copies
 are not separately finalized. Private module finalizers remain accessible through
@@ -1965,13 +1977,15 @@ These lifecycle rules follow [Fortran 2023 section 7.5.6](https://j3-fortran.org
 
 The implementation diagnoses polymorphic and POINTER objects, type extension involving finalizable types,
 finalizable function results, TYPEOF/CLASSOF of finalizable objects, scalar
-ALLOCATABLE dummies, array or allocatable components of finalizable type, defined assignment
+ALLOCATABLE dummies, fixed array components of finalizable type, recursive owned
+layouts involving finalizable types, polymorphic finalizable components, defined assignment
 involving finalizable types, and named EXIT/CYCLE or GOTO
 with live finalizable locals. DEALLOCATE STAT/ERRMSG with finalizable objects is
 also unsupported, as are MOVE_ALLOC STAT/ERRMSG for finalizable arrays.
-Run `python tests/test_finalization.py` and `python tests/test_array_finalization.py`;
+Run `python tests/test_finalization.py`, `python tests/test_array_finalization.py`,
+and `python tests/test_owned_finalization.py`;
 standalone examples are `tests/programs/xscalar_final.f90` and
-`tests/programs/xarray_final.f90`.
+`tests/programs/xarray_final.f90` and `tests/programs/xowned_final.f90`.
 
 ### Arrays of derived type
 
@@ -2089,13 +2103,15 @@ See `tests/test_owned_record_intent_out.py` and
 `tests/programs/xowned_record_intent_out.f90`.
 
 Array constructors of records with ALLOCATABLE components, general array-valued function results of these types,
-deferred-length CHARACTER allocatable components, POINTER components, intrinsic
-copies of containers whose array elements own allocations, and further arrays of
+deferred-length CHARACTER allocatable components, POINTER components,
+structure constructors of containers whose array elements own allocations, and further arrays of
 descriptor-owning containers remain unsupported. Array-valued ELEMENTAL functions
 with intrinsic results and owned-record arguments also remain unsupported.
 Scalar calls to ELEMENTAL procedures continue to support derived actuals with
 ALLOCATABLE components and fixed array components, including scalar array elements.
 Their generated component interface preserves ordinary array arguments and purity.
+Intrinsic assignment between scalar container variables deep-copies their owned
+record arrays, including intrinsic allocations owned by those records.
 Default output of records with ALLOCATABLE components requires defined I/O,
 as in Fortran. Run `python tests/test_allocatable_record_arrays.py` for
 interpreter/native O0/O2 checks against gfortran.
