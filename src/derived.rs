@@ -925,6 +925,17 @@ impl Lowerer {
                     continue;
                 }
                 Source::Copy(n) => Expr::Ident(n),
+                // A constructor's parent part can contribute an unallocated
+                // allocatable component (or an unassociated pointer). Copy its
+                // state as well as its value, just like whole-record copying.
+                Source::Value(Expr::Ident(n)) if !field.plain_scalar()
+                    && n.rsplit_once('%').is_some_and(|(object,member)| {
+                        objects.get(object).and_then(|ty|self.leaf_component(ty,member))
+                            .is_some_and(|c|c.allocatable() && field.allocatable() || c.pointer() && field.pointer())
+                    }) => {
+                        if n != to {arrays.extend(self.copy_component(field, &to, &n));}
+                        continue;
+                    }
                 Source::Value(v) => v,
                 Source::Absent => {
                     arrays.push(if field.pointer() {
@@ -1536,6 +1547,7 @@ fn resolve_types(mut program: Program) -> Result<Program> {
     crate::imports::clear_declarations(&mut program.body);
     crate::referenced_types::clear_provenance(&mut program.body);
     program=crate::tokenize::prepare(program)?;
+    program = crate::extensions::resolve_constructors(program)?;
     program = crate::named_arguments::resolve(program, false)?;
     program=crate::enumerations::prepare(program)?;
     if crate::conditionals::contains(&program) {

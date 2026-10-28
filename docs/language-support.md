@@ -1636,8 +1636,14 @@ Run `python tests/test_scalar_result_extensions.py` or try
 Try `rf.bat xalloc_scalar_result.f90 --run`, or run
 `python tests/test_allocatable_scalar_results.py` after building the compiler.
 
-This is partial scalar support. Scalar derived-type allocation/components, explicit SAVE on intrinsic
-allocatable scalars, and allocatable scalar DO control variables remain
+Concrete scalar `TYPE(t), ALLOCATABLE, TARGET` objects also support allocation,
+including SOURCE constructors, without requiring a polymorphic pointer owner
+in the source group. Saved targets retain their allocation between calls;
+see [scalar polymorphic pointer components](#scalar-polymorphic-pointer-components)
+for the storage and model-expression restrictions.
+
+This is partial scalar support. Other scalar derived-type allocation/components,
+explicit SAVE on intrinsic allocatable scalars, and allocatable scalar DO control variables remain
 unsupported. Existing host-association restrictions for allocatable storage
 also remain. Ordinary scalar dummy arguments do not gain ALLOCATABLE semantics.
 
@@ -2086,6 +2092,18 @@ objects and scalar SELECT TYPE are supported as described below; unlimited
 polymorphic scalar procedure dummies are also supported. CLASS(*) allocation
 remains unsupported.
 
+Structure constructors accept an explicit parent component, positionally or
+by keyword, such as `child(base(4),20)` and `child(base=base(4),extra=20)`.
+Inherited fields may alternatively be supplied individually in declaration
+order or by keyword. Nested extensions, parent-component views, default
+initialization, scalar declaration initializers, procedure arguments and
+`ALLOCATE(SOURCE=...)` use the same constructor normalization. Parent-valued
+function expressions are evaluated once and copied intrinsically, including
+allocatable component state and values; overloaded assignment is not invoked
+for the compiler's temporary. Existing record-array and component storage
+limitations still apply. Run `python tests/test_inherited_constructors.py`;
+the standalone example is `tests/programs/xinherited_constructor.f90`.
+
 ### ABSTRACT types and DEFERRED bindings
 
 Fortran 2003 abstract types declare contracts which concrete extensions must
@@ -2441,8 +2459,8 @@ MOLD supplies type information without reading the model's component values;
 allocation applies default initialization and leaves other components undefined.
 Failed allocation with STAT preserves the existing target and its aliases.
 All objects in these allocation lists must currently be supported scalar targets
-of the same type. Model expressions retain the existing expression-lowering
-limits, including constructors with an explicit parent part.
+of the same type. Constructors with explicit parent parts are supported;
+model expressions otherwise retain the existing expression-lowering limits.
 Scalar allocatable TARGET dummy descriptors, polymorphic allocated targets and
 model expressions, and MOVE_ALLOC of these targets remain unsupported.
 

@@ -634,14 +634,18 @@ fn schemas(body: &mut [Stmt], defs: &mut Definitions) -> Result<()> {
 }
 
 pub(super) fn prepare(program: &mut Program, defs: &mut Definitions) -> Result<()> {
-    if !defs.members.values().any(|m| {
+    let owners=defs.members.values().any(|m| {
         m.values()
             .any(|v| v.polymorphic && v.attrs.iter().any(|a| a == "pointer"))
-    }) {
-        return Ok(());
-    }
+    });
+    if !owners && !allocated::needed(&mut program.body) {return Ok(());}
     persistent::prepare(program, defs)?;
     allocated::prepare(program)?;
+    if !owners {
+        // Concrete allocated targets also work without a polymorphic pointer
+        // component anywhere in the source group.
+        return Ok(());
+    }
     calls::prepare(program, defs)?;
     let mut persistent = persistent::declarations(program);
     persistent.extend(persistent::owners(program, defs)?);

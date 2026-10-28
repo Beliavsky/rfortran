@@ -61,6 +61,13 @@ pub(in crate::select_type::runtime) fn valid(n: &str, epoch: &str, ds: &Declarat
         })
 }
 
+pub(super) fn needed(body: &mut [Stmt]) -> bool {
+    let vars=super::super::super::objects(body,&Objects::new());
+    vars.values().any(|v|!v.polymorphic && v.rank==0
+        && v.attrs.iter().any(|a|a=="allocatable") && v.attrs.iter().any(|a|a=="target"))
+        || body.iter_mut().any(|s|children(s).into_iter().any(|b|needed(b)))
+}
+
 pub(super) fn prepare(program: &mut Program) -> Result<()> {
     fn scope(body: &mut Vec<Stmt>, params: &[String], module: bool) -> Result<()> {
         let vars = super::super::super::objects(body, &Objects::new());

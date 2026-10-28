@@ -1988,7 +1988,21 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                 Stmt::DerivedType { .. } | Stmt::DerivedDecl { .. } | Stmt::OperatorInterface { .. } | Stmt::GenericInterface { .. } => unreachable!("derived declarations must be lowered before execution"),
                 Stmt::DummyIntent { .. } | Stmt::Accessibility { .. } => {}
                 Stmt::Block { body } => {
-                    if let Some(ret) = exec_stmts(body, funcs, call_stack) {
+                    // Inlined calls can introduce local aliases of module or
+                    // SAVE storage. End those bindings with the block: on the
+                    // next iteration, initialization of a local flag must not
+                    // overwrite the persistent flag it used to alias.
+                    let frame=call_stack.last().unwrap();
+                    let saved: std::collections::HashSet<_>=frame.saved.keys().cloned().collect();
+                    let arrays: std::collections::HashSet<_>=frame.module_arrays.keys().cloned().collect();
+                    let result=exec_stmts(body, funcs, call_stack);
+                    let frame=call_stack.last_mut().unwrap();
+                    frame.commit_saved();
+                    frame.saved.retain(|n,_|saved.contains(n));
+                    frame.saved_seen.retain(|n,_|saved.contains(n));
+                    frame.module_arrays.retain(|n,_|arrays.contains(n));
+                    frame.module_seen.retain(|n,_|arrays.contains(n));
+                    if let Some(ret) = result {
                         return Some(ret);
                     }
                 }

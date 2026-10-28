@@ -19,6 +19,9 @@ pub(crate) const EXTENDS: &str = "@extends";
 
 type Definition = (Vec<Stmt>, Vec<(String, String)>);
 
+mod constructors;
+pub(crate) use constructors::resolve as resolve_constructors;
+
 fn collect(body: &mut Vec<Stmt>, types: &mut HashMap<String, Definition>, parents: &mut HashMap<String, String>) -> Result<()> {
     body.retain(|s| match s {
         Stmt::CallSub { name, args } if name == EXTENDS => {
@@ -167,6 +170,7 @@ pub(crate) fn resolve(mut program: Program) -> Result<Program> {
     if let Some(n) = parent_names.iter().find(|n| components.contains(*n)) {
         bail!("a component named `{n}`, like a parent type, is not yet supported");
     }
+    constructors::preserve_parent_views(&mut program.body, &parents);
     let mut value = serde_json::to_value(&program.body)?;
     parent_components(&mut value, &parent_names);
     program.body = serde_json::from_value(value)?;
