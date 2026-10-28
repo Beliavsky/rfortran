@@ -14,6 +14,7 @@ struct Member {
     tag: String,
     rank: usize,
     readonly: bool,
+    persistent: bool,
 }
 type Members = BTreeMap<String, Member>;
 
@@ -50,6 +51,7 @@ fn members(
     path: &str,
     rank: usize,
     readonly: bool,
+    persistent: bool,
     out: &mut Members,
     seen: &mut HashSet<String>,
 ) -> Result<()> {
@@ -57,7 +59,7 @@ fn members(
         return Ok(());
     }
     if let Some(parent) = defs.parents.get(kind) {
-        members(defs, parent, path, rank, readonly, out, seen)?;
+        members(defs, parent, path, rank, readonly, persistent, out, seen)?;
     }
     for (name, component) in defs.members.get(kind).into_iter().flatten() {
         let key = format!("{path}%{name}");
@@ -75,6 +77,7 @@ fn members(
                     tag: format!("{path}%{}", field(name)),
                     rank,
                     readonly,
+                    persistent,
                 },
             );
         } else if component.rank == 0
@@ -83,7 +86,7 @@ fn members(
                 .iter()
                 .any(|a| a == "allocatable" || a == "pointer")
         {
-            members(defs, &component.kind, &key, rank, readonly, out, seen)?;
+            members(defs, &component.kind, &key, rank, readonly, persistent, out, seen)?;
         }
     }
     seen.remove(kind);
@@ -97,6 +100,7 @@ struct Scope<'a> {
     serial: &'a mut usize,
     declarations: Vec<Stmt>,
     pure: bool,
+    static_counts: HashMap<String, usize>,
 }
 impl Scope<'_> {
     fn owner(&self, e: &Expr) -> bool {
@@ -226,7 +230,7 @@ impl Scope<'_> {
         });
         if write {
             writes.push(Stmt::CallSub {
-                name: "@pointer_component_store".into(),
+                name: if member.persistent { "@pointer_component_store_static" } else { "@pointer_component_store" }.into(),
                 args: vec![id(&proxy), tag],
             });
         }
@@ -310,6 +314,10 @@ impl Scope<'_> {
             }
             let mut prefix = vec![];
             let mut writes = vec![];
+            let destination = match &s {
+                Stmt::Assign { name, .. } | Stmt::AssignIndex { name, .. } => Some(name.clone()),
+                _ => None,
+            };
             (||->Result<()> {
                 if let Stmt::Block{body}=&s {
                     if body.iter().any(|s|matches!(s,Stmt::DerivedDecl{type_name,attributes,..}
@@ -332,7 +340,7 @@ impl Scope<'_> {
                         for e in args.iter_mut().skip(1) {self.expression(e,&mut prefix,&mut writes,false)?;}
                     }
                     Stmt::CallSub{name,args} if name=="@nullify" => for e in args {self.expression(e,&mut prefix,&mut writes,true)?;},
-                    Stmt::CallSub{name,args} if name.contains('%') && !name.starts_with('@') => {
+                    Stmt::CallSub{name,args} if name.contains('%') && (!name.starts_with('@') || name.starts_with("@module$")) => {
                         let mut designator=Expr::Call(name.clone(),args.clone());
                         self.expression(&mut designator,&mut prefix,&mut writes,false)?;
                         if let Expr::Call(target,actuals)=designator {*name=target;*args=actuals;}
@@ -376,6 +384,16 @@ impl Scope<'_> {
                 }
                 Ok(())
             })().map_err(|e|crate::source_diagnostics::at(e,location))?;
+            if let Some(destination) = destination {
+                for (key, member) in &self.members {
+                    if member.persistent && key.strip_prefix(&destination).is_some_and(|s| s.starts_with('%')) {
+                        let test = Expr::Bin(BinOp::Gt, Box::new(id(&member.tag)),
+                            Box::new(int(*self.static_counts.get(&member.kind).unwrap_or(&0))));
+                        writes.push(Stmt::If { cond: if member.rank == 0 { test } else { Expr::Call("any".into(), vec![test]) },
+                            then_body: failure("persistent pointer component currently requires a saved or module target".into()), else_body: None });
+                    }
+                }
+            }
             if let Stmt::DoWhile { cond, body } = &mut s {
                 if !prefix.is_empty() {
                     let test = std::mem::replace(cond, Expr::Logical(true));
@@ -408,20 +426,31 @@ fn scope(
 ) -> Result<()> {
     let declared = declarations(body, parent);
     let mut fields = Members::new();
-    for (name, object) in super::super::objects(body, &Objects::new()) {
+    let mut globals = Objects::new();
+    for ds in parent.values() {
+        for (n, v) in super::super::objects(ds, &Objects::new()) {
+            if n.starts_with("@module$") { globals.insert(n, v); }
+        }
+    }
+    for (name, object) in super::super::objects(body, &globals) {
         let mut found = Members::new();
         members(
             defs,
             &object.kind,
             &name,
             object.rank,
-            object.attrs.iter().any(|a| a == "intent(in)"),
+            object.attrs.iter().any(|a| a == "intent(in)") || (pure && name.starts_with("@module$")),
+            name.starts_with("@module$") || object.attrs.iter().any(|a| a == persistent::OWNER),
             &mut found,
             &mut HashSet::new(),
         )?;
         let interface = body.iter().any(|s|matches!(s,Stmt::CallSub{name,..} if name==calls::ENVIRONMENT));
-        if !found.is_empty() && (module || (params.contains(&name) && !interface)) {
-            bail!("module objects and dummy arguments with polymorphic POINTER components are not yet supported");
+        if !found.is_empty() && params.contains(&name) && !interface {
+            bail!("dummy arguments with polymorphic POINTER components require a known explicit interface");
+        }
+        if !found.is_empty() && (module || object.attrs.iter().any(|a| a == "save"))
+            && object.attrs.iter().any(|a| a == "allocatable" || a == "pointer") {
+            bail!("persistent ALLOCATABLE/POINTER owner objects require a general runtime descriptor interface");
         }
         fields.extend(found);
     }
@@ -479,7 +508,7 @@ fn scope(
         .keys()
         .filter(|kind| {
             let mut found = Members::new();
-            members(defs, kind, "", 0, false, &mut found, &mut HashSet::new()).is_ok()
+            members(defs, kind, "", 0, false, false, &mut found, &mut HashSet::new()).is_ok()
                 && !found.is_empty()
         })
         .cloned()
@@ -491,6 +520,13 @@ fn scope(
         serial,
         declarations: vec![],
         pure,
+        static_counts: defs.fields.keys().map(|kind| {
+            let count = globals.values().filter(|v| v.rank == 0 && !v.polymorphic
+                && v.attrs.iter().any(|a| a == "target")
+                && !v.attrs.iter().any(|a| a == "pointer" || a == "allocatable")
+                && defs.distance(&v.kind, kind).is_some()).count();
+            (kind.clone(), count)
+        }).collect(),
     };
     lower.body(body)?;
     lower.declarations.append(body);
@@ -566,9 +602,10 @@ pub(super) fn prepare(program: &mut Program, defs: &mut Definitions) -> Result<(
     }) {
         return Ok(());
     }
-    persistent::prepare(program)?;
+    persistent::prepare(program, defs)?;
     calls::prepare(program, defs)?;
-    let persistent = persistent::declarations(program);
+    let mut persistent = persistent::declarations(program);
+    persistent.extend(persistent::owners(program, defs)?);
     scope(
         &mut program.body,
         defs,
@@ -579,7 +616,8 @@ pub(super) fn prepare(program: &mut Program, defs: &mut Definitions) -> Result<(
         &mut 0,
     )?;
     fn clear(body: &mut Vec<Stmt>) {
-        body.retain(|s|!matches!(s,Stmt::CallSub{name,..} if name==calls::ENVIRONMENT));
+        body.retain(|s|!matches!(s,Stmt::CallSub{name,..} if name==calls::ENVIRONMENT)
+            && !matches!(s,Stmt::DummyIntent{intent,..} if intent==persistent::OWNER));
         for s in body {for child in children(s) {clear(child);}}
     }
     clear(&mut program.body);

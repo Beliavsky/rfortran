@@ -2352,7 +2352,7 @@ Run `python tests/test_polymorphic_pointers.py`. A standalone example is
 
 ### Scalar polymorphic POINTER components
 
-Local records can contain scalar `CLASS(parent), POINTER` components. The
+Records can contain scalar `CLASS(parent), POINTER` components. The
 owners can be scalars or fixed/runtime-allocated record arrays through rank 15,
 including components nested in ordinary scalar records. Module-defined owner
 types, USE aliases and separately compiled `.rmod` interfaces are supported.
@@ -2402,11 +2402,26 @@ private, initialization checks follow the target, and separate module compilatio
 preserves storage identity. INTENT(OUT) resets the owner without destroying its
 saved target.
 
+Owners themselves can also be module variables or SAVE variables, including
+fixed-size owner arrays through rank 15 and ordinary scalar wrappers. Separate
+procedures share their association state, including module USE aliases, private
+module owners exposed through public procedures, and separately compiled
+modules. SAVE attributes, named SAVE statements and bare SAVE statements work
+in procedures; saving one entity in a shared declaration does not save the others.
+Saved owner and target storage is shared across call specializations. Owner
+bindings, named generics, forwarding and INTENT(OUT) reset retain these semantics.
+
+Persistent owners currently accept associations to explicit SAVE or module
+targets. Storing another borrowed target, directly, through an owner dummy, or
+by copying an owner, produces a runtime diagnostic. A conditional owner copy
+whose association selects a supported static target is allowed. General borrowed
+or allocated target descriptors remain future work.
+
 Static targets use a shared storage-identity table; automatic targets still use
 hidden borrowed TARGET arguments alongside association tags. Neither form copies
 or owns targets, and this is not a portable descriptor ABI. Recursive owner
-procedures, new automatic local TARGET storage in these procedures, owner function
-results and module owner objects remain unsupported, as do runtime polymorphic
+procedures, new automatic local TARGET storage in these procedures and owner
+function results remain unsupported, as do runtime polymorphic
 owner receivers, shadowed host targets, external calls without a known interface,
 constructors with explicit arguments for these owner types, SELECT TYPE on owner
 dummies or pointer components,
@@ -2417,6 +2432,9 @@ owner storage still needs a general persistent component descriptor ABI.
 Run `python tests/test_polymorphic_pointer_persistent.py` for static-target tests.
 `tests/programs/xpolymorphic_pointer_saved_target.f90` exercises association after
 return, shared-target mutation, owner copying and NULLIFY.
+Run `python tests/test_polymorphic_pointer_saved_owners.py` for module/SAVE owner
+tests. `tests/programs/xpolymorphic_pointer_saved_owner.f90` tests shared module
+association state and saved owners across separate calls.
 
 Run `python tests/test_polymorphic_pointer_components.py`. The reduced example
 `tests/programs/xpolymorphic_pointer_array_component.f90` prints `T 7`.

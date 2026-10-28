@@ -280,6 +280,7 @@ fn save(body: &mut Vec<Stmt>, dummies: Option<&[String]>) -> Result<(), String> 
         let locals: Vec<(String, bool)> = body.iter().flat_map(|s| match s {
             Stmt::VarDecl { names, .. } => names.iter().map(|n| (n.clone(), false)).collect(),
             Stmt::ArrayDecl { name, .. } => vec![(name.clone(), true)],
+            Stmt::DerivedDecl { names, dims, .. } => names.iter().map(|n| (n.clone(), !dims.is_empty())).collect(),
             _ => vec![],
         }).filter(|(n, _)| !dummies.contains(n) && !external.contains(n)).collect();
         for (n, array) in locals {
@@ -294,6 +295,21 @@ fn save(body: &mut Vec<Stmt>, dummies: Option<&[String]>) -> Result<(), String> 
     for name in names {
         if dummies.contains(&name) {
             return Err(format!("dummy argument `{name}` cannot have the SAVE attribute"));
+        }
+        if let Some(at) = body.iter().position(|s|
+            matches!(s, Stmt::DerivedDecl { names, .. } if names.contains(&name))) {
+            // SAVE is per entity; split a mixed declaration before adding it.
+            let Stmt::DerivedDecl { type_name, mut names, mut attributes, polymorphic, dims } = body[at].clone() else { unreachable!() };
+            if attributes.iter().any(|a| a == "save" || a == "parameter") { continue; }
+            attributes.push("save".into());
+            if names.len() == 1 {
+                body[at] = Stmt::DerivedDecl { type_name, names, attributes, polymorphic, dims };
+            } else {
+                names.retain(|n| n != &name);
+                if let Stmt::DerivedDecl { names: ns, .. } = &mut body[at] { *ns = names; }
+                body.insert(at + 1, Stmt::DerivedDecl { type_name, names: vec![name], attributes, polymorphic, dims });
+            }
+            continue;
         }
         match declared(body, &name) {
             None => return Err(format!("SAVE requires `{name}` to be declared in the same program unit")),

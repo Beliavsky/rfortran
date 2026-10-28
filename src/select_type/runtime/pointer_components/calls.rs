@@ -7,9 +7,21 @@ use super::*;
 
 pub(super) const ENVIRONMENT: &str = "@pointer_component_environment";
 
-fn owner(defs: &Definitions, kind: &str) -> Result<bool> {
+fn persistent_actual(e: &Expr, owners: &HashSet<String>) -> bool {
+    let n = match e {
+        Expr::Ident(n) | Expr::Index(n, _) | Expr::Section { name: n, .. } => n,
+        Expr::Call(n, args) if n.starts_with("@record_component:") => {
+            return args.first().is_some_and(|e| persistent_actual(e, owners));
+        }
+        Expr::Call(n, _) => n,
+        _ => return false,
+    };
+    owners.contains(n.split('%').next().unwrap_or(n))
+}
+
+pub(super) fn owner(defs: &Definitions, kind: &str) -> Result<bool> {
     let mut fields = Members::new();
-    members(defs, kind, "", 0, false, &mut fields, &mut HashSet::new())?;
+    members(defs, kind, "", 0, false, false, &mut fields, &mut HashSet::new())?;
     Ok(!fields.is_empty())
 }
 
@@ -89,6 +101,7 @@ pub(super) fn substitute(body: &mut [Stmt], from: &str, to: &str) {
             Stmt::Assign { name: n, .. }
             | Stmt::AssignIndex { name: n, .. }
             | Stmt::Do { var: n, .. } => name(n, from, to),
+            Stmt::CallSub { name: n, .. } if n.strip_prefix(from).is_some_and(|s| s.starts_with('%')) => name(n, from, to),
             _ => {}
         }
         for e in expressions(s) {
@@ -108,6 +121,7 @@ pub(super) fn substitute(body: &mut [Stmt], from: &str, to: &str) {
 
 struct Calls {
     persistent: Declarations,
+    owners: Declarations,
     interfaces: Option<crate::operators::OwnerInterfaces>,
     owner_kinds: HashSet<String>,
     templates: HashMap<String, (Stmt, String)>,
@@ -286,6 +300,7 @@ impl Calls {
         host: &str,
         locals: &HashSet<String>,
         scope: &crate::operators::OwnerScope,
+        persistent_owners: &HashSet<String>,
     ) -> Result<()> {
         let Some((template, destination)) = self.templates.get(name).cloned() else {
             return Ok(());
@@ -314,6 +329,12 @@ impl Calls {
         });
         self.concrete(body, params, args, scope)?;
         let vars = super::super::super::objects(body, &Objects::new());
+        for (p, actual) in params.iter().zip(args.iter()) {
+            if vars.get(p).is_some_and(|v| self.owner_kinds.contains(&v.kind))
+                && persistent_actual(actual, persistent_owners) {
+                body.push(Stmt::DummyIntent { name: p.clone(), intent: persistent::OWNER.into() });
+            }
+        }
         if let Some(interfaces) = &self.interfaces {
             for (p, actual) in params.iter().zip(args.iter()) {
                 if vars
@@ -449,6 +470,7 @@ impl Calls {
         host: &str,
         locals: &HashSet<String>,
         scope: &crate::operators::OwnerScope,
+        persistent_owners: &HashSet<String>,
     ) -> Result<()> {
         let mut location = None;
         for s in body {
@@ -466,13 +488,13 @@ impl Calls {
             }
             (|| -> Result<()> {
                 if let Stmt::CallSub { name, args } = s {
-                    self.call(name, args, targets, host, locals, scope)?;
+                    self.call(name, args, targets, host, locals, scope, persistent_owners)?;
                 }
                 for e in expressions(s) {
                     let mut error = None;
                     visit_expr(e, &mut |e| {
                         if let Expr::Call(name, args) = e {
-                            if let Err(e) = self.call(name, args, targets, host, locals, scope) {
+                            if let Err(e) = self.call(name, args, targets, host, locals, scope, persistent_owners) {
                                 error = Some(e);
                             }
                         }
@@ -482,7 +504,7 @@ impl Calls {
                     }
                 }
                 for child in children(s) {
-                    self.statements(child, targets, host, locals, scope)?;
+                    self.statements(child, targets, host, locals, scope, persistent_owners)?;
                 }
                 Ok(())
             })()
@@ -572,7 +594,11 @@ impl Calls {
         let locals = super::super::super::objects(body, &Objects::new())
             .into_keys()
             .collect();
-        self.statements(body, &targets, host, &locals, &scope)?;
+        let mut persistent_owners: HashSet<_> = self.owners.keys().cloned().collect();
+        persistent_owners.extend(super::super::super::objects(body, &Objects::new())
+            .into_iter().filter(|(_, v)| v.attrs.iter().any(|a| a == persistent::OWNER)).map(|(n, _)| n));
+        self.statements(body, &targets, host, &locals, &scope, &persistent_owners)?;
+        body.extend(self.owners.keys().cloned().map(crate::imports::reference));
         body.extend(self.persistent.keys().cloned().map(crate::imports::reference));
         // Every proxy in this activation uses the same ordered identity table.
         body.insert(
@@ -596,6 +622,7 @@ pub(super) fn prepare(program: &mut Program, defs: &mut Definitions) -> Result<(
     }
     let mut calls = Calls {
         persistent: persistent::declarations(program),
+        owners: persistent::owners(program, defs)?,
         interfaces: None,
         owner_kinds,
         templates: HashMap::new(),
@@ -614,7 +641,9 @@ pub(super) fn prepare(program: &mut Program, defs: &mut Definitions) -> Result<(
             defs.parents.clone(),
         )?);
     }
-    calls.scope(&mut program.body, &calls.persistent.clone(), &[], "", "")?;
+    let mut globals = calls.persistent.clone();
+    globals.extend(calls.owners.clone());
+    calls.scope(&mut program.body, &globals, &[], "", "")?;
     fn attach(body: &mut Vec<Stmt>, host: &str, generated: &mut HashMap<String, Vec<Stmt>>) {
         for s in body.iter_mut() {
             match s {

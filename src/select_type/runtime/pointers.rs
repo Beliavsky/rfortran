@@ -119,12 +119,19 @@ impl Lower<'_> {
             return Ok(None);
         };
         if name=="@pointer_component_targets" {return Ok(Some(vec![]));}
-        if matches!(name.as_str(),"@pointer_component_load"|"@pointer_component_store") {
+        if matches!(name.as_str(),"@pointer_component_load"|"@pointer_component_store"|"@pointer_component_store_static") {
             let [Expr::Ident(p),tag]=args.as_slice() else {bail!("invalid pointer component descriptor transfer");};
             let object=vars.get(p).filter(|o|o.pointer).context("missing pointer component view")?;
-            return Ok(Some(vec![if name=="@pointer_component_load" {
+            let mut out = vec![];
+            if name == "@pointer_component_store_static" {
+                let count = object.variants.iter().filter(|(_, n)| n.starts_with("@module$")).count();
+                out.push(Stmt::If { cond: Expr::Bin(BinOp::Gt, Box::new(id(&object.tag)), Box::new(int(count))),
+                    then_body: failure("persistent pointer component currently requires a saved or module target".into()), else_body: None });
+            }
+            out.push(if name=="@pointer_component_load" {
                 Stmt::Assign{name:object.tag.clone(),value:tag.clone()}
-            } else {pointer_components::assign(tag,id(&object.tag))?}]));
+            } else {pointer_components::assign(tag,id(&object.tag))?});
+            return Ok(Some(out));
         }
         if name == "@pointer_associate" {
             let [Expr::Ident(p), target] = args.as_slice() else {
