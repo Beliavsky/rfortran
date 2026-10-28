@@ -103,6 +103,7 @@ mod intrinsic_rewrites;
 mod matmul_runtime;
 mod block_scopes;
 mod allocation_options;
+mod allocation_identity;
 mod complex;
 mod derived_arrays;
 mod operators;

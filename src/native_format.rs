@@ -5,6 +5,7 @@
 //! Built once with the compiler and embedded as a native static library.
 #![no_std]
 mod timing;
+mod allocation_identity;
 mod c_descriptor;
 mod float_model;
 

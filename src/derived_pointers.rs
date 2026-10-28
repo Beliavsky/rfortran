@@ -60,6 +60,26 @@ impl Lower {
         let Stmt::CallSub { name, args } = s else { return Ok(false) };
         if name == "@pointer_associate" {
             let [Expr::Ident(pointer), target] = args.as_slice() else { return Ok(false) };
+            // Borrow owned primitive components directly from their heap handle.
+            // Materializing a scalar record view loses the parent's TARGET
+            // attribute and needlessly loads unrelated component values.
+            if let Expr::Call(tag,args)=target {
+                if let Some(field)=tag.strip_prefix("@record_component:") {
+                    if let Some((owner,indices))=args.first().and_then(|e|self.element(e,objects)) {
+                        if let Some(f)=self.fields(&objects[owner].ty)?.into_iter().find(|f|f.name==field && f.heap.is_some()) {
+                            if args.len()!=1 {bail!("subscripts on owned pointer targets are not yet supported");}
+                            if !self.target_roots.contains(owner.split('%').next().unwrap()) {bail!("owned pointer target `{owner}` requires TARGET attribute on its parent object");}
+                            let (kind,dims)=f.heap.as_ref().unwrap();
+                            let Some(pdims)=self.array_shapes.get(pointer) else {bail!("owned component association requires an array POINTER");};
+                            if self.intrinsic_kinds.get(pointer)!=Some(kind) || pdims.len()!=dims.len() {bail!("pointer and owned component must have matching type, kind and rank");}
+                            let (owner,mut indices)=(owner.to_owned(),indices.to_vec());
+                            self.capture_indices(&mut indices,prefix);
+                            prefix.push(Stmt::CallSub{name:"@record_pointer_associate".into(),args:vec![Expr::Ident(pointer.clone()),select(&owner,&f,vec![],&indices)?,Expr::Str(format!("{owner}%{field}"))]});
+                            return Ok(true);
+                        }
+                    }
+                }
+            }
             let Some(object) = objects.get(pointer).filter(|o| !o.dims.is_empty()).cloned() else { return Ok(false) };
             let fields = self.pointer_fields(&object.ty)?;
             let values = if matches!(target, Expr::Call(n,a) if n == "null" && a.is_empty()) {

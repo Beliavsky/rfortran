@@ -1474,6 +1474,24 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                     lower(&mut statements,&shapes,serial,checks)?;
                     out.push(Stmt::Block{body:statements});continue;
                 }
+                Stmt::CallSub {name,args} if name=="@move_allocation_storage" => {
+                    let [Expr::Ident(to),Expr::Ident(from)]=args.as_slice() else {bail!("invalid allocation storage transfer")};
+                    if !shapes.contains_key(&format!("@heap:{to}")) || !shapes.contains_key(&format!("@heap:{from}")) {
+                        bail!("allocation storage transfer from `{from}` to `{to}` requires heap descriptors");
+                    }
+                    out.push(Stmt::CallSub{name:"@heap_transfer_buffers".into(),args:args.clone()});
+                    for key in ["@extent","@allocated","@axes","@lowers"] {
+                        let dest=&shapes[&format!("{key}:{to}")].1;
+                        let source=&shapes[&format!("{key}:{from}")].1;
+                        for (dest,source) in dest.iter().zip(source) {
+                            let (Expr::Ident(d),Expr::Ident(s))=(dest,source) else {bail!("allocation transfer requires writable descriptor fields")};
+                            out.push(assign(d,id(s)));
+                            out.push(assign(s,if key=="@allocated" {Expr::Logical(false)} else {int(0)}));
+                        }
+                    }
+                    continue;
+                }
+                Stmt::CallSub {name,..} if name=="@heap_identity" => {out.push(s);continue;}
                 Stmt::CallSub { name, args } if name == "@deallocate" => {
                     for n in deallocation_targets(args)? {
                         if let Some(flag) = allocated(&n, &shapes) {

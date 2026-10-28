@@ -5,7 +5,7 @@
 //! instead; the private environment is not an external ABI or owning storage.
 use super::*;
 
-pub(super) const ENVIRONMENT: &str = "@pointer_component_environment";
+pub(in crate::select_type::runtime) const ENVIRONMENT: &str = "@pointer_component_environment";
 
 fn persistent_actual(e: &Expr, owners: &HashSet<String>) -> bool {
     let n = match e {
@@ -301,7 +301,7 @@ impl Calls {
         locals: &HashSet<String>,
         scope: &crate::operators::OwnerScope,
         persistent_owners: &HashSet<String>,
-        epochs: &HashMap<String, String>,
+        epochs: &HashMap<String, allocated::Info>,
     ) -> Result<()> {
         let Some((template, destination)) = self.templates.get(name).cloned() else {
             return Ok(());
@@ -419,15 +419,25 @@ impl Calls {
         }
         for ((kind, target), hidden) in targets.iter().zip(&hidden) {
             let mut metadata = vec![];
-            if let Some(epoch) = epochs.get(target) {
+            let allocation=epochs.get(target);
+            if let Some(allocation) = allocation {
                 let formal = format!("{hidden}$epoch");
-                params.push(formal.clone()); args.push(id(epoch));
+                params.push(formal.clone()); args.push(id(&allocation.epoch));
                 body.insert(0, Stmt::VarDecl {kind:TypeSpec::Integer(Some(8)),names:vec![formal.clone()]});
                 body.insert(0, Stmt::DummyIntent {name:formal.clone(),intent:"intent(in)".into()});
                 metadata.push(allocated::epoch_attribute(&formal));
             }
-            params.push(hidden.clone());
-            args.push(id(target));
+            if let Some(backing)=allocation.and_then(|i|i.backing.as_ref()) {
+                // Pass the descriptor, including an unallocated moved-from
+                // variable, without evaluating its nonexistent scalar element.
+                let formal=format!("{hidden}$storage");
+                metadata.push(allocated::backing_attribute(&formal));
+                params.push(formal.clone());args.push(id(backing));
+                body.insert(0,Stmt::DerivedDecl{type_name:kind.clone(),names:vec![formal],attributes:vec!["allocatable".into(),"target".into(),"@scalar_heap".into(),"@referenced_type".into(),if readonly {"intent(in)"}else{"intent(inout)"}.into()],polymorphic:false,dims:vec![id("@deferred_extent")]});
+            } else {
+                params.push(hidden.clone());
+                args.push(id(target));
+            }
             body.insert(
                 0,
                 Stmt::DerivedDecl {
@@ -480,7 +490,7 @@ impl Calls {
         locals: &HashSet<String>,
         scope: &crate::operators::OwnerScope,
         persistent_owners: &HashSet<String>,
-        epochs: &HashMap<String, String>,
+        epochs: &HashMap<String, allocated::Info>,
     ) -> Result<()> {
         let mut location = None;
         for s in body {
@@ -554,6 +564,7 @@ impl Calls {
             )?;
         }
         let mut targets = vec![];
+        let local=super::super::super::objects(body,&Objects::new());
         for (n, ds) in &declared {
             let has = |attribute: &str| {
                 ds.iter().any(|s| match s {
@@ -574,7 +585,7 @@ impl Calls {
                 {
                     if dims.is_empty() && has("target") && !has("pointer") && (!has("allocatable") || allocated::info(ds).is_some()) {
                         if environment.map_or_else(
-                            || self.persistent.contains_key(n) || referenced.contains(n),
+                            || self.persistent.contains_key(n) || referenced.contains(n) || (local.contains_key(n) && allocated::info(ds).is_some()),
                             |args| args.contains(&id(n)),
                         )
                         {
@@ -607,7 +618,7 @@ impl Calls {
         let mut persistent_owners: HashSet<_> = self.owners.keys().cloned().collect();
         persistent_owners.extend(super::super::super::objects(body, &Objects::new())
             .into_iter().filter(|(_, v)| v.attrs.iter().any(|a| a == persistent::OWNER)).map(|(n, _)| n));
-        let epochs = declared.iter().filter_map(|(n,d)| allocated::info(d).map(|i|(n.clone(),i.epoch))).collect();
+        let epochs = declared.iter().filter_map(|(n,d)| allocated::info(d).map(|i|(n.clone(),i))).collect();
         self.statements(body, &targets, host, &locals, &scope, &persistent_owners, &epochs)?;
         body.extend(self.owners.keys().cloned().map(crate::imports::reference));
         body.extend(self.persistent.keys().cloned().map(crate::imports::reference));

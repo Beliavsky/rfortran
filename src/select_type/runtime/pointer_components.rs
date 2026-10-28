@@ -5,7 +5,7 @@
 //! targets use shared persistent identities. Scalar pointer views reuse runtime
 //! dispatch without copying or owning the target storage.
 use super::*;
-mod calls;
+pub(super) mod calls;
 pub(super) mod allocated;
 pub(super) mod persistent;
 
@@ -103,7 +103,6 @@ struct Scope<'a> {
     serial: &'a mut usize,
     declarations: Vec<Stmt>,
     pure: bool,
-    static_counts: HashMap<String, usize>,
     result: Option<String>,
 }
 impl Scope<'_> {
@@ -349,12 +348,7 @@ impl Scope<'_> {
                     if let Some(result) = &self.result {
                         for (key, member) in &self.members {
                             if key.strip_prefix(result).is_some_and(|s| s.starts_with('%')) {
-                                prefix.push(Stmt::If {
-                                    cond: Expr::Bin(BinOp::Gt, Box::new(id(&member.tag)),
-                                        Box::new(int(*self.static_counts.get(&member.kind).unwrap_or(&0)))),
-                                    then_body: failure("pointer component function result currently requires a saved or module target".into()),
-                                    else_body: None,
-                                });
+                                prefix.push(Stmt::CallSub{name:"@pointer_component_validate_static".into(),args:vec![id(&member.tag),id(&member.epoch),Expr::Str(member.kind.clone()),int(member.rank),Expr::Str("pointer component function result currently requires a saved or module target".into())]});
                             }
                         }
                     }
@@ -412,10 +406,7 @@ impl Scope<'_> {
             if let Some(destination) = destination {
                 for (key, member) in &self.members {
                     if member.persistent && key.strip_prefix(&destination).is_some_and(|s| s.starts_with('%')) {
-                        let test = Expr::Bin(BinOp::Gt, Box::new(id(&member.tag)),
-                            Box::new(int(*self.static_counts.get(&member.kind).unwrap_or(&0))));
-                        writes.push(Stmt::If { cond: if member.rank == 0 { test } else { Expr::Call("any".into(), vec![test]) },
-                            then_body: failure("persistent pointer component currently requires a saved or module target".into()), else_body: None });
+                        writes.push(Stmt::CallSub{name:"@pointer_component_validate_static".into(),args:vec![id(&member.tag),id(&member.epoch),Expr::Str(member.kind.clone()),int(member.rank),Expr::Str("persistent pointer component currently requires a saved or module target".into())]});
                     }
                 }
             }
@@ -535,6 +526,8 @@ fn scope(
     if let Some(args)=body.iter().find_map(|s|match s {Stmt::CallSub{name,args} if name==calls::ENVIRONMENT=>Some(args),_=>None}) {
         candidates.extend(args.iter().filter_map(|e|if let Expr::Ident(n)=e {Some(n.clone())}else{None}));
     } else { targets(body, &mut candidates); }
+    let environment=body.iter().find_map(|s|match s {Stmt::CallSub{name,args} if name==calls::ENVIRONMENT=>Some(args),_=>None});
+    candidates.extend(declared.iter().filter(|(n,_)|environment.is_none_or(|args|args.contains(&id(n)))).filter_map(|(n,ds)| allocated::info(ds).map(|_|n.clone())));
     let mut candidates: Vec<_> = candidates.into_iter().collect();
     candidates.sort();
     let constructors = defs
@@ -555,13 +548,7 @@ fn scope(
         declarations: vec![],
         pure,
         result,
-        static_counts: defs.fields.keys().map(|kind| {
-            let count = globals.values().filter(|v| v.rank == 0 && !v.polymorphic
-                && v.attrs.iter().any(|a| a == "target")
-                && !v.attrs.iter().any(|a| a == "pointer")
-                && defs.distance(&v.kind, kind).is_some()).count();
-            (kind.clone(), count)
-        }).collect(),
+
     };
     lower.body(body)?;
     lower.declarations.append(body);

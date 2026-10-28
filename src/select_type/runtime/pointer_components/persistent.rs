@@ -38,7 +38,7 @@ pub(in crate::select_type::runtime) fn declarations(program: &Program) -> Declar
             for (n, v) in objects {
                 if v.rank == 0
                     && !v.polymorphic
-                    && v.attrs.iter().any(|a| a == "target")
+                    && (v.attrs.iter().any(|a| a == "target") || declared.get(&n).is_some_and(|d|super::allocated::info(d).is_some()))
                     && !v.attrs.iter().any(|a| a == "pointer")
                 {
                     if let Some(d) = declared.get(&n) {
@@ -182,11 +182,11 @@ pub(super) fn prepare(program: &mut Program, defs: &Definitions) -> Result<()> {
                 .filter(|(n, v)| {
                     !params.contains(n)
                         && !v.polymorphic
-                        && ((v.rank == 0 && v.attrs.iter().any(|a| a == "target"))
+                        && ((v.rank == 0 && v.attrs.iter().any(|a| a == "target" || a == "allocatable"))
                             || owner_kinds.contains(&v.kind))
                         && v.attrs.iter().any(|a| a == "save")
                         && !v.attrs.iter().any(|a| a == "pointer")
-                        && (!v.attrs.iter().any(|a| a == "allocatable") || (v.rank == 0 && v.attrs.iter().any(|a| a == "target") && !owner_kinds.contains(&v.kind)))
+                        && (!v.attrs.iter().any(|a| a == "allocatable") || (v.rank == 0 && !owner_kinds.contains(&v.kind)))
                 })
                 .map(|(n, _)| n)
                 .collect();
@@ -283,7 +283,7 @@ pub(super) fn prepare(program: &mut Program, defs: &Definitions) -> Result<()> {
                             .values()
                             .any(|v| {
                                 v.attrs.iter().any(|a| a == "save")
-                                    && (v.attrs.iter().any(|a| a == "target")
+                                    && (v.attrs.iter().any(|a| a == "target") || (v.rank==0 && v.attrs.iter().any(|a|a=="allocatable"))
                                         || owner_kinds.contains(&v.kind))
                             })
                     {

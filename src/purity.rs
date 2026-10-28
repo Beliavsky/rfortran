@@ -173,6 +173,20 @@ pub fn validate(program: &Program) -> Result<()> {
                 Stmt::CallSub {name,args} if name=="@deallocate" => {
                     for object in crate::allocatables::deallocation_targets(args)? {writable(&object)?;}
                 }
+                Stmt::CallSub {name,args} if name=="@heap_identity" || name=="@move_allocation_storage" => {
+                    for arg in args {
+                        let Expr::Ident(n)=arg else {bail!("invalid internal allocation descriptor")};
+                        writable(n)?;
+                    }
+                }
+                Stmt::CallSub {name,args} if name=="@heap_record_drop_array" || name=="@heap_record_load" || name=="@heap_record_store" => {
+                    let Some(Expr::Ident(local))=args.first() else {bail!("invalid owned allocation operation")};
+                    writable(local)?;
+                    if name=="@heap_record_store" {
+                        let Some(Expr::Ident(handle))=args.get(1) else {bail!("invalid owned allocation handle")};
+                        writable(handle)?;
+                    } else if let Some(value)=args.get(1) {expression(value,&locals,known)?;}
+                }
                 Stmt::CallSub { name, args } => {
                     let Some(Procedure { pure: true, intents: Some(intents), optional }) = known.get(name) else {
                         bail!("PURE procedure cannot call impure or unknown subroutine `{name}`");

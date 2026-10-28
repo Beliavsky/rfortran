@@ -3003,6 +3003,28 @@ fn gen_stmts(
                     record_heap::emit(module,b,ptr_ty,dc,name,args,value,ints,reals,bools)?;
                     continue;
                 }
+                if name=="@heap_identity" {
+                    let IExpr::Ident(n)=&args[0] else {bail!("invalid allocation identity")};
+                    let value=file_io::call(module,b,"rfort_allocation_identity",&[],types::I64)?;
+                    let okay=b.ins().icmp_imm(ir::condcodes::IntCC::SignedGreaterThan,value,0);
+                    file_io::require(module,b,ptr_ty,dc,okay,"allocation identity exhausted")?;
+                    let address=storage_addr(b,ptr_ty,ints[n]);
+                    b.ins().store(MemFlags::new(),value,address,0);
+                    continue;
+                }
+                if name=="@heap_transfer_buffers" {
+                    let storage=|n:&str|ints.get(n).or_else(||reals.get(n)).or_else(||bools.get(n)).copied();
+                    for pair in [[0,1],[2,3]] {
+                        let IExpr::Ident(to)=&args[pair[0]] else {bail!("invalid allocation transfer")};
+                        let IExpr::Ident(from)=&args[pair[1]] else {bail!("invalid allocation transfer")};
+                        let dest=heap_cell(b,ptr_ty,storage(to).context("missing transfer destination")?)?;
+                        let source=heap_cell(b,ptr_ty,storage(from).context("missing transfer source")?)?;
+                        let pointer=b.ins().load(ptr_ty,MemFlags::new(),source,0);
+                        b.ins().store(MemFlags::new(),pointer,dest,0);
+                        let zero=b.ins().iconst(ptr_ty,0);b.ins().store(MemFlags::new(),zero,source,0);
+                    }
+                    continue;
+                }
                 if name=="@heap_bind" {
                     let IExpr::Ident(local)=&args[0] else{bail!("invalid heap binding")};
                     let cell=b.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,8,0));

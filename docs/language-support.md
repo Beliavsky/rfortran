@@ -1642,10 +1642,13 @@ in the source group. Saved targets retain their allocation between calls;
 see [scalar polymorphic pointer components](#scalar-polymorphic-pointer-components)
 for the storage and model-expression restrictions.
 
-This is partial scalar support. Other scalar derived-type allocation/components,
-explicit SAVE on intrinsic allocatable scalars, and allocatable scalar DO control variables remain
-unsupported. Existing host-association restrictions for allocatable storage
-also remain. Ordinary scalar dummy arguments do not gain ALLOCATABLE semantics.
+Concrete scalar derived allocatables also work without TARGET, including saved
+and module storage, with the supported record component layouts. MOVE_ALLOC
+transfers their allocation and owned components without copying; scalar concrete
+ALLOCATABLE dummy descriptors and allocatable scalar derived components remain
+unsupported. Explicit SAVE on intrinsic allocatable scalars and allocatable
+scalar DO control variables also remain unsupported. Existing host-association
+restrictions for allocatable storage also remain. Ordinary scalar dummy arguments do not gain ALLOCATABLE semantics.
 
 Run `python tests/test_allocatable_scalars.py` after building the compiler, or
 try `rf.bat xalloc_scalar.f90 --run` for the allocation-state example above.
@@ -1750,7 +1753,17 @@ call-site storage) are not yet reallocated. Run
 
 `call move_alloc(from, to)` moves an ALLOCATABLE array, including components,
 by copying it and deallocating `from`, so pointers into `from` are not carried
-over. ALLOCATE accepts `source=` and `mold=` (taking the bounds of an array
+over. Concrete scalar derived allocatables instead transfer their field buffers,
+owned component handles and initialization masks without copying. Existing
+polymorphic pointers follow the allocation when TO has TARGET, including repeated
+moves, saved/module storage, and separately compiled module procedures. An
+allocated TO is deallocated first; an unallocated FROM leaves both unallocated.
+Keyword FROM/TO, STAT and ERRMSG are accepted for these scalar record moves;
+success sets STAT to zero and leaves ERRMSG unchanged. See
+`tests/programs/xderived_move_alloc.f90` and run
+`python tests/test_derived_move_alloc.py`.
+
+ALLOCATE accepts `source=` and `mold=` (taking the bounds of an array
 source or mold, or the given bounds), and ALLOCATE and DEALLOCATE accept
 `stat=` and `errmsg=`, which report allocating an allocated array or
 deallocating an unallocated one instead of stopping. Run
@@ -2445,7 +2458,7 @@ and preserves aliases when assigning to an existing allocation. NULLIFY and
 INTENT(OUT) owner reset do not deallocate the target.
 
 Associating with an unallocated target produces a runtime diagnostic. Each
-association records the allocation generation; dereferencing an alias after its
+association records a unique allocation identity; dereferencing an alias after its
 target is deallocated or reallocated is diagnosed instead of silently selecting
 the replacement allocation. Saved/module allocated targets can be returned by
 owner factories; ordinary local allocations retain the existing escape restriction.
@@ -2461,8 +2474,15 @@ Failed allocation with STAT preserves the existing target and its aliases.
 All objects in these allocation lists must currently be supported scalar targets
 of the same type. Constructors with explicit parent parts are supported;
 model expressions otherwise retain the existing expression-lowering limits.
-Scalar allocatable TARGET dummy descriptors, polymorphic allocated targets and
-model expressions, and MOVE_ALLOC of these targets remain unsupported.
+MOVE_ALLOC carries the identity and storage to the destination, so existing
+aliases follow a TARGET destination and cannot select a later reallocation of
+FROM or the allocation formerly owned by TO. Pointer components can escape after
+a move to saved/module storage; a moved allocation still owned by an automatic
+local retains the existing escape check. Supported pointers to scalar and fixed-array
+components, and pointers into supported owned array components, retain their
+underlying allocation as well.
+Scalar allocatable TARGET dummy descriptors and polymorphic allocated targets
+and model expressions remain unsupported.
 
 Scalar function results containing these pointer components are supported,
 including explicit RESULT names, implicit function-name results, early RETURN,

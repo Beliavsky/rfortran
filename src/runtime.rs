@@ -12,6 +12,7 @@ struct RecordAllocation {
 #[derive(Clone, Debug)]
 enum PointerStorage {
     Frame(usize, String),
+    Module(String),
     Record(usize, bool, String),
 }
 
@@ -347,6 +348,14 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                     let handle=eval_expr(&args[0],env_str,env_int,env_real32,env_real64,env_log,funcs,call_stack).0.unwrap();
                     let offset=if name=="@ptr_name" {0}else{eval_expr(&args[1],env_str,env_int,env_real32,env_real64,env_log,funcs,call_stack).0.unwrap()};
                     let target=POINTER_STORAGE.with(|storage|storage.borrow().get(handle as usize).expect("invalid pointer storage handle").clone());
+                    if let PointerStorage::Module(key)=&target {
+                        if name=="@ptr_name" {return ValueTuple::from_str(key.clone());}
+                        let index=usize::try_from(offset).expect("negative pointer offset");
+                        return MODULE_ARRAYS.with(|arrays|match &arrays.borrow()[key] {
+                            ModuleArray::Real(a)=>ValueTuple::from_real(a[index]),
+                            ModuleArray::Integer(a)=>if name=="@ptr_load_l" {ValueTuple::from_bool(a[index]!=0)}else{ValueTuple::from_int(a[index])},
+                        });
+                    }
                     if let PointerStorage::Record(allocation,mask,label)=&target {
                         if name=="@ptr_name" {return ValueTuple::from_str(label.clone());}
                         return RECORD_ALLOCATIONS.with(|records| {
@@ -1253,11 +1262,17 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                     if name=="@ptr_bind" {
                         let [Expr::Ident(data),Expr::Ident(flags),Expr::Ident(label),Expr::Ident(target),Expr::Ident(flag)]=args.as_slice() else {unreachable!()};
                         let frame_index=call_stack.len()-1;
+                        call_stack.last_mut().unwrap().commit_saved();
+                        let module_arrays=call_stack.last().unwrap().module_arrays.clone();
                         let handles=POINTER_STORAGE.with(|storage| {
                             let mut storage=storage.borrow_mut();
                             [target,flag].map(|n| {
-                                let handle=if let Some(i)=storage.iter().position(|value|matches!(value,PointerStorage::Frame(f,v) if *f==frame_index && v==n)) {i}
-                                    else {storage.push(PointerStorage::Frame(frame_index,n.clone()));storage.len()-1};
+                                let matches=|value:&PointerStorage|match (module_arrays.get(n),value) {
+                                    (Some(key),PointerStorage::Module(k))=>key==k,
+                                    (None,PointerStorage::Frame(f,v))=>*f==frame_index && v==n,_=>false,
+                                };
+                                let handle=if let Some(i)=storage.iter().position(matches) {i}
+                                    else {storage.push(module_arrays.get(n).map_or_else(||PointerStorage::Frame(frame_index,n.clone()),|k|PointerStorage::Module(k.clone())));storage.len()-1};
                                 handle as i64
                             })
                         });
@@ -1272,6 +1287,21 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                             let storage=storage.borrow();
                             (storage[values[0].0.unwrap() as usize].clone(),storage[values[1].0.unwrap() as usize].clone())
                         });
+                        if let PointerStorage::Module(target)=&target_storage {
+                            let PointerStorage::Module(flag)=&flag_storage else {unreachable!()};
+                            let index=usize::try_from(values[2].0.unwrap()).expect("negative pointer store offset");
+                            let value=&values[3];
+                            MODULE_ARRAYS.with(|arrays| {
+                                let mut arrays=arrays.borrow_mut();
+                                match arrays.get_mut(target).unwrap() {
+                                    ModuleArray::Real(a)=>{let v=value.1.unwrap_or(value.0.unwrap_or(0) as f64);a[index]=if kind=="r4" {v as f32 as f64}else{v};},
+                                    ModuleArray::Integer(a)=>a[index]=if kind=="clear" {0}else if kind=="l" {i64::from(value.2.unwrap_or(false))}else{value.0.unwrap_or(0)},
+                                }
+                                if kind!="clear" {let ModuleArray::Integer(a)=arrays.get_mut(flag).unwrap() else {unreachable!()};a[index]=1;}
+                            });
+                            for frame in call_stack.iter_mut() {frame.sync_saved();}
+                            idx+=1;continue;
+                        }
                         if let PointerStorage::Record(allocation,_,_)=target_storage {
                             let offset=usize::try_from(values[2].0.unwrap()).expect("negative pointer store offset");
                             let value=&values[3];
@@ -1361,6 +1391,42 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                             }
                         }
                         call_stack.last_mut().unwrap().commit_saved();idx+=1;continue;
+                    }
+                    if name=="@heap_identity" {
+                        let Expr::Ident(n)=&args[0] else {unreachable!()};
+                        let value=crate::allocation_identity::rfort_allocation_identity();
+                        assert!(value>0,"allocation identity exhausted");
+                        let fr=call_stack.last_mut().unwrap();fr.env_int.insert(n.clone(),value);
+                        fr.commit_saved();idx+=1;continue;
+                    }
+                    if name=="@heap_transfer_buffers" {
+                        let frame_index=call_stack.len()-1;
+                        let fr=call_stack.last_mut().unwrap();
+                        for pair in [[0,1],[2,3]] {
+                            let Expr::Ident(to)=&args[pair[0]] else {unreachable!()};
+                            let Expr::Ident(from)=&args[pair[1]] else {unreachable!()};
+                            let source_key=fr.module_arrays.get(from);
+                            let destination_key=fr.module_arrays.get(to);
+                            POINTER_STORAGE.with(|storage|for entry in storage.borrow_mut().iter_mut() {
+                                let is=|n:&str,key:Option<&String>,entry:&PointerStorage|match entry {
+                                    PointerStorage::Frame(f,v)=>*f==frame_index && v==n,
+                                    PointerStorage::Module(k)=>key==Some(k),_=>false,
+                                };
+                                if is(from,source_key,entry) {
+                                    *entry=destination_key.map_or_else(||PointerStorage::Frame(frame_index,to.clone()),|key|PointerStorage::Module(key.clone()));
+                                } else if is(to,destination_key,entry) {
+                                    // Pointers into the replaced allocation have undefined
+                                    // association status; never attach them to the new one.
+                                    *entry=PointerStorage::Frame(usize::MAX,String::new());
+                                }
+                            });
+                            if let Some(source)=fr.env_real_arrays.get_mut(from) {
+                                let values=std::mem::take(source);fr.env_real_arrays.insert(to.clone(),values);
+                            } else {
+                                let values=std::mem::take(fr.env_int_arrays.get_mut(from).unwrap());fr.env_int_arrays.insert(to.clone(),values);
+                            }
+                        }
+                        fr.commit_saved();idx+=1;continue;
                     }
                     if name=="@heap_bind" {idx+=1;continue;}
                     if name=="@heap_allocate" || name=="@heap_resize" || name=="@heap_free" || name=="@heap_drop" {

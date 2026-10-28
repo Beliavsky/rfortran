@@ -54,6 +54,8 @@ pub(super) fn targets(
     }
     let mut edges = HashMap::new();
     associations(body, &mut edges);
+    let environment=body.iter().find_map(|s|match s {Stmt::CallSub{name,args} if name==pointer_components::calls::ENVIRONMENT=>Some(args),_=>None});
+    let local:HashSet<_>=body.iter().filter_map(|s|match s {Stmt::DerivedDecl{names,..}=>Some(names),_=>None}).flatten().collect();
     // Follow pointer-to-pointer assignments transitively; a target that only
     // another unrelated pointer can select must not generate a value read.
     let mut referenced = HashSet::new();
@@ -65,7 +67,8 @@ pub(super) fn targets(
     }
     let mut targets: Vec<_> = decls
         .iter()
-        .filter(|(n, _)| referenced.contains(*n))
+        .filter(|(n, ds)| referenced.contains(*n) || (pointer_components::allocated::info(ds).is_some()
+            && environment.map_or_else(||n.starts_with("@module$")||local.contains(n),|args|args.contains(&id(n)))))
         .filter_map(|(n, ds)| {
             let has = |attribute: &str| {
                 ds.iter().any(|s| match s {
@@ -108,6 +111,25 @@ fn null(e: &Expr) -> bool {
 fn eq(n: &str, k: usize) -> Expr {
     Expr::Bin(BinOp::Eq, Box::new(id(n)), Box::new(int(k)))
 }
+fn and(a:Expr,b:Expr)->Expr {Expr::Bin(BinOp::And,Box::new(a),Box::new(b))}
+fn or(a:Expr,b:Expr)->Expr {Expr::Bin(BinOp::Or,Box::new(a),Box::new(b))}
+/// An allocated target is selected by allocation identity, independent of the
+/// variable to which the pointer was originally associated.
+pub(super) fn selected(o:&Object,index:usize,decls:&Declarations)->Expr {
+    let n=&o.variants[index].1;
+    if decls.get(n).and_then(|d|pointer_components::allocated::info(d)).is_some() {
+        pointer_components::allocated::valid(n,&o.epoch,decls)
+    } else {and(eq(&o.tag,index+1),eq(&o.epoch,0))}
+}
+pub(super) fn pointer_cases(o:&Object,bodies:Vec<Vec<Stmt>>,default:Vec<Stmt>,decls:&Declarations)->Stmt {
+    if !o.pointer {return cases(o,bodies,default);}
+    let mut result=default;
+    for (i,body) in bodies.into_iter().enumerate().rev() {
+        result=vec![Stmt::If{cond:selected(o,i,decls),then_body:body,else_body:Some(result)}];
+    }
+    if result.len()==1 {result.remove(0)} else {Stmt::Block{body:result}}
+}
+
 impl Lower<'_> {
     pub(super) fn pointer_statement(
         &self,
@@ -118,15 +140,35 @@ impl Lower<'_> {
         let Stmt::CallSub { name, args } = s else {
             return Ok(None);
         };
+        if name=="@pointer_component_validate_static" {
+            let [tag,epoch,Expr::Str(kind),Expr::IntLit(rank),Expr::Str(message)]=args.as_slice() else {bail!("invalid persistent pointer validation")};
+            let mut candidates:Vec<_>=decls.iter().filter_map(|(n,d)| {
+                d.iter().find_map(|s|match s {
+                    Stmt::DerivedDecl{type_name,attributes,polymorphic:false,dims,..} if n.starts_with("@module$") && dims.is_empty() && (attributes.iter().any(|a|a=="target") || d.iter().any(|s|matches!(s,Stmt::DummyIntent{intent,..} if intent=="target"))) && !attributes.iter().any(|a|a=="pointer") && self.defs.distance(type_name,kind).is_some()=>Some((n,d)),_=>None,
+                })
+            }).collect();
+            candidates.sort_by_key(|(n,_)|*n);
+            let mut live=Expr::Logical(false);
+            let mut out=vec![];
+            for (index,(_,ds)) in candidates.iter().enumerate() {
+                if let Some(i)=pointer_components::allocated::info(ds) {
+                    let matches=and(Expr::Bin(BinOp::Gt,Box::new(id(&i.epoch)),Box::new(int(0))),Expr::Bin(BinOp::Eq,Box::new(epoch.clone()),Box::new(id(&i.epoch))));
+                    live=or(live,matches.clone());
+                    out.push(pointer_components::assign(tag,Expr::Call("merge".into(),vec![int(index+1),tag.clone(),matches]))?);
+                }
+            }
+            let allocated=Expr::Bin(BinOp::Gt,Box::new(epoch.clone()),Box::new(int(0)));
+            let invalid=or(and(allocated.clone(),Expr::not(live)),and(Expr::not(allocated),Expr::Bin(BinOp::Gt,Box::new(tag.clone()),Box::new(int(candidates.len())))));
+            out.push(Stmt::If{cond:if rank=="0" {invalid}else{Expr::Call("any".into(),vec![invalid])},then_body:failure(message.clone()),else_body:None});
+            return Ok(Some(out));
+        }
         if name=="@pointer_component_targets" {return Ok(Some(vec![]));}
         if matches!(name.as_str(),"@pointer_component_load"|"@pointer_component_store"|"@pointer_component_store_static") {
             let [Expr::Ident(p),tag,epoch]=args.as_slice() else {bail!("invalid pointer component descriptor transfer");};
             let object=vars.get(p).filter(|o|o.pointer).context("missing pointer component view")?;
             let mut out = vec![];
             if name == "@pointer_component_store_static" {
-                let count = object.variants.iter().filter(|(_, n)| n.starts_with("@module$")).count();
-                out.push(Stmt::If { cond: Expr::Bin(BinOp::Gt, Box::new(id(&object.tag)), Box::new(int(count))),
-                    then_body: failure("persistent pointer component currently requires a saved or module target".into()), else_body: None });
+                out.extend(self.pointer_statement(&Stmt::CallSub{name:"@pointer_component_validate_static".into(),args:vec![id(&object.tag),id(&object.epoch),Expr::Str(object.kind.clone()),int(0),Expr::Str("persistent pointer component currently requires a saved or module target".into())]},vars,decls)?.unwrap());
             }
             out.push(if name=="@pointer_component_load" {
                 Stmt::Assign{name:object.tag.clone(),value:tag.clone()}
@@ -165,7 +207,7 @@ impl Lower<'_> {
                         vec![set(&object.tag, tag),Stmt::Assign{name:object.epoch.clone(),value:id(&other.epoch)}]
                     })
                     .collect();
-                return Ok(Some(vec![cases(other, bodies, vec![set(&object.tag, 0),set(&object.epoch, 0)])]));
+                return Ok(Some(vec![pointer_cases(other, bodies, vec![set(&object.tag, 0),set(&object.epoch, 0)],decls)]));
             }
             let Some(index) = object.variants.iter().position(|(_, n)| n == target) else {
                 if !decls.contains_key(target) {
@@ -271,10 +313,11 @@ impl Lower<'_> {
                         ));
                     }
                 }
-                checks
+                let ordinary=checks
                     .into_iter()
                     .reduce(|a, b| Expr::Bin(BinOp::Or, Box::new(a), Box::new(b)))
-                    .unwrap_or(Expr::Logical(false))
+                    .unwrap_or(Expr::Logical(false));
+                or(and(eq(&object.epoch,0),ordinary),and(Expr::Bin(BinOp::Gt,Box::new(id(&object.epoch)),Box::new(int(0))),Expr::Bin(BinOp::Eq,Box::new(id(&object.epoch)),Box::new(id(&other.epoch)))))
             } else {
                 if !decls.contains_key(target) {
                     bail!("unknown ASSOCIATED target `{target}`");
@@ -283,8 +326,7 @@ impl Lower<'_> {
                     .variants
                     .iter()
                     .position(|(_, n)| n == target)
-                    .map_or(Expr::Logical(false), |i| Expr::Bin(BinOp::And,Box::new(eq(&object.tag, i + 1)),
-                        Box::new(pointer_components::allocated::valid(target,&object.epoch,decls))))
+                    .map_or(Expr::Logical(false), |i| selected(object,i,decls))
             }
         } else {
             Expr::Bin(BinOp::Ne, Box::new(id(&object.tag)), Box::new(int(0)))

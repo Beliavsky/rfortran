@@ -139,6 +139,7 @@ struct Lower {
     procedures: HashMap<String, Procedure>,
     serial: usize,
     array_shapes: HashMap<String, Vec<Expr>>,
+    intrinsic_kinds: HashMap<String, TypeSpec>,
     /// Components of each type that are arrays of a derived type, and scalar
     /// derived components, which may contain such arrays in turn.
     array_components: HashMap<String, Vec<(String, Object)>>,
@@ -1462,6 +1463,7 @@ impl Lower {
     fn body(&mut self, body: &mut Vec<Stmt>, inherited: &Objects) -> Result<()> {
         let mut objects = inherited.clone();
         let outer_shapes = self.array_shapes.clone();
+        let outer_kinds = self.intrinsic_kinds.clone();
         let outer_targets = self.target_roots.clone();
         for statement in body.iter() {
             if let Stmt::DerivedDecl {names,attributes,..}=statement {
@@ -1478,12 +1480,14 @@ impl Lower {
         }
         for s in body.iter() {
             match s {
-                Stmt::ArrayDecl { name, dims, .. } => {
+                Stmt::ArrayDecl { name, dims, kind } => {
                     self.array_shapes.insert(name.clone(), dims.clone());
+                    self.intrinsic_kinds.insert(name.clone(),kind.clone());
                 }
-                Stmt::VarDecl { names, .. } => {
+                Stmt::VarDecl { names, kind } => {
                     for n in names {
                         self.array_shapes.remove(n);
+                        self.intrinsic_kinds.insert(n.clone(),kind.clone());
                     }
                 }
                 _ => {}
@@ -1712,6 +1716,16 @@ impl Lower {
                         if target.ty!=source.ty {bail!("initialization transfer requires matching derived types");}
                         for field in self.fields(&target.ty)? {
                             if field.heap.is_some() {bail!("initialization transfer of owned array components is not yet supported");}
+                            prefix.push(Stmt::CallSub{name:name.clone(),args:vec![Expr::Ident(storage(to,&field.name)),Expr::Ident(storage(from,&field.name))]});
+                        }
+                        return Ok(());
+                    }
+                    Stmt::CallSub {name,args} if name=="@move_allocation_storage" => {
+                        let [Expr::Ident(to),Expr::Ident(from)]=args.as_slice() else {bail!("invalid record allocation transfer")};
+                        let target=objects.get(to).context("missing allocation transfer destination")?;
+                        let source=objects.get(from).context("missing allocation transfer source")?;
+                        if target.ty!=source.ty || target.dims.len()!=source.dims.len() {bail!("allocation transfer requires matching type and rank");}
+                        for field in self.fields(&target.ty)? {
                             prefix.push(Stmt::CallSub{name:name.clone(),args:vec![Expr::Ident(storage(to,&field.name)),Expr::Ident(storage(from,&field.name))]});
                         }
                         return Ok(());
@@ -2016,6 +2030,7 @@ impl Lower {
         *body = out;
         self.array_shapes = outer_shapes;
         self.target_roots = outer_targets;
+        self.intrinsic_kinds = outer_kinds;
         Ok(())
     }
 }
@@ -2035,6 +2050,7 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
         scalar_results: HashMap::new(),
         scalar_functions: Default::default(),
         target_roots: Default::default(),
+        intrinsic_kinds: Default::default(),
         elemental_records: HashMap::new(),
         elemental_results: HashMap::new(),
         elemental_functions: Default::default(),

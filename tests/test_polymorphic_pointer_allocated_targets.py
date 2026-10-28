@@ -242,12 +242,13 @@ end subroutine
 end
 ''', '9\n15')
 
-    def test_move_alloc_is_explicitly_diagnosed(self):
-        self.reject(ALLOC_TYPES + 'end module\n' + MAIN + '''type(child),allocatable,target::other
+    def test_move_alloc_transfers_storage(self):
+        self.check(ALLOC_TYPES + 'end module\n' + MAIN + '''type(child),allocatable,target::other
 allocate(target)
 call move_alloc(from=target,to=other)
+print *,allocated(target),allocated(other),other%value
 end
-''', 'MOVE_ALLOC of scalar ALLOCATABLE TARGET records')
+''', 'F T 1')
 
     def test_separate_compilation(self):
         module = ALLOC_TYPES + '''contains

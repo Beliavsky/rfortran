@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Beliavsky
 //! Concrete scalar allocatable targets use a one-element record descriptor.
-//! Epochs distinguish successive allocations of the same declared target.
+//! Unique allocation identities follow storage through MOVE_ALLOC.
 use super::*;
 
 const BACKING: &str = "@allocated_target_storage:";
@@ -35,6 +35,9 @@ pub(in crate::select_type::runtime) fn info(ds: &[Stmt]) -> Option<Info> {
 pub(super) fn epoch_attribute(epoch: &str) -> String {
     format!("{EPOCH}{epoch}")
 }
+pub(super) fn backing_attribute(backing: &str) -> String {
+    format!("{BACKING}{backing}")
+}
 pub(in crate::select_type::runtime) fn element(n: &str, ds: &Declarations) -> Expr {
     ds.get(n)
         .and_then(|d| info(d))
@@ -64,7 +67,7 @@ pub(in crate::select_type::runtime) fn valid(n: &str, epoch: &str, ds: &Declarat
 pub(super) fn needed(body: &mut [Stmt]) -> bool {
     let vars=super::super::super::objects(body,&Objects::new());
     vars.values().any(|v|!v.polymorphic && v.rank==0
-        && v.attrs.iter().any(|a|a=="allocatable") && v.attrs.iter().any(|a|a=="target"))
+        && v.attrs.iter().any(|a|a=="allocatable"))
         || body.iter_mut().any(|s|children(s).into_iter().any(|b|needed(b)))
 }
 
@@ -85,14 +88,12 @@ pub(super) fn prepare(program: &mut Program) -> Result<()> {
                     && names.iter().any(|n| {
                         vars.get(n).is_some_and(|v| {
                             v.attrs.iter().any(|a| a == "allocatable")
-                                && v.attrs.iter().any(|a| a == "target")
                         })
                     }) =>
                 {
                     for n in names.iter() {
                         if !vars.get(n).is_some_and(|v| {
                             v.attrs.iter().any(|a| a == "allocatable")
-                                && v.attrs.iter().any(|a| a == "target")
                         }) {
                             out.push(Stmt::DerivedDecl {
                                 type_name: type_name.clone(),
@@ -123,10 +124,9 @@ pub(super) fn prepare(program: &mut Program) -> Result<()> {
                             names: vec![backing],
                             attributes: vec![
                                 "allocatable".into(),
-                                "target".into(),
                                 "@scalar_heap".into(),
                                 "@referenced_type".into(),
-                            ],
+                            ].into_iter().chain(vars[n].attrs.iter().filter(|a|a.as_str()=="target").cloned()).collect(),
                             polymorphic: false,
                             dims: vec![id("@deferred_extent")],
                         });
@@ -204,6 +204,7 @@ pub(in crate::select_type::runtime) fn finish(
     }
     let (mut has_targets, mut has_models) = (false, false);
     model_options(&mut program.body, &mut has_targets, &mut has_models);
+    if !has_targets {return Ok(());}
     let types = if has_targets && has_models {
         let mut snapshot = program.clone();
         crate::imports::clear_declarations(&mut snapshot.body);
@@ -253,14 +254,10 @@ pub(in crate::select_type::runtime) fn finish(
         origin: &str,
         serial: &mut usize,
     ) -> Result<()> {
-        let declared = if types.is_some() {
-            declarations(body, parent_decls)
-        } else {
-            Declarations::new()
-        };
+        let declared = declarations(body, parent_decls);
         let model_scope = types.map(|t| t.scope(body, origin));
         let mut derived = HashMap::new();
-        if types.is_some() {
+        {
             for (n, ds) in &declared {
                 for s in ds {
                     match s {
@@ -337,14 +334,7 @@ pub(in crate::select_type::runtime) fn finish(
                                 name: "@allocate".into(),
                                 args: vec![Expr::Call(backing.clone(), vec![int(1)])],
                             },
-                            Stmt::Assign {
-                                name: i.epoch.clone(),
-                                value: Expr::Bin(
-                                    BinOp::Add,
-                                    Box::new(Expr::Call("abs".into(), vec![id(&i.epoch)])),
-                                    Box::new(int(1)),
-                                ),
-                            },
+                            Stmt::CallSub { name: "@heap_identity".into(), args: vec![id(&i.epoch)] },
                         ],
                         else_body: None,
                     });
@@ -441,21 +431,9 @@ pub(in crate::select_type::runtime) fn finish(
                             } else {
                                 Expr::not(status)
                             },
-                            then_body: vec![Stmt::Assign {
-                                name: i.epoch.clone(),
-                                value: if allocating {
-                                    Expr::Bin(
-                                        BinOp::Add,
-                                        Box::new(Expr::Call("abs".into(), vec![id(&i.epoch)])),
-                                        Box::new(int(1)),
-                                    )
-                                } else {
-                                    Expr::Un(
-                                        crate::ast::UnOp::Neg,
-                                        Box::new(Expr::Call("abs".into(), vec![id(&i.epoch)])),
-                                    )
-                                },
-                            }],
+                            then_body: vec![if allocating {
+                                Stmt::CallSub { name: "@heap_identity".into(), args: vec![id(&i.epoch)] }
+                            } else {set(&i.epoch,0)}],
                             else_body: None,
                         });
                         if let Some(value)=&source_value {
@@ -463,7 +441,37 @@ pub(in crate::select_type::runtime) fn finish(
                         }
                     }
                 } else if matches!(name.as_str(),"move_alloc"|"@move_alloc") && args.iter().any(|a| {let mut found=false;visit_expr(&mut a.clone(),&mut |e| {if matches!(e,Expr::Ident(n) if targets.get(n).is_some_and(|i|i.backing.is_some())) {found=true;}});found}) {
-                    return Err(crate::source_diagnostics::at(anyhow::anyhow!("MOVE_ALLOC of scalar ALLOCATABLE TARGET records requires a movable allocation identity and is not yet supported"),location));
+                    let transfer=(||->Result<Vec<Stmt>> {
+                        let mut actuals=args.clone();
+                        crate::named_arguments::Signature {
+                            params:vec!["from".into(),"to".into(),"stat".into(),"errmsg".into()],
+                            optional:HashSet::from(["stat".into(),"errmsg".into()]),
+                        }.reorder("move_alloc",&mut actuals)?;
+                        let (Some(Expr::Ident(from)),Some(Expr::Ident(to)))=(actuals.first(),actuals.get(1)) else {bail!("MOVE_ALLOC requires ALLOCATABLE variables FROM and TO");};
+                        if from==to {bail!("MOVE_ALLOC FROM and TO must be different variables");}
+                        let Some(f)=targets.get(from).filter(|i|i.backing.is_some()) else {bail!("MOVE_ALLOC FROM must be a scalar ALLOCATABLE derived-type variable");};
+                        let Some(t)=targets.get(to).filter(|i|i.backing.is_some()) else {bail!("MOVE_ALLOC TO must be a scalar ALLOCATABLE derived-type variable");};
+                        if derived.get(from).is_none() || derived.get(from)!=derived.get(to) {bail!("MOVE_ALLOC FROM and TO must have the same declared type and rank");}
+                        let (fb,tb)=(f.backing.as_ref().unwrap(),t.backing.as_ref().unwrap());
+                        let mut result=vec![
+                            Stmt::If{cond:Expr::Call("allocated".into(),vec![id(tb)]),then_body:vec![Stmt::CallSub{name:"@deallocate".into(),args:vec![id(tb)]}],else_body:None},
+                            Stmt::CallSub{name:"@move_allocation_storage".into(),args:vec![id(tb),id(fb)]},
+                            Stmt::Assign{name:t.epoch.clone(),value:id(&f.epoch)},
+                            set(&f.epoch,0),
+                        ];
+                        if let Some(stat)=actuals.get(2).filter(|e|!crate::named_arguments::omitted(e)) {
+                            let Expr::Ident(n)=stat else {bail!("MOVE_ALLOC STAT requires a scalar INTEGER variable");};
+                            if !declared.get(n).is_some_and(|ds|ds.iter().any(|s|matches!(s,Stmt::VarDecl{kind:TypeSpec::Integer(_),..}))) {bail!("MOVE_ALLOC STAT requires a scalar INTEGER variable");}
+                            result.push(set(n,0));
+                        }
+                        if let Some(errmsg)=actuals.get(3).filter(|e|!crate::named_arguments::omitted(e)) {
+                            let Expr::Ident(n)=errmsg else {bail!("MOVE_ALLOC ERRMSG requires a scalar CHARACTER variable");};
+                            if !declared.get(n).is_some_and(|ds|ds.iter().any(|s|matches!(s,Stmt::VarDecl{kind:TypeSpec::Character(_)|TypeSpec::CharacterAssumed,..}))) {bail!("MOVE_ALLOC ERRMSG requires a scalar CHARACTER variable");}
+                        }
+                        Ok(result)
+                    })().map_err(|e|crate::source_diagnostics::at(e,location))?;
+                    out.extend(transfer);
+                    continue;
                 } else if let Some((root, method)) = name.split_once('%') {
                     if let Some(b) = targets.get(root).and_then(|i| i.backing.as_ref()) {
                         args.insert(0, Expr::Call(b.clone(), vec![int(1)]));
@@ -546,9 +554,7 @@ pub(in crate::select_type::runtime) fn finish(
     let mut global_decls = Declarations::new();
     for s in &program.body {
         if let Stmt::Module { body, .. } = s {
-            if types.is_some() {
-                global_decls.extend(declarations(body, &Declarations::new()));
-            }
+            global_decls.extend(declarations(body, &Declarations::new()));
             for (n, d) in declarations(body, &Declarations::new()) {
                 if let Some(i) = info(&d) {
                     globals.insert(n, i);

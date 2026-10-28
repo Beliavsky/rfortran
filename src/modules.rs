@@ -858,7 +858,7 @@ pub(crate) fn capture(mut program: Program) -> Result<Program> {
                         declaration.clone()
                     };
                     let mut declarations = vec![declaration];
-                    declarations.extend(body.iter().filter(|s|matches!(s,Stmt::DummyIntent {name:n,intent} if n==&name && matches!(intent.as_str(),"allocatable"|"pointer"|"target"))).cloned());
+                    declarations.extend(body.iter().filter(|s|matches!(s,Stmt::DummyIntent {name:n,intent} if n==&name && matches!(intent.as_str(),"allocatable"|"pointer"|"target"|"@scalar_heap"))).cloned());
                     data.insert(
                         name,
                         Data {

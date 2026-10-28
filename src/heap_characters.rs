@@ -332,6 +332,14 @@ impl Lower {
                     });
                     continue;
                 }
+                Stmt::CallSub {name,args} if name=="@heap_transfer_buffers" => {
+                    if let [Expr::Ident(to),Expr::Ident(from)]=args.as_slice() {
+                        if arrays.contains_key(to) {
+                            result.push(Stmt::Assign{name:format!("@character_heap_bytes${to}"),value:id(&format!("@character_heap_bytes${from}"))});
+                            result.push(Stmt::Assign{name:format!("@character_heap_bytes${from}"),value:int(0)});
+                        }
+                    }
+                }
                 Stmt::CallSub { name, .. }
                     if matches!(
                         name.as_str(),

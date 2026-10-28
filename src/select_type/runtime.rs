@@ -910,7 +910,7 @@ impl Lower<'_> {
                         self.body(&mut branch,&local,&local_decls,pure)?;
                         branches.push(branch);
                     }
-                    prefix.push(cases(object,branches,failure(if object.pointer {format!("SELECT TYPE on unassociated polymorphic pointer `{selector}`")} else {format!("SELECT TYPE on unallocated polymorphic object `{selector}`")})));
+                    prefix.push(pointers::pointer_cases(object,branches,failure(if object.pointer {format!("SELECT TYPE on unassociated or deallocated polymorphic pointer `{selector}`")} else {format!("SELECT TYPE on unallocated polymorphic object `{selector}`")}),decls));
                     return Ok(prefix);
                 }
                 // Evaluate runtime-dependent conditions at their original
@@ -994,10 +994,11 @@ impl Lower<'_> {
                 bodies.push(branch);
                 chosen.pop();
             }
-            return Ok(vec![cases(
+            return Ok(vec![pointers::pointer_cases(
                 o,
                 bodies,
-                failure(if o.pointer {format!("use of unassociated polymorphic pointer `{}`",o.display)} else {format!("use of unallocated polymorphic object `{n}`")}),
+                failure(if o.pointer {format!("use of unassociated polymorphic pointer `{}` (or deallocated or reallocated target)",o.display)} else {format!("use of unallocated polymorphic object `{n}`")}),
+                decls,
             )]);
         }
         self.serial += 1;

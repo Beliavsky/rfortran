@@ -231,6 +231,16 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                 before.push(Stmt::CallSub {name:"@module_bind".into(),args:vec![Expr::Ident(variable.flag.clone()),Expr::Str(format!("{key}.initialized")),Expr::Str(serde_json::to_string(&flags)?)]});
                 variable.state=State::Maybe;variable.elements.clear();
             }
+            Stmt::CallSub {name,args} if name=="@heap_identity" => {
+                let Expr::Ident(n)=&args[0] else {bail!("invalid allocation identity destination")};
+                write(n,None,env,&mut after,serial);
+            }
+            Stmt::CallSub {name,args} if name=="@heap_transfer_buffers" => {
+                let [Expr::Ident(to),Expr::Ident(from)]=args.as_slice() else {bail!("invalid allocation transfer")};
+                let (to,from)=(to.clone(),from.clone());
+                args.extend([Expr::Ident(env[&to].flag.clone()),Expr::Ident(env[&from].flag.clone())]);
+                for n in [&to,&from] {let v=env.get_mut(n).unwrap();v.state=State::Maybe;v.elements.clear();}
+            }
             Stmt::CallSub {name,args} if name=="@heap_bind" => {
                 let Expr::Ident(local)=&args[0] else{unreachable!()};
                 let v=&env[local];before.push(Stmt::CallSub{name:"@heap_bind".into(),args:vec![Expr::Ident(v.flag.clone())]});
