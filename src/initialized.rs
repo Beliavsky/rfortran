@@ -20,6 +20,7 @@ struct Variable {
     runtime_sized: bool,
     heap_length: Option<Expr>,
     element_width: i64,
+    character_length: Option<usize>,
 }
 type Env = BTreeMap<String, Variable>;
 fn int(n: i64) -> Expr { Expr::IntLit(n.to_string()) }
@@ -51,6 +52,10 @@ pub(crate) const UNCHECKED_BEGIN: &str = "@unchecked_begin";
 pub(crate) const MAY_DEFINE: &str = "@may_define";
 pub(crate) const UNCHECKED_END: &str = "@unchecked_end";
 pub(crate) const COPY_INITIALIZATION: &str = "@copy_initialization";
+/// Copy storage without reading undefined values, preserving its definedness.
+pub(crate) const TRANSPORT: &str = "@transport_value";
+pub(crate) const TRANSPORT_FROM_CODES: &str = "@transport_from_codes";
+pub(crate) const TRANSPORT_TO_CODES: &str = "@transport_to_codes";
 thread_local! { static UNCHECKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
 
 fn check(name: &str, index: Option<&Expr>, env: &Env, out: &mut Vec<Stmt>, serial: &mut usize) -> Result<()> {
@@ -161,6 +166,61 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
     let mut location=None;
     for mut stmt in std::mem::take(body) {
         if let Stmt::CallSub { name, args } = &stmt {
+            if name == TRANSPORT_FROM_CODES || name == TRANSPORT_TO_CODES {
+                let [Expr::Ident(to), offset, width, Expr::Ident(from), capacity] = args.as_slice() else {bail!("invalid CHARACTER storage transport");};
+                let dst=env.get(to).cloned().context("missing CHARACTER transport destination")?;
+                let src=env.get(from).cloned().context("missing CHARACTER transport source")?;
+                for e in [offset,width,capacity] {read(e,env,&mut output,serial)?;}
+                *serial+=1;
+                let index=format!("@transport_code_index_{serial}");
+                let status=format!("@transport_code_status_{serial}");
+                let code=format!("@transport_code_value_{serial}");
+                for n in [&index,&status,&code] {output.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![n.clone()]});}
+                let id=|n:&str|Expr::Ident(n.into());
+                let bin=|op,a,b|Expr::Bin(op,Box::new(a),Box::new(b));
+                let position=bin(crate::ast::BinOp::Add,offset.clone(),bin(crate::ast::BinOp::Add,id(&index),int(1)));
+                let assign=|name:String,value|Stmt::Assign{name,value};
+                let each=|body|Stmt::Do{var:index.clone(),start:int(0),end:bin(crate::ast::BinOp::Sub,width.clone(),int(1)),body};
+                if name==TRANSPORT_FROM_CODES {
+                    output.push(assign(status.clone(),int(1)));
+                    output.push(each(vec![assign(status.clone(),bin(crate::ast::BinOp::Mul,id(&status),flag(&src,Some(position.clone()))))]));
+                    output.push(Stmt::If{cond:bin(crate::ast::BinOp::Ne,id(&status),int(0)),then_body:vec![
+                        assign(to.clone(),Expr::Str(" ".repeat(usize::try_from(constant(capacity).context("CHARACTER transport requires a fixed capacity")?)?))),
+                        each(vec![Stmt::CallSub{name:"@character_code_store".into(),args:vec![id(to),id(&index),Expr::Index(from.clone(),vec![position])]}])],else_body:None});
+                    output.push(assign(dst.flag,id(&status)));
+                } else {
+                    output.push(each(vec![
+                        Stmt::If{cond:bin(crate::ast::BinOp::Ne,flag(&src,None),int(0)),then_body:vec![
+                            Stmt::CallSub{name:"@internal_read_byte".into(),args:vec![id(&code),id(from),id(&index),capacity.clone()]},
+                            Stmt::AssignIndex{name:to.clone(),indices:vec![position.clone()],value:id(&code)}],else_body:None},
+                        Stmt::AssignIndex{name:dst.flag,indices:vec![position],value:flag(&src,None)}]));
+                }
+                let dst=env.get_mut(to).unwrap();dst.state=State::Maybe;dst.elements.clear();
+                continue;
+            }
+            if name == TRANSPORT {
+                let [target, source] = args.as_slice() else {bail!("invalid storage transport");};
+                let (to, ti) = key(target).context("storage transport requires a variable destination")?;
+                let (from, si) = key(source).context("storage transport requires a variable source")?;
+                let dst = env.get(to).cloned().context("missing storage transport destination")?;
+                let src = env.get(from).cloned().context("missing storage transport source")?;
+                for index in [ti, si].into_iter().flatten() {read(index,env,&mut output,serial)?;}
+                let df = flag(&dst,ti.cloned());
+                let sf = flag(&src,si.cloned());
+                let assign = |target:Expr,value:Expr| match target {
+                    Expr::Ident(name)=>Stmt::Assign{name,value},
+                    Expr::Index(name,indices)|Expr::Call(name,indices)=>Stmt::AssignIndex{name,indices,value},
+                    _=>unreachable!(),
+                };
+                let copy=if let Some(length)=dst.character_length {
+                    Stmt::CallSub{name:"@character_assign".into(),args:vec![target.clone(),source.clone(),int(length as i64)]}
+                } else {assign(target.clone(),source.clone())};
+                output.push(Stmt::If {cond:Expr::Bin(crate::ast::BinOp::Ne,Box::new(sf.clone()),Box::new(int(0))),
+                    then_body:vec![copy],else_body:None});
+                output.push(assign(df,sf));
+                let dst=env.get_mut(to).unwrap();dst.state=State::Maybe;dst.elements.clear();
+                continue;
+            }
             if name == COPY_INITIALIZATION {
                 fn storage(e:&Expr)->Option<&str> {
                     match e {
@@ -525,6 +585,10 @@ fn scope(body: &mut Vec<Stmt>, inherited: &mut Env, params: &[String], result: O
     }).collect();
     if let Some(name) = result { names.entry(name.into()).or_insert(None); }
     let mut heap_shapes=crate::allocatables::Shapes::new();crate::allocatables::metadata(body,&mut heap_shapes);
+    let character_lengths=body.iter().filter_map(|s|match s {
+        Stmt::VarDecl{kind:TypeSpec::Character(length),names}=>Some(names.iter().map(move |name|(name.clone(),length.unwrap_or(1)))),
+        _=>None,
+    }).flatten().collect::<BTreeMap<_,_>>();
     let mut env = inherited.clone();
     let mut prefix = Vec::new();
     for (name, extent) in names {
@@ -536,7 +600,8 @@ fn scope(body: &mut Vec<Stmt>, inherited: &mut Env, params: &[String], result: O
         let element_width=body.iter().find_map(|s|match s {Stmt::DummyIntent{name:n,intent} if n==&name=>intent.strip_prefix("@character_element_width:").and_then(|n|n.parse().ok()),_=>None}).unwrap_or(1);
         let zero_sized=body.iter().any(|s|matches!(s,Stmt::VarDecl{kind:TypeSpec::Character(Some(0)),names} if names.contains(&name)))
             && !body.iter().any(|s|matches!(s,Stmt::CallSub{name:n,args} if n=="@heap_character_bind" && args.first()==Some(&Expr::Ident(name.clone()))));
-        let v = Variable { zero_sized, element_width, flag: flag.clone(), extent, state: if assigned { State::Yes } else { State::No }, elements: BTreeMap::new(), runtime_sized, heap_length: heap_shapes.contains_key(&format!("@heap:{name}")).then(||crate::allocatables::length(&name,&heap_shapes).unwrap()) };
+        let character_length=character_lengths.get(&name).copied();
+        let v = Variable { zero_sized, element_width, character_length, flag: flag.clone(), extent, state: if assigned { State::Yes } else { State::No }, elements: BTreeMap::new(), runtime_sized, heap_length: heap_shapes.contains_key(&format!("@heap:{name}")).then(||crate::allocatables::length(&name,&heap_shapes).unwrap()) };
         if let Some(n) = extent {
             prefix.push(Stmt::ArrayDecl { kind: TypeSpec::Integer(None), name: flag.clone(), dims: vec![int(n)] });
             let index = format!("@init_clear_{serial}");

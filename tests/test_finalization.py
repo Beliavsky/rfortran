@@ -268,9 +268,8 @@ end
                 self.reject(MODULE.replace('type(item),intent(inout)::x',decl)
                             +'end module\nend\n', 'FINAL dummy')
 
-    def test_unsupported_arrays_and_results(self):
-        self.reject(MODULE+'end module\nuse m\ntype(item)::x(2)\nend\n',
-                    'finalization of arrays')
+    def test_main_array_and_unsupported_result(self):
+        self.check(MODULE+'end module\nuse m\ntype(item)::x(2)\nend\n','')
         self.reject(MODULE+'''function make() result(x)
 type(item)::x
 end function
@@ -362,8 +361,9 @@ end
         self.reject(MODULE.replace('subroutine finish(x)','subroutine finish(x,y)').replace(
             'type(item),intent(inout)::x','type(item),intent(inout)::x,y')+
                     'end module\nend\n','exactly one dummy')
-        self.reject(MODULE.replace('type(item),intent(inout)::x','type(item),intent(inout)::x(:)')+
-                    'end module\nend\n','array and ELEMENTAL FINAL')
+        self.reject(MODULE.replace('final :: finish','final :: finish,finish_again')+
+                    'subroutine finish_again(x)\ntype(item)::x\nend subroutine\nend module\nend\n',
+                    'same rank')
 
     def test_finalized_component_assignment(self):
         self.check("""module m

@@ -116,6 +116,16 @@ pub fn validate(program: &Program) -> Result<()> {
             }
             match stmt {
                 Stmt::CallSub {name,..} if name == crate::initialized::UNCHECKED_BEGIN || name == crate::initialized::UNCHECKED_END => {},
+                Stmt::CallSub {name,args} if name==crate::initialized::TRANSPORT => {
+                    let [target,source]=args.as_slice() else {bail!("invalid storage transport");};
+                    let n=match target {Expr::Ident(n)|Expr::Index(n,_)|Expr::Call(n,_)=>n,_=>bail!("invalid storage transport destination")};
+                    writable(n)?;expression(source,&locals,known)?;
+                },
+                Stmt::CallSub {name,args} if name==crate::initialized::TRANSPORT_FROM_CODES || name==crate::initialized::TRANSPORT_TO_CODES => {
+                    let Some(Expr::Ident(target))=args.first() else {bail!("invalid CHARACTER storage transport");};
+                    writable(target)?;
+                    for e in &args[1..] {expression(e,&locals,known)?;}
+                },
                 Stmt::CallSub {name,args} if name == crate::initialized::COPY_INITIALIZATION => {
                     let [Expr::Ident(target),source]=args.as_slice() else {bail!("invalid initialization-mask transfer");};
                     writable(target)?;

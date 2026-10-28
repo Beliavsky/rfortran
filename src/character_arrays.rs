@@ -689,6 +689,30 @@ fn body(
                 }
                 *args=values;
             }
+            Stmt::CallSub { name, args } if name==crate::initialized::TRANSPORT => {
+                // Keep slot identities: ordinary expression expansion would
+                // read an undefined CHARACTER merely to gather the section.
+                let element=|e:&Expr|match e {
+                    Expr::Index(n,a)|Expr::Call(n,a) if arrays.contains_key(n) && a.len()==1=>Some((n.clone(),a[0].clone())),
+                    _=>None,
+                };
+                if let Some((n,index))=args.get(1).and_then(element) {
+                    let index=dynamic(index,&arrays,serial,&mut output)?;
+                    let index=capture_index(&n,index,&arrays,serial,&mut output);
+                    *serial+=1;
+                    let temp=format!("@character_transport_{serial}");
+                    output.push(Stmt::VarDecl{kind:TypeSpec::Character(Some(arrays[&n].length)),names:vec![temp.clone()]});
+                    output.push(dispatch(&n,index,&arrays,|slot|Stmt::CallSub{name:crate::initialized::TRANSPORT.into(),args:vec![Expr::Ident(temp.clone()),Expr::Ident(slot)]}));
+                    args[1]=Expr::Ident(temp);
+                }
+                if let Some((n,index))=args.first().and_then(element) {
+                    let index=dynamic(index,&arrays,serial,&mut output)?;
+                    let index=capture_index(&n,index,&arrays,serial,&mut output);
+                    let source=args[1].clone();
+                    output.push(dispatch(&n,index,&arrays,|slot|Stmt::CallSub{name:crate::initialized::TRANSPORT.into(),args:vec![Expr::Ident(slot),source.clone()]}));
+                } else {output.push(s);}
+                continue;
+            }
             Stmt::CallSub { name, args } => {
                 if name=="@internal_read" {
                     let mut values=vec![];

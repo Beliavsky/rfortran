@@ -1633,7 +1633,7 @@ impl Lower {
                                 *e=Expr::Call(name.clone(),vec![Expr::Call("@section_subscript".into(),vec![e.clone()])]);
                             }
                             if let Expr::Call(n,a) | Expr::Index(n,a) = e {
-                                if selection(n,a,&s) && !vector_selection(n,a,&s) {
+                                if selection(n,a,&s) && (!vector_selection(n,a,&s) || crate::finalization::array_helper(name)) {
                                     if s.contains_key(&format!("@readonly:{n}")) {bail!("cannot pass a section of PARAMETER or INTENT(IN) array `{n}` as a writable argument");}
                                     let kind=s[n].0.clone();
                                     let capacity=selection_capacity(n,a,&s);
@@ -1643,9 +1643,9 @@ impl Lower {
                                     let source=Expr::Index(n.clone(),self.selected(&selected,&vars));
                                     let target=Expr::Index(temp.clone(),vars.iter().map(|v|id(v)).collect());
                                     if intent.as_deref()!=Some("intent(out)") {
-                                        prefix.extend(self.nest(&vars,&dims,vec![Stmt::AssignIndex{name:temp.clone(),indices:vars.iter().map(|v|id(v)).collect(),value:source}]));
+                                        prefix.extend(self.nest(&vars,&dims,vec![Stmt::CallSub{name:crate::initialized::TRANSPORT.into(),args:vec![target.clone(),source.clone()]}]));
                                     }
-                                    suffix.extend(self.nest(&vars,&dims,vec![Stmt::AssignIndex{name:n.clone(),indices:self.selected(&selected,&vars),value:target}]));
+                                    suffix.extend(self.nest(&vars,&dims,vec![Stmt::CallSub{name:crate::initialized::TRANSPORT.into(),args:vec![source,target]}]));
                                     *e=id(&temp);
                                     continue;
                                 }

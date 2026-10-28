@@ -7,11 +7,17 @@ use anyhow::{bail, Context, Result};
 use std::collections::{HashMap, HashSet};
 
 pub(crate) const OUTPUT: &str = "@final_intent_out";
+pub(crate) const ARRAY_ASSIGNMENT: &str = "@final_array_assignment";
+pub(crate) fn array_helper(name: &str) -> bool {
+    name.strip_prefix("@finalize_array_")
+        .is_some_and(|suffix| !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit()))
+}
 
 #[derive(Clone)]
 struct Object {
     ty: String,
     attrs: Vec<String>,
+    dims: Vec<Expr>,
 }
 impl Object {
     fn has(&self, attr: &str) -> bool {
@@ -30,6 +36,7 @@ struct Routine {
     module: Option<String>,
     function: bool,
     elemental: bool,
+    pure: bool,
 }
 type Objects = HashMap<String, Object>;
 struct Lower {
@@ -38,6 +45,9 @@ struct Lower {
     finalizable: HashSet<String>,
     assignments: HashSet<String>,
     serial: usize,
+    ranks: HashMap<String, usize>,
+    helpers: HashMap<(String, usize), String>,
+    generated: Vec<Stmt>,
 }
 fn id(n: &str) -> Expr {
     Expr::Ident(n.into())
@@ -122,6 +132,7 @@ impl Lower {
                     params,
                     body,
                     elemental,
+                    pure,
                     ..
                 }
                 | Stmt::Function {
@@ -129,6 +140,7 @@ impl Lower {
                     params,
                     body,
                     elemental,
+                    pure,
                     ..
                 } => {
                     self.routines.insert(
@@ -139,6 +151,7 @@ impl Lower {
                             module: module.map(str::to_owned),
                             function: matches!(s, Stmt::Function { .. }),
                             elemental: *elemental,
+                            pure: *pure,
                         },
                     );
                     self.collect(body, None);
@@ -155,6 +168,7 @@ impl Lower {
     fn validate(&mut self) -> Result<()> {
         for (ty, d) in &self.types {
             let mut seen = HashSet::new();
+            let mut ranks = HashSet::new();
             for (name, pos) in &d.finals {
                 let result = (|| -> Result<()> {
                     if !seen.insert(name) {
@@ -198,20 +212,22 @@ impl Lower {
                     {
                         bail!("FINAL dummy must be nonoptional, nonpointer, nonallocatable and nonpolymorphic, of type `{ty}`, without VALUE or INTENT(OUT)");
                     }
-                    if !decl.3.is_empty() || r.elemental {
-                        bail!("array and ELEMENTAL FINAL procedures are not yet supported");
+                    if decl.3.len() > 15 {
+                        bail!("FINAL dummy rank must not exceed 15");
                     }
+                    if r.elemental && !decl.3.is_empty() {
+                        bail!("ELEMENTAL FINAL dummy must be scalar");
+                    }
+                    if !ranks.insert(decl.3.len()) {
+                        bail!(
+                            "multiple FINAL procedures for type `{ty}` have the same rank {}",
+                            decl.3.len()
+                        );
+                    }
+                    self.ranks.insert(name.clone(), decl.3.len());
                     Ok(())
                 })();
                 result.map_err(|e| crate::source_diagnostics::at(e, Some(*pos)))?;
-            }
-            if d.finals.len() > 1 {
-                return Err(crate::source_diagnostics::at(
-                    anyhow::anyhow!(
-                        "multiple scalar FINAL procedures for type `{ty}` have the same rank"
-                    ),
-                    Some(d.finals[1].1),
-                ));
             }
             if !d.finals.is_empty() {
                 self.finalizable.insert(ty.clone());
@@ -251,7 +267,7 @@ impl Lower {
         }
         Ok(())
     }
-    fn components(&self, name: &str, ty: &str, objects: &mut Objects) {
+    fn components(&self, name: &str, ty: &str, dims: &[Expr], objects: &mut Objects) {
         for (field, t, attrs, rank) in &self.types[ty].components {
             if *rank == 0 && !attrs.iter().any(|a| a == "pointer" || a == "allocatable") {
                 let name = format!("{name}%{field}");
@@ -260,53 +276,159 @@ impl Lower {
                     Object {
                         ty: t.clone(),
                         attrs: attrs.clone(),
+                        dims: dims.to_vec(),
                     },
                 );
                 if self.types.contains_key(t) {
-                    self.components(&name, t, objects);
+                    self.components(&name, t, dims, objects);
                 }
             }
         }
     }
-    fn finals(&self, name: &str, ty: &str) -> Vec<Stmt> {
-        let d = &self.types[ty];
-        let mut out = d
+    fn selected(&self, ty: &str, rank: usize) -> Option<String> {
+        self.types[ty]
             .finals
             .iter()
-            .flat_map(|(f, _)| {
-                [
-                    crate::imports::reference(f.clone()),
-                    call(f, vec![id(name)]),
-                ]
+            .find(|(f, _)| self.ranks.get(f) == Some(&rank))
+            .or_else(|| {
+                self.types[ty]
+                    .finals
+                    .iter()
+                    .find(|(f, _)| self.routines[f].elemental)
             })
-            .collect::<Vec<_>>();
-        for (c, t, attrs, _) in &d.components {
+            .map(|(f, _)| f.clone())
+    }
+    fn pure(&self, ty: &str, rank: usize) -> bool {
+        self.selected(ty, rank)
+            .is_none_or(|f| self.routines[&f].pure)
+            && self.types[ty]
+                .components
+                .iter()
+                .filter(|(_, t, a, _)| {
+                    !a.iter().any(|a| a == "pointer") && self.finalizable.contains(t)
+                })
+                .all(|(_, t, _, _)| self.pure(t, 0))
+    }
+    fn member(target: Expr, field: &str) -> Expr {
+        match target {
+            Expr::Ident(n) => id(&format!("{n}%{field}")),
+            e => Expr::Call(format!("@record_component:{field}"), vec![e]),
+        }
+    }
+    fn scalar_calls(&self, target: Expr, ty: &str) -> Vec<Stmt> {
+        let mut out = vec![];
+        if let Some(f) = self.selected(ty, 0) {
+            out.push(crate::imports::reference(f.clone()));
+            out.push(call(&f, vec![target.clone()]));
+        }
+        for (c, t, attrs, _) in &self.types[ty].components {
             if !attrs.iter().any(|a| a == "pointer") && self.finalizable.contains(t) {
-                out.extend(self.finals(&format!("{name}%{c}"), t));
+                out.extend(self.scalar_calls(Self::member(target.clone(), c), t));
             }
         }
         out
     }
-    fn finalize(&self, name: &str, o: &Object) -> Vec<Stmt> {
-        let out = self.finals(name, &o.ty);
+    fn helper(&mut self, ty: &str, rank: usize) -> String {
+        let key = (ty.to_owned(), rank);
+        if let Some(name) = self.helpers.get(&key) {
+            return name.clone();
+        }
+        self.serial += 1;
+        let name = format!("@finalize_array_{}", self.serial);
+        self.helpers.insert(key, name.clone());
+        let param = "@final_object";
+        let mut body = vec![
+            crate::imports::reference(ty.into()),
+            Stmt::DerivedDecl {
+                type_name: ty.into(),
+                names: vec![param.into()],
+                attributes: vec!["intent(inout)".into()],
+                polymorphic: false,
+                dims: vec![id("@deferred_extent"); rank],
+            },
+        ];
+        if rank == 0 {
+            body.extend(self.scalar_calls(id(param), ty));
+        } else {
+            let vars = (0..rank)
+                .map(|axis| format!("@final_index_{axis}"))
+                .collect::<Vec<_>>();
+            for var in &vars {
+                body.push(Stmt::VarDecl {
+                    kind: crate::ast::TypeSpec::Integer(Some(8)),
+                    names: vec![var.clone()],
+                });
+            }
+            let element = Expr::Call(param.into(), vars.iter().map(|n| id(n)).collect());
+            let loops = |mut inner: Vec<Stmt>| {
+                for (axis, var) in vars.iter().enumerate() {
+                    inner = vec![Stmt::Do {
+                        var: var.clone(),
+                        start: Expr::IntLit("1".into()),
+                        end: Expr::Call(
+                            "size".into(),
+                            vec![id(param), Expr::IntLit((axis + 1).to_string())],
+                        ),
+                        body: inner,
+                    }];
+                }
+                inner
+            };
+            if let Some(f) = self.selected(ty, rank) {
+                body.push(crate::imports::reference(f.clone()));
+                if self.ranks[&f] == rank {
+                    body.push(call(&f, vec![id(param)]));
+                } else {
+                    body.extend(loops(vec![call(&f, vec![element.clone()])]));
+                }
+            }
+            let mut components = vec![];
+            for (c, t, attrs, _) in &self.types[ty].components {
+                if !attrs.iter().any(|a| a == "pointer") && self.finalizable.contains(t) {
+                    components.extend(self.scalar_calls(Self::member(element.clone(), c), t));
+                }
+            }
+            if !components.is_empty() {
+                body.extend(loops(components));
+            }
+        }
+        self.generated.push(Stmt::Subroutine {
+            name: name.clone(),
+            params: vec![param.into()],
+            body,
+            pure: self.pure(ty, rank),
+            elemental: false,
+        });
+        name
+    }
+    fn finals(&mut self, name: &str, ty: &str, rank: usize) -> Vec<Stmt> {
+        if rank == 0 {
+            self.scalar_calls(id(name), ty)
+        } else {
+            let f = self.helper(ty, rank);
+            vec![call(&f, vec![id(name)])]
+        }
+    }
+    fn finalize(&mut self, name: &str, o: &Object) -> Vec<Stmt> {
+        let out = self.finals(name, &o.ty, o.dims.len());
         if o.has("allocatable") {
             vec![guarded(Expr::Call("allocated".into(), vec![id(name)]), out)]
         } else {
             out
         }
     }
-    fn cleanup(&self, live: &[(String, Object)]) -> Vec<Stmt> {
+    fn cleanup(&mut self, live: &[(String, Object)]) -> Vec<Stmt> {
         let mut out = vec![];
         for (name, o) in live.iter().rev() {
             if o.has("allocatable") {
-                let mut body = self.finals(name, &o.ty);
+                let mut body = self.finals(name, &o.ty, o.dims.len());
                 body.push(call("@deallocate", vec![id(name)]));
                 out.push(guarded(
                     Expr::Call("allocated".into(), vec![id(name)]),
                     body,
                 ));
             } else {
-                out.extend(self.finals(name, &o.ty));
+                out.extend(self.finals(name, &o.ty, o.dims.len()));
             }
         }
         out
@@ -364,19 +486,20 @@ impl Lower {
                     let o = Object {
                         ty: type_name.clone(),
                         attrs: attributes.clone(),
+                        dims: dims.clone(),
                     };
                     objects.insert(name.clone(), o.clone());
                     if self.types.contains_key(type_name) {
-                        self.components(name, type_name, &mut objects);
+                        self.components(name, type_name, dims, &mut objects);
                     }
                     if !self.finalizable.contains(type_name) {
                         continue;
                     }
                     let result = (|| -> Result<()> {
-                        if !dims.is_empty() || *polymorphic || o.has("pointer") {
-                            bail!("finalization of arrays, polymorphic objects and POINTER objects is not yet supported");
+                        if *polymorphic || o.has("pointer") {
+                            bail!("finalization of polymorphic objects and POINTER objects is not yet supported");
                         }
-                        if params.contains(name) && o.has("allocatable") {
+                        if params.contains(name) && dims.is_empty() && o.has("allocatable") {
                             bail!("scalar ALLOCATABLE dummies of finalizable type are not yet supported");
                         }
                         if params.contains(name) && o.has("intent(out)") {
@@ -458,7 +581,16 @@ impl Lower {
                     }
                     Stmt::CallSub{name,args} if name=="move_alloc" && !self.routines.contains_key(name)=>{
                         crate::named_arguments::Signature{params:vec!["from".into(),"to".into(),"stat".into(),"errmsg".into()],optional:["stat".into(),"errmsg".into()].into_iter().collect()}.reorder(name,args)?;
-                        if let Some(Expr::Ident(n))=args.get(1) {if let Some(o)=objects.get(n).filter(|o|self.finalizable.contains(&o.ty)){out.extend(self.finalize(n,o));}}
+                        if let Some(Expr::Ident(n))=args.get(1) {if let Some(o)=objects.get(n).filter(|o|self.finalizable.contains(&o.ty)){
+                            out.extend(self.finalize(n,o));
+                            if !o.dims.is_empty() {
+                                let Some(Expr::Ident(from))=args.first() else{bail!("MOVE_ALLOC requires ALLOCATABLE variables")};
+                                if from==n {bail!("MOVE_ALLOC source and destination must differ");}
+                                if !o.has("allocatable") || objects.get(from).is_none_or(|a|!a.has("allocatable")||a.ty!=o.ty||a.dims.len()!=o.dims.len()) {bail!("MOVE_ALLOC requires matching ALLOCATABLE type and rank");}
+                                if args.iter().skip(2).any(|e|!crate::named_arguments::omitted(e)) {bail!("MOVE_ALLOC STAT/ERRMSG for finalizable arrays is not yet supported");}
+                                s=Stmt::Block{body:vec![guarded(Expr::Call("allocated".into(),vec![id(n)]),vec![call("@deallocate",vec![id(n)])]),call("@move_allocation_storage",vec![id(n),id(from)])]};
+                            }
+                        }}
                     }
                     Stmt::VarDecl{kind:crate::ast::TypeSpec::Referenced{source,..},..}
                     | Stmt::ArrayDecl{kind:crate::ast::TypeSpec::Referenced{source,..},..}
@@ -466,6 +598,11 @@ impl Lower {
                         bail!("TYPEOF/CLASSOF of finalizable objects is not yet supported");
                     }
                     Stmt::Assign{name,value} if objects.get(name).is_some_and(|o|self.finalizable.contains(&o.ty))=>{
+                        if !objects[name].dims.is_empty() {
+                            let f=self.helper(&objects[name].ty,objects[name].dims.len());
+                            s=call(ARRAY_ASSIGNMENT,vec![Expr::Str(f),id(name),value.clone(),Expr::Logical(objects[name].has("allocatable"))]);
+                            return Ok(());
+                        }
                         // Declaration initialization is not intrinsic assignment.
                         let initialization=i>0 && matches!(&original[i-1],Stmt::DerivedDecl{names,attributes,..} if names.contains(name)&&attributes.iter().any(|a|a=="save"));
                         if !initialization {
@@ -476,6 +613,13 @@ impl Lower {
                             out.extend(self.finalize(name,o));
                             *value=id(&temp);
                         }
+                    }
+                    Stmt::AssignIndex{name,indices,value} if objects.get(name).is_some_and(|o|self.finalizable.contains(&o.ty))=>{
+                        // Vector subscripts acquire their rank in record-array
+                        // lowering. Supply each possible rank without guessing
+                        // whether an INTEGER actual is scalar or an array.
+                        let fs=(0..=objects[name].dims.len()).map(|rank|Expr::Str(self.helper(&objects[name].ty,rank))).collect();
+                        s=call(ARRAY_ASSIGNMENT,vec![Expr::Call("@final_helpers".into(),fs),Expr::Call(name.clone(),indices.clone()),value.clone(),Expr::Logical(false)]);
                     }
                     _=>{}
                 }
@@ -536,26 +680,58 @@ pub(crate) fn resolve(mut program: Program) -> Result<Program> {
         finalizable: HashSet::new(),
         assignments: HashSet::new(),
         serial: 0,
+        ranks: HashMap::new(),
+        helpers: HashMap::new(),
+        generated: vec![],
     };
     lower.collect(&program.body, None);
     lower.validate()?;
     if lower.finalizable.is_empty() {
         return Ok(program);
     }
+    // A nonfinal nested type still contributes owned allocation state to a
+    // finalizable parent's assignment snapshots and finalizer arguments.
+    let mut descriptor_types = lower.finalizable.clone();
+    loop {
+        let nested = descriptor_types.iter().filter_map(|t|lower.types.get(t))
+            .flat_map(|d|d.components.iter())
+            .filter(|(_,_,attrs,_)|!attrs.iter().any(|a|a=="pointer"))
+            .map(|(_,t,_,_)|t.clone()).filter(|t|!descriptor_types.contains(t))
+            .collect::<Vec<_>>();
+        if nested.is_empty() {break;}
+        descriptor_types.extend(nested);
+    }
     // Parent finalizers must not be inherited as ordinary bindings.
-    fn extensions(body: &mut [Stmt], finalizable: &HashSet<String>) -> Result<()> {
+    fn extensions(body: &mut [Stmt], finalizable: &HashSet<String>, descriptor_types: &HashSet<String>) -> Result<()> {
         for s in body {
+            if let Stmt::DerivedType { name, components, .. } = s {
+                if descriptor_types.contains(name) {
+                    // FINAL and staged intrinsic assignment must preserve the
+                    // allocation state even for a component never allocated in
+                    // this scope. Use descriptors for scalar record fields too.
+                    let owned = components.iter().filter_map(|s| match s {
+                        Stmt::DummyIntent { name, intent } if intent == "allocatable" => Some(name.clone()),
+                        _ => None,
+                    }).collect::<Vec<_>>();
+                    for name in owned {
+                        if !components.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==&name && intent=="@scalar_heap")) {
+                            components.push(Stmt::DummyIntent {name,intent:"@scalar_heap".into()});
+                        }
+                    }
+                }
+            }
             if matches!(s,Stmt::CallSub{name,args} if name==crate::extensions::EXTENDS && args.iter().any(|e|matches!(e,Expr::Ident(n) if finalizable.contains(n))))
             {
                 bail!("type extension involving finalizable types is not yet supported");
             }
             for child in crate::procedure_arguments::children(s) {
-                extensions(child, finalizable)?;
+                extensions(child, finalizable, descriptor_types)?;
             }
         }
         Ok(())
     }
-    extensions(&mut program.body, &lower.finalizable)?;
+    extensions(&mut program.body, &lower.finalizable, &descriptor_types)?;
     lower.body(&mut program.body, &Objects::new(), &[], false, &[], 0)?;
+    program.body.extend(lower.generated);
     Ok(program)
 }

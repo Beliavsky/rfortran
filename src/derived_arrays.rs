@@ -22,6 +22,8 @@ mod record_pack;
 mod record_constructors;
 #[path = "derived_pointers.rs"]
 mod derived_pointers;
+#[path = "record_finalization.rs"]
+mod record_finalization;
 
 #[derive(Clone)]
 struct Field {
@@ -852,7 +854,7 @@ impl Lower {
                 Ok((
                     fields
                         .iter()
-                        .map(|f| if f.dims.is_empty() { Ok(Expr::Call(storage(&n, &f.name), args.clone())) } else { select(&n, f, vec![], &args) })
+                        .map(|f| select(&n, f, vec![], &args))
                         .collect::<Result<_>>()?,
                     array,
                 ))
@@ -1604,6 +1606,7 @@ impl Lower {
                         let output = attributes.iter().any(|a| a == "intent(out)")
                             && !attributes.iter().any(|a| a == "pointer");
                         let allocatable = attributes.iter().any(|a| a == "allocatable");
+                        let final_output=attributes.iter().any(|a|a==crate::finalization::OUTPUT);
                         for e in dims.iter_mut() {
                             self.expression(e, &mut objects, &mut prefix)?;
                         }
@@ -1623,6 +1626,9 @@ impl Lower {
                                     name: field.clone(),
                                     dims: storage_dims(&f, dims),
                                 });
+                                if allocatable && !dummies.contains(n) {
+                                    prefix.push(Stmt::DummyIntent {name:field.clone(),intent:"@record_heap_local".into()});
+                                }
                                 if f.heap.is_some() && !dummies.contains(n) && !attributes.iter().any(|a|a.starts_with("intent(")) {prefix.push(Stmt::DummyIntent {name:field.clone(),intent:"@record_slots".into()});}
                                 if output && f.heap.is_some() {
                                     // These slots still own the caller's allocations. Keep
@@ -1631,6 +1637,9 @@ impl Lower {
                                         name: "@heap_record_drop_array".into(),
                                         args: vec![Expr::Ident(field.clone()), Expr::Call("size".into(), vec![Expr::Ident(field.clone())])],
                                     });
+                                }
+                                if final_output && !allocatable && f.heap.is_none() {
+                                    entry.push(Stmt::CallSub{name:"@undefine".into(),args:vec![Expr::Ident(field.clone())]});
                                 }
                                 if let (true, Some(value)) = (initialize || (output && !allocatable), &f.default) {
                                     entry.extend(self.default_fill(n, &f, value, dims.len())?);
@@ -1643,7 +1652,7 @@ impl Lower {
                                 }) {
                                     prefix.push(Stmt::DummyIntent {
                                         name: field.clone(),
-                                        intent: if intent == "intent(out)" && (f.heap.is_some() || allocatable) {
+                                        intent: if intent == "intent(out)" && (f.heap.is_some() || allocatable || final_output) {
                                             "intent(inout)".into()
                                         } else { intent.clone() },
                                     });
@@ -1670,6 +1679,10 @@ impl Lower {
                             defaults.extend(entry);
                         }
                         prefix.extend(defaults);
+                        return Ok(());
+                    }
+                    Stmt::CallSub{name,args} if name==crate::finalization::ARRAY_ASSIGNMENT => {
+                        self.final_assignment(args,&mut objects,&mut prefix)?;
                         return Ok(());
                     }
                     Stmt::Assign { name, value } | Stmt::AssignIndex { name, value, .. }

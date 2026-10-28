@@ -234,6 +234,49 @@ impl Lower {
         for mut stmt in std::mem::take(body) {
             let mut prefix = vec![];
             match &mut stmt {
+                Stmt::CallSub{name,args} if name==crate::initialized::TRANSPORT => {
+                    let element=|e:&Expr|match e {
+                        Expr::Index(n,a)|Expr::Call(n,a) if arrays.contains_key(n) && a.len()==1=>Some((n.clone(),a[0].clone())),
+                        _=>None,
+                    };
+                    let target=args.first().and_then(element);
+                    let source=args.get(1).and_then(element);
+                    if let (Some((to,ti)),Some((from,si)))=(target.clone(),source.clone()) {
+                        let width=self.stride(&to,arrays[&to]);
+                        let to_offset=self.offset(ti,width.clone(),&mut prefix);
+                        let from_offset=self.offset(si,self.stride(&from,arrays[&from]),&mut prefix);
+                        self.serial+=1;
+                        let index=format!("@character_transport_{}",self.serial);
+                        prefix.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![index.clone()]});
+                        prefix.push(Stmt::Do{var:index.clone(),start:int(1),end:width,body:vec![Stmt::CallSub{name:name.clone(),args:vec![
+                            Expr::Index(to,vec![bin(BinOp::Add,to_offset,id(&index))]),
+                            Expr::Index(from,vec![bin(BinOp::Add,from_offset,id(&index))])]}]});
+                        result.extend(prefix);continue;
+                    }
+                    if let Some((to,ti))=target {
+                        let capacity=arrays[&to];
+                        let width=self.logical_width(&to,capacity);
+                        let offset=self.offset(ti,self.stride(&to,capacity),&mut prefix);
+                        self.serial+=1;
+                        let temp=format!("@character_transport_scalar_{}",self.serial);
+                        prefix.push(Stmt::VarDecl{kind:TypeSpec::Character(Some(capacity)),names:vec![temp.clone()]});
+                        prefix.push(Stmt::CallSub{name:name.clone(),args:vec![id(&temp),args[1].clone()]});
+                        prefix.push(Stmt::CallSub{name:crate::initialized::TRANSPORT_TO_CODES.into(),args:vec![id(&to),offset,width,id(&temp),int(capacity)]});
+                        result.extend(prefix);continue;
+                    }
+                    if let Some((from,si))=source {
+                        let capacity=arrays[&from];
+                        let width=self.logical_width(&from,capacity);
+                        let offset=self.offset(si,self.stride(&from,capacity),&mut prefix);
+                        self.serial+=1;
+                        let temp=format!("@character_transport_scalar_{}",self.serial);
+                        prefix.push(Stmt::VarDecl{kind:TypeSpec::Character(Some(capacity)),names:vec![temp.clone()]});
+                        prefix.push(Stmt::CallSub{name:crate::initialized::TRANSPORT_FROM_CODES.into(),args:vec![id(&temp),offset,width,id(&from),int(capacity)]});
+                        prefix.push(Stmt::CallSub{name:name.clone(),args:vec![args[0].clone(),id(&temp)]});
+                        result.extend(prefix);continue;
+                    }
+                    result.push(stmt);continue;
+                }
                 Stmt::CallSub{name,args} if name=="@scalar_character_from_codes" => {
                     fn storage(e:&Expr)->Option<String> {match e {
                         Expr::Ident(n)=>Some(n.clone()),

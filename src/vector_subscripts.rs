@@ -1246,6 +1246,9 @@ fn validate_actual(
     index: usize,
     procedures: &HashMap<String, Vec<String>>,
 ) -> Result<()> {
+    // Intrinsic assignment can finalize a vector-selected variable. This is
+    // an implicit lifetime operation, not a user CALL with a writable vector.
+    if crate::finalization::array_helper(name) {return Ok(());}
     if let Some(intents) = procedures.get(name) {
         if intents.get(index).is_none_or(|i| i.strip_prefix("@c_descriptor:").unwrap_or(i) != "intent(in)") {
             bail!("vector-subscript actual argument cannot be associated with writable dummy argument {} of `{name}`",index+1);

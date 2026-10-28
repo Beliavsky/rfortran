@@ -1930,11 +1930,11 @@ saved local objects need scalar components. Run
 ### Scalar finalization
 
 A derived type defined in a module can declare `final :: release` (or
-`final release`). The finalizer must be a module subroutine with one scalar,
+`final release`). The finalizer must be a module subroutine with one scalar or array,
 nonpolymorphic dummy of that type, without POINTER, ALLOCATABLE, OPTIONAL,
 VALUE or INTENT(OUT). Invalid bindings receive source locations.
 
-Scalar nonpolymorphic objects invoke their finalizers on intrinsic assignment,
+Scalar and array nonpolymorphic objects invoke their finalizers on intrinsic assignment,
 explicit deallocation, INTENT(OUT) entry, and automatic procedure/BLOCK cleanup,
 including RETURN, EXIT and CYCLE through nested blocks. Assignment evaluates
 and preserves the right-hand side before finalizing the destination. Unallocated
@@ -1944,20 +1944,34 @@ The containing object's finalizer precedes finalizers of its nonallocatable
 scalar components. Primitive allocatable components remain available during
 finalization and are subsequently released by normal allocation cleanup.
 
+Array finalization selects a non-elemental finalizer with the same rank, from
+one through fifteen, and passes the whole array once, including zero-sized
+arrays. If no matching rank exists, an ELEMENTAL finalizer is applied to each
+element. A non-elemental scalar finalizer is not an array fallback. Nested scalar
+components are finalized after the containing array's finalizer completes.
+Array assignments preserve overlapping RHS values and selected destination
+indices before calling FINAL, including strided and vector selections. Whole
+ALLOCATABLE arrays can allocate or reallocate on assignment; allocatable array
+INTENT(OUT) arguments are finalized before their old allocation is released.
+Writable section transfers preserve initialization masks, including numeric and
+CHARACTER fields that a finalizer does not read. Transporting an undefined field
+does not define it or suppress errors from a subsequent read.
+
 Saved objects and objects remaining at STOP, ERROR STOP or main-program
 termination are not finalized for that event. Compiler-generated record copies
 are not separately finalized. Private module finalizers remain accessible through
 their public type, including USE ONLY, renaming and separate `.rmod` compilation.
 These lifecycle rules follow [Fortran 2023 section 7.5.6](https://j3-fortran.org/doc/year/24/24-007.pdf).
 
-This initial implementation diagnoses arrays, ELEMENTAL/rank-specific finalizers,
-polymorphic and POINTER objects, type extension involving finalizable types,
+The implementation diagnoses polymorphic and POINTER objects, type extension involving finalizable types,
 finalizable function results, TYPEOF/CLASSOF of finalizable objects, scalar
-ALLOCATABLE dummies, finalizable allocatable components, defined assignment
+ALLOCATABLE dummies, array or allocatable components of finalizable type, defined assignment
 involving finalizable types, and named EXIT/CYCLE or GOTO
 with live finalizable locals. DEALLOCATE STAT/ERRMSG with finalizable objects is
-also unsupported. Run `python tests/test_finalization.py`; a standalone example is
-`tests/programs/xscalar_final.f90`.
+also unsupported, as are MOVE_ALLOC STAT/ERRMSG for finalizable arrays.
+Run `python tests/test_finalization.py` and `python tests/test_array_finalization.py`;
+standalone examples are `tests/programs/xscalar_final.f90` and
+`tests/programs/xarray_final.f90`.
 
 ### Arrays of derived type
 
@@ -2070,8 +2084,7 @@ includes nested scalar components, fixed array defaults, optional and forwarded
 dummies, empty arrays and sections, and parent ranks through 15. Allocatable
 INTENT(OUT) parent arrays release both their components and their outer storage,
 and enter the procedure unallocated. Nonallocatable dummies preserve the caller's
-array bounds and storage. Scalar FINAL procedures are described above;
-finalization of record arrays remains unsupported.
+array bounds and storage. Scalar and array FINAL procedures are described above.
 See `tests/test_owned_record_intent_out.py` and
 `tests/programs/xowned_record_intent_out.f90`.
 
@@ -2111,8 +2124,9 @@ so valid existing pointers continue to refer to the updated allocation.
 gfortran. Direct subscripted or section targets of the owned component remain unsupported; sections can be
 taken from an already associated pointer.
 
-Polymorphic arrays, saved arrays, derived PARAMETER arrays,
-finalization and a separate-object record ABI remain unsupported.
+Polymorphic arrays, saved arrays, derived PARAMETER arrays
+and a separate-object record ABI remain unsupported. See the finalization
+section above for supported FINAL procedures and remaining restrictions.
 `tests/programs/xset_alloc_derived.f90` and `tests/185_allocated_derived_concat.f90` exercise empty
 and nonempty allocated inputs and replacement of an allocated output.
 Run `python tests/test_allocated_array_functions.py` for interpreter/native

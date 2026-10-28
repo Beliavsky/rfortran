@@ -202,7 +202,9 @@ pub(crate) fn scalar_actual_kind(e: &Expr, shapes: &Shapes) -> Result<TypeSpec> 
         }
         Expr::Index(n, args) | Expr::Call(n, args) if shapes.get(n).is_some_and(|(_,dims)| !dims.is_empty()) => {
             let (kind,dims)=&shapes[n];
-            if args.len()!=dims.len() {bail!("array element actual `{n}` requires {} subscripts",dims.len());}
+            // Heap backing storage is flat; its descriptor retains source rank.
+            let rank=crate::allocatables::axes(n,shapes).map_or(dims.len(),|axes|axes.len());
+            if args.len()!=rank {bail!("array element actual `{n}` requires {rank} subscripts");}
             Ok(kind.clone())
         }
         Expr::Call(n, args) if matches!(n.as_str(), "dble" | "real" | "int") && args.len() == 1 => {
@@ -1100,12 +1102,24 @@ pub(crate) fn check_allocated_with_interfaces(s:&Stmt,pending:&HashSet<String>,
             else_body,
         } => {
             expr(cond, pending, interfaces)?;
+            // Deep record copies read an allocatable component only on the
+            // branch where ALLOCATED proves its descriptor is live.
+            let (test, positive) = match cond {
+                Expr::Un(crate::ast::UnOp::Not, test) => (test.as_ref(), false),
+                test => (test, true),
+            };
+            let mut live = pending.clone();
+            if let Expr::Call(n, args) = test {
+                if n == "allocated" {
+                    if let [Expr::Ident(n)] = args.as_slice() { live.remove(n); }
+                }
+            }
             for s in then_body {
-                check_allocated_with_interfaces(s, pending, interfaces)?;
+                check_allocated_with_interfaces(s, if positive { &live } else { pending }, interfaces)?;
             }
             if let Some(b) = else_body {
                 for s in b {
-                    check_allocated_with_interfaces(s, pending, interfaces)?;
+                    check_allocated_with_interfaces(s, if positive { pending } else { &live }, interfaces)?;
                 }
             }
         }
