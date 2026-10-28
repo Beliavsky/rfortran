@@ -2432,8 +2432,19 @@ target is deallocated or reallocated is diagnosed instead of silently selecting
 the replacement allocation. Saved/module allocated targets can be returned by
 owner factories; ordinary local allocations retain the existing escape restriction.
 STAT/ERRMSG report allocation-state errors without changing existing associations.
-Scalar allocatable TARGET dummy descriptors, polymorphic allocated targets,
-SOURCE/MOLD allocation and MOVE_ALLOC of these targets remain unsupported.
+SOURCE and MOLD allocation support scalar nonpolymorphic model expressions of
+the target's declared type, including variables, components, array elements,
+ordinary constructors and explicit-interface function results. SOURCE evaluates
+its expression once for the allocation list and copies intrinsically, including
+deep copies of allocatable components, even when ASSIGNMENT(=) is overloaded.
+MOLD supplies type information without reading the model's component values;
+allocation applies default initialization and leaves other components undefined.
+Failed allocation with STAT preserves the existing target and its aliases.
+All objects in these allocation lists must currently be supported scalar targets
+of the same type. Model expressions retain the existing expression-lowering
+limits, including constructors with an explicit parent part.
+Scalar allocatable TARGET dummy descriptors, polymorphic allocated targets and
+model expressions, and MOVE_ALLOC of these targets remain unsupported.
 
 Scalar function results containing these pointer components are supported,
 including explicit RESULT names, implicit function-name results, early RETURN,
@@ -2470,6 +2481,9 @@ target mutation, dispatch and a null result.
 Run `python tests/test_polymorphic_pointer_allocated_targets.py` for allocated
 target tests. `tests/programs/xpolymorphic_pointer_allocated_target.f90` shows
 an allocating factory, shared mutation and explicit target deallocation.
+Run `python tests/test_polymorphic_pointer_allocation_models.py` for SOURCE/MOLD
+tests. `tests/programs/xallocated_target_models.f90` contrasts deep copying with
+default initialization.
 
 Run `python tests/test_polymorphic_pointer_components.py`. The reduced example
 `tests/programs/xpolymorphic_pointer_array_component.f90` prints `T 7`.

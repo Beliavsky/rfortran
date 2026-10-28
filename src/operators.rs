@@ -1113,6 +1113,11 @@ impl Resolver {
                     }
                     self.expression(value, &vars, &visible)?;
                 }
+                Stmt::CallSub { name, args } if name==INTRINSIC_ASSIGNMENT => {
+                    let [Expr::Ident(name),value]=args.as_mut_slice() else {bail!("invalid intrinsic record assignment marker");};
+                    self.expression(value,&vars,&visible)?;
+                    *s=Stmt::Assign{name:name.clone(),value:value.clone()};
+                }
                 Stmt::CallSub { name, args } if matches!(name.as_str(),"@formatted_print"|"@formatted_write_noadvance"|"@write") => {
                     for item in args {self.io_item(item,&vars,&visible)?;}
                 }
@@ -1241,6 +1246,10 @@ pub(crate) fn validate_conditionals(program:&Program)->Result<()> {
     let mut resolver=Resolver::default();resolver.collect(&program.body)?;
     walk(&resolver,&program.body,&Vars::new(),&Bindings::new())
 }
+
+/// Compiler-generated copies (for example ALLOCATE SOURCE) must retain
+/// intrinsic assignment semantics even when ASSIGNMENT(=) is visible.
+pub(crate) const INTRINSIC_ASSIGNMENT: &str = "@intrinsic_record_assignment";
 
 pub fn resolve(mut program: Program) -> Result<Program> {
     fn needs_constants(body: &[Stmt]) -> bool {

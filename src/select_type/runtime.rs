@@ -1148,7 +1148,7 @@ pub(super) fn resolve(mut program: Program, defs: &mut Definitions) -> Result<Pr
     }
     let has_components=defs.has_polymorphic_components;
     if !needed(&program.body) && !has_components {
-        pointer_components::allocated::finish(&mut program)?;
+        pointer_components::allocated::finish(&mut program, defs)?;
         return Ok(program);
     }
     defs.validate(&program.body, &Objects::new())?;
@@ -1186,6 +1186,6 @@ pub(super) fn resolve(mut program: Program, defs: &mut Definitions) -> Result<Pr
         }
     }
     restore(&mut program.body);
-    pointer_components::allocated::finish(&mut program)?;
+    pointer_components::allocated::finish(&mut program, defs)?;
     Ok(program)
 }

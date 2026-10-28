@@ -180,7 +180,34 @@ pub(super) fn prepare(program: &mut Program) -> Result<()> {
 
 /// Erase virtual scalar declarations only after pointer and interface lowering
 /// have used their original TKR. Ordinary storage lowering sees record arrays.
-pub(in crate::select_type::runtime) fn finish(program: &mut Program) -> Result<()> {
+pub(in crate::select_type::runtime) fn finish(
+    program: &mut Program,
+    defs: &Definitions,
+) -> Result<()> {
+    // Preserve source signatures for model expressions, including function
+    // results. Interface provenance may follow the parser's final RETURN.
+    fn model_options(body: &mut [Stmt], targets: &mut bool, models: &mut bool) {
+        for s in body {
+            *targets |= matches!(s,Stmt::DerivedDecl{attributes,..} if attributes.iter().any(|a|a.starts_with(BACKING)));
+            *models |= matches!(s,Stmt::CallSub{name,args} if matches!(name.as_str(),"@allocate"|"@allocate_derived_type") && args.iter().any(|e|matches!(e,Expr::Call(n,_) if n=="@keyword:source"||n=="@keyword:mold")));
+            for b in children(s) {
+                model_options(b, targets, models);
+            }
+        }
+    }
+    let (mut has_targets, mut has_models) = (false, false);
+    model_options(&mut program.body, &mut has_targets, &mut has_models);
+    let types = if has_targets && has_models {
+        let mut snapshot = program.clone();
+        crate::imports::clear_declarations(&mut snapshot.body);
+        Some(crate::operators::OwnerInterfaces::new(
+            &snapshot,
+            HashSet::new(),
+            defs.parents.clone(),
+        )?)
+    } else {
+        None
+    };
     fn expression(e: &mut Expr, targets: &HashMap<String, Info>) {
         visit_expr(e, &mut |e| match e {
             Expr::Ident(n) => {
@@ -211,7 +238,35 @@ pub(in crate::select_type::runtime) fn finish(program: &mut Program) -> Result<(
             _ => {}
         });
     }
-    fn scope(body: &mut Vec<Stmt>, parent: &HashMap<String, Info>) -> Result<()> {
+    fn scope(
+        body: &mut Vec<Stmt>,
+        parent: &HashMap<String, Info>,
+        parent_decls: &Declarations,
+        types: Option<&crate::operators::OwnerInterfaces>,
+        origin: &str,
+        serial: &mut usize,
+    ) -> Result<()> {
+        let declared = if types.is_some() {
+            declarations(body, parent_decls)
+        } else {
+            Declarations::new()
+        };
+        let model_scope = types.map(|t| t.scope(body, origin));
+        let mut derived = HashMap::new();
+        if types.is_some() {
+            for (n, ds) in &declared {
+                for s in ds {
+                    match s {
+                        Stmt::DerivedDecl {
+                            type_name, dims, ..
+                        } => {
+                            derived.insert(n.clone(), (type_name.clone(), dims.len()));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
         let mut targets = parent.clone();
         for (n, ds) in declarations(body, &Declarations::new()) {
             if let Some(i) = info(&ds) {
@@ -221,16 +276,17 @@ pub(in crate::select_type::runtime) fn finish(program: &mut Program) -> Result<(
             }
         }
         let mut out = vec![];
+        let mut temporaries = vec![];
         let mut location = None;
         for mut s in std::mem::take(body) {
             if let Stmt::SourceLocation(p) = &s {
                 location = Some(*p);
             }
             match &mut s {
-                Stmt::Function { body, .. }
-                | Stmt::Subroutine { body, .. }
-                | Stmt::Module { body, .. } => {
-                    scope(body, &targets)?;
+                Stmt::Function { name, body, .. }
+                | Stmt::Subroutine { name, body, .. }
+                | Stmt::Module { name, body, .. } => {
+                    scope(body, &targets, &declared, types, name, serial)?;
                     out.push(s);
                     continue;
                 }
@@ -306,8 +362,36 @@ pub(in crate::select_type::runtime) fn finish(program: &mut Program) -> Result<(
                             }
                         })
                         .collect();
-                    if !selected.is_empty() && args.iter().any(|e| matches!(e,Expr::Call(n,_) if n=="@keyword:source" || n=="@keyword:mold")) {
-                        return Err(crate::source_diagnostics::at(anyhow::anyhow!("SOURCE/MOLD allocation of scalar ALLOCATABLE TARGET records is not yet supported"),location));
+                    let mut source_value=None;
+                    if allocating && !selected.is_empty() {
+                        let models:Vec<_>=args.iter().filter_map(|e| match e {
+                            Expr::Call(n,a) if (n=="@keyword:source"||n=="@keyword:mold") && a.len()==1=>Some((n.clone(),a[0].clone())),_=>None,
+                        }).collect();
+                        if !models.is_empty() {
+                            let validation=(||->Result<()> {
+                                if models.len()!=1 {bail!("ALLOCATE permits only one SOURCE or MOLD specifier");}
+                                if name=="@allocate_derived_type" {bail!("ALLOCATE type-spec cannot be combined with SOURCE or MOLD");}
+                                if args.iter().filter(|e| !matches!(e,Expr::Call(n,_) if n.starts_with("@keyword:"))).count()!=selected.len() {bail!("mixed SOURCE/MOLD allocation lists with scalar ALLOCATABLE TARGET records are not yet supported");}
+                                let types=types.context("missing allocation expression types")?;
+                                let model_scope=model_scope.as_ref().context("missing allocation model scope")?;
+                                if types.dynamic(&models[0].1,model_scope) {bail!("polymorphic SOURCE/MOLD expressions for concrete scalar ALLOCATABLE TARGET records are not yet supported");}
+                                let Some((kind,0))=types.derived(&models[0].1,model_scope)? else {bail!("scalar ALLOCATABLE TARGET allocation requires a scalar derived-type SOURCE or MOLD expression");};
+                                for (n,_) in &selected {
+                                    if derived.get(n).is_none_or(|(expected,_)|expected!=&kind) {bail!("SOURCE/MOLD type must match the declared type of nonpolymorphic allocation target `{n}`");}
+                                }
+                                if models[0].0=="@keyword:source" {
+                                    *serial+=1;
+                                    let temp=format!("@allocated_source{serial}");
+                                    temporaries.push(Stmt::DerivedDecl{type_name:kind,names:vec![temp.clone()],attributes:vec!["@referenced_type".into()],polymorphic:false,dims:vec![]});
+                                    let mut value=models[0].1.clone();expression(&mut value,&targets);
+                                    out.push(Stmt::CallSub{name:crate::operators::INTRINSIC_ASSIGNMENT.into(),args:vec![id(&temp),value]});
+                                    source_value=Some(id(&temp));
+                                }
+                                Ok(())
+                            })();
+                            validation.map_err(|e|crate::source_diagnostics::at(e,location))?;
+                            args.retain(|e|!matches!(e,Expr::Call(n,_) if n=="@keyword:source"||n=="@keyword:mold"));
+                        }
                     }
                     if !selected.is_empty() {
                         let stat = args.iter().find_map(|e| match e { Expr::Call(n,a) if n=="@keyword:stat" && a.len()==1 => Some(a[0].clone()), _=>None });
@@ -367,6 +451,9 @@ pub(in crate::select_type::runtime) fn finish(program: &mut Program) -> Result<(
                             }],
                             else_body: None,
                         });
+                        if let Some(value)=&source_value {
+                            suffix.push(Stmt::AssignIndex{name:i.backing.clone().unwrap(),indices:vec![int(1)],value:value.clone()});
+                        }
                     }
                 } else if matches!(name.as_str(),"move_alloc"|"@move_alloc") && args.iter().any(|a| {let mut found=false;visit_expr(&mut a.clone(),&mut |e| {if matches!(e,Expr::Ident(n) if targets.get(n).is_some_and(|i|i.backing.is_some())) {found=true;}});found}) {
                     return Err(crate::source_diagnostics::at(anyhow::anyhow!("MOVE_ALLOC of scalar ALLOCATABLE TARGET records requires a movable allocation identity and is not yet supported"),location));
@@ -421,7 +508,7 @@ pub(in crate::select_type::runtime) fn finish(program: &mut Program) -> Result<(
                 }
             }
             for child in children(&mut s) {
-                scope(child, &targets)?;
+                scope(child, &targets, &declared, types, origin, serial)?;
             }
             if let Some((failed, stat, errmsg)) = allocation_status {
                 let mut success = vec![s];
@@ -444,12 +531,17 @@ pub(in crate::select_type::runtime) fn finish(program: &mut Program) -> Result<(
                 out.extend(suffix);
             }
         }
-        *body = out;
+        temporaries.extend(out);
+        *body = temporaries;
         Ok(())
     }
     let mut globals = HashMap::new();
+    let mut global_decls = Declarations::new();
     for s in &program.body {
         if let Stmt::Module { body, .. } = s {
+            if types.is_some() {
+                global_decls.extend(declarations(body, &Declarations::new()));
+            }
             for (n, d) in declarations(body, &Declarations::new()) {
                 if let Some(i) = info(&d) {
                     globals.insert(n, i);
@@ -457,5 +549,12 @@ pub(in crate::select_type::runtime) fn finish(program: &mut Program) -> Result<(
             }
         }
     }
-    scope(&mut program.body, &globals)
+    scope(
+        &mut program.body,
+        &globals,
+        &global_decls,
+        types.as_ref(),
+        "",
+        &mut 0,
+    )
 }

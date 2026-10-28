@@ -211,13 +211,18 @@ deallocate(target)
 end
 ''', 'T F 11')
 
-    def test_unsupported_source_and_mold_are_diagnosed(self):
-        for option in ('source', 'mold'):
+    def test_source_and_mold(self):
+        for option,expected in (('source','17'), ('mold','11')):
             with self.subTest(option=option):
-                self.reject(ALLOC_TYPES + 'end module\n' + MAIN + f'''type(child)::value
+                self.check(ALLOC_TYPES + 'end module\n' + MAIN + f'''type(child)::value
+value%value=7
 allocate(target,{option}=value)
+copy%object=>target
+print *,copy%object%get()
+nullify(copy%object)
+deallocate(target)
 end
-''', 'SOURCE/MOLD allocation of scalar ALLOCATABLE TARGET')
+''', expected)
 
     def test_shadowed_local_is_not_rewritten(self):
         self.check(TYPES + 'end module\n' + MAIN + '''type(child),allocatable,target::local
