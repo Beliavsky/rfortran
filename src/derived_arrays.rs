@@ -190,6 +190,7 @@ struct Lower {
     scalar_results: HashMap<String, String>,
     /// Known scalar results, including intrinsic-type mask functions.
     scalar_functions: std::collections::HashSet<String>,
+    scalar_result_declarations: HashMap<String, Stmt>,
     target_roots: std::collections::HashSet<String>,
     elemental_records: HashMap<String, elemental_records::Procedure>,
     elemental_results: HashMap<String, elemental_record_results::ResultProcedure>,
@@ -564,7 +565,15 @@ impl Lower {
                             Stmt::ArrayDecl{name,dims,..} => name==n && !dims.is_empty(),
                             Stmt::DerivedDecl{names,dims,..} => names.contains(n) && !dims.is_empty(),
                             _ => false,
-                        }) { self.scalar_functions.insert(name.clone()); }
+                        }) {
+                            self.scalar_functions.insert(name.clone());
+                            if let Some(declaration)=body.iter().find_map(|s|match s {
+                                Stmt::VarDecl{kind,names} if names.contains(n)=>Some(Stmt::VarDecl{kind:kind.clone(),names:vec![]}),
+                                Stmt::InitializedDecl{kind,entities,..} if entities.iter().any(|(name,_)|name==n)=>Some(Stmt::VarDecl{kind:kind.clone(),names:vec![]}),
+                                Stmt::DerivedDecl{type_name,names,dims,..} if names.contains(n) && dims.is_empty()=>Some(Stmt::DerivedDecl{type_name:type_name.clone(),names:vec![],attributes:vec![],dims:vec![],polymorphic:false}),
+                                _=>None,
+                            }) {self.scalar_result_declarations.insert(name.clone(),declaration);}
+                        }
                         if let Some(ty) = body.iter().find_map(|s| match s {
                             Stmt::DerivedDecl { type_name, names, dims, .. }
                                 if dims.is_empty() && names.contains(n) => Some(type_name.clone()),
@@ -580,12 +589,12 @@ impl Lower {
                         if dims.is_empty() && names.iter().any(|n| params.contains(n))))
                     {
                         self.scalar_procedures.insert(name.clone());
-                        self.readonly_params.insert(name.clone(),params.iter().map(|p|body.iter().any(|s|match s {
+                    }
+                    self.readonly_params.insert(name.clone(),params.iter().map(|p|body.iter().any(|s|match s {
                             Stmt::DerivedDecl {names,attributes,..}=>names.contains(p) && attributes.iter().any(|a|a=="intent(in)"),
                             Stmt::DummyIntent {name,intent}=>name==p && intent=="intent(in)",
                             _=>false,
-                        })).collect());
-                    }
+                    })).collect());
                     if result.is_some() || params.iter().any(|n| arrays.contains_key(n)) {
                         self.procedures.insert(
                             name.clone(),
@@ -1144,6 +1153,7 @@ impl Lower {
         prefix: &mut Vec<Stmt>,
     ) -> Result<()> {
         if self.expand_component_constructor(e, objects, prefix)? { return Ok(()); }
+        if self.component_function_actuals(e,objects,prefix)? {return Ok(());}
         if self.pointer_inquiry(e, objects, prefix)? { return Ok(()); }
         if self.scalar_component_view(e, objects, prefix)? { return Ok(()); }
         self.heap_component_actual(e,objects,prefix,None)?;
@@ -2153,6 +2163,7 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
         readonly_params: HashMap::new(),
         scalar_results: HashMap::new(),
         scalar_functions: Default::default(),
+        scalar_result_declarations: HashMap::new(),
         target_roots: Default::default(),
         intrinsic_kinds: Default::default(),
         elemental_records: HashMap::new(),

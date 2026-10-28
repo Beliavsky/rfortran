@@ -1647,7 +1647,9 @@ and module storage, with the supported record component layouts. MOVE_ALLOC
 transfers their allocation and owned components without copying. Concrete scalar
 ALLOCATABLE dummy descriptors support caller allocation updates, OPTIONAL
 forwarding and finalization as described under [FINAL procedures](#scalar-finalization).
-Scalar allocatable component actuals remain unsupported. Explicit SAVE on
+Concrete scalar allocatable derived components can be actual arguments to these
+dummies, including nested scalar owners and elements of multidimensional owner
+arrays. Component actuals for TARGET dummies remain unsupported. Explicit SAVE on
 intrinsic allocatable scalars and allocatable
 scalar DO control variables also remain unsupported. Existing host-association
 restrictions for allocatable storage also remain. Ordinary scalar dummy arguments do not gain ALLOCATABLE semantics.
@@ -1991,8 +1993,14 @@ OPTIONAL absence and forwarding, keyword and generic calls, type-bound calls,
 PURE procedures and separate `.rmod` compilation. Hidden allocation identities
 also track allocation changes through TARGET dummies and invalidate old pointer
 aliases when an allocation is replaced. Actuals must be compatible scalar
-ALLOCATABLE variables or forwarded dummies; component actuals and recursive
-allocation-descriptor calls remain unsupported. See
+ALLOCATABLE variables, forwarded dummies or concrete scalar allocatable derived
+components. Component actuals support nested scalar owners, array-element owners,
+keyword/OPTIONAL forwarding, generic dispatch and separate compilation. Owner
+subscripts are captured before a subroutine call so a changed index does not
+redirect descriptor writeback. TARGET dummies with component actuals (including
+escaping pointer associations) and recursive allocation-descriptor calls remain
+unsupported. See `tests/test_allocatable_component_actuals.py`,
+`tests/programs/xallocatable_component_actual.f90`,
 `tests/test_allocatable_scalar_finalization.py` and
 `tests/programs/xallocatable_scalar_final.f90`.
 

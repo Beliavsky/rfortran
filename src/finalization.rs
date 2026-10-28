@@ -10,6 +10,9 @@ mod owned_components;
 
 pub(crate) const OUTPUT: &str = "@final_intent_out";
 pub(crate) const ARRAY_ASSIGNMENT: &str = "@final_array_assignment";
+pub(crate) fn prepare_components(program: &mut Program) -> Result<()> {
+    owned_components::prepare(program)
+}
 pub(crate) fn array_helper(name: &str) -> bool {
     name.strip_prefix("@finalize_array_")
         .is_some_and(|suffix| !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit()))
@@ -460,6 +463,26 @@ impl Lower {
             out
         }
     }
+    fn component_object(&self, e:&Expr, objects:&Objects)->Option<Object> {
+        match e {
+            Expr::Ident(n)=>objects.get(n).cloned(),
+            Expr::Call(tag,args) if tag.starts_with("@record_component:") && args.len()==1=>{
+                let mut owner=self.component_object(&args[0],objects)?;
+                for field in tag[18..].split('%') {
+                    let definition=self.types.get(&owner.ty)?;
+                    let (_,ty,attrs,rank)=definition.components.iter().find(|(n,_,_,_)|n==field)?;
+                    owner=Object{ty:ty.clone(),attrs:attrs.clone(),dims:if *rank==0 {vec![]} else if attrs.iter().any(|a|a=="allocatable") {vec![id("@deferred_extent");*rank]} else {definition.component_dims.get(field)?.clone()}};
+                }
+                Some(owner)
+            }
+            Expr::Call(n,args)|Expr::Index(n,args)=>{
+                let mut o=objects.get(n)?.clone();
+                if args.len()!=o.dims.len() || args.iter().any(|e|matches!(e,Expr::Section{..})) {return None;}
+                o.dims.clear();Some(o)
+            }
+            _=>None,
+        }
+    }
     fn cleanup(&mut self, live: &[(String, Object)]) -> Vec<Stmt> {
         let mut out = vec![];
         for (name, o) in live.iter().rev() {
@@ -617,6 +640,25 @@ impl Lower {
                         if !targets.is_empty() && args.iter().any(|e|matches!(e,Expr::Call(n,_) if n.starts_with("@keyword:"))) {bail!("DEALLOCATE STAT/ERRMSG with finalizable objects is not yet supported");}
                         for (n,o) in targets {
                             out.extend(self.finalize(n,o));
+                        }
+                        for actual in args.iter_mut().filter(|e|matches!(e,Expr::Call(tag,_) if tag.starts_with("@record_component:"))) {
+                            if let Some(o)=self.component_object(actual,&objects).filter(|o|self.finalizable.contains(&o.ty)) {
+                                // Both the FINAL callback and DEALLOCATE must select the
+                                // same owner element, even with an impure index expression.
+                                fn capture(e:&mut Expr,out:&mut Vec<Stmt>,serial:&mut usize) {
+                                    if let Expr::Call(tag,args)|Expr::Index(tag,args)=e {
+                                        if tag.starts_with("@record_component:") {for a in args {capture(a,out,serial);}}
+                                        else {for a in args {if !matches!(a,Expr::IntLit(_)) {
+                                            *serial+=1;let n=format!("@final_owner_index_{serial}");
+                                            out.push(Stmt::VarDecl{kind:crate::ast::TypeSpec::Integer(Some(8)),names:vec![n.clone()]});
+                                            out.push(Stmt::Assign{name:n.clone(),value:a.clone()});*a=id(&n);
+                                        }}}
+                                    }
+                                }
+                                capture(actual,&mut out,&mut self.serial);
+                                let f=self.helper(&o.ty,o.dims.len());
+                                out.push(guarded(Expr::Call("allocated".into(),vec![actual.clone()]),vec![call(&f,vec![actual.clone()])]));
+                            }
                         }
                     }
                     Stmt::CallSub{name,args} if name=="move_alloc" && !self.routines.contains_key(name)=>{

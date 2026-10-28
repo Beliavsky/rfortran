@@ -759,6 +759,25 @@ impl Resolver {
                     });
                 }
             }
+            if name.starts_with("@record_component:") && args.len()==2 {
+                if let Expr::Call(marker, subscripts)=&args[1] {
+                    if marker=="@component_subscripts" {
+                        let mut component=Expr::Call(name.clone(),vec![args[0].clone()]);
+                        let ty=self.expression(&mut component,vars,visible)?;
+                        if let Ty::Array(element,rank)=ty {
+                            let mut remaining=rank;
+                            for subscript in subscripts {
+                                let mut subscript=subscript.clone();
+                                if !matches!(subscript,Expr::Section{..}) && !matches!(self.expression(&mut subscript,vars,visible)?,Ty::Array(..)) {
+                                    remaining=remaining.saturating_sub(1);
+                                }
+                            }
+                            return Ok(if remaining==0 {*element} else {Ty::Array(element,remaining)});
+                        }
+                        return Ok(Ty::Unknown);
+                    }
+                }
+            }
             if name.starts_with("@record_component:") && args.len()==1 {
                 let field=&name[18..];
                 let value=self.expression(&mut args[0],vars,visible)?;

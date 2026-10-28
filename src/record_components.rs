@@ -5,6 +5,36 @@
 //! Materialize record elements without flattening owned allocations into values.
 use super::*;
 impl Lower {
+    /// A function can change an owned descriptor just as a subroutine can.
+    /// Evaluate its result before writing staged components back to the owner.
+    pub(super) fn component_function_actuals(&mut self,e:&mut Expr,objects:&mut Objects,prefix:&mut Vec<Stmt>)->Result<bool> {
+        let Expr::Call(name,args)=e else{return Ok(false)};
+        let Some(mut declaration)=self.scalar_result_declarations.get(name).cloned() else{return Ok(false)};
+        let mut suffix=vec![];
+        for (i,actual) in args.iter_mut().enumerate() {
+            if !self.readonly_actual(name,i,objects) {
+                self.heap_component_actual(actual,objects,prefix,Some(&mut suffix))?;
+            }
+        }
+        if suffix.is_empty() {return Ok(false);}
+        // Recursion sees the materialized actuals rather than component views.
+        self.expression(e,objects,prefix)?;
+        self.serial+=1;
+        let temp=format!("@component_function_result_{}",self.serial);
+        match &mut declaration {
+            Stmt::VarDecl{names,..}=>*names=vec![temp.clone()],
+            Stmt::DerivedDecl{names,type_name,..}=>{
+                *names=vec![temp.clone()];
+                objects.insert(temp.clone(),Object{ty:type_name.clone(),dims:vec![]});
+            }
+            _=>unreachable!(),
+        }
+        prefix.push(declaration);
+        prefix.push(Stmt::Assign{name:temp.clone(),value:e.clone()});
+        prefix.extend(suffix);
+        *e=Expr::Ident(temp);
+        Ok(true)
+    }
     fn fixed_record_component_name(&self,owner:&str,field:&str,objects:&Objects)->Option<String> {
         let fields=self.types.get(&objects.get(owner).filter(|o|!o.dims.is_empty())?.ty)?;
         let folded=field.replace('%',"$");

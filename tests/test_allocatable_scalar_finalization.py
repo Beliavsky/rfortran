@@ -391,14 +391,15 @@ deallocate(x)
 end
 ''','8\nfinal 8\n')
 
-    def test_component_actual_limit_diagnosed(self):
+    def test_component_actual(self):
         module=MODULE.replace('contains\nsubroutine finish', '''type::container
  type(resource),allocatable::item
 end type
 contains
 subroutine finish''')
-        self.reject(module+'''subroutine inspect(x)
+        self.check(module+'''subroutine inspect(x)
 type(resource),allocatable,intent(in)::x
+print *,allocated(x)
 end subroutine
 end module
 use m
@@ -406,7 +407,7 @@ implicit none
 type(container)::x
 call inspect(x%item)
 end
-''','ALLOCATABLE scalar component actuals are not yet supported')
+''','F\n')
 
     def test_separate_intent_declaration(self):
         self.reject(MODULE+'''subroutine change(x)

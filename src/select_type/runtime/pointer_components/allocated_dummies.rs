@@ -2,11 +2,13 @@
 // Copyright (c) 2026 Beliavsky
 //! Preserve source interfaces, then pass scalar allocation storage and identity.
 use super::*;
+#[path = "allocated_component_actuals.rs"]
+mod components;
 
 #[derive(Clone)]
 struct Interface {
     signature: crate::named_arguments::Signature,
-    descriptors: Vec<(usize, String, bool)>,
+    descriptors: Vec<(usize, String, bool, bool)>,
 }
 fn collect(body: &[Stmt], out: &mut HashMap<String, Interface>, prepared: bool) {
     for s in body {
@@ -27,7 +29,14 @@ fn collect(body: &[Stmt], out: &mut HashMap<String, Interface>, prepared: bool) 
                         && v.rank == 0
                         && v.attrs.iter().any(|a| a == "allocatable")
                         && (!prepared || v.attrs.iter().any(|a| a == "@allocated_scalar_dummy")))
-                    .then(|| (i, v.kind.clone(), v.attrs.iter().any(|a| a == "intent(in)")))
+                    .then(|| {
+                        (
+                            i,
+                            v.kind.clone(),
+                            v.attrs.iter().any(|a| a == "intent(in)"),
+                            v.attrs.iter().any(|a| a == "target"),
+                        )
+                    })
                 })
                 .collect::<Vec<_>>();
             if !descriptors.is_empty() {
@@ -61,6 +70,8 @@ pub(super) fn normalize(program: &mut Program, defs: &Definitions) -> Result<()>
     if interfaces.is_empty() {
         return Ok(());
     }
+    crate::finalization::prepare_components(program)?;
+    components::normalize(program)?;
     let resolver = crate::operators::OwnerInterfaces::new(
         program,
         interfaces.keys().cloned().collect(),
@@ -92,11 +103,16 @@ pub(super) fn lower(program: &mut Program) -> Result<()> {
     if interfaces.is_empty() {
         return Ok(());
     }
+    let model = components::Model::new(&mut program.body);
+    let mut serial = 0;
     fn actuals(
         name: &str,
         args: &mut Vec<Expr>,
         declared: &Declarations,
         interfaces: &HashMap<String, Interface>,
+        model: &components::Model,
+        prefix: &mut Vec<Stmt>,
+        serial: &mut usize,
     ) -> Result<()> {
         let Some(interface) = interfaces.get(name) else {
             return Ok(());
@@ -106,15 +122,42 @@ pub(super) fn lower(program: &mut Program) -> Result<()> {
             Expr::Call(crate::named_arguments::OMITTED.into(), vec![])
         });
         let mut hidden = vec![];
-        for (i, expected, readonly) in &interface.descriptors {
+        for (i, expected, readonly, target) in &interface.descriptors {
             let actual = &args[*i];
             if crate::named_arguments::omitted(actual) {
                 hidden.push(actual.clone());
                 continue;
             }
-            if matches!(actual,Expr::Ident(n)|Expr::Call(n,_) if n.contains('%') || n.starts_with("@record_component:"))
-            {
-                bail!("ALLOCATABLE scalar component actuals are not yet supported");
+            if let Some((mut descriptor, kind, input)) = model.actual(actual, declared)? {
+                if &kind != expected {
+                    bail!(
+                        "ALLOCATABLE scalar dummy `{}` requires the same declared type and rank",
+                        interface.signature.params[*i]
+                    );
+                }
+                if !readonly && input {
+                    bail!("cannot pass INTENT(IN) component to writable ALLOCATABLE dummy");
+                }
+                if *target {
+                    bail!("TARGET ALLOCATABLE scalar component actuals are not yet supported");
+                }
+                model.capture(&mut descriptor, prefix, serial);
+                // No TARGET dummy can export this temporary allocation identity.
+                // The component descriptor itself supplies allocation status and
+                // receives updates through the existing record writeback path.
+                *serial += 1;
+                let epoch = format!("@component_actual_epoch_{serial}");
+                prefix.push(Stmt::VarDecl {
+                    kind: TypeSpec::Integer(Some(8)),
+                    names: vec![epoch.clone()],
+                });
+                prefix.push(Stmt::CallSub {
+                    name: "@heap_identity".into(),
+                    args: vec![id(&epoch)],
+                });
+                args[*i] = descriptor;
+                hidden.push(id(&epoch));
+                continue;
             }
             let Expr::Ident(n) = actual else {
                 bail!("ALLOCATABLE scalar dummy `{}` of `{name}` requires an ALLOCATABLE scalar actual",interface.signature.params[*i]);
@@ -170,11 +213,14 @@ pub(super) fn lower(program: &mut Program) -> Result<()> {
         body: &mut Vec<Stmt>,
         parent: &Declarations,
         interfaces: &HashMap<String, Interface>,
+        model: &components::Model,
+        serial: &mut usize,
     ) -> Result<()> {
         let declared = declarations(body, parent);
         let mut location = None;
-        for s in body {
-            if let Stmt::SourceLocation(p) = s {
+        let mut out = vec![];
+        for mut s in std::mem::take(body) {
+            if let Stmt::SourceLocation(p) = &s {
                 location = Some(*p);
             }
             if let Stmt::Function {
@@ -182,12 +228,12 @@ pub(super) fn lower(program: &mut Program) -> Result<()> {
             }
             | Stmt::Subroutine {
                 name, params, body, ..
-            } = s
+            } = &mut s
             {
                 if let Some(interface) = interfaces.get(name) {
                     let local = declarations(body, &Declarations::new());
                     let mut hidden = vec![];
-                    for (i, _, _) in &interface.descriptors {
+                    for (i, _, _, _) in &interface.descriptors {
                         let info = info(&local[&params[*i]])
                             .context("missing ALLOCATABLE dummy storage")?;
                         params[*i] = info.backing.unwrap();
@@ -195,32 +241,68 @@ pub(super) fn lower(program: &mut Program) -> Result<()> {
                     }
                     params.extend(hidden);
                 }
-                scope(body, &declared, interfaces)?;
+                scope(body, &declared, interfaces, model, serial)?;
+                out.push(s);
                 continue;
             }
-            if let Stmt::Module { body, .. } = s {
-                scope(body, &declared, interfaces)?;
+            if let Stmt::Module { body, .. } = &mut s {
+                scope(body, &declared, interfaces, model, serial)?;
+                out.push(s);
                 continue;
             }
             let mut result = Ok(());
-            for e in expressions(s) {
+            let mut prefix = vec![];
+            for e in expressions(&mut s) {
                 visit_expr(e, &mut |e| {
                     if result.is_ok() {
                         if let Expr::Call(name, args) = e {
-                            result = actuals(name, args, &declared, interfaces);
+                            result = actuals(
+                                name,
+                                args,
+                                &declared,
+                                interfaces,
+                                model,
+                                &mut prefix,
+                                serial,
+                            );
                         }
                     }
                 });
             }
             result.map_err(|e| crate::source_diagnostics::at(e, location))?;
-            if let Stmt::CallSub { name, args } = s {
-                actuals(name, args, &declared, interfaces)
-                    .map_err(|e| crate::source_diagnostics::at(e, location))?;
+            if let Stmt::CallSub { name, args } = &mut s {
+                actuals(
+                    name,
+                    args,
+                    &declared,
+                    interfaces,
+                    model,
+                    &mut prefix,
+                    serial,
+                )
+                .map_err(|e| crate::source_diagnostics::at(e, location))?;
             }
-            for child in children(s) {
-                scope(child, &declared, interfaces)?;
+            for child in children(&mut s) {
+                scope(child, &declared, interfaces, model, serial)?;
             }
+            if !prefix.is_empty() {
+                if let Stmt::DoWhile { cond, body } = &mut s {
+                    // Actual owner indices and descriptor setup must be
+                    // reevaluated each time the loop tests its condition.
+                    let condition = std::mem::replace(cond, Expr::Logical(true));
+                    prefix.push(Stmt::If {
+                        cond: Expr::Un(crate::ast::UnOp::Not, Box::new(condition)),
+                        then_body: vec![Stmt::Exit],
+                        else_body: None,
+                    });
+                    prefix.append(body);
+                    *body = std::mem::take(&mut prefix);
+                }
+            }
+            out.extend(prefix);
+            out.push(s);
         }
+        *body = out;
         Ok(())
     }
     let mut globals = Declarations::new();
@@ -229,5 +311,11 @@ pub(super) fn lower(program: &mut Program) -> Result<()> {
             globals.extend(declarations(body, &Declarations::new()));
         }
     }
-    scope(&mut program.body, &globals, &interfaces)
+    scope(
+        &mut program.body,
+        &globals,
+        &interfaces,
+        &model,
+        &mut serial,
+    )
 }

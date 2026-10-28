@@ -3,6 +3,42 @@
 //! Concrete scalar owned record components share rank-one descriptor storage.
 use super::*;
 
+pub(super) fn prepare(program: &mut Program) -> Result<()> {
+    fn collect(body: &mut [Stmt], types: &mut HashMap<String, Definition>) {
+        for s in body {
+            if let Stmt::DerivedType { name, components, .. } = s {
+                let mut definition = Definition::default();
+                for c in components {
+                    if let Stmt::DerivedDecl {
+                        type_name, names, attributes, dims, polymorphic: false,
+                    } = c {
+                        for name in names {
+                            // This pass can follow FINAL normalization, which
+                            // already expanded a scalar into physical rank one.
+                            let rank = if attributes.iter().any(|a| a == "@scalar_heap") {
+                                0
+                            } else {
+                                dims.len()
+                            };
+                            definition.components.push((
+                                name.clone(), type_name.clone(), attributes.clone(), rank,
+                            ));
+                        }
+                    }
+                }
+                types.insert(name.clone(), definition);
+            } else {
+                for child in crate::procedure_arguments::children(s) {
+                    collect(child, types);
+                }
+            }
+        }
+    }
+    let mut types = HashMap::new();
+    collect(&mut program.body, &mut types);
+    normalize(program, &types)
+}
+
 pub(super) fn normalize(program: &mut Program, types: &HashMap<String, Definition>) -> Result<()> {
     fn paths(name: &str, ty: &str, types: &HashMap<String, Definition>, out: &mut Vec<String>) {
         if let Some(d) = types.get(ty) {
