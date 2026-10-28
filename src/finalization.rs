@@ -542,9 +542,6 @@ impl Lower {
                         if *polymorphic || o.has("pointer") {
                             bail!("finalization of polymorphic objects and POINTER objects is not yet supported");
                         }
-                        if params.contains(name) && dims.is_empty() && o.has("allocatable") {
-                            bail!("scalar ALLOCATABLE dummies of finalizable type are not yet supported");
-                        }
                         if params.contains(name) && o.has("intent(out)") {
                             let mut calls = self.finalize(name, &o);
                             if o.has("optional") {

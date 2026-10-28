@@ -1644,9 +1644,11 @@ for the storage and model-expression restrictions.
 
 Concrete scalar derived allocatables also work without TARGET, including saved
 and module storage, with the supported record component layouts. MOVE_ALLOC
-transfers their allocation and owned components without copying; scalar concrete
-ALLOCATABLE dummy descriptors and allocatable scalar derived components remain
-unsupported. Explicit SAVE on intrinsic allocatable scalars and allocatable
+transfers their allocation and owned components without copying. Concrete scalar
+ALLOCATABLE dummy descriptors support caller allocation updates, OPTIONAL
+forwarding and finalization as described under [FINAL procedures](#scalar-finalization).
+Scalar allocatable component actuals remain unsupported. Explicit SAVE on
+intrinsic allocatable scalars and allocatable
 scalar DO control variables also remain unsupported. Existing host-association
 restrictions for allocatable storage also remain. Ordinary scalar dummy arguments do not gain ALLOCATABLE semantics.
 
@@ -1979,6 +1981,21 @@ explicit deallocation, and procedure/BLOCK exit. Scalar owned components use
 one-element internal descriptors with scalar FINAL dispatch. Copies of containers
 whose children own intrinsic allocations copy the data independently.
 
+Concrete scalar ALLOCATABLE derived-type dummies in subroutines and functions
+share the caller's allocation descriptor. INTENT(OUT) finalizes an allocated
+actual, releases its allocation, and enters the body unallocated. INTENT(IN)
+and INTENT(INOUT) preserve allocation on entry; dummies are not finalized on
+procedure exit. Allocation, deallocation, assignment and MOVE_ALLOC in the body
+update the caller's storage. This includes nested finalizable components,
+OPTIONAL absence and forwarding, keyword and generic calls, type-bound calls,
+PURE procedures and separate `.rmod` compilation. Hidden allocation identities
+also track allocation changes through TARGET dummies and invalidate old pointer
+aliases when an allocation is replaced. Actuals must be compatible scalar
+ALLOCATABLE variables or forwarded dummies; component actuals and recursive
+allocation-descriptor calls remain unsupported. See
+`tests/test_allocatable_scalar_finalization.py` and
+`tests/programs/xallocatable_scalar_final.f90`.
+
 Saved objects and objects remaining at STOP, ERROR STOP or main-program
 termination are not finalized for that event. Compiler-generated record copies
 are not separately finalized. Private module finalizers remain accessible through
@@ -1986,8 +2003,7 @@ their public type, including USE ONLY, renaming and separate `.rmod` compilation
 These lifecycle rules follow [Fortran 2023 section 7.5.6](https://j3-fortran.org/doc/year/24/24-007.pdf).
 
 The implementation diagnoses polymorphic and POINTER objects, type extension involving finalizable types,
-finalizable function results, TYPEOF/CLASSOF of finalizable objects, scalar
-ALLOCATABLE dummies, recursive owned
+finalizable function results, TYPEOF/CLASSOF of finalizable objects, recursive owned
 layouts involving finalizable types, polymorphic finalizable components, defined assignment
 involving finalizable types, and named EXIT/CYCLE or GOTO
 with live finalizable locals. DEALLOCATE STAT/ERRMSG with finalizable objects is
@@ -2563,8 +2579,10 @@ a move to saved/module storage; a moved allocation still owned by an automatic
 local retains the existing escape check. Supported pointers to scalar and fixed-array
 components, and pointers into supported owned array components, retain their
 underlying allocation as well.
-Scalar allocatable TARGET dummy descriptors and polymorphic allocated targets
-and model expressions remain unsupported.
+Scalar allocatable TARGET dummy descriptors share storage and allocation identity
+with compatible scalar allocatable variables and forwarded dummies. INTENT(OUT)
+replacement invalidates old aliases. Polymorphic allocated targets and model
+expressions remain unsupported.
 
 Scalar function results containing these pointer components are supported,
 including explicit RESULT names, implicit function-name results, early RETURN,

@@ -627,7 +627,7 @@ pub(super) fn prepare(program: &mut Program, defs: &mut Definitions) -> Result<(
     });
     if !owners && !allocated::needed(&mut program.body) {return Ok(());}
     persistent::prepare(program, defs)?;
-    allocated::prepare(program)?;
+    allocated::prepare(program, defs)?;
     if !owners {
         // Concrete allocated targets also work without a polymorphic pointer
         // component anywhere in the source group.

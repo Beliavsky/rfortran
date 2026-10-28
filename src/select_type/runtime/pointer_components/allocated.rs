@@ -3,6 +3,8 @@
 //! Concrete scalar allocatable targets use a one-element record descriptor.
 //! Unique allocation identities follow storage through MOVE_ALLOC.
 use super::*;
+#[path="allocated_dummies.rs"]
+mod dummies;
 
 const BACKING: &str = "@allocated_target_storage:";
 const EPOCH: &str = "@allocated_target_epoch:";
@@ -71,7 +73,8 @@ pub(super) fn needed(body: &mut [Stmt]) -> bool {
         || body.iter_mut().any(|s|children(s).into_iter().any(|b|needed(b)))
 }
 
-pub(super) fn prepare(program: &mut Program) -> Result<()> {
+pub(super) fn prepare(program: &mut Program, defs: &Definitions) -> Result<()> {
+    dummies::normalize(program, defs)?;
     fn scope(body: &mut Vec<Stmt>, params: &[String], module: bool) -> Result<()> {
         let vars = super::super::super::objects(body, &Objects::new());
         let mut out = vec![];
@@ -104,14 +107,13 @@ pub(super) fn prepare(program: &mut Program) -> Result<()> {
                             });
                             continue;
                         }
-                        if params.contains(n) {
-                            bail!("concrete scalar ALLOCATABLE TARGET dummy descriptors are not yet supported");
-                        }
+                        let dummy=params.contains(n);
                         let backing = format!("{n}$@allocated_storage");
                         let epoch = format!("{n}$@allocated_epoch");
                         let mut attrs = attributes.clone();
                         attrs.push(format!("{BACKING}{backing}"));
                         attrs.push(epoch_attribute(&epoch));
+                        if dummy {attrs.push("@allocated_scalar_dummy".into());}
                         out.push(Stmt::DerivedDecl {
                             type_name: type_name.clone(),
                             names: vec![n.clone()],
@@ -126,11 +128,22 @@ pub(super) fn prepare(program: &mut Program) -> Result<()> {
                                 "allocatable".into(),
                                 "@scalar_heap".into(),
                                 "@referenced_type".into(),
-                            ].into_iter().chain(vars[n].attrs.iter().filter(|a|a.as_str()=="target").cloned()).collect(),
+                            ].into_iter().chain(vars[n].attrs.iter().filter(|a|a.as_str()=="target" || dummy && (a.starts_with("intent(") || a.as_str()=="optional" || a.as_str()==crate::finalization::OUTPUT)).cloned()).collect(),
                             polymorphic: false,
                             dims: vec![id("@deferred_extent")],
                         });
-                        if module {
+                        if dummy {
+                            out.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![epoch.clone()]});
+                            let readonly=vars[n].attrs.iter().any(|a|a=="intent(in)");
+                            out.push(Stmt::DummyIntent{name:epoch.clone(),intent:if readonly {"intent(in)"}else{"intent(inout)"}.into()});
+                            if vars[n].attrs.iter().any(|a|a=="optional") {out.push(Stmt::DummyIntent{name:epoch.clone(),intent:"optional".into()});}
+                            if vars[n].attrs.iter().any(|a|a=="intent(out)") {
+                                let reset=set(&epoch,0);
+                                out.push(if vars[n].attrs.iter().any(|a|a=="optional") {
+                                    Stmt::If{cond:Expr::Call("present".into(),vec![id(n)]),then_body:vec![reset],else_body:None}
+                                }else{reset});
+                            }
+                        } else if module {
                             out.push(Stmt::InitializedDecl {
                                 kind: TypeSpec::Integer(Some(8)),
                                 attributes: vec!["@module_initializer".into()],
@@ -191,6 +204,7 @@ pub(in crate::select_type::runtime) fn finish(
     program: &mut Program,
     defs: &Definitions,
 ) -> Result<()> {
+    dummies::lower(program)?;
     // Preserve source signatures for model expressions, including function
     // results. Interface provenance may follow the parser's final RETURN.
     fn model_options(body: &mut [Stmt], targets: &mut bool, models: &mut bool) {
@@ -483,9 +497,10 @@ pub(in crate::select_type::runtime) fn finish(
             for e in expressions(&mut s) {
                 visit_expr(e, &mut |e| {
                     if let Expr::Call(n, a) = e {
-                        if n == "allocated" && a.len() == 1 {
+                        if matches!(n.as_str(),"allocated"|"present") && a.len() == 1 {
                             let actual = match &a[0] {
-                                Expr::Call(n, v) if n == "@keyword:scalar" && v.len() == 1 => &v[0],
+                                Expr::Call(key, v) if v.len() == 1 &&
+                                    (n=="allocated" && key=="@keyword:scalar" || n=="present" && key=="@keyword:a") => &v[0],
                                 e => e,
                             };
                             if let Expr::Ident(v) = actual {

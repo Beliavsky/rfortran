@@ -12,6 +12,42 @@ class AllocatedPointerTargets(unittest.TestCase):
     check = shared.PolymorphicPointers.check
     reject = shared.PolymorphicPointers.reject
 
+    def test_allocatable_target_dummy_descriptor(self):
+        self.check(ALLOC_TYPES+'''contains
+subroutine reset(t)
+type(child),allocatable,target,intent(out)::t
+allocate(t)
+t%value=5
+end subroutine
+subroutine attach(x,t)
+type(entry),intent(inout)::x
+type(child),allocatable,target,intent(inout)::t
+x%object=>t
+end subroutine
+end module
+'''+MAIN+'''call reset(target)
+call attach(copy,target)
+call copy%object%add(2)
+print *,target%value,copy%object%get(),associated(copy%object,target)
+nullify(copy%object)
+deallocate(target)
+end
+''','7 17 T')
+
+    def test_output_dummy_invalidates_previous_target_identity(self):
+        self.check(ALLOC_TYPES+'''contains
+subroutine reset(t)
+type(child),allocatable,target,intent(out)::t
+allocate(t)
+end subroutine
+end module
+'''+MAIN+'''allocate(target)
+copy%object=>target
+call reset(target)
+print *,copy%object%get()
+end
+''',error='deallocated or reallocated target',reference=False)
+
     def test_fixture(self):
         self.check((ROOT/'tests/programs/xpolymorphic_pointer_allocated_target.f90').read_text(), '14 T\nT F 14\nF')
 
