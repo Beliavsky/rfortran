@@ -85,7 +85,7 @@ pub(super) fn targets(
                 } if dims.is_empty()
                     && has("target")
                     && !has("pointer")
-                    && !has("allocatable")
+                    && (!has("allocatable") || pointer_components::allocated::info(ds).is_some())
                     && defs.distance(type_name, parent).is_some() =>
                 {
                     Some((type_name.clone(), n.clone()))
@@ -120,7 +120,7 @@ impl Lower<'_> {
         };
         if name=="@pointer_component_targets" {return Ok(Some(vec![]));}
         if matches!(name.as_str(),"@pointer_component_load"|"@pointer_component_store"|"@pointer_component_store_static") {
-            let [Expr::Ident(p),tag]=args.as_slice() else {bail!("invalid pointer component descriptor transfer");};
+            let [Expr::Ident(p),tag,epoch]=args.as_slice() else {bail!("invalid pointer component descriptor transfer");};
             let object=vars.get(p).filter(|o|o.pointer).context("missing pointer component view")?;
             let mut out = vec![];
             if name == "@pointer_component_store_static" {
@@ -131,6 +131,9 @@ impl Lower<'_> {
             out.push(if name=="@pointer_component_load" {
                 Stmt::Assign{name:object.tag.clone(),value:tag.clone()}
             } else {pointer_components::assign(tag,id(&object.tag))?});
+            out.push(if name=="@pointer_component_load" {
+                Stmt::Assign{name:object.epoch.clone(),value:epoch.clone()}
+            } else {pointer_components::assign(epoch,id(&object.epoch))?});
             return Ok(Some(out));
         }
         if name == "@pointer_associate" {
@@ -141,7 +144,7 @@ impl Lower<'_> {
                 return Ok(None);
             };
             if null(target) {
-                return Ok(Some(vec![set(&object.tag, 0)]));
+                return Ok(Some(vec![set(&object.tag, 0),set(&object.epoch, 0)]));
             }
             let Expr::Ident(target) = target else {
                 bail!("polymorphic POINTER association currently requires a scalar TARGET variable or local polymorphic pointer");
@@ -159,10 +162,10 @@ impl Lower<'_> {
                             .iter()
                             .position(|(_, v)| v == n)
                             .map_or(0, |i| i + 1);
-                        vec![set(&object.tag, tag)]
+                        vec![set(&object.tag, tag),Stmt::Assign{name:object.epoch.clone(),value:id(&other.epoch)}]
                     })
                     .collect();
-                return Ok(Some(vec![cases(other, bodies, vec![set(&object.tag, 0)])]));
+                return Ok(Some(vec![cases(other, bodies, vec![set(&object.tag, 0),set(&object.epoch, 0)])]));
             }
             let Some(index) = object.variants.iter().position(|(_, n)| n == target) else {
                 if !decls.contains_key(target) {
@@ -170,7 +173,15 @@ impl Lower<'_> {
                 }
                 bail!("polymorphic POINTER target `{target}` must be a compatible concrete scalar TARGET variable; allocated and component targets are not yet supported");
             };
-            return Ok(Some(vec![set(&object.tag, index + 1)]));
+            let mut out = vec![];
+            let epoch = if let Some(i) = decls.get(target).and_then(|d| pointer_components::allocated::info(d)) {
+                out.push(Stmt::If { cond: Expr::Bin(BinOp::Le,Box::new(id(&i.epoch)),Box::new(int(0))),
+                    then_body: failure(format!("pointer association to unallocated target `{target}`")), else_body: None });
+                id(&i.epoch)
+            } else {int(0)};
+            out.push(set(&object.tag, index + 1));
+            out.push(Stmt::Assign{name:object.epoch.clone(),value:epoch});
+            return Ok(Some(out));
         }
         if name == "@nullify" {
             let mut out = vec![];
@@ -179,6 +190,7 @@ impl Lower<'_> {
                 if let Expr::Ident(n) = arg {
                     if let Some(o) = vars.get(n).filter(|o| o.pointer) {
                         out.push(set(&o.tag, 0));
+                        out.push(set(&o.epoch, 0));
                         continue;
                     }
                 }
@@ -254,7 +266,8 @@ impl Lower<'_> {
                         checks.push(Expr::Bin(
                             BinOp::And,
                             Box::new(eq(&object.tag, i + 1)),
-                            Box::new(eq(&other.tag, j + 1)),
+                            Box::new(Expr::Bin(BinOp::And,Box::new(eq(&other.tag, j + 1)),
+                                Box::new(Expr::Bin(BinOp::Eq,Box::new(id(&object.epoch)),Box::new(id(&other.epoch)))))),
                         ));
                     }
                 }
@@ -270,7 +283,8 @@ impl Lower<'_> {
                     .variants
                     .iter()
                     .position(|(_, n)| n == target)
-                    .map_or(Expr::Logical(false), |i| eq(&object.tag, i + 1))
+                    .map_or(Expr::Logical(false), |i| Expr::Bin(BinOp::And,Box::new(eq(&object.tag, i + 1)),
+                        Box::new(pointer_components::allocated::valid(target,&object.epoch,decls))))
             }
         } else {
             Expr::Bin(BinOp::Ne, Box::new(id(&object.tag)), Box::new(int(0)))

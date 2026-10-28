@@ -2415,7 +2415,25 @@ Persistent owners currently accept associations to explicit SAVE or module
 targets. Storing another borrowed target, directly, through an owner dummy, or
 by copying an owner, produces a runtime diagnostic. A conditional owner copy
 whose association selects a supported static target is allowed. General borrowed
-or allocated target descriptors remain future work.
+escaping target descriptors remain future work.
+
+These components also support concrete scalar `TYPE(t), ALLOCATABLE, TARGET`
+variables, including local, module and saved targets. Allocation uses the existing
+record-array descriptor, so aliases borrow the same storage and do not acquire
+ownership. Default component initialization, initialization checks, component
+arrays, binding calls and separately compiled module targets retain their existing
+record-storage behavior. Whole-object assignment allocates an unallocated target
+and preserves aliases when assigning to an existing allocation. NULLIFY and
+INTENT(OUT) owner reset do not deallocate the target.
+
+Associating with an unallocated target produces a runtime diagnostic. Each
+association records the allocation generation; dereferencing an alias after its
+target is deallocated or reallocated is diagnosed instead of silently selecting
+the replacement allocation. Saved/module allocated targets can be returned by
+owner factories; ordinary local allocations retain the existing escape restriction.
+STAT/ERRMSG report allocation-state errors without changing existing associations.
+Scalar allocatable TARGET dummy descriptors, polymorphic allocated targets,
+SOURCE/MOLD allocation and MOVE_ALLOC of these targets remain unsupported.
 
 Scalar function results containing these pointer components are supported,
 including explicit RESULT names, implicit function-name results, early RETURN,
@@ -2449,6 +2467,9 @@ association state and saved owners across separate calls.
 Run `python tests/test_polymorphic_pointer_results.py` for function-result tests.
 `tests/programs/xpolymorphic_pointer_result.f90` demonstrates a factory, shared
 target mutation, dispatch and a null result.
+Run `python tests/test_polymorphic_pointer_allocated_targets.py` for allocated
+target tests. `tests/programs/xpolymorphic_pointer_allocated_target.f90` shows
+an allocating factory, shared mutation and explicit target deallocation.
 
 Run `python tests/test_polymorphic_pointer_components.py`. The reduced example
 `tests/programs/xpolymorphic_pointer_array_component.f90` prints `T 7`.

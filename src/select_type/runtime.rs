@@ -22,6 +22,7 @@ struct Object {
     dummy: bool,
     output: bool,
     tag: String,
+    epoch: String,
     variants: Vec<(String, String)>,
 }
 type Runtime = BTreeMap<String, Object>;
@@ -274,6 +275,7 @@ impl Lower<'_> {
                     dummy: params.contains(n),
                     output: params.contains(n) && v.attrs.iter().any(|a| a == "intent(out)"),
                     tag: format!("{stem}$tag"),
+                    epoch: format!("{stem}$epoch"),
                     variants: if pointer {
                         pointers::targets(n, &declared, &v.kind, self.defs, body)
                     } else {
@@ -330,6 +332,7 @@ impl Lower<'_> {
                 kind: TypeSpec::Integer(None),
                 names: vec![object.tag.clone()],
             });
+            if object.pointer { storage.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![object.epoch.clone()] }); }
             if object.dummy {
                 storage.push(Stmt::DummyIntent {
                     name: object.tag.clone(),
@@ -395,6 +398,7 @@ impl Lower<'_> {
             if object.member { continue; }
             if !object.dummy {
                 entry.push(set(&object.tag, 0));
+                if object.pointer { entry.push(set(&object.epoch, 0)); }
             } else if object.output {
                 entry.push(cases(
                     object,
@@ -880,7 +884,12 @@ impl Lower<'_> {
                         local_decls.insert(tag.clone(),vec![declaration.clone()]);
                         prefix.push(declaration);
                         prefix.push(Stmt::Assign{name:tag.clone(),value:id(&object.tag)});
-                        Some(tag)
+                        let epoch = format!("{tag}$epoch");
+                        let declaration = Stmt::VarDecl {kind:TypeSpec::Integer(Some(8)),names:vec![epoch.clone()]};
+                        local_decls.insert(epoch.clone(),vec![declaration.clone()]);
+                        prefix.push(declaration);
+                        prefix.push(Stmt::Assign{name:epoch.clone(),value:id(&object.epoch)});
+                        Some((tag,epoch))
                     } else {None};
                     let mut branches=vec![];
                     for (kind,_) in &object.variants {
@@ -893,7 +902,7 @@ impl Lower<'_> {
                         }
                         let mut local=vars.clone();
                         let mut view=object.clone();
-                        if let Some(tag)=&snapshot {view.tag=tag.clone();}
+                        if let Some((tag,epoch))=&snapshot {view.tag=tag.clone();view.epoch=epoch.clone();}
                         let mut branch=if let Some((class,guard_kind,body))=best {
                             view.kind=guard_kind.into(); view.polymorphic=class; body
                         } else {default.clone().unwrap_or_default()};
@@ -969,7 +978,7 @@ impl Lower<'_> {
                     continue;
                 }
                 chosen.push((n.clone(), kind.clone(), storage.clone()));
-                bodies.push(self.dispatch(
+                let mut branch = self.dispatch(
                     s.clone(),
                     used,
                     index + 1,
@@ -977,7 +986,12 @@ impl Lower<'_> {
                     decls,
                     pure,
                     location,
-                )?);
+                )?;
+                if o.pointer && decls.get(storage).and_then(|d| pointer_components::allocated::info(d)).is_some() {
+                    branch = vec![Stmt::If { cond: pointer_components::allocated::valid(storage, &o.epoch, decls), then_body: branch,
+                        else_body: Some(failure(format!("use of pointer to deallocated or reallocated target `{}`", o.display))) }];
+                }
+                bodies.push(branch);
                 chosen.pop();
             }
             return Ok(vec![cases(
@@ -999,7 +1013,7 @@ impl Lower<'_> {
                 parameter
             } else {n.clone()};
             params.push(parameter.clone());
-            args.push(if object.pointer {id(storage)} else {Expr::Call(storage.clone(), vec![int(1)])});
+            args.push(if object.pointer {pointer_components::allocated::element(storage, decls)} else {Expr::Call(storage.clone(), vec![int(1)])});
             body.push(Stmt::DerivedDecl {
                 type_name: object.kind.clone(),
                 names: vec![parameter],
@@ -1016,6 +1030,14 @@ impl Lower<'_> {
         let mut captures: HashSet<String> = decls.keys().filter(|n| uses(&s, n)).cloned().collect();
         loop {
             let mut added = false;
+            for n in captures.clone() {
+                if let Some(i) = decls.get(&n).and_then(|d| pointer_components::allocated::info(d)) {
+                    if let Some(b) = i.backing {
+                        added |= captures.insert(b);
+                        added |= captures.insert(i.epoch);
+                    }
+                }
+            }
             for n in decls.keys() {
                 if captures.contains(n) {
                     continue;
@@ -1031,10 +1053,11 @@ impl Lower<'_> {
         }
         for (n, d) in decls {
             let parameter=d.iter().any(|s|matches!(s,Stmt::InitializedDecl{attributes,..} if attributes.iter().any(|a|a=="parameter")));
+            let virtual_scalar = pointer_components::allocated::info(d).is_some_and(|i| i.backing.is_some());
             if used.iter().any(|(v, _)| *v == n) || (!parameter && !captures.contains(n)) {
                 continue;
             }
-            if !parameter {
+            if !parameter && !virtual_scalar {
                 params.push(n.clone());
                 args.push(id(n));
             }
@@ -1125,6 +1148,7 @@ pub(super) fn resolve(mut program: Program, defs: &mut Definitions) -> Result<Pr
     }
     let has_components=defs.has_polymorphic_components;
     if !needed(&program.body) && !has_components {
+        pointer_components::allocated::finish(&mut program)?;
         return Ok(program);
     }
     defs.validate(&program.body, &Objects::new())?;
@@ -1162,5 +1186,6 @@ pub(super) fn resolve(mut program: Program, defs: &mut Definitions) -> Result<Pr
         }
     }
     restore(&mut program.body);
+    pointer_components::allocated::finish(&mut program)?;
     Ok(program)
 }

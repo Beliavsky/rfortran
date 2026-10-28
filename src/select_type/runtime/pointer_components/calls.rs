@@ -301,6 +301,7 @@ impl Calls {
         locals: &HashSet<String>,
         scope: &crate::operators::OwnerScope,
         persistent_owners: &HashSet<String>,
+        epochs: &HashMap<String, String>,
     ) -> Result<()> {
         let Some((template, destination)) = self.templates.get(name).cloned() else {
             return Ok(());
@@ -417,6 +418,14 @@ impl Calls {
             }
         }
         for ((kind, target), hidden) in targets.iter().zip(&hidden) {
+            let mut metadata = vec![];
+            if let Some(epoch) = epochs.get(target) {
+                let formal = format!("{hidden}$epoch");
+                params.push(formal.clone()); args.push(id(epoch));
+                body.insert(0, Stmt::VarDecl {kind:TypeSpec::Integer(Some(8)),names:vec![formal.clone()]});
+                body.insert(0, Stmt::DummyIntent {name:formal.clone(),intent:"intent(in)".into()});
+                metadata.push(allocated::epoch_attribute(&formal));
+            }
             params.push(hidden.clone());
             args.push(id(target));
             body.insert(
@@ -433,7 +442,7 @@ impl Calls {
                         }
                         .into(),
                         "@referenced_type".into(),
-                    ],
+                    ].into_iter().chain(metadata).collect(),
                     polymorphic: false,
                     dims: vec![],
                 },
@@ -471,6 +480,7 @@ impl Calls {
         locals: &HashSet<String>,
         scope: &crate::operators::OwnerScope,
         persistent_owners: &HashSet<String>,
+        epochs: &HashMap<String, String>,
     ) -> Result<()> {
         let mut location = None;
         for s in body {
@@ -488,13 +498,13 @@ impl Calls {
             }
             (|| -> Result<()> {
                 if let Stmt::CallSub { name, args } = s {
-                    self.call(name, args, targets, host, locals, scope, persistent_owners)?;
+                    self.call(name, args, targets, host, locals, scope, persistent_owners, epochs)?;
                 }
                 for e in expressions(s) {
                     let mut error = None;
                     visit_expr(e, &mut |e| {
                         if let Expr::Call(name, args) = e {
-                            if let Err(e) = self.call(name, args, targets, host, locals, scope, persistent_owners) {
+                            if let Err(e) = self.call(name, args, targets, host, locals, scope, persistent_owners, epochs) {
                                 error = Some(e);
                             }
                         }
@@ -504,7 +514,7 @@ impl Calls {
                     }
                 }
                 for child in children(s) {
-                    self.statements(child, targets, host, locals, scope, persistent_owners)?;
+                    self.statements(child, targets, host, locals, scope, persistent_owners, epochs)?;
                 }
                 Ok(())
             })()
@@ -562,7 +572,7 @@ impl Calls {
                     ..
                 } = s
                 {
-                    if dims.is_empty() && has("target") && !has("pointer") && !has("allocatable") {
+                    if dims.is_empty() && has("target") && !has("pointer") && (!has("allocatable") || allocated::info(ds).is_some()) {
                         if environment.map_or_else(
                             || self.persistent.contains_key(n) || referenced.contains(n),
                             |args| args.contains(&id(n)),
@@ -597,7 +607,8 @@ impl Calls {
         let mut persistent_owners: HashSet<_> = self.owners.keys().cloned().collect();
         persistent_owners.extend(super::super::super::objects(body, &Objects::new())
             .into_iter().filter(|(_, v)| v.attrs.iter().any(|a| a == persistent::OWNER)).map(|(n, _)| n));
-        self.statements(body, &targets, host, &locals, &scope, &persistent_owners)?;
+        let epochs = declared.iter().filter_map(|(n,d)| allocated::info(d).map(|i|(n.clone(),i.epoch))).collect();
+        self.statements(body, &targets, host, &locals, &scope, &persistent_owners, &epochs)?;
         body.extend(self.owners.keys().cloned().map(crate::imports::reference));
         body.extend(self.persistent.keys().cloned().map(crate::imports::reference));
         // Every proxy in this activation uses the same ordered identity table.

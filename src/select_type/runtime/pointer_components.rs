@@ -6,12 +6,14 @@
 //! dispatch without copying or owning the target storage.
 use super::*;
 mod calls;
+pub(super) mod allocated;
 pub(super) mod persistent;
 
 #[derive(Clone)]
 struct Member {
     kind: String,
     tag: String,
+    epoch: String,
     rank: usize,
     readonly: bool,
     persistent: bool,
@@ -75,6 +77,7 @@ fn members(
                 Member {
                     kind: component.kind.clone(),
                     tag: format!("{path}%{}", field(name)),
+                    epoch: format!("{path}%{}$epoch", field(name)),
                     rank,
                     readonly,
                     persistent,
@@ -207,6 +210,12 @@ impl Scope<'_> {
             }
             id(&member.tag)
         };
+        let mut epoch = tag.clone();
+        visit_expr(&mut epoch, &mut |e| match e {
+            Expr::Ident(n) if n == &member.tag => *n = member.epoch.clone(),
+            Expr::Call(n, _) if n.starts_with("@record_component:") => *n = format!("{n}$epoch"),
+            _ => {}
+        });
         *self.serial += 1;
         let proxy = format!("@pointer_component_view{}", self.serial);
         self.declarations.push(Stmt::DerivedDecl {
@@ -227,12 +236,12 @@ impl Scope<'_> {
         });
         prefix.push(Stmt::CallSub {
             name: "@pointer_component_load".into(),
-            args: vec![id(&proxy), tag.clone()],
+            args: vec![id(&proxy), tag.clone(), epoch.clone()],
         });
         if write {
             writes.push(Stmt::CallSub {
                 name: if member.persistent { "@pointer_component_store_static" } else { "@pointer_component_store" }.into(),
-                args: vec![id(&proxy), tag],
+                args: vec![id(&proxy), tag, epoch],
             });
         }
         Ok(Some((proxy, suffix, arguments)))
@@ -549,7 +558,7 @@ fn scope(
         static_counts: defs.fields.keys().map(|kind| {
             let count = globals.values().filter(|v| v.rank == 0 && !v.polymorphic
                 && v.attrs.iter().any(|a| a == "target")
-                && !v.attrs.iter().any(|a| a == "pointer" || a == "allocatable")
+                && !v.attrs.iter().any(|a| a == "pointer")
                 && defs.distance(&v.kind, kind).is_some()).count();
             (kind.clone(), count)
         }).collect(),
@@ -595,6 +604,9 @@ fn schemas(body: &mut [Stmt], defs: &mut Definitions) -> Result<()> {
                                 let fields = defs.fields.get_mut(name).unwrap();
                                 fields.remove(&n);
                                 fields.insert(tag, None);
+                                let epoch = format!("{}$epoch", field(&n));
+                                out.push(Stmt::InitializedDecl { kind: TypeSpec::Integer(Some(8)), attributes: vec![], entities: vec![(epoch.clone(), Some(int(0)))] });
+                                fields.insert(epoch, None);
                             }
                         }
                         Stmt::CallSub { name, args }
@@ -629,6 +641,7 @@ pub(super) fn prepare(program: &mut Program, defs: &mut Definitions) -> Result<(
         return Ok(());
     }
     persistent::prepare(program, defs)?;
+    allocated::prepare(program)?;
     calls::prepare(program, defs)?;
     let mut persistent = persistent::declarations(program);
     persistent.extend(persistent::owners(program, defs)?);

@@ -39,7 +39,7 @@ pub(in crate::select_type::runtime) fn declarations(program: &Program) -> Declar
                 if v.rank == 0
                     && !v.polymorphic
                     && v.attrs.iter().any(|a| a == "target")
-                    && !v.attrs.iter().any(|a| a == "pointer" || a == "allocatable")
+                    && !v.attrs.iter().any(|a| a == "pointer")
                 {
                     if let Some(d) = declared.get(&n) {
                         out.insert(n, d.clone());
@@ -48,6 +48,16 @@ pub(in crate::select_type::runtime) fn declarations(program: &Program) -> Declar
             }
         }
     }
+    // Include the allocation descriptor and epoch used by static target views.
+    let mut extra = vec![];
+    for ds in out.values() { if let Some(i) = super::allocated::info(ds) {
+        extra.push(i.epoch);
+        if let Some(b) = i.backing { extra.push(b); }
+    }}
+    for s in &program.body { if let Stmt::Module { body, .. } = s {
+        let ds = super::super::declarations(body, &Declarations::new());
+        for n in &extra { if let Some(d) = ds.get(n) { out.insert(n.clone(), d.clone()); } }
+    }}
     out
 }
 
@@ -175,7 +185,8 @@ pub(super) fn prepare(program: &mut Program, defs: &Definitions) -> Result<()> {
                         && ((v.rank == 0 && v.attrs.iter().any(|a| a == "target"))
                             || owner_kinds.contains(&v.kind))
                         && v.attrs.iter().any(|a| a == "save")
-                        && !v.attrs.iter().any(|a| a == "pointer" || a == "allocatable")
+                        && !v.attrs.iter().any(|a| a == "pointer")
+                        && (!v.attrs.iter().any(|a| a == "allocatable") || (v.rank == 0 && v.attrs.iter().any(|a| a == "target") && !owner_kinds.contains(&v.kind)))
                 })
                 .map(|(n, _)| n)
                 .collect();
