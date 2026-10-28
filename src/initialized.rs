@@ -19,6 +19,7 @@ struct Variable {
     elements: BTreeMap<i64, State>,
     runtime_sized: bool,
     heap_length: Option<Expr>,
+    heap_allocated: Option<Expr>,
     element_width: i64,
     character_length: Option<usize>,
 }
@@ -444,9 +445,15 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                 let v = env.get_mut(name).ok_or_else(|| anyhow::anyhow!("undefined output argument `{name}`"))?;
 
                 v.state = State::No; v.elements.clear();
-                stmt = if v.heap_length.is_some() {Stmt::Block{body:vec![]}} else if let Some(extent)=v.extent {
+                // OUT association undefines existing heap elements as well as
+                // fixed storage. A CHARACTER byte count can outlive its freed
+                // buffer, so only clear the mask while the allocation exists.
+                stmt = if let Some(extent)=v.heap_length.clone().or_else(||v.extent.map(int)) {
                     *serial+=1;let index=format!("@undefine_index_{serial}");
-                    Stmt::Block{body:vec![Stmt::VarDecl{kind:TypeSpec::Integer(None),names:vec![index.clone()]},Stmt::Do{var:index.clone(),start:int(1),end:int(extent),body:vec![Stmt::AssignIndex{name:v.flag.clone(),indices:vec![Expr::Ident(index)],value:int(0)}]}]}
+                    let clear=Stmt::Block{body:vec![Stmt::VarDecl{kind:TypeSpec::Integer(None),names:vec![index.clone()]},Stmt::Do{var:index.clone(),start:int(1),end:extent,body:vec![Stmt::AssignIndex{name:v.flag.clone(),indices:vec![Expr::Ident(index)],value:int(0)}]}]};
+                    if v.heap_length.is_some() {
+                        if let Some(cond)=&v.heap_allocated {Stmt::If{cond:cond.clone(),then_body:vec![clear],else_body:None}} else {clear}
+                    } else {clear}
                 } else { Stmt::Assign { name: v.flag.clone(), value: int(0) } };
             }
             Stmt::CallSub { name,args } if name=="@stop" || name=="@error_stop" => {
@@ -601,7 +608,7 @@ fn scope(body: &mut Vec<Stmt>, inherited: &mut Env, params: &[String], result: O
         let zero_sized=body.iter().any(|s|matches!(s,Stmt::VarDecl{kind:TypeSpec::Character(Some(0)),names} if names.contains(&name)))
             && !body.iter().any(|s|matches!(s,Stmt::CallSub{name:n,args} if n=="@heap_character_bind" && args.first()==Some(&Expr::Ident(name.clone()))));
         let character_length=character_lengths.get(&name).copied();
-        let v = Variable { zero_sized, element_width, character_length, flag: flag.clone(), extent, state: if assigned { State::Yes } else { State::No }, elements: BTreeMap::new(), runtime_sized, heap_length: heap_shapes.contains_key(&format!("@heap:{name}")).then(||crate::allocatables::length(&name,&heap_shapes).unwrap()) };
+        let v = Variable { zero_sized, element_width, character_length, flag: flag.clone(), extent, state: if assigned { State::Yes } else { State::No }, elements: BTreeMap::new(), runtime_sized, heap_length: heap_shapes.contains_key(&format!("@heap:{name}")).then(||crate::allocatables::length(&name,&heap_shapes).unwrap()), heap_allocated:crate::allocatables::allocated(&name,&heap_shapes) };
         if let Some(n) = extent {
             prefix.push(Stmt::ArrayDecl { kind: TypeSpec::Integer(None), name: flag.clone(), dims: vec![int(n)] });
             let index = format!("@init_clear_{serial}");

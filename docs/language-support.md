@@ -3296,6 +3296,19 @@ functions, ranks through 15, differing result ranks, sections, empty results,
 array expressions, writable arguments and module side effects. `tests/programs/xabove_diag.f90`
 prints `4.0 7.0 8.0` with or without PURE.
 
+Whole runtime-sized allocatable arrays also retain their storage identity when
+passed to ordinary INTENT(OUT)/INTENT(INOUT) function dummies. This includes
+allocatable components forwarded through type-bound array-valued functions:
+updates reach the original owner, preserving its bounds. See
+`tests/programs/xwritable_component_function.f90` and
+`python tests/test_allocatable_component_forward.py` for runtime-bound numeric
+and LOGICAL examples, multidimensional arrays, overridden bindings and separate
+module compilation. Only canonical whole-array views are recovered this way;
+computed expressions retain their existing argument-association checks.
+INTENT(OUT) also clears initialization flags for the active elements of
+runtime-sized arrays, so values left over from the caller do not count as
+assignments made by the function.
+
 ### Defined operators with array operands
 
 Defined dotted operators such as `.notin.` can select functions with array
