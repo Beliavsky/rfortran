@@ -1599,9 +1599,11 @@ impl Lower {
                         if attributes.iter().any(|a| a == "pointer") {
                             self.pointer_fields(type_name)?;
                         }
-                        if attributes.iter().any(|a|a=="intent(out)") && self.fields(type_name)?.iter().any(|f|f.heap.is_some()) {
-                            bail!("INTENT(OUT) arrays of records with allocatable components require entry finalization, which is not yet supported");
-                        }
+                        // INTENT on a POINTER applies to its association, not
+                        // to the lifetime or defaults of the pointed-to object.
+                        let output = attributes.iter().any(|a| a == "intent(out)")
+                            && !attributes.iter().any(|a| a == "pointer");
+                        let allocatable = attributes.iter().any(|a| a == "allocatable");
                         for e in dims.iter_mut() {
                             self.expression(e, &mut objects, &mut prefix)?;
                         }
@@ -1613,6 +1615,7 @@ impl Lower {
                         let mut defaults = vec![];
                         for n in names {
                             let initialize = initialize(n);
+                            let mut entry = vec![];
                             for f in self.fields(type_name)? {
                                 let field = storage(n, &f.name);
                                 prefix.push(Stmt::ArrayDecl {
@@ -1621,8 +1624,16 @@ impl Lower {
                                     dims: storage_dims(&f, dims),
                                 });
                                 if f.heap.is_some() && !dummies.contains(n) && !attributes.iter().any(|a|a.starts_with("intent(")) {prefix.push(Stmt::DummyIntent {name:field.clone(),intent:"@record_slots".into()});}
-                                if let (true, Some(value)) = (initialize, &f.default) {
-                                    defaults.extend(self.default_fill(n, &f, value, dims.len())?);
+                                if output && f.heap.is_some() {
+                                    // These slots still own the caller's allocations. Keep
+                                    // their handles defined until entry cleanup consumes them.
+                                    entry.push(Stmt::CallSub {
+                                        name: "@heap_record_drop_array".into(),
+                                        args: vec![Expr::Ident(field.clone()), Expr::Call("size".into(), vec![Expr::Ident(field.clone())])],
+                                    });
+                                }
+                                if let (true, Some(value)) = (initialize || (output && !allocatable), &f.default) {
+                                    entry.extend(self.default_fill(n, &f, value, dims.len())?);
                                 }
                                 for intent in attributes.iter().filter(|a| {
                                     matches!(
@@ -1632,10 +1643,31 @@ impl Lower {
                                 }) {
                                     prefix.push(Stmt::DummyIntent {
                                         name: field.clone(),
-                                        intent: intent.clone(),
+                                        intent: if intent == "intent(out)" && (f.heap.is_some() || allocatable) {
+                                            "intent(inout)".into()
+                                        } else { intent.clone() },
                                     });
                                 }
                             }
+                            if output && allocatable {
+                                entry.push(Stmt::CallSub {
+                                    name: "@deallocate".into(),
+                                    args: self.fields(type_name)?.iter().map(|f| Expr::Ident(storage(n, &f.name))).collect(),
+                                });
+                                let first = storage(n, &self.fields(type_name)?[0].name);
+                                entry = vec![Stmt::If {
+                                    cond: Expr::Call("allocated".into(), vec![Expr::Ident(first)]),
+                                    then_body: entry, else_body: None,
+                                }];
+                            }
+                            if output && attributes.iter().any(|a| a == "optional") {
+                                let first = storage(n, &self.fields(type_name)?[0].name);
+                                entry = vec![Stmt::If {
+                                    cond: Expr::Call("present".into(), vec![Expr::Ident(first)]),
+                                    then_body: entry, else_body: None,
+                                }];
+                            }
+                            defaults.extend(entry);
                         }
                         prefix.extend(defaults);
                         return Ok(());
@@ -1740,6 +1772,15 @@ impl Lower {
                         let mut flat = vec![];
                         let mut defaults = vec![];
                         for mut e in std::mem::take(args) {
+                            // A rank-one allocation with explicit lower bounds
+                            // is parsed as a section, rather than a Call.
+                            if name == "@allocate" {
+                                if let Expr::Section { name, lower, upper, stride } = e {
+                                    e = Expr::Call(name, vec![Expr::Section {
+                                        name: String::new(), lower, upper, stride,
+                                    }]);
+                                }
+                            }
                             let (n, dims) = match &e {
                                 Expr::Call(n, d) => (n, Some(d)),
                                 Expr::Ident(n) => (n, None),

@@ -419,7 +419,11 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
             Stmt::Do { var, start, end, body } => {
                 read(start, env, &mut before, serial)?; read(end, env, &mut before, serial)?;
                 write(var, None, env, &mut before, serial);
-                if !matches!((constant(start), constant(end)), (Some(a), Some(b)) if a > b) {
+                if matches!((constant(start), constant(end)), (Some(a), Some(b)) if a > b) {
+                    // Unreachable owned-allocation operations would otherwise
+                    // reach codegen without their initialization-mask operands.
+                    body.clear();
+                } else {
                     let mut inner = env.clone(); possible_writes(body, &mut inner);
                     // A reduction over runtime-sized storage can execute zero
                     // iterations. Check its uninitialized elements only if read.

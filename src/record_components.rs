@@ -89,12 +89,12 @@ impl Lower {
                 return Ok(());
             }
         }
-        let Some((owner, field)) = name.rsplit_once('%') else {
+        let Some((owner, field)) = name.match_indices('%').find_map(|(i, _)| {
+            let (owner, field) = (&name[..i], &name[i + 1..]);
+            self.heap_component(owner, field, objects).then_some((owner, field))
+        }) else {
             return Ok(());
         };
-        if !self.heap_component(owner, field, objects) {
-            return Ok(());
-        }
         let (owner, field) = (owner.to_owned(), field.to_owned());
         let mut parent = indices.clone();
         let component = component_subscripts(&mut parent);

@@ -183,8 +183,10 @@ pub(super) fn emit(
     let IExpr::Ident(mask) = args.last().unwrap() else {
         bail!("missing record component initialization mask")
     };
-    let data_cell = heap_cell(b, ptr, storage(local)?)?;
-    let mask_cell = heap_cell(b, ptr, storage(mask)?)?;
+    let data_cell = heap_cell(b, ptr, storage(local)?)
+        .with_context(|| format!("owned component operation `{name}` on `{local}`"))?;
+    let mask_cell = heap_cell(b, ptr, storage(mask)?)
+        .with_context(|| format!("owned component initialization mask `{mask}`"))?;
     let metadata = &args[2..args.len() - 1];
     let mut addresses = vec![];
     for meta in metadata {

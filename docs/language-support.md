@@ -2032,8 +2032,17 @@ is checked.
 See `tests/programs/xowned_record_elemental.f90` and
 `tests/test_owned_record_array_operations.py`.
 
-Array constructors of records with ALLOCATABLE components, INTENT(OUT) array
-dummies of these types, general array-valued function results of these types,
+INTENT(OUT) array dummies release their existing owned components on entry and
+apply component defaults. Components without defaults become undefined. This
+includes nested scalar components, fixed array defaults, optional and forwarded
+dummies, empty arrays and sections, and parent ranks through 15. Allocatable
+INTENT(OUT) parent arrays release both their components and their outer storage,
+and enter the procedure unallocated. Nonallocatable dummies preserve the caller's
+array bounds and storage. User FINAL procedures remain unsupported.
+See `tests/test_owned_record_intent_out.py` and
+`tests/programs/xowned_record_intent_out.f90`.
+
+Array constructors of records with ALLOCATABLE components, general array-valued function results of these types,
 deferred-length CHARACTER allocatable components, POINTER components, intrinsic
 copies of containers whose array elements own allocations, and further arrays of
 descriptor-owning containers remain unsupported. Array-valued ELEMENTAL functions
