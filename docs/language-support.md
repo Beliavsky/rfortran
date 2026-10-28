@@ -1941,7 +1941,7 @@ and preserves the right-hand side before finalizing the destination. Unallocated
 objects are not finalized. MOVE_ALLOC finalizes an allocated destination before
 replacing its allocation; the source allocation moves without finalization.
 The containing object's finalizer precedes finalizers of its nonallocatable
-scalar components. Primitive allocatable components remain available during
+scalar and fixed-array components. Primitive allocatable components remain available during
 finalization and are subsequently released by normal allocation cleanup.
 
 Array finalization selects a non-elemental finalizer with the same rank, from
@@ -1949,6 +1949,16 @@ one through fifteen, and passes the whole array once, including zero-sized
 arrays. If no matching rank exists, an ELEMENTAL finalizer is applied to each
 element. A non-elemental scalar finalizer is not an array fallback. Nested scalar
 components are finalized after the containing array's finalizer completes.
+Fixed-size derived-type array components also select FINAL by their own rank,
+with ELEMENTAL fallback, including empty components and ranks through 15.
+Containers need not have a FINAL procedure of their own. Explicit component
+bounds, nested fixed components, arrays of containers within the supported
+record layout, assignment, INTENT(OUT), parent deallocation and automatic
+cleanup are covered by `tests/test_fixed_component_finalization.py` and
+`tests/programs/xfixed_component_final.f90`.
+For arrays of containers, the flattened storage combines component and parent
+axes; their combined rank must currently not exceed 15. A scalar container can
+have a rank-15 component.
 Array assignments preserve overlapping RHS values and selected destination
 indices before calling FINAL, including strided and vector selections. Whole
 ALLOCATABLE arrays can allocate or reallocate on assignment; allocatable array
@@ -1960,7 +1970,7 @@ does not define it or suppress errors from a subsequent read.
 Owned components of finalizable derived type are supported: both scalar
 ALLOCATABLE components and array components through rank 15. The containing
 object's FINAL procedure runs while its components remain available, followed
-by finalization of nonallocatable scalar components, then finalization and
+by finalization of nonallocatable scalar and fixed-array components, then finalization and
 deallocation of allocated components. Unallocated components are skipped.
 This also applies to containers without a FINAL procedure of their own,
 nested ownership, array owners passed through scalar procedures, intrinsic
@@ -1977,7 +1987,7 @@ These lifecycle rules follow [Fortran 2023 section 7.5.6](https://j3-fortran.org
 
 The implementation diagnoses polymorphic and POINTER objects, type extension involving finalizable types,
 finalizable function results, TYPEOF/CLASSOF of finalizable objects, scalar
-ALLOCATABLE dummies, fixed array components of finalizable type, recursive owned
+ALLOCATABLE dummies, recursive owned
 layouts involving finalizable types, polymorphic finalizable components, defined assignment
 involving finalizable types, and named EXIT/CYCLE or GOTO
 with live finalizable locals. DEALLOCATE STAT/ERRMSG with finalizable objects is

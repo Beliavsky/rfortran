@@ -26,17 +26,44 @@ mod derived_pointers;
 mod record_finalization;
 #[path = "record_owned_copy.rs"]
 mod record_owned_copy;
+#[path = "record_inquiries.rs"]
+mod record_inquiries;
 
 #[derive(Clone)]
 struct Field {
     name: String,
     kind: TypeSpec,
     default: Option<Expr>,
-    /// Constant extents of an array component; empty for a scalar. Its
+    /// Constant bounds of an array component; empty for a scalar. Its
     /// storage puts these axes ahead of the axes of the array of records.
     dims: Vec<Expr>,
     /// A per-element owned intrinsic allocation, stored as a descriptor handle.
     heap: Option<(TypeSpec, Vec<Expr>)>,
+}
+/// Explicit constant component bounds, retaining nonunit lower bounds.
+fn component_bounds(dim: &Expr) -> Result<(i64, i64)> {
+    match dim {
+        Expr::Call(n, args) if n == "@declared_bounds" && args.len() == 2 => Ok((
+            crate::parameters::integer_constant(&args[0])?,
+            crate::parameters::integer_constant(&args[1])?,
+        )),
+        Expr::Call(n, args) if n == "@section_subscript" && args.len() == 1 => component_bounds(&args[0]),
+        Expr::Section { lower, upper: Some(upper), stride: None, .. } => Ok((
+            lower.as_deref().map(crate::parameters::integer_constant).transpose()?.unwrap_or(1),
+            crate::parameters::integer_constant(upper)?,
+        )),
+        _ => Ok((1, crate::parameters::integer_constant(dim)?)),
+    }
+}
+fn component_allocation_dims(field: &Field, target: &str) -> Vec<Expr> {
+    field.dims.iter().map(|dim| match dim {
+        Expr::Call(n, args) if n=="@declared_bounds" && args.len()==2 =>
+            Expr::Call("@section_subscript".into(),vec![Expr::Section {
+                name:target.into(),lower:Some(Box::new(args[0].clone())),
+                upper:Some(Box::new(args[1].clone())),stride:None,
+            }]),
+        dim => dim.clone(),
+    }).collect()
 }
 fn whole_axes(f: &Field) -> Vec<Expr> {
     f.dims.iter().map(|_| Expr::Section { name: String::new(), lower: None, upper: None, stride: None }).collect()
@@ -230,7 +257,9 @@ impl Lower {
                                                 entities: vec![(field.clone(), Some(value.clone()))],
                                             });
                                         }
-                                        out.push(Stmt::ArrayDecl { kind: f.kind.clone(), name: field.clone(), dims: dims.clone() });
+                                        let mut bounds = f.dims.clone();
+                                        bounds.extend(dims.iter().cloned());
+                                        out.push(Stmt::ArrayDecl { kind: f.kind.clone(), name: field.clone(), dims: bounds });
                                         if f.heap.is_some() {out.push(Stmt::DummyIntent {name:field.clone(),intent:"@record_slots".into()});}
                                         for a in &attributes {
                                             out.push(Stmt::DummyIntent { name: field.clone(), intent: a.clone() });
@@ -467,7 +496,7 @@ impl Lower {
                             // A fixed-size array component; an initialized one
                             // follows its InitializedDecl.
                             Stmt::ArrayDecl { kind, name, dims }
-                                if dims.iter().all(|d| crate::parameters::integer_constant(d).is_ok()) =>
+                                if dims.iter().all(|d| component_bounds(d).is_ok()) =>
                             {
                                 match fields.iter_mut().find(|f| &f.name == name && f.dims.is_empty() && f.default.is_some()) {
                                     Some(f) => f.dims = dims.clone(),
@@ -1199,14 +1228,16 @@ impl Lower {
                 for e in args.iter_mut() {
                     self.expression(e, objects, prefix)?;
                 }
+                if let Some(value) = self.record_inquiry(n, args, objects, prefix)? {
+                    *e = value;
+                    return Ok(());
+                }
                 if let Some(array) = args.first_mut() {
                     let owner=match array {Expr::Ident(n)|Expr::Call(n,_)|Expr::Index(n,_)|Expr::Section{name:n,..}=>Some(n),_=>None};
                     if let Some(owner)=owner {
                         if let Some(o) = objects.get(owner).filter(|o| !o.dims.is_empty()) {
                             let (field, axes) = self.shape_field(&o.ty)?;
-                            if axes > 0 {
-                                bail!("shape inquiries of arrays of type `{}` require a scalar component", o.ty);
-                            }
+                            debug_assert_eq!(axes, 0);
                             *owner = storage(owner, &field);
                         }
                     }
@@ -1334,12 +1365,13 @@ impl Lower {
             let mut subscripts = vec![];
             let mut total = 1i64;
             for d in &f.dims {
-                let extent = crate::parameters::integer_constant(d)?.max(0);
+                let (lower, upper) = component_bounds(d)?;
+                let extent = (upper-lower+1).max(0);
                 total *= extent;
                 let extent = Expr::IntLit(extent.to_string());
                 subscripts.push(Expr::Bin(crate::ast::BinOp::Add,
                     Box::new(Expr::Call("mod".into(), vec![ordinal.clone(), extent.clone()])),
-                    Box::new(Expr::IntLit("1".into()))));
+                    Box::new(Expr::IntLit(lower.to_string()))));
                 ordinal = Expr::Bin(crate::ast::BinOp::Div, Box::new(ordinal), Box::new(extent));
             }
             subscripts.extend(indices.iter().cloned());
@@ -1829,7 +1861,8 @@ impl Lower {
                                         prefix.push(Stmt::CallSub{name:"@heap_record_drop_array".into(),args:vec![Expr::Ident(field.clone()),Expr::Call("size".into(),vec![Expr::Ident(field.clone())])]});
                                     }
                                     flat.push(if let Some(d) = &bounds {
-                                        let mut dimensions=f.dims.iter().cloned().chain(d.iter().cloned()).collect::<Vec<_>>();
+                                        let mut dimensions=component_allocation_dims(&f,&field);
+                                        dimensions.extend(d.iter().cloned());
                                         for dimension in &mut dimensions {retarget(dimension,n,&field);}
                                         Expr::Call(field.clone(), dimensions)
                                     } else {

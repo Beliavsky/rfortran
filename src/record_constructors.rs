@@ -178,7 +178,7 @@ impl Lower {
                     name: storage.clone(),
                     intent: "allocatable".into(),
                 });
-                let mut allocated = field.dims.clone();
+                let mut allocated = component_allocation_dims(field, &storage);
                 allocated.push(id(&length));
                 prefix.push(Stmt::CallSub {
                     name: "@allocate".into(),

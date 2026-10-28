@@ -5,6 +5,12 @@
 //! Materialize record elements without flattening owned allocations into values.
 use super::*;
 impl Lower {
+    fn fixed_record_component_name(&self,owner:&str,field:&str,objects:&Objects)->Option<String> {
+        let fields=self.types.get(&objects.get(owner).filter(|o|!o.dims.is_empty())?.ty)?;
+        let folded=field.replace('%',"$");
+        if fields.iter().any(|f|!f.dims.is_empty() && f.name.contains('$') && f.name==folded) {return Some(folded);}
+        fields.iter().any(|f|!f.dims.is_empty() && f.name.starts_with(&format!("{field}$"))).then(||field.into())
+    }
     fn heap_component_name(&self,owner:&str,field:&str,objects:&Objects)->Option<String> {
         let fields=&self.types.get(&objects.get(owner).filter(|o|!o.dims.is_empty())?.ty)?;
         let folded=field.replace('%',"$");
@@ -64,7 +70,8 @@ impl Lower {
         let Some((owner, _)) = self.element(element, objects) else {
             return Ok(false);
         };
-        let Some(field)=self.heap_component_name(owner,&field,objects) else{return Ok(false);};
+        let Some(field)=self.heap_component_name(owner,&field,objects)
+            .or_else(||self.fixed_record_component_name(owner,&field,objects)) else{return Ok(false);};
         let element = element.clone();
         let indices = component_subscripts(args);
         let temp = self.element_storage(&element, objects, prefix, suffix, true, Some(&field))?;
@@ -114,7 +121,8 @@ impl Lower {
         }
         let Some((owner, field)) = name.match_indices('%').find_map(|(i, _)| {
             let (owner, field) = (&name[..i], &name[i + 1..]);
-            self.heap_component_name(owner, field, objects).map(|field|(owner, field))
+            self.heap_component_name(owner, field, objects)
+                .or_else(||self.fixed_record_component_name(owner,field,objects)).map(|field|(owner, field))
         }) else {
             return Ok(());
         };

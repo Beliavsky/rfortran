@@ -294,14 +294,15 @@ impl Lower {
                 let mut ordinal = bin(BinOp::Sub, id(&index), int(1));
                 let mut count = 1i64;
                 for d in &field.dims {
-                    let extent = crate::parameters::integer_constant(d)?.max(0);
+                    let (lower, upper) = component_bounds(d)?;
+                    let extent = (upper-lower+1).max(0);
                     count = count
                         .checked_mul(extent)
                         .context("PACK component extent overflow")?;
                     let at = bin(
                         BinOp::Add,
                         Expr::Call("mod".into(), vec![ordinal.clone(), int(extent)]),
-                        int(1),
+                        int(lower),
                     );
                     from.push(at.clone());
                     to.push(at);
@@ -472,7 +473,7 @@ impl Lower {
                 name: name.clone(),
                 intent: "allocatable".into(),
             });
-            let mut dims = field.dims.clone();
+            let mut dims = component_allocation_dims(field, &name);
             dims.push(length.clone());
             prefix.push(Stmt::CallSub {
                 name: "@allocate".into(),

@@ -202,7 +202,6 @@ end
 
     def test_unsupported_layouts_diagnosed(self):
         self.reject(MODULE.replace('type(resource),allocatable::item','class(resource),allocatable::item')+'end module\nend\n','polymorphic components')
-        self.reject(MODULE.replace('type(resource),allocatable::items(:)','type(resource)::items(2)')+'end module\nend\n','fixed array components')
         self.reject(MODULE.replace('integer::value=7','integer::value=7\n type(resource),allocatable::next',1)+'end module\nend\n','recursive owned layouts')
 
     def test_finalizer_deallocates_own_component(self):

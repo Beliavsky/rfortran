@@ -30,6 +30,7 @@ impl Object {
 struct Definition {
     finals: Vec<(String, usize)>,
     components: Vec<(String, String, Vec<String>, usize)>,
+    component_dims: HashMap<String, Vec<Expr>>,
     module: Option<String>,
 }
 struct Routine {
@@ -120,6 +121,10 @@ impl Lower {
                                     _ => vec![],
                                 })
                                 .collect(),
+                            component_dims: components.iter().flat_map(|s| match s {
+                                Stmt::DerivedDecl { names, dims, .. } => names.iter().map(|n| (n.clone(), dims.clone())).collect(),
+                                _ => vec![],
+                            }).collect(),
                             module: module.map(str::to_owned),
                         },
                     );
@@ -254,14 +259,8 @@ impl Lower {
             self.finalizable.extend(added);
         }
         for d in self.types.values() {
-            for (_, ty, attrs, rank) in &d.components {
+            for (_, ty, attrs, _) in &d.components {
                 if self.finalizable.contains(ty) && attrs.iter().any(|a|a=="@polymorphic") && !attrs.iter().any(|a|a=="pointer") {bail!("finalization of polymorphic components is not yet supported");}
-                if self.finalizable.contains(ty)
-                    && !attrs.iter().any(|a| a == "pointer")
-                    && *rank != 0 && !attrs.iter().any(|a| a == "allocatable")
-                {
-                    bail!("fixed array components of finalizable type are not yet supported");
-                }
             }
         }
         fn acyclic(ty:&str,types:&HashMap<String,Definition>,active:&mut HashSet<String>)->Result<()> {
@@ -281,16 +280,21 @@ impl Lower {
         for (field, t, attrs, rank) in &self.types[ty].components {
             if !attrs.iter().any(|a| a == "pointer") {
                 let name = format!("{name}%{field}");
+                let component_dims = if attrs.iter().any(|a|a=="allocatable") {
+                    vec![id("@deferred_extent");*rank]
+                } else if *rank != 0 {
+                    self.types[ty].component_dims[field].clone()
+                } else {dims.to_vec()};
                 objects.insert(
                     name.clone(),
                     Object {
                         ty: t.clone(),
                         attrs: attrs.clone(),
-                        dims: if attrs.iter().any(|a|a=="allocatable") {vec![id("@deferred_extent");*rank]} else {dims.to_vec()},
+                        dims: component_dims.clone(),
                     },
                 );
                 if self.types.contains_key(t) && !attrs.iter().any(|a|a=="allocatable") {
-                    self.components(&name, t, dims, objects);
+                    self.components(&name, t, &component_dims, objects);
                 }
             }
         }
@@ -410,9 +414,9 @@ impl Lower {
                     body.extend(loops(vec![call(&f, vec![element.clone()])]));
                 }
             }
-            // Materialize owned component views once per scalar parent. This
-            // preserves their descriptors across child FINAL and deallocation.
-            let components = if self.types[ty].components.iter().any(|(_,t,a,_)|a.iter().any(|a|a=="allocatable")&&self.finalizable.contains(t)) {
+            // Materialize component arrays once per scalar parent, preserving
+            // their own rank and any owned descriptors across child FINAL.
+            let components = if self.types[ty].components.iter().any(|(_,t,a,r)|(*r != 0 || a.iter().any(|a|a=="allocatable"))&&self.finalizable.contains(t)) {
                 let f=self.component_helper(ty);vec![call(&f,vec![element.clone()])]
             } else {self.component_calls(element.clone(),ty)};
             if !components.is_empty() {
