@@ -849,7 +849,8 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
     }
     #[derive(Clone, Debug)]
     struct FieldBorrow {
-        local:String, source:String, index:usize, seen:ValueTuple, original:ValueTuple,
+        local:String, source:String, index:usize, array:bool,
+        seen:Vec<ValueTuple>, original:Vec<ValueTuple>,
     }
     #[derive(Clone, Debug)]
     struct CallFrame {
@@ -895,6 +896,17 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
             if let Some(v)=self.env_int_arrays.get(source) {ValueTuple::from_int(v[index])}
             else {ValueTuple::from_real(self.env_real_arrays[source][index])}
         }
+        fn field_values(&self,view:&FieldBorrow)->Vec<ValueTuple> {
+            if view.array {(0..view.seen.len()).map(|i|self.borrowed_field_value(&view.local,i)).collect()}
+            else {vec![self.result_value(&view.local)]}
+        }
+        fn apply_field_values(&mut self,view:&FieldBorrow,values:&[ValueTuple]) {
+            if view.array {
+                if let Some(a)=self.env_int_arrays.get_mut(&view.local) {
+                    for (a,v) in a.iter_mut().zip(values) {*a=v.0.unwrap_or_else(||i64::from(v.2.unwrap_or(false)));}
+                } else {for (a,v) in self.env_real_arrays.get_mut(&view.local).unwrap().iter_mut().zip(values) {*a=v.1.unwrap();}}
+            } else if let Some(value)=values.first() {self.apply_value(&view.local,value);}
+        }
         fn commit_borrows(&mut self) {
             // Interpreter frames own value maps rather than native addresses.
             // Publish only changed cells, then refresh every live view at the
@@ -912,16 +924,17 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                 });
             }
             for view in self.field_borrows.clone() {
-                let current=self.result_value(&view.local);
-                if current!=view.seen {
-                    if let Some(values)=self.env_int_arrays.get_mut(&view.source) {values[view.index]=current.0.unwrap_or_else(||i64::from(current.2.unwrap_or(false)));}
-                    else {self.env_real_arrays.get_mut(&view.source).unwrap()[view.index]=current.1.unwrap();}
+                for (i,current) in self.field_values(&view).iter().enumerate() {
+                    if current!=&view.seen[i] {
+                        if let Some(values)=self.env_int_arrays.get_mut(&view.source) {values[view.index+i]=current.0.unwrap_or_else(||i64::from(current.2.unwrap_or(false)));}
+                        else {self.env_real_arrays.get_mut(&view.source).unwrap()[view.index+i]=current.1.unwrap();}
+                    }
                 }
             }
             // A second commit without an intervening statement must not replay
             // stale changes over a newer alias's writes.
             for i in 0..self.record_borrows.len() {let v=&self.record_borrows[i];let current=self.record_value(&v.local,&v.mask,&v.metadata);self.record_borrows[i].seen=current;}
-            for i in 0..self.field_borrows.len() {let current=self.result_value(&self.field_borrows[i].local);self.field_borrows[i].seen=current;}
+            for i in 0..self.field_borrows.len() {let current=self.field_values(&self.field_borrows[i]);self.field_borrows[i].seen=current;}
         }
         fn sync_borrows(&mut self) {
             for i in 0..self.record_borrows.len() {
@@ -930,9 +943,12 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                 self.apply_record(&view.local,&view.mask,&view.metadata,&value);self.record_borrows[i].seen=value;
             }
             for i in 0..self.field_borrows.len() {
-                let view=self.field_borrows[i].clone();let mut value=self.borrowed_field_value(&view.source,view.index);
-                if self.env_log.contains_key(&view.local) {value=ValueTuple::from_bool(value.0.unwrap_or(0)!=0);}
-                self.apply_value(&view.local,&value);self.field_borrows[i].seen=value;
+                let view=self.field_borrows[i].clone();
+                let values=(0..view.seen.len()).map(|i| {
+                    let value=self.borrowed_field_value(&view.source,view.index+i);
+                    if self.env_log.contains_key(&view.local) {ValueTuple::from_bool(value.0.unwrap_or(0)!=0)} else {value}
+                }).collect::<Vec<_>>();
+                self.apply_field_values(&view,&values);self.field_borrows[i].seen=values;
             }
         }
         fn apply_saved(&mut self,name:&str,kind:&TypeSpec,value:&ValueTuple) {
@@ -1440,11 +1456,14 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         let (source,index)=designator(&args[1],call_stack);
                         if name=="@record_field_borrow" {
                             let (mask_source,mask_index)=designator(&args[3],call_stack);
+                            let snapshot=call_stack.last().unwrap().clone();
+                            let count=eval_expr(&args[4],&snapshot.env_str,&snapshot.env_int,&snapshot.env_real32,&snapshot.env_real64,&snapshot.env_log,funcs,call_stack).0.unwrap() as usize;
                             let frame=call_stack.last_mut().unwrap();
                             for (arg,source,index) in [(&args[0],source,index),(&args[2],mask_source,mask_index)] {
                                 let Expr::Ident(local)=arg else{unreachable!()};
-                                let original=frame.result_value(local);
-                                frame.field_borrows.push(FieldBorrow{local:local.clone(),source,index,seen:original.clone(),original});
+                                let array=frame.env_int_arrays.contains_key(local)||frame.env_real_arrays.contains_key(local);
+                                let original=if array {(0..count).map(|i|frame.borrowed_field_value(local,i)).collect()} else {vec![frame.result_value(local)]};
+                                frame.field_borrows.push(FieldBorrow{local:local.clone(),source,index,array,seen:original.clone(),original});
                             }
                         } else {
                             let Expr::Ident(local)=&args[0] else{unreachable!()};
@@ -1477,7 +1496,7 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         } else {
                             for arg in args {let Expr::Ident(local)=arg else{unreachable!()};
                                 let i=frame.field_borrows.iter().rposition(|v|&v.local==local).unwrap();let v=frame.field_borrows.remove(i);
-                                frame.apply_value(&v.local,&v.original);
+                                frame.apply_field_values(&v,&v.original);
                             }
                         }
                         idx+=1;continue;

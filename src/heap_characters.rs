@@ -234,6 +234,33 @@ impl Lower {
         for mut stmt in std::mem::take(body) {
             let mut prefix = vec![];
             match &mut stmt {
+                Stmt::CallSub{name,args} if name=="@array_substring_assign" && matches!(args.first(),Some(Expr::Index(n,_)|Expr::Call(n,_)) if arrays.contains_key(n)) => {
+                    let [base,range,value]=args.as_slice() else {anyhow::bail!("invalid heap CHARACTER substring assignment");};
+                    let (Expr::Index(n,indices)|Expr::Call(n,indices))=base else {unreachable!()};
+                    let [index]=indices.as_slice() else {anyhow::bail!("heap CHARACTER substring requires a linear index");};
+                    let n=n.clone();let width=arrays[&n];
+                    let index=self.capture(TypeSpec::Integer(Some(8)),index.clone(),&mut prefix);
+                    let mut value=value.clone();self.expression(&mut value,&arrays,&mut prefix)?;
+                    let value=self.capture(TypeSpec::Character(Some(width)),value,&mut prefix);
+                    let Expr::Section{lower,upper,stride,..}=range else {anyhow::bail!("CHARACTER substring requires a range");};
+                    let lower=lower.as_deref().map_or(Some(1),|e|crate::parameters::integer_constant(e).ok());
+                    let upper_constant=upper.as_deref().map(crate::parameters::integer_constant).transpose().ok().flatten();
+                    let full=lower==Some(1) && stride.is_none() && (upper.is_none() || upper_constant==Some(width as i64));
+                    if full {
+                        let mut writes=vec![Stmt::AssignIndex{name:n,indices:vec![id(&index)],value:id(&value)}];
+                        self.body(&mut writes,&arrays)?;
+                        prefix.extend(writes);result.extend(prefix);continue;
+                    }
+                    let mut source=Expr::Index(n.clone(),vec![id(&index)]);
+                    self.expression(&mut source,&arrays,&mut prefix)?;
+                    let local=self.capture(TypeSpec::Character(Some(width)),source,&mut prefix);
+                    let mut writes=vec![
+                        Stmt::AssignIndex{name:local.clone(),indices:vec![range.clone()],value:id(&value)},
+                        Stmt::AssignIndex{name:n,indices:vec![id(&index)],value:id(&local)},
+                    ];
+                    self.body(&mut writes,&arrays)?;
+                    prefix.extend(writes);result.extend(prefix);continue;
+                }
                 Stmt::CallSub{name,args} if name==crate::initialized::TRANSPORT => {
                     let element=|e:&Expr|match e {
                         Expr::Index(n,a)|Expr::Call(n,a) if arrays.contains_key(n) && a.len()==1=>Some((n.clone(),a[0].clone())),

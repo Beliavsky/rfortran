@@ -317,7 +317,12 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                 if name=="@record_field_borrow" {
                     let (source,index)=key(&args[1]).context("field borrow requires a designator")?;
                     let source_flag=flag(&env[source],index.cloned());
-                    args.extend([Expr::Ident(mask),source_flag]);
+                    // Writes through the view can define any borrowed cell.
+                    // Retain the actual masks for runtime checks on both aliases.
+                    let variable=env.get_mut(source).unwrap();
+                    variable.state=State::Maybe;variable.elements.clear();
+                    let count=args.pop().unwrap();
+                    args.extend([Expr::Ident(mask),source_flag,count]);
                     let v=env.get_mut(&local).unwrap();v.state=State::Maybe;v.elements.clear();
                 } else {args.push(Expr::Ident(mask));}
             }

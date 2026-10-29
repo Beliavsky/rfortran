@@ -2029,19 +2029,23 @@ resized whole-array destination takes the RHS bounds. Saved/module owners and
 separate module compilation are supported. MOVE_ALLOC STAT/ERRMSG for these
 derived arrays remains unsupported.
 Indexed-owner calls borrow owned allocation descriptors and numeric/LOGICAL
-scalar fields. Allocation, deallocation, bounds, initialization masks, allocation
+scalar and fixed-size array fields. Scalar CHARACTER fields retain their original
+designators, including substring writes. Allocation, deallocation, bounds, initialization masks, allocation
 identity and component writes are visible immediately through module names and
 overlapping owner arguments, including subscripts that select the same element
 at runtime. CHARACTER allocation descriptors share both their code-buffer length
 and character-element count. Descriptor replacement preserves the live descriptor
-cells; intrinsic copies still create independent allocations. Fixed-size array
-and scalar CHARACTER fields of an owner may still be transported through
-temporaries when passing the whole element.
+cells; intrinsic copies still create independent allocations. Fixed array views
+retain component lower bounds and share initialization masks without reading
+undefined elements. Nested scalar components, ALLOCATABLE parents, separate
+modules and overlapping dynamic subscripts are supported. Fixed-size CHARACTER
+array fields may still use temporary copies during whole-element calls.
 Polymorphic allocated components and recursive allocation-descriptor calls remain
 unsupported. See `tests/test_allocatable_array_component_targets.py`,
 `tests/test_allocatable_owner_component_targets.py`,
 `tests/programs/xallocatable_owner_component_target.f90`,
 `tests/test_array_component_alias_visibility.py`,
+`tests/test_fixed_component_alias_visibility.py`,
 `tests/programs/xarray_component_alias_visibility.f90`,
 `tests/programs/xallocatable_array_component_target.f90`,
 `tests/test_allocatable_component_targets.py`,

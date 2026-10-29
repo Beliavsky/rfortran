@@ -104,7 +104,33 @@ impl Lower {
             .or_else(||self.fixed_record_component_name(owner,&field,objects)) else{return Ok(false);};
         let element = element.clone();
         let indices = component_subscripts(args);
-        let temp = self.element_storage(&element, objects, prefix, suffix, true, Some(&field))?;
+        if indices.is_empty() && suffix.is_some() {
+            let (owner,_)=self.element(&element,objects).unwrap();
+            let mut ty=objects[owner].ty.clone();
+            let mut derived=true;
+            for part in field.split('%') {
+                if let Some((_,sub))=self.scalar_components.get(&ty).into_iter().flatten().find(|(n,_)|n==part) {ty=sub.clone();}
+                else {derived=false;break;}
+            }
+            if derived {
+                let mut parent=element.clone();
+                self.scalar_record_actual(&mut parent,objects,prefix,suffix)?;
+                if let Expr::Call(tag,values)=parent {
+                    if tag=="@borrowed_record" {
+                        let prefix=format!("@record_field:{field}%");
+                        let mut fields=vec![Expr::Str(ty)];
+                        for value in values.into_iter().skip(1) {
+                            if let Expr::Call(tag,args)=value {
+                                if let Some(name)=tag.strip_prefix(&prefix) {fields.push(Expr::Call(format!("@record_field:{name}"),args));}
+                            }
+                        }
+                        *e=Expr::Call(tag,fields);return Ok(true);
+                    }
+                }
+                anyhow::bail!("nested writable record requires a borrowed view");
+            }
+        }
+        let temp = self.element_storage(&element, objects, prefix, suffix, true, Some(&field),false)?;
         *e = if indices.is_empty() {
             Expr::Ident(format!("{temp}%{field}"))
         } else {
@@ -141,7 +167,7 @@ impl Lower {
                     source = Expr::Ident(self.element_temp(&source, objects, prefix, None)?);
                 }
                 let target =
-                    self.element_storage(&element, objects, prefix, Some(suffix), false, None)?;
+                    self.element_storage(&element, objects, prefix, Some(suffix), false, None,false)?;
                 *s = Stmt::Assign {
                     name: target,
                     value: source,
@@ -163,7 +189,7 @@ impl Lower {
         if self.element(&element, objects).is_none() {
             bail!("allocatable record components require scalar parent subscripts");
         }
-        let temp = self.element_storage(&element, objects, prefix, Some(suffix), true, Some(&field))?;
+        let temp = self.element_storage(&element, objects, prefix, Some(suffix), true, Some(&field),false)?;
         *s = if component.is_empty() {
             Stmt::Assign {
                 name: format!("{temp}%{field}"),

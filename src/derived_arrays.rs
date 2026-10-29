@@ -55,6 +55,14 @@ fn component_bounds(dim: &Expr) -> Result<(i64, i64)> {
         _ => Ok((1, crate::parameters::integer_constant(dim)?)),
     }
 }
+fn component_count(field:&Field)->Result<i64> {
+    field.dims.iter().try_fold(1i64,|n,d| {
+        let (lower,upper)=component_bounds(d)?;
+        let extent=(i128::from(upper)-i128::from(lower)+1).max(0);
+        let total=i128::from(n)*extent;
+        i64::try_from(total).context("record component size overflow")
+    })
+}
 fn component_allocation_dims(field: &Field, target: &str) -> Vec<Expr> {
     field.dims.iter().map(|dim| match dim {
         Expr::Call(n, args) if n=="@declared_bounds" && args.len()==2 =>
@@ -378,15 +386,33 @@ impl Lower {
             let (object, mut indices) = (object.to_owned(), indices.to_vec());
             let ty = objects[&object].ty.clone();
             let fields = self.fields(&ty)?;
-            if fields.iter().all(|f| f.heap.is_none()) {
+            if fields.iter().all(|f| f.heap.is_none()) || copy_back.is_some() {
                 // Borrow primitive component designators directly. Copying an
                 // entire element reads unrelated undefined fields and breaks
                 // aliasing when the same element supplies parent/dynamic views.
                 self.capture_indices(&mut indices, prefix);
+                // Freeze even simple indices: a callee can change the index
+                // variable through another argument or module association.
+                for index in &mut indices {
+                    if matches!(index,Expr::Ident(_)) {
+                        self.serial+=1;
+                        let temp=format!("@record_view_index_{}",self.serial);
+                        prefix.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![temp.clone()]});
+                        prefix.push(Stmt::Assign{name:temp.clone(),value:index.clone()});
+                        *index=Expr::Ident(temp);
+                    }
+                }
+                let owned = if fields.iter().any(|f|f.heap.is_some()) || copy_back.is_some() && fields.iter().any(|f|!f.dims.is_empty()) {
+                    let element=Expr::Call(object.clone(),indices.clone());
+                    Some(self.element_storage(&element,objects,prefix,copy_back,true,None,true)?)
+                } else {None};
                 let mut values = vec![Expr::Str(ty)];
                 for f in fields {
+                    let value=if owned.is_some() && (f.heap.is_some() || !f.dims.is_empty() || !matches!(f.kind,TypeSpec::Character(_)|TypeSpec::CharacterAssumed)) {
+                        Expr::Ident(format!("{}%{}",owned.as_ref().unwrap(),f.name))
+                    } else {select(&object,&f,vec![],&indices)?};
                     values.push(Expr::Call(format!("@record_field:{}", f.name),
-                        vec![select(&object, &f, vec![], &indices)?]));
+                        vec![value]));
                 }
                 *actual = Expr::Call("@borrowed_record".into(), values);
             } else {
@@ -396,14 +422,14 @@ impl Lower {
         Ok(())
     }
     /// Materialize a scalar element view. Writable calls borrow owned
-    /// descriptors and scalar numeric cells; value copies retain their own
+    /// descriptors and contiguous numeric/LOGICAL fields; value copies retain their own
     /// storage and transport their fields back after the statement.
     fn element_temp(&mut self, e: &Expr, objects: &mut Objects, prefix: &mut Vec<Stmt>,
         copy_back: Option<&mut Vec<Stmt>>) -> Result<String> {
-        self.element_storage(e,objects,prefix,copy_back,true,None)
+        self.element_storage(e,objects,prefix,copy_back,true,None,false)
     }
     fn element_storage(&mut self, e: &Expr, objects: &mut Objects, prefix: &mut Vec<Stmt>,
-        copy_back: Option<&mut Vec<Stmt>>, copy_in:bool, component: Option<&str>) -> Result<String> {
+        copy_back: Option<&mut Vec<Stmt>>, copy_in:bool, component: Option<&str>, direct_character:bool) -> Result<String> {
         let (object, idx) = self.element(e, objects).context("a type-bound call requires a scalar object or an array element")?;
         let (object, mut idx) = (object.to_owned(), idx.to_vec());
         for index in &mut idx { self.expression(index, objects, prefix)?; }
@@ -430,18 +456,22 @@ impl Lower {
         // Their descriptors belong to `xx` just as nested `%` fields do.
         // Load and write back the entire selected component group.
         for f in self.fields(&ty)?.into_iter().filter(|f| component.is_none_or(|c| f.name == c || f.name.starts_with(&format!("{c}%")) || f.name.starts_with(&format!("{c}$")))) {
+            if f.heap.is_none() && component_count(&f)?==0 {continue;}
             let local = format!("{temp}%{}", f.name);
             if f.heap.is_some() {
                 prefix.push(Stmt::DummyIntent {name:local.clone(),intent:"@record_heap_local".into()});
                 if copy_in {prefix.push(Stmt::CallSub {name:if borrow {"@heap_record_borrow"} else {"@heap_record_load"}.into(),args:vec![Expr::Ident(local),select(&object,&f,vec![],&idx)?]});}
-            } else if copy_in {
-                if borrow && f.dims.is_empty() && !matches!(f.kind,TypeSpec::Character(_)|TypeSpec::CharacterAssumed) {
-                    prefix.push(Stmt::CallSub{name:"@record_field_borrow".into(),args:vec![Expr::Ident(local),select(&object,&f,vec![],&idx)?]});
+            } else if copy_in && (!direct_character || !f.dims.is_empty() || !matches!(f.kind,TypeSpec::Character(_)|TypeSpec::CharacterAssumed)) {
+                if borrow && !matches!(f.kind,TypeSpec::Character(_)|TypeSpec::CharacterAssumed) {
+                    let first=f.dims.iter().map(|d|component_bounds(d).map(|(l,_)|Expr::IntLit(l.to_string()))).collect::<Result<Vec<_>>>()?;
+                    let count=component_count(&f)?;
+                    prefix.push(Stmt::CallSub{name:"@record_field_borrow".into(),args:vec![Expr::Ident(local),select(&object,&f,first,&idx)?,Expr::IntLit(count.to_string())]});
                 } else {self.transport_element_field(&object,&temp,&f,&idx,false,prefix)?;}
             }
         }
         if let Some(back) = copy_back {
             for f in self.fields(&ty)?.into_iter().filter(|f| component.is_none_or(|c| f.name == c || f.name.starts_with(&format!("{c}%")) || f.name.starts_with(&format!("{c}$")))) {
+                if f.heap.is_none() && component_count(&f)?==0 {continue;}
                 if f.heap.is_some() {
                     if borrow {
                         back.push(Stmt::CallSub{name:"@heap_record_unborrow".into(),args:vec![Expr::Ident(format!("{temp}%{}",f.name))]});
@@ -452,8 +482,8 @@ impl Lower {
                     back.push(Stmt::Assign{name:handle.clone(),value:select(&object,&f,vec![],&idx)?});
                     back.push(Stmt::CallSub {name:"@heap_record_store".into(),args:vec![Expr::Ident(format!("{temp}%{}",f.name)),Expr::Ident(handle.clone())]});
                     back.push(assignment(select(&object,&f,vec![],&idx)?,Expr::Ident(handle)));
-                } else {
-                    if borrow && f.dims.is_empty() && !matches!(f.kind,TypeSpec::Character(_)|TypeSpec::CharacterAssumed) {
+                } else if !direct_character || !f.dims.is_empty() || !matches!(f.kind,TypeSpec::Character(_)|TypeSpec::CharacterAssumed) {
+                    if borrow && !matches!(f.kind,TypeSpec::Character(_)|TypeSpec::CharacterAssumed) {
                         back.push(Stmt::CallSub{name:"@record_field_unborrow".into(),args:vec![Expr::Ident(format!("{temp}%{}",f.name))]});
                     } else {self.transport_element_field(&object,&temp,&f,&idx,true,back)?;}
                 }

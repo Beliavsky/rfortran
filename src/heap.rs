@@ -315,6 +315,9 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
                   // runtime storage for its value's extent.
                   || (array_dummies && allocation(body,name,&declared,&functions) && !allocate_statement(body,name)) || dims.len()>1 && body.iter().any(|s|matches!(s,Stmt::CallSub{name:call,args} if call=="@deallocate"&&args.iter().any(|e|matches!(e,Expr::Ident(n) if n==name)))))
               && numeric(kind) && (!matches!(kind,TypeSpec::Character(_)) || body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name && matches!(intent.as_str(),"@record_heap_local"|"@scalar_heap"))) || passed.contains(name) || dims.len()>1 || runtime_allocate(body,name) || body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name && intent=="@deferred_character_array"))
+                  // Module aliases must agree on the storage representation,
+                  // even in a procedure which never allocates the array itself.
+                  || body.iter().any(|s|matches!(s,Stmt::CallSub{name:tag,args} if tag=="@module_bind" && matches!(args.first(),Some(Expr::Ident(n)) if n==name) && args.get(2).is_some_and(|e|matches!(e,Expr::Str(encoded) if serde_json::from_str::<crate::modules::Storage>(encoded).is_ok_and(|s|s.deferred)))))
                   || array_assignment(body,name,&declared,&functions)
                   || body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name&&intent=="@automatic")))
               && body.iter().any(|s|matches!(s,Stmt::DummyIntent{name:n,intent} if n==name&&intent=="allocatable")))

@@ -636,6 +636,16 @@ fn body(
                 let a = arrays
                     .get(name)
                     .context("array substring assignment requires a CHARACTER array")?;
+                if let Some(index)=index.filter(|e|!matches!(base,Expr::Section {..}) && integer(e).is_err()) {
+                    let index=dynamic(index.clone(),&arrays,serial,&mut output)?;
+                    let index=capture_index(name,index,&arrays,serial,&mut output);
+                    *serial+=1;let temp=format!("@character_substring_value_{serial}");
+                    output.push(Stmt::VarDecl{kind:TypeSpec::Character(Some(a.length)),names:vec![temp.clone()]});
+                    let value=expanded(value.clone(),&arrays,serial,&mut output)?.expr();
+                    output.push(Stmt::Assign{name:temp.clone(),value});
+                    output.push(dispatch(name,index,&arrays,|slot|Stmt::AssignIndex{name:slot,indices:vec![range.clone()],value:Expr::Ident(temp.clone())}));
+                    continue;
+                }
                 assign(
                     select(name, index, &arrays)?,
                     a.length,

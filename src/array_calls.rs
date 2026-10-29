@@ -22,8 +22,21 @@ fn bind_scalar_views(body:&mut Vec<Stmt>, views:&HashMap<String,Expr>)->Result<(
     if views.is_empty() {return Ok(());}
     body.retain(|s|!matches!(s,Stmt::DummyIntent{name,..} if views.contains_key(name)));
     for s in body {
+        if let Stmt::AssignIndex{name,indices,value}=s {
+            if let Some(view)=views.get(name) {
+                let [range]=indices.as_slice() else {bail!("scalar CHARACTER view requires one substring range");};
+                let mut range=range.clone();
+                if let Expr::Section{name,..}=&mut range {name.clear();}
+                *s=Stmt::CallSub{name:"@array_substring_assign".into(),args:vec![view.clone(),range,value.clone()]};
+            }
+        }
         for e in crate::procedure_arguments::expressions(s) {
             crate::procedure_arguments::visit_expr(e,&mut |e| {
+                if let Expr::Section{name,..}=e {
+                    if let Some(view)=views.get(name) {
+                        *e=Expr::Call("@array_substring".into(),vec![view.clone(),e.clone()]);return;
+                    }
+                }
                 if let Expr::Ident(n)=e {if let Some(view)=views.get(n) {*e=view.clone();}}
             });
         }
