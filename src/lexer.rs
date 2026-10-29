@@ -966,6 +966,22 @@ pub fn lex(input: &str) -> Vec<Token> {
         }
         index += 1;
     }
+    // BLOCK begins a construct only alone at the head of a statement or
+    // after a construct name, and ends one after END; elsewhere it is a
+    // name, as a dummy argument `block`.
+    for i in 0..tokens.len() {
+        if !matches!(tokens[i].kind, TokenKind::KwBlock) { continue; }
+        let joined = |a: usize, b: usize| same_statement(&input[tokens[a].span.end..tokens[b].span.start]);
+        // A BLOCK statement has nothing after BLOCK, unlike `block(i) = 0`.
+        let alone = tokens.get(i + 1).is_none_or(|_| !joined(i, i + 1));
+        let construct = alone && (statement_head(&tokens, input, i)
+            || i >= 2 && matches!(tokens[i-1].kind, TokenKind::Colon) && matches!(tokens[i-2].kind, TokenKind::Ident(_))
+                && statement_head(&tokens, input, i-2) && joined(i-2, i-1) && joined(i-1, i))
+            || i >= 1 && matches!(tokens[i-1].kind, TokenKind::KwEnd) && joined(i-1, i);
+        if !construct {
+            tokens[i].kind = TokenKind::Ident(input[tokens[i].span.clone()].to_ascii_lowercase());
+        }
+    }
     // Fortran has no reserved procedure names: a keyword such as PRINT can
     // name a procedure in a header, CALL, or END FUNCTION/SUBROUTINE name.
     for i in 1..tokens.len() {
@@ -1001,6 +1017,97 @@ pub fn lex(input: &str) -> Vec<Token> {
                     tokens[i].kind = TokenKind::StatementLabel(number.clone());
                 }
             }
+        }
+    }
+    // Fortran has no reserved words: an entity declared after `::` may be
+    // spelled like a keyword, as `logical :: exit` or `integer :: if`. Within
+    // the program unit declaring it (with its header and contained
+    // procedures), its uses are names, except at the head of a statement,
+    // where the keyword statement stays unless an assignment follows.
+    let word = |t: &Token| { let w = &input[t.span.clone()]; w.as_bytes().first().is_some_and(u8::is_ascii_alphabetic) && w.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_') };
+    let joined = |a: usize, b: usize| same_statement(&input[tokens[a].span.end..tokens[b].span.start]);
+    // Program units as token ranges, from the head of the header statement
+    // to the end of the END statement.
+    let mut units: Vec<(usize, usize)> = vec![];
+    let mut open: Vec<usize> = vec![];
+    let mut head = 0;
+    for i in 0..tokens.len() {
+        if statement_head(&tokens, input, i) { head = i; }
+        let unit = matches!(tokens[i].kind, TokenKind::KwFunction | TokenKind::KwSubroutine | TokenKind::KwProgram | TokenKind::KwModule);
+        let ended = i > head && matches!(tokens[i-1].kind, TokenKind::KwEnd) && joined(i-1, i);
+        if unit && ended {
+            if let Some(start) = open.pop() {
+                let mut last = i;
+                while last + 1 < tokens.len() && joined(last, last + 1) { last += 1; }
+                units.push((start, last));
+            }
+        } else if unit && !(matches!(tokens[i].kind, TokenKind::KwModule)
+            && tokens.get(i + 1).is_some_and(|t| matches!(&t.kind, TokenKind::Ident(n) if n.eq_ignore_ascii_case("procedure")) && joined(i, i + 1)))
+            && (i == head || (head..i).all(|k| !matches!(tokens[k].kind, TokenKind::LParen | TokenKind::Eq))) {
+            open.push(head);
+        }
+    }
+    let mut declared: Vec<(String, usize, usize)> = vec![];
+    let mut i = 0;
+    while i < tokens.len() {
+        if matches!(tokens[i].kind, TokenKind::DColon) {
+            let (start, last) = units.iter().filter(|(a, b)| *a <= i && i <= *b).min_by_key(|(a, b)| b - a).copied().unwrap_or((0, tokens.len() - 1));
+            let mut depth = 0i32;
+            let mut expect_name = true;
+            let mut j = i + 1;
+            while j < tokens.len() && joined(j - 1, j) {
+                match tokens[j].kind {
+                    TokenKind::LParen | TokenKind::LBracket => depth += 1,
+                    TokenKind::RParen | TokenKind::RBracket => depth -= 1,
+                    TokenKind::Comma if depth == 0 => { expect_name = true; j += 1; continue; }
+                    _ => {}
+                }
+                if expect_name && depth == 0 && !matches!(tokens[j].kind, TokenKind::Ident(_)) && word(&tokens[j]) {
+                    declared.push((input[tokens[j].span.clone()].to_ascii_lowercase(), start, last));
+                }
+                expect_name = false;
+                j += 1;
+            }
+            i = j;
+            continue;
+        }
+        i += 1;
+    }
+    for (name, start, last) in declared {
+        for i in start..=last {
+            if matches!(tokens[i].kind, TokenKind::Ident(_)) || !word(&tokens[i]) || !input[tokens[i].span.clone()].eq_ignore_ascii_case(&name) { continue; }
+            // `exit = x`, `if(i) = x` or `p%f = x`, but not `if (c) y = x`.
+            let same = |a: usize, b: usize| same_statement(&input[tokens[a].span.end..tokens[b].span.start]);
+            let assignment = i + 1 < tokens.len() && same(i, i + 1) && match tokens[i + 1].kind {
+                TokenKind::Eq | TokenKind::Percent => true,
+                TokenKind::LParen => {
+                    let mut depth = 0i32;
+                    let mut k = i + 1;
+                    while k < tokens.len() && (k == i + 1 || same(k - 1, k)) {
+                        match tokens[k].kind { TokenKind::LParen => depth += 1, TokenKind::RParen => depth -= 1, _ => {} }
+                        if depth == 0 { break; }
+                        k += 1;
+                    }
+                    k + 1 < tokens.len() && same(k, k + 1) && matches!(tokens[k + 1].kind, TokenKind::Eq | TokenKind::Percent)
+                }
+                _ => false,
+            };
+            // The statement of a logical IF, as EXIT in `if (c) exit`, also
+            // starts after the condition's closing parenthesis.
+            let after_condition = i > 0 && matches!(tokens[i - 1].kind, TokenKind::RParen) && same(i - 1, i) && {
+                let mut depth = 0i32;
+                let mut k = i - 1;
+                loop {
+                    match tokens[k].kind { TokenKind::RParen => depth += 1, TokenKind::LParen => depth -= 1, _ => {} }
+                    if depth == 0 || k == 0 || !same(k - 1, k) { break; }
+                    k -= 1;
+                }
+                depth == 0 && k > 0 && matches!(tokens[k - 1].kind, TokenKind::KwIf) && statement_head(&tokens, input, k - 1)
+            };
+            if (statement_head(&tokens, input, i) || after_condition) && !assignment { continue; }
+            // The unit's own header keyword, as FUNCTION in `function f()`.
+            if matches!(tokens[i].kind, TokenKind::KwFunction | TokenKind::KwSubroutine | TokenKind::KwProgram | TokenKind::KwModule | TokenKind::KwEnd) { continue; }
+            tokens[i].kind = TokenKind::Ident(name.clone());
         }
     }
     format_statements(&mut tokens, input);

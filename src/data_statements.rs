@@ -155,7 +155,17 @@ fn modified(body: &[Stmt], name: &str) -> bool {
         // Formatted output only reads its items.
         Stmt::CallSub { name: n, .. } if n == "@formatted_print" => false,
         Stmt::Read { args } | Stmt::CallSub { args, .. } => args.iter().any(|a| mentions(a, name)),
-        Stmt::Subroutine { .. } | Stmt::Function { .. } => true,
+        // An internal procedure modifies a host variable that it does not
+        // declare or receive as an argument, and modifies.
+        Stmt::Subroutine { params, body, .. } | Stmt::Function { params, body, .. } => {
+            let local = params.iter().any(|p| p.eq_ignore_ascii_case(name)) || body.iter().any(|s| match s {
+                Stmt::VarDecl { names, .. } | Stmt::DerivedDecl { names, .. } => names.iter().any(|n| n.eq_ignore_ascii_case(name)),
+                Stmt::ArrayDecl { name: n, .. } => n.eq_ignore_ascii_case(name),
+                Stmt::InitializedDecl { entities, .. } => entities.iter().any(|(n, _)| n.eq_ignore_ascii_case(name)),
+                _ => false,
+            });
+            !local && modified(body, name)
+        }
         Stmt::If { then_body, else_body, .. } => modified(then_body, name) || else_body.as_deref().is_some_and(|b| modified(b, name)),
         Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } | Stmt::Block { body } => modified(body, name),
         Stmt::SelectCase { cases, default, .. } => {
@@ -447,8 +457,19 @@ fn unit(body: &mut Vec<Stmt>, dummies: Option<&[String]>) -> Result<(), String> 
     let mut elements: Vec<_> = elements.into_iter().collect();
     elements.sort_by(|a, b| a.0.cmp(&b.0));
     for (name, slots) in elements {
+        // Elements that DATA does not give a value, which a valid program
+        // assigns before using, start as zero of the element type.
+        let zero = match declared(body, &name).map(|(kind, _)| kind) {
+            Some(TypeSpec::Integer(_) | TypeSpec::IntegerKind(_)) => Some(Expr::IntLit("0".into())),
+            Some(TypeSpec::Real | TypeSpec::RealKind(_)) => Some(Expr::RealLit("0.0".into())),
+            Some(TypeSpec::DoublePrecision) => Some(Expr::Call("dble".into(), vec![Expr::RealLit("0.0".into())])),
+            Some(TypeSpec::Logical | TypeSpec::LogicalKind(_)) => Some(Expr::Logical(false)),
+            Some(TypeSpec::Character(_)) => Some(Expr::Str(String::new())),
+            _ => None,
+        };
         let values = slots
             .into_iter()
+            .map(|v| v.or_else(|| zero.clone()))
             .collect::<Option<Vec<_>>>()
             .ok_or_else(|| format!("DATA currently requires every element of `{name}` to be given a value"))?;
         initialize(body, &name, Expr::Call("@array_constructor".into(), values), procedure)?;

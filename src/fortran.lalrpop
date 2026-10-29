@@ -1169,6 +1169,9 @@ PreFuncDeclData: Vec<Stmt> = {
         .map_err(|error| lalrpop_util::ParseError::User { error }),
     <head:IntrinsicDeclHead> <entities:DeclEntities> =>? {
         let (t,attrs,dimension,has_colons) = head;
+        // VOLATILE and ASYNCHRONOUS only restrict optimization, which
+        // single-threaded code without asynchronous I/O does not need.
+        let attrs: Vec<String> = attrs.into_iter().filter(|a| !matches!(a.to_ascii_lowercase().as_str(), "volatile" | "asynchronous")).collect();
         if !has_colons && entities.iter().any(|(_,_,value,_)| value.is_some()) {
             return Err(lalrpop_util::ParseError::User {error:"declaration initialization requires `::`"});
         }

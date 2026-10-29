@@ -984,6 +984,16 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
             if matches!(kind,TypeSpec::IntegerKind(_) | TypeSpec::RealKind(_) | TypeSpec::LogicalKind(_) | TypeSpec::Complex(_)) { resolve_kind(&mut kind,&constants)?; }
             for name in names { record_model_type(&mut constants,&name,&kind,rank); }
         }
+        // SAVE without an initializer outside a procedure, as a module
+        // variable `real, save :: x`, declares an ordinary variable: module
+        // and main-program variables are already saved.
+        if let Stmt::InitializedDecl { kind, attributes, entities } = &*stmt {
+            if entities.iter().all(|(_, v)| v.is_none())
+                && attributes.iter().all(|a| matches!(a.to_ascii_lowercase().as_str(), "save" | "public" | "private" | "@module_initializer")) {
+                let names = entities.iter().map(|(n, _)| n.clone()).collect();
+                *stmt = Stmt::VarDecl { kind: kind.clone(), names };
+            }
+        }
         if let Stmt::InitializedDecl {
             kind,
             attributes,
