@@ -65,7 +65,12 @@ enum Storage {
     Static(ir::GlobalValue),
     HeapStack(ir::StackSlot),
     HeapStatic(ir::GlobalValue),
+    /// A scoped reference to a live scalar or heap descriptor cell. The
+    /// runtime slot allows a loop iteration to select a different element.
+    Borrowed { cell: ir::StackSlot, original: BorrowedOriginal, heap: bool },
 }
+#[derive(Clone,Copy)]
+enum BorrowedOriginal { Stack(ir::StackSlot), Static(ir::GlobalValue) }
 impl From<ir::StackSlot> for Storage {
     fn from(slot: ir::StackSlot) -> Self { Self::Stack(slot) }
 }
@@ -75,10 +80,34 @@ fn storage_addr(b: &mut FunctionBuilder, ptr_ty: ir::Type, storage: impl Into<St
         Storage::Static(global) => b.ins().global_value(ptr_ty, global),
         Storage::HeapStack(slot)=>{let cell=b.ins().stack_addr(ptr_ty,slot,0);b.ins().load(ptr_ty,ir::MemFlags::new(),cell,0)},
         Storage::HeapStatic(global)=>{let cell=b.ins().global_value(ptr_ty,global);b.ins().load(ptr_ty,ir::MemFlags::new(),cell,0)},
+        Storage::Borrowed {cell,heap,..}=>{
+            let address=b.ins().stack_load(ptr_ty,cell,0);
+            if heap {b.ins().load(ptr_ty,ir::MemFlags::new(),address,0)} else {address}
+        },
     }
 }
 fn heap_cell(b:&mut FunctionBuilder,ptr:ir::Type,storage:Storage)->Result<ir::Value> {
-    Ok(match storage {Storage::HeapStack(slot)=>b.ins().stack_addr(ptr,slot,0),Storage::HeapStatic(global)=>b.ins().global_value(ptr,global),_=>bail!("array is missing its runtime allocation descriptor")})
+    Ok(match storage {Storage::HeapStack(slot)=>b.ins().stack_addr(ptr,slot,0),Storage::HeapStatic(global)=>b.ins().global_value(ptr,global),Storage::Borrowed{cell,heap:true,..}=>b.ins().stack_load(ptr,cell,0),_=>bail!("array is missing its runtime allocation descriptor")})
+}
+
+fn borrow_storage(b:&mut FunctionBuilder,old:Storage,address:ir::Value,heap:bool)->Result<Storage> {
+    let original=match old {
+        Storage::Stack(s)|Storage::HeapStack(s)=>BorrowedOriginal::Stack(s),
+        Storage::Static(s)|Storage::HeapStatic(s)=>BorrowedOriginal::Static(s),
+        Storage::Borrowed{..}=>bail!("record storage is already borrowed"),
+    };
+    let cell=b.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,8,0));
+    b.ins().stack_store(address,cell,0);
+    Ok(Storage::Borrowed{cell,original,heap})
+}
+fn unborrow_storage(storage:Storage)->Result<Storage> {
+    let Storage::Borrowed{original,heap,..}=storage else {bail!("missing borrowed record storage")};
+    Ok(match (original,heap) {
+        (BorrowedOriginal::Stack(s),false)=>Storage::Stack(s),
+        (BorrowedOriginal::Stack(s),true)=>Storage::HeapStack(s),
+        (BorrowedOriginal::Static(s),false)=>Storage::Static(s),
+        (BorrowedOriginal::Static(s),true)=>Storage::HeapStatic(s),
+    })
 }
 fn array_storage(b: &mut FunctionBuilder, module: &mut ObjectModule, len: usize, main: bool) -> Result<Storage> {
     let size = len.checked_mul(8).ok_or_else(|| anyhow::anyhow!("array size overflow"))?;
@@ -2995,6 +3024,45 @@ fn gen_stmts(
                 if name=="@c_export" {continue;}
                 if name=="@c_invoke" {
                     c_interop::invoke(module,b,ptr_ty,args,ints,reals,bools,dc)?;
+                    continue;
+                }
+                if name=="@record_field_borrow" || name=="@heap_record_borrow" {
+                    let designator=|b:&mut FunctionBuilder,e:&IExpr|->Result<ir::Value> {
+                        let (IExpr::Ident(n)|IExpr::Index(n,_))=e else {bail!("borrow requires a record field designator")};
+                        let storage=ints.get(n).or_else(||reals.get(n)).or_else(||bools.get(n)).context("missing borrowed field")?;
+                        let base=storage_addr(b,ptr_ty,*storage);
+                        if let IExpr::Index(_,indices)=e {
+                            let index=eval_expr(b,ex,ptr_ty,&indices[0],ints,reals,bools,func_meta);let index=to_i64(b,index);
+                            let index=b.ins().iadd_imm(index,-1);let offset=b.ins().imul_imm(index,8);
+                            Ok(b.ins().iadd(base,offset))
+                        } else {Ok(base)}
+                    };
+                    let source=designator(b,&args[1])?;
+                    let mask_source=if name=="@record_field_borrow" {Some(designator(b,&args[3])?)} else {None};
+                    if name=="@heap_record_borrow" {
+                        record_heap::borrow(module,b,ptr_ty,dc,args,source,ints,reals,bools)?;
+                    } else {
+                        for (arg,address) in [(&args[0],source),(&args[2],mask_source.unwrap())] {
+                            let IExpr::Ident(n)=arg else {bail!("invalid field borrow local")};
+                            let map=if ints.contains_key(n) {&mut *ints} else if reals.contains_key(n) {&mut *reals} else {&mut *bools};
+                            map.insert(n.clone(),borrow_storage(b,map[n],address,false)?);
+                        }
+                    }
+                    continue;
+                }
+                if name=="@record_field_unborrow" || name=="@heap_record_unborrow" {
+                    let fields=if name=="@heap_record_unborrow" {
+                        args.iter().enumerate().filter_map(|(i,a)|(i!=1).then_some(a)).collect::<Vec<_>>()
+                    } else {args.iter().collect()};
+                    for field in fields {
+                        let IExpr::Ident(n)=field else {bail!("invalid field unborrow")};
+                        let map=if ints.contains_key(n) {&mut *ints} else if reals.contains_key(n) {&mut *reals} else {&mut *bools};
+                        let storage=*map.get(n).context("missing borrowed field")?;
+                        // Restore the compile-time mapping as well: cleanup
+                        // outside a skipped branch must use the original local,
+                        // never that branch's uninitialized reference slot.
+                        map.insert(n.clone(),unborrow_storage(storage)?);
+                    }
                     continue;
                 }
                 if name.starts_with("@heap_record_") {

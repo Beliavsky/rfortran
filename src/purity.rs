@@ -189,7 +189,7 @@ pub fn validate(program: &Program) -> Result<()> {
                         writable(n)?;
                     }
                 }
-                Stmt::CallSub {name,args} if name=="@heap_record_drop_array" || name=="@heap_record_load" || name=="@heap_record_store" => {
+                Stmt::CallSub {name,args} if matches!(name.as_str(),"@heap_record_drop_array"|"@heap_record_load"|"@heap_record_store"|"@heap_record_borrow"|"@heap_record_unborrow"|"@record_field_borrow"|"@record_field_unborrow") => {
                     let Some(Expr::Ident(local))=args.first() else {bail!("invalid owned allocation operation")};
                     writable(local)?;
                     if name=="@heap_record_store" {

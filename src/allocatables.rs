@@ -1532,9 +1532,10 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                     expression(&mut args[1], &mut shapes,&mut guards,checks,serial)?;
                     out.extend(guards);out.push(s);continue;
                 }
-                Stmt::CallSub {name,args} if name=="@heap_record_load" || name=="@heap_record_store" => {
+                Stmt::CallSub {name,args} if matches!(name.as_str(),"@heap_record_load"|"@heap_record_store"|"@heap_record_borrow"|"@heap_record_unborrow") => {
                     let Expr::Ident(local)=&args[0] else {bail!("record allocation requires local storage")};
                     let local=local.clone();
+                    if name=="@heap_record_unborrow" {args.push(int(0));}
                     expression(&mut args[1], &mut shapes,&mut guards,checks,serial)?;
                     args.push(length(&local,&shapes).context("record allocation requires a heap descriptor")?);
                     args.push(allocated(&local,&shapes).context("missing record allocation status")?);

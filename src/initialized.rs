@@ -310,12 +310,23 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                 read(&args[0],env,&mut before,serial)?;
                 for target in &args[2..] {let Expr::Ident(n)=target else{bail!("invalid owned pointer descriptor")};write(n,None,env,&mut after,serial);}
             }
-            Stmt::CallSub {name,args} if name=="@heap_record_load" || name=="@heap_record_store" => {
+            Stmt::CallSub {name,args} if matches!(name.as_str(),"@record_field_borrow"|"@record_field_unborrow") => {
                 let Expr::Ident(local)=&args[0] else{unreachable!()};
                 let local=local.clone();
                 let mask=env[&local].flag.clone();
-                if name=="@heap_record_load" {
-                    read(&args[1],env,&mut before,serial)?;
+                if name=="@record_field_borrow" {
+                    let (source,index)=key(&args[1]).context("field borrow requires a designator")?;
+                    let source_flag=flag(&env[source],index.cloned());
+                    args.extend([Expr::Ident(mask),source_flag]);
+                    let v=env.get_mut(&local).unwrap();v.state=State::Maybe;v.elements.clear();
+                } else {args.push(Expr::Ident(mask));}
+            }
+            Stmt::CallSub {name,args} if matches!(name.as_str(),"@heap_record_load"|"@heap_record_store"|"@heap_record_borrow"|"@heap_record_unborrow") => {
+                let Expr::Ident(local)=&args[0] else{unreachable!()};
+                let local=local.clone();
+                let mask=env[&local].flag.clone();
+                if name!="@heap_record_store" {
+                    if name!="@heap_record_unborrow" {read(&args[1],env,&mut before,serial)?;}
                     for meta in &args[2..] {let Expr::Ident(n)=meta else{unreachable!()};write(n,None,env,&mut after,serial);}
                     let variable=env.get_mut(&local).unwrap();variable.state=State::Maybe;variable.elements.clear();
                 } else {

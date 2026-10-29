@@ -54,8 +54,20 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
     OUTPUT_SERIAL.with(|serial|serial.set(0));
     thread_local! { static SAVED: std::cell::RefCell<HashMap<String,ValueTuple>> = std::cell::RefCell::new(HashMap::new()); }
     SAVED.with(|values|values.borrow_mut().clear());
-    #[derive(Clone,Debug,PartialEq)]
+    #[derive(Clone,Debug)]
     enum ModuleArray {Integer(Vec<i64>),Real(Vec<f64>)}
+    // These comparisons detect writes to shared storage; they are not Fortran
+    // numerical comparisons. NaNs must compare unchanged to their snapshots,
+    // and changing the sign of zero must count as a write.
+    impl PartialEq for ModuleArray {
+        fn eq(&self,other:&Self)->bool {
+            match (self,other) {
+                (Self::Integer(a),Self::Integer(b))=>a==b,
+                (Self::Real(a),Self::Real(b))=>a.iter().map(|v|v.to_bits()).eq(b.iter().map(|v|v.to_bits())),
+                _=>false,
+            }
+        }
+    }
     thread_local! {static MODULE_ARRAYS:std::cell::RefCell<HashMap<String,ModuleArray>>=std::cell::RefCell::new(HashMap::new());}
     MODULE_ARRAYS.with(|values|values.borrow_mut().clear());
     fn io_result<T>(result: anyhow::Result<T>) -> T {
@@ -121,13 +133,19 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
         s.parse::<f64>().unwrap_or(0.0)
     }
 
-    #[derive(Clone, Debug, Default, PartialEq)]
+    #[derive(Clone, Debug, Default)]
     struct ValueTuple(
         pub Option<i64>,
         pub Option<f64>,
         pub Option<bool>,
         pub Option<String>,
     );
+    impl PartialEq for ValueTuple {
+        fn eq(&self,other:&Self)->bool {
+            self.0==other.0 && self.1.map(f64::to_bits)==other.1.map(f64::to_bits)
+                && self.2==other.2 && self.3==other.3
+        }
+    }
 
     impl ValueTuple {
         fn from_int(i: i64) -> Self {
@@ -825,7 +843,18 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
     }
 
     #[derive(Clone, Debug)]
+    struct RecordBorrow {
+        local:String, mask:String, metadata:Vec<String>, handle:usize,
+        seen:RecordAllocation, original:RecordAllocation,
+    }
+    #[derive(Clone, Debug)]
+    struct FieldBorrow {
+        local:String, source:String, index:usize, seen:ValueTuple, original:ValueTuple,
+    }
+    #[derive(Clone, Debug)]
     struct CallFrame {
+        record_borrows:Vec<RecordBorrow>,
+        field_borrows:Vec<FieldBorrow>,
         saved: HashMap<String,(String,TypeSpec)>,
         saved_seen: HashMap<String,ValueTuple>,
         module_arrays:HashMap<String,String>,
@@ -844,6 +873,68 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
         is_function: bool,
     }
     impl CallFrame {
+        fn record_value(&self,local:&str,mask:&str,metadata:&[String])->RecordAllocation {
+            RecordAllocation{integers:self.env_int_arrays.get(local).cloned(),reals:self.env_real_arrays.get(local).cloned(),
+                mask:self.env_int_arrays.get(mask).cloned().unwrap_or_default(),
+                metadata:metadata.iter().enumerate().map(|(i,n)|if i==1 {i64::from(*self.env_log.get(n).unwrap_or(&false))}else{*self.env_int.get(n).unwrap_or(&0)}).collect()}
+        }
+        fn apply_record(&mut self,local:&str,mask:&str,metadata:&[String],value:&RecordAllocation) {
+            for (i,(n,v)) in metadata.iter().zip(&value.metadata).enumerate() {
+                if i==1 {self.env_log.insert(n.clone(),*v!=0);} else {self.env_int.insert(n.clone(),*v);}
+            }
+            if let Some(v)=&value.reals {self.env_real_arrays.insert(local.into(),v.clone());}
+            else {self.env_int_arrays.insert(local.into(),value.integers.clone().unwrap_or_default());}
+            self.env_int_arrays.insert(mask.into(),value.mask.clone());
+        }
+        fn apply_value(&mut self,n:&str,v:&ValueTuple) {
+            if let Some(v)=v.0 {self.env_int.insert(n.into(),v);}
+            else if let Some(v)=v.1 {if self.env_real32.contains_key(n) {self.env_real32.insert(n.into(),v as f32);} else {self.env_real64.insert(n.into(),v);}}
+            else if let Some(v)=v.2 {self.env_log.insert(n.into(),v);}
+        }
+        fn borrowed_field_value(&self,source:&str,index:usize)->ValueTuple {
+            if let Some(v)=self.env_int_arrays.get(source) {ValueTuple::from_int(v[index])}
+            else {ValueTuple::from_real(self.env_real_arrays[source][index])}
+        }
+        fn commit_borrows(&mut self) {
+            // Interpreter frames own value maps rather than native addresses.
+            // Publish only changed cells, then refresh every live view at the
+            // next statement boundary. This avoids replaying a stale sibling
+            // view over a write made through a different alias.
+            for view in self.record_borrows.clone() {
+                let current=self.record_value(&view.local,&view.mask,&view.metadata);
+                RECORD_ALLOCATIONS.with(|records| {
+                    let mut records=records.borrow_mut();let target=records[view.handle].as_mut().expect("live borrowed descriptor");
+                    if current.integers!=view.seen.integers {target.integers=current.integers;}
+                    let bits=|a:&Option<Vec<f64>>|a.as_ref().map(|a|a.iter().map(|x|x.to_bits()).collect::<Vec<_>>());
+                    if bits(&current.reals)!=bits(&view.seen.reals) {target.reals=current.reals;}
+                    if current.mask!=view.seen.mask {target.mask=current.mask;}
+                    for (i,v) in current.metadata.into_iter().enumerate() {if v!=view.seen.metadata[i] {target.metadata[i]=v;}}
+                });
+            }
+            for view in self.field_borrows.clone() {
+                let current=self.result_value(&view.local);
+                if current!=view.seen {
+                    if let Some(values)=self.env_int_arrays.get_mut(&view.source) {values[view.index]=current.0.unwrap_or_else(||i64::from(current.2.unwrap_or(false)));}
+                    else {self.env_real_arrays.get_mut(&view.source).unwrap()[view.index]=current.1.unwrap();}
+                }
+            }
+            // A second commit without an intervening statement must not replay
+            // stale changes over a newer alias's writes.
+            for i in 0..self.record_borrows.len() {let v=&self.record_borrows[i];let current=self.record_value(&v.local,&v.mask,&v.metadata);self.record_borrows[i].seen=current;}
+            for i in 0..self.field_borrows.len() {let current=self.result_value(&self.field_borrows[i].local);self.field_borrows[i].seen=current;}
+        }
+        fn sync_borrows(&mut self) {
+            for i in 0..self.record_borrows.len() {
+                let view=self.record_borrows[i].clone();
+                let value=RECORD_ALLOCATIONS.with(|records|records.borrow()[view.handle].clone().expect("live borrowed descriptor"));
+                self.apply_record(&view.local,&view.mask,&view.metadata,&value);self.record_borrows[i].seen=value;
+            }
+            for i in 0..self.field_borrows.len() {
+                let view=self.field_borrows[i].clone();let mut value=self.borrowed_field_value(&view.source,view.index);
+                if self.env_log.contains_key(&view.local) {value=ValueTuple::from_bool(value.0.unwrap_or(0)!=0);}
+                self.apply_value(&view.local,&value);self.field_borrows[i].seen=value;
+            }
+        }
         fn apply_saved(&mut self,name:&str,kind:&TypeSpec,value:&ValueTuple) {
             let number=value.1.unwrap_or(value.0.unwrap_or(0) as f64);
             self.env_int.remove(name);self.env_real32.remove(name);self.env_real64.remove(name);self.env_log.remove(name);
@@ -869,8 +960,10 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                 let value=SAVED.with(|values|values.borrow()[&key].clone());
                 self.apply_saved(&name,&kind,&value);self.saved_seen.insert(name,value);
             }
+            self.sync_borrows();
         }
         fn commit_saved(&mut self) {
+            self.commit_borrows();
             for (name,key) in self.module_arrays.clone() {
                 let value=if let Some(v)=self.env_int_arrays.get(&name) {ModuleArray::Integer(v.clone())}else{ModuleArray::Real(self.env_real_arrays[&name].clone())};
                 if self.module_seen.get(&name)!=Some(&value) {
@@ -896,6 +989,7 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
         }
         fn new(fd: &FuncDef, func_name: Option<String>) -> Self {
             Self {
+                record_borrows:Vec::new(),field_borrows:Vec::new(),
                 saved:HashMap::new(),saved_seen:HashMap::new(),module_arrays:HashMap::new(),module_seen:HashMap::new(),
                 env_str: HashMap::new(),
                 env_int: HashMap::new(),
@@ -1336,6 +1430,58 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         eprintln!("Runtime error: C interoperability requires native compilation; use --run instead of the interpreter");
                         std::process::exit(1);
                     }
+                    if name=="@record_field_borrow" || name=="@heap_record_borrow" {
+                        let designator=|e:&Expr,stack:&mut Vec<CallFrame>| {
+                            let (Expr::Index(n,indices)|Expr::Call(n,indices))=e else {panic!("borrow requires an array field")};
+                            let frame=stack.last().unwrap().clone();
+                            let index=eval_expr(&indices[0],&frame.env_str,&frame.env_int,&frame.env_real32,&frame.env_real64,&frame.env_log,funcs,stack).0.unwrap();
+                            (n.clone(),(index-1) as usize)
+                        };
+                        let (source,index)=designator(&args[1],call_stack);
+                        if name=="@record_field_borrow" {
+                            let (mask_source,mask_index)=designator(&args[3],call_stack);
+                            let frame=call_stack.last_mut().unwrap();
+                            for (arg,source,index) in [(&args[0],source,index),(&args[2],mask_source,mask_index)] {
+                                let Expr::Ident(local)=arg else{unreachable!()};
+                                let original=frame.result_value(local);
+                                frame.field_borrows.push(FieldBorrow{local:local.clone(),source,index,seen:original.clone(),original});
+                            }
+                        } else {
+                            let Expr::Ident(local)=&args[0] else{unreachable!()};
+                            let Expr::Ident(mask)=args.last().unwrap() else{unreachable!()};
+                            let metadata=args[2..args.len()-1].iter().map(|a|{let Expr::Ident(n)=a else{unreachable!()};n.clone()}).collect::<Vec<_>>();
+                            let frame=call_stack.last_mut().unwrap();
+                            let original=frame.record_value(local,mask,&metadata);
+                            let current=frame.env_int_arrays[&source][index];
+                            let handle=RECORD_ALLOCATIONS.with(|records| {
+                                let mut records=records.borrow_mut();
+                                if current>0 {current as usize} else {
+                                    let mut value=original.clone();
+                                    value.integers=value.integers.map(|_|Vec::new());value.reals=value.reals.map(|_|Vec::new());value.mask.clear();
+                                    value.metadata.fill(0);
+                                    for (i,v) in value.metadata.iter_mut().enumerate().skip(2+(metadata.len()-2)/2) {if metadata.len()%2==0 || i+1<metadata.len() {*v=1;}}
+                                    records.push(Some(value));records.len()-1
+                                }
+                            });
+                            frame.env_int_arrays.get_mut(&source).unwrap()[index]=handle as i64;
+                            frame.record_borrows.push(RecordBorrow{local:local.clone(),mask:mask.clone(),metadata,handle,seen:original.clone(),original});
+                        }
+                        let frame=call_stack.last_mut().unwrap();frame.sync_borrows();frame.commit_saved();idx+=1;continue;
+                    }
+                    if name=="@record_field_unborrow" || name=="@heap_record_unborrow" {
+                        let frame=call_stack.last_mut().unwrap();frame.commit_saved();
+                        let Expr::Ident(local)=&args[0] else{unreachable!()};
+                        if name=="@heap_record_unborrow" {
+                            let i=frame.record_borrows.iter().rposition(|v|&v.local==local).unwrap();let v=frame.record_borrows.remove(i);
+                            frame.apply_record(&v.local,&v.mask,&v.metadata,&v.original);
+                        } else {
+                            for arg in args {let Expr::Ident(local)=arg else{unreachable!()};
+                                let i=frame.field_borrows.iter().rposition(|v|&v.local==local).unwrap();let v=frame.field_borrows.remove(i);
+                                frame.apply_value(&v.local,&v.original);
+                            }
+                        }
+                        idx+=1;continue;
+                    }
                     if name.starts_with("@heap_record_") {
                         let frame=call_stack.last().unwrap().clone();
                         let position=if name=="@heap_record_dispose" || name=="@heap_record_pointer" {0}else{1};
@@ -1372,7 +1518,7 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                             if name=="@heap_record_load" {
                                 let record=RECORD_ALLOCATIONS.with(|records|records.borrow().get(value as usize).cloned().flatten());
                                 let mut values=vec![0;metadata.len()];
-                                for value in values.iter_mut().skip(2+(metadata.len()-2)/2) {*value=1;}
+                                for (i,value) in values.iter_mut().enumerate().skip(2+(metadata.len()-2)/2) {if metadata.len()%2==0 || i+1<metadata.len() {*value=1;}}
                                 if let Some(record)=&record {values=record.metadata.clone();}
                                 let frame=call_stack.last_mut().unwrap();
                                 for (i,(target,value)) in metadata.iter().zip(values).enumerate() {
@@ -2263,6 +2409,7 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
         None
     }
     let top_frame = CallFrame {
+        record_borrows:Vec::new(),field_borrows:Vec::new(),
         saved:HashMap::new(),saved_seen:HashMap::new(),module_arrays:HashMap::new(),module_seen:HashMap::new(),
         env_str,
         env_int,

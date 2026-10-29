@@ -3,9 +3,45 @@
 // See LICENSE-MIT in the repository root.
 
 //! Owned component descriptors: [data, initialization mask, length, allocated,
-//! extents..., lower bounds...]. All words are 64 bits on every native target.
+//! extents..., lower bounds..., optional CHARACTER element count]. All words
+//! are 64 bits on every native target. An odd metadata count includes that
+//! final element count; all other shapes have two words per dimension.
 use super::*;
 use cranelift_codegen::ir::{condcodes::IntCC, types, MemFlags};
+
+/// Borrow descriptor cells, including unallocated ones. The owning array keeps
+/// the descriptor alive; allocation and MOVE_ALLOC mutate its cells in place.
+pub(super) fn borrow(module:&mut ObjectModule,b:&mut FunctionBuilder,ptr:ir::Type,dc:&mut u32,
+    args:&[IExpr],source:ir::Value,ints:&mut HashMap<String,Storage>,reals:&mut HashMap<String,Storage>,bools:&mut HashMap<String,Storage>)->Result<()> {
+    let metadata=&args[2..args.len()-1];
+    let old=b.ins().load(ptr,MemFlags::new(),source,0);
+    let missing=b.ins().icmp_imm(IntCC::Equal,old,0);
+    let create=b.create_block();let ready=b.create_block();b.append_block_param(ready,ptr);
+    b.ins().brif(missing,create,&[],ready,&[old.into()]);
+    b.switch_to_block(create);b.seal_block(create);
+    let bytes=b.ins().iconst(ptr,((metadata.len()+2)*8) as i64);
+    let handle=file_io::call(module,b,"malloc",&[bytes],ptr)?;
+    let okay=b.ins().icmp_imm(IntCC::NotEqual,handle,0);
+    file_io::require(module,b,ptr,dc,okay,"record descriptor allocation failed")?;
+    for i in 0..metadata.len()+2 {
+        let lower=i>=4+(metadata.len()-2)/2 && (metadata.len()%2==0 || i<metadata.len()+1);
+        let value=b.ins().iconst(types::I64,i64::from(lower));
+        b.ins().store(MemFlags::new(),value,handle,(i*8) as i32);
+    }
+    b.ins().store(MemFlags::new(),handle,source,0);
+    b.ins().jump(ready,&[handle.into()]);b.switch_to_block(ready);b.seal_block(ready);
+    let handle=b.block_params(ready)[0];
+    for (arg,offset,heap) in std::iter::once((&args[0],0,true))
+        .chain(std::iter::once((args.last().unwrap(),8,true)))
+        .chain(metadata.iter().enumerate().map(|(i,a)|(a,((i+2)*8) as i64,false))) {
+        let IExpr::Ident(n)=arg else {bail!("invalid borrowed descriptor cell")};
+        let address=b.ins().iadd_imm(handle,offset);
+        let map=if ints.contains_key(n) {&mut *ints} else if reals.contains_key(n) {&mut *reals} else {&mut *bools};
+        let old=*map.get(n).context("missing borrowed descriptor storage")?;
+        map.insert(n.clone(),borrow_storage(b,old,address,heap)?);
+    }
+    Ok(())
+}
 
 fn pointer(b: &mut FunctionBuilder, ptr: ir::Type, value: ir::Value) -> ir::Value {
     if ptr == types::I64 {
@@ -203,7 +239,7 @@ pub(super) fn emit(
             b.ins().store(MemFlags::new(), zero, cell, 0);
         }
         for (i, (address, boolean)) in addresses.iter().enumerate() {
-            let default = if i >= 2 + (metadata.len() - 2) / 2 {
+            let default = if i >= 2 + (metadata.len() - 2) / 2 && (metadata.len()%2==0 || i+1<metadata.len()) {
                 1
             } else {
                 0
@@ -280,7 +316,17 @@ pub(super) fn emit(
         }
         b.ins().jump(complete,&[]);
         b.switch_to_block(replace);b.seal_block(replace);
-        free_descriptor(module, b, ptr, value)?;
+        // A live element view may reference these descriptor cells. Replace
+        // its buffers without replacing the descriptor itself.
+        let existing=b.create_block();let fresh=b.create_block();let storage_ready=b.create_block();
+        b.append_block_param(storage_ready,ptr);
+        b.ins().brif(present,existing,&[],fresh,&[]);
+        b.switch_to_block(existing);b.seal_block(existing);
+        for offset in [0,8] {
+            let data=b.ins().load(ptr,MemFlags::new(),old,offset);release(module,b,ptr,data)?;
+        }
+        b.ins().jump(storage_ready,&[old.into()]);
+        b.switch_to_block(fresh);b.seal_block(fresh);
         let bytes = b.ins().iconst(ptr, ((metadata.len() + 2) * 8) as i64);
         let handle = file_io::call(module, b, "malloc", &[bytes], ptr)?;
         let okay = b.ins().icmp_imm(IntCC::NotEqual, handle, 0);
@@ -292,7 +338,19 @@ pub(super) fn emit(
             okay,
             "record descriptor allocation failed",
         )?;
+        b.ins().jump(storage_ready,&[handle.into()]);
+        b.switch_to_block(storage_ready);b.seal_block(storage_ready);
+        let handle=b.block_params(storage_ready)[0];
         let length = b.ins().load(types::I64, MemFlags::new(), addresses[0].0, 0);
+        let allocated=b.ins().load(types::I8,MemFlags::new(),addresses[1].0,0);
+        let allocated=b.ins().icmp_imm(IntCC::NotEqual,allocated,0);
+        let buffers=b.create_block();let empty=b.create_block();let metadata_ready=b.create_block();
+        b.ins().brif(allocated,buffers,&[],empty,&[]);
+        b.switch_to_block(empty);b.seal_block(empty);
+        let zero=b.ins().iconst(types::I64,0);
+        for offset in [0,8] {b.ins().store(MemFlags::new(),zero,handle,offset);}
+        b.ins().jump(metadata_ready,&[]);
+        b.switch_to_block(buffers);b.seal_block(buffers);
         for (offset, cell) in [(0, data_cell), (8, mask_cell)] {
             let source = b.ins().load(ptr, MemFlags::new(), cell, 0);
             let source = word(b, source);
@@ -300,6 +358,8 @@ pub(super) fn emit(
             let data = word(b, data);
             b.ins().store(MemFlags::new(), data, handle, offset);
         }
+        b.ins().jump(metadata_ready,&[]);
+        b.switch_to_block(metadata_ready);b.seal_block(metadata_ready);
         for (i, (address, boolean)) in addresses.iter().enumerate() {
             let v = b.ins().load(
                 if *boolean { types::I8 } else { types::I64 },

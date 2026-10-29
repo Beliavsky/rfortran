@@ -394,8 +394,9 @@ impl Lower {
         }
         Ok(())
     }
-    /// Copy an element of an array of records into a new scalar object, and,
-    /// when `copy_back` is given, copy the object back after the statement.
+    /// Materialize a scalar element view. Writable calls borrow owned
+    /// descriptors and scalar numeric cells; value copies retain their own
+    /// storage and transport their fields back after the statement.
     fn element_temp(&mut self, e: &Expr, objects: &mut Objects, prefix: &mut Vec<Stmt>,
         copy_back: Option<&mut Vec<Stmt>>) -> Result<String> {
         self.element_storage(e,objects,prefix,copy_back,true,None)
@@ -423,6 +424,7 @@ impl Lower {
         prefix.push(Stmt::DerivedDecl { type_name: ty.clone(), names: vec![temp.clone()], attributes: vec![], polymorphic: false, dims: vec![] });
         objects.insert(temp.clone(), Object { ty: ty.clone(), dims: vec![] });
         self.register_components(&temp, &ty, objects);
+        let borrow = copy_in && copy_back.is_some();
         // Derived array components flatten to fields such as `xx$year`.
         // Their descriptors belong to `xx` just as nested `%` fields do.
         // Load and write back the entire selected component group.
@@ -430,21 +432,29 @@ impl Lower {
             let local = format!("{temp}%{}", f.name);
             if f.heap.is_some() {
                 prefix.push(Stmt::DummyIntent {name:local.clone(),intent:"@record_heap_local".into()});
-                if copy_in {prefix.push(Stmt::CallSub {name:"@heap_record_load".into(),args:vec![Expr::Ident(local),select(&object,&f,vec![],&idx)?]});}
+                if copy_in {prefix.push(Stmt::CallSub {name:if borrow {"@heap_record_borrow"} else {"@heap_record_load"}.into(),args:vec![Expr::Ident(local),select(&object,&f,vec![],&idx)?]});}
             } else if copy_in {
-                self.transport_element_field(&object,&temp,&f,&idx,false,prefix)?;
+                if borrow && f.dims.is_empty() && !matches!(f.kind,TypeSpec::Character(_)|TypeSpec::CharacterAssumed) {
+                    prefix.push(Stmt::CallSub{name:"@record_field_borrow".into(),args:vec![Expr::Ident(local),select(&object,&f,vec![],&idx)?]});
+                } else {self.transport_element_field(&object,&temp,&f,&idx,false,prefix)?;}
             }
         }
         if let Some(back) = copy_back {
             for f in self.fields(&ty)?.into_iter().filter(|f| component.is_none_or(|c| f.name == c || f.name.starts_with(&format!("{c}%")) || f.name.starts_with(&format!("{c}$")))) {
                 if f.heap.is_some() {
+                    if borrow {
+                        back.push(Stmt::CallSub{name:"@heap_record_unborrow".into(),args:vec![Expr::Ident(format!("{temp}%{}",f.name))]});
+                        continue;
+                    }
                     self.serial+=1;let handle=format!("@record_slot_{}",self.serial);
                     back.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![handle.clone()]});
                     back.push(Stmt::Assign{name:handle.clone(),value:select(&object,&f,vec![],&idx)?});
                     back.push(Stmt::CallSub {name:"@heap_record_store".into(),args:vec![Expr::Ident(format!("{temp}%{}",f.name)),Expr::Ident(handle.clone())]});
                     back.push(assignment(select(&object,&f,vec![],&idx)?,Expr::Ident(handle)));
                 } else {
-                    self.transport_element_field(&object,&temp,&f,&idx,true,back)?;
+                    if borrow && f.dims.is_empty() && !matches!(f.kind,TypeSpec::Character(_)|TypeSpec::CharacterAssumed) {
+                        back.push(Stmt::CallSub{name:"@record_field_unborrow".into(),args:vec![Expr::Ident(format!("{temp}%{}",f.name))]});
+                    } else {self.transport_element_field(&object,&temp,&f,&idx,true,back)?;}
                 }
             }
         }

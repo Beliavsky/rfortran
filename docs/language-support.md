@@ -2000,7 +2000,7 @@ ALLOCATABLE variables, forwarded dummies or concrete scalar allocatable derived
 components. Component actuals support nested scalar owners, array-element owners,
 keyword/OPTIONAL forwarding, generic dispatch and separate compilation. Owner
 subscripts are captured before a subroutine call so a changed index does not
-redirect descriptor writeback. TARGET dummies also accept concrete scalar
+redirect the borrowed view. TARGET dummies also accept concrete scalar
 allocatable components of scalar owners, including nested scalar owners, and
 elements of concrete TARGET arrays through rank 15. Fixed, runtime-sized and
 assumed-shape arrays retain their bounds; owner indices are evaluated once before
@@ -2015,13 +2015,20 @@ MOVE_ALLOC between elements or root variables, and independent identities after
 whole-array, element, section and vector-subscript copies. Pointer lookup currently
 scans the owner's allocation-identity array; it does not retain an index variable
 that can later change.
-Indexed-owner calls currently stage the selected record element. Descriptor
-changes reach the owning array on return; directly accessing that same element
-through another owner argument or a module variable during the call is not yet
-supported. Pointer accesses use the active borrowed component view.
+Indexed-owner calls borrow owned allocation descriptors and numeric/LOGICAL
+scalar fields. Allocation, deallocation, bounds, initialization masks, allocation
+identity and component writes are visible immediately through module names and
+overlapping owner arguments, including subscripts that select the same element
+at runtime. CHARACTER allocation descriptors share both their code-buffer length
+and character-element count. Descriptor replacement preserves the live descriptor
+cells; intrinsic copies still create independent allocations. Fixed-size array
+and scalar CHARACTER fields of an owner may still be transported through
+temporaries when passing the whole element.
 Escaping associations through allocatable owner objects,
 polymorphic allocated components and recursive allocation-descriptor calls remain
 unsupported. See `tests/test_allocatable_array_component_targets.py`,
+`tests/test_array_component_alias_visibility.py`,
+`tests/programs/xarray_component_alias_visibility.f90`,
 `tests/programs/xallocatable_array_component_target.f90`,
 `tests/test_allocatable_component_targets.py`,
 `tests/programs/xallocatable_component_target.f90`,
