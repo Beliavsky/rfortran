@@ -123,6 +123,8 @@ impl Pair {
 struct Lower {
     serial: usize,
     functions: HashMap<String, Function>,
+    /// Subroutines, for checking the types of COMPLEX dummies' actuals.
+    subroutines: HashMap<String, Function>,
     helpers: HashSet<(String, u8)>,
     /// Scalar temporaries of the current unit free for reuse, by type. A
     /// statement's temporaries are live until it, nested bodies included, is
@@ -322,11 +324,21 @@ impl Lower {
                             },
                         );
                     }
-                    self.collect(body, &local)?;
                 }
-                Stmt::Subroutine { body, .. }
-                | Stmt::Module { body, .. }
-                | Stmt::Block { body } => self.collect(body, &scope)?,
+                Stmt::Subroutine { name, params, body, .. } => {
+                    let mut local = scope.clone();
+                    declarations(body, &mut local);
+                    self.subroutines.insert(
+                        name.clone(),
+                        Function {
+                            result: Info::scalar(TypeSpec::Logical),
+                            params: params.clone(),
+                            arguments: local,
+                            elemental: false,
+                        },
+                    );
+                }
+                Stmt::Module { body, .. } | Stmt::Block { body } => self.collect(body, &scope)?,
                 _ => {}
             }
         }
@@ -1150,18 +1162,11 @@ impl Lower {
                     self.helper(&format!("{n}_im"), k, args),
                 )
             }
+            Expr::Call(n, a) if self.functions.get(&n).is_some_and(|f| f.elemental) && !dimensions.is_empty() => {
+                return self.elemental(&n, a, k, dimensions, s, out);
+            }
             Expr::Call(n, mut a) if self.functions.contains_key(&n) => {
                 let f = self.functions[&n].clone();
-                if f.elemental
-                    && a.iter().any(|e| {
-                        self.info(e, s)
-                            .ok()
-                            .flatten()
-                            .is_some_and(|i| !i.dims.is_empty())
-                    })
-                {
-                    bail!("array invocation of user-defined COMPLEX ELEMENTAL functions is not yet supported");
-                }
                 self.arguments(&n, &mut a, s, out)?;
                 self.serial += 1;
                 let temp = format!("@complex_result_{}", self.serial);
@@ -1195,6 +1200,110 @@ impl Lower {
             kind: k,
             dims: dimensions,
         })
+    }
+    /// A COMPLEX ELEMENTAL function applied to arrays: each argument is
+    /// evaluated once, then the function is called for each element, in
+    /// array element order, and the REAL and imaginary parts are stored.
+    fn elemental(
+        &mut self,
+        n: &str,
+        args: Vec<Expr>,
+        k: u8,
+        dimensions: Vec<Expr>,
+        s: &mut Scope,
+        out: &mut Vec<Stmt>,
+    ) -> Result<Pair> {
+        let f = self.functions[n].clone();
+        // Each actual: a COMPLEX pair, or another value, and whether it is an array.
+        let mut actuals: Vec<(Option<Pair>, Option<Expr>, bool)> = vec![];
+        for (index, e) in args.into_iter().enumerate() {
+            let info = self.info(&e, s)?.context("unknown ELEMENTAL argument type")?;
+            if !info.dims.is_empty() && info.dims.len() != dimensions.len() {
+                bail!("ELEMENTAL `{n}` array arguments must have the same rank");
+            }
+            for (extent, expected) in info.dims.iter().zip(&dimensions) {
+                if extent != expected {
+                    out.push(Stmt::If {
+                        cond: bin(BinOp::Ne, extent.clone(), expected.clone()),
+                        then_body: vec![Stmt::CallSub {
+                            name: "@error_stop".into(),
+                            args: vec![Expr::Str(format!("nonconforming array arguments to ELEMENTAL `{n}`"))],
+                        }],
+                        else_body: None,
+                    });
+                }
+            }
+            let array = !info.dims.is_empty();
+            let parameter = f.params.get(index).and_then(|p| f.arguments.get(p)).and_then(|i| complex_kind(&i.kind));
+            if let Some(kind) = parameter {
+                if complex_kind(&info.kind) != Some(kind) {
+                    bail!("COMPLEX type or kind mismatch for argument {} of `{n}`", index + 1);
+                }
+                let p = self.pair(e, s, out)?;
+                let p = self.frozen(p, s, out);
+                actuals.push((Some(p), None, array));
+            } else if matches!(info.kind, TypeSpec::Integer(_) | TypeSpec::Real | TypeSpec::DoublePrecision | TypeSpec::Logical) {
+                let mut e = e;
+                self.expression(&mut e, s, out)?;
+                let v = self.primitive(info.kind, info.dims, e, s, out);
+                actuals.push((None, Some(v), array));
+            } else if !array {
+                let mut e = e;
+                self.expression(&mut e, s, out)?;
+                actuals.push((None, Some(e), false));
+            } else {
+                bail!("array argument {} of COMPLEX ELEMENTAL `{n}` has an unsupported type", index + 1);
+            }
+        }
+        let re = self.primitive(component_type(k), dimensions.clone(), real("0.0", k), s, out);
+        let im = self.primitive(component_type(k), dimensions.clone(), real("0.0", k), s, out);
+        self.serial += 1;
+        let indices: Vec<String> = (0..dimensions.len())
+            .map(|d| format!("@complex_elemental_{}_{d}", self.serial))
+            .collect();
+        out.push(Stmt::VarDecl {
+            kind: TypeSpec::Integer(Some(8)),
+            names: indices.clone(),
+        });
+        let temp = format!("@complex_result_{}", self.serial);
+        out.push(Stmt::DerivedDecl {
+            type_name: typename(k),
+            names: vec![temp.clone()],
+            attributes: vec![],
+            polymorphic: false,
+            dims: vec![],
+        });
+        s.insert(temp.clone(), Info { kind: TypeSpec::Complex(k.to_string()), dims: vec![] });
+        let at: Vec<Expr> = indices.iter().map(|i| id(i)).collect();
+        let element = |e: &Expr, array: bool| match e {
+            Expr::Ident(name) if array => call(name, at.clone()),
+            _ => e.clone(),
+        };
+        let items = actuals
+            .iter()
+            .map(|(p, v, array)| match (p, v) {
+                (Some(p), _) => Pair {
+                    re: element(&p.re, *array),
+                    im: element(&p.im, *array),
+                    kind: p.kind,
+                    dims: vec![],
+                }
+                .pack(),
+                (None, Some(v)) => element(v, *array),
+                (None, None) => unreachable!(),
+            })
+            .collect();
+        let (Expr::Ident(rn), Expr::Ident(iname)) = (&re, &im) else { unreachable!() };
+        let mut body = vec![
+            Stmt::Assign { name: temp.clone(), value: call(n, items) },
+            Stmt::AssignIndex { name: rn.clone(), indices: at.clone(), value: id(&format!("{temp}%re")) },
+            Stmt::AssignIndex { name: iname.clone(), indices: at.clone(), value: id(&format!("{temp}%im")) },
+        ];
+        for (index, extent) in indices.iter().zip(&dimensions) {
+            body = vec![Stmt::Do { var: index.clone(), start: int(1), end: extent.clone(), body }];
+        }
+        out.extend(body);
+        Ok(Pair { re, im, kind: k, dims: dimensions })
     }
     fn matrix(
         &mut self,
@@ -1317,7 +1426,7 @@ impl Lower {
         s: &mut Scope,
         out: &mut Vec<Stmt>,
     ) -> Result<()> {
-        let f = self.functions.get(n).cloned();
+        let f = self.functions.get(n).or_else(|| self.subroutines.get(n)).cloned();
         for (index, e) in a.iter_mut().enumerate() {
             if let Some(k) = f
                 .as_ref()
@@ -1327,6 +1436,15 @@ impl Lower {
                 let info = self
                     .info(e, s)?
                     .context("unknown COMPLEX procedure argument")?;
+                if complex_kind(&info.kind).is_none() {
+                    // Old code passes REAL work arrays to COMPLEX array dummies,
+                    // relying on storage association. COMPLEX values here are
+                    // stored as separate REAL and imaginary parts.
+                    bail!(
+                        "argument {} of `{n}` is not COMPLEX but its dummy is: passing REAL storage to a COMPLEX dummy is not supported; pass a COMPLEX variable",
+                        index + 1
+                    );
+                }
                 if complex_kind(&info.kind) != Some(k) {
                     bail!(
                         "COMPLEX type or kind mismatch for argument {} of `{n}`",
@@ -1762,6 +1880,40 @@ impl Lower {
         *items = values;
         Ok(())
     }
+    /// Lower a procedure body with its internal functions visible, so that
+    /// internal functions of the same name in different hosts stay distinct.
+    fn procedure_body(&mut self, body: &mut Vec<Stmt>, inherited: &Scope, params: &[String]) -> Result<()> {
+        let internal: Vec<String> = body
+            .iter()
+            .filter_map(|s| match s {
+                Stmt::Function { name, .. } | Stmt::Subroutine { name, .. } => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+        if internal.is_empty() {
+            return self.body(body, inherited, params);
+        }
+        let saved: Vec<(String, Option<Function>, Option<Function>)> = internal
+            .iter()
+            .map(|n| (n.clone(), self.functions.remove(n), self.subroutines.remove(n)))
+            .collect();
+        let mut host = inherited.clone();
+        for p in params {
+            host.remove(p);
+        }
+        let result = self.collect(body, &host).and_then(|_| self.body(body, inherited, params));
+        for (n, f, r) in saved {
+            match f {
+                Some(f) => self.functions.insert(n.clone(), f),
+                None => self.functions.remove(&n),
+            };
+            match r {
+                Some(r) => self.subroutines.insert(n, r),
+                None => self.subroutines.remove(&n),
+            };
+        }
+        result
+    }
     fn body(&mut self, body: &mut Vec<Stmt>, inherited: &Scope, params: &[String]) -> Result<()> {
         let mut scope = inherited.clone();
         for p in params {
@@ -1870,8 +2022,8 @@ impl Lower {
                 Stmt::If{cond,then_body,else_body}=>{self.expression(cond,&mut scope,&mut prefix)?;self.body(then_body,&scope,&[])?;if let Some(b)=else_body{self.body(b,&scope,&[])?;}},
                 Stmt::Do{start,end,body,..}=>{self.expression(start,&mut scope,&mut prefix)?;self.expression(end,&mut scope,&mut prefix)?;self.body(body,&scope,&[])?;},
                 Stmt::DoWhile{cond,body}=>{self.expression(cond,&mut scope,&mut prefix)?;self.body(body,&scope,&[])?;if !prefix.is_empty(){let mut evaluate=std::mem::take(&mut prefix);evaluate.push(Stmt::If{cond:Expr::Un(UnOp::Not,Box::new(cond.clone())),then_body:vec![Stmt::Exit],else_body:None});evaluate.append(body);*body=evaluate;*cond=Expr::Logical(true);}},
-                Stmt::Function{body,params,return_type,..}=>{if return_type.as_ref().is_some_and(|k|complex_kind(k).is_some()){*return_type=None;}self.body(body,&scope,params)?;},
-                Stmt::Subroutine{body,params,..}=>self.body(body,&scope,params)?,
+                Stmt::Function{body,params,return_type,..}=>{if return_type.as_ref().is_some_and(|k|complex_kind(k).is_some()){*return_type=None;}self.procedure_body(body,&scope,params)?;},
+                Stmt::Subroutine{body,params,..}=>self.procedure_body(body,&scope,params)?,
                 Stmt::Module{body,..}|Stmt::Block{body}=>self.body(body,&scope,&[])?,
                 Stmt::SelectCase{expr,cases,default}=>{self.expression(expr,&mut scope,&mut prefix)?;for c in cases{self.body(&mut c.body,&scope,&[])?;}if let Some(b)=default{self.body(b,&scope,&[])?;}},
                 _=>{}

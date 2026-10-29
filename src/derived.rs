@@ -465,7 +465,7 @@ impl Lowerer {
                             used_fields,
                         },
                     );
-                    self.collect_procedures(body)?;
+                    // Internal procedures are collected per host, in procedure_body.
                 }
                 Stmt::Module { body, .. } => {
                     self.objects(body, &Objects::new())?;
@@ -1246,6 +1246,30 @@ impl Lowerer {
             !c.attrs.is_empty() || c.derived.as_deref().is_some_and(|sub| self.has_dynamic_component(sub))
         })
     }
+    /// Lower a procedure body with its internal procedures visible, so that
+    /// internal procedures of the same name in different hosts stay distinct.
+    fn procedure_body(&mut self, body: &mut Vec<Stmt>, inherited: &Objects, params: &[String]) -> Result<()> {
+        let internal: Vec<String> = body
+            .iter()
+            .filter_map(|s| match s {
+                Stmt::Function { name, .. } | Stmt::Subroutine { name, .. } => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+        if internal.is_empty() {
+            return self.body(body, inherited, params);
+        }
+        let saved: Vec<(String, Option<Procedure>)> =
+            internal.iter().map(|n| (n.clone(), self.procedures.remove(n))).collect();
+        let result = self.collect_procedures(body).and_then(|_| self.body(body, inherited, params));
+        for (n, p) in saved {
+            match p {
+                Some(p) => self.procedures.insert(n, p),
+                None => self.procedures.remove(&n),
+            };
+        }
+        result
+    }
     fn body(&mut self, body: &mut Vec<Stmt>, inherited: &Objects, params: &[String]) -> Result<()> {
         let statement_location = std::cell::Cell::new(None);
         let result = (|| -> Result<()> {
@@ -1473,7 +1497,7 @@ impl Lowerer {
                             }
                             plain(body);
                         }
-                        self.body(body, &objects, &old_params)?;
+                        self.procedure_body(body, &objects, &old_params)?;
                         // Unused INTENT(IN) record fields are omitted from the
                         // flattened ABI. They must not retain OPTIONAL metadata
                         // for names which are no longer procedure parameters.
@@ -1498,7 +1522,7 @@ impl Lowerer {
                             pure: *pure,
                         };
                     } else {
-                        self.body(body, &objects, &old_params)?;
+                        self.procedure_body(body, &objects, &old_params)?;
                         // Unused INTENT(IN) record fields are omitted from the
                         // flattened ABI. They must not retain OPTIONAL metadata
                         // for names which are no longer procedure parameters.

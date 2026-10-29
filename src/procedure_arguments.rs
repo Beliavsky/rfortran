@@ -182,6 +182,22 @@ fn template(params: &[String], body: &[Stmt]) -> Option<Template> {
     }
     let mut calls = HashSet::new();
     invoked(body, &mut calls);
+    // A dummy declared only as a COMPLEX scalar and invoked, as `f` in
+    // `complex :: f` and `w = f(z)`, is a function; COMPLEX lowering, which
+    // comes later, cannot treat it as data.
+    for p in params {
+        let mut declarations = body.iter().filter(|s| match s {
+            Stmt::ArrayDecl { name, .. } | Stmt::DummyIntent { name, .. } => name == p,
+            Stmt::VarDecl { names, .. } | Stmt::DerivedDecl { names, .. } => names.contains(p),
+            Stmt::InitializedDecl { entities, .. } => entities.iter().any(|(n, _)| n == p),
+            _ => false,
+        });
+        if calls.contains(p)
+            && declarations.all(|s| matches!(s, Stmt::VarDecl { kind: crate::ast::TypeSpec::Complex(_), .. }))
+        {
+            data.remove(p.as_str());
+        }
+    }
     let dummies: Vec<usize> = params
         .iter()
         .enumerate()

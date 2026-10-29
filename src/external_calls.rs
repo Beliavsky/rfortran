@@ -42,6 +42,8 @@ thread_local! {
     /// of the scalar names they declare, which COMPLEX lowering does not keep.
     static COMPLEX_PROCEDURES: std::cell::RefCell<HashMap<String, (HashSet<String>, HashMap<String, TypeSpec>)>> =
         std::cell::RefCell::new(HashMap::new());
+    /// For each procedure with COMPLEX dummies, whether each dummy is COMPLEX.
+    static COMPLEX_DUMMIES: std::cell::RefCell<HashMap<String, Vec<bool>>> = std::cell::RefCell::new(HashMap::new());
 }
 
 /// A dummy of a stub, like the actuals of the calls it stands for.
@@ -418,6 +420,18 @@ fn complex_value(scope: &Scope, e: &Expr) -> bool {
     }
 }
 
+/// Whether an actual argument is a REAL, DOUBLE PRECISION or INTEGER variable,
+/// element or section, or a literal of those types: storage that is not COMPLEX.
+fn real_storage(scope: &Scope, e: &Expr) -> bool {
+    match e {
+        Expr::IntLit(_) | Expr::RealLit(_) => true,
+        Expr::Ident(n) | Expr::Call(n, _) | Expr::Index(n, _) | Expr::Section { name: n, .. } => {
+            !scope.procedures.contains(n) && scope.kind(n).is_some_and(|k| numeric(&k)) && (scope.is_array(n) || matches!(e, Expr::Ident(_)))
+        }
+        _ => false,
+    }
+}
+
 /// The stub of a procedure that is not defined here, with dummies like the
 /// actuals of its calls.
 fn stub_procedure(name: &str, result: &Option<TypeSpec>, dummies: &[StubDummy]) -> Stmt {
@@ -703,6 +717,17 @@ impl Lower {
         // A call with COMPLEX actuals is left for COMPLEX lowering.
         let mut complex = false;
         if let Stmt::CallSub { name, args } = s {
+            // Old code passes REAL work arrays to COMPLEX array dummies,
+            // relying on storage association. COMPLEX values are stored as
+            // separate REAL and imaginary parts.
+            let dummies = COMPLEX_DUMMIES.with(|s| s.borrow().get(name.as_str()).cloned());
+            if let Some(dummies) = dummies.filter(|_| !self.complex_phase && !scope.procedures.contains(name.as_str())) {
+                for (i, (actual, &dummy)) in args.iter().zip(&dummies).enumerate() {
+                    if dummy && real_storage(scope, actual) {
+                        bail!("argument {} of `{name}` is not COMPLEX but its dummy is: passing REAL storage to a COMPLEX dummy is not supported; pass a COMPLEX variable", i + 1);
+                    }
+                }
+            }
             complex = !self.complex_phase && args.iter().any(|a| complex_value(scope, a));
             if complex && self.undefined(name, scope) && !args.iter().any(keyword)
                 && (!scope.uses || scope.externals.contains(name)) && crate::intrinsics::purity(name).is_none()
@@ -1422,6 +1447,7 @@ fn entry_point(name: &str, params: &[String], body: &[Stmt], dummies: &[(TypeSpe
 pub(crate) fn resolve(p: Program) -> Result<Program> {
     STUBS.with(|s| s.borrow_mut().clear());
     COMPLEX_PROCEDURES.with(|s| s.borrow_mut().clear());
+    COMPLEX_DUMMIES.with(|s| s.borrow_mut().clear());
     run(p, false)
 }
 
@@ -1493,6 +1519,8 @@ fn run(mut p: Program, complex_phase: bool) -> Result<Program> {
                 let kinds = scope.kinds.iter().filter(|(n, k)| !scope.is_array(n) && !matches!(k, TypeSpec::Complex(_)))
                     .map(|(n, k)| (n.clone(), k.clone())).collect();
                 COMPLEX_PROCEDURES.with(|s| s.borrow_mut().insert(name.clone(), (scope.externals.clone(), kinds)));
+                let dummies = params.iter().map(|p| complex(scope.kind(p))).collect();
+                COMPLEX_DUMMIES.with(|s| s.borrow_mut().insert(name.clone(), dummies));
                 continue;
             }
         }

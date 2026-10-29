@@ -31,11 +31,13 @@ fn numeric(kind: &TypeSpec) -> bool {
             | TypeSpec::DoublePrecision
     )
 }
+// COMPLEX is checked here before it is lowered to a derived-type scalar.
 fn scalar(kind: &TypeSpec) -> bool {
     numeric(kind)
         || matches!(
             kind,
-            TypeSpec::Logical
+            TypeSpec::Complex(_)
+                | TypeSpec::Logical
                 | TypeSpec::Character(_)
                 | TypeSpec::CharacterLength(_)
                 | TypeSpec::CharacterAssumed
