@@ -2002,8 +2002,10 @@ keyword/OPTIONAL forwarding, generic dispatch and separate compilation. Owner
 subscripts are captured before a subroutine call so a changed index does not
 redirect the borrowed view. TARGET dummies also accept concrete scalar
 allocatable components of scalar owners, including nested scalar owners, and
-elements of concrete TARGET arrays through rank 15. Fixed, runtime-sized and
-assumed-shape arrays retain their bounds; owner indices are evaluated once before
+elements of concrete TARGET arrays through rank 15. Fixed, runtime-sized,
+assumed-shape and ALLOCATABLE owners retain their bounds; scalar ALLOCATABLE
+owners, including nested scalar components, use the same descriptor interface.
+Owner indices are evaluated once before
 writable calls. With
 a TARGET owner, pointer-component associations can survive the call and retain
 the allocation identity through mutation and MOVE_ALLOC. Saved/module owners
@@ -2015,6 +2017,17 @@ MOVE_ALLOC between elements or root variables, and independent identities after
 whole-array, element, section and vector-subscript copies. Pointer lookup currently
 scans the owner's allocation-identity array; it does not retain an index variable
 that can later change.
+ALLOCATABLE owner deallocation, reallocation and INTENT(OUT) replacement
+invalidate old component targets. Lookup checks allocation status before
+scanning an owner's elements, including empty arrays. MOVE_ALLOC transfers the
+owner's storage and allocation identities, so component pointers follow it to a
+compatible TARGET destination; replaced destination allocations are invalidated
+and finalized. Whole owned-array assignment snapshots the RHS before resizing,
+including overlapping sections, and deep copies components into independent
+allocations. Conforming destination bounds are retained; a newly allocated or
+resized whole-array destination takes the RHS bounds. Saved/module owners and
+separate module compilation are supported. MOVE_ALLOC STAT/ERRMSG for these
+derived arrays remains unsupported.
 Indexed-owner calls borrow owned allocation descriptors and numeric/LOGICAL
 scalar fields. Allocation, deallocation, bounds, initialization masks, allocation
 identity and component writes are visible immediately through module names and
@@ -2024,9 +2037,10 @@ and character-element count. Descriptor replacement preserves the live descripto
 cells; intrinsic copies still create independent allocations. Fixed-size array
 and scalar CHARACTER fields of an owner may still be transported through
 temporaries when passing the whole element.
-Escaping associations through allocatable owner objects,
-polymorphic allocated components and recursive allocation-descriptor calls remain
+Polymorphic allocated components and recursive allocation-descriptor calls remain
 unsupported. See `tests/test_allocatable_array_component_targets.py`,
+`tests/test_allocatable_owner_component_targets.py`,
+`tests/programs/xallocatable_owner_component_target.f90`,
 `tests/test_array_component_alias_visibility.py`,
 `tests/programs/xarray_component_alias_visibility.f90`,
 `tests/programs/xallocatable_array_component_target.f90`,

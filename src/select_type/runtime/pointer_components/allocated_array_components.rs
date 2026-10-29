@@ -13,6 +13,8 @@ pub(in crate::select_type::runtime) struct Target {
     pub epoch: String,
     pub rank: usize,
     pub readonly: bool,
+    #[serde(default)]
+    pub allocatable: bool,
 }
 pub(super) fn target(ds: &[Stmt]) -> Option<Target> {
     ds.iter().find_map(|s| {
@@ -50,7 +52,7 @@ impl Target {
     }
     pub fn position(&self, epoch: Expr) -> Expr {
         Expr::Call(
-            format!("@component_allocation_position_{}", self.rank),
+            position_name(self.rank, self.allocatable),
             vec![id(&format!("{}%{}", self.owner, self.epoch)), epoch],
         )
     }
@@ -76,8 +78,14 @@ impl Target {
         )
     }
 }
-fn position_function(rank: usize) -> Stmt {
-    let name = format!("@component_allocation_position_{rank}");
+fn position_name(rank: usize, allocatable: bool) -> String {
+    format!(
+        "@component_allocation_position_{}{rank}",
+        if allocatable { "allocatable_" } else { "" }
+    )
+}
+fn position_function(rank: usize, allocatable: bool) -> Stmt {
+    let name = position_name(rank, allocatable);
     let mut body = vec![
         Stmt::ArrayDecl {
             kind: TypeSpec::Integer(Some(8)),
@@ -99,6 +107,20 @@ fn position_function(rank: usize) -> Stmt {
         set("position", 0),
         set("count", 0),
     ];
+    if allocatable {
+        body.push(Stmt::DummyIntent {
+            name: "epochs".into(),
+            intent: "allocatable".into(),
+        });
+        body.push(Stmt::If {
+            cond: Expr::Un(
+                crate::ast::UnOp::Not,
+                Box::new(Expr::Call("allocated".into(), vec![id("epochs")])),
+            ),
+            then_body: vec![Stmt::Return(Some(id("position")))],
+            else_body: None,
+        });
+    }
     let indices = (0..rank)
         .map(|a| format!("@component_axis{a}"))
         .collect::<Vec<_>>();
@@ -138,8 +160,8 @@ fn position_function(rank: usize) -> Stmt {
     for (axis, var) in indices.into_iter().enumerate() {
         scan = vec![Stmt::Do {
             var,
-            start: int(1),
-            end: Expr::Call("size".into(), vec![id("epochs"), int(axis + 1)]),
+            start: Expr::Call("lbound".into(), vec![id("epochs"), int(axis + 1)]),
+            end: Expr::Call("ubound".into(), vec![id("epochs"), int(axis + 1)]),
             body: scan,
         }];
     }
@@ -193,7 +215,7 @@ pub(super) fn prepare(
         declared_parent: &Declarations,
         paths: &HashMap<String, Vec<(String, String, String)>>,
         generated: &mut Vec<Stmt>,
-        ranks: &mut HashSet<usize>,
+        ranks: &mut HashSet<(usize, bool)>,
         serial: &mut usize,
         pure: bool,
     ) -> Result<()> {
@@ -218,9 +240,7 @@ pub(super) fn prepare(
                             || ds.iter().any(
                                 |s| matches!(s,Stmt::DummyIntent{intent,..} if intent=="target"),
                             ))
-                        || attributes
-                            .iter()
-                            .any(|a| a == "allocatable" || a == "pointer")
+                        || attributes.iter().any(|a| a == "pointer")
                     {
                         continue;
                     }
@@ -234,6 +254,7 @@ pub(super) fn prepare(
                             epoch,
                             rank: dims.len(),
                             readonly: readonly(ds),
+                            allocatable: attributes.iter().any(|a|a=="allocatable") || ds.iter().any(|s|matches!(s,Stmt::DummyIntent{intent,..} if intent=="allocatable")),
                         };
                         let alias = if owner.starts_with("@module$") {
                             format!("{owner}$@array_component${}", field.replace('%', "$"))
@@ -256,7 +277,7 @@ pub(super) fn prepare(
                                 dims: vec![],
                             });
                         }
-                        ranks.insert(dims.len());
+                        ranks.insert((dims.len(), t.allocatable));
                         arrays.insert((owner.clone(), field), (t, alias));
                     }
                 }
@@ -264,6 +285,22 @@ pub(super) fn prepare(
         }
         // Wrap only executable leaf statements. Index expressions are actual
         // arguments, so the record-element call machinery evaluates them once.
+        // A scalar ALLOCATABLE owner already has a one-element physical array.
+        // Project its component paths through that same indexed-owner interface.
+        let scalar_roots = declared
+            .iter()
+            .filter_map(|(root, ds)| {
+                let i = info(ds)?;
+                if i.array.is_some() {
+                    return None;
+                }
+                let backing = i.backing?;
+                arrays
+                    .keys()
+                    .any(|(owner, _)| owner == &backing)
+                    .then(|| (root.clone(), backing))
+            })
+            .collect::<HashMap<_, _>>();
         let mut out = vec![];
         let mut location = None;
         for mut s in std::mem::take(body) {
@@ -299,6 +336,50 @@ pub(super) fn prepare(
             ) {
                 out.push(s);
                 continue;
+            }
+            for e in expressions(&mut s) {
+                visit_expr(e, &mut |e| {
+                    let (name, subscripts) = match e {
+                        Expr::Ident(n) => (n.clone(), vec![]),
+                        Expr::Call(n, a) => (n.clone(), a.clone()),
+                        _ => return,
+                    };
+                    let Some((root, field)) = name.split_once('%') else {
+                        return;
+                    };
+                    let Some(backing) = scalar_roots.get(root) else {
+                        return;
+                    };
+                    let mut args = vec![Expr::Call(backing.clone(), vec![int(1)])];
+                    if !subscripts.is_empty() {
+                        args.push(Expr::Call("@component_subscripts".into(), subscripts));
+                    }
+                    *e = Expr::Call(format!("@record_component:{field}"), args);
+                });
+            }
+            let assign = match &s {
+                Stmt::Assign { name, value } => Some((name.clone(), vec![], value.clone())),
+                Stmt::AssignIndex {
+                    name,
+                    indices,
+                    value,
+                } => Some((name.clone(), indices.clone(), value.clone())),
+                _ => None,
+            };
+            if let Some((name, subscripts, value)) = assign {
+                if let Some((root, field)) = name.split_once('%') {
+                    if let Some(backing) = scalar_roots.get(root) {
+                        let mut indices = vec![int(1)];
+                        if !subscripts.is_empty() {
+                            indices.push(Expr::Call("@component_subscripts".into(), subscripts));
+                        }
+                        s = Stmt::AssignIndex {
+                            name: format!("{backing}%{field}"),
+                            indices,
+                            value,
+                        };
+                    }
+                }
             }
             let mut elements: Vec<(Expr, String, String)> = vec![];
             let mut record = |element: &Expr, field: &str| {
@@ -564,8 +645,8 @@ pub(super) fn prepare(
     }
     let mut ranks = ranks.into_iter().collect::<Vec<_>>();
     ranks.sort();
-    for rank in ranks {
-        generated.push(position_function(rank));
+    for (rank, allocatable) in ranks {
+        generated.push(position_function(rank, allocatable));
     }
     crate::finalization::generated_component_moves(program, &mut generated)?;
     program

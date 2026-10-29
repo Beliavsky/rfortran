@@ -188,7 +188,7 @@ pub(super) fn prepare(program: &mut Program, defs: &Definitions) -> Result<()> {
                             || owner_kinds.contains(&v.kind))
                         && v.attrs.iter().any(|a| a == "save")
                         && !v.attrs.iter().any(|a| a == "pointer")
-                        && (!v.attrs.iter().any(|a| a == "allocatable") || (v.rank == 0 && !owner_kinds.contains(&v.kind)))
+                        && (!v.attrs.iter().any(|a| a == "allocatable") || !owner_kinds.contains(&v.kind))
                 })
                 .map(|(n, _)| n)
                 .collect();

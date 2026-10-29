@@ -188,12 +188,13 @@ print *,p%object%value
 end
 ''','3')
 
-    def test_allocatable_owner_limit(self):
-        self.reject(MODULE+DECL+'''type(container),allocatable,target::dynamic
+    def test_allocatable_owner(self):
+        self.check(MODULE+DECL+'''type(container),allocatable,target::dynamic
 allocate(dynamic)
 call create(dynamic%item,p)
+print *,p%object%value
 end
-''','TARGET ALLOCATABLE scalar component actuals are not yet supported')
+''','3')
 
     def test_shadowed_owner(self):
         module=MODULE.replace('contains\nsubroutine create','''type(container),target::box

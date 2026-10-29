@@ -22,17 +22,17 @@ class Deallocate(unittest.TestCase):
             encoding="utf-8"))["cases"][fixture.stem]["program_stdout"]
         self.check(fixture.read_text(encoding="utf-8"), expected)
 
-    def check(self, program, expected=None, error=None, data="", reference=True, std="f2018", interpreter=True):
+    def check(self, program, expected=None, error=None, data="", reference=True, std="f2018", interpreter=True, compile_timeout=60):
         with tempfile.TemporaryDirectory(prefix="deallocate-") as tmp:
             directory = Path(tmp)
             source = directory / "example.f90"
             source.write_text(program, encoding="utf-8")
             with FailureArtifacts(directory, self.id(), expected={"stdout":expected,"stderr_contains":error}, input=data) as recorder:
                 # Other feature suites borrow check without inheriting this class.
-                Deallocate._check_program(self, source, directory, recorder, expected, error, data, reference, std, interpreter)
+                Deallocate._check_program(self, source, directory, recorder, expected, error, data, reference, std, interpreter, compile_timeout)
 
-    def _check_program(self, source, directory, recorder, expected, error, data, reference, std, interpreter):
-        commands = build_commands(source, directory, recorder=recorder)
+    def _check_program(self, source, directory, recorder, expected, error, data, reference, std, interpreter, compile_timeout=60):
+        commands = build_commands(source, directory, recorder=recorder, compile_timeout=compile_timeout)
         if not interpreter:
             # Programs too slow for the interpreter run compiled only.
             commands = commands[1:]

@@ -192,6 +192,7 @@ struct Lower {
     scalar_functions: std::collections::HashSet<String>,
     scalar_result_declarations: HashMap<String, Stmt>,
     target_roots: std::collections::HashSet<String>,
+    allocatable_roots: std::collections::HashSet<String>,
     elemental_records: HashMap<String, elemental_records::Procedure>,
     elemental_results: HashMap<String, elemental_record_results::ResultProcedure>,
     elemental_functions: std::collections::HashSet<String>,
@@ -1538,17 +1539,21 @@ impl Lower {
         let outer_shapes = self.array_shapes.clone();
         let outer_kinds = self.intrinsic_kinds.clone();
         let outer_targets = self.target_roots.clone();
+        let outer_allocatables = self.allocatable_roots.clone();
         for statement in body.iter() {
             if let Stmt::DerivedDecl {names,attributes,..}=statement {
                 for name in names {
                     if attributes.iter().any(|a|a=="target") {self.target_roots.insert(name.clone());}
                     else {self.target_roots.remove(name);}
+                    if attributes.iter().any(|a|a=="allocatable") {self.allocatable_roots.insert(name.clone());}
+                    else {self.allocatable_roots.remove(name);}
                 }
             }
         }
         for statement in body.iter() {
             if let Stmt::DummyIntent {name,intent}=statement {
                 if intent=="target" {self.target_roots.insert(name.clone());}
+                if intent=="allocatable" {self.allocatable_roots.insert(name.clone());}
             }
         }
         for s in body.iter() {
@@ -1842,6 +1847,21 @@ impl Lower {
                             prefix.push(Stmt::CallSub{name:name.clone(),args:vec![Expr::Ident(storage(to,&field.name)),Expr::Ident(storage(from,&field.name))]});
                         }
                         return Ok(());
+                    }
+                    Stmt::CallSub {name,args} if name=="move_alloc" && !self.procedures.contains_key(name)
+                        && args.iter().any(|a| {
+                            let a=crate::named_arguments::keyword(a).map_or(a,|(_,v)|v);
+                            matches!(a,Expr::Ident(n) if objects.get(n).is_some_and(|o|!o.dims.is_empty()))
+                        }) => {
+                        crate::named_arguments::Signature{params:vec!["from".into(),"to".into(),"stat".into(),"errmsg".into()],optional:["stat".into(),"errmsg".into()].into_iter().collect()}.reorder(name,args)?;
+                        let [Expr::Ident(from),Expr::Ident(to),..]=args.as_slice() else {bail!("MOVE_ALLOC requires ALLOCATABLE variables")};
+                        let source=objects.get(from).context("MOVE_ALLOC requires matching derived arrays")?;
+                        let target=objects.get(to).context("MOVE_ALLOC requires matching derived arrays")?;
+                        if from==to || !self.allocatable_roots.contains(from) || !self.allocatable_roots.contains(to)
+                            || source.ty!=target.ty || source.dims.len()!=target.dims.len() {bail!("MOVE_ALLOC requires distinct ALLOCATABLE owners of matching type and rank");}
+                        if args.iter().skip(2).any(|e|!crate::named_arguments::omitted(e)) {bail!("MOVE_ALLOC STAT/ERRMSG for derived arrays is not yet supported");}
+                        let mut generated=vec![Stmt::If{cond:Expr::Call("allocated".into(),vec![Expr::Ident(to.clone())]),then_body:vec![Stmt::CallSub{name:"@deallocate".into(),args:vec![Expr::Ident(to.clone())]}],else_body:None},Stmt::CallSub{name:"@move_allocation_storage".into(),args:vec![Expr::Ident(to.clone()),Expr::Ident(from.clone())]}];
+                        self.body(&mut generated,&objects)?;prefix.extend(generated);return Ok(());
                     }
                     Stmt::CallSub {name,args} if name=="@move_allocation_storage" => {
                         let [Expr::Ident(to),Expr::Ident(from)]=args.as_slice() else {bail!("invalid record allocation transfer")};
@@ -2165,6 +2185,7 @@ impl Lower {
         *body = out;
         self.array_shapes = outer_shapes;
         self.target_roots = outer_targets;
+        self.allocatable_roots = outer_allocatables;
         self.intrinsic_kinds = outer_kinds;
         Ok(())
     }
@@ -2187,6 +2208,7 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
         scalar_functions: Default::default(),
         scalar_result_declarations: HashMap::new(),
         target_roots: Default::default(),
+        allocatable_roots: Default::default(),
         intrinsic_kinds: Default::default(),
         elemental_records: HashMap::new(),
         elemental_results: HashMap::new(),
@@ -2208,6 +2230,7 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
                 if let Stmt::DerivedDecl { type_name, names, dims, attributes, .. } = s {
                     for n in names {
                         if attributes.iter().any(|a|a=="target") {lower.target_roots.insert(n.clone());}
+                        if attributes.iter().any(|a|a=="allocatable") {lower.allocatable_roots.insert(n.clone());}
                         globals.insert(n.clone(), Object { ty: type_name.clone(), dims: dims.clone() });
                         if dims.is_empty() {
                             lower.register_components(n, type_name, &mut globals);

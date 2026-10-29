@@ -470,7 +470,9 @@ impl Calls {
             if let Some(array) = allocation.and_then(|i| i.array.as_ref()) {
                 let formal=format!("{hidden}$owner");
                 params.push(formal.clone());args.push(id(&array.owner));
-                body.insert(0,Stmt::DerivedDecl{type_name:array.owner_type.clone(),names:vec![formal.clone()],attributes:vec!["target".into(),"@referenced_type".into(),if readonly || array.readonly {"intent(in)"}else{"intent(inout)"}.into()],polymorphic:false,dims:vec![id("@deferred_extent");array.rank]});
+                let mut attrs=vec!["target".into(),"@referenced_type".into(),if readonly || array.readonly {"intent(in)"}else{"intent(inout)"}.into()];
+                if array.allocatable {attrs.push("allocatable".into());}
+                body.insert(0,Stmt::DerivedDecl{type_name:array.owner_type.clone(),names:vec![formal.clone()],attributes:attrs,polymorphic:false,dims:vec![id("@deferred_extent");array.rank]});
                 let mut view=array.clone();view.owner=formal;
                 metadata.extend([view.attribute(),allocated::backing_attribute(&format!("{hidden}$storage")),allocated::epoch_attribute(&format!("{hidden}$epoch"))]);
             } else if let Some(allocation) = allocation {

@@ -14,9 +14,10 @@ ROOT = Path(__file__).resolve().parent.parent
 COMPILER = Path(os.environ.get("RFORT_TEST_COMPILER", os.environ.get("F90C_TEST_COMPILER", ROOT / ("target/debug/rfort.exe" if os.name == "nt" else "target/debug/rfort")))).resolve()
 
 
-def build_commands(source, directory, cwd=None, recorder=None):
+def build_commands(source, directory, cwd=None, recorder=None, compile_timeout=60):
     """Interpreter, -O0 and -O2 commands for source. Module interfaces are
-    written to cwd, the current directory by default."""
+    written to cwd, the current directory by default. compile_timeout allows
+    descriptor-heavy cases more build time without changing execution limits."""
     commands = [[COMPILER, "run", source]]
     for opt in (0, 2):
         obj = directory / f"read{opt}.obj"
@@ -24,7 +25,7 @@ def build_commands(source, directory, cwd=None, recorder=None):
         for cmd in ([COMPILER, "-O", str(opt), "emit-obj", source, obj],
                     [COMPILER, "link", obj, "-o", exe]):
             run = recorder.run if recorder is not None else subprocess.run
-            result = run(cmd, capture_output=True, text=True, timeout=60, cwd=cwd)
+            result = run(cmd, capture_output=True, text=True, timeout=compile_timeout, cwd=cwd)
             if result.returncode:
                 raise AssertionError(result.stdout + result.stderr)
         commands.append([exe])
