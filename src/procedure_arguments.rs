@@ -381,6 +381,8 @@ fn place(body: &mut Vec<Stmt>, made: &mut Vec<(String, Stmt)>, templates: &HashM
                 let name = name.clone();
                 let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(made).into_iter().partition(|(t, _)| *t == name);
                 *made = rest;
+                // USE ONLY of the template stays valid after it is dropped.
+                out.push(crate::imports::declaration(name.clone()));
                 for (_, mut copy) in mine {
                     if let Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } = &mut copy {
                         place(body, made, templates);

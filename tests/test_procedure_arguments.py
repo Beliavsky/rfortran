@@ -207,6 +207,38 @@ print *, associated(p)
 end program p5
 """, 'F\nT T F 13\n1 11\n2 20\nshout 5\nF\n')
 
+    def test_use_only_of_private_module_with_external_dummy(self):
+        # From nswc_mod.f90: QAGS takes an EXTERNAL function and is named in
+        # USE ONLY of a module that is PRIVATE by default.
+        self.check("""module m
+implicit none
+private
+public :: qags
+contains
+subroutine qags(f, a, b, result, ier)
+real, external :: f
+real, intent(in) :: a, b
+real, intent(out) :: result
+integer, intent(out) :: ier
+result = (f(a) + f(b))*(b - a)/2
+ier = 0
+end subroutine qags
+end module m
+program p
+use m, only: qags
+implicit none
+real, external :: square
+real :: r
+integer :: ier
+call qags(square, 0., 1., r, ier)
+print *, r, ier
+end program
+real function square(x)
+real, intent(in) :: x
+square = x*x
+end function
+""", " 0.5 0\n")
+
     def test_invalid_actuals_are_diagnosed(self):
         self.reject("""module m
 implicit none

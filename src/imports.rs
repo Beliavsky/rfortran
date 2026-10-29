@@ -118,6 +118,9 @@ impl Validator {
         if name.starts_with("@module$") && name.rsplit_once("$type").is_some_and(|(source,tag)|
             source.split('$').count()>=3 && !tag.is_empty() && tag.bytes().all(|c|c.is_ascii_digit())) {return Ok(());}
 
+        // A specialization for procedure actual arguments, `f@with@g`, is
+        // accessible where its source procedure `f` is.
+        if let Some((source,_))=name.split_once("@with@") {return self.procedure(source,visible);}
         if !visible.contains(name) && crate::intrinsics::purity(name).is_some() {return Ok(());}
         self.name(name,visible)
     }
