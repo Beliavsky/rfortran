@@ -28,6 +28,23 @@ class DimReductions(unittest.TestCase):
                 self.assertEqual(result.returncode,0,result.stderr)
                 self.assertTrue(equivalent(expected,result.stdout),result.stdout)
 
+    def test_runtime_dim(self):
+        import test_deallocate
+        test_deallocate.Deallocate.check(self, """program p
+implicit none
+integer::a(2,3),v(3),d
+logical::m(3)
+a=reshape([1,2,3,4,5,6],[2,3])
+v=[1,2,3]
+m=[.true.,.false.,.true.]
+d=2
+print *,sum(a,dim=d),maxval(a,dim=d)
+d=1
+print *,sum(a,dim=d),product(a,dim=d)
+print *,sum(v,dim=d),any(m,dim=d),all(m,dim=d),count(m,dim=d)
+end program
+""", " 9 12 5 6\n 3 7 11 2 12 30\n 6 T F 2\n")
+
     def test_shape_errors_and_masked_reads(self):
         with tempfile.TemporaryDirectory(prefix="dim-shapes-") as tmp:
             directory=Path(tmp)
@@ -35,7 +52,6 @@ class DimReductions(unittest.TestCase):
             for body, message in [
                 ("integer::a(2,3,4),b(4,2)\na=1\nb=sum(a,dim=2)", "nonconforming array assignment"),
                 ("integer::a(2,3),b(3,2)\na=1\nb=1\nprint *,sum(a,dim=1,mask=b>0)", "MASK shape"),
-                ("integer::a(2,3),d\na=1\nd=2\nprint *,sum(a,dim=d)", "constant INTEGER"),
             ]:
                 source.write_text(body+"\nend\n")
                 result=subprocess.run([COMPILER,"check",source],capture_output=True,text=True,timeout=15)

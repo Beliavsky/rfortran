@@ -31,7 +31,6 @@ class MaskedReductions(unittest.TestCase):
     def test_diagnostics(self):
         cases=[
             ("integer::a(3)\na=1\nprint *,sum(a,dim=0)","DIM must be between"),
-            ("integer::a(3),d\na=1\nd=1\nprint *,sum(a,dim=d)","constant INTEGER"),
             ("integer::a(2,3),b(3,2)\na=1\nb=1\nprint *,sum(a,mask=b>0)","MASK shape"),
             ("integer::a(2,3)\na=1\nprint *,sum(a,dim=3)","DIM must be between"),
             ("integer::a(3),m(3)\na=1\nm=1\nprint *,sum(a,mask=m)","MASK must be LOGICAL"),

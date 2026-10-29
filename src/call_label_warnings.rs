@@ -308,6 +308,37 @@ impl<'a> Analysis<'a> {
                 note:"use a distinct procedure name when intrinsic access is intended; shadowing may be deliberate and is legal"});
         }
     }
+    /// Variables, dummy arguments and procedures named like Fortran
+    /// statement keywords or attributes, as `block`, `exit` or `if`. Such
+    /// names are legal, since Fortran has no reserved words, but make code
+    /// harder to read. Intrinsic procedure names are -Wintrinsic-shadow's.
+    pub(super) fn keyword_names(&mut self) {
+        const KEYWORDS: &[&str] = &[
+            "abstract", "allocatable", "allocate", "assign", "associate", "asynchronous", "backspace", "bind",
+            "block", "call", "case", "character", "class", "close", "codimension", "common", "complex",
+            "contains", "contiguous", "continue", "critical", "cycle", "data", "deallocate", "default",
+            "deferred", "dimension", "do", "double", "elemental", "else", "elseif", "elsewhere", "end",
+            "endfile", "entry", "enum", "enumerator", "equivalence", "error", "exit", "extends", "external",
+            "final", "flush", "forall", "format", "function", "generic", "go", "goto", "if", "implicit",
+            "import", "impure", "include", "inquire", "integer", "intent", "interface", "intrinsic", "logical",
+            "module", "namelist", "non_overridable", "nopass", "nullify", "only", "open", "operator",
+            "optional", "parameter", "pass", "pause", "pointer", "precision", "print", "private", "procedure",
+            "program", "protected", "public", "pure", "read", "real", "recursive", "result", "return",
+            "rewind", "save", "select", "sequence", "stop", "submodule", "subroutine", "target", "then",
+            "type", "use", "value", "volatile", "wait", "where", "while", "write",
+        ];
+        for d in &self.decls {
+            let name = d.name.to_ascii_lowercase();
+            if !KEYWORDS.contains(&name.as_str()) || name.starts_with('@') {
+                continue;
+            }
+            let span = d.procedure.and_then(|p| self.procedure_span(p)).unwrap_or_else(|| d.span.clone());
+            let what = if d.procedure.is_some() { "procedure" } else if d.dummy { "dummy argument" } else { "variable" };
+            self.warnings.push(Advice{category:"keyword-name",span,
+                message:format!("{what} `{}` is named like the Fortran keyword {}",d.name,name.to_ascii_uppercase()),related:None,
+                note:"Fortran has no reserved words, so this is legal, but a distinct name is clearer"});
+        }
+    }
     pub(super) fn unused_labels(&mut self, body: &'a [Stmt], offset: usize) {
         let mut labels = HashMap::new();
         let mut references = HashSet::new();

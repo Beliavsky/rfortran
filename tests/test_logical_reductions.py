@@ -32,8 +32,7 @@ class LogicalReductions(unittest.TestCase):
         cases=[
             ("logical::m(3)\nm=.true.\nprint *,count(m,dim=0)","DIM must be between"),
             ("integer::a(2,3)\na=1\nprint *,count(a>0,dim=3)","DIM must be between"),
-            ("integer::d\nlogical::m(3)\nd=1\nm=.true.\nprint *,any(m,dim=d)","constant INTEGER"),
-            ("logical::m(3)\nm=.true.\nprint *,all(m,dim=.true.)","constant INTEGER"),
+            ("logical::m(3)\nm=.true.\nprint *,all(m,dim=.true.)","scalar INTEGER"),
             ("integer::a(3)\na=1\nprint *,count(a)","incorrect numeric/logical type"),
             ("print *,count(.true.)","must be an array"),
             ("logical::m(3)\nm=.true.\nprint *,count(m,mask=m)","duplicate argument"),

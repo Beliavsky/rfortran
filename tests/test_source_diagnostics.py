@@ -130,7 +130,7 @@ end function good
             ('program main\nuse ieee_features\nend program\n',2,'intrinsic module `ieee_features`'),
             ('module m\nuse ieee_exceptions\nend module m\nprogram main\nuse m\nend program\n',2,'intrinsic module `ieee_exceptions`'),
             ('program main\ninteger,allocatable::a(:)\na=[3,1,2]\nprint *,maxloc(a,dim=2)\nend program\n',4,'DIM must be between 1 and 1'),
-            ("module m\ncharacter(len=:),allocatable::names(:)\nend module m\nprogram main\nuse m\nallocate(character(len=3)::names(2))\nend program\n",6,'requires deferred-length CHARACTER scalars'),
+            ("module m\ncharacter(len=:),allocatable::names(:)\nend module m\nprogram main\nuse m\nallocate(character(len=3)::names(2))\nend program\n",6,'supported only for local arrays'),
             ("program main\ncharacter(len=8)::text\ntext='a'\ncall show()\ncontains\nsubroutine show()\nprint *,text\nend subroutine\nend program\n",2,'host association for `text`'),
             ('program main\nprint *,f(1)\ncontains\npure integer function f(i)\ninteger,intent(in)::i\ncall g()\nf=i\nend function\nend program\n',6,'PURE procedure cannot call'),
         ]

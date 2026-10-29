@@ -678,6 +678,9 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
                 let saved=capture(Expr::Call("max".into(),vec![int(0),length]),&mut scope,&mut result,serial);
                 for object in &args[1..] {
                     let Expr::Ident(n)=object else {bail!("ALLOCATE(CHARACTER(LEN=...) :: ...) requires deferred-length CHARACTER scalars");};
+                    // An element of a heap CHARACTER array that the deferred-length
+                    // lowering did not handle, as one declared in a module.
+                    if n.starts_with('@') {bail!("ALLOCATE(CHARACTER(LEN=...) :: ...) of a deferred-length CHARACTER array is supported only for local arrays");}
                     let length=scope.lengths.get(n).filter(|_|!scope.fixed.contains(n))
                         .with_context(||format!("ALLOCATE(CHARACTER(LEN=...) :: {n}) requires a deferred-length ALLOCATABLE CHARACTER scalar"))?.clone();
                     if scope.procedure {bail!("deferred CHARACTER host association in procedures is not yet supported");}

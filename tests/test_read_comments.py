@@ -261,8 +261,8 @@ print *,allocated(b),size(b)
 end
 """
         self.compare(module + main, "T 0\n")
-        self.compare(module + main.replace("make(0,b)", "make(3,b)"),
-                     error="exceeds its bounded call-site capacity", reference=False)
+        # The empty section reallocates B to size 0.
+        self.compare(module + main.replace("make(0,b)", "make(3,b)"), "T 0\n")
 
 
 if __name__ == "__main__":

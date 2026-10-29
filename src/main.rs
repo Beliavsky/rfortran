@@ -413,6 +413,7 @@ fn lower_program_body(
         let program = namelists::resolve(program)?;
         let program = c_pointers::prepare(program)?;
         let program = c_interop::prepare(program)?;
+        elemental::reject_allocatable_results(&program)?;
         let program = compile_profile::run("storage_size::resolve", || storage_size::resolve(program))?;
         let program = compile_profile::run("statement_functions::resolve", || statement_functions::resolve(program))?;
         let program = compile_profile::run("transfer::resolve", || transfer::resolve(program))?;

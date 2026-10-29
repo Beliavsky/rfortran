@@ -1285,6 +1285,7 @@ pub fn check(
         "enum-exhaustive",
         "implicit-interface",
         "intrinsic-shadow",
+        "keyword-name",
         "underflow",
         "empty-case",
         "unused-label",
@@ -1300,6 +1301,7 @@ pub fn check(
                 | "conversion"
                 | "implicit-interface"
                 | "intrinsic-shadow"
+                | "keyword-name"
         ) {
             &optional
         } else {
@@ -1360,6 +1362,9 @@ pub fn check(
         a.syntax_value_checks(&program.body, scope, 0);
         a.unused_labels(&program.body, 0);
         a.intrinsic_shadows();
+        if controls.get("keyword-name").is_some_and(|c| c.0) {
+            a.keyword_names();
+        }
     }
     a.warnings.sort_by_key(|w| w.span.start);
     a.warnings

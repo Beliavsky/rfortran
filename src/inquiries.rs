@@ -135,7 +135,7 @@ pub fn model_type(e: &Expr, lookup: &impl Fn(&str) -> Option<(TypeSpec,usize)>) 
                             || !matches!(b,TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision|TypeSpec::Complex(_)) {
                             bail!("numeric inquiry argument has nonnumeric arithmetic operands");
                         }
-                        Some(if matches!(op,BinOp::Pow) && matches!(b,TypeSpec::Integer(_)) { a }
+                        Some(if matches!(op,BinOp::Pow) && matches!(b,TypeSpec::Integer(_)) && !matches!(a,TypeSpec::Integer(_)) { a }
                             else if matches!(&a,TypeSpec::Complex(_)) || matches!(&b,TypeSpec::Complex(_)) {
                                 let component=|t:&TypeSpec|match t {TypeSpec::Complex(k)=>k.parse::<u8>().unwrap_or(4),TypeSpec::DoublePrecision=>8,_=>4};
                                 TypeSpec::Complex(component(&a).max(component(&b)).to_string())

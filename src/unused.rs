@@ -38,6 +38,7 @@ const CATEGORIES: &[&str] = &[
     "enum-exhaustive",
     "implicit-interface",
     "intrinsic-shadow",
+    "keyword-name",
     "underflow",
     "empty-case",
     "unused-label",

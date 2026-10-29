@@ -230,6 +230,34 @@ pub fn validate(
     Ok(())
 }
 
+/// Reject an ALLOCATABLE or POINTER result of an ELEMENTAL function before
+/// lowering replaces the declaration of an allocatable derived-type scalar.
+pub fn reject_allocatable_results(program: &Program) -> Result<()> {
+    fn walk(body: &[Stmt]) -> Result<()> {
+        for s in body {
+            match s {
+                Stmt::Function { name, elemental, body, .. } => {
+                    if *elemental {
+                        let result = match body.last() {
+                            Some(Stmt::Return(Some(Expr::Ident(n)))) => n.as_str(),
+                            _ => name.as_str(),
+                        };
+                        if body.iter().any(|s| matches!(s, Stmt::DerivedDecl { names, attributes, .. } if names.iter().any(|n| n == result)
+                            && attributes.iter().any(|a| matches!(a.as_str(), "allocatable" | "pointer")))) {
+                            return Err(crate::source_diagnostics::declaration(body,result,None,format!("ELEMENTAL function `{name}` result cannot be ALLOCATABLE or POINTER")));
+                        }
+                    }
+                    walk(body)?;
+                }
+                Stmt::Module { body, .. } | Stmt::Subroutine { body, .. } | Stmt::Block { body } => walk(body)?,
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+    walk(&program.body)
+}
+
 pub fn validate_program(program: &Program) -> Result<()> {
     fn walk(body: &[Stmt]) -> Result<()> {
         for s in body {

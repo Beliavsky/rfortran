@@ -358,5 +358,39 @@ end
         self.assertIn("[unused-label]", self.check(source.replace("allow", "deny"), errors=True))
 
 
+    def test_keyword_names(self):
+        """-Wkeyword-name: variables, dummy arguments and procedures named
+        like Fortran keywords; intrinsic procedure names such as LEN are not
+        reported, and the warning is opt-in, not part of -Wall."""
+        source = """module m
+contains
+subroutine piv(block, n)
+integer, intent(in) :: n
+real, intent(inout) :: block(n)
+block(1) = 0
+end subroutine
+end module
+program p
+use m
+logical :: exit
+integer :: if, len
+real :: a(2)
+exit = .true.
+if = 1
+len = 2
+call piv(a, 2)
+print *, exit, if, len
+end program
+"""
+        self.assertEqual(self.check(source), "")
+        self.assertNotIn("[keyword-name]", self.check(source, ["-Wall"]))
+        warnings = self.check(source, ["-Wkeyword-name"])
+        self.assertEqual(warnings.count("[keyword-name]"), 3, warnings)
+        for text in ["dummy argument `block`", "variable `exit`", "variable `if`"]:
+            self.assertIn(text, warnings)
+        self.assertNotIn("`len`", warnings)
+        self.assertIn("error:", self.check(source, ["-Werror=keyword-name"], errors=True))
+
+
 if __name__ == "__main__":
     unittest.main()

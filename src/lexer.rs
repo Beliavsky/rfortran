@@ -1105,6 +1105,17 @@ pub fn lex(input: &str) -> Vec<Token> {
                 depth == 0 && k > 0 && matches!(tokens[k - 1].kind, TokenKind::KwIf) && statement_head(&tokens, input, k - 1)
             };
             if (statement_head(&tokens, input, i) || after_condition) && !assignment { continue; }
+            // A later word of a statement's leading keyword phrase, as PRECISION
+            // in `double precision :: precision`, CASE in `select case (x)` or
+            // DOUBLE in `pure double precision function f(x)`.
+            // PURE, ELEMENTAL and the like become keywords only later.
+            let keyword = |k: usize| word(&tokens[k]) && match &tokens[k].kind {
+                TokenKind::Ident(n) => matches!(n.to_ascii_lowercase().as_str(), "pure" | "simple" | "impure" | "elemental" | "recursive"),
+                _ => true,
+            };
+            let mut k = i;
+            while k > 0 && same(k - 1, k) && keyword(k - 1) && !statement_head(&tokens, input, k) { k -= 1; }
+            if k < i && statement_head(&tokens, input, k) && !assignment { continue; }
             // The unit's own header keyword, as FUNCTION in `function f()`.
             if matches!(tokens[i].kind, TokenKind::KwFunction | TokenKind::KwSubroutine | TokenKind::KwProgram | TokenKind::KwModule | TokenKind::KwEnd) { continue; }
             tokens[i].kind = TokenKind::Ident(name.clone());

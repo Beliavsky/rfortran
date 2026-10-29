@@ -419,7 +419,8 @@ class BatchSources(unittest.TestCase):
         sources[-1].write_text("program main\ninteger :: =\nend program main\n", encoding="utf-8")
         result = self.batch(*sources)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("main source.f90c-sources.f90", result.stderr)
+        # The error names the original file and line, not the combined source.
+        self.assertIn("main source.f90:2:", result.stderr)
         self.assertTrue(sources[-1].with_suffix(".f90c-sources.f90").exists())
         self.assertFalse(sources[-1].with_suffix(".exe").exists())
 

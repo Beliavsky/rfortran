@@ -67,6 +67,7 @@ and lifetime diagnostics also identify the related declaration or assignment.
 | `-Wenum-exhaustive` | Yes | SELECT CASE without CASE DEFAULT missing declared values of an enumeration type or named interoperable enum type |
 | `-Wimplicit-interface` | No | Calls lacking a known explicit interface; module/internal procedures, interface blocks, generics and known intrinsics are exempt |
 | `-Wintrinsic-shadow` | No | Defined or declared user procedures sharing a known intrinsic procedure name; ordinary data names are exempt |
+| `-Wkeyword-name` | No | Variables, dummy arguments and procedures named like Fortran statement keywords or attributes, such as `block`, `exit`, `if`, `data` or `result`; legal, since Fortran has no reserved words, but harder to read. Intrinsic procedure names such as `len` are left to `-Wintrinsic-shadow` |
 | `-Wunderflow` | Yes | Supported nonzero constant expressions or assignments rounding to zero in REAL(4)/REAL(8) |
 | `-Wempty-case` | Yes | Reversed constant INTEGER, CHARACTER or enumeration CASE ranges |
 | `-Wunused-label` | Yes | Unreferenced statement labels within each program unit, including FORMAT labels |

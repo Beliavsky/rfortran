@@ -221,11 +221,10 @@ end
                    "print *,a(:,1)\ndeallocate(a)\nend\n", "2 2\n")
         self.check("integer,allocatable::a(:,:)\nallocate(a(2,3))\na=2\n"
                    "print *,sum(a,dim=1),sum(a,mask=a>0)\nend\n", "4 4 4 12\n")
-        for operation in ("print *,transpose(a)", "print *,a(1)"):
-            with self.subTest(operation=operation):
-                self.reject("integer,allocatable::a(:,:)\nallocate(a(2,3))\na=2\n" +
-                            operation + "\ndeallocate(a)\nend\n",
-                            "subscripts" if operation.endswith("a(1)") else "supported")
+        self.check("integer,allocatable::a(:,:)\nallocate(a(2,3))\na=reshape([1,2,3,4,5,6],[2,3])\n"
+                   "print *,transpose(a)\nprint *,shape(transpose(a))\ndeallocate(a)\nend\n", "1 3 5 2 4 6\n3 2\n")
+        self.reject("integer,allocatable::a(:,:)\nallocate(a(2,3))\na=2\n"
+                    "print *,a(1)\ndeallocate(a)\nend\n", "subscripts")
 
     def test_local_matrix_shadows_caller_storage(self):
         self.check("""program main
