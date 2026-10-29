@@ -134,6 +134,7 @@ fn declarations(body: &[Stmt], parent: &Declarations) -> Declarations {
             }
         }
     }
+    pointer_components::allocated::component_declarations(&mut out);
     out
 }
 fn uses(s: &Stmt, n: &str) -> bool {

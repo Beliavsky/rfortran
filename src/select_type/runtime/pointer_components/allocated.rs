@@ -5,6 +5,8 @@
 use super::*;
 #[path="allocated_dummies.rs"]
 mod dummies;
+#[path="allocated_components.rs"]
+mod components;
 
 const BACKING: &str = "@allocated_target_storage:";
 const EPOCH: &str = "@allocated_target_epoch:";
@@ -73,7 +75,7 @@ pub(super) fn needed(body: &mut [Stmt]) -> bool {
         || body.iter_mut().any(|s|children(s).into_iter().any(|b|needed(b)))
 }
 
-pub(super) fn prepare(program: &mut Program, defs: &Definitions) -> Result<()> {
+pub(super) fn prepare(program: &mut Program, defs: &mut Definitions) -> Result<()> {
     dummies::normalize(program, defs)?;
     fn scope(body: &mut Vec<Stmt>, params: &[String], module: bool) -> Result<()> {
         let vars = super::super::super::objects(body, &Objects::new());
@@ -195,7 +197,12 @@ pub(super) fn prepare(program: &mut Program, defs: &Definitions) -> Result<()> {
         *body = out;
         Ok(())
     }
-    scope(&mut program.body, &[], false)
+    scope(&mut program.body, &[], false)?;
+    components::prepare(program,defs)
+}
+
+pub(in crate::select_type::runtime) fn component_declarations(declared:&mut Declarations) {
+    components::declarations(declared);
 }
 
 /// Erase virtual scalar declarations only after pointer and interface lowering
@@ -454,6 +461,25 @@ pub(in crate::select_type::runtime) fn finish(
                             suffix.push(Stmt::AssignIndex{name:i.backing.clone().unwrap(),indices:vec![int(1)],value:value.clone()});
                         }
                     }
+                } else if name == "@move_allocation_storage"
+                    && matches!(args.as_slice(), [Expr::Ident(to), Expr::Ident(from)]
+                        if targets.get(to).is_some_and(|i| i.backing.is_some())
+                        && targets.get(from).is_some_and(|i| i.backing.is_some()))
+                {
+                    // FINAL lowering already disposed of the old destination.
+                    // Transfer its descriptor and identity together, preserving
+                    // associations to the source allocation after the move.
+                    let Expr::Ident(to) = &args[0] else { unreachable!() };
+                    let Expr::Ident(from) = &args[1] else { unreachable!() };
+                    let t = &targets[to];
+                    let f = &targets[from];
+                    out.push(Stmt::CallSub {
+                        name: name.clone(),
+                        args: vec![id(t.backing.as_ref().unwrap()), id(f.backing.as_ref().unwrap())],
+                    });
+                    out.push(Stmt::Assign { name: t.epoch.clone(), value: id(&f.epoch) });
+                    out.push(set(&f.epoch, 0));
+                    continue;
                 } else if matches!(name.as_str(),"move_alloc"|"@move_alloc") && args.iter().any(|a| {let mut found=false;visit_expr(&mut a.clone(),&mut |e| {if matches!(e,Expr::Ident(n) if targets.get(n).is_some_and(|i|i.backing.is_some())) {found=true;}});found}) {
                     let transfer=(||->Result<Vec<Stmt>> {
                         let mut actuals=args.clone();

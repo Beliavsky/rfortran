@@ -106,6 +106,15 @@ pub(super) fn substitute(body: &mut [Stmt], from: &str, to: &str) {
         }
         for e in expressions(s) {
             visit_expr(e, &mut |e| match e {
+                Expr::Call(n, args) if n == "present" => {
+                    // Presence belongs to the original OPTIONAL interface,
+                    // not to the always-present borrowed target environment.
+                    for arg in args {
+                        visit_expr(arg, &mut |e| {
+                            if matches!(e, Expr::Ident(n) if n == to) { *e = id(from); }
+                        });
+                    }
+                }
                 Expr::Ident(n)
                 | Expr::Call(n, _)
                 | Expr::Index(n, _)
@@ -397,6 +406,34 @@ impl Calls {
             .enumerate()
             .map(|(i, _)| format!("@pointer_owner_target{i:08}"))
             .collect();
+        // Component views of a TARGET owner dummy name the same allocation
+        // as the caller's view. Use that canonical borrowed target rather
+        // than treating the callee's synthetic view as local TARGET storage.
+        let mut component_aliases = vec![];
+        for (p, actual) in params.iter().zip(args.iter()) {
+            let Expr::Ident(actual) = actual else { continue; };
+            if !vars.get(p).is_some_and(|v| v.attrs.iter().any(|a| a == "target")) {
+                continue;
+            }
+            for (alias, v) in &vars {
+                if !v.attrs.iter().any(|a| a == "@allocated_component_alias") { continue; }
+                let Some(backing) = v.attrs.iter().find_map(|a| a.strip_prefix("@allocated_target_storage:")) else { continue; };
+                let Some(field) = backing.strip_prefix(p).filter(|s| s.starts_with('%')) else { continue; };
+                let backing = format!("{actual}{field}");
+                if let Some((target, _)) = epochs.iter().find(|(_, i)| i.backing.as_ref() == Some(&backing)) {
+                    let canonical = if self.persistent.contains_key(target) {
+                        Some(target.clone())
+                    } else {
+                        targets.iter().position(|(_, n)| n == target).map(|i| hidden[i].clone())
+                    };
+                    if let Some(canonical) = canonical { component_aliases.push((alias.clone(), canonical)); }
+                }
+            }
+        }
+        for (alias, canonical) in component_aliases {
+            substitute(body, &alias, &canonical);
+            body.retain(|s| !matches!(s, Stmt::DerivedDecl { names, .. } if names.contains(&alias)));
+        }
         for (p, actual) in params.iter().zip(args.iter()) {
             if vars
                 .get(p)
@@ -424,7 +461,7 @@ impl Calls {
                 let formal = format!("{hidden}$epoch");
                 params.push(formal.clone()); args.push(id(&allocation.epoch));
                 body.insert(0, Stmt::VarDecl {kind:TypeSpec::Integer(Some(8)),names:vec![formal.clone()]});
-                body.insert(0, Stmt::DummyIntent {name:formal.clone(),intent:"intent(in)".into()});
+                body.insert(0, Stmt::DummyIntent {name:formal.clone(),intent:if readonly {"intent(in)"}else{"intent(inout)"}.into()});
                 metadata.push(allocated::epoch_attribute(&formal));
             }
             if let Some(backing)=allocation.and_then(|i|i.backing.as_ref()) {

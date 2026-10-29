@@ -122,13 +122,13 @@ end subroutine
 end module''')
         self.reject(module+'end\n','INTENT(IN)')
 
-    def test_reject_target_dummy(self):
-        self.reject(MODULE.replace('allocatable, intent(out)', 'allocatable, target, intent(out)')+'''use allocatable_component_demo
+    def test_target_dummy(self):
+        self.check(MODULE.replace('allocatable, intent(out)', 'allocatable, target, intent(out)')+'''use allocatable_component_demo
 implicit none
 type(owner)::x
 call reset(x%item)
 end
-''','TARGET ALLOCATABLE scalar component actuals')
+''','entry F\n')
 
     def test_separate_module(self):
         helper=test_module_compilation.ModuleCompilation()
