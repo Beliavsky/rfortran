@@ -19,7 +19,7 @@ pub(super) fn declarations(declared: &mut Declarations) {
                 ..
             } = s
             {
-                if attributes.iter().any(|a| a == ALIAS) {
+                if attributes.iter().any(|a| a == ALIAS) && !array_target(ds) {
                     if let Some(i) = info(ds) {
                         let backing = i.backing.unwrap();
                         extra.push((
@@ -337,5 +337,7 @@ pub(super) fn prepare(program: &mut Program, defs: &mut Definitions) -> Result<(
             }
         }
     }
+    super::array_components::prepare(program, &paths)?;
+    crate::finalization::prepare_components(program)?;
     scope(&mut program.body, &globals, &paths)
 }

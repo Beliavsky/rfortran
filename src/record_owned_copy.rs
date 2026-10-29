@@ -12,6 +12,7 @@ impl Lower {
                         type_name, dims, attributes, ..
                     } => {
                         if attributes.iter().any(|a|a=="pointer" || a=="allocatable" && dims.is_empty()) {return false;}
+                        if attributes.iter().any(|a|a=="allocatable") && attributes.iter().any(|a|a=="@scalar_heap") {return true;}
                         if dims.is_empty() {
                             self.needs_owned_copy(type_name)
                         } else {
@@ -133,6 +134,12 @@ impl Lower {
                             },
                         ],
                     ));
+                } else if let Some(field)=name.strip_prefix("@allocated_component_epoch_") {
+                    // This is an intrinsic deep copy, not descriptor transport
+                    // for a borrowed actual. Each copied allocation gets its
+                    // own identity, including section and vector destinations.
+                    out.push(Stmt::Assign{name:target.clone(),value:Expr::IntLit("0".into())});
+                    out.push(guarded(test("allocated",&format!("{to}%{field}")),vec![call("@heap_identity",vec![id(&target)])]));
                 } else if dims.is_empty() && child.is_some() {
                     copy(lower, &target, &source, child.as_ref().unwrap(), out)?;
                 } else {

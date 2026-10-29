@@ -181,11 +181,12 @@ print *,box%item%value,associated(p%object,box%item)
 end
 ''','F\n10 T')
 
-    def test_array_owner_limit(self):
-        self.reject(MODULE+DECL+'''type(container),target::boxes(2)
+    def test_array_owner(self):
+        self.check(MODULE+DECL+'''type(container),target::boxes(2)
 call create(boxes(2)%item,p)
+print *,p%object%value
 end
-''','TARGET ALLOCATABLE scalar component actuals are not yet supported')
+''','3')
 
     def test_allocatable_owner_limit(self):
         self.reject(MODULE+DECL+'''type(container),allocatable,target::dynamic

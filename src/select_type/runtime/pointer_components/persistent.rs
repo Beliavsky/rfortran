@@ -51,6 +51,7 @@ pub(in crate::select_type::runtime) fn declarations(program: &Program) -> Declar
     // Include the allocation descriptor and epoch used by static target views.
     let mut extra = vec![];
     for ds in out.values() { if let Some(i) = super::allocated::info(ds) {
+        if let Some(a) = i.array {extra.push(a.owner);continue;}
         extra.push(i.epoch);
         if let Some(b) = i.backing { extra.push(b); }
     }}
@@ -183,6 +184,7 @@ pub(super) fn prepare(program: &mut Program, defs: &Definitions) -> Result<()> {
                     !params.contains(n)
                         && !v.polymorphic
                         && ((v.rank == 0 && v.attrs.iter().any(|a| a == "target" || a == "allocatable"))
+                            || (v.rank > 0 && v.attrs.iter().any(|a|a=="target") && body.iter().any(|s|matches!(s,Stmt::DerivedDecl{names,..} if names.contains(n))))
                             || owner_kinds.contains(&v.kind))
                         && v.attrs.iter().any(|a| a == "save")
                         && !v.attrs.iter().any(|a| a == "pointer")

@@ -410,12 +410,22 @@ impl Calls {
         // as the caller's view. Use that canonical borrowed target rather
         // than treating the callee's synthetic view as local TARGET storage.
         let mut component_aliases = vec![];
+        let component_views=declarations(body,&Declarations::new());
         for (p, actual) in params.iter().zip(args.iter()) {
             let Expr::Ident(actual) = actual else { continue; };
             if !vars.get(p).is_some_and(|v| v.attrs.iter().any(|a| a == "target")) {
                 continue;
             }
             for (alias, v) in &vars {
+                if let Some(array)=component_views.get(alias).and_then(|d|allocated::info(d)).and_then(|i|i.array) {
+                    if array.owner==*p {
+                        if let Some((target,_))=epochs.iter().find(|(_,i)|i.array.as_ref().is_some_and(|a|a.owner==*actual && a.field==array.field && a.rank==array.rank)) {
+                            let canonical=if self.persistent.contains_key(target){Some(target.clone())}else{targets.iter().position(|(_,n)|n==target).map(|i|hidden[i].clone())};
+                            if let Some(canonical)=canonical {component_aliases.push((alias.clone(),canonical));}
+                        }
+                    }
+                    continue;
+                }
                 if !v.attrs.iter().any(|a| a == "@allocated_component_alias") { continue; }
                 let Some(backing) = v.attrs.iter().find_map(|a| a.strip_prefix("@allocated_target_storage:")) else { continue; };
                 let Some(field) = backing.strip_prefix(p).filter(|s| s.starts_with('%')) else { continue; };
@@ -457,14 +467,22 @@ impl Calls {
         for ((kind, target), hidden) in targets.iter().zip(&hidden) {
             let mut metadata = vec![];
             let allocation=epochs.get(target);
-            if let Some(allocation) = allocation {
+            if let Some(array) = allocation.and_then(|i| i.array.as_ref()) {
+                let formal=format!("{hidden}$owner");
+                params.push(formal.clone());args.push(id(&array.owner));
+                body.insert(0,Stmt::DerivedDecl{type_name:array.owner_type.clone(),names:vec![formal.clone()],attributes:vec!["target".into(),"@referenced_type".into(),if readonly || array.readonly {"intent(in)"}else{"intent(inout)"}.into()],polymorphic:false,dims:vec![id("@deferred_extent");array.rank]});
+                let mut view=array.clone();view.owner=formal;
+                metadata.extend([view.attribute(),allocated::backing_attribute(&format!("{hidden}$storage")),allocated::epoch_attribute(&format!("{hidden}$epoch"))]);
+            } else if let Some(allocation) = allocation {
                 let formal = format!("{hidden}$epoch");
                 params.push(formal.clone()); args.push(id(&allocation.epoch));
                 body.insert(0, Stmt::VarDecl {kind:TypeSpec::Integer(Some(8)),names:vec![formal.clone()]});
                 body.insert(0, Stmt::DummyIntent {name:formal.clone(),intent:if readonly {"intent(in)"}else{"intent(inout)"}.into()});
                 metadata.push(allocated::epoch_attribute(&formal));
             }
-            if let Some(backing)=allocation.and_then(|i|i.backing.as_ref()) {
+            if allocation.is_some_and(|i|i.array.is_some()) {
+                // The owner array is the persistent allocation environment.
+            } else if let Some(backing)=allocation.and_then(|i|i.backing.as_ref()) {
                 // Pass the descriptor, including an unallocated moved-from
                 // variable, without evaluating its nonexistent scalar element.
                 let formal=format!("{hidden}$storage");
@@ -621,7 +639,8 @@ impl Calls {
                 } = s
                 {
                     if dims.is_empty() && has("target") && !has("pointer") && (!has("allocatable") || allocated::info(ds).is_some()) {
-                        if environment.map_or_else(
+                        let component_dummy=allocated::info(ds).and_then(|i|i.backing).is_some_and(|b|params.iter().any(|p|b==*p || b.strip_prefix(p).is_some_and(|f|f.starts_with('%'))));
+                        if component_dummy || environment.map_or_else(
                             || self.persistent.contains_key(n) || referenced.contains(n) || (local.contains_key(n) && allocated::info(ds).is_some()),
                             |args| args.contains(&id(n)),
                         )

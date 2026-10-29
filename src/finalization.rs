@@ -13,6 +13,44 @@ pub(crate) const ARRAY_ASSIGNMENT: &str = "@final_array_assignment";
 pub(crate) fn prepare_components(program: &mut Program) -> Result<()> {
     owned_components::prepare(program)
 }
+/// Indexed-owner wrappers are introduced after source finalization. Lower only
+/// their remaining MOVE_ALLOC statements; source calls already finalized by the
+/// original pass must not be processed a second time.
+pub(crate) fn generated_component_moves(program:&Program, generated:&mut Vec<Stmt>)->Result<()> {
+    fn has_move(body:&mut [Stmt])->bool {
+        body.iter_mut().any(|s| matches!(s,Stmt::CallSub{name,..} if name=="move_alloc") || crate::procedure_arguments::children(s).into_iter().any(|b|has_move(b)))
+    }
+    if !has_move(generated) {return Ok(());}
+    let mut lower=Lower{types:HashMap::new(),routines:HashMap::new(),finalizable:HashSet::new(),assignments:HashSet::new(),serial:0,ranks:HashMap::new(),helpers:HashMap::new(),generated:vec![]};
+    let mut source=program.clone();
+    fn scalar_layouts(body:&mut [Stmt]) {
+        for s in body {
+            if let Stmt::DerivedType{components,..}=s {
+                for c in components {if let Stmt::DerivedDecl{attributes,dims,..}=c {if attributes.iter().any(|a|a=="@scalar_heap"){dims.clear();}}}
+            } else {for b in crate::procedure_arguments::children(s){scalar_layouts(b);}}
+        }
+    }
+    scalar_layouts(&mut source.body);
+    lower.collect(&source.body,None);lower.validate()?;
+    if lower.finalizable.is_empty() {return Ok(());}
+    fn serial(body:&[Stmt], next:&mut usize) {
+        for s in body {
+            if let Stmt::Subroutine{name,..}|Stmt::Function{name,..}=s {
+                if name.starts_with("@finalize_") {if let Some(n)=name.rsplit('_').next().and_then(|n|n.parse::<usize>().ok()) {*next=(*next).max(n);}}
+            }
+            for b in crate::procedure_arguments::children(&mut s.clone()) {serial(b,next);}
+        }
+    }
+    serial(&program.body,&mut lower.serial);
+    for s in generated.iter_mut() {
+        if has_move(std::slice::from_mut(s)) {
+            let mut selected=vec![s.clone()];
+            lower.body(&mut selected,&Objects::new(),&[],false,&[],0)?;
+            *s=selected.remove(0);
+        }
+    }
+    generated.extend(lower.generated);Ok(())
+}
 pub(crate) fn array_helper(name: &str) -> bool {
     name.strip_prefix("@finalize_array_")
         .is_some_and(|suffix| !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit()))

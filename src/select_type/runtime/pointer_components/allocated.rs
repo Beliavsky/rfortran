@@ -7,6 +7,8 @@ use super::*;
 mod dummies;
 #[path="allocated_components.rs"]
 mod components;
+#[path="allocated_array_components.rs"]
+mod array_components;
 
 const BACKING: &str = "@allocated_target_storage:";
 const EPOCH: &str = "@allocated_target_epoch:";
@@ -15,6 +17,7 @@ const EPOCH: &str = "@allocated_target_epoch:";
 pub(in crate::select_type::runtime) struct Info {
     pub backing: Option<String>,
     pub epoch: String,
+    pub array: Option<array_components::Target>,
 }
 pub(in crate::select_type::runtime) fn info(ds: &[Stmt]) -> Option<Info> {
     let attrs: Vec<_> = ds
@@ -26,6 +29,7 @@ pub(in crate::select_type::runtime) fn info(ds: &[Stmt]) -> Option<Info> {
         .flatten()
         .collect();
     Some(Info {
+        array: array_components::target(ds),
         epoch: attrs
             .iter()
             .find_map(|a| a.strip_prefix(EPOCH))
@@ -42,13 +46,22 @@ pub(super) fn epoch_attribute(epoch: &str) -> String {
 pub(super) fn backing_attribute(backing: &str) -> String {
     format!("{BACKING}{backing}")
 }
-pub(in crate::select_type::runtime) fn element(n: &str, ds: &Declarations) -> Expr {
+pub(in crate::select_type::runtime) fn element(n: &str, epoch: &str, ds: &Declarations) -> Expr {
+    if let Some(a) = ds.get(n).and_then(|d| array_components::target(d)) {
+        return a.element(id(epoch));
+    }
     ds.get(n)
         .and_then(|d| info(d))
         .and_then(|i| i.backing)
         .map_or_else(|| id(n), |b| Expr::Call(b, vec![int(1)]))
 }
 pub(in crate::select_type::runtime) fn valid(n: &str, epoch: &str, ds: &Declarations) -> Expr {
+    valid_expr(n, id(epoch), ds)
+}
+pub(in crate::select_type::runtime) fn valid_expr(n: &str, epoch: Expr, ds: &Declarations) -> Expr {
+    if let Some(a) = ds.get(n).and_then(|d| array_components::target(d)) {
+        return Expr::Bin(BinOp::Gt, Box::new(a.position(epoch)), Box::new(int(0)));
+    }
     ds.get(n)
         .and_then(|d| info(d))
         .map_or(Expr::Logical(true), |i| {
@@ -61,7 +74,7 @@ pub(in crate::select_type::runtime) fn valid(n: &str, epoch: &str, ds: &Declarat
                 )),
                 Box::new(Expr::Bin(
                     BinOp::Eq,
-                    Box::new(id(epoch)),
+                    Box::new(epoch.clone()),
                     Box::new(id(&i.epoch)),
                 )),
             )
@@ -204,6 +217,9 @@ pub(super) fn prepare(program: &mut Program, defs: &mut Definitions) -> Result<(
 pub(in crate::select_type::runtime) fn component_declarations(declared:&mut Declarations) {
     components::declarations(declared);
 }
+
+pub(in crate::select_type::runtime) fn array_target(ds:&[Stmt])->bool { array_components::target(ds).is_some() }
+pub(in crate::select_type::runtime) fn array_association(e:&Expr, ds:&Declarations)->Option<(String,Expr)> {array_components::association(e,ds)}
 
 /// Erase virtual scalar declarations only after pointer and interface lowering
 /// have used their original TKR. Ordinary storage lowering sees record arrays.

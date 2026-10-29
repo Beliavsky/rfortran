@@ -645,6 +645,7 @@ pub(crate) fn automatic_derived(mut program: Program) -> Result<Program> {
     }
     fn lower(params: &[String], result: &str, body: &mut Vec<Stmt>, enumerations: &HashSet<String>) {
         let mut allocations = vec![];
+        let mut required=params.iter().cloned().collect::<HashSet<_>>();
         for s in body.iter_mut() {
             let Stmt::DerivedDecl { type_name, names, attributes, dims, .. } = s else { continue };
             // Enumeration storage is erased to INTEGER after nominal checks.
@@ -652,10 +653,11 @@ pub(crate) fn automatic_derived(mut program: Program) -> Result<Program> {
             if enumerations.contains(type_name) {continue;}
             if dims.is_empty() || !dims.iter().any(|d| uses(d, params))
                 || names.iter().any(|n| params.contains(n) || n == result)
-                || attributes.iter().any(|a| matches!(a.as_str(), "allocatable" | "pointer" | "save" | "target") || a.starts_with("intent(")) {
+                || attributes.iter().any(|a| matches!(a.as_str(), "allocatable" | "pointer" | "save") || a.starts_with("intent(")) {
                 continue;
             }
             for name in names.iter() {
+                required.insert(name.clone());
                 let subscripts = dims.iter().map(|d| match d {
                     Expr::Call(tag, a) if tag == "@declared_bounds" => Expr::Call("@section_subscript".into(), vec![Expr::Section {
                         name: name.clone(),
@@ -683,6 +685,17 @@ pub(crate) fn automatic_derived(mut program: Program) -> Result<Program> {
             } else if !matches!(s, Stmt::SourceLocation(_)) {
                 break;
             }
+        }
+        // Pointer lowering can prepend executable initialization before the
+        // source declarations. Automatic storage must still be declared (and
+        // its bound parameters in scope) before allocating it.
+        for (i,s) in body.iter().enumerate() {
+            let needed=match s {
+                Stmt::DerivedDecl{names,..}|Stmt::VarDecl{names,..}=>names.iter().any(|n|required.contains(n)),
+                Stmt::ArrayDecl{name,..}=>required.contains(name),
+                _=>false,
+            };
+            if needed {at=at.max(i+1);}
         }
         let tail = body.split_off(at);
         body.extend(allocations);

@@ -404,6 +404,18 @@ impl Lower {
         copy_back: Option<&mut Vec<Stmt>>, copy_in:bool, component: Option<&str>) -> Result<String> {
         let (object, idx) = self.element(e, objects).context("a type-bound call requires a scalar object or an array element")?;
         let (object, mut idx) = (object.to_owned(), idx.to_vec());
+        for index in &mut idx { self.expression(index, objects, prefix)?; }
+        if copy_back.is_some() {
+            for index in &mut idx {
+                if matches!(index,Expr::Ident(_)) {
+                    self.serial+=1;
+                    let temp=format!("@record_owner_index_{}",self.serial);
+                    prefix.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![temp.clone()]});
+                    prefix.push(Stmt::Assign{name:temp.clone(),value:index.clone()});
+                    *index=Expr::Ident(temp);
+                }
+            }
+        }
         self.capture_indices(&mut idx, prefix);
         let ty = objects[&object].ty.clone();
         self.serial += 1;

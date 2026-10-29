@@ -124,7 +124,12 @@ pub(super) fn selected(o:&Object,index:usize,decls:&Declarations)->Expr {
 pub(super) fn pointer_cases(o:&Object,bodies:Vec<Vec<Stmt>>,default:Vec<Stmt>,decls:&Declarations)->Stmt {
     if !o.pointer {return cases(o,bodies,default);}
     let mut result=default;
-    for (i,body) in bodies.into_iter().enumerate().rev() {
+    // Borrowed scalar views contain mutations not yet written back to their
+    // array owner. Prefer them for a matching allocation identity, while
+    // retaining the original tag numbering and static-storage prefix.
+    let mut branches=bodies.into_iter().enumerate().collect::<Vec<_>>();
+    branches.sort_by_key(|(i,_)|decls.get(&o.variants[*i].1).is_some_and(|ds|pointer_components::allocated::array_target(ds)));
+    for (i,body) in branches.into_iter().rev() {
         result=vec![Stmt::If{cond:selected(o,i,decls),then_body:body,else_body:Some(result)}];
     }
     if result.len()==1 {result.remove(0)} else {Stmt::Block{body:result}}
@@ -150,9 +155,10 @@ impl Lower<'_> {
             candidates.sort_by_key(|(n,_)|*n);
             let mut live=Expr::Logical(false);
             let mut out=vec![];
-            for (index,(_,ds)) in candidates.iter().enumerate() {
+            for (index,(n,ds)) in candidates.iter().enumerate() {
                 if let Some(i)=pointer_components::allocated::info(ds) {
-                    let matches=and(Expr::Bin(BinOp::Gt,Box::new(id(&i.epoch)),Box::new(int(0))),Expr::Bin(BinOp::Eq,Box::new(epoch.clone()),Box::new(id(&i.epoch))));
+                    let matches=pointer_components::allocated::valid_expr(n,epoch.clone(),decls);
+                    let _=i;
                     live=or(live,matches.clone());
                     out.push(pointer_components::assign(tag,Expr::Call("merge".into(),vec![int(index+1),tag.clone(),matches]))?);
                 }
@@ -187,6 +193,10 @@ impl Lower<'_> {
             };
             if null(target) {
                 return Ok(Some(vec![set(&object.tag, 0),set(&object.epoch, 0)]));
+            }
+            if let Some((target, epoch))=pointer_components::allocated::array_association(target,decls) {
+                let index=object.variants.iter().position(|(_,n)|n==&target).context("array component pointer target must have a compatible declared type")?;
+                return Ok(Some(vec![Stmt::Assign{name:object.epoch.clone(),value:epoch},Stmt::If{cond:Expr::Bin(BinOp::Le,Box::new(id(&object.epoch)),Box::new(int(0))),then_body:failure("pointer association to unallocated array component".into()),else_body:None},set(&object.tag,index+1)]));
             }
             let Expr::Ident(target) = target else {
                 bail!("polymorphic POINTER association currently requires a scalar TARGET variable or local polymorphic pointer");
@@ -297,6 +307,10 @@ impl Lower<'_> {
             return Ok(());
         };
         let target = args.get(1).filter(|a| !crate::named_arguments::omitted(a));
+        if let Some((_,epoch))=target.and_then(|e|pointer_components::allocated::array_association(e,decls)) {
+            *e=and(Expr::Bin(BinOp::Gt,Box::new(id(&object.epoch)),Box::new(int(0))),Expr::Bin(BinOp::Eq,Box::new(id(&object.epoch)),Box::new(epoch)));
+            return Ok(());
+        }
         let value = if let Some(target) = target {
             let Expr::Ident(target) = target else {
                 bail!("ASSOCIATED with a polymorphic pointer currently requires a scalar target variable");

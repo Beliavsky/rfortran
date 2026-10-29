@@ -1649,9 +1649,10 @@ ALLOCATABLE dummy descriptors support caller allocation updates, OPTIONAL
 forwarding and finalization as described under [FINAL procedures](#scalar-finalization).
 Concrete scalar allocatable derived components can be actual arguments to these
 dummies, including nested scalar owners and elements of multidimensional owner
-arrays. TARGET dummies additionally support components of scalar and nested
-scalar owners, including persistent pointer associations to TARGET owners;
-array-element and allocatable owner objects retain restrictions. Explicit SAVE on
+arrays. TARGET dummies additionally support components of scalar/nested scalar
+owners and elements of concrete TARGET arrays through rank 15, including
+persistent pointer associations to saved/module owners. ALLOCATABLE owner
+objects retain restrictions. Explicit SAVE on
 intrinsic allocatable scalars and allocatable
 scalar DO control variables also remain unsupported. Existing host-association
 restrictions for allocatable storage also remain. Ordinary scalar dummy arguments do not gain ALLOCATABLE semantics.
@@ -2000,14 +2001,29 @@ components. Component actuals support nested scalar owners, array-element owners
 keyword/OPTIONAL forwarding, generic dispatch and separate compilation. Owner
 subscripts are captured before a subroutine call so a changed index does not
 redirect descriptor writeback. TARGET dummies also accept concrete scalar
-allocatable components of scalar owners, including nested scalar owners. With
+allocatable components of scalar owners, including nested scalar owners, and
+elements of concrete TARGET arrays through rank 15. Fixed, runtime-sized and
+assumed-shape arrays retain their bounds; owner indices are evaluated once before
+writable calls. With
 a TARGET owner, pointer-component associations can survive the call and retain
 the allocation identity through mutation and MOVE_ALLOC. Saved/module owners
 can supply persistent targets; intrinsic owner copies get independent allocation
 identities. FINAL cleanup and INTENT(OUT) replacement invalidate old aliases.
-Escaping associations through array-element owners, allocatable owner objects,
+Array-element owners support direct association, calls through owner dummies,
+saved/module factories, nested scalar components, separate compilation, FINAL,
+MOVE_ALLOC between elements or root variables, and independent identities after
+whole-array, element, section and vector-subscript copies. Pointer lookup currently
+scans the owner's allocation-identity array; it does not retain an index variable
+that can later change.
+Indexed-owner calls currently stage the selected record element. Descriptor
+changes reach the owning array on return; directly accessing that same element
+through another owner argument or a module variable during the call is not yet
+supported. Pointer accesses use the active borrowed component view.
+Escaping associations through allocatable owner objects,
 polymorphic allocated components and recursive allocation-descriptor calls remain
-unsupported. See `tests/test_allocatable_component_targets.py`,
+unsupported. See `tests/test_allocatable_array_component_targets.py`,
+`tests/programs/xallocatable_array_component_target.f90`,
+`tests/test_allocatable_component_targets.py`,
 `tests/programs/xallocatable_component_target.f90`,
 `tests/test_allocatable_component_actuals.py`,
 `tests/programs/xallocatable_component_actual.f90`,

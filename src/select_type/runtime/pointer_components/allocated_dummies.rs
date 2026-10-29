@@ -319,3 +319,35 @@ pub(super) fn lower(program: &mut Program) -> Result<()> {
         &mut serial,
     )
 }
+
+/// Validate source component inputs before indexed-owner wrappers hide the
+/// original call behind a specialization (including unused procedures).
+pub(super) fn validate_component_inputs(program:&mut Program)->Result<()> {
+    let mut interfaces=HashMap::new();collect(&program.body,&mut interfaces,true);
+    let model=components::Model::new(&mut program.body);
+    fn scope(body:&mut [Stmt],parent:&Declarations,interfaces:&HashMap<String,Interface>,model:&components::Model)->Result<()> {
+        let declared=declarations(body,parent);let mut location=None;
+        for s in body {
+            if let Stmt::SourceLocation(p)=s {location=Some(*p);}
+            if let Stmt::CallSub{name,args}=s {
+                if let Some(interface)=interfaces.get(name) {
+                    let mut actuals=args.clone();interface.signature.reorder(name,&mut actuals)?;
+                    for (i,_,readonly,_) in &interface.descriptors {
+                        if !readonly {
+                            if let Some(actual)=actuals.get(*i) {
+                                if model.actual(actual,&declared)?.is_some_and(|(_,_,input)|input) {
+                                    return Err(crate::source_diagnostics::at(anyhow::anyhow!("cannot pass INTENT(IN) component to writable ALLOCATABLE dummy"),location));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            for b in children(s) {scope(b,&declared,interfaces,model)?;}
+        }
+        Ok(())
+    }
+    let mut globals=Declarations::new();
+    for s in &program.body {if let Stmt::Module{body,..}=s {globals.extend(declarations(body,&Declarations::new()));}}
+    scope(&mut program.body,&globals,&interfaces,&model)
+}

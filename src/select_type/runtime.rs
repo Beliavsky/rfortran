@@ -1015,7 +1015,7 @@ impl Lower<'_> {
                 parameter
             } else {n.clone()};
             params.push(parameter.clone());
-            args.push(if object.pointer {pointer_components::allocated::element(storage, decls)} else {Expr::Call(storage.clone(), vec![int(1)])});
+            args.push(if object.pointer {pointer_components::allocated::element(storage, &object.epoch, decls)} else {Expr::Call(storage.clone(), vec![int(1)])});
             body.push(Stmt::DerivedDecl {
                 type_name: object.kind.clone(),
                 names: vec![parameter],
@@ -1033,7 +1033,16 @@ impl Lower<'_> {
         loop {
             let mut added = false;
             for n in captures.clone() {
+                if let Some((root,_))=n.split_once('%') {
+                    if decls.get(root).is_some_and(|ds|ds.iter().any(|s|matches!(s,Stmt::DerivedDecl{dims,..} if dims.is_empty())) && pointer_components::allocated::info(ds).is_none()) {
+                        added |= captures.insert(root.into());
+                    }
+                }
                 if let Some(i) = decls.get(&n).and_then(|d| pointer_components::allocated::info(d)) {
+                    if let Some(a) = i.array {
+                        added |= captures.insert(a.owner);
+                        continue;
+                    }
                     if let Some(b) = i.backing {
                         added |= captures.insert(b);
                         added |= captures.insert(i.epoch);
@@ -1054,6 +1063,7 @@ impl Lower<'_> {
             }
         }
         for (n, d) in decls {
+            if n.split_once('%').is_some_and(|(root,_)|captures.contains(root) && decls.get(root).is_some_and(|ds|ds.iter().any(|s|matches!(s,Stmt::DerivedDecl{dims,..} if dims.is_empty())) && pointer_components::allocated::info(ds).is_none())) {continue;}
             let parameter=d.iter().any(|s|matches!(s,Stmt::InitializedDecl{attributes,..} if attributes.iter().any(|a|a=="parameter")));
             let virtual_scalar = pointer_components::allocated::info(d).is_some_and(|i| i.backing.is_some());
             if used.iter().any(|(v, _)| *v == n) || (!parameter && !captures.contains(n)) {

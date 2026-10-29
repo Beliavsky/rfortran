@@ -2532,7 +2532,7 @@ pub fn analyze_with_origins(
                     walk_expr_undef(a, fn_map, external_fn_ret, sym, implicit_typing, undef);
                 }
             }
-            Stmt::Function { params, body, .. } => {
+            Stmt::Function { params, body, .. } | Stmt::Subroutine { params, body, .. } => {
                 let mut local_sym = sym.clone();
                 for param in params {
                     let param_lower = param.to_ascii_lowercase();
@@ -2540,23 +2540,15 @@ pub fn analyze_with_origins(
                         local_sym.insert(param_lower, implicit_type);
                     }
                 }
-                for st in body {
-                    walk_stmt_undef(
-                        st,
-                        fn_map,
-                        external_fn_ret,
-                        &mut local_sym,
-                        implicit_typing,
-                        undef,
-                    );
-                }
-            }
-            Stmt::Subroutine { params, body, .. } => {
-                let mut local_sym = sym.clone();
-                for param in params {
-                    let param_lower = param.to_ascii_lowercase();
-                    if let Some(implicit_type) = implicit_typing.get_implicit_type(param) {
-                        local_sym.insert(param_lower, implicit_type);
+                // Lowering can place descriptor setup ahead of source dummy
+                // declarations. Those parameters are in scope on entry.
+                for declaration in body {
+                    match declaration {
+                        Stmt::VarDecl{kind,names} => for name in names {
+                            if params.contains(name) {local_sym.insert(name.to_ascii_lowercase(),kind.clone());}
+                        },
+                        Stmt::ArrayDecl{kind,name,..} if params.contains(name) => {local_sym.insert(name.to_ascii_lowercase(),kind.clone());},
+                        _=>{}
                     }
                 }
                 for st in body {
