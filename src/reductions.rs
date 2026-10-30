@@ -1532,6 +1532,52 @@ pub(crate) fn advance_control(value:&Expr,variables:&HashMap<String,(TypeSpec,Ve
     Ok(Expr::Ident(flag))
 }
 
+/// Give undeclared scalar READ destinations their implicit types, from the
+/// IMPLICIT statements of this body or the default rules, so that input
+/// lowering knows how to convert the values.
+fn implicit_read_destinations(body: &[Stmt], symbols: &mut Symbols) {
+    use crate::ast::Implicit;
+    let mut rules: HashMap<char, TypeSpec> = ('a'..='z')
+        .map(|c| (c, if ('i'..='n').contains(&c) { TypeSpec::Integer(None) } else { TypeSpec::Real }))
+        .collect();
+    for s in body {
+        if let Stmt::Implicit(implicit) = s {
+            let mut set = |kind: &TypeSpec, ranges: &[crate::ast::LetterRange]| {
+                for r in ranges {
+                    for c in r.start.to_ascii_lowercase()..=r.end.unwrap_or(r.start).to_ascii_lowercase() { rules.insert(c, kind.clone()); }
+                }
+            };
+            match implicit {
+                Implicit::None => return,
+                Implicit::Rule { type_spec, letter_ranges } => set(type_spec, letter_ranges),
+                Implicit::Rules { rules: list } => for rule in list { set(&rule.type_spec, &rule.letter_ranges) },
+            }
+        }
+    }
+    fn visit(body: &[Stmt], rules: &HashMap<char, TypeSpec>, symbols: &mut Symbols) {
+        for s in body {
+            match s {
+                Stmt::CallSub { name, args } => {
+                    let Some(start) = crate::input::transfer_start(name) else { continue };
+                    for a in args.iter().skip(start) {
+                        let Expr::Ident(n) = a else { continue };
+                        if n.starts_with('@') || symbols.contains_key(n) || symbols.procedures.contains(n) { continue; }
+                        if let Some(kind) = n.chars().next().and_then(|c| rules.get(&c.to_ascii_lowercase())) {
+                            symbols.insert(n.clone(), (kind.clone(), vec![]));
+                        }
+                    }
+                }
+                Stmt::Function { .. } | Stmt::Subroutine { .. } | Stmt::Module { .. } => {}
+                _ => {
+                    let mut s = s.clone();
+                    for b in crate::procedure_arguments::children(&mut s) { visit(b, rules, symbols); }
+                }
+            }
+        }
+    }
+    visit(body, &rules, symbols);
+}
+
 fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> Result<()> {
     let mut symbols = inherited.clone();
     for stmt in body.iter() {
@@ -1541,6 +1587,7 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
             _ => {}
         }
     }
+    implicit_read_destinations(body, &mut symbols);
     let mut output = Vec::new();
     let mut source_offset=None;
     (||->Result<()> {

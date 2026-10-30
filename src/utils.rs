@@ -123,6 +123,7 @@ pub fn print_help() {
     println!("  -Wunused-<category>  Enable type, variable, parameter, dummy-argument or function warnings");
     println!("  -Woptional-argument Warn about OPTIONAL dummy references without proven presence");
     println!("  -Wshort-circuit     Warn about unsafe ALLOCATED/ASSOCIATED logical guards");
+    println!("  -Wimplicit-typing   Warn about variables typed by implicit typing rules");
     println!("  -Wimplicit-save     Warn about implicit SAVE from local declaration initialization");
     println!("  -Wmissing-intent    Warn about data dummy arguments without INTENT (opt-in)");
     println!("  -Wshadow            Warn about locals shadowing enclosing data declarations (opt-in)");

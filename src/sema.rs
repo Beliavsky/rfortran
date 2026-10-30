@@ -521,6 +521,32 @@ pub fn analyze_with_origins(
                     }
                 }
             }
+            // Lowered input defines its leading arguments, as ir.rs
+            // input_destinations does for the backend.
+            Stmt::CallSub { name, args } => {
+                let count = match name.as_str() {
+                    "@list_read_begin" | "@list_read_internal_begin" | "@list_read_next" | "@stream_get"
+                        | "@read_record_status" | "@read_record_checked" => 2,
+                    "@list_read_complex_next" => 3,
+                    "@read_record" | "@internal_read_byte" | "@list_read_end" => 1,
+                    _ => 0,
+                };
+                for a in args.iter().take(count) {
+                    if let Expr::Ident(n) = a {
+                        let lname = n.to_ascii_lowercase();
+                        if !lname.starts_with('@') && !sym.contains_key(&lname) {
+                            if let Some(implicit_type) = implicit_typing.get_implicit_type(&lname) {
+                                sym.insert(lname, implicit_type);
+                            }
+                        }
+                    }
+                }
+            }
+            Stmt::Block { body } | Stmt::DoWhile { body, .. } => {
+                for st in body {
+                    collect_assignment_targets_early(st, sym, implicit_typing);
+                }
+            }
             Stmt::If {
                 then_body,
                 else_body,

@@ -2322,6 +2322,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
     }
 
     funcs.insert(0, current.clone());
+    declare_implicit_variables(&mut funcs, program);
 
     if debug {
         let unoptimized_module = Module {
@@ -2693,6 +2694,140 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
         uses_modules,
         has_program,
     })
+}
+
+/// Declare the implicitly typed scalar variables of each procedure: names it
+/// assigns, reads or references without declaring them. Their type comes from
+/// the IMPLICIT statements of the procedure and its hosts, or the default
+/// rules (I to N INTEGER, otherwise REAL). Module and host variables are
+/// renamed and declared before this point, so an undeclared plain name is local.
+fn declare_implicit_variables(funcs: &mut [Function], program: &Program) {
+    use crate::ast::{Implicit, TypeSpec};
+    use std::collections::{HashMap, HashSet};
+    type Rules = Option<HashMap<char, TypeSpec>>;
+    fn apply(body: &[Stmt], host: &Rules) -> Rules {
+        let mut rules = host.clone()?;
+        for s in body {
+            if let Stmt::Implicit(implicit) = s {
+                let mut set = |kind: &TypeSpec, ranges: &[crate::ast::LetterRange]| {
+                    for r in ranges {
+                        let (a, b) = (r.start.to_ascii_lowercase(), r.end.unwrap_or(r.start).to_ascii_lowercase());
+                        for c in a..=b { rules.insert(c, kind.clone()); }
+                    }
+                };
+                match implicit {
+                    Implicit::None => return None,
+                    Implicit::Rule { type_spec, letter_ranges } => set(type_spec, letter_ranges),
+                    Implicit::Rules { rules: list } => for rule in list { set(&rule.type_spec, &rule.letter_ranges) },
+                }
+            }
+        }
+        Some(rules)
+    }
+    // The rules of every procedure, inherited from its host.
+    fn collect(body: &[Stmt], host: &Rules, out: &mut HashMap<String, Rules>, externals: &mut HashSet<String>) {
+        for s in body {
+            match s {
+                Stmt::Function { name, body, .. } | Stmt::Subroutine { name, body, .. } => {
+                    let rules = apply(body, host);
+                    out.insert(name.clone(), rules.clone());
+                    collect(body, &rules, out, externals);
+                }
+                Stmt::Module { body, .. } => collect(body, &apply(body, host), out, externals),
+                Stmt::DummyIntent { name, intent } if intent == "external" => { externals.insert(name.clone()); }
+                _ => {}
+            }
+        }
+    }
+    let mut defaults = HashMap::new();
+    for c in 'a'..='z' {
+        defaults.insert(c, if ('i'..='n').contains(&c) { TypeSpec::Integer(None) } else { TypeSpec::Real });
+    }
+    let main = apply(&program.body, &Some(defaults));
+    let mut rules = HashMap::new();
+    let mut externals = HashSet::new();
+    collect(&program.body, &main, &mut rules, &mut externals);
+
+    fn expr(e: &IExpr, used: &mut Vec<String>, callees: &mut HashSet<String>) {
+        match e {
+            IExpr::Ident(n) => used.push(n.clone()),
+            IExpr::Index(_, args) => for a in args { expr(a, used, callees) },
+            IExpr::Call(n, args) => { callees.insert(n.clone()); for a in args { expr(a, used, callees) } }
+            IExpr::Bin(_, a, b) => { expr(a, used, callees); expr(b, used, callees); }
+            IExpr::Un(_, a) => expr(a, used, callees),
+            _ => {}
+        }
+    }
+    fn walk(body: &[IStmt], declared: &mut HashSet<String>, used: &mut Vec<String>, callees: &mut HashSet<String>) {
+        for s in body {
+            match s {
+                IStmt::DeclVar(_, n, dims) => { declared.insert(n.clone()); for d in dims { expr(d, used, callees) } }
+                IStmt::AssignStr(n, _) | IStmt::AssignIntLit(n, _) | IStmt::AssignRealLit(n, _) | IStmt::AssignBool(n, _) => used.push(n.clone()),
+                IStmt::AssignIdent(n, v) => { used.push(n.clone()); used.push(v.clone()); }
+                IStmt::AssignExpr(n, e) => { used.push(n.clone()); expr(e, used, callees); }
+                IStmt::AssignIndex(_, idx, v) => { for e in idx { expr(e, used, callees) } expr(v, used, callees); }
+                IStmt::Print(items) | IStmt::Read(items) => for e in items { expr(e, used, callees) },
+                IStmt::Return(e) => if let Some(e) = e { expr(e, used, callees) },
+                IStmt::Call(n, args) => { callees.insert(n.clone()); for a in args { expr(a, used, callees) } }
+                IStmt::If { cond, then_body, else_body } => {
+                    expr(cond, used, callees);
+                    walk(then_body, declared, used, callees);
+                    if let Some(b) = else_body { walk(b, declared, used, callees) }
+                }
+                IStmt::Do { var, start, end, body } => {
+                    used.push(var.clone());
+                    expr(start, used, callees);
+                    expr(end, used, callees);
+                    walk(body, declared, used, callees);
+                }
+                IStmt::DoWhile { cond, body } => { expr(cond, used, callees); walk(body, declared, used, callees); }
+                IStmt::SelectCase { selector, cases, default } => {
+                    expr(selector, used, callees);
+                    for case in cases {
+                        for item in &case.items {
+                            match item {
+                                IcCaseItem::Range(a, b) => { expr(a, used, callees); expr(b, used, callees); }
+                                IcCaseItem::Single(a) => expr(a, used, callees),
+                                IcCaseItem::Multi(items) => for a in items { expr(a, used, callees) },
+                            }
+                        }
+                        walk(&case.body, declared, used, callees);
+                    }
+                    if let Some(b) = default { walk(b, declared, used, callees) }
+                }
+                IStmt::Block { body } => walk(body, declared, used, callees),
+                IStmt::Exit | IStmt::Cycle => {}
+            }
+        }
+    }
+    let procedures: HashSet<String> = funcs.iter().map(|f| f.name.clone()).collect();
+    let mut all_callees = HashSet::new();
+    let mut found = vec![];
+    for f in funcs.iter() {
+        let mut declared = HashSet::new();
+        let mut used = vec![];
+        walk(&f.body, &mut declared, &mut used, &mut all_callees);
+        found.push((declared, used));
+    }
+    for (f, (declared, used)) in funcs.iter_mut().zip(found) {
+        let unit_rules = match rules.get(&f.name) { Some(r) => r, None => &main };
+        let Some(unit_rules) = unit_rules else { continue };
+        let mut added = HashSet::new();
+        let mut decls = vec![];
+        for n in used {
+            if n.starts_with('@') || n.contains(['%', '$', ':']) || declared.contains(&n) || f.params.contains(&n)
+                || n == f.name || procedures.contains(&n) || all_callees.contains(&n) || externals.contains(&n)
+                || !added.insert(n.clone()) {
+                continue;
+            }
+            let Some(kind) = n.chars().next().and_then(|c| unit_rules.get(&c.to_ascii_lowercase())) else { continue };
+            decls.push(IStmt::DeclVar(kind.clone(), n, vec![]));
+        }
+        if !decls.is_empty() {
+            decls.append(&mut f.body);
+            f.body = decls;
+        }
+    }
 }
 
 fn substitute_loop_var(stmt: IStmt, var: &str, value: &IExpr) -> IStmt {

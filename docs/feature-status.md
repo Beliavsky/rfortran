@@ -112,7 +112,7 @@ Found on 2026-10-21, fixed:
 | [Fixed source form (`.f`, `.for`, `.ftn`, `.f77`, `.fpp`)](language-support.md#fixed-source-form) | F77 or earlier | ✅ | Converted to free form as it is read. Code written without blanks, such as `DO10I=1,5`, is not supported | test_fixed_form.py |
 | [Preprocessor conditionals (`#if`, `#ifdef`, `#else`, `#endif`)](language-support.md#preprocessor-conditionals) | Extension | 🟡 | For `.F`, `.F90` and other upper-case extensions, or with `-cpp`; `-D` definitions. No `#include` or replacement of names in Fortran lines | test_preprocessor.py |
 | [INCLUDE lines](language-support.md#include-lines) | F90 | ✅ | Quoted filenames, nested/repeated inclusion, inherited source form, source-relative and -I searches, cycle checks, and original file/line diagnostics | test_include.py |
-| Implicit typing | F77 or earlier | ✅ | IMPLICIT COMPLEX is not supported |  |
+| Implicit typing | F77 or earlier | ✅ | IMPLICIT COMPLEX is not supported; host association of implicitly typed variables is not supported | test_implicit_typing.py |
 | `IMPLICIT NONE` | F90 | ✅ |  |  |
 | [`IMPLICIT NONE (TYPE, EXTERNAL)`](language-support.md#other-statement-forms) | F2018 | ✅ | EXTERNAL is accepted but not checked | test_syntax_forms.py |
 | [DIMENSION statement](language-support.md#other-statement-forms) | F77 or earlier | ✅ |  | test_syntax_forms.py |
@@ -200,7 +200,7 @@ Found on 2026-10-21, fixed:
 | [Vector subscripts](language-support.md#vector-subscripts) | F90 | ✅ | Not in READ or WHERE | test_vector_subscripts.py |
 | Whole-array arithmetic and elemental intrinsics | F90 | ✅ |  |  |
 | [WHERE, ELSEWHERE, nested WHERE](language-support.md#where-and-logical-arrays) | Mixed | 🟡 | WHERE and unmasked ELSEWHERE: F90; nesting and masked ELSEWHERE: F95. Section and CHARACTER destinations are not supported | test_where.py, test_nested_where.py |
-| [FORALL](language-support.md#forall) | F95 | ✅ | One assignment per FORALL; runtime controls include scalar descriptor-backed array inquiries | test_multi_forall.py, test_forall_functions.py, test_runtime_forall.py |
+| [FORALL](language-support.md#forall) | F95 | ✅ | FORALL statements and constructs, nested FORALL and masks; a masked value is also evaluated where the mask is false; no WHERE inside FORALL, masked component assignments or bounds that use another FORALL index; runtime controls include scalar descriptor-backed array inquiries | test_multi_forall.py, test_forall_functions.py, test_runtime_forall.py, test_forall_constructs.py |
 | [Empty arrays](language-support.md#empty-arrays) | F90 | ✅ |  | test_empty_matrices.py |
 | `SIZE`, `SHAPE`, `LBOUND`, `UBOUND` | F90 | ✅ |  | test_bound_inquiries.py |
 
