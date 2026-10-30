@@ -3,6 +3,8 @@ fn main() {
     println!("cargo:rerun-if-changed=src/float_model.rs");
     println!("cargo:rerun-if-changed=src/fortran.lalrpop");
     println!("cargo:rerun-if-changed=build.rs");
+    // native_runtime marks code compiled only into the native runtime library.
+    println!("cargo::rustc-check-cfg=cfg(native_runtime)");
     lalrpop::process_root().unwrap();
     for file in ["src/native_format.rs", "src/c_descriptor.rs", "src/timing.rs", "src/calendar.rs", "src/environment.rs", "src/format_spec.rs", "src/record_input.rs", "src/list_input.rs", "src/namelist_input.rs", "src/namelist_native.rs", "src/character_input.rs", "src/file_inquiry.rs"] {
         println!("cargo:rerun-if-changed={file}");
@@ -22,6 +24,8 @@ fn main() {
             "panic=abort",
             "-C",
             "debuginfo=0",
+            "--cfg",
+            "native_runtime",
             "--target",
         ])
         .arg(std::env::var("TARGET").unwrap())

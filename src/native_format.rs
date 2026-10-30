@@ -91,6 +91,33 @@ pub unsafe extern "C" fn rfort_scratch_newunit(slots: *mut *mut core::ffi::c_voi
     }
     0
 }
+/// Standard output, the stream of unit 6 and of PRINT.
+unsafe fn standard_output()->*mut core::ffi::c_void {
+    #[cfg(windows)] {__acrt_iob_func(1)}
+    #[cfg(target_os="macos")] {extern "C" {static mut __stdoutp:*mut core::ffi::c_void;} __stdoutp}
+    #[cfg(not(any(windows,target_os="macos")))] {extern "C" {static mut stdout:*mut core::ffi::c_void;} stdout}
+}
+extern "C" fn check_standard_output() {
+    extern "C" {fn _exit(code:i32)->!;}
+    unsafe {
+        let stream=standard_output();
+        // Output is buffered until exit when standard output is a pipe or a
+        // file. A failed write must not leave a successful exit status with
+        // the output silently missing.
+        if fflush(stream)!=0 || ferror(stream)!=0 {
+            let message=b"Error: write to standard output failed\n";
+            let error=rfort_stderr_stream();
+            fwrite(message.as_ptr(),1,message.len(),error);
+            fflush(error);
+            _exit(1);
+        }
+    }
+}
+/// Check at exit that everything written to standard output was written.
+pub(crate) unsafe fn watch_standard_output() {
+    extern "C" {fn atexit(function:extern "C" fn())->i32;}
+    atexit(check_standard_output);
+}
 /// Standard error, the stream of unit 0 when no file is connected to it.
 #[no_mangle]
 pub unsafe extern "C" fn rfort_stderr_stream()->*mut core::ffi::c_void {

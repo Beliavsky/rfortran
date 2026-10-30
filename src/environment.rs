@@ -72,7 +72,11 @@ static mut ARG_COUNT:i32=0;
 static mut ARG_VALUES:*const *const u8=core::ptr::null();
 #[no_mangle]
 pub unsafe extern "C" fn rfort_set_arguments(count:i32,values:*const *const u8)->i64 {
-    ARG_COUNT=count;ARG_VALUES=values;0
+    ARG_COUNT=count;ARG_VALUES=values;
+    // Called once at the start of every compiled main program.
+    #[cfg(native_runtime)]
+    crate::watch_standard_output();
+    0
 }
 #[no_mangle]
 pub unsafe extern "C" fn rfort_argument_query(number:i64,output:*mut u8,width:usize,present:i64,length:*mut i64)->i64 {
