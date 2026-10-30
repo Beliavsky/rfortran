@@ -33,7 +33,7 @@ class ParameterStatements(unittest.TestCase):
             ("integer::i\nparameter(i=1)\ni=2", "cannot modify PARAMETER"),
             ("integer::i\nparameter(i=1,i=2)", "duplicate PARAMETER"),
             ("integer::i,j\nparameter(i=j,j=2)", "invalid initializer"),
-            ("parameter(i=1)", "preceding scalar type declaration"),
+            ("implicit none\nparameter(i=1)", "has no type under IMPLICIT NONE"),
             ("integer::a(2)\nparameter(a=[1,2])", "preceding scalar type declaration"),
             ("integer::i\nparameter(i=i+1)", "invalid initializer"),
         ]

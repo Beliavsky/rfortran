@@ -631,9 +631,33 @@ pub(crate) fn folded_integer_constant(expr: &Expr) -> Result<i64> {
     integer_constant(&expr)
 }
 
+/// The type IMPLICIT statements, or the default rules (I to N INTEGER,
+/// otherwise REAL), give `name`; None under IMPLICIT NONE.
+fn implicit_type(implicit: &[Stmt], name: &str) -> Option<TypeSpec> {
+    use crate::ast::Implicit;
+    let letter = name.chars().next()?.to_ascii_lowercase();
+    let mut kind = if ('i'..='n').contains(&letter) { TypeSpec::Integer(None) } else { TypeSpec::Real };
+    for s in implicit {
+        let Stmt::Implicit(rule) = s else { continue };
+        let rules: Vec<(&TypeSpec, &[crate::ast::LetterRange])> = match rule {
+            Implicit::None => return None,
+            Implicit::Rule { type_spec, letter_ranges } => vec![(type_spec, letter_ranges)],
+            Implicit::Rules { rules } => rules.iter().map(|r| (&r.type_spec, r.letter_ranges.as_slice())).collect(),
+        };
+        for (type_spec, ranges) in rules {
+            if ranges.iter().any(|r| (r.start.to_ascii_lowercase()..=r.end.unwrap_or(r.start).to_ascii_lowercase()).contains(&letter)) {
+                kind = type_spec.clone();
+            }
+        }
+    }
+    Some(kind)
+}
+
 fn separate_parameters(body: &mut Vec<Stmt>, arguments: &[String]) -> Result<()> {
     if !body.iter().any(|s| matches!(s,Stmt::InitializedDecl { attributes, .. } if attributes.iter().any(|a| a == "@separate_parameter"))) { return Ok(()); }
     let mut declared: HashMap<String,TypeSpec> = HashMap::new();
+    let implicit: Vec<Stmt> = body.iter().filter(|s| matches!(s, Stmt::Implicit(_))).cloned().collect();
+    let arrays: HashSet<String> = body.iter().filter_map(|s| match s { Stmt::ArrayDecl { name, .. } => Some(name.clone()), _ => None }).collect();
     let mut converted = HashSet::new();
     let mut output = Vec::new();
     let mut statement_location = None;
@@ -645,7 +669,15 @@ fn separate_parameters(body: &mut Vec<Stmt>, arguments: &[String]) -> Result<()>
                 for (name, value) in entities {
                     if arguments.contains(&name) { bail!("dummy argument `{name}` cannot be a PARAMETER"); }
                     if !converted.insert(name.clone()) { bail!("duplicate PARAMETER definition `{name}`"); }
-                    let kind = declared.get(&name).with_context(|| format!("separate PARAMETER `{name}` currently requires a preceding scalar type declaration"))?.clone();
+                    if arrays.contains(&name) {
+                        bail!("separate PARAMETER `{name}` currently requires a preceding scalar type declaration; array constants are not yet supported");
+                    }
+                    // An undeclared constant has its implicit type.
+                    let kind = match declared.get(&name) {
+                        Some(kind) => kind.clone(),
+                        None => implicit_type(&implicit, &name)
+                            .with_context(|| format!("PARAMETER `{name}` has no type under IMPLICIT NONE; declare its type first"))?,
+                    };
                     output.push(Stmt::InitializedDecl { kind, attributes:vec!["parameter".into()], entities:vec![(name,value)] });
                 }
             }

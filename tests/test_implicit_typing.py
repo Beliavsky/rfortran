@@ -241,6 +241,31 @@ call s
 end program p
 """, "7.9\n7\n")
 
+    def test_separate_parameters(self):
+        # Constants may be named LEN or KIND, and take their implicit type.
+        self.check("""program p
+parameter (len = 2, nb = 3, pi = 3.25, kind = 8)
+integer a(len)
+real z(nb)
+a = len
+z = pi
+print *, a, z, kind, nb * 2
+end program p
+""", "2 2 3.25 3.25 3.25 8 6\n")
+        self.check("""program p
+implicit double precision (a-h,o-z)
+parameter (half = 0.5d0, k = 7)
+character(len=2, kind=1) :: t
+t = 'xy'
+print *, half * 3, k / 2, t
+end program p
+""", "1.5 3 xy\n")
+        self.reject("""program p
+implicit none
+parameter (q = 2)
+end program p
+""", "has no type under IMPLICIT NONE")
+
     def test_implicit_none_still_rejected(self):
         self.reject("""program p
 implicit none

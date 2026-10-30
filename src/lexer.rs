@@ -1337,13 +1337,19 @@ pub fn lex(input: &str) -> Vec<Token> {
         if let TokenKind::Ident(n) = &tokens[start].kind {
             let next=tokens.get(start+1).map(|t| &t.kind);
             let previous=start.checked_sub(1).and_then(|i| tokens.get(i)).map(|t| &t.kind);
+            // `PARAMETER (LEN = 2)` names a constant LEN; it is not a type selector.
+            let parameter=start.checked_sub(2).and_then(|i| tokens.get(i)).is_some_and(|t| match &t.kind {
+                TokenKind::Ident(w) => w.eq_ignore_ascii_case("parameter"),
+                TokenKind::KwParameter => true,
+                _ => false,
+            });
             let replacement=match n.to_ascii_lowercase().as_str() {
                 "default" if matches!(previous,Some(TokenKind::KwCase)) => Some(TokenKind::KwDefault),
                 "only" if matches!(next,Some(TokenKind::Colon)) && start >= 3 && (matches!(tokens[start-3].kind,TokenKind::KwUse)
                     || (start >= 4 && matches!(tokens[start-4].kind,TokenKind::KwUse) && matches!(tokens[start-3].kind,TokenKind::DColon))
                     || (start >= 6 && matches!(tokens[start-6].kind,TokenKind::KwUse) && matches!(tokens[start-5].kind,TokenKind::Comma) && matches!(tokens[start-3].kind,TokenKind::DColon))) => Some(TokenKind::KwOnly),
-                "len" if matches!(previous,Some(TokenKind::LParen)) && matches!(next,Some(TokenKind::Eq)) => Some(TokenKind::KwLen),
-                "kind" if matches!(previous,Some(TokenKind::LParen)) && matches!(next,Some(TokenKind::Eq)) => Some(TokenKind::KwKind),
+                "len" if !parameter && matches!(previous,Some(TokenKind::LParen)) && matches!(next,Some(TokenKind::Eq)) => Some(TokenKind::KwLen),
+                "kind" if !parameter && matches!(previous,Some(TokenKind::LParen)) && matches!(next,Some(TokenKind::Eq)) => Some(TokenKind::KwKind),
                 // The second selector of CHARACTER(LEN=..., KIND=...) or CHARACTER(KIND=..., LEN=...).
                 "kind" | "len" if matches!(previous,Some(TokenKind::Comma)) && matches!(next,Some(TokenKind::Eq)) && character_selector(&tokens,start) =>
                     Some(if n.eq_ignore_ascii_case("kind") {TokenKind::KwKind} else {TokenKind::KwLen}),
