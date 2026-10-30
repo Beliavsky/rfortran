@@ -41,6 +41,13 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
     thread_local! { static FILES: std::cell::RefCell<crate::file_io::Files> = std::cell::RefCell::new(crate::file_io::Files::default()); }
     FILES.with(|files| *files.borrow_mut() = crate::file_io::Files::default());
     thread_local! { static POINTER_STORAGE: std::cell::RefCell<Vec<PointerStorage>> = std::cell::RefCell::new(vec![PointerStorage::Frame(usize::MAX,String::new())]); }
+    // A pointer handle holds its storage index above POINTER_SHIFT bits, so
+    // that native-style address arithmetic, which adds 8 bytes per element
+    // (as for an array element passed to an array dummy), gives an element
+    // offset in the low bits.
+    const POINTER_SHIFT: u32 = 40;
+    fn pointer_handle(index: usize) -> i64 { (index as i64) << POINTER_SHIFT }
+    fn pointer_decode(handle: i64) -> (usize, i64) { ((handle >> POINTER_SHIFT) as usize, (handle & ((1i64 << POINTER_SHIFT) - 1)) / 8) }
     POINTER_STORAGE.with(|storage|*storage.borrow_mut()=vec![PointerStorage::Frame(usize::MAX,String::new())]);
     thread_local! {
         static OUTPUT_LISTS: std::cell::RefCell<HashMap<i64,(String,bool,Vec<Expr>)>> = std::cell::RefCell::new(HashMap::new());
@@ -363,9 +370,9 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                     return ValueTuple::from_int(crate::timing::rfort_clock_count(kind));
                 }
                 if name=="@ptr_name" || name.starts_with("@ptr_load_") {
-                    let handle=eval_expr(&args[0],env_str,env_int,env_real32,env_real64,env_log,funcs,call_stack).0.unwrap();
-                    let offset=if name=="@ptr_name" {0}else{eval_expr(&args[1],env_str,env_int,env_real32,env_real64,env_log,funcs,call_stack).0.unwrap()};
-                    let target=POINTER_STORAGE.with(|storage|storage.borrow().get(handle as usize).expect("invalid pointer storage handle").clone());
+                    let (handle,extra)=pointer_decode(eval_expr(&args[0],env_str,env_int,env_real32,env_real64,env_log,funcs,call_stack).0.unwrap());
+                    let offset=if name=="@ptr_name" {0}else{eval_expr(&args[1],env_str,env_int,env_real32,env_real64,env_log,funcs,call_stack).0.unwrap()+extra};
+                    let target=POINTER_STORAGE.with(|storage|storage.borrow().get(handle).expect("invalid pointer storage handle").clone());
                     if let PointerStorage::Module(key)=&target {
                         if name=="@ptr_name" {return ValueTuple::from_str(key.clone());}
                         let index=usize::try_from(offset).expect("negative pointer offset");
@@ -1383,7 +1390,7 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                                 };
                                 let handle=if let Some(i)=storage.iter().position(matches) {i}
                                     else {storage.push(module_arrays.get(n).map_or_else(||PointerStorage::Frame(frame_index,n.clone()),|k|PointerStorage::Module(k.clone())));storage.len()-1};
-                                handle as i64
+                                pointer_handle(handle)
                             })
                         });
                         let fr=call_stack.last_mut().unwrap();
@@ -1392,10 +1399,13 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                     }
                     if let Some(kind)=name.strip_prefix("@ptr_store_") {
                         let fr=call_stack.last().unwrap().clone();
-                        let values=args.iter().map(|a|eval_expr(a,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack)).collect::<Vec<_>>();
+                        let mut values=args.iter().map(|a|eval_expr(a,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack)).collect::<Vec<_>>();
+                        let (target_index,extra)=pointer_decode(values[0].0.unwrap());
+                        let (flag_index,_)=pointer_decode(values[1].0.unwrap());
+                        values[2].0=Some(values[2].0.unwrap()+extra);
                         let (target_storage,flag_storage)=POINTER_STORAGE.with(|storage| {
                             let storage=storage.borrow();
-                            (storage[values[0].0.unwrap() as usize].clone(),storage[values[1].0.unwrap() as usize].clone())
+                            (storage[target_index].clone(),storage[flag_index].clone())
                         });
                         if let PointerStorage::Module(target)=&target_storage {
                             let PointerStorage::Module(flag)=&flag_storage else {unreachable!()};
@@ -1514,7 +1524,7 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                                 [false,true].map(|mask| {
                                     let handle=if let Some(i)=storage.iter().position(|entry|matches!(entry,PointerStorage::Record(id,m,_) if *id==value as usize && *m==mask)) {i}
                                         else {storage.push(PointerStorage::Record(value as usize,mask,label.clone()));storage.len()-1};
-                                    handle as i64
+                                    pointer_handle(handle)
                                 })
                             });
                             let rank=(args.len()-7)/3;

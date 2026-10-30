@@ -20,14 +20,14 @@ def build_commands(source, directory, cwd=None, recorder=None, compile_timeout=6
     descriptor-heavy cases more build time without changing execution limits."""
     commands = [[COMPILER, "run", source]]
     for opt in (0, 2):
-        obj = directory / f"read{opt}.obj"
         exe = directory / (f"read{opt}.exe" if os.name == "nt" else f"read{opt}")
-        for cmd in ([COMPILER, "-O", str(opt), "emit-obj", source, obj],
-                    [COMPILER, "link", obj, "-o", exe]):
-            run = recorder.run if recorder is not None else subprocess.run
-            result = run(cmd, capture_output=True, text=True, timeout=compile_timeout, cwd=cwd)
-            if result.returncode:
-                raise AssertionError(result.stdout + result.stderr)
+        # One build process instead of emit-obj and link: starting a process
+        # is a large part of each check's time on Windows.
+        run = recorder.run if recorder is not None else subprocess.run
+        result = run([COMPILER, "-O", str(opt), "build", source, "-o", exe],
+                     capture_output=True, text=True, timeout=compile_timeout, cwd=cwd)
+        if result.returncode:
+            raise AssertionError(result.stdout + result.stderr)
         commands.append([exe])
     return commands
 

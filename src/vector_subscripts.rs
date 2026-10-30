@@ -278,6 +278,9 @@ fn info(e: &Expr, scope: &Scope) -> Result<Option<Info>> {
                         _ => kind == value.kind,
                     };
                     if !same {
+                        if matches!((&kind, &value.kind), (TypeSpec::Character(_), TypeSpec::Character(_))) {
+                            bail!("CHARACTER array constructor elements must have equal lengths");
+                        }
                         bail!("vector constructor items must have the same type and kind");
                     }
                 }

@@ -4,7 +4,7 @@
 
 //! Specialize assumed-shape subroutine calls using fixed or runtime descriptors.
 //! These private descriptors do not define a separate-object procedure ABI.
-use crate::ast::{Expr, Program, Stmt, TypeSpec};
+use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Context, Result};
 use std::collections::{HashMap, HashSet};
 type Shapes = HashMap<String, (TypeSpec, Vec<Expr>)>;
@@ -49,6 +49,132 @@ fn bind_scalar_views(body:&mut Vec<Stmt>, views:&HashMap<String,Expr>)->Result<(
             bail!("an array-element dummy used as a DO variable is not yet supported");
         }
         for b in crate::procedure_arguments::children(s) {bind_scalar_views(b,views)?;}
+    }
+    Ok(())
+}
+
+/// A rank-one array dummy associated with an array element, or with a whole
+/// array of another rank (sequence association): its element `j` is the
+/// element of `array` that is `offset + j - lower` places after the first in
+/// array element order.
+struct SequenceView {
+    array: String,
+    lowers: Vec<Expr>,
+    extents: Vec<Expr>,
+    offset: Expr,
+    lower: Expr,
+}
+
+/// The lower bounds and extents of an array actual, the last extent being
+/// unknown for an assumed-size array.
+fn sequence_axes(name: &str, shapes: &Shapes) -> Option<(Vec<Expr>, Vec<Expr>)> {
+    let one = || Expr::IntLit("1".into());
+    if let Some(extents) = crate::allocatables::axes(name, shapes) {
+        let lowers = crate::allocatables::lowers(name, shapes).unwrap_or_else(|| vec![one(); extents.len()]);
+        return (lowers.len() == extents.len()).then_some((lowers, extents));
+    }
+    let (_, dims) = shapes.get(name)?;
+    let last = dims.len().checked_sub(1)?;
+    let mut lowers = vec![];
+    let mut extents = vec![];
+    for (axis, d) in dims.iter().enumerate() {
+        let assumed = |e: &Expr| matches!(e, Expr::Ident(n) if n == "@assumed_extent");
+        let (lower, upper) = match d {
+            Expr::Call(n, a) if n == "@declared_bounds" && a.len() == 2 => (a[0].clone(), a[1].clone()),
+            _ => (one(), d.clone()),
+        };
+        if assumed(&upper) {
+            if axis != last { return None; }
+            lowers.push(lower);
+            extents.push(Expr::Ident("@assumed_extent".into()));
+            continue;
+        }
+        if matches!(&upper, Expr::Ident(n) if n.starts_with('@')) { return None; }
+        let extent = if matches!(&lower, Expr::IntLit(v) if v == "1") { upper } else {
+            Expr::Bin(BinOp::Add, Box::new(Expr::Bin(BinOp::Sub, Box::new(upper), Box::new(lower.clone()))), Box::new(one()))
+        };
+        lowers.push(lower);
+        extents.push(extent);
+    }
+    Some((lowers, extents))
+}
+
+impl SequenceView {
+    /// The subscripts of the element of `array` for dummy subscript `j`.
+    fn subscripts(&self, j: Expr) -> Vec<Expr> {
+        let bin = |op, a: Expr, b: Expr| Expr::Bin(op, Box::new(a), Box::new(b));
+        let t = bin(BinOp::Add, self.offset.clone(), bin(BinOp::Sub, j, self.lower.clone()));
+        let rank = self.extents.len();
+        let mut out = vec![];
+        let mut stride: Option<Expr> = None;
+        for axis in 0..rank {
+            let quotient = match &stride { Some(s) => bin(BinOp::Div, t.clone(), s.clone()), None => t.clone() };
+            let position = if axis + 1 == rank { quotient } else { Expr::Call("mod".into(), vec![quotient, self.extents[axis].clone()]) };
+            out.push(bin(BinOp::Add, self.lowers[axis].clone(), position));
+            stride = Some(match stride { Some(s) => bin(BinOp::Mul, s, self.extents[axis].clone()), None => self.extents[axis].clone() });
+        }
+        out
+    }
+}
+
+/// A whole view passed to a user procedure passes its first element, so the
+/// callee in turn receives the rest of the array (sequence association).
+fn bind_sequence_actuals(name: &str, args: &mut [Expr], views: &HashMap<String, SequenceView>) {
+    if name.starts_with('@') && !name.starts_with("@module$") || crate::intrinsics::purity(name).is_some() { return; }
+    for a in args.iter_mut() {
+        if let Expr::Ident(n) = a {
+            if let Some(view) = views.get(n.as_str()) {
+                *a = Expr::Index(view.array.clone(), view.subscripts(view.lower.clone()));
+            }
+        }
+    }
+}
+
+fn bind_sequence_expression(e: &mut Expr, views: &HashMap<String, SequenceView>) -> Result<()> {
+    match e {
+        Expr::Call(n, args) | Expr::Index(n, args) => {
+            if !views.contains_key(n.as_str()) { bind_sequence_actuals(n, args, views); }
+            for a in args.iter_mut() { bind_sequence_expression(a, views)?; }
+            if let Some(view) = views.get(n.as_str()) {
+                let [j] = args.as_slice() else { bail!("an array dummy associated with an array element requires single subscripts"); };
+                if matches!(j, Expr::Section { .. }) || matches!(j, Expr::Call(t, _) if t.starts_with("@section") || t.starts_with("@vector")) {
+                    bail!("sections of an array dummy associated with an array element are not yet supported");
+                }
+                *e = Expr::Index(view.array.clone(), view.subscripts(j.clone()));
+            }
+        }
+        Expr::Ident(n) | Expr::Section { name: n, .. } if views.contains_key(n.as_str()) => {
+            bail!("an array dummy associated with an array element is supported only in element references");
+        }
+        Expr::Section { lower, upper, stride, .. } => {
+            for b in [lower, upper, stride].into_iter().flatten() { bind_sequence_expression(b, views)?; }
+        }
+        Expr::Bin(_, a, b) => { bind_sequence_expression(a, views)?; bind_sequence_expression(b, views)?; }
+        Expr::Un(_, a) => bind_sequence_expression(a, views)?,
+        _ => {}
+    }
+    Ok(())
+}
+
+fn bind_sequence_views(body: &mut Vec<Stmt>, views: &HashMap<String, SequenceView>) -> Result<()> {
+    if views.is_empty() { return Ok(()); }
+    body.retain(|s| !matches!(s, Stmt::DummyIntent { name, .. } | Stmt::ArrayDecl { name, .. } if views.contains_key(name)));
+    for s in body {
+        if let Stmt::AssignIndex { name, indices, value } = s {
+            if let Some(view) = views.get(name.as_str()) {
+                for i in indices.iter_mut() { bind_sequence_expression(i, views)?; }
+                bind_sequence_expression(value, views)?;
+                let [j] = indices.as_slice() else { bail!("an array dummy associated with an array element requires single subscripts"); };
+                *s = Stmt::AssignIndex { name: view.array.clone(), indices: view.subscripts(j.clone()), value: value.clone() };
+                continue;
+            }
+        }
+        if matches!(s, Stmt::Assign { name, .. } if views.contains_key(name.as_str())) {
+            bail!("whole-array assignment to an array dummy associated with an array element is not yet supported");
+        }
+        if let Stmt::CallSub { name, args } = s { bind_sequence_actuals(name, args, views); }
+        for e in crate::procedure_arguments::expressions(s) { bind_sequence_expression(e, views)?; }
+        for b in crate::procedure_arguments::children(s) { bind_sequence_views(b, views)?; }
     }
     Ok(())
 }
@@ -1538,6 +1664,7 @@ fn expand(
                 let mut names = HashMap::new();
                 let mut c_views=HashMap::new();
                 let mut scalar_views=HashMap::new();
+                let mut sequence_views:HashMap<String,SequenceView>=HashMap::new();
                 let mut borrowed_widths=HashSet::new();
                 let mut absent = HashSet::new();
                 let mut prefix = vec![];
@@ -1674,6 +1801,48 @@ fn expand(
                             }
                         }
                         if allocatable && !matches!(actual,Expr::Ident(_)) {bail!("ALLOCATABLE dummy `{p}` requires an ALLOCATABLE variable");}
+                        // Sequence association: a rank-one dummy receives an
+                        // array element and the elements after it, or a whole
+                        // array of another rank, without a copy.
+                        let pointer=r.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==p && intent=="pointer"));
+                        let element=match actual {
+                            Expr::Call(n,subscripts)|Expr::Index(n,subscripts) if shapes.get(n).is_some_and(|(_,d)|d.len()==subscripts.len())
+                                && subscripts.iter().all(|e|!matches!(e,Expr::Section{..}) && !matches!(e,Expr::Call(t,_) if t.starts_with("@section") || t.starts_with("@vector"))
+                                    && crate::vector_subscripts::argument_expression_shape(e,&shapes,functions).ok().flatten().is_none_or(|(_,axes)|axes.is_empty())) =>
+                                Some((n.clone(),subscripts.clone())),
+                            Expr::Ident(n) if shapes.get(n).is_some_and(|(_,d)|d.len()>1) => Some((n.clone(),vec![])),
+                            _ => None,
+                        };
+                        if let (Some((array,subscripts)),false,false,1)=(element,allocatable,pointer,dims.len()) {
+                            if let Some((lowers,extents))=sequence_axes(&array,&shapes).filter(|_|crate::pointers::same_kind(&shapes[&array].0,&kind)) {
+                                let capture=|value:Expr,stem:&str,prefix:&mut Vec<Stmt>,serial:&mut usize|->Expr {
+                                    if crate::parameters::integer_constant(&value).is_ok() {return value;}
+                                    *serial+=1;let temp=format!("@sequence_{stem}_{serial}");
+                                    prefix.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![temp.clone()]});
+                                    prefix.push(Stmt::Assign{name:temp.clone(),value});
+                                    Expr::Ident(temp)
+                                };
+                                let rank=extents.len();
+                                let lowers:Vec<Expr>=lowers.into_iter().map(|l|capture(l,"lower",&mut prefix,serial)).collect();
+                                let extents:Vec<Expr>=extents.into_iter().enumerate().map(|(axis,e)|if axis+1==rank {e} else {capture(e,"extent",&mut prefix,serial)}).collect();
+                                let bin=|op,a:Expr,b:Expr|Expr::Bin(op,Box::new(a),Box::new(b));
+                                let mut offset=Expr::IntLit("0".into());
+                                let mut stride:Option<Expr>=None;
+                                for (axis,subscript) in subscripts.into_iter().enumerate() {
+                                    let position=bin(BinOp::Sub,subscript,lowers[axis].clone());
+                                    let term=match &stride {Some(s)=>bin(BinOp::Mul,position,s.clone()),None=>position};
+                                    offset=bin(BinOp::Add,offset,term);
+                                    stride=Some(match stride {Some(s)=>bin(BinOp::Mul,s,extents[axis].clone()),None=>extents[axis].clone()});
+                                }
+                                let offset=capture(offset,"offset",&mut prefix,serial);
+                                let lower=match &dims[0] {Expr::Call(n,a) if n=="@declared_bounds" && a.len()==2=>a[0].clone(),_=>Expr::IntLit("1".into())};
+                                *serial+=1;let alias=format!("@sequence_view_{serial}");
+                                names.insert(p.clone(),alias.clone());
+                                local.insert(p.clone(),(kind.clone(),dims.clone()));
+                                sequence_views.insert(alias,SequenceView{array,lowers,extents,offset,lower});
+                                continue;
+                            }
+                        }
                         let mut captured=actual.clone();
                         // Multidimensional and pointer expressions need their
                         // active shape, not a flat constant-bound reduction
@@ -2022,6 +2191,7 @@ fn expand(
                 )?;
                 crate::subroutines::rename(&mut cloned, &names, &r.params, serial)?;
                 bind_scalar_views(&mut cloned,&scalar_views)?;
+                bind_sequence_views(&mut cloned,&sequence_views)?;
                 fn bind_c_views(body:&mut Vec<Stmt>,views:&HashMap<String,Expr>) {
                     for s in body {
                         if let Stmt::CallSub{name,args}=s {

@@ -310,6 +310,9 @@ fn shape(e: &Expr, s: &Shapes) -> Result<Option<(TypeSpec, Vec<Expr>)>> {
                 if i == 0 {
                     kind = k;
                 } else if !crate::pointers::same_kind(&kind, &k) {
+                    if matches!((&kind, &k), (TypeSpec::Character(_), TypeSpec::Character(_))) {
+                        bail!("CHARACTER array constructor elements must have equal lengths");
+                    }
                     bail!("vector constructor items must have the same type and kind");
                 }
                 dims.push(d.first().cloned().unwrap_or(int(1)));

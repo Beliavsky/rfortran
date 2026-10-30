@@ -463,7 +463,10 @@ impl Lower {
                 if copy_in {prefix.push(Stmt::CallSub {name:if borrow {"@heap_record_borrow"} else {"@heap_record_load"}.into(),args:vec![Expr::Ident(local),select(&object,&f,vec![],&idx)?]});}
             } else if copy_in && (!direct_character || !f.dims.is_empty() || !matches!(f.kind,TypeSpec::Character(_)|TypeSpec::CharacterAssumed)) {
                 if borrow && !matches!(f.kind,TypeSpec::Character(_)|TypeSpec::CharacterAssumed) {
-                    let first=f.dims.iter().map(|d|component_bounds(d).map(|(l,_)|Expr::IntLit(l.to_string()))).collect::<Result<Vec<_>>>()?;
+                    // The first element of the field: the storage array may
+                    // keep the component's lower bounds or start at one.
+                    let target=storage(&object,&f.name);
+                    let first=(1..=f.dims.len()).map(|axis|Expr::Call("lbound".into(),vec![Expr::Ident(target.clone()),Expr::IntLit(axis.to_string())])).collect::<Vec<_>>();
                     let count=component_count(&f)?;
                     prefix.push(Stmt::CallSub{name:"@record_field_borrow".into(),args:vec![Expr::Ident(local),select(&object,&f,first,&idx)?,Expr::IntLit(count.to_string())]});
                 } else {self.transport_element_field(&object,&temp,&f,&idx,false,prefix)?;}
@@ -909,6 +912,21 @@ impl Lower {
             bail!("array constructors of records with allocatable components are not yet supported");
         }
         match e {
+            // An element of a record array, which an array dummy receives
+            // with the rest of the array (sequence association), as each of
+            // its component arrays from the same element.
+            Expr::Call(n, args) if n == "@borrowed_record" && matches!(args.first(), Some(Expr::Str(t)) if t == ty)
+                && fields.iter().all(|f| f.dims.is_empty() && f.heap.is_none()) =>
+            {
+                let values = fields
+                    .iter()
+                    .map(|f| args[1..].iter().find_map(|e| match e {
+                        Expr::Call(tag, v) if *tag == format!("@record_field:{}", f.name) => v.first().cloned(),
+                        _ => None,
+                    }).with_context(|| format!("missing record component `{}`", f.name)))
+                    .collect::<Result<Vec<_>>>()?;
+                Ok((values, false))
+            }
             Expr::Call(n, args) if n.starts_with("@complex_array$") && crate::complex::type_kind(ty).is_some() => {
                 if args.len() != 2 { bail!("invalid internal COMPLEX array components"); }
                 Ok((args, true))

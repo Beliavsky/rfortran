@@ -56,7 +56,14 @@ impl Lower {
             out.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![index.clone()]});
             indices.push(Expr::Ident(index));
         }
-        let source=select(owner,field,indices.clone(),parent_indices)?;
+        // The loops run over the bounds of the local copy; the storage array
+        // may start at one instead of the component's lower bound.
+        let storage_name=super::storage(owner,&field.name);
+        let shifted=indices.iter().enumerate().map(|(axis,index)| {
+            let bound=|name:&str|Expr::Call("lbound".into(),vec![Expr::Ident(name.into()),Expr::IntLit((axis+1).to_string())]);
+            Expr::Bin(crate::ast::BinOp::Add,Box::new(Expr::Bin(crate::ast::BinOp::Sub,Box::new(index.clone()),Box::new(bound(&local)))),Box::new(bound(&storage_name)))
+        }).collect();
+        let source=select(owner,field,shifted,parent_indices)?;
         let target=if indices.is_empty(){Expr::Ident(local.clone())}else{Expr::Call(local.clone(),indices.clone())};
         let mut body=vec![Stmt::CallSub{name:crate::initialized::TRANSPORT.into(),args:if copy_back{vec![source,target]}else{vec![target,source]}}];
         for (axis,index) in indices.into_iter().enumerate() {

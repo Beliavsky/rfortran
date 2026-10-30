@@ -501,6 +501,15 @@ fn dispatch(body: &mut Vec<Stmt>, top: bool, serial: &mut usize, states: &mut Ve
         0
     };
     let mut statements = body.split_off(first);
+    if top {
+        // Later declarations too, such as a PARAMETER array declared after
+        // the element assignments that initialize an earlier one: in the
+        // loop they would be local to the first segment.
+        let (declarations, rest): (Vec<Stmt>, Vec<Stmt>) = statements.into_iter().partition(|s| matches!(s,
+            Stmt::VarDecl { .. } | Stmt::ArrayDecl { .. } | Stmt::DummyIntent { .. } | Stmt::DerivedDecl { .. }));
+        body.extend(declarations);
+        statements = rest;
+    }
     let procedures: Vec<Stmt> = statements.iter().filter(|s| matches!(s, Stmt::Subroutine { .. } | Stmt::Function { .. } | Stmt::Module { .. })).cloned().collect();
     statements.retain(|s| !matches!(s, Stmt::Subroutine { .. } | Stmt::Function { .. } | Stmt::Module { .. }));
     let mut segments: Vec<Vec<Stmt>> = vec![vec![]];

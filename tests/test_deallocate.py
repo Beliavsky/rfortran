@@ -3,7 +3,9 @@
 Run after cargo build --bin rfort: python tests/test_deallocate.py
 Set RFORT_TEST_COMPILER to check another compiler build.
 """
+import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -13,6 +15,17 @@ import unittest
 from test_record_read import ROOT, COMPILER, build_commands
 from run_ofort_compat import equivalent
 from failure_artifacts import FailureArtifacts
+
+
+def gfortran_cache(source, std, data):
+    """The file holding gfortran's output for this source, standard and input,
+    written once that output matched the expected output. Set
+    RFORT_GFORTRAN_CACHE=0 to always run gfortran."""
+    if os.environ.get("RFORT_GFORTRAN_CACHE", "1") == "0":
+        return None
+    key = hashlib.sha256("\0".join([std, Path(source).read_text(encoding="utf-8"), data or ""]).encode("utf-8")).hexdigest()
+    base = Path(os.environ.get("RFORT_GFORTRAN_CACHE_DIR", Path(tempfile.gettempdir()) / "rfort_gfortran_cache"))
+    return base / key[:2] / (key + ".txt")
 
 
 class Deallocate(unittest.TestCase):
@@ -36,7 +49,14 @@ class Deallocate(unittest.TestCase):
         if not interpreter:
             # Programs too slow for the interpreter run compiled only.
             commands = commands[1:]
+        cached = None
         if expected is not None and reference and shutil.which("gfortran"):
+            cached = gfortran_cache(source, std, data)
+        if cached is not None and cached.is_file() and equivalent(cached.read_text(encoding="utf-8"), expected):
+            # gfortran already gave the expected output for this source,
+            # options and input; skip compiling and running it again.
+            pass
+        elif cached is not None:
             exe = directory / "reference.exe"
             result = recorder.run(["gfortran", f"-std={std}", "-fcheck=all",
                                      source, "-o", exe], cwd=directory,
@@ -57,6 +77,9 @@ class Deallocate(unittest.TestCase):
                         self.assertEqual(result.stderr, "")
                         self.assertTrue(equivalent(result.stdout, expected),
                                         f"expected stdout: {expected!r}; actual stdout: {result.stdout!r}")
+                        if cached is not None and command[0] == directory / "reference.exe":
+                            cached.parent.mkdir(parents=True, exist_ok=True)
+                            cached.write_text(result.stdout, encoding="utf-8")
                 except AssertionError as failure:
                     raise AssertionError(recorder.failed(failure)) from failure
 
