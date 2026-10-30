@@ -444,6 +444,18 @@ pub fn analyze_with_origins(
 
     fn collect_do_vars(s: &Stmt, out: &mut HashMap<String, TypeSpec>) {
         match s {
+            // FORALL indices, like DO variables, are INTEGER.
+            Stmt::CallSub { name, args } if name == "@forall" => {
+                for control in args.chunks(4) {
+                    if let Some(Expr::Ident(index)) = control.first() {
+                        out.entry(index.to_ascii_lowercase()).or_insert(TypeSpec::Integer(None));
+                    }
+                }
+            }
+            // The index of an expanded FORALL.
+            Stmt::DummyIntent { name, intent } if intent == "@forall_index" => {
+                out.entry(name.to_ascii_lowercase()).or_insert(TypeSpec::Integer(None));
+            }
             Stmt::Do { var, body, .. } => {
                 out.insert(var.to_ascii_lowercase(), TypeSpec::Integer(None));
                 for st in body {

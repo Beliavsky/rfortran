@@ -849,12 +849,26 @@ impl Lowerer {
         for control in args.chunks_exact(4) {
             let Expr::Ident(index) = &control[0] else { bail!("FORALL index must be an integer variable"); };
             if !names.insert(index.clone()) { bail!("duplicate FORALL index `{index}`"); }
-            if shapes.contains_key(index) || !matches!(self.types.get(index), Some(TypeSpec::Integer(None | Some(4 | 8)))) {
+            // An undeclared index has its implicit type, INTEGER for I to N.
+            let implicit_integer = self.types.get(index).is_none()
+                && index.chars().next().is_some_and(|c| ('i'..='n').contains(&c.to_ascii_lowercase()));
+            if shapes.contains_key(index) || !implicit_integer && !matches!(self.types.get(index), Some(TypeSpec::Integer(None | Some(4 | 8)))) {
                 bail!("FORALL index `{index}` currently requires an explicitly declared scalar INTEGER of kind 4 or 8");
             }
             let mut bounds = control[1..].to_vec();
             for bound in &mut bounds {
-                let integer=self.integer_expr(bound,shapes);
+                // Undeclared names in a bound have their implicit type.
+                fn implicit(e: &Expr, lower: &Lowerer, shapes: &Shapes) -> bool {
+                    match e {
+                        Expr::Ident(n) if lower.types.get(n).is_none() && !shapes.contains_key(n) =>
+                            n.chars().next().is_some_and(|c| ('i'..='n').contains(&c.to_ascii_lowercase())),
+                        Expr::Bin(BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow, a, b) =>
+                            implicit(a, lower, shapes) && implicit(b, lower, shapes),
+                        Expr::Un(_, a) => implicit(a, lower, shapes),
+                        e => lower.integer_expr(e, shapes),
+                    }
+                }
+                let integer=self.integer_expr(bound,shapes) || implicit(bound,self,shapes);
                 self.expression(bound, shapes)?;
                 if !integer && !self.integer_expr(bound,shapes) {
                     bail!("FORALL bounds and stride must be scalar INTEGER expressions");

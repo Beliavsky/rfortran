@@ -366,7 +366,7 @@ impl Checker<'_> {
                 TokenKind::At => Some("multiple_subscripts"),
                 TokenKind::KwElemental => Some("elemental"),
                 TokenKind::KwImpure => Some("impure"),
-                TokenKind::KwForall => Some("forall"),
+                TokenKind::KwForall | TokenKind::KwForallBlock => Some("forall"),
                 TokenKind::KwAssociate => Some("associate"),
                 TokenKind::KwClass => Some("polymorphic"),
                 TokenKind::KwBlock => Some("block"),

@@ -184,6 +184,73 @@ pub fn computed_goto(labels: Vec<String>, selector: Expr) -> Stmt {
     chain.and_then(|mut c| c.pop()).unwrap_or(Stmt::CallSub { name: "@continue".into(), args: vec![] })
 }
 
+/// `TYPE(t) x, y(3)` or `CLASS(t) x` written without `::`, which allows no
+/// attributes or initializers.
+pub fn derived_declarations(type_name: String, polymorphic: bool,
+    entities: Vec<(String, Vec<Expr>, Option<Expr>, Option<TypeSpec>)>) -> Result<Vec<Stmt>, &'static str> {
+    entities.into_iter().map(|(name, dims, value, length)| {
+        if value.is_some() { return Err("an initializer in a TYPE or CLASS declaration requires ::"); }
+        if length.is_some() { return Err("a length applies only to CHARACTER entities"); }
+        Ok(Stmt::DerivedDecl { type_name: type_name.clone(), names: vec![name], attributes: vec![], polymorphic, dims })
+    }).collect()
+}
+
+/// A FORALL statement or construct as one-assignment FORALLs marked by
+/// `@forall` with index triplets. A construct runs each statement for every
+/// index in turn, so it becomes one FORALL per statement; a nested FORALL adds
+/// its triplets. A mask keeps the old element where it is false:
+/// `a(i) = merge(value, a(i), mask)`, so the value is also evaluated where the
+/// mask is false.
+pub fn forall(header: (Vec<Expr>, Option<Expr>), body: Vec<Stmt>) -> Result<Stmt, &'static str> {
+    fn add(controls: &[Expr], mask: Option<&Expr>, s: Stmt, out: &mut Vec<Stmt>) -> Result<(), &'static str> {
+        match s {
+            Stmt::SourceLocation(_) => out.push(s),
+            Stmt::Block { body } if matches!(body.first(), Some(Stmt::CallSub { name, .. }) if name == "@forall") => {
+                let mut body = body.into_iter();
+                let Some(Stmt::CallSub { args: inner, .. }) = body.next() else { unreachable!() };
+                let mut combined = controls.to_vec();
+                combined.extend(inner);
+                for s in body { add(&combined, mask, s, out)?; }
+            }
+            // The statements of a nested FORALL construct.
+            Stmt::Block { body } if body.iter().all(|s| matches!(s, Stmt::SourceLocation(_) | Stmt::Block { .. })) => {
+                for s in body { add(controls, mask, s, out)?; }
+            }
+            Stmt::AssignIndex { name, indices, value } => {
+                let value = match mask {
+                    None => value,
+                    Some(_) if name.contains('%') => return Err("a FORALL mask with a component assignment is not yet supported"),
+                    Some(mask) => {
+                        let old = match indices.as_slice() {
+                            [section @ Expr::Section { .. }] => section.clone(),
+                            _ => Expr::Call(name.clone(), indices.iter().map(|e| match e {
+                                Expr::Call(n, a) if n == "@vector_subscript" && matches!(a.as_slice(), [Expr::Section { .. }]) =>
+                                    Expr::Call("@section_subscript".into(), a.clone()),
+                                e => e.clone(),
+                            }).collect()),
+                        };
+                        Expr::Call("merge".into(), vec![value, old, mask.clone()])
+                    }
+                };
+                out.push(Stmt::Block { body: vec![
+                    Stmt::CallSub { name: "@forall".into(), args: controls.to_vec() },
+                    Stmt::AssignIndex { name, indices, value },
+                ] });
+            }
+            _ if mask.is_some() => return Err("a FORALL mask currently requires array-element or array-section assignments"),
+            s => out.push(Stmt::Block { body: vec![Stmt::CallSub { name: "@forall".into(), args: controls.to_vec() }, s] }),
+        }
+        Ok(())
+    }
+    let (controls, mask) = header;
+    let mut out = vec![];
+    for s in body { add(&controls, mask.as_ref(), s, &mut out)?; }
+    Ok(match out.len() {
+        1 => out.pop().unwrap(),
+        _ => Stmt::Block { body: out },
+    })
+}
+
 /// Normalize a named scalar result into explicit returns for the existing backends.
 pub fn function_with_result(name: String, params: Vec<String>, result: String, mut body: Vec<Stmt>) -> Stmt {
     fn returns(body: &mut [Stmt], result: &str) {

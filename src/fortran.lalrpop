@@ -48,6 +48,8 @@ extern {
         KW_RECURSIVE => TokenKind::KwRecursive,
         KW_ELEMENTAL => TokenKind::KwElemental,
         KW_FORALL => TokenKind::KwForall,
+        KW_FORALL_BLOCK => TokenKind::KwForallBlock,
+        KW_ENDFORALL => TokenKind::KwEndForall,
         KW_PARAMETER => TokenKind::KwParameter,
         KW_WHERE => TokenKind::KwWhere,
         KW_WHERE_BLOCK => TokenKind::KwWhereBlock,
@@ -631,11 +633,13 @@ Stmt: Stmt = {
         statements.extend(body); statements.extend(tail);
         Stmt::Block {body:statements}
     },
-    KW_FORALL LPAREN <controls:ForallControls> RPAREN <assignment:Stmt> => {
-        // A private marker keeps ordinary scope/expression passes traversing the
-        // assignment until static shapes are known and simultaneous writes lower.
-        Stmt::Block { body: vec![Stmt::CallSub {name:"@forall".into(),args:controls},assignment] }
-    },
+    // A private @forall marker keeps ordinary scope/expression passes
+    // traversing the assignment until static shapes are known and
+    // simultaneous writes lower; see crate::ast::forall.
+    KW_FORALL LPAREN <header:ForallHeader> RPAREN <assignment:Stmt> =>?
+        crate::ast::forall(header, vec![assignment]).map_err(|error|lalrpop_util::ParseError::User {error}),
+    KW_FORALL_BLOCK LPAREN <header:ForallHeader> RPAREN <body:Stmts> KW_ENDFORALL =>?
+        crate::ast::forall(header, body).map_err(|error|lalrpop_util::ParseError::User {error}),
     <name:LoopName?> <stmt:DoLoop> <end:END_LOOP_NAME?> => crate::named_loops::parsed(stmt,name,end),
     KW_RETURN => Stmt::Return(None),
     KW_GOTO <label:INT> => Stmt::CallSub { name: "@goto".into(), args: vec![Expr::IntLit(label)] },
@@ -936,11 +940,11 @@ WriteControl: Expr = {
 };
 WriteValue: Expr = { STAR => Expr::Call("@write_star".into(),vec![]), <value:RhsExpr> => value };
 
-ForallControls: Vec<Expr> = {
-    <first:ForallControl> <rest:(COMMA <ForallControl>)*> => {
+ForallHeader: (Vec<Expr>, Option<Expr>) = {
+    <first:ForallControl> <rest:(COMMA <ForallControl>)*> <mask:(COMMA <CondExpr>)?> => {
         let mut controls = first;
         for control in rest { controls.extend(control); }
-        controls
+        (controls, mask)
     },
 };
 ForallControl: Vec<Expr> = {
@@ -1148,6 +1152,11 @@ PreFuncDeclData: Vec<Stmt> = {
         if let Some(value)=value {out.push(Stmt::Assign{name,value});}
         out.extend(association);out
     }).collect(),
+    // TYPE(t) x and CLASS(t) x without ::, which allows no attributes.
+    KW_TYPE LPAREN <type_name:Ident> RPAREN <entities:DeclEntities> =>? crate::ast::derived_declarations(type_name,false,entities)
+        .map_err(|error|lalrpop_util::ParseError::User{error}),
+    KW_CLASS LPAREN <type_name:ClassTypeName> RPAREN <entities:DeclEntities> =>? crate::ast::derived_declarations(type_name,true,entities)
+        .map_err(|error|lalrpop_util::ParseError::User{error}),
     KW_CLASS LPAREN <type_name:ClassTypeName> RPAREN <attributes:IntrinsicAttrList> DCOLON <entities:DeclEntities> => entities.into_iter().flat_map(|(name,dims,value,_)| {
         let (value,association)=crate::ast::split_pointer_initializer(&name,value);
         let dims=if dims.is_empty(){attributes.1.clone().unwrap_or_default()}else{dims};

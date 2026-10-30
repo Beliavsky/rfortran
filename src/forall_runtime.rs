@@ -214,7 +214,8 @@ pub(crate) fn expand(
             names: vec![first.clone(), last.clone(), step.clone(), iterator.clone()],
         });
         out.push(Stmt::VarDecl {
-            kind: types[index].clone(),
+            // An undeclared index is implicitly default INTEGER.
+            kind: types.get(index).cloned().unwrap_or(TypeSpec::Integer(None)),
             names: vec![current.clone()],
         });
         out.extend([

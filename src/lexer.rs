@@ -348,6 +348,8 @@ pub enum TokenKind {
     KwRecursive,
     KwElemental,
     KwForall,
+    KwForallBlock,
+    KwEndForall,
     KwParameter,
     KwWhere,
     KwWhereBlock,
@@ -1260,7 +1262,14 @@ pub fn lex(input: &str) -> Vec<Token> {
             }
         }
         if statement_start && !assignment {
-            if matches!(&tokens[start].kind,TokenKind::Ident(n) if n.eq_ignore_ascii_case("endwhere")) {
+            if matches!(&tokens[start].kind,TokenKind::Ident(n) if n.eq_ignore_ascii_case("endforall")) {
+                tokens[start].kind = TokenKind::KwEndForall;
+            } else if matches!(tokens[start].kind,TokenKind::KwEnd)
+                && tokens.get(start+1).is_some_and(|t| matches!(&t.kind,TokenKind::Ident(n) if n.eq_ignore_ascii_case("forall")) && same_statement(&input[tokens[start].span.end..t.span.start])) {
+                tokens[start].kind = TokenKind::KwEndForall;
+                tokens[start].span.end = tokens[start+1].span.end;
+                tokens.remove(start+1);
+            } else if matches!(&tokens[start].kind,TokenKind::Ident(n) if n.eq_ignore_ascii_case("endwhere")) {
                 tokens[start].kind = TokenKind::KwEndWhere;
             } else if matches!(tokens[start].kind,TokenKind::KwEnd)
                 && tokens.get(start+1).is_some_and(|t| matches!(&t.kind,TokenKind::Ident(n) if n.eq_ignore_ascii_case("where")) && same_statement(&input[tokens[start].span.end..t.span.start])) {
@@ -1471,7 +1480,17 @@ pub fn lex(input: &str) -> Vec<Token> {
             && matches!(tokens.get(start+1).map(|t|&t.kind),Some(TokenKind::LParen))
             && matches!(tokens.get(start+2).map(|t|&t.kind),Some(TokenKind::Ident(_)))
             && matches!(tokens.get(start+3).map(|t|&t.kind),Some(TokenKind::Eq)) {
-            tokens[start].kind=TokenKind::KwForall;
+            // A FORALL header ending its source statement opens a construct.
+            let mut depth=0;
+            let mut block=false;
+            for end in start+1..tokens.len() {
+                match tokens[end].kind {TokenKind::LParen=>depth+=1,TokenKind::RParen=>depth-=1,_=>{}}
+                if depth==0 {
+                    block=tokens.get(end+1).is_none_or(|t|!same_statement(&input[tokens[end].span.end..t.span.start]));
+                    break;
+                }
+            }
+            tokens[start].kind=if block {TokenKind::KwForallBlock} else {TokenKind::KwForall};
         }
         if matches!(&tokens[start].kind, TokenKind::Ident(n) if n.eq_ignore_ascii_case("error")) && matches!(tokens.get(start+1).map(|t| &t.kind), Some(TokenKind::KwStop)) { tokens[start].kind = TokenKind::KwError; }
         if matches!(&tokens[start].kind, TokenKind::Ident(n) if n.eq_ignore_ascii_case("allocate")) && matches!(tokens.get(start+1).map(|t| &t.kind), Some(TokenKind::LParen)) { tokens[start].kind = TokenKind::KwAllocate; }
