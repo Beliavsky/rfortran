@@ -63,7 +63,8 @@ struct Procedure {
     params: Vec<(String, Option<String>)>,
     result: Option<(String, String)>,
     function: bool,
-    inputs: HashSet<String>,
+    /// Dummies declared INTENT(OUT) or INTENT(INOUT), which need a variable.
+    outputs: HashSet<String>,
     used_fields: HashMap<String, Vec<String>>,
 }
 // Track data objects separately from globally collected procedure signatures.
@@ -421,6 +422,12 @@ impl Lowerer {
                             }
                         }
                     }
+                    let writable = |a: &str| matches!(a, "intent(out)" | "intent(inout)");
+                    let outputs: HashSet<String> = body.iter().flat_map(|d| match d {
+                        Stmt::DerivedDecl { names, attributes, .. } if attributes.iter().any(|a| writable(a)) => names.clone(),
+                        Stmt::DummyIntent { name, intent } if writable(intent) => vec![name.clone()],
+                        _ => vec![],
+                    }).collect();
                     let mut used = HashSet::new();
                     references(body, &mut used);
                     let mut used_fields = HashMap::new();
@@ -461,7 +468,7 @@ impl Lowerer {
                                 .collect(),
                             result,
                             function: matches!(s, Stmt::Function { .. }),
-                            inputs,
+                            outputs,
                             used_fields,
                         },
                     );
@@ -620,7 +627,9 @@ impl Lowerer {
                 let object = if let Some(n) = object {
                     n
                 } else {
-                    if !proc.inputs.contains(param) {
+                    // A dummy without INTENT may be associated with an
+                    // expression, provided the procedure does not define it.
+                    if proc.outputs.contains(param) {
                         bail!("writable derived argument `{param}` requires a variable of type `{ty}`");
                     }
                     // A constructor/function actual has its own component storage.

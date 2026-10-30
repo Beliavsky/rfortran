@@ -12,6 +12,54 @@ class ComplexProcedures(unittest.TestCase):
     check = test_deallocate.Deallocate.check
     reject = test_deallocate.Deallocate.reject
 
+    def test_complex_actuals_of_external_and_module_procedures(self):
+        # An expression for a COMPLEX dummy without INTENT, a COMPLEX
+        # component, and an intrinsic of a COMPLEX argument, passed to an
+        # external subroutine and to a module function.
+        self.check("""module m
+implicit none
+contains
+complex function sq(x)
+complex :: x
+sq = x*x
+end function sq
+end module m
+subroutine cp(n, bd)
+integer, intent(in) :: n
+complex :: bd
+print '(2f8.4,i3)', real(bd), aimag(bd), n
+end subroutine cp
+complex function twice(z)
+complex, intent(in) :: z
+twice = 2*z
+end function twice
+program p
+use m
+implicit none
+type t
+   complex :: z
+end type t
+type(t) :: r
+complex :: w(2)
+complex, external :: twice
+external cp
+r%z = (1.0,2.0)
+w = [(1.0,2.0),(3.0,4.0)]
+call cp(1, r%z)
+call cp(2, twice(w(1)))
+call cp(3, exp((0.0,0.0)))
+call cp(4, w(2) + 1.0)
+call cp(5, sqrt((4.0,0.0)))
+print '(2f8.4)', sq(w(1) + 1.0), sq(r%z)
+end program
+""", "  1.0000  2.0000  1\n"
+     "  2.0000  4.0000  2\n"
+     "  1.0000  0.0000  3\n"
+     "  4.0000  4.0000  4\n"
+     "  2.0000  0.0000  5\n"
+     "  0.0000  8.0000\n"
+     " -3.0000  4.0000\n")
+
     def test_real_storage_for_complex_dummy_is_rejected(self):
         # As BLKTR1 of nswc_mod.f90, which passes elements of a REAL work
         # array to COMPLEX array dummies: an external call, a module

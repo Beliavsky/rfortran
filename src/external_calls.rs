@@ -413,6 +413,11 @@ fn complex_value(scope: &Scope, e: &Expr) -> bool {
     let complex = |n: &str| scope.kind(n).is_some_and(|k| matches!(k, TypeSpec::Complex(_)));
     match e {
         Expr::Call(n, _) if matches!(n.as_str(), "@complex_literal" | "cmplx" | "dcmplx" | "conjg" | "dconjg") => true,
+        // Elemental math intrinsics of a COMPLEX argument are COMPLEX.
+        Expr::Call(n, a) if matches!(n.as_str(), "exp" | "log" | "sqrt" | "sin" | "cos" | "tan" | "sinh" | "cosh" | "tanh"
+            | "asin" | "acos" | "atan" | "asinh" | "acosh" | "atanh" | "cexp" | "clog" | "csqrt" | "csin" | "ccos")
+            && !scope.kinds.contains_key(n.as_str()) && !scope.procedures.contains(n.as_str())
+            && a.first().is_some_and(|x| complex_value(scope, x)) => true,
         Expr::Ident(n) | Expr::Call(n, _) | Expr::Index(n, _) | Expr::Section { name: n, .. } => complex(n),
         Expr::Bin(BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow, a, b) => complex_value(scope, a) || complex_value(scope, b),
         Expr::Un(UnOp::Neg, a) => complex_value(scope, a),
@@ -961,7 +966,10 @@ impl Lower {
             }
             return self.definitions.get(name).is_some_and(|d| d.function.is_none() && self.needs_entry(d, args, scope));
         }
-        if args.iter().any(|a| complex_value(scope, a)) {
+        // A procedure with COMPLEX dummies or result is called by reference
+        // only after COMPLEX lowering, even when no actual is visibly COMPLEX
+        // here, as a COMPLEX component `r%z`.
+        if args.iter().any(|a| complex_value(scope, a)) || COMPLEX_PROCEDURES.with(|s| s.borrow().contains_key(name)) {
             return false;
         }
         let generated = name.starts_with('@') && !name.starts_with(DERIVED_RESULT);
