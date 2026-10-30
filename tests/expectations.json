@@ -145,7 +145,7 @@
       "compiler_stderr": "",
       "program_exit_code": 0,
       "program_stderr": "",
-      "program_stdout": " 42 98\n 3.14 1\n"
+      "program_stdout": " 42 98\n 3.14 1.0\n"
     },
     "22_list_directed_output": {
       "compiler_exit_code": 0,

@@ -199,7 +199,8 @@ end
     def test_invalid_clauses(self):
         for clause,message in (("reduce(+:s,s)","duplicate"),("reduce(+:i)","concurrent index"),("reduce(-:s)","unsupported REDUCE"),("reduce(.and.:s)","not suitable"),("reduce(+:missing)","declared intrinsic")):
             with self.subTest(clause=clause):
-                self.reject(f'integer::i,s=0\ndo concurrent(i=1:3) {clause}\nend do\nend\n',message)
+                # IMPLICIT NONE: an undeclared `missing` would otherwise be an implicitly typed INTEGER.
+                self.reject(f'implicit none\ninteger::i,s=0\ndo concurrent(i=1:3) {clause}\nend do\nend\n',message)
 
     def test_invalid_attributes(self):
         for declaration,attr in (("integer,parameter::s=1","parameter"),("integer,intent(in)::s","intent(in)"),("integer,optional::s","optional")):

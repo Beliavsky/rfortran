@@ -76,7 +76,7 @@ subroutine work()
 print *,i
 end subroutine
 end program
-''', ['-Wimplicit-typing'], errors=True)  # Existing implicit host capture limitation.
+''', ['-Wimplicit-typing'])
         self.assertEqual(warning.count('[implicit-typing]'), 1, warning)
 
     def test_loop_and_implied_do_indices(self):
@@ -86,7 +86,7 @@ print *,i
 end do
 print *, (j,j=1,2)
 end program
-''', ['-Wimplicit-typing'], errors=True)  # Existing implicit I/O index limitation.
+''', ['-Wimplicit-typing'])
         self.assertEqual(warning.count('[implicit-typing]'), 2, warning)
         self.assertIn('`i`', warning)
         self.assertIn('`j`', warning)

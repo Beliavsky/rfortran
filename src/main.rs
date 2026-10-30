@@ -410,6 +410,7 @@ fn lower_program_body(
     origins: Option<&[source_diagnostics::SourceOrigin]>,
 ) -> Result<ast::Program> {
     (|| {
+        let program = implicit_warnings::declare(program);
         let program = namelists::resolve(program)?;
         let program = c_pointers::prepare(program)?;
         let program = c_interop::prepare(program)?;

@@ -105,6 +105,142 @@ print *, total
 end program p
 """, "15\n")
 
+    def test_implicit_types_convert_assigned_values(self):
+        # I to N are INTEGER and the rest REAL, so values convert on assignment.
+        self.check("""program p
+integer c
+call system_clock(c)
+i = 7.9 + 0*c
+x = 7 + 0*c
+j = i / 2
+y = x / 2
+m = 2.5
+print *, i, x, j, y, m
+end program p
+""", "7 7.0 3 3.5 2\n")
+
+    def test_implicit_statement_types_in_every_unit(self):
+        self.check("""module m
+contains
+subroutine ms
+implicit integer (a-c)
+a = 7.9
+print *, a
+end subroutine
+end module
+subroutine es
+implicit integer (a-c)
+b = -7.9
+print *, b
+end
+program p
+use m
+implicit integer (a-c)
+c = 7.9
+print *, c
+call ms
+call es
+call cs
+contains
+subroutine cs
+a = 3.5
+print *, a
+end subroutine
+end program p
+""", "7\n7\n-7\n3\n")
+
+    def test_declared_integer_assigned_real(self):
+        self.check("""program p
+integer c, a
+double precision d
+call system_clock(c)
+d = -7.9d0 + 0*c
+a = d
+print *, a
+a = -2.5
+print *, a
+end program p
+""", "-7\n-2\n")
+
+    def test_statement_functions_and_procedure_dummies(self):
+        self.check("""program p
+real y
+external g
+real g
+f(x) = x**2 + 1
+y = f(3.0)
+k = f(2.0)
+print *, y, k
+call t(g, 2.0)
+contains
+subroutine t(h, a)
+print *, h(a)
+end subroutine
+end program p
+real function g(x)
+g = x*10
+end function
+""", "10.0 5\n20.0\n")
+
+    def test_host_association(self):
+        # The internal procedure reads and defines implicitly typed host
+        # variables, including one the host READs.
+        self.check("""program p
+integer c
+call system_clock(c)
+hv = 2.5 + 0*c
+read *, n
+call s()
+print *, hv, n
+contains
+subroutine s()
+k = n * 2
+hv = hv + k
+n = n + 1
+print *, hv, k
+end subroutine
+end program p
+""", "10.5 8\n10.5 5\n", data="4\n")
+
+    def test_host_association_with_implicit_statement(self):
+        self.check("""program p
+implicit double precision (a-h,o-z)
+integer c
+call system_clock(c)
+x = 1d0/3d0 + 0*c
+call s()
+contains
+subroutine s()
+print *, x * 3
+end subroutine
+end program p
+""", "1.0\n")
+
+    def test_conflicting_implicit_statements_rejected(self):
+        self.reject("""program p
+implicit double precision (a-h,o-z)
+implicit integer (z)
+end program p
+""", "letter `z` already has an IMPLICIT type")
+        self.reject("""program p
+implicit none
+implicit integer (z)
+end program p
+""", "IMPLICIT NONE cannot appear with other IMPLICIT statements")
+        # Different scoping units have their own rules.
+        self.check("""subroutine s
+implicit integer (a-c)
+a = 7.9
+print *, a
+end
+program p
+implicit real (a-c)
+a = 7.9
+print *, a
+call s
+end program p
+""", "7.9\n7\n")
+
     def test_implicit_none_still_rejected(self):
         self.reject("""program p
 implicit none

@@ -894,6 +894,10 @@ impl Lowerer {
                     .context("FORALL iteration count is too large")
             })?
         };
+        // Constant FORALLs are unrolled; a large one runs as loops instead, so
+        // that compile time and code size do not grow with the iteration count.
+        const UNROLL_LIMIT: usize = 64;
+        if iterations > UNROLL_LIMIT { runtime = true; }
         let [_, Stmt::AssignIndex {
             name,
             indices,

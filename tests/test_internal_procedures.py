@@ -319,15 +319,17 @@ value=2
 end function
 end subroutine
 ''','explicitly declared result type')
-        self.reject('''subroutine work()
+        # An implicitly typed host variable is host associated.
+        self.check('''program main
 x=1
 call helper()
+print *,x
 contains
 subroutine helper()
-x=2
+x=x+1.5
 end subroutine
-end subroutine
-''','requires an explicit declaration')
+end program
+''','2.5\n')
 
     def test_main_program_host(self):
         self.check('''program main

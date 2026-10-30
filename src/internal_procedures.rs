@@ -659,6 +659,27 @@ fn hoist(body: &mut Vec<Stmt>) {
     decls.append(body);
     *body = decls;
 }
+/// The type that IMPLICIT statements, or the default rules (I to N INTEGER,
+/// otherwise REAL), give `name`; None under IMPLICIT NONE.
+fn implicit_type(implicit: &[Stmt], name: &str) -> Option<TypeSpec> {
+    use crate::ast::Implicit;
+    let letter = name.chars().next()?.to_ascii_lowercase();
+    let mut kind = if ('i'..='n').contains(&letter) { TypeSpec::Integer(None) } else { TypeSpec::Real };
+    for s in implicit {
+        let Stmt::Implicit(rule) = s else { continue };
+        let rules: Vec<(&TypeSpec, &[crate::ast::LetterRange])> = match rule {
+            Implicit::None => return None,
+            Implicit::Rule { type_spec, letter_ranges } => vec![(type_spec, letter_ranges)],
+            Implicit::Rules { rules } => rules.iter().map(|r| (&r.type_spec, r.letter_ranges.as_slice())).collect(),
+        };
+        for (type_spec, ranges) in rules {
+            if ranges.iter().any(|r| (r.start.to_ascii_lowercase()..=r.end.unwrap_or(r.start).to_ascii_lowercase()).contains(&letter)) {
+                kind = type_spec.clone();
+            }
+        }
+    }
+    Some(kind)
+}
 /// The source offset of the statement declaring `name` in a host body.
 fn declaration_offset(body: &[Stmt], name: &str) -> Option<usize> {
     let mut at = None;
@@ -703,7 +724,15 @@ fn procedure(
                     names.insert(var.clone());
                     definitions(body, names);
                 }
-                Stmt::DoWhile { body, .. } => definitions(body, names),
+                Stmt::DoWhile { body, .. } | Stmt::Block { body } => definitions(body, names),
+                // READ destinations.
+                Stmt::CallSub { name, args } => {
+                    if let Some(start) = crate::input::transfer_start(name) {
+                        for a in args.iter().skip(start) {
+                            if let Expr::Ident(n) = a { names.insert(n.clone()); }
+                        }
+                    }
+                }
                 Stmt::If {
                     then_body,
                     else_body,
@@ -802,11 +831,24 @@ fn procedure(
     let mut captures = BTreeMap::new();
     let mut bindings = HashMap::new();
     let mut prefix = vec![];
+    // An implicitly typed host variable that an internal procedure uses gets
+    // an explicit declaration of its implicit type, so it is captured like
+    // any declared variable.
+    let mut implicit_declarations = vec![];
+    for (name, v) in host.iter_mut().filter(|(n, _)| used.contains(*n)) {
+        if !v.attributes.remove("@implicit_host") { continue; }
+        let Some(kind) = implicit_type(&implicit, name) else {
+            bail!("host-associated variable `{name}` has no type under IMPLICIT NONE");
+        };
+        v.kind = kind.clone();
+        implicit_declarations.push(Stmt::VarDecl { kind, names: vec![name.clone()] });
+    }
+    if !implicit_declarations.is_empty() {
+        let at = body.iter().position(|s| !matches!(s, Stmt::Use { .. } | Stmt::Implicit(_) | Stmt::SourceLocation(_))).unwrap_or(body.len());
+        body.splice(at..at, implicit_declarations);
+    }
     for (name, v) in host.iter().filter(|(n, _)| used.contains(*n)) {
         let declared = declaration_offset(body, name);
-        if v.attributes.contains("@implicit_host") {
-            return Err(crate::source_diagnostics::at(anyhow::anyhow!("host-associated variable `{name}` currently requires an explicit declaration"), declared));
-        }
         if !matches!(
             v.kind,
             TypeSpec::Integer(None | Some(4) | Some(8))

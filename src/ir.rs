@@ -1929,6 +1929,8 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
                     let source=crate::inquiries::model_type(value,&|n|types.get(n).map(|k|(k.clone(),0))).ok().flatten();
                     let conversion=match (types.get(name),source) {
                         (Some(TypeSpec::Real|TypeSpec::DoublePrecision),Some(TypeSpec::Integer(_)))=>Some("dble"),
+                        // A REAL value assigned to an INTEGER truncates toward zero.
+                        (Some(TypeSpec::Integer(_)),Some(TypeSpec::Real|TypeSpec::DoublePrecision|TypeSpec::RealKind(_)))=>Some("int"),
                         _=>None,
                     };
                     if let Some(conversion)=conversion {

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Beliavsky
-//! Diagnose implicit data declarations before lowering synthesizes explicit ones.
+//! Diagnose implicit data declarations, and declare implicitly typed
+//! variables explicitly so that lowering sees their types.
 use crate::ast::{Expr, Implicit, Program, Stmt, TypeSpec};
 use crate::lexer::{Token, TokenKind};
 use crate::procedure_arguments::{children, expressions};
@@ -14,6 +15,13 @@ struct Scope {
     // False denotes a data entity whose type has not been explicitly declared.
     names: HashMap<String, bool>,
     implicit: Vec<Option<TypeSpec>>,
+    // A BLOCK is not a scoping unit for implicit typing: its implicitly
+    // typed variables belong to the enclosing unit.
+    block: bool,
+    // A USE without ONLY of a module whose contents are unknown here, such as
+    // an intrinsic module, may supply any undeclared name, in this scope or
+    // its hosts, so no implicit declarations are inserted.
+    opaque: bool,
 }
 struct Analysis {
     scopes: Vec<Scope>,
@@ -21,6 +29,13 @@ struct Analysis {
     tokens: Vec<Token>,
     seen: HashSet<(usize, String)>,
     warnings: Vec<(String, TypeSpec, Range<usize>)>,
+    // Each implicitly typed variable with the scope that owns it.
+    implicit: Vec<(usize, String, TypeSpec)>,
+    // Insert declarations of implicitly typed variables into their scopes.
+    declare: bool,
+    // Names used with parentheses or in CALL: procedures or statement
+    // functions, never implicitly typed scalar variables, so not declared.
+    called: HashSet<String>,
 }
 
 fn declarations(body: &[Stmt]) -> HashMap<String, bool> {
@@ -141,7 +156,12 @@ impl Analysis {
         if !name.starts_with(|c: char| c.is_ascii_alphabetic()) {
             return;
         }
-        let (owner, explicit) = self.lookup(scope, name).unwrap_or((scope, false));
+        let mut unit = scope;
+        while self.scopes[unit].block {
+            let Some(parent) = self.scopes[unit].parent else { break };
+            unit = parent;
+        }
+        let (owner, explicit) = self.lookup(scope, name).unwrap_or((unit, false));
         if explicit || self.seen.contains(&(owner, name.to_owned())) {
             return;
         }
@@ -151,6 +171,7 @@ impl Analysis {
         };
         self.scopes[owner].names.insert(name.into(), false);
         self.seen.insert((owner, name.into()));
+        self.implicit.push((owner, name.into(), kind.clone()));
         // AST identifiers do not carry spans. Locate this use in its source statement.
         let span = self
             .tokens
@@ -169,6 +190,9 @@ impl Analysis {
         self.warnings.push((name.into(), kind, span));
     }
     fn expr(&mut self, scope: usize, e: &Expr, offset: usize) {
+        if let Expr::Call(n, _) | Expr::Index(n, _) = e {
+            self.called.insert(n.clone());
+        }
         match e {
             Expr::Ident(n) | Expr::Index(n, _) | Expr::Section { name: n, .. } => {
                 self.reference(scope, n, offset);
@@ -204,11 +228,12 @@ impl Analysis {
     }
     fn scope(
         &mut self,
-        body: &mut [Stmt],
+        body: &mut Vec<Stmt>,
         parent: Option<usize>,
         params: &[String],
         result: Option<&str>,
         contained: Option<&[String]>,
+        block: bool,
     ) {
         let mut names: HashMap<_, _> = params.iter().map(|n| (n.clone(), false)).collect();
         if let Some(result) = result {
@@ -253,10 +278,14 @@ impl Analysis {
             }
         }
         let id = self.scopes.len();
+        let opaque = parent.is_some_and(|p| self.scopes[p].opaque)
+            || body.iter().any(|s| matches!(s, Stmt::Use { module, only: None, .. } if !self.modules.contains_key(module)));
         self.scopes.push(Scope {
             parent,
             names,
             implicit,
+            block,
+            opaque,
         });
         let offset = body
             .iter()
@@ -272,6 +301,19 @@ impl Analysis {
             self.reference(id, n, offset);
         }
         self.body(body, id, offset, contained);
+        if self.declare && !self.scopes[id].opaque {
+            // Contained procedures were analyzed within body, so every
+            // implicitly typed variable of this scope is known. A function
+            // result keeps the type its function gives it.
+            let declarations: Vec<Stmt> = self.implicit.iter()
+                .filter(|(owner, name, _)| *owner == id && result != Some(name.as_str()) && !self.called.contains(name))
+                .map(|(_, name, kind)| Stmt::VarDecl { kind: kind.clone(), names: vec![name.clone()] })
+                .collect();
+            if !declarations.is_empty() {
+                let at = body.iter().position(|s| !matches!(s, Stmt::Use { .. } | Stmt::Implicit(_) | Stmt::SourceLocation(_))).unwrap_or(body.len());
+                body.splice(at..at, declarations);
+            }
+        }
     }
     fn body(
         &mut self,
@@ -289,13 +331,14 @@ impl Analysis {
                 }
                 Stmt::Function { .. } | Stmt::Subroutine { .. } | Stmt::Module { .. } => continue,
                 Stmt::Block { body } => {
-                    self.scope(body, Some(scope), &[], None, None);
+                    self.scope(body, Some(scope), &[], None, None, true);
                     continue;
                 }
                 Stmt::Assign { name, .. } | Stmt::AssignIndex { name, .. } => {
                     self.reference(scope, name, offset)
                 }
                 Stmt::Do { var, .. } => self.reference(scope, var, offset),
+                Stmt::CallSub { name, .. } => { self.called.insert(name.clone()); }
                 _ => {}
             }
             if let Stmt::VarDecl { kind, .. }
@@ -324,15 +367,15 @@ impl Analysis {
                         _ => name.clone(),
                     };
                     let host = contained.is_none_or(|c| c.contains(name)).then_some(scope);
-                    self.scope(body, host, params, Some(&result), None);
+                    self.scope(body, host, params, Some(&result), None, false);
                 }
                 Stmt::Subroutine {
                     name, params, body, ..
                 } => {
                     let host = contained.is_none_or(|c| c.contains(name)).then_some(scope);
-                    self.scope(body, host, params, None, None);
+                    self.scope(body, host, params, None, None, false);
                 }
-                Stmt::Module { body, .. } => self.scope(body, None, &[], None, None),
+                Stmt::Module { body, .. } => self.scope(body, None, &[], None, None, false),
                 _ => {}
             }
         }
@@ -365,6 +408,9 @@ pub fn check(
         tokens: crate::lexer::lex(src),
         seen: HashSet::new(),
         warnings: vec![],
+        implicit: vec![],
+        called: HashSet::new(),
+        declare: false,
     };
     analysis.scope(
         &mut program.body.clone(),
@@ -372,6 +418,7 @@ pub fn check(
         &[],
         None,
         Some(&program.contains),
+        false,
     );
     analysis.warnings.sort_by_key(|(_, _, span)| span.start);
     use codespan_reporting::{
@@ -424,4 +471,30 @@ pub fn check(
         bail!("implicit typing warnings treated as errors");
     }
     Ok(())
+}
+
+/// Declare every implicitly typed variable explicitly, with the type its
+/// scoping unit's IMPLICIT rules give it, so that every later pass sees the
+/// type: `i = 7.9` stores 7 and `x = 7` stores 7.0.
+pub fn declare(mut program: Program) -> Program {
+    let mut analysis = Analysis {
+        scopes: vec![],
+        modules: program
+            .body
+            .iter()
+            .filter_map(|s| match s {
+                Stmt::Module { name, body } => Some((name.clone(), body.clone())),
+                _ => None,
+            })
+            .collect(),
+        tokens: vec![],
+        seen: HashSet::new(),
+        warnings: vec![],
+        implicit: vec![],
+        called: HashSet::new(),
+        declare: true,
+    };
+    let contains = program.contains.clone();
+    analysis.scope(&mut program.body, None, &[], None, Some(&contains), false);
+    program
 }

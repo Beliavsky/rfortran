@@ -476,6 +476,45 @@ fn human_token(tok: &TokenKind) -> String {
     }
 }
 
+/// Each letter may have one IMPLICIT type in a scoping unit, and IMPLICIT NONE
+/// excludes other IMPLICIT statements there.
+fn check_implicit_statements(body: &[crate::ast::Stmt]) -> Result<(), (String, Option<usize>)> {
+    use crate::ast::{Implicit, Stmt};
+    let mut letters = std::collections::HashSet::new();
+    let mut none = false;
+    let mut rules = false;
+    let mut at = None;
+    for s in body {
+        match s {
+            Stmt::SourceLocation(pos) => at = Some(*pos),
+            Stmt::Implicit(Implicit::None) => {
+                if none { return Err(("duplicate IMPLICIT NONE statement".into(), at)); }
+                if rules { return Err(("IMPLICIT NONE cannot appear with other IMPLICIT statements".into(), at)); }
+                none = true;
+            }
+            Stmt::Implicit(implicit) => {
+                if none { return Err(("IMPLICIT NONE cannot appear with other IMPLICIT statements".into(), at)); }
+                rules = true;
+                let ranges: Vec<&crate::ast::LetterRange> = match implicit {
+                    Implicit::Rule { letter_ranges, .. } => letter_ranges.iter().collect(),
+                    Implicit::Rules { rules } => rules.iter().flat_map(|r| &r.letter_ranges).collect(),
+                    Implicit::None => unreachable!(),
+                };
+                for r in ranges {
+                    let (start, end) = (r.start.to_ascii_lowercase(), r.end.unwrap_or(r.start).to_ascii_lowercase());
+                    if start > end { return Err((format!("IMPLICIT letter range {start}-{end} is not in alphabetical order"), at)); }
+                    for c in start..=end {
+                        if !letters.insert(c) { return Err((format!("letter `{c}` already has an IMPLICIT type"), at)); }
+                    }
+                }
+            }
+            Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } | Stmt::Module { body, .. } => check_implicit_statements(body)?,
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 /// Give each DIMENSION-statement entity its type: from a type declaration of
 /// the same name in the same scope, or by default implicit typing.
 fn resolve_dimension_statements(body: &mut Vec<crate::ast::Stmt>) -> Result<(), String> {
@@ -606,12 +645,12 @@ pub fn parse_with_origins(
         .parse(triples.into_iter())
     {
         Ok(mut p) => {
-            if let Err((msg, at)) = resolve_dimension_statements(&mut p.body)
+            if let Err((msg, at)) = check_implicit_statements(&p.body).and_then(|_| resolve_dimension_statements(&mut p.body)
                 .and_then(|_| crate::statement_labels::formats(&mut p.body))
                 .and_then(|_| crate::data_statements::resolve(&mut p.body))
                 .map_err(|msg| (msg, None))
                 .and_then(|_| crate::deferred_arrays::resolve(&mut p.body))
-                .and_then(|_| crate::deferred_arrays::type_parameter_inquiries(&mut p.body).map_err(|msg| (msg, None))) {
+                .and_then(|_| crate::deferred_arrays::type_parameter_inquiries(&mut p.body).map_err(|msg| (msg, None)))) {
                 // Label the statement when the error has a source offset.
                 let span = at.map_or(0..0, |p| p..src[p..].find('\n').map_or(src.len(), |n| p + n));
                 let mut diag = Diagnostic::error().with_message(&msg);
