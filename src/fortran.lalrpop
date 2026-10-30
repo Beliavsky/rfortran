@@ -99,6 +99,7 @@ extern {
         FORMAT_SPEC => TokenKind::FormatSpec(<String>),
         KW_DATA => TokenKind::KwData,
         KW_EQUIVALENCE => TokenKind::KwEquivalence,
+        KW_COMMON => TokenKind::KwCommon,
         KW_GOTO => TokenKind::KwGoto,
         KW_CONTINUE => TokenKind::KwContinue,
         TRUE => TokenKind::True,
@@ -651,6 +652,8 @@ Stmt: Stmt = {
     KW_DATA <sets:DataSets> => Stmt::CallSub { name: "@data".into(), args: sets },
     // EQUIVALENCE (object, object, ...), ...
     KW_EQUIVALENCE <sets:EquivalenceSets> => Stmt::CallSub { name: crate::equivalence::STATEMENT.into(), args: sets },
+    // COMMON blocks: each block name, as a string, then its objects.
+    KW_COMMON <groups:CommonGroups> => Stmt::CallSub { name: crate::common::STATEMENT.into(), args: groups },
     // A FORMAT statement; its label gives the format to READ, WRITE and PRINT.
     <spec:FORMAT_SPEC> => Stmt::CallSub { name: "@format_statement".into(), args: vec![Expr::Str(spec)] },
     <name: Designator> EQ <rhs: RhsExpr> => Stmt::Assign { name, value: rhs },
@@ -955,6 +958,28 @@ ForallStride: Expr = { COLON <e:RhsExpr> => e };
 EquivalenceSets: Vec<Expr> = {
     <s:EquivalenceSet> => vec![s],
     <mut v:EquivalenceSets> COMMA <s:EquivalenceSet> => { v.push(s); v },
+};
+// The lexer drops the optional comma before a following /name/ or //, so
+// that one token of lookahead chooses between another object and the next block.
+CommonGroups: Vec<Expr> = {
+    <first:CommonFirst> => first,
+    <mut v:CommonGroups> <g:CommonNamed> => { v.extend(g); v },
+};
+CommonFirst: Vec<Expr> = {
+    <items:CommonObjects> => { let mut v=vec![Expr::Str(String::new())]; v.extend(items); v },
+    <g:CommonNamed> => g,
+};
+CommonNamed: Vec<Expr> = {
+    SLASH <name:Ident> SLASH <items:CommonObjects> => { let mut v=vec![Expr::Str(name)]; v.extend(items); v },
+    CONCAT <items:CommonObjects> => { let mut v=vec![Expr::Str(String::new())]; v.extend(items); v },
+};
+CommonObjects: Vec<Expr> = {
+    <o:CommonObject> => vec![o],
+    <mut v:CommonObjects> COMMA <o:CommonObject> => { v.push(o); v },
+};
+CommonObject: Expr = {
+    <name:Ident> => Expr::Ident(name),
+    <name:Ident> LPAREN <dims:DimList> RPAREN => Expr::Call(name, dims),
 };
 EquivalenceSet: Expr = {
     LPAREN <objects:DataObjects> RPAREN => Expr::Call("@equivalence_set".into(), objects),

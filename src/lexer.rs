@@ -324,6 +324,7 @@ pub enum TokenKind {
     FormatSpec(String),
     KwData,
     KwEquivalence,
+    KwCommon,
     KwGoto,
     KwContinue,
     #[token(".true.", ignore(ascii_case))]
@@ -1379,6 +1380,10 @@ pub fn lex(input: &str) -> Vec<Token> {
                 // EQUIVALENCE (a, b), ..., but not an array named EQUIVALENCE.
                 "equivalence" if matches!(next,Some(TokenKind::LParen)) && statement_head(&tokens,input,start)
                     && !assigned(&tokens,input,start) => Some(TokenKind::KwEquivalence),
+                // COMMON /name/ a, b, blank COMMON // a or COMMON a, but not a
+                // variable named COMMON.
+                "common" if matches!(next,Some(TokenKind::Slash|TokenKind::Concat|TokenKind::Ident(_))) && statement_head(&tokens,input,start)
+                    && !assigned(&tokens,input,start) => Some(TokenKind::KwCommon),
                 "procedure" if matches!(next,Some(TokenKind::DColon)) || matches!(previous,Some(TokenKind::KwModule))
                     // A type-bound binding with attributes: `procedure, private :: f`.
                     || matches!(next,Some(TokenKind::Comma)) && statement_head(&tokens,input,start) => Some(TokenKind::KwProcedure),
@@ -1798,6 +1803,29 @@ pub fn lex(input: &str) -> Vec<Token> {
             };
             if part(&normalized[i+1..*comma])&&part(&normalized[*comma+1..end]){normalized[i].kind=TokenKind::ComplexOpen;}
         }
+    }
+    // In COMMON, the comma before a following /name/ or // is optional. Drop
+    // it, so that the grammar sees a block name directly after an object.
+    let mut i = 0;
+    while i < normalized.len() {
+        if matches!(normalized[i].kind, TokenKind::KwCommon) {
+            let mut depth = 0i32;
+            let mut j = i + 1;
+            while j < normalized.len() && same_statement(&input[normalized[j-1].span.end..normalized[j].span.start]) {
+                match normalized[j].kind {
+                    TokenKind::LParen => depth += 1,
+                    TokenKind::RParen => depth -= 1,
+                    TokenKind::Comma if depth == 0
+                        && matches!(normalized.get(j+1).map(|t| &t.kind), Some(TokenKind::Slash | TokenKind::Concat)) => {
+                        normalized.remove(j);
+                        continue;
+                    }
+                    _ => {}
+                }
+                j += 1;
+            }
+        }
+        i += 1;
     }
     // Last, since the inserted END DO tokens have no source text to separate
     // them from the statement they follow.

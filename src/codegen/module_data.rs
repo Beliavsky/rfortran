@@ -103,11 +103,17 @@ fn walk(
                 // procedures have translation-unit storage. Module procedures
                 // instead retain their real module owner and exported symbol.
                 let private_saved = module == "@pointer_saved";
-                let owned = private_saved || owners.contains(module);
+                // COMMON block storage (see crate::common) is defined by every
+                // object that uses the block; weak definitions let objects
+                // compiled separately share one copy.
+                let common = module.starts_with("rfort_common_") || module == "rfort_blank_common";
+                let owned = private_saved || common || owners.contains(module);
                 let id = obj.declare_data(
                     &symbol,
                     if private_saved {
                         Linkage::Local
+                    } else if common {
+                        Linkage::Preemptible
                     } else if owned {
                         Linkage::Export
                     } else {

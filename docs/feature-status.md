@@ -135,7 +135,7 @@ Found on 2026-10-21, fixed:
 | VOLATILE attribute | F2003 | ✅ | Accepted |  |
 | [Statement labels](language-support.md#statement-labels) | F77 or earlier | 🟡 | Labels are accepted; no statement can branch to them except READ `END=` | test_statement_labels.py |
 | [Construct and procedure endings](language-support.md#procedure-and-module-endings) | Mixed | ✅ | Bare END: F77 or earlier; construct-specific and named endings: F90. Including a bare `END` for a module | test_unnamed_procedure_ends.py, test_syntax_forms.py |
-| COMMON blocks | F77 or earlier | ❌ |  |  |
+| COMMON blocks | F77 or earlier | 🟡 | Named and blank COMMON whose objects match in number, type, kind and shape in every unit (names may differ); no storage association between different layouts, EQUIVALENCE of COMMON objects, BLOCK DATA, derived-type objects or SAVE /name/ | test_common_blocks.py |
 | [DATA statements](language-support.md#other-statement-forms) | F77 or earlier | 🟡 | Array elements and implied-DO lists must give every element of their array a value; sections are not supported. Procedure-local arrays only if the procedure does not change them | test_statement_forms_io.py, test_external_calls.py |
 | [EQUIVALENCE](language-support.md#other-statement-forms) | F77 or earlier | 🟡 | Local variables of one type with constant bounds; each later object must lie within the first, and cannot be used as a whole array | test_external_calls.py |
 | Unnamed ENUM, BIND(C) enumerators (Fortran 2003) | F2003 | ❌ |  |  |
