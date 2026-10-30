@@ -1643,7 +1643,15 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
             }
         }
         if let Stmt::CallSub {name,args}=&stmt {
-            if name=="@format_item" && args.len()==2 && element(&args[1],&int(1),&symbols).is_ok_and(|(_,shape,_)|shape.is_some()) {
+            // Array items, including array-valued results such as SUM(A, 1)
+            // that formatted_items materializes before writing their elements.
+            let materializable=|item:&Expr|(array_valued(item,&symbols) || matches!(item,Expr::Call(n,_) if array_call(n))) && {
+                // A scalar such as SUM(A) has array arguments but no elements.
+                let (mut captured,mut prefix,mut scratch)=(item.clone(),vec![],*serial);
+                argument_with_elementals(&mut captured,&symbols.variables,&mut prefix,&mut scratch,&symbols.elementals).is_ok_and(|(_,count,_)|count>=0)
+            };
+            if name=="@format_item" && args.len()==2 && (element(&args[1],&int(1),&symbols).is_ok_and(|(_,shape,_)|shape.is_some())
+                || materializable(&args[1])) {
                 let Expr::Ident(handle)=&args[0] else {bail!("invalid formatted output session");};
                 let mut expanded=formatted_items(handle,&args[1..],&symbols,serial)?;
                 lower_body(&mut expanded,&symbols,serial)?;
