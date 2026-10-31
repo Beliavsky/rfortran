@@ -823,6 +823,14 @@ pub(crate) fn capture(mut program: Program) -> Result<Program> {
                     for initializer in &initializers {
                         match initializer {
                             Stmt::Assign { value, .. } => {
+                                // An array of rank above one is initialized by
+                                // RESHAPE of its values in array element order.
+                                let value = match value {
+                                    Expr::Call(tag, args) if tag.eq_ignore_ascii_case("reshape") && args.len() >= 2
+                                        && args[2..].iter().all(|a| matches!(a, Expr::Call(n, x) if x.is_empty() && (n == "@no_pad" || n == "@no_order")))
+                                        && matches!(&args[0], Expr::Call(t, items) if t == "@array_constructor" && items.len() == count) => &args[0],
+                                    value => value,
+                                };
                                 if let Expr::Call(tag, items) = value {
                                     if tag == "@array_constructor" {
                                         if items.len() != count {

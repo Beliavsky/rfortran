@@ -11,6 +11,11 @@
 //! unit's objects of the block, and the objects equivalenced to them, are
 //! views of that array from their element offsets (see crate::equivalence).
 //! The objects of such a block must have elements of one size.
+//!
+//! The initial values of COMMON objects, from BLOCK DATA or, as an extension,
+//! from any unit, become initial values of the block's module variables or
+//! of its storage array. A BLOCK DATA unit is parsed as a subroutine named by
+//! `block_data`, which is removed once its blocks are resolved.
 use crate::ast::{Expr, Implicit, Program, Stmt, TypeSpec};
 use anyhow::{bail, Result};
 use std::collections::{HashMap, HashSet};
@@ -19,10 +24,26 @@ use std::collections::{HashMap, HashSet};
 /// string (empty for blank COMMON), then its objects.
 pub(crate) const STATEMENT: &str = "@common";
 
+const BLOCK_DATA: &str = "rfort_block_data_";
+
+/// A BLOCK DATA unit, as a subroutine that nothing calls; an unnamed one is
+/// named by its position in the source.
+pub(crate) fn block_data(pos: usize, name: Option<String>, mut body: Vec<Stmt>) -> Stmt {
+    body.insert(0, Stmt::SourceLocation(pos));
+    let name = format!("{BLOCK_DATA}{}", name.map_or_else(|| pos.to_string(), |n| n.to_ascii_lowercase()));
+    Stmt::Subroutine { name, params: vec![], body, pure: false, elemental: false }
+}
+
+pub(crate) fn is_block_data(name: &str) -> bool {
+    name.starts_with(BLOCK_DATA)
+}
+
 #[derive(Clone)]
 struct Object {
     kind: TypeSpec,
     dims: Vec<Expr>,
+    /// The initial value from the unit's declaration or DATA.
+    value: Option<Expr>,
 }
 
 struct Layout {
@@ -46,6 +67,31 @@ struct Context {
     extents: HashMap<String, i64>,
     /// The types of every unit's objects of each block, from the analysis.
     kinds: HashMap<String, Vec<TypeSpec>>,
+    /// The initial values of the variables of blocks without storage, by
+    /// block and position, with the object's name.
+    initial: HashMap<(String, usize), (Expr, String)>,
+    /// The initial values in each storage array: the first element, the
+    /// number of elements, the value and the object's name.
+    storage_initial: HashMap<String, Vec<(i64, i64, Expr, String)>>,
+    /// The named constants of each module, and of the unit being resolved.
+    modules: HashMap<String, HashMap<String, Expr>>,
+    constants: HashMap<String, Expr>,
+}
+
+/// The zero of a type, for the elements of storage that no object initializes.
+fn zero(kind: &TypeSpec) -> Expr {
+    match kind {
+        TypeSpec::Character(Some(n)) => Expr::Str(" ".repeat(*n)),
+        TypeSpec::Logical | TypeSpec::LogicalKind(_) => Expr::Logical(false),
+        TypeSpec::Integer(_) => Expr::IntLit("0".into()),
+        TypeSpec::Complex(_) => Expr::Call("cmplx".into(), vec![Expr::RealLit("0.0".into()), Expr::RealLit("0.0".into())]),
+        _ => Expr::RealLit("0.0".into()),
+    }
+}
+
+/// The implicit typing rules of a unit without a host.
+pub(crate) fn implicit_rules(body: &[Stmt]) -> Option<HashMap<char, TypeSpec>> {
+    rules(body, &default_rules())
 }
 
 fn storage_name(block: &str) -> String {
@@ -134,13 +180,35 @@ fn bound(e: &Expr, constants: &HashMap<String, Expr>, block: &str, name: &str) -
     }
 }
 
-fn unit(body: &mut Vec<Stmt>, label: &str, host: &Rules, internal: Option<&[String]>, ctx: &mut Context) -> Result<()> {
-    let unit_rules = rules(body, host);
-    let constants: HashMap<String, Expr> = body.iter().flat_map(|s| match s {
+/// The named constants that a unit declares.
+fn named_constants(body: &[Stmt]) -> HashMap<String, Expr> {
+    body.iter().flat_map(|s| match s {
         Stmt::InitializedDecl { attributes, entities, .. } if attributes.iter().any(|a| a.eq_ignore_ascii_case("parameter")) =>
             entities.iter().filter_map(|(n, v)| v.clone().map(|v| (n.clone(), v))).collect::<Vec<_>>(),
         _ => vec![],
-    }).collect();
+    }).collect()
+}
+
+fn unit(body: &mut Vec<Stmt>, label: &str, host: &Rules, internal: Option<&[String]>, ctx: &mut Context) -> Result<()> {
+    let saved = ctx.constants.clone();
+    let result = unit_scope(body, label, host, internal, ctx);
+    ctx.constants = saved;
+    result
+}
+
+fn unit_scope(body: &mut Vec<Stmt>, label: &str, host: &Rules, internal: Option<&[String]>, ctx: &mut Context) -> Result<()> {
+    let unit_rules = rules(body, host);
+    // The constants of the host, of the modules the unit uses, and its own.
+    for s in body.iter() {
+        let Stmt::Use { module, only, renames, .. } = s else { continue };
+        let Some(exported) = ctx.modules.get(module) else { continue };
+        let local = |remote: &String| renames.iter().find(|(_, r)| r == remote).map_or_else(|| remote.clone(), |(l, _)| l.clone());
+        let names: Vec<&String> = match only { Some(list) => list.iter().collect(), None => exported.keys().collect() };
+        let found: Vec<(String, Expr)> = names.into_iter().filter_map(|n| exported.get(n).map(|v| (local(n), v.clone()))).collect();
+        ctx.constants.extend(found);
+    }
+    ctx.constants.extend(named_constants(body));
+    let constants = ctx.constants.clone();
     let mut statements = vec![];
     body.retain(|s| match s {
         Stmt::CallSub { name, args } if name == STATEMENT => { statements.push(args.clone()); false }
@@ -180,6 +248,8 @@ fn unit(body: &mut Vec<Stmt>, label: &str, host: &Rules, internal: Option<&[Stri
             let mut kind = None;
             let mut dims = common_dims.clone();
             let mut found = false;
+            let mut value = None;
+            let mut initialized = false;
             for s in body.iter_mut() {
                 match s {
                     Stmt::ArrayDecl { kind: k, name: n, dims: d } if *n == name => {
@@ -192,8 +262,14 @@ fn unit(body: &mut Vec<Stmt>, label: &str, host: &Rules, internal: Option<&[Stri
                         names.retain(|n| *n != name);
                         kind = Some(k.clone());
                     }
-                    Stmt::InitializedDecl { entities, .. } if entities.iter().any(|(n, _)| *n == name) => {
-                        bail!("`{name}` in {} cannot be initialized in its declaration; BLOCK DATA is not yet supported", display(&block));
+                    Stmt::InitializedDecl { kind: k, attributes, entities } if entities.iter().any(|(n, _)| *n == name) => {
+                        if attributes.iter().any(|a| a.eq_ignore_ascii_case("parameter")) {
+                            bail!("named constant `{name}` cannot be an object of {}", display(&block));
+                        }
+                        let at = entities.iter().position(|(n, _)| *n == name).unwrap();
+                        if let (_, Some(v)) = entities.remove(at) { value = Some(substitute(&v, &constants)); }
+                        if kind.is_none() { kind = Some(k.clone()); }
+                        initialized = true;
                     }
                     Stmt::DerivedDecl { names, .. } if names.contains(&name) => {
                         bail!("derived-type object `{name}` in {} is not yet supported", display(&block));
@@ -203,6 +279,7 @@ fn unit(body: &mut Vec<Stmt>, label: &str, host: &Rules, internal: Option<&[Stri
             }
             if found { body.retain(|s| !matches!(s, Stmt::ArrayDecl { name: n, .. } if *n == name)); }
             body.retain(|s| !matches!(s, Stmt::VarDecl { names, .. } if names.is_empty()));
+            if initialized { body.retain(|s| !matches!(s, Stmt::InitializedDecl { entities, .. } if entities.is_empty())); }
             let kind = match kind {
                 Some(kind) => kind,
                 None => {
@@ -219,7 +296,7 @@ fn unit(body: &mut Vec<Stmt>, label: &str, host: &Rules, internal: Option<&[Stri
             }
             let dims = dims.iter().map(|d| bound(d, &constants, &block, &name)).collect::<Result<Vec<_>>>()?;
             renames.push((name, variable_name(&block, position + 1)));
-            objects.push(Object { kind, dims });
+            objects.push(Object { kind, dims, value });
         }
         if ctx.analysis && renames.iter().any(|(n, _)| equivalence_sets(body).iter().flatten().any(|e| mentions(e, n))) {
             ctx.equivalenced.insert(block.clone());
@@ -234,6 +311,12 @@ fn unit(body: &mut Vec<Stmt>, label: &str, host: &Rules, internal: Option<&[Stri
             }
             uses.extend(storage_views(body, &block, &kind, &renames, &objects, &unit_rules, ctx)?);
             continue;
+        }
+        for (position, (o, (name, _))) in objects.iter().zip(&renames).enumerate() {
+            let Some(value) = &o.value else { continue };
+            if let Some((_, other)) = ctx.initial.insert((block.clone(), position), (value.clone(), name.clone())) {
+                bail!("`{name}` and `{other}`, the same object of {}, are both initialized", display(&block));
+            }
         }
         match ctx.layouts.get(&block) {
             None => {
@@ -268,7 +351,11 @@ fn unit(body: &mut Vec<Stmt>, label: &str, host: &Rules, internal: Option<&[Stri
                 // A procedure of the main program inherits its implicit rules;
                 // an external procedure has the default rules.
                 let host = if internal.is_none_or(|c| c.contains(name)) { unit_rules.clone() } else { default_rules() };
-                let label = format!("`{name}`");
+                let label = match name.strip_prefix(BLOCK_DATA) {
+                    Some(n) if n.starts_with(|c: char| c.is_ascii_digit()) => "a BLOCK DATA unit".to_string(),
+                    Some(n) => format!("BLOCK DATA `{n}`"),
+                    None => format!("`{name}`"),
+                };
                 unit(body, &label, &host, None, ctx)?;
             }
             Stmt::Module { name, body } => {
@@ -364,6 +451,30 @@ fn storage_views(body: &mut Vec<Stmt>, block: &str, kind: &TypeSpec, renames: &[
     let remaining: Vec<Expr> = sets.into_iter().filter(|(_, used)| !used).map(|(s, _)| s).collect();
     body.retain(|s| !matches!(s, Stmt::CallSub { name, .. } if name == crate::equivalence::STATEMENT));
     if !remaining.is_empty() { body.push(Stmt::CallSub { name: crate::equivalence::STATEMENT.into(), args: remaining }); }
+    // The initial values of the block's objects and of the objects
+    // equivalenced to them become initial values of the storage.
+    for (name, start, size) in &placed {
+        let member = objects.iter().zip(renames).find(|(_, (n, _))| n == name).map(|(o, _)| o);
+        let (object_kind, value) = match member {
+            Some(o) => (o.kind.clone(), o.value.clone()),
+            None => {
+                let mut found = None;
+                for s in body.iter_mut() {
+                    let Stmt::InitializedDecl { kind, attributes, entities } = s else { continue };
+                    let Some(at) = entities.iter().position(|(n, v)| n == name && v.is_some()) else { continue };
+                    if attributes.iter().any(|a| a.eq_ignore_ascii_case("parameter")) { continue; }
+                    found = Some((kind.clone(), entities.remove(at).1));
+                }
+                body.retain(|s| !matches!(s, Stmt::InitializedDecl { entities, .. } if entities.is_empty()));
+                match found { Some(f) => f, None => continue }
+            }
+        };
+        let Some(value) = value else { continue };
+        if format!("{object_kind:?}") != format!("{kind:?}") {
+            bail!("initialized `{name}` of {} has a type other than the block's other objects; this is not yet supported", display(block));
+        }
+        ctx.storage_initial.entry(block.into()).or_default().push((*start, *size, value, name.clone()));
+    }
     let end = placed.iter().map(|(_, start, size)| start + size).max().unwrap_or(0);
     let extent = ctx.extents.entry(block.into()).or_insert(0);
     *extent = (*extent).max(end);
@@ -380,9 +491,13 @@ fn default_rules() -> Rules {
 pub fn resolve(mut program: Program) -> Result<Program> {
     let contains = program.contains.clone();
     // Find the blocks that need storage: different layouts, or EQUIVALENCE.
-    let mut analysis = Context { analysis: true, ..Default::default() };
+    let modules: HashMap<String, HashMap<String, Expr>> = program.body.iter().filter_map(|s| match s {
+        Stmt::Module { name, body } => Some((name.clone(), named_constants(body))),
+        _ => None,
+    }).collect();
+    let mut analysis = Context { analysis: true, modules: modules.clone(), ..Default::default() };
     unit(&mut program.body.clone(), "the main program", &default_rules(), Some(&contains), &mut analysis)?;
-    let mut ctx = Context::default();
+    let mut ctx = Context { modules, ..Default::default() };
     for block in analysis.mismatched.union(&analysis.equivalenced) {
         let first = &analysis.layouts[block].objects;
         let Some(object) = first.first() else { continue };
@@ -405,20 +520,49 @@ pub fn resolve(mut program: Program) -> Result<Program> {
         ctx.storage.insert(block.clone(), kind);
     }
     unit(&mut program.body, "the main program", &default_rules(), Some(&contains), &mut ctx)?;
+    // BLOCK DATA has nothing left but its blocks' initial values.
+    program.body.retain(|s| !matches!(s, Stmt::Subroutine { name, .. } if is_block_data(name)));
     let (layouts, order) = (&ctx.layouts, &ctx.order);
-    let modules: Vec<Stmt> = order.iter().map(|block| {
+    let initialized = |kind: &TypeSpec, name: String, value: Expr, dims: &[Expr]| -> Vec<Stmt> {
+        // An initialized array is its InitializedDecl followed by its ArrayDecl.
+        let mut out = vec![Stmt::InitializedDecl { kind: kind.clone(), attributes: vec![], entities: vec![(name.clone(), Some(value))] }];
+        if !dims.is_empty() { out.push(Stmt::ArrayDecl { kind: kind.clone(), name, dims: dims.to_vec() }); }
+        out
+    };
+    let mut modules = vec![];
+    for block in order {
         if let Some(kind) = ctx.storage.get(block) {
-            let body = vec![Stmt::ArrayDecl { kind: kind.clone(), name: storage_name(block), dims: vec![Expr::IntLit(ctx.extents[block].to_string())] }];
-            return Stmt::Module { name: module_name(block), body };
+            let extent = ctx.extents[block];
+            let dims = vec![Expr::IntLit(extent.to_string())];
+            let Some(values) = ctx.storage_initial.get(block) else {
+                modules.push(Stmt::Module { name: module_name(block), body: vec![Stmt::ArrayDecl { kind: kind.clone(), name: storage_name(block), dims }] });
+                continue;
+            };
+            let mut cells: Vec<Option<Expr>> = vec![None; extent as usize];
+            for (start, count, value, name) in values {
+                for (k, v) in crate::equivalence::expand(value, *count)?.into_iter().enumerate() {
+                    if !crate::equivalence::merge(&mut cells[*start as usize + k], v) {
+                        bail!("`{name}` gives storage element {} of {} a second initial value", *start as usize + k + 1, display(block));
+                    }
+                }
+            }
+            let cells = cells.into_iter().map(|c| c.unwrap_or_else(|| zero(kind))).collect();
+            let body = initialized(kind, storage_name(block), Expr::Call("@array_constructor".into(), cells), &dims);
+            modules.push(Stmt::Module { name: module_name(block), body });
+            continue;
         }
         let layout = &layouts[block];
-        let body = layout.objects.iter().enumerate().map(|(i, o)| {
+        let mut body = vec![];
+        for (i, o) in layout.objects.iter().enumerate() {
             let name = variable_name(block, i + 1);
-            if o.dims.is_empty() { Stmt::VarDecl { kind: o.kind.clone(), names: vec![name] } }
-            else { Stmt::ArrayDecl { kind: o.kind.clone(), name, dims: o.dims.clone() } }
-        }).collect();
-        Stmt::Module { name: module_name(block), body }
-    }).collect();
+            match ctx.initial.get(&(block.clone(), i)) {
+                Some((value, _)) => body.extend(initialized(&o.kind, name, value.clone(), &o.dims)),
+                None if o.dims.is_empty() => body.push(Stmt::VarDecl { kind: o.kind.clone(), names: vec![name] }),
+                None => body.push(Stmt::ArrayDecl { kind: o.kind.clone(), name, dims: o.dims.clone() }),
+            }
+        }
+        modules.push(Stmt::Module { name: module_name(block), body });
+    }
     program.body.splice(0..0, modules);
     Ok(program)
 }

@@ -325,6 +325,10 @@ pub enum TokenKind {
     KwData,
     KwEquivalence,
     KwCommon,
+    /// BLOCK DATA or BLOCKDATA at the head of a statement.
+    KwBlockData,
+    /// END BLOCK DATA, END BLOCKDATA or ENDBLOCKDATA.
+    KwEndBlockData,
     KwGoto,
     KwContinue,
     #[token(".true.", ignore(ascii_case))]
@@ -1638,6 +1642,42 @@ pub fn lex(input: &str) -> Vec<Token> {
             }
         }
         named_index+=1;
+    }
+    // BLOCK DATA [name] begins a program unit, and END BLOCK DATA [name]
+    // ends one; the name is an EndUnitName, as after END SUBROUTINE.
+    let mut index = 0;
+    while index < tokens.len() {
+        let joined = |tokens: &[Token], a: usize| tokens.get(a + 1).is_some_and(|t| same_statement(&input[tokens[a].span.end..t.span.start]));
+        let word = |tokens: &[Token], i: usize| tokens.get(i).map(|t| input[t.span.clone()].to_ascii_lowercase());
+        let head = statement_head(&tokens, input, index);
+        let first = word(&tokens, index);
+        // The number of tokens that make the keyword, and its kind.
+        let found = match first.as_deref() {
+            Some("block") if head && joined(&tokens, index) && word(&tokens, index + 1).as_deref() == Some("data") => Some((2, TokenKind::KwBlockData)),
+            Some("blockdata") if head && matches!(tokens[index].kind, TokenKind::Ident(_)) => Some((1, TokenKind::KwBlockData)),
+            Some("endblockdata") if head && matches!(tokens[index].kind, TokenKind::Ident(_)) => Some((1, TokenKind::KwEndBlockData)),
+            Some("end") if head && joined(&tokens, index) => match word(&tokens, index + 1).as_deref() {
+                Some("blockdata") => Some((2, TokenKind::KwEndBlockData)),
+                Some("block") if joined(&tokens, index + 1) && word(&tokens, index + 2).as_deref() == Some("data") => Some((3, TokenKind::KwEndBlockData)),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some((count, kind)) = found {
+            let last = index + count - 1;
+            // Only a name may follow: not `blockdata = 1` or `block data(1)`.
+            let rest = joined(&tokens, last).then(|| &tokens[last + 1]);
+            let name = rest.is_some_and(|t| matches!(t.kind, TokenKind::Ident(_)) && !joined(&tokens, last + 1));
+            if rest.is_none() || name {
+                let span = tokens[index].span.start..tokens[last].span.end;
+                tokens.splice(index..=last, [Token { kind, span }]);
+                if name {
+                    let n = input[tokens[index + 1].span.clone()].to_ascii_lowercase();
+                    tokens[index + 1].kind = TokenKind::EndUnitName(n);
+                }
+            }
+        }
+        index += 1;
     }
     // The optional construct name after END IF, END SELECT, END BLOCK,
     // END ASSOCIATE, ELSE, ELSE IF (...) THEN and CASE selects nothing more.

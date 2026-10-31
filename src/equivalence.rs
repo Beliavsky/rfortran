@@ -152,9 +152,33 @@ impl Shape {
     }
 }
 
+/// Whether `e` is a zero value, as DATA gives the elements of an array that
+/// it does not name.
+fn zero_value(e: &Expr) -> bool {
+    match e {
+        Expr::IntLit(v) => v.parse::<i64>() == Ok(0),
+        Expr::RealLit(v) => v.replace(['d', 'D'], "e").parse::<f64>() == Ok(0.0),
+        Expr::Logical(b) => !b,
+        Expr::Str(s) => s.trim().is_empty(),
+        Expr::Call(n, a) if n == "dble" && a.len() == 1 => zero_value(&a[0]),
+        _ => false,
+    }
+}
+
+/// Give a storage element the initial value `v`, unless it has another. The
+/// zeros of elements that DATA does not name give way to a value.
+pub(crate) fn merge(cell: &mut Option<Expr>, v: Expr) -> bool {
+    match cell {
+        Some(old) if zero_value(old) => { *old = v; true }
+        Some(_) if zero_value(&v) => true,
+        Some(_) => false,
+        None => { *cell = Some(v); true }
+    }
+}
+
 /// The `count` initial values of an initialization: the items of an array
 /// constructor, with DATA repeat counts expanded, or one value for each.
-fn expand(value: &Expr, count: i64) -> Result<Vec<Expr>> {
+pub(crate) fn expand(value: &Expr, count: i64) -> Result<Vec<Expr>> {
     let Expr::Call(n, items) = value else { return Ok(vec![value.clone(); count as usize]) };
     if n != "@array_constructor" { return Ok(vec![value.clone(); count as usize]); }
     let mut out = vec![];
@@ -860,8 +884,7 @@ fn unit(body: &mut Vec<Stmt>, commons: &HashMap<(String, String), (TypeSpec, Vec
         for (delta, value, count) in values {
             for (k, v) in expand(&value, count)?.into_iter().enumerate() {
                 let cell = &mut cells[(delta + k as i64) as usize];
-                if cell.is_some() { bail!("EQUIVALENCE objects give storage element {} of `{primary}` two initial values", delta + k as i64 + 1); }
-                *cell = Some(v);
+                if !merge(cell, v) { bail!("EQUIVALENCE objects give storage element {} of `{primary}` two initial values", delta + k as i64 + 1); }
             }
         }
         let zero = match &kind {

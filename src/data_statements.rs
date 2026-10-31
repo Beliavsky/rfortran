@@ -93,13 +93,104 @@ fn targets(body: &[Stmt], object: &Expr, bound: &HashMap<String, i64>, out: &mut
                 }
             }
         }
-        Expr::Call(n, subscripts) | Expr::Index(n, subscripts) => {
+        Expr::Call(n, subscripts) | Expr::Index(n, subscripts) if subscripts.iter().all(|s| !is_vector(s)) => {
             let subscripts = subscripts.iter().map(value).collect::<Result<_, _>>()?;
             out.push(Target::Element(n.clone(), subscripts));
+        }
+        // A section, or vector subscripts: its elements in array element order.
+        Expr::Section { name, .. } | Expr::Call(name, _) | Expr::Index(name, _) => {
+            let subscripts = match object { Expr::Call(_, s) | Expr::Index(_, s) => s.clone(), _ => vec![object.clone()] };
+            let dims = body.iter().find_map(|s| match s {
+                Stmt::ArrayDecl { name: n, dims, .. } if n == name => Some(dims.clone()),
+                _ => None,
+            }).ok_or_else(|| format!("DATA gives a section to `{name}`, which is not a declared array"))?;
+            let b = bounds(body, &dims).ok_or_else(|| format!("DATA for a section of `{name}` requires constant bounds"))?;
+            if b.len() != subscripts.len() {
+                return Err(format!("DATA gives `{name}` the wrong number of subscripts"));
+            }
+            let lists = subscripts.iter().zip(&b).map(|(s, d)| indices(body, s, *d, bound)).collect::<Result<Vec<_>, _>>()?;
+            // Count through the subscripts, the first fastest.
+            let mut at = vec![0usize; lists.len()];
+            if lists.iter().all(|l| !l.is_empty()) {
+                loop {
+                    out.push(Target::Element(name.clone(), at.iter().zip(&lists).map(|(i, l)| l[*i]).collect()));
+                    let mut k = 0;
+                    while k < at.len() {
+                        at[k] += 1;
+                        if at[k] < lists[k].len() { break; }
+                        at[k] = 0;
+                        k += 1;
+                    }
+                    if k == at.len() { break; }
+                }
+            }
         }
         _ => return Err("DATA currently supports variables, array elements and implied-DO lists, not sections".into()),
     }
     Ok(())
+}
+
+/// Whether a subscript selects several elements: a triplet or a vector.
+fn is_vector(s: &Expr) -> bool {
+    matches!(s, Expr::Section { .. }) || matches!(s, Expr::Call(n, _) if n == "@section_subscript" || n == "@array_constructor")
+}
+
+/// The value of an integer constant expression of a DATA object, with the
+/// variables of enclosing implied-DO lists bound.
+fn constant(body: &[Stmt], e: &Expr, bound: &HashMap<String, i64>) -> Result<i64, String> {
+    let mut e = e.clone();
+    crate::procedure_arguments::visit_expr(&mut e, &mut |e| {
+        if let Expr::Ident(n) = e {
+            if let Some(v) = bound.get(n.as_str()) {
+                *e = Expr::IntLit(v.to_string());
+            }
+        }
+    });
+    integer(body, &e).ok_or_else(|| "DATA subscripts and implied-DO bounds must be integer constants".to_string())
+}
+
+/// The subscript values a DATA subscript selects, in a dimension of lower
+/// bound `lower` and extent `extent`: a triplet, a vector, or one value.
+fn indices(body: &[Stmt], s: &Expr, (lower, extent): (i64, i64), bound: &HashMap<String, i64>) -> Result<Vec<i64>, String> {
+    match s {
+        Expr::Section { lower: l, upper: u, stride, .. } => {
+            let first = l.as_deref().map_or(Ok(lower), |e| constant(body, e, bound))?;
+            let last = u.as_deref().map_or(Ok(lower + extent - 1), |e| constant(body, e, bound))?;
+            let step = stride.as_deref().map_or(Ok(1), |e| constant(body, e, bound))?;
+            if step == 0 { return Err("DATA section stride must not be zero".into()); }
+            let mut out = vec![];
+            let mut i = first;
+            while (step > 0 && i <= last) || (step < 0 && i >= last) { out.push(i); i += step; }
+            Ok(out)
+        }
+        Expr::Call(n, a) if n == "@section_subscript" && a.len() == 1 => indices(body, &a[0], (lower, extent), bound),
+        Expr::Call(n, items) if n == "@array_constructor" => {
+            fn values(body: &[Stmt], items: &[Expr], bound: &HashMap<String, i64>, out: &mut Vec<i64>) -> Result<(), String> {
+                for item in items {
+                    match item {
+                        Expr::Call(n, a) if n == "@output_implied_do" && a.len() >= 4 => {
+                            let Expr::Ident(var) = &a[0] else { return Err("invalid implied-DO in a DATA subscript".into()) };
+                            let (first, last, step) = (constant(body, &a[1], bound)?, constant(body, &a[2], bound)?, constant(body, &a[3], bound)?);
+                            if step == 0 { return Err("implied-DO step must not be zero".into()); }
+                            let mut i = first;
+                            while (step > 0 && i <= last) || (step < 0 && i >= last) {
+                                let mut inner = bound.clone();
+                                inner.insert(var.clone(), i);
+                                values(body, &a[4..], &inner, out)?;
+                                i += step;
+                            }
+                        }
+                        e => out.push(constant(body, e, bound)?),
+                    }
+                }
+                Ok(())
+            }
+            let mut out = vec![];
+            values(body, items, bound, &mut out)?;
+            Ok(out)
+        }
+        e => Ok(vec![constant(body, e, bound)?]),
+    }
 }
 
 /// The next value of a DATA value list, expanding a repeat `r*c` whose count
@@ -183,7 +274,7 @@ fn initialize(body: &mut Vec<Stmt>, name: &str, value: Expr, procedure: bool) ->
     // An array that a procedure never changes, such as a table of pivots, is
     // a named constant; its initial value is all it ever has. Procedures do
     // not otherwise support initialized local arrays, which need SAVE storage.
-    let attributes = if array && procedure && !modified(body, name) { vec!["parameter".to_owned()] } else { vec![] };
+    let attributes = if array && procedure && !modified(body, name) && !in_common(body, name) { vec!["parameter".to_owned()] } else { vec![] };
     let initializer = || Stmt::InitializedDecl { kind: kind.clone(), attributes: attributes.clone(), entities: vec![(name.to_owned(), Some(value.clone()))] };
     if array {
         // An initialized array is its InitializedDecl followed by its ArrayDecl.
@@ -237,6 +328,50 @@ fn initialize(body: &mut Vec<Stmt>, name: &str, value: Expr, procedure: bool) ->
         _ => unreachable!(),
     }
     Ok(())
+}
+
+/// Whether `name` is an object of a COMMON statement of `body`.
+fn in_common(body: &[Stmt], name: &str) -> bool {
+    body.iter().any(|s| matches!(s, Stmt::CallSub { name: n, args } if n == crate::common::STATEMENT
+        && args.iter().any(|a| matches!(a, Expr::Ident(o) | Expr::Call(o, _) if o == name))))
+}
+
+/// Declare the COMMON objects of a unit with DATA statements that have no
+/// declaration, by their implicit types, and move bounds given in COMMON to
+/// the declaration, so that DATA can give the objects values.
+fn declare_common_objects(body: &mut Vec<Stmt>) {
+    if !body.iter().any(|s| matches!(s, Stmt::CallSub { name, .. } if name == "@data")) { return; }
+    let rules = crate::common::implicit_rules(body);
+    let mut i = 0;
+    while i < body.len() {
+        let Stmt::CallSub { name, args } = &body[i] else { i += 1; continue };
+        if name != crate::common::STATEMENT { i += 1; continue; }
+        let mut args = args.clone();
+        let mut inserted = vec![];
+        for a in args.iter_mut() {
+            let (n, dims) = match a { Expr::Ident(n) => (n.clone(), vec![]), Expr::Call(n, d) => (n.clone(), d.clone()), _ => continue };
+            match declared(body, &n) {
+                Some((kind, false)) if !dims.is_empty() => {
+                    let Some(at) = body.iter().position(|s| matches!(s, Stmt::VarDecl { names, .. } if names.contains(&n))) else { continue };
+                    if let Stmt::VarDecl { names, .. } = &mut body[at] { names.retain(|m| *m != n); }
+                    inserted.push(Stmt::ArrayDecl { kind, name: n.clone(), dims });
+                }
+                Some(_) => continue,
+                None => {
+                    let letter = n.chars().next().unwrap_or('a').to_ascii_lowercase();
+                    let Some(kind) = rules.as_ref().and_then(|r| r.get(&letter)).cloned() else { continue };
+                    inserted.push(if dims.is_empty() { Stmt::VarDecl { kind, names: vec![n.clone()] } }
+                        else { Stmt::ArrayDecl { kind, name: n.clone(), dims } });
+                }
+            }
+            *a = Expr::Ident(n);
+        }
+        body[i] = Stmt::CallSub { name: crate::common::STATEMENT.into(), args };
+        let count = inserted.len();
+        body.splice(i..i, inserted);
+        i += count + 1;
+    }
+    body.retain(|s| !matches!(s, Stmt::VarDecl { names, .. } if names.is_empty()));
 }
 
 /// Whether `name` is referenced like a function in `body`, or defined like a
@@ -374,6 +509,7 @@ pub(crate) fn resolve(body: &mut Vec<Stmt>) -> Result<(), String> {
 
 fn unit(body: &mut Vec<Stmt>, dummies: Option<&[String]>) -> Result<(), String> {
     save(body, dummies)?;
+    declare_common_objects(body);
     let procedure = dummies.is_some();
     let mut sets = vec![];
     body.retain(|s| match s {
@@ -481,6 +617,8 @@ fn unit(body: &mut Vec<Stmt>, dummies: Option<&[String]>) -> Result<(), String> 
                 dummies.push(name.clone());
                 unit(body, Some(&dummies))?
             }
+            // BLOCK DATA initializes COMMON objects; it is not a procedure.
+            Stmt::Subroutine { body, name, .. } if crate::common::is_block_data(name) => unit(body, None)?,
             Stmt::Subroutine { body, params, .. } => unit(body, Some(&params.clone()))?,
             Stmt::Module { body, .. } => unit(body, None)?,
             _ => {}

@@ -388,6 +388,8 @@ fn human_token(tok: &TokenKind) -> String {
         TokenKind::KwData => "keyword data".into(),
         TokenKind::KwEquivalence => "keyword equivalence".into(),
         TokenKind::KwCommon => "keyword common".into(),
+        TokenKind::KwBlockData => "keyword block data".into(),
+        TokenKind::KwEndBlockData => "end block data".into(),
         TokenKind::KwGoto => "keyword goto".into(),
         TokenKind::KwIf => "keyword if".into(),
         TokenKind::KwThen => "keyword then".into(),

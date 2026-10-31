@@ -13,8 +13,12 @@ at run time is also built with gfortran: if it fails there too it is reported
 as GFORTRAN_FAIL rather than counted against rfort. dg-output patterns are not
 checked.
 
-OUTDIR receives results.csv (one row per test), summary.md (counts and the
-most common compile errors) and logs/ (the output of every test not passing).
+OUTDIR receives results_YYYYMMDD_HHMM.csv (one row per test) and
+summary_YYYYMMDD_HHMM.md (counts and the most common compile errors), named by
+the start of the run so that earlier runs are kept, copies of the two as
+results.csv and summary.md, and logs/ (the output of every test not passing in
+the latest run). The tests that pass or stop passing since the previous run
+are printed and added to the summary.
 """
 import argparse
 import csv
@@ -99,6 +103,8 @@ def main():
     logs = out / 'logs'
     shutil.rmtree(logs, ignore_errors=True)
     logs.mkdir(parents=True)
+    stamp = time.strftime('%Y%m%d_%H%M')
+    previous = sorted(out.glob('results_*_*.csv'))
     tests = candidates(suite, args.sample, args.seed)
     gfortran = shutil.which('gfortran')
     exe_name = 'test.exe' if os.name == 'nt' else 'test'
@@ -106,8 +112,7 @@ def main():
     start = time.time()
     for i, test in enumerate(tests, 1):
         rel = test.relative_to(suite).as_posix()
-        sys.stdout.write(f'\r[{i}/{len(tests)}] {clock(time.time() - start)} {rel[:70]:<70}')
-        sys.stdout.flush()
+        progress(i - 1, len(tests), time.time() - start, sum(r['status'] == 'PASS' for r in rows), rel)
         with tempfile.TemporaryDirectory(prefix='gts-') as tmp:
             work = Path(tmp)
             source = work / test.name
@@ -136,13 +141,44 @@ def main():
             if log:
                 (logs / (rel.replace('/', '__') + '.txt')).write_text(log, encoding='utf-8')
         rows.append(dict(test=rel, status=status, build_s=f'{build_time:.1f}', run_s=f'{run_time:.1f}', detail=detail[:300]))
+    progress(len(tests), len(tests), time.time() - start, sum(r['status'] == 'PASS' for r in rows), '')
     print()
-    with (out / 'results.csv').open('w', newline='', encoding='utf-8') as f:
+    results = out / f'results_{stamp}.csv'
+    with results.open('w', newline='', encoding='utf-8') as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0]))
         w.writeheader()
         w.writerows(rows)
-    write_summary(out / 'summary.md', rows, args, compiler, time.time() - start)
-    print((out / 'summary.md').read_text(encoding='utf-8').split('\n## ')[0])
+    changes = compare(previous[-1], rows) if previous else []
+    summary = out / f'summary_{stamp}.md'
+    write_summary(summary, rows, args, compiler, time.time() - start, changes)
+    shutil.copyfile(results, out / 'results.csv')
+    shutil.copyfile(summary, out / 'summary.md')
+    print(summary.read_text(encoding='utf-8').split('\n## Most common')[0])
+    print(f'Results: {results}')
+
+
+def compare(path, rows):
+    """The changes since the run in `path`: (heading, tests) for the tests
+    that now pass and the tests that no longer pass."""
+    with path.open(newline='', encoding='utf-8') as f:
+        before = {r['test']: r['status'] for r in csv.DictReader(f)}
+    now = {r['test']: r['status'] for r in rows}
+    passing = sorted(t for t, s in now.items() if s == 'PASS' and before.get(t, 'PASS') != 'PASS')
+    failing = sorted(f'{t} ({s})' for t, s in now.items() if s != 'PASS' and before.get(t) == 'PASS')
+    return [(f'Now passing, since {path.name}', passing), (f'No longer passing, since {path.name}', failing)]
+
+
+def progress(done, total, elapsed, passed, current):
+    """Redraw one status line: a bar, counts, elapsed and estimated remaining
+    time, and the test being run."""
+    width = 30
+    filled = width * done // max(total, 1)
+    left = clock(elapsed / done * (total - done)) if done else '?'
+    line = (f'[{"#" * filled}{"-" * (width - filled)}] {done}/{total} {100 * done // max(total, 1)}% '
+            f'{passed} pass  {clock(elapsed)} elapsed, ~{left} left  {current}')
+    columns = shutil.get_terminal_size((120, 20)).columns - 1
+    sys.stdout.write('\r' + line[:columns].ljust(columns))
+    sys.stdout.flush()
 
 
 def clock(seconds):
@@ -150,7 +186,7 @@ def clock(seconds):
     return f'{seconds // 3600}:{seconds // 60 % 60:02}:{seconds % 60:02}'
 
 
-def write_summary(path, rows, args, compiler, elapsed):
+def write_summary(path, rows, args, compiler, elapsed, changes):
     lines = [f'# rfort on the gfortran test suite', '',
              f'Compiler: `{compiler}` at -O{args.opt}; {len(rows)} tests '
              f'(torture/execute plus a sample of {args.sample} gfortran.dg run tests, seed {args.seed}); '
@@ -164,6 +200,10 @@ def write_summary(path, rows, args, compiler, elapsed):
         lines.append(f'**{group}**: {counts["PASS"]} of {scored} pass '
                      f'({100 * counts["PASS"] // max(scored, 1)}%); '
                      + ', '.join(f'{k} {v}' for k, v in sorted(counts.items())))
+        lines.append('')
+    for heading, tests in changes:
+        lines += [f'## {heading}: {len(tests)}', '']
+        lines += [f'- {t}' for t in tests]
         lines.append('')
     kinds = Counter(error_kind(r['detail']) for r in rows if r['status'] in ('COMPILE_FAIL', 'COMPILER_CRASH'))
     lines += ['## Most common compile errors', '', '| Tests | Error |', '|---:|---|']
