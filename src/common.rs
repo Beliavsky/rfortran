@@ -28,6 +28,11 @@ struct Layout {
 
 type Rules = Option<HashMap<char, TypeSpec>>;
 
+/// Whether a module holds a COMMON block.
+pub(crate) fn is_block_module(name: &str) -> bool {
+    name.starts_with("rfort_common_") || name == "rfort_blank_common"
+}
+
 fn module_name(block: &str) -> String {
     if block.is_empty() { "rfort_blank_common".into() } else { format!("rfort_common_{block}") }
 }
@@ -89,18 +94,6 @@ fn bound(e: &Expr, constants: &HashMap<String, Expr>, block: &str, name: &str) -
     }
 }
 
-/// Whether an EQUIVALENCE statement of the unit names `name`.
-fn equivalenced(body: &[Stmt], name: &str) -> bool {
-    fn mentions(e: &Expr, name: &str) -> bool {
-        match e {
-            Expr::Ident(n) | Expr::Section { name: n, .. } => n == name,
-            Expr::Call(n, args) | Expr::Index(n, args) => n == name || args.iter().any(|a| mentions(a, name)),
-            _ => false,
-        }
-    }
-    body.iter().any(|s| matches!(s, Stmt::CallSub { name: n, args } if n == crate::equivalence::STATEMENT && args.iter().any(|a| mentions(a, name))))
-}
-
 fn unit(body: &mut Vec<Stmt>, label: &str, host: &Rules, internal: Option<&[String]>,
         layouts: &mut HashMap<String, Layout>, order: &mut Vec<String>) -> Result<()> {
     let unit_rules = rules(body, host);
@@ -144,9 +137,6 @@ fn unit(body: &mut Vec<Stmt>, label: &str, host: &Rules, internal: Option<&[Stri
             };
             if renames.iter().any(|(n, _): &(String, String)| *n == name) {
                 bail!("`{name}` appears more than once in {}", display(&block));
-            }
-            if equivalenced(body, &name) {
-                bail!("`{name}` in {} also appears in EQUIVALENCE; EQUIVALENCE of COMMON objects is not yet supported", display(&block));
             }
             let mut kind = None;
             let mut dims = common_dims.clone();

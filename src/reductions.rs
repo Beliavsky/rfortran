@@ -97,6 +97,12 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
         return Ok((value,Some(count),kind));
     }
     match e {
+        // EQUIVALENCE bit reinterpretation of a scalar.
+        Expr::Call(name,args) if args.len()==1 && crate::equivalence::bits_kind(name).is_some() => {
+            let (_,count,_)=element(&args[0],index,symbols)?;
+            if count.is_some() {bail!("reductions of reinterpreted EQUIVALENCE arrays are not yet supported");}
+            Ok((e.clone(),None,crate::equivalence::bits_kind(name).unwrap()))
+        }
         Expr::Call(name,args) if crate::real_intrinsics::decode(name).is_some() || crate::real_intrinsics::keys(name).is_some() && !symbols.contains_key(name) && !symbols.procedures.contains(name) => {
             let mut values=vec![];let mut kinds=vec![];let mut shape=None;
             for arg in args {

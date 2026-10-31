@@ -106,11 +106,11 @@ common /c/ x, y
 end subroutine
 """, "COMMON block /c/ has different layouts")
         self.reject("""program p
-real a(2), b
+real a(2), big(4)
 common /c/ a
-equivalence (a(1), b)
+equivalence (a(1), big(1))
 end program
-""", "EQUIVALENCE of COMMON objects is not yet supported")
+""", "EQUIVALENCE of `big` extends `a`, a COMMON object")
         self.reject("""program p
 implicit none
 common /c/ q

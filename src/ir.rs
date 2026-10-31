@@ -1835,6 +1835,7 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
             Expr::Call(name, args) => {
                 if name.eq_ignore_ascii_case("dble") { return true; }
                 if name.eq_ignore_ascii_case("real") || name.eq_ignore_ascii_case("int") { return false; }
+                if let Some(kind) = crate::equivalence::bits_kind(name) { return kind == crate::ast::TypeSpec::DoublePrecision; }
                 args.first().is_some_and(|arg| double_kind(arg, types))
             }
             _ => false,

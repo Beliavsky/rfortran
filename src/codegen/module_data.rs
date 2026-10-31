@@ -106,7 +106,7 @@ fn walk(
                 // COMMON block storage (see crate::common) is defined by every
                 // object that uses the block; weak definitions let objects
                 // compiled separately share one copy.
-                let common = module.starts_with("rfort_common_") || module == "rfort_blank_common";
+                let common = crate::common::is_block_module(module);
                 let owned = private_saved || common || owners.contains(module);
                 let id = obj.declare_data(
                     &symbol,

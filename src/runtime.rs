@@ -513,6 +513,11 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
         let n = name.to_ascii_lowercase();
         match n.as_str() {
             "@round_real32"=>Some(ValueTuple::from_real((to_real(args.first()?)? as f32) as f64)),
+            // Bit reinterpretation for EQUIVALENCE of REAL and INTEGER storage.
+            "@real32_bits"=>Some(ValueTuple::from_int(i64::from((to_real(args.first()?)? as f32).to_bits() as i32))),
+            "@bits_real32"=>Some(ValueTuple::from_real(f64::from(f32::from_bits(to_int(args.first()?)? as u32)))),
+            "@real64_bits"=>Some(ValueTuple::from_int(to_real(args.first()?)?.to_bits() as i64)),
+            "@bits_real64"=>Some(ValueTuple::from_real(f64::from_bits(to_int(args.first()?)? as u64))),
             "isnan"=>Some(ValueTuple::from_bool(to_real(args.first()?)?.is_nan())),
             "abs" => {
                 if let Some(i) = args.get(0)?.0 {

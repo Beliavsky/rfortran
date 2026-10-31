@@ -50,6 +50,8 @@ fn complex_mold(mold: &Expr, types: &HashMap<String, TypeSpec>) -> bool {
 struct Lower<'a> {
     /// The declared types of the unit's names.
     types: &'a HashMap<String, TypeSpec>,
+    /// The unit's arrays.
+    arrays: std::collections::HashSet<String>,
     /// The temporaries to declare at the start of the unit.
     declarations: Vec<Stmt>,
     serial: usize,
@@ -113,8 +115,47 @@ impl Lower<'_> {
         Ok(Some((set, temporary)))
     }
 
+    /// TRANSFER of a scalar INTEGER or REAL to a scalar of the same size, as
+    /// the bit reinterpretation that EQUIVALENCE uses.
+    fn scalar(&self, e: &mut Expr) {
+        match e {
+            Expr::Call(_, args) | Expr::Index(_, args) => for a in args.iter_mut() { self.scalar(a) },
+            Expr::Bin(_, a, b) => { self.scalar(a); self.scalar(b); }
+            Expr::Un(_, a) => self.scalar(a),
+            _ => {}
+        }
+        let Expr::Call(n, args) = e else { return };
+        if n != "transfer" || self.types.contains_key(n) { return; }
+        let [source, mold] = args.as_slice() else { return };
+        let array = |e: &Expr| match e {
+            Expr::Ident(n) => self.arrays.contains(n),
+            Expr::Call(n, _) => n.starts_with("@array_constructor") || n == "@typed_constructor",
+            Expr::Section { .. } => true,
+            _ => false,
+        };
+        if array(source) || array(mold) { return; }
+        let lookup = |n: &str| self.types.get(n).cloned().map(|k| (k, usize::from(self.arrays.contains(n))));
+        let (Ok(Some(from)), Ok(Some(to))) = (crate::inquiries::model_type(source, &lookup), crate::inquiries::model_type(mold, &lookup)) else { return };
+        let real32 = |k: &TypeSpec| matches!(k, TypeSpec::Real) || matches!(k, TypeSpec::RealKind(k) if k == "4");
+        let real64 = |k: &TypeSpec| matches!(k, TypeSpec::DoublePrecision) || matches!(k, TypeSpec::RealKind(k) if k == "8");
+        let int32 = |k: &TypeSpec| matches!(k, TypeSpec::Integer(None | Some(4)));
+        let int64 = |k: &TypeSpec| matches!(k, TypeSpec::Integer(Some(8)));
+        let primitive = if real32(&from) && int32(&to) { "@real32_bits" }
+            else if int32(&from) && real32(&to) { "@bits_real32" }
+            else if real64(&from) && int64(&to) { "@real64_bits" }
+            else if int64(&from) && real64(&to) { "@bits_real64" }
+            else if (real32(&from) && real32(&to)) || (real64(&from) && real64(&to)) || (int32(&from) && int32(&to)) || (int64(&from) && int64(&to)) {
+                *e = source.clone();
+                return;
+            } else { return };
+        *e = Expr::Call(primitive.into(), vec![source.clone()]);
+    }
+
     fn statements(&mut self, body: &mut Vec<Stmt>) -> Result<()> {
         for s in body.iter_mut() {
+            if !matches!(s, Stmt::Function { .. } | Stmt::Subroutine { .. } | Stmt::Module { .. }) {
+                for e in crate::procedure_arguments::expressions(s) { self.scalar(e); }
+            }
             match s {
                 Stmt::Function { .. } | Stmt::Subroutine { .. } | Stmt::Module { .. } => continue,
                 Stmt::CallSub { name, args } if !name.starts_with('@') => {
@@ -180,7 +221,8 @@ fn unit(body: &mut Vec<Stmt>) -> Result<()> {
         }
     }
     let types = types(body);
-    let mut lower = Lower { types: &types, declarations: vec![], serial: 0 };
+    let arrays = body.iter().filter_map(|s| match s { Stmt::ArrayDecl { name, .. } => Some(name.clone()), _ => None }).collect();
+    let mut lower = Lower { types: &types, arrays, declarations: vec![], serial: 0 };
     lower.statements(body)?;
     let declarations = lower.declarations;
     body.splice(0..0, declarations);

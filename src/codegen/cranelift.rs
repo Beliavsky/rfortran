@@ -991,6 +991,31 @@ fn eval_expr(
                     let value=b.ins().fdemote(ir::types::F32,value);
                     CgVal::F64(b.ins().fpromote(ir::types::F64,value))
                 }
+                // Bit reinterpretation for EQUIVALENCE of REAL and INTEGER storage.
+                "@real32_bits" => {
+                    let value=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);
+                    let value=to_f64(b,value);
+                    let single=b.ins().fdemote(ir::types::F32,value);
+                    let bits=b.ins().bitcast(ir::types::I32,MemFlags::new(),single);
+                    CgVal::I64(b.ins().sextend(ir::types::I64,bits))
+                }
+                "@bits_real32" => {
+                    let value=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);
+                    let value=to_i64(b,value);
+                    let bits=b.ins().ireduce(ir::types::I32,value);
+                    let single=b.ins().bitcast(ir::types::F32,MemFlags::new(),bits);
+                    CgVal::F64(b.ins().fpromote(ir::types::F64,single))
+                }
+                "@real64_bits" => {
+                    let value=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);
+                    let value=to_f64(b,value);
+                    CgVal::I64(b.ins().bitcast(ir::types::I64,MemFlags::new(),value))
+                }
+                "@bits_real64" => {
+                    let value=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);
+                    let value=to_i64(b,value);
+                    CgVal::F64(b.ins().bitcast(ir::types::F64,MemFlags::new(),value))
+                }
                 "isnan" => {
                     let value=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);
                     let value=to_f64(b,value);
@@ -1251,8 +1276,8 @@ fn double_value(e: &IExpr, real_kind: &HashMap<String, bool>, func_meta: &HashMa
             }
             if let Some((_, kind)) = crate::real_intrinsics::decode(name) { return kind == 8; }
             if let Some(meta) = func_meta.get(name) { return meta.double; }
-            if name.eq_ignore_ascii_case("dble") { return true; }
-            if name.eq_ignore_ascii_case("real") { return false; }
+            if name.eq_ignore_ascii_case("dble") || name == "@bits_real64" { return true; }
+            if name.eq_ignore_ascii_case("real") || crate::equivalence::bits_kind(name).is_some() { return false; }
             // An array element.
             if let Some(double) = real_kind.get(name) { return *double; }
             args.first().is_some_and(|arg| double_value(arg, real_kind, func_meta))
@@ -1563,6 +1588,7 @@ fn print_expr(
             if crate::intrinsics::math_arity(name).is_some() || crate::intrinsics::integer_rounding(name) || crate::intrinsics::real_predicate(name)
                 || crate::bit_intrinsics::decode(name).is_some() || crate::real_intrinsics::decode(name).is_some()
                 || matches!(lname.as_str(), "abs" | "int" | "nint" | "real" | "dble" | "max" | "min" | "mod" | "modulo" | "sign")
+                || crate::equivalence::bits_kind(name).is_some()
             {
                 let value = eval_expr(b, ex, ptr_ty, e, ints, reals, bools, func_meta);
                 print_numeric_value(b, ex, ptr_ty, value, double_expression(e, real_kind));

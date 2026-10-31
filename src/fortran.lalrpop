@@ -983,6 +983,8 @@ CommonObject: Expr = {
 };
 EquivalenceSet: Expr = {
     LPAREN <objects:DataObjects> RPAREN => Expr::Call("@equivalence_set".into(), objects),
+    // Two names, as in EQUIVALENCE (X, I), lex like a COMPLEX constant.
+    COMPLEX_OPEN <objects:DataObjects> RPAREN => Expr::Call("@equivalence_set".into(), objects),
 };
 DataSets: Vec<Expr> = {
     <set:DataSet> => vec![set],
