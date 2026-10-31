@@ -75,6 +75,7 @@ mod equivalence;
 mod common;
 mod entries;
 mod pdt;
+mod scalar_components;
 mod statement_functions;
 mod defining_functions;
 mod transfer;
@@ -414,6 +415,7 @@ fn lower_program_body(
 ) -> Result<ast::Program> {
     (|| {
         let program = pdt::resolve(program)?;
+        let program = scalar_components::resolve(program)?;
         let program = multidim::shape_arguments(program);
         let program = common::resolve(program)?;
         let program = implicit_warnings::declare(program);
@@ -437,6 +439,10 @@ fn lower_program_body(
         let program = compile_profile::run("array_calls::resolve", || array_calls::resolve(program))?;
         let program = compile_profile::run("reductions::resolve", || reductions::resolve(program))?;
         let program = compile_profile::run("sections::resolve", || sections::resolve(program))?;
+        // RFORT_DUMP_LOWERED=1 prints the program after source-level lowering.
+        if std::env::var_os("RFORT_DUMP_LOWERED").is_some_and(|v| v == "1") {
+            eprintln!("{program:#?}");
+        }
         Ok(program)
     })()
     .map_err(|error| source_diagnostics::report(error, src, tokens, filename, origins))

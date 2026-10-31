@@ -356,8 +356,11 @@ impl Lower {
                         && matches!(args.first(),Some(Expr::Ident(n)) if arrays.contains_key(n)) =>
                 {
                     let Expr::Ident(n) = &args[0] else { unreachable!() };
+                    let n = n.clone();
+                    let n = n.as_str();
                     let bytes = id(&format!("@character_heap_bytes${n}"));
                     let width = self.stride(n, arrays[n]);
+                    let deferred_width = match self.widths.get(n) { Some(Expr::Ident(w)) => Some(w.clone()), _ => None };
                     let length = std::mem::replace(&mut args[2], bytes.clone());
                     // Keep both lengths in the owned descriptor: code-buffer
                     // bytes for storage and character elements for inquiries.
@@ -371,8 +374,19 @@ impl Lower {
                             value: bin(BinOp::Mul, length.clone(), width.clone()),
                         });
                     }
+                    // A deferred-length component's length is the code count
+                    // per element of the loaded descriptor.
+                    let reload = match (deferred_width, load) {
+                        (Some(w), true) => Some(Stmt::If {
+                            cond: bin(BinOp::Gt, length.clone(), int(0)),
+                            then_body: vec![Stmt::Assign { name: w.clone(), value: bin(BinOp::Div, bytes.clone(), length.clone()) }],
+                            else_body: None,
+                        }),
+                        _ => None,
+                    };
                     result.extend(prefix);
                     result.push(stmt);
+                    result.extend(reload);
                     continue;
                 }
                 Stmt::CallSub { name, args }

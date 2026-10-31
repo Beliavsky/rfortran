@@ -137,23 +137,6 @@ print *, associated(b%p), associated(b%k)
 end program
 """, "F F\nT 23.0 7 1.0 20.0 3.0 4.0\nF F\n")
 
-    def test_unsupported_component_forms_are_diagnosed(self):
-        for declaration, message in [
-            ("character(len=:), allocatable :: s", "ALLOCATABLE scalar component"),
-        ]:
-            self.reject(f"""program main
-implicit none
-type :: other
-integer :: i
-end type other
-type :: t
-{declaration}
-end type t
-type(t) :: x
-print *, 1
-end program
-""", message)
-
     def test_allocatable_component_from_expressions(self):
         self.check("""program main
 implicit none

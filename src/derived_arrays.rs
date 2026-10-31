@@ -267,8 +267,8 @@ impl Lower {
                                                 entities: vec![(field.clone(), Some(value.clone()))],
                                             });
                                         }
-                                        let mut bounds = f.dims.clone();
-                                        bounds.extend(dims.iter().cloned());
+                                        // An allocated array of records defers its fields' extents too.
+                                        let bounds = storage_dims(f, &dims);
                                         out.push(Stmt::ArrayDecl { kind: f.kind.clone(), name: field.clone(), dims: bounds });
                                         if f.heap.is_some() {out.push(Stmt::DummyIntent {name:field.clone(),intent:"@record_slots".into()});}
                                         for a in &attributes {
