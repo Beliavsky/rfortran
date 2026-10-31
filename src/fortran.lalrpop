@@ -1009,6 +1009,9 @@ DataObject: Expr = {
         Expr::Call(crate::data_statements::IMPLIED_DO.into(), args)
     },
     <n:Designator> LPAREN <a:SubscriptList> RPAREN => crate::ast::section_or_call(n, a),
+    // A substring of an array element, as in EQUIVALENCE (c(1:1), d(1)(2:)).
+    <n:Designator> LPAREN <a:SubscriptList> RPAREN LPAREN <r:Subscript> RPAREN =>
+        Expr::Call("@array_substring".into(), vec![crate::ast::section_or_call(n, a), r]),
 };
 DataValues: Vec<Expr> = {
     <c:DataValue> => vec![c],

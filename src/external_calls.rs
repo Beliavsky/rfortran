@@ -44,6 +44,9 @@ thread_local! {
         std::cell::RefCell::new(HashMap::new());
     /// For each procedure with COMPLEX dummies, whether each dummy is COMPLEX.
     static COMPLEX_DUMMIES: std::cell::RefCell<HashMap<String, Vec<bool>>> = std::cell::RefCell::new(HashMap::new());
+    /// The variables of the program's modules, with their types and ranks,
+    /// for the units that USE them.
+    static MODULE_VARIABLES: std::cell::RefCell<HashMap<String, Vec<(String, TypeSpec, usize)>>> = std::cell::RefCell::new(HashMap::new());
 }
 
 /// A dummy of a stub, like the actuals of the calls it stands for.
@@ -198,6 +201,17 @@ impl Scope {
                 if !arrays.contains(name) {
                     self.statement_functions.insert(name.clone());
                 }
+            }
+        }
+        // USE-associated module variables, under their local names.
+        for s in body {
+            let Stmt::Use { module, only, renames, .. } = s else { continue };
+            let variables = MODULE_VARIABLES.with(|m| m.borrow().get(module).cloned()).unwrap_or_default();
+            for (name, kind, rank) in variables {
+                if only.as_ref().is_some_and(|o| !o.contains(&name)) { continue; }
+                let local = renames.iter().find(|(_, remote)| *remote == name).map_or(name.clone(), |(local, _)| local.clone());
+                self.kinds.insert(local.clone(), kind);
+                if rank > 0 { self.ranks.insert(local, rank); }
             }
         }
         for s in body {
@@ -1468,6 +1482,19 @@ pub(crate) fn resolve_complex(p: Program) -> Result<Program> {
 }
 
 fn run(mut p: Program, complex_phase: bool) -> Result<Program> {
+    let mut variables = HashMap::new();
+    for s in &p.body {
+        let Stmt::Module { name, body } = s else { continue };
+        let list: &mut Vec<(String, TypeSpec, usize)> = variables.entry(name.clone()).or_default();
+        for d in body {
+            match d {
+                Stmt::VarDecl { kind, names } => list.extend(names.iter().map(|n| (n.clone(), kind.clone(), 0))),
+                Stmt::ArrayDecl { kind, name, dims } => list.push((name.clone(), kind.clone(), dims.len())),
+                _ => {}
+            }
+        }
+    }
+    MODULE_VARIABLES.with(|m| *m.borrow_mut() = variables);
     let mut stubs = HashMap::new();
     let complex_procedures = COMPLEX_PROCEDURES.with(|s| s.borrow().clone());
     if complex_phase {

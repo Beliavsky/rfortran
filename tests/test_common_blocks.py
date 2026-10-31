@@ -95,22 +95,18 @@ end program
 """, "12\n")
 
     def test_rejections(self):
+        # Different layouts and EQUIVALENCE extensions share storage (see
+        # test_equivalence_storage.py), but not CHARACTER with other types.
         self.reject("""program p
 real a(4)
 common /c/ a
 call s
 end program
 subroutine s
-real x(2), y(2)
-common /c/ x, y
+character(len=4) x(4)
+common /c/ x
 end subroutine
-""", "COMMON block /c/ has different layouts")
-        self.reject("""program p
-real a(2), big(4)
-common /c/ a
-equivalence (a(1), big(1))
-end program
-""", "EQUIVALENCE of `big` extends `a`, a COMMON object")
+""", "storage association of `x` with COMMON block /c/, of types CHARACTER(len=4) and REAL(4), is not yet supported")
         self.reject("""program p
 implicit none
 common /c/ q

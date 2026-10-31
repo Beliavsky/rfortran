@@ -98,13 +98,104 @@ print *, g
 end subroutine
 """, "3.0 3.0 3.0 4 4 4 4\n12345\n12345\n")
 
+    def test_common_storage_association(self):
+        # EQUIVALENCE extends /com1/ past b into c, and the units of /two/
+        # declare different layouts. Whole arrays become sections of the
+        # block's storage, and are passed by their first element.
+        self.check("""program p
+real(8) a(8), b(5), c(5)
+common /com1/ b, c
+equivalence (a(1), b(2))
+real x(10)
+common /two/ x
+b = 100
+c = 200
+print *, a
+call par(a, b, c)
+x = [(real(i), i = 1, 10)]
+call halves
+end program
+subroutine par(a, b, c)
+real(8) a(8), b(5), c(5)
+print *, sum(a), sum(b), sum(c)
+end subroutine
+subroutine halves
+real lo(5), hi(5)
+common /two/ lo, hi
+print *, lo(5), hi(1), sum(hi)
+end subroutine
+""", "100.0 100.0 100.0 100.0 200.0 200.0 200.0 200.0\n1200.0 500.0 1000.0\n5.0 6.0 40.0\n")
+
+    def test_elements_of_different_sizes(self):
+        # The D1MACH idiom: INTEGER*4 pairs over DOUBLE PRECISION elements.
+        self.check("""program p
+double precision dmach(2)
+integer small(2), large(2)
+equivalence (dmach(1), small(1)), (dmach(2), large(1))
+dmach(1) = 1.0d13
+print *, small
+large(1) = 0
+large(2) = 1072693248
+print *, dmach(2), dmach(1) + dmach(2)
+end program
+""", "-448790528 1117925532\n1.0 10000000000001.0\n")
+
+    def test_character_storage(self):
+        self.check("""program p
+character*8 c
+character*1 d(2), f(2)
+character*4 e
+equivalence (c(1:1), d(1)), (c(3:5), e(2:4)), (c(6:6), f(2))
+c = 'abcdefgh'
+print *, d(1), d(2), ' ', e, ' ', f(1), f(2)
+e = 'WXYZ'
+print *, c
+call show
+end program
+subroutine show
+character(len=6) s, t
+common /block/ s, t
+s = 'Hello '
+t = 'World '
+call both
+end subroutine
+subroutine both
+character(len=12) c
+common /block/ c
+print *, c
+end subroutine
+""", "ab bcde ef\naWXYZfgh\nHello World\n")
+
+    def test_initial_values_and_local_storage(self):
+        self.check("""program p
+call one
+call two
+end program
+subroutine one
+integer :: a(3)
+integer :: x = 1
+integer :: z = 3
+equivalence (a(1), x), (a(3), z)
+print *, a(1), a(3), x, z
+end subroutine
+subroutine two
+integer a(2), b(2), c
+equivalence (a(2), b(1)), (b(2), c)
+data a /1, 2/
+data c /3/
+print *, b, c
+b(2) = 30
+print *, c
+end subroutine
+""", "1 3 1 3\n2 3 3\n30\n")
+
     def test_rejections(self):
         self.reject("""program p
-double precision d
-integer m(2)
-equivalence (d, m(1))
+character(len=4) s
+integer m
+equivalence (s, m)
 end program
-""", "whose elements have different sizes")
+""", "storage association of `s` with `m`, of types CHARACTER(len=4) and INTEGER(4), is not yet supported")
         # Only one object of a set can keep its storage.
         self.reject("""program p
 real x
