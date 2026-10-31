@@ -106,7 +106,9 @@ fn walk(
                 // COMMON block storage (see crate::common) is defined by every
                 // object that uses the block; weak definitions let objects
                 // compiled separately share one copy.
-                let common = crate::common::is_block_module(module);
+                // So is the storage of the pools of recursive types (see
+                // crate::recursive_types), which no module file describes.
+                let common = crate::common::is_block_module(module) || module == crate::recursive_types::MODULE;
                 let owned = private_saved || common || owners.contains(module);
                 let id = obj.declare_data(
                     &symbol,

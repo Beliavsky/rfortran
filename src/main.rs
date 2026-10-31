@@ -76,6 +76,8 @@ mod common;
 mod entries;
 mod pdt;
 mod scalar_components;
+mod recursive_types;
+mod recursive_outputs;
 mod statement_functions;
 mod defining_functions;
 mod transfer;
@@ -415,6 +417,8 @@ fn lower_program_body(
 ) -> Result<ast::Program> {
     (|| {
         let program = pdt::resolve(program)?;
+        let program = recursive_types::resolve(program)?;
+        let program = recursive_outputs::resolve(program)?;
         let program = scalar_components::resolve(program)?;
         let program = multidim::shape_arguments(program);
         let program = common::resolve(program)?;
