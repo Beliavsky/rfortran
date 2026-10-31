@@ -1363,7 +1363,18 @@ pub fn lex(input: &str) -> Vec<Token> {
                 // TYPE, attributes :: name and TYPE name (alone on its statement).
                 "type" if statement_head(&tokens,input,start) && tokens.get(start+1).is_some_and(|t| same_statement(&input[tokens[start].span.end..t.span.start]))
                     && (matches!(next,Some(TokenKind::Comma))
-                        || matches!(next,Some(TokenKind::Ident(_))) && tokens.get(start+2).is_none_or(|t| !same_statement(&input[tokens[start+1].span.end..t.span.start]))) => Some(TokenKind::KwType),
+                        || matches!(next,Some(TokenKind::Ident(_))) && tokens.get(start+2).is_none_or(|t| !same_statement(&input[tokens[start+1].span.end..t.span.start]))
+                        // TYPE name(type parameters), alone on its statement.
+                        || matches!(next,Some(TokenKind::Ident(_))) && matches!(tokens.get(start+2).map(|t| &t.kind),Some(TokenKind::LParen)) && {
+                            let mut depth=0i32;
+                            let mut close=None;
+                            for i in start+2..tokens.len() {
+                                match tokens[i].kind {TokenKind::LParen=>depth+=1,TokenKind::RParen=>depth-=1,_=>{}}
+                                if depth==0 {close=Some(i);break;}
+                            }
+                            close.is_some_and(|i| tokens.get(i+1).is_none_or(|t| !same_statement(&input[tokens[i].span.end..t.span.start]))
+                                && (start+3..i).all(|j| matches!(tokens[j].kind,TokenKind::Ident(_)|TokenKind::Comma)))
+                        }) => Some(TokenKind::KwType),
                 "class" if matches!(next,Some(TokenKind::LParen)) => Some(TokenKind::KwClass),
                 "typeof" | "classof" if matches!(next,Some(TokenKind::LParen)) && statement_head(&tokens,input,start) => {
                     let mut depth=0i32;
@@ -1675,6 +1686,18 @@ pub fn lex(input: &str) -> Vec<Token> {
         };
         let span = tokens[index].span.start..tokens[last].span.end;
         tokens.splice(index..=last, [Token { kind: TokenKind::Entry(format!("{name};{};{result}", dummies.join(","))), span }]);
+        index += 1;
+    }
+    // PUBLIC name and PRIVATE name are PUBLIC :: name and PRIVATE :: name.
+    let mut index = 0;
+    while index < tokens.len() {
+        let access = matches!(tokens[index].kind, TokenKind::KwPublic | TokenKind::KwPrivate) && statement_head(&tokens, input, index)
+            && tokens.get(index + 1).is_some_and(|t| same_statement(&input[tokens[index].span.end..t.span.start])
+                && !matches!(t.kind, TokenKind::DColon | TokenKind::Comma));
+        if access {
+            let at = tokens[index].span.end;
+            tokens.insert(index + 1, Token { kind: TokenKind::DColon, span: at..at });
+        }
         index += 1;
     }
     // SEQUENCE, alone after a TYPE statement or PRIVATE in a type definition,

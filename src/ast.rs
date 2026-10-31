@@ -186,6 +186,26 @@ pub fn computed_goto(labels: Vec<String>, selector: Expr) -> Stmt {
 
 /// `TYPE(t) x, y(3)` or `CLASS(t) x` written without `::`, which allows no
 /// attributes or initializers.
+/// The statements for the attributes of `TYPE, attributes :: name`: PUBLIC
+/// and PRIVATE become accessibility statements, EXTENDS and ABSTRACT markers.
+pub fn type_attributes(name: &str, attrs: Vec<String>) -> Result<Vec<Stmt>, &'static str> {
+    let mut out = Vec::new();
+    for attr in attrs {
+        match attr.to_ascii_lowercase().as_str() {
+            "public" => out.push(Stmt::Accessibility { public: true, names: vec![name.to_owned()] }),
+            "private" => out.push(Stmt::Accessibility { public: false, names: vec![name.to_owned()] }),
+            "bind(c)" => {},
+            a if a.starts_with("extends(") && a.ends_with(')') => {
+                let parent = attr[8..attr.len() - 1].to_string();
+                out.push(Stmt::CallSub { name: crate::extensions::EXTENDS.into(), args: vec![Expr::Ident(name.to_owned()), Expr::Ident(parent)] });
+            }
+            "abstract" => out.push(Stmt::CallSub { name: crate::abstract_types::ABSTRACT.into(), args: vec![Expr::Ident(name.to_owned())] }),
+            _ => return Err("unsupported derived-type attribute"),
+        }
+    }
+    Ok(out)
+}
+
 pub fn derived_declarations(type_name: String, polymorphic: bool,
     entities: Vec<(String, Vec<Expr>, Option<Expr>, Option<TypeSpec>)>) -> Result<Vec<Stmt>, &'static str> {
     entities.into_iter().map(|(name, dims, value, length)| {
