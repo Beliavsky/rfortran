@@ -252,6 +252,10 @@ struct DynamicScope {
     procedures: std::collections::HashSet<String>,
     function_results: HashMap<String,TypeSpec>,
     procedure: bool,
+    /// The deferred-length variables of the host, which a procedure cannot
+    /// yet use, and the procedure's dummy arguments and result.
+    host: std::collections::HashSet<String>,
+    dummies: std::collections::HashSet<String>,
 }
 fn declare_character(name: &str, capacity: usize, output: &mut Vec<Stmt>) {
     let heap = capacity == MAX_EXPRESSION_LENGTH;
@@ -404,7 +408,7 @@ fn dynamic_slice(source: Expr, range: &Expr, scope: &mut DynamicScope, output: &
     Ok(Expr::Call("@dynamic_substring".into(), vec![source, start, size, int(cap)]))
 }
 fn dynamic_expression(e: &mut Expr, scope: &mut DynamicScope, output: &mut Vec<Stmt>, serial: &mut usize) -> Result<()> {
-    if scope.procedure && matches!(e, Expr::Ident(n) | Expr::Section {name:n,..} if scope.lengths.contains_key(n) && !scope.fixed.contains(n)) {
+    if matches!(e, Expr::Ident(n) | Expr::Section {name:n,..} if scope.host.contains(n)) {
         bail!("deferred CHARACTER host association in procedures is not yet supported");
     }
     match e {
@@ -425,7 +429,7 @@ fn dynamic_expression(e: &mut Expr, scope: &mut DynamicScope, output: &mut Vec<S
         }
         Expr::Call(n, args) if n == "allocated" && args.len() == 1 && matches!(&args[0], Expr::Ident(n) if scope.lengths.contains_key(n)) => {
             let Expr::Ident(n) = &args[0] else { unreachable!() };
-            if scope.procedure { bail!("deferred CHARACTER host association in procedures is not yet supported"); }
+            if scope.host.contains(n) { bail!("deferred CHARACTER host association in procedures is not yet supported"); }
             *e = ident(&allocation_flag(&scope.lengths[n]));
         }
         Expr::Call(n, args) if matches!(n.as_str(), "len" | "len_trim") && args.len() == 1 && capacity(&args[0], scope).is_some() => {
@@ -619,12 +623,16 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
     for s in statements.iter() {
         match s {
             Stmt::VarDecl { kind, names } => for name in names {
+                scope.host.remove(name);
                 scope.characters.remove(name);
                 scope.lengths.remove(name);
                 scope.fixed.remove(name);
                 scope.symbols.insert(name.clone(), (kind.clone(), vec![]));
                 if deferred(kind) {
-                    if !local { bail!("deferred CHARACTER storage currently requires a main-program or BLOCK local variable"); }
+                    if scope.dummies.contains(name) {
+                        bail!("deferred-length CHARACTER dummy argument or function result `{name}` is not yet supported");
+                    }
+                    if !local { bail!("deferred CHARACTER storage currently requires a local variable"); }
                     if !statements.iter().any(|s| matches!(s, Stmt::DummyIntent {name:n,intent} if n == name && intent == "allocatable")) {
                         bail!("deferred CHARACTER `{name}` requires ALLOCATABLE");
                     }
@@ -683,7 +691,7 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
                     if n.starts_with('@') {bail!("ALLOCATE(CHARACTER(LEN=...) :: ...) of a deferred-length CHARACTER array is supported only for local arrays");}
                     let length=scope.lengths.get(n).filter(|_|!scope.fixed.contains(n))
                         .with_context(||format!("ALLOCATE(CHARACTER(LEN=...) :: {n}) requires a deferred-length ALLOCATABLE CHARACTER scalar"))?.clone();
-                    if scope.procedure {bail!("deferred CHARACTER host association in procedures is not yet supported");}
+                    if scope.host.contains(n) {bail!("deferred CHARACTER host association in procedures is not yet supported");}
                     let flag=allocation_flag(&length);
                     let cap=scope.characters[n.as_str()];
                     let stop=|text:String|vec![Stmt::CallSub {name:"@error_stop".into(),args:vec![Expr::Str(text)]}];
@@ -699,7 +707,7 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
             Stmt::CallSub {name,args} if name=="@deallocate" => {
                 for n in crate::allocatables::deallocation_targets(args)? {
                     let length=scope.lengths.get(&n).with_context(||format!("DEALLOCATE requires a supported ALLOCATABLE variable `{n}`"))?.clone();
-                    if scope.procedure {bail!("deferred CHARACTER host association in procedures is not yet supported");}
+                    if scope.host.contains(&n) {bail!("deferred CHARACTER host association in procedures is not yet supported");}
                     let flag=allocation_flag(&length);
                     result.push(Stmt::If {cond:Expr::Un(crate::ast::UnOp::Not,Box::new(ident(&flag))),
                         then_body:vec![Stmt::CallSub {name:"@error_stop".into(),args:vec![Expr::Str(format!("DEALLOCATE of unallocated CHARACTER `{n}`"))]}],else_body:None});
@@ -818,7 +826,17 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
                 let declares = body.iter().any(|s| matches!(s, Stmt::VarDecl { kind, .. } if deferred(kind)));
                 dynamic_body(body, &scope, local || declares, serial)?
             }
-            Stmt::Module { body, .. } | Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } => {
+            // A procedure's own deferred-length variables are local to it;
+            // those of its host are not yet available to it.
+            Stmt::Function { name, params, body, .. } | Stmt::Subroutine { name, params, body, .. } => {
+                let mut inner = scope.clone();
+                inner.host = scope.lengths.keys().filter(|n| !scope.fixed.contains(*n)).cloned().collect();
+                inner.dummies = params.iter().cloned().collect();
+                let result = match body.last() { Some(Stmt::Return(Some(Expr::Ident(r)))) => r.clone(), _ => name.clone() };
+                inner.dummies.insert(result);
+                dynamic_body(body, &inner, true, serial)?;
+            }
+            Stmt::Module { body, .. } => {
                 dynamic_body(body, &scope, false, serial)?;
             }
             Stmt::SelectCase { expr, cases, default } => {
