@@ -329,6 +329,8 @@ pub enum TokenKind {
     KwBlockData,
     /// END BLOCK DATA, END BLOCKDATA or ENDBLOCKDATA.
     KwEndBlockData,
+    /// ENTRY name [([dummies])] [RESULT(r)], as `name;dummy,...;r`.
+    Entry(String),
     KwGoto,
     KwContinue,
     #[token(".true.", ignore(ascii_case))]
@@ -1642,6 +1644,50 @@ pub fn lex(input: &str) -> Vec<Token> {
             }
         }
         named_index+=1;
+    }
+    // ENTRY name [([dummy, ...])] [RESULT (r)] is one token, but not a
+    // variable named ENTRY.
+    let mut index = 0;
+    while index < tokens.len() {
+        let joined = |tokens: &[Token], a: usize| tokens.get(a + 1).is_some_and(|t| same_statement(&input[tokens[a].span.end..t.span.start]));
+        if !(matches!(&tokens[index].kind, TokenKind::Ident(n) if n.eq_ignore_ascii_case("entry"))
+            && statement_head(&tokens, input, index) && joined(&tokens, index)
+            && matches!(tokens[index + 1].kind, TokenKind::Ident(_))) {
+            index += 1;
+            continue;
+        }
+        let mut last = index;
+        while joined(&tokens, last) { last += 1; }
+        let text = |t: &Token| input[t.span.clone()].to_ascii_lowercase();
+        let words: Vec<String> = tokens[index + 1..=last].iter().map(text).collect();
+        let name = words[0].clone();
+        let mut rest = &words[1..];
+        let mut dummies = vec![];
+        if rest.first().map(String::as_str) == Some("(") {
+            let Some(close) = rest.iter().position(|w| w == ")") else { index += 1; continue };
+            dummies = rest[1..close].iter().filter(|w| *w != ",").cloned().collect();
+            rest = &rest[close + 1..];
+        }
+        let result = match rest {
+            [] => String::new(),
+            [r, o, n, c] if r == "result" && o == "(" && c == ")" => n.clone(),
+            _ => { index += 1; continue }
+        };
+        let span = tokens[index].span.start..tokens[last].span.end;
+        tokens.splice(index..=last, [Token { kind: TokenKind::Entry(format!("{name};{};{result}", dummies.join(","))), span }]);
+        index += 1;
+    }
+    // SEQUENCE, alone after a TYPE statement or PRIVATE in a type definition,
+    // asks for storage in component order, which components have anyway.
+    let mut index = 0;
+    while index < tokens.len() {
+        let sequence = matches!(&tokens[index].kind, TokenKind::Ident(n) if n.eq_ignore_ascii_case("sequence"))
+            && statement_head(&tokens, input, index) && index > 0
+            && tokens.get(index + 1).is_none_or(|t| !same_statement(&input[tokens[index].span.end..t.span.start]))
+            && (0..index).rev().find(|&i| statement_head(&tokens, input, i)).is_some_and(|i|
+                matches!(tokens[i].kind, TokenKind::KwPrivate)
+                || matches!(tokens[i].kind, TokenKind::KwType) && !matches!(tokens.get(i + 1).map(|t| &t.kind), Some(TokenKind::LParen)));
+        if sequence { tokens.remove(index); } else { index += 1; }
     }
     // BLOCK DATA [name] begins a program unit, and END BLOCK DATA [name]
     // ends one; the name is an EndUnitName, as after END SUBROUTINE.

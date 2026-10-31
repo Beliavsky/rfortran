@@ -40,6 +40,58 @@ fn conform(a: &[i64], b: &[i64]) -> bool {
     a.len()==b.len() && a.iter().zip(b).all(|(a,b)| a==b || *a == -1 || *b == -1)
 }
 
+/// Write `SHAPE(x)` as RESHAPE's SHAPE argument as the array constructor of
+/// the extents of `x`, when `x` is an array of the unit or its host with
+/// explicit bounds, so that RESHAPE sees a constant shape.
+pub fn shape_arguments(mut program: Program) -> Program {
+    fn extents(dims: &[Expr]) -> Option<Vec<Expr>> {
+        dims.iter().map(|d| match d {
+            Expr::Call(n, a) if n == "@declared_bounds" && a.len() == 2 =>
+                Some(bin(BinOp::Add, bin(BinOp::Sub, a[1].clone(), a[0].clone()), int(1))),
+            Expr::IntLit(_) | Expr::Ident(_) | Expr::Bin(..) => Some(d.clone()),
+            _ => None,
+        }).collect()
+    }
+    fn scope(body: &mut [Stmt], host: &HashMap<String, Vec<Expr>>) {
+        let mut arrays = host.clone();
+        for s in body.iter() {
+            match s {
+                Stmt::ArrayDecl { name, dims, .. } => match extents(dims) {
+                    Some(e) if !dims.iter().any(|d| matches!(d, Expr::Ident(n) if n.starts_with('@'))) => { arrays.insert(name.clone(), e); }
+                    _ => { arrays.remove(name); }
+                },
+                Stmt::VarDecl { names, .. } => for n in names { arrays.remove(n); },
+                _ => {}
+            }
+        }
+        // Allocatable, pointer and assumed-shape arrays have no fixed shape.
+        for s in body.iter() {
+            if let Stmt::DummyIntent { name, intent } = s {
+                if matches!(intent.as_str(), "allocatable" | "pointer") { arrays.remove(name); }
+            }
+        }
+        for s in body.iter_mut() {
+            if matches!(s, Stmt::Function { .. } | Stmt::Subroutine { .. } | Stmt::Module { .. }) {
+                for b in crate::procedure_arguments::children(s) { scope(b, &arrays); }
+                continue;
+            }
+            for e in crate::procedure_arguments::expressions(s) {
+                crate::procedure_arguments::visit_expr(e, &mut |e| {
+                    let Expr::Call(n, args) = e else { return };
+                    if !n.eq_ignore_ascii_case("reshape") || args.len() < 2 { return; }
+                    let Expr::Call(s, a) = &args[1] else { return };
+                    let [Expr::Ident(x)] = a.as_slice() else { return };
+                    if !s.eq_ignore_ascii_case("shape") { return; }
+                    if let Some(e) = arrays.get(x) { args[1] = Expr::Call("@array_constructor".into(), e.clone()); }
+                });
+            }
+            for b in crate::procedure_arguments::children(s) { scope(b, &arrays); }
+        }
+    }
+    scope(&mut program.body, &HashMap::new());
+    program
+}
+
 pub(crate) fn reshape_shape(args: &[Expr]) -> Result<Vec<i64>> {
     if args.len() != 4 { bail!("RESHAPE requires normalized SOURCE, SHAPE, PAD and ORDER arguments"); }
     let Expr::Call(tag, items) = &args[1] else { bail!("RESHAPE SHAPE must currently be a constant array constructor"); };

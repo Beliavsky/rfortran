@@ -601,6 +601,7 @@ fn unit(body: &mut Vec<Stmt>, dummies: Option<&[String]>) -> Result<(), String> 
             Some(TypeSpec::DoublePrecision) => Some(Expr::Call("dble".into(), vec![Expr::RealLit("0.0".into())])),
             Some(TypeSpec::Logical | TypeSpec::LogicalKind(_)) => Some(Expr::Logical(false)),
             Some(TypeSpec::Character(_)) => Some(Expr::Str(String::new())),
+            Some(TypeSpec::Complex(_)) => Some(Expr::Call("@complex_literal".into(), vec![Expr::RealLit("0.0".into()), Expr::RealLit("0.0".into())])),
             _ => None,
         };
         let values = slots

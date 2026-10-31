@@ -296,7 +296,7 @@ current limits.
 | Interface blocks for external procedures | F90 | ✅ |  |  |
 | [Dummy procedures](language-support.md#dummy-procedures-and-procedure-pointers) | F77 or earlier | 🟡 | External dummy procedures: F77 or earlier; explicit interfaces: F90. Intrinsic procedures cannot be passed | test_procedure_arguments.py |
 | [Procedure pointers](language-support.md#dummy-procedures-and-procedure-pointers) | F2003 | 🟡 | Not as components or arguments | test_procedure_arguments.py |
-| ENTRY statements | F77 or earlier | ❌ |  |  |
+| ENTRY statements | F77 or earlier | 🟡 | Subroutine and function entries, also in modules, with their own dummies and RESULT clauses; results of the same type share storage, and SAVE and DATA variables are shared by all entry points. No alternate returns; derived-type, CHARACTER(*) and POINTER results are limited as for other functions | test_entry_statements.py |
 | [Statement functions](language-support.md#other-statement-forms) | F77 or earlier | ✅ |  | test_external_calls.py |
 
 ## Modules

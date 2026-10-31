@@ -101,6 +101,7 @@ extern {
         KW_EQUIVALENCE => TokenKind::KwEquivalence,
         KW_COMMON => TokenKind::KwCommon,
         KW_BLOCK_DATA => TokenKind::KwBlockData,
+        ENTRY_STMT => TokenKind::Entry(<String>),
         KW_END_BLOCK_DATA => TokenKind::KwEndBlockData,
         KW_GOTO => TokenKind::KwGoto,
         KW_CONTINUE => TokenKind::KwContinue,
@@ -719,6 +720,7 @@ Stmt: Stmt = {
     KW_EXIT => Stmt::Exit,
     KW_CYCLE => Stmt::Cycle,
     KW_CONTINUE => Stmt::CallSub{name:"@continue".into(),args:vec![]},
+    <e:ENTRY_STMT> => crate::entries::statement(&e),
     KW_STOP_EMPTY => Stmt::CallSub { name: "@stop".into(), args: vec![] },
     // ERROR STOP without a stop code.
     KW_ERROR KW_STOP_EMPTY => Stmt::CallSub { name: "@error_stop".into(), args: vec![Expr::Str(String::new())] },

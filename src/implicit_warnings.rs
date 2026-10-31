@@ -360,14 +360,27 @@ impl Analysis {
         for s in body {
             match s {
                 Stmt::Function {
-                    name, params, body, ..
+                    name, params, body, return_type, ..
                 } => {
                     let result = match body.last() {
                         Some(Stmt::Return(Some(Expr::Ident(n)))) => n.clone(),
                         _ => name.clone(),
                     };
                     let host = contained.is_none_or(|c| c.contains(name)).then_some(scope);
+                    let id = self.scopes.len();
                     self.scope(body, host, params, Some(&result), None, false);
+                    // A RESULT variable without a declaration has its implicit type.
+                    if self.declare && result != *name && return_type.is_none() && !self.scopes[id].opaque
+                        && !declarations(body).contains_key(&result) {
+                        let letter = result.as_bytes()[0].to_ascii_lowercase();
+                        if letter.is_ascii_lowercase() {
+                            if let Some(kind) = self.scopes[id].implicit[(letter - b'a') as usize].clone() {
+                                let at = body.iter().position(|s| !matches!(s, Stmt::Use { .. } | Stmt::Implicit(_) | Stmt::SourceLocation(_))).unwrap_or(body.len());
+                                body.insert(at, Stmt::VarDecl { kind: kind.clone(), names: vec![result.clone()] });
+                                *return_type = Some(kind);
+                            }
+                        }
+                    }
                 }
                 Stmt::Subroutine {
                     name, params, body, ..

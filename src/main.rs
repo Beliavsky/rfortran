@@ -73,6 +73,7 @@ mod c_interop;
 mod c_pointers;
 mod equivalence;
 mod common;
+mod entries;
 mod statement_functions;
 mod defining_functions;
 mod transfer;
@@ -411,6 +412,7 @@ fn lower_program_body(
     origins: Option<&[source_diagnostics::SourceOrigin]>,
 ) -> Result<ast::Program> {
     (|| {
+        let program = multidim::shape_arguments(program);
         let program = common::resolve(program)?;
         let program = implicit_warnings::declare(program);
         let program = namelists::resolve(program)?;
