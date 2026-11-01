@@ -1,0 +1,40 @@
+The combined rfortran interpreter is distributed under GPLv3, as a modified fork
+of https://github.com/SirPigari/f90c. See runtime/LICENSE-GPLv3.txt. Original
+modules in this fork may additionally be available individually under MIT;
+see the repository's LICENSING.md and runtime/LICENSE-MIT.txt.
+Source and build scripts: https://github.com/Beliavsky/rfortran
+runtime/build.json records the exact source revision for clean published builds.
+Local development builds marked dirty include uncommitted changes.
+
+The HTML layout, CSS, and app.js are adapted from https://github.com/Beliavsky/ofort
+(web/index.html, web/style.css, web/app.js), retrieved 2026-11-01.
+
+MIT License
+
+Copyright (c) 2026 Beliavsky
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+CodeMirror 5.65.20 and its Fortran mode are MIT licensed.
+See vendor/LICENSE-CodeMirror. Vendored from cdnjs; runtime needs no CDN.
+
+browser_wasi_shim 0.4.2, by Bjorn Svensson and contributors, is used under
+its MIT license. Vendored from the @bjorn3/browser_wasi_shim npm package.
+Source: https://github.com/bjorn3/browser_wasi_shim
+See vendor/wasi/LICENSE-MIT. Its upstream Apache license is included as well.

@@ -1,0 +1,49 @@
+<!doctype html>
+<!-- Adapted from Beliavsky/ofort (MIT); see THIRD-PARTY-NOTICES.txt. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>rfortran / Fortran playground</title>
+  <link rel="stylesheet" href="vendor/codemirror.min.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header><div class="header-copy"><a class="brand" href="./">rfortran<span> / playground</span></a><p>An interface for the rfortran browser interpreter. Source stays in your browser.</p></div><nav aria-label="Project links"><a href="https://github.com/Beliavsky/rfortran" target="_blank" rel="noopener noreferrer">GitHub</a><a href="https://beliavsky.github.io/python-to-fortran-playground/run/?mode=fortran" target="_blank" rel="noopener noreferrer">Other Fortran compilers</a></nav></header>
+  <main>
+    <aside class="preview-notice" id="runtime-notice" role="status"><strong>Browser interpreter.</strong> Run loads the Rust WebAssembly interpreter. On a local checkout, build it first with <code>python web-interpreter/build.py</code>.</aside>
+    <div class="toolbar">
+      <select id="mode" aria-label="Execution mode"><option value="program">Program</option><option value="repl">REPL session</option></select>
+      <button id="run" class="primary">Run program <span>Ctrl + Enter</span></button>
+      <button id="stop" disabled>Stop</button>
+      <select id="example" aria-label="Example program"><option value="hello">Hello, Fortran</option><option value="arrays">Array calculations</option><option value="input">Reading input</option></select>
+      <button id="download">Download source</button>
+      <button id="clear-session" hidden>Clear session</button>
+      <button id="focus" aria-pressed="false">Focus mode</button>
+      <button id="report">Report a bug</button>
+    </div>
+    <div class="workspace">
+      <section class="panel editor-panel"><div class="panel-heading"><label id="source-heading" for="source">01 / SOURCE</label><button id="clear-code" type="button">Clear code</button><span id="source-description">Free-form Fortran</span></div><div id="source-edits" hidden><span role="status">Modified source; current state unchanged. Restart and run source to apply edits.</span><button id="discard-edits" type="button">Discard edits</button></div><textarea id="source" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Fortran source"></textarea><div id="end-preview" hidden><p>Suggested END lines (not submitted)</p><pre id="suggested-ends"></pre></div><div id="repl-entry" hidden><div class="repl-input-heading"><label for="repl-command">Enter Fortran or a REPL command</label><label><input id="auto-declare" type="checkbox" disabled> Auto-declare</label><label><input id="auto-end" type="checkbox" disabled title="Enter explicit END statements to complete blocks"> Auto-end</label></div><textarea id="repl-command" rows="2" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea><div class="repl-entry-actions"><button id="repl-submit" class="primary">Enter line</button><button id="finish-block" hidden>Finish block</button><span id="repl-hint">Enter submits; Shift+Enter adds a line.</span></div><p class="repl-help">Expressions show their value. Complete blocks with explicit END DO, END IF, or END SELECT statements. Auto-declare infers supported scalars and rank-one numeric/logical arrays on assignment. Try .help, .vars, .shapes, .list, or .cancel. READ, modules, procedures and files require Program mode.</p></div></section>
+      <section class="panel results"><div class="panel-heading"><span>02 / RESULTS</span><span id="status" role="status">Ready</span></div><h2>Output</h2><pre id="output" tabindex="0"></pre><h2>Warnings &amp; errors</h2><pre id="errors" tabindex="0"></pre></section>
+      <section id="variables-panel" class="panel" hidden><div class="panel-heading"><span>03 / VARIABLES</span><span>Current state</span></div><p class="variables-note">Types, shapes and bounded value previews. Unset variables must be assigned before use.</p><pre id="variables" tabindex="0">(no variables)</pre></section>
+    </div>
+    <section class="panel input-panel"><div class="panel-heading"><label for="stdin">03 / STANDARD INPUT</label><span>Supply input before running</span></div><textarea id="stdin" rows="3" spellcheck="false" placeholder="Values for READ(*, ...) go here"></textarea></section>
+    <footer>Experimental rfortran interpreter, adapted from the ofort playground. Fortran runs locally in a WebAssembly worker, with a 30-second limit and 256 MiB memory ceiling. Program input is supplied before running; virtual files last only for that run. Stop, Clear session, switching modes, or reloading discards REPL state. Program drafts and standard input are saved locally when browser storage is available. <a href="THIRD-PARTY-NOTICES.txt">Licenses</a> | <a href="runtime/build.json">Build details and source revision</a>.</footer>
+  </main>
+  <dialog id="report-dialog" aria-labelledby="report-heading">
+    <h2 id="report-heading">Report a playground bug</h2>
+    <p class="privacy-warning">GitHub issues are public. Remove private code, data, and credentials, including anything printed in the output.</p>
+    <p>Describe what went wrong and what you expected. Prefer the smallest program that reproduces the problem. Standard input is not included automatically.</p>
+    <label for="report-title">Issue title</label>
+    <input id="report-title" type="text" value="Browser playground: unexpected behavior" maxlength="160">
+    <label class="report-option"><input id="report-source" type="checkbox"> Include Fortran source (from the last run, or the editor if not run)</label>
+    <label for="report-preview">Editable report preview</label>
+    <textarea id="report-preview" rows="14" spellcheck="false"></textarea>
+    <p id="report-note" role="status"></p>
+    <div class="report-actions"><button id="report-open" class="primary">Open GitHub issue</button><button id="report-download">Download report</button><button id="report-close">Cancel</button></div>
+  </dialog>
+  <script src="vendor/codemirror.min.js"></script>
+  <script src="vendor/fortran.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
