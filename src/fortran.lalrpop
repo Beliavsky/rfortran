@@ -703,6 +703,9 @@ Stmt: Stmt = {
         Stmt::AssignIndex{name:format!("{id}%{field}"),indices:args,value:rhs}
     },
     <name:Designator> ARROW <target:RhsExpr> => Stmt::CallSub {name:"@pointer_associate".into(),args:vec![Expr::Ident(name),target]},
+    // Bounds remapping, `p(lower:) => t` or `p(lower:upper, ...) => t`.
+    <name:Designator> LPAREN <bounds:SubscriptList> RPAREN ARROW <target:RhsExpr> =>
+        Stmt::CallSub {name:"@pointer_associate".into(),args:vec![Expr::Ident(name),target,Expr::Call("@pointer_remap".into(),bounds)]},
     <id:Designator> LPAREN <args:SubscriptList> RPAREN PERCENT <field:ComponentPath> ARROW <target:RhsExpr> =>
         Stmt::CallSub {name:"@pointer_associate".into(),args:vec![Expr::Call(format!("@record_component:{field}"),vec![crate::ast::section_or_call(id,args)]),target]},
     <id: Designator> LPAREN <args: SubscriptList> RPAREN LPAREN <range: Subscript> RPAREN EQ <rhs: RhsExpr> =>

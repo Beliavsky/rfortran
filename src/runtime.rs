@@ -1407,6 +1407,43 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         fr.env_int.insert(data.clone(),handles[0]);fr.env_int.insert(flags.clone(),handles[1]);fr.env_int.insert(label.clone(),handles[0]);
                         idx+=1;continue;
                     }
+                    if name=="@ptr_allocate" {
+                        let [Expr::Ident(data),Expr::Ident(flags),Expr::Ident(label),count,Expr::Str(kind),Expr::Str(target)]=args.as_slice() else {unreachable!()};
+                        let fr=call_stack.last().unwrap().clone();
+                        let count=eval_expr(count,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
+                        let count=io_result(usize::try_from(count).ok().filter(|n|*n<=(1usize<<36)).ok_or_else(||anyhow::anyhow!("allocation size overflow")));
+                        let real=matches!(kind.as_str(),"r4"|"r8");
+                        let record=RecordAllocation{integers:(!real).then(||vec![0;count]),reals:real.then(||vec![0.0;count]),mask:vec![0;count],metadata:vec![]};
+                        let allocation=RECORD_ALLOCATIONS.with(|records| {
+                            let mut records=records.borrow_mut();
+                            if let Some(free)=records.iter().enumerate().skip(1).find_map(|(i,r)|r.is_none().then_some(i)) {records[free]=Some(record);free}
+                            else {records.push(Some(record));records.len()-1}
+                        });
+                        // A reused allocation slot gets new storage handles, so
+                        // that stale handles to the old storage do not alias it.
+                        let handles=POINTER_STORAGE.with(|storage| {
+                            let mut storage=storage.borrow_mut();
+                            for entry in storage.iter_mut() {
+                                if matches!(entry,PointerStorage::Record(id,_,_) if *id==allocation) {*entry=PointerStorage::Record(usize::MAX,false,String::new());}
+                            }
+                            [false,true].map(|mask| {storage.push(PointerStorage::Record(allocation,mask,target.clone()));pointer_handle(storage.len()-1)})
+                        });
+                        let fr=call_stack.last_mut().unwrap();
+                        fr.env_int.insert(data.clone(),handles[0]);fr.env_int.insert(flags.clone(),handles[1]);fr.env_int.insert(label.clone(),handles[0]);
+                        fr.commit_saved();idx+=1;continue;
+                    }
+                    if name=="@ptr_deallocate" {
+                        let fr=call_stack.last().unwrap().clone();
+                        let handle=eval_expr(&args[0],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
+                        let (index,_)=pointer_decode(handle);
+                        let target=POINTER_STORAGE.with(|storage|storage.borrow().get(index).cloned());
+                        let Some(PointerStorage::Record(allocation,false,_))=target else {
+                            eprintln!("Runtime error: DEALLOCATE of a pointer whose target was not allocated by ALLOCATE");std::process::exit(1)
+                        };
+                        let live=RECORD_ALLOCATIONS.with(|records|records.borrow_mut().get_mut(allocation).and_then(Option::take).is_some());
+                        if !live {eprintln!("Runtime error: DEALLOCATE of a pointer whose target was already deallocated");std::process::exit(1);}
+                        idx+=1;continue;
+                    }
                     if let Some(kind)=name.strip_prefix("@ptr_store_") {
                         let fr=call_stack.last().unwrap().clone();
                         let mut values=args.iter().map(|a|eval_expr(a,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack)).collect::<Vec<_>>();

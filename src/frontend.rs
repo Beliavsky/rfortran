@@ -45,6 +45,7 @@ pub(crate) fn lower_program_body(
     (|| {
         let program = protected::resolve(program)?;
         let program = pdt::resolve(program)?;
+        let program = character_pointers::resolve(program)?;
         let program = recursive_types::resolve(program)?;
         let program = recursive_outputs::resolve(program)?;
         let program = scalar_components::resolve(program)?;

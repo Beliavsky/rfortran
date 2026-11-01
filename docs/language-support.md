@@ -65,6 +65,9 @@ gfortran when it is installed. Run the tests after `cargo build --bin rfort`.
   - [MOVE_ALLOC and ALLOCATE options](#move_alloc-and-allocate-options)
   - [ALLOCATABLE function results](#allocatable-function-results)
   - [Pointer association](#pointer-association)
+  - [Pointer allocation](#pointer-allocation)
+  - [Pointer bounds remapping](#pointer-bounds-remapping)
+  - [Derived-type and CHARACTER pointers](#derived-type-and-character-pointers)
 - [Derived types](#derived-types)
   - [Derived-type components](#derived-type-components)
   - [Arrays of derived type](#arrays-of-derived-type)
@@ -1851,14 +1854,13 @@ unassociated accesses and shape mismatches remain runtime errors.
 Run `python tests/test_pointer_expression_arguments.py` for regression checks.
 
 The native descriptor is currently lowered to scalar local fields. Procedure
-calls still use specialization; a general descriptor calling convention and
-pointer ALLOCATE remain future work. Numeric ALLOCATABLE heap storage is
+calls still use specialization; a general descriptor calling convention
+remains future work. Numeric ALLOCATABLE heap storage is
 described under [Runtime allocation](#runtime-allocation). Early IR transformations that assume
 direct variable access are disabled for procedures that access pointer storage;
 Cranelift still applies the requested native optimization level.
 
-Pointer declaration initialization, bounds/rank remapping, pointer
-allocation, ALLOCATABLE scalar targets, CHARACTER/derived scalar pointers,
+Pointer declaration initialization, ALLOCATABLE scalar targets,
 INTEGER(16) pointers, pointer
 dummy function arguments and results, host pointer references from unspecialized
 procedures, `INTENT(IN)` pointer dummies,
@@ -1872,6 +1874,81 @@ Run `python tests/test_pointer_descriptors.py` for ranks 2–15, changing shapes
 nonunit bounds, strided views, output dummies, overlap, and initialization checks.
 `tests/136_pointer_descriptors.f90` covers multidimensional descriptors in the
 regular Cargo regression suite.
+
+### Pointer allocation
+
+`ALLOCATE` of a numeric or LOGICAL pointer of any rank through 15 creates new
+storage, with runtime bounds, and associates the pointer with all of it:
+
+```fortran
+integer, pointer :: p(:), q(:)
+allocate(p(-2:2))
+q => p(::2)
+deallocate(p)
+```
+
+Each ALLOCATE makes separate storage, so other pointers keep their targets
+when a pointer is allocated again. `STAT=`, `ERRMSG=` and `SOURCE=` work as
+for ALLOCATABLE variables; allocating an associated pointer is not an error.
+Pointer dummies of local procedures can be allocated, and module pointers
+can be allocated in module procedures. Elements start undefined, and reading
+one before it is set is reported as for other variables.
+
+`DEALLOCATE` of a pointer requires that it be associated with the whole of
+an allocation, which pointer assignment `q => p` and new lower bounds
+(`q(0:) => p`) preserve; deallocating a disassociated pointer, a pointer to
+a TARGET variable or a pointer to a section stops with an error. Other
+pointers to the deallocated storage become undefined, as in Fortran: the
+interpreter reports their use, while native code does not check it.
+
+### Pointer bounds remapping
+
+A pointer assignment can give the pointer new lower bounds, or map the
+elements of its target, in array element order, onto a new shape:
+
+```fortran
+real, target :: a(2,3)
+real, pointer :: v(:), w(:,:)
+v(0:) => a(1,:)       ! lower bound 0
+v(1:6) => a           ! all of a, as a vector
+w(1:3,1:2) => a
+```
+
+A remapped target must be rank one, with any stride, or contiguous, and
+must have at least as many elements as the new shape; both are checked when
+the program runs.
+
+### Derived-type and CHARACTER pointers
+
+Scalar and rank-one array pointers of derived types, scalar POINTER
+components of derived types, and pointers of constant-length CHARACTER
+types support association with TARGET variables and their elements and
+sections, ALLOCATE, DEALLOCATE, NULLIFY and ASSOCIATED, with or without a
+target. They can be pointer dummies of procedures and module variables, and
+a module TARGET variable can have an initial value:
+
+```fortran
+type(point), target :: a
+type(point), pointer :: p
+character(len=5), target :: names(3)
+character(len=5), pointer :: c
+p => a
+p%x = 1.0
+c => names(2)
+c(1:1) = 'J'
+```
+
+Objects of a derived type used through scalar pointers, and CHARACTER
+POINTER and TARGET entities of a length that some pointer has, are kept in
+the storage pools that recursive derived types (linked lists and trees) use, so
+every object of such a type has a handle. Module objects of those types are
+made when the main program starts, so the main program must be in the same
+compilation. Deferred-length (`len=:`) and assumed-length CHARACTER pointers,
+pointer association with a substring, CHARACTER POINTER function results,
+TARGET dummy arguments used as pointer targets, initialized CHARACTER TARGET
+variables in procedures, arrays of rank above one of such objects, and
+polymorphic, extended or parameterized types with pointers remain
+unsupported.
 
 ## Derived types
 

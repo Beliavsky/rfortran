@@ -105,6 +105,11 @@ struct Lower {
     /// The program's functions.
     functions: HashSet<String>,
     serial: usize,
+    /// The variables of derived types of the program's modules, with those
+    /// of the modules they use.
+    modules: HashMap<String, Vars>,
+    /// The statements that make the objects of module variables.
+    module_entries: Vec<Stmt>,
 }
 
 /// A variable of a scope: its type, and whether it is a POINTER or
@@ -114,6 +119,7 @@ struct Var {
     ty: String,
     reference: bool,
     owned: bool,
+    array: bool,
 }
 type Vars = HashMap<String, Var>;
 
@@ -334,6 +340,9 @@ impl Lower {
     /// to `out`.
     fn expr(&mut self, e: &mut Expr, vars: &Vars, out: &mut Vec<Stmt>) -> Result<()> {
         match e {
+            // Arrays of handles keep their descriptors: an array POINTER is
+            // an INTEGER array POINTER.
+            Expr::Call(n, args) if (n == "associated" || n == "allocated") && args.first().is_some_and(|a| array_of(a, vars).is_some()) => {}
             Expr::Call(n, args) if (n == "associated" || n == "allocated") && !args.is_empty() => {
                 let mut handles = vec![];
                 for a in args.iter() {
@@ -424,12 +433,30 @@ impl Lower {
         }
     }
 
+    /// A loop over the elements of the rank-one handle array `n`: free each
+    /// element's object with `free`, if given, then set it to `value`.
+    fn each(&mut self, n: &str, value: Expr, free: Option<&str>) -> Stmt {
+        self.serial += 1;
+        let i = format!("@pool_index_{}", self.serial);
+        let mut body = vec![];
+        if let Some(free) = free { body.push(sub(free, vec![call(n, vec![id(&i)])])); }
+        body.push(Stmt::AssignIndex { name: n.to_owned(), indices: vec![id(&i)], value });
+        Stmt::Block { body: vec![
+            Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![i.clone()] },
+            Stmt::Do { var: i, start: call("lbound", vec![id(n), int(1)]), end: call("ubound", vec![id(n), int(1)]), body },
+        ] }
+    }
+
     fn statements(&mut self, body: &mut Vec<Stmt>, vars: &Vars) -> Result<()> {
         let mut result = vec![];
         for mut s in std::mem::take(body) {
             let mut out = vec![];
             match &mut s {
                 Stmt::Module { .. } | Stmt::Function { .. } | Stmt::Subroutine { .. } => { result.push(s); continue; }
+                Stmt::CallSub { name, args } if name == "@pointer_associate" && array_of(&args[0], vars).is_some() => {
+                    result.push(s);
+                    continue;
+                }
                 Stmt::CallSub { name, args } if name == "@pointer_associate" && args.len() == 2 => {
                     if let Some(Place::Handle { target, .. }) = self.place(&args[0], vars)? {
                         let value = match &args[1] {
@@ -447,16 +474,34 @@ impl Lower {
                 }
                 Stmt::CallSub { name, args } if name == "@nullify" => {
                     let mut handled = vec![];
+                    let mut arrays = vec![];
                     for a in args.iter() {
+                        if array_of(a, vars).is_some() { arrays.push(a.clone()); continue; }
                         if let Some(Place::Handle { target, .. }) = self.place(a, vars)? { handled.push(target.assign(int(0))); }
                     }
-                    if handled.len() == args.len() { result.extend(handled); continue; }
+                    if handled.len() + arrays.len() == args.len() && !handled.is_empty() {
+                        if !arrays.is_empty() { handled.push(sub("@nullify", arrays)); }
+                        result.extend(handled);
+                        continue;
+                    }
                 }
                 Stmt::CallSub { name, args } if name == "@allocate" => {
                     let source = args.iter().find_map(|a| match a { Expr::Call(k, v) if k == "@keyword:source" => Some(v[0].clone()), _ => None });
                     let mut rest = vec![];
                     for a in args.iter() {
                         if matches!(a, Expr::Call(k, _) if k.starts_with("@keyword:")) { continue; }
+                        // An array of handles, then an object for each element.
+                        if let Some((n, ty)) = array_of(a, vars) {
+                            if source.is_some() { bail!("ALLOCATE with SOURCE= of an array of objects of type `{ty}` is not yet supported"); }
+                            let mut a = a.clone();
+                            if let Expr::Call(_, bounds) = &mut a {
+                                if bounds.len() != 1 { bail!("arrays of rank above one of type `{ty}` are not yet supported"); }
+                                for b in bounds.iter_mut() { self.expr(b, vars, &mut out)?; }
+                            }
+                            out.push(sub("@allocate", vec![a]));
+                            out.push(self.each(&n, call(&format!("rfort_new_{ty}"), vec![]), None));
+                            continue;
+                        }
                         match self.place(a, vars)? {
                             Some(Place::Handle { target, ty, .. }) => {
                                 let value = match &source {
@@ -483,18 +528,31 @@ impl Lower {
                     }
                 }
                 Stmt::CallSub { name, args } if name == "@deallocate" => {
+                    // Objects of pool types are freed; other objects remain
+                    // for an ordinary DEALLOCATE.
                     let mut handled = vec![];
+                    let mut rest = vec![];
                     for a in args.iter() {
-                        if let Some(Place::Handle { target, value, ty, .. }) = self.place(a, vars)? {
+                        if let Some((n, ty)) = array_of(a, vars) {
+                            handled.push(self.each(&n, int(0), Some(&format!("rfort_free_{ty}"))));
+                            handled.push(sub("@deallocate", vec![a.clone()]));
+                        } else if let Some(Place::Handle { target, value, ty, .. }) = self.place(a, vars)? {
                             handled.push(sub(&format!("rfort_free_{ty}"), vec![value]));
                             handled.push(target.assign(int(0)));
+                        } else {
+                            rest.push(a.clone());
                         }
                     }
                     if !handled.is_empty() {
-                        if handled.len() != 2 * args.iter().filter(|a| !matches!(a, Expr::Call(k, _) if k.starts_with("@keyword:"))).count() {
-                            bail!("DEALLOCATE of objects of recursive types together with other objects is not yet supported");
+                        if rest.iter().any(|a| matches!(a, Expr::Call(k, _) if k.starts_with("@keyword:"))) {
+                            bail!("STAT= and ERRMSG= in DEALLOCATE of objects of recursive types are not yet supported");
                         }
-                        result.extend(handled);
+                        if !rest.is_empty() {
+                            for a in rest.iter_mut() { self.expr(a, vars, &mut out)?; }
+                            handled.push(Stmt::CallSub { name: "@deallocate".into(), args: rest });
+                        }
+                        out.extend(handled);
+                        result.extend(out);
                         continue;
                     }
                 }
@@ -541,7 +599,7 @@ impl Lower {
                             let mut v = value.clone();
                             self.expr(&mut v, vars, &mut out)?;
                             let v = if contains_call(&v) { self.temporary_typed(v, &mut out) } else { v };
-                            out.push(Stmt::AssignIndex { name: array, indices, value: v });
+                            out.push(element_assignment(array, indices, v));
                             result.extend(out);
                             continue;
                         }
@@ -549,13 +607,43 @@ impl Lower {
                     }
                 }
                 Stmt::AssignIndex { name, indices, value } => {
-                    let target = Expr::Call(name.clone(), indices.clone());
+                    // `a(i)%c = v` keeps the subscripts of an array `a` with
+                    // its component name; those of a scalar's are the component's.
+                    let base = name.split_once('%').map(|(b, rest)| (b, rest));
+                    let target = match base {
+                        Some((b, rest)) if vars.get(b).is_some_and(|v| v.array) => {
+                            // `a(i)%c(j) = v` has the component's subscripts last.
+                            let mut subs = indices.clone();
+                            let component = match subs.last() {
+                                Some(Expr::Call(t, _)) if t == "@component_subscripts" => subs.pop(),
+                                _ => None,
+                            };
+                            let mut e = Expr::Call(b.to_owned(), subs);
+                            let fields: Vec<&str> = rest.split('%').collect();
+                            for (i, field) in fields.iter().enumerate() {
+                                let mut args = vec![e];
+                                if i + 1 == fields.len() {
+                                    args.extend(component.clone());
+                                }
+                                e = Expr::Call(format!("@record_component:{field}"), args);
+                            }
+                            e
+                        }
+                        _ => Expr::Call(name.clone(), indices.clone()),
+                    };
                     if let Some(Place::Value(Expr::Call(array, mut idx))) = self.place(&target, vars)? {
-                        for i in idx.iter_mut() { self.expr(i, vars, &mut out)?; }
+                        for i in idx.iter_mut() {
+                            // A substring range is not a designator; only its bounds are expressions.
+                            if let Expr::Section { lower, upper, stride, .. } = i {
+                                for b in [lower, upper, stride].into_iter().flatten() { self.expr(b, vars, &mut out)?; }
+                            } else {
+                                self.expr(i, vars, &mut out)?;
+                            }
+                        }
                         let mut v = value.clone();
                         self.expr(&mut v, vars, &mut out)?;
                         let v = if contains_call(&v) { self.temporary_typed(v, &mut out) } else { v };
-                        out.push(Stmt::AssignIndex { name: array, indices: idx, value: v });
+                        out.push(element_assignment(array, idx, v));
                         result.extend(out);
                         continue;
                     }
@@ -633,10 +721,23 @@ impl Lower {
     fn scope(&mut self, body: &mut Vec<Stmt>, host: &Vars, params: &[String], result: Option<&str>, module: bool) -> Result<()> {
         let mut vars = host.clone();
         for s in body.iter() {
+            if let Stmt::Use { module, only, renames, .. } = s {
+                let Some(public) = self.modules.get(module) else { continue };
+                for (n, v) in public {
+                    if only.as_ref().is_none_or(|o| o.contains(n)) && !renames.iter().any(|(_, r)| r == n) {
+                        vars.insert(n.clone(), v.clone());
+                    }
+                }
+                for (local, remote) in renames {
+                    if let Some(v) = public.get(remote) { vars.insert(local.clone(), v.clone()); }
+                }
+            }
+        }
+        for s in body.iter() {
             match s {
-                Stmt::DerivedDecl { type_name, names, attributes, .. } => for n in names {
+                Stmt::DerivedDecl { type_name, names, attributes, dims, .. } => for n in names {
                     let reference = attributes.iter().any(|a| a == "pointer" || a == "allocatable");
-                    vars.insert(n.clone(), Var { ty: type_name.clone(), reference, owned: attributes.iter().any(|a| a == "allocatable") });
+                    vars.insert(n.clone(), Var { ty: type_name.clone(), reference, owned: attributes.iter().any(|a| a == "allocatable"), array: !dims.is_empty() });
                 },
                 Stmt::VarDecl { names, .. } => for n in names { vars.remove(n); },
                 Stmt::ArrayDecl { name, .. } => { vars.remove(name); }
@@ -676,6 +777,10 @@ impl Lower {
                             if allocatable || attributes.iter().any(|a| a == "pointer") {
                                 out.push(Stmt::DummyIntent { name: n.clone(), intent: if allocatable { "allocatable".into() } else { "pointer".into() } });
                             }
+                            // Array POINTERs of handles may point into it.
+                            if attributes.iter().any(|a| a == "target") {
+                                out.push(Stmt::DummyIntent { name: n.clone(), intent: "target".into() });
+                            }
                         }
                         for a in &attributes {
                             if a.starts_with("intent") || a == "optional" || a == "save" || a == "value" {
@@ -695,11 +800,20 @@ impl Lower {
                             continue;
                         }
                         if module {
-                            if !reference || !dims.is_empty() {
-                                bail!("module variable `{n}` of recursive type `{type_name}` must currently be a scalar POINTER or ALLOCATABLE");
+                            // A module object is made when the main program starts.
+                            if !dims.is_empty() {
+                                if !reference {
+                                    if dims.len() > 1 { bail!("arrays of rank above one of recursive type `{type_name}` are not yet supported"); }
+                                    let make = self.each(&n, call(&format!("rfort_new_{type_name}"), vec![]), None);
+                                    self.module_entries.push(make);
+                                }
+                                continue;
                             }
                             out.retain(|s| !matches!(s, Stmt::VarDecl { names, .. } if names == &[n.clone()]));
                             out.push(Stmt::InitializedDecl { kind: TypeSpec::Integer(None), attributes: vec![], entities: vec![(n.clone(), Some(int(0)))] });
+                            if !reference {
+                                self.module_entries.push(Stmt::Assign { name: n.clone(), value: call(&format!("rfort_new_{type_name}"), vec![]) });
+                            }
                             continue;
                         }
                         if !dims.is_empty() {
@@ -941,7 +1055,36 @@ pub fn resolve(mut program: Program) -> Result<Program> {
     // type are left to the diagnostics of the lowering of derived types.
     defs.retain(|_, (components, bindings)| !bindings.iter().any(|(b, _)| b.starts_with("@final"))
         && !components.iter().any(|c| matches!(c, Stmt::DerivedDecl { polymorphic: true, .. })));
-    let recursive = recursive_types(&defs);
+    let mut recursive = recursive_types(&defs);
+    // Objects of a type with scalar POINTER variables or components also
+    // live in a pool, so that a handle can designate a TARGET object or an
+    // allocated one. Types they reach through scalar POINTER components do too.
+    fn pointer_types(body: &[Stmt], out: &mut HashSet<String>) {
+        for s in body {
+            match s {
+                Stmt::DerivedDecl { type_name, attributes, dims, polymorphic: false, .. }
+                    if (dims.is_empty() || type_name.starts_with(crate::character_pointers::WRAPPER)) && attributes.iter().any(|a| a == "pointer") => { out.insert(type_name.clone()); }
+                Stmt::DerivedType { components, .. } => pointer_types(components, out),
+                // POINTER dummies of ELEMENTAL procedures are diagnosed later.
+                Stmt::Function { elemental: true, .. } | Stmt::Subroutine { elemental: true, .. } => {}
+                Stmt::Module { body, .. } | Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } | Stmt::Block { body } => pointer_types(body, out),
+                _ => {}
+            }
+        }
+    }
+    let mut pointed = HashSet::new();
+    pointer_types(&program.body, &mut pointed);
+    let mut pending: Vec<String> = pointed.into_iter().filter(|t| defs.contains_key(t)).collect();
+    while let Some(t) = pending.pop() {
+        if !recursive.insert(t.clone()) { continue; }
+        for c in &defs[&t].0 {
+            if let Stmt::DerivedDecl { type_name, attributes, dims, polymorphic: false, .. } = c {
+                if dims.is_empty() && attributes.iter().any(|a| a == "pointer" || a == "allocatable") && defs.contains_key(type_name) {
+                    pending.push(type_name.clone());
+                }
+            }
+        }
+    }
     if recursive.is_empty() { return Ok(program); }
     // Named constants anywhere, for component kinds and bounds.
     let mut constants = HashMap::new();
@@ -1077,9 +1220,37 @@ pub fn resolve(mut program: Program) -> Result<Program> {
         }
     }
     function_names(&program.body, &mut names);
-    let mut lower = Lower { boxed, others, results, constants, functions: names, serial: 0 };
+    // Module variables, in the order of definition, so that a module's
+    // variables include those of the modules it uses.
+    let mut modules: HashMap<String, Vars> = HashMap::new();
+    for s in &program.body {
+        let Stmt::Module { name, body } = s else { continue };
+        let mut vars = Vars::new();
+        for s in body {
+            match s {
+                Stmt::Use { module, only: None, renames, .. } if renames.is_empty() => {
+                    if let Some(used) = modules.get(module) { vars.extend(used.clone()); }
+                }
+                Stmt::DerivedDecl { type_name, names, attributes, dims, .. } => for n in names {
+                    let reference = attributes.iter().any(|a| a == "pointer" || a == "allocatable");
+                    vars.insert(n.clone(), Var { ty: type_name.clone(), reference, owned: attributes.iter().any(|a| a == "allocatable"), array: !dims.is_empty() });
+                },
+                _ => {}
+            }
+        }
+        modules.insert(name.clone(), vars);
+    }
+    let mut lower = Lower { boxed, others, results, constants, functions: names, serial: 0, modules, module_entries: vec![] };
     let _ = &lower.constants;
     lower.scope(&mut program.body, &Vars::new(), &[], None, false)?;
+    if !lower.module_entries.is_empty() {
+        let main = program.body.iter().position(|s| !specification(s) && !matches!(s, Stmt::Module { .. } | Stmt::Function { .. } | Stmt::Subroutine { .. }));
+        let Some(main) = main else {
+            bail!("module objects of recursive types and CHARACTER TARGET module variables need the main program in the same compilation");
+        };
+        let entries = std::mem::take(&mut lower.module_entries);
+        program.body.splice(main..main, entries);
+    }
     // Every unit uses the pools; the generated temporaries need declaring
     // where their statements are, which the scopes did.
     let use_pools = Stmt::Use { module: MODULE.into(), nature: None, only: None, renames: vec![] };
@@ -1096,6 +1267,24 @@ pub fn resolve(mut program: Program) -> Result<Program> {
     program.body = body;
     hoist_declarations(&mut program.body);
     Ok(program)
+}
+
+/// The name and type of an array POINTER or ALLOCATABLE of objects of a
+/// pool type designated by `e` (with ALLOCATE bounds, if any).
+fn array_of(e: &Expr, vars: &Vars) -> Option<(String, String)> {
+    let (Expr::Ident(n) | Expr::Call(n, _)) = e else { return None };
+    vars.get(n).filter(|v| v.array && v.reference).map(|v| (n.clone(), v.ty.clone()))
+}
+
+/// The assignment of `value` to a pool element `array(indices)`, or to a
+/// substring of one.
+fn element_assignment(array: String, mut indices: Vec<Expr>, value: Expr) -> Stmt {
+    if array == "@array_substring" && indices.len() == 2 {
+        let range = indices.pop().unwrap();
+        let element = indices.pop().unwrap();
+        return Stmt::CallSub { name: "@array_substring_assign".into(), args: vec![element, range, value] };
+    }
+    Stmt::AssignIndex { name: array, indices, value }
 }
 
 /// Move the declarations of generated temporaries, made beside the

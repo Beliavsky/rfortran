@@ -74,6 +74,7 @@ mod proc_components;
 mod field_subscripts;
 mod scalar_components;
 mod recursive_types;
+mod character_pointers;
 mod recursive_outputs;
 mod statement_functions;
 mod defining_functions;

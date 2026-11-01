@@ -111,19 +111,73 @@ fn converted(value: Expr, kind: Option<&TypeSpec>) -> Expr {
     Expr::Call(conversion.into(), vec![value])
 }
 
-fn unit(body: &mut Vec<Stmt>) -> Result<()> {
+/// The arrays a scope declares.
+fn declared_arrays(body: &[Stmt]) -> HashSet<String> {
+    body.iter()
+        .flat_map(|s| match s {
+            Stmt::ArrayDecl { name, .. } => vec![name.clone()],
+            Stmt::DerivedDecl { names, dims, .. } if !dims.is_empty() => names.clone(),
+            _ => vec![],
+        })
+        .collect()
+}
+
+/// The arrays of the program's modules, with those of the modules they use.
+type Modules = HashMap<String, HashSet<String>>;
+
+fn unit(body: &mut Vec<Stmt>, host: &HashSet<String>, modules: &mut Modules) -> Result<()> {
+    // Modules, which have no host, come first, for the units that use them.
     for s in body.iter_mut() {
-        if let Stmt::Subroutine { body, .. } | Stmt::Function { body, .. } | Stmt::Module { body, .. } = s {
-            unit(body)?;
+        if let Stmt::Module { name, body } = s {
+            unit(body, &HashSet::new(), modules)?;
+            let mut public = declared_arrays(body);
+            for s in body.iter() {
+                if let Stmt::Use { module, only: None, renames, .. } = s {
+                    if renames.is_empty() {
+                        public.extend(modules.get(module).cloned().unwrap_or_default());
+                    }
+                }
+            }
+            modules.insert(name.clone(), public);
         }
     }
-    let arrays: HashSet<String> = body
-        .iter()
-        .filter_map(|s| match s {
-            Stmt::ArrayDecl { name, .. } => Some(name.clone()),
-            _ => None,
-        })
-        .collect();
+    // An array of the host or of a used module is not a statement function.
+    let mut arrays = host.clone();
+    let mut unknown_module = false;
+    for s in body.iter() {
+        if let Stmt::Use { module, only, renames, .. } = s {
+            match modules.get(module) {
+                Some(public) => {
+                    for n in public {
+                        if only.as_ref().is_none_or(|o| o.contains(n)) {
+                            arrays.insert(n.clone());
+                        }
+                    }
+                    for (local, remote) in renames {
+                        if public.contains(remote) {
+                            arrays.insert(local.clone());
+                        }
+                    }
+                }
+                None => unknown_module = true,
+            }
+        }
+    }
+    let local = declared_arrays(body);
+    // A local scalar declaration hides a host array.
+    for s in body.iter() {
+        if let Stmt::VarDecl { names, .. } = s {
+            for n in names {
+                arrays.remove(n);
+            }
+        }
+    }
+    arrays.extend(local);
+    for s in body.iter_mut() {
+        if let Stmt::Subroutine { body, .. } | Stmt::Function { body, .. } = s {
+            unit(body, &arrays, modules)?;
+        }
+    }
     let kinds: HashMap<String, TypeSpec> = body
         .iter()
         .flat_map(|s| match s {
@@ -135,8 +189,11 @@ fn unit(body: &mut Vec<Stmt>) -> Result<()> {
     let mut kept = vec![];
     let mut specifying = true;
     for s in std::mem::take(body) {
+        // With a module this compilation does not define, only a name
+        // declared here is known not to be one of its arrays.
         let definition = specifying
-            && matches!(&s, Stmt::AssignIndex { name, indices, .. } if !arrays.contains(name)
+            && matches!(&s, Stmt::AssignIndex { name, indices, .. } if !arrays.contains(name) && !name.contains('%')
+                && (!unknown_module || kinds.contains_key(name))
                 && !indices.is_empty() && indices.iter().all(|i| matches!(i, Expr::Ident(_))));
         if definition {
             let Stmt::AssignIndex { name, indices, mut value } = s else { unreachable!() };
@@ -168,6 +225,6 @@ fn unit(body: &mut Vec<Stmt>) -> Result<()> {
 }
 
 pub(crate) fn resolve(mut p: Program) -> Result<Program> {
-    unit(&mut p.body)?;
+    unit(&mut p.body, &HashSet::new(), &mut Modules::new())?;
     Ok(p)
 }

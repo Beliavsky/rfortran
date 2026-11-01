@@ -509,6 +509,42 @@ impl Lower {
                         self.read_item(item, &arrays, &mut prefix)?;
                     }
                 }
+                // A formatted READ has one destination, after its unit and
+                // format (and its status variables).
+                // An element destination is read into a scalar, then stored,
+                // and only when the READ succeeds.
+                Stmt::CallSub { name, args } if matches!(name.as_str(), "@formatted_read" | "@formatted_read_status")
+                    && matches!(args.get(if name == "@formatted_read" { 2 } else { 4 }), Some(Expr::Index(n, _) | Expr::Call(n, _)) if arrays.contains_key(n)) =>
+                {
+                    let destination = if name == "@formatted_read" { 2 } else { 4 };
+                    let (Expr::Index(n, indices) | Expr::Call(n, indices)) = args[destination].clone() else { unreachable!() };
+                    let [index] = indices.as_slice() else { anyhow::bail!("heap CHARACTER element requires a linear index") };
+                    let mut index = index.clone();
+                    self.expression(&mut index, &arrays, &mut prefix)?;
+                    let index = self.capture(TypeSpec::Integer(Some(8)), index, &mut prefix);
+                    self.serial += 1;
+                    let temp = format!("@character_heap_input_{}", self.serial);
+                    prefix.push(Stmt::VarDecl { kind: TypeSpec::Character(Some(arrays[&n])), names: vec![temp.clone()] });
+                    args[destination] = id(&temp);
+                    for (i, e) in args.iter_mut().enumerate() {
+                        if i != destination {
+                            self.expression(e, &arrays, &mut prefix)?;
+                        }
+                    }
+                    let mut store = vec![Stmt::AssignIndex { name: n.clone(), indices: vec![id(&index)], value: id(&temp) }];
+                    self.body(&mut store, &arrays)?;
+                    prefix.push(Stmt::CallSub { name: name.clone(), args: args.clone() });
+                    match args.get(3).filter(|_| name == "@formatted_read_status") {
+                        Some(code @ Expr::Ident(_)) => prefix.push(Stmt::If {
+                            cond: bin(BinOp::Eq, code.clone(), int(0)),
+                            then_body: store,
+                            else_body: None,
+                        }),
+                        _ => prefix.extend(store),
+                    }
+                    result.extend(prefix);
+                    continue;
+                }
                 Stmt::Print { items } | Stmt::CallSub { args: items, .. } => {
                     for e in items {
                         self.expression(e, &arrays, &mut prefix)?;

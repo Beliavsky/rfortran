@@ -3346,6 +3346,36 @@ fn gen_stmts(
                     let destination=storage_addr(b,ptr_ty,ints[label]);b.ins().store(MemFlags::new(),address,destination,0);
                     continue;
                 }
+                if name == "@ptr_allocate" {
+                    let [IExpr::Ident(data),IExpr::Ident(flags),IExpr::Ident(label),count,_,IExpr::Str(target)] = args.as_slice() else {bail!("invalid pointer allocation");};
+                    let count=eval_expr(b,ex,ptr_ty,count,ints,reals,bools,func_meta);let count=to_i64(b,count);
+                    let maximum=b.ins().iconst(types::I64,if ptr_ty==types::I64 {i64::MAX/8} else {(u32::MAX/8) as i64});
+                    let okay=b.ins().icmp(ir::condcodes::IntCC::UnsignedLessThanOrEqual,count,maximum);
+                    file_io::require(module,b,ptr_ty,dc,okay,"allocation size overflow")?;
+                    let one=b.ins().iconst(types::I64,1);let empty=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,count,0);let count=b.ins().select(empty,one,count);
+                    let count=if ptr_ty==types::I64 {count} else {b.ins().ireduce(ptr_ty,count)};
+                    let width=b.ins().iconst(ptr_ty,8);
+                    for (field,message) in [(data,"pointer allocation failed"),(flags,"initialization mask allocation failed")] {
+                        let address=file_io::call(module,b,"calloc",&[count,width],ptr_ty)?;
+                        let okay=b.ins().icmp_imm(ir::condcodes::IntCC::NotEqual,address,0);
+                        file_io::require(module,b,ptr_ty,dc,okay,message)?;
+                        let address=if ptr_ty==types::I64 {address} else {b.ins().uextend(types::I64,address)};
+                        let destination=storage_addr(b,ptr_ty,ints[field]);b.ins().store(MemFlags::new(),address,destination,0);
+                    }
+                    let mut text=target.as_bytes().to_vec();text.push(0);let address=make_data(module,b,ptr_ty,dc,&text)?;
+                    let destination=storage_addr(b,ptr_ty,ints[label]);b.ins().store(MemFlags::new(),address,destination,0);
+                    continue;
+                }
+                if name == "@ptr_deallocate" {
+                    let mut signature=module.make_signature();signature.params.push(ir::AbiParam::new(ptr_ty));
+                    let id=module.declare_function("free",Linkage::Import,&signature)?;let f=module.declare_func_in_func(id,b.func);
+                    for arg in args {
+                        let address=eval_expr(b,ex,ptr_ty,arg,ints,reals,bools,func_meta);let address=to_i64(b,address);
+                        let address=if ptr_ty==types::I64 {address} else {b.ins().ireduce(ptr_ty,address)};
+                        b.ins().call(f,&[address]);
+                    }
+                    continue;
+                }
                 if let Some(tag)=name.strip_prefix("@ptr_store_c_") {
                     let base=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);let base=to_i64(b,base);
                     let index=eval_expr(b,ex,ptr_ty,&args[2],ints,reals,bools,func_meta);let index=to_i64(b,index);

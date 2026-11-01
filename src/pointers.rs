@@ -272,6 +272,10 @@ struct ArrayValue {
 }
 struct Lower {
     vars: HashMap<String, Variable>,
+    /// The types of every declared variable, arrays included.
+    kinds: HashMap<String, TypeSpec>,
+    /// The ranks of every declared array.
+    ranks: HashMap<String, usize>,
     pointers: HashMap<String, Pointer>,
     functions: HashSet<String>,
     serial: usize,
@@ -358,6 +362,14 @@ impl Lower {
                 Stmt::ArrayDecl { kind, name, dims } => (kind, vec![name.clone()], dims.clone()),
                 _ => continue,
             };
+            for name in &names {
+                self.kinds.insert(name.clone(), kind.clone());
+                if dims.is_empty() {
+                    self.ranks.remove(name);
+                } else {
+                    self.ranks.insert(name.clone(), dims.len());
+                }
+            }
             for name in names {
                 let has = |a: &str| attrs.iter().any(|(n, i)| n == &name && i == a);
                 if has("pointer") {
@@ -475,7 +487,7 @@ impl Lower {
                         }
                     }
                     if name == "@pointer_associate" {
-                        if let [Expr::Ident(p), e] = args.as_slice() {
+                        if let [Expr::Ident(p), e, ..] = args.as_slice() {
                             if let Some(n) = root(e) {
                                 if n != "null" {
                                     edges.push((p.clone(), n.into()));
@@ -769,7 +781,7 @@ impl Lower {
         } else if self
             .vars
             .get(n)
-            .is_some_and(|v| !v.dims.is_empty() || association)
+            .is_some_and(|v| (!v.dims.is_empty() && numeric(&v.kind)) || association)
         {
             self.storage_view(n, association, out)?
         } else {
@@ -1228,6 +1240,33 @@ impl Lower {
         }
         Ok(None)
     }
+    /// Whether a list-directed output item is CHARACTER, which is written
+    /// without separators next to another CHARACTER item.
+    fn character(&self, e: &Expr) -> bool {
+        match e {
+            Expr::Str(_) | Expr::Bin(BinOp::Concat, ..) => true,
+            Expr::Call(n, args) if n == "@array_substring" || n == "@substring" || n == "@dynamic_substring" => {
+                args.first().is_none_or(|a| self.character(a)) || n != "@array_substring"
+            }
+            Expr::Call(n, _) if matches!(n.as_str(), "trim" | "adjustl" | "adjustr" | "repeat" | "char" | "achar") => true,
+            Expr::Ident(n) | Expr::Call(n, _) | Expr::Index(n, _) | Expr::Section { name: n, .. } => {
+                matches!(self.kinds.get(n.as_str()), Some(TypeSpec::Character(_)))
+            }
+            _ => false,
+        }
+    }
+    /// A rank-one runtime-sized copy of an array value.
+    fn materialize(&mut self, a: ArrayValue, out: &mut Vec<Stmt>) -> Expr {
+        let count = product(a.shape.iter().cloned());
+        let temp = self.fresh();
+        crate::heap::temporary(a.kind.clone(), temp.clone(), count.clone(), out);
+        let index = self.fresh();
+        out.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![index.clone()] });
+        let (mut body, value) = self.loop_body(a, &index);
+        body.push(Stmt::AssignIndex { name: temp.clone(), indices: vec![id(&index)], value });
+        out.push(Stmt::Do { var: index, start: int(1), end: count, body });
+        id(&temp)
+    }
     fn conform(&self, a: &[Expr], b: &[Expr], out: &mut Vec<Stmt>) -> Result<()> {
         if a.len() != b.len() {
             bail!("pointer array expression rank mismatch");
@@ -1408,6 +1447,21 @@ impl Lower {
                 }
             }
         }
+        // A vector subscript that is a POINTER array expression subscripts
+        // by a copy of its elements.
+        if let Expr::Call(n, args) | Expr::Index(n, args) = e {
+            // The storage pools of recursive types are module arrays.
+            let array = self.kinds.contains_key(n.as_str()) || n.starts_with("rfort_");
+            if !self.pointers.contains_key(n.as_str()) && !self.functions.contains(n.as_str()) && array {
+                for a in args.iter_mut() {
+                    if self.has_pointer(a) {
+                        if let Some(values) = self.array(a, out)? {
+                            *a = self.materialize(values, out);
+                        }
+                    }
+                }
+            }
+        }
         if root(e).is_some_and(|n| self.pointers.contains_key(n)) {
             let v = self.view(e, false, out)?.unwrap();
             if !v.axes.is_empty() {
@@ -1551,8 +1605,25 @@ impl Lower {
                         continue;
                     }
                 }
-                let character = matches!(e, Expr::Str(_))
-                    || matches!(&e,Expr::Ident(n) if self.vars.get(n).is_some_and(|v|matches!(v.kind,TypeSpec::Character(_))));
+                let character = self.character(&e);
+                // A whole CHARACTER array, element by element.
+                if let Expr::Ident(n) = &e {
+                    if character && self.ranks.get(n.as_str()) == Some(&1) {
+                        if i == 0 || !previous_character {
+                            out.push(Stmt::CallSub { name: "@print_fragment".into(), args: vec![Expr::Str(" ".into())] });
+                        }
+                        let index = self.fresh();
+                        out.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![index.clone()] });
+                        out.push(Stmt::Do {
+                            var: index.clone(),
+                            start: call("lbound", vec![e.clone(), int(1)]),
+                            end: call("ubound", vec![e.clone(), int(1)]),
+                            body: vec![Stmt::CallSub { name: "@print_fragment".into(), args: vec![Expr::Index(n.clone(), vec![id(&index)])] }],
+                        });
+                        previous_character = true;
+                        continue;
+                    }
+                }
                 let mut args = vec![];
                 if i == 0 || !character || !previous_character {
                     args.push(Expr::Str(" ".into()));
@@ -1694,6 +1765,186 @@ impl Lower {
         }
         Ok(())
     }
+    /// Pointer association with new bounds: `p(l1:, ...) => t` gives the
+    /// target's dimensions new lower bounds; `p(l1:u1, ...) => t` maps the
+    /// elements of a rank-one or contiguous target, in array element order,
+    /// onto a new shape.
+    fn remap(&mut self, p: &str, e: &Expr, bounds: &[Expr], readonly: &HashSet<String>, out: &mut Vec<Stmt>) -> Result<()> {
+        let ptr = self.pointers.get(p).context("pointer association requires POINTER")?.clone();
+        if readonly.contains(p) {
+            bail!("cannot change association of INTENT(IN) POINTER `{p}`");
+        }
+        let rank = ptr.desc.axes.len();
+        if bounds.len() != rank {
+            bail!("pointer `{p}` has rank {rank} but {} bounds are given", bounds.len());
+        }
+        let mut pairs = vec![];
+        for b in bounds {
+            let b = match b {
+                Expr::Call(n, a) if n == "@section_subscript" => &a[0],
+                _ => b,
+            };
+            let Expr::Section { lower: Some(lower), upper, stride: None, .. } = b else {
+                bail!("pointer `{p}` bounds must have the form lower: or lower:upper");
+            };
+            pairs.push(((**lower).clone(), upper.as_deref().cloned()));
+        }
+        let lower_only = pairs.iter().all(|(_, u)| u.is_none());
+        if !lower_only && pairs.iter().any(|(_, u)| u.is_none()) {
+            bail!("pointer `{p}` bounds must all be lower: or all lower:upper");
+        }
+        let v = self
+            .view(e, true, out)?
+            .context("pointer association requires a TARGET variable or array section")?;
+        if !same_kind(&ptr.kind, &v.kind) {
+            bail!("type or kind mismatch in pointer association for `{p}`");
+        }
+        if ptr.c_storage != v.c_storage {
+            bail!("association between C storage and private Fortran pointer storage is not yet supported");
+        }
+        if v.unknown_last && lower_only {
+            bail!("assumed-size array requires a bounded section");
+        }
+        // New lower bounds for a whole allocated pointer keep it deallocatable.
+        let state = match e {
+            Expr::Ident(q) if lower_only => self.pointers.get(q).map_or(int(1), |q| id(&q.desc.state)),
+            _ => int(1),
+        };
+        let mut values = vec![v.data.clone(), v.flags.clone(), v.name.clone(), state, v.origin.clone()];
+        if lower_only {
+            if v.axes.len() != rank {
+                bail!("rank mismatch in pointer association for `{p}`");
+            }
+            for ((lower, _), a) in pairs.into_iter().zip(&v.axes) {
+                let mut lower = lower;
+                self.expr(&mut lower, out)?;
+                values.extend([lower, a.extent.clone(), a.stride.clone()]);
+            }
+        } else {
+            if v.axes.is_empty() {
+                bail!("pointer `{p}` bounds remapping requires an array target");
+            }
+            // A rank-one target may have any stride; a higher-rank one must
+            // be contiguous, so that its elements are equally spaced.
+            let step = v.axes[0].stride.clone();
+            let mut spacing = step.clone();
+            for (i, a) in v.axes.iter().enumerate().skip(1) {
+                spacing = mul(spacing, v.axes[i - 1].extent.clone());
+                out.push(require(
+                    bin(BinOp::Or, bin(BinOp::Le, a.extent.clone(), int(1)), bin(BinOp::Eq, a.stride.clone(), spacing.clone())),
+                    format!("bounds remapping of pointer `{p}` requires a rank-one or contiguous target"),
+                ));
+            }
+            let available = self.integer(v.count(), out);
+            let mut stride = self.integer(step, out);
+            let mut needed = int(1);
+            for (lower, upper) in pairs {
+                let (mut lower, mut upper) = (lower, upper.unwrap());
+                self.expr(&mut lower, out)?;
+                self.expr(&mut upper, out)?;
+                let lower = self.integer(lower, out);
+                let extent = self.integer(call("max", vec![add(sub(upper, lower.clone()), int(1)), int(0)]), out);
+                values.extend([lower, extent.clone(), stride.clone()]);
+                stride = self.integer(mul(stride, extent.clone()), out);
+                needed = self.integer(mul(needed, extent), out);
+            }
+            out.push(require(
+                bin(BinOp::Le, needed, available),
+                format!("pointer `{p}` bounds remapping needs more elements than its target has"),
+            ));
+        }
+        let values = values.into_iter().map(|e| self.integer(e, out)).collect::<Vec<_>>();
+        for (dest, value) in ptr.desc.fields().into_iter().zip(values) {
+            out.push(assign(&dest, value));
+        }
+        Ok(())
+    }
+    /// ALLOCATE of a POINTER creates new storage with an initialization mask
+    /// and associates the pointer with all of it. State 2 marks an
+    /// association with a whole allocation, which DEALLOCATE requires.
+    fn allocate(&mut self, p: &str, e: &Expr, readonly: &HashSet<String>, out: &mut Vec<Stmt>) -> Result<()> {
+        let ptr = self.pointers[p].clone();
+        if readonly.contains(p) {
+            bail!("cannot ALLOCATE INTENT(IN) POINTER `{p}`");
+        }
+        if ptr.c_storage {
+            bail!("ALLOCATE of a C-interoperable POINTER is not yet supported");
+        }
+        let bounds = match e {
+            Expr::Ident(_) => vec![],
+            Expr::Call(_, a) | Expr::Index(_, a) => a.clone(),
+            _ => bail!("invalid ALLOCATE object `{p}`"),
+        };
+        if bounds.len() != ptr.desc.axes.len() {
+            bail!("ALLOCATE of POINTER `{p}` requires {} bounds", ptr.desc.axes.len());
+        }
+        // Evaluate every bound before changing the descriptor, which a
+        // bound may read.
+        let mut axes = vec![];
+        for b in &bounds {
+            let b = match b {
+                Expr::Call(n, a) if n == "@section_subscript" => &a[0],
+                _ => b,
+            };
+            let (mut lower, mut upper) = match b {
+                Expr::Section { lower, upper: Some(upper), stride: None, .. } => {
+                    (lower.as_deref().cloned().unwrap_or(int(1)), (**upper).clone())
+                }
+                Expr::Call(n, a) if n == "@heap_bounds" && a.len() == 2 => (a[0].clone(), a[1].clone()),
+                Expr::Section { .. } => bail!("invalid bounds in ALLOCATE of POINTER `{p}`"),
+                _ => (int(1), b.clone()),
+            };
+            self.expr(&mut lower, out)?;
+            self.expr(&mut upper, out)?;
+            let lower = self.integer(lower, out);
+            let extent = self.integer(call("max", vec![add(sub(upper, lower.clone()), int(1)), int(0)]), out);
+            axes.push((lower, extent));
+        }
+        let mut stride = int(1);
+        for (axis, (lower, extent)) in ptr.desc.axes.iter().zip(axes) {
+            for (field, value) in [(&axis.lower, lower), (&axis.extent, extent.clone()), (&axis.stride, stride.clone())] {
+                let Expr::Ident(n) = field else { unreachable!() };
+                out.push(assign(n, value));
+            }
+            stride = self.integer(mul(stride, extent), out);
+        }
+        out.push(Stmt::CallSub {
+            name: "@ptr_allocate".into(),
+            args: vec![
+                id(&ptr.desc.data),
+                id(&ptr.desc.flags),
+                id(&ptr.desc.name),
+                stride,
+                Expr::Str(suffix(&ptr.kind).into()),
+                Expr::Str(p.into()),
+            ],
+        });
+        self.name_capacity = self.name_capacity.max(p.len());
+        out.push(assign(&ptr.desc.origin, int(0)));
+        out.push(assign(&ptr.desc.state, int(2)));
+        Ok(())
+    }
+    fn deallocate(&mut self, p: &str, e: &Expr, readonly: &HashSet<String>, out: &mut Vec<Stmt>) -> Result<()> {
+        let ptr = self.pointers[p].clone();
+        if !matches!(e, Expr::Ident(_)) {
+            bail!("DEALLOCATE requires the whole POINTER `{p}`");
+        }
+        if readonly.contains(p) {
+            bail!("cannot DEALLOCATE INTENT(IN) POINTER `{p}`");
+        }
+        let d = &ptr.desc;
+        out.push(require(
+            bin(BinOp::Ne, id(&d.state), int(0)),
+            format!("DEALLOCATE of unassociated pointer `{p}`"),
+        ));
+        out.push(require(
+            bin(BinOp::And, bin(BinOp::Eq, id(&d.state), int(2)), bin(BinOp::Eq, id(&d.origin), int(0))),
+            format!("pointer `{p}` in DEALLOCATE is not associated with a whole allocated target"),
+        ));
+        out.push(Stmt::CallSub { name: "@ptr_deallocate".into(), args: vec![id(&d.data), id(&d.flags)] });
+        out.push(assign(&d.state, int(0)));
+        Ok(())
+    }
     fn body(&mut self, body: &mut Vec<Stmt>, inherited: &HashSet<String>) -> Result<()> {
         let statement_location = std::cell::Cell::new(None);
         let result = (|| -> Result<()> {
@@ -1801,10 +2052,41 @@ impl Lower {
                     out.push(Stmt::CallSub{name:"@heap_record_pointer".into(),args});
                     continue;
                 }
+                Stmt::CallSub { name, args }
+                    if matches!(name.as_str(), "@allocate" | "@deallocate")
+                        && args.iter().any(|e| root(e).is_some_and(|n| self.pointers.contains_key(n))) =>
+                {
+                    let allocate = name == "@allocate";
+                    let mut others = vec![];
+                    for e in args.iter() {
+                        match root(e).filter(|n| self.pointers.contains_key(*n)) {
+                            Some(p) if allocate => self.allocate(p, e, &readonly, &mut out)?,
+                            Some(p) => self.deallocate(p, e, &readonly, &mut out)?,
+                            None => others.push(e.clone()),
+                        }
+                    }
+                    if !others.is_empty() {
+                        for e in others.iter_mut() {
+                            if let Expr::Call(_, bounds) = e {
+                                for b in bounds {
+                                    self.expr(b, &mut out)?;
+                                }
+                            }
+                        }
+                        out.push(Stmt::CallSub { name: name.clone(), args: others });
+                    }
+                    continue;
+                }
                 Stmt::CallSub { name, args } if name == "@pointer_associate" => {
-                    let [Expr::Ident(p), e] = args.as_slice() else {
-                        bail!("invalid pointer association")
+                    let (p, e, remap) = match args.as_slice() {
+                        [Expr::Ident(p), e] => (p, e, None),
+                        [Expr::Ident(p), e, Expr::Call(tag, bounds)] if tag == "@pointer_remap" => (p, e, Some(bounds.as_slice())),
+                        _ => bail!("invalid pointer association"),
                     };
+                    if let Some(bounds) = remap {
+                        self.remap(p, e, bounds, &readonly, &mut out)?;
+                        continue;
+                    }
                     self.associate(p, e, &readonly, &mut out)?;
                     continue;
                 }
@@ -1878,6 +2160,20 @@ impl Lower {
                             for b in bounds {
                                 self.expr(b, &mut out)?;
                             }
+                        }
+                    }
+                }
+                // Formatted output of a POINTER array expression writes a
+                // temporary copy of its elements in array element order.
+                Stmt::CallSub { name, args }
+                    if matches!(name.as_str(), "@formatted_print" | "@formatted_write" | "@formatted_write_noadvance" | "@write")
+                        && args.iter().any(|e| self.has_pointer(e)) =>
+                {
+                    for e in args.iter_mut() {
+                        let array = if self.has_pointer(e) { self.array(e, &mut out)? } else { None };
+                        match array {
+                            Some(a) => *e = self.materialize(a, &mut out),
+                            None => self.expr(e, &mut out)?,
                         }
                     }
                 }
@@ -2005,6 +2301,8 @@ pub fn resolve(mut p: Program) -> Result<Program> {
     fn unit(body: &mut Vec<Stmt>, functions: &HashSet<String>) -> Result<()> {
         let mut lower = Lower {
             vars: HashMap::new(),
+            kinds: HashMap::new(),
+            ranks: HashMap::new(),
             pointers: HashMap::new(),
             functions: functions.clone(),
             serial: 0,

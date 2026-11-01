@@ -960,6 +960,16 @@ fn specialize(
             }
             Stmt::CallSub { name, args } if name == "@allocate" => {
                 for a in args {
+                    // POINTER allocation is lowered with the pointer descriptors.
+                    if let Expr::Ident(n) | Expr::Call(n, _) = a {
+                        if shapes.contains_key(&format!("@pointer:{n}")) {
+                            if let Expr::Call(_, dims) = a {
+                                for d in dims {rewrite_value(d,shapes,constants,absent)?;}
+                            }
+                            output.push(Stmt::CallSub {name:"@allocate".into(),args:vec![a.clone()]});
+                            continue;
+                        }
+                    }
                     let Expr::Call(n, dims) = a else {
                         bail!("ALLOCATE expects array bounds");
                     };

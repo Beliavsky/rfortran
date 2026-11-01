@@ -13,7 +13,12 @@ use crate::ast::{BinOp, Expr, Program, Stmt, UnOp};
 use anyhow::{bail, Result};
 use std::collections::HashMap;
 
+/// Variable ranks. A POINTER `p` also has the key `@pointer:p`.
 type Ranks = HashMap<String, usize>;
+
+fn pointer(ranks: &Ranks, n: &str) -> bool {
+    ranks.contains_key(&format!("@pointer:{n}"))
+}
 
 fn id(n: &str) -> Expr {
     Expr::Ident(n.into())
@@ -112,7 +117,8 @@ pub(crate) fn allocate(args: &[Expr], ranks: &Ranks) -> Result<Option<Vec<Stmt>>
         return Ok(Some(allocations));
     }
     allocations.extend(status(stat, errmsg, 0, "")?);
-    let arrays: Vec<Expr> = names.iter().filter(|n| ranks.get(*n).is_some_and(|r| *r > 0)).map(|n| test("allocated", n)).collect();
+    // Allocating an associated POINTER is not an error.
+    let arrays: Vec<Expr> = names.iter().filter(|n| ranks.get(*n).is_some_and(|r| *r > 0) && !pointer(ranks, n)).map(|n| test("allocated", n)).collect();
     if arrays.is_empty() {
         return Ok(Some(allocations));
     }
@@ -141,6 +147,7 @@ fn deallocate(args: &[Expr], ranks: &Ranks) -> Result<Option<Vec<Stmt>>> {
     let unallocated: Vec<Expr> = objects
         .iter()
         .filter_map(|o| match o {
+            Expr::Ident(n) if pointer(ranks, n) => Some(Expr::Un(UnOp::Not, Box::new(test("associated", n)))),
             Expr::Ident(n) if ranks.get(n).is_some_and(|r| *r > 0) => {
                 Some(Expr::Un(UnOp::Not, Box::new(test("allocated", n))))
             }
@@ -207,6 +214,27 @@ fn lower(body: &mut Vec<Stmt>, inherited: &Ranks) -> Result<()> {
                 }
             }
             _ => {}
+        }
+    }
+    // A local declaration hides a host POINTER of the same name.
+    for s in body.iter() {
+        match s {
+            Stmt::ArrayDecl { name, .. } => {
+                ranks.remove(&format!("@pointer:{name}"));
+            }
+            Stmt::VarDecl { names, .. } => {
+                for n in names {
+                    ranks.remove(&format!("@pointer:{n}"));
+                }
+            }
+            _ => {}
+        }
+    }
+    for s in body.iter() {
+        if let Stmt::DummyIntent { name, intent } = s {
+            if intent == "pointer" {
+                ranks.insert(format!("@pointer:{name}"), 0);
+            }
         }
     }
     let mut out = vec![];
