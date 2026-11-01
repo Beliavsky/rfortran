@@ -79,8 +79,8 @@ end program main
         self.reject('program main\ncharacter(6)::position\nprint *,orient([1.0],position)\ncontains\n'+ORIENT+'end program\n',
                     'uninitialized variable')
 
-    def test_runtime_result_extent_is_rejected(self):
-        self.reject("""program main
+    def test_runtime_result_extent(self):
+        self.check("""program main
 integer::n
 read(*,*)n
 print *,fill(n,'x')
@@ -92,7 +92,7 @@ integer::out(n)
 out=len(text)
 end function fill
 end program main
-""",'result extent must resolve to a call-site constant')
+""",'1 1 1\n',data='3\n')
 
 if __name__ == '__main__':
     unittest.main()

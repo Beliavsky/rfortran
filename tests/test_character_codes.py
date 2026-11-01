@@ -91,7 +91,7 @@ end
                            error='codes 1 through 127',data=str(code)+'\n')
         self.reject("print *,iachar('ab')\nend\n",'length one')
         self.reject("print *,char(1.0)\nend\n",'scalar INTEGER')
-        self.reject("print *,iachar('a',8)\nend\n",'KIND is not yet supported')
+        self.check("print *,iachar('a',8),kind(iachar('a',8))\nend\n",'97 8\n')
         self.check("""character(3)::text
 integer::lo,hi
 text='abc'
