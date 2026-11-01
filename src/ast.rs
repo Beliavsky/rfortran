@@ -698,7 +698,8 @@ pub fn procedure_declaration(encoded: &str) -> Vec<Stmt> {
         _ => {
             let mut attributes = form.split(',');
             let interface = attributes.next().unwrap_or("procedure()").to_string();
-            let attributes: Vec<&str> = attributes.filter(|a| matches!(*a, "pointer" | "optional")).collect();
+            // NOPASS and PASS(arg) matter for procedure pointer components.
+            let attributes: Vec<&str> = attributes.filter(|a| matches!(*a, "pointer" | "optional" | "nopass") || a.starts_with("pass")).collect();
             for name in entities {
                 out.push(Stmt::DummyIntent { name: name.into(), intent: interface.clone() });
                 for a in &attributes {

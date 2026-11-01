@@ -278,7 +278,7 @@ current limits.
 | [Scalar polymorphic ALLOCATABLE objects](language-support.md#scalar-polymorphic-allocatable-objects) | F2003; MOLD F2008 | 🟡 | Local scalar typed/SOURCE=/MOLD= allocation, ALLOCATED, DEALLOCATE, polymorphic assignment/reallocation, SELECT TYPE and overridden calls; scalar variable/constructor sources and required scalar allocatable dummies; no OPTIONAL descriptors, saved/module objects or polymorphic arrays | test_polymorphic_allocatable.py, test_polymorphic_allocatable_dummies.py |
 | [ABSTRACT types and DEFERRED bindings](language-support.md#abstract-types-and-deferred-bindings) | F2003 | 🟡 | Concrete implementations, inherited contracts, interface/override checks and scalar CLASS dispatch; default first PASS only, existing polymorphic storage/result limits | test_abstract_types.py |
 | Parameterized derived types | F2003 | 🟡 | KIND and LEN parameters: defaults, keyword values, values from named constants and KIND or SELECTED_REAL_KIND; arrays, procedure arguments, inquiries (`x%k`, `x%m%n`, `len(x%c)`, `x%c%len`), extension, constructors `t(8)(...)`, SELECT TYPE guards, modules with ONLY and renaming. Constant values make ordinary derived types; LEN values known only at run time, assumed (`*`) dummies and deferred (`:`) ALLOCATABLE objects with ALLOCATE(t(n=...) :: x) keep the LEN values as components and allocate the components that depend on them. Not yet: runtime LEN values of extended types or rank-2 arrays of objects, or whole-array references to components that depend on runtime LEN values | test_parameterized_types.py |
-| Procedure-pointer components | F2003 | ❌ |  |  |
+| Procedure-pointer components | F2003 | 🟡 | PASS, PASS(arg) and NOPASS components with abstract, procedure or implicit interfaces; association in any module or procedure, structure constructors, ASSOCIATED, NULLIFY, copies, arrays of objects, nested and extended types, and local procedure pointers associated with components. Each is a tag that a dispatcher over its targets reads. Not yet: passing a component as an actual procedure argument; targets with array arguments must be PURE | test_procedure_pointer_components.py |
 
 ## Procedures
 
@@ -296,7 +296,7 @@ current limits.
 | Generic interfaces | F90 | ✅ |  | test_generic_inquiries.py |
 | Interface blocks for external procedures | F90 | ✅ |  |  |
 | [Dummy procedures](language-support.md#dummy-procedures-and-procedure-pointers) | F77 or earlier | 🟡 | External dummy procedures: F77 or earlier; explicit interfaces: F90. Intrinsic procedures cannot be passed | test_procedure_arguments.py |
-| [Procedure pointers](language-support.md#dummy-procedures-and-procedure-pointers) | F2003 | 🟡 | Not as components or arguments | test_procedure_arguments.py |
+| [Procedure pointers](language-support.md#dummy-procedures-and-procedure-pointers) | F2003 | 🟡 | Local pointers and components (see Procedure-pointer components); not as arguments | test_procedure_arguments.py, test_procedure_pointer_components.py |
 | ENTRY statements | F77 or earlier | 🟡 | Subroutine and function entries, also in modules, with their own dummies and RESULT clauses; results of the same type share storage, and SAVE and DATA variables are shared by all entry points. No alternate returns; derived-type, CHARACTER(*) and POINTER results are limited as for other functions | test_entry_statements.py |
 | [Statement functions](language-support.md#other-statement-forms) | F77 or earlier | ✅ |  | test_external_calls.py |
 

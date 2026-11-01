@@ -1593,6 +1593,7 @@ fn resolve_types(mut program: Program) -> Result<Program> {
     crate::parameters::fold_kind_inquiries(&mut program);
     crate::imports::validate(&program)?;
     program=crate::modules::associate(program)?;
+    program=crate::proc_components::resolve(program)?;
     crate::component_access::validate(&mut program)?;
     program=crate::abstract_types::resolve(program)?;
     program=crate::assumed_rank::resolve(program)?;

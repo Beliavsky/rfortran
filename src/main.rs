@@ -76,6 +76,7 @@ mod common;
 mod entries;
 mod pdt;
 mod protected;
+mod proc_components;
 mod field_subscripts;
 mod scalar_components;
 mod recursive_types;
