@@ -331,6 +331,8 @@ pub enum TokenKind {
     KwEndBlockData,
     /// ENTRY name [([dummies])] [RESULT(r)], as `name;dummy,...;r`.
     Entry(String),
+    /// Before `t(values) ::` in ALLOCATE, a type with parameter values.
+    TypedAllocate,
     KwGoto,
     KwContinue,
     #[token(".true.", ignore(ascii_case))]
@@ -1686,6 +1688,29 @@ pub fn lex(input: &str) -> Vec<Token> {
         };
         let span = tokens[index].span.start..tokens[last].span.end;
         tokens.splice(index..=last, [Token { kind: TokenKind::Entry(format!("{name};{};{result}", dummies.join(","))), span }]);
+        index += 1;
+    }
+    // ALLOCATE(t(values) :: x): mark the type specification, which the
+    // grammar cannot otherwise tell from an array element until `::`.
+    let mut index = 0;
+    while index + 3 < tokens.len() {
+        let typed = matches!(tokens[index].kind, TokenKind::KwAllocate)
+            && matches!(tokens[index + 1].kind, TokenKind::LParen)
+            && matches!(tokens[index + 2].kind, TokenKind::Ident(_))
+            && matches!(tokens[index + 3].kind, TokenKind::LParen)
+            && {
+                let mut depth = 0i32;
+                let mut close = None;
+                for i in index + 3..tokens.len() {
+                    match tokens[i].kind { TokenKind::LParen => depth += 1, TokenKind::RParen => depth -= 1, _ => {} }
+                    if depth == 0 { close = Some(i); break; }
+                }
+                close.is_some_and(|i| matches!(tokens.get(i + 1).map(|t| &t.kind), Some(TokenKind::DColon)))
+            };
+        if typed {
+            let at = tokens[index + 2].span.start;
+            tokens.insert(index + 2, Token { kind: TokenKind::TypedAllocate, span: at..at });
+        }
         index += 1;
     }
     // PUBLIC name and PRIVATE name are PUBLIC :: name and PRIVATE :: name.

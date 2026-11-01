@@ -102,6 +102,7 @@ extern {
         KW_COMMON => TokenKind::KwCommon,
         KW_BLOCK_DATA => TokenKind::KwBlockData,
         ENTRY_STMT => TokenKind::Entry(<String>),
+        TYPED_ALLOCATE => TokenKind::TypedAllocate,
         KW_END_BLOCK_DATA => TokenKind::KwEndBlockData,
         KW_GOTO => TokenKind::KwGoto,
         KW_CONTINUE => TokenKind::KwContinue,
@@ -593,6 +594,11 @@ Stmt: Stmt = {
     },
     KW_ERROR KW_STOP <arg: RhsExpr> => Stmt::CallSub { name: "@error_stop".into(), args: vec![arg] },
     KW_ALLOCATE LPAREN <args: CallArgList> RPAREN => Stmt::CallSub { name: "@allocate".into(), args },
+    // ALLOCATE(t(values) :: x) of a parameterized derived type.
+    KW_ALLOCATE LPAREN TYPED_ALLOCATE <name:Ident> LPAREN <values:TypeParameterValues> RPAREN DCOLON <args:CallArgList> RPAREN => {
+        let mut typed=vec![Expr::Ident(crate::pdt::spec(&name, values))]; typed.extend(args);
+        Stmt::CallSub{name:"@allocate_derived_type".into(),args:typed}
+    },
     KW_ALLOCATE LPAREN <kind:Ident> DCOLON <args:CallArgList> RPAREN => {
         let mut typed=vec![Expr::Ident(kind)]; typed.extend(args);
         Stmt::CallSub{name:"@allocate_derived_type".into(),args:typed}
@@ -703,7 +709,9 @@ Stmt: Stmt = {
         Stmt::CallSub {name:"@array_substring_assign".into(), args:vec![crate::ast::section_or_call(id,args),range,rhs]},
     <id: Designator> LPAREN <args: SubscriptList> RPAREN EQ <rhs: RhsExpr> => {
         let expr = crate::ast::section_or_call(id.clone(), args);
-        let indices = match expr { Expr::Section { .. } => vec![expr], Expr::Call(_, args) => args.into_iter().map(|e| if matches!(e,Expr::Section {..}) { Expr::Call("@vector_subscript".into(),vec![e]) } else {e}).collect(), _ => unreachable!() };
+        let mut indices = match expr { Expr::Section { .. } => vec![expr], Expr::Call(_, args) => args.into_iter().map(|e| if matches!(e,Expr::Section {..}) { Expr::Call("@vector_subscript".into(),vec![e]) } else {e}).collect(), _ => unreachable!() };
+        // a%foo(i) = v: subscripts of the component (see crate::field_subscripts).
+        if id.contains('%') { indices = vec![Expr::Call(crate::field_subscripts::MARK.into(), indices)]; }
         Stmt::AssignIndex { name: id, indices, value: rhs }
     },
     KW_USE <head:UseHead> <tail:UseOnly> => Stmt::Use { module:head.0, nature:head.1, only:tail.0, renames:tail.1 },

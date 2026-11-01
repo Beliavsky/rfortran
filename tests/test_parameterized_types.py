@@ -196,21 +196,105 @@ end program
 end program
 """, "single 1 1.5\ndouble 2 2.5\n")
 
-    def test_rejections(self):
-        self.reject("""program p
-  type t(n)
+    def test_runtime_len_values(self):
+        # LEN values known only at run time, assumed by dummies, and of
+        # arrays of objects; CHARACTER and array components depend on them.
+        self.check("""module m
+  implicit none
+  type :: vec(k, n)
+    integer, kind :: k = 4
     integer, len :: n
-    integer :: a(n)
+    real(k) :: v(n)
+    character(len=n) :: tag
   end type
-  type(t(3)) :: x
-  call show(x)
 contains
-  subroutine show(y)
-    type(t(*)) :: y
-    print *, y%n
+  subroutine show(x)
+    type(vec(8, *)), intent(in) :: x
+    print *, x%n, size(x%v), sum(x%v), len(x%tag), kind(x%v)
+  end subroutine
+  subroutine fill(x, value)
+    type(vec(8, *)), intent(inout) :: x
+    real(8), intent(in) :: value
+    x%v = value
+  end subroutine
+end module
+program p
+  use m
+  implicit none
+  integer :: m1
+  type(vec(8, :)), allocatable :: d
+  type(vec(8, 2)) :: c
+  m1 = 3
+  call work(m1)
+  allocate(vec(8, 5) :: d)
+  call fill(d, 2d0)
+  d%tag = 'abcde'
+  call show(d)
+  print *, d%n, d%tag
+  c%v = [1d0, 2d0]
+  c%tag = 'cc'
+  call show(c)
+contains
+  subroutine work(n)
+    integer, intent(in) :: n
+    type(vec(8, n)) :: a
+    type(vec(n=2*n)) :: b(2)
+    a%v = 1
+    a%tag = 'xyz'
+    call show(a)
+    b(2)%v = 4
+    print *, b(2)%n, size(b(2)%v), sum(b(2)%v), kind(b(1)%v)
   end subroutine
 end program
-""", "assumed LEN type parameter `n` of `t` is not yet supported")
+""", "3 3 3.0 3 8\n6 6 24.0 4\n5 5 10.0 5 8\n5 abcde\n2 2 3.0 2 8\n")
+
+    def test_deferred_len_allocation(self):
+        self.check("""module m
+  implicit none
+  type :: vec(n)
+    integer, len :: n
+    real :: v(n)
+  end type
+contains
+  subroutine show(x)
+    type(vec(*)), intent(in) :: x
+    print *, x%n, size(x%v), sum(x%v)
+  end subroutine
+end module
+program p
+  use m
+  implicit none
+  type(vec(:)), allocatable :: d
+  print *, allocated(d)
+  allocate(vec(5) :: d)
+  d%v = 2
+  call show(d)
+  print *, allocated(d), d%n
+  deallocate(d)
+  allocate(vec(n=2) :: d)
+  d%v = [1., 3.]
+  call show(d)
+end program
+""", "F\n5 5 10.0\nT 5\n2 2 4.0\n")
+
+    def test_rejections(self):
+        self.reject("""program p
+  type :: vec(k)
+    integer, len :: k = 3
+    integer :: foo(k)
+  end type
+  type(vec) :: a(2)
+  integer :: n
+  n = 3
+  call make(n)
+contains
+  subroutine make(m)
+    integer :: m
+    type(vec(m)) :: b(2)
+    b%foo = 1
+  end subroutine
+end program
+""", "`b%foo` of a whole array whose type has LEN parameters known only at run time is not yet supported")
         self.reject("""program p
   type t(k)
     integer, kind :: k

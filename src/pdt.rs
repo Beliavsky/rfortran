@@ -7,8 +7,14 @@
 //! becomes an ordinary derived type whose components have the values in place
 //! of the parameters, named like `matrix_pdt_8_3` and defined where the
 //! parameterized type is. Inquiries such as `x%k` become the constant values.
-//! KIND parameters are always constant; LEN parameters must be constant here
-//! (no `*` or `:`), which leaves runtime lengths for later.
+//! KIND parameters are always constant.
+//!
+//! A type with a LEN parameter whose value is known only at run time, assumed
+//! (`*`) or deferred (`:`) somewhere in the program instead has, for each set
+//! of KIND values, one type whose LEN parameters are INTEGER components of
+//! their names, so that `x%n` reads them. Its components that depend on them
+//! are ALLOCATABLE, allocated with the object's values when the object comes
+//! into being: at the start of its scope, or by ALLOCATE(t(n=...) :: x).
 use crate::ast::{Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Context, Result};
 use std::collections::{HashMap, HashSet};
@@ -22,6 +28,8 @@ const SPEC: &str = "@pdt$";
 pub(crate) const CONSTRUCTOR: &str = "@pdt_constructor";
 /// Where a parameterized type's concrete types go.
 const INSTANCES: &str = "@pdt_instances";
+/// The value of a LEN parameter of an object of a type in runtime mode.
+const RUNTIME: i64 = i64::MIN;
 
 pub(crate) fn parameters(name: &str, params: Vec<String>) -> Stmt {
     let mut args = vec![Expr::Ident(name.to_owned())];
@@ -76,6 +84,13 @@ struct State {
     pending: Vec<(String, Vec<i64>, String)>,
     /// The named constants of each module.
     modules: HashMap<String, HashMap<String, Expr>>,
+    /// The types, with their KIND values (0 for the LEN parameters), whose
+    /// LEN parameters are components.
+    runtime: HashSet<(String, Vec<i64>)>,
+    /// The LEN values of the last instance: the expressions they have where
+    /// the type is used, None for KIND parameters and `*` or `:`.
+    last_lens: Vec<Option<Expr>>,
+    last_serial: usize,
 }
 
 #[derive(Clone, Default)]
@@ -87,6 +102,8 @@ struct Env {
     aliases: HashMap<String, String>,
     /// Variables of concrete types: the generic and the parameter values.
     vars: HashMap<String, (String, Vec<i64>)>,
+    /// The arrays among them.
+    arrays: HashSet<String>,
 }
 
 fn named_constants(body: &[Stmt]) -> HashMap<String, Expr> {
@@ -346,25 +363,48 @@ impl State {
         // Defaults may use earlier parameters.
         let mut bound = constants.clone();
         let mut numbers = vec![];
+        let mut lens = vec![];
         for (p, v) in g.params.iter().zip(given) {
-            let value = match v {
+            let kind = g.kinds.contains(p);
+            let (value, len) = match v {
                 Some(Expr::Ident(s)) if s == "*" || s == ":" => {
                     let what = if s == "*" { "assumed" } else { "deferred" };
-                    if g.kinds.contains(p) { bail!("KIND type parameter `{p}` of `{generic}` cannot be {what}"); }
-                    bail!("{what} LEN type parameter `{p}` of `{generic}` is not yet supported; give it a constant value");
+                    if kind { bail!("KIND type parameter `{p}` of `{generic}` cannot be {what}"); }
+                    (RUNTIME, None)
                 }
-                Some(v) => evaluate(&v, constants).with_context(|| format!("type parameter `{p}` of `{generic}` must currently be a constant INTEGER expression"))?,
+                Some(v) if kind => (evaluate(&v, constants).with_context(|| format!("KIND type parameter `{p}` of `{generic}` must be a constant INTEGER expression"))?, None),
+                Some(v) => match evaluate(&v, constants) {
+                    Ok(n) => (n, Some(Expr::IntLit(n.to_string()))),
+                    Err(_) => (RUNTIME, Some(v)),
+                },
                 None => {
                     let d = g.defaults.get(p).with_context(|| format!("type parameter `{p}` of `{generic}` has no default and needs a value"))?;
-                    evaluate(d, &bound).with_context(|| format!("the default of type parameter `{p}` of `{generic}` must be a constant INTEGER expression"))?
+                    match evaluate(d, &bound) {
+                        Ok(n) => (n, (!kind).then(|| Expr::IntLit(n.to_string()))),
+                        Err(_) if !kind => (RUNTIME, Some(substitute(d, &bound))),
+                        Err(e) => return Err(e.context(format!("the default of KIND type parameter `{p}` of `{generic}` must be a constant INTEGER expression"))),
+                    }
                 }
             };
-            bound.insert(p.clone(), Expr::IntLit(value.to_string()));
+            if let Some(len) = &len { bound.insert(p.clone(), len.clone()); } else if value != RUNTIME { bound.insert(p.clone(), Expr::IntLit(value.to_string())); }
             numbers.push(value);
+            lens.push(len);
         }
+        // A type with LEN values known only at run time has them as components
+        // for every object with the same KIND values.
+        let kinds_key: Vec<i64> = g.params.iter().zip(&numbers).map(|(p, v)| if g.kinds.contains(p) { *v } else { 0 }).collect();
+        let key = (generic.to_owned(), kinds_key);
+        if numbers.contains(&RUNTIME) { self.runtime.insert(key.clone()); }
+        if self.runtime.contains(&key) {
+            if g.parent.is_some() || g.plain_parent.is_some() {
+                bail!("LEN type parameters known only at run time are not yet supported for the extended type `{}`", g.name);
+            }
+            for (p, n) in g.params.iter().zip(numbers.iter_mut()) { if !g.kinds.contains(p) { *n = RUNTIME; } }
+        }
+        self.last_lens = lens;
         let list = self.instances.entry(generic.to_owned()).or_default();
         if let Some((name, _)) = list.iter().find(|(_, v)| *v == numbers) { return Ok((name.clone(), numbers)); }
-        let suffix: Vec<String> = numbers.iter().map(|v| if *v < 0 { format!("m{}", -v) } else { v.to_string() }).collect();
+        let suffix: Vec<String> = numbers.iter().map(|v| if *v == RUNTIME { "len".to_owned() } else if *v < 0 { format!("m{}", -v) } else { v.to_string() }).collect();
         let name = format!("{}_pdt_{}", g.display, suffix.join("_"));
         list.push((name.clone(), numbers.clone()));
         self.pending.push((generic.to_owned(), numbers.clone(), name.clone()));
@@ -385,7 +425,101 @@ impl State {
         Ok(Some((name, generic, numbers)))
     }
 
+    /// The statements that give an object of a runtime-mode type its LEN
+    /// values and allocate the components that depend on them.
+    fn create(&mut self, object: &Object, key: &str, numbers: &[i64], lens: &[Option<Expr>], env: &Env, out: &mut Vec<Stmt>) -> Result<()> {
+        let g = self.generics[key].clone();
+        let mut values = known(&g, numbers);
+        for (p, (n, v)) in g.params.iter().zip(numbers.iter().zip(lens)) {
+            if *n != RUNTIME { continue; }
+            let v = v.clone().with_context(|| format!("an object of type `{}` needs a value for its LEN type parameter `{p}`", g.name))?;
+            out.push(object.assign(p, v.clone()));
+            values.insert(p.clone(), v);
+        }
+        let lens: HashSet<String> = g.params.iter().zip(numbers).filter(|(_, v)| **v == RUNTIME).map(|(p, _)| p.clone()).collect();
+        for c in &g.components {
+            match c {
+                Stmt::VarDecl { kind: TypeSpec::CharacterLength(len), .. } | Stmt::InitializedDecl { kind: TypeSpec::CharacterLength(len), .. } if mentions(len, &lens) => {
+                    let names: Vec<String> = match c {
+                        Stmt::InitializedDecl { entities, .. } => entities.iter().map(|(n, _)| n.clone()).collect(),
+                        Stmt::VarDecl { names, .. } => names.clone(),
+                        _ => unreachable!(),
+                    };
+                    for n in names {
+                        out.push(Stmt::CallSub { name: crate::substrings::ALLOCATE_CHARACTER.into(), args: vec![substitute(len, &values), object.designator(&n, vec![])] });
+                    }
+                }
+                Stmt::ArrayDecl { kind, name, dims } if kind_mentions(kind, &lens) || dims.iter().any(|d| mentions(d, &lens)) => {
+                    let dims: Vec<Expr> = dims.iter().map(|d| substitute(d, &values)).collect();
+                    if let TypeSpec::CharacterLength(len) = kind {
+                        out.push(Stmt::CallSub { name: crate::substrings::ALLOCATE_CHARACTER.into(), args: vec![substitute(len, &values), object.designator(name, dims)] });
+                    } else {
+                        out.push(Stmt::CallSub { name: "@allocate".into(), args: vec![object.designator(name, dims)] });
+                    }
+                }
+                Stmt::DerivedDecl { type_name, names, dims, .. } => {
+                    let Some((n, v)) = decode(type_name) else { continue };
+                    let generic = g.scope.aliases.get(&n).cloned().unwrap_or(n.clone());
+                    if !self.generics.contains_key(&generic) { continue; }
+                    let mut v: Vec<Expr> = v.iter().map(|e| substitute(e, &values)).collect();
+                    for x in v.iter_mut() { kinds_in(x, env); }
+                    let (_, inner) = self.instance(&generic, &v, &env.constants)?;
+                    let inner_lens = self.last_lens.clone();
+                    if !inner.contains(&RUNTIME) { continue; }
+                    if !dims.is_empty() { bail!("array components of parameterized type `{n}` with LEN values known only at run time are not yet supported"); }
+                    let Object::Path(path) = object else {
+                        bail!("arrays of type `{}` with components of parameterized types are not yet supported", g.name);
+                    };
+                    for name in names {
+                        self.create(&Object::Path(format!("{path}%{name}")), &generic, &inner, &inner_lens, env, out)?;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// ALLOCATE(t(n=...) :: x): allocate `x`, then its components.
+    fn allocations(&mut self, body: &mut Vec<Stmt>, env: &Env) -> Result<()> {
+        let mut out = vec![];
+        for mut s in std::mem::take(body) {
+            if let Stmt::CallSub { name, args } = &s {
+                if name == "@allocate_derived_type" {
+                    if let Some(Expr::Ident(t)) = args.first() {
+                        if let Some((concrete, key, numbers)) = self.resolve_type(t, env)? {
+                            let lens = self.last_lens.clone();
+                            let objects = args[1..].to_vec();
+                            if numbers.contains(&RUNTIME) {
+                                out.push(Stmt::CallSub { name: "@allocate".into(), args: objects.clone() });
+                                for o in &objects {
+                                    let Expr::Ident(path) = o else { bail!("ALLOCATE with type parameters needs variables or components") };
+                                    self.create(&Object::Path(path.clone()), &key, &numbers, &lens, env, &mut out)?;
+                                }
+                            } else {
+                                let mut args = vec![Expr::Ident(concrete)];
+                                args.extend(objects);
+                                out.push(Stmt::CallSub { name: "@allocate_derived_type".into(), args });
+                            }
+                            continue;
+                        }
+                    }
+                }
+            }
+            if !matches!(s, Stmt::Module { .. } | Stmt::Function { .. } | Stmt::Subroutine { .. }) {
+                for b in crate::procedure_arguments::children(&mut s) { self.allocations(b, env)?; }
+            }
+            out.push(s);
+        }
+        *body = out;
+        Ok(())
+    }
+
     fn scope(&mut self, body: &mut Vec<Stmt>, host: &Env) -> Result<()> {
+        self.scope_with(body, host, &[], false)
+    }
+
+    fn scope_with(&mut self, body: &mut Vec<Stmt>, host: &Env, params: &[String], module: bool) -> Result<()> {
         let mut env = host.clone();
         for s in body.iter() {
             if let Stmt::CallSub { name, args } = s {
@@ -447,12 +581,40 @@ impl State {
                 for n in names { env.kinds.insert(n, k); }
             }
         }
+        let mut entry = vec![];
         for s in body.iter_mut() {
             match s {
-                Stmt::DerivedDecl { type_name, names, .. } => {
+                Stmt::DerivedDecl { type_name, names, attributes, dims, .. } => {
                     if let Some((name, generic, numbers)) = self.resolve_type(type_name, &env)? {
+                        let lens = self.last_lens.clone();
                         *type_name = name;
-                        for n in names.iter() { env.vars.insert(n.clone(), (generic.clone(), numbers.clone())); }
+                        for n in names.iter() {
+                            env.vars.insert(n.clone(), (generic.clone(), numbers.clone()));
+                            if dims.is_empty() { env.arrays.remove(n); } else { env.arrays.insert(n.clone()); }
+                        }
+                        if numbers.contains(&RUNTIME) {
+                            // The actual of a dummy keeps its storage, which
+                            // INTENT(OUT) would deallocate.
+                            for a in attributes.iter_mut() { if a == "intent(out)" { *a = "intent(inout)".into(); } }
+                            let reference = attributes.iter().any(|a| a == "pointer" || a == "allocatable");
+                            for n in names.iter() {
+                                if reference || params.contains(n) { continue; }
+                                if module { bail!("module variable `{n}` of a type with LEN parameters known only at run time is not yet supported"); }
+                                match dims.len() {
+                                    0 => self.create(&Object::Path(n.clone()), &generic, &numbers, &lens, &env, &mut entry)?,
+                                    1 => {
+                                        self.last_serial += 1;
+                                        let i = format!("@pdt_index_{}", self.last_serial);
+                                        entry.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![i.clone()] });
+                                        let mut inner = vec![];
+                                        self.create(&Object::Element(n.clone(), Expr::Ident(i.clone())), &generic, &numbers, &lens, &env, &mut inner)?;
+                                        let bound = |f: &str| Expr::Call(f.into(), vec![Expr::Ident(n.clone()), Expr::IntLit("1".into())]);
+                                        entry.push(Stmt::Do { var: i, start: bound("lbound"), end: bound("ubound"), body: inner });
+                                    }
+                                    _ => bail!("arrays of rank above one of a type with LEN parameters known only at run time are not yet supported"),
+                                }
+                            }
+                        }
                     }
                 }
                 Stmt::DerivedType { components, .. } => {
@@ -471,7 +633,8 @@ impl State {
             }
         }
         let inquiries: HashMap<String, Expr> = env.vars.iter().flat_map(|(v, (g, numbers))| {
-            self.generics[g].params.iter().zip(numbers).map(|(p, n)| (format!("{v}%{p}"), Expr::IntLit(n.to_string()))).collect::<Vec<_>>()
+            self.generics[g].params.iter().zip(numbers).filter(|(_, n)| **n != RUNTIME)
+                .map(|(p, n)| (format!("{v}%{p}"), Expr::IntLit(n.to_string()))).collect::<Vec<_>>()
         }).collect();
         if !inquiries.is_empty() {
             for s in body.iter_mut() {
@@ -481,12 +644,25 @@ impl State {
                 }
             }
         }
+        self.allocations(body, &env)?;
         self.expressions(body, &env)?;
         for s in body.iter_mut() {
             match s {
-                Stmt::Module { body, .. } | Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } => self.scope(body, &env)?,
+                Stmt::Module { body, .. } => self.scope_with(body, &env, &[], true)?,
+                Stmt::Function { params, body, .. } | Stmt::Subroutine { params, body, .. } => {
+                    let params = params.clone();
+                    self.scope_with(body, &env, &params, false)?
+                }
                 _ => {}
             }
+        }
+        // Objects come into being after the declarations.
+        if !entry.is_empty() {
+            let (declarations, statements): (Vec<Stmt>, Vec<Stmt>) = entry.into_iter().partition(|s| matches!(s, Stmt::VarDecl { .. }));
+            let at = body.iter().position(|s| !specification(s)).unwrap_or(body.len());
+            body.splice(at..at, statements);
+            let first = body.iter().position(|s| !matches!(s, Stmt::Use { .. } | Stmt::Implicit(_) | Stmt::SourceLocation(_))).unwrap_or(body.len());
+            body.splice(first..first, declarations);
         }
         Ok(())
     }
@@ -504,6 +680,20 @@ impl State {
             // Constructors with type parameter values first, whose type
             // with its values the second pass would take for a constructor.
             for phase in 0..2 {
+            // A component that depends on a LEN value known only at run time
+            // is ALLOCATABLE, which a whole array of the objects cannot
+            // select.
+            // (An assignment with subscripts, as `b(2)%v = 4`, selects an element.)
+            let target = match &*s { Stmt::Assign { name, .. } => Some(name.clone()), _ => None };
+            if let Some(name) = target { self.check_section(&name, env)?; }
+            for e in crate::procedure_arguments::expressions(s) {
+                let mut names = vec![];
+                crate::procedure_arguments::visit_expr(e, &mut |x| match x {
+                    Expr::Ident(n) | Expr::Call(n, _) if n.contains('%') => names.push(n.clone()),
+                    _ => {}
+                });
+                for n in names { self.check_section(&n, env)?; }
+            }
             for e in crate::procedure_arguments::expressions(s) {
                 crate::procedure_arguments::visit_expr(e, &mut |e| {
                     if error.is_some() { return; }
@@ -526,7 +716,11 @@ impl State {
                             let mut values = values.clone();
                             for v in values.iter_mut() { kinds_in(v, env); }
                             match self.instance(&generic, &values, &env.constants) {
-                                Ok((name, _)) => *e = Expr::Call(name, args[1..].to_vec()),
+                                Ok((name, numbers)) => {
+                                    let mut all = self.runtime_values(&generic, &numbers);
+                                    all.extend(args[1..].iter().cloned());
+                                    *e = Expr::Call(name, all);
+                                }
                                 Err(err) => error = Some(err),
                             }
                         }
@@ -551,11 +745,15 @@ impl State {
                                 }
                             }
                         }
-                        Expr::Call(n, _) if !env.vars.contains_key(n) => {
+                        Expr::Call(n, args) if !env.vars.contains_key(n) => {
                             let generic = env.aliases.get(n).cloned().unwrap_or(n.clone());
                             if self.generics.contains_key(&generic) {
                                 match self.instance(&generic, &[], &env.constants) {
-                                    Ok((name, _)) => *n = name,
+                                    Ok((name, numbers)) => {
+                                        let lens = self.runtime_values(&generic, &numbers);
+                                        args.splice(0..0, lens);
+                                        *n = name;
+                                    }
                                     Err(err) => error = Some(err.context(format!("the structure constructor `{generic}(...)` needs its type parameters' defaults; constructors with type parameter values are not yet supported"))),
                                 }
                             }
@@ -572,6 +770,34 @@ impl State {
         match error { Some(e) => Err(e), None => Ok(()) }
     }
 
+    fn check_section(&self, path: &str, env: &Env) -> Result<()> {
+        let mut parts = path.split('%');
+        let Some(base) = parts.next() else { return Ok(()) };
+        let Some(field) = parts.next() else { return Ok(()) };
+        if !env.arrays.contains(base) { return Ok(()); }
+        let Some((key, numbers)) = env.vars.get(base) else { return Ok(()) };
+        if !numbers.contains(&RUNTIME) { return Ok(()); }
+        let g = &self.generics[key];
+        let lens: HashSet<String> = g.params.iter().zip(numbers).filter(|(_, v)| **v == RUNTIME).map(|(p, _)| p.clone()).collect();
+        let dependent = g.components.iter().any(|c| match c {
+            Stmt::VarDecl { kind, names } => names.iter().any(|n| n == field) && kind_mentions(kind, &lens),
+            Stmt::ArrayDecl { kind, name, dims } => name == field && (kind_mentions(kind, &lens) || dims.iter().any(|d| mentions(d, &lens))),
+            _ => false,
+        });
+        if dependent {
+            bail!("`{base}%{field}` of a whole array whose type has LEN parameters known only at run time is not yet supported; use an element, as in `{base}(i)%{field}`");
+        }
+        Ok(())
+    }
+
+    /// The LEN values of the last instance that are components, which a
+    /// structure constructor gives first.
+    fn runtime_values(&self, generic: &str, numbers: &[i64]) -> Vec<Expr> {
+        let g = &self.generics[generic];
+        g.params.iter().zip(numbers).zip(&self.last_lens).filter(|((_, n), _)| **n == RUNTIME)
+            .map(|((p, _), v)| v.clone().unwrap_or_else(|| Expr::Ident(p.clone()))).collect()
+    }
+
     /// The value of the type parameter that `object%c1%...%p` names, through
     /// components of parameterized types.
     fn inquire(&mut self, object: &str, fields: &[String], env: &Env) -> Option<i64> {
@@ -579,9 +805,9 @@ impl State {
         for (i, f) in fields.iter().enumerate() {
             let g = self.generics.get(&key)?.clone();
             if i + 1 == fields.len() {
-                return g.params.iter().position(|p| p == f).map(|i| numbers[i]);
+                return g.params.iter().position(|p| p == f).map(|i| numbers[i]).filter(|v| *v != RUNTIME);
             }
-            let values: HashMap<String, Expr> = g.params.iter().zip(&numbers).map(|(p, v)| (p.clone(), Expr::IntLit(v.to_string()))).collect();
+            let values = known(&g, &numbers);
             // c%len and c%kind of an intrinsic component.
             if i + 2 == fields.len() && matches!(fields[i + 1].as_str(), "len" | "kind") {
                 if let Some(kind) = intrinsic_component(&g, f, &values) {
@@ -615,7 +841,7 @@ impl State {
         let (mut key, mut numbers) = env.vars.get(object)?.clone();
         for f in inner {
             let g = self.generics.get(&key)?.clone();
-            let values: HashMap<String, Expr> = g.params.iter().zip(&numbers).map(|(p, v)| (p.clone(), Expr::IntLit(v.to_string()))).collect();
+            let values = known(&g, &numbers);
             let type_name = g.components.iter().find_map(|c| match c {
                 Stmt::DerivedDecl { type_name, names, .. } if names.contains(f) => Some(type_name.clone()),
                 _ => None,
@@ -631,7 +857,7 @@ impl State {
             numbers = n;
         }
         let g = self.generics.get(&key)?.clone();
-        let values: HashMap<String, Expr> = g.params.iter().zip(&numbers).map(|(p, v)| (p.clone(), Expr::IntLit(v.to_string()))).collect();
+        let values = known(&g, &numbers);
         intrinsic_component(&g, last, &values)
     }
 
@@ -647,10 +873,55 @@ impl State {
         } else if let Some(parent) = &g.plain_parent {
             out.push(Stmt::CallSub { name: crate::extensions::EXTENDS.into(), args: vec![Expr::Ident(name.to_owned()), Expr::Ident(parent.clone())] });
         }
-        let values: HashMap<String, Expr> = g.params.iter().zip(numbers).map(|(p, v)| (p.clone(), Expr::IntLit(v.to_string()))).collect();
+        let values = known(&g, numbers);
+        let lens: HashSet<String> = g.params.iter().zip(numbers).filter(|(_, v)| **v == RUNTIME).map(|(p, _)| p.clone()).collect();
         let mut components = vec![];
+        // LEN parameters known only at run time are components first.
+        for p in g.params.iter().filter(|p| lens.contains(*p)) {
+            components.push(Stmt::VarDecl { kind: TypeSpec::Integer(None), names: vec![p.clone()] });
+        }
+        let deferred = |n: usize| vec![Expr::Ident("@deferred_extent".into()); n];
+        let allocatable = |n: &str| Stmt::DummyIntent { name: n.to_owned(), intent: "allocatable".into() };
+        // Components whose sizes depend on them are ALLOCATABLE.
+        let dependent: HashSet<String> = g.components.iter().flat_map(|c| match c {
+            Stmt::VarDecl { kind, names } if kind_mentions(kind, &lens) => names.clone(),
+            Stmt::InitializedDecl { kind, entities, .. } if kind_mentions(kind, &lens) => entities.iter().map(|(n, _)| n.clone()).collect(),
+            Stmt::ArrayDecl { kind, name, dims } if kind_mentions(kind, &lens) || dims.iter().any(|d| mentions(d, &lens)) => vec![name.clone()],
+            Stmt::DerivedDecl { names, dims, .. } if dims.iter().any(|d| mentions(d, &lens)) => names.clone(),
+            _ => vec![],
+        }).collect();
         for c in &g.components {
             let mut c = c.clone();
+            match &mut c {
+                Stmt::VarDecl { kind, names } if names.iter().any(|n| dependent.contains(n)) => {
+                    *kind = TypeSpec::CharacterLength(Box::new(Expr::Ident("@deferred_character".into())));
+                    for n in names.iter() { components.push(allocatable(n)); }
+                    components.push(c);
+                    continue;
+                }
+                Stmt::InitializedDecl { kind, entities, .. } if entities.iter().any(|(n, _)| dependent.contains(n)) => {
+                    // Their default initialization needs their storage, which
+                    // the object's creation gives.
+                    if matches!(kind, TypeSpec::CharacterLength(_)) {
+                        let names: Vec<String> = entities.iter().map(|(n, _)| n.clone()).collect();
+                        for n in &names { components.push(allocatable(n)); }
+                        components.push(Stmt::VarDecl { kind: TypeSpec::CharacterLength(Box::new(Expr::Ident("@deferred_character".into()))), names });
+                    }
+                    continue;
+                }
+                Stmt::ArrayDecl { kind, name, dims } if dependent.contains(name.as_str()) => {
+                    *kind = if kind_mentions(kind, &lens) { TypeSpec::CharacterLength(Box::new(Expr::Ident("@deferred_character".into()))) } else { kind_of(kind, &values)? };
+                    *dims = deferred(dims.len());
+                    components.push(allocatable(name));
+                    components.push(c);
+                    continue;
+                }
+                Stmt::DerivedDecl { dims, attributes, names, .. } if names.iter().any(|n| dependent.contains(n)) => {
+                    *dims = deferred(dims.len());
+                    if !attributes.iter().any(|a| a == "allocatable") { attributes.push("allocatable".into()); }
+                }
+                _ => {}
+            }
             match &mut c {
                 Stmt::VarDecl { kind, .. } => *kind = kind_of(kind, &values)?,
                 Stmt::InitializedDecl { kind, entities, .. } => {
@@ -678,6 +949,72 @@ impl State {
         }
         out.push(Stmt::DerivedType { name: name.to_owned(), components, bindings: g.bindings.clone() });
         Ok(out)
+    }
+}
+
+/// Whether a statement belongs to a unit's specification part or defines
+/// one of its units.
+fn specification(s: &Stmt) -> bool {
+    match s {
+        Stmt::VarDecl { .. } | Stmt::ArrayDecl { .. } | Stmt::InitializedDecl { .. } | Stmt::DerivedDecl { .. }
+        | Stmt::DerivedType { .. } | Stmt::Use { .. } | Stmt::Implicit(_) | Stmt::DummyIntent { .. } | Stmt::SourceLocation(_)
+        | Stmt::Accessibility { .. } | Stmt::GenericInterface { .. } | Stmt::OperatorInterface { .. }
+        | Stmt::Module { .. } | Stmt::Function { .. } | Stmt::Subroutine { .. } => true,
+        Stmt::CallSub { name, .. } => name == INSTANCES || name == crate::common::STATEMENT || name == crate::equivalence::STATEMENT
+            || name == crate::extensions::EXTENDS || name.starts_with("@data"),
+        _ => false,
+    }
+}
+
+/// The parameter values of an instance that are constant.
+fn known(g: &Generic, numbers: &[i64]) -> HashMap<String, Expr> {
+    g.params.iter().zip(numbers).filter(|(_, v)| **v != RUNTIME).map(|(p, v)| (p.clone(), Expr::IntLit(v.to_string()))).collect()
+}
+
+/// Whether an expression uses any of `names`.
+fn mentions(e: &Expr, names: &HashSet<String>) -> bool {
+    let mut found = false;
+    let mut e = e.clone();
+    crate::procedure_arguments::visit_expr(&mut e, &mut |x| found |= matches!(x, Expr::Ident(n) if names.contains(n)));
+    found
+}
+
+fn kind_mentions(kind: &TypeSpec, names: &HashSet<String>) -> bool {
+    matches!(kind, TypeSpec::CharacterLength(e) if mentions(e, names))
+}
+
+/// An object whose components a runtime-mode type allocates: a variable or
+/// component by its path, or an element of a rank-one array of records.
+#[derive(Clone)]
+enum Object {
+    Path(String),
+    Element(String, Expr),
+}
+
+impl Object {
+    fn field(&self, c: &str) -> (String, Option<Expr>) {
+        match self {
+            Object::Path(p) => (format!("{p}%{c}"), None),
+            Object::Element(v, i) => (c.to_owned(), Some(Expr::Call(v.clone(), vec![i.clone()]))),
+        }
+    }
+    fn assign(&self, c: &str, value: Expr) -> Stmt {
+        match self {
+            Object::Path(p) => Stmt::Assign { name: format!("{p}%{c}"), value },
+            Object::Element(v, i) => Stmt::AssignIndex { name: format!("{v}%{c}"), indices: vec![i.clone()], value },
+        }
+    }
+    /// The designator of component `c`, with array bounds `dims`.
+    fn designator(&self, c: &str, dims: Vec<Expr>) -> Expr {
+        match self.field(c) {
+            (path, None) if dims.is_empty() => Expr::Ident(path),
+            (path, None) => Expr::Call(path, dims),
+            (field, Some(element)) => {
+                let mut args = vec![element];
+                if !dims.is_empty() { args.push(Expr::Call("@component_subscripts".into(), dims)); }
+                Expr::Call(format!("@record_component:{field}"), args)
+            }
+        }
     }
 }
 
@@ -767,6 +1104,12 @@ pub fn resolve(mut program: Program) -> Result<Program> {
         Stmt::Module { name, body } => Some((name.clone(), named_constants(body))),
         _ => None,
     }).collect();
+    // A first run finds the types with LEN values known only at run time,
+    // so that all their objects have the same representation.
+    let mut probe = program.body.clone();
+    state.scope(&mut probe, &Env::default())?;
+    state.instances.clear();
+    state.pending.clear();
     state.scope(&mut program.body, &Env::default())?;
     // Define the instances, which may use further instances.
     let mut definitions: HashMap<String, Vec<Vec<Stmt>>> = HashMap::new();

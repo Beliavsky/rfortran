@@ -858,7 +858,7 @@ fn pool_source(boxed: &HashMap<String, Boxed>, constants: &HashMap<String, Expr>
         let b = &boxed[ty];
         decl += &format!("integer :: rfort_{ty}_size = 0, rfort_{ty}_used = 0, rfort_{ty}_free = 0\ninteger, allocatable :: rfort_{ty}_link(:)\n");
         let mut grow = format!("subroutine rfort_grow_{ty}()\ninteger :: n\ninteger, allocatable :: t_link(:)\n");
-        let mut grow_body = format!("n = max(16, 2 * rfort_{ty}_size)\nallocate(t_link(n))\nif (rfort_{ty}_size > 0) t_link(1:rfort_{ty}_size) = rfort_{ty}_link\ncall move_alloc(t_link, rfort_{ty}_link)\n");
+        let mut grow_body = format!("n = max(16, 2 * rfort_{ty}_size)\nallocate(t_link(0:n))\nif (rfort_{ty}_size > 0) t_link(0:rfort_{ty}_size) = rfort_{ty}_link\ncall move_alloc(t_link, rfort_{ty}_link)\n");
         let mut init = String::new();
         let mut free = String::new();
         let mut copy = String::new();
@@ -879,8 +879,10 @@ fn pool_source(boxed: &HashMap<String, Boxed>, constants: &HashMap<String, Expr>
             let t = format!("t_{}", c.name);
             grow += &format!("{text}, allocatable :: {t}({})\n", colons.join(","));
             let extents: Vec<String> = bounds.iter().map(|(l, u)| format!("{l}:{u}")).collect();
-            let alloc_shape: Vec<String> = extents.iter().cloned().chain(std::iter::once("n".to_owned())).collect();
-            let old_part: Vec<String> = bounds.iter().map(|_| ":".to_owned()).chain(std::iter::once(format!("1:rfort_{ty}_size"))).collect();
+            // Slot 0 is the null object, which a reference through a null
+            // handle, as in `associated(p) .and. associated(p%next)`, reads.
+            let alloc_shape: Vec<String> = extents.iter().cloned().chain(std::iter::once("0:n".to_owned())).collect();
+            let old_part: Vec<String> = bounds.iter().map(|_| ":".to_owned()).chain(std::iter::once(format!("0:rfort_{ty}_size"))).collect();
             grow_body += &format!("allocate({t}({}))\nif (rfort_{ty}_size > 0) {t}({}) = {p}\ncall move_alloc({t}, {p})\n", alloc_shape.join(","), old_part.join(","));
             let element = |h: &str| -> String {
                 let lead: Vec<String> = bounds.iter().map(|_| ":".to_owned()).chain(std::iter::once(h.to_owned())).collect();
@@ -920,7 +922,8 @@ fn pool_source(boxed: &HashMap<String, Boxed>, constants: &HashMap<String, Expr>
                 }
             }
         }
-        procs += &format!("{grow}{grow_body}rfort_{ty}_size = n\nend subroutine\n");
+        let null = init.replace("(h)", "(0)").replace(",h)", ",0)");
+        procs += &format!("{grow}{grow_body}if (rfort_{ty}_size == 0) then\nrfort_{ty}_link(0) = 0\n{null}end if\nrfort_{ty}_size = n\nend subroutine\n");
         procs += &format!("function rfort_new_{ty}() result(h)\ninteger :: h\nif (rfort_{ty}_free /= 0) then\nh = rfort_{ty}_free\nrfort_{ty}_free = rfort_{ty}_link(h)\nelse\nif (rfort_{ty}_used == rfort_{ty}_size) call rfort_grow_{ty}()\nrfort_{ty}_used = rfort_{ty}_used + 1\nh = rfort_{ty}_used\nend if\nrfort_{ty}_link(h) = 0\n{init}end function\n");
         procs += &format!("recursive subroutine rfort_free_{ty}(h)\ninteger, intent(in) :: h\ninteger :: k\nif (h == 0) return\n{free}rfort_{ty}_link(h) = rfort_{ty}_free\nrfort_{ty}_free = h\nend subroutine\n");
         procs += &format!("recursive function rfort_copy_{ty}(h) result(n)\ninteger, intent(in) :: h\ninteger :: n, k\nn = 0\nif (h == 0) return\nn = rfort_new_{ty}()\n{copy}end function\n");

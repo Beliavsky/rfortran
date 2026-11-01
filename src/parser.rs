@@ -390,6 +390,7 @@ fn human_token(tok: &TokenKind) -> String {
         TokenKind::KwCommon => "keyword common".into(),
         TokenKind::KwBlockData => "keyword block data".into(),
         TokenKind::Entry(_) => "ENTRY statement".into(),
+        TokenKind::TypedAllocate => "type specification".into(),
         TokenKind::KwEndBlockData => "end block data".into(),
         TokenKind::KwGoto => "keyword goto".into(),
         TokenKind::KwIf => "keyword if".into(),
@@ -649,6 +650,7 @@ pub fn parse_with_origins(
         .parse(triples.into_iter())
     {
         Ok(mut p) => {
+            crate::field_subscripts::resolve(&mut p);
             if let Err((msg, at)) = check_implicit_statements(&p.body)
                 .and_then(|_| crate::entries::resolve(&mut p).map_err(|msg| (msg, None)))
                 .and_then(|_| resolve_dimension_statements(&mut p.body)

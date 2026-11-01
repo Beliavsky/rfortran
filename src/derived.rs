@@ -604,10 +604,25 @@ impl Lowerer {
                             bail!("derived argument `{param}` requires type `{ty}`");
                         }
                         for field in &proc.used_fields[param] {
-                            let mut value = fields[1..].iter().find_map(|e| match e {
-                                Expr::Call(tag, values) if tag == &format!("@record_field:{field}") => values.first().cloned(),
+                            let find = |name: &str| fields[1..].iter().find_map(|e| match e {
+                                Expr::Call(tag, values) if tag == &format!("@record_field:{name}") => values.first().cloned(),
                                 _ => None,
-                            }).with_context(|| format!("missing ELEMENTAL record component `{field}`"))?;
+                            });
+                            // A borrowed element gives a deferred-length CHARACTER
+                            // array component without its length field: the
+                            // length of its elements.
+                            let length = match find(field) {
+                                Some(_) => None,
+                                None => field.strip_prefix("@deferred_length_").and_then(|c| find(c)).map(|v| {
+                                    self.serial += 1;
+                                    let temp = format!("@borrowed_length_{}", self.serial);
+                                    prefix.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![temp.clone()] });
+                                    prefix.push(Stmt::Assign { name: temp.clone(), value: Expr::Call("len".into(), vec![v]) });
+                                    Expr::Ident(temp)
+                                }),
+                            };
+                            let mut value = find(field).or(length)
+                                .with_context(|| format!("missing ELEMENTAL record component `{field}`"))?;
                             self.expression(&mut value, objects, prefix)?;
                             result.push(value);
                         }

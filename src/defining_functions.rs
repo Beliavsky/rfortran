@@ -100,6 +100,11 @@ fn twin(name: &str, params: &[String], body: &[Stmt], kind: &TypeSpec) -> Option
 /// of `body` are module or internal procedures rather than external ones.
 fn twins(body: &mut Vec<Stmt>, contained: &dyn Fn(&str) -> bool, found: &mut HashMap<String, TypeSpec>) {
     let mut added = vec![];
+    // Functions given twins by an earlier run keep them.
+    let existing: std::collections::HashSet<String> = body.iter().filter_map(|s| match s {
+        Stmt::Subroutine { name, .. } => name.strip_prefix(TWIN).map(str::to_owned),
+        _ => None,
+    }).collect();
     for (i, s) in body.iter_mut().enumerate() {
         match s {
             Stmt::Function { name, params, body: inner, return_type, pure, elemental } => {
@@ -107,7 +112,7 @@ fn twins(body: &mut Vec<Stmt>, contained: &dyn Fn(&str) -> bool, found: &mut Has
                     Stmt::VarDecl { kind, names } if names.contains(name) => Some(kind.clone()),
                     _ => None,
                 }));
-                if let (true, false, Some(kind)) = (contained(name), *pure || *elemental, kind) {
+                if let (true, false, Some(kind), false) = (contained(name), *pure || *elemental, kind, existing.contains(name.as_str())) {
                     if let Some(t) = twin(name, params, inner, &kind) {
                         found.insert(name.clone(), kind);
                         added.push((i + 1, t, name.clone()));
@@ -136,6 +141,8 @@ fn twins(body: &mut Vec<Stmt>, contained: &dyn Fn(&str) -> bool, found: &mut Has
 struct Calls<'a> {
     functions: &'a HashMap<String, TypeSpec>,
     serial: usize,
+    /// The prefix of the names of temporaries, which differs between runs.
+    prefix: &'static str,
 }
 
 impl Calls<'_> {
@@ -146,7 +153,7 @@ impl Calls<'_> {
             if let Expr::Call(n, args) = e {
                 if let Some(kind) = self.functions.get(n.as_str()) {
                     self.serial += 1;
-                    let temp = format!("rfort_defined_{}", self.serial);
+                    let temp = format!("{}{}", self.prefix, self.serial);
                     declarations.push(Stmt::VarDecl { kind: kind.clone(), names: vec![temp.clone()] });
                     let mut args = std::mem::take(args);
                     args.push(Expr::Ident(temp.clone()));
@@ -221,7 +228,17 @@ impl Calls<'_> {
     }
 }
 
-pub(crate) fn resolve(mut p: Program) -> Result<Program> {
+pub(crate) fn resolve(p: Program) -> Result<Program> {
+    run(p, "rfort_defined_")
+}
+
+/// After derived-type lowering, a function that defines a component of a
+/// derived-type dummy has scalar component dummies, which twins can take.
+pub(crate) fn resolve_components(p: Program) -> Result<Program> {
+    run(p, "rfort_defined_component_")
+}
+
+fn run(mut p: Program, prefix: &'static str) -> Result<Program> {
     let mut functions = HashMap::new();
     let contains = p.contains.clone();
     twins(&mut p.body, &|n: &str| contains.iter().any(|c| c == n), &mut functions);
@@ -242,7 +259,7 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
         }
     }
     imports(&mut p.body, &functions);
-    let mut calls = Calls { functions: &functions, serial: 0 };
+    let mut calls = Calls { functions: &functions, serial: 0, prefix };
     calls.unit(&mut p.body);
     if !p.contains.is_empty() {
         let twins: Vec<String> = p.contains.iter().filter(|n| functions.contains_key(*n)).map(|n| format!("{TWIN}{n}")).collect();

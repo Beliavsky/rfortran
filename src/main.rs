@@ -75,6 +75,7 @@ mod equivalence;
 mod common;
 mod entries;
 mod pdt;
+mod field_subscripts;
 mod scalar_components;
 mod recursive_types;
 mod recursive_outputs;
@@ -434,6 +435,7 @@ fn lower_program_body(
         let program = compile_profile::run("equivalence::resolve", || equivalence::resolve(program))?;
         let program = compile_profile::run("external_calls::resolve", || external_calls::resolve(program))?;
         let program = compile_profile::run("derived::resolve", || derived::resolve(program))?;
+        let program = compile_profile::run("defining_functions::resolve_components", || defining_functions::resolve_components(program))?;
         let program = compile_profile::run("external_calls::resolve_complex", || external_calls::resolve_complex(program))?;
         let program = compile_profile::run("random_seed::resolve", || random_seed::resolve(program))?;
         let program = compile_profile::run("parameters::resolve", || parameters::resolve(program))?;
