@@ -245,6 +245,23 @@ pub unsafe extern "C" fn rfort_file_open_dynamic(slots:*mut *mut core::ffi::c_vo
     }
     *slots.add(index)=file;*names.add(index)=name;*actions.add(index)=file_inquiry::action(mode);unit
 }
+/// The stream of `unit` for a data transfer. An unconnected unit 1..1023
+/// connects to the file fort.N, as in gfortran and ifx: created if absent,
+/// positioned at its start, with READWRITE action. Null when unconnected and
+/// not eligible, or when the file cannot be opened.
+#[no_mangle]
+pub unsafe extern "C" fn rfort_file_implicit(slots:*mut *mut core::ffi::c_void,names:*mut *const u8,actions:*mut i64,unit:i64)->*mut core::ffi::c_void {
+    let Some(index)=file_inquiry::index(unit) else {return core::ptr::null_mut()};
+    let file=*slots.add(index);
+    if !file.is_null() || !(1..1024).contains(&unit) || matches!(unit,5|6) {return file;}
+    let mut text=*b"fort.0000";let mut length=5;
+    for digit in [1000,100,10,1] {if unit>=digit || digit==1 {text[length]=b'0'+(unit/digit%10) as u8;length+=1;}}
+    let name=malloc(length+1).cast::<u8>();if name.is_null() {return core::ptr::null_mut();}
+    core::ptr::copy_nonoverlapping(text.as_ptr(),name,length);*name.add(length)=0;
+    let mut file=fopen(name,b"r+b\0".as_ptr());if file.is_null() {file=fopen(name,b"w+b\0".as_ptr());}
+    if file.is_null() {free(name.cast());return file;}
+    *slots.add(index)=file;*names.add(index)=name;*actions.add(index)=3;file
+}
 #[no_mangle]
 pub unsafe extern "C" fn rfort_format_end_file(pointer:*mut core::ffi::c_void,stream:*mut core::ffi::c_void)->i32 {
     let list=&*pointer.cast::<OutputList>();let mut failed=false;

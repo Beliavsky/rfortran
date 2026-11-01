@@ -284,6 +284,17 @@ impl Files {
             (0,unit,1,1,i64::from(!name.is_empty()),name,inquiry::action_text(*self.2.get(&unit).unwrap_or(&3)).into())
         } else {(0,-1,0,i64::from(unit>=0 && inquiry::index(unit).is_some()),0,String::new(),"UNDEFINED".into())}
     }
+    /// A data transfer on an unconnected unit 1..1023 connects it to the
+    /// file fort.N, as gfortran and ifx do: created if absent, positioned at
+    /// its start, with READWRITE action. Other units are left alone.
+    fn implicit(&mut self, unit: i64) {
+        if !(1..1024).contains(&unit) || matches!(unit, 5 | 6) || self.0.contains_key(&unit) { return; }
+        let name = format!("fort.{unit}");
+        let Ok(file) = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(&name) else { return };
+        self.0.insert(unit, file);
+        self.1.insert(unit, name);
+        self.2.insert(unit, 3);
+    }
     fn valid(unit: i64) -> Result<()> {
         if (!(0..1024).contains(&unit) && !(-1033..=-10).contains(&unit)) || matches!(unit, 5 | 6) {
             bail!("file units must be in 0..1023, excluding preconnected units 5 and 6");
@@ -390,6 +401,7 @@ impl Files {
             std::io::stderr().flush()?;
             return Ok(());
         }
+        self.implicit(unit);
         let file=self.0.get_mut(&unit).context("file unit is not connected")?;
         file.write_all(text.as_bytes())?;
         if advance {file.write_all(b"\n")?;}
@@ -399,6 +411,7 @@ impl Files {
     }
     pub(crate) fn record(&mut self, unit: i64, length: usize) -> Result<String> {
         Self::valid(unit)?;
+        self.implicit(unit);
         let file = self
             .0
             .get_mut(&unit)
@@ -445,10 +458,12 @@ impl Files {
     }
     /// Unformatted stream output: 0, or 1 on an error.
     pub(crate) fn stream_write(&mut self,unit:i64,bytes:&[u8])->i64 {
+        self.implicit(unit);
         match self.0.get_mut(&unit) {Some(file)=>i64::from(file.write_all(bytes).is_err()),None=>1}
     }
     /// Unformatted stream input: 0, -1 at end of file, or 1 on an error.
     pub(crate) fn stream_read(&mut self,unit:i64,buffer:&mut [u8])->i64 {
+        self.implicit(unit);
         let Some(file)=self.0.get_mut(&unit) else {return 1};
         match file.read_exact(buffer) {Ok(())=>0,Err(e) if e.kind()==std::io::ErrorKind::UnexpectedEof=>-1,Err(_)=>1}
     }
@@ -461,7 +476,7 @@ impl Files {
     pub(crate) fn input_byte(&mut self,unit:i64)->Result<Option<u8>,()> {
         let mut byte=[0];
         let result=if unit==5 {std::io::stdin().read(&mut byte)} else {
-            let file=self.0.get_mut(&unit).ok_or(())?;file.read(&mut byte)
+            self.implicit(unit);let file=self.0.get_mut(&unit).ok_or(())?;file.read(&mut byte)
         };
         match result {Ok(0)=>Ok(None),Ok(_)=>Ok(Some(byte[0])),Err(_)=>Err(())}
     }
@@ -481,6 +496,7 @@ impl Files {
             });
         }
         if Self::valid(unit).is_err() { return crate::record_input::ERROR; }
+        self.implicit(unit);
         let Some(file) = self.0.get_mut(&unit) else { return crate::record_input::ERROR; };
         scan(buffer, &mut || {
             let mut byte = [0];

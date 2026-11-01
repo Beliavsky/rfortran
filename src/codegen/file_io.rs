@@ -142,11 +142,22 @@ pub(super) fn open_dynamic(module:&mut ObjectModule,b:&mut FunctionBuilder,ptr:i
     let okay=b.ins().icmp_imm(IntCC::NotEqual,unit,i64::MIN);require(module,b,ptr,dc,okay,"OPEN failed")?;Ok(unit)
 }
 pub(super) fn name(module:&mut ObjectModule,b:&mut FunctionBuilder,ptr:ir::Type,dc:&mut u32,unit:ir::Value)->Result<ir::Value> {
-    handle(module,b,ptr,dc,unit)?;
+    let slot=slot(module,b,ptr,dc,unit)?;
+    let file=b.ins().load(ptr,MemFlags::new(),slot,0);
+    let connected=b.ins().icmp_imm(IntCC::NotEqual,file,0);
+    require(module,b,ptr,dc,connected,"file unit is not connected")?;
     let (index,_)=unit_index(b,unit);
     let base=table(b,module,ptr,".rfort.file_names")?;
     let offset=b.ins().imul_imm(index,8);let address=b.ins().iadd(base,offset);
     Ok(b.ins().load(ptr,MemFlags::new(),address,0))
+}
+
+/// The stream of a connected unit, connecting an unconnected one to fort.N.
+fn implicit(module: &mut ObjectModule, b: &mut FunctionBuilder, ptr: ir::Type, unit: ir::Value) -> Result<ir::Value> {
+    let slots = table(b, module, ptr, ".rfort.file_units")?;
+    let names = table(b, module, ptr, ".rfort.file_names")?;
+    let actions = table(b, module, ptr, ".rfort.file_actions")?;
+    call(module, b, "rfort_file_implicit", &[slots, names, actions, unit], ptr)
 }
 
 pub(super) fn handle(
@@ -156,8 +167,8 @@ pub(super) fn handle(
     dc: &mut u32,
     unit: ir::Value,
 ) -> Result<ir::Value> {
-    let slot = slot(module, b, ptr, dc, unit)?;
-    let file = b.ins().load(ptr, MemFlags::new(), slot, 0);
+    slot(module, b, ptr, dc, unit)?;
+    let file = implicit(module, b, ptr, unit)?;
     let connected = b.ins().icmp_imm(IntCC::NotEqual, file, 0);
     require(module, b, ptr, dc, connected, "file unit is not connected")?;
     Ok(file)
@@ -172,8 +183,8 @@ pub(super) fn write_handle(
     dc: &mut u32,
     unit: ir::Value,
 ) -> Result<ir::Value> {
-    let slot = slot(module, b, ptr, dc, unit)?;
-    let file = b.ins().load(ptr, MemFlags::new(), slot, 0);
+    slot(module, b, ptr, dc, unit)?;
+    let file = implicit(module, b, ptr, unit)?;
     let stderr = call(module, b, "rfort_stderr_stream", &[], ptr)?;
     let zero = b.ins().icmp_imm(IntCC::Equal, unit, 0);
     let unconnected = b.ins().icmp_imm(IntCC::Equal, file, 0);
@@ -204,11 +215,8 @@ pub(super) fn read_handle(
     b.switch_to_block(invalid);b.seal_block(invalid);
     b.ins().jump(done,&[zero.into(),error.into()]);
     b.switch_to_block(lookup);b.seal_block(lookup);
-    let id=module.declare_data(".rfort.file_units",Linkage::Local,true,false)?;
-    let global=module.declare_data_in_func(id,b.func);
-    let base=b.ins().global_value(ptr,global);
-    let offset=b.ins().imul_imm(index,8);let address=b.ins().iadd(base,offset);
-    let handle=b.ins().load(ptr,MemFlags::new(),address,0);
+    let _ = index;
+    let handle=implicit(module,b,ptr,unit)?;
     let connected=b.ins().icmp_imm(IntCC::NotEqual,handle,0);
     let status=b.ins().select(connected,zero,error);
     b.ins().jump(done,&[handle.into(),status.into()]);

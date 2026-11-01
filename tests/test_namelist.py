@@ -162,7 +162,7 @@ end program
 character(100)::msg
 namelist /g/ n
 n=5
-write(999,nml=g,iostat=ios,iomsg=msg)
+write(-5,nml=g,iostat=ios,iomsg=msg)
 print *,ios>0,len_trim(msg)>0
 open(newunit=u,status='scratch')
 write(u,'(a)')'&g n=7 /'

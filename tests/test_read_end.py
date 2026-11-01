@@ -91,8 +91,11 @@ end program main
 """, "use named EXIT/CYCLE")
 
     def test_input_error_is_not_eof(self):
+        # An invalid unit, as an unconnected one now connects to fort.N.
         self.check("""program main
-read(unit=23,fmt=*,end=10)
+integer :: u
+u = -5
+read(unit=u,fmt=*,end=10)
 10 continue
 print *,'wrong'
 end program main

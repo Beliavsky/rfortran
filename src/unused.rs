@@ -42,6 +42,19 @@ const CATEGORIES: &[&str] = &[
     "underflow",
     "empty-case",
     "unused-label",
+    "implicit-open",
+];
+/// The opt-in categories that -Wextra enables, as gfortran's -Wextra adds to
+/// -Wall. implicit-interface and conversion stay opt-in: they fire throughout
+/// legacy and mixed-kind code.
+const EXTRA: &[&str] = &[
+    "missing-intent",
+    "shadow",
+    "shadow-dummy-argument",
+    "dead-store",
+    "unchecked-status",
+    "intrinsic-shadow",
+    "keyword-name",
 ];
 fn canonical(name: &str) -> &str {
     match name {
@@ -57,7 +70,7 @@ pub fn validate_options(options: &[String]) -> Result<()> {
             .or_else(|| option.strip_prefix("error="))
             .unwrap_or(option);
         let name = canonical(name);
-        if !CATEGORIES.contains(&name) && !matches!(name, "unused" | "unused-private") {
+        if !CATEGORIES.contains(&name) && !matches!(name, "unused" | "unused-private" | "extra") {
             bail!("unknown warning option `{option}`");
         }
     }
@@ -91,6 +104,16 @@ pub(crate) fn selected(
         || settings.error.contains(old)
         || settings.deny.contains(category)
         || settings.error.contains(category);
+    // -Wextra is a group: an option naming the category wins in either order.
+    if EXTRA.contains(&category) {
+        for option in options {
+            match option.as_str() {
+                "extra" => enabled = true,
+                "no-extra" => enabled = false,
+                _ => {}
+            }
+        }
+    }
     for option in options {
         let name = canonical(
             option

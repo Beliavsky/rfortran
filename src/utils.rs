@@ -117,6 +117,10 @@ pub fn print_help() {
     println!("  -I <directory>       Search for INCLUDE files and .rmod module interfaces (repeatable)");
     println!("  -J <directory>       Write module interfaces here and search this directory");
     println!("  -Wall, --Wall        Enable common warnings (some advice remains opt-in)");
+    println!("  -Wextra, --Wextra    Enable the opt-in advice except implicit-interface and conversion:");
+    println!("                      missing-intent, shadow, shadow-dummy-argument, dead-store,");
+    println!("                      unchecked-status, intrinsic-shadow, keyword-name");
+    println!("                      As in gfortran, it does not imply -Wall; use -Wall -Wextra");
     println!("  -std=<revision>     Check implemented features: f90, f95, f2003, f2008, f2018, f2023");
     println!("                      Default: permissive; revision checks are partial");
     println!("  -Wunused             Enable all unused-declaration warnings");
@@ -143,6 +147,8 @@ pub fn print_help() {
     println!("  -Wunderflow         Warn about nonzero constants rounding to zero");
     println!("  -Wempty-case        Warn about reversed constant CASE ranges");
     println!("  -Wunused-label      Warn about unreferenced statement labels");
+    println!("  -Wimplicit-open     Warn about READ/WRITE on a constant unit no OPEN names (on by default;");
+    println!("                      the unit connects to fort.N, as in gfortran and ifx)");
     println!("  -Wno-<category>      Disable a warning category");
     println!("  -Werror, --Werror    Treat enabled warnings as errors");
     println!("  -Werror=<category>  Enable a warning category and treat it as an error");

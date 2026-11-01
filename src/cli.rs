@@ -210,6 +210,7 @@ impl Cli {
                 flag if flag.starts_with("-std=") => args.push(format!("--std={}",&flag[5..]).into()),
                 "-Wall" | "--wall" => args.push("--Wall".into()),
                 "-Werror" | "--werror" => args.push("--Werror".into()),
+                "--Wextra" | "--wextra" => { args.push("--warning".into()); args.push("extra".into()); }
                 "-ffixed-form" | "-ffree-form" | "-fd-lines-as-code" => args.push(format!("-{text}").into()),
                 "-fd-lines-as-comments" => {}
                 "-cpp" | "-nocpp" => args.push(format!("-{text}").into()),

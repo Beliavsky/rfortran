@@ -96,10 +96,8 @@ end
 ''','file\nfirst\nsecond\n')
 
     def test_invalid_runtime_unit_and_advance(self):
-        # List-directed WRITE to a unit with no connected file fails at runtime.
-        self.check("integer::u\nu=17\nwrite(u,*) 'invalid'\nend\n",error='file unit is not connected',reference=False)
+        # WRITE to an unconnected unit connects it to fort.N: tests/test_implicit_open.py.
         self.check("character(5)::advance\nadvance='maybe'\nwrite(6,'(a)',advance=advance) 'invalid'\nend\n",error="ADVANCE must be 'yes' or 'no'",reference=False)
-        self.check("write(17,*) 'invalid'\nend\n",error='file unit is not connected',reference=False)
 
     def test_empty_character_dummy_with_runtime_loop_bound(self):
         program='''program main

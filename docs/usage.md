@@ -51,26 +51,33 @@ The following source advice shares the existing `-Wno-<category>`,
 Diagnostics identify original source locations; shadowing, dead-store, aliasing,
 and lifetime diagnostics also identify the related declaration or assignment.
 
-| Option | In `-Wall` | Initial scope |
-| --- | --- | --- |
-| `-Wshadow` | No | Local data declarations hiding enclosing variables or named constants, including USE-associated names |
-| `-Wshadow-dummy-argument` | No | The corresponding check for dummy arguments, separately selectable |
-| `-Wdead-store` | No | Straight-line assignments to local scalars overwritten before a read |
-| `-Winteger-division` | Yes | Constant integer divisions with a nonzero discarded remainder, including named constants |
-| `-Wunchecked-status` | No | Local scalar IOSTAT, allocation STAT, and intrinsic status results not inspected or forwarded |
-| `-Wtarget-lifetime` | Yes | Pointer associations escaping a known automatic local target |
-| `-Waliasing` | Yes | Known overlapping actuals when a defined procedure's OUT dummy, or modified INOUT dummy, conflicts with another dummy's reads |
-| `-Wconversion` | No | Potential information loss in implicit numeric assignment/initialization conversions |
-| `-Wprecision-loss` | Yes | Lower-precision literals or calculations subsequently widened to a higher real/complex kind |
-| `-Wpointer-init` | Yes | Derived-type pointer components lacking default initialization |
-| `-Wdo-subscript` | Yes | Loop-derived scalar subscript ranges extending beyond known fixed array bounds |
-| `-Wenum-exhaustive` | Yes | SELECT CASE without CASE DEFAULT missing declared values of an enumeration type or named interoperable enum type |
-| `-Wimplicit-interface` | No | Calls lacking a known explicit interface; module/internal procedures, interface blocks, generics and known intrinsics are exempt |
-| `-Wintrinsic-shadow` | No | Defined or declared user procedures sharing a known intrinsic procedure name; ordinary data names are exempt |
-| `-Wkeyword-name` | No | Variables, dummy arguments and procedures named like Fortran statement keywords or attributes, such as `block`, `exit`, `if`, `data` or `result`; legal, since Fortran has no reserved words, but harder to read. Intrinsic procedure names such as `len` are left to `-Wintrinsic-shadow` |
-| `-Wunderflow` | Yes | Supported nonzero constant expressions or assignments rounding to zero in REAL(4)/REAL(8) |
-| `-Wempty-case` | Yes | Reversed constant INTEGER, CHARACTER or enumeration CASE ranges |
-| `-Wunused-label` | Yes | Unreferenced statement labels within each program unit, including FORMAT labels |
+`-Wextra` enables the opt-in advice that `-Wall` leaves out, except
+`-Wconversion` and `-Wimplicit-interface`, which fire throughout mixed-kind and
+legacy code. As in gfortran, `-Wextra` does not imply `-Wall`; use
+`-Wall -Wextra` for both. An option naming a category overrides the group in
+either order, so `-Wall -Wextra -Wno-shadow` drops only shadowing advice;
+`-Wno-extra` turns the group off again.
+
+| Option | In `-Wall` | In `-Wextra` | Initial scope |
+| --- | --- | --- | --- |
+| `-Wshadow` | No | Yes | Local data declarations hiding enclosing variables or named constants, including USE-associated names |
+| `-Wshadow-dummy-argument` | No | Yes | The corresponding check for dummy arguments, separately selectable |
+| `-Wdead-store` | No | Yes | Straight-line assignments to local scalars overwritten before a read |
+| `-Winteger-division` | Yes | No | Constant integer divisions with a nonzero discarded remainder, including named constants |
+| `-Wunchecked-status` | No | Yes | Local scalar IOSTAT, allocation STAT, and intrinsic status results not inspected or forwarded |
+| `-Wtarget-lifetime` | Yes | No | Pointer associations escaping a known automatic local target |
+| `-Waliasing` | Yes | No | Known overlapping actuals when a defined procedure's OUT dummy, or modified INOUT dummy, conflicts with another dummy's reads |
+| `-Wconversion` | No | No | Potential information loss in implicit numeric assignment/initialization conversions |
+| `-Wprecision-loss` | Yes | No | Lower-precision literals or calculations subsequently widened to a higher real/complex kind |
+| `-Wpointer-init` | Yes | No | Derived-type pointer components lacking default initialization |
+| `-Wdo-subscript` | Yes | No | Loop-derived scalar subscript ranges extending beyond known fixed array bounds |
+| `-Wenum-exhaustive` | Yes | No | SELECT CASE without CASE DEFAULT missing declared values of an enumeration type or named interoperable enum type |
+| `-Wimplicit-interface` | No | No | Calls lacking a known explicit interface; module/internal procedures, interface blocks, generics and known intrinsics are exempt |
+| `-Wintrinsic-shadow` | No | Yes | Defined or declared user procedures sharing a known intrinsic procedure name; ordinary data names are exempt |
+| `-Wkeyword-name` | No | Yes | Variables, dummy arguments and procedures named like Fortran statement keywords or attributes, such as `block`, `exit`, `if`, `data` or `result`; legal, since Fortran has no reserved words, but harder to read. Intrinsic procedure names such as `len` are left to `-Wintrinsic-shadow` |
+| `-Wunderflow` | Yes | No | Supported nonzero constant expressions or assignments rounding to zero in REAL(4)/REAL(8) |
+| `-Wempty-case` | Yes | No | Reversed constant INTEGER, CHARACTER or enumeration CASE ranges |
+| `-Wunused-label` | Yes | No | Unreferenced statement labels within each program unit, including FORMAT labels |
 
 Interface advice distinguishes optional warnings from language requirements.
 Keyword calls without an explicit interface are errors. When a procedure body
@@ -164,7 +171,7 @@ Neither check is a complete proof of storage safety or Fortran conformance.
 Enable all the new advice with, for example:
 
 ```cmd
-rfort -Wall -Wconversion -Wshadow -Wshadow-dummy-argument -Wdead-store -Wunchecked-status check example.f90
+rfort -Wall -Wextra -Wconversion -Wimplicit-interface check example.f90
 ```
 
 Regression checks: `python tests/test_source_advice.py` and
@@ -211,7 +218,7 @@ This diagnostic does not expand existing backend support for saved pointers.
 Disable with `-Wno-implicit-save`, promote with `-Werror=implicit-save`, or use
 `!#allow(implicit-save)` / `!#deny(implicit-save)`.
 
-`-Wmissing-intent` is opt-in and is **not enabled by `-Wall`**. It warns about
+`-Wmissing-intent` is opt-in and is **not enabled by `-Wall`**; `-Wextra` enables it. It warns about
 data dummy arguments without explicit `INTENT`, without choosing an intent or
 rewriting the procedure. Procedure, POINTER, and VALUE dummies are exempt in
 this initial implementation. Separate INTENT statements and derived-type dummy
@@ -222,7 +229,8 @@ Disable with `-Wno-missing-intent`, promote with `-Werror=missing-intent`, or us
 Both checks run before lowering, including on uncalled procedure definitions,
 and retain original file locations in multi-source builds. Definitions loaded
 from `.rmod` files are not diagnosed again. Example:
-`rfort -Wall -Wmissing-intent check tests/programs/xdeclaration_warnings.f90`.
+`rfort -Wall -Wmissing-intent check tests/programs/xdeclaration_warnings.f90`
+(or `-Wall -Wextra`).
 Regression checks: `python tests/test_declaration_warnings.py`.
 
 `-Wformat`, enabled by `-Wall`/`--wall`, checks known formats against known
@@ -289,6 +297,19 @@ warnings have been replaced, so unused dummy arguments no longer produce
 messages saying "parameter" or duplicate local-variable warnings.
 `tests/programs/xunused.f90` demonstrates these diagnostics; run `rfort -Wall tests/programs/xunused.f90` or
 `python tests/test_unused_warnings.py` for the regression checks.
+
+`-Wimplicit-open` is **on by default**. A READ or WRITE on an unconnected unit
+1..1023 (other than the preconnected 0, 5 and 6) connects it to the file
+`fort.N` in the working directory, as gfortran and ifx do: the file is created
+if absent and positioned at its start, so a READ of a new unit reaches end of
+file, and a WRITE after CLOSE starts the file again. This is a common extension,
+not portable Fortran, so rfort warns at the first READ or WRITE of each constant
+unit (an integer literal or a named constant) that no OPEN statement of the
+program names. NEWUNIT= opens don't count, and an OPEN of a unit given by a
+variable turns the check off, since it might connect any unit. Disable with
+`-Wno-implicit-open` or `!#allow(implicit-open)`; promote with
+`-Werror=implicit-open`. `-std=` does not change the behavior. Regression
+checks: `python tests/test_implicit_open.py`.
 
 `-Woptional-argument` warns when an OPTIONAL dummy is referenced without a
 proven `PRESENT` guard. For example, `if (present(s2))` does not prove that `s1`

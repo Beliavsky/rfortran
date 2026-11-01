@@ -66,9 +66,10 @@ end
         program = f"""implicit none
 character(4) :: text
 integer :: unit, status
-unit = 20
+unit = -5
 read(unit,'(a)',iostat=status) text
 print *, status > 0
+unit = 20
 open(unit,file={literal(data)},status='old',action='read')
 read(unit,'(a)',iostat=unit) text
 if (unit == 0) print '(a)', '['//text//']'

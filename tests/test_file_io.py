@@ -63,8 +63,6 @@ class FileIO(unittest.TestCase):
             (None, opening, "OPEN failed"),
             (b"", opening+"read(20,'(a)') text", "end of file or input error"),
             (b"a"*12000+b"\xff\n", opening+"read(20,'(a)') text", "non-NUL ASCII"),
-            (b"abc\n", "read(20,'(a)') text", "file unit is not connected"),
-            (b"abc\n", opening+"close(20)\nread(20,'(a)') text", "file unit is not connected"),
             (b"abc\n", "backspace(20)", "file unit is not connected"),
             (b"abc\n", opening+opening, "already connected"),
             (b"abc\n", "iu=1024\nrewind(iu)", "file units must be in 0..1023"),
