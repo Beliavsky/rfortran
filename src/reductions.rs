@@ -588,7 +588,7 @@ fn lower_bit(e:&mut Expr,symbols:&mut Symbols,prefix:&mut Vec<Stmt>,serial:&mut 
                 }
             }
         }
-        if values.iter().enumerate().skip(1).any(|(i,v)|v.is_none() && !checked[i]) && !crate::bit_intrinsics::counts(name) && !matches!(name.as_str(),"iand"|"ior"|"ieor"|"not") {
+        if values.iter().enumerate().skip(1).any(|(i,v)|v.is_none() && !checked[i]) && !crate::bit_intrinsics::counts(name) && !matches!(name.as_str(),"iand"|"ior"|"ieor"|"not"|"merge_bits") {
             bail!("{} with array arguments currently requires constant control arguments",name.to_ascii_uppercase());
         }
         *name=crate::bit_intrinsics::tag(name,bytes);
@@ -613,6 +613,7 @@ fn lower_bit(e:&mut Expr,symbols:&mut Symbols,prefix:&mut Vec<Stmt>,serial:&mut 
         "ishft"=>Some(bin(BinOp::Or,bin(BinOp::Lt,args[1].clone(),int(-bits)),bin(BinOp::Gt,args[1].clone(),int(bits)))),
         "ibits"=>Some(bin(BinOp::Gt,args[2].clone(),bin(BinOp::Sub,int(bits),args[1].clone()))),
         "dshiftl"|"dshiftr"=>Some(bin(BinOp::Or,bin(BinOp::Lt,args[2].clone(),int(0)),bin(BinOp::Gt,args[2].clone(),int(bits)))),
+        "shiftl"|"shiftr"|"shifta"=>Some(bin(BinOp::Or,bin(BinOp::Lt,args[1].clone(),int(0)),bin(BinOp::Gt,args[1].clone(),int(bits)))),
         _=>None,
     };
     if let Some(cond)=control {prefix.push(Stmt::If {cond,then_body:vec![Stmt::CallSub {name:"@error_stop".into(),args:vec![Expr::Str(crate::bit_intrinsics::range_message(name,bits))]}],else_body:None});}

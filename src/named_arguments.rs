@@ -121,6 +121,8 @@ pub(crate) fn intrinsic(name: &str) -> Option<Signature> {
         "bessel_jn" | "bessel_yn" => &["n", "x"],
         "rfort_bessel_jn" | "rfort_bessel_yn" => &["x", "n"],
         "norm2" => &["x", "dim"],
+        "maskl" | "maskr" => &["i", "kind"],
+        "erfc_scaled" => &["x"],
         "out_of_range" => &["x", "mold", "round"],
         "sqrt" | "exp" | "log" | "log10" | "sin" | "cos" | "tan" | "asin" | "acos" | "atan"
         | "sinh" | "cosh" | "tanh" | "asinh" | "acosh" | "atanh" | "erf" | "erfc" | "gamma" | "log_gamma"
@@ -144,6 +146,8 @@ pub(crate) fn intrinsic(name: &str) -> Option<Signature> {
         "move_alloc" => &["from", "to"],
         "cpu_time" => &["time"],
         "get_command_argument" => &["number","value","length","status"],
+        "get_command" => &["command","length","status"],
+        "execute_command_line" => &["command","wait","exitstat","cmdstat","cmdmsg"],
         "getcwd" => &["c","status"],
         "get_environment_variable" => &["name","value","length","status","trim_name"],
         "date_and_time" => &["date", "time", "zone", "values"],
@@ -176,6 +180,8 @@ pub(crate) fn intrinsic(name: &str) -> Option<Signature> {
         optional: if name=="tokenize" {HashSet::from(["separator".into()])}else if name=="split" {HashSet::from(["back".into()])}else if name=="cmplx" {HashSet::from(["y".into(),"kind".into()])}else if name=="associated" {HashSet::from(["target".into()])}else if matches!(name,"index"|"scan"|"verify") {
             HashSet::from(["back".into(),"kind".into()])
         } else if name=="get_command_argument" {HashSet::from(["value".into(),"length".into(),"status".into()])
+        } else if name=="get_command" {HashSet::from(["command".into(),"length".into(),"status".into()])
+        } else if name=="execute_command_line" {HashSet::from(["wait".into(),"exitstat".into(),"cmdstat".into(),"cmdmsg".into()])
         } else if matches!(name,"next"|"previous") {HashSet::from(["stat".into()])
         } else if name=="getcwd" {HashSet::from(["status".into()])
         } else if name=="get_environment_variable" {
@@ -191,6 +197,7 @@ pub(crate) fn intrinsic(name: &str) -> Option<Signature> {
         } else if name=="ishftc" {HashSet::from(["size".into()])
         } else if name=="out_of_range" {HashSet::from(["round".into()])
         } else if name=="norm2" {HashSet::from(["dim".into()])
+        } else if matches!(name,"maskl"|"maskr") {HashSet::from(["kind".into()])
         } else if matches!(name, "real" | "int" | "nint" | "aint" | "anint" | "floor" | "ceiling" | "char" | "achar" | "ichar" | "iachar" | "len" | "len_trim") {
             HashSet::from(["kind".into()])
         } else {

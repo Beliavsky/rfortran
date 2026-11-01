@@ -717,11 +717,12 @@ pub fn analyze_with_origins(
     }
     for name in [
         "btest", "iand", "ibclr", "ibits", "ibset", "ieor", "ior", "ishft", "ishftc", "not", "mod",
-        "modulo", "sign", "popcnt", "poppar", "leadz", "trailz", "dshiftl", "dshiftr", "bit_size", "iany", "iall", "iparity",
+        "modulo", "sign", "popcnt", "poppar", "leadz", "trailz", "dshiftl", "dshiftr", "shiftl", "shiftr", "shifta", "merge_bits", "maskl", "maskr", "bit_size", "iany", "iall", "iparity",
     ] {
         known_intrinsics.insert(name.to_string(), TypeSpec::Integer(None));
     }
 
+    known_intrinsics.insert("rfort_argument_count".into(),TypeSpec::Integer(None));
     known_intrinsics.insert("btest".into(),TypeSpec::Logical);
     known_intrinsics.insert("parity".into(),TypeSpec::Logical);
     known_intrinsics.insert("out_of_range".into(),TypeSpec::Logical);

@@ -954,6 +954,22 @@ fn eval_expr(
                         let full=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,magnitude,bits);
                         b.ins().select(full,zero,shifted)
                     },
+                    "shiftl"|"shiftr"=>{
+                        let shifted=if operation=="shiftl" {b.ins().ishl(i,values[1])} else {b.ins().ushr(i,values[1])};
+                        let full=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,values[1],bits);
+                        b.ins().select(full,zero,shifted)
+                    },
+                    "shifta"=>{
+                        // I is sign extended; a shift of 64 is a shift of 63.
+                        let most=b.ins().iconst(ir::types::I64,63);
+                        let over=b.ins().icmp_imm(ir::condcodes::IntCC::SignedGreaterThan,values[1],63);
+                        let amount=b.ins().select(over,most,values[1]);
+                        b.ins().sshr(values[0],amount)
+                    },
+                    "merge_bits"=>{
+                        let chosen=b.ins().band(i,values[2]);let others=b.ins().bnot(values[2]);
+                        let rest=b.ins().band(values[1],others);b.ins().bor(chosen,rest)
+                    },
                     "popcnt"=>b.ins().popcnt(i),
                     "poppar"=>{let count=b.ins().popcnt(i);b.ins().band(count,one)},
                     "leadz"=>{let count=b.ins().clz(i);b.ins().iadd_imm(count,bits-64)},
@@ -2711,6 +2727,15 @@ fn gen_stmts(
                     let IExpr::Ident(length)=&args[1] else {unreachable!()};let length=storage_addr(b,ptr_ty,ints[length]);
                     let code=file_io::call(module,b,"rfort_argument_query",&[number,dest.address,dest.length,present,length],types::I64)?;
                     let IExpr::Ident(status)=&args[0] else {unreachable!()};let status=storage_addr(b,ptr_ty,ints[status]);
+                    b.ins().store(MemFlags::new(),code,status,0);continue;
+                }
+                if name=="@execute_command" {
+                    let source=characters::view(module,b,ptr_ty,dc,chars,ints,&args[3])?;
+                    let dest=characters::view(module,b,ptr_ty,dc,chars,ints,&args[2])?;
+                    let wait=eval_expr(b,ex,ptr_ty,&args[4],ints,reals,bools,func_meta);let wait=to_i64(b,wait);
+                    let IExpr::Ident(exit)=&args[0] else {unreachable!()};let exit=storage_addr(b,ptr_ty,ints[exit]);
+                    let code=file_io::call(module,b,"rfort_execute_command",&[source.address,source.length,wait,dest.address,dest.length,exit],types::I64)?;
+                    let IExpr::Ident(status)=&args[1] else {unreachable!()};let status=storage_addr(b,ptr_ty,ints[status]);
                     b.ins().store(MemFlags::new(),code,status,0);continue;
                 }
                 if name=="@environment_query" {

@@ -101,7 +101,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
             }
             let result = match &mut s {
                 Stmt::CallSub { name, args }
-                    if matches!(name.as_str(), "split" | "cpu_time" | "system_clock" | "date_and_time" | "get_environment_variable" | "getcwd" | "get_command_argument")
+                    if matches!(name.as_str(), "split" | "cpu_time" | "system_clock" | "date_and_time" | "get_environment_variable" | "getcwd" | "get_command_argument" | "get_command" | "execute_command_line")
                         && !procedures.contains(name) =>
                 {
                     lower_call(name, args, &vars, &readonly, pure, serial,types).map(|statements| {
@@ -190,6 +190,13 @@ fn lower_call(
     if name == "split" {return lower_split(args,vars,readonly,serial,types);}
     if name == "getcwd" {return lower_cwd(args,vars,readonly,serial);}
     if matches!(name,"get_environment_variable"|"get_command_argument") {return lower_environment(name,args,vars,readonly,serial,types);}
+    if name == "get_command" {
+        // The argument query for the whole command line.
+        let number=Expr::Un(crate::ast::UnOp::Neg,Box::new(Expr::IntLit((-crate::environment::COMMAND_LINE).to_string())));
+        args.insert(0,number);
+        return lower_environment(name,args,vars,readonly,serial,types);
+    }
+    if name == "execute_command_line" {return lower_execute(args,vars,readonly,serial,types);}
     if name == "date_and_time" {
         return lower_date(args, vars, readonly, serial);
     }
@@ -601,7 +608,7 @@ fn digits(value: Expr, width: u32) -> Expr {
 
 fn lower_environment(name:&str,args:&[Expr],vars:&HashMap<String,(TypeSpec,usize)>,readonly:&HashSet<String>,serial:&mut usize,types:&crate::operators::ExpressionTypes)->Result<Vec<Stmt>> {
     let intrinsic=name.to_ascii_uppercase();
-    let command=name=="get_command_argument";
+    let command=name.starts_with("get_command");
     let kind=|e:&Expr|crate::inquiries::model_type(e,&|n|vars.get(n).cloned());
     let character=|k:&TypeSpec|matches!(k,TypeSpec::Character(_)|TypeSpec::CharacterAssumed|TypeSpec::CharacterLength(_));
     fn text(e:&Expr,vars:&HashMap<String,(TypeSpec,usize)>)->bool {
@@ -612,7 +619,8 @@ fn lower_environment(name:&str,args:&[Expr],vars:&HashMap<String,(TypeSpec,usize
             _=>crate::inquiries::model_type(e,&|n|vars.get(n).cloned()).ok().flatten().is_some_and(|k|matches!(k,TypeSpec::Character(_)|TypeSpec::CharacterAssumed|TypeSpec::CharacterLength(_))),
         }
     }
-    if command {
+    if name=="get_command" {
+    } else if command {
         let inferred=types.kind_rank(&args[0],vars)?;
         let input=kind(&args[0]).ok().flatten().or_else(||inferred.as_ref().map(|(k,_)|k.clone()));
         let scalar=inferred.as_ref().map_or_else(||scalar_index(&args[0],vars),|(_,rank)|*rank==0);
@@ -655,6 +663,61 @@ fn lower_environment(name:&str,args:&[Expr],vars:&HashMap<String,(TypeSpec,usize
         }
         out.push(assign(target,Expr::Ident(temp)));
     }}
+    Ok(out)
+}
+
+/// A writable scalar output variable of an intrinsic subroutine, and its type.
+fn output<'a>(e:&Expr,vars:&'a HashMap<String,(TypeSpec,usize)>,readonly:&HashSet<String>,intrinsic:&str)->Result<&'a TypeSpec> {
+    let n=match e {Expr::Ident(n)|Expr::Index(n,_)|Expr::Call(n,_)=>n,_=>bail!("{intrinsic} requires writable output variables")};
+    let (kind,rank)=vars.get(n).with_context(||format!("{intrinsic} requires declared output variables"))?;
+    let scalar=match e {Expr::Ident(_)=>*rank==0,Expr::Index(_,a)|Expr::Call(_,a)=>*rank>0 && a.len()==*rank && a.iter().all(|e|scalar_index(e,vars)),_=>false};
+    if !scalar || readonly.contains(n) {bail!("{intrinsic} requires writable scalar output variables");}
+    Ok(kind)
+}
+
+/// EXECUTE_COMMAND_LINE runs the command synchronously. EXITSTAT is assigned
+/// when the command ran, CMDMSG when it could not, and without CMDSTAT a
+/// failure is an error termination.
+fn lower_execute(args:&[Expr],vars:&HashMap<String,(TypeSpec,usize)>,readonly:&HashSet<String>,serial:&mut usize,types:&crate::operators::ExpressionTypes)->Result<Vec<Stmt>> {
+    use crate::ast::{BinOp,UnOp};
+    let character=|k:&TypeSpec|matches!(k,TypeSpec::Character(_)|TypeSpec::CharacterAssumed|TypeSpec::CharacterLength(_));
+    if !types.kind_rank(&args[0],vars)?.is_some_and(|(k,rank)|character(&k) && rank==0) {
+        bail!("EXECUTE_COMMAND_LINE COMMAND requires a scalar CHARACTER expression");
+    }
+    let supplied=|i:usize|args.get(i).filter(|e|!crate::named_arguments::omitted(e));
+    let wait=supplied(1).cloned().unwrap_or(Expr::Logical(true));
+    if !matches!(types.kind_rank(&wait,vars)?,Some((TypeSpec::Logical,0))) {bail!("EXECUTE_COMMAND_LINE WAIT requires a scalar LOGICAL expression");}
+    for i in 2..=4 {if let Some(e)=supplied(i) {
+        let kind=output(e,vars,readonly,"EXECUTE_COMMAND_LINE")?;
+        if i==4 {if !character(kind) {bail!("EXECUTE_COMMAND_LINE CMDMSG requires CHARACTER");}}
+        else if !matches!(kind,TypeSpec::Integer(_)) {bail!("EXECUTE_COMMAND_LINE EXITSTAT and CMDSTAT require INTEGER");}
+    }}
+    let width=match supplied(4) {
+        Some(Expr::Ident(n)|Expr::Index(n,_)|Expr::Call(n,_))=>match &vars[n].0 {
+            TypeSpec::Character(size)=>Expr::IntLit(size.unwrap_or(1).to_string()),
+            _=>Expr::Call("len".into(),vec![Expr::Ident(n.clone())]),
+        },
+        _=>Expr::IntLit("0".into()),
+    };
+    let exit=temporary(serial,"command_exit");let status=temporary(serial,"command_status");let message=temporary(serial,"env_value");
+    let message_kind=if let Expr::IntLit(n)=&width {TypeSpec::Character(Some(n.parse()?))} else {TypeSpec::CharacterLength(Box::new(width.clone()))};
+    let status_is=|value:i64|{
+        let literal=if value<0 {Expr::Un(UnOp::Neg,Box::new(Expr::IntLit((-value).to_string())))} else {Expr::IntLit(value.to_string())};
+        Expr::Bin(BinOp::Eq,Box::new(Expr::Ident(status.clone())),Box::new(literal))
+    };
+    let ran=Expr::Bin(BinOp::Or,Box::new(status_is(0)),Box::new(status_is(-2)));
+    let failed=Expr::Un(UnOp::Not,Box::new(ran.clone()));
+    let mut out=vec![Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![exit.clone(),status.clone()]},
+        Stmt::VarDecl{kind:message_kind,names:vec![message.clone()]},
+        Stmt::CallSub{name:"@execute_command".into(),args:vec![Expr::Ident(exit.clone()),Expr::Ident(status.clone()),Expr::Ident(message.clone()),
+            args[0].clone(),wait,width,Expr::Logical(supplied(3).is_some())]}];
+    if let Some(target)=supplied(2) {out.push(Stmt::If{cond:ran,then_body:vec![assign(target,Expr::Ident(exit))],else_body:None});}
+    match supplied(3) {
+        Some(target)=>out.push(assign(target,Expr::Ident(status.clone()))),
+        None=>out.push(Stmt::If{cond:failed.clone(),then_body:vec![Stmt::CallSub{name:"@error_stop".into(),
+            args:vec![Expr::Str("EXECUTE_COMMAND_LINE: the command could not be executed".into())]}],else_body:None}),
+    }
+    if let Some(target)=supplied(4) {out.push(Stmt::If{cond:failed,then_body:vec![assign(target,Expr::Ident(message))],else_body:None});}
     Ok(out)
 }
 

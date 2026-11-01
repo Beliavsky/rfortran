@@ -78,9 +78,31 @@ pub unsafe extern "C" fn rfort_set_arguments(count:i32,values:*const *const u8)-
     crate::watch_standard_output();
     0
 }
+/// The argument NUMBER that asks rfort_argument_query for the whole command,
+/// as GET_COMMAND returns it.
+pub const COMMAND_LINE:i64=-2147483647;
+/// COMMAND_ARGUMENT_COUNT: the arguments after the command name.
+#[no_mangle]
+pub unsafe extern "C" fn rfort_argument_count()->i64 {
+    i64::from(ARG_COUNT.max(1)-1)
+}
 #[no_mangle]
 pub unsafe extern "C" fn rfort_argument_query(number:i64,output:*mut u8,width:usize,present:i64,length:*mut i64)->i64 {
     *length=0;core::ptr::write_bytes(output,b' ',width);*output.add(width)=0;
+    if number==COMMAND_LINE {
+        // The command name and arguments, separated by blanks.
+        if ARG_VALUES.is_null() {return 1;}
+        let mut size=0usize;
+        for k in 0..ARG_COUNT.max(0) as usize {
+            let value=*ARG_VALUES.add(k);
+            if value.is_null() {continue;}
+            if k>0 {if size<width {*output.add(size)=b' ';} size+=1;}
+            let mut n=0;
+            while *value.add(n)!=0 {if size<width {*output.add(size)=*value.add(n);} size+=1;n+=1;}
+        }
+        *length=size as i64;
+        return if present!=0 && size>width {-1} else {0};
+    }
     if number<0 || number>=i64::from(ARG_COUNT) || ARG_VALUES.is_null() {return 1;}
     let value=*ARG_VALUES.add(number as usize);
     if value.is_null() {return 1;}
@@ -88,4 +110,36 @@ pub unsafe extern "C" fn rfort_argument_query(number:i64,output:*mut u8,width:us
     *length=size as i64;
     core::ptr::copy_nonoverlapping(value,output,size.min(width));
     if present!=0 && size>width {-1} else {0}
+}
+
+/// EXECUTE_COMMAND_LINE, run synchronously: the CMDSTAT value, 0 when the
+/// command ran (or -2 when WAIT is false), with its exit status in EXITSTAT.
+/// MESSAGE, of WIDTH bytes and a terminator, describes a failure.
+#[no_mangle]
+pub unsafe extern "C" fn rfort_execute_command(command:*const u8,length:usize,wait:i64,message:*mut u8,width:usize,exitstat:*mut i64)->i64 {
+    core::ptr::write_bytes(message,b' ',width);*message.add(width)=0;
+    let (status,text):(i64,&[u8])=run_command(command,length,exitstat);
+    let copied=text.len().min(width);core::ptr::copy_nonoverlapping(text.as_ptr(),message,copied);
+    if status==0 && wait==0 {-2} else {status}
+}
+#[cfg(target_os="wasi")]
+unsafe fn run_command(_command:*const u8,_length:usize,_exitstat:*mut i64)->(i64,&'static [u8]) {
+    (-1,b"command execution is not supported")
+}
+#[cfg(not(target_os="wasi"))]
+unsafe fn run_command(command:*const u8,length:usize,exitstat:*mut i64)->(i64,&'static [u8]) {
+    extern "C" {fn system(command:*const u8)->i32;fn fflush(stream:*mut core::ffi::c_void)->i32;}
+    let buffer=malloc(length.saturating_add(1)) as *mut u8;
+    if buffer.is_null() {return (2,b"out of memory");}
+    core::ptr::copy_nonoverlapping(command,buffer,length);*buffer.add(length)=0;
+    if core::slice::from_raw_parts(buffer,length).contains(&0) {free(buffer.cast());return (3,b"the command contains a NUL character");}
+    // Output written so far comes before the command's own output.
+    fflush(core::ptr::null_mut());
+    let code=system(buffer);
+    free(buffer.cast());
+    if code==-1 {return (1,b"the command could not be executed");}
+    #[cfg(windows)] {*exitstat=i64::from(code);}
+    // A wait status: the exit code, or 128 plus the signal that ended it.
+    #[cfg(not(windows))] {*exitstat=i64::from(if code&0x7f==0 {(code>>8)&0xff} else {128+(code&0x7f)});}
+    (0,b"")
 }

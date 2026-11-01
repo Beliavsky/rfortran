@@ -9,6 +9,7 @@ use anyhow::{bail, Result};
 pub const NAMES: &[&str] = &[
     "btest", "iand", "ior", "ieor", "not", "ibset", "ibclr", "ibits", "ishft",
     "popcnt", "poppar", "leadz", "trailz", "dshiftl", "dshiftr",
+    "shiftl", "shiftr", "shifta", "merge_bits",
 ];
 
 /// These return a default INTEGER count rather than a value of I's kind.
@@ -23,7 +24,8 @@ pub fn keys(name: &str) -> Option<&'static [&'static str]> {
         "dshiftl" | "dshiftr" => &["i", "j", "shift"],
         "btest" | "ibset" | "ibclr" => &["i", "pos"],
         "ibits" => &["i", "pos", "len"],
-        "ishft" => &["i", "shift"],
+        "ishft" | "shiftl" | "shiftr" | "shifta" => &["i", "shift"],
+        "merge_bits" => &["i", "j", "mask"],
         _ => return None,
     })
 }
@@ -56,7 +58,8 @@ pub fn result_kind(name: &str, kinds: &[TypeSpec]) -> Result<TypeSpec> {
         }
         bytes.push(k);
     }
-    if matches!(name, "iand" | "ior" | "ieor" | "dshiftl" | "dshiftr") && bytes[0] != bytes[1] {
+    if matches!(name, "iand" | "ior" | "ieor" | "dshiftl" | "dshiftr" | "merge_bits") && bytes[0] != bytes[1]
+        || name == "merge_bits" && bytes[0] != bytes[2] {
         bail!(
             "{} arguments must have the same INTEGER kind",
             name.to_ascii_uppercase()
@@ -93,7 +96,7 @@ pub fn range_message(name: &str, bits: i64) -> String {
     let limits = match name {
         "ibits" => format!("POS and LEN must be nonnegative with POS + LEN <= {bits}"),
         "ishft" => format!("SHIFT must be between {} and {bits}", -bits),
-        "dshiftl" | "dshiftr" => format!("SHIFT must be between 0 and {bits}"),
+        "dshiftl" | "dshiftr" | "shiftl" | "shiftr" | "shifta" => format!("SHIFT must be between 0 and {bits}"),
         _ => format!("POS must be between 0 and {}", bits - 1),
     };
     format!("{}: {limits}", name.to_ascii_uppercase())
@@ -104,6 +107,7 @@ pub fn validate_controls(name: &str, bytes: u8, values: &[Option<i64>]) -> Resul
         "btest" | "ibset" | "ibclr" => values[1].is_some_and(|n| n < 0 || n >= bits),
         "ishft" => values[1].is_some_and(|n| n < -bits || n > bits),
         "dshiftl" | "dshiftr" => values[2].is_some_and(|n| n < 0 || n > bits),
+        "shiftl" | "shiftr" | "shifta" => values[1].is_some_and(|n| n < 0 || n > bits),
         "ibits" => {
             values[1].is_some_and(|n| n < 0 || n > bits)
                 || values[2].is_some_and(|n| n < 0 || n > bits)
@@ -154,6 +158,11 @@ pub fn evaluate(name: &str, bytes: u8, values: &[i64]) -> Result<i64> {
                 i.checked_shr((-values[1]) as u32).unwrap_or(0)
             }
         }
+        "shiftl" => i.checked_shl(values[1] as u32).unwrap_or(0),
+        "shiftr" => i.checked_shr(values[1] as u32).unwrap_or(0),
+        // The sign bit of I's kind fills the vacated bits.
+        "shifta" => ((((i << (64 - bits)) as i64) >> (64 - bits)) >> values[1].min(63)) as u64,
+        "merge_bits" => (i & values[2] as u64) | (values[1] as u64 & !(values[2] as u64)),
         "popcnt" => u64::from(i.count_ones()),
         "poppar" => u64::from(i.count_ones() & 1),
         "leadz" => u64::from(i.leading_zeros() - (64 - bits)),

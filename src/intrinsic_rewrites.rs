@@ -17,6 +17,9 @@
 //! DPROD(X, Y) is DBLE(X)*DBLE(Y). Specific names such as IABS, FLOAT and
 //! DSQRT become their generic intrinsic, BESSEL_JN(N, X) and BESSEL_YN(N, X)
 //! call runtime wrappers that take X first, and NORM2(X) is SQRT(SUM(X*X)).
+//! MASKL(I) and MASKR(I) shift the bits of NOT(0) of the result kind, and
+//! ERFC_SCALED(X) is EXP(X**2)*ERFC(X) or, past where that overflows, an
+//! asymptotic series. COMMAND_ARGUMENT_COUNT() calls the runtime.
 //! A user procedure or variable with one of these names keeps its own definition.
 use crate::ast::{BinOp, Expr, Program, Stmt};
 use crate::procedure_arguments::{children, expressions, visit_expr};
@@ -106,6 +109,28 @@ fn pi_like(x: &Expr) -> Expr {
     call("acos", vec![bin(BinOp::Sub, bin(BinOp::Mul, x.clone(), int(0)), int(1))])
 }
 
+// EXP(X**2)*ERFC(X), or for X past where EXP(X**2) would overflow, the
+// asymptotic series 1/(X*SQRT(PI)) * sum (-1)**k (2k-1)!! / (2X**2)**k, whose
+// eight terms are accurate there for both REAL kinds.
+fn erfc_scaled(x: &Expr) -> Expr {
+    let square = bin(BinOp::Mul, x.clone(), x.clone());
+    // One and pi in the kind of X, for infinite X too.
+    let one = bin(BinOp::Div, call("tiny", vec![x.clone()]), call("tiny", vec![x.clone()]));
+    let pi = call("acos", vec![Expr::Un(crate::ast::UnOp::Neg, Box::new(one))]);
+    let y = bin(BinOp::Div, int(1), bin(BinOp::Mul, int(2), square.clone()));
+    let coefficients = [1i64, -1, 3, -15, 105, -945, 10395, -135135];
+    let term = |c: i64| if c < 0 { Expr::Un(crate::ast::UnOp::Neg, Box::new(int(-c))) } else { int(c) };
+    let mut series = term(coefficients[7]);
+    for c in coefficients[..7].iter().rev() {
+        series = bin(BinOp::Add, term(*c), bin(BinOp::Mul, y.clone(), series));
+    }
+    // Divided in turn, so that X*SQRT(PI) cannot overflow for X near HUGE(X).
+    let asymptotic = bin(BinOp::Div, bin(BinOp::Div, series, x.clone()), call("sqrt", vec![pi]));
+    let direct = bin(BinOp::Mul, call("exp", vec![square]), call("erfc", vec![x.clone()]));
+    let threshold = bin(BinOp::Mul, Expr::RealLit("0.97".into()), call("sqrt", vec![call("log", vec![call("huge", vec![x.clone()])])]));
+    call("merge", vec![asymptotic, direct, bin(BinOp::Gt, x.clone(), threshold)])
+}
+
 // Degree and half-revolution trigonometric functions: the argument is scaled
 // to radians before the ordinary function, or the result scaled after it.
 fn scaled_trig(lname: &str, args: &[Expr]) -> Option<Result<Expr>> {
@@ -154,6 +179,35 @@ fn rewrite(e: &mut Expr, user: &HashSet<String>, error: &mut Option<anyhow::Erro
         let mut sum = vec![bin(BinOp::Mul, args[0].clone(), args[0].clone())];
         sum.extend(args.get(1).filter(|dim| !crate::named_arguments::omitted(dim)).cloned());
         *e = call("sqrt", vec![call("sum", sum)]);
+        return;
+    }
+    if matches!(lname.as_str(), "maskl" | "maskr") {
+        if !(1..=2).contains(&args.len()) {
+            *error = Some(anyhow::anyhow!("{} expects I and optional KIND", lname.to_ascii_uppercase()));
+            return;
+        }
+        let zero = match args.get(1).filter(|kind| !crate::named_arguments::omitted(kind)) {
+            Some(kind) => call("int", vec![int(0), kind.clone()]),
+            None => int(0),
+        };
+        let shift = if lname == "maskl" { "shiftr" } else { "shiftl" };
+        *e = call("not", vec![call(shift, vec![call("not", vec![zero]), args[0].clone()])]);
+        return;
+    }
+    if lname == "command_argument_count" {
+        if !args.is_empty() {
+            *error = Some(anyhow::anyhow!("COMMAND_ARGUMENT_COUNT takes no arguments"));
+            return;
+        }
+        *e = call("rfort_argument_count", vec![]);
+        return;
+    }
+    if lname == "erfc_scaled" {
+        if args.len() != 1 {
+            *error = Some(anyhow::anyhow!("ERFC_SCALED expects X"));
+            return;
+        }
+        *e = erfc_scaled(&args[0]);
         return;
     }
     if lname == "dim" && args.len() == 2 {

@@ -216,7 +216,7 @@ Found on 2026-10-21, fixed:
 | [Reallocation on assignment](language-support.md#reallocation-on-assignment) | F2003 | 🟡 | CHARACTER arrays rank one only; a multidimensional expression cannot mix fixed-size and runtime-sized arrays | test_allocatable_reallocation.py, test_runtime_allocatables.py |
 | [MOVE_ALLOC](language-support.md#move_alloc-and-allocate-options) | F2003; STAT/ERRMSG F2018 | 🟡 | Intrinsic arrays use copying; concrete derived allocatables transfer storage, owned components, initialization masks and allocation identity, preserving aliases to TARGET destinations; derived-array STAT/ERRMSG remains unsupported | test_allocation_options.py, test_derived_move_alloc.py, test_allocatable_owner_component_targets.py |
 | [ALLOCATE with SOURCE=, MOLD=, STAT=, ERRMSG=](language-support.md#move_alloc-and-allocate-options) | Mixed | ✅ | STAT: F90; SOURCE and ERRMSG: F2003; MOLD: F2008. | test_allocation_options.py |
-| Typed ALLOCATE (`allocate(character(len=5) :: s)`) | F2003 | ❌ |  |  |
+| Typed ALLOCATE (`allocate(character(len=5) :: s)`) | F2003 | 🟡 | Deferred-length CHARACTER scalars and derived types; a deferred-length CHARACTER array fails at run time |  |
 | [DEALLOCATE](language-support.md#deallocate) | F90 | ✅ |  | test_deallocate.py, test_syntax_forms.py |
 | [POINTER association with TARGET](language-support.md#pointer-association) | Mixed | ✅ | POINTER/TARGET: F90; ALLOCATABLE targets: F2003; ranks above 7: F2008. Ranks 0–15, sections, strides; allocated array targets and numeric/LOGICAL array expressions as ordinary INTENT(IN) actuals; module POINTER variables share their association across the module, its procedures and every unit that uses it | test_pointer_association.py, test_module_pointers.py, test_pointer_descriptors.py, test_pointer_expression_arguments.py, test_allocatable_pointer_targets.py |
 | NULLIFY, `NULL()`, ASSOCIATED with one or two arguments | Mixed | ✅ | NULLIFY and ASSOCIATED: F90; NULL(): F95. | test_associate.py |
@@ -328,7 +328,7 @@ current limits.
 | [List-directed WRITE to a file, and WRITE to unit 0 (standard error)](language-support.md#file-and-standard-input) | F77 or earlier | ✅ | List-directed file output: F77; unit 0 for standard error is a processor convention. Items are written as G0 separated by blanks; READ/WRITE on an unconnected unit 1..1023 connects it to fort.N, as in gfortran and ifx (extension; -Wimplicit-open warns, on by default) | test_implicit_open.py, test_formatted_output.py |
 | [INQUIRE](language-support.md#file-and-standard-input) | F77 or earlier; ACTION F90; IOMSG F2003 | 🟡 | UNIT/FILE with EXIST, OPENED, NAMED, NUMBER, NAME, ACTION, IOSTAT, IOMSG and ERR; other properties and IOLENGTH pending | test_inquire.py |
 | [Unformatted stream access](language-support.md#file-and-standard-input) | F2003 | 🟡 | READ and WRITE of INTEGER, REAL, LOGICAL, CHARACTER and derived-type data, POS= on READ, IOSTAT; not COMPLEX | test_stream_io.py |
-| Unformatted sequential and direct access | F77 or earlier | ❌ |  |  |
+| Unformatted sequential and direct access | F77 or earlier | 🟡 | Sequential access; direct access (REC=) is not yet supported |  |
 | [NAMELIST](language-support.md#namelist) | Mixed | 🟡 | External NAMELIST: F90; internal input and IOMSG: F2003. Intrinsic scalars/fixed arrays, element designators, partial updates, repetitions/nulls, IOSTAT/IOMSG. Internal output, sections, allocatable/pointer/derived objects and USE-associated groups remain unsupported | test_namelist.py |
 | [Defined derived-type I/O](language-support.md#file-and-standard-input) | F2003 | ❌ | Defined derived-type I/O: F2003; default component-wise derived-type I/O: F90 (covered above). |  |
 
@@ -344,7 +344,7 @@ current limits.
 | `SIGN`, `DIM`, `DPROD` | F77 or earlier | ✅ |  | test_formatted_output.py |
 | `ERF`, `ERFC`, `GAMMA`, `LOG_GAMMA`, `HYPOT` | F2008 | ✅ |  | test_intrinsic_rewrites.py |
 | [Bessel functions](language-support.md#elemental-math-functions) `BESSEL_J0`, `BESSEL_J1`, `BESSEL_JN`, `BESSEL_Y0`, `BESSEL_Y1`, `BESSEL_YN` | F2008 | 🟡 | Not the transformational `BESSEL_JN(N1, N2, X)` form; REAL(4) results are computed in DOUBLE PRECISION | test_more_intrinsics.py |
-| `ERFC_SCALED` | F2008 | ❌ |  |  |
+| `ERFC_SCALED` | F2008 | ✅ | EXP(X**2)*ERFC(X), and an asymptotic series where EXP(X**2) would overflow | test_command_and_bit_intrinsics.py |
 | [Specific names](language-support.md#elemental-math-functions) (`IABS`, `FLOAT`, `DSQRT`, `AMOD`, `ISIGN`, `MAX0`, ...) | F77 or earlier | ✅ |  | test_more_intrinsics.py |
 | [`OUT_OF_RANGE`](language-support.md#integer-bit-intrinsics) | F2023 | 🟡 | Scalar arguments; ROUND must be a constant | test_more_intrinsics.py |
 | [Numeric inquiries](language-support.md#integer-and-real-inquiries) (`HUGE`, `TINY`, `EPSILON`, `DIGITS`, `PRECISION`, `RANGE`, ...) | F90 | ✅ |  | test_integer_huge.py, test_numeric_model.py |
@@ -353,7 +353,7 @@ current limits.
 | [`ISHFTC`](language-support.md#integer-bit-intrinsics) | F90 | ✅ | Not in PARAMETER initializers | test_intrinsic_rewrites.py |
 | [`BGE`, `BGT`, `BLE`, `BLT`](language-support.md#integer-bit-intrinsics) | F2008 | ✅ |  | test_syntax_forms.py |
 | [`POPCNT`, `POPPAR`, `LEADZ`, `TRAILZ`, `DSHIFTL`, `DSHIFTR`, `BIT_SIZE`](language-support.md#integer-bit-intrinsics) | Mixed | ✅ | BIT_SIZE: F90; the other listed procedures: F2008. | test_more_intrinsics.py |
-| `SHIFTL`, `SHIFTR`, `SHIFTA`, `MASKL`, `MASKR`, `MERGE_BITS` | F2008 | ❌ |  |  |
+| `SHIFTL`, `SHIFTR`, `SHIFTA`, `MASKL`, `MASKR`, `MERGE_BITS` | F2008 | ✅ | With array arguments, SHIFT (and MASKL/MASKR's I) must be constant, as for ISHFT | test_command_and_bit_intrinsics.py |
 | [Reductions](language-support.md#reductions) (`SUM`, `PRODUCT`, `MAXVAL`, `MINVAL`, `COUNT`, `ANY`, `ALL`) | F90 | ✅ | Fixed/runtime extents through rank 15; DIM must be constant | test_masked_reductions.py, test_dim_reductions.py, test_runtime_dim_reductions.py, test_runtime_elemental_reductions.py |
 | [`IANY`, `IALL`, `IPARITY`, `PARITY`](language-support.md#reductions) | F2008 | ✅ | Fixed/runtime extents through rank 15; DIM must be constant | test_more_intrinsics.py, test_runtime_dim_reductions.py |
 | [Locations](language-support.md#array-transformations-and-locations) (`MAXLOC`, `MINLOC`, `FINDLOC`) | Mixed | ✅ | MAXLOC/MINLOC: F90; FINDLOC: F2008. Runtime extents through rank 15; DIM must be constant | test_locations.py, test_runtime_dim_reductions.py |
@@ -363,11 +363,11 @@ current limits.
 | [`MATMUL`](language-support.md#allocatable-arrays-and-pointers) | F90 | 🟡 | Not LOGICAL; a runtime-sized operand must be a whole array, an elemental expression of whole arrays, or a TRANSPOSE or RESHAPE of one | test_complex.py, test_formatted_output.py, test_runtime_matmul.py |
 | [`NORM2`](language-support.md#reductions) | F2008 | ✅ | Computed as `SQRT(SUM(X*X))`, without scaling against overflow; runtime array extents supported with constant DIM | test_more_intrinsics.py, test_runtime_dim_reductions.py |
 | [`STORAGE_SIZE`](language-support.md#integer-bit-intrinsics) | F2008 | 🟡 | Not types with ALLOCATABLE or POINTER components | test_storage_size.py |
-| `TRANSFER`, `IS_CONTIGUOUS` | Mixed | ❌ | TRANSFER: F90; IS_CONTIGUOUS: F2008. |  |
+| `TRANSFER`, `IS_CONTIGUOUS` | Mixed | 🟡 | TRANSFER: F90, for the forms listed under TRANSFER above; IS_CONTIGUOUS: F2008, not yet supported. |  |
 | `RANDOM_NUMBER`, [`RANDOM_SEED`](language-support.md#intrinsic-keywords-and-random_seed) | F90 | ✅ |  | test_intrinsic_keywords.py |
 | [`CPU_TIME`, `SYSTEM_CLOCK`, `DATE_AND_TIME`](language-support.md#cpu_time-system_clock-and-date_and_time) | Mixed | ✅ | SYSTEM_CLOCK and DATE_AND_TIME: F90; CPU_TIME: F95. | test_timing.py, test_date_and_time.py |
 | [`GET_COMMAND_ARGUMENT`, `GET_ENVIRONMENT_VARIABLE`](language-support.md#command-line-and-environment) | F2003 | ✅ |  | test_command_argument.py, test_environment.py |
-| `COMMAND_ARGUMENT_COUNT`, `GET_COMMAND`, `EXECUTE_COMMAND_LINE` | Mixed | ❌ | COMMAND_ARGUMENT_COUNT and GET_COMMAND: F2003; EXECUTE_COMMAND_LINE: F2008. |  |
+| `COMMAND_ARGUMENT_COUNT`, `GET_COMMAND`, `EXECUTE_COMMAND_LINE` | Mixed | ✅ | COMMAND_ARGUMENT_COUNT and GET_COMMAND: F2003; EXECUTE_COMMAND_LINE: F2008. Commands run synchronously through the system shell; with WAIT=.FALSE., CMDSTAT is -2 as the standard specifies. The browser interpreter cannot run commands (CMDSTAT -1) | test_command_and_bit_intrinsics.py |
 
 ## Parallel features
 

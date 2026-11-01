@@ -519,6 +519,7 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
             "@real64_bits"=>Some(ValueTuple::from_int(to_real(args.first()?)?.to_bits() as i64)),
             "@bits_real64"=>Some(ValueTuple::from_real(f64::from_bits(to_int(args.first()?)? as u64))),
             "isnan"=>Some(ValueTuple::from_bool(to_real(args.first()?)?.is_nan())),
+            "rfort_argument_count"=>Some(ValueTuple::from_int(unsafe {crate::environment::rfort_argument_count()})),
             "abs" => {
                 if let Some(i) = args.get(0)?.0 {
                     Some(ValueTuple::from_int(i.abs()))
@@ -1762,6 +1763,17 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         let frame=call_stack.last_mut().unwrap();
                         for (arg,val) in args[..2].iter().zip([status,length]) {let Expr::Ident(n)=arg else {unreachable!()};frame.env_int.insert(n.clone(),val);}
                         let Expr::Ident(n)=&args[2] else {unreachable!()};frame.env_str.insert(n.clone(),String::from_utf8_lossy(&output[..width]).into_owned());idx+=1;continue;
+                    }
+                    if name=="@execute_command" {
+                        let fr=call_stack.last().unwrap().clone();
+                        let mut eval=|e:&Expr|eval_expr(e,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack);
+                        let command=eval(&args[3]).3.unwrap();let wait=eval(&args[4]).2.unwrap();let width=eval(&args[5]).0.unwrap() as usize;
+                        { use std::io::Write; let _ = std::io::stdout().flush(); }
+                        let mut message=vec![0u8;width+1];let mut exit=0;
+                        let status=unsafe {crate::environment::rfort_execute_command(command.as_ptr(),command.len(),i64::from(wait),message.as_mut_ptr(),width,&mut exit)};
+                        let frame=call_stack.last_mut().unwrap();
+                        for (arg,val) in args[..2].iter().zip([exit,status]) {let Expr::Ident(n)=arg else {unreachable!()};frame.env_int.insert(n.clone(),val);}
+                        let Expr::Ident(n)=&args[2] else {unreachable!()};frame.env_str.insert(n.clone(),String::from_utf8_lossy(&message[..width]).into_owned());idx+=1;continue;
                     }
                     if name=="@environment_query" {
                         let fr=call_stack.last().unwrap().clone();
