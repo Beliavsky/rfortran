@@ -359,6 +359,11 @@ ComponentPath: String = {
     <n:ComponentName> => n,
     <p:ComponentPath> PERCENT <c:ComponentName> => format!("{p}%{c}"),
 };
+// The format of `READ format, items`: a CHARACTER constant or variable.
+ReadFormat: Expr = {
+    <s:STR> => Expr::Str(s),
+    <n:Ident> => Expr::Ident(n),
+};
 Designator: String = {
     <n:Ident> => n,
     <n:Designator> PERCENT <c:ComponentName> => format!("{n}%{c}"),
@@ -640,6 +645,10 @@ Stmt: Stmt = {
         args.extend(es);
         Stmt::CallSub { name: "@formatted_read".into(), args }
     },
+    // READ format, items: formatted input from standard input, as READ(*,format).
+    KW_READ <fmt:ReadFormat> COMMA <es:ExprList> =>?
+        crate::input::read_controls(vec![Expr::Call("@write_star".into(),vec![]),fmt],es)
+            .map_err(|error|lalrpop_util::ParseError::User {error}),
     KW_READ STAR COMMA <es:ExprList> =>?
         crate::input::read_controls(vec![Expr::Call("@write_star".into(),vec![]),Expr::Call("@write_star".into(),vec![])],es)
             .map_err(|error|lalrpop_util::ParseError::User {error}),

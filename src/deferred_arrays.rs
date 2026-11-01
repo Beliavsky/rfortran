@@ -75,15 +75,32 @@ fn rewrite(body: &mut Vec<Stmt>, arrays: &[String], allocated: &mut std::collect
                 }
             }
             Stmt::CallSub { name, args } if name == crate::substrings::ALLOCATE_CHARACTER => {
-                let (mine, others): (Vec<Expr>, Vec<Expr>) = args[1..].iter().cloned()
+                let (mut mine, mut others): (Vec<Expr>, Vec<Expr>) = args[1..].iter().cloned()
                     .partition(|a| matches!(a, Expr::Call(o, _) | Expr::Index(o, _) if arrays.contains(o)));
+                // STAT= and ERRMSG= go with the arrays when nothing else is allocated.
+                if !mine.is_empty() && others.iter().all(|a| matches!(a, Expr::Call(k, _) if k.starts_with("@keyword:"))) {
+                    mine.append(&mut others);
+                }
                 if !mine.is_empty() {
+                    // A later constructor assignment reallocates.
+                    for a in &mine {
+                        if let Expr::Call(n, _) | Expr::Index(n, _) = a { allocated.insert(n.clone()); }
+                    }
                     out.push(Stmt::CallSub { name: "@allocate".into(), args: mine.into_iter().map(|a| match a {
                         Expr::Index(n, d) => Expr::Call(n, d), a => a }).collect() });
                     if others.is_empty() { continue; }
                     let mut kept = vec![args[0].clone()];
                     kept.extend(others);
                     *args = kept;
+                }
+            }
+            Stmt::CallSub { name, args } if name == "@allocate" || name == "@deallocate" => {
+                for a in args.iter() {
+                    if let Expr::Ident(n) | Expr::Call(n, _) | Expr::Index(n, _) = a {
+                        if arrays.contains(n) {
+                            if name == "@allocate" { allocated.insert(n.clone()); } else { allocated.remove(n); }
+                        }
+                    }
                 }
             }
             Stmt::If { then_body, else_body, .. } => {
@@ -254,11 +271,16 @@ fn reallocate(body: &mut Vec<Stmt>, arrays: &[String], declared: &[String]) {
                 }
             }
             Stmt::CallSub { name, args } if name == crate::substrings::ALLOCATE_CHARACTER => {
-                let (mine, others): (Vec<Expr>, Vec<Expr>) = args[1..].iter().cloned()
+                let (mut mine, mut others): (Vec<Expr>, Vec<Expr>) = args[1..].iter().cloned()
                     .partition(|a| matches!(a, Expr::Call(o, _) | Expr::Index(o, _) if arrays.contains(o)));
+                // STAT= and ERRMSG= go with the arrays when nothing else is allocated.
+                if !mine.is_empty() && others.iter().all(|a| matches!(a, Expr::Call(k, _) if k.starts_with("@keyword:"))) {
+                    mine.append(&mut others);
+                }
                 if !mine.is_empty() {
                     for a in &mine {
                         let (Expr::Call(o, _) | Expr::Index(o, _)) = a else { unreachable!() };
+                        if o.starts_with("@keyword:") { continue; }
                         out.push(set_width(o, args[0].clone()));
                     }
                     out.push(Stmt::CallSub { name: "@allocate".into(), args: mine.into_iter().map(|a| match a {

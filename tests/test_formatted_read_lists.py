@@ -161,6 +161,23 @@ print *,status>0
 end
 ''',' 0 3 2 1 0\n T\n',data=' 1 2 3\n 1 0 3\n')
 
+    def test_read_format_without_unit(self):
+        # READ format, items reads standard input, as READ(*,format) does.
+        commands=self.commands('''implicit none
+character(len=10)::s
+character(len=6)::fmt
+integer::i,j
+read '(a)',s
+read "(2i3)",i,j
+print '(a,"|",2i4)',trim(s),i,j
+fmt='(a)'
+read fmt,s
+read *,j
+print '(a,i3)',trim(s),j
+end
+''',reference=True)
+        self.execute(commands,b'hello\n  1  2\nworld\n7\n','hello|   1   2\nworld  7\n')
+
     def test_runtime_bounds_diagnosed(self):
         self.reject('''implicit none
 integer::a(3),i,n
