@@ -33,12 +33,9 @@ class NamedFormats(unittest.TestCase):
 
     def test_diagnostics(self):
         cases = [
-            ("", "write (*,0) 1", "numeric format labels"),
-            ("", "write (*,100) 1", "numeric format labels"),
+            ("", "write (*,0) 1", "format label 0 does not label a FORMAT statement"),
+            ("", "write (*,100) 1", "format label 100 does not label a FORMAT statement"),
             ("integer,parameter::fmt=0", "write (*,fmt) 1", "numeric format labels"),
-            ("character(*),parameter::fmt='(e12.4)'", "write (*,fmt) 1.0", "unsupported output descriptor"),
-            ("character(*),parameter::fmt='(i3)'", "write (*,fmt) 1,2", "descriptor count"),
-            ("character(*),parameter::fmt='(i3)'", "write (20,fmt) 1", "external file WRITE"),
         ]
         with tempfile.TemporaryDirectory(prefix="bad-formats-") as tmp:
             path = Path(tmp) / "main.f90"
@@ -48,6 +45,28 @@ class NamedFormats(unittest.TestCase):
                     result = subprocess.run([COMPILER, "check", path], capture_output=True, text=True, timeout=15)
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn(diagnostic, result.stderr)
+
+    def test_once_rejected_formats(self):
+        # E editing, format reversion over more items than descriptors, and a
+        # WRITE to an unconnected unit, which goes to fort.20 as in gfortran.
+        program = """program main
+character(*),parameter::fmt='(e12.4)', f2='(i3)'
+write (*,fmt) 1.0
+write (*,f2) 1,2
+write (20,f2) 1
+end program main
+"""
+        with tempfile.TemporaryDirectory(prefix="named-formats-") as tmp:
+            directory = Path(tmp)
+            source = directory / "main.f90"
+            source.write_text(program, encoding="utf-8")
+            for command in build_commands(source, directory):
+                with self.subTest(command=command):
+                    (directory / "fort.20").unlink(missing_ok=True)
+                    result = subprocess.run(command, cwd=directory, capture_output=True, text=True, timeout=15)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout, "  0.1000E+01\n  1\n  2\n")
+                    self.assertEqual((directory / "fort.20").read_text(), "  1\n")
 
 
 if __name__ == "__main__":

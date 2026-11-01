@@ -10,12 +10,13 @@ program test_functions
 contains
 
 function foo()
+    integer :: foo
     print *, "in foo"
     foo = 1
 end function foo
 
 function bar()
-    integer :: x
+    integer :: bar, x
     x = 5
     print *, "bar x: ", x
     bar = x

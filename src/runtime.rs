@@ -818,16 +818,19 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
         String::from_utf8_lossy(&out[..n]).into_owned()
     }
 
-    fn double_expression(e: &Expr, doubles: &HashMap<String, f64>) -> bool {
+    fn double_expression(e: &Expr, doubles: &HashMap<String, f64>, frame: &CallFrame) -> bool {
         match e {
             Expr::Ident(name) => doubles.contains_key(name),
+            // An element of a DOUBLE PRECISION array.
+            Expr::Index(name, _) | Expr::Call(name, _) if frame.double_arrays.contains(name) => true,
+            Expr::RealLit(text) => text.contains(['d', 'D']) || text.ends_with("_8"),
             Expr::Call(name, args) => {
                 if name.eq_ignore_ascii_case("dble") { return true; }
                 if name.eq_ignore_ascii_case("real") { return false; }
-                args.first().is_some_and(|arg| double_expression(arg, doubles))
+                args.first().is_some_and(|arg| double_expression(arg, doubles, frame))
             }
-            Expr::Bin(_, a, b) => double_expression(a, doubles) || double_expression(b, doubles),
-            Expr::Un(_, a) => double_expression(a, doubles),
+            Expr::Bin(_, a, b) => double_expression(a, doubles, frame) || double_expression(b, doubles, frame),
+            Expr::Un(_, a) => double_expression(a, doubles, frame),
             _ => false,
         }
     }
@@ -1208,7 +1211,7 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                             Expr::IntLit(s) => parts.push((s.clone(), false)),
                             Expr::RealLit(s) => {
                                 let f = parse_f64_lossy(s);
-                                parts.push((format_real(f, false), false));
+                                parts.push((format_real(f, s.contains(['d', 'D']) || s.ends_with("_8")), false));
                             }
                             Expr::Logical(b) => parts.push((if *b {
                                 "T".into()
@@ -1222,7 +1225,8 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                                         if frame.logical_arrays.contains(id) { if *v != 0 { "T".into() } else { "F".into() } }
                                         else { v.to_string() }, false)));
                                 } else if let Some(values) = frame.env_real_arrays.get(id) {
-                                    parts.extend(values.iter().map(|v| (format_real(*v, false), false)));
+                                    let double = frame.double_arrays.contains(id);
+                                    parts.extend(values.iter().map(|v| (format_real(*v, double), false)));
                                 } else if let Some(v) = r64.get(id) {
                                     parts.push((format_real(*v, true), false));
                                 } else if let Some(v) = r32.get(id) {
@@ -1248,7 +1252,7 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                                 if let Some(s) = vt.3 {
                                     parts.push((s, true));
                                 } else if let Some(f) = vt.1 {
-                                    parts.push((format_real(f, double_expression(it, &r64)), false));
+                                    parts.push((format_real(f, double_expression(it, &r64, call_stack.last().unwrap())), false));
                                 } else if let Some(i) = vt.0 {
                                     parts.push((i.to_string(), false));
                                 } else if let Some(b) = vt.2 {
