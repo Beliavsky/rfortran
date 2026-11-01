@@ -43,6 +43,8 @@ const CATEGORIES: &[&str] = &[
     "empty-case",
     "unused-label",
     "implicit-open",
+    "fixed-unit",
+    "character-truncation",
 ];
 /// The opt-in categories that -Wextra enables, as gfortran's -Wextra adds to
 /// -Wall. implicit-interface and conversion stay opt-in: they fire throughout
@@ -55,6 +57,7 @@ const EXTRA: &[&str] = &[
     "unchecked-status",
     "intrinsic-shadow",
     "keyword-name",
+    "fixed-unit",
 ];
 fn canonical(name: &str) -> &str {
     match name {

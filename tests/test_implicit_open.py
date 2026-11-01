@@ -124,5 +124,45 @@ class ImplicitOpen(unittest.TestCase):
         self.assertIn('READ on unit 21', stderr)
 
 
+    def test_fixed_units_in_procedures(self):
+        program = '''module logs
+  implicit none
+  integer, parameter :: log_unit = 30
+contains
+  subroutine start_log()
+    open(log_unit, file='run.log')
+  end subroutine
+  subroutine save_value(x)
+    real, intent(in) :: x
+    open(20, file='save.txt')
+    write(20,*) x
+    close(20)
+  end subroutine
+end module logs
+program main
+  use logs
+  implicit none
+  open(20, file='main.txt')
+  call start_log()
+end program
+'''
+        self.assertEqual(self.check(program), (0, ''))
+        for flags in (['-Wfixed-unit'], ['-Wextra']):
+            code, stderr = self.check(program, flags)
+            self.assertEqual(code, 0)
+            self.assertEqual(stderr.count('[fixed-unit]'), 2, stderr)
+            self.assertIn('OPEN of fixed unit 30 in `start_log`', stderr)
+            self.assertIn('OPEN of fixed unit 20 in `save_value`', stderr)
+            self.assertIn('unit 20 is also opened in the main program `main`', stderr)
+            self.assertIn('open(newunit=u, ...)', stderr)
+        code, stderr = self.check(program, ['-Wfixed-unit', '-std=f2003'])
+        self.assertEqual(stderr.count('[fixed-unit]'), 2, stderr)
+        self.assertNotIn('newunit', stderr)
+        self.assertEqual(self.check(program, ['-Wextra', '-Wno-fixed-unit']), (0, ''))
+        code, stderr = self.check(program, ['-Werror=fixed-unit'])
+        self.assertNotEqual(code, 0)
+        self.assertIn('error: OPEN of fixed unit', stderr)
+
+
 if __name__ == '__main__':
     unittest.main()

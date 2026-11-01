@@ -675,6 +675,63 @@ impl<'a> Analysis<'a> {
             }
         }
     }
+    /// The constant length of a CHARACTER type; None for other types and for
+    /// assumed, deferred or nonconstant lengths.
+    fn type_length(&self, kind: &TypeSpec, scope: usize) -> Option<i64> {
+        match kind {
+            TypeSpec::Character(n) => Some(n.unwrap_or(1) as i64),
+            TypeSpec::CharacterLength(e) if !matches!(&**e, Expr::Ident(n) if n.starts_with('@')) => self.bound_integer(e, scope),
+            _ => None,
+        }
+    }
+    /// The constant length of a CHARACTER expression, when the compiler can
+    /// know it.
+    fn character_length(&self, e: &Expr, scope: usize) -> Option<i64> {
+        match e {
+            Expr::Str(s) => Some(s.chars().count() as i64),
+            Expr::Bin(BinOp::Concat, a, b) => Some(self.character_length(a, scope)? + self.character_length(b, scope)?),
+            Expr::Ident(n) => {
+                let (kind, _, _, _, owner) = self.data_type(scope, n)?;
+                let kind = kind?;
+                if let Some(length) = self.type_length(&kind, owner) { return Some(length); }
+                // A PARAMETER of assumed length has the length of its value.
+                let d = &self.decls[self.resolve(scope, n)?];
+                match (&kind, &d.constant) {
+                    (TypeSpec::CharacterAssumed, Some(value)) if !n.contains('%') => self.character_length(value, d.scope),
+                    _ => None,
+                }
+            }
+            // An element of a CHARACTER array.
+            Expr::Index(n, _) | Expr::Call(n, _) if !n.starts_with('@') => {
+                let (kind, _, dims, _, owner) = self.data_type(scope, n)?;
+                if dims.is_empty() { return None; }
+                self.type_length(&kind?, owner)
+            }
+            Expr::Section { name, lower, upper, stride: None } if !name.is_empty() => {
+                let (kind, _, dims, _, owner) = self.data_type(scope, name)?;
+                let length = self.type_length(&kind?, owner)?;
+                if !dims.is_empty() { return Some(length); }
+                // A substring with constant bounds.
+                let lower = lower.as_deref().map_or(Some(1), |e| self.bound_integer(e, scope))?;
+                let upper = upper.as_deref().map_or(Some(length), |e| self.bound_integer(e, scope))?;
+                Some((upper - lower + 1).max(0))
+            }
+            Expr::Call(n, items) if n == "@array_constructor" && !items.is_empty() => {
+                items.iter().map(|e| self.character_length(e, scope)).collect::<Option<Vec<_>>>()?.into_iter().max()
+            }
+            _ => None,
+        }
+    }
+    /// -Wcharacter-truncation: a CHARACTER value of known length longer than
+    /// its fixed-length destination.
+    fn character_assignment(&mut self, name: &str, e: &Expr, to: i64, scope: usize, offset: usize, context: &str) {
+        let Some(from) = self.character_length(e, scope) else { return };
+        if from > to {
+            self.warnings.push(Advice{category:"character-truncation",span:self.rhs_span(offset),
+                message:format!("CHARACTER value of length {from} is truncated to length {to} in {context} `{name}`"),related:None,
+                note:"shorten the value, lengthen the destination, or take an explicit substring when the truncation is intended"});
+        }
+    }
     pub(super) fn pointer_initializers(&mut self) {
         for t in &self.types {
             let mut offset = 0;
@@ -1226,9 +1283,24 @@ impl<'a> Analysis<'a> {
             }
             match s {
                 Stmt::Assign { name, value } | Stmt::AssignIndex { name, value, .. } => {
-                    if let Some((Some(k), _, _, _, owner)) = self.data_type(scope, name) {
+                    if let Some((Some(k), _, dims, _, owner)) = self.data_type(scope, name) {
                         if let Some(to) = self.number_kind(&k, owner) {
                             self.numeric_assignment(name, value, to, scope, offset);
+                        }
+                        if let Some(length) = self.type_length(&k, owner) {
+                            // The destination: the variable, an element, or a substring.
+                            let to = match s {
+                                Stmt::AssignIndex { indices, .. } if dims.is_empty() => match indices.as_slice() {
+                                    [Expr::Section { lower, upper, stride: None, .. }] => {
+                                        let lower = lower.as_deref().map_or(Some(1), |e| self.bound_integer(e, scope));
+                                        let upper = upper.as_deref().map_or(Some(length), |e| self.bound_integer(e, scope));
+                                        lower.zip(upper).map(|(l, u)| (u - l + 1).max(0))
+                                    }
+                                    _ => None,
+                                },
+                                _ => Some(length),
+                            };
+                            if let Some(to) = to { self.character_assignment(name, value, to, scope, offset, "assignment to"); }
                         }
                     }
                 }
@@ -1237,6 +1309,13 @@ impl<'a> Analysis<'a> {
                         for (n, e) in entities {
                             if let Some(e) = e {
                                 self.numeric_assignment(n, e, to, scope, offset);
+                            }
+                        }
+                    }
+                    if let Some(to) = self.type_length(kind, scope) {
+                        for (n, e) in entities {
+                            if let Some(e) = e {
+                                self.character_assignment(n, e, to, scope, offset, "the initialization of");
                             }
                         }
                     }

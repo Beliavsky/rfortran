@@ -51,7 +51,8 @@ The following source advice shares the existing `-Wno-<category>`,
 Diagnostics identify original source locations; shadowing, dead-store, aliasing,
 and lifetime diagnostics also identify the related declaration or assignment.
 
-`-Wextra` enables the opt-in advice that `-Wall` leaves out, except
+`-Wextra` enables the opt-in advice that `-Wall` leaves out (including
+`-Wmissing-intent` and `-Wfixed-unit`), except
 `-Wconversion` and `-Wimplicit-interface`, which fire throughout mixed-kind and
 legacy code. As in gfortran, `-Wextra` does not imply `-Wall`; use
 `-Wall -Wextra` for both. An option naming a category overrides the group in
@@ -78,6 +79,7 @@ either order, so `-Wall -Wextra -Wno-shadow` drops only shadowing advice;
 | `-Wunderflow` | Yes | No | Supported nonzero constant expressions or assignments rounding to zero in REAL(4)/REAL(8) |
 | `-Wempty-case` | Yes | No | Reversed constant INTEGER, CHARACTER or enumeration CASE ranges |
 | `-Wunused-label` | Yes | No | Unreferenced statement labels within each program unit, including FORMAT labels |
+| `-Wcharacter-truncation` | Yes | No | CHARACTER values of compile-time length (literals, fixed-length variables and PARAMETERs, concatenations, constant substrings, array constructors) assigned or initialized into a shorter fixed-length variable, element, component or substring, as gfortran's `-Wcharacter-truncation`. Deferred-length destinations reallocate and are exempt; actual arguments and DATA statements are not checked |
 
 Interface advice distinguishes optional warnings from language requirements.
 Keyword calls without an explicit interface are errors. When a procedure body
@@ -310,6 +312,16 @@ variable turns the check off, since it might connect any unit. Disable with
 `-Wno-implicit-open` or `!#allow(implicit-open)`; promote with
 `-Werror=implicit-open`. `-std=` does not change the behavior. Regression
 checks: `python tests/test_implicit_open.py`.
+
+`-Wfixed-unit` is opt-in and enabled by `-Wextra`. It warns about an OPEN of a
+constant unit (an integer literal or a named constant) in a procedure or
+module, since a fixed number may already be connected elsewhere in the
+program. A main program owns its units and is exempt; its internal
+procedures are not. Units 0, 5 and 6 are exempt. When another program unit
+opens the same constant unit, the warning names it. The note suggests
+`open(newunit=u, ...)`, which connects a free unit, unless `-std=` selects a
+revision before Fortran 2008. Disable with `-Wno-fixed-unit`, promote with
+`-Werror=fixed-unit`, or use `!#allow(fixed-unit)` / `!#deny(fixed-unit)`.
 
 `-Woptional-argument` warns when an OPTIONAL dummy is referenced without a
 proven `PRESENT` guard. For example, `if (present(s2))` does not prove that `s1`

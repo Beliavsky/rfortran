@@ -1289,6 +1289,7 @@ pub fn check(
         "underflow",
         "empty-case",
         "unused-label",
+        "character-truncation",
     ]
     .into_iter()
     .map(|c| {
