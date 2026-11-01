@@ -108,9 +108,24 @@ fn expand(
     cpp: bool,
     stack: &mut Vec<PathBuf>,
 ) -> Result<Input> {
+    #[cfg(not(target_os="wasi"))]
     let canonical = path
         .canonicalize()
         .with_context(|| format!("reading {}", path.display()))?;
+    // WASI has no canonicalize operation. The browser's virtual filesystem has
+    // no symlinks; lexical normalization still detects INCLUDE cycles there.
+    #[cfg(target_os="wasi")]
+    let canonical = {
+        let mut normalized=PathBuf::new();
+        for component in path.components() {
+            match component {
+                std::path::Component::CurDir => {},
+                std::path::Component::ParentDir => {normalized.pop();},
+                part => normalized.push(part.as_os_str()),
+            }
+        }
+        normalized
+    };
     if stack.iter().any(|p| {
         p == &canonical
             || cfg!(windows)
@@ -200,7 +215,14 @@ fn expand(
     Ok(result)
 }
 
+/// The source of `path`, with its submodules merged into their modules.
 pub fn read(path: &Path, cli: &Cli) -> Result<Input> {
+    crate::submodules::merge(read_unmerged(path, cli)?)
+}
+
+/// The source of `path`, for a group of files whose submodules are merged
+/// after the files are combined.
+pub fn read_unmerged(path: &Path, cli: &Cli) -> Result<Input> {
     expand(
         path,
         cli,

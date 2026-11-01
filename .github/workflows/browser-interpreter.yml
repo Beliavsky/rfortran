@@ -1,0 +1,66 @@
+name: Browser interpreter
+
+on:
+  push:
+    paths: ['src/**', 'tools/fixed2free/**', 'web-interpreter/**', '.github/workflows/browser-interpreter.yml']
+  pull_request:
+    paths: ['src/**', 'tools/fixed2free/**', 'web-interpreter/**', '.github/workflows/browser-interpreter.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: browser-interpreter-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Build interpreter
+        run: python web-interpreter/build.py
+      - name: Test actual WebAssembly and interface
+        env:
+          RFORT_WASM_REQUIRED: '1'
+        run: node --test web-interpreter/tests/*.test.mjs
+      - name: Prepare static site
+        run: |
+          mkdir -p target/browser-site
+          cp web-interpreter/{index.html,style.css,app.js,driver.mjs,worker.mjs,runtime-adapter.mjs,THIRD-PARTY-NOTICES.txt} target/browser-site/
+          cp -R web-interpreter/{runtime,vendor} target/browser-site/
+          touch target/browser-site/.nojekyll
+      - uses: actions/upload-artifact@v4
+        with:
+          name: browser-interpreter-site
+          path: target/browser-site
+          include-hidden-files: true
+      - uses: actions/upload-pages-artifact@v3
+        if: github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch && vars.BROWSER_INTERPRETER_PAGES == 'true' && vars.PLAYGROUND_API_URL == ''
+        with:
+          path: target/browser-site
+
+  deploy:
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch && vars.BROWSER_INTERPRETER_PAGES == 'true' && vars.PLAYGROUND_API_URL == ''
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v5
+      - uses: actions/deploy-pages@v4
+        id: deployment

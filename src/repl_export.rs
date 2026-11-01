@@ -9,6 +9,7 @@ use anyhow::{bail, Context, Result};
 use std::collections::HashSet;
 use std::path::Path;
 
+#[cfg_attr(target_os="wasi",derive(serde::Serialize,serde::Deserialize))]
 #[derive(Default)]
 pub(super) struct History {
     declarations: Vec<String>,
@@ -32,10 +33,12 @@ impl History {
                     .push(stmt);
             }
         }
-        // submit receives the parser wrapper: IMPLICIT NONE, input, END.
-        let end = source
-            .len()
-            .checked_sub("end\n".len())
+        // Both terminal wrappers and replayed programs have a parsed final END.
+        // Use its token span so END PROGRAM name and trailing comments export
+        // correctly, without mistaking END inside a string for a terminator.
+        let end = lex(source).into_iter().rev()
+            .find(|t| matches!(t.kind, TokenKind::BareEnd | TokenKind::KwEnd))
+            .map(|t| t.span.start)
             .context("missing REPL source wrapper")?;
         for (i, (start, stmts)) in groups.iter().enumerate() {
             if stmts.is_empty() || stmts.iter().all(|s| matches!(s, Stmt::Implicit(_))) {

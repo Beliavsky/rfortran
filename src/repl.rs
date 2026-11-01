@@ -34,6 +34,7 @@ struct Snapshot {
 
 /// Run submissions in a worker so runtime STOP/error exits cannot kill the
 /// session, including release builds compiled with panic=abort.
+#[cfg(not(target_os="wasi"))]
 fn execute(program: Program, flags: std::collections::BTreeMap<String,String>, seed: u64) -> Result<Snapshot> {
     struct Work(std::path::PathBuf);
     impl Drop for Work { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); } }
@@ -52,6 +53,16 @@ fn execute(program: Program, flags: std::collections::BTreeMap<String,String>, s
     Ok(serde_json::from_slice(&result)?)
 }
 
+#[cfg(target_os="wasi")]
+fn execute(program: Program, flags: std::collections::BTreeMap<String,String>, mut seed:u64) -> Result<Snapshot> {
+    let values=crate::runtime::interpret_scalars(&program,&flags,&mut seed)?;
+    Ok(Snapshot{values,seed})
+}
+
+#[cfg(target_os="wasi")]
+#[path="repl_browser.rs"]
+pub(crate) mod browser;
+
 pub(crate) fn evaluate(path: &Path) -> Result<()> {
     let mut input: Evaluation = serde_json::from_slice(&std::fs::read(path)?)?;
     let values = crate::runtime::interpret_scalars(&input.program, &input.flags, &mut input.seed)?;
@@ -59,6 +70,7 @@ pub(crate) fn evaluate(path: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg_attr(target_os="wasi",derive(serde::Serialize,serde::Deserialize))]
 struct Session {
     declarations: Vec<Stmt>,
     names: HashSet<String>,
@@ -301,28 +313,32 @@ pub(crate) fn run(args: &crate::cli::Cli) -> Result<()> {
             text if text.starts_with(':') => { eprintln!("Error: unknown REPL command `{text}`; use :help"); continue; },
             _ => {},
         }
-        if code(&line).trim().is_empty() { continue; }
-        let continued = code(&line).trim_end().ends_with('&');
-        pending.push_str(&line);
-        if !line.ends_with('\n') { pending.push('\n'); }
-        if continued { continue; }
-        let expanded = match shortcuts::expand(&pending, &session) {
-            Ok(source) => source,
-            Err(error) => { eprintln!("Error: {error:#}"); pending.clear(); continue; },
-        };
-        let source = expanded.as_deref().unwrap_or(&pending);
-        let statement = wrapped(source, false);
-        let expression = wrapped(source, true);
-        let stmt_probe = crate::parser::probe_fragment(&statement, statement.len() - 4);
-        let expr_probe = crate::parser::probe_fragment(&expression, expression.len() - 4);
-        let selected = if stmt_probe.0 { statement }
-            else if expr_probe.0 { expression }
-            else if stmt_probe.1 { continue; }
-            else { statement };
-        if let Err(error) = session.submit(&selected, args) {
+        if let Err(error) = submit_line(&mut session, &mut pending, &line, args) {
             eprintln!("Error: {}", crate::source_diagnostics::user_names(&format!("{error:#}")));
         }
-        pending.clear();
     }
     Ok(())
+}
+
+/// One normal input line, shared by terminal and browser sessions.
+fn submit_line(session:&mut Session,pending:&mut String,line:&str,args:&crate::cli::Cli)->Result<()> {
+    if code(line).trim().is_empty() {return Ok(());}
+    let continued=code(line).trim_end().ends_with('&');
+    pending.push_str(line);
+    if !line.ends_with('\n') {pending.push('\n');}
+    if continued {return Ok(());}
+    let expanded=match shortcuts::expand(pending,session) {
+        Ok(source)=>source,
+        Err(error)=>{pending.clear();return Err(error);}
+    };
+    let source=expanded.as_deref().unwrap_or(pending);
+    let statement=wrapped(source,false);
+    let expression=wrapped(source,true);
+    let stmt_probe=crate::parser::probe_fragment(&statement,statement.len()-4);
+    let expr_probe=crate::parser::probe_fragment(&expression,expression.len()-4);
+    let selected=if stmt_probe.0 {statement} else if expr_probe.0 {expression}
+        else if stmt_probe.1 {return Ok(());} else {statement};
+    let result=session.submit(&selected,args);
+    pending.clear();
+    result
 }

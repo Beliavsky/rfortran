@@ -59,7 +59,7 @@ fn combine(sources: &[PathBuf], output: &Path, inputs: &[PathBuf], cli: &Cli) ->
         let source = source.canonicalize()?;
         text.push_str(&format!("! Source: {}\n", source.display()));
         let start=text.len();
-        let input = crate::source_includes::read(&source, cli)?;
+        let input = crate::source_includes::read_unmerged(&source, cli)?;
         text.push_str(&input.text);
         origins.extend(input.origins.into_iter().map(|mut o| { o.range = o.range.start+start..o.range.end+start; o }));
         text.push('\n');

@@ -21,7 +21,7 @@ pub(crate) struct SourceOrigin {
     pub name: String,
     pub range: Range<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source: Option<String>,
+    pub source: Option<std::sync::Arc<str>>,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub offset: usize,
 }

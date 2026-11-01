@@ -8,6 +8,7 @@ use crate::ast::{Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Context, Result};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+#[cfg_attr(target_os="wasi",derive(serde::Serialize,serde::Deserialize))]
 #[derive(Clone)]
 pub(super) struct Allocation {
     pub kind: TypeSpec,

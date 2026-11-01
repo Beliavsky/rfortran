@@ -402,3 +402,25 @@ wrapper-generated files are recognized and refreshed, while handwritten files
 and source inputs are protected from overwrite. A single source is compiled
 directly. The old `f90c-sources.ps1` helper is retained for legacy use; the
 native driver does not invoke it.
+### Submodules
+
+A submodule is compiled together with its ancestor module: put both in one
+file, or list their files in one source group, parents before their
+descendants, for example `rfort shapes.f90 shapes_impl.f90 main.f90`. Each
+submodule is merged into its module before compilation. A separate module
+procedure body becomes a module procedure, and the submodule's own variables,
+types and procedures become private module entities, so code that uses the
+module cannot see them. A body may repeat its interface
+(`module function f(x) ... end function`) or inherit it
+(`module procedure f ... end procedure`); the dummy argument names of a
+repeated interface must match. Separate interfaces may also be declared in a
+generic interface block or in a submodule, and a body may be in the module
+itself.
+
+Not yet supported: compiling a submodule apart from its module (a module whose
+separate procedures have no body in the source group is an error); a submodule
+entity with the same name as an entity of its module or of another submodule;
+and a submodule that uses a module which uses its ancestor, since merging
+makes that a circular module dependency. Run `python tests/test_submodules.py`
+for the regressions.
+

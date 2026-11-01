@@ -1,137 +1,14 @@
-mod abstract_types;
-mod select_type;
-mod assumed_rank;
+include!("frontend_modules.rs");
+use frontend::{prepare_program, lower_program_body, suppress_legacy_unused};
 use crate::codegen::Backend;
 use anyhow::Result;
 use cranelift_codegen::settings::{self, Configurable, Flags};
 
-mod ast;
-mod cli;
 mod driver;
 mod codegen;
-mod errors;
-mod source_diagnostics;
-mod source_includes;
-mod standards;
 mod ir;
-mod intrinsics;
-mod float_model;
-mod real_intrinsics;
-mod modules;
-mod module_files;
-mod heap;
-mod heap_characters;
-mod random_seed;
-mod timing;
-mod compile_profile;
 mod command_time;
-mod calendar;
-mod environment;
-mod timing_intrinsics;
-mod tokenize;
-mod conditionals;
-mod bit_intrinsics;
-mod inquiries;
-mod lexer;
 mod linker;
-mod parser;
-mod statement_labels;
-mod pointers;
-mod parameters;
-mod empty_constructors;
-mod sections;
-mod reductions;
-mod initialized;
-mod input;
-mod namelists;
-mod allocatable_scalars;
-mod allocatable_scalar_results;
-mod namelist_input;
-mod unformatted;
-mod storage_size;
-mod input_items;
-mod file_io;
-mod output;
-mod do_steps;
-mod named_loops;
-mod internal_procedures;
-mod purity;
-mod simple;
-mod elemental;
-mod character_elementals;
-mod character_spec;
-mod constructors;
-mod constructor_expressions;
-mod subroutines;
-mod array_calls;
-mod allocatables;
-mod allocation_bounds;
-mod optional;
-mod recursive_arrays;
-mod external_calls;
-mod c_interop;
-mod c_pointers;
-mod equivalence;
-mod common;
-mod entries;
-mod pdt;
-mod protected;
-mod proc_components;
-mod field_subscripts;
-mod scalar_components;
-mod recursive_types;
-mod recursive_outputs;
-mod statement_functions;
-mod defining_functions;
-mod transfer;
-mod preprocess;
-mod named_arguments;
-mod substrings;
-mod character_arrays;
-mod vector_subscripts;
-mod multiple_subscripts;
-mod concurrent_reduce;
-mod enumerations;
-mod function_arrays;
-mod array_bounds;
-mod multidim;
-mod forall_runtime;
-mod formatting;
-mod format_spec;
-mod record_input;
-mod list_input;
-mod character_input;
-mod derived;
-mod finalization;
-mod referenced_types;
-mod extensions;
-mod data_statements;
-mod deferred_arrays;
-mod deferred_character_components;
-mod procedure_arguments;
-mod intrinsic_rewrites;
-mod matmul_runtime;
-mod block_scopes;
-mod allocation_options;
-mod allocation_identity;
-mod complex;
-mod derived_arrays;
-mod operators;
-mod imports;
-mod component_access;
-mod runtime;
-mod repl;
-mod sema;
-mod unused;
-mod optional_warnings;
-mod implicit_warnings;
-mod reachability;
-mod format_warnings;
-mod open_warnings;
-mod declaration_warnings;
-mod short_circuit_warnings;
-mod source_advice;
-mod utils;
 
 #[cfg(target_os = "windows")]
 const OBJDUMP_BYTES: Option<&[u8]> = Some(include_bytes!("bin/tools/objdump.exe"));
@@ -381,84 +258,6 @@ fn compiler_main(started: std::time::Instant) -> Result<()> {
     Ok(())
 }
 
-fn prepare_program(
-    program: ast::Program,
-    src: &str,
-    tokens: &[lexer::Token],
-    input: &std::path::Path,
-    origins: Option<&[source_diagnostics::SourceOrigin]>,
-    settings: &sema::SemaSettings,
-    args: &cli::Cli,
-) -> Result<module_files::Prepared> {
-    let filename = input.to_str().unwrap_or("<unknown>");
-    unused::validate_options(&args.warnings)?;
-    optional_warnings::check(&program, src, tokens, filename, origins, settings, &args.warnings)?;
-    declaration_warnings::check(&program, src, tokens, filename, origins, settings, &args.warnings)?;
-    let prepared = module_files::prepare(program, src, input, origins, args)
-        .map_err(|error| source_diagnostics::report(error, src, tokens, filename, origins))?;
-    unused::check(&prepared.program, &prepared.source, &lexer::lex(&prepared.source), src.len(),
-                  filename, Some(&prepared.origins), settings, &args.warnings)?;
-    implicit_warnings::check(&prepared.program, &prepared.source, src.len(), filename,
-                             &prepared.origins, settings, &args.warnings)?;
-    short_circuit_warnings::check(&prepared.program, &prepared.source, src.len(), filename,
-                                 &prepared.origins, settings, &args.warnings)?;
-    source_advice::check(&prepared.program, &prepared.source, src.len(), filename,
-                        &prepared.origins, settings, &args.warnings)?;
-    reachability::check(&prepared.program, &prepared.source, src.len(), filename,
-                        &prepared.origins, settings, &args.warnings)?;
-    format_warnings::check(&prepared.program, &prepared.source, src.len(), filename,
-                           &prepared.origins, settings, &args.warnings)?;
-    open_warnings::check(&prepared.source, src.len(), filename, &prepared.origins, settings, &args.warnings, args.standard)?;
-    if args.standard.is_some() {
-        standards::check(&prepared.program, &prepared.source, &lexer::lex(&prepared.source), filename,
-                         Some(&prepared.origins), args.standard, settings.werror)?;
-    }
-    Ok(prepared)
-}
-
-fn lower_program_body(
-    program: ast::Program, src: &str, tokens: &[lexer::Token], filename: &str,
-    origins: Option<&[source_diagnostics::SourceOrigin]>,
-) -> Result<ast::Program> {
-    (|| {
-        let program = protected::resolve(program)?;
-        let program = pdt::resolve(program)?;
-        let program = recursive_types::resolve(program)?;
-        let program = recursive_outputs::resolve(program)?;
-        let program = scalar_components::resolve(program)?;
-        let program = multidim::shape_arguments(program);
-        let program = common::resolve(program)?;
-        let program = implicit_warnings::declare(program);
-        let program = namelists::resolve(program)?;
-        let program = c_pointers::prepare(program)?;
-        let program = c_interop::prepare(program)?;
-        elemental::reject_allocatable_results(&program)?;
-        let program = compile_profile::run("storage_size::resolve", || storage_size::resolve(program))?;
-        let program = compile_profile::run("statement_functions::resolve", || statement_functions::resolve(program))?;
-        let program = compile_profile::run("transfer::resolve", || transfer::resolve(program))?;
-        let program = compile_profile::run("defining_functions::resolve", || defining_functions::resolve(program))?;
-        let program = compile_profile::run("equivalence::resolve", || equivalence::resolve(program))?;
-        let program = compile_profile::run("external_calls::resolve", || external_calls::resolve(program))?;
-        let program = compile_profile::run("derived::resolve", || derived::resolve(program))?;
-        let program = compile_profile::run("defining_functions::resolve_components", || defining_functions::resolve_components(program))?;
-        let program = compile_profile::run("external_calls::resolve_complex", || external_calls::resolve_complex(program))?;
-        let program = compile_profile::run("random_seed::resolve", || random_seed::resolve(program))?;
-        let program = compile_profile::run("parameters::resolve", || parameters::resolve(program))?;
-        let program = c_interop::resolve(program)?;
-        let program = compile_profile::run("timing_intrinsics::resolve", || timing_intrinsics::resolve(program))?;
-        let program = compile_profile::run("tokenize::resolve", || tokenize::resolve(program))?;
-        let program = compile_profile::run("array_calls::resolve", || array_calls::resolve(program))?;
-        let program = compile_profile::run("reductions::resolve", || reductions::resolve(program))?;
-        let program = compile_profile::run("sections::resolve", || sections::resolve(program))?;
-        // RFORT_DUMP_LOWERED=1 prints the program after source-level lowering.
-        if std::env::var_os("RFORT_DUMP_LOWERED").is_some_and(|v| v == "1") {
-            eprintln!("{program:#?}");
-        }
-        Ok(program)
-    })()
-    .map_err(|error| source_diagnostics::report(error, src, tokens, filename, origins))
-}
-
 fn compile_to_object(
     input: &std::path::Path,
     out: &std::path::Path,
@@ -469,7 +268,9 @@ fn compile_to_object(
     origins: Option<&[source_diagnostics::SourceOrigin]>,
 ) -> Result<BuildArtifact> {
     // A combined source was converted file by file already.
-    let source_input = if let Some(origins) = origins { source_includes::Input { text: utils::read_file_to_string(input)?, origins: origins.to_vec() } } else { source_includes::read(input, args)? };
+    let source_input = if let Some(origins) = origins {
+        submodules::merge(source_includes::Input { text: utils::read_file_to_string(input)?, origins: origins.to_vec() })?
+    } else { source_includes::read(input, args)? };
     let src = source_input.text;
     let origins = Some(source_input.origins.as_slice());
     let tokens = lexer::lex(&src);
@@ -731,10 +532,4 @@ fn compile_to_object(
         object: out.to_path_buf(),
         has_program,
     })
-}
-
-fn suppress_legacy_unused(settings: &mut sema::SemaSettings) {
-    for category in ["unused_param", "unused_local", "unused_program_var", "unused_function"] {
-        settings.allow.insert(category.into());
-    }
 }

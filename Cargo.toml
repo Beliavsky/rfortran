@@ -28,7 +28,7 @@ smallvec = "1"
 lalrpop-util = { version = "0.22.2", default-features = false, features = ["lexer"] }
 uuid = { version = "1.18.0", features = ["v4"] }
 which = "8.0.0"
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 fixed2free = { path = "tools/fixed2free" }
 

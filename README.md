@@ -7,6 +7,11 @@ is not limited to Fortran 90, but it does not yet implement a complete Fortran
 standard. Native object code is generated with Cranelift, and an interpreter is
 available for development and testing.
 
+An experimental [browser interpreter and REPL](web-interpreter/README.md) runs
+the shared Rust interpreter locally through WebAssembly. Build it with
+`python web-interpreter/build.py` after installing the `wasm32-wasip1` Rust target;
+the browser interface needs only static hosting, including GitHub Pages.
+
 ## Current status
 
 Development is focused on compiling small programs correctly and extending

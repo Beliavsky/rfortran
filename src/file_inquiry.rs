@@ -21,6 +21,7 @@ pub(crate) fn action_text(action:i64)->&'static str {
 
 /// Test filesystem existence without opening, truncating, or connecting a file.
 /// A missing path is a successful inquiry; other OS failures are I/O errors.
+#[cfg(not(target_os="wasi"))]
 pub(crate) fn exists(path:&[u8])->(i64,i64) {
     let path=trim(path);
     if path.contains(&0) {return (2,0);}
@@ -37,6 +38,20 @@ pub(crate) fn exists(path:&[u8])->(i64,i64) {
         #[cfg(not(any(windows,target_os="macos")))] let error=*__errno_location();
         free(name.cast());
         if result==0 {(0,1)} else if matches!(error,2|20) {(0,0)} else {(3,0)}
+    }
+}
+
+// WASI's libc access/realpath stubs cannot query the virtual filesystem.
+#[cfg(target_os="wasi")]
+pub(crate) fn exists(path:&[u8])->(i64,i64) {
+    let path=trim(path);
+    if path.contains(&0) {return (2,0);}
+    if path.is_empty() {return (0,0);}
+    let Ok(path)=std::str::from_utf8(path) else{return (2,0);};
+    match std::fs::metadata(path) {
+        Ok(_)=>(0,1),
+        Err(error) if error.kind()==std::io::ErrorKind::NotFound=>(0,0),
+        Err(_)=>(3,0),
     }
 }
 
@@ -69,6 +84,7 @@ impl Path {
 }
 pub(crate) fn trim(mut path:&[u8])->&[u8] {while path.last()==Some(&b' ') {path=&path[..path.len()-1];}path}
 /// Compare normalized absolute paths; this does not equate distinct hard links.
+#[cfg(not(target_os="wasi"))]
 pub(crate) fn same_name(a:&[u8],b:&[u8])->bool {
     let (a,b)=(trim(a),trim(b));
     if a==b {return true;}
@@ -82,6 +98,23 @@ pub(crate) fn same_name(a:&[u8],b:&[u8])->bool {
             if x==0 {return true;}i+=1;
         }
     }
+}
+
+#[cfg(target_os="wasi")]
+pub(crate) fn same_name(a:&[u8],b:&[u8])->bool {
+    fn normalized(path:&[u8])->Option<std::path::PathBuf> {
+        let path=std::str::from_utf8(trim(path)).ok()?;
+        let mut result=std::path::PathBuf::from("/");
+        for part in std::path::Path::new(path).components() {
+            match part {
+                std::path::Component::CurDir=>{},
+                std::path::Component::ParentDir=>{result.pop();},
+                part=>result.push(part.as_os_str()),
+            }
+        }
+        Some(result)
+    }
+    matches!((normalized(a),normalized(b)),(Some(a),Some(b)) if a==b)
 }
 
 #[cfg(test)]
