@@ -16,6 +16,32 @@ mod allocation;
 mod enum_types;
 pub use enum_types::definition as enum_definition;
 
+/// An unnamed `ENUM, BIND(C)` (Fortran 2003): each enumerator is a named
+/// INTEGER constant of the kind of a C int, with its given value or the
+/// previous enumerator's plus one, starting from zero.
+pub fn unnamed_enum(bind: String, language: String, items: Vec<(usize, Vec<(String, Option<Expr>)>)>) -> std::result::Result<Vec<Stmt>, &'static str> {
+    if !bind.eq_ignore_ascii_case("bind") || !language.eq_ignore_ascii_case("c") {
+        return Err("an ENUM statement requires BIND(C)");
+    }
+    let mut out = vec![];
+    let mut previous: Option<String> = None;
+    let mut seen = HashSet::new();
+    for (pos, entities) in items {
+        out.push(Stmt::SourceLocation(pos));
+        for (name, value) in entities {
+            if !seen.insert(name.to_ascii_lowercase()) { return Err("an enumerator is defined twice"); }
+            let value = match (value, &previous) {
+                (Some(v), _) => v,
+                (None, Some(p)) => Expr::Bin(crate::ast::BinOp::Add, Box::new(Expr::Ident(p.clone())), Box::new(Expr::IntLit("1".into()))),
+                (None, None) => Expr::IntLit("0".into()),
+            };
+            out.push(Stmt::InitializedDecl { kind: TypeSpec::Integer(Some(4)), attributes: vec!["parameter".into()], entities: vec![(name.clone(), Some(value))] });
+            previous = Some(name);
+        }
+    }
+    Ok(out)
+}
+
 pub fn definition(
     name: String,
     access: Option<bool>,

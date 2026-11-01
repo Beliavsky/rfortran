@@ -1215,6 +1215,9 @@ PreFuncDecl: Vec<Stmt> = {
     },
 };
 PreFuncDeclData: Vec<Stmt> = {
+    // ENUM, BIND(C) without a name: named constants (Fortran 2003).
+    KW_ENUM COMMA <bind:Ident> LPAREN <language:Ident> RPAREN <items:EnumItems> KW_END KW_ENUM =>?
+        crate::enumerations::unnamed_enum(bind,language,items).map_err(|error|lalrpop_util::ParseError::User{error}),
     KW_ENUM COMMA <bind:Ident> LPAREN <language:Ident> RPAREN DCOLON <name:Ident> <items:EnumItems> KW_END KW_ENUM =>?
         crate::enumerations::enum_definition(name,bind,language,items).map_err(|error|lalrpop_util::ParseError::User{error}),
     <head:EnumerationHead> <items:EnumerationItems> KW_END KW_ENUMERATION KW_TYPE <end:END_UNIT_NAME?> =>?

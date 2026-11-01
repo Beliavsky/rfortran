@@ -1713,6 +1713,13 @@ pub fn lex(input: &str) -> Vec<Token> {
         }
         index += 1;
     }
+    // NONE is a keyword only in IMPLICIT NONE; elsewhere it is a name.
+    for i in 0..tokens.len() {
+        if matches!(tokens[i].kind, TokenKind::KwNone)
+            && !(i > 0 && matches!(tokens[i - 1].kind, TokenKind::KwImplicit) && same_statement(&input[tokens[i - 1].span.end..tokens[i].span.start])) {
+            tokens[i].kind = TokenKind::Ident(input[tokens[i].span.clone()].to_ascii_lowercase());
+        }
+    }
     // PUBLIC name and PRIVATE name are PUBLIC :: name and PRIVATE :: name.
     let mut index = 0;
     while index < tokens.len() {
