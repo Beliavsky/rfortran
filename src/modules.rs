@@ -668,6 +668,32 @@ pub(crate) struct Storage {
     #[serde(default)]
     pub deferred: bool,
 }
+/// The bindings of a module variable: its storage, or for a POINTER the
+/// cells of its descriptor (see crate::pointers), which module storage keeps
+/// so that every scope that uses it shares its association.
+fn bindings(name: &str, definition: &Data) -> Result<Vec<Stmt>> {
+    let pointer = definition.declarations.iter().any(|s| matches!(s, Stmt::DummyIntent { name: n, intent } if n == name && intent == "pointer"));
+    if !pointer {
+        return Ok(vec![Stmt::CallSub {
+            name: "@module_bind".into(),
+            args: vec![Expr::Ident(name.to_owned()), Expr::Str(name.to_owned()), Expr::Str(serde_json::to_string(&definition.storage)?)],
+        }]);
+    }
+    let rank = definition.declarations.iter().find_map(|s| match s {
+        Stmt::ArrayDecl { name: n, dims, .. } if n == name => Some(dims.len()),
+        _ => None,
+    }).unwrap_or(0);
+    let cell = Storage { kind: TypeSpec::Integer(Some(8)), values: vec![Expr::IntLit("0".into())], initialized: true, rank: 0, deferred: false };
+    let cell = serde_json::to_string(&cell)?;
+    let fields: Vec<String> = (0..5 + 3 * rank).map(|k| format!("{name}@descriptor{k}")).collect();
+    let mut out = vec![Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: fields.clone() }];
+    for f in &fields {
+        out.push(Stmt::CallSub { name: "@module_bind".into(), args: vec![Expr::Ident(f.clone()), Expr::Str(f.clone()), Expr::Str(cell.clone())] });
+    }
+    out.push(Stmt::DummyIntent { name: name.to_owned(), intent: format!("@borrowed_descriptor:{}", fields.join(",")) });
+    Ok(out)
+}
+
 #[derive(Clone)]
 struct Data {
     declarations: Vec<Stmt>,
@@ -931,14 +957,7 @@ pub(crate) fn capture(mut program: Program) -> Result<Program> {
                 });
                 prefix.extend(definition.initializers.clone());
             } else {
-                prefix.push(Stmt::CallSub {
-                    name: "@module_bind".into(),
-                    args: vec![
-                        Expr::Ident(name.clone()),
-                        Expr::Str(name),
-                        Expr::Str(serde_json::to_string(&definition.storage)?),
-                    ],
-                });
+                prefix.extend(bindings(&name, definition)?);
             }
         }
         prefix.append(body);
@@ -954,11 +973,7 @@ pub(crate) fn capture(mut program: Program) -> Result<Program> {
         let definition = &data[&name];
         if definition.constant { continue; }
         bindings.extend(definition.declarations.clone());
-        bindings.push(Stmt::CallSub {
-            name: "@module_bind".into(),
-            args: vec![Expr::Ident(name.clone()), Expr::Str(name),
-                Expr::Str(serde_json::to_string(&definition.storage)?)],
-        });
+        bindings.extend(self::bindings(&name, definition)?);
     }
     fn saved(body: &[Stmt], bindings: &mut Vec<Stmt>) {
         for statement in body {

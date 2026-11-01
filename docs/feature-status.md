@@ -130,7 +130,7 @@ Found on 2026-10-21, fixed:
 | [Declaration initialization](language-support.md#declaration-initialization) | F90 | 🟡 | Saved arrays of INTEGER, REAL, DOUBLE PRECISION, LOGICAL and CHARACTER are supported; saved CHARACTER arrays are limited to 1024 elements | test_main_initialization.py, test_saved_locals.py, test_initializers_and_kinds.py |
 | SAVE | F77 or earlier | 🟡 | Scalars only; the SAVE statement saves listed scalars, or all local scalars without a list | test_saved_locals.py, test_external_calls.py |
 | VALUE attribute | F2003 | ✅ |  |  |
-| PROTECTED attribute | F2003 | ❌ |  |  |
+| PROTECTED attribute | F2003 | ✅ | Attribute and statement; outside its module a PROTECTED variable cannot be assigned (with its elements and components), read into, used as a DO variable, passed to INTENT(OUT)/INTENT(INOUT) dummies of procedures in the program, allocated, deallocated or moved, and a PROTECTED pointer cannot change association; through USE chains and renames | test_protected.py |
 | CONTIGUOUS attribute | F2008 | ✅ | Accepted |  |
 | VOLATILE attribute | F2003 | ✅ | Accepted |  |
 | [Statement labels](language-support.md#statement-labels) | F77 or earlier | 🟡 | Labels are accepted; no statement can branch to them except READ `END=` | test_statement_labels.py |
@@ -218,7 +218,7 @@ Found on 2026-10-21, fixed:
 | [ALLOCATE with SOURCE=, MOLD=, STAT=, ERRMSG=](language-support.md#move_alloc-and-allocate-options) | Mixed | ✅ | STAT: F90; SOURCE and ERRMSG: F2003; MOLD: F2008. | test_allocation_options.py |
 | Typed ALLOCATE (`allocate(character(len=5) :: s)`) | F2003 | ❌ |  |  |
 | [DEALLOCATE](language-support.md#deallocate) | F90 | ✅ |  | test_deallocate.py, test_syntax_forms.py |
-| [POINTER association with TARGET](language-support.md#pointer-association) | Mixed | ✅ | POINTER/TARGET: F90; ALLOCATABLE targets: F2003; ranks above 7: F2008. Ranks 0–15, sections, strides; allocated array targets and numeric/LOGICAL array expressions as ordinary INTENT(IN) actuals | test_pointer_association.py, test_pointer_descriptors.py, test_pointer_expression_arguments.py, test_allocatable_pointer_targets.py |
+| [POINTER association with TARGET](language-support.md#pointer-association) | Mixed | ✅ | POINTER/TARGET: F90; ALLOCATABLE targets: F2003; ranks above 7: F2008. Ranks 0–15, sections, strides; allocated array targets and numeric/LOGICAL array expressions as ordinary INTENT(IN) actuals; module POINTER variables share their association across the module, its procedures and every unit that uses it | test_pointer_association.py, test_module_pointers.py, test_pointer_descriptors.py, test_pointer_expression_arguments.py, test_allocatable_pointer_targets.py |
 | NULLIFY, `NULL()`, ASSOCIATED with one or two arguments | Mixed | ✅ | NULLIFY and ASSOCIATED: F90; NULL(): F95. | test_associate.py |
 | ALLOCATE of a POINTER | F90 | ❌ |  |  |
 | Pointer bounds remapping | F2003 | ❌ |  |  |

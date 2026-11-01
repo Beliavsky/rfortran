@@ -1584,7 +1584,7 @@ pub fn lex(input: &str) -> Vec<Token> {
     for index in 0..tokens.len() {
         let TokenKind::Ident(word) = &tokens[index].kind else { continue };
         let word = word.to_ascii_lowercase();
-        if !matches!(word.as_str(), "intent" | "optional" | "pointer" | "target" | "allocatable" | "external" | "intrinsic" | "save" | "value")
+        if !matches!(word.as_str(), "intent" | "optional" | "pointer" | "target" | "allocatable" | "external" | "intrinsic" | "save" | "value" | "protected")
             || !statement_head(&tokens, input, index) {
             continue;
         }

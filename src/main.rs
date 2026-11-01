@@ -75,6 +75,7 @@ mod equivalence;
 mod common;
 mod entries;
 mod pdt;
+mod protected;
 mod field_subscripts;
 mod scalar_components;
 mod recursive_types;
@@ -417,6 +418,7 @@ fn lower_program_body(
     origins: Option<&[source_diagnostics::SourceOrigin]>,
 ) -> Result<ast::Program> {
     (|| {
+        let program = protected::resolve(program)?;
         let program = pdt::resolve(program)?;
         let program = recursive_types::resolve(program)?;
         let program = recursive_outputs::resolve(program)?;
