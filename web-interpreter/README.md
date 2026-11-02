@@ -103,17 +103,26 @@ controls; they do not replace a rendered browser check.
 
 ## GitHub Pages
 
-`.github/workflows/browser-interpreter.yml` builds and tests on relevant pushes
-and pull requests, and uploads a ready-to-serve static site artifact. No server
+`.github/workflows/browser-interpreter.yml` builds and tests on every push
+and pull requests, and uploads a ready-to-serve static site artifact. It builds
+on a Windows runner, matching the locally validated interpreter build; the
+resulting WebAssembly runs in browsers on Windows, Linux and macOS. No server
 or secrets are needed. To publish it:
 
 1. In repository Settings / Pages, select GitHub Actions as the build source.
-2. Set repository Actions variable `BROWSER_INTERPRETER_PAGES` to `true`.
-3. Leave `PLAYGROUND_API_URL` unset (or empty) so the older server-based
-   playground workflow does not deploy a different site to the same Pages root.
-4. Push to the default branch or run the Browser interpreter workflow manually.
+2. Commit and push the workflow and interpreter sources to the default branch
+   (`main`), or run the Browser interpreter workflow manually after pushing.
+3. In Actions, wait for the Browser interpreter build, tests and deployment to
+   succeed. The published URL appears in the deployment job.
 
 The site will be served at https://beliavsky.github.io/rfortran/ and update with
-relevant pushes to the default branch. Deploying replaces that repository's
-Pages site, so enable only one Pages publisher. This implementation has not been
-published from the local checkout.
+every successful push to the default branch. Failed builds/tests keep the last
+published version. Pull requests and other branches build and test without
+publishing. No API service URL, server, token or secret is needed.
+
+Publishing is enabled by default. To disable browser deployment, set repository
+Actions variable `BROWSER_INTERPRETER_PAGES` to `false`. The older server-based
+playground can publish only when that variable is `false` and
+`PLAYGROUND_API_URL` is set, so the two workflows cannot overwrite one another.
+Deploying replaces that repository's Pages site. The local server is only for
+development; public visitors do not need Python, Rust or rfort installed.

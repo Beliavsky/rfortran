@@ -2,7 +2,6 @@ name: Browser interpreter
 
 on:
   push:
-    paths: ['src/**', 'tools/fixed2free/**', 'web-interpreter/**', '.github/workflows/browser-interpreter.yml']
   pull_request:
     paths: ['src/**', 'tools/fixed2free/**', 'web-interpreter/**', '.github/workflows/browser-interpreter.yml']
   workflow_dispatch:
@@ -16,7 +15,12 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Match the platform on which the full interpreter build is validated.
+    # The resulting WASI binary runs in browsers on any supported OS.
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -46,13 +50,13 @@ jobs:
           path: target/browser-site
           include-hidden-files: true
       - uses: actions/upload-pages-artifact@v3
-        if: github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch && vars.BROWSER_INTERPRETER_PAGES == 'true' && vars.PLAYGROUND_API_URL == ''
+        if: github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch && vars.BROWSER_INTERPRETER_PAGES != 'false'
         with:
           path: target/browser-site
 
   deploy:
     needs: build
-    if: github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch && vars.BROWSER_INTERPRETER_PAGES == 'true' && vars.PLAYGROUND_API_URL == ''
+    if: github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch && vars.BROWSER_INTERPRETER_PAGES != 'false'
     runs-on: ubuntu-latest
     permissions:
       pages: write

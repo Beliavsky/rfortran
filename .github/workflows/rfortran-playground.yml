@@ -89,7 +89,7 @@ jobs:
       always() && needs.image.result == 'success' &&
       (needs.execution-host.result == 'success' || needs.execution-host.result == 'skipped') &&
       github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch &&
-      vars.PLAYGROUND_API_URL != ''
+      vars.BROWSER_INTERPRETER_PAGES == 'false' && vars.PLAYGROUND_API_URL != ''
     runs-on: ubuntu-latest
     permissions:
       contents: read
