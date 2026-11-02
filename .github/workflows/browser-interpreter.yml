@@ -37,13 +37,11 @@ jobs:
       - name: Test actual WebAssembly and interface
         env:
           RFORT_WASM_REQUIRED: '1'
-        run: node --test web-interpreter/tests/*.test.mjs
-      - name: Prepare static site
         run: |
-          mkdir -p target/browser-site
-          cp web-interpreter/{index.html,style.css,app.js,indent.js,driver.mjs,worker.mjs,runtime-adapter.mjs,THIRD-PARTY-NOTICES.txt} target/browser-site/
-          cp -R web-interpreter/{runtime,vendor} target/browser-site/
-          touch target/browser-site/.nojekyll
+          python web-interpreter/tests/test_package.py
+          node --test web-interpreter/tests/*.test.mjs
+      - name: Prepare static site
+        run: python web-interpreter/package.py
       - uses: actions/upload-artifact@v4
         with:
           name: browser-interpreter-site

@@ -73,6 +73,8 @@ const editor = typeof CodeMirror === "function" ? CodeMirror.fromTextArea(byId("
   electricChars: true,
   lineWrapping: true,
   extraKeys: {
+    "Enter": cm => RfortIndent.newline(cm),
+    "Shift-Enter": cm => RfortIndent.newline(cm),
     "Ctrl-Enter": () => { if (!busy) byId("run").click(); },
     "Cmd-Enter": () => { if (!busy) byId("run").click(); },
     "Tab": cm => {

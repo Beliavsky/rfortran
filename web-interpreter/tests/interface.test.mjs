@@ -6,7 +6,7 @@ import {readFileSync} from "node:fs";
 const html=readFileSync(new URL("../index.html",import.meta.url),"utf8");
 const script=readFileSync(new URL("../app.js",import.meta.url),"utf8");
 const indentScript=readFileSync(new URL("../indent.js",import.meta.url),"utf8");
-function page({drafts={},brokenStorage=false}={}) {
+function page({drafts={},brokenStorage=false,withEditor=false}={}) {
   const nodes=new Map(),workers=[],downloads=[],opened=[],timers=new Map(),blobs=[];
   const storage=new Map(Object.entries(drafts));
   let focus=null, serial=0;
@@ -49,7 +49,37 @@ function page({drafts={},brokenStorage=false}={}) {
     createElement:() => {const e=new Element();e.click=()=>downloads.push(e);return e;},
     execCommand:()=>{if(focus)focus.value="";},
   };
+  let editorOptions, codeEditor;
+  function CodeMirror() {}
+  CodeMirror.defineMode=()=>{};
+  CodeMirror.fromTextArea=(input,options)=>{
+    editorOptions=options;
+    const handlers=new Map(), settings={...options};
+    const position=offset=>{
+      const lines=input.value.slice(0,offset).split("\n");
+      return {line:lines.length-1,ch:lines.at(-1).length};
+    };
+    const offset=pos=>input.value.split("\n").slice(0,pos.line).reduce((n,line)=>n+line.length+1,0)+pos.ch;
+    codeEditor={
+      getValue:()=>input.value,
+      setValue(value) {input.value=value;input.selectionStart=input.selectionEnd=value.length;handlers.get("change")?.();},
+      on:(name,handler)=>handlers.set(name,handler),
+      getOption:name=>settings[name],setOption:(name,value)=>{settings[name]=value;},
+      firstLine:()=>0,getLine:n=>input.value.split("\n")[n],
+      listSelections:()=>[{from:()=>position(input.selectionStart),to:()=>position(input.selectionEnd)}],
+      getRange:(from,to)=>input.value.slice(offset(from),offset(to)),
+      replaceSelections(values) {
+        const start=input.selectionStart,end=input.selectionEnd;
+        input.value=input.value.slice(0,start)+values[0]+input.value.slice(end);
+        input.selectionStart=input.selectionEnd=start+values[0].length;
+        handlers.get("change")?.();
+      },
+      operation:fn=>fn(),scrollIntoView:()=>{},refresh:()=>{},focus:()=>{},
+    };
+    return codeEditor;
+  };
   const context=vm.createContext({document,Worker,URL:TestURL,URLSearchParams,Blob,
+    CodeMirror:withEditor ? CodeMirror : undefined,
     navigator:{userAgent:"test browser"},window:{open:(...args)=>opened.push(args)},
     localStorage:{getItem:key=>{if(brokenStorage)throw Error();return storage.get(key)??null;},
       setItem:(key,value)=>{if(brokenStorage)throw Error();storage.set(key,value);}},
@@ -59,7 +89,7 @@ function page({drafts={},brokenStorage=false}={}) {
   });
   vm.runInContext(indentScript,context);
   vm.runInContext(script,context);
-  return {get:id=>nodes.get(id),workers,downloads,opened,blobs,storage,classes,timers};
+  return {get:id=>nodes.get(id),workers,downloads,opened,blobs,storage,classes,timers,editor:codeEditor,editorOptions};
 }
 function done(worker,props={}) {
   worker.reply({type:"done",ok:true,output:"",errors:"",seconds:0.01,...props});
@@ -131,6 +161,25 @@ test("textarea fallback and REPL multiline input always indent three spaces",()=
   command.emit("keydown",{key:"Enter",shiftKey:true});
   assert.equal(command.value,"do i=1,3\n   ");
   assert.equal(p.workers.length,0);
+});
+
+test("CodeMirror Enter explicitly indents DO and IF, including selection replacement",()=>{
+  const p=page({withEditor:true});
+  for (const opening of ["do i=1,3", "if (i>0) then"]) {
+    p.editor.setValue(`program p\n   ${opening}`);
+    p.editorOptions.extraKeys.Enter(p.editor);
+    assert.equal(p.editor.getValue(),`program p\n   ${opening}\n      `);
+  }
+  p.editor.setValue("program p\n   do i=1,3\n      replace me\n   end do");
+  const input=p.get("source");
+  input.selectionStart=input.value.indexOf("replace me");
+  input.selectionEnd=input.selectionStart+"replace me".length;
+  p.editorOptions.extraKeys["Shift-Enter"](p.editor);
+  assert.match(p.editor.getValue(),/\n      \n      \n   end do$/);
+  p.editor.setOption("readOnly",true);
+  const before=p.editor.getValue();
+  p.editorOptions.extraKeys.Enter(p.editor);
+  assert.equal(p.editor.getValue(),before);
 });
 
 test("REPL reports inferred-declaration settings and pending input",()=>{

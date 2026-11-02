@@ -76,6 +76,19 @@ var RfortIndent = (() => {
     for (const line of before.split(/\r?\n/)) advance(state,line);
     return " ".repeat(indent(state,next));
   }
+  function newline(editor) {
+    if (editor.getOption("readOnly")) return;
+    editor.operation(() => {
+      const values=editor.listSelections().map(selection => {
+        const from=selection.from(), to=selection.to();
+        const before=editor.getRange({line:editor.firstLine(),ch:0},from);
+        const next=editor.getLine(to.line).slice(to.ch);
+        return "\n"+after(before,next);
+      });
+      editor.replaceSelections(values,"end","+input");
+      editor.scrollIntoView(null);
+    });
+  }
   function install(cm) {
     cm.defineMode("rfort-fortran",config => {
       const base=cm.getMode(config,"text/x-fortran");
@@ -92,6 +105,6 @@ var RfortIndent = (() => {
       };
     });
   }
-  return {width,start,copy,advance,indent,after,install};
+  return {width,start,copy,advance,indent,after,newline,install};
 })();
 if (typeof CodeMirror === "function") RfortIndent.install(CodeMirror);

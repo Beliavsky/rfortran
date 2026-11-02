@@ -98,6 +98,7 @@ and WASI host code retain their MIT notices.
 
 ```cmd
 set RFORT_WASM_REQUIRED=1
+python web-interpreter/tests/test_package.py
 node --test web-interpreter/tests/*.test.mjs
 ```
 
@@ -109,6 +110,12 @@ Driver and UI tests use Worker/DOM stubs for stop/timeout, edits, reports and
 controls; they do not replace a rendered browser check.
 
 ## GitHub Pages
+
+`python web-interpreter/package.py` prepares `target/browser-site` for static
+hosting. Its HTML uses content hashes in script and stylesheet URLs so browser
+caches cannot combine a new page with old editor assets. To try the packaged
+site locally, serve that directory instead of `web-interpreter`. Packaging tests
+verify that an editor change also changes its published URL.
 
 `.github/workflows/browser-interpreter.yml` builds and tests on every push
 and pull requests, and uploads a ready-to-serve static site artifact. It builds
