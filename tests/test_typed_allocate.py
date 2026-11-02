@@ -54,6 +54,24 @@ print '(a,2i3)', s(3), len(s(3)), n
 end program main
 ''', 'abc de    3  2\nwxyz  4  0\n')
 
+    def test_allocated_status_of_character_arrays(self):
+        self.check('''program main
+implicit none
+character(len=:), allocatable :: s(:)
+character(len=4), allocatable :: w(:)
+real, allocatable :: x(:)
+print '(3l2)', allocated(s), allocated(w), allocated(x)
+allocate(character(len=3) :: s(2))
+allocate(w(3), x(2))
+s = 'ab'
+w = 'cd'
+print '(3l2,1x,2a,1x,3a)', allocated(s), allocated(w), allocated(x), s, w
+deallocate(w)
+print '(2l2)', allocated(s), allocated(w)
+if (.not. allocated(w)) print '(a,i2,i2)', 'w gone', size(s), len(s)
+end program main
+''', ' F F F\n T T T ab ab  cd  cd  cd\n T F\nw gone 2 3\n')
+
     def test_dummy_argument(self):
         self.check('''program main
 implicit none

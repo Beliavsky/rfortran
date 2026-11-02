@@ -448,7 +448,10 @@ fn rewrite(
             for e in args.iter_mut().skip(1) {rewrite(e,shapes,constants,absent)?;}
         },
         Expr::Call(n,args) if n=="allocated" => {
-            if let [Expr::Ident(array)]=args.as_slice() {if let Some(flag)=crate::allocatables::allocated(array,shapes) {*e=flag;}}
+            if let [Expr::Ident(array)]=args.as_slice() {
+                if let Some(flag)=crate::allocatables::allocated(array,shapes) {*e=flag;}
+                else if let Some((_,flag))=shapes.get(&format!("@allocation_status:{array}")) {*e=flag[0].clone();}
+            }
         }
         Expr::Call(n, args) if n == "present" => {
             let [Expr::Ident(param)] = args.as_slice() else {
@@ -936,6 +939,16 @@ fn specialize(
         .collect();
     body.retain(|s| !matches!(s, Stmt::ArrayDecl { name, .. } if deferred.contains_key(name)));
     let mut output = Vec::new();
+    // A deferred array that ALLOCATE gives a fixed shape keeps its
+    // allocation status in a variable, for ALLOCATED.
+    let mut names: Vec<&String> = deferred.keys().collect();
+    names.sort();
+    for n in names {
+        let flag = format!("@allocation_status${n}");
+        output.push(Stmt::VarDecl { kind: TypeSpec::Logical, names: vec![flag.clone()] });
+        output.push(Stmt::Assign { name: flag.clone(), value: Expr::Logical(false) });
+        shapes.insert(format!("@allocation_status:{n}"), (TypeSpec::Logical, vec![Expr::Ident(flag)]));
+    }
     for mut s in std::mem::take(body) {
         if let Some(p) = crate::source_diagnostics::statement_offset(&s) { statement_location.set(Some(p)); }
         let pending: HashSet<_> = deferred
@@ -1013,6 +1026,7 @@ fn specialize(
                         *d=Expr::IntLit(crate::parameters::integer_constant(d)?.max(0).to_string());
                     }
                     shapes.insert(n.clone(), (kind.clone(), dims.clone()));
+                    output.push(Stmt::Assign { name: format!("@allocation_status${n}"), value: Expr::Logical(true) });
                     output.push(Stmt::ArrayDecl {
                         name: n.clone(),
                         kind,
@@ -1023,7 +1037,12 @@ fn specialize(
             }
             Stmt::CallSub {name,args} if name=="@deallocate"=>{
                 crate::allocatables::deallocation_targets(args)?;
-                output.push(s);continue;
+                let cleared: Vec<Stmt> = args.iter().filter_map(|a| match a {
+                    Expr::Ident(n) if shapes.contains_key(&format!("@allocation_status:{n}")) =>
+                        Some(Stmt::Assign { name: format!("@allocation_status${n}"), value: Expr::Logical(false) }),
+                    _ => None,
+                }).collect();
+                output.push(s);output.extend(cleared);continue;
             }
             Stmt::Assign { name, value } => {
                 if absent.contains(name) { bail!("assignment to absent OPTIONAL dummy `{name}`"); }

@@ -12,6 +12,8 @@ struct Array {
     length: usize,
     elements: Vec<String>,
     extent: Option<Expr>,
+    /// The allocation status of an ALLOCATABLE array.
+    allocated: Option<Expr>,
 }
 type Arrays = HashMap<String, Array>;
 pub fn original_element(name: &str) -> Option<(&str, i64)> {
@@ -85,6 +87,10 @@ fn expression(e: Expr, arrays: &Arrays) -> Result<Value> {
             for e in values {match expression(e,arrays)? {Value::Scalar(e)=>items.push(e),Value::Array(v)=>items.extend(v)}}
             Value::Array(items)
         },
+        Expr::Call(n,args) if n=="allocated" && matches!(args.as_slice(),[Expr::Ident(a)] if arrays.get(a).is_some_and(|a|a.allocated.is_some())) => {
+            let Expr::Ident(a)=&args[0] else {unreachable!()};
+            Value::Scalar(arrays[a].allocated.clone().unwrap())
+        }
         Expr::Call(n,args) if matches!(n.as_str(),"lbound"|"ubound") && matches!(args.first(),Some(Expr::Ident(a)) if arrays.contains_key(a)) => {
             let Expr::Ident(a)=&args[0] else {unreachable!()};
             let value=if n=="lbound" {Expr::IntLit("1".into())} else {arrays[a].extent.clone().unwrap_or_else(||Expr::IntLit(arrays[a].elements.len().to_string()))};
@@ -523,6 +529,7 @@ fn body(
                     Array {
                         length: length.unwrap_or(1),
                         extent: crate::allocatables::length(name,&shapes),
+                        allocated: crate::allocatables::allocated(name,&shapes),
                         elements: (1..=extent)
                             .map(|i| format!("@character_array_{serial}_{name}_{i}"))
                             .collect(),

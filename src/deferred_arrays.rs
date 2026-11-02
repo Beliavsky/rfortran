@@ -65,7 +65,7 @@ fn rewrite(body: &mut Vec<Stmt>, arrays: &[String], allocated: &mut std::collect
         match &mut s {
             Stmt::Assign { name, value } if arrays.contains(name) => {
                 if let Some((_, Some(size))) = shape(value) {
-                    // CHARACTER arrays do not yet support ALLOCATED or a
+                    // CHARACTER arrays do not yet support a
                     // conditional DEALLOCATE, so the first assignment in
                     // statement order allocates, and later ones reallocate.
                     if !allocated.insert(name.clone()) {
