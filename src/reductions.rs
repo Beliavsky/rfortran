@@ -1001,14 +1001,14 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             let target = vec![bin(BinOp::Add, id(&row), bin(BinOp::Mul, less(&col), int(rows)))];
             let item = Expr::Index(temp.clone(), target.clone());
             let zero = match kind { TypeSpec::Real => Expr::RealLit("0.0".into()), TypeSpec::DoublePrecision => Expr::RealLit("0.0d0".into()), _ => int(0) };
+            let cell = format!("@matmul_cell_{serial}");
             prefix.push(Stmt::ArrayDecl { kind: kind.clone(), name: temp.clone(), dims: vec![int(rows * cols)] });
-            prefix.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![row.clone(), col.clone(), k.clone()] });
-            let product = Stmt::AssignIndex { name: temp.clone(), indices: target.clone(), value: bin(BinOp::Add, item, bin(BinOp::Mul, a, b)) };
-            let cell = vec![
-                Stmt::AssignIndex { name: temp.clone(), indices: target, value: zero },
-                Stmt::Do { var: k, start: int(1), end: int(inner), body: vec![product] },
-            ];
-            let column = vec![Stmt::Do { var: row, start: int(1), end: int(rows), body: cell }];
+            prefix.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![row.clone(), col.clone(), k.clone(), cell.clone()] });
+            prefix.push(Stmt::Do { var: cell.clone(), start: int(1), end: int(rows * cols), body: vec![Stmt::AssignIndex { name: temp.clone(), indices: vec![id(&cell)], value: zero }] });
+            // Each element still sums its products in order of k. With the
+            // row loop innermost, A and the result are read with unit stride.
+            let product = Stmt::AssignIndex { name: temp.clone(), indices: target, value: bin(BinOp::Add, item, bin(BinOp::Mul, a, b)) };
+            let column = vec![Stmt::Do { var: k, start: int(1), end: int(inner), body: vec![Stmt::Do { var: row, start: int(1), end: int(rows), body: vec![product] }] }];
             prefix.push(Stmt::Do { var: col, start: int(1), end: int(cols), body: column });
             symbols.insert(temp.clone(), (kind, vec![int(rows * cols)]));
             *e = Expr::Ident(temp);
@@ -1383,6 +1383,48 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
         }
     }
     Ok(())
+}
+
+/// Whether an element of an array expression can be assigned before the
+/// next is evaluated: it reads only other ordinary variables, through
+/// intrinsics that cannot reach the destination.
+fn independent(e: &Expr, destination: &str, index: &str, symbols: &Symbols) -> bool {
+    const PURE: &[&str] = &["abs", "dble", "real", "int", "nint", "sqrt", "exp", "log", "log10", "sin", "cos", "tan",
+        "asin", "acos", "atan", "atan2", "sinh", "cosh", "tanh", "min", "max", "mod", "modulo", "sign", "aint", "anint",
+        "floor", "ceiling", "dprod", "dim"];
+    let plain = |n: &str| n != destination && (n == index || !n.starts_with('@') || n.starts_with("@matmul_array_"));
+    // The destination element itself, as y in y = y + x.
+    fn same(e: &Expr, index: &str) -> bool {
+        // The subscript as a * index + b.
+        fn linear(e: &Expr, index: &str) -> Option<(i64, i64)> {
+            use crate::ast::BinOp;
+            match e {
+                Expr::Ident(n) if n == index => Some((1, 0)),
+                Expr::IntLit(v) => Some((0, v.parse().ok()?)),
+                Expr::Bin(op @ (BinOp::Add | BinOp::Sub), a, b) => {
+                    let ((a1, a0), (b1, b0)) = (linear(a, index)?, linear(b, index)?);
+                    if matches!(op, BinOp::Add) { Some((a1.checked_add(b1)?, a0.checked_add(b0)?)) } else { Some((a1.checked_sub(b1)?, a0.checked_sub(b0)?)) }
+                }
+                Expr::Bin(BinOp::Mul, a, b) => match (linear(a, index)?, linear(b, index)?) {
+                    ((0, k), (c, d)) | ((c, d), (0, k)) => Some((c.checked_mul(k)?, d.checked_mul(k)?)),
+                    _ => None,
+                },
+                _ => None,
+            }
+        }
+        linear(e, index) == Some((1, 0))
+    }
+    match e {
+        Expr::IntLit(_) | Expr::RealLit(_) | Expr::Logical(_) => true,
+        Expr::Index(n, args) | Expr::Call(n, args) if n == destination => args.len() == 1 && same(&args[0], index),
+        Expr::Ident(n) => plain(n),
+        Expr::Index(n, args) => plain(n) && args.iter().all(|a| independent(a, destination, index, symbols)),
+        Expr::Call(n, args) => (PURE.contains(&n.as_str()) || plain(n) && symbols.get(n).is_some_and(|(_, dims)| !dims.is_empty()))
+            && args.iter().all(|a| independent(a, destination, index, symbols)),
+        Expr::Bin(_, a, b) => independent(a, destination, index, symbols) && independent(b, destination, index, symbols),
+        Expr::Un(_, a) => independent(a, destination, index, symbols),
+        _ => false,
+    }
 }
 
 fn array_valued(e: &Expr, symbols: &Symbols) -> bool {
@@ -2156,6 +2198,10 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                     if let Some(length) = runtime_extent(value) { prefix.push(shape_guard(length,int(extent))); }
                     else if count!=Some(extent) {bail!("array assignment shapes do not conform");}
                     prefix.push(Stmt::VarDecl{kind:TypeSpec::Integer(None),names:vec![index.clone()]});
+                    if independent(&scalar,name,&index,&symbols) {
+                        prefix.push(Stmt::Do{var:index,start:int(1),end:int(extent),body:vec![Stmt::AssignIndex{name:name.clone(),indices:vec![index_expr],value:scalar}]});
+                        output.push(Stmt::Block{body:prefix});continue;
+                    }
                     prefix.push(Stmt::ArrayDecl{kind:kind.clone(),name:temp.clone(),dims:vec![int(extent)]});
                     prefix.push(Stmt::Do{var:index.clone(),start:int(1),end:int(extent),body:vec![Stmt::AssignIndex{name:temp.clone(),indices:vec![index_expr.clone()],value:scalar}]});
                     prefix.push(Stmt::Do{var:index,start:int(1),end:int(extent),body:vec![Stmt::AssignIndex{name:name.clone(),indices:vec![index_expr.clone()],value:Expr::Index(temp,vec![index_expr])}]});

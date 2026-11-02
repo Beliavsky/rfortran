@@ -385,25 +385,28 @@ impl Lowerer {
                 // A function call checks each dynamic subscript exactly once, including
                 // in loop conditions and nested expressions. Checking only the flattened
                 // offset would miss invalid subscripts that alias another column.
+                // The extent is an argument so that code generation can test
+                // it inline and call the guard only to report a failure.
                 let function = format!("@matrix_bound_{}", self.guards.len());
                 let parameter = format!("@matrix_index_{}", self.guards.len());
+                let limit = format!("@matrix_extent_{}", self.guards.len());
                 let value = Expr::Ident(parameter.clone());
                 self.guards.push(Stmt::Function {
                     name: function.clone(),
-                    params: vec![parameter.clone()],
+                    params: vec![parameter.clone(), limit.clone()],
                     pure: false,
                     elemental: false,
                     return_type: Some(TypeSpec::Integer(Some(8))),
                     body: vec![
                         Stmt::VarDecl {
                             kind: TypeSpec::Integer(Some(8)),
-                            names: vec![parameter],
+                            names: vec![parameter, limit.clone()],
                         },
                         Stmt::If {
                             cond: bin(
                                 BinOp::Or,
                                 bin(BinOp::Lt, value.clone(), int(1)),
-                                bin(BinOp::Gt, value.clone(), int(*extent)),
+                                bin(BinOp::Gt, value.clone(), Expr::Ident(limit)),
                             ),
                             then_body: vec![Stmt::CallSub {
                                 name: "@error_stop".into(),
@@ -417,7 +420,7 @@ impl Lowerer {
                         Stmt::Return(Some(value)),
                     ],
                 });
-                Expr::Call(function, vec![e.clone()])
+                Expr::Call(function, vec![e.clone(), int(*extent)])
             };
             offset = bin(
                 BinOp::Add,

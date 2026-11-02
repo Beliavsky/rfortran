@@ -1530,7 +1530,18 @@ pub fn lower_to_ir_with_debug(program: &Program, debug: bool) -> Result<LowerOut
 
                         let assigned_conflicts_constants =
                             assigned_in_loop.iter().any(|v| constants.contains_key(v));
+                        // Unroll only small loops: a nest of unrolled loops
+                        // multiplies the generated code by every trip count.
+                        fn size(body: &[IStmt]) -> usize {
+                            body.iter().map(|s| 1 + match s {
+                                IStmt::If { then_body, else_body, .. } => size(then_body) + else_body.as_deref().map_or(0, size),
+                                IStmt::Do { body, .. } | IStmt::DoWhile { body, .. } | IStmt::Block { body } => size(body),
+                                IStmt::SelectCase { cases, default, .. } => cases.iter().map(|c| size(&c.body)).sum::<usize>() + default.as_deref().map_or(0, size),
+                                _ => 0,
+                            }).sum()
+                        }
                         if loop_count <= 1000
+                            && loop_count.saturating_mul(size(&optimized_body)) <= 128
                             && loop_count > 0
                             && !optimized_body
                                 .iter()

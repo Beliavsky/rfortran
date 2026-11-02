@@ -15,9 +15,13 @@ python benchmarks\run.py --size medium
 The smoke profile checks compatibility and correctness. Its timings are usually
 too short for useful comparisons. Start performance measurements with `medium`.
 The console prints each compiler's median kernel execution time in seconds next
-to its status. These times exclude startup and compilation. Short timings are
-labeled, and failed cases show `-` rather than a misleading execution time.
-Use `large` when kernels still complete too quickly. The report suppresses ratios
+to its status, with nine decimal places so decimal points align. These times
+exclude startup and compilation. Each gfortran row also shows the rfort/gfortran
+time ratio: values above 1 mean rfort is slower. A `*` marks a preliminary ratio
+involving a short timing. Short timings are labeled, and failed cases show `-`
+for their time. Ratios show `-` if either compiler failed, was omitted, or had a
+zero median time.
+Use `large` when kernels still complete too quickly. The Markdown report suppresses ratios
 when either median kernel duration is below 0.02 seconds (configurable with
 `--min-seconds`). It still records the raw measurements. A correct, short-running
 case is marked `passed (short timing)`, not a compiler failure.

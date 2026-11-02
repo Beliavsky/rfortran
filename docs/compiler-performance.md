@@ -112,3 +112,40 @@ All 53 focused integration tests and 133 Rust unit tests pass with these
 changes. The integration suite includes gfortran comparisons where applicable.
 The rebuilt release also passes 19 vector, SELECT CASE and profiling tests;
 see `target/compile-performance-release-tests.txt` (ignored).
+
+## Run-time cost of checks
+
+Generated programs keep their uninitialized-value and subscript checks at every
+optimization level. These optimizations reduce their cost without removing them
+where they can fail:
+
+- A nest of DO loops with constant, nonempty bounds that assigns every element
+  of a fixed-size array exactly once per index, without EXIT, CYCLE or RETURN,
+  defines the whole array. Later reads need no initialization check. A
+  variable that no statement of its scope can make undefined again (INTENT(OUT)
+  association, ALLOCATE, storage transport and similar) also skips the flag
+  stores of writes after it is fully defined.
+- Subscript checks of explicit-shape and allocatable arrays are tested inline;
+  the guard procedure is called only to report a failure. A subscript that is a
+  DO variable of a loop with constant bounds, plus or minus constants, and that
+  stays within the extent is not tested.
+- A DO variable that its body cannot redefine is kept in a register. Its storage
+  still receives every value, for callees and for its value after the loop.
+- A whole-array assignment whose right side reads only other ordinary arrays,
+  or the destination at the same element, is assigned without a temporary.
+- MATMUL accumulates with the row loop innermost, so its operands and result
+  are read with unit stride. Each element still sums its products in order.
+- The IR optimizer unrolls a constant loop only if the unrolled body has at most
+  128 statements. Before this limit, a check-free matrix-product nest unrolled
+  every level and compilation did not finish.
+
+`tests/test_checked_loop_performance.py` checks that partial nests, EXIT and
+out-of-range subscripts are still reported.
+
+On the medium benchmark profile (`python benchmarks/run.py --size medium`),
+the rfort/gfortran kernel-time ratio of matmul_loop fell from about 480 to about
+3, stencil_2d from 227 to about 4.5, vector_array from 10.6 to about 1.7,
+allocation_fill from 10.4 to about 3.5, and matmul_intrinsic from 83 to about 18.
+Timings on the measurement machine varied by a factor of two during the session,
+so the ratios are from interleaved runs of both executables. The remaining gaps
+come mainly from gfortran's SIMD vectorization and its blocked library MATMUL.

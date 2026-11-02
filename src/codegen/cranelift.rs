@@ -19,7 +19,7 @@ use crate::ast::TypeSpec;
 
 use cranelift_codegen::ir;
 use cranelift_codegen::ir::InstBuilder;
-use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
+use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_module::{DataDescription, Linkage, Module as _};
 use std::cmp::max;
 use std::collections::{HashMap, HashSet};
@@ -700,6 +700,8 @@ fn eval_expr(
             if let Some(ss) = ints.get(&format!("@character_pointer:{id}")) {
                 let a = storage_addr(b, ptr_ty, *ss);
                 CgVal::I64(b.ins().load(ir::types::I64, MemFlags::new(), a, 0))
+            } else if let Some(counter) = LOOP_COUNTERS.with(|c| c.borrow().get(id).map(|c| c.0)).filter(|_| ints.contains_key(id)) {
+                CgVal::I64(b.use_var(counter))
             } else if let Some(ss) = ints.get(id) {
                 let a = storage_addr(b, ptr_ty, *ss);
                 CgVal::I64(b.ins().load(ir::types::I64, MemFlags::new(), a, 0))
@@ -1214,6 +1216,55 @@ fn eval_expr(
                     CgVal::F64(r)
                 }
                 _ => {
+                    // A subscript guard tests its range inline and calls the
+                    // guard procedure only to report an out-of-range subscript.
+                    if let (Some(meta), Some(IExpr::IntLit(extent)), true) = (func_meta.get(name), args.get(1), name.starts_with("@matrix_bound_") && args.len() == 2) {
+                        let extent: i64 = extent.parse().unwrap_or(0);
+                        let index = eval_expr(b, ex, ptr_ty, &args[0], ints, reals, bools, func_meta);
+                        let index = to_i64(b, index);
+                        if counter_range(&args[0]).is_some_and(|(lo, hi)| lo >= 1 && hi <= extent) { return CgVal::I64(index); }
+                        let offset = b.ins().iadd_imm(index, -1);
+                        let outside = b.ins().icmp_imm(ir::condcodes::IntCC::UnsignedGreaterThanOrEqual, offset, extent);
+                        let failure = b.create_block();
+                        let success = b.create_block();
+                        b.set_cold_block(failure);
+                        b.ins().brif(outside, failure, &[], success, &[]);
+                        b.switch_to_block(failure); b.seal_block(failure);
+                        let limit = b.ins().iconst(ir::types::I64, extent);
+                        b.ins().call(meta.fref, &[index, limit]);
+                        b.ins().jump(success, &[]);
+                        b.switch_to_block(success); b.seal_block(success);
+                        return CgVal::I64(index);
+                    }
+                    // An allocatable array's element offset, from (position,
+                    // extent) pairs; the helper is called only to report a
+                    // subscript outside the allocated bounds.
+                    if let (Some(meta), true) = (func_meta.get(name), name.starts_with("@alloc_offset_") && !args.is_empty() && args.len() % 2 == 0) {
+                        let values: Vec<ir::Value> = args.iter().map(|a| {let v = eval_expr(b, ex, ptr_ty, a, ints, reals, bools, func_meta); to_i64(b, v)}).collect();
+                        let mut outside = None;
+                        for pair in values.chunks(2) {
+                            let offset = b.ins().iadd_imm(pair[0], -1);
+                            let test = b.ins().icmp(ir::condcodes::IntCC::UnsignedGreaterThanOrEqual, offset, pair[1]);
+                            outside = Some(match outside {Some(o) => b.ins().bor(o, test), None => test});
+                        }
+                        let failure = b.create_block();
+                        let success = b.create_block();
+                        b.set_cold_block(failure);
+                        b.ins().brif(outside.unwrap(), failure, &[], success, &[]);
+                        b.switch_to_block(failure); b.seal_block(failure);
+                        b.ins().call(meta.fref, &values);
+                        b.ins().jump(success, &[]);
+                        b.switch_to_block(success); b.seal_block(success);
+                        let mut offset = b.ins().iconst(ir::types::I64, 1);
+                        let mut stride: Option<ir::Value> = None;
+                        for pair in values.chunks(2) {
+                            let position = b.ins().iadd_imm(pair[0], -1);
+                            let term = match stride {Some(s) => b.ins().imul(position, s), None => position};
+                            offset = b.ins().iadd(offset, term);
+                            stride = Some(match stride {Some(s) => b.ins().imul(s, pair[1]), None => pair[1]});
+                        }
+                        return CgVal::I64(offset);
+                    }
                     if let Some(meta) = func_meta.get(name) {
                         let mut argv = Vec::new();
                         for (i, a) in args.iter().enumerate() {
@@ -2027,6 +2078,36 @@ fn print_expr(
     Ok(())
 }
 
+/// The values a subscript can take in the current iterations of DO loops
+/// with constant bounds.
+fn counter_range(e: &IExpr) -> Option<(i64, i64)> {
+    use crate::ast::BinOp;
+    match e {
+        IExpr::IntLit(v) => { let v = v.parse().ok()?; Some((v, v)) }
+        IExpr::Ident(n) => LOOP_COUNTERS.with(|c| c.borrow().get(n).and_then(|c| c.1)),
+        IExpr::Bin(BinOp::Add, a, b) => { let (a, b) = (counter_range(a)?, counter_range(b)?); Some((a.0.checked_add(b.0)?, a.1.checked_add(b.1)?)) }
+        IExpr::Bin(BinOp::Sub, a, b) => { let (a, b) = (counter_range(a)?, counter_range(b)?); Some((a.0.checked_sub(b.1)?, a.1.checked_sub(b.0)?)) }
+        _ => None,
+    }
+}
+
+/// Whether a DO body may assign its variable, or pass it where a callee
+/// could. Standard-conforming code never does; generated code might.
+fn redefines(body: &[IStmt], var: &str) -> bool {
+    let named = |e: &IExpr| matches!(e, IExpr::Ident(n) if n == var);
+    body.iter().any(|s| match s {
+        IStmt::DeclVar(_, n, _) | IStmt::AssignStr(n, _) | IStmt::AssignIntLit(n, _) | IStmt::AssignRealLit(n, _)
+        | IStmt::AssignBool(n, _) | IStmt::AssignIdent(n, _) | IStmt::AssignExpr(n, _) | IStmt::AssignIndex(n, _, _) => n == var,
+        IStmt::Read(args) => args.iter().any(named),
+        IStmt::Call(_, args) => args.iter().any(named),
+        IStmt::If { then_body, else_body, .. } => redefines(then_body, var) || else_body.as_ref().is_some_and(|b| redefines(b, var)),
+        IStmt::Do { var: v, body, .. } => v == var || redefines(body, var),
+        IStmt::DoWhile { body, .. } | IStmt::Block { body } => redefines(body, var),
+        IStmt::SelectCase { cases, default, .. } => cases.iter().any(|c| redefines(&c.body, var)) || default.as_ref().is_some_and(|b| redefines(b, var)),
+        _ => false,
+    })
+}
+
 fn gen_stmts(
     b: &mut FunctionBuilder,
     ex: &Externs,
@@ -2488,7 +2569,8 @@ fn gen_stmts(
                 end,
                 body,
             } => {
-                if let Some(ss) = ints.get(var) {
+                if let Some(ss) = ints.get(var).copied() {
+                    let ss = &ss;
                     let sv = eval_expr(b, ex, ptr_ty, start, ints, reals, bools, func_meta);
                     let ev = eval_expr(b, ex, ptr_ty, end, ints, reals, bools, func_meta);
                     let si = to_i64(b, sv);
@@ -2499,11 +2581,22 @@ fn gen_stmts(
                     let body_blk = b.create_block();
                     let continue_blk = b.create_block();
                     let after_blk = b.create_block();
+                    // A body that cannot redefine the variable reads it from a
+                    // register. Its storage still receives each value, for
+                    // calls that read it and for its value after the loop.
+                    let counter = (!redefines(body, var)).then(|| {
+                        let counter = b.declare_var(types::I64);
+                        b.def_var(counter, si);
+                        counter
+                    });
 
                     b.ins().jump(loop_blk, &[]);
 
                     b.switch_to_block(loop_blk);
-                    let cur = b.ins().load(types::I64, MemFlags::new(), a, 0);
+                    let cur = match counter {
+                        Some(counter) => {let cur = b.use_var(counter); let a = storage_addr(b, ptr_ty, *ss); b.ins().store(MemFlags::new(), cur, a, 0); cur}
+                        None => b.ins().load(types::I64, MemFlags::new(), a, 0),
+                    };
                     let cmp = b
                         .ins()
                         .icmp(ir::condcodes::IntCC::SignedGreaterThan, cur, ei);
@@ -2512,6 +2605,8 @@ fn gen_stmts(
 
                     b.switch_to_block(body_blk);
                     b.seal_block(body_blk);
+                    let range = match (start, end) {(IExpr::IntLit(a), IExpr::IntLit(b)) => a.parse().ok().zip(b.parse().ok()), _ => None};
+                    let previous = counter.map(|counter| LOOP_COUNTERS.with(|c| c.borrow_mut().insert(var.clone(), (counter, range))));
                     let tr = gen_stmts(
                         b,
                         ex,
@@ -2532,14 +2627,25 @@ fn gen_stmts(
                         Some(continue_blk),
                         arrays,
                         tokens,
-                    )?;
+                    );
+                    if let Some(previous) = previous {
+                        LOOP_COUNTERS.with(|c| {let mut c = c.borrow_mut(); match previous {Some(p) => {c.insert(var.clone(), p);} None => {c.remove(var);}}});
+                    }
+                    let tr = tr?;
                     if !tr { b.ins().jump(continue_blk, &[]); }
 
                     b.switch_to_block(continue_blk);
-                    let cur2 = b.ins().load(types::I64, MemFlags::new(), a, 0);
-                    let one = b.ins().iconst(types::I64, 1);
-                    let next = b.ins().iadd(cur2, one);
-                    b.ins().store(MemFlags::new(), next, a, 0);
+                    if let Some(counter) = counter {
+                        let cur2 = b.use_var(counter);
+                        let next = b.ins().iadd_imm(cur2, 1);
+                        b.def_var(counter, next);
+                    } else {
+                        let a = storage_addr(b, ptr_ty, *ss);
+                        let cur2 = b.ins().load(types::I64, MemFlags::new(), a, 0);
+                        let one = b.ins().iconst(types::I64, 1);
+                        let next = b.ins().iadd(cur2, one);
+                        b.ins().store(MemFlags::new(), next, a, 0);
+                    }
                     b.ins().jump(loop_blk, &[]);
                     b.seal_block(continue_blk);
                     b.seal_block(loop_blk);
@@ -3877,6 +3983,10 @@ thread_local! {
     /// Calls that expression code generation could not resolve. Code generation
     /// continues with a placeholder value so the error can name every call.
     static UNRESOLVED_CALLS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// DO variables whose loop bodies cannot redefine them, with the SSA
+    /// variable that holds the current iteration's value.
+    /// The range is known when the loop bounds are constants.
+    static LOOP_COUNTERS: std::cell::RefCell<HashMap<String, (Variable, Option<(i64, i64)>)>> = std::cell::RefCell::new(HashMap::new());
     /// Declared INTEGER kinds other than the default, for B, O and Z output.
     static INTEGER_KINDS: std::cell::RefCell<HashMap<String, u8>> = std::cell::RefCell::new(HashMap::new());
 }

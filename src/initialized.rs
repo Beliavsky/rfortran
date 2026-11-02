@@ -22,6 +22,9 @@ struct Variable {
     heap_allocated: Option<Expr>,
     element_width: i64,
     character_length: Option<usize>,
+    /// No statement of the scope can make a defined value undefined again,
+    /// so once the whole variable is defined its flags stay set.
+    stable: bool,
 }
 type Env = BTreeMap<String, Variable>;
 fn int(n: i64) -> Expr { Expr::IntLit(n.to_string()) }
@@ -113,6 +116,8 @@ fn read(e: &Expr, env: &Env, out: &mut Vec<Stmt>, serial: &mut usize) -> Result<
 }
 fn write(name: &str, index: Option<&Expr>, env: &mut Env, out: &mut Vec<Stmt>, serial: &mut usize) {
     let Some(v) = env.get_mut(name) else { return; };
+    // Every flag of a defined stable variable is already set.
+    if v.stable && v.state == State::Yes && v.elements.is_empty() { return; }
     if let Some(n) = v.extent {
         if let Some(index) = index {
             if let Some(i) = constant(index) {
@@ -161,6 +166,103 @@ fn possible_writes(body: &[Stmt], env: &mut Env) {
             _ => {}
         }
     }
+}
+
+/// A subscript as a constant plus multiples of loop variables, looking
+/// through subscript guards, which return their index or stop.
+fn affine(e: &Expr, loops: &[(String, i64, i64)]) -> Option<(BTreeMap<String, i64>, i64)> {
+    use crate::ast::BinOp;
+    match e {
+        Expr::IntLit(_) => Some((BTreeMap::new(), constant(e)?)),
+        Expr::Ident(n) if loops.iter().any(|(v, _, _)| v == n) => Some((BTreeMap::from([(n.clone(), 1)]), 0)),
+        Expr::Call(n, args) if n.starts_with("@matrix_bound_") && args.len() == 2 => affine(&args[0], loops),
+        Expr::Bin(op @ (BinOp::Add | BinOp::Sub), a, b) => {
+            let (mut terms, a0) = affine(a, loops)?;
+            let (other, b0) = affine(b, loops)?;
+            let sign = if matches!(op, BinOp::Add) { 1 } else { -1 };
+            for (v, c) in other { *terms.entry(v).or_insert(0) += sign * c; }
+            Some((terms, a0.checked_add(sign * b0)?))
+        }
+        Expr::Bin(BinOp::Mul, a, b) => {
+            let (terms, offset, factor) = match (affine(a, loops)?, affine(b, loops)?) {
+                ((t, o), (f, k)) if f.values().all(|c| *c == 0) => (t, o, k),
+                ((f, k), (t, o)) if f.values().all(|c| *c == 0) => (t, o, k),
+                _ => return None,
+            };
+            Some((terms.into_iter().map(|(v, c)| (v, c * factor)).collect(), offset.checked_mul(factor)?))
+        }
+        _ => None,
+    }
+}
+
+/// Arrays that a nest of DO loops with constant, nonempty ranges assigns at
+/// every element 1..extent, without leaving the nest early.
+fn full_cover(var: &str, start: &Expr, end: &Expr, body: &[Stmt], env: &Env) -> Vec<String> {
+    fn mentions(e: &Expr, name: &str) -> bool {
+        match e {
+            Expr::Ident(n) => n == name,
+            Expr::Index(n, a) | Expr::Call(n, a) => n == name || a.iter().any(|e| mentions(e, name)),
+            Expr::Bin(_, a, b) => mentions(a, name) || mentions(b, name),
+            Expr::Un(_, a) => mentions(a, name),
+            Expr::Section { name: n, .. } => n == name,
+            _ => false,
+        }
+    }
+    // Statements that cannot leave the nest or undefine storage.
+    fn simple(body: &[Stmt], arrays: &[String]) -> bool {
+        body.iter().all(|s| match s {
+            Stmt::SourceLocation(_) | Stmt::Assign { .. } | Stmt::AssignIndex { .. } | Stmt::VarDecl { .. } | Stmt::Print { .. } => true,
+            Stmt::Do { body, .. } => simple(body, arrays),
+            Stmt::If { then_body, else_body, .. } => simple(then_body, arrays) && else_body.as_ref().is_none_or(|b| simple(b, arrays)),
+            Stmt::CallSub { name, args } => !name.starts_with("@unchecked") && !arrays.iter().any(|a| args.iter().any(|e| mentions(e, a))),
+            _ => false,
+        })
+    }
+    fn assigned(body: &[Stmt], loops: &mut Vec<(String, i64, i64)>, found: &mut Vec<(String, BTreeMap<String, i64>, i64, Vec<(String, i64, i64)>)>) {
+        for s in body {
+            match s {
+                Stmt::AssignIndex { name, indices, .. } if indices.len() == 1 => {
+                    if let Some((terms, offset)) = affine(&indices[0], loops) { found.push((name.clone(), terms, offset, loops.clone())); }
+                }
+                Stmt::Do { var, start, end, body } => {
+                    if let (Some(a), Some(b)) = (constant(start), constant(end)) {
+                        if a <= b { loops.push((var.clone(), a, b)); assigned(body, loops, found); loops.pop(); }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let (Some(a), Some(b)) = (constant(start), constant(end)) else { return vec![] };
+    if a > b { return vec![]; }
+    let mut found = Vec::new();
+    assigned(body, &mut vec![(var.into(), a, b)], &mut found);
+    let mut covered = Vec::new();
+    for (name, terms, offset, loops) in found {
+        let Some(v) = env.get(&name) else { continue };
+        let Some(extent) = v.extent else { continue };
+        if v.heap_length.is_some() || v.runtime_sized || v.zero_sized || v.element_width != 1 || covered.contains(&name) { continue; }
+        // Each loop variable of the subscript strides past all faster ones:
+        // the subscript then maps the iterations onto 1..extent one to one.
+        let mut strides: Vec<(i64, i64, i64)> = Vec::new();
+        let mut ok = true;
+        for (v, c) in &terms {
+            if *c == 0 { continue; }
+            let Some((_, lo, hi)) = loops.iter().find(|(n, _, _)| n == v) else { ok = false; break };
+            strides.push((*c, *lo, hi - lo + 1));
+        }
+        if !ok || strides.iter().any(|(c, _, _)| *c <= 0) { continue; }
+        strides.sort();
+        let mut expected = 1i64;
+        for (c, _, count) in &strides {
+            if *c != expected { ok = false; break; }
+            let Some(next) = expected.checked_mul(*count) else { ok = false; break };
+            expected = next;
+        }
+        let first = strides.iter().fold(Some(offset), |acc, (c, lo, _)| acc?.checked_add(c.checked_mul(*lo)?));
+        if ok && expected == extent && first == Some(1) { covered.push(name); }
+    }
+    if simple(body, &covered) { covered } else { vec![] }
 }
 
 fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut usize) -> Result<bool> {
@@ -509,6 +611,7 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                     // reach codegen without their initialization-mask operands.
                     body.clear();
                 } else {
+                    let covered = full_cover(var, start, end, body, env);
                     let mut inner = env.clone(); possible_writes(body, &mut inner);
                     // A reduction over runtime-sized storage can execute zero
                     // iterations. Check its uninitialized elements only if read.
@@ -519,6 +622,9 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                     }
                     flow(body, &mut inner, result, serial)?;
                     *env = merge(env, &inner);
+                    for name in covered {
+                        if let Some(v) = env.get_mut(&name) { v.state = State::Yes; v.elements.clear(); }
+                    }
                 }
             }
             Stmt::DoWhile { cond, body } => {
@@ -601,6 +707,35 @@ fn collect(body: &[Stmt], variables: &mut BTreeMap<String, Option<i64>>) {
         }
     }
 }
+/// Variables named by statements that can make defined values undefined or
+/// replace their flags.
+fn undefining(body: &[Stmt], names: &mut std::collections::BTreeSet<String>) {
+    fn collect(e: &Expr, names: &mut std::collections::BTreeSet<String>) {
+        match e {
+            Expr::Ident(n) => { names.insert(n.clone()); }
+            Expr::Index(n, a) | Expr::Call(n, a) => { names.insert(n.clone()); for e in a { collect(e, names); } }
+            Expr::Bin(_, a, b) => { collect(a, names); collect(b, names); }
+            Expr::Un(_, a) => collect(a, names),
+            Expr::Section { name, .. } => { names.insert(name.clone()); }
+            _ => {}
+        }
+    }
+    for s in body {
+        match s {
+            Stmt::CallSub { name, args } if [TRANSPORT, TRANSPORT_FROM_CODES, TRANSPORT_TO_CODES, COPY_INITIALIZATION, "@module_bind",
+                "@heap_transfer_buffers", "@record_field_borrow", "@record_field_unborrow", "@heap_record_load", "@heap_record_store",
+                "@heap_record_borrow", "@heap_record_unborrow", "@saved_bind", "@undefine", "@ptr_bind", "@heap_allocate", "@heap_resize",
+                "@heap_free", "@heap_drop", "@heap_bind", "@heap_character_bind", "@heap_character_clear"].contains(&name.as_str()) => {
+                for e in args { collect(e, names); }
+            }
+            Stmt::If { then_body, else_body, .. } => { undefining(then_body, names); if let Some(b) = else_body { undefining(b, names); } }
+            Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } | Stmt::Block { body } | Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } | Stmt::Module { body, .. } => undefining(body, names),
+            Stmt::SelectCase { cases, default, .. } => { for c in cases { undefining(&c.body, names); } if let Some(b) = default { undefining(b, names); } }
+            _ => {}
+        }
+    }
+}
+
 fn scope(body: &mut Vec<Stmt>, inherited: &mut Env, params: &[String], result: Option<&str>, serial: &mut usize, capture: Option<&mut BTreeMap<String,String>>) -> Result<()> {
     let mut names = BTreeMap::new(); collect(body, &mut names);
     let declared: Vec<String> = body.iter().flat_map(|s| match s {
@@ -616,6 +751,8 @@ fn scope(body: &mut Vec<Stmt>, inherited: &mut Env, params: &[String], result: O
     }).flatten().collect::<BTreeMap<_,_>>();
     let mut env = inherited.clone();
     let mut prefix = Vec::new();
+    let mut unstable = std::collections::BTreeSet::new();
+    undefining(body, &mut unstable);
     for (name, extent) in names {
         if env.contains_key(&name) && !declared.contains(&name) { continue; }
         *serial += 1;
@@ -626,7 +763,7 @@ fn scope(body: &mut Vec<Stmt>, inherited: &mut Env, params: &[String], result: O
         let zero_sized=body.iter().any(|s|matches!(s,Stmt::VarDecl{kind:TypeSpec::Character(Some(0)),names} if names.contains(&name)))
             && !body.iter().any(|s|matches!(s,Stmt::CallSub{name:n,args} if n=="@heap_character_bind" && args.first()==Some(&Expr::Ident(name.clone()))));
         let character_length=character_lengths.get(&name).copied();
-        let v = Variable { zero_sized, element_width, character_length, flag: flag.clone(), extent, state: if assigned { State::Yes } else { State::No }, elements: BTreeMap::new(), runtime_sized, heap_length: heap_shapes.contains_key(&format!("@heap:{name}")).then(||crate::allocatables::length(&name,&heap_shapes).unwrap()), heap_allocated:crate::allocatables::allocated(&name,&heap_shapes) };
+        let v = Variable { zero_sized, element_width, character_length, stable: !unstable.contains(&name), flag: flag.clone(), extent, state: if assigned { State::Yes } else { State::No }, elements: BTreeMap::new(), runtime_sized, heap_length: heap_shapes.contains_key(&format!("@heap:{name}")).then(||crate::allocatables::length(&name,&heap_shapes).unwrap()), heap_allocated:crate::allocatables::allocated(&name,&heap_shapes) };
         if let Some(n) = extent {
             prefix.push(Stmt::ArrayDecl { kind: TypeSpec::Integer(None), name: flag.clone(), dims: vec![int(n)] });
             let index = format!("@init_clear_{serial}");

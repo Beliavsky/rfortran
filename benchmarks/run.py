@@ -323,7 +323,8 @@ def main(argv=None) -> int:
         (output/"report.json").write_text(json.dumps(report,indent=2,allow_nan=False)+"\n",encoding="utf-8")
         (output/"summary.md").write_text(markdown(report),encoding="utf-8")
     print("Times are median kernel execution seconds (excluding startup and compilation).", flush=True)
-    print(f"{'Benchmark':22} {'Compiler':9} {'Status':24} {'Kernel median (s)':>17}", flush=True)
+    print("Ratio > 1 means rfort is slower; * marks a ratio involving a short timing.", flush=True)
+    print(f"{'Benchmark':22} {'Compiler':9} {'Status':24} {'Kernel median (s)':>17} {'rfort/gfortran':>15}", flush=True)
     for case in cases:
         rows = [compile_case(case,c,case["profiles"][args.size],args,output,env) for c in compilers.values()]
         report["results"].extend(rows)
@@ -336,13 +337,24 @@ def main(argv=None) -> int:
                 if r["status"] == "compiled": sample(r,case,args,env,False)
         for r in rows:
             summarize(r,args.min_seconds)
+        by_compiler = {r['compiler']: r for r in rows}
+        ratio = '-'
+        pair = [by_compiler.get(name) for name in ('rfort', 'gfortran')]
+        if all(r is not None and r['status'] == 'passed' and r['timing']['median'] > 0 for r in pair):
+            relative = pair[0]['timing']['median'] / pair[1]['timing']['median']
+            if math.isfinite(relative):
+                ratio = f"{relative:.3f}"
+                if not all(r['timing']['reliable_duration'] for r in pair):
+                    ratio += '*'
+        for r in rows:
             status = r['status']
             seconds = '-'
             if status == 'passed':
-                seconds = f"{r['timing']['median']:.6g}"
+                seconds = f"{r['timing']['median']:.9f}"
                 if not r['timing']['reliable_duration']:
                     status += ' (short timing)'
-            print(f"{case['name']:22} {r['compiler']:9} {status:24} {seconds:>17}",flush=True)
+            comparison = ratio if r['compiler'] == 'gfortran' else ''
+            print(f"{case['name']:22} {r['compiler']:9} {status:24} {seconds:>17} {comparison:>15}",flush=True)
         save()
     failed = sum(r["status"] != "passed" for r in report["results"])
     print(f"\n{len(report['results'])-failed} passed; {failed} failed/unavailable")
