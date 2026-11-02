@@ -5,6 +5,7 @@ import contextlib
 import io
 import json
 import math
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -138,11 +139,35 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(runner.compiler_names(args),['rfort','gfortran','ifx','ofort'])
         self.assertEqual(runner.compiler_path(args,'ifx'),'C:/intel/ifx.exe')
         self.assertEqual(runner.compiler_path(args,'ofort'),'ofort')
-        self.assertEqual(runner.compiler_flags(args,'ifx'),['-O3'])
+        self.assertEqual(runner.compiler_flags(args,'ifx')[-1],'-O3')
         self.assertEqual(runner.compiler_flags(args,'gfortran'),['-O2'])
         self.assertEqual(runner.compiler_flags(args,'ofort'),['--fast'])
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             runner.main(['--compiler-path','ifx','--list'])
+
+    def test_check_modes(self):
+        flags = lambda checks, name: runner.compiler_flags(runner.parser().parse_args(['--checks',checks]),name)
+        self.assertEqual(flags('default','rfort'),['-O2'])
+        self.assertEqual(flags('default','gfortran'),['-O2'])
+        self.assertEqual(flags('none','rfort'),['-O2','-nocheck'])
+        self.assertEqual(flags('none','gfortran'),['-O2'])
+        self.assertEqual(flags('all','rfort'),['-O2'])
+        self.assertEqual(flags('all','gfortran'),['-O2','-fcheck=all'])
+        self.assertEqual(flags('none','ofort'),['--no-check-uninitialized'])
+        self.assertEqual(flags('all','flang'),['-O2'])
+        # An explicit optimization level still replaces the default.
+        args = runner.parser().parse_args(['--checks','none','--rfort-flag=-O0'])
+        self.assertEqual(runner.compiler_flags(args,'rfort'),['-nocheck','-O0'])
+
+    def test_intel_compilers_default_to_precise_floating_point(self):
+        precise = ['/fp:precise'] if os.name == 'nt' else ['-fp-model','precise']
+        args = runner.parser().parse_args([])
+        self.assertEqual(runner.compiler_flags(args,'ifx'),['-O2',*precise])
+        self.assertEqual(runner.compiler_flags(args,'gfortran'),['-O2'])
+        args = runner.parser().parse_args(['--compiler-flag=ifx=/fp:fast','--compiler-flag=ifx=-O3'])
+        self.assertEqual(runner.compiler_flags(args,'ifx'),['/fp:fast','-O3'])
+        args = runner.parser().parse_args(['--no-default-flags'])
+        self.assertEqual(runner.compiler_flags(args,'ifx'),[])
 
     def test_interpreter_runs_sources_without_a_build(self):
         args = runner.parser().parse_args([])

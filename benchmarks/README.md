@@ -38,7 +38,11 @@ NAME=PATH` gives its executable (`--rfort` and `--gfortran` also still work).
 `--compilers rfort` runs rfort alone. ofort is an interpreter: each run
 interprets the sources, with no build step and no default flags. Other
 compilers get `-O2` by default; `--compiler-flag NAME=FLAG` adds a flag, and an
-explicit `-O` level replaces the default.
+explicit `-O` level replaces the default. ifx and ifort also get the precise
+floating-point model (`/fp:precise` on Windows, `-fp-model precise` elsewhere):
+their default fast model reorders sums and can restructure recurrences that the
+other compilers evaluate as written. A floating-point model flag, such as
+`--compiler-flag=ifx=/fp:fast`, replaces it; `--no-default-flags` omits it.
 
 ```cmd
 python benchmarks\run.py --rfort C:\path\to\rfort.exe --gfortran C:\path\to\gfortran.exe --size medium
@@ -125,7 +129,25 @@ Compiled benchmarks receive `-O2` by default; this does not mean their optimizat
 passes or runtime safety checks are equivalent. Default runtime checks remain in
 effect. Record any alternative checking or optimization configuration separately:
 
+`--checks` selects run-time checking for all compilers at once, and is recorded
+in the reports:
+
+| `--checks` | rfort | gfortran | ifx, ifort | ofort | flang, others |
+|---|---|---|---|---|---|
+| `default` | checked | unchecked | unchecked | checked | as normally run |
+| `none` | `-nocheck` | unchecked | unchecked | `--no-check-uninitialized` | as normally run |
+| `all` | checked | `-fcheck=all` | `-check all` (`/check:all` on Windows) | `--check-uninitialized` | no flags |
+
+The default measures each compiler as users normally run it, so a lost check
+optimization in rfort shows up in the results. `none` compares generated code
+alone. `all` is only roughly like for like: rfort checks subscripts and reads
+of uninitialized variables, `gfortran -fcheck=all` checks subscripts and other
+conditions but not uninitialized reads, and ifx's uninitialized-variable checks
+cover fewer cases than rfort's.
+
 ```cmd
+python benchmarks\run.py --size medium --checks all
+python benchmarks\run.py --size medium --checks none --compilers gfortran flang
 python benchmarks\run.py --size medium --rfort-flag=-O0 --gfortran-flag=-O0
 python benchmarks\run.py --size medium --no-default-flags --rfort-flag=-O2 --gfortran-flag=-O3
 python benchmarks\run.py --size medium --runs 7 --warmups 2 --timeout 60 --compile-timeout 180

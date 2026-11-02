@@ -171,15 +171,33 @@ def named_values(pairs: list[str], option: str) -> list[tuple[str, str]]:
     return result
 
 
+# Run-time checking flags for --checks none and all. The checks differ: see
+# the README. A compiler without an entry gets no flags in either mode.
+CHECK_FLAGS = {
+    "rfort": {"none": ["-nocheck"]},
+    "gfortran": {"all": ["-fcheck=all"]},
+    "ifx": {"all": ["/check:all"] if os.name == "nt" else ["-check", "all"]},
+    "ifort": {"all": ["/check:all"] if os.name == "nt" else ["-check", "all"]},
+    "ofort": {"none": ["--no-check-uninitialized"], "all": ["--check-uninitialized"]},
+}
+
+
 def compiler_flags(args, name: str) -> list[str]:
-    extra = list({"rfort": args.rfort_flag, "gfortran": args.gfortran_flag}.get(name, []))
+    extra = list(CHECK_FLAGS.get(name, {}).get(args.checks, []))
+    extra += {"rfort": args.rfort_flag, "gfortran": args.gfortran_flag}.get(name, [])
     extra += [flag for n, flag in named_values(args.compiler_flag, "--compiler-flag") if n == name]
     if name in INTERPRETERS:
         return extra
     # rfort rejects duplicate optimization options, whereas gfortran accepts
     # them. Emit a single explicit level when the caller overrides the default.
     explicit = any(f.startswith("-O") or f == "--opt-level" or f.startswith("--opt-level=") for f in extra)
-    return ([] if args.no_default_flags or explicit else ["-O2"]) + extra
+    defaults = [] if explicit else ["-O2"]
+    # Intel compilers default to fast floating point, which reorders sums
+    # that the other compilers evaluate as written. Use the precise model
+    # unless a floating-point model is given.
+    if name in ("ifx", "ifort") and not any(f.startswith(("/fp:", "-fp-model", "-ffp-model")) for f in extra):
+        defaults += ["/fp:precise"] if os.name == "nt" else ["-fp-model", "precise"]
+    return ([] if args.no_default_flags else defaults) + extra
 
 
 def compiler_path(args, name: str) -> str:
@@ -269,7 +287,7 @@ def summarize(result: dict, minimum: float) -> None:
 
 def markdown(report: dict) -> str:
     lines = ["# rfortran benchmark report", "", f"UTC: {report['created_utc']}",
-             f"Profile: `{report['settings']['size']}`; seed: {report['settings']['seed']}; measured runs: {report['settings']['runs']}",
+             f"Profile: `{report['settings']['size']}`; seed: {report['settings']['seed']}; measured runs: {report['settings']['runs']}; run-time checks: {report['settings'].get('checks', 'default')}",
              "", "Kernel times exclude initialization, validation and printing. Process wall times and compilation times are in report.json.",
              "Ratios require correct results and sufficiently long measured durations; ratio > 1 means rfort is slower.",
              ""]
@@ -322,6 +340,8 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--compiler-flag", action="append", default=[], metavar="NAME=FLAG",
                    help="Extra flag for any compiler; use --compiler-flag=ifx=-O3")
     p.add_argument("--no-default-flags", action="store_true", help="Omit the default -O2 for all compilers")
+    p.add_argument("--checks", choices=["default", "none", "all"], default="default",
+                   help="Run-time checks: as each compiler normally runs, off for all, or on for all")
     p.add_argument("--size", choices=["smoke", "small", "medium", "large"], default="small")
     p.add_argument("--bench", nargs="+", default=["*"], help="Benchmark name globs (quote wildcards)")
     p.add_argument("--runs", type=int, default=5)
@@ -377,6 +397,7 @@ def main(argv=None) -> int:
         (output/"report.json").write_text(json.dumps(report,indent=2,allow_nan=False)+"\n",encoding="utf-8")
         (output/"summary.md").write_text(markdown(report),encoding="utf-8")
     print("Times are median kernel execution seconds (excluding startup and compilation).", flush=True)
+    print(f"Run-time checks: {args.checks}.", flush=True)
     print("Ratio > 1 means rfort is slower; * marks a ratio involving a short timing.", flush=True)
     width = max(9, *(len(n) for n in compilers))
     labels = [f"rfort/{n}" for n in others]
