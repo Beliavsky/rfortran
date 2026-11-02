@@ -48,6 +48,24 @@ class PackageTests(unittest.TestCase):
             self.assertNotEqual(before, package.sha256(file))
             self.assertEqual(package.sha256(file), hashlib.sha256(b'second build').hexdigest())
 
+    def test_british_licence_filenames_are_copied_with_own_provenance(self):
+        # ansi_term 0.12.1 ships LICENCE, without an explicit license_file.
+        for filename in ('LICENCE', 'LICENCE-MIT', 'licence.txt'):
+            with self.subTest(filename=filename), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                (root / 'Cargo.toml').touch()
+                text = b'Fixture license text\nCopyright notice\n'
+                (root / filename).write_bytes(text)
+                metadata = dict(packages=[dict(name='ansi_term', version='0.12.1', id='ansi_term',
+                                               manifest_path=str(root / 'Cargo.toml'), license='MIT')],
+                                resolve=dict(nodes=[dict(id='ansi_term')]))
+                with patch.object(package, 'capture', return_value=json.dumps(metadata)):
+                    package.dependency_licenses(root / 'output')
+                self.assertEqual((root / 'output/ansi_term-0.12.1' / filename).read_bytes(), text)
+                index = json.loads((root / 'output/index.json').read_text(encoding='utf-8'))
+                self.assertEqual(index[0]['license_match'], 'own license texts')
+                self.assertEqual(index[0]['license_text_origin'], 'ansi_term-0.12.1')
+
     def test_workspace_license_origin_and_repository_boundaries(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

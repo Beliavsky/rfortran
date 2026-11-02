@@ -47,7 +47,8 @@ Clean packaging creates:
 
 The source archive and source revision in BUILD.json must match the binary.
 Packages include GPL/MIT project notices and the selected Cargo dependencies'
-license texts. Missing texts fail packaging. Workspace members that omit texts
+license texts (recognizing both LICENSE and LICENCE filenames). Missing texts
+fail packaging. Workspace members that omit texts
 can use a peer crate's repository-wide license only if repository and SPDX match
 (or its Cargo VCS commit and SPDX match, covering missing/subdirectory repository URLs);
 the origin is recorded in THIRD-PARTY-LICENSES/index.json. License selection uses

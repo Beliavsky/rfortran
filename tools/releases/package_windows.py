@@ -76,7 +76,7 @@ def dependency_licenses(destination, target=TARGET):
     for package in packages:
         root = Path(package['manifest_path']).parent
         files = [p for p in root.iterdir() if p.is_file() and
-                 p.name.lower().startswith(('license', 'copying', 'notice', 'unlicense', 'copyright'))]
+                 p.name.lower().startswith(('license', 'licence', 'copying', 'notice', 'unlicense', 'copyright'))]
         if package.get('license_file'):
             license_file = root / package['license_file']
             if license_file.is_file():
