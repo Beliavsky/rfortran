@@ -14,6 +14,7 @@ import zipfile
 
 import package_windows as package
 import package_linux as linux
+import package_macos as macos
 
 
 class PackageTests(unittest.TestCase):
@@ -117,6 +118,7 @@ class PackageTests(unittest.TestCase):
             (release_files / 'examples').mkdir(parents=True)
             (release_files / 'INSTALL.md').write_text('Install @VERSION@', encoding='utf-8')
             (release_files / 'INSTALL-linux.md').write_text('Linux @VERSION@', encoding='utf-8')
+            (release_files / 'INSTALL-macos.md').write_text('macOS @VERSION@', encoding='utf-8')
             (release_files / 'examples/hello.f90').write_text('print *,1\nend\n', encoding='utf-8')
             (release_files / 'examples/hello.obj').write_bytes(b'unwanted build artifact')
             (root / 'src/bin/tools').mkdir(parents=True)
@@ -177,6 +179,72 @@ class PackageTests(unittest.TestCase):
                 self.assertEqual(build['elf'], elf)
             digest, name = (linux_output / 'SHA256SUMS-linux.txt').read_text().strip().split('  ')
             self.assertEqual(digest, package.sha256(linux_output / name))
+            macos_output = Path(temporary) / 'macos-assets'
+            macho = dict(needed=['/usr/lib/libSystem.B.dylib'], minimum_macos='14.0',
+                         code_signature='ad-hoc; not notarized')
+            def macos_licenses(directory, target):
+                self.assertEqual(target, macos.TARGET)
+                licenses(directory)
+            with patch.object(package, 'ROOT', root), patch.object(macos, 'ROOT', root), \
+                    patch.object(macos, 'HERE', release_files), \
+                    patch.object(macos, 'dependency_licenses', side_effect=macos_licenses), \
+                    patch.object(macos, 'macho_dependencies', return_value=macho), \
+                    patch.object(macos, 'smoke', return_value={'checks': ['fixture check']}):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    macos_archive = macos.package(binary, macos_output)
+                    report = macos.verify(macos_archive, macos_output / 'smoke.json', info['commit'])
+                self.assertEqual(report['target'], macos.TARGET)
+                self.assertEqual(report['macho'], macho)
+                with patch.object(macos, 'macho_dependencies', return_value={'needed': []}):
+                    with self.assertRaisesRegex(ValueError, 'dependencies do not match'):
+                        macos.verify(macos_archive, macos_output / 'bad.json')
+            with tarfile.open(macos_archive) as tar:
+                prefix = 'rfortran-1.2.3-macos-arm64/'
+                self.assertEqual(tar.getmember(prefix+'rfort').mode, 0o755)
+                self.assertEqual(tar.extractfile(prefix+'INSTALL.md').read(), b'macOS 1.2.3')
+                build = json.load(tar.extractfile(prefix+'BUILD.json'))
+                self.assertEqual(build['target'], macos.TARGET)
+                self.assertEqual(build['macho'], macho)
+                self.assertEqual(build['binary_sha256'], package.sha256(binary))
+                self.assertIn(prefix+'THIRD-PARTY-LICENSES/index.json', tar.getnames())
+                self.assertFalse(any(name.endswith('.obj') for name in tar.getnames()))
+            digest, name = (macos_output / 'SHA256SUMS-macos.txt').read_text().strip().split('  ')
+            self.assertEqual(digest, package.sha256(macos_output / name))
+
+    def test_macos_dependency_audit_checks_architecture_deployment_and_signature(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            binary = Path(temporary) / 'rfort'
+            header = struct.pack('<IIII', 0xfeedfacf, 0x0100000c, 0, 2)
+            binary.write_bytes(header)
+            linked = 'rfort:\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0)\n'
+            commands = 'Load command 8\n      cmd LC_BUILD_VERSION\n  cmdsize 32\n platform 1\n    minos 14.0.0\n      sdk 15.0\n'
+            def audit(libraries=linked, loads=commands, signature='Signature=adhoc', verify_error=None):
+                outputs = [subprocess.CompletedProcess([], 0, stdout=text, stderr='')
+                           for text in (libraries, loads, '', signature)]
+                if verify_error:
+                    outputs[2] = verify_error
+                with patch.object(macos.subprocess, 'run', side_effect=outputs):
+                    return macos.macho_dependencies(binary)
+            self.assertEqual(audit()['minimum_macos'], '14.0.0')
+            with self.assertRaisesRegex(ValueError, 'newer than baseline'):
+                audit(loads=commands.replace('14.0.0', '15.0'))
+            with self.assertRaisesRegex(ValueError, 'non-system'):
+                audit(libraries=linked.replace('/usr/lib/libSystem.B.dylib', '@rpath/libcustom.dylib'))
+            with self.assertRaisesRegex(ValueError, 'non-system'):
+                audit(libraries=linked.replace('/usr/lib/libSystem.B.dylib', '/usr/lib/../../opt/libcustom.dylib'))
+            with self.assertRaisesRegex(ValueError, 'LC_RPATH'):
+                audit(loads=commands+'Load command 9\n      cmd LC_RPATH\n')
+            with self.assertRaisesRegex(ValueError, 'macOS LC_BUILD_VERSION'):
+                audit(loads=commands.replace('platform 1', 'platform 2'))
+            with self.assertRaisesRegex(ValueError, 'ad-hoc code signature'):
+                audit(signature='Signature=none')
+            with self.assertRaises(subprocess.CalledProcessError):
+                audit(verify_error=subprocess.CalledProcessError(1, ['codesign'], stderr='invalid signature'))
+            for bad_header in [struct.pack('<IIII', 0xfeedfacf, 0x01000007, 3, 2),
+                               struct.pack('<IIII', 0xfeedfacf, 0x0100000c, 2, 2), b'\xca\xfe\xba\xbe']:
+                binary.write_bytes(bad_header)
+                with self.assertRaisesRegex(ValueError, 'Mach-O arm64'):
+                    macos.macho_dependencies(binary)
 
     def test_linux_dependency_audit_rejects_wrong_arch_new_glibc_and_private_libraries(self):
         with tempfile.TemporaryDirectory() as temporary:

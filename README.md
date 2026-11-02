@@ -13,7 +13,7 @@ the shared Rust interpreter locally through WebAssembly. Build it with
 the browser interface needs only static hosting, including GitHub Pages.
 
 Try it online at **https://beliavsky.github.io/rfortran/**.
-Windows x64 and Linux x86-64 prerelease packaging and release instructions are in
+Windows x64, Linux x86-64 and macOS Apple Silicon prerelease packaging instructions are in
 [tools/releases/README.md](tools/releases/README.md). One `rfort` executable provides
 native compilation, interpretation (`rfort run file.f90`) and the REPL (`rfort repl`).
 
@@ -23,8 +23,9 @@ Development is focused on compiling small programs correctly and extending
 coverage through local regressions and cases from the external ofort test suite.
 Windows x64 is the primary locally tested platform. The release workflow also
 builds Linux x86-64 packages and requires extracted-archive checks on Ubuntu 22.04
-and 24.04 before attaching them to a draft release. macOS has a native driver
-path and a separate manually triggered validation workflow.
+and 24.04 before attaching them to a draft release. Apple Silicon packages
+similarly require extracted-archive checks on macOS 14 and 15. Native Linux and
+macOS execution is validated by GitHub Actions rather than local Windows tests.
 
 Implemented subsets include:
 
@@ -347,7 +348,7 @@ Three design choices shape what rfort supports:
 ## Toolchains
 
 Windows x64 is the primary locally tested platform. Linux release packages are
-gated by native archive checks in GitHub Actions; macOS validation is separate.
+gated by native archive checks in GitHub Actions, as are macOS Apple Silicon packages.
 These checks do not establish that every compiler feature works on each platform.
 
 ### Windows
@@ -378,6 +379,11 @@ The system toolchain supplies startup files and system library paths; bundled
 Linux linker binaries and `patch.o` are no longer used.
 
 ### macOS
+
+The experimental release archive targets Apple Silicon (arm64), macOS 14 or
+newer, with release checks on macOS 14 and 15. It is ad-hoc signed but not
+Developer ID signed or notarized; see INSTALL.md for download security and
+installation details. Intel macOS binaries are not included.
 
 The driver invokes `xcrun --sdk macosx clang`, using the selected Apple Command
 Line Tools/Xcode installation and SDK. It compiles the same C runtime adapters

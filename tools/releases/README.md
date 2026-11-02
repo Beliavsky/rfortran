@@ -1,10 +1,11 @@
 # Native prerelease packaging
 
-The prerelease workflow packages **Windows x64 and Linux x86-64**. `rfort.exe`
-(Windows) or `rfort` (Linux) contains the compiler, interpreter and REPL; there
-are no separate interpreter downloads. Linux assets are eligible for the draft
-release only after the extracted archive passes on Ubuntu 22.04 and 24.04.
-macOS remains a validation-only target with no release download.
+The prerelease workflow packages **Windows x64, Linux x86-64 and macOS Apple
+Silicon (arm64)**. Each executable contains the compiler, interpreter and REPL;
+there are no separate interpreter downloads. Linux archives must pass extracted
+archive checks on Ubuntu 22.04 and 24.04; macOS archives must pass on macOS 14
+and 15 Apple Silicon. All platform checks must succeed before the draft release
+is assembled.
 
 ## Build and preview locally
 
@@ -50,7 +51,8 @@ license texts. Missing texts fail packaging. Workspace members that omit texts
 can use a peer crate's repository-wide license only if repository and SPDX match
 (or its Cargo VCS commit and SPDX match, covering missing/subdirectory repository URLs);
 the origin is recorded in THIRD-PARTY-LICENSES/index.json. License selection uses
-each platform's Cargo target; Linux does not inherit the Windows dependency list.
+each platform's Cargo target; Linux and macOS do not inherit the Windows
+dependency list.
 
 ## Linux x86-64 packaging and verification
 
@@ -90,6 +92,45 @@ python tools/releases/package_linux.py verify --archive target/release-assets/rf
 release verification deliberately rejects dirty packages. Native Linux execution
 cannot be validated by running the packaging unit tests on Windows alone.
 
+## macOS Apple Silicon packaging and verification
+
+The workflow builds `aarch64-apple-darwin` on an Apple Silicon `macos-14` runner
+with `MACOSX_DEPLOYMENT_TARGET=14.0`. It explicitly verifies the host architecture
+and applies an ad-hoc code signature to the final executable after Cargo's
+release stripping. No Apple credentials are needed for this signature.
+
+Packaging inspects the Mach-O header, deployment target and dynamic libraries,
+rejecting Intel/arm64e/universal binaries, non-system libraries, LC_RPATH and
+minimum macOS versions newer than 14.0. It verifies the embedded code signature.
+The archive is `rfortran-<version>-macos-arm64.tar.gz`, with a separate
+`SHA256SUMS-macos.txt` before release assembly. It includes target-specific
+license texts and [installation instructions](INSTALL-macos.md).
+
+Linux and macOS share archive staging, permission preservation, extraction and
+verification in `package_unix.py`; their dependency audits remain specific to
+each format. On an Apple Silicon development Mac with Rust, Python 3.11+ and
+Apple's Command Line Tools:
+
+```sh
+export MACOSX_DEPLOYMENT_TARGET=14.0
+cargo build --release --locked --bin rfort --target aarch64-apple-darwin --target-dir target/release-candidates
+codesign --force --sign - target/release-candidates/aarch64-apple-darwin/release/rfort
+python tools/releases/test_package.py
+python tools/releases/package_macos.py build --binary target/release-candidates/aarch64-apple-darwin/release/rfort
+python tools/releases/package_macos.py verify --archive target/release-assets/rfortran-0.1.0-alpha.1-macos-arm64.tar.gz --report target/release-assets/macos-smoke.json
+```
+
+Fresh macOS 14 and 15 jobs download the archive, check its checksum, source
+revision, architecture, libraries and signature, then run the shared 16 smoke
+checks outside the checkout in a path containing spaces. No compiler build is
+performed in these verification jobs.
+
+The package is **not Developer ID signed or notarized**. Browser download
+quarantine and Gatekeeper prompts are not reproduced by these CI checks;
+INSTALL.md explains that limitation and links to Apple's guidance. Developer
+ID signing and notarization would require a separate signing setup. This release
+does not include Intel macOS or promise compatibility with macOS before 14.
+
 ## Create a draft prerelease
 
 Commit all release changes, including Cargo.toml, Cargo.lock, release scripts,
@@ -97,19 +138,19 @@ examples, workflows and documentation. The tag version must match Cargo.toml.
 
 ```cmd
 git push origin main
-git tag -a v0.1.0-alpha.1 -m "Experimental Windows and Linux prerelease"
+git tag -a v0.1.0-alpha.1 -m "Experimental Windows, Linux and Apple Silicon prerelease"
 git push origin v0.1.0-alpha.1
 ```
 
 Use an unused tag matching Cargo.toml; do not move or recreate an existing tag.
-The **Native prerelease** workflow builds Windows x64 and Linux x86-64, tests the
-packages, then creates a **draft prerelease** with both platforms' assets and
-their smoke reports. Its combined `SHA256SUMS.txt` covers both binary archives,
+The **Native prerelease** workflow builds Windows x64, Linux x86-64 and macOS
+Apple Silicon, tests the packages, then creates a **draft prerelease** with all
+three platforms' assets and their smoke reports. Its combined `SHA256SUMS.txt` covers all binary archives,
 all smoke reports and the matching source archive. A manual workflow run builds
 artifacts for review without creating a GitHub release. A rerun may update an
 existing draft; it refuses to replace assets in a published release.
 
-In GitHub Releases, download and try the Windows ZIP, review both platforms'
+In GitHub Releases, download and try the Windows ZIP, review all platforms'
 smoke reports and notes,
 then publish the draft. Builds do not publish the announcement or automatically
 publish the release. The announcement draft is in docs/announcement-draft.md.
@@ -117,6 +158,6 @@ publish the release. The announcement draft is in docs/announcement-draft.md.
 In Actions, manually run **Validate Linux and macOS native builds** to check
 host compilation, interpreter, REPL, native -O0/-O2 and Rust unit tests on those
 platforms. This records runner architecture and does not publish downloads.
-Linux release checks also run automatically in **Native prerelease**. macOS
-downloads should be added only after its checks and installation instructions
-have been validated.
+Linux and Apple Silicon release checks also run automatically in **Native
+prerelease**. Windows-only local packaging tests do not replace native Linux
+or macOS execution checks.

@@ -1,17 +1,13 @@
 """Package Linux x86-64 releases and verify the downloaded archive on a fresh host."""
 import argparse
-import json
 import os
 from pathlib import Path
 import re
-import shutil
 import struct
 import subprocess
-import tarfile
-import tempfile
-import tomllib
 
-from package_windows import capture, dependency_licenses, sha256
+import package_unix
+from package_windows import capture, dependency_licenses
 from smoke import smoke
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -53,101 +49,17 @@ def elf_dependencies(binary):
 
 
 def package(binary, output, allow_dirty=False):
-    binary, output = Path(binary).resolve(), Path(output).resolve()
-    version = tomllib.loads((ROOT / 'Cargo.toml').read_text(encoding='utf-8'))['package']['version']
-    revision = capture(['git', 'rev-parse', 'HEAD'])
-    dirty = bool(capture(['git', 'status', '--porcelain', '--untracked-files=normal']))
-    if dirty and not allow_dirty:
-        raise RuntimeError('Use a clean checkout; --allow-dirty is for local PREVIEW checks only.')
-    dependencies = elf_dependencies(binary)
-    output.mkdir(parents=True, exist_ok=True)
-    name = f'rfortran-{version}-linux-x86_64' + ('-PREVIEW' if dirty else '')
-    archive = output / f'{name}.tar.gz'
-    with tempfile.TemporaryDirectory(prefix='rfort linux package ') as temporary:
-        stage = Path(temporary) / name
-        stage.mkdir()
-        shutil.copyfile(binary, stage / 'rfort')
-        for file in ('LICENSE', 'LICENSE-MIT', 'LICENSING.md', 'README.md'):
-            shutil.copyfile(ROOT / file, stage / file)
-        (stage / 'docs').mkdir()
-        for file in ('feature-status.md', 'language-support.md', 'usage.md', 'testing.md'):
-            shutil.copyfile(ROOT / 'docs' / file, stage / 'docs' / file)
-        (stage / 'examples').mkdir()
-        for file in sorted((HERE / 'examples').glob('*.f90')):
-            shutil.copyfile(file, stage / 'examples' / file.name)
-        install = (HERE / 'INSTALL-linux.md').read_text(encoding='utf-8')
-        (stage / 'INSTALL.md').write_text(install.replace('@VERSION@', version), encoding='utf-8')
-        dependency_licenses(stage / 'THIRD-PARTY-LICENSES', target=TARGET)
-        info = dict(version=version, target=TARGET, commit=revision, dirty=dirty,
-                    source=f'https://github.com/Beliavsky/rfortran/tree/{revision}',
-                    binary_sha256=sha256(binary), elf=dependencies,
-                    compatibility_baseline=f'Linux x86-64, glibc {BASELINE} or newer',
-                    rustc=capture(['rustc', '-vV']),
-                    disassembler='external objdump; not bundled')
-        (stage / 'BUILD.json').write_text(json.dumps(info, indent=2)+'\n', encoding='utf-8')
-
-        def permissions(member):
-            member.mode = 0o755 if member.isdir() or member.name == f'{name}/rfort' else 0o644
-            member.uid = member.gid = 0
-            member.uname = member.gname = ''
-            return member
-
-        with tarfile.open(archive, 'w:gz') as tar:
-            tar.add(stage, arcname=name, filter=permissions)
-    (output / 'SHA256SUMS-linux.txt').write_text(f'{sha256(archive)}  {archive.name}\n', encoding='utf-8')
-    print(f'Packaged {archive}; archive execution tests are required before release.')
-    return archive
+    return package_unix.package(
+        binary, output, allow_dirty, target=TARGET, platform_name='linux-x86_64',
+        checksum_name='SHA256SUMS-linux.txt', install_name='INSTALL-linux.md',
+        compatibility=f'Linux x86-64, glibc {BASELINE} or newer',
+        inspect=elf_dependencies, metadata_key='elf', root=ROOT, here=HERE,
+        licenses=dependency_licenses, capture=capture)
 
 
 def verify(archive, report, expected_commit=None):
-    archive = Path(archive).resolve()
-    with tempfile.TemporaryDirectory(prefix='rfort extracted linux distribution ') as temporary:
-        unpacked = Path(temporary)
-        # Release archives contain only ordinary files/directories under one root.
-        # Reject links and traversal before extracting any bytes or executing code.
-        with tarfile.open(archive, 'r:gz') as tar:
-            members = tar.getmembers()
-            roots = set()
-            names = set()
-            for member in members:
-                parts = member.name.split('/')
-                if (not parts[0] or any(p in ('', '.', '..') for p in parts)
-                        or '\\' in member.name or ':' in member.name
-                        or member.name in names or not (member.isfile() or member.isdir())):
-                    raise ValueError(f'Unsafe archive member: {member.name}')
-                roots.add(parts[0])
-                names.add(member.name)
-            if len(roots) != 1:
-                raise ValueError('Expected one distribution directory.')
-            for member in members:
-                path = unpacked / member.name
-                if member.isdir():
-                    path.mkdir(parents=True, exist_ok=True)
-                else:
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    with tar.extractfile(member) as source, path.open('wb') as destination:
-                        shutil.copyfileobj(source, destination)
-                    path.chmod(member.mode & 0o777)
-        stage = unpacked / roots.pop()
-        info = json.loads((stage / 'BUILD.json').read_text(encoding='utf-8'))
-        if info['target'] != TARGET or info['dirty']:
-            raise ValueError('Expected a clean Linux x86-64 release build.')
-        if expected_commit and info['commit'] != expected_commit:
-            raise ValueError('Archive source revision does not match the workflow revision.')
-        if sha256(stage / 'rfort') != info['binary_sha256']:
-            raise ValueError('Extracted executable checksum does not match BUILD.json.')
-        if not any(m.name == f'{stage.name}/rfort' and m.mode & 0o111 for m in members):
-            raise ValueError('Executable permission missing from archive.')
-        if elf_dependencies(stage / 'rfort') != info['elf']:
-            raise ValueError('Extracted ELF dependencies do not match BUILD.json.')
-        results = smoke(stage / 'rfort', stage / 'examples', info['version'])
-        results.update(archive=archive.name, archive_sha256=sha256(archive),
-                       target=TARGET, commit=info['commit'], elf=info['elf'])
-        report = Path(report)
-        report.parent.mkdir(parents=True, exist_ok=True)
-        report.write_text(json.dumps(results, indent=2)+'\n', encoding='utf-8')
-        print(f'Extracted Linux archive: {len(results["checks"])} checks passed.')
-        return results
+    return package_unix.verify(archive, report, expected_commit, target=TARGET,
+                               inspect=elf_dependencies, metadata_key='elf', smoke=smoke)
 
 
 if __name__ == '__main__':
