@@ -141,3 +141,43 @@ check("WASM virtual files support program I/O and disappear between runs",async(
   const next=await r.runProgram({source:'logical::found\ninquire(file="numbers.txt",exist=found)\nprint *,found\nend'});
   assert.equal(next.ok,true,next.errors);assert.equal(words(next.output),"F");
 });
+check("WASM runs pointer allocation, remapping, derived-type and CHARACTER pointers",async()=>{
+  const result=await run(`program main
+implicit none
+type point
+  real :: x = 0.
+end type
+integer, pointer :: p(:), m(:,:)
+type(point), pointer :: q
+character(len=3), target :: s
+character(len=3), pointer :: c
+allocate(p(-1:4))
+p = [1,2,3,4,5,6]
+m(1:2,1:3) => p
+print '(3i2,2i3)', m(2,:), lbound(p), size(m)
+allocate(q)
+q%x = 2.5
+s = 'abc'
+c => s
+c(1:1) = 'X'
+print '(f4.1,1x,a,l2)', q%x, s, associated(c, s)
+deallocate(p, q)
+print '(l2,i4,i3)', associated(p), shiftl(3, 4), maskr(3)
+end program main
+`);
+  assert.equal(result.ok,true,result.errors);
+  assert.equal(words(result.output),"2 4 6 -1 6 2.5 Xbc T F 48 7");
+});
+check("WASM reports that commands cannot be executed",async()=>{
+  const result=await run(`integer :: e, c, n
+character(len=40) :: msg
+n = command_argument_count()
+e = -1
+msg = ''
+call execute_command_line('echo hi', exitstat=e, cmdstat=c, cmdmsg=msg)
+print '(3i3,1x,a)', n, e, c, trim(msg)
+end
+`);
+  assert.equal(result.ok,true,result.errors);
+  assert.equal(words(result.output),"0 -1 -1 command execution is not supported");
+});

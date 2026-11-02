@@ -1411,7 +1411,7 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         let [Expr::Ident(data),Expr::Ident(flags),Expr::Ident(label),count,Expr::Str(kind),Expr::Str(target)]=args.as_slice() else {unreachable!()};
                         let fr=call_stack.last().unwrap().clone();
                         let count=eval_expr(count,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
-                        let count=io_result(usize::try_from(count).ok().filter(|n|*n<=(1usize<<36)).ok_or_else(||anyhow::anyhow!("allocation size overflow")));
+                        let count=io_result(usize::try_from(count).ok().filter(|n|(*n as u64)<=(1u64<<36)).ok_or_else(||anyhow::anyhow!("allocation size overflow")));
                         let real=matches!(kind.as_str(),"r4"|"r8");
                         let record=RecordAllocation{integers:(!real).then(||vec![0;count]),reals:real.then(||vec![0.0;count]),mask:vec![0;count],metadata:vec![]};
                         let allocation=RECORD_ALLOCATIONS.with(|records| {
