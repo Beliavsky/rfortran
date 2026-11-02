@@ -51,12 +51,91 @@ jobs:
         run: python tools/releases/package_windows.py --binary target/release-candidates/x86_64-pc-windows-msvc/release/rfort.exe
       - uses: actions/upload-artifact@v4
         with:
-          name: native-release-assets
+          name: native-release-assets-windows
           path: target/release-assets/*
           if-no-files-found: error
 
+  linux:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify release version and record platform
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          python - <<'PY'
+          import os, pathlib, tomllib
+          version = tomllib.loads(pathlib.Path('Cargo.toml').read_text())['package']['version']
+          if os.environ['REF_TYPE'] == 'tag':
+              assert os.environ['RELEASE_TAG'] == 'v' + version, 'Tag must match Cargo.toml version'
+          print('Building rfortran', version)
+          PY
+          uname -a
+          ldd --version
+          rustc -vV
+      - name: Install native build and inspection tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential binutils
+      - name: Build Linux x86-64 executable
+        run: cargo build --release --locked --bin rfort --target x86_64-unknown-linux-gnu --target-dir target/release-candidates
+      - name: Rust unit tests
+        run: cargo test --locked --bin rfort --target x86_64-unknown-linux-gnu --target-dir target/release-candidates
+      - name: Test packaging helpers
+        run: python tools/releases/test_package.py
+      - name: Package Linux distribution and audit glibc requirements
+        run: python tools/releases/package_linux.py build --binary target/release-candidates/x86_64-unknown-linux-gnu/release/rfort
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-release-assets-linux
+          path: target/release-assets/*
+          if-no-files-found: error
+
+  linux-check:
+    needs: linux
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-release-assets-linux
+          path: release-assets
+      - name: Install end-user native compilation prerequisites
+        run: sudo apt-get update && sudo apt-get install -y build-essential binutils
+      - name: Verify checksum and test the extracted archive outside the checkout
+        env:
+          EXPECTED_COMMIT: ${{ github.sha }}
+          RUNNER_OS_LABEL: ${{ matrix.os }}
+        run: |
+          set -euo pipefail
+          (cd release-assets && sha256sum -c SHA256SUMS-linux.txt)
+          archive=(release-assets/rfortran-*-linux-x86_64.tar.gz)
+          test "${#archive[@]}" -eq 1
+          report="$(basename "${archive[0]}" .tar.gz)-smoke-${RUNNER_OS_LABEL}.json"
+          python tools/releases/package_linux.py verify --archive "${archive[0]}" \
+            --expected-commit "$EXPECTED_COMMIT" --report "verified-assets/$report"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-release-assets-linux-check-${{ matrix.os }}
+          path: verified-assets/*
+          if-no-files-found: error
+
   draft:
-    needs: windows
+    needs: [windows, linux-check]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -65,8 +144,17 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: native-release-assets
+          pattern: native-release-assets-*
+          merge-multiple: true
           path: release-assets
+      - name: Verify platform checksums and create combined release checksums
+        working-directory: release-assets
+        run: |
+          set -euo pipefail
+          sha256sum -c SHA256SUMS.txt
+          sha256sum -c SHA256SUMS-linux.txt
+          rm SHA256SUMS-linux.txt
+          sha256sum *.zip *.tar.gz *-smoke*.json > SHA256SUMS.txt
       - name: Create or update the draft prerelease
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

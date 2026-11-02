@@ -67,9 +67,9 @@ def pe_imports(path):
     return sorted(set(imports))
 
 
-def dependency_licenses(destination):
+def dependency_licenses(destination, target=TARGET):
     metadata = json.loads(capture(['cargo', 'metadata', '--locked', '--format-version', '1',
-                                   '--filter-platform', TARGET]))
+                                   '--filter-platform', target]))
     ids = {node['id'] for node in metadata['resolve']['nodes']}
     packages = [p for p in metadata['packages'] if p['id'] in ids and p['name'] != 'rfortran']
     found, peers, commits, vcs_peers = {}, {}, {}, {}

@@ -3,8 +3,9 @@ from [SirPigari/f90c](https://github.com/SirPigari/f90c).
 
 Try the browser interpreter: **https://beliavsky.github.io/rfortran/**
 
-The Windows x64 ZIP contains one `rfort.exe`, examples, installation notes,
-feature status and license notices. Rust is not needed to use the download.
+Downloads are a Windows x64 ZIP and a Linux x86-64 tar.gz. Each contains one
+`rfort` executable, examples, installation notes, feature status and license
+notices. Rust is not needed to use either download.
 
 ```cmd
 rfort run examples\hello.f90
@@ -14,17 +15,30 @@ rfort examples\hello.f90 -o hello.exe --run
 
 Interpretation and the REPL do not need a development toolchain. Native
 compilation needs LLVM's linker, Visual Studio C++ Build Tools and the Windows
-SDK; these are not bundled. See INSTALL.md in the archive.
+SDK on Windows; these are not bundled. On Linux, native compilation requires
+a system C compiler, linker and development libraries (for example Ubuntu's
+`build-essential`). See INSTALL.md in the corresponding archive.
+
+The Linux archive targets x86-64 with glibc 2.35 or newer and is checked on Ubuntu
+22.04 and 24.04. It does not support musl/Alpine, 32-bit x86 or ARM. On Linux:
+
+```sh
+./rfort run examples/hello.f90
+./rfort repl
+./rfort examples/hello.f90 -o hello --run
+```
 
 The package is tested after extraction, including interpretation, supplied
-input, the REPL and native execution at -O0 and -O2. Its smoke-test report is
-attached. SHA256SUMS.txt covers the binary ZIP, report and matching source archive.
+input, the REPL, native execution at -O0 and -O2, C interoperability and separate
+module compilation. Linux archive checks run in fresh jobs on both Ubuntu
+versions. Smoke-test reports are attached. SHA256SUMS.txt covers both binary
+archives, reports and the matching source archive.
 
 This is a prerelease with incomplete language support. The native compiler,
 interpreter and REPL have different limits; this is not a replacement for an
-established production compiler. Windows x64 is the first binary release.
-Linux/macOS native builds are undergoing separate validation and are not
-advertised as supported release downloads yet.
+established production compiler. Windows has received more extensive local
+testing; Linux validation does not establish compatibility with every Linux
+distribution. macOS downloads are not included.
 
 See the [feature-status document](https://github.com/Beliavsky/rfortran/blob/main/docs/feature-status.md).
 Please report bugs with the version, OS, command, small reproducer, expected

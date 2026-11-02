@@ -41,7 +41,7 @@ def smoke(binary, examples, expected_version=None):
         # Generated objects/module caches belong in the test directory too.
         sources = work / 'examples'
         sources.mkdir()
-        for name, _, _ in cases:
+        for name in [c[0] for c in cases] + ['module_value.f90', 'module_main.f90', 'c_interop.f90']:
             shutil.copyfile(examples / name, sources / name)
         for name, input, expected in cases:
             run([binary, 'run', sources / name], work, input=input,
@@ -57,6 +57,21 @@ def smoke(binary, examples, expected_version=None):
                      '-o', executable], work)
                 run([executable], work, input=input, env=standalone, expected=expected)
                 results.append(f'native -O{optimization}: {name}')
+        executable = work / ('interop.exe' if os.name == 'nt' else 'interop')
+        run([binary, sources / 'c_interop.f90', '-o', executable], work)
+        run([executable], work, env=standalone, expected='42')
+        results.append('native C interoperability: libc abs with BIND(C), VALUE')
+        modules = work / 'module interfaces'
+        modules.mkdir()
+        objects = []
+        for name in ('module_value', 'module_main'):
+            obj = work / (name + ('.obj' if os.name == 'nt' else '.o'))
+            run([binary, '-J', modules, '-c', sources / f'{name}.f90', '-o', obj], work)
+            objects.append(obj)
+        executable = work / ('modules.exe' if os.name == 'nt' else 'modules')
+        run([binary, *objects, '-o', executable], work)
+        run([executable], work, env=standalone, expected='42')
+        results.append('native separate module compilation and object linking')
     return {'binary_version': version, 'checks': results}
 
 

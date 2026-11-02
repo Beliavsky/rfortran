@@ -13,6 +13,7 @@ from unittest.mock import patch
 import zipfile
 
 import package_windows as package
+import package_linux as linux
 
 
 class PackageTests(unittest.TestCase):
@@ -115,6 +116,7 @@ class PackageTests(unittest.TestCase):
             release_files = root / 'release-files'
             (release_files / 'examples').mkdir(parents=True)
             (release_files / 'INSTALL.md').write_text('Install @VERSION@', encoding='utf-8')
+            (release_files / 'INSTALL-linux.md').write_text('Linux @VERSION@', encoding='utf-8')
             (release_files / 'examples/hello.f90').write_text('print *,1\nend\n', encoding='utf-8')
             (release_files / 'examples/hello.obj').write_bytes(b'unwanted build artifact')
             (root / 'src/bin/tools').mkdir(parents=True)
@@ -147,6 +149,95 @@ class PackageTests(unittest.TestCase):
             for line in (output / 'SHA256SUMS.txt').read_text(encoding='utf-8').splitlines():
                 digest, name = line.split('  ')
                 self.assertEqual(digest, package.sha256(output / name))
+            linux_output = Path(temporary) / 'linux-assets'
+            elf = dict(needed=['libc.so.6'], minimum_glibc='2.34',
+                       interpreter='/lib64/ld-linux-x86-64.so.2')
+            def linux_licenses(directory, target):
+                self.assertEqual(target, linux.TARGET)
+                licenses(directory)
+            with patch.object(package, 'ROOT', root), patch.object(linux, 'ROOT', root), \
+                    patch.object(linux, 'HERE', release_files), \
+                    patch.object(linux, 'dependency_licenses', side_effect=linux_licenses), \
+                    patch.object(linux, 'elf_dependencies', return_value=elf), \
+                    patch.object(linux, 'smoke', return_value={'checks': ['fixture check']}):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    linux_archive = linux.package(binary, linux_output)
+                    report = linux.verify(linux_archive, linux_output / 'smoke.json', info['commit'])
+                self.assertEqual(report['commit'], info['commit'])
+                with self.assertRaisesRegex(ValueError, 'revision'):
+                    linux.verify(linux_archive, linux_output / 'bad.json', 'wrong revision')
+            with tarfile.open(linux_archive) as tar:
+                prefix = 'rfortran-1.2.3-linux-x86_64/'
+                self.assertEqual(tar.getmember(prefix+'rfort').mode, 0o755)
+                self.assertIn(prefix+'examples/hello.f90', tar.getnames())
+                self.assertFalse(any(name.endswith('.obj') for name in tar.getnames()))
+                self.assertEqual(tar.extractfile(prefix+'INSTALL.md').read(), b'Linux 1.2.3')
+                build = json.load(tar.extractfile(prefix+'BUILD.json'))
+                self.assertEqual(build['target'], linux.TARGET)
+                self.assertEqual(build['elf'], elf)
+            digest, name = (linux_output / 'SHA256SUMS-linux.txt').read_text().strip().split('  ')
+            self.assertEqual(digest, package.sha256(linux_output / name))
+
+    def test_linux_dependency_audit_rejects_wrong_arch_new_glibc_and_private_libraries(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            binary = Path(temporary) / 'rfort'
+            header = bytearray(20)
+            header[:6] = b'\x7fELF\x02\x01'
+            struct.pack_into('<H', header, 18, 62)
+            binary.write_bytes(header)
+            def audit(dynamic, versions, interpreter='[Requesting program interpreter: /lib64/ld-linux-x86-64.so.2]'):
+                outputs = [subprocess.CompletedProcess([], 0, stdout=text)
+                           for text in (dynamic, versions, interpreter)]
+                with patch.object(linux.subprocess, 'run', side_effect=outputs):
+                    return linux.elf_dependencies(binary)
+            dynamic = '(NEEDED) Shared library: [libc.so.6]'
+            self.assertEqual(audit(dynamic, 'GLIBC_2.2.5 GLIBC_2.34')['minimum_glibc'], '2.34')
+            with self.assertRaisesRegex(ValueError, 'newer than baseline'):
+                audit(dynamic, 'GLIBC_2.36')
+            with self.assertRaisesRegex(ValueError, 'shared library'):
+                audit(dynamic+'\n(NEEDED) Shared library: [libcustom.so]', 'GLIBC_2.34')
+            with self.assertRaisesRegex(ValueError, 'RPATH'):
+                audit(dynamic+'\n(RUNPATH) Library runpath: [/build/lib]', 'GLIBC_2.34')
+            with self.assertRaisesRegex(ValueError, 'ELF interpreter'):
+                audit(dynamic, 'GLIBC_2.34', '[Requesting program interpreter: /build/ld.so]')
+            struct.pack_into('<H', header, 18, 183)
+            binary.write_bytes(header)
+            with self.assertRaisesRegex(ValueError, 'x86-64'):
+                linux.elf_dependencies(binary)
+
+    def test_linux_archive_rejects_traversal_and_links_before_execution(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / 'bad.tar.gz'
+            for name, kind in [('../escape', tarfile.REGTYPE), ('root/link', tarfile.SYMTYPE),
+                               ('/absolute', tarfile.REGTYPE)]:
+                with tarfile.open(archive, 'w:gz') as tar:
+                    member = tarfile.TarInfo(name)
+                    member.type = kind
+                    member.linkname = '/outside'
+                    tar.addfile(member)
+                with patch.object(linux, 'smoke') as smoke:
+                    with self.assertRaisesRegex(ValueError, 'Unsafe archive'):
+                        linux.verify(archive, Path(temporary) / 'report.json')
+                    smoke.assert_not_called()
+
+    def test_linux_verification_rejects_tampered_binary_and_missing_execute_permission(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = root / 'candidate.tar.gz'
+            info = dict(target=linux.TARGET, dirty=False, commit='test revision',
+                        binary_sha256=hashlib.sha256(b'original').hexdigest())
+            for content, mode, error in [(b'tampered', 0o755, 'checksum'),
+                                         (b'original', 0o644, 'permission')]:
+                with tarfile.open(archive, 'w:gz') as tar:
+                    for name, data, permissions in [('root/BUILD.json', json.dumps(info).encode(), 0o644),
+                                                     ('root/rfort', content, mode)]:
+                        member = tarfile.TarInfo(name)
+                        member.size, member.mode = len(data), permissions
+                        tar.addfile(member, io.BytesIO(data))
+                with patch.object(linux, 'smoke') as smoke:
+                    with self.assertRaisesRegex(ValueError, error):
+                        linux.verify(archive, root / 'report.json')
+                    smoke.assert_not_called()
 
 
 if __name__ == '__main__':

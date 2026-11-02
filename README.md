@@ -13,16 +13,18 @@ the shared Rust interpreter locally through WebAssembly. Build it with
 the browser interface needs only static hosting, including GitHub Pages.
 
 Try it online at **https://beliavsky.github.io/rfortran/**.
-Windows prerelease packaging and release instructions are in
-[tools/releases/README.md](tools/releases/README.md). One `rfort.exe` provides
+Windows x64 and Linux x86-64 prerelease packaging and release instructions are in
+[tools/releases/README.md](tools/releases/README.md). One `rfort` executable provides
 native compilation, interpretation (`rfort run file.f90`) and the REPL (`rfort repl`).
 
 ## Current status
 
 Development is focused on compiling small programs correctly and extending
 coverage through local regressions and cases from the external ofort test suite.
-Windows x64 is the tested platform. Linux and macOS have native driver paths,
-but execution on those platforms still needs validation.
+Windows x64 is the primary locally tested platform. The release workflow also
+builds Linux x86-64 packages and requires extracted-archive checks on Ubuntu 22.04
+and 24.04 before attaching them to a draft release. macOS has a native driver
+path and a separate manually triggered validation workflow.
 
 Implemented subsets include:
 
@@ -344,9 +346,9 @@ Three design choices shape what rfort supports:
 
 ## Toolchains
 
-Windows x64 is tested. Linux and macOS have explicit driver paths but still
-need native execution validation; their presence is not a claim that every
-compiler feature works on those platforms.
+Windows x64 is the primary locally tested platform. Linux release packages are
+gated by native archive checks in GitHub Actions; macOS validation is separate.
+These checks do not establish that every compiler feature works on each platform.
 
 ### Windows
 
@@ -364,6 +366,11 @@ Optional environment overrides:
 - `RFORT_LIB_PATH`: semicolon-separated additional library directories.
 
 ### Linux
+
+The experimental release archive targets x86-64 with glibc 2.35 or newer,
+with release checks on Ubuntu 22.04 and 24.04. See the archive's INSTALL.md and
+BUILD.json for prerequisites and recorded dependencies. musl/Alpine, 32-bit x86
+and ARM are not targets of this download.
 
 The driver invokes the system `cc` to compile its embedded C runtime adapters
 and link generated objects. Install a C compiler and development libraries.
