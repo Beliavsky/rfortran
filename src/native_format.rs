@@ -438,6 +438,23 @@ fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     fail("internal formatting failure")
 }
 
+// The prebuilt core library on Unix can retain unwind-table references even
+// though this no_std static library is built with panic=abort. There is no std
+// runtime in the C-linked executable to supply this symbol. Unwinding through
+// our runtime is unsupported: abort if a foreign unwinder ever invokes it.
+#[cfg(all(native_runtime, unix))]
+#[no_mangle]
+pub unsafe extern "C" fn rust_eh_personality(
+    _version: i32,
+    _actions: i32,
+    _exception_class: u64,
+    _exception: *mut core::ffi::c_void,
+    _context: *mut core::ffi::c_void,
+) -> ! {
+    extern "C" { fn abort() -> !; }
+    abort()
+}
+
 // Fixed 24-byte layout also used by the Cranelift call site.
 #[repr(C)]
 #[derive(Clone, Copy)]

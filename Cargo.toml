@@ -35,6 +35,10 @@ fixed2free = { path = "tools/fixed2free" }
 [build-dependencies]
 lalrpop = "0.22.2"
 
+[dev-dependencies]
+# Emit Apple Silicon regression objects on Windows/Linux without a Mac linker.
+cranelift-codegen = { version = "0.124.2", features = ["arm64"] }
+
 [features]
 WASM_SUPPORT = []
 # Optional developer convenience; release archives use external disassemblers.

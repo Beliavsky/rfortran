@@ -8,6 +8,8 @@ mod module_data;
 mod record_heap;
 #[path = "c_interop.rs"]
 mod c_interop;
+#[path = "object_target.rs"]
+mod object_target;
 use anyhow::{bail, Context, Result};
 use cranelift_codegen::{isa, settings};
 use cranelift_object::{ObjectBuilder, ObjectModule};
@@ -4026,7 +4028,8 @@ impl CraneliftBackend {
         use cranelift_module::FuncId;
         use ir::{types, AbiParam};
         let triple = self.triple.clone().unwrap_or_else(Triple::host);
-        let isa = isa::lookup(triple.clone())?.finish(self.flags.clone())?;
+        let flags = object_target::flags_for_target(&triple, &self.flags)?;
+        let isa = isa::lookup(triple.clone())?.finish(flags)?;
         let builder = ObjectBuilder::new(
             isa.clone(),
             "f90c",

@@ -27,6 +27,8 @@ jobs:
           rustc -vV
       - name: Build compiler and interpreter
         run: cargo build --release --locked --bin rfort
+      - name: Check standalone runtime with the native C linker
+        run: python tests/test_native_runtime_link.py
       - name: Check interpreter, REPL and native -O0/-O2
         run: python tools/releases/smoke.py --binary target/release/rfort
       - name: Rust unit tests

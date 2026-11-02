@@ -2,6 +2,16 @@
 
 ## Regression tests
 
+Native platform checks include `cargo test --bin rfort object_target::tests`,
+which emits Apple Silicon Mach-O objects on any development host and checks
+that target-specific PIC settings preserve optimization flags. The test-only
+ARM64 backend does not add cross-compilation to the released command-line tool.
+On Linux/macOS, `python tests/test_native_runtime_link.py` additionally builds
+the standalone no_std runtime, links it with the system C compiler without
+Rust's standard runtime, and checks formatted output and abort-on-unwind behavior.
+The release and native-platform validation workflows run these checks alongside
+native smoke tests. The release workflow also tests the extracted distributions.
+
 ```sh
 cargo build --bin rfort
 cargo test --bin rfort --test testsuite -- --test-threads=1

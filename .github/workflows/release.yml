@@ -85,6 +85,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y build-essential binutils
       - name: Build Linux x86-64 executable
         run: cargo build --release --locked --bin rfort --target x86_64-unknown-linux-gnu --target-dir target/release-candidates
+      - name: Check standalone runtime with the native C linker
+        run: python tests/test_native_runtime_link.py
       - name: Rust unit tests
         run: cargo test --locked --bin rfort --target x86_64-unknown-linux-gnu --target-dir target/release-candidates
       - name: Test packaging helpers
@@ -166,6 +168,8 @@ jobs:
           xcrun --sdk macosx clang --version
       - name: Build Apple Silicon executable
         run: cargo build --release --locked --bin rfort --target aarch64-apple-darwin --target-dir target/release-candidates
+      - name: Check standalone runtime with the native C linker
+        run: python tests/test_native_runtime_link.py
       - name: Rust unit tests
         run: cargo test --locked --bin rfort --target aarch64-apple-darwin --target-dir target/release-candidates
       - name: Apply ad-hoc signature to the final executable
