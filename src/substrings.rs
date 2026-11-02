@@ -263,6 +263,20 @@ fn declare_character(name: &str, capacity: usize, output: &mut Vec<Stmt>) {
     if heap { output.push(Stmt::CallSub {name:"@heap_character_bind".into(), args:vec![ident(name)]}); }
 }
 fn allocation_flag(length: &str) -> String { format!("{length}_allocated") }
+/// The module storage key of a variable bound to module storage in this scope.
+fn module_key(statements: &[Stmt], name: &str) -> Option<String> {
+    statements.iter().find_map(|s| match s {
+        Stmt::CallSub { name: n, args } if n == "@module_bind" => match args.as_slice() {
+            [Expr::Ident(local), Expr::Str(key), ..] if local == name => Some(key.clone()),
+            _ => None,
+        },
+        _ => None,
+    })
+}
+fn module_bind(local: &str, key: &str, kind: TypeSpec, value: Expr) -> Result<Stmt> {
+    let storage = crate::modules::Storage { kind, values: vec![value], initialized: true, rank: 0, deferred: false };
+    Ok(Stmt::CallSub { name: "@module_bind".into(), args: vec![ident(local), Expr::Str(key.into()), Expr::Str(serde_json::to_string(&storage)?)] })
+}
 fn binary(op: BinOp, a: Expr, b: Expr) -> Expr {
     Expr::Bin(op, Box::new(a), Box::new(b))
 }
@@ -641,8 +655,14 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
                     let length = format!("@substring_allocated_length_{serial}$of${name}");
                     scope.symbols.insert(length.clone(), (TypeSpec::Integer(Some(8)), vec![]));
                     scope.lengths.insert(name.clone(), length);
-                    scope.characters.insert(name.clone(), 0);
-                    targets.push(name.clone());
+                    // Module storage is shared with scopes that may assign
+                    // any length, so it is always an owned buffer.
+                    if module_key(statements, name).is_some() {
+                        scope.characters.insert(name.clone(), MAX_EXPRESSION_LENGTH);
+                    } else {
+                        scope.characters.insert(name.clone(), 0);
+                        targets.push(name.clone());
+                    }
                 } else if let TypeSpec::Character(n) = kind { scope.characters.insert(name.clone(), n.unwrap_or(1)); }
             },
             Stmt::ArrayDecl { kind, name, dims } => {
@@ -676,6 +696,7 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
         }
     }
     let mut result = vec![];
+    let original = statements.clone();
     for mut statement in std::mem::take(statements) {
         if let Some(p) = crate::source_diagnostics::statement_offset(&statement) { statement_location.set(Some(p)); }
         let mut prefix = vec![];
@@ -688,7 +709,7 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
                     let Expr::Ident(n)=object else {bail!("ALLOCATE(CHARACTER(LEN=...) :: ...) requires deferred-length CHARACTER scalars");};
                     // An element of a heap CHARACTER array that the deferred-length
                     // lowering did not handle, as one declared in a module.
-                    if n.starts_with('@') {bail!("ALLOCATE(CHARACTER(LEN=...) :: ...) of a deferred-length CHARACTER array is supported only for local arrays");}
+                    if n.starts_with('@') && !scope.lengths.contains_key(n) {bail!("ALLOCATE(CHARACTER(LEN=...) :: ...) of a deferred-length CHARACTER array is supported only for local arrays");}
                     let length=scope.lengths.get(n).filter(|_|!scope.fixed.contains(n))
                         .with_context(||format!("ALLOCATE(CHARACTER(LEN=...) :: {n}) requires a deferred-length ALLOCATABLE CHARACTER scalar"))?.clone();
                     if scope.host.contains(n) {bail!("deferred CHARACTER host association in procedures is not yet supported");}
@@ -722,9 +743,20 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
             }
             Stmt::VarDecl { kind, names } if deferred(kind) => {
                 for name in names {
+                    let flag = allocation_flag(&scope.lengths[name]);
+                    if let Some(key) = module_key(&original, name) {
+                        // The buffer is bound by the variable's own module
+                        // binding; its length and status are module storage too.
+                        result.push(Stmt::VarDecl { kind: TypeSpec::Character(Some(0)), names: vec![name.clone()] });
+                        result.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![scope.lengths[name].clone()] });
+                        result.push(module_bind(&scope.lengths[name], &format!("{key}@length"), TypeSpec::Integer(Some(8)), Expr::IntLit("0".into()))?);
+                        result.push(Stmt::VarDecl { kind: TypeSpec::Logical, names: vec![flag.clone()] });
+                        result.push(module_bind(&flag, &format!("{key}@allocated"), TypeSpec::Logical, Expr::Logical(false))?);
+                        scope.symbols.insert(name.clone(), (TypeSpec::Character(Some(scope.characters[name])), vec![]));
+                        continue;
+                    }
                     declare_character(name, scope.characters[name], &mut result);
                     result.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![scope.lengths[name].clone()] });
-                    let flag = allocation_flag(&scope.lengths[name]);
                     result.push(Stmt::VarDecl { kind: TypeSpec::Logical, names: vec![flag.clone()] });
                     result.push(Stmt::Assign { name: flag, value: Expr::Logical(false) });
                     scope.symbols.insert(name.clone(), (TypeSpec::Character(Some(scope.characters[name])), vec![]));
@@ -793,6 +825,7 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
                 }
                 for e in &mut args[1..] {dynamic_expression(e,&mut scope,&mut prefix,serial)?;}
             }
+            Stmt::CallSub { name, .. } if name == "@module_bind" => {}
             Stmt::Print { items } | Stmt::CallSub { args: items, .. } => for e in items { dynamic_expression(e, &mut scope, &mut prefix, serial)?; },
             Stmt::Return(Some(e)) => dynamic_expression(e, &mut scope, &mut prefix, serial)?,
             Stmt::Read { args } => {

@@ -979,7 +979,10 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                     let length=length.unwrap_or(1);let mut text=value.3.clone().unwrap_or_default();
                     text.truncate(length);text.extend(std::iter::repeat(' ').take(length-text.len()));
                     self.env_str.insert(name.into(),text);
-                },_=>unreachable!(),
+                },
+                // A deferred-length CHARACTER scalar keeps its own length.
+                TypeSpec::CharacterLength(_)=>{self.env_str.insert(name.into(),value.3.clone().unwrap_or_default());},
+                _=>unreachable!(),
             }
         }
         fn sync_saved(&mut self) {

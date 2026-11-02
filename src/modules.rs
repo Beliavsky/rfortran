@@ -880,7 +880,11 @@ pub(crate) fn capture(mut program: Program) -> Result<Program> {
                             _ => {}
                         }
                     }
-                    for value in &mut values {
+                    // A deferred-length CHARACTER scalar starts unallocated.
+                    if crate::substrings::deferred(kind) {
+                        values = vec![Expr::Str(String::new())];
+                    }
+                    for value in values.iter_mut().filter(|_| !crate::substrings::deferred(kind)) {
                         *value = crate::parameters::initial_value(kind, value)?;
                     }
                     let declaration = if dims.is_empty() {

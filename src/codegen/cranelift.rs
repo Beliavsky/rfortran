@@ -3210,9 +3210,11 @@ fn gen_stmts(
                     let [IExpr::Ident(local),IExpr::Str(key),IExpr::Str(initializer)]=args.as_slice() else {bail!("invalid module storage binding");};
                     let initial:crate::modules::Storage=serde_json::from_str(initializer)?;
                     let symbol=format!(".rfort.module.{key}");
+                    // A deferred-length CHARACTER scalar: the pointer and length of its buffer.
+                    let text=crate::substrings::deferred(&initial.kind);
                     let id=if let Some(cranelift_module::FuncOrDataId::Data(id))=module.get_name(&symbol) {id} else {
                         let mut bytes=vec![];
-                        let initial_values=if initial.deferred {vec![crate::ast::Expr::IntLit("0".into())]}else{initial.values.clone()};
+                        let initial_values=if text {vec![]} else if initial.deferred {vec![crate::ast::Expr::IntLit("0".into())]}else{initial.values.clone()};
                         for value in &initial_values {
                             if let TypeSpec::Character(length)=&initial.kind {
                                 let mut text=crate::parameters::character_constant(value)?.into_bytes();
@@ -3227,11 +3229,13 @@ fn gen_stmts(
                                 else if module.isa().endianness()==ir::Endianness::Little {bytes.extend(bits.to_le_bytes());}else{bytes.extend(bits.to_be_bytes());}
                             }
                         }
+                        if text {bytes.resize(16,0);}
                         if bytes.is_empty() {bytes.resize(8,0);}
                         let id=module.declare_data(&symbol,Linkage::Local,true,false)?;
                         let mut data=DataDescription::new();data.define(bytes.into_boxed_slice());data.set_align(8);module.define_data(id,&data)?;id
                     };
                     let global=module.declare_data_in_func(id,b.func);
+                    if text {chars.bind_module(local,global,ints);continue;}
                     let storage=if initial.deferred {arrays.insert(local.clone(),1);Storage::HeapStatic(global)}else{Storage::Static(global)};
                     if let Some((slot,_))=chars.get_mut(local) {
                         *slot=storage;let address=storage_addr(b,ptr_ty,storage);

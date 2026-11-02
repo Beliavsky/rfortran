@@ -19,7 +19,27 @@ use std::collections::HashMap;
 pub(super) struct Characters {
     values: HashMap<String, (super::Storage, usize)>,
     temporaries: RefCell<Vec<ir::StackSlot>>,
-    heap_lengths: HashMap<String, ir::StackSlot>,
+    heap_lengths: HashMap<String, Length>,
+}
+/// Where the length of an owned buffer lives: the invocation's stack, or
+/// after the pointer in the static cell of a module variable.
+#[derive(Clone, Copy)]
+pub(super) enum Length { Stack(ir::StackSlot), Static(ir::GlobalValue) }
+impl Length {
+    fn address(self, b: &mut FunctionBuilder, ptr: ir::Type) -> ir::Value {
+        match self {
+            Length::Stack(slot) => b.ins().stack_addr(ptr, slot, 0),
+            Length::Static(global) => { let base = b.ins().global_value(ptr, global); b.ins().iadd_imm(base, 8) }
+        }
+    }
+    pub(super) fn load(self, b: &mut FunctionBuilder, ptr: ir::Type) -> ir::Value {
+        let address = self.address(b, ptr);
+        b.ins().load(ptr, MemFlags::new(), address, 0)
+    }
+    fn store(self, b: &mut FunctionBuilder, ptr: ir::Type, value: ir::Value) {
+        let address = self.address(b, ptr);
+        b.ins().store(MemFlags::new(), value, address, 0);
+    }
 }
 impl Characters {
     pub(super) fn new() -> Self { Self { values: HashMap::new(), temporaries: RefCell::new(Vec::new()), heap_lengths: HashMap::new() } }
@@ -55,19 +75,27 @@ impl Characters {
             ir::StackSlotKind::ExplicitSlot, 8, 3));
         let zero = b.ins().iconst(ptr, 0);
         b.ins().stack_store(zero, length, 0);
-        self.heap_lengths.insert(name.into(), length);
+        self.heap_lengths.insert(name.into(), Length::Stack(length));
         self.values.insert(name.into(), (super::Storage::HeapStack(cell), crate::substrings::MAX_EXPRESSION_LENGTH));
         ints.insert(format!("@character_pointer:{name}"), super::Storage::Stack(cell));
     }
 
+    /// A deferred-length module variable keeps its buffer pointer and
+    /// length in module storage, which outlives every invocation.
+    pub(super) fn bind_module(&mut self, name: &str, global: ir::GlobalValue, ints: &mut Integers) {
+        self.heap_lengths.insert(name.into(), Length::Static(global));
+        self.values.insert(name.into(), (super::Storage::HeapStatic(global), crate::substrings::MAX_EXPRESSION_LENGTH));
+        ints.insert(format!("@character_pointer:{name}"), super::Storage::Static(global));
+    }
+
     pub(super) fn clear(&self, module: &mut ObjectModule, b: &mut FunctionBuilder,
                         ptr: ir::Type, name: &str) -> Result<()> {
-        let (super::Storage::HeapStack(cell), _) = self.values[name] else {bail!("invalid heap CHARACTER storage");};
-        let previous = b.ins().stack_load(ptr, cell, 0);
+        let cell = super::heap_cell(b, ptr, self.values[name].0).context("invalid heap CHARACTER storage")?;
+        let previous = b.ins().load(ptr, MemFlags::new(), cell, 0);
         free(module, b, ptr, previous)?;
         let zero = b.ins().iconst(ptr, 0);
-        b.ins().stack_store(zero, cell, 0);
-        b.ins().stack_store(zero, self.heap_lengths[name], 0);
+        b.ins().store(MemFlags::new(), zero, cell, 0);
+        self.heap_lengths[name].store(b, ptr, zero);
         Ok(())
     }
 
@@ -273,8 +301,8 @@ pub(super) fn view(
                 .context("missing CHARACTER source storage")?;
             Ok(View {
                 address: super::storage_addr(b, ptr, *slot),
-                length: if let Some(slot)=chars.heap_lengths.get(name) {
-                    b.ins().stack_load(ptr, *slot, 0)
+                length: if let Some(length)=chars.heap_lengths.get(name) {
+                    length.load(b, ptr)
                 } else {b.ins().iconst(ptr, *length as i64)},
                 capacity: *length,
             })
@@ -402,11 +430,11 @@ pub(super) fn assign(
         call(module,b,"memset",&[tail,space,padding],ptr)?;
         let end=b.ins().iadd(address,length);
         let zero=b.ins().iconst(types::I8,0);b.ins().store(MemFlags::new(),zero,end,0);
-        let (super::Storage::HeapStack(cell),_)=chars.values[dest] else {bail!("invalid heap CHARACTER assignment");};
-        let previous=b.ins().stack_load(ptr,cell,0);
+        let cell=super::heap_cell(b,ptr,chars.values[dest].0).context("invalid heap CHARACTER assignment")?;
+        let previous=b.ins().load(ptr,MemFlags::new(),cell,0);
         free(module,b,ptr,previous)?;
-        b.ins().stack_store(address,cell,0);
-        b.ins().stack_store(length,*length_slot,0);
+        b.ins().store(MemFlags::new(),address,cell,0);
+        length_slot.store(b,ptr,length);
         return Ok(());
     }
     let (slot, length) = chars

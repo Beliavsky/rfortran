@@ -287,7 +287,7 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                 if sig.result.is_some() {if let Some(Expr::Ident(n))=args.last(){write(n,None,env,&mut after,serial);}}
             }
             Stmt::CallSub {name,args} if name=="@module_bind" => {
-                let [Expr::Ident(local),Expr::Str(key),Expr::Str(initializer)]=args.as_slice() else {unreachable!()};
+                let [Expr::Ident(local),Expr::Str(key),Expr::Str(initializer)]=args.as_slice() else {bail!("invalid module binding {args:?}")};
                 let initial:crate::modules::Storage=serde_json::from_str(initializer)?;
                 let variable=env.get_mut(local).context("missing module variable initialization state")?;
                 let flags=crate::modules::Storage {kind:TypeSpec::Integer(None),values:vec![int(i64::from(initial.initialized));variable.extent.unwrap_or(1) as usize],initialized:true,rank:usize::from(variable.extent.is_some()),deferred:variable.heap_length.is_some()};

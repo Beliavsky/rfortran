@@ -6,6 +6,10 @@
 use super::*;
 
 fn bytes(initial: &crate::modules::Storage, little: bool) -> Result<Vec<u8>> {
+    // A deferred-length CHARACTER scalar: the pointer and length of its buffer.
+    if crate::substrings::deferred(&initial.kind) {
+        return Ok(vec![0; 16]);
+    }
     let mut bytes = Vec::new();
     let values = if initial.deferred {
         vec![crate::ast::Expr::IntLit("0".into())]

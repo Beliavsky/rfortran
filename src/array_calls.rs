@@ -329,8 +329,12 @@ pub(crate) fn scalar_actual_kind(e: &Expr, shapes: &Shapes) -> Result<TypeSpec> 
             let a = scalar_actual_kind(a, shapes)?;
             let b = scalar_actual_kind(b, shapes)?;
             if matches!(op, BinOp::Concat) {
-                if let (TypeSpec::Character(a), TypeSpec::Character(b)) = (a, b) {
+                if let (TypeSpec::Character(a), TypeSpec::Character(b)) = (&a, &b) {
                     return Ok(TypeSpec::Character(Some(a.unwrap_or(1) + b.unwrap_or(1))));
+                }
+                // A deferred-length operand gives the result a runtime length.
+                if [&a, &b].iter().all(|k| matches!(k, TypeSpec::Character(_)) || crate::substrings::deferred(k)) {
+                    return Ok(crate::ast::character_length(Expr::Ident("@deferred_character".into())));
                 }
                 bail!("CHARACTER concatenation requires CHARACTER operands");
             }
@@ -1754,6 +1758,9 @@ fn expand(
                                 TypeSpec::Character(expected) if expected.unwrap_or(1) <= length.unwrap_or(1) => {},
                                 _ => bail!("type or CHARACTER length mismatch for dummy `{p}`"),
                             }
+                        } else if crate::substrings::deferred(&actual_kind) && matches!(kind, TypeSpec::CharacterAssumed) {
+                            // The dummy has the runtime length of the actual.
+                            kind = actual_kind;
                         } else if !matches!((&kind,&actual_kind),(TypeSpec::Integer(a),TypeSpec::Integer(b)) if a.unwrap_or(4)==b.unwrap_or(4)) && kind != actual_kind {
                             bail!("type mismatch for dummy `{p}`");
                         }
@@ -2067,6 +2074,10 @@ fn expand(
                     } else if intent == "intent(in)" {
                         *serial += 1;
                         let temp = format!("@array_call_input_{serial}");
+                        // A copy of runtime length, of a deferred-length actual.
+                        if crate::substrings::deferred(&kind) {
+                            prefix.push(Stmt::DummyIntent { name: temp.clone(), intent: "allocatable".into() });
+                        }
                         prefix.push(Stmt::VarDecl {
                             kind,
                             names: vec![temp.clone()],

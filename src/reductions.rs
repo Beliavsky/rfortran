@@ -470,6 +470,22 @@ fn character_capacity(e: &Expr, symbols: &Symbols) -> Result<Option<usize>> {
     })
 }
 
+/// The runtime length of a CHARACTER operand of a comparison.
+fn runtime_length(e: &Expr, symbols: &Symbols) -> Option<Expr> {
+    Some(match e {
+        Expr::Str(s) => int(s.len() as i64),
+        Expr::Ident(n) => match symbols.get(n) {
+            Some((TypeSpec::Character(n), dims)) if dims.is_empty() => int(n.unwrap_or(1) as i64),
+            _ => return None,
+        },
+        Expr::Bin(BinOp::Concat, a, b) => bin(BinOp::Add, runtime_length(a,symbols)?, runtime_length(b,symbols)?),
+        Expr::Call(n,args) if n == "trim" && args.len()==1 => Expr::Call("len_trim".into(), args.clone()),
+        Expr::Call(n,args) if matches!(n.as_str(),"adjustl"|"adjustr") && args.len()==1 => runtime_length(&args[0],symbols)?,
+        Expr::Call(n,args) if n == "@dynamic_substring" && args.len() == 4 => args[2].clone(),
+        _ => return None,
+    })
+}
+
 fn lower_character_comparison(op: BinOp, a: &Expr, b: &Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, serial: &mut usize) -> Result<Option<Expr>> {
     let lengths = (character_capacity(a,symbols)?,character_capacity(b,symbols)?);
     let length = match lengths {
@@ -478,17 +494,27 @@ fn lower_character_comparison(op: BinOp, a: &Expr, b: &Expr, symbols: &mut Symbo
         _ => bail!("CHARACTER comparison requires two scalar CHARACTER operands"),
     };
     if length >= i32::MAX as usize { bail!("CHARACTER comparison is too large"); }
+    // An operand of runtime length, such as a deferred-length variable, is
+    // compared over the longer of the two runtime lengths in owned buffers.
+    let runtime = length == crate::substrings::MAX_EXPRESSION_LENGTH;
     *serial += 1;
-    let names: Vec<String> = ["left","right","index","a","b","order"].iter()
+    let names: Vec<String> = ["left","right","index","a","b","order","length"].iter()
         .map(|part| format!("@character_compare_{serial}_{part}")).collect();
     let id = |i: usize| Expr::Ident(names[i].clone());
     for (i,name) in names.iter().enumerate() {
-        let kind = if i<2 {TypeSpec::Character(Some(length))} else {TypeSpec::Integer(Some(8))};
+        let kind = if i<2 {TypeSpec::Character(Some(if runtime {0} else {length}))} else {TypeSpec::Integer(Some(8))};
         prefix.push(Stmt::VarDecl {kind:kind.clone(), names:vec![name.clone()]});
+        if i<2 && runtime {prefix.push(Stmt::CallSub {name:"@heap_character_bind".into(),args:vec![id(i)]});}
         symbols.insert(name.clone(),(kind,vec![]));
     }
+    let width = if runtime {
+        let left = runtime_length(a,symbols).context("CHARACTER comparison requires an operand of known length")?;
+        let right = runtime_length(b,symbols).context("CHARACTER comparison requires an operand of known length")?;
+        prefix.push(Stmt::Assign {name:names[6].clone(),value:Expr::Call("max".into(),vec![left,right])});
+        id(6)
+    } else {int(length as i64)};
     for (i,source) in [a,b].into_iter().enumerate() {
-        prefix.push(Stmt::CallSub {name:"@character_assign".into(),args:vec![id(i),source.clone(),int(length as i64)]});
+        prefix.push(Stmt::CallSub {name:"@character_assign".into(),args:vec![id(i),source.clone(),width.clone()]});
     }
     prefix.push(Stmt::Assign {name:names[5].clone(),value:int(0)});
     let mut body = Vec::new();
@@ -498,7 +524,7 @@ fn lower_character_comparison(op: BinOp, a: &Expr, b: &Expr, symbols: &mut Symbo
     body.push(Stmt::If {cond:bin(BinOp::Ne,id(3),id(4)),then_body:vec![
         Stmt::Assign {name:names[5].clone(),value:bin(BinOp::Sub,id(3),id(4))}
     ],else_body:None});
-    prefix.push(Stmt::Do {var:names[2].clone(),start:int(0),end:int(length as i64-1),body:vec![
+    prefix.push(Stmt::Do {var:names[2].clone(),start:int(0),end:bin(BinOp::Sub,width,int(1)),body:vec![
         Stmt::If {cond:bin(BinOp::Eq,id(5),int(0)),then_body:body,else_body:None}
     ]});
     Ok(Some(bin(op,id(5),int(0))))

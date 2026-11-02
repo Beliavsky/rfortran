@@ -274,7 +274,7 @@ impl Lower {
                         // Constant kinds and lengths, from the host's PARAMETERs or modules.
                         let local = names.iter().any(|k| d.statements.contains_key(k) && !d.parameters.contains(k));
                         if local || matches!(kind, TypeSpec::CharacterAssumed)
-                            || matches!(kind, TypeSpec::CharacterLength(e) if matches!(&**e, Expr::Ident(x) if x == "@deferred_character"))
+                            || (matches!(s, Stmt::ArrayDecl { .. }) && crate::substrings::deferred(kind))
                         {
                             fits = false;
                         }

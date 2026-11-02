@@ -942,6 +942,33 @@ ALLOCATE with a type specification sets the length; the value is undefined until
 assigned. A deferred-length variable can be the VALUE of GET_COMMAND_ARGUMENT
 and GET_ENVIRONMENT_VARIABLE, which fill its current length.
 
+Deferred-length scalars can also be module variables, and host variables
+of internal procedures (which live in module storage; see
+[Internal procedures and host association](#internal-procedures-and-host-association)).
+Every scope that uses one shares its buffer, length and allocation status,
+also across separately compiled objects:
+
+```fortran
+module log_m
+  character(len=:), allocatable :: buf
+contains
+  subroutine push(s)
+    character(len=*), intent(in) :: s
+    if (allocated(buf)) then
+      buf = buf // ';' // s
+    else
+      buf = s
+    end if
+  end subroutine
+end module
+```
+
+A deferred-length scalar, or an expression of runtime length such as
+`buf // '!'`, can be the actual argument of an assumed-length
+(`character(len=*)`) scalar dummy, which then has its runtime length.
+Comparisons of runtime-length values, such as `buf(i:i) == ';'`, compare
+over the longer of the two runtime lengths.
+
 Deferred-length CHARACTER arrays (`character(len=:), allocatable :: w(:)`)
 are supported as main-program, BLOCK and procedure local variables. ALLOCATE
 with a type specification sets the length, which may be a runtime value, as in
@@ -971,9 +998,9 @@ Some function specializations still require bounded CHARACTER array inputs;
 support for a component in a subroutine does not remove that separate limit.
 Local deferred arrays also support overlapping concatenation assignments such
 as `w = w // '!'`.
-`x%len` and `x%kind` are LEN(x) and KIND(x). Procedure and module
-storage and host association, READ into a deferred-length destination, and
-MAX and MIN of CHARACTER values retain restrictions. REPEAT, concatenation,
+`x%len` and `x%kind` are LEN(x) and KIND(x). Deferred-length dummy
+arguments, module and host deferred-length arrays, READ into a deferred-length
+destination, and MAX and MIN of CHARACTER values retain restrictions. REPEAT, concatenation,
 ADJUSTL/ADJUSTR and native output temporaries use heap buffers sized to the
 runtime value. REPEAT checks negative counts and excessive result lengths before
 multiplication/allocation, and an empty source takes constant time even with a
@@ -3631,7 +3658,8 @@ The variables of a main program, or of a procedure that cannot call itself
 (directly or through other procedures of the program), that its internal
 procedures use are kept in module storage, so internal procedures can use
 them as the host does: whole arrays and sections, ALLOCATABLE and POINTER
-variables, CHARACTER variables, derived-type variables, READ into them, and
+variables, CHARACTER variables (including deferred-length scalars),
+derived-type variables, READ into them, and
 passing them to other procedures. A procedure host deallocates such
 ALLOCATABLE variables when it returns, as it does its other locals. This
 covers variables declared with constant kinds, lengths and bounds, from
@@ -3653,7 +3681,7 @@ end subroutine
 ```
 
 Other host variables (in recursive hosts, dummy arguments, automatic
-objects, deferred-length CHARACTER variables, variables in COMMON,
+objects, deferred-length CHARACTER arrays, variables in COMMON,
 EQUIVALENCE, DATA or NAMELIST statements, and variables an internal
 procedure's declarations inquire about, such as `len(a)`) use a borrowed
 host environment instead. Through it, internal procedures can read and update INTEGER(4/8),
