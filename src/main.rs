@@ -10,9 +10,9 @@ mod ir;
 mod command_time;
 mod linker;
 
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "windows", feature = "bundled-objdump"))]
 const OBJDUMP_BYTES: Option<&[u8]> = Some(include_bytes!("bin/tools/objdump.exe"));
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(all(target_os = "windows", feature = "bundled-objdump")))]
 const OBJDUMP_BYTES: Option<&[u8]> = None;
 
 #[derive(Debug, Clone)]

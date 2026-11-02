@@ -1,6 +1,6 @@
 [package]
 name = "rfortran"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 edition = "2021"
 description = "Experimental Fortran compiler written in Rust"
 repository = "https://github.com/Beliavsky/rfortran"
@@ -37,6 +37,8 @@ lalrpop = "0.22.2"
 
 [features]
 WASM_SUPPORT = []
+# Optional developer convenience; release archives use external disassemblers.
+bundled-objdump = []
 
 default = []
 

@@ -12,6 +12,11 @@ the shared Rust interpreter locally through WebAssembly. Build it with
 `python web-interpreter/build.py` after installing the `wasm32-wasip1` Rust target;
 the browser interface needs only static hosting, including GitHub Pages.
 
+Try it online at **https://beliavsky.github.io/rfortran/**.
+Windows prerelease packaging and release instructions are in
+[tools/releases/README.md](tools/releases/README.md). One `rfort.exe` provides
+native compilation, interpretation (`rfort run file.f90`) and the REPL (`rfort repl`).
+
 ## Current status
 
 Development is focused on compiling small programs correctly and extending
