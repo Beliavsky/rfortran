@@ -2,9 +2,9 @@
 "use strict";
 const byId = id => document.getElementById(id);
 const examples = {
-  hello: 'program hello\n   implicit none\n   print *, "Hello from rfortran in your browser!"\nend program hello\n',
-  arrays: 'program arrays\n   implicit none\n   integer :: i\n   integer, parameter :: dp = kind(0.0d0)\n   real(kind=dp) :: x(5)\n   x = [(real(i, kind=dp), i=1,5)]\n   print *, "x =", x\n   print *, "sum =", sum(x)\n   print *, "mean =", sum(x)/size(x)\nend program arrays\n',
-  input: 'program input_demo\n   implicit none\n   integer :: n, ios\n   read(*, *, iostat=ios) n\n   if (ios == 0) then\n      print *, "Your number squared:", n*n\n   else\n      print *, "Supply an integer in the standard input box."\n   end if\nend program input_demo\n'
+  hello: 'program hello\nimplicit none\nprint *, "Hello from rfortran in your browser!"\nend program hello\n',
+  arrays: 'program arrays\nimplicit none\ninteger :: i\ninteger, parameter :: dp = kind(0.0d0)\nreal(kind=dp) :: x(5)\nx = [(real(i, kind=dp), i=1,5)]\nprint *, "x =", x\nprint *, "sum =", sum(x)\nprint *, "mean =", sum(x)/size(x)\nend program arrays\n',
+  input: 'program input_demo\nimplicit none\ninteger :: n, ios\nread(*, *, iostat=ios) n\nif (ios == 0) then\n   print *, "Your number squared:", n*n\nelse\n   print *, "Supply an integer in the standard input box."\nend if\nend program input_demo\n'
 };
 let capabilities = {autoDeclare:false, autoEnd:false};
 let worker = null;

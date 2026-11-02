@@ -154,7 +154,7 @@ test("textarea fallback and REPL multiline input always indent three spaces",()=
   input.value="program p\ndo i=1,3";
   input.selectionStart=input.selectionEnd=input.value.length;
   input.emit("keydown",{key:"Enter"});
-  assert.equal(input.value,"program p\ndo i=1,3\n      ");
+  assert.equal(input.value,"program p\ndo i=1,3\n   ");
   assert.equal(p.storage.get("rfortran.web.source"),input.value);
   const command=p.get("repl-command");command.value="do i=1,3";
   command.selectionStart=command.selectionEnd=command.value.length;
@@ -166,16 +166,16 @@ test("textarea fallback and REPL multiline input always indent three spaces",()=
 test("CodeMirror Enter explicitly indents DO and IF, including selection replacement",()=>{
   const p=page({withEditor:true});
   for (const opening of ["do i=1,3", "if (i>0) then"]) {
-    p.editor.setValue(`program p\n   ${opening}`);
+    p.editor.setValue(`program p\n${opening}`);
     p.editorOptions.extraKeys.Enter(p.editor);
-    assert.equal(p.editor.getValue(),`program p\n   ${opening}\n      `);
+    assert.equal(p.editor.getValue(),`program p\n${opening}\n   `);
   }
-  p.editor.setValue("program p\n   do i=1,3\n      replace me\n   end do");
+  p.editor.setValue("program p\ndo i=1,3\n   replace me\nend do");
   const input=p.get("source");
   input.selectionStart=input.value.indexOf("replace me");
   input.selectionEnd=input.selectionStart+"replace me".length;
   p.editorOptions.extraKeys["Shift-Enter"](p.editor);
-  assert.match(p.editor.getValue(),/\n      \n      \n   end do$/);
+  assert.match(p.editor.getValue(),/\n   \n   \nend do$/);
   p.editor.setOption("readOnly",true);
   const before=p.editor.getValue();
   p.editorOptions.extraKeys.Enter(p.editor);

@@ -2,6 +2,9 @@
 // Editing assistance only; Fortran parsing and validation stay in Rust.
 var RfortIndent = (() => {
   const width = 3;
+  // Program units establish scope, but their bodies start in column one.
+  const units = new Set(["program","module","submodule","function","subroutine","blockdata"]);
+  const depth = stack => stack.reduce((n,kind)=>n+(units.has(kind) ? 0 : 1),0);
   const start = () => ({stack:[], pending:""});
   const copy = state => ({stack:[...state.stack], pending:state.pending});
   function code(line) {
@@ -28,20 +31,21 @@ var RfortIndent = (() => {
   // Returns the indentation of a statement and updates the following level.
   function statement(state,text) {
     const stack=state.stack;
-    let level=stack.length;
+    let level=depth(stack);
     if (!text || /^\w+\s*(?:=|=>)/.test(text)) return level;
     const end=text.match(/^end\s*(program|module|submodule|function|subroutine|interface|block\s*data|block|associate|critical|team|select|where|forall|do|if|type|enum(?:eration)?)(?:\b|$)/);
     if (end || /^end\s*$/.test(text)) {
       close(stack,end ? end[1].replace(/\s/g,"") : null);
-      return stack.length;
+      return depth(stack);
     }
     if (/^(?:case\b|class\s+(?:is\b|default\b)|type\s+is\b|rank\s*(?:\(|default\b))/.test(text)) {
       if (stack.at(-1)==="arm") stack.pop();
-      level=stack.length;
+      level=depth(stack);
       if (stack.at(-1)==="select") stack.push("arm");
       return level;
     }
-    if (/^(?:else\b|elseif\b|elsewhere\b|contains\b)/.test(text)) return Math.max(0,level-1);
+    if (/^contains\b/.test(text)) return Math.max(0,level-(units.has(stack.at(-1)) ? 0 : 1));
+    if (/^(?:else\b|elseif\b|elsewhere\b)/.test(text)) return Math.max(0,level-1);
     let kind=null;
     if (/^if\s*\(.*\)\s*then\s*$/.test(text)) kind="if";
     else if (/^do(?:\s|$)/.test(text)) kind="do";
@@ -68,7 +72,7 @@ var RfortIndent = (() => {
     for (const part of text.split(";")) statement(state,part.trim());
   }
   function indent(state,next="") {
-    if (state.pending) return (state.stack.length+1)*width;
+    if (state.pending) return (depth(state.stack)+1)*width;
     return statement(copy(state),code(next).split(";")[0].trim())*width;
   }
   function after(before,next="") {

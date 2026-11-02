@@ -8,7 +8,8 @@ reports work without a native execution server. CodeMirror and the WASI host are
 vendored; execution needs no CDN.
 
 The editor always uses three-space automatic Fortran block indentation, with
-spaces rather than tabs. Enter indents the next line; closing statements dedent
+spaces rather than tabs. Program, module and procedure bodies start in column
+one; each nested control block adds three spaces. Enter indents the next line; closing statements dedent
 automatically. Tab and Shift+Tab indent or unindent selections. Shift+Enter in
 the REPL adds an indented line; pasted source is indented in the main editor.
 Enter still submits the REPL command. There is no
