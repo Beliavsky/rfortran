@@ -5,6 +5,7 @@ import vm from "node:vm";
 import {readFileSync} from "node:fs";
 const html=readFileSync(new URL("../index.html",import.meta.url),"utf8");
 const script=readFileSync(new URL("../app.js",import.meta.url),"utf8");
+const indentScript=readFileSync(new URL("../indent.js",import.meta.url),"utf8");
 function page({drafts={},brokenStorage=false}={}) {
   const nodes=new Map(),workers=[],downloads=[],opened=[],timers=new Map(),blobs=[];
   const storage=new Map(Object.entries(drafts));
@@ -56,6 +57,7 @@ function page({drafts={},brokenStorage=false}={}) {
     setTimeout:(callback,delay)=>{const id=++serial;timers.set(id,{callback,delay});return id;},
     clearTimeout:id=>timers.delete(id),
   });
+  vm.runInContext(indentScript,context);
   vm.runInContext(script,context);
   return {get:id=>nodes.get(id),workers,downloads,opened,blobs,storage,classes,timers};
 }
@@ -111,10 +113,24 @@ test("examples, draft persistence, Tab, and source download work without runtime
   assert.equal(p.storage.get("rfortran.web.source"),p.get("source").value);
   p.get("source").value="abc";p.get("source").selectionStart=3;p.get("source").selectionEnd=3;
   p.get("source").emit("keydown",{key:"Tab"});
-  assert.equal(p.get("source").value,"abc    ");
-  assert.equal(p.storage.get("rfortran.web.source"),"abc    ");
+  assert.equal(p.get("source").value,"abc   ");
+  assert.equal(p.storage.get("rfortran.web.source"),"abc   ");
   p.get("download").click();assert.equal(p.downloads[0].download,"program.f90");
-  assert.equal(await p.blobs[0].text(),"abc    ");
+  assert.equal(await p.blobs[0].text(),"abc   ");
+});
+
+test("textarea fallback and REPL multiline input always indent three spaces",()=>{
+  const p=page();const input=p.get("source");
+  input.value="program p\ndo i=1,3";
+  input.selectionStart=input.selectionEnd=input.value.length;
+  input.emit("keydown",{key:"Enter"});
+  assert.equal(input.value,"program p\ndo i=1,3\n      ");
+  assert.equal(p.storage.get("rfortran.web.source"),input.value);
+  const command=p.get("repl-command");command.value="do i=1,3";
+  command.selectionStart=command.selectionEnd=command.value.length;
+  command.emit("keydown",{key:"Enter",shiftKey:true});
+  assert.equal(command.value,"do i=1,3\n   ");
+  assert.equal(p.workers.length,0);
 });
 
 test("REPL reports inferred-declaration settings and pending input",()=>{

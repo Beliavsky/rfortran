@@ -2,9 +2,9 @@
 "use strict";
 const byId = id => document.getElementById(id);
 const examples = {
-  hello: 'program hello\nimplicit none\nprint *, "Hello from rfortran in your browser!"\nend program hello\n',
-  arrays: 'program arrays\nimplicit none\ninteger :: i\ninteger, parameter :: dp = kind(0.0d0)\nreal(kind=dp) :: x(5)\nx = [(real(i, kind=dp), i=1,5)]\nprint *, "x =", x\nprint *, "sum =", sum(x)\nprint *, "mean =", sum(x)/size(x)\nend program arrays\n',
-  input: 'program input_demo\nimplicit none\ninteger :: n, ios\nread(*, *, iostat=ios) n\nif (ios == 0) then\n  print *, "Your number squared:", n*n\nelse\n  print *, "Supply an integer in the standard input box."\nend if\nend program input_demo\n'
+  hello: 'program hello\n   implicit none\n   print *, "Hello from rfortran in your browser!"\nend program hello\n',
+  arrays: 'program arrays\n   implicit none\n   integer :: i\n   integer, parameter :: dp = kind(0.0d0)\n   real(kind=dp) :: x(5)\n   x = [(real(i, kind=dp), i=1,5)]\n   print *, "x =", x\n   print *, "sum =", sum(x)\n   print *, "mean =", sum(x)/size(x)\nend program arrays\n',
+  input: 'program input_demo\n   implicit none\n   integer :: n, ios\n   read(*, *, iostat=ios) n\n   if (ios == 0) then\n      print *, "Your number squared:", n*n\n   else\n      print *, "Supply an integer in the standard input box."\n   end if\nend program input_demo\n'
 };
 let capabilities = {autoDeclare:false, autoEnd:false};
 let worker = null;
@@ -63,19 +63,21 @@ byId("source").value = readDraft("rfortran.web.source", examples.hello);
 byId("stdin").value = readDraft("rfortran.web.stdin", "");
 byId("stdin").addEventListener("input", () => saveDraft("rfortran.web.stdin", byId("stdin").value));
 const editor = typeof CodeMirror === "function" ? CodeMirror.fromTextArea(byId("source"), {
-  mode: "text/x-fortran",
+  mode: "rfort-fortran",
   theme: "ofort",
   lineNumbers: true,
-  indentUnit: 4,
-  tabSize: 4,
+  indentUnit: 3,
+  tabSize: 3,
   indentWithTabs: false,
+  smartIndent: true,
+  electricChars: true,
   lineWrapping: true,
   extraKeys: {
     "Ctrl-Enter": () => { if (!busy) byId("run").click(); },
     "Cmd-Enter": () => { if (!busy) byId("run").click(); },
     "Tab": cm => {
       if (cm.somethingSelected()) cm.indentSelection("add");
-      else cm.replaceSelection("    ", "end");
+      else cm.replaceSelection("   ", "end");
     },
     "Shift-Tab": cm => cm.indentSelection("subtract")
   }
@@ -96,8 +98,15 @@ function sourceChanged() {
     if (!isRepl()) saveDraft("rfortran.web.source", sourceText());
   }
 }
-if (editor) editor.on("change", sourceChanged);
-else byId("source").addEventListener("input", sourceChanged);
+if (editor) {
+  editor.on("change", sourceChanged);
+  editor.on("inputRead", (cm,change) => {
+    if (change.origin !== "paste") return;
+    cm.operation(() => {
+      for (let line=change.from.line;line<change.from.line+change.text.length;line++) cm.indentLine(line,"smart");
+    });
+  });
+} else byId("source").addEventListener("input", sourceChanged);
 byId("discard-edits").addEventListener("click", () => {
   if (!busy) setSource(sessionBaseline);
 });
@@ -171,7 +180,11 @@ byId("source").addEventListener("keydown", event => {
   if (event.key === "Tab") {
     event.preventDefault();
     const editor = event.target;
-    editor.setRangeText("    ", editor.selectionStart, editor.selectionEnd, "end");
+    editor.setRangeText("   ", editor.selectionStart, editor.selectionEnd, "end");
+    sourceChanged();
+  } else if (event.key === "Enter" && !event.ctrlKey && !event.metaKey && !event.isComposing) {
+    event.preventDefault();
+    indentNewline(event.target);
     sourceChanged();
   }
 });
@@ -325,7 +338,13 @@ byId("repl-submit").addEventListener("click", () => {
 });
 
 byId("repl-command").addEventListener("keydown", event => {
-  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+  if (event.key === "Enter" && event.shiftKey && !event.isComposing) {
+    event.preventDefault();
+    indentNewline(event.target);
+  } else if (event.key === "Tab") {
+    event.preventDefault();
+    event.target.setRangeText("   ",event.target.selectionStart,event.target.selectionEnd,"end");
+  } else if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
     byId("repl-submit").click();
   } else if ((event.key === "ArrowUp" || event.key === "ArrowDown") && !event.target.value.includes("\n")) {
@@ -334,6 +353,12 @@ byId("repl-command").addEventListener("keydown", event => {
     event.target.value = commandHistory[historyIndex] || "";
   }
 });
+
+function indentNewline(input) {
+  const before=input.value.slice(0,input.selectionStart);
+  const next=input.value.slice(input.selectionEnd).split(/\r?\n/)[0];
+  input.setRangeText("\n"+RfortIndent.after(before,next),input.selectionStart,input.selectionEnd,"end");
+}
 
 byId("clear-session").addEventListener("click", () => {
   if (busy) return;

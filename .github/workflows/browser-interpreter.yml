@@ -41,7 +41,7 @@ jobs:
       - name: Prepare static site
         run: |
           mkdir -p target/browser-site
-          cp web-interpreter/{index.html,style.css,app.js,driver.mjs,worker.mjs,runtime-adapter.mjs,THIRD-PARTY-NOTICES.txt} target/browser-site/
+          cp web-interpreter/{index.html,style.css,app.js,indent.js,driver.mjs,worker.mjs,runtime-adapter.mjs,THIRD-PARTY-NOTICES.txt} target/browser-site/
           cp -R web-interpreter/{runtime,vendor} target/browser-site/
           touch target/browser-site/.nojekyll
       - uses: actions/upload-artifact@v4

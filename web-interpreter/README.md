@@ -7,6 +7,13 @@ standard input, examples, source downloads, variable inspection and editable bug
 reports work without a native execution server. CodeMirror and the WASI host are
 vendored; execution needs no CDN.
 
+The editor always uses three-space automatic Fortran block indentation, with
+spaces rather than tabs. Enter indents the next line; closing statements dedent
+automatically. Tab and Shift+Tab indent or unindent selections. Shift+Enter in
+the REPL adds an indented line; pasted source is indented in the main editor.
+Enter still submits the REPL command. There is no
+indentation setting to configure.
+
 ## Build and run locally
 
 From the repository root, with Rust, Python and Node.js 22 or later installed:
