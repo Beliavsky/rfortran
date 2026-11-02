@@ -15,23 +15,35 @@ python benchmarks\run.py --size medium
 The smoke profile checks compatibility and correctness. Its timings are usually
 too short for useful comparisons. Start performance measurements with `medium`.
 The console prints each compiler's median kernel execution time in seconds next
-to its status, with nine decimal places so decimal points align. These times
-exclude startup and compilation. Each gfortran row also shows the rfort/gfortran
-time ratio: values above 1 mean rfort is slower. A `*` marks a preliminary ratio
-involving a short timing. Short timings are labeled, and failed cases show `-`
-for their time. Ratios show `-` if either compiler failed, was omitted, or had a
-zero median time.
+to its status, with four decimal places so decimal points align. These times
+exclude startup and compilation. The rfort row also shows rfort's time ratio
+to each other compiler: values above 1 mean rfort is slower. A `*` marks a
+preliminary ratio involving a short timing. Short timings are labeled, and
+failed cases show `-` for their time. Ratios show `-` if either compiler failed,
+was omitted, or had a zero median time. After the last benchmark, a summary
+table gives, for each other compiler, the number of benchmarks with a ratio, how
+many of them are marked `*`, and the median, geometric mean, mean, sample
+standard deviation, minimum and maximum of the ratios. The summary includes
+ratios marked `*`. The same values are saved as `ratio_summary` in
+`report.json`.
 Use `large` when kernels still complete too quickly. The Markdown report suppresses ratios
 when either median kernel duration is below 0.02 seconds (configurable with
 `--min-seconds`). It still records the raw measurements. A correct, short-running
 case is marked `passed (short timing)`, not a compiler failure.
 
-The default compilers are `target\release\rfort.exe` and `gfortran` on PATH.
-Override them explicitly if needed:
+rfort (`target\release\rfort.exe` by default) always runs. `--compilers` names
+the compilers to compare it with, `gfortran` by default; each gets a ratio
+column. A compiler is found on PATH by its name unless `--compiler-path
+NAME=PATH` gives its executable (`--rfort` and `--gfortran` also still work).
+`--compilers rfort` runs rfort alone. ofort is an interpreter: each run
+interprets the sources, with no build step and no default flags. Other
+compilers get `-O2` by default; `--compiler-flag NAME=FLAG` adds a flag, and an
+explicit `-O` level replaces the default.
 
 ```cmd
 python benchmarks\run.py --rfort C:\path\to\rfort.exe --gfortran C:\path\to\gfortran.exe --size medium
-python benchmarks\run.py --compilers gfortran --bench "vector_*" "matmul_*"
+python benchmarks\run.py --size medium --compilers gfortran ifx flang ofort --compiler-path flang=C:\Programs\LLVM\bin\flang.exe
+python benchmarks\run.py --compilers gfortran ifx --compiler-flag=ifx=-O3 --bench "vector_*" "matmul_*"
 python benchmarks\run.py --list
 ```
 
@@ -103,13 +115,13 @@ Kernel times exceeding complete process wall time beyond a small clock tolerance
 are rejected as well, so a gross SYSTEM_CLOCK error cannot produce a speed ratio.
 
 The runner warms each executable once, then measures five fresh process runs by
-default. It alternates compiler order between measured rounds. Reports include
+default. It alternates compiler order between measured rounds. For an interpreter such as ofort, the kernel time is the interpreted execution of the timed region; reading the sources is excluded. Reports include
 median, minimum, maximum and standard deviation. A ratio above one means rfort
 took longer. Do not treat smoke results or ratios from different machines,
 sizes, flags or checking modes as comparable. Keep other heavy work, including
 compiler builds, off the machine during serious performance measurements.
 
-Both compilers receive `-O2` by default; this does not mean their optimization
+Compiled benchmarks receive `-O2` by default; this does not mean their optimization
 passes or runtime safety checks are equivalent. Default runtime checks remain in
 effect. Record any alternative checking or optimization configuration separately:
 

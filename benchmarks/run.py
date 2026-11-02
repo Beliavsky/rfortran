@@ -148,7 +148,8 @@ def compiler_info(name: str, requested: str, output: Path, env: dict) -> dict:
         info["original_path"] = str(original)
         version = invoke([info["path"], "--version"], output, 10, env)
         info["version"] = (version["stdout"] or version["stderr"]).strip()
-        info["available"] = version["returncode"] == 0
+        # Compilers outside the default pair may not support --version.
+        info["available"] = version["returncode"] == 0 or name not in ("rfort", "gfortran")
         if not info["available"]:
             info["error"] = "could not query compiler version"
     except OSError as error:
@@ -156,12 +157,41 @@ def compiler_info(name: str, requested: str, output: Path, env: dict) -> dict:
     return info
 
 
+# Implementations that run Fortran sources directly, without an executable.
+INTERPRETERS = {"ofort"}
+
+
+def named_values(pairs: list[str], option: str) -> list[tuple[str, str]]:
+    result = []
+    for pair in pairs:
+        name, sep, value = pair.partition("=")
+        if not sep or not name:
+            raise ValueError(f"{option} expects NAME=VALUE, got {pair!r}")
+        result.append((name, value))
+    return result
+
+
 def compiler_flags(args, name: str) -> list[str]:
-    extra = getattr(args, name + "_flag")
+    extra = list({"rfort": args.rfort_flag, "gfortran": args.gfortran_flag}.get(name, []))
+    extra += [flag for n, flag in named_values(args.compiler_flag, "--compiler-flag") if n == name]
+    if name in INTERPRETERS:
+        return extra
     # rfort rejects duplicate optimization options, whereas gfortran accepts
     # them. Emit a single explicit level when the caller overrides the default.
     explicit = any(f.startswith("-O") or f == "--opt-level" or f.startswith("--opt-level=") for f in extra)
     return ([] if args.no_default_flags or explicit else ["-O2"]) + extra
+
+
+def compiler_path(args, name: str) -> str:
+    paths = dict(named_values(args.compiler_path, "--compiler-path"))
+    if name in paths:
+        return paths[name]
+    return {"rfort": args.rfort, "gfortran": args.gfortran}.get(name, name)
+
+
+def compiler_names(args) -> list[str]:
+    """rfort, against which the others are compared, then the others."""
+    return list(dict.fromkeys(["rfort", *args.compilers]))
 
 
 def compile_case(case: dict, compiler: dict, profile: dict, args, output: Path, env: dict) -> dict:
@@ -178,9 +208,15 @@ def compile_case(case: dict, compiler: dict, profile: dict, args, output: Path, 
     (work / "bench_config.f90").write_text(
         "module bench_config\nimplicit none\ninteger,parameter :: n=" + str(profile["n"])
         + ", repetitions=" + str(profile["repetitions"]) + "\nend module\n", encoding="utf-8")
-    exe = work / ("benchmark.exe" if os.name == "nt" else "benchmark")
     flags = compiler_flags(args, compiler["name"])
-    command = [compiler["path"], *flags, "bench_config.f90", "bench_support.f90", source.name, "-o", str(exe)]
+    sources = ["bench_config.f90", "bench_support.f90", source.name]
+    if compiler["name"] in INTERPRETERS:
+        # Each run interprets the sources; there is no build step.
+        result["run_command"] = [compiler["path"], *flags, *sources]
+        result["status"] = "compiled"
+        return result
+    exe = work / ("benchmark.exe" if os.name == "nt" else "benchmark")
+    command = [compiler["path"], *flags, *sources, "-o", str(exe)]
     build = invoke(command, work, args.compile_timeout, env)
     for stream in ("stdout", "stderr"):
         (work / ("compile." + stream + ".txt")).write_text(build[stream], encoding="utf-8")
@@ -196,7 +232,8 @@ def compile_case(case: dict, compiler: dict, profile: dict, args, output: Path, 
 
 
 def sample(result: dict, case: dict, args, env: dict, warmup: bool) -> None:
-    run = invoke([result["executable"]], Path(result["directory"]), args.timeout, env, f"{args.seed}\n")
+    command = result.get("run_command") or [result["executable"]]
+    run = invoke(command, Path(result["directory"]), args.timeout, env, f"{args.seed}\n")
     result["warmups" if warmup else "samples"].append(run)
     if run["timeout"]:
         result["status"] = "run_timeout"
@@ -235,8 +272,12 @@ def markdown(report: dict) -> str:
              f"Profile: `{report['settings']['size']}`; seed: {report['settings']['seed']}; measured runs: {report['settings']['runs']}",
              "", "Kernel times exclude initialization, validation and printing. Process wall times and compilation times are in report.json.",
              "Ratios require correct results and sufficiently long measured durations; ratio > 1 means rfort is slower.",
-             "", "| Benchmark | rfort status | gfortran status | rfort seconds | gfortran seconds | rfort / gfortran |",
-             "|---|---|---|---:|---:|---:|"]
+             ""]
+    names = list(dict.fromkeys(["rfort", *report["compilers"], *(r["compiler"] for r in report["results"])]))
+    others = names[1:]
+    lines.append("| Benchmark | " + " | ".join(
+        [f"{n} status" for n in names] + [f"{n} seconds" for n in names] + [f"rfort / {n}" for n in others]) + " |")
+    lines.append("|---|" + "---|" * len(names) + "---:|" * (len(names) + len(others)))
     for case in report["benchmarks"]:
         rows = {r["compiler"]: r for r in report["results"] if r["benchmark"] == case["name"]}
         def status(name):
@@ -248,11 +289,13 @@ def markdown(report: dict) -> str:
         def seconds(name):
             r = rows.get(name, {})
             return f"{r['timing']['median']:.6g}" if r.get("status") == "passed" else "—"
-        ratio = "—"
-        a, b = rows.get("rfort", {}), rows.get("gfortran", {})
-        if all(r.get("status") == "passed" and r["timing"]["reliable_duration"] for r in (a,b)):
-            ratio = f"{a['timing']['median']/b['timing']['median']:.3f}"
-        lines.append(f"| {case['name']} | {status('rfort')} | {status('gfortran')} | {seconds('rfort')} | {seconds('gfortran')} | {ratio} |")
+        def ratio(name):
+            a, b = rows.get("rfort", {}), rows.get(name, {})
+            if all(r.get("status") == "passed" and r["timing"]["reliable_duration"] for r in (a,b)):
+                return f"{a['timing']['median']/b['timing']['median']:.3f}"
+            return "—"
+        cells = [status(n) for n in names] + [seconds(n) for n in names] + [ratio(n) for n in others]
+        lines.append(f"| {case['name']} | " + " | ".join(cells) + " |")
     lines.extend(["", "## Compilers", ""])
     for name, compiler in report["compilers"].items():
         lines.extend([f"### {name}", "", "```text", compiler.get("version", compiler.get("error", "unknown")), "```", ""])
@@ -268,12 +311,17 @@ def markdown(report: dict) -> str:
 
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--compilers", nargs="+", choices=["rfort", "gfortran"], default=["rfort", "gfortran"])
+    p.add_argument("--compilers", nargs="+", default=["gfortran"], metavar="NAME",
+                   help="Compilers to compare with rfort, which always runs, e.g. gfortran ifx flang ofort")
     p.add_argument("--rfort", default=str(ROOT / "target" / "release" / ("rfort.exe" if os.name == "nt" else "rfort")))
     p.add_argument("--gfortran", default="gfortran")
+    p.add_argument("--compiler-path", action="append", default=[], metavar="NAME=PATH",
+                   help="Executable for a compiler; otherwise NAME is found on PATH")
     p.add_argument("--rfort-flag", action="append", default=[], help="Extra flag; use --rfort-flag=-O0")
     p.add_argument("--gfortran-flag", action="append", default=[])
-    p.add_argument("--no-default-flags", action="store_true", help="Omit the default -O2 for both compilers")
+    p.add_argument("--compiler-flag", action="append", default=[], metavar="NAME=FLAG",
+                   help="Extra flag for any compiler; use --compiler-flag=ifx=-O3")
+    p.add_argument("--no-default-flags", action="store_true", help="Omit the default -O2 for all compilers")
     p.add_argument("--size", choices=["smoke", "small", "medium", "large"], default="small")
     p.add_argument("--bench", nargs="+", default=["*"], help="Benchmark name globs (quote wildcards)")
     p.add_argument("--runs", type=int, default=5)
@@ -295,6 +343,11 @@ def main(argv=None) -> int:
         p.error("runs must be positive, warmups nonnegative, and seed between 3 and 20")
     if any(not math.isfinite(v) or v <= 0 for v in (args.timeout, args.compile_timeout, args.min_seconds)):
         p.error("timeouts and min-seconds must be finite and positive")
+    try:
+        named_values(args.compiler_path, "--compiler-path")
+        named_values(args.compiler_flag, "--compiler-flag")
+    except ValueError as error:
+        p.error(str(error))
     manifest = json.loads((HERE / "manifest.json").read_text(encoding="utf-8"))
     cases = [c for c in manifest["benchmarks"] if any(fnmatch.fnmatchcase(c["name"], g) for g in args.bench)]
     if not cases:
@@ -311,7 +364,8 @@ def main(argv=None) -> int:
     env = os.environ.copy()
     threads = {k:"1" for k in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "VECLIB_MAXIMUM_THREADS")}
     env.update(threads)
-    compilers = {n: compiler_info(n, getattr(args,n), output, env) for n in dict.fromkeys(args.compilers)}
+    compilers = {n: compiler_info(n, compiler_path(args, n), output, env) for n in compiler_names(args)}
+    others = [n for n in compilers if n != "rfort"]
     report = dict(schema_version=1, created_utc=datetime.now(timezone.utc).isoformat(),
                   machine=dict(platform=platform.platform(), processor=platform.processor(),
                                architecture=platform.machine(), logical_cpus=os.cpu_count(), python=sys.version),
@@ -324,7 +378,13 @@ def main(argv=None) -> int:
         (output/"summary.md").write_text(markdown(report),encoding="utf-8")
     print("Times are median kernel execution seconds (excluding startup and compilation).", flush=True)
     print("Ratio > 1 means rfort is slower; * marks a ratio involving a short timing.", flush=True)
-    print(f"{'Benchmark':22} {'Compiler':9} {'Status':24} {'Kernel median (s)':>17} {'rfort/gfortran':>15}", flush=True)
+    width = max(9, *(len(n) for n in compilers))
+    labels = [f"rfort/{n}" for n in others]
+    columns = [max(15, len(label)) for label in labels]
+    print(f"{'Benchmark':22} {'Compiler':{width}} {'Status':24} {'Kernel median (s)':>17}"
+          + "".join(f" {label:>{w}}" for label, w in zip(labels, columns)), flush=True)
+    ratios = {n: [] for n in others}
+    short_ratios = {n: 0 for n in others}
     for case in cases:
         rows = [compile_case(case,c,case["profiles"][args.size],args,output,env) for c in compilers.values()]
         report["results"].extend(rows)
@@ -338,24 +398,49 @@ def main(argv=None) -> int:
         for r in rows:
             summarize(r,args.min_seconds)
         by_compiler = {r['compiler']: r for r in rows}
-        ratio = '-'
-        pair = [by_compiler.get(name) for name in ('rfort', 'gfortran')]
-        if all(r is not None and r['status'] == 'passed' and r['timing']['median'] > 0 for r in pair):
-            relative = pair[0]['timing']['median'] / pair[1]['timing']['median']
-            if math.isfinite(relative):
-                ratio = f"{relative:.3f}"
-                if not all(r['timing']['reliable_duration'] for r in pair):
-                    ratio += '*'
+        comparisons = []
+        for name in others:
+            ratio = '-'
+            pair = [by_compiler.get('rfort'), by_compiler.get(name)]
+            if all(r is not None and r['status'] == 'passed' and r['timing']['median'] > 0 for r in pair):
+                relative = pair[0]['timing']['median'] / pair[1]['timing']['median']
+                if math.isfinite(relative):
+                    ratio = f"{relative:.3f}"
+                    ratios[name].append(relative)
+                    if not all(r['timing']['reliable_duration'] for r in pair):
+                        ratio += '*'
+                        short_ratios[name] += 1
+            comparisons.append(ratio)
         for r in rows:
             status = r['status']
             seconds = '-'
             if status == 'passed':
-                seconds = f"{r['timing']['median']:.9f}"
+                seconds = f"{r['timing']['median']:.4f}"
                 if not r['timing']['reliable_duration']:
                     status += ' (short timing)'
-            comparison = ratio if r['compiler'] == 'gfortran' else ''
-            print(f"{case['name']:22} {r['compiler']:9} {status:24} {seconds:>17} {comparison:>15}",flush=True)
+            # The rfort row carries its ratio to each other compiler.
+            shown = comparisons if r['compiler'] == 'rfort' else [''] * len(others)
+            print(f"{case['name']:22} {r['compiler']:{width}} {status:24} {seconds:>17}"
+                  + "".join(f" {c:>{w}}" for c, w in zip(shown, columns)), flush=True)
         save()
+    summary = {}
+    for name in others:
+        values = ratios[name]
+        if values:
+            # Ratios are multiplicative, so the geometric mean is the usual average.
+            summary[name] = dict(count=len(values), short_timing=short_ratios[name], median=statistics.median(values),
+                                 geometric_mean=statistics.geometric_mean(values), mean=statistics.mean(values),
+                                 sd=statistics.stdev(values) if len(values) > 1 else None, min=min(values), max=max(values))
+    if summary:
+        report["ratio_summary"] = summary
+        save()
+        keys = ("median", "geometric_mean", "mean", "sd", "min", "max")
+        label = max(len("ratio"), *(len(f"rfort/{n}") for n in summary))
+        print("\nSummary of ratios; n counts benchmarks with a ratio, * those marked *:")
+        print(f"{'ratio':{label}} {'n':>3} {'*':>3}" + "".join(f" {k:>10}" for k in ("median", "geomean", "mean", "sd", "min", "max")))
+        for name, stats in summary.items():
+            print(f"{'rfort/' + name:{label}} {stats['count']:>3} {stats['short_timing']:>3}"
+                  + "".join(f" {'-':>10}" if stats[k] is None else f" {stats[k]:>10.3f}" for k in keys))
     failed = sum(r["status"] != "passed" for r in report["results"])
     print(f"\n{len(report['results'])-failed} passed; {failed} failed/unavailable")
     print(f"Report: {output/'report.json'}\nSummary: {output/'summary.md'}")

@@ -131,6 +131,40 @@ class RunnerTests(unittest.TestCase):
         args = runner.parser().parse_args(['--no-default-flags'])
         self.assertEqual(runner.compiler_flags(args,'gfortran'),[])
 
+    def test_other_compilers_paths_and_flags(self):
+        args = runner.parser().parse_args(['--compilers','gfortran','ifx','ofort',
+                                           '--compiler-path','ifx=C:/intel/ifx.exe','--compiler-flag=ifx=-O3',
+                                           '--compiler-flag=ofort=--fast'])
+        self.assertEqual(runner.compiler_names(args),['rfort','gfortran','ifx','ofort'])
+        self.assertEqual(runner.compiler_path(args,'ifx'),'C:/intel/ifx.exe')
+        self.assertEqual(runner.compiler_path(args,'ofort'),'ofort')
+        self.assertEqual(runner.compiler_flags(args,'ifx'),['-O3'])
+        self.assertEqual(runner.compiler_flags(args,'gfortran'),['-O2'])
+        self.assertEqual(runner.compiler_flags(args,'ofort'),['--fast'])
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            runner.main(['--compiler-path','ifx','--list'])
+
+    def test_interpreter_runs_sources_without_a_build(self):
+        args = runner.parser().parse_args([])
+        case = self.cases[0]
+        compiler = dict(name='ofort',path='ofort.exe',available=True)
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(runner,'invoke') as invoke:
+            r = runner.compile_case(case,compiler,case['profiles']['smoke'],args,Path(tmp),{})
+            invoke.assert_not_called()
+            self.assertEqual(r['status'],'compiled')
+            self.assertEqual(r['run_command'],['ofort.exe','bench_config.f90','bench_support.f90',Path(case['source']).name])
+
+    def test_report_has_a_ratio_column_per_other_compiler(self):
+        result = dict(status='compiled',warmups=[],samples=[dict(seconds=1,values={'BENCH_SECONDS':t}) for t in (1.,1.,1.)])
+        runner.summarize(result,.02)
+        fast = dict(result,timing=dict(result['timing'],median=.5))
+        report = dict(created_utc='test',settings=dict(size='small',seed=3,runs=3),benchmarks=[dict(name='kernel')],
+                      compilers={},results=[dict(result,benchmark='kernel',compiler=n) for n in ('rfort','gfortran')]
+                      +[dict(fast,benchmark='kernel',compiler='ifx')])
+        text = runner.markdown(report)
+        self.assertIn('| rfort / gfortran | rfort / ifx |',text)
+        self.assertIn('| 1 | 1 | 0.5 | 1.000 | 2.000 |',text)
+
     def test_failed_run_never_receives_a_timing_summary(self):
         case = self.cases[0]
         result = dict(status='compiled',profile=case['profiles']['smoke'],directory='.',
