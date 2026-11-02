@@ -62,6 +62,9 @@ pub struct Cli {
     )]
     pub lto: bool,
 
+    #[structopt(long = "nocheck", help = "Compile without run-time checks of uninitialized reads and array subscripts")]
+    pub nocheck: bool,
+
     #[structopt(
         short = "O",
         long = "opt-level",
@@ -210,6 +213,9 @@ impl Cli {
                 flag if flag.starts_with("-std=") => args.push(format!("--std={}",&flag[5..]).into()),
                 "-Wall" | "--wall" => args.push("--Wall".into()),
                 "-Werror" | "--werror" => args.push("--Werror".into()),
+                "-nocheck" => args.push("--nocheck".into()),
+                // Maximum speed: the heaviest optimization, without run-time checks.
+                "-fast" | "--fast" => { args.push("--nocheck".into()); args.push("-O3".into()); }
                 "--Wextra" | "--wextra" => { args.push("--warning".into()); args.push("extra".into()); }
                 "-ffixed-form" | "-ffree-form" | "-fd-lines-as-code" => args.push(format!("-{text}").into()),
                 "-fd-lines-as-comments" => {}

@@ -36,6 +36,7 @@ mod empty_constructors;
 mod sections;
 mod reductions;
 mod initialized;
+mod nocheck;
 mod input;
 mod namelists;
 mod allocatable_scalars;

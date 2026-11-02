@@ -44,6 +44,30 @@ every obsolescent/deleted feature and every language constraint are not yet
 classified. Passing `-std=f90`, for example, does not certify Fortran 90
 conformance. Regression checks: `python tests/test_standards.py`.
 
+## Run-time checks
+
+Compiled programs stop with a message when they read an uninitialized variable
+or use a subscript outside an array's bounds, at every optimization level.
+`-nocheck` compiles without these checks; `-fast` is `-O3 -nocheck`. Without
+the checks, such a read gives whatever the memory holds and such a subscript
+can read or overwrite other storage, as in gfortran without `-fcheck`. Use
+them for tested programs whose speed matters.
+
+```cmd
+rfort -nocheck main.f90 --run
+rfort -fast main.f90 -o main.exe
+```
+
+The options affect compiled programs only: the `run` subcommand keeps its
+checks. Compile-time errors for variables read before any assignment remain.
+Allocation-status checks (for example, assignment to an unallocated array)
+are kept. An explicit `-O` level cannot be combined with `-fast`. On the
+medium benchmark profile, `-nocheck` made rfort about 5% faster overall
+(geometric mean) and at most about 1.4 times faster, because rfort already
+removes checks it can prove unnecessary (see
+[compiler-performance.md](compiler-performance.md)).
+Regression checks: `python tests/test_nocheck.py`.
+
 ## Warnings
 
 The following source advice shares the existing `-Wno-<category>`,

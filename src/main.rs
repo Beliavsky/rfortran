@@ -345,6 +345,7 @@ fn compile_to_object(
         }
     }
     let program = compile_profile::run("initialized", || initialized::instrument_with_origins(program, &src, input.file_name().and_then(|name| name.to_str()).unwrap_or("<unknown>"), &prepared.origins))?;
+    let program = if args.nocheck { nocheck::strip(program) } else { program };
     let lowered = compile_profile::run("ir", || ir::lower_to_ir_with_debug(&program, args.debug_ir))?;
     let has_program = lowered.has_program;
     if !args.quiet {
