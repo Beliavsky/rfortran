@@ -28,6 +28,9 @@ struct Validator {
     parents: HashMap<String, String>,
     generics: HashSet<String>,
     results: HashMap<String, String>,
+    /// The derived-type variables of each module, with those of the
+    /// modules it uses, which USE association makes visible.
+    modules: HashMap<String, Objects>,
 }
 fn spelling(name: &str) -> &str {
     name.rsplit('$').next().unwrap_or(name)
@@ -364,6 +367,21 @@ impl Validator {
         initial: Option<usize>,
     ) -> Result<()> {
         let mut objects = inherited.clone();
+        for s in body.iter() {
+            if let Stmt::Use { module, only, renames, .. } = s {
+                let Some(public) = self.modules.get(module) else { continue };
+                for (n, ty) in public {
+                    if only.as_ref().is_none_or(|o| o.contains(n)) && !renames.iter().any(|(_, r)| r == n) {
+                        objects.insert(n.clone(), ty.clone());
+                    }
+                }
+                for (local, remote) in renames {
+                    if let Some(ty) = public.get(remote) {
+                        objects.insert(local.clone(), ty.clone());
+                    }
+                }
+            }
+        }
         // A local intrinsic declaration shadows an enclosing derived object.
         for s in body.iter() {
             match s {
@@ -564,6 +582,24 @@ pub(crate) fn validate(program: &mut Program) -> Result<()> {
         if let Some(def) = check.types.get_mut(ty) {
             def.parent = Some(parent.clone());
         }
+    }
+    for s in &program.body {
+        let Stmt::Module { name, body } = s else { continue };
+        let mut objects = Objects::new();
+        for s in body {
+            match s {
+                Stmt::Use { module, only: None, renames, .. } if renames.is_empty() => {
+                    objects.extend(check.modules.get(module).cloned().unwrap_or_default());
+                }
+                Stmt::DerivedDecl { names, type_name, .. } => {
+                    for n in names {
+                        objects.insert(n.clone(), type_name.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+        check.modules.insert(name.clone(), objects);
     }
     if check
         .types

@@ -287,22 +287,31 @@ end subroutine
             self.assertEqual(result.returncode,0,result.stderr)
             self.assertEqual(result.stdout.split(),['11','22'])
 
-    def test_unsupported_host_definition_paths_are_rejected(self):
-        for statement,extra,message in [
-            ('read(*,*) x','','READ definitions of host-associated objects'),
-            ('call random_number(x)','','ordinary subroutines'),
-            ('call setter(x)','subroutine setter(y)\ninteger,intent(out)::y\ny=2\nend subroutine\n','writable dummy'),
-        ]:
-            source=f'''subroutine work()
+    def test_host_definitions_by_read_and_procedure_arguments(self):
+        # READ, procedure arguments and intrinsic subroutines define host
+        # variables, which live in module storage.
+        self.check('''call work()
+end
+subroutine work()
 integer::x
+real::r
 call helper()
+print *,x,r>=0.0,r<1.0
 contains
 subroutine helper()
-{statement}
+read(*,*) x
+call setter(x)
+x=x+1
+call random_number(r)
 end subroutine
-{extra}end subroutine
-'''
-            with self.subTest(statement=statement):self.reject(source,message)
+subroutine setter(y)
+integer,intent(inout)::y
+y=2*y
+end subroutine
+end subroutine
+''',' 11 T T\n',data='5\n')
+
+    def test_unsupported_host_definition_paths_are_rejected(self):
         self.reject('''subroutine work()
 integer::x
 call helper()
@@ -311,7 +320,7 @@ subroutine helper()
 print *,size(x)
 end subroutine
 end subroutine
-''','requires a host-associated array')
+''','SIZE requires a rank-one array')
         self.reject('''subroutine work()
 contains
 function value()
@@ -387,6 +396,168 @@ call accumulate()
 end subroutine
 end program
 ''','55.0 2 T\n2 8 18 32 50 3.0\n')
+
+
+    def test_whole_arrays_sections_allocatables_and_characters_of_a_main_program(self):
+        # The host variables live in module storage, with all its support.
+        self.check('''program main
+implicit none
+real :: a(5)
+real, allocatable :: b(:)
+character(len=10) :: name
+integer :: k, n
+a = [(real(k), k=1,5)]
+call scale(2.0)
+call part
+print '(5f5.1)', a
+print '(f6.1)', total()
+call grow(3)
+print '(3f4.1,i3)', b, size(b)
+name = 'abc'
+call greet
+call add(n)
+print '(i0)', n
+call twice
+print '(5f5.1)', a
+contains
+subroutine scale(f)
+real, intent(in) :: f
+a = a * f
+end subroutine
+subroutine part
+a(2:3) = -1.
+end subroutine
+real function total()
+total = sum(a)
+end function
+subroutine grow(m)
+integer, intent(in) :: m
+allocate(b(m))
+b = 1.5
+end subroutine
+subroutine greet
+print '(2a)', 'hi ', trim(name)
+name = 'xyz'
+end subroutine
+subroutine add(m)
+integer, intent(out) :: m
+m = count(a > 0.) + len_trim(name)
+end subroutine
+subroutine twice
+call dbl(a)
+end subroutine
+subroutine dbl(x)
+real, intent(inout) :: x(:)
+x = 2*x
+end subroutine
+end program main
+''', '''  2.0 -1.0 -1.0  8.0 10.0
+  18.0
+ 1.5 1.5 1.5  3
+hi abc
+6
+  4.0 -2.0 -2.0 16.0 20.0
+''')
+
+    def test_procedure_hosts(self):
+        # A host that cannot call itself has one instance of its variables;
+        # its ALLOCATABLE variables are deallocated when it returns, a local
+        # of an internal procedure hides a host variable, and a recursive
+        # host keeps its own variables in each call.
+        self.check('''module ops
+implicit none
+integer, parameter :: n = 4
+contains
+subroutine stats(x, mean, label)
+real, intent(in) :: x(:)
+real, intent(out) :: mean
+character(len=*), intent(out) :: label
+real, allocatable :: work(:)
+character(len=12) :: tag
+integer :: calls = 0
+allocate(work(size(x)))
+work = x
+call centre
+mean = sum(work) / size(work) + total()
+call stamp
+label = tag
+contains
+subroutine centre
+work = work - minval(work)
+end subroutine
+real function total()
+real :: work
+work = 0.
+total = work
+end function
+subroutine stamp
+calls = calls + 1
+write(tag, '(a,i0)') 'calls=', calls
+end subroutine
+end subroutine
+integer function fact(k) result(r)
+integer, intent(in) :: k
+integer :: acc(n)
+acc = 1
+call fill
+r = product(acc(1:k))
+contains
+subroutine fill
+integer :: i
+do i = 2, n
+acc(i) = i
+end do
+end subroutine
+end function
+end module ops
+recursive integer function tri(k) result(r)
+integer, intent(in) :: k
+integer :: here
+here = k
+r = 0
+call add
+contains
+recursive subroutine add
+if (here > 0) r = here + tri(here - 1)
+end subroutine
+end function
+program main
+use ops
+implicit none
+interface
+recursive integer function tri(k) result(r)
+integer, intent(in) :: k
+end function
+end interface
+real :: m
+character(len=12) :: lab
+call stats([3., 5., 7.], m, lab)
+print '(f6.2,1x,a)', m, trim(lab)
+call stats([1., 2.], m, lab)
+print '(f6.2,1x,a)', m, trim(lab)
+print '(i0,1x,i0)', fact(3), fact(4)
+print '(i0)', tri(4)
+end program main
+''', '''  2.00 calls=1
+  0.50 calls=2
+6 24
+10
+''')
+
+    def test_private_components_of_use_associated_objects(self):
+        # A host object of a type with PRIVATE components, and a module
+        # object, are checked wherever they are used.
+        self.reject('''module boxes
+type box
+integer, private :: value = 1
+end type
+type(box) :: shared
+end module
+program p
+use boxes
+print *, shared%value
+end
+''', 'PRIVATE to module `boxes`')
 
 
 if __name__=='__main__':

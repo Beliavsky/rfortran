@@ -75,6 +75,7 @@ mod field_subscripts;
 mod scalar_components;
 mod recursive_types;
 mod character_pointers;
+mod host_storage;
 mod recursive_outputs;
 mod statement_functions;
 mod defining_functions;

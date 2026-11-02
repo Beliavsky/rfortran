@@ -43,6 +43,7 @@ pub(crate) fn lower_program_body(
     origins: Option<&[source_diagnostics::SourceOrigin]>,
 ) -> Result<ast::Program> {
     (|| {
+        let program = host_storage::resolve(program)?;
         let program = protected::resolve(program)?;
         let program = pdt::resolve(program)?;
         let program = character_pointers::resolve(program)?;

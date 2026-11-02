@@ -108,7 +108,10 @@ fn walk(
                 // compiled separately share one copy.
                 // So is the storage of the pools of recursive types (see
                 // crate::recursive_types), which no module file describes.
-                let common = crate::common::is_block_module(module) || module == crate::recursive_types::MODULE;
+                // And so is the storage of the host variables of internal
+                // procedures (see crate::host_storage), named after their host.
+                let common = crate::common::is_block_module(module) || module == crate::recursive_types::MODULE
+                    || module.starts_with(crate::host_storage::MODULE);
                 let owned = private_saved || common || owners.contains(module);
                 let id = obj.declare_data(
                     &symbol,

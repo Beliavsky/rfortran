@@ -3625,7 +3625,38 @@ call. Run `python tests/test_procedure_arguments.py`.
 ### Internal procedures and host association
 
 Functions, subroutines and the main program accept CONTAINS with internal
-functions/subroutines. Internal procedures can read and update INTEGER(4/8),
+functions/subroutines.
+
+The variables of a main program, or of a procedure that cannot call itself
+(directly or through other procedures of the program), that its internal
+procedures use are kept in module storage, so internal procedures can use
+them as the host does: whole arrays and sections, ALLOCATABLE and POINTER
+variables, CHARACTER variables, derived-type variables, READ into them, and
+passing them to other procedures. A procedure host deallocates such
+ALLOCATABLE variables when it returns, as it does its other locals. This
+covers variables declared with constant kinds, lengths and bounds, from
+named constants of the host, its module or used modules. Derived-type
+variables of a procedure host need SAVE, since their default initialization
+applies on each entry, and their type must come from another module.
+
+```fortran
+real, allocatable :: b(:)
+character(len=10) :: name
+call grow(3)
+contains
+subroutine grow(n)
+  integer, intent(in) :: n
+  allocate(b(n))
+  b = 1.5
+  name = 'grown'
+end subroutine
+```
+
+Other host variables (in recursive hosts, dummy arguments, automatic
+objects, deferred-length CHARACTER variables, variables in COMMON,
+EQUIVALENCE, DATA or NAMELIST statements, and variables an internal
+procedure's declarations inquire about, such as `len(a)`) use a borrowed
+host environment instead. Through it, internal procedures can read and update INTEGER(4/8),
 REAL(4/8), and LOGICAL variables explicitly declared in the enclosing procedure
 or main program, including its dummy arguments and array elements of ranks 1
 through 15. Array accesses retain lower bounds,
@@ -3643,10 +3674,11 @@ Reads of undefined host values retain runtime checks; writes to host INTENT(IN)
 variables are rejected. The native backend passes borrowed storage addresses;
 the interpreter uses handles identifying the owning call frame.
 
-Capturing CHARACTER, POINTER, ALLOCATABLE, or OPTIONAL host objects, whole-array
-host values/assignments, sections, READ/I/O definitions through host objects,
-and forwarding captured objects directly to ordinary subroutine dummies or
-internal writable dummy arguments remain unsupported. Internal function results
+Through the borrowed environment, CHARACTER, POINTER, ALLOCATABLE, or OPTIONAL
+host objects, whole-array host values/assignments, sections, READ/I/O
+definitions through host objects, and forwarding captured objects directly to
+ordinary subroutine dummies or internal writable dummy arguments remain
+unsupported. Internal function results
 must have explicit types. Internal procedures cannot yet
 contain further internal procedures. Procedure values/escaping closures are
 unsupported; recursive array/output dummy arguments retain the limits below.

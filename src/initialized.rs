@@ -40,6 +40,8 @@ fn guard(value: Expr, name: &str, index: Option<Expr>, width: i64) -> Stmt {
     let (name,index)=if let Some((original,element))=crate::character_arrays::original_element(name) {
         (original,Some(int(element)))
     } else {(name,index)};
+    // A module variable is reported by the name the programmer wrote.
+    let name = if name.starts_with("@module$") { name.rsplit('$').next().unwrap_or(name) } else { name };
     let mut args = vec![value, Expr::Str(name.into())];
     args.extend(index);
     Stmt::CallSub { name: "@check_initialized".into(), args }
