@@ -118,6 +118,11 @@ impl Validator {
         if name.starts_with("@module$") && name.rsplit_once("$type").is_some_and(|(source,tag)|
             source.split('$').count()>=3 && !tag.is_empty() && tag.bytes().all(|c|c.is_ascii_digit())) {return Ok(());}
 
+        // A rank specialization of an assumed-rank procedure, `f$rank1$vars`,
+        // is accessible where `f` is.
+        if let Some((source, tag)) = name.split_once("$rank") {
+            if tag.contains("$vars") {return self.procedure(source, visible);}
+        }
         // A specialization for procedure actual arguments, `f@with@g`, is
         // accessible where its source procedure `f` is.
         if let Some((source,_))=name.split_once("@with@") {return self.procedure(source,visible);}

@@ -136,6 +136,11 @@ pub(super) fn prepare(body: &mut [Stmt], inherited: &HashMap<String, Expr>) -> R
                         *kind = k;
                     }
                 }
+                Stmt::CallSub { name, args } if name == "@allocate_intrinsic_type" => {
+                    if let Some(k) = guard_kind(&args[0])? {
+                        args[0] = parsed(normalized(k, &constants)?);
+                    }
+                }
                 Stmt::SelectCase { expr, cases, .. } if selection(expr).is_some() => {
                     for c in cases {
                         if let CaseItem::Single(Expr::Call(_, a)) = &mut c.items[0] {

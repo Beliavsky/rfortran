@@ -109,6 +109,7 @@ fn fixed_allocation_dummies(body: &mut [Stmt]) {
                         // Descriptor-backed scalar/record views can be inactive
                         // while another dynamic type is selected by a tag.
                         && !has(p, "@scalar_heap")
+                        && !has(p, "@tagged_storage")
                         && body.iter().any(|s| matches!(s, Stmt::ArrayDecl { name, .. } if name == *p))
                         && ["allocated", "lbound", "ubound"].iter().all(|f| !text.contains(&format!("{{\"Call\":[\"{f}\",[{ident}")))
                         && !passed(body, p)

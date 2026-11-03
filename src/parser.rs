@@ -391,6 +391,7 @@ fn human_token(tok: &TokenKind) -> String {
         TokenKind::KwBlockData => "keyword block data".into(),
         TokenKind::Entry(_) => "ENTRY statement".into(),
         TokenKind::TypedAllocate => "type specification".into(),
+        TokenKind::IntrinsicAllocate => "type specification".into(),
         TokenKind::KwEndBlockData => "end block data".into(),
         TokenKind::KwGoto => "keyword goto".into(),
         TokenKind::KwIf => "keyword if".into(),

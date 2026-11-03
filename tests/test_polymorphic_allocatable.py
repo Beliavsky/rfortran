@@ -173,8 +173,9 @@ end program
     def test_unsupported_storage_diagnostics(self):
         self.reject(program('allocate(circle::x)').replace('allocatable :: x','allocatable,save :: x'),
                     'SAVED runtime polymorphic objects')
+        # Polymorphic ALLOCATABLE arrays are supported; this one lacks bounds.
         self.reject(program('allocate(circle::x)').replace('allocatable :: x','allocatable :: x(:)'),
-                    'runtime polymorphic ALLOCATABLE arrays')
+                    'ALLOCATE expects array bounds')
 
     def test_captured_optional_argument_presence(self):
         self.check(PREFIX+"""program p

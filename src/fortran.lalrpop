@@ -103,6 +103,7 @@ extern {
         KW_BLOCK_DATA => TokenKind::KwBlockData,
         ENTRY_STMT => TokenKind::Entry(<String>),
         TYPED_ALLOCATE => TokenKind::TypedAllocate,
+        INTRINSIC_ALLOCATE => TokenKind::IntrinsicAllocate,
         KW_END_BLOCK_DATA => TokenKind::KwEndBlockData,
         KW_GOTO => TokenKind::KwGoto,
         KW_CONTINUE => TokenKind::KwContinue,
@@ -607,6 +608,11 @@ Stmt: Stmt = {
     KW_ALLOCATE LPAREN <kind:Ident> DCOLON <args:CallArgList> RPAREN => {
         let mut typed=vec![Expr::Ident(kind)]; typed.extend(args);
         Stmt::CallSub{name:"@allocate_derived_type".into(),args:typed}
+    },
+    // ALLOCATE(real(8) :: x), whose objects are unlimited polymorphic.
+    KW_ALLOCATE LPAREN INTRINSIC_ALLOCATE <kind:TypeSpec> DCOLON <args:CallArgList> RPAREN => {
+        let mut typed=vec![crate::select_type::intrinsic_guard(kind)]; typed.extend(args);
+        Stmt::CallSub{name:"@allocate_intrinsic_type".into(),args:typed}
     },
     // ALLOCATE(CHARACTER(LEN=n) :: s) of a deferred-length CHARACTER scalar.
     KW_ALLOCATE LPAREN KW_CHARACTER LPAREN KW_LEN EQ <length:RhsExpr> RPAREN DCOLON <objects: CallArgList> RPAREN => {

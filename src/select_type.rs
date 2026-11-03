@@ -12,6 +12,7 @@ use anyhow::{bail, Context, Result};
 use std::collections::{HashMap, HashSet};
 mod runtime;
 mod intrinsic;
+mod tagged;
 use crate::ast::TypeSpec;
 pub(crate) use intrinsic::parsed as intrinsic_guard;
 const SELECT: &str = "@select_type";
@@ -1293,6 +1294,7 @@ fn bound_dispatch_needed(body: &[Stmt], inherited: &Objects, defs: &Definitions)
     false
 }
 pub(crate) fn resolve(mut program: Program) -> Result<Program> {
+    program = tagged::resolve(program)?;
     if needed(&program.body) { intrinsic::prepare(&mut program.body, &HashMap::new())?; }
     let mut defs = Definitions::default();
     defs.collect(&program.body);

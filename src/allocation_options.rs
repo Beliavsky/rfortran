@@ -103,6 +103,11 @@ pub(crate) fn allocate(args: &[Expr], ranks: &Ranks) -> Result<Option<Vec<Stmt>>
             (Expr::Ident(n), Some(Expr::Ident(from))) if ranks.get(from).is_some_and(|r| *r > 0) => {
                 allocations.push(allocate_like(n, from, ranks[from]));
             }
+            // An array expression gives the extents, with lower bounds 1.
+            (Expr::Ident(n), Some(value)) if ranks.get(n).is_some_and(|r| *r > 0) => {
+                let extents = (1..=ranks[n]).map(|d| Expr::Call("size".into(), vec![value.clone(), Expr::IntLit(d.to_string())])).collect();
+                allocations.push(call("@allocate", vec![Expr::Call(n.clone(), extents)]));
+            }
             (Expr::Ident(n), _) if ranks.get(n).is_some_and(|r| *r > 0) => {
                 bail!("ALLOCATE of array `{n}` requires bounds or an array variable as SOURCE= or MOLD=")
             }

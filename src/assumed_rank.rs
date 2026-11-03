@@ -262,17 +262,20 @@ fn collect(
                     ..
                 } => {
                     let mut dummies = vec![];
+                    let mut declared = None;
                     for s in body {
+                        if let Stmt::SourceLocation(p) = s {
+                            declared = Some(*p);
+                        }
                         let (names, dims) = match s {
                             Stmt::ArrayDecl { name, dims, .. } => (vec![name.clone()], dims),
-                            Stmt::DerivedDecl {
-                                names,
-                                dims,
-                                polymorphic,
-                                ..
-                            } => {
-                                if assumed(dims) && *polymorphic {
-                                    bail!("polymorphic assumed-rank dummies are not yet supported");
+                            Stmt::DerivedDecl { names, dims, polymorphic, attributes, .. } => {
+                                // ALLOCATABLE ones get tagged storage of each rank.
+                                let allocatable = |n: &String| attributes.iter().any(|a| a == "allocatable")
+                                    || body.iter().any(|s| matches!(s, Stmt::DummyIntent { name, intent } if name == n && intent == "allocatable"));
+                                if assumed(dims) && *polymorphic && !names.iter().all(allocatable) {
+                                    return Err(crate::source_diagnostics::at(anyhow::anyhow!(
+                                        "polymorphic assumed-rank dummies that are not ALLOCATABLE are not yet supported"), declared));
                                 }
                                 (names.clone(), dims)
                             }
@@ -995,6 +998,8 @@ impl Lowerer {
                         }
                     }
                     out.extend(definitions);
+                    // USE ONLY still names the procedure the copies replace.
+                    out.push(crate::imports::declaration(name.clone()));
                     continue;
                 }
             }

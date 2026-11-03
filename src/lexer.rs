@@ -333,6 +333,8 @@ pub enum TokenKind {
     Entry(String),
     /// Before `t(values) ::` in ALLOCATE, a type with parameter values.
     TypedAllocate,
+    /// Before an intrinsic type specification `integer(8) ::` in ALLOCATE.
+    IntrinsicAllocate,
     KwGoto,
     KwContinue,
     #[token(".true.", ignore(ascii_case))]
@@ -1710,6 +1712,29 @@ pub fn lex(input: &str) -> Vec<Token> {
         if typed {
             let at = tokens[index + 2].span.start;
             tokens.insert(index + 2, Token { kind: TokenKind::TypedAllocate, span: at..at });
+        }
+        index += 1;
+    }
+    // ALLOCATE(real(8) :: x): mark an intrinsic type specification other
+    // than CHARACTER, whose LEN= form has its own rule.
+    let mut index = 0;
+    while index + 3 < tokens.len() {
+        let typed = matches!(tokens[index].kind, TokenKind::KwAllocate)
+            && matches!(tokens[index + 1].kind, TokenKind::LParen)
+            && matches!(tokens[index + 2].kind, TokenKind::KwInteger | TokenKind::KwReal | TokenKind::KwDouble | TokenKind::KwComplex | TokenKind::KwLogical)
+            && {
+                let mut depth = 0i32;
+                let mut colons = false;
+                for t in &tokens[index + 1..] {
+                    match t.kind { TokenKind::LParen => depth += 1, TokenKind::RParen => depth -= 1, _ => {} }
+                    if depth == 1 && matches!(t.kind, TokenKind::DColon) { colons = true; break; }
+                    if depth == 0 { break; }
+                }
+                colons
+            };
+        if typed {
+            let at = tokens[index + 2].span.start;
+            tokens.insert(index + 2, Token { kind: TokenKind::IntrinsicAllocate, span: at..at });
         }
         index += 1;
     }
