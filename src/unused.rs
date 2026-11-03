@@ -45,6 +45,7 @@ const CATEGORIES: &[&str] = &[
     "implicit-open",
     "fixed-unit",
     "character-truncation",
+    "memory-leak",
 ];
 /// The opt-in categories that -Wextra enables, as gfortran's -Wextra adds to
 /// -Wall. implicit-interface and conversion stay opt-in: they fire throughout

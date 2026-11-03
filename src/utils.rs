@@ -150,6 +150,7 @@ pub fn print_help() {
     println!("  -Wcharacter-truncation  Warn about CHARACTER values of known length truncated by assignment");
     println!("  -Wimplicit-open     Warn about READ/WRITE on a constant unit no OPEN names (on by default;");
     println!("                      the unit connects to fort.N, as in gfortran and ifx)");
+    println!("  -Wmemory-leak       Warn about local POINTER storage lost without DEALLOCATE (on by default)");
     println!("  -Wfixed-unit        Warn about OPEN of a constant unit in a procedure; suggest NEWUNIT= (opt-in)");
     println!("  -Wno-<category>      Disable a warning category");
     println!("  -Werror, --Werror    Treat enabled warnings as errors");

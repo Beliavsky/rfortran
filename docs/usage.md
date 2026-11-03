@@ -337,6 +337,21 @@ variable turns the check off, since it might connect any unit. Disable with
 `-Werror=implicit-open`. `-std=` does not change the behavior. Regression
 checks: `python tests/test_implicit_open.py`.
 
+`-Wmemory-leak` is **on by default**. It warns when storage allocated through a
+local POINTER of a procedure is lost without DEALLOCATE: when the procedure
+returns, or when ALLOCATE, NULLIFY or `=>` reassigns the pointer. A leak on
+every path "is not deallocated"; a leak on some paths "may not be deallocated",
+and names the IF whose outcome keeps the storage when there is one. The ELSE
+branch of `IF (ASSOCIATED(p))` holds no storage, so
+`if (associated(p)) deallocate(p)` is not reported. A pointer that might keep
+its storage elsewhere is not checked: one passed to a procedure other than a
+known intrinsic, used as the target of `=>`, returned, or named in an internal
+procedure. Dummy arguments, function results, SAVE pointers (including those
+initialized with `=> NULL()`), ALLOCATE with STAT= and procedures with GO TO
+are skipped. Disable with `-Wno-memory-leak` or `!#allow(memory-leak)`;
+promote with `-Werror=memory-leak`. Regression checks:
+`python tests/test_memory_leak.py`.
+
 `-Wfixed-unit` is opt-in and enabled by `-Wextra`. It warns about an OPEN of a
 constant unit (an integer literal or a named constant) in a procedure or
 module, since a fixed number may already be connected elsewhere in the

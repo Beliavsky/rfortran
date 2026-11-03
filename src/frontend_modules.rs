@@ -125,6 +125,7 @@ mod implicit_warnings;
 mod reachability;
 mod format_warnings;
 mod open_warnings;
+mod leak_warnings;
 mod declaration_warnings;
 mod short_circuit_warnings;
 mod source_advice;

@@ -31,6 +31,8 @@ pub(crate) fn prepare_program(
     format_warnings::check(&prepared.program, &prepared.source, src.len(), filename,
                            &prepared.origins, settings, &args.warnings)?;
     open_warnings::check(&prepared.source, src.len(), filename, &prepared.origins, settings, &args.warnings, args.standard)?;
+    leak_warnings::check(&prepared.program, &prepared.source, src.len(), filename,
+                         &prepared.origins, settings, &args.warnings)?;
     if args.standard.is_some() {
         standards::check(&prepared.program, &prepared.source, &lexer::lex(&prepared.source), filename,
                          Some(&prepared.origins), args.standard, settings.werror)?;
