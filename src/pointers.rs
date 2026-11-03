@@ -1493,6 +1493,31 @@ impl Lower {
         }
         Ok(())
     }
+    fn random_number(&mut self, dest: &Expr, readonly: &HashSet<String>, out: &mut Vec<Stmt>) -> Result<()> {
+        let n = root(dest).context("invalid RANDOM_NUMBER argument")?;
+        self.writable(n, readonly)?;
+        let v = self.view(dest, false, out)?.context("RANDOM_NUMBER requires a REAL variable")?;
+        if !matches!(v.kind, TypeSpec::Real | TypeSpec::DoublePrecision) {
+            bail!("RANDOM_NUMBER requires a REAL argument");
+        }
+        if v.unknown_last {bail!("whole assumed-size array requires a bounded section");}
+        let element = |this: &mut Self, offset: Expr, body: &mut Vec<Stmt>| {
+            let value = this.temp(v.kind.clone(), int(0), body);
+            body.push(Stmt::CallSub { name: "random_number".into(), args: vec![value.clone()] });
+            this.store(&v, offset, value, body);
+        };
+        if v.axes.is_empty() {
+            element(self, v.origin.clone(), out);
+            return Ok(());
+        }
+        let index = self.fresh();
+        out.push(Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: vec![index.clone()] });
+        let mut body = vec![];
+        let offset = self.offset(&v, id(&index), &mut body);
+        element(self, offset, &mut body);
+        out.push(Stmt::Do { var: index, start: int(1), end: v.count(), body });
+        Ok(())
+    }
     fn assignment(
         &mut self,
         dest: &Expr,
@@ -2176,6 +2201,12 @@ impl Lower {
                             None => self.expr(e, &mut out)?,
                         }
                     }
+                }
+                // RANDOM_NUMBER of POINTER storage sets each element in
+                // array element order from a scalar call.
+                Stmt::CallSub { name, args } if name == "random_number" && args.len() == 1 && self.has_pointer(&args[0]) => {
+                    self.random_number(&args[0], &readonly, &mut out)?;
+                    continue;
                 }
                 Stmt::CallSub { name, args } => {
                     if args.iter().any(|e| self.has_pointer(e))
