@@ -58,6 +58,44 @@ failure; it does not isolate the full group's character-output performance
 bottleneck. Verification logs are saved under
 `target/fve-fold-bounds-repro/verified/report.json`.
 
+## Character-output compilation-speed follow-up
+
+`output::prepare_character_views` and `output::prepare_formatted` now share
+unchanged symbol tables between nested scopes. Generated branches and loops
+without declarations no longer copy the entire surrounding table. Adding a
+declaration, shadowing a name, or introducing a temporary still creates an
+isolated copy. Descriptor metadata is collected separately so an empty update
+does not trigger a copy. Both walks also skip subtrees without PRINT or supported
+WRITE operations: those generated allocation/bounds-check scopes cannot be
+changed by these passes and do not need symbol environments at all.
+
+Opt-in pass timings now distinguish `output.character_views` from
+`output.character_views.formatted` within the previously combined pass.
+
+All 88 targeted tests pass: 61 output tests plus 27 formatted implied-DO,
+internal array WRITE, runtime-format, and character-array tests. The new
+`tests/test_output_scope_sharing.py` covers sibling and shadowed scopes,
+runtime output units, and runtime-sized character views in interpreter/native
+O0/O2 execution with gfortran comparisons.
+
+The sharing-only attempt still timed out in the character-view walk; pruning
+scopes with no output was necessary. In the subsequent uncontended optimized
+development build, the formerly blocking pass completes in 2.410 seconds:
+1.001 seconds for `output.character_views` and 1.378 seconds for its formatted
+output follow-up. This development build uses LTO disabled and 16 codegen units;
+do not interpret these measurements as a controlled end-to-end speedup over
+the prior normal-release binaries. The build proceeds to `constructors::resolve`.
+The compiler/source snapshots, commands, logs and report are saved under
+`target/2015-compat/fve-output-pruned/`.
+
+The full run still times out after 300.070 seconds, now in
+`constructors::resolve`; gfortran completes in 7.611 seconds. No complete rfort
+executable was produced or executed. Constructor lowering is the next hotspot.
+The three new scope tests also pass against the rebuilt optimized executable.
+`target/release/rfort.exe` currently contains this LTO-disabled development
+build; a normal `cargo build --release --bin rfort` restores the repository's
+usual release-profile settings.
+
 ## Compilation-speed follow-up: fve
 
 The initial release profile timed out after 180 seconds in the final

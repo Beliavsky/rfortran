@@ -6,6 +6,7 @@
 use crate::ast::{BinOp, Expr, Stmt, TypeSpec, UnOp};
 use anyhow::{bail, Result};
 use std::collections::HashMap;
+use crate::allocatables::SharedShapes;
 
 /// Normalize positional/named controls once, so all later passes see the
 /// existing UNIT, FMT, options, items layout (including reordered keywords).
@@ -107,6 +108,25 @@ pub(crate) fn write_controls(
 }
 
 type Symbols = HashMap<String, (TypeSpec, Vec<Expr>)>;
+
+// Most generated allocation/bounds checks contain no output. Do not build
+// their lexical environments merely to traverse code this pass cannot change.
+fn has_output(body: &[Stmt]) -> bool {
+    body.iter().any(|s| match s {
+        Stmt::Print { .. } => true,
+        Stmt::CallSub { name, .. } => matches!(name.as_str(),
+            "@write" | "@formatted_print" | "@formatted_write_noadvance"),
+        Stmt::Block { body } | Stmt::Do { body, .. } | Stmt::DoWhile { body, .. }
+        | Stmt::Subroutine { body, .. } | Stmt::Function { body, .. }
+        | Stmt::Module { body, .. } => has_output(body),
+        Stmt::If { then_body, else_body, .. } => has_output(then_body)
+            || else_body.as_ref().is_some_and(|body| has_output(body)),
+        Stmt::SelectCase { cases, default, .. } => cases.iter().any(|c| has_output(&c.body))
+            || default.as_ref().is_some_and(|body| has_output(body)),
+        _ => false,
+    })
+}
+
 fn int(n: i64) -> Expr {
     Expr::IntLit(n.to_string())
 }
@@ -425,7 +445,8 @@ pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> Result<crat
             Expr::Bin(_,a,b)=>ready(a,symbols)&&ready(b,symbols),Expr::Un(_,a)=>ready(a,symbols),_=>true,
         }
     }
-    fn scope(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> Result<()> {
+    fn scope(body: &mut Vec<Stmt>, inherited: &SharedShapes, serial: &mut usize) -> Result<()> {
+        if !has_output(body) { return Ok(()); }
         let mut symbols = inherited.clone();
         for stmt in body.iter() {
             match stmt {
@@ -440,7 +461,10 @@ pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> Result<crat
                 _ => {}
             }
         }
-        crate::allocatables::metadata(body,&mut symbols);
+        // Avoid forcing a copy in generated scopes without descriptor metadata.
+        let mut metadata = Symbols::new();
+        crate::allocatables::metadata(body, &mut metadata);
+        if !metadata.is_empty() { symbols.extend(metadata); }
         let mut location = None;
         for stmt in body.iter_mut() {
             if let Some(offset)=crate::source_diagnostics::statement_offset(&*stmt) {location=Some(offset);}
@@ -649,6 +673,7 @@ pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> Result<crat
     let mut functions:Symbols=crate::elemental::functions(&program).into_iter()
         .map(|(name,kind)|(format!("@elemental:{name}"),(kind,vec![]))).collect();
     functions.extend(crate::constructor_expressions::function_shapes(&program));
+    let functions = SharedShapes(std::sync::Arc::new(functions));
     scope(&mut program.body, &functions, &mut 0)?;
     Ok(program)
 }
@@ -656,12 +681,15 @@ pub(crate) fn prepare_formatted(mut program: crate::ast::Program) -> Result<crat
 /// Turn active CHARACTER array views into I/O implied-DOs before scalarizing
 /// their bounded backing storage. Unselected capacity slots are never read.
 pub(crate) fn prepare_character_views(mut program:crate::ast::Program)->Result<crate::ast::Program> {
-    fn scope(body:&mut Vec<Stmt>,inherited:&Symbols,serial:&mut usize)->Result<()> {
+    fn scope(body:&mut Vec<Stmt>,inherited:&SharedShapes,serial:&mut usize)->Result<()> {
+        if !has_output(body) { return Ok(()); }
+        let setup = crate::compile_profile::Work::new("output.views.symbols");
         let mut symbols=inherited.clone();
         for s in body.iter() {match s {
             Stmt::ArrayDecl{kind,name,dims}=>{symbols.insert(name.clone(),(kind.clone(),dims.clone()));},
             Stmt::VarDecl{kind,names}=>for n in names {symbols.insert(n.clone(),(kind.clone(),vec![]));},_=>{}
         }}
+        drop(setup);
         let mut out=vec![];
         let mut location=None;
         for mut s in std::mem::take(body) {
@@ -672,6 +700,7 @@ pub(crate) fn prepare_character_views(mut program:crate::ast::Program)->Result<c
                 Stmt::CallSub{name,args} if name=="@write"=>Some(&mut args[2..]),_=>None,
             };
             if let Some(items)=items {
+                let _work = crate::compile_profile::Work::new("output.views.items");
                 for item in items {
                     // Capture CHARACTER constructors before CHARACTER array
                     // storage is lowered. Leaving [scalar_text] for the later
@@ -706,7 +735,10 @@ pub(crate) fn prepare_character_views(mut program:crate::ast::Program)->Result<c
                 }
             }
             match &mut s {
-                Stmt::Print{items} if items.iter().any(contains_implied_do)=>s=lower(items,&symbols,serial).map_err(|e|crate::source_diagnostics::at(e,location))?,
+                Stmt::Print{items} if items.iter().any(contains_implied_do)=>{
+                    let _work = crate::compile_profile::Work::new("output.views.lower");
+                    s=lower(items,&symbols,serial).map_err(|e|crate::source_diagnostics::at(e,location))?;
+                },
                 Stmt::Block{body}|Stmt::Do{body,..}|Stmt::DoWhile{body,..}=>scope(body,&symbols,serial)?,
                 Stmt::If{then_body,else_body,..}=>{scope(then_body,&symbols,serial)?;if let Some(body)=else_body {scope(body,&symbols,serial)?;}},
                 Stmt::Subroutine{body,..}|Stmt::Function{body,..}|Stmt::Module{body,..}=>scope(body,&symbols,serial)?,
@@ -720,6 +752,8 @@ pub(crate) fn prepare_character_views(mut program:crate::ast::Program)->Result<c
     let mut functions:Symbols=crate::elemental::functions(&program).into_iter()
         .map(|(name,kind)|(format!("@elemental:{name}"),(kind,vec![]))).collect();
     functions.extend(crate::constructor_expressions::function_shapes(&program));
-    scope(&mut program.body,&functions,&mut 0)?;
-    prepare_formatted(program)
+    let functions = SharedShapes(std::sync::Arc::new(functions));
+    crate::compile_profile::run("output.character_views", ||
+        scope(&mut program.body, &functions, &mut 0))?;
+    crate::compile_profile::run("output.character_views.formatted", || prepare_formatted(program))
 }
