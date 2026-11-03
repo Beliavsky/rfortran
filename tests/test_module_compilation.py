@@ -5,10 +5,20 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-from test_record_read import COMPILER
+from test_record_read import COMPILER, ROOT
 
 
 class ModuleCompilation(unittest.TestCase):
+    def test_recursive_result_with_automatic_local(self):
+        for optimization in ('0', '2'):
+            with self.subTest(optimization=optimization):
+                module = self.source('fold', (ROOT / 'tests/programs/mfve_fold_bounds.f90').read_text())
+                self.success('-O', optimization, '-c', module)
+                module.unlink()
+                driver = self.source('main', (ROOT / 'tests/programs/xfve_fold_bounds.f90').read_text())
+                self.success('-O', optimization, '-c', driver)
+                self.run_objects(['fold', 'main'], '4 3 3')
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix='rfort modules (A&B) ')
         self.addCleanup(self.tmp.cleanup)

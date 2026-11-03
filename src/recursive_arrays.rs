@@ -473,6 +473,13 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
                         name: procedure.native.clone(),
                         intent: "@native_recursive".into(),
                     });
+                    // Array-dummy procedures skipped automatic_locals because
+                    // they were expected to be specialized at each call. A
+                    // native recursive entry (including a bridge into a cycle)
+                    // will not run that specialization, so allocate its source
+                    // automatic arrays here using their runtime bounds.
+                    let mut shapes = crate::allocatables::Shapes::new();
+                    crate::heap::automatic(&mut native_body, &mut shapes)?;
                     rewrite_calls(&mut native_body, procedure, procedures)?;
                     generated.push(Stmt::Subroutine {
                         name: procedure.native.clone(),

@@ -1,5 +1,63 @@
 # Standalone repros from the Fortran 2015 samples
 
+## fve separate compilation: automatic local array and recursive array result
+
+[mfve_fold_bounds.f90](../tests/programs/mfve_fold_bounds.f90) reduces the
+`util.f90:6500` failure to a small module. Its `fold_sizes` subroutine has a
+runtime-sized output dummy and an automatic local array. Assigning the result
+of recursive `group_sizes` to that local array previously failed when compiling
+the module separately:
+
+```text
+error: reduction extents and section bounds must be constant integers:
+`nfolds` is not a previously defined integer PARAMETER
+10 | nelem = group_sizes(n,nfolds)
+```
+
+[xfve_fold_bounds.f90](../tests/programs/xfve_fold_bounds.f90) is a small driver
+that checks the expected group sizes `4 3 3`. gfortran successfully compiles the
+module and driver separately, links them, and runs the check. rfort now does
+the same after the native-entry automatic-array fix.
+
+Procedures with array dummies initially skip automatic-local allocation because
+their locals are normally allocated during call-site specialization. Recursive
+array lowering can instead convert such a procedure to a native entry (including
+a nonrecursive bridge that calls a recursive procedure). Those entries now run
+the automatic-array allocation step before their calls are rewritten. Their
+local arrays retain runtime bounds and have storage per invocation.
+
+Validation: 23 recursive-array tests, 14 separate-module tests, and 5 automatic
+array tests pass. Added checks cover the repro with interpreter/native execution,
+separate compilation at O0/O2 after deleting the module source, nondefault bounds,
+zero extents, and local storage retained across recursive calls.
+
+The rebuilt release compiles the reduced module in 0.121 seconds and its driver
+runs with output `4 3 3`. After separately compiling `kind.f90`, the original
+`C:/fortran/2015/util.f90` now compiles successfully in 5.129 seconds. These are
+single wall-clock measurements; commands and results are saved in
+`target/fve-fold-bounds-fixed/release/report.json`. The full combined `fve`
+performance bottleneck has not been retested as part of this fix.
+
+CMD commands from the repository root:
+
+```cmd
+if not exist target\fve-fold-bounds-repro mkdir target\fve-fold-bounds-repro
+target\release\rfort.exe -c tests\programs\mfve_fold_bounds.f90 -J target\fve-fold-bounds-repro -o target\fve-fold-bounds-repro\module.obj
+target\release\rfort.exe tests\programs\xfve_fold_bounds.f90 target\fve-fold-bounds-repro\module.obj -I target\fve-fold-bounds-repro -o target\fve-fold-bounds-repro\rfort-driver.exe --run
+gfortran -std=f2018 -fcheck=all -c tests\programs\mfve_fold_bounds.f90 -J target\fve-fold-bounds-repro -o target\fve-fold-bounds-repro\module.o
+gfortran -std=f2018 -fcheck=all -c tests\programs\xfve_fold_bounds.f90 -I target\fve-fold-bounds-repro -o target\fve-fold-bounds-repro\main.o
+gfortran target\fve-fold-bounds-repro\module.o target\fve-fold-bounds-repro\main.o -o target\fve-fold-bounds-repro\driver.exe
+target\fve-fold-bounds-repro\driver.exe
+```
+
+Before the fix, reduction experiments showed that assigning `group_sizes` directly to the output dummy
+compiles; replacing it with a simple nonrecursive array-valued function also
+compiles. The failing repro retains the recursive result, automatic local,
+and runtime-sized output dummy together. This identifies a separate-compilation
+failure; it does not isolate the full group's character-output performance
+bottleneck. Verification logs are saved under
+`target/fve-fold-bounds-repro/verified/report.json`.
+
 ## Compilation-speed follow-up: fve
 
 The initial release profile timed out after 180 seconds in the final

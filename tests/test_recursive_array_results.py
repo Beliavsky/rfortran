@@ -7,6 +7,35 @@ import test_deallocate
 class RecursiveArrayResults(unittest.TestCase):
     check = test_deallocate.Deallocate.check
 
+    def test_automatic_locals_in_recursive_frames(self):
+        self.check('''module m
+implicit none
+contains
+recursive subroutine accumulate(a,n,depth)
+integer,intent(in) :: n,depth
+integer,intent(inout) :: a(n)
+integer :: saved(0:n-1)
+saved=depth
+if(depth>0) call accumulate(a,n,depth-1)
+a=a+saved
+end subroutine
+end module
+program main
+use m
+implicit none
+integer :: a(3),b(0)
+a=0
+call accumulate(a,3,3)
+call accumulate(b,0,2)
+print *,a,size(b)
+end
+''', '6 6 6 0\n')
+
+    def test_fold_bounds_reproducer(self):
+        self.check((ROOT / 'tests/programs/mfve_fold_bounds.f90').read_text()
+                   + '\n' + (ROOT / 'tests/programs/xfve_fold_bounds.f90').read_text(),
+                   '4 3 3\n')
+
     def test_real_result_reproducer(self):
         self.check((ROOT / 'tests/programs/xrecursive_real_array_result.f90').read_text(),
                    '1.0 2.0 3.0\n')
