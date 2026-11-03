@@ -1,5 +1,45 @@
 # Standalone repros from the Fortran 2015 samples
 
+## Follow-up: recursive numeric array results fixed
+
+The recursive REAL array-result repro now compiles and runs. Recursive
+explicit-shape INTEGER, REAL, DOUBLE PRECISION and LOGICAL array results use
+caller-owned buffers and the existing native recursive array descriptors,
+instead of recursively expanding the character/array-function inliner.
+ALLOCATABLE, POINTER, CHARACTER and derived-type recursive results are outside
+this change.
+
+The tracked regression fixture is
+[tests/programs/xrecursive_real_array_result.f90](../tests/programs/xrecursive_real_array_result.f90).
+[tests/test_recursive_array_results.py](../tests/test_recursive_array_results.py)
+checks direct and mutual recursion, runtime matrix shapes, zero-sized and
+LOGICAL results, scalar and array actuals evaluated once, and calls in repeated
+loop conditions. Its seven tests pass with the interpreter, native `-O0` and
+`-O2`, and gfortran. The existing recursive-array and forward-array-result
+suites also pass (14 and eight tests, respectively).
+The release compiler was rebuilt, all seven focused tests also pass against
+that binary, and `rf.bat tests\programs\xrecursive_real_array_result.f90 --run`
+prints `1.0 2.0 3.0`.
+
+A focused driver using the original `kind.f90` and `moving_average.f90` now
+builds and runs, including the recursive oversized-window path. For input
+`[1,4,9]` and window 5, both rfort and gfortran print
+`1.0000 2.5000 4.6667`. Its inputs and results are saved locally under
+`target/2015-compat/recursive-results-vector-driver-20261103/`.
+
+The full `mavg_files.txt` group gets past the original recursive-result error
+and reaches `moving_average.f90:87`, where a column section inside FORALL is
+still rejected. The latest isolated comparison is under
+`target/2015-compat/recursive-results-mavg-final-20261103/`.
+The `fve_files.txt` and `rcsv_files.txt` groups still report their original
+PARAMETER diagnostics at `util.f90:8070` and `statistics.f90:1082`; those were
+not resolved by this change. Their follow-up logs are under
+`target/2015-compat/recursive-results-final-20261103/`.
+
+The table below preserves the original observations against the older binary.
+
+## Original repro verification
+
 Checked on 2026-11-03 using an existing Windows x86-64 rfort
 0.1.0-alpha.1 executable, SHA256
 `a89f046e71e2f63838bf988d04dabcba2f92bb2103b88df0612f712bbbcc76a0`.

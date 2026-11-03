@@ -63,6 +63,7 @@ mod allocatables;
 mod allocation_bounds;
 mod optional;
 mod recursive_arrays;
+mod recursive_array_results;
 mod external_calls;
 mod c_interop;
 mod c_pointers;

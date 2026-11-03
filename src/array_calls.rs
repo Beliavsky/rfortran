@@ -2296,6 +2296,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
     p = crate::compile_profile::run("crate::allocatables::hoist_array_results", || crate::allocatables::hoist_array_results(p))?;
     p = crate::compile_profile::run("crate::input_items::prepare", || crate::input_items::prepare(p))?;
     p = crate::compile_profile::run("crate::modules::capture", || crate::modules::capture(p))?;
+    p = crate::compile_profile::run("crate::recursive_array_results::resolve", || crate::recursive_array_results::resolve(p))?;
     p = crate::compile_profile::run("crate::heap::automatic_locals", || crate::heap::automatic_locals(p))?;
     p = crate::compile_profile::run("crate::heap::prepare", || crate::heap::prepare(p))?;
     p = crate::compile_profile::run("crate::modules::prepare_globals", || crate::modules::prepare_globals(p))?;
