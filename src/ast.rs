@@ -592,6 +592,38 @@ pub fn associate(pairs: Vec<(String, Expr)>, mut body: Vec<Stmt>) -> Result<Stmt
     }
     let mut written = vec![];
     assigned(&mut body, &mut written);
+    // A variable selector designates its element or section when the block
+    // starts. A subscript that reads a variable the block modifies is
+    // evaluated then, into a temporary.
+    static SERIAL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let mut captures = vec![];
+    let mut pairs = pairs;
+    for (_, selector) in pairs.iter_mut() {
+        let mut capture = |e: &mut Expr| {
+            let mut reads = false;
+            visit_expr(&mut e.clone(), &mut |x| if let Expr::Ident(n) = x { reads |= written.contains(n) });
+            if reads {
+                let temp = format!("@associate_subscript_{}", SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+                captures.push((temp.clone(), std::mem::replace(e, Expr::Ident(temp))));
+            }
+        };
+        match selector {
+            Expr::Call(_, args) | Expr::Index(_, args) if !args.is_empty() => {
+                for a in args.iter_mut() {
+                    match a {
+                        Expr::Section { lower, upper, stride, .. } => {
+                            for e in [lower, upper, stride].into_iter().flatten() { capture(e); }
+                        }
+                        a => capture(a),
+                    }
+                }
+            }
+            Expr::Section { lower, upper, stride, .. } => {
+                for e in [lower, upper, stride].into_iter().flatten() { capture(e); }
+            }
+            _ => {}
+        }
+    }
     for (name, selector) in &pairs {
         // Names in the selector other than the designated variable itself.
         let mut used = vec![];
@@ -616,6 +648,12 @@ pub fn associate(pairs: Vec<(String, Expr)>, mut body: Vec<Stmt>) -> Result<Stmt
             return Err("an ASSOCIATE selector that depends on a variable modified in the block is not yet supported");
         }
         substitute(&mut body, name, selector)?;
+    }
+    if !captures.is_empty() {
+        let mut start = vec![Stmt::VarDecl { kind: TypeSpec::Integer(Some(8)), names: captures.iter().map(|(t, _)| t.clone()).collect() }];
+        start.extend(captures.into_iter().map(|(name, value)| Stmt::Assign { name, value }));
+        start.append(&mut body);
+        body = start;
     }
     fn substitute(body: &mut [Stmt], name: &str, selector: &Expr) -> Result<(), &'static str> {
         let prefix = format!("{name}%");

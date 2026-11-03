@@ -42,15 +42,53 @@ end associate
 end program as
 """, '21 3 3.0 2\n10 20 3 4 5 6 5.0\n20 4 6\n10 0 3 0 5 0\n6.0\n')
 
-    def test_selector_modified_in_block_is_rejected(self):
-        self.reject("""program main
+    def test_subscripts_are_evaluated_when_the_block_starts(self):
+        # Changing i and j in the block does not move the element or
+        # section that the names designate.
+        self.check("""program main
 implicit none
 integer :: a(3), i
-a = 1
+a = [1, 2, 3]
 i = 1
-associate (e => a(i))
-i = 2
-e = 5
+associate (p => a(i))
+   i = 2
+   p = 5
+end associate
+print *, a
+end program
+""", '5 2 3\n')
+        self.check("""program main
+implicit none
+integer :: a(6), b(3,3), i, j, k
+a = [(k, k = 1, 6)]
+b = 0
+i = 2; j = 4
+associate (s => a(i:j), e => b(i, j-1), w => a)
+   i = 5; j = 1
+   s = -s
+   e = 7
+   w(i) = 100
+   print *, s, e, size(s)
+end associate
+print *, a
+print *, b
+do k = 1, 2
+   associate (q => a(k))
+      q = q * 10
+   end associate
+end do
+print *, a
+end program
+""", '-2 -3 -4 7 3\n1 -2 -3 -4 100 6\n0 0 0 0 0 0 0 7 0\n10 -20 -3 -4 100 6\n')
+
+    def test_expression_selector_modified_in_block_is_rejected(self):
+        self.reject("""program main
+implicit none
+real :: r
+r = 1.0
+associate (t => r*3.0)
+r = 2.0
+print *, t
 end associate
 end program
 """, "ASSOCIATE selector that depends on a variable modified")
