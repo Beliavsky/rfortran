@@ -358,7 +358,10 @@ promote with `-Werror=memory-leak`. Regression checks:
 `-Wallocation-state` is **on by default**. It warns about DEALLOCATE of a local
 ALLOCATABLE that is unallocated on every path reaching the statement, and
 ALLOCATE of one that is allocated on every path, when the statement has no
-STAT=; either stops the program with an error when it runs. A local
+STAT=; either stops the program with an error when it runs. Intrinsic,
+derived-type and polymorphic ALLOCATABLEs are checked, and every form of
+ALLOCATE counts, such as `allocate(x(0:n))`, `allocate(real :: x(n))` and
+`allocate(character(len=n) :: s)`. A local
 ALLOCATABLE starts unallocated; ALLOCATE and assignment to the whole variable
 allocate it, DEALLOCATE and MOVE_ALLOC (as FROM) leave it unallocated, and the
 branches of `IF (ALLOCATED(x))` know its state. A state that depends on a

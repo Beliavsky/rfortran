@@ -676,6 +676,13 @@ and empty loops retain the initial value. A runtime step runs
 is zero. Increment overflow of a constant step in the compiler's 64-bit INTEGER
 storage reports a runtime error.
 
+The control variable cannot be redefined inside its loop, as the standard
+requires: assigning it, reading into it, using it as the variable of a nested
+DO or implied DO, or naming it in IOSTAT=, STAT=, SIZE=, NEWUNIT= and similar
+status specifiers, including through an ASSOCIATE name, is a compile-time error
+that names the loop's line. Passing it to an INTENT(OUT) or INTENT(INOUT) dummy
+argument is not checked. Run `python tests/test_do_variable_redefinition.py`.
+
 Unbounded `do` / `end do` loops repeat until EXIT, RETURN, or STOP transfers
 control. CYCLE starts the next iteration; nested loops target the innermost
 loop. A bare DO may end with a newline, a comment, or a semicolon. Continued
@@ -716,7 +723,9 @@ statement list. Assigned GOTO and the arithmetic IF are not supported.
 ### Assumed-rank arguments and SELECT RANK
 
 Fortran 2018 assumed-rank intrinsic and nonpolymorphic derived-type dummies
-can be declared with `x(..)` or `dimension(..)`. A specific internal or module
+can be declared with `x(..)` or `dimension(..)`. Polymorphic assumed-rank
+dummies must be ALLOCATABLE, such as `class(*), allocatable :: x(..)`, and are
+specialized the same way, with [tagged storage](#polymorphic-allocatable-arrays-and-class-allocatable-objects) for each rank. A specific internal or module
 procedure can receive a scalar or an array through rank 15. `SELECT RANK` selects a rank-specific block:
 
 ```fortran
@@ -806,8 +815,11 @@ checking also visits these branches. See
 
 ASSOCIATE replaces each associate name by its selector inside the block, so a
 variable, element, section or component selector is updated through the name.
-A selector whose value could change inside the block, such as `a(i)` when the
-block assigns `i`, is rejected because it would be re-evaluated. ASSOCIATED
+Subscripts and section bounds of a selector that read a variable the block
+changes, such as `i` in `a(i)` when the block assigns `i`, are evaluated when
+the block starts, so the name keeps designating the same element or section.
+An expression selector that depends on such a variable, such as `t => r*3.0`
+when the block assigns `r`, is rejected. ASSOCIATED
 also accepts a TARGET (a TARGET variable, section or POINTER) and is true when
 the pointer is associated with the same elements in the same order. Run
 `python tests/test_associate.py`.
@@ -1801,7 +1813,9 @@ success sets STAT to zero and leaves ERRMSG unchanged. See
 `python tests/test_derived_move_alloc.py`.
 
 ALLOCATE accepts `source=` and `mold=` (taking the bounds of an array
-source or mold, or the given bounds), and ALLOCATE and DEALLOCATE accept
+variable, the extents of an array expression with lower bounds 1, or the given
+bounds) and an intrinsic type specification such as `allocate(real :: x(n))`,
+and ALLOCATE and DEALLOCATE accept
 `stat=` and `errmsg=`, which report allocating an allocated array or
 deallocating an unallocated one instead of stopping. Run
 `python tests/test_allocation_options.py`.
@@ -1858,7 +1872,8 @@ initialization masks and local procedure dummy arguments against gfortran.
 form is described under [ASSOCIATE](#associate).
 Array pointers support element and whole-array assignment, section reads/writes,
 `SIZE`, `SHAPE`, `LBOUND`, and `UBOUND`, including runtime DIM. Whole-array SUM,
-PRODUCT, MINVAL, MAXVAL, ANY, ALL, and COUNT are supported. Reduction DIM
+PRODUCT, MINVAL, MAXVAL, ANY, ALL, and COUNT are supported. RANDOM_NUMBER fills a
+scalar, array or section pointer of REAL kind. Reduction DIM
 arguments and numeric-reduction MASK arguments remain unsupported for pointers.
 Association and shape inquiries do not
 read the target's values; ordinary uninitialized-value checks apply when data
@@ -1927,6 +1942,8 @@ an allocation, which pointer assignment `q => p` and new lower bounds
 a TARGET variable or a pointer to a section stops with an error. Other
 pointers to the deallocated storage become undefined, as in Fortran: the
 interpreter reports their use, while native code does not check it.
+Storage a local pointer allocates and loses without DEALLOCATE is reported by
+the [`-Wmemory-leak`](usage.md) warning.
 
 ### Pointer bounds remapping
 
@@ -2363,8 +2380,8 @@ inherited bindings. Scalar CLASS dummy
 calls support overridden binding dispatch as described below. ABSTRACT types
 and DEFERRED bindings are supported. Local scalar polymorphic ALLOCATABLE
 objects and scalar SELECT TYPE are supported as described below; unlimited
-polymorphic scalar procedure dummies are also supported. CLASS(*) allocation
-remains unsupported.
+polymorphic scalar procedure dummies are also supported, as are
+[polymorphic ALLOCATABLE arrays and CLASS(*) ALLOCATABLE objects](#polymorphic-allocatable-arrays-and-class-allocatable-objects).
 
 Structure constructors accept an explicit parent component, positionally or
 by keyword, such as `child(base(4),20)` and `child(base=base(4),extra=20)`.
@@ -2545,12 +2562,13 @@ y = x              ! y becomes a rectangle with a copy of x's value
 Sources currently support scalar concrete variables, constructors, and the
 runtime polymorphic locals described here; arbitrary derived-valued function
 results and component/array-element sources are not yet supported by this
-allocation path. This implementation does not support polymorphic arrays,
-CLASS(*), ALLOCATABLE polymorphic results, OPTIONAL polymorphic allocatable
+allocation path. [Polymorphic ALLOCATABLE arrays and CLASS(*) ALLOCATABLE
+objects](#polymorphic-allocatable-arrays-and-class-allocatable-objects) are described below. This implementation does not support
+ALLOCATABLE polymorphic results, OPTIONAL polymorphic allocatable
 dummy arguments, saved or module
-polymorphic objects, STAT=/ERRMSG= on polymorphic allocation, whole-object
-assignment to SELECT TYPE associate names, or runtime polymorphic values in
-counted DO bounds.
+polymorphic scalars, STAT=/ERRMSG= on polymorphic scalar allocation,
+whole-object assignment to SELECT TYPE associate names, or runtime polymorphic
+values in counted DO bounds.
 Existing derived-type component, result and procedure-interface restrictions
 still apply. POINTER association and CLASSOF declarations do not acquire
 runtime polymorphic descriptor support from this feature.
@@ -2558,6 +2576,43 @@ runtime polymorphic descriptor support from this feature.
 Run `python tests/test_polymorphic_allocatable.py`. The standalone example is
 `tests/programs/xpolymorphic_allocatable.f90`; allocation-source and assignment
 examples are in `tests/programs/xpolymorphic_source.f90`.
+
+### Polymorphic ALLOCATABLE arrays and CLASS(*) ALLOCATABLE objects
+
+CLASS(*) ALLOCATABLE objects of any rank and CLASS(t) ALLOCATABLE arrays are
+held as a type tag and one ordinary ALLOCATABLE per possible dynamic type. The
+dynamic types of a CLASS(t) array are the nonabstract extensions of `t`; those
+of a CLASS(*) object are the types the program allocates, assigns or moves into
+CLASS(*) objects (CHARACTER is not yet supported). They support:
+
+- ALLOCATE with a type specification (`allocate(real :: x(n))`,
+  `allocate(circle :: s(3))`), SOURCE= or MOLD=, and STAT=; a SOURCE= or
+  MOLD= array expression without bounds gives the extents;
+- DEALLOCATE (with STAT=), ALLOCATED, MOVE_ALLOC between polymorphic objects or
+  from a nonpolymorphic ALLOCATABLE, and assignment to the whole object;
+- SELECT TYPE with an array selector, whose branches see the array with its
+  dynamic type;
+- other uses, such as SIZE, bounds, component references and type-bound calls
+  on elements, which run once for the dynamic type held;
+- ALLOCATABLE CLASS(*) or CLASS(t) dummy arguments, including INTENT(OUT) and
+  ALLOCATABLE assumed-rank dummies `class(*), allocatable :: x(..)` with
+  SELECT RANK.
+
+```fortran
+class(*), allocatable :: v(:)
+allocate(v, source=[1.0, 2.0, 3.0])
+select type (v)
+type is (real)
+  print *, sum(v)
+end select
+```
+
+Errors stop the program: ALLOCATE of an allocated object, DEALLOCATE of an
+unallocated one, and SELECT TYPE or other uses of an unallocated one. Module
+and function-result polymorphic ALLOCATABLE arrays, non-ALLOCATABLE
+polymorphic assumed-rank dummies, and polymorphic SOURCE= expressions other
+than whole variables are not yet supported. Run
+`python tests/test_polymorphic_allocatables.py`.
 
 ### Scalar polymorphic allocatable dummy arguments
 
@@ -2821,9 +2876,11 @@ parent component as nonpolymorphic, so it does not call the override again.
 Dispatch uses private call-site type specialization with borrowed component
 views, rather than a public runtime vtable/descriptor ABI. It currently requires
 simple scalar variable actuals and the default first passed-object dummy.
-Polymorphic arrays, CLASS(*), CLASSOF dispatch,
+Polymorphic array dummies that are not ALLOCATABLE, CLASS(*), CLASSOF dispatch,
 POINTER/VALUE CLASS dummies, and generic interfaces containing
-specialized CLASS specifics remain unsupported. NOPASS and named PASS arguments
+specialized CLASS specifics remain unsupported. Elements of
+[polymorphic ALLOCATABLE arrays](#polymorphic-allocatable-arrays-and-class-allocatable-objects) call the binding of the array's dynamic
+type. NOPASS and named PASS arguments
 retain their existing limitations.
 Local scalar polymorphic pointer receivers can borrow the concrete targets
 described in [scalar polymorphic POINTER objects](#scalar-polymorphic-pointer-objects).
@@ -2879,7 +2936,8 @@ intrinsic expressions can supply read-only arguments. Writable variable
 actuals and guard aliases share caller storage; INTENT(IN) is retained.
 Derived exact/ancestor guards and CLASS DEFAULT can occur in the same selection.
 
-Array selectors, CLASS(*) allocation descriptors, POINTER/VALUE CLASS dummies,
+Array selectors that are not [polymorphic ALLOCATABLE arrays](#polymorphic-allocatable-arrays-and-class-allocatable-objects),
+POINTER/VALUE CLASS dummies,
 and generic interfaces containing specialized CLASS specifics remain
 unsupported. Derived-type actuals retain their scalar-variable restriction.
 Ordinary scalar binding calls through narrowed CLASS views use
