@@ -130,6 +130,41 @@ resolution in 0.140 seconds and reaches the 180-second overall limit inside
 `substrings::resolve`. Substring lowering is the next confirmed hotspot.
 `target/release/rfort.exe` remains the LTO-disabled optimized development build.
 
+## Substring-lowering compilation-speed follow-up
+
+Substring lowering now skips generated scopes with no character work and shares
+unchanged numeric symbol/array-shape tables. Capacity inference no longer scans
+nested bodies when there are no local deferred-character targets. Module-binding
+keys are retained directly instead of cloning the entire statement tree.
+Character declarations, substring operations, intrinsic diagnostics, procedure
+entry checks and SELECT CASE remain on the lowering path.
+
+All 42 targeted tests pass (scalar and parameter substrings, deferred-character
+locals/module storage, runtime character storage, character intrinsics, and the
+new `tests/test_substring_scope_sharing.py`). The new regression checks shadowed
+character/numeric variables and overlapping runtime substring assignments in
+interpreter/native O0/O2 execution against gfortran.
+
+The initial sharing/tree-copy changes alone still timed out inside the dynamic
+substring walk at the overall 300-second limit
+(`target/2015-compat/fve-substring-sharing/`). Skipping irrelevant scopes was also
+needed. With the final change, substring lowering completes in **29.826 seconds**:
+29.653 seconds for the dynamic phase and 0.164 seconds for fixed substrings.
+Function-array lowering then completes in 23.181 seconds. These are pass times,
+not complete build times. Compiler settings remain LTO disabled and 16 codegen
+units, as in the preceding profiles.
+
+Snapshots, commands and pass logs for the final run are saved under
+`target/2015-compat/fve-substring-pruned/`. Opt-in timing now distinguishes the
+dynamic and fixed substring phases.
+
+The final run still times out after 300.079 seconds, now in
+`reductions::resolve`; gfortran completes in 8.433 seconds. Multidimensional
+lowering completes in 92.126 seconds and is the largest completed individual
+pass in this run. No full rfort executable was produced or executed. The new
+scope regression also passes against the rebuilt optimized binary. The release
+path still contains the LTO-disabled development build used for these profiles.
+
 ## Compilation-speed follow-up: fve
 
 The initial release profile timed out after 180 seconds in the final

@@ -227,8 +227,8 @@ pub fn resolve(mut program: Program) -> Result<Program> {
         }}
     }
     let mut scope=DynamicScope::default();procedures(&program.body,&mut scope.procedures,&mut scope.function_results);
-    dynamic_body(&mut program.body, &scope, true, &mut 0)?;
-    body(&mut program.body, &Characters::new(), &mut 0)?;
+    crate::compile_profile::run("substrings.dynamic", || dynamic_body(&mut program.body, &scope, true, &mut 0))?;
+    crate::compile_profile::run("substrings.fixed", || body(&mut program.body, &Characters::new(), &mut 0))?;
     Ok(program)
 }
 
@@ -243,12 +243,24 @@ pub(crate) fn deferred(kind: &TypeSpec) -> bool {
     matches!(kind, TypeSpec::CharacterLength(e) if matches!(e.as_ref(), Expr::Ident(n) if n == "@deferred_character"))
 }
 
+// Numeric array shapes dominate large specialized scopes. Share read-only
+// environments; declarations and generated temporaries retain isolated updates.
+#[derive(Clone, Default)]
+struct SharedSymbols(std::sync::Arc<HashMap<String, (TypeSpec, Vec<Expr>)>>);
+impl std::ops::Deref for SharedSymbols {
+    type Target = HashMap<String, (TypeSpec, Vec<Expr>)>;
+    fn deref(&self) -> &Self::Target { &self.0 }
+}
+impl std::ops::DerefMut for SharedSymbols {
+    fn deref_mut(&mut self) -> &mut Self::Target { std::sync::Arc::make_mut(&mut self.0) }
+}
+
 #[derive(Clone, Default)]
 struct DynamicScope {
     characters: Characters,
     lengths: HashMap<String, String>,
     fixed: std::collections::HashSet<String>,
-    symbols: HashMap<String, (TypeSpec, Vec<Expr>)>,
+    symbols: SharedSymbols,
     procedures: std::collections::HashSet<String>,
     function_results: HashMap<String,TypeSpec>,
     procedure: bool,
@@ -628,7 +640,50 @@ fn dynamic_expression(e: &mut Expr, scope: &mut DynamicScope, output: &mut Vec<S
     }
     Ok(())
 }
+// Conservatively retain all character operations and intrinsic diagnostics.
+// Numeric generated allocation/bounds-check scopes need no character environment.
+fn needs_dynamic_expression(e: &Expr, scope: &DynamicScope) -> bool {
+    match e {
+        Expr::Ident(n) => scope.characters.contains_key(n) || scope.host.contains(n),
+        Expr::Section { .. } => true,
+        Expr::Call(n, _) if matches!(n.as_str(), "repeat" | "allocated" | "len" | "len_trim"
+            | "@literal_substring" | "@dynamic_substring" | "new_line" | "index" | "scan"
+            | "verify" | "@split_scan" | "ichar" | "iachar" | "char" | "achar") => true,
+        Expr::Call(_, args) | Expr::Index(_, args) =>
+            args.iter().any(|e| needs_dynamic_expression(e, scope)),
+        Expr::Bin(_, a, b) => needs_dynamic_expression(a, scope) || needs_dynamic_expression(b, scope),
+        Expr::Un(_, a) => needs_dynamic_expression(a, scope),
+        _ => false,
+    }
+}
+fn needs_dynamic_body(statements: &[Stmt], scope: &DynamicScope) -> bool {
+    let expr = |e: &Expr| needs_dynamic_expression(e, scope);
+    statements.iter().any(|s| match s {
+        Stmt::VarDecl { kind, .. } | Stmt::ArrayDecl { kind, .. } =>
+            matches!(kind, TypeSpec::Character(_) | TypeSpec::CharacterLength(_)),
+        Stmt::DummyIntent { intent, .. } => intent.starts_with("@character_spec_length:"),
+        Stmt::Assign { name, value } => scope.lengths.contains_key(name) || expr(value),
+        Stmt::AssignIndex { name, indices, value } => scope.characters.contains_key(name)
+            || expr(value) || indices.iter().any(expr),
+        Stmt::CallSub { name, .. } if matches!(name.as_str(),
+            ALLOCATE_CHARACTER | "@deallocate" | "@internal_format_end") => true,
+        Stmt::Print { items } | Stmt::Read { args: items }
+        | Stmt::CallSub { args: items, .. } => items.iter().any(expr),
+        Stmt::Return(Some(e)) => expr(e),
+        Stmt::If { cond, then_body, else_body } => expr(cond) || needs_dynamic_body(then_body, scope)
+            || else_body.as_ref().is_some_and(|b| needs_dynamic_body(b, scope)),
+        Stmt::Do { start, end, body, .. } => expr(start) || expr(end) || needs_dynamic_body(body, scope),
+        Stmt::DoWhile { cond, body } => expr(cond) || needs_dynamic_body(body, scope),
+        Stmt::Block { body } => needs_dynamic_body(body, scope),
+        // Procedure entry also establishes dummy/result and host restrictions.
+        Stmt::Function { .. } | Stmt::Subroutine { .. } | Stmt::Module { .. } => true,
+        // CHARACTER expression selectors may need a storage-backed snapshot.
+        Stmt::SelectCase { .. } => true,
+        _ => false,
+    })
+}
 fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: bool, serial: &mut usize) -> Result<()> {
+    if !needs_dynamic_body(statements, inherited) { return Ok(()); }
     let statement_location = std::cell::Cell::new(None);
     let result = (|| -> Result<()> {
     let mut scope = inherited.clone();
@@ -679,6 +734,7 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
             scope.lengths.insert(name.clone(),length.to_owned());scope.fixed.insert(name.clone());
         }
     }}
+    if !targets.is_empty() {
     for iteration in 0..=targets.len() + 1 {
         let mut sizes = targets.iter().map(|n| (n.clone(), scope.characters[n])).collect::<Characters>();
         assignment_capacities(statements, &targets, &scope, &mut sizes)?;
@@ -695,8 +751,14 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
             scope.characters.insert(name.clone(), sizes[name]);
         }
     }
+    }
     let mut result = vec![];
-    let original = statements.clone();
+    // Only module binding keys are needed after consuming the statements.
+    // Cloning entire nested procedure bodies here made each enclosing scope
+    // repeatedly copy all of its descendants.
+    let module_keys: HashMap<_, _> = scope.lengths.keys()
+        .filter_map(|name| module_key(statements, name).map(|key| (name.clone(), key)))
+        .collect();
     for mut statement in std::mem::take(statements) {
         if let Some(p) = crate::source_diagnostics::statement_offset(&statement) { statement_location.set(Some(p)); }
         let mut prefix = vec![];
@@ -744,7 +806,7 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
             Stmt::VarDecl { kind, names } if deferred(kind) => {
                 for name in names {
                     let flag = allocation_flag(&scope.lengths[name]);
-                    if let Some(key) = module_key(&original, name) {
+                    if let Some(key) = module_keys.get(name) {
                         // The buffer is bound by the variable's own module
                         // binding; its length and status are module storage too.
                         result.push(Stmt::VarDecl { kind: TypeSpec::Character(Some(0)), names: vec![name.clone()] });
