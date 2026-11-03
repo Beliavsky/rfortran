@@ -277,8 +277,25 @@ struct Lowerer {
     types: HashMap<String, TypeSpec>,
     functions: HashMap<String, TypeSpec>,
     module_arrays: std::collections::HashSet<String>,
+    // Arrays whose storage is on the heap: their declared extent is a
+    // placeholder, and their subscripts are checked when they are lowered.
+    // Compiler-generated arrays, named with `@`, are treated the same way.
+    heap: std::collections::HashSet<String>,
 }
 impl Lowerer {
+    /// The declared shape of an array whose subscripts are checked and, for
+    /// rank two or more, flattened.
+    fn checked<'a>(&self, name: &str, shapes: &'a Shapes) -> Option<&'a Vec<i64>> {
+        shapes.get(name).filter(|d| d.len() > 1 || d.len() == 1 && !name.starts_with('@') && !self.heap.contains(name))
+    }
+    /// A scalar subscript of a rank-one array that no earlier pass checked.
+    fn unchecked(&self, e: &Expr, shapes: &Shapes) -> bool {
+        let mut guarded = false;
+        crate::procedure_arguments::visit_expr(&mut e.clone(), &mut |e| if let Expr::Call(n, _) = e {
+            guarded |= ["@alloc_offset_", "@lower_bound_index_", "@matrix_bound_"].iter().any(|p| n.starts_with(p));
+        });
+        !guarded && self.integer_expr(e, shapes)
+    }
     fn check_association(&self, name: &str) -> Result<()> {
         if self.module_arrays.contains(name)
             && !self.types.contains_key(name)
@@ -373,7 +390,10 @@ impl Lowerer {
         let mut offset = int(1);
         let mut stride = 1i64;
         for (axis, (e, extent)) in indices.iter().zip(dims).enumerate() {
-            let checked = if let Ok(index) = crate::parameters::integer_constant(e) {
+            let constant = crate::parameters::integer_constant(e).ok();
+            // A constant rank-one subscript outside the bounds is checked when
+            // it is reached: generated code may follow a run-time size check.
+            let checked = if let Some(index) = constant.filter(|i| dims.len() > 1 || (1..=*extent).contains(i)) {
                 if index < 1 || index > *extent {
                     bail!(
                         "array `{name}` dimension {}: subscript {index} outside 1:{extent}",
@@ -422,6 +442,10 @@ impl Lowerer {
                 });
                 Expr::Call(function, vec![e.clone(), int(*extent)])
             };
+            if dims.len() == 1 {
+                *indices = vec![checked];
+                return Ok(());
+            }
             offset = bin(
                 BinOp::Add,
                 offset,
@@ -683,8 +707,10 @@ impl Lowerer {
                 for a in args.iter_mut() {
                     self.expression(a, shapes)?;
                 }
-                if let Some(dims) = shapes.get(n).filter(|d| d.len() > 1) {
-                    self.indices(n, args, dims)?;
+                if let Some(dims) = self.checked(n, shapes) {
+                    if dims.len() > 1 || args.len() == 1 && self.unchecked(&args[0], shapes) {
+                        self.indices(n, args, dims)?;
+                    }
                 }
             }
             Expr::Bin(_, a, b) => {
@@ -1265,8 +1291,10 @@ impl Lowerer {
                     for e in indices.iter_mut() {
                         self.expression(e, &shapes)?;
                     }
-                    if let Some(dims) = shapes.get(name).filter(|d| d.len() > 1) {
-                        self.indices(name, indices, dims)?;
+                    if let Some(dims) = self.checked(name, &shapes) {
+                        if dims.len() > 1 || indices.len() == 1 && self.unchecked(&indices[0], &shapes) {
+                            self.indices(name, indices, dims)?;
+                        }
                     }
                     self.expression(value, &shapes)?;
                 }
@@ -1488,6 +1516,20 @@ pub fn resolve(mut p: Program) -> Result<Program> {
         }
     }
     collect_pure(&p.body, &mut lower.pure_functions);
+    fn heap(body: &mut [Stmt], out: &mut std::collections::HashSet<String>) {
+        for s in body.iter_mut() {
+            if let Stmt::CallSub { name, args } = s {
+                if name.starts_with("@heap") { for a in args.iter() { if let Expr::Ident(n) = a { out.insert(n.clone()); } } }
+            }
+            for e in crate::procedure_arguments::expressions(s) {
+                crate::procedure_arguments::visit_expr(e, &mut |e| if let Expr::Call(n, args) = e {
+                    if n.starts_with("@heap") { for a in args.iter() { if let Expr::Ident(n) = a { out.insert(n.clone()); } } }
+                });
+            }
+            for b in crate::procedure_arguments::children(s) { heap(b, out); }
+        }
+    }
+    heap(&mut p.body, &mut lower.heap);
     for s in &p.body {
         if let Stmt::Module { body, .. } = s {
             for s in body {
