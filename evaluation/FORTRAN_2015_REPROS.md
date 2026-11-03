@@ -1,5 +1,46 @@
 # Standalone repros from the Fortran 2015 samples
 
+## Follow-up: fve constructor index scope fixed
+
+[tests/programs/xfve_constructor_implied_do.f90](../tests/programs/xfve_constructor_implied_do.f90)
+now compiles and prints `2.0 3.0 4.0`, matching gfortran. During an early
+constant-folding snapshot, the parser's named-loop wrapper is still a BLOCK.
+Constructor validation looked only for declarations inside that wrapper and
+missed the enclosing procedure's INTEGER declaration of `imetric`.
+
+The validator now includes visible scalar INTEGER type metadata, after USE
+association and local shadowing. Local REAL, array and PARAMETER declarations
+still hide an enclosing INTEGER and cannot serve as constructor indices.
+The seven tests in
+[tests/test_early_constructor_scope.py](../tests/test_early_constructor_scope.py)
+cover the original repro, nested BLOCK visibility, module host association,
+runtime bounds, local shadowing, invalid or missing indices, and preservation
+of the enclosing variable's value and initialization state. They pass in the
+interpreter and native `-O0`/`-O2`, with gfortran comparisons for valid programs.
+The existing array-constructor, constructor-expression, named-loop, early
+intrinsic-keyword and early deferred-CHARACTER suites pass too (30 tests).
+The release compiler was rebuilt. All seven new tests also pass against that
+binary, and `rf.bat tests\programs\xfve_constructor_implied_do.f90 --run`
+prints the expected three means.
+
+The full debug-compiler `fve_files.txt` follow-up reached its 120-second compile
+limit without a diagnostic; this does not establish that the entire program
+builds. Gfortran still builds it. Commands, source copies and logs are at
+`target/2015-compat/fve-constructor-scope-fixed-20261103/`.
+A separate 90-second pass-timing probe at
+`target/2015-compat/fve-constructor-scope-profile-20261103/` reached
+`derived::resolve` after parsing and preparation, without completing that pass
+before the timeout. This identifies the broad area for further investigation,
+not a specific cause of the slowdown.
+
+The rebuilt release compiler does finish far enough to report the next error:
+`whole POINTER array in this expression is not yet supported`, at
+`vol_pred.f90:127`, the metrics constructor containing expressions involving
+`vol_hist_stk` and `vol_fwd_stk`. Its compile attempt took 73.359 seconds;
+gfortran built the group in 9.584 seconds. The full group remains blocked.
+The release snapshot, ordered sources and logs are at
+`target/2015-compat/fve-constructor-scope-release-20261103/`.
+
 ## Follow-up: early deferred CHARACTER array rejection fixed
 
 The declaration at `statistics.f90:1689` now passes. Deferred-length CHARACTER
@@ -36,8 +77,18 @@ statistics declaration. Neither group builds completely yet:
 | `fve_files.txt` | constructor implied-DO index `imetric` requires a locally declared scalar INTEGER variable | `vol_pred.f90:103`, enclosing named DO |
 | `rcsv_files.txt` | unsupported expression in numeric array reduction | `read_csv.f90:100`, internal READ |
 
+The standalone `fve` repro is
+[tests/programs/xfve_constructor_implied_do.f90](../tests/programs/xfve_constructor_implied_do.f90).
+Run `rf.bat tests\programs\xfve_constructor_implied_do.f90 --run`.
+Before the scope fix above, both debug and release compilers rejected the declared INTEGER index
+`imetric`, pointing to the enclosing named DO. Saved/allocated derived-object
+storage is necessary to trigger the early constant-folding pass in this
+reduction; without it the same implied-DO compiles. Gfortran with
+`-std=f2018 -fcheck=all` compiles and runs the repro, printing `2.0 3.0 4.0`.
+
 Both groups still compile with gfortran. The follow-up compiles and links only;
-it does not execute the external programs. Source copies, compiler snapshot,
+it does not execute the external programs; the standalone repro was executed
+with gfortran. Source copies, compiler snapshot,
 commands and full diagnostics are preserved in the report directory.
 
 ## Follow-up: utility/statistics PARAMETER errors fixed

@@ -953,7 +953,6 @@ pub(crate) fn initial_value(kind: &TypeSpec, value: &Expr) -> Result<Expr> {
 
 fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[String], modules: &Modules, assumed_dummies: bool, main_scope: bool, template: bool) -> Result<Constants> {
     separate_parameters(body, arguments)?;
-    validate_constructor_indices(body)?;
     let mut constants = inherited.clone();
     for stmt in body.iter() {
         if let Stmt::Use { module, only, .. } = stmt {
@@ -995,6 +994,7 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
             }
         }
     }
+    validate_constructor_indices(body, &constants)?;
     for stmt in body.iter_mut() {
         if let Stmt::Function {name,..} | Stmt::Subroutine {name,..} | Stmt::GenericInterface {name,..} = stmt {
             constants.insert(format!("@model_procedure:{name}"),Expr::Logical(true));
@@ -1267,9 +1267,25 @@ fn variable(name: &str, constants: &Constants) -> Result<()> {
 }
 
 // Constructor implied-DO indices have local values and never read/write the
-// enclosing variable. Require explicit scalar INTEGER declarations in this subset.
-fn validate_constructor_indices(body: &mut Vec<Stmt>) -> Result<()> {
-    let mut integers = HashSet::new();
+// enclosing variable. Include visible scalar INTEGER declarations: an early
+// snapshot can still contain the parser's BLOCK wrapper for a named construct.
+fn validate_constructor_indices(body: &mut Vec<Stmt>, constants: &Constants) -> Result<()> {
+    let mut integers = constants.keys().filter_map(|key| {
+        let name = key.strip_prefix("@model_type:")?;
+        (!constants.contains_key(name)
+            && matches!(model_type_lookup(constants, name), Some((TypeSpec::Integer(_), 0))))
+            .then(|| name.to_owned())
+    }).collect::<HashSet<_>>();
+    // Local declarations hide host declarations even if their type or rank
+    // differs. PARAMETER names are not iteration variables.
+    for s in body.iter() {
+        match s {
+            Stmt::VarDecl { names, .. } | Stmt::DerivedDecl { names, .. } => for n in names { integers.remove(n); },
+            Stmt::ArrayDecl { name, .. } => { integers.remove(name); },
+            Stmt::InitializedDecl { entities, .. } => for (n, _) in entities { integers.remove(n); },
+            _ => {},
+        }
+    }
     for s in body.iter() {
         if let Stmt::VarDecl { kind: TypeSpec::Integer(_) | TypeSpec::IntegerKind(_), names } = s {
             integers.extend(names.iter().cloned());
