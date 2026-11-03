@@ -270,6 +270,9 @@ struct ArrayValue {
     value: Expr,
     reads: Vec<Stmt>,
 }
+// Keep declared result types and ELEMENTAL identity when scalar functions
+// remain as native calls through pointer-array expression lowering.
+type Functions = HashMap<String, (bool, Option<TypeSpec>)>;
 struct Lower {
     vars: HashMap<String, Variable>,
     /// The types of every declared variable, arrays included.
@@ -277,7 +280,7 @@ struct Lower {
     /// The ranks of every declared array.
     ranks: HashMap<String, usize>,
     pointers: HashMap<String, Pointer>,
-    functions: HashSet<String>,
+    functions: Functions,
     serial: usize,
     capacity: i64,
     name_capacity: usize,
@@ -1034,9 +1037,12 @@ impl Lower {
             }
         }
         Ok(match e {
+            Expr::Call(n, _) if self.functions.get(n).is_some_and(|(_,kind)|kind.is_some()) =>
+                self.functions[n].1.clone().unwrap(),
             Expr::IntLit(_) => TypeSpec::Integer(None),
             Expr::RealLit(_) => TypeSpec::Real,
             Expr::Logical(_) => TypeSpec::Logical,
+            Expr::Str(s) => TypeSpec::Character(Some(s.len())),
             Expr::Un(UnOp::Not, _) => TypeSpec::Logical,
             Expr::Un(_, a) => self.kind(a)?,
             Expr::Bin(op, a, b) => {
@@ -1065,6 +1071,7 @@ impl Lower {
                 result.context("empty constructor requires an explicit type")?
             }
             Expr::Call(n, a) if n == "reshape" || n == "abs" => self.kind(&a[0])?,
+            Expr::Call(n, a) if crate::intrinsics::math_arity(n).is_some() => self.kind(&a[0])?,
             _ => bail!("unsupported type in pointer array expression"),
         })
     }
@@ -1182,9 +1189,11 @@ impl Lower {
                 return Ok(Some(a));
             }
         }
-        // An elemental intrinsic applies to each element of its array
-        // arguments, with its scalar arguments evaluated once.
+        // Elemental intrinsics and user functions apply to each element of
+        // array arguments. Retain the user's declared scalar result type.
         if let Expr::Call(n, args) = e {
+            let user_result = self.functions.get(n).filter(|(elemental,_)|*elemental)
+                .and_then(|(_,kind)|kind.clone());
             let conversion = match n.as_str() {
                 "dble" | "dfloat" if args.len() == 1 => Some(TypeSpec::DoublePrecision),
                 "real" | "sngl" | "float" if args.len() == 1 => Some(TypeSpec::Real),
@@ -1200,7 +1209,8 @@ impl Lower {
                         | "max" | "min" | "dmax1" | "dmin1" | "max0" | "min0" | "mod" | "dmod" | "sign" | "dsign"
                         | "isign" | "dim" | "ddim"
                 );
-            if elemental && !self.functions.contains(n) && !self.vars.contains_key(n) && !self.pointers.contains_key(n) {
+            if (user_result.is_some() || elemental && !self.functions.contains_key(n))
+                && !self.vars.contains_key(n) && !self.pointers.contains_key(n) {
                 let mut parts = vec![];
                 for a in args {
                     parts.push(self.array(a, out)?);
@@ -1221,6 +1231,10 @@ impl Lower {
                             None => {
                                 let mut e = a.clone();
                                 self.expr(&mut e, out)?;
+                                // A scalar actual is evaluated once for the
+                                // whole elemental invocation, including an
+                                // impure scalar function used as that actual.
+                                if user_result.is_some() {e=self.temp(self.kind(a)?,e,out);}
                                 if let Ok(k) = self.kind(a) {
                                     kind = promote(kind, k);
                                 }
@@ -1230,7 +1244,7 @@ impl Lower {
                     }
                     return Ok(Some(ArrayValue {
                         shape,
-                        kind: conversion.unwrap_or(kind),
+                        kind: user_result.or(conversion).unwrap_or(kind),
                         capacity,
                         value: call(n, values),
                         reads,
@@ -1410,7 +1424,7 @@ impl Lower {
     }
     fn expr(&mut self, e: &mut Expr, out: &mut Vec<Stmt>) -> Result<()> {
         if let Expr::Call(n, args) = e {
-            if !self.functions.contains(n) {
+            if !self.functions.contains_key(n) {
                 if n == "@c_loc" {
                     let args=args.clone(); return self.c_loc(e,&args,out);
                 }
@@ -1452,7 +1466,7 @@ impl Lower {
         if let Expr::Call(n, args) | Expr::Index(n, args) = e {
             // The storage pools of recursive types are module arrays.
             let array = self.kinds.contains_key(n.as_str()) || n.starts_with("rfort_");
-            if !self.pointers.contains_key(n.as_str()) && !self.functions.contains(n.as_str()) && array {
+            if !self.pointers.contains_key(n.as_str()) && !self.functions.contains_key(n.as_str()) && array {
                 for a in args.iter_mut() {
                     if self.has_pointer(a) {
                         if let Some(values) = self.array(a, out)? {
@@ -2319,17 +2333,17 @@ fn replace_stmt(s: &mut Stmt, n: &str, value: &Expr) {
 }
 
 pub fn resolve(mut p: Program) -> Result<Program> {
-    fn known(body: &mut Vec<Stmt>, names: &mut HashSet<String>) {
+    fn known(body: &mut Vec<Stmt>, names: &mut Functions) {
         for s in body {
-            if let Stmt::Function { name, .. } = s {
-                names.insert(name.clone());
+            if let Stmt::Function { name, elemental, return_type, body, .. } = s {
+                names.insert(name.clone(), (*elemental, crate::elemental::result_kind(name,return_type,body)));
             }
             for b in children(s) {
                 known(b, names);
             }
         }
     }
-    fn unit(body: &mut Vec<Stmt>, functions: &HashSet<String>) -> Result<()> {
+    fn unit(body: &mut Vec<Stmt>, functions: &Functions) -> Result<()> {
         let mut lower = Lower {
             vars: HashMap::new(),
             kinds: HashMap::new(),
@@ -2358,7 +2372,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
             lower.body(body, &HashSet::new())?;
             body.splice(0..0, std::mem::take(&mut lower.temporaries));
         }
-        fn procedures(body: &mut Vec<Stmt>, functions: &HashSet<String>) -> Result<()> {
+        fn procedures(body: &mut Vec<Stmt>, functions: &Functions) -> Result<()> {
             for s in body {
                 if let Stmt::Function { name, body, .. } = s {
                     let pointers: HashSet<_> = body
@@ -2392,7 +2406,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
         }
         procedures(body, functions)
     }
-    let mut functions = HashSet::new();
+    let mut functions = Functions::new();
     known(&mut p.body, &mut functions);
     unit(&mut p.body, &functions)?;
     crate::substrings::hoist(&mut p.body);

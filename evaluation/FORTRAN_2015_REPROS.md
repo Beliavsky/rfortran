@@ -1,5 +1,46 @@
 # Standalone repros from the Fortran 2015 samples
 
+## Follow-up: ELEMENTAL functions of POINTER array expressions
+
+[tests/programs/xfve_pointer_metrics.f90](../tests/programs/xfve_pointer_metrics.f90)
+reduces the next `vol_pred.f90:127` failure. POINTERs select columns of allocated
+TARGET matrices. The metrics constructor combines RMS/logarithms, ordinary
+and logarithmic correlations, and means of the user-defined ELEMENTAL
+functions `qlike` and `mse_var` applied to POINTER array expressions. The old
+release compiler reproduced `whole POINTER array in this expression is not
+yet supported` on this fixture.
+
+The pointer-array lowerer previously retained only function names. It could
+apply elemental intrinsics to descriptor elements, but treated a remaining
+user-defined ELEMENTAL call as a scalar expression and rejected the whole
+POINTER arguments. It now retains ELEMENTAL identity and declared result
+types, and emits the scalar function call in its existing descriptor loop.
+The result type can differ from the argument type. Scalar actual expressions
+are captured once, including an impure scalar function used as an argument.
+
+The new regression suite is
+[tests/test_pointer_elemental_functions.py](../tests/test_pointer_elemental_functions.py).
+It checks the five original metrics, INTEGER kinds 1/2/4/8, REAL, DOUBLE
+PRECISION and LOGICAL, differing result kinds, ranks 2/3/15, reversed and
+strided views, nested calls, reassociation, empty arrays, impure ELEMENTAL
+invocation counts and scalar evaluation counts. Runtime shape, association
+and initialization checks remain tested. Valid outputs are compared across
+the interpreter, native `-O0`/`-O2` and gfortran.
+All nine new tests pass. The existing pointer-expression-argument, descriptor,
+association, allocatable-target and runtime-elemental-reduction suites also
+pass (57 tests). The descriptor suite's 10,000-element interpreter case hit
+its 15-second limit during concurrent testing and passed when rerun separately.
+The release compiler was rebuilt; all nine new tests pass against that binary
+too. `rf.bat tests\programs\xfve_pointer_metrics.f90 --run` prints
+`0.565952 0.944911 0.866025 0.424196 0.003750`, matching gfortran.
+
+The full rebuilt-release `fve_files.txt` attempt reaches its 180-second compile
+limit without a diagnostic. Gfortran builds it in 11.035 seconds. Thus the
+standalone metrics failure is fixed, but successful compilation of the full
+program has not been established; compilation time is the next investigation.
+The compiler snapshot, ordered source copies, commands and logs are at
+`target/2015-compat/fve-pointer-elementals-fixed-20261103/`.
+
 ## Follow-up: fve constructor index scope fixed
 
 [tests/programs/xfve_constructor_implied_do.f90](../tests/programs/xfve_constructor_implied_do.f90)
