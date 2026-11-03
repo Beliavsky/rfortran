@@ -27,7 +27,7 @@ const CATEGORY: &str = "memory-leak";
 
 /// Intrinsic procedures that read or define a POINTER's target but cannot
 /// keep the pointer.
-const INTRINSICS: &[&str] = &[
+pub(crate) const INTRINSICS: &[&str] = &[
     "abs", "acos", "aimag", "aint", "all", "anint", "any", "asin", "associated", "atan", "atan2", "ceiling",
     "cmplx", "conjg", "cos", "cosh", "count", "cpu_time", "cshift", "dble", "dot_product", "eoshift", "exp",
     "findloc", "floor", "huge", "int", "is_contiguous", "kind", "lbound", "len", "len_trim", "log", "log10",
@@ -82,7 +82,7 @@ fn names(e: &Expr, p: &str) -> bool {
 }
 
 /// Whether a statement, nested bodies included, names `p`.
-fn mentions(s: &Stmt, p: &str) -> bool {
+pub(crate) fn mentions(s: &Stmt, p: &str) -> bool {
     let mut s = s.clone();
     if matches!(&s, Stmt::Assign { name, .. } | Stmt::AssignIndex { name, .. } if name.split('%').next() == Some(p)) {
         return true;
@@ -126,7 +126,7 @@ fn escapes(body: &[Stmt], p: &str) -> bool {
     })
 }
 
-fn gotos(body: &[Stmt]) -> bool {
+pub(crate) fn gotos(body: &[Stmt]) -> bool {
     body.iter().any(|s| matches!(s, Stmt::CallSub { name, .. } if name == "@goto") || {
         let mut copy = s.clone();
         crate::procedure_arguments::children(&mut copy).into_iter().any(|b| gotos(b))
@@ -357,7 +357,7 @@ fn procedures(src: &str, tokens: &[Token], body: &[Stmt], out: &mut Vec<Report>)
     }
 }
 
-fn span(src: &str, tokens: &[Token], offset: usize, name: Option<&str>) -> std::ops::Range<usize> {
+pub(crate) fn span(src: &str, tokens: &[Token], offset: usize, name: Option<&str>) -> std::ops::Range<usize> {
     let ts = crate::declaration_warnings::statement_tokens(tokens, offset, usize::MAX, src);
     name.and_then(|n| ts.iter().find(|t| matches!(&t.kind, TokenKind::Ident(i) if i == n)))
         .or(ts.first())

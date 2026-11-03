@@ -355,6 +355,22 @@ are skipped. Disable with `-Wno-memory-leak` or `!#allow(memory-leak)`;
 promote with `-Werror=memory-leak`. Regression checks:
 `python tests/test_memory_leak.py`.
 
+`-Wallocation-state` is **on by default**. It warns about DEALLOCATE of a local
+ALLOCATABLE that is unallocated on every path reaching the statement, and
+ALLOCATE of one that is allocated on every path, when the statement has no
+STAT=; either stops the program with an error when it runs. A local
+ALLOCATABLE starts unallocated; ALLOCATE and assignment to the whole variable
+allocate it, DEALLOCATE and MOVE_ALLOC (as FROM) leave it unallocated, and the
+branches of `IF (ALLOCATED(x))` know its state. A state that depends on a
+condition the analysis cannot follow is not reported, so
+`if (n > 0) allocate(x(n))` followed by `if (n > 0) deallocate(x)` is accepted.
+Passing the whole variable to a procedure other than a known intrinsic makes
+its state unknown. Variables named in an internal procedure, dummy arguments,
+function results, SAVE variables and procedures with GO TO are skipped.
+Disable with `-Wno-allocation-state` or `!#allow(allocation-state)`; promote
+with `-Werror=allocation-state`. Regression checks:
+`python tests/test_allocation_state.py`.
+
 `-Wfixed-unit` is opt-in and enabled by `-Wextra`. It warns about an OPEN of a
 constant unit (an integer literal or a named constant) in a procedure or
 module, since a fixed number may already be connected elsewhere in the
