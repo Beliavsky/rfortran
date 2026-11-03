@@ -341,7 +341,10 @@ checks: `python tests/test_implicit_open.py`.
 local POINTER of a procedure is lost without DEALLOCATE: when the procedure
 returns, or when ALLOCATE, NULLIFY or `=>` reassigns the pointer. A leak on
 every path "is not deallocated"; a leak on some paths "may not be deallocated",
-and names the IF whose outcome keeps the storage when there is one. The ELSE
+and names the IF whose outcome keeps the storage when there is one. When the
+pointer is never used as a pointer (no `=>`, NULLIFY or ASSOCIATED) and every
+leak is at a return, the warning suggests declaring it ALLOCATABLE, which is
+deallocated automatically when the procedure returns. The ELSE
 branch of `IF (ASSOCIATED(p))` holds no storage, so
 `if (associated(p)) deallocate(p)` is not reported. A pointer that might keep
 its storage elsewhere is not checked: one passed to a procedure other than a

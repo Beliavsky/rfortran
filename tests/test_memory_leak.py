@@ -150,6 +150,16 @@ class MemoryLeak(unittest.TestCase):
         self.assertEqual(warnings(result.stderr), [
             ("POINTER `x` may not be deallocated before `mean` returns, so its storage may leak [memory-leak]", 4)])
         self.assertIn("when this condition is false, `x` is still allocated", result.stderr)
+        self.assertIn("declare `x` ALLOCATABLE instead of POINTER", result.stderr)
+
+    def test_allocatable_suggestion_only_when_it_ends_the_leak(self):
+        result = check(CASES)
+        notes = {line: block for block in result.stderr.split("warning: ")[1:]
+                 for line in [int(re.search(r"example\.f90:(\d+):", block).group(1))]}
+        # never and early: leaks at returns only. again: a leak at ALLOCATE in
+        # a loop. lost: `=>` uses x as a pointer.
+        self.assertEqual({line: "ALLOCATABLE" in block for line, block in notes.items()},
+                         {7: True, 21: True, 30: False, 39: False})
 
     def test_disable_and_promote(self):
         self.assertNotIn("memory-leak", check(CONDITIONAL, "-Wno-memory-leak").stderr)

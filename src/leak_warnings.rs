@@ -309,6 +309,27 @@ struct Report {
     procedure: String,
     pointer: String,
     leak: Leak,
+    /// The pointer could be ALLOCATABLE, which would end every leak.
+    allocatable: bool,
+}
+
+/// Whether `p` is used as a pointer: in `=>`, NULLIFY or ASSOCIATED.
+fn pointer_use(body: &[Stmt], p: &str) -> bool {
+    body.iter().any(|s| {
+        let direct = match s {
+            Stmt::CallSub { name, args } if name == "@pointer_associate" => args.iter().any(|a| root(a) == Some(p)),
+            Stmt::CallSub { name, args } if name == "@nullify" => args.iter().any(|a| root(a) == Some(p)),
+            _ => false,
+        };
+        let mut copy = s.clone();
+        direct || crate::procedure_arguments::expressions(&mut copy).into_iter().any(|e| {
+            let mut found = false;
+            crate::procedure_arguments::visit_expr(e, &mut |e| if let Expr::Call(n, args) = e {
+                found |= n == "associated" && args.iter().any(|a| names(a, p));
+            });
+            found
+        }) || crate::procedure_arguments::children(&mut copy).into_iter().any(|b| pointer_use(b, p))
+    })
 }
 
 fn procedures(src: &str, tokens: &[Token], body: &[Stmt], out: &mut Vec<Report>) {
@@ -325,7 +346,10 @@ fn procedures(src: &str, tokens: &[Token], body: &[Stmt], out: &mut Vec<Report>)
                     w.leak(&end, Point::Return(None));
                     // A leak is certain only for storage no path deallocates.
                     for l in &mut w.leaks { l.definite &= !w.freed.contains(&l.site); }
-                    out.extend(w.leaks.into_iter().map(|leak| Report { procedure: name.clone(), pointer: p.clone(), leak }));
+                    // A local ALLOCATABLE is deallocated when the procedure
+                    // returns; ALLOCATE of an allocated one is an error.
+                    let allocatable = !pointer_use(body, &p) && w.leaks.iter().all(|l| matches!(l.point, Point::Return(_)));
+                    out.extend(w.leaks.into_iter().map(|leak| Report { procedure: name.clone(), pointer: p.clone(), leak, allocatable }));
                 }
             }
             _ => {}
@@ -368,7 +392,7 @@ pub(crate) fn check(
         Some((i, o)) => (ids[i], o.span(span)),
         None => (fallback, span.start.min(src.len())..span.end.min(src.len())),
     };
-    for Report { procedure, pointer: p, leak } in &reports {
+    for Report { procedure, pointer: p, leak, allocatable } in &reports {
         let (file, site) = locate(span(src, &tokens, leak.site, Some(p)));
         let event = match leak.point {
             Point::Return(_) => format!("before `{procedure}` returns"),
@@ -405,7 +429,12 @@ pub(crate) fn check(
         let d = if error { Diagnostic::error() } else { Diagnostic::warning() }
             .with_message(message)
             .with_labels(labels)
-            .with_notes(vec![format!("DEALLOCATE `{p}` on every path; -Wno-{CATEGORY} disables this warning")]);
+            .with_notes(if *allocatable {
+                vec![format!("declare `{p}` ALLOCATABLE instead of POINTER: a local ALLOCATABLE is deallocated automatically when `{procedure}` returns"),
+                     format!("or DEALLOCATE `{p}` on every path; -Wno-{CATEGORY} disables this warning")]
+            } else {
+                vec![format!("DEALLOCATE `{p}` on every path; -Wno-{CATEGORY} disables this warning")]
+            });
         emit_to_io_write(&mut StandardStream::stderr(ColorChoice::Auto), &Config::default(), &files, &d)?;
     }
     if error && !reports.is_empty() { bail!("{CATEGORY} warnings treated as errors"); }
