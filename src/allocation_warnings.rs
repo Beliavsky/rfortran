@@ -25,6 +25,10 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 const CATEGORY: &str = "allocation-state";
 
+/// The forms of ALLOCATE: plain, and with a derived type, intrinsic type or
+/// CHARACTER length specification as the first argument.
+const ALLOCATE: &[&str] = &["@allocate", "@allocate_derived_type", "@allocate_intrinsic_type", crate::substrings::ALLOCATE_CHARACTER];
+
 /// Why a variable has its state, with the offset of the statement.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Cause {
@@ -154,8 +158,9 @@ impl Walker<'_> {
             }
             match s {
                 Stmt::Function { .. } | Stmt::Subroutine { .. } | Stmt::Module { .. } => {}
-                Stmt::CallSub { name, args } if name == "@allocate"
-                    && args.iter().any(|a| matches!(a, Expr::Call(n, _) if n == self.x) || self.whole(a)) => {
+                // A type specification or CHARACTER length comes first.
+                Stmt::CallSub { name, args } if ALLOCATE.contains(&name.as_str())
+                    && args[usize::from(name != "@allocate")..].iter().any(|a| matches!(a, Expr::Call(n, _) | Expr::Section { name: n, .. } if n == self.x) || self.whole(a)) => {
                     let allocated = State::Known(true, Cause::Allocated(offset));
                     if stat(args) {
                         cur.insert(allocated);
@@ -264,6 +269,10 @@ fn candidates(body: &[Stmt], params: &[String], name: &str, internal: &dyn Fn(&s
         match s {
             Stmt::SourceLocation(n) => offset = *n,
             Stmt::DummyIntent { name, intent } if intent == "allocatable" => allocatables.push((name.clone(), offset)),
+            Stmt::DerivedDecl { names, attributes, .. } if attributes.iter().any(|a| a == "allocatable") => {
+                allocatables.extend(names.iter().map(|n| (n.clone(), offset)));
+                if attributes.iter().any(|a| a == "save") { saved.extend(names.iter().cloned()); }
+            }
             Stmt::DummyIntent { name, intent } if intent == "save" => { saved.insert(name.clone()); }
             Stmt::InitializedDecl { attributes, entities, .. } if attributes.iter().any(|a| a.eq_ignore_ascii_case("save")) => {
                 saved.extend(entities.iter().map(|(n, _)| n.clone()));
@@ -274,6 +283,8 @@ fn candidates(body: &[Stmt], params: &[String], name: &str, internal: &dyn Fn(&s
     if saved.contains(crate::data_statements::SAVE_ALL) {
         return vec![];
     }
+    let mut seen = HashSet::new();
+    allocatables.retain(|(n, _)| seen.insert(n.clone()));
     allocatables.into_iter().filter(|(x, _)| {
         !saved.contains(x) && !params.contains(x) && x != name && !returned(body, x) && !redeclared(body, x)
             && !body.iter().any(|s| matches!(s, Stmt::Function { name, .. } | Stmt::Subroutine { name, .. } if internal(name)) && mentions(s, x))
