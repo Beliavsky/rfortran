@@ -297,3 +297,20 @@ The second command uses the verified cache offline. JSON and Markdown reports
 are written to `target/oop-compat/`. Unexpected failures return a nonzero status;
 known gaps require a matching phase and diagnostic. See the suite README for
 case selection, compiler paths, timeouts, licensing, and the initial checkpoint.
+
+## External ordered-source lists
+
+`tests/run_source_list_compat.py` compiles complete groups listed by `*files.txt`
+files, preserving their source order. It snapshots an existing rfort executable,
+copies inputs into isolated build directories and compares compilation/linking
+with gfortran. It does not rebuild rfort or execute the generated programs.
+
+```cmd
+python tests\run_source_list_compat.py --root C:\fortran\2015 --lists low_files.txt mix_files.txt fve_files.txt rcsv_files.txt --limit 4
+```
+
+Each run writes JSON/Markdown reports and full diagnostics beneath a new
+`target/source-list-compat/` directory. The [2026-11-03 sample report](../evaluation/FORTRAN_2015_SAMPLE.md)
+covers 22 source groups, distinguishes rfort-only failures from source/dependency
+problems, and gives commands to repeat that sample. Compilation success alone
+does not establish runtime correctness.
