@@ -37,7 +37,7 @@ class Constructors(unittest.TestCase):
             ("integer::i,a(3)", "a=[(i,i=1,3)]\nprint *,i", "uninitialized variable `i`"),
             ("integer::i,a(3)", "a=[(a(i),i=3,1,-1)]", "uninitialized"),
             ("integer::i,a(3)", "a=[(i,i=1,4)]", "nonconforming array assignment"),
-            ("integer::i,a(3)", "a=[(i,i=1,1000000)]", "expansion limit"),
+            ("integer::i\ninteger,parameter::a(1000000)=[(i,i=1,1000000)]", "print *,a(1)", "expansion limit"),
         ]
         with tempfile.TemporaryDirectory(prefix="bad-constructor-") as tmp:
             path=Path(tmp)/"main.f90"

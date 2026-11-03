@@ -1337,6 +1337,11 @@ fn validate_constructor_indices(body: &mut Vec<Stmt>, constants: &Constants) -> 
     Ok(())
 }
 
+// Executable constructors may stay compact for the runtime loop lowerer.
+// Declaration/constant evaluation deliberately does not enable this policy.
+const RUNTIME_CONSTRUCTORS: &str = "@runtime_constructors";
+const CONSTRUCTOR_UNROLL_LIMIT: i128 = 64;
+
 fn constructor_items(items: &[Expr], constants: &Constants, output: &mut Vec<Expr>, budget: &mut usize) -> Result<()> {
     for item in items {
         match item {
@@ -1345,7 +1350,14 @@ fn constructor_items(items: &[Expr], constants: &Constants, output: &mut Vec<Exp
                 let mut bounds = args[1..4].to_vec();
                 for e in &mut bounds { rewrite_expr(e, constants)?; }
                 let constant_bounds = bounds.iter().map(integer_constant).collect::<Result<Vec<_>>>();
-                let Ok(bounds) = constant_bounds else {
+                let keep_loop = constants.contains_key(RUNTIME_CONSTRUCTORS)
+                    && constant_bounds.as_ref().is_ok_and(|b| {
+                        let (lo, hi, step) = (i128::from(b[0]), i128::from(b[1]), i128::from(b[2]));
+                        step != 0 && (if step > 0 { hi - lo } else { lo - hi })
+                            / step.abs() + 1 > CONSTRUCTOR_UNROLL_LIMIT
+                    });
+                let constant_bounds = constant_bounds.ok().filter(|_| !keep_loop);
+                let Some(bounds) = constant_bounds else {
                     let mut local=constants.clone();local.remove(index);
                     let mut values=vec![];
                     constructor_items(&args[4..],&local,&mut values,budget)?;
@@ -1378,7 +1390,9 @@ pub(crate) fn expand_constructor(expr:&mut Expr)->Result<()> {
     if let Expr::Call(tag,items)=expr {
         if tag=="@array_constructor" {
             let mut expanded=vec![];
-            constructor_items(items,&Constants::new(),&mut expanded,&mut 100_000)?;
+            let mut constants = Constants::new();
+            constants.insert(RUNTIME_CONSTRUCTORS.into(), Expr::Logical(true));
+            constructor_items(items,&constants,&mut expanded,&mut 100_000)?;
             *items=expanded;
         }
     }
@@ -1475,7 +1489,10 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
         if args.len()==1 {
             *expr=crate::empty_constructors::parsed(kind,vec![]);
         } else {
-            let mut items=vec![];constructor_items(&args[1..],constants,&mut items,&mut 4096)?;
+            // Typed constructors still use the constant element converter.
+            let mut constant_context = constants.clone();
+            constant_context.remove(RUNTIME_CONSTRUCTORS);
+            let mut items=vec![];constructor_items(&args[1..],&constant_context,&mut items,&mut 4096)?;
             *expr=typed_constructor(&kind,items)?;
         }
         return Ok(());
@@ -1484,7 +1501,9 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
         if name=="@typed_character_constructor" {
             let mut length=args[0].clone();rewrite_expr(&mut length,constants)?;
             let length=usize::try_from(integer_constant(&length)?.max(0)).context("CHARACTER constructor length exceeds supported limits")?;
-            let mut items=Vec::new();constructor_items(&args[1..],constants,&mut items,&mut 4096)?;
+            let mut constant_context = constants.clone();
+            constant_context.remove(RUNTIME_CONSTRUCTORS);
+            let mut items=Vec::new();constructor_items(&args[1..],&constant_context,&mut items,&mut 4096)?;
             *expr=typed_constructor(&TypeSpec::Character(Some(length)),items)?;
             return Ok(());
         }
@@ -1981,7 +2000,33 @@ pub(crate) fn concrete_kind(mut kind: TypeSpec) -> Result<TypeSpec> {
 }
 
 fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules, assumed: &[String], template: bool) -> Result<()> {
+    // Derived and COMPLEX constructors have separate earlier lowering paths
+    // which still require expansion. Only opt in when the destination's
+    // declaration proves the ordinary runtime constructor lowerer supports it.
+    const LOOP_DESTINATION: &str = "@constructor_loop_destination:";
+    let mut loop_destinations: HashSet<String> = constants.keys()
+        .filter_map(|n| n.strip_prefix(LOOP_DESTINATION).map(str::to_owned)).collect();
+    for s in body.iter() {
+        match s {
+            Stmt::VarDecl { names, .. } | Stmt::DerivedDecl { names, .. } => {
+                for name in names { loop_destinations.remove(name); }
+            }
+            Stmt::ArrayDecl { name, kind, .. } => {
+                loop_destinations.remove(name);
+                if matches!(kind, TypeSpec::Integer(_) | TypeSpec::IntegerKind(_)
+                    | TypeSpec::Real | TypeSpec::RealKind(_) | TypeSpec::DoublePrecision
+                    | TypeSpec::Logical | TypeSpec::LogicalKind(_) | TypeSpec::Character(_)) {
+                    loop_destinations.insert(name.clone());
+                }
+            }
+            _ => {}
+        }
+    }
     let mut scoped = constants.clone();
+    scoped.retain(|n, _| !n.starts_with(LOOP_DESTINATION));
+    for name in &loop_destinations {
+        scoped.insert(format!("{LOOP_DESTINATION}{name}"), Expr::Logical(true));
+    }
     // A local declaration hides host type information as well as its value.
     for stmt in body.iter() {
         match stmt {
@@ -2001,6 +2046,13 @@ fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules, ass
     for stmt in body {
         if let Stmt::SourceLocation(offset)=stmt {source_offset=Some(*offset);}
         (|| -> Result<()> {
+        // Do not defer constructors used in declarations, initializers or
+        // specification expressions: those still require constant expansion.
+        if matches!(stmt, Stmt::Assign {name, ..} if loop_destinations.contains(name)) {
+            scoped.insert(RUNTIME_CONSTRUCTORS.into(), Expr::Logical(true));
+        } else {
+            scoped.remove(RUNTIME_CONSTRUCTORS);
+        }
         let constants = &scoped;
         match stmt {
             Stmt::Print { items } => {
