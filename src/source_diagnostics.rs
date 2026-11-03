@@ -197,6 +197,10 @@ pub(crate) fn at(error: anyhow::Error, offset: Option<usize>) -> anyhow::Error {
         error
     }
 }
+/// An error at the statement starting at `offset`, highlighting `name`.
+pub(crate) fn named(message: String, offset: usize, name: &str) -> anyhow::Error {
+    LocatedError { message, range: offset..usize::MAX, highlight: Some(name.into()) }.into()
+}
 pub(crate) fn declaration(
     body: &[Stmt],
     name: &str,
