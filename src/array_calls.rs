@@ -2369,7 +2369,9 @@ pub fn resolve(mut p: Program) -> Result<Program> {
     p = crate::compile_profile::run("crate::multidim::prepare_character_storage", || crate::multidim::prepare_character_storage(p))?;
     let p = crate::compile_profile::run("crate::heap_characters::resolve", || crate::heap_characters::resolve(p))?;
     let p = crate::compile_profile::run("crate::character_arrays::resolve", || crate::character_arrays::resolve(p))?;
-    crate::multidim::resolve(crate::function_arrays::resolve(crate::substrings::resolve(p)?)?)
+    let p = crate::compile_profile::run("crate::substrings::resolve", || crate::substrings::resolve(p))?;
+    let p = crate::compile_profile::run("crate::function_arrays::resolve", || crate::function_arrays::resolve(p))?;
+    crate::compile_profile::run("crate::multidim::resolve", || crate::multidim::resolve(p))
 }
 
 #[cfg(test)]

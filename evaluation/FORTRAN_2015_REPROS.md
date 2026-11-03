@@ -96,6 +96,40 @@ The three new scope tests also pass against the rebuilt optimized executable.
 build; a normal `cargo build --release --bin rfort` restores the repository's
 usual release-profile settings.
 
+## Constructor-resolution compilation-speed follow-up
+
+`constructors::resolve` now shares unchanged array-shape tables across nested
+scopes and skips scopes without constructor, implied-DO, or SIZE work. SIZE
+inquiries outside constructors still undergo resolution, and retained implied-DOs
+still receive the existing diagnostics. Local declarations and nonempty descriptor
+metadata updates isolate their scope using copy-on-write.
+
+All 119 constructor regression tests pass, including two new cases in
+`tests/test_constructor_scope_sharing.py` covering shadowed arrays, sibling scopes,
+constructor snapshots, and SIZE inquiries in nested control flow. These exercise
+interpreter and native O0/O2 execution with gfortran comparisons.
+
+Using the same optimized development build settings as the preceding output
+profile (LTO disabled, 16 codegen units), the full fve group now completes
+`constructors::resolve` in **0.149 seconds**. The preceding run was still in this
+pass at the overall 300-second limit. Character-output preparation takes 2.442
+seconds, and subsequent character-array lowering also completes.
+
+The full build still times out after 300.083 seconds, beyond character-array
+lowering; gfortran completes in 9.455 seconds. No complete rfort executable was
+produced or run. Compiler/source snapshots, commands and logs are saved under
+`target/2015-compat/fve-constructor-pruned/`. This demonstrates removal of the
+constructor hotspot, not completion of the overall compilation-speed work.
+
+Opt-in pass timers now also distinguish the subsequent substring, function-array,
+and multidimensional-array passes so the remaining work can be located precisely.
+
+The final instrumented build also passes both new scope tests. Its diagnostic
+follow-up (`target/2015-compat/fve-post-constructor-profile/`) completes constructor
+resolution in 0.140 seconds and reaches the 180-second overall limit inside
+`substrings::resolve`. Substring lowering is the next confirmed hotspot.
+`target/release/rfort.exe` remains the LTO-disabled optimized development build.
+
 ## Compilation-speed follow-up: fve
 
 The initial release profile timed out after 180 seconds in the final

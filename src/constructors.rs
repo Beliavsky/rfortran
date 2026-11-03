@@ -409,7 +409,42 @@ impl Builder<'_> {
         Ok(out)
     }
 }
-fn body(stmts: &mut Vec<Stmt>, inherited: &Shapes, serial: &mut usize) -> Result<()> {
+// Most generated scopes contain only scalar operations. Avoid collecting and
+// copying their inherited array metadata when this pass has no work there.
+fn needs_expression(e: &Expr) -> bool {
+    match e {
+        Expr::Call(n, _) if matches!(n.as_str(), "size" | "@array_constructor" | "@output_implied_do") => true,
+        Expr::Call(_, args) | Expr::Index(_, args) => args.iter().any(needs_expression),
+        Expr::Bin(_, a, b) => needs_expression(a) || needs_expression(b),
+        Expr::Un(_, a) => needs_expression(a),
+        Expr::Section { lower, upper, stride, .. } =>
+            [lower, upper, stride].into_iter().flatten().any(|e| needs_expression(e)),
+        _ => false,
+    }
+}
+fn needs_body(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(|stmt| match stmt {
+        Stmt::Assign { value, .. } => needs_expression(value),
+        Stmt::AssignIndex { indices, value, .. } =>
+            needs_expression(value) || indices.iter().any(needs_expression),
+        Stmt::Print { items } | Stmt::Read { args: items }
+        | Stmt::CallSub { args: items, .. } => items.iter().any(needs_expression),
+        Stmt::Return(Some(e)) => needs_expression(e),
+        Stmt::If { cond, then_body, else_body } => needs_expression(cond)
+            || needs_body(then_body) || else_body.as_ref().is_some_and(|b| needs_body(b)),
+        Stmt::Do { start, end, body, .. } =>
+            needs_expression(start) || needs_expression(end) || needs_body(body),
+        Stmt::DoWhile { cond, body } => needs_expression(cond) || needs_body(body),
+        Stmt::Block { body } | Stmt::Function { body, .. }
+        | Stmt::Subroutine { body, .. } | Stmt::Module { body, .. } => needs_body(body),
+        Stmt::SelectCase { expr, cases, default } => needs_expression(expr)
+            || cases.iter().any(|c| needs_body(&c.body))
+            || default.as_ref().is_some_and(|b| needs_body(b)),
+        _ => false,
+    })
+}
+fn body(stmts: &mut Vec<Stmt>, inherited: &crate::allocatables::SharedShapes, serial: &mut usize) -> Result<()> {
+    if !needs_body(stmts) { return Ok(()); }
     let mut shapes = inherited.clone();
     for stmt in stmts.iter() {
         match stmt {
@@ -424,7 +459,9 @@ fn body(stmts: &mut Vec<Stmt>, inherited: &Shapes, serial: &mut usize) -> Result
             _ => {}
         }
     }
-    crate::allocatables::metadata(stmts, &mut shapes);
+    let mut metadata = Shapes::new();
+    crate::allocatables::metadata(stmts, &mut metadata);
+    if !metadata.is_empty() { shapes.extend(metadata); }
     let mut source_offset = None;
     for stmt in stmts.iter_mut() {
         if let Stmt::SourceLocation(offset) = stmt {
@@ -577,6 +614,6 @@ fn body(stmts: &mut Vec<Stmt>, inherited: &Shapes, serial: &mut usize) -> Result
     Ok(())
 }
 pub(crate) fn resolve(mut p: Program) -> Result<Program> {
-    body(&mut p.body, &Shapes::new(), &mut 0)?;
+    body(&mut p.body, &crate::allocatables::SharedShapes(std::sync::Arc::new(Shapes::new())), &mut 0)?;
     Ok(p)
 }
