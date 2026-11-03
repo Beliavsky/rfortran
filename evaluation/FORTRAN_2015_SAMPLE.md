@@ -8,6 +8,9 @@ A [third sample of 18 groups](FORTRAN_2015_SAMPLE3.md) records further results,
 source-list issues and two diagnostic probes using corrected copies.
 A [targeted fourth sample of 24 groups](FORTRAN_2015_SAMPLE4.md) favors new
 dependencies and avoids repeatedly encountered shared blockers.
+The [repro follow-ups](FORTRAN_2015_REPROS.md) record fixes for recursive numeric
+array results and the utility/statistics PARAMETER diagnostics; the table below
+retains the original sample results.
 
 This is a selected 22-group sample, not a sweep of all 2,148 source lists.
 Compiler: rfort 0.1.0-alpha.1, Windows x86-64.

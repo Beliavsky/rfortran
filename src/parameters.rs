@@ -1398,6 +1398,23 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
             return Ok(());
         }
     }
+    if let Expr::Call(name, args) = expr {
+        // Constant lowering can run before ordinary keyword association (for
+        // example while preserving saved derived-object initializers). Fold
+        // scalar intrinsic values only after interpreting their argument names;
+        // a KIND keyword wrapper is not itself an integer constant expression.
+        // Visible user procedures/generics keep their keywords via the guard above.
+        if matches!(name.as_str(), "real" | "int" | "nint" | "aint" | "anint"
+            | "floor" | "ceiling" | "char" | "achar" | "ichar" | "iachar"
+            | "len" | "len_trim" | "kind" | "selected_int_kind"
+            | "selected_real_kind" | "selected_logical_kind" | "selected_char_kind")
+            && crate::named_arguments::has_keywords(args)
+        {
+            if let Some(signature) = crate::named_arguments::intrinsic(name) {
+                signature.reorder(name, args)?;
+            }
+        }
+    }
     if let Expr::Call(name,args)=expr {
         if name=="@conditional" {
             // Preserve the full choice for static checking. Constant evaluators

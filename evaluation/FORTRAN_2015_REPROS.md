@@ -1,5 +1,47 @@
 # Standalone repros from the Fortran 2015 samples
 
+## Follow-up: utility/statistics PARAMETER errors fixed
+
+The executable assignments at `statistics.f90:1082` and `util.f90:8070` now
+pass the earlier PARAMETER diagnostics. Reduction established the common cause:
+saved derived-object preparation requests an early constant-folding snapshot,
+before ordinary keyword association. The scalar-intrinsic folder interpreted
+the keyword wrapper in `real(...,kind=dp)` as an integer expression, instead
+of associating KIND with its value first. Runtime data and bounds do not need
+to be constant.
+
+[tests/programs/xbin_prob_result.f90](../tests/programs/xbin_prob_result.f90)
+preserves the statistics assignment, its two array-result functions, and the
+unrelated saved/allocated derived objects needed to trigger the early snapshot.
+It reproduced the exact PARAMETER error before the fix. It now prints
+`1.0`, followed by bin probabilities `0.2500 0.2500 0.5000`.
+
+The fix associates keywords using the existing intrinsic signatures before
+folding the supported scalar conversions and inquiries. Visible user procedures
+and generics retain their own keyword names. The five tests in
+[tests/test_early_intrinsic_keywords.py](../tests/test_early_intrinsic_keywords.py)
+check the original statistics trigger, the utility recursive REAL-conversion
+statement, reordered conversion/inquiry/kind keywords, user-defined REAL, and
+invalid keyword diagnostics. They pass in the interpreter, native `-O0` and
+`-O2`, and gfortran where applicable. The existing named-argument,
+initializer/kind and persistent-polymorphic-pointer suites pass too (eight,
+two and 13 tests).
+The release compiler was rebuilt; the five focused tests pass against that
+binary too. `rf.bat tests\programs\xbin_prob_result.f90 --run` produces the
+expected probabilities.
+
+Isolated comparisons of `fve_files.txt` and `rcsv_files.txt` both get past the
+original errors and now stop at `statistics.f90:1689`:
+
+```fortran
+character (len=:), allocatable :: indep_label_,cstats_indep_(:)
+```
+
+The new diagnostic is `deferred CHARACTER arrays are not yet supported`.
+Both groups still build with gfortran; neither is yet a successful full rfort
+build. Snapshots, commands and logs for the follow-up are saved locally in
+`target/2015-compat/early-keywords-fixed-20261103/`.
+
 ## Follow-up: recursive numeric array results fixed
 
 The recursive REAL array-result repro now compiles and runs. Recursive
@@ -31,9 +73,10 @@ The full `mavg_files.txt` group gets past the original recursive-result error
 and reaches `moving_average.f90:87`, where a column section inside FORALL is
 still rejected. The latest isolated comparison is under
 `target/2015-compat/recursive-results-mavg-final-20261103/`.
-The `fve_files.txt` and `rcsv_files.txt` groups still report their original
-PARAMETER diagnostics at `util.f90:8070` and `statistics.f90:1082`; those were
-not resolved by this change. Their follow-up logs are under
+At that stage, the `fve_files.txt` and `rcsv_files.txt` groups still reported
+their original PARAMETER diagnostics at `util.f90:8070` and
+`statistics.f90:1082`; recursion support alone did not resolve them. The newer
+keyword-folding follow-up above fixes those errors. The earlier logs are under
 `target/2015-compat/recursive-results-final-20261103/`.
 
 The table below preserves the original observations against the older binary.
