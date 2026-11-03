@@ -22,7 +22,9 @@ struct Info {
 }
 #[derive(Clone, Default)]
 struct Scope {
-    variables: HashMap<String, Variable>,
+    // Most generated branches only read the enclosing declarations. Copy the
+    // table only when a scope shadows a name or introduces a temporary.
+    variables: std::sync::Arc<HashMap<String, Variable>>,
     // Signatures are immutable while lowering a program. Sharing them avoids
     // cloning all module interfaces for every generated block and branch.
     functions: std::sync::Arc<HashMap<String, TypeSpec>>,
@@ -499,8 +501,7 @@ impl Lowerer {
                 dims: dims.clone(),
             }
         });
-        scope
-            .variables
+        std::sync::Arc::make_mut(&mut scope.variables)
             .insert(name.clone(), Variable { kind, dims });
         name
     }
@@ -940,13 +941,13 @@ impl Lowerer {
     fn body(&mut self, body: &mut Vec<Stmt>, inherited: &Scope, params: &[String]) -> Result<()> {
         let mut scope = inherited.clone();
         for p in params {
-            scope.variables.remove(p);
+            std::sync::Arc::make_mut(&mut scope.variables).remove(p);
         }
         for s in body.iter() {
             match s {
                 Stmt::VarDecl { kind, names } => {
                     for n in names {
-                        scope.variables.insert(
+                        std::sync::Arc::make_mut(&mut scope.variables).insert(
                             n.clone(),
                             Variable {
                                 kind: kind.clone(),
@@ -956,7 +957,7 @@ impl Lowerer {
                     }
                 }
                 Stmt::ArrayDecl { kind, name, dims } => {
-                    scope.variables.insert(
+                    std::sync::Arc::make_mut(&mut scope.variables).insert(
                         name.clone(),
                         Variable {
                             kind: kind.clone(),
@@ -1295,7 +1296,7 @@ pub(crate) fn elemental_function(e:&mut Expr, shapes:&mut crate::allocatables::S
 
 fn resolve_inner(mut program: Program, after_calls: bool) -> Result<Program> {
     let procedures = procedure_intents(&program.body);
-    program = runtime::resolve(program, &procedures)?;
+    program = crate::compile_profile::run("vector.runtime", || runtime::resolve(program, &procedures))?;
     fn functions(body: &[Stmt], scope: &mut Scope) {
         for s in body {
             match s {
@@ -1325,10 +1326,13 @@ fn resolve_inner(mut program: Program, after_calls: bool) -> Result<Program> {
     let mut scope = Scope::default();
     scope.procedures = std::sync::Arc::new(procedures);
     functions(&program.body, &mut scope);
+    let _fixed = crate::compile_profile::Pass::new("vector.fixed");
     Lowerer {
         serial: serial_start(&program.body),
     }
     .body(&mut program.body, &scope, &[])?;
+    drop(_fixed);
+    let _characters = crate::compile_profile::Pass::new("vector.characters");
     if after_calls {
         crate::substrings::hoist_vectors(&mut program.body);
     } else {

@@ -1,5 +1,83 @@
 # Standalone repros from the Fortran 2015 samples
 
+## Compilation-speed follow-up: fve
+
+The initial release profile timed out after 180 seconds in the final
+`vector_subscripts::finish` pass. A second, more detailed profile reached the
+300-second limit inside its runtime-vector portion. Each generated branch and
+loop eagerly copied the enclosing symbol/shape table, including scopes that
+only read existing scalar variables. Large specialized procedures therefore
+repeatedly copied thousands of unrelated declarations.
+
+Runtime vector lowering, fixed vector lowering, and allocatable finishing now
+share unchanged symbol tables. A scope copies its table only when it introduces
+or shadows a declaration, adds a temporary, or changes descriptor metadata.
+Empty metadata updates do not force a copy. The mutable-map APIs used by
+procedure specialization retain their previous ownership and error behavior.
+
+The vector-only optimized development build completed the final vector pass in
+26.834 seconds (runtime: 16.286, fixed: 10.500), then reached the next bottleneck
+in `allocatables::finish`. The same scope-sharing optimization was applied to
+that pass as well. These intermediate measurements identify the bottlenecks;
+they were collected with background builds/tests and are not controlled timing
+ratios. The development builds disabled LTO and used 16 codegen units; the final
+build uses the repository's normal release profile. The final normal-release result is recorded below.
+
+[tests/test_vector_scope_sharing.py](../tests/test_vector_scope_sharing.py)
+checks nested BLOCK declarations, sibling scopes, shadowed scalar/array names,
+runtime descriptors, and generated temporaries. Existing vector, pointer,
+allocation, character-result and runtime-DIM suites exercise the shared paths.
+All 115 tests pass against the combined changes: scope sharing (2), fixed
+vectors (8), vector ranks (18), runtime sections (20), pointer elementals (9),
+runtime allocatables (19), runtime-DIM reductions (16), allocatable reallocation
+(12), and CHARACTER allocatable results (11). Valid cases run in the interpreter
+and native `-O0`/`-O2`, with gfortran reference comparisons.
+
+Profiling is opt-in; ordinary compiler output is unchanged. To rerun the
+ordered-source compilation from a CMD prompt (use a new output directory):
+
+```cmd
+set RFORT_TIME_PASSES=1
+python tests\run_source_list_compat.py --root C:\fortran\2015 --compiler target\release\rfort.exe --lists fve_files.txt --limit 1 --compile-timeout 300 --output target\2015-compat\fve-speed-rerun
+set RFORT_TIME_PASSES=
+```
+
+The runner snapshots the compiler and ordered sources, saves phase timings in
+`fve_files/rfort/stderr.txt`, and writes commands/statuses to `report.json` and
+`report.md`. It compiles and links only; it does not execute the full program.
+Intermediate snapshots and reports are in:
+
+- `target/2015-compat/fve-speed-before-20261103/` (original normal release).
+- `target/2015-compat/fve-speed-instrumented-20261103/` (detailed baseline).
+- `target/2015-compat/fve-speed-shared-20261103/` (vector-only optimization).
+- `target/2015-compat/fve-speed-final-20261103/` (combined changes, normal release).
+
+Final normal-release profile (no concurrent builds or tests):
+
+| Phase | Seconds |
+|---|---:|
+| Final runtime-vector lowering | 8.085 |
+| Final fixed-vector lowering | 3.159 |
+| Final vector pass, total | 11.258 |
+| Allocatable finishing | 45.014 |
+| Character-output preparation | Unfinished at the overall 300-second limit |
+
+The full group still times out (300.057 seconds), now in
+`output::prepare_character_views`; it does not yet produce an executable.
+Gfortran compiles the same copied group in 9.454 seconds. The old 180-second
+limit and the new 300-second limit are **timeout caps**, not completed-build
+timings; no end-to-end speedup ratio is established. The phase profile shows
+that both previously blocking passes now finish, and identifies character
+output preparation as the next bottleneck. That function includes a scope walk
+and a subsequent `prepare_formatted` call; finer profiling should distinguish
+those before the next optimization.
+
+The release was rebuilt with the normal Cargo profile. Both new scope tests
+also pass with that binary, and `rf.bat tests\programs\xfve_pointer_metrics.f90
+--run` still produces the five expected metrics. Final compiler SHA256:
+`4623305af8d594c80b1c44669ba53c8059e1ae1b61763396d94ede599d313fb5`.
+
+
 ## Follow-up: ELEMENTAL functions of POINTER array expressions
 
 [tests/programs/xfve_pointer_metrics.f90](../tests/programs/xfve_pointer_metrics.f90)

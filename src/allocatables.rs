@@ -8,6 +8,20 @@ use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec, UnOp};
 use anyhow::{bail, Context, Result};
 use std::collections::{HashMap, HashSet};
 pub(crate) type Shapes = HashMap<String, (TypeSpec, Vec<Expr>)>;
+
+// Generated checks and scalar loops share declarations with their parent.
+// Copy-on-write keeps those read-only scopes cheap while isolating shadowed
+// declarations and temporaries introduced by a child transformation.
+#[derive(Clone)]
+pub(crate) struct SharedShapes(pub(crate) std::sync::Arc<Shapes>);
+impl std::ops::Deref for SharedShapes {
+    type Target = Shapes;
+    fn deref(&self) -> &Shapes { &self.0 }
+}
+impl std::ops::DerefMut for SharedShapes {
+    fn deref_mut(&mut self) -> &mut Shapes { std::sync::Arc::make_mut(&mut self.0) }
+}
+
 fn int(n: i64) -> Expr {
     Expr::IntLit(n.to_string())
 }
@@ -459,7 +473,7 @@ fn logical_shape(
 fn linear_index(
     name: &str,
     indices: &mut Vec<Expr>,
-    shapes: &mut Shapes,
+    shapes: &mut SharedShapes,
     checks: &mut Vec<Stmt>,
     serial: &mut usize,
 ) -> Result<()> {
@@ -1027,7 +1041,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
     }
     fn expression(
         e: &mut Expr,
-        shapes: &mut Shapes,
+        shapes: &mut SharedShapes,
         guards: &mut Vec<Stmt>,
         checks: &mut Vec<Stmt>,
         serial: &mut usize,
@@ -1166,7 +1180,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
         }
         Ok(())
     }
-    fn runtime_reduction(e: &mut Expr, shapes: &mut Shapes, prefix: &mut Vec<Stmt>, checks: &mut Vec<Stmt>, serial: &mut usize) -> Result<()> {
+    fn runtime_reduction(e: &mut Expr, shapes: &mut SharedShapes, prefix: &mut Vec<Stmt>, checks: &mut Vec<Stmt>, serial: &mut usize) -> Result<()> {
         let Expr::Call(name,args)=e else {return Ok(())};
         let location=matches!(name.as_str(),"@minloc"|"@maxloc"|"@findloc");
         if !(crate::reductions::reduction(name)||location) || shapes.contains_key(name) {return Ok(());}
@@ -1271,7 +1285,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
         }
         let start=prefix.len();
         crate::reductions::scalar_value(e,shapes,prefix,serial)?;
-        fn register(body:&[Stmt],shapes:&mut Shapes) {
+        fn register(body:&[Stmt],shapes:&mut SharedShapes) {
             for s in body {match s {
                 Stmt::ArrayDecl{kind,name,dims}=>{shapes.insert(name.clone(),(kind.clone(),dims.clone()));},
                 Stmt::VarDecl{kind,names}=>for n in names {shapes.insert(n.clone(),(kind.clone(),vec![]));},
@@ -1295,13 +1309,13 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
     }
     fn lower(
         body: &mut Vec<Stmt>,
-        inherited: &Shapes,
+        inherited: &SharedShapes,
         serial: &mut usize,
         checks: &mut Vec<Stmt>,
     ) -> Result<()> {
         let statement_location = std::cell::Cell::new(None);
         let result = (|| -> Result<()> {
-        let mut shapes = if body.iter().any(|s|matches!(s,Stmt::DummyIntent{intent,..} if intent=="@native_recursive")) {Shapes::new()} else {inherited.clone()};
+        let mut shapes = if body.iter().any(|s|matches!(s,Stmt::DummyIntent{intent,..} if intent=="@native_recursive")) {SharedShapes(std::sync::Arc::default())} else {inherited.clone()};
         for s in body.iter() {
             match s {
                 Stmt::ArrayDecl { kind, name, dims } => {
@@ -1323,7 +1337,9 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                 _ => {}
             }
         }
-        metadata(body, &mut shapes);
+        let mut local_metadata = Shapes::new();
+        metadata(body, &mut local_metadata);
+        if !local_metadata.is_empty() { shapes.extend(local_metadata); }
         let mut out = vec![];
         for mut s in std::mem::take(body) {
             if let Some(p) = crate::source_diagnostics::statement_offset(&s) { statement_location.set(Some(p)); }
@@ -2049,7 +2065,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
             }
         }
     }
-    lower(&mut p.body, &elemental_shapes, &mut serial, &mut checks)?;
+    lower(&mut p.body, &SharedShapes(std::sync::Arc::new(elemental_shapes)), &mut serial, &mut checks)?;
     p.body.extend(checks);
     Ok(p)
 }

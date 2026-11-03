@@ -9,6 +9,15 @@ use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
 
+use crate::allocatables::SharedShapes as Symbols;
+
+fn with_symbols<T>(shapes: &mut Shapes, f: impl FnOnce(&mut Symbols) -> T) -> T {
+    let mut symbols = Symbols(std::sync::Arc::new(std::mem::take(shapes)));
+    let result = f(&mut symbols);
+    *shapes = std::sync::Arc::try_unwrap(symbols.0).unwrap_or_else(|s| (*s).clone());
+    result
+}
+
 fn int(n: i64) -> Expr {
     Expr::IntLit(n.to_string())
 }
@@ -42,7 +51,7 @@ fn error(cond: Expr, message: String) -> Stmt {
         else_body: None,
     }
 }
-fn declarations(body: &[Stmt], symbols: &mut Shapes) {
+fn declarations(body: &[Stmt], symbols: &mut Symbols) {
     for s in body {
         match s {
             Stmt::ArrayDecl { kind, name, dims } => {
@@ -80,7 +89,9 @@ fn declarations(body: &[Stmt], symbols: &mut Shapes) {
             _ => {}
         }
     }
-    allocatables::metadata(body, symbols);
+    let mut metadata = Shapes::new();
+    allocatables::metadata(body, &mut metadata);
+    if !metadata.is_empty() { symbols.extend(metadata); }
     for stmt in body {
         if let Stmt::DummyIntent { name, intent } = stmt {
             if intent == "pointer" {
@@ -495,7 +506,7 @@ struct Lower {
     shallow: bool,
 }
 impl Lower {
-    fn scalar(&mut self, role: &str, value: Expr, out: &mut Vec<Stmt>, s: &mut Shapes) -> Expr {
+    fn scalar(&mut self, role: &str, value: Expr, out: &mut Vec<Stmt>, s: &mut Symbols) -> Expr {
         if let Some(n) = constant(&value) {
             return int(n);
         }
@@ -514,7 +525,7 @@ impl Lower {
         kind: TypeSpec,
         dims: &[Expr],
         out: &mut Vec<Stmt>,
-        s: &mut Shapes,
+        s: &mut Symbols,
     ) -> Result<String> {
         self.buffer_capacity(kind, dims, None, out, s)
     }
@@ -524,7 +535,7 @@ impl Lower {
         dims: &[Expr],
         capacity: Option<Vec<i64>>,
         out: &mut Vec<Stmt>,
-        s: &mut Shapes,
+        s: &mut Symbols,
     ) -> Result<String> {
         self.serial += 1;
         let n = format!("@vector_runtime_values_{}", self.serial);
@@ -604,7 +615,7 @@ impl Lower {
         }
         Ok(n)
     }
-    fn loop_vars(&mut self, dims: &[Expr], out: &mut Vec<Stmt>, s: &mut Shapes) -> Vec<String> {
+    fn loop_vars(&mut self, dims: &[Expr], out: &mut Vec<Stmt>, s: &mut Symbols) -> Vec<String> {
         dims.iter()
             .map(|_| {
                 self.serial += 1;
@@ -736,7 +747,7 @@ impl Lower {
             _ => bail!("this vector subscript expression is not yet supported"),
         })
     }
-    fn freeze(&mut self, e: &mut Expr, s: &mut Shapes, out: &mut Vec<Stmt>) -> Result<()> {
+    fn freeze(&mut self, e: &mut Expr, s: &mut Symbols, out: &mut Vec<Stmt>) -> Result<()> {
         if let Expr::Section {
             lower,
             upper,
@@ -808,7 +819,7 @@ impl Lower {
         &mut self,
         n: &str,
         args: &mut [Expr],
-        s: &mut Shapes,
+        s: &mut Symbols,
         out: &mut Vec<Stmt>,
         writable: bool,
     ) -> Result<(Vec<Axis>, Vec<Expr>)> {
@@ -942,7 +953,7 @@ impl Lower {
         self.element(e,index,s,out)
     }
     // Capture scalar controls once, including when an empty result has no iterations.
-    fn capture_scalar(&mut self,e:Expr,kind:TypeSpec,s:&mut Shapes,out:&mut Vec<Stmt>)->Expr {
+    fn capture_scalar(&mut self,e:Expr,kind:TypeSpec,s:&mut Symbols,out:&mut Vec<Stmt>)->Expr {
         self.serial+=1;
         let n=format!("@vector_runtime_control_{}",self.serial);
         out.push(Stmt::VarDecl{kind:kind.clone(),names:vec![n.clone()]});
@@ -966,7 +977,7 @@ impl Lower {
         }else{out.push(error(bin(BinOp::Ne,a,b),format!("{label} CHARACTER lengths must match")));}
         Ok(())
     }
-    fn preserve_character_length(&mut self,source:&Expr,target:&str,s:&mut Shapes,out:&mut Vec<Stmt>) {
+    fn preserve_character_length(&mut self,source:&Expr,target:&str,s:&mut Symbols,out:&mut Vec<Stmt>) {
         let name=match source {Expr::Ident(n)|Expr::Index(n,_)|Expr::Section{name:n,..}=>Some(n),Expr::Call(tag,a) if tag=="@packed_view"=>match a.first(){Some(Expr::Ident(n))=>Some(n),_=>None},_=>None};
         if let Some((_,values))=name.and_then(|n|s.get(&format!("@character_spec_length:{n}"))).cloned() {
             if let Some(value)=values.first() {
@@ -978,7 +989,7 @@ impl Lower {
             }
         }
     }
-    fn unpack(&mut self,e:&mut Expr,s:&mut Shapes,out:&mut Vec<Stmt>)->Result<()> {
+    fn unpack(&mut self,e:&mut Expr,s:&mut Symbols,out:&mut Vec<Stmt>)->Result<()> {
         let Expr::Call(name,args)=e else {return Ok(());};
         if name!="unpack" || s.contains_key(name) || args.len()!=3 {return Ok(());}
         let (Some((kind,vd)),Some((mk,md)),Some((fk,fd)))=(shape(&args[0],s)?,shape(&args[1],s)?,shape(&args[2],s)?) else {return Ok(());};
@@ -1022,7 +1033,7 @@ impl Lower {
         *e=id(&result);
         Ok(())
     }
-    fn shift(&mut self,e:&mut Expr,s:&mut Shapes,out:&mut Vec<Stmt>)->Result<()> {
+    fn shift(&mut self,e:&mut Expr,s:&mut Symbols,out:&mut Vec<Stmt>)->Result<()> {
         let Expr::Call(name,args)=e else {return Ok(());};
         if !matches!(name.as_str(),"cshift"|"eoshift") || s.contains_key(name) {return Ok(());}
         let endoff=name=="eoshift";
@@ -1104,7 +1115,7 @@ impl Lower {
         *e=id(&result);
         Ok(())
     }
-    fn spread(&mut self,e:&mut Expr,s:&mut Shapes,out:&mut Vec<Stmt>)->Result<()> {
+    fn spread(&mut self,e:&mut Expr,s:&mut Symbols,out:&mut Vec<Stmt>)->Result<()> {
         let Expr::Call(name,args)=e else {return Ok(());};
         if name!="spread" || s.contains_key(name) || args.len()!=3 {return Ok(());}
         let Some((kind,source_dims))=shape(&args[0],s)? else {return Ok(());};
@@ -1142,7 +1153,7 @@ impl Lower {
         *e=id(&result);
         Ok(())
     }
-    fn transpose(&mut self,e:&mut Expr,s:&mut Shapes,out:&mut Vec<Stmt>)->Result<()> {
+    fn transpose(&mut self,e:&mut Expr,s:&mut Symbols,out:&mut Vec<Stmt>)->Result<()> {
         let Expr::Call(name,args)=e else {return Ok(());};
         if name!="transpose" || s.contains_key(name) || args.len()!=1 {return Ok(());}
         let Some((kind,source_dims))=shape(&args[0],s)? else {return Ok(());};
@@ -1161,7 +1172,7 @@ impl Lower {
         *e=id(&result);
         Ok(())
     }
-    fn reshape(&mut self,e:&mut Expr,s:&mut Shapes,out:&mut Vec<Stmt>)->Result<()> {
+    fn reshape(&mut self,e:&mut Expr,s:&mut Symbols,out:&mut Vec<Stmt>)->Result<()> {
         let Expr::Call(name,_)=e else {return Ok(());};
         if name!="reshape" || s.contains_key(name) {return Ok(());}
         let Some((kind,dimensions))=shape(e,s)? else {return Ok(());};
@@ -1212,7 +1223,7 @@ impl Lower {
         *e=id(&result);
         Ok(())
     }
-    fn expression(&mut self, e: &mut Expr, s: &mut Shapes, out: &mut Vec<Stmt>) -> Result<()> {
+    fn expression(&mut self, e: &mut Expr, s: &mut Symbols, out: &mut Vec<Stmt>) -> Result<()> {
         // ASSOCIATED inspects target identity, not a copied section value.
         if matches!(e,Expr::Call(n,_) if n=="associated") {return Ok(());}
         // Rank-one triplets use a dedicated AST node; use the same captured
@@ -1370,7 +1381,7 @@ impl Lower {
             _=>self.reshape_element(e,index,s,out),
         }
     }
-    fn where_body(&mut self, body:&[Stmt], s:&mut Shapes, dims:&[Expr], parent:Option<&str>)->Result<Vec<Stmt>> {
+    fn where_body(&mut self, body:&[Stmt], s:&mut Symbols, dims:&[Expr], parent:Option<&str>)->Result<Vec<Stmt>> {
         let mut out=vec![];
         let length=self.scalar("where_length",product(dims),&mut out,s);
         let index=self.loop_vars(&[length.clone()],&mut out,s).remove(0);
@@ -1435,13 +1446,13 @@ impl Lower {
         }
         Ok(())
     }
-    fn child(&mut self, body: &mut Vec<Stmt>, inherited: &Shapes, params: &[String]) -> Result<()> {
-        if self.shallow { Ok(()) } else { self.body(body, inherited, params) }
+    fn child(&mut self, body: &mut Vec<Stmt>, inherited: &Symbols, params: &[String]) -> Result<()> {
+        if self.shallow { Ok(()) } else { self.body(body, inherited.clone(), params) }
     }
-    fn body(&mut self, body: &mut Vec<Stmt>, inherited: &Shapes, params: &[String]) -> Result<()> {
+    fn body(&mut self, body: &mut Vec<Stmt>, inherited: Symbols, params: &[String]) -> Result<()> {
         let statement_location = std::cell::Cell::new(None);
         let result = (|| -> Result<()> {
-        let mut s = inherited.clone();
+        let mut s = inherited;
         for p in params {
             s.remove(p);
         }
@@ -1740,14 +1751,14 @@ pub(super) fn specialize(body:&mut Vec<Stmt>, shapes:&Shapes, procedures:std::sy
     // array_calls::expand visits child scopes itself. Revisiting the entire
     // subtree at each ancestor makes specialization quadratic in nesting depth.
     let mut lower=Lower{serial:(*serial).max(inherited_serial).max(super::serial_start(body)),procedures,force:false,shallow:true};
-    lower.body(body,shapes,&[])?;
+    lower.body(body,Symbols(std::sync::Arc::new(shapes.clone())),&[])?;
     *serial=lower.serial;
     Ok(())
 }
 pub(super) fn specialize_expression(e:&mut Expr, shapes:&mut Shapes, prefix:&mut Vec<Stmt>, serial:&mut usize)->Result<()> {
     let inherited_serial=shapes.keys().filter(|n|n.contains("@vector_")).filter_map(|n|n.rsplit('_').next()?.parse::<usize>().ok()).max().unwrap_or(0);
     let mut lower=Lower{serial:(*serial).max(inherited_serial),procedures:std::sync::Arc::default(),force:false,shallow:false};
-    lower.expression(e,shapes,prefix)?;
+    with_symbols(shapes, |symbols| lower.expression(e,symbols,prefix))?;
     *serial=lower.serial;
     Ok(())
 }
@@ -1763,8 +1774,14 @@ pub(super) fn argument_expression_shape(e:&Expr, shapes:&Shapes, functions:&Hash
 /// elemental function with writable actuals. Inputs are bound before outputs
 /// are defined, and each scalar invocation writes its own result/status.
 pub(super) fn elemental_function(
+    e: &mut Expr, s: &mut Shapes, out: &mut Vec<Stmt>, serial: &mut usize,
+    routine: (&[String], &[Stmt], &str, &TypeSpec),
+) -> Result<bool> {
+    with_symbols(s, |symbols| elemental_function_inner(e, symbols, out, serial, routine))
+}
+fn elemental_function_inner(
     e: &mut Expr,
-    s: &mut Shapes,
+    s: &mut Symbols,
     out: &mut Vec<Stmt>,
     serial: &mut usize,
     routine: (&[String], &[Stmt], &str, &TypeSpec),
@@ -1977,7 +1994,7 @@ fn heap_buffer(
     n: String,
     dims: &[Expr],
     out: &mut Vec<Stmt>,
-    s: &mut Shapes,
+    s: &mut Symbols,
 ) -> Result<()> {
     crate::heap::unallocated_result(kind, n.clone(), dims.len(), out, s)?;
     out.push(Stmt::CallSub {
@@ -2080,7 +2097,7 @@ pub(super) fn resolve(
         force: false,
         shallow: false,
     }
-    .body(&mut p.body, &symbols, &[])?;
+    .body(&mut p.body, Symbols(std::sync::Arc::new(symbols)), &[])?;
     section_helpers(&mut p.body);
     Ok(p)
 }
