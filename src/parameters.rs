@@ -2033,7 +2033,9 @@ fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules, ass
                 }
             }
             Stmt::ArrayDecl { kind, name, dims } => {
-                if crate::substrings::deferred(kind) { bail!("deferred CHARACTER arrays are not yet supported"); }
+                // Early snapshots run before tokenize::prepare supplies the
+                // runtime element-length storage. Preserve deferred lengths
+                // here, just as resolve_kind does for deferred scalars.
                 if !matches!(kind, TypeSpec::CharacterAssumed) || !assumed.contains(name) {
                     resolve_template_kind(kind, constants, template)?;
                 }

@@ -159,8 +159,10 @@ fn runtime_shape(e: &Expr, arrays: &[String], declared: &[String]) -> Option<(Ex
     };
     if let Some(values) = constructor(e) {
         let plan = items(values, declared)?;
+        // An empty typed constructor still supplies its element length.
+        // Its zero size must not prevent allocation/reallocation lowering.
         let count = plan.iter().map(|p| p.as_deref().map_or(int(1), size))
-            .reduce(|a, b| Expr::Bin(crate::ast::BinOp::Add, Box::new(a), Box::new(b)))?;
+            .reduce(|a, b| Expr::Bin(crate::ast::BinOp::Add, Box::new(a), Box::new(b))).unwrap_or_else(|| int(0));
         let typed = match e {
             Expr::Call(n, items) if n == "@typed_constructor" => {
                 let Some(Expr::Str(kind)) = items.first() else { return None };
@@ -173,7 +175,7 @@ fn runtime_shape(e: &Expr, arrays: &[String], declared: &[String]) -> Option<(Ex
             _ => None,
         };
         // The elements of an untyped constructor have the same length.
-        return Some((typed.unwrap_or_else(|| length(&values[0])), count));
+        return Some((typed.or_else(|| values.first().map(length))?, count));
     }
     match e {
         Expr::Bin(crate::ast::BinOp::Concat,a,b)=>{

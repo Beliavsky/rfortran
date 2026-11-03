@@ -1,5 +1,45 @@
 # Standalone repros from the Fortran 2015 samples
 
+## Follow-up: early deferred CHARACTER array rejection fixed
+
+The declaration at `statistics.f90:1689` now passes. Deferred-length CHARACTER
+arrays already have runtime storage support, but early constant-folding
+snapshots rejected them before that storage lowering ran. The constant pass
+now preserves their deferred length, as it already did for deferred scalars.
+
+[tests/programs/xoptional_character_array_copy.f90](../tests/programs/xoptional_character_array_copy.f90)
+reproduces the exact diagnostic using a mixed scalar/array declaration,
+assignment from optional assumed-length CHARACTER arrays, and unrelated saved
+derived-object storage that triggers the early snapshot. It checks both the
+present and absent optional argument, including different array sizes and
+element lengths. The focused suite is
+[tests/test_early_deferred_character_arrays.py](../tests/test_early_deferred_character_arrays.py).
+Its second test checks runtime-length ALLOCATE and reallocation on assignment.
+That test also exposed and fixes an empty typed-constructor shape bug: an empty
+CHARACTER constructor must provide both its declared element length and size
+zero, rather than retaining the destination's previous element length.
+All 37 tests in the focused suite and the existing deferred CHARACTER array,
+deferred CHARACTER local, early intrinsic keyword, empty constructor and
+TOKENIZE suites pass. The new regressions compare interpreter and native
+`-O0`/`-O2` output with gfortran, including empty constructors with zero and
+runtime-dependent nonzero element lengths.
+The release compiler was rebuilt, both new regressions pass against that
+binary, and `rf.bat tests\programs\xoptional_character_array_copy.f90 --run`
+prints the expected label sizes, lengths and contents.
+
+The isolated full-group follow-up at
+`target/2015-compat/deferred-character-final-20261103/` gets beyond the
+statistics declaration. Neither group builds completely yet:
+
+| Group | Next diagnostic | Reported location |
+|---|---|---|
+| `fve_files.txt` | constructor implied-DO index `imetric` requires a locally declared scalar INTEGER variable | `vol_pred.f90:103`, enclosing named DO |
+| `rcsv_files.txt` | unsupported expression in numeric array reduction | `read_csv.f90:100`, internal READ |
+
+Both groups still compile with gfortran. The follow-up compiles and links only;
+it does not execute the external programs. Source copies, compiler snapshot,
+commands and full diagnostics are preserved in the report directory.
+
 ## Follow-up: utility/statistics PARAMETER errors fixed
 
 The executable assignments at `statistics.f90:1082` and `util.f90:8070` now
