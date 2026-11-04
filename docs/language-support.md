@@ -2950,6 +2950,30 @@ Run `python tests/test_select_type.py` and
 `tests/programs/xselect_type.f90` and
 `tests/programs/xselect_type_intrinsic.f90`.
 
+### Parameterized derived types
+
+Fortran 2003 parameterized derived types have partial support. KIND and LEN
+parameters support defaults, positional and keyword values, named constants,
+and values obtained from KIND or SELECTED_REAL_KIND. Supported uses include
+arrays, procedure arguments, nested components, type extension, constructors
+such as `t(8)(...)`, SELECT TYPE guards, and module imports with ONLY and renaming.
+Parameter and CHARACTER-length inquiries include `x%k`, `x%m%n`, `len(x%c)`
+and `x%c%len`.
+
+Constant parameter values are specialized into ordinary derived types. Supported
+runtime LEN parameters are retained as components, with allocation of components
+whose sizes depend on them. This includes assumed-length (`*`) dummy arguments
+and deferred-length (`:`) ALLOCATABLE objects allocated with a type specification,
+such as `allocate(t(n=...) :: x)`.
+
+Runtime LEN parameters are not yet supported for extended types or rank-two
+arrays of objects. Whole-array references to components whose sizes depend on
+runtime LEN parameters are also unsupported. Other derived-type storage and
+operation restrictions still apply; this is not complete PDT support.
+
+Run `python tests/test_parameterized_types.py` for coverage of constant and
+runtime parameters, allocation, constructors, extension, inquiries and diagnostics.
+
 ### TYPEOF and CLASSOF declarations
 
 These follow the declaration rules in [J3/24-007, section 7.3.2.1](https://j3-fortran.org/doc/year/24/24-007.pdf).
@@ -2981,7 +3005,8 @@ or POINTER. Supported scalar CLASS dummy-argument cases use the existing derived
 and type-extension lowering; this does not add dynamic dispatch or polymorphic
 allocation. Intrinsic references are rejected. TYPEOF rejects unlimited
 polymorphic references; CLASSOF of CLASS(*) is valid Fortran but receives an
-explicit unsupported diagnostic. Parameterized derived types remain unsupported.
+explicit unsupported diagnostic. For the supported forms and restrictions of
+parameterized derived types, see [Parameterized derived types](#parameterized-derived-types).
 
 These specifiers are accepted only in type declarations and component definitions,
 not in function prefixes, ALLOCATE type specifications or array constructors.
