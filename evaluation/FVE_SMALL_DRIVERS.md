@@ -463,3 +463,45 @@ These runs do not establish successful compilation of either stats probe or FVE.
 The full main was not retried. The next step is native-code-generation profiling:
 distinguish native IR construction from Cranelift optimization/emission and
 identify the expensive generated procedure or main body.
+
+
+## Large-procedure register allocation
+
+Per-procedure native timings isolate the next bottleneck. The scalar stats main
+contains about 695,000 Cranelift IR instructions before optimization. Native IR
+construction takes 0.467 seconds; Cranelift optimization and machine lowering
+finish in seconds, then backtracking register allocation exceeds the 180-second
+compilation limit. Verification is not the bottleneck. Diagnostic reports:
+`target/2015-compat/fve-codegen-profile/` and
+`target/2015-compat/fve-cranelift-passes/`.
+
+Procedures with at least 100,000 native IR instructions now use Cranelift's
+single-pass register allocator. Smaller procedures keep the default allocator.
+Optimization level, verifier, target features, stack probing, and relocation
+handling are preserved. The threshold is a conservative policy for exceptionally
+large generated procedures, not a claim about an optimal crossover point.
+Single-pass allocation can produce more spills and moves; execution performance
+on large applications remains to be measured.
+
+With the rebuilt release compiler, the scalar literal stats probe compiles in
+63.634 seconds and the one-call vector stats probe in 53.078 seconds. Native main
+emission takes 33.346 and 28.717 seconds respectively. These are single runs,
+not controlled benchmark medians. Both objects link against the saved module
+objects. With input `3`, the scalar executable prints `0.01`; with input `3,2`,
+the vector executable prints `0.02`. Logs, executables, and run records are in
+`target/2015-compat/fve-single-pass/`.
+
+All 14 tests in `test_large_native_functions`, `test_named_loops`, and
+`test_allocatable_inquiry_kinds` pass against the release compiler. The generated
+20,000-statement native regressions cover main and a called function at O0/O2 and
+compares its output with gfortran. Native timing logs remain opt-in through
+`RFORT_TIME_PASSES=1`; detailed Cranelift pass logs can additionally be enabled
+with `RUST_LOG=cranelift_codegen::timing=debug,cranelift_codegen::context=debug`.
+
+The full `xfwd_vol_ema_pred.f90` main-only retry hits its 300-second limit during
+initialization analysis, before native code generation. Gfortran compiles its
+object in 0.271 seconds. Report:
+`target/2015-compat/fve-main-single-pass/`. Earlier full-main attempts stopped on
+an initialization error; fixing that error exposed additional work in this pass.
+A successful full FVE build is still not established. Next: profile initialization
+analysis on the full main, while retaining the now-working stats probes.

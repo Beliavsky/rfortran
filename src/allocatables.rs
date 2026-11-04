@@ -150,9 +150,11 @@ pub(crate) fn inquiry(name: &str, args: &[Expr], shapes: &Shapes) -> Result<Opti
         None
     };
     let result = if name == "size" {
-        guard(axis.map(|d| dimensions[d].clone()).unwrap_or(length))
+        // Descriptor extents are wide integers, but an inquiry without KIND
+        // has default INTEGER type, including in generic/elemental calls.
+        Expr::Call("int".into(), vec![guard(axis.map(|d| dimensions[d].clone()).unwrap_or(length))])
     } else if let Some(axis) = axis {
-        guard(bound(axis,dimensions[axis].clone()))
+        Expr::Call("int".into(), vec![guard(bound(axis,dimensions[axis].clone()))])
     } else {
         Expr::Call(
             "@array_constructor".into(),

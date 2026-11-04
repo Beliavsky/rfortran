@@ -10,6 +10,8 @@ mod record_heap;
 mod c_interop;
 #[path = "object_target.rs"]
 mod object_target;
+#[path = "large_functions.rs"]
+mod large_functions;
 use anyhow::{bail, Context, Result};
 use cranelift_codegen::{isa, settings};
 use cranelift_object::{ObjectBuilder, ObjectModule};
@@ -4025,6 +4027,7 @@ impl Backend for CraneliftBackend {
 
 impl CraneliftBackend {
     fn compile_module(&self, module: &Module, tokens: Option<&[crate::lexer::Token]>) -> Result<Vec<u8>> {
+        let _codegen = crate::compile_profile::Pass::new("codegen");
         use crate::ast::TypeSpec;
         use cranelift_module::FuncId;
         use ir::{types, AbiParam};
@@ -4375,6 +4378,8 @@ impl CraneliftBackend {
             if idx == 0 && is_real_main {
                 continue;
             }
+            let construction_name = format!("codegen.construct.{}", f.name);
+            let construction = crate::compile_profile::Pass::new(&construction_name);
             let rt = eff_ret.get(&f.name).unwrap().clone();
             let pk = param_kinds_map.get(&f.name).unwrap().clone();
             let pdf = param_double_flags.get(&f.name).unwrap().clone();
@@ -4580,7 +4585,8 @@ impl CraneliftBackend {
                 chars.finish(&mut obj, &mut ctx_f.func, ptr_ty)?;
             }
             let fid = *func_ids.get(&f.name).unwrap();
-            obj.define_function(fid, &mut ctx_f)?;
+            drop(construction);
+            crate::compile_profile::run(&format!("codegen.emit.{}", f.name), || large_functions::define(&mut obj, fid, &mut ctx_f))?;
             obj.clear_context(&mut ctx_f);
         }
         let entry_func_name = module
@@ -4590,6 +4596,7 @@ impl CraneliftBackend {
             .unwrap_or_else(|| "main".into());
         let is_real_main = entry_func_name == "main" && !module.funcs.is_empty();
         if is_real_main {
+            let construction = crate::compile_profile::Pass::new("codegen.construct.main");
             let mut ctx_main = obj.make_context();
             let ptr_ty = isa.pointer_type();
             ctx_main
@@ -4669,7 +4676,8 @@ impl CraneliftBackend {
             }
             let main_id =
                 obj.declare_function("main", Linkage::Export, &ctx_main.func.signature)?;
-            obj.define_function(main_id, &mut ctx_main)?;
+            drop(construction);
+            crate::compile_profile::run("codegen.emit.main", || large_functions::define(&mut obj, main_id, &mut ctx_main))?;
             obj.clear_context(&mut ctx_main);
         }
         c_interop::exports(&mut obj,module,isa.pointer_type(),&func_ids,self.module_owners.as_ref())?;

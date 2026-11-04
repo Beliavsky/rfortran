@@ -743,3 +743,19 @@ Gfortran compiles both objects successfully. Reports are in
 [FVE_SMALL_DRIVERS.md](FVE_SMALL_DRIVERS.md#heap-cleanup-after-loop-transfers-fixed).
 Next: profile native IR construction and Cranelift optimization/emission. The
 full FVE main has not been rerun, and no successful FVE build is claimed.
+
+
+The native timeout in the stats probes is traced to Cranelift's backtracking
+register allocator on a roughly 695,000-instruction main procedure. Procedures
+with at least 100,000 native IR instructions now use single-pass allocation,
+retaining other compiler settings. The literal and one-call vector stats probes
+compile in 63.634/53.078 seconds, link with saved module objects, and run with
+correct outputs `0.01`/`0.02`. Fourteen focused tests pass, including large main
+and called-function regressions at O0/O2. Reports and run records:
+`target/2015-compat/fve-single-pass/`.
+
+The full FVE main still times out after 300 seconds in initialization analysis,
+before native code generation; gfortran object compilation passes in 0.271 seconds.
+Next investigate initialization-analysis cost. Report:
+`target/2015-compat/fve-main-single-pass/`; details and the register-allocation
+tradeoff are in [FVE_SMALL_DRIVERS.md](FVE_SMALL_DRIVERS.md#large-procedure-register-allocation).
