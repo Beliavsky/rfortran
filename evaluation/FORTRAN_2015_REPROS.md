@@ -662,3 +662,14 @@ The earlier verified gnuplot FORALL/constructor repro is
 [Small-driver results and commands](FVE_SMALL_DRIVERS.md) isolate the forecast
 statistics-reporting calls: the reduced caller times out at 180 seconds, whereas
 a matched module with only those two calls removed compiles in 34.230 seconds.
+
+The follow-up [statistics-dispatch probes](FVE_SMALL_DRIVERS.md#narrowing-the-statistics-dispatcher)
+remove forecasting and reporting: four repeated `stats(names,x)` calls exceed
+120 seconds, while direct `mean(x)` compiles in 5.717 seconds. Matched one/two-call
+variants and smaller EXIT/initialization failures are saved for further work.
+
+
+The subsequent scoped math-check optimization and one/two/four-call measurements
+are documented in [FVE_SMALL_DRIVERS.md](FVE_SMALL_DRIVERS.md#scoped-semantic-math-checks).
+Math checking is now subsecond for these probes; generated-storage initialization
+errors and expensive earlier passes still prevent a successful FVE build.

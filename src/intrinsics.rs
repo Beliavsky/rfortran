@@ -138,6 +138,31 @@ mod tests {
     }
 
     #[test]
+    fn math_checks_restore_shadowed_types_and_array_membership() {
+        for (declarations, statements, expected, count) in [
+            ("real :: x(2)",
+             "block\nreal :: x\nx=1.0\nprint *, sqrt(x)\nend block\nprint *, sqrt(x)",
+             "array arguments", 1),
+            ("real :: x",
+             "x=1.0\nblock\ninteger :: x\nx=1\nprint *, sqrt(x)\nend block\nprint *, sqrt(x)",
+             "REAL or DOUBLE PRECISION", 1),
+            ("real :: x",
+             "x=1.0\nblock\nreal :: x(2)\nprint *, sqrt(x)\nend block\nprint *, sqrt(x)",
+             "array arguments", 1),
+            ("", "block\nprint *, sqrt(1)\nend block\nblock\nprint *, sqrt(2)\nend block",
+             "REAL or DOUBLE PRECISION", 2),
+        ] {
+            let source = format!("program main\nimplicit none\n{declarations}\n{statements}\nend program main\n");
+            let tokens = crate::lexer::lex(&source);
+            let program = crate::parser::parse_with_src(&source, &tokens, "scope.f90").unwrap();
+            let errors = crate::sema::analyze_with_src(&program, &source, &tokens, "scope.f90",
+                &crate::sema::SemaSettings::default(), &std::collections::HashSet::new(), false);
+            assert_eq!(errors.iter().filter(|e| matches!(e.kind, crate::errors::CompileErrorKind::Semantic)
+                && e.message.contains(expected)).count(), count, "{statements}: {errors:?}");
+        }
+    }
+
+    #[test]
     fn rejects_invalid_scalar_math_calls() {
         for (declarations, statement, expected) in [
             ("", "print *, max(1)", "expects 2 argument"),

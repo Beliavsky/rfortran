@@ -2845,21 +2845,27 @@ pub fn analyze_with_origins(
     }
 
     fn check_math_body(
-        body: &[Stmt], inherited: &HashMap<String, TypeSpec>, inherited_arrays: &HashSet<String>,
+        body: &[Stmt], symbols: &mut HashMap<String, TypeSpec>, arrays: &mut HashSet<String>,
         functions: &HashMap<String, FnInfo>, returns: &HashMap<String, TypeSpec>,
         problems: &mut Vec<(String, String)>,
     ) {
-        let mut symbols = inherited.clone();
-        let mut arrays = inherited_arrays.clone();
+        // Record only declarations changed by this scope. Nested executable
+        // blocks usually declare nothing, so they can borrow the environment.
+        // Reverse restoration also handles repeated declarations of one name.
+        let mut shadowed = Vec::new();
         for stmt in body {
             match stmt {
                 Stmt::VarDecl { kind, names } => for name in names {
-                    symbols.insert(name.to_ascii_lowercase(), kind.clone());
-                    arrays.remove(&name.to_ascii_lowercase());
+                    let key = name.to_ascii_lowercase();
+                    let previous = symbols.insert(key.clone(), kind.clone());
+                    let was_array = arrays.remove(&key);
+                    shadowed.push((key, previous, was_array));
                 },
                 Stmt::ArrayDecl { kind, name, .. } => {
-                    symbols.insert(name.to_ascii_lowercase(), kind.clone());
-                    arrays.insert(name.to_ascii_lowercase());
+                    let key = name.to_ascii_lowercase();
+                    let previous = symbols.insert(key.clone(), kind.clone());
+                    let was_array = !arrays.insert(key.clone());
+                    shadowed.push((key, previous, was_array));
                 }
                 _ => {}
             }
@@ -2895,19 +2901,19 @@ pub fn analyze_with_origins(
                 Stmt::Return(Some(e)) => expressions.push(e),
                 Stmt::If { cond, then_body, else_body } => {
                     expressions.push(cond);
-                    check_math_body(then_body, &symbols, &arrays, functions, returns, problems);
-                    if let Some(body) = else_body { check_math_body(body, &symbols, &arrays, functions, returns, problems); }
+                    check_math_body(then_body, symbols, arrays, functions, returns, problems);
+                    if let Some(body) = else_body { check_math_body(body, symbols, arrays, functions, returns, problems); }
                 }
                 Stmt::Do { start, end, body, .. } => {
                     expressions.extend([start, end]);
-                    check_math_body(body, &symbols, &arrays, functions, returns, problems);
+                    check_math_body(body, symbols, arrays, functions, returns, problems);
                 }
                 Stmt::DoWhile { cond, body } => {
                     expressions.push(cond);
-                    check_math_body(body, &symbols, &arrays, functions, returns, problems);
+                    check_math_body(body, symbols, arrays, functions, returns, problems);
                 }
                 Stmt::Block { body } | Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } | Stmt::Module { body, .. } => {
-                    check_math_body(body, &symbols, &arrays, functions, returns, problems);
+                    check_math_body(body, symbols, arrays, functions, returns, problems);
                 }
                 Stmt::SelectCase { expr, cases, default } => {
                     expressions.push(expr);
@@ -2915,20 +2921,26 @@ pub fn analyze_with_origins(
                         for item in &case.items {
                             match item { CaseItem::Single(e) => expressions.push(e), CaseItem::Range(a,b) => expressions.extend([a,b]) }
                         }
-                        check_math_body(&case.body, &symbols, &arrays, functions, returns, problems);
+                        check_math_body(&case.body, symbols, arrays, functions, returns, problems);
                     }
-                    if let Some(body) = default { check_math_body(body, &symbols, &arrays, functions, returns, problems); }
+                    if let Some(body) = default { check_math_body(body, symbols, arrays, functions, returns, problems); }
                 }
                 _ => {}
             }
-            for e in expressions { check_math_expr(e, &symbols, &arrays, functions, returns, problems); }
+            for e in expressions { check_math_expr(e, symbols, arrays, functions, returns, problems); }
+        }
+        for (name, previous, was_array) in shadowed.into_iter().rev() {
+            if let Some(kind) = previous { symbols.insert(name.clone(), kind); }
+            else { symbols.remove(&name); }
+            if was_array { arrays.insert(name); }
+            else { arrays.remove(&name); }
         }
     }
 
     drop(sema_phase);
     let sema_phase = crate::compile_profile::Pass::new("sema.math_checks");
     let mut math_problems = Vec::new();
-    check_math_body(&program.body, &sym, &HashSet::new(), &fn_map, &external_fn_ret, &mut math_problems);
+    check_math_body(&program.body, &mut sym.clone(), &mut HashSet::new(), &fn_map, &external_fn_ret, &mut math_problems);
     for (name, message) in math_problems {
         report_error(&message, find_ident_span(&name), &mut stderr, &file, &mut errors, false);
     }
