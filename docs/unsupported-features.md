@@ -26,7 +26,6 @@ Check freshness with `python tools/generate_unsupported_features.py --check`.
 | Feature | Introduced | Status | Notes | Tests |
 |---|---|---|---|---|
 | DC decimal comma; RU, RD, RZ, RN, RC, RP rounding modes | F2003 | ❌ |  |  |
-| [Defined derived-type I/O](language-support.md#file-and-standard-input) | F2003 | ❌ | Defined derived-type I/O: F2003; default component-wise derived-type I/O: F90 (covered above). |  |
 
 ## Parallel features
 

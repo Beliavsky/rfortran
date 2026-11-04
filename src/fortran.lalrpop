@@ -371,6 +371,17 @@ Designator: String = {
 };
 Bindings: Vec<(String,String)> = {
     => vec![],
+    <mut bindings:Bindings> <g:Ident> <attrs:(COMMA <BindingAttributes>)?> DCOLON <direction:Ident> LPAREN <form:Ident> RPAREN ARROW <specifics:IdentList> =>? {
+        if g != "generic" || !matches!(direction.as_str(), "read" | "write") || !matches!(form.as_str(), "formatted" | "unformatted") {
+            return Err(lalrpop_util::ParseError::User {error:"expected GENERIC :: READ/WRITE(FORMATTED/UNFORMATTED)"});
+        }
+        if let Some(attrs)=attrs {
+            if attrs.iter().any(|a|a!="public") {return Err(lalrpop_util::ParseError::User{error:"defined I/O generic bindings currently support PUBLIC accessibility only"});}
+            bindings.push((format!("@defined_io_access:{direction}:{form}"),"@public".into()));
+        }
+        bindings.extend(specifics.into_iter().map(|b|(format!("@defined_io:{direction}:{form}"),b)));
+        Ok(bindings)
+    },
     <mut bindings:Bindings> <pos:@L> <f:Ident> DCOLON? <names:IdentList> =>? {
         if !f.eq_ignore_ascii_case("final") {
             return Err(lalrpop_util::ParseError::User {error:"expected FINAL in a final binding"});

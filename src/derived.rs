@@ -1603,6 +1603,7 @@ fn resolve_types(mut program: Program) -> Result<Program> {
     program=crate::concurrent_reduce::resolve(program)?;
     crate::simple::validate(&program)?;
     program = crate::extensions::resolve(program)?;
+    program = crate::defined_io::resolve(program)?;
     program=crate::referenced_types::resolve(program)?;
     program=crate::abstract_types::finish(program)?;
     program = crate::procedure_arguments::resolve(program)?;

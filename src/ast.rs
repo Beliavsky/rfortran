@@ -326,7 +326,7 @@ pub fn do_concurrent(controls: Vec<Expr>, mask: Option<Expr>, body: Vec<Stmt>) -
 /// only one of those bindings may be overridden in an extension.
 pub fn generic_bindings(bindings: Vec<(String, String)>) -> Vec<(String, String)> {
     let specific = |b: &str| bindings.iter().find(|(n, _)| n == b && !n.starts_with('@')).map(|(_, t)| t.clone());
-    bindings.iter().map(|(n, t)| match n.starts_with("@generic:") || n.starts_with("@operator:") {
+    bindings.iter().map(|(n, t)| match n.starts_with("@generic:") || n.starts_with("@operator:") || n.starts_with("@defined_io:") {
         true => (n.clone(), specific(t).unwrap_or_else(|| t.clone())),
         false => (n.clone(), t.clone()),
     }).chain(bindings.iter().filter_map(|(n,b)|n.strip_prefix("@generic:").map(|g|

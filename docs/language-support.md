@@ -4119,6 +4119,43 @@ enough output digits to avoid rounding beyond the finite range.
 Run `python tests/test_numeric_model.py` for interpreter/native O0/O2 comparisons
 with gfortran, statement boundaries, initialization behavior and invalid arguments.
 
+### Defined derived-type output
+
+Initial Fortran 2003 defined I/O supports type-bound
+`generic :: write(formatted) => binding` for scalar derived variables written
+to standard output (`PRINT`, or `WRITE` with `UNIT=*` or literal `6`). The
+binding must identify a subroutine with the six standard dummies: scalar
+`CLASS(type), INTENT(IN)` DTV, default INTEGER UNIT, assumed-length CHARACTER
+IOTYPE, assumed-shape default INTEGER V_LIST, default INTEGER `INTENT(OUT)`
+IOSTAT, and assumed-length CHARACTER `INTENT(INOUT)` IOMSG. UNIT, IOTYPE, and
+V_LIST require `INTENT(IN)`.
+
+List-directed parent output passes `LISTDIRECTED` and an empty V_LIST. An
+explicit parent format can contain a single `DT` descriptor for one object,
+including its optional string and integer parameters, for example
+`write(*,"(dt'label'(3,2))") object`. The procedure receives `DTlabel` and
+`[3,2]`. Multiple scalar objects may appear in a list-directed parent statement.
+Child formatted writes to standard output do not terminate the parent's
+record. This also works through directly called helper subroutines, and normal
+advancing output resumes after the defined procedure returns.
+
+Parent WRITE accepts scalar-variable IOSTAT and IOMSG controls. A nonzero status
+returned by the defined procedure stops further item processing and is passed
+back to the caller; without IOSTAT it terminates with the returned message.
+The current message temporary holds 256 characters.
+
+This is partial support. File and internal parent units, READ, unformatted
+transfers, namelist defined I/O, generic interface blocks, private and inherited defined
+bindings, derived-array items, component/expression items, runtime parent
+formats, and general formats mixing DT with other descriptors remain outside
+the supported subset. Child WRITE retains its existing control-option limits
+(in particular, child IOSTAT/IOMSG are not yet supported). T/TL positioning in
+child output is diagnosed rather than treating the child as a fresh record.
+
+`tests/programs/xdefined_formatted_output.f90` is a standalone example.
+Run `python tests/test_defined_io.py` for interpreter/native O0/O2 checks,
+gfortran output comparisons, and interface/unsupported-form diagnostics.
+
 ### File and standard input
 
 FLUSH writes all buffered output, and ENDFILE ends a file at its current

@@ -1015,6 +1015,15 @@ impl Record<'_> {
     }
 }
 
+/// Reject positioning that needs a shared, seekable parent-record buffer.
+pub fn check_child_output(format:&[u8], count:usize)->Result<(), &'static str> {
+    let mut parser=GroupParser::new(format,count)?;
+    while let Some(d)=parser.next()? {
+        if matches!(d.code,T|TL) {return Err("T/TL positioning in defined child output is not yet supported");}
+    }
+    Ok(())
+}
+
 /// Write `count` items with `format`, visiting item `i` with `item(i, f)`.
 /// The whole statement is checked before anything is written; a record break
 /// is a newline, and the final record is not terminated. Trailing X or TR

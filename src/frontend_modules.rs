@@ -1,5 +1,6 @@
 // Shared frontend/interpreter module declarations. No native backend dependencies.
 mod frontend;
+mod defined_io;
 mod abstract_types;
 mod select_type;
 mod assumed_rank;

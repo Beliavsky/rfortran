@@ -38,6 +38,8 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
     RECORD_ALLOCATIONS.with(|records| *records.borrow_mut()=vec![None]);
     thread_local! { static RANDOM_STATE: std::cell::Cell<u64> = const { std::cell::Cell::new(1) }; }
     RANDOM_STATE.with(|state| state.set(session.as_ref().map_or(1, |(_, seed)| **seed)));
+    thread_local! {static DEFINED_OUTPUT_DEPTH:std::cell::Cell<usize>=const {std::cell::Cell::new(0)};}
+    DEFINED_OUTPUT_DEPTH.with(|depth|depth.set(0));
     thread_local! { static FILES: std::cell::RefCell<crate::file_io::Files> = std::cell::RefCell::new(crate::file_io::Files::default()); }
     FILES.with(|files| *files.borrow_mut() = crate::file_io::Files::default());
     thread_local! { static POINTER_STORAGE: std::cell::RefCell<Vec<PointerStorage>> = std::cell::RefCell::new(vec![PointerStorage::Frame(usize::MAX,String::new())]); }
@@ -2031,6 +2033,10 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         call_stack.last_mut().unwrap().env_str.insert(dest.clone(),input);
                         idx+=1;continue;
                     }
+                    if name=="@defined_output_enter" || name=="@defined_output_leave" {
+                        DEFINED_OUTPUT_DEPTH.with(|depth|depth.set(if name=="@defined_output_enter" {depth.get()+1} else {depth.get().checked_sub(1).expect("unbalanced defined output context")}));
+                        idx+=1;continue;
+                    }
                     if name=="@format_begin" {
                         let Expr::Ident(dest)=&args[0] else {unreachable!()};
                         let fr=call_stack.last().unwrap().clone();
@@ -2066,7 +2072,8 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                     if name == "@formatted_print" || name == "@formatted_write_noadvance" || name=="@internal_formatted_record" || name=="@file_formatted_record" || name=="@file_formatted_fragment" {
                         let internal=name=="@internal_formatted_record";
                         let external=name=="@file_formatted_record" || name=="@file_formatted_fragment";
-                        let advance=name!="@formatted_write_noadvance" && name!="@file_formatted_fragment";
+                        let child=!internal && !external && DEFINED_OUTPUT_DEPTH.with(|depth|depth.get()!=0);
+                        let advance=name!="@formatted_write_noadvance" && name!="@file_formatted_fragment" && !child;
                         let end=args.len()-if internal {2} else if external {1}else {0};
                         let fr=call_stack.last().unwrap().clone();
                         // A whole array item, as the result of MAXLOC, gives its elements.
@@ -2119,6 +2126,7 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                             else if let Some(f)=v.1 {(Value::Real(f,real_kind(e,&frame,f)),None)}
                             else {let i=v.0.unwrap();(Value::Integer(i,if i==i as i32 as i64 {4} else {8}),None)}
                         }).collect();
+                        if child {io_result(crate::format_spec::check_child_output(format.as_bytes(),items.len()).map_err(anyhow::Error::msg));}
                         let mut bytes=Vec::new();
                         let rendered=crate::format_spec::render_with(format.as_bytes(),items.len(),&|i,f|{
                             match &items[i] {(_,Some(s))=>f(crate::format_spec::Value::Character(s.as_bytes())),(v,None)=>f(*v)}
@@ -2140,7 +2148,7 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                             io_result(FILES.with(|files|files.borrow_mut().write_fragment(unit,output,advance)));idx+=1;continue;
                         }
                         print!("{output}");
-                        if name == "@formatted_write_noadvance" {
+                        if !advance {
                             use std::io::Write;
                             io_result(std::io::stdout().flush().map_err(Into::into));
                         } else {

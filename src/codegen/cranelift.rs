@@ -3102,6 +3102,10 @@ fn gen_stmts(
                     file_io::call(module,b,"rfort_internal_format_end",&[handle,view.address,width],types::I32)?;
                     continue;
                 }
+                if name=="@defined_output_enter" || name=="@defined_output_leave" {
+                    file_io::call(module,b,if name=="@defined_output_enter" {"rfort_defined_output_enter"} else {"rfort_defined_output_leave"},&[],types::I32)?;
+                    continue;
+                }
                 if name=="@format_begin" {
                     let IExpr::Ident(dest)=&args[0] else {anyhow::bail!("invalid formatted output list");};
                     let format=characters::view(module,b,ptr_ty,dc,chars,ints,&args[1])?;

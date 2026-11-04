@@ -567,8 +567,23 @@ unsafe fn render_format(
     checked(format_spec::render_with(bytes, count, &value, &mut |b| emit(b), advancing));
 }
 
+// Defined output is synchronous; nested child statements retain the parent's record.
+static mut DEFINED_OUTPUT_DEPTH: usize = 0;
+#[no_mangle]
+pub unsafe extern "C" fn rfort_defined_output_enter() -> i32 {
+    DEFINED_OUTPUT_DEPTH += 1; 0
+}
+#[no_mangle]
+pub unsafe extern "C" fn rfort_defined_output_leave() -> i32 {
+    if DEFINED_OUTPUT_DEPTH == 0 { fail("unbalanced defined output context"); }
+    DEFINED_OUTPUT_DEPTH -= 1; 0
+}
 #[no_mangle]
 pub unsafe extern "C" fn rfort_formatted_write(format:*const u8,length:usize,items:*const Item,count:usize,advance:i32) {
+    let advance=if DEFINED_OUTPUT_DEPTH!=0 {
+        checked(format_spec::check_child_output(core::slice::from_raw_parts(format,length),count));
+        0
+    } else {advance};
     render_format(format,length,items,count,&mut |byte| {putchar(byte as i32);},advance!=0);
     if advance!=0 {putchar(10);} else {fflush(core::ptr::null_mut());}
 }
