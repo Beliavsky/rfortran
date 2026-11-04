@@ -686,3 +686,10 @@ stage drops from 2.119/9.379/33.992 to 0.811/3.884/10.315 seconds on the repeate
 stats probes; see [FVE_SMALL_DRIVERS.md](FVE_SMALL_DRIVERS.md#scoped-procedure-body-type-checking).
 The initialization blocker remains; undefined-call scope handling is the next
 semantic performance candidate.
+
+
+Undefined-call checking now restores recorded symbol updates instead of cloning
+procedure environments. Its one/two/four-call timings are 0.030/0.022/0.053 seconds;
+see [FVE_SMALL_DRIVERS.md](FVE_SMALL_DRIVERS.md#scoped-undefined-call-checking).
+Earlier array-call lowering now dominates the four-call probe. All rfort probes
+still stop at the existing generated-storage initialization error.

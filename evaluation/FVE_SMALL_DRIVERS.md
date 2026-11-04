@@ -258,7 +258,45 @@ assignments before/after restoration. All 23 integration tests in
 `test_select_case_function_result`, and `test_intent_spellings` pass.
 
 Undefined-call checking takes 0.800/3.358/9.945 seconds for one/two/four calls.
-It still clones procedure and block environments and is the next semantic
+At that point it still cloned procedure environments and was the next semantic
 optimization candidate. Unlike the type-only checker, it introduces implicit
 symbols during expression traversal; any scoped replacement must preserve those
 rules and prevent declarations leaking between procedures or blocks.
+
+
+## Scoped undefined-call checking
+
+Undefined-call checking now records every symbol-table insertion (including
+implicit declarations) and restores a checkpoint on procedure exit. It no longer
+copies the entire enclosing table for each procedure. Top-level updates survive,
+and explicit/implicit locals and parameter types do not leak into sibling scopes.
+The set of statements traversed by this pass was not expanded.
+
+| Stats calls | Previous undefined-call stage (s) | Scoped stage (s) | New semantic total (s) | New attempt total (s) |
+|---|---:|---:|---:|---:|
+| 1 | 0.800 | 0.030 | 0.953 | 30.602 |
+| 2 | 3.358 | 0.022 | 1.569 | 42.403 |
+| 4 | 9.945 | 0.053 | 7.379 | 111.567 |
+
+These are sequential single-run measurements using the same module snapshots and
+optimized development settings as above. The nonmonotonic one/two-call stage
+timings and variations in unchanged stages reinforce that these are profiling
+observations, not controlled speedup ratios. All three rfort attempts still reach
+the same generated-storage initialization error; all gfortran object compilations
+pass. The full FVE build has not been established to succeed.
+
+Reports and compiler/source snapshots: `target/2015-compat/fve-undefined-scopes/`.
+
+Validation: all four focused Rust tests pass (nested restoration, preservation of
+top-level updates, procedure-local name isolation, and preceding regressions).
+All 32 integration tests in `test_implicit_typing`, `test_external_calls`, and
+`test_function_scope_metadata` pass.
+
+Earlier lowering is now the larger target: the four-call run spends 63.156 seconds
+in `array_calls::resolve`, including substring, allocatable, and function-array
+handling; reduction lowering takes 16.455 seconds and section lowering 12.887.
+These nested timings must not be added to their parent pass. Semantic analysis
+takes 7.379 seconds, of which 6.792 is in the function-body/top-level-check stage.
+The next investigation should profile repeated expansion and work within
+array-call lowering, using the matched probes before attempting another full FVE
+compile. The initialization error remains an independent correctness blocker.

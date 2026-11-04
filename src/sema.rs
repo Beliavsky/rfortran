@@ -27,6 +27,30 @@ impl SourceTokenIndex {
     }
 }
 
+// Tracks explicit and implicit declarations introduced while visiting a procedure.
+// Restoring a checkpoint discards its locals without cloning the enclosing table.
+struct UndefinedSymbols<'a> {
+    symbols: &'a mut HashMap<String, TypeSpec>,
+    changes: Vec<(String, Option<TypeSpec>)>,
+}
+impl UndefinedSymbols<'_> {
+    fn insert(&mut self, name: String, kind: TypeSpec) {
+        let previous = self.symbols.insert(name.clone(), kind);
+        self.changes.push((name, previous));
+    }
+    fn restore(&mut self, checkpoint: usize) {
+        while self.changes.len() > checkpoint {
+            let (name, previous) = self.changes.pop().unwrap();
+            if let Some(kind) = previous { self.symbols.insert(name, kind); }
+            else { self.symbols.remove(&name); }
+        }
+    }
+}
+impl std::ops::Deref for UndefinedSymbols<'_> {
+    type Target = HashMap<String, TypeSpec>;
+    fn deref(&self) -> &Self::Target { self.symbols }
+}
+
 pub(crate) fn show_type(type_spec: &TypeSpec) -> String {
     match type_spec {
         TypeSpec::Referenced {polymorphic,..} => if *polymorphic {"CLASSOF"} else {"TYPEOF"}.into(),
@@ -2479,7 +2503,7 @@ pub fn analyze_with_origins(
         e: &'a Expr,
         fn_map: &HashMap<String, FnInfo>,
         external_fn_ret: &HashMap<String, TypeSpec>,
-        sym: &mut HashMap<String, TypeSpec>,
+        sym: &mut UndefinedSymbols<'_>,
         implicit_typing: &ImplicitTyping,
         undef: &mut Vec<&'a str>,
     ) {
@@ -2541,7 +2565,7 @@ pub fn analyze_with_origins(
         s: &'a Stmt,
         fn_map: &HashMap<String, FnInfo>,
         external_fn_ret: &HashMap<String, TypeSpec>,
-        sym: &mut HashMap<String, TypeSpec>,
+        sym: &mut UndefinedSymbols<'_>,
         implicit_typing: &ImplicitTyping,
         undef: &mut Vec<&'a str>,
     ) {
@@ -2596,11 +2620,11 @@ pub fn analyze_with_origins(
                 }
             }
             Stmt::Function { params, body, .. } | Stmt::Subroutine { params, body, .. } => {
-                let mut local_sym = sym.clone();
+                let checkpoint = sym.changes.len();
                 for param in params {
                     let param_lower = param.to_ascii_lowercase();
                     if let Some(implicit_type) = implicit_typing.get_implicit_type(param) {
-                        local_sym.insert(param_lower, implicit_type);
+                        sym.insert(param_lower, implicit_type);
                     }
                 }
                 // Lowering can place descriptor setup ahead of source dummy
@@ -2608,9 +2632,9 @@ pub fn analyze_with_origins(
                 for declaration in body {
                     match declaration {
                         Stmt::VarDecl{kind,names} => for name in names {
-                            if params.contains(name) {local_sym.insert(name.to_ascii_lowercase(),kind.clone());}
+                            if params.contains(name) {sym.insert(name.to_ascii_lowercase(),kind.clone());}
                         },
-                        Stmt::ArrayDecl{kind,name,..} if params.contains(name) => {local_sym.insert(name.to_ascii_lowercase(),kind.clone());},
+                        Stmt::ArrayDecl{kind,name,..} if params.contains(name) => {sym.insert(name.to_ascii_lowercase(),kind.clone());},
                         _=>{}
                     }
                 }
@@ -2619,11 +2643,12 @@ pub fn analyze_with_origins(
                         st,
                         fn_map,
                         external_fn_ret,
-                        &mut local_sym,
+                        sym,
                         implicit_typing,
                         undef,
                     );
                 }
+                sym.restore(checkpoint);
             }
             Stmt::Module { body, .. } => {
                 for st in body {
@@ -2636,12 +2661,13 @@ pub fn analyze_with_origins(
     drop(sema_phase);
     let sema_phase = crate::compile_profile::Pass::new("sema.undefined_calls");
     let mut undef_calls: Vec<&str> = Vec::new();
+    let mut undefined_symbols = UndefinedSymbols { symbols: &mut sym, changes: Vec::new() };
     for stmt in &program.body {
         walk_stmt_undef(
             stmt,
             &fn_map,
             &external_fn_ret,
-            &mut sym,
+            &mut undefined_symbols,
             &implicit_typing,
             &mut undef_calls,
         );
@@ -2962,6 +2988,42 @@ pub fn analyze_with_origins(
 #[cfg(test)]
 mod source_token_index_tests {
     use super::*;
+
+    #[test]
+    fn undefined_symbols_restore_nested_updates_and_keep_root_updates() {
+        let mut table = HashMap::from([("x".into(), TypeSpec::Logical)]);
+        {
+            let mut symbols = UndefinedSymbols { symbols: &mut table, changes: Vec::new() };
+            symbols.insert("root".into(), TypeSpec::Real);
+            let outer = symbols.changes.len();
+            symbols.insert("x".into(), TypeSpec::Real);
+            symbols.insert("implicit_local".into(), TypeSpec::Integer(None));
+            let nested = symbols.changes.len();
+            symbols.insert("x".into(), TypeSpec::Character(None));
+            symbols.insert("x".into(), TypeSpec::DoublePrecision);
+            symbols.insert("nested".into(), TypeSpec::Real);
+            symbols.restore(nested);
+            assert!(matches!(symbols.get("x"), Some(TypeSpec::Real)));
+            assert!(symbols.contains_key("implicit_local"));
+            assert!(!symbols.contains_key("nested"));
+            symbols.restore(outer);
+            assert!(matches!(symbols.get("x"), Some(TypeSpec::Logical)));
+            assert!(!symbols.contains_key("implicit_local"));
+        }
+        assert!(table.contains_key("root"));
+        assert_eq!(table.len(), 2);
+    }
+
+    #[test]
+    fn undefined_call_check_does_not_leak_procedure_declarations() {
+        let source = "program main\nimplicit none\ncall first()\ncall second()\ncontains\nsubroutine first()\nreal :: private_array(2), x\nx=private_array(1)\nprint *,x\nend subroutine\nsubroutine second()\nreal :: x\nx=private_array(1)\nprint *,x\nend subroutine\nend program\n";
+        let tokens = crate::lexer::lex(source);
+        let program = crate::parser::parse_with_src(source, &tokens, "scope.f90").unwrap();
+        let errors = analyze_with_src(&program, source, &tokens, "scope.f90",
+            &SemaSettings::default(), &HashSet::new(), false);
+        assert_eq!(errors.iter().filter(|e| e.message.contains("undefined function or subroutine `private_array`")).count(), 1,
+            "{errors:?}");
+    }
 
     #[test]
     fn procedure_scopes_restore_shadowed_assignment_types() {
