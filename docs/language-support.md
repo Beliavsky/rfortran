@@ -4122,7 +4122,7 @@ with gfortran, statement boundaries, initialization behavior and invalid argumen
 ### Defined derived-type output
 
 Initial Fortran 2003 defined I/O supports type-bound
-`generic :: write(formatted) => binding` for scalar derived variables written
+`generic :: write(formatted) => binding` for scalar derived values written
 to standard output or sequential formatted external files, including dynamic
 units and negative units returned by `OPEN(NEWUNIT=...)`. The
 binding must identify a subroutine with the six standard dummies: scalar
@@ -4136,6 +4136,10 @@ explicit parent format can contain a single `DT` descriptor for one object,
 including its optional string and integer parameters, for example
 `write(*,"(dt'label'(3,2))") object`. The procedure receives `DTlabel` and
 `[3,2]`. Multiple scalar objects may appear in a list-directed parent statement.
+Scalar components, array elements (including multidimensional elements),
+structure constructors, and scalar derived function results use the same
+binding as named scalar variables. Subscripts and function results are
+materialized by the existing derived-argument lowering and evaluated once.
 Child formatted writes to the parent's unit do not terminate its record.
 Writes to other units retain their normal record endings. This also works through directly called helper subroutines, and normal
 advancing output resumes after the defined procedure returns.
@@ -4155,7 +4159,7 @@ The current message temporary holds 256 characters.
 
 This is partial support. Internal parent units, READ, unformatted
 transfers, namelist defined I/O, generic interface blocks, private and inherited defined
-bindings, derived-array items, component/expression items, runtime parent
+bindings, derived-array items and sections, runtime parent
 formats, and general formats mixing DT with other descriptors remain outside
 the supported subset. Child ADVANCE currently requires a constant YES/NO value.
 T/TL positioning in
@@ -4163,7 +4167,8 @@ child output is diagnosed rather than treating the child as a fresh record.
 
 Standalone examples are `tests/programs/xdefined_formatted_output.f90` for
 standard output and `tests/programs/xdefined_formatted_file.f90` for a scratch
-file with parent/child status controls.
+file with parent/child status controls. `tests/programs/xdefined_formatted_values.f90`
+demonstrates scalar components and constructors.
 Run `python tests/test_defined_io.py` for interpreter/native O0/O2 checks,
 gfortran output comparisons, and interface/unsupported-form diagnostics.
 

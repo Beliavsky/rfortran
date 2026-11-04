@@ -248,27 +248,31 @@ fn dt(format: &Expr) -> Result<(String, Vec<Expr>)> {
     Ok((iotype, values))
 }
 
-type Objects = HashMap<String, (String, bool)>;
-type Components = HashMap<(String, String), (String, bool)>;
+type Objects = HashMap<String, (String, usize)>;
+type Declarations = HashMap<String, (TypeSpec, usize)>;
 fn lower(
     body: &mut Vec<Stmt>,
     inherited: &Objects,
+    inherited_declarations: &Declarations,
     bindings: &HashMap<String, String>,
-    components: &Components,
+    expression_types: &crate::operators::ExpressionTypes,
     child_routines: &HashSet<String>,
     child: bool,
     serial: &mut usize,
 ) -> Result<()> {
     let mut objects = inherited.clone();
+    let mut declarations = inherited_declarations.clone();
     for s in body.iter() {
         match s {
-            Stmt::VarDecl { names, .. } => {
+            Stmt::VarDecl { kind, names } => {
                 for n in names {
                     objects.remove(n);
+                    declarations.insert(n.clone(), (kind.clone(), 0));
                 }
             }
-            Stmt::ArrayDecl { name, .. } => {
+            Stmt::ArrayDecl { kind, name, dims } => {
                 objects.remove(name);
+                declarations.insert(name.clone(), (kind.clone(), dims.len()));
             }
             Stmt::DerivedDecl {
                 type_name,
@@ -277,7 +281,8 @@ fn lower(
                 ..
             } => {
                 for n in names {
-                    objects.insert(n.clone(), (type_name.clone(), !dims.is_empty()));
+                    objects.insert(n.clone(), (type_name.clone(), dims.len()));
+                    declarations.remove(n);
                 }
             }
             _ => {}
@@ -300,55 +305,25 @@ fn lower(
                 _ => None,
             };
             if let Some((unit, format, mut items)) = selected {
-                let target = |e: &Expr| match e {
-                    Expr::Ident(n) => {
-                        let mut names = n.split('%');
-                        let (mut ty, mut array) = objects.get(names.next().unwrap())?.clone();
-                        for field in names {
-                            let value = components.get(&(ty, field.into()))?;
-                            ty = value.0.clone();
-                            array = true;
-                        }
-                        bindings.get(&ty).map(|p| (p.clone(), array))
-                    }
-                    Expr::Section { name: n, .. } => objects
-                        .get(n)
-                        .and_then(|(ty, _)| bindings.get(ty))
-                        .map(|p| (p.clone(), true)),
-                    Expr::Call(n, args)
-                        if n == "@array_constructor" || n == "@typed_constructor" =>
-                    {
-                        fn constructor_target(
-                            e: &Expr,
-                            objects: &Objects,
-                            bindings: &HashMap<String, String>,
-                        ) -> Option<String> {
-                            match e {
-                                Expr::Ident(n) | Expr::Section { name: n, .. } => {
-                                    objects.get(n).and_then(|(ty, _)| bindings.get(ty)).cloned()
-                                }
-                                Expr::Call(n, args) | Expr::Index(n, args) => bindings
-                                    .get(n)
-                                    .or_else(|| objects.get(n).and_then(|(ty, _)| bindings.get(ty)))
-                                    .cloned()
-                                    .or_else(|| {
-                                        args.iter()
-                                            .find_map(|e| constructor_target(e, objects, bindings))
-                                    }),
-                                _ => None,
+                // Share type/rank inference with generic procedure resolution, so
+                // constructors, components and function results retain their type.
+                let target = |e: &Expr| -> Result<Option<(String, bool)>> {
+                    Ok(
+                        match expression_types.type_rank(e, &declarations, &objects)? {
+                            Some((crate::operators::ExpressionElement::Derived(ty), rank)) => {
+                                bindings.get(&ty).map(|p| (p.clone(), rank != 0))
                             }
-                        }
-                        args.iter()
-                            .find_map(|e| constructor_target(e, &objects, bindings))
-                            .map(|p| (p, true))
-                    }
-                    Expr::Call(n, _) | Expr::Index(n, _) => bindings
-                        .get(n)
-                        .or_else(|| objects.get(n).and_then(|(ty, _)| bindings.get(ty)))
-                        .map(|p| (p.clone(), true)),
-                    _ => None,
+                            _ => None,
+                        },
+                    )
                 };
-                if items.iter().any(|e| target(e).is_some()) {
+                if items
+                    .iter()
+                    .map(&target)
+                    .collect::<Result<Vec<_>>>()?
+                    .iter()
+                    .any(Option::is_some)
+                {
                     let mut status_target = None;
                     let mut message_target = None;
                     while matches!(items.first(),Some(Expr::Call(n,_)) if n.starts_with("@write_option:"))
@@ -413,7 +388,7 @@ fn lower(
                     }
                     for item in items {
                         let start = out.len();
-                        if let Some((procedure, array)) = target(&item) {
+                        if let Some((procedure, array)) = target(&item)? {
                             if array {
                                 bail!("defined formatted output currently requires scalar derived variables");
                             }
@@ -572,8 +547,9 @@ fn lower(
                 lower(
                     nested,
                     &objects,
+                    &declarations,
                     bindings,
-                    components,
+                    expression_types,
                     child_routines,
                     nested_child,
                     serial,
@@ -638,66 +614,13 @@ pub fn resolve(mut program: Program) -> Result<Program> {
         }
         children = found;
     }
-    fn fields(body: &mut [Stmt], components: &mut Components) {
-        for s in body {
-            if let Stmt::DerivedType {
-                name,
-                components: fields,
-                ..
-            } = s
-            {
-                for f in fields {
-                    if let Stmt::DerivedDecl {
-                        type_name,
-                        names,
-                        dims,
-                        ..
-                    } = f
-                    {
-                        for field in names {
-                            components.insert(
-                                (name.clone(), field.clone()),
-                                (type_name.clone(), !dims.is_empty()),
-                            );
-                        }
-                    }
-                }
-            }
-            for b in crate::procedure_arguments::children(s) {
-                fields(b, components);
-            }
-        }
-    }
-    let mut components = Components::new();
-    fields(&mut program.body, &mut components);
-    let mut function_results = Objects::new();
-    for (name, procedure) in &procedures {
-        if let Stmt::Function { body, .. } = procedure {
-            let result = match body.last() {
-                Some(Stmt::Return(Some(Expr::Ident(n)))) => n,
-                _ => name,
-            };
-            for declaration in body {
-                if let Stmt::DerivedDecl {
-                    type_name,
-                    names,
-                    dims,
-                    ..
-                } = declaration
-                {
-                    if names.contains(result) {
-                        function_results
-                            .insert(name.clone(), (type_name.clone(), !dims.is_empty()));
-                    }
-                }
-            }
-        }
-    }
+    let expression_types = crate::operators::ExpressionTypes::new(&program)?;
     lower(
         &mut program.body,
-        &function_results,
+        &Objects::new(),
+        &Declarations::new(),
         &bindings,
-        &components,
+        &expression_types,
         &children,
         false,
         &mut 0,

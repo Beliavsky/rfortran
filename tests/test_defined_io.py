@@ -187,6 +187,89 @@ end subroutine
 end module""")
         self.check(source,' [7]! [9]!\n after\n')
 
+    def test_scalar_components_and_constructors(self):
+        self.check((ROOT/'tests/programs/xdefined_formatted_values.f90').read_text(),
+                   '11 12 13\n11\n')
+
+    def test_array_elements(self):
+        source=self.source("write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x", """points(1)=point(21)
+points(2)=point(22)
+print *, points(2),points(1)
+write(*,'(dt)') points(2)
+""").replace('type(point) :: a,b','type(point) :: a,b,points(2)')
+        self.check(source,'22 21\n22\n')
+
+    def test_function_result_evaluated_once(self):
+        source=self.source("write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x", """print *, make_point()
+print *, calls
+write(*,'(dt)') make_point()
+print *, calls
+""")
+        source=source.replace('implicit none', 'implicit none\ninteger :: calls=0',1)
+        source=source.replace('end module', """function make_point() result(p)
+type(point) :: p
+calls=calls+1
+p%x=30+calls
+end function
+end module""")
+        self.check(source,'31\n1\n32\n2\n')
+
+    def test_components_of_array_elements(self):
+        source=self.source("write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x", """boxes(1)%item=point(41)
+boxes(2)%item=point(42)
+print *, boxes(2)%item,boxes(1)%item
+""")
+        source=source.replace('end type', 'end type\ntype :: container\n type(point) :: item\nend type',1)
+        source=source.replace('type(point) :: a,b','type(point) :: a,b\ntype(container) :: boxes(2)')
+        self.check(source,'42 41\n')
+
+    def test_scalar_elements_of_array_components(self):
+        source=self.source("write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x", """box%items(1)=point(51)
+box%items(2)=point(52)
+print *, box%items(2),box%items(1)
+""")
+        source=source.replace('end type', 'end type\ntype :: container\n type(point) :: items(2)\nend type',1)
+        source=source.replace('type(point) :: a,b','type(point) :: a,b\ntype(container) :: box')
+        self.check(source,'52 51\n')
+
+    def test_reject_vector_and_multidimensional_sections(self):
+        source=self.source('iostat=0','print *, points(indices)').replace('type(point) :: a,b',
+            'type(point) :: a,b,points(2)\ninteger :: indices(2)')
+        self.reject(source,'requires scalar derived variables')
+        source=source.replace('points(indices)','points([1,2])')
+        self.reject(source,'requires scalar derived variables')
+        source=source.replace('points(2)','points(2,2)').replace('points([1,2])','points(:,1)')
+        self.reject(source,'requires scalar derived variables')
+
+    def test_subscript_evaluated_once(self):
+        source=self.source("write(unit,'(i0,1x,i0)',iostat=iostat,iomsg=iomsg) dtv%x,dtv%y", """points(1)=point(61,62)
+points(2)=point(71,72)
+print *, points(next_index())
+print *, calls
+""")
+        source=source.replace('integer :: x','integer :: x,y',1)
+        source=source.replace('implicit none','implicit none\ninteger :: calls=0',1)
+        source=source.replace('type(point) :: a,b','type(point) :: a,b,points(2)')
+        source=source.replace('end module', """integer function next_index() result(i)
+calls=calls+1
+i=calls
+end function
+end module""")
+        self.check(source,'61 62\n1\n')
+
+    def test_multidimensional_element_and_array_result_diagnostic(self):
+        source=self.source("write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x", """points(2,1)=point(81)
+print *, points(2,1)
+""").replace('type(point) :: a,b','type(point) :: a,b,points(2,2)')
+        self.check(source,'81\n')
+        source=self.source('iostat=0','print *, make_points()').replace('end module', """function make_points() result(p)
+type(point) :: p(2)
+p(1)=point(1)
+p(2)=point(2)
+end function
+end module""")
+        self.reject(source,'requires scalar derived variables')
+
     def test_reject_unsupported_parent_forms(self):
         self.reject(self.source('iostat=0',"write(*,'(dt,dt)') a,b"),'one scalar object')
 
