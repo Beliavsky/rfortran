@@ -1858,6 +1858,12 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         let text=eval_expr(&args[1],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).3.unwrap();
                         io_result(FILES.with(|files|files.borrow_mut().write_record(unit,&text)));idx+=1;continue;
                     }
+                    if name=="@file_require_action" {
+                        let fr=call_stack.last().unwrap().clone();
+                        let unit=eval_expr(&args[0],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
+                        let reading=matches!(&args[1],Expr::IntLit(n) if n=="1");
+                        io_result(FILES.with(|files|files.borrow().require_action(unit,reading)));idx+=1;continue;
+                    }
                     if name=="@file_scratch" {
                         let fr=call_stack.last().unwrap().clone();
                         let unit=eval_expr(&args[0],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();

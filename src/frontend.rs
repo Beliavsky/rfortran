@@ -35,6 +35,8 @@ pub(crate) fn prepare_program(
                          &prepared.origins, settings, &args.warnings)?;
     allocation_warnings::check(&prepared.program, &prepared.source, src.len(), filename,
                                &prepared.origins, settings, &args.warnings)?;
+    action_warnings::check(&prepared.program, &prepared.source, src.len(), filename,
+                           &prepared.origins, settings, &args.warnings)?;
     if args.standard.is_some() {
         standards::check(&prepared.program, &prepared.source, &lexer::lex(&prepared.source), filename,
                          Some(&prepared.origins), args.standard, settings.werror)?;

@@ -1858,6 +1858,9 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                     bail!("IOMSG requires a scalar CHARACTER variable");
                 }
             }
+            // Without IOSTAT=, a READ from a unit opened for WRITE stops with
+            // its own message rather than a generic input error.
+            if let Some(check)=crate::file_io::readable_check(name,args,&symbols.variables) {output.push(check);}
             if name=="@empty_read" {
                 output.push(crate::input::lower_empty_read(args,&symbols.variables,serial)?);
                 continue;

@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write, Seek, SeekFrom};
 #[path="file_inquiry.rs"]
 mod inquiry;
+pub(crate) use inquiry::action_message;
 
 pub(crate) fn unit(expr: &Expr, symbols: &HashMap<String, (TypeSpec, Vec<Expr>)>) -> Result<()> {
     match expr {
@@ -211,6 +212,17 @@ impl Open {
     }
 }
 
+/// `@file_require_action(unit, 1)` ahead of an external READ without
+/// IOSTAT=, which stops when the unit's ACTION is WRITE.
+pub(crate) fn readable_check(name:&str,args:&[Expr],symbols:&HashMap<String,(TypeSpec,Vec<Expr>)>)->Option<Stmt> {
+    let unit=match (name,args) {
+        ("@formatted_read",[unit,..])=>unit,
+        ("@internal_read"|"@empty_read"|"@unformatted_read"|"@formatted_read_status",[unit,Expr::Str(control),..]) if control.is_empty()=>unit,
+        _=>return None,
+    };
+    if !crate::output::integer(unit,symbols) || crate::parameters::integer_constant(unit).ok()==Some(5) {return None;}
+    Some(Stmt::CallSub{name:"@file_require_action".into(),args:vec![unit.clone(),Expr::IntLit("1".into())]})
+}
 fn lower_inquiry(mut controls:HashMap<String,Expr>,symbols:&HashMap<String,(TypeSpec,Vec<Expr>)>,serial:&mut usize)->Result<Stmt> {
     let unit=controls.remove("unit");let file=controls.remove("file");
     if unit.is_some()==file.is_some() {bail!("INQUIRE requires exactly one of UNIT or FILE");}
@@ -294,6 +306,14 @@ impl Files {
         self.0.insert(unit, file);
         self.1.insert(unit, name);
         self.2.insert(unit, 3);
+    }
+    /// An error when the ACTION of `unit` forbids a data transfer in the
+    /// given direction.
+    pub(crate) fn require_action(&self, unit: i64, reading: bool) -> Result<()> {
+        if self.0.contains_key(&unit) && self.2.get(&unit) == Some(&if reading { 2 } else { 1 }) {
+            bail!(inquiry::action_message(reading));
+        }
+        Ok(())
     }
     fn valid(unit: i64) -> Result<()> {
         if (!(0..1024).contains(&unit) && !(-1033..=-10).contains(&unit)) || matches!(unit, 5 | 6) {
@@ -402,6 +422,7 @@ impl Files {
             return Ok(());
         }
         self.implicit(unit);
+        self.require_action(unit,false)?;
         let file=self.0.get_mut(&unit).context("file unit is not connected")?;
         file.write_all(text.as_bytes())?;
         if advance {file.write_all(b"\n")?;}
@@ -412,6 +433,7 @@ impl Files {
     pub(crate) fn record(&mut self, unit: i64, length: usize) -> Result<String> {
         Self::valid(unit)?;
         self.implicit(unit);
+        self.require_action(unit, true)?;
         let file = self
             .0
             .get_mut(&unit)
@@ -459,11 +481,13 @@ impl Files {
     /// Unformatted stream output: 0, or 1 on an error.
     pub(crate) fn stream_write(&mut self,unit:i64,bytes:&[u8])->i64 {
         self.implicit(unit);
+        if self.require_action(unit,false).is_err() {return 1;}
         match self.0.get_mut(&unit) {Some(file)=>i64::from(file.write_all(bytes).is_err()),None=>1}
     }
     /// Unformatted stream input: 0, -1 at end of file, or 1 on an error.
     pub(crate) fn stream_read(&mut self,unit:i64,buffer:&mut [u8])->i64 {
         self.implicit(unit);
+        if self.require_action(unit,true).is_err() {return 1;}
         let Some(file)=self.0.get_mut(&unit) else {return 1};
         match file.read_exact(buffer) {Ok(())=>0,Err(e) if e.kind()==std::io::ErrorKind::UnexpectedEof=>-1,Err(_)=>1}
     }
@@ -476,7 +500,7 @@ impl Files {
     pub(crate) fn input_byte(&mut self,unit:i64)->Result<Option<u8>,()> {
         let mut byte=[0];
         let result=if unit==5 {std::io::stdin().read(&mut byte)} else {
-            self.implicit(unit);let file=self.0.get_mut(&unit).ok_or(())?;file.read(&mut byte)
+            self.implicit(unit);self.require_action(unit,true).map_err(|_|())?;let file=self.0.get_mut(&unit).ok_or(())?;file.read(&mut byte)
         };
         match result {Ok(0)=>Ok(None),Ok(_)=>Ok(Some(byte[0])),Err(_)=>Err(())}
     }
@@ -497,6 +521,7 @@ impl Files {
         }
         if Self::valid(unit).is_err() { return crate::record_input::ERROR; }
         self.implicit(unit);
+        if self.require_action(unit, true).is_err() { return crate::record_input::ERROR; }
         let Some(file) = self.0.get_mut(&unit) else { return crate::record_input::ERROR; };
         scan(buffer, &mut || {
             let mut byte = [0];

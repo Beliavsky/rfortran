@@ -105,6 +105,30 @@ fn unit_index(b: &mut FunctionBuilder, unit:ir::Value)->(ir::Value,ir::Value) {
     let mapped=b.ins().iadd_imm(negative,1024);
     (b.ins().select(positive,unit,mapped),b.ins().bor(positive,valid_negative))
 }
+/// The ACTION of `unit`: 1 READ, 2 WRITE, 3 READWRITE, or 0 when the unit
+/// is unconnected or out of range.
+fn action(module:&mut ObjectModule,b:&mut FunctionBuilder,ptr:ir::Type,unit:ir::Value)->Result<ir::Value> {
+    let (index,range)=unit_index(b,unit);
+    let zero=b.ins().iconst(types::I64,0);let index=b.ins().select(range,index,zero);
+    let offset=b.ins().imul_imm(index,8);
+    let slots=table(b,module,ptr,".rfort.file_units")?;let address=b.ins().iadd(slots,offset);
+    let file=b.ins().load(ptr,MemFlags::new(),address,0);
+    let actions=table(b,module,ptr,".rfort.file_actions")?;let address=b.ins().iadd(actions,offset);
+    let action=b.ins().load(types::I64,MemFlags::new(),address,0);
+    let connected=b.ins().icmp_imm(IntCC::NotEqual,file,0);let valid=b.ins().band(range,connected);
+    Ok(b.ins().select(valid,action,zero))
+}
+/// Whether `unit` permits a data transfer in the given direction; an
+/// unconnected unit does, as its connection is checked elsewhere.
+pub(super) fn permits(module:&mut ObjectModule,b:&mut FunctionBuilder,ptr:ir::Type,unit:ir::Value,reading:bool)->Result<ir::Value> {
+    let action=action(module,b,ptr,unit)?;
+    Ok(b.ins().icmp_imm(IntCC::NotEqual,action,if reading {2} else {1}))
+}
+/// Stop unless `unit` permits a data transfer in the given direction.
+pub(super) fn require_action(module:&mut ObjectModule,b:&mut FunctionBuilder,ptr:ir::Type,dc:&mut u32,unit:ir::Value,reading:bool)->Result<()> {
+    let okay=permits(module,b,ptr,unit,reading)?;
+    require(module,b,ptr,dc,okay,crate::file_io::action_message(reading))
+}
 pub(super) fn table(b: &mut FunctionBuilder,module:&mut ObjectModule,ptr:ir::Type,name:&str)->Result<ir::Value> {
     let id=module.declare_data(name,Linkage::Local,true,false)?;
     let global=module.declare_data_in_func(id,b.func);
@@ -192,6 +216,7 @@ pub(super) fn write_handle(
     let file = b.ins().select(error_unit, stderr, file);
     let connected = b.ins().icmp_imm(IntCC::NotEqual, file, 0);
     require(module, b, ptr, dc, connected, "file unit is not connected")?;
+    require_action(module, b, ptr, dc, unit, false)?;
     Ok(file)
 }
 
@@ -218,6 +243,7 @@ pub(super) fn read_handle(
     let _ = index;
     let handle=implicit(module,b,ptr,unit)?;
     let connected=b.ins().icmp_imm(IntCC::NotEqual,handle,0);
+    let readable=permits(module,b,ptr,unit,true)?;let connected=b.ins().band(connected,readable);
     let status=b.ins().select(connected,zero,error);
     b.ins().jump(done,&[handle.into(),status.into()]);
     b.switch_to_block(done);b.seal_block(done);
@@ -302,6 +328,7 @@ pub(super) fn operation(
             require(module, b, ptr, dc, okay, "CLOSE could not delete the file")?;
         }
         call(module,b,"rfort_file_free_name",&[path],types::I32)?;b.ins().store(MemFlags::new(),zero,address,0);
+        let actions=table(b,module,ptr,".rfort.file_actions")?;let address=b.ins().iadd(actions,offset);b.ins().store(MemFlags::new(),zero,address,0);
         b.ins().jump(done, &[]);
         b.switch_to_block(done);
         b.seal_block(done);

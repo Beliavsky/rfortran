@@ -2904,6 +2904,11 @@ fn gen_stmts(
                     let okay=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,code,0);
                     file_io::require(module,b,ptr_ty,dc,okay,"formatted file WRITE failed")?;continue;
                 }
+                if name=="@file_require_action" {
+                    let unit=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);let unit=to_i64(b,unit);
+                    let reading=matches!(&args[1],IExpr::IntLit(n) if n=="1");
+                    file_io::require_action(module,b,ptr_ty,dc,unit,reading)?;continue;
+                }
                 if name == "@file_flush" {
                     // A null stream flushes every output stream.
                     let null = b.ins().iconst(ptr_ty, 0);
@@ -3017,7 +3022,10 @@ fn gen_stmts(
                         let slot=match tag {4=>chars.get(value).map(|s|s.0),2=>reals.get(value).copied(),3=>bools.get(value).copied(),_=>ints.get(value).copied()}
                             .ok_or_else(||anyhow::anyhow!("missing stream transfer storage"))?;
                         let address=storage_addr(b,ptr_ty,slot);let tag=b.ins().iconst(types::I64,tag);let width=b.ins().iconst(ptr_ty,width);
-                        file_io::call(module,b,if name=="@stream_put" {"rfort_stream_put"} else {"rfort_stream_get"},&[file,tag,width,address],types::I64)?
+                        let code=file_io::call(module,b,if name=="@stream_put" {"rfort_stream_put"} else {"rfort_stream_get"},&[file,tag,width,address],types::I64)?;
+                        // A transfer that the unit's ACTION forbids is an error.
+                        let okay=file_io::permits(module,b,ptr_ty,unit,name=="@stream_get")?;
+                        let error=b.ins().iconst(types::I64,1);b.ins().select(okay,code,error)
                     };
                     let address=storage_addr(b,ptr_ty,ints[status]);b.ins().store(MemFlags::new(),code,address,0);continue;
                 }

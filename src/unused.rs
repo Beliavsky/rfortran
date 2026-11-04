@@ -47,6 +47,7 @@ const CATEGORIES: &[&str] = &[
     "character-truncation",
     "memory-leak",
     "allocation-state",
+    "action-mismatch",
 ];
 /// The opt-in categories that -Wextra enables, as gfortran's -Wextra adds to
 /// -Wall. implicit-interface and conversion stay opt-in: they fire throughout

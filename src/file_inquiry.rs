@@ -15,6 +15,10 @@ pub(crate) fn unit(index:usize)->i64 {if index<1024 {index as i64} else {-10-(in
 
 /// ACTION codes stored with a connection, independently of the C stream mode.
 pub(crate) fn action(mode:i64)->i64 {match mode {0=>1,1|4|6=>2,_=>3}}
+/// The run-time error for a data transfer that the unit's ACTION forbids.
+pub(crate) fn action_message(reading:bool)->&'static str {
+    if reading {"READ from a unit opened with ACTION='WRITE'"} else {"WRITE to a unit opened with ACTION='READ'"}
+}
 pub(crate) fn action_text(action:i64)->&'static str {
     match action {1=>"READ",2=>"WRITE",3=>"READWRITE",_=>"UNDEFINED"}
 }

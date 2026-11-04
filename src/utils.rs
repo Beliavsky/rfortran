@@ -152,6 +152,7 @@ pub fn print_help() {
     println!("                      the unit connects to fort.N, as in gfortran and ifx)");
     println!("  -Wmemory-leak       Warn about local POINTER storage lost without DEALLOCATE (on by default)");
     println!("  -Wallocation-state  Warn about DEALLOCATE of an unallocated or ALLOCATE of an allocated local (on by default)");
+    println!("  -Waction-mismatch   Warn about READ from a unit opened for WRITE or WRITE to one opened for READ (on by default)");
     println!("  -Wfixed-unit        Warn about OPEN of a constant unit in a procedure; suggest NEWUNIT= (opt-in)");
     println!("  -Wno-<category>      Disable a warning category");
     println!("  -Werror, --Werror    Treat enabled warnings as errors");
