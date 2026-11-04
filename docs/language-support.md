@@ -1562,8 +1562,11 @@ bounds and released on return. Each recursive activation has its own array.
 Fixed-length CHARACTER and derived-type automatic arrays work the same way.
 Like other runtime-sized CHARACTER arrays, an automatic CHARACTER array does not
 yet support substring assignment to an element (`c(i)(2:3) = ...`) or internal
-WRITE to an element. Automatic CHARACTER lengths such as `character(len=n)` are
-not yet supported. Run `python tests/test_automatic_arrays.py`.
+WRITE to an element. Scalar automatic CHARACTER lengths such as
+`character(len=n)` are supported for procedure and BLOCK locals; runtime
+element lengths for automatic arrays remain unsupported. Run
+`python tests/test_automatic_arrays.py` and
+`python tests/test_dummy_character_lengths.py`.
 
 Numeric and LOGICAL allocatable locals and module variables now support heap
 allocation with runtime dimensions, including dimensions read from input or
@@ -3315,11 +3318,17 @@ can use `LEN(text)` of a CHARACTER dummy, including supported constant arithmeti
 such as `LEN(text)+2` or `MAX(1,LEN(text))`. Each call binds the length from the
 actual argument's declared scalar or element length; the contents can be read
 at runtime. Nested calls and BLOCK declarations keep their own lengths.
-Specification expressions cannot depend on OPTIONAL dummies. Runtime-dependent
-`LEN_TRIM(text)` lengths remain unsupported. `tests/154_dummy_character_lengths.f90`
+Scalar procedure and BLOCK locals also support runtime INTEGER lengths and
+`LEN_TRIM(text)` lengths. Each object's length is evaluated once on entry and
+clamped to zero if negative. Subsequent assignments pad or truncate to that
+length, even if a variable used in its declaration changes. Storage is
+heap-backed; reserving it leaves the value undefined. Substring assignment is
+supported. Runtime-length CHARACTER arrays and READ into these scalar objects
+remain unsupported. Specification expressions cannot depend on OPTIONAL dummies. `tests/154_dummy_character_lengths.f90`
 isolates the local `mod_text` declaration from `util.f90:read_vec_real`.
 Run `python tests/test_dummy_character_lengths.py` for interpreter/native O0/O2
-checks and gfortran comparisons.
+checks and gfortran comparisons. `tests/programs/xautomatic_character_length.f90`
+is a standalone runtime-length example (supply an integer such as `5` on stdin).
 
 TRIM expressions passed to assumed-length INTENT(IN) CHARACTER dummies retain
 their runtime length separately from storage capacity. Their operands are

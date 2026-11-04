@@ -689,6 +689,10 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
     let mut scope = inherited.clone();
     scope.procedure = !local;
     let mut targets = vec![];
+    let automatic: std::collections::HashSet<String> = statements.iter().filter_map(|s| match s {
+        Stmt::CallSub {name,args} if name=="@automatic_character" => match args.as_slice() { [Expr::Ident(n)] => Some(n.clone()), _ => None },
+        _ => None,
+    }).collect();
     for s in statements.iter() {
         match s {
             Stmt::VarDecl { kind, names } => for name in names {
@@ -812,6 +816,16 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
                 }
                 continue;
             }
+            Stmt::CallSub {name,..} if name=="@automatic_character" => continue,
+            Stmt::VarDecl {names,..} if names.iter().all(|n|automatic.contains(n)) => {
+                for name in names {
+                    declare_character(name, MAX_EXPRESSION_LENGTH, &mut result);
+                    // Allocate at entry, but leave the Fortran value undefined.
+                    result.push(Stmt::CallSub {name:"@character_assign".into(),args:vec![ident(name),Expr::Str(String::new()),ident(&scope.lengths[name])]});
+                    result.push(Stmt::CallSub {name:"@undefine".into(),args:vec![ident(name)]});
+                }
+                continue;
+            }
             Stmt::VarDecl { kind, names } if deferred(kind) => {
                 for name in names {
                     let flag = allocation_flag(&scope.lengths[name]);
@@ -836,6 +850,11 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
             }
             Stmt::Assign { name, value } => {
                 dynamic_expression(value, &mut scope, &mut prefix, serial)?;
+                if scope.fixed.contains(name) && scope.characters.get(name)==Some(&MAX_EXPRESSION_LENGTH) {
+                    result.extend(prefix);
+                    result.push(Stmt::CallSub {name:"@character_assign".into(),args:vec![ident(name),value.clone(),ident(&scope.lengths[name])]});
+                    continue;
+                }
                 if let Some(length) = scope.lengths.get(name).filter(|_|!scope.fixed.contains(name)).cloned() {
                     let length_value = logical_length(value, &mut scope, &mut prefix, serial)?;
                     let saved = capture(length_value, &mut scope, &mut prefix, serial);

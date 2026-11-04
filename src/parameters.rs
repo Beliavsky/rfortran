@@ -2197,7 +2197,10 @@ fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules, ass
             Stmt::Function { name,elemental,params, body, return_type, .. } => {
                 source_offset=body.iter().find_map(|s|if let Stmt::SourceLocation(pos)=s {Some(*pos)}else{None});
                 let inline=crate::elemental::inline_character(*elemental,name,params,return_type,body);
-                let local = resolve_scope(body, constants, params, modules, inline, false, inline)?;
+                let optional=body.iter().filter_map(|s|if let Stmt::DummyIntent{name,intent}=s {if intent=="optional" {Some(name.clone())}else{None}}else{None}).collect();
+                validate_optional_character_lengths(body,&optional)?;
+                let automatic=body.iter().any(|s|matches!(s,Stmt::VarDecl{kind:TypeSpec::CharacterLength(_),..}));
+                let local = resolve_scope(body, constants, params, modules, inline, false, inline || automatic)?;
                 if let Some(kind) = return_type { resolve_template_kind(kind, &local, inline)?; }
                 let result_name = match body.last() { Some(Stmt::Return(Some(Expr::Ident(n)))) => Some(n), _ => None };
                 if !inline && (matches!(return_type, Some(TypeSpec::Character(_))) || body.iter().any(|s| matches!(s,
@@ -2208,14 +2211,14 @@ fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules, ass
             Stmt::Subroutine { params, body, elemental, .. } => {
                 let optional=body.iter().filter_map(|s|if let Stmt::DummyIntent{name,intent}=s {if intent=="optional" {Some(name.clone())}else{None}}else{None}).collect();
                 validate_optional_character_lengths(body,&optional)?;
-                let specialized=*elemental || body.iter().any(|s|match s {
+                let specialized=*elemental || body.iter().any(|s| matches!(s, Stmt::VarDecl {kind: TypeSpec::CharacterLength(_), ..})) || body.iter().any(|s|match s {
                     Stmt::ArrayDecl {name,..}=>params.contains(name),
                     Stmt::VarDecl {kind,names}=>matches!(kind,TypeSpec::Character(_)|TypeSpec::CharacterAssumed|TypeSpec::CharacterLength(_)) && names.iter().any(|n|params.contains(n)),
                     _=>false,
                 });
                 resolve_scope(body, constants, params, modules, true, false, specialized)?;
             }
-            Stmt::Block { body } => { resolve_scope(body, constants, &[], modules, false, false, template)?; },
+            Stmt::Block { body } => { resolve_scope(body, constants, &[], modules, false, false, true)?; },
             Stmt::Module { .. } => {},
             Stmt::InitializedDecl { .. } => {
                 bail!("PARAMETER declaration must be in a specification part")

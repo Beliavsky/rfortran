@@ -150,6 +150,12 @@ pub fn model_type(e: &Expr, lookup: &impl Fn(&str) -> Option<(TypeSpec,usize)>) 
                 }
             }
         },
+        Expr::Call(n,a) if matches!(n.as_str(),"len"|"len_trim") && lookup(n).is_none() && (1..=2).contains(&a.len()) => {
+            if model_type(&a[0],lookup)?.is_some_and(|k|!matches!(k,TypeSpec::Character(_)|TypeSpec::CharacterLength(_)|TypeSpec::CharacterAssumed)) {bail!("{n} requires a CHARACTER argument");}
+            let kind=a.get(1).filter(|e|!crate::named_arguments::omitted(e)).map(crate::parameters::integer_constant).transpose()?.unwrap_or(4);
+            if !matches!(kind,1|2|4|8) {bail!("{n} KIND must be a supported INTEGER kind (1, 2, 4 or 8)");}
+            Some(TypeSpec::Integer(Some(kind as u8)))
+        },
         Expr::Call(n,a) if matches!(n.as_str(),"index"|"scan"|"verify") && (2..=4).contains(&a.len()) => {
             for arg in &a[..2] {
                 if model_type(arg,lookup)?.is_some_and(|k|!matches!(k,TypeSpec::Character(_)|TypeSpec::CharacterLength(_)|TypeSpec::CharacterAssumed)) {bail!("{n} requires CHARACTER arguments");}

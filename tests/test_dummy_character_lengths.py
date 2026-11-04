@@ -108,7 +108,7 @@ end program main
 """,'CHARACTER length cannot depend on OPTIONAL')
 
     def test_runtime_trim_length_is_not_mistaken_for_capacity(self):
-        self.reject("""program main
+        self.check("""program main
 character(4)::text
 read(*,'(a)')text
 call work(text)
@@ -120,7 +120,113 @@ copy=text
 print '(a)',copy
 end subroutine work
 end program main
-""",'character constant')
+""", 'ab\n', data='ab\n')
+
+    def test_runtime_integer_length_captured_on_entry(self):
+        self.check((ROOT/'tests/programs/xautomatic_character_length.f90').read_text(encoding='utf-8'), '5\n[abcde]\n[Z    ]\n2\n[ab]\n[Z ]\n0\n[]\n[]\n0\n[]\n[]\n', data='5\n')
+
+    def test_runtime_length_storage_limit(self):
+        self.check((ROOT/'tests/programs/xautomatic_character_length.f90').read_text(encoding='utf-8'),
+                   error='automatic CHARACTER length is too large', data='2147483647\n', reference=False)
+
+    def test_runtime_block_length_and_substrings(self):
+        self.check("""program main
+implicit none
+integer :: n, i
+read *, n
+do i=1,2
+block
+character(len=n+i) :: text
+text='abcdefgh'
+text(2:3)='XY'
+print *,len(text)
+print '(a)',text
+end block
+end do
+end program
+""", '4\naXYd\n5\naXYde\n', data='3\n')
+
+    def test_runtime_function_local_and_nested_call(self):
+        self.check("""program main
+implicit none
+integer :: n, value
+read *, n
+value=work(n)
+print *, value
+contains
+integer function work(n) result(value)
+integer,intent(in) :: n
+character(len=n) :: text
+text='abc'
+call show(text)
+value=len(text)
+end function
+subroutine show(text)
+character(len=*),intent(in) :: text
+print '(a)', '['//text//']'
+end subroutine
+end program
+""", '[abc  ]\n5\n', data='5\n')
+
+    def test_large_runtime_length_and_multiple_objects(self):
+        self.check("""program main
+use iso_fortran_env, only: int64
+implicit none
+integer(int64) :: n
+read *,n
+call work(n)
+contains
+subroutine work(n)
+integer(int64),intent(in) :: n
+character(len=max(n,1_int64)) :: text, copy
+text='Z'
+text(n:n)='!'
+copy=text
+print *,len(text),len(copy)
+print '(a)',copy(1:1)//copy(n:n)
+end subroutine
+end program
+""", '100000 100000\nZ!\n',data='100000\n')
+
+    def test_invalid_runtime_lengths(self):
+        for declaration in ('real,intent(in) :: n', 'integer,intent(in) :: n(2)'):
+            actual = '2.0' if declaration.startswith('real') else '[2,3]'
+            self.reject(f"""program main
+call work({actual})
+contains
+subroutine work(n)
+{declaration}
+character(len=n) :: text
+text='a'
+print *,text
+end subroutine
+end program
+""", 'automatic CHARACTER length must be a scalar INTEGER expression')
+        self.reject("""program main
+call work(3)
+contains
+subroutine work(n)
+integer,intent(in),optional :: n
+character(len=n) :: text
+text='a'
+print *,text
+end subroutine
+end program
+""", 'CHARACTER length cannot depend on OPTIONAL')
+
+    def test_runtime_length_does_not_initialize_value(self):
+        self.reject("""program main
+integer :: n
+read *, n
+call work(n)
+contains
+subroutine work(n)
+integer,intent(in) :: n
+character(len=n) :: text
+print '(a)',text
+end subroutine
+end program
+""", 'uninitialized')
 
 if __name__ == '__main__':
     unittest.main()

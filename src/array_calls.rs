@@ -970,6 +970,31 @@ fn specialize(
                 shapes.insert(name.clone(), (kind.clone(), dims.clone()));
             }
             Stmt::VarDecl { names, kind } => {
+                if let TypeSpec::CharacterLength(length) = kind {
+                    if !crate::substrings::deferred(&TypeSpec::CharacterLength(length.clone())) {
+                        rewrite(length, shapes, constants, absent)?;
+                        if let Err(error) = crate::parameters::concrete_kind(TypeSpec::CharacterLength(length.clone())) {
+                            if crate::parameters::integer_constant(length).is_ok() {return Err(error);}
+                            let ty = crate::inquiries::model_type(length, &|n|shapes.get(n).map(|(k,d)|(k.clone(),d.len())))?
+                                .or_else(|| scalar_actual_kind(length, shapes).ok());
+                            if !matches!(ty, Some(TypeSpec::Integer(_))) || array_actual(length, shapes) {
+                                bail!("automatic CHARACTER length must be a scalar INTEGER expression");
+                            }
+                            let saved = format!("@automatic_character_length${}", names[0]);
+                            let capacity = crate::substrings::MAX_EXPRESSION_LENGTH;
+                            output.push(Stmt::VarDecl {kind:TypeSpec::Integer(Some(8)),names:vec![saved.clone()]});
+                            output.push(Stmt::Assign {name:saved.clone(),value:Expr::Call("max".into(),vec![Expr::IntLit("0".into()),length.as_ref().clone()])});
+                            output.push(Stmt::If {cond:Expr::Bin(BinOp::Gt,Box::new(Expr::Ident(saved.clone())),Box::new(Expr::IntLit(capacity.to_string()))),then_body:vec![Stmt::CallSub{name:"@error_stop".into(),args:vec![Expr::Str("automatic CHARACTER length is too large".into())]}],else_body:None});
+                            shapes.insert(saved.clone(),(TypeSpec::Integer(Some(8)),vec![]));
+                            for name in names.iter() {
+                                output.push(Stmt::DummyIntent{name:name.clone(),intent:format!("@character_spec_length:{saved}")});
+                                output.push(Stmt::CallSub{name:"@automatic_character".into(),args:vec![Expr::Ident(name.clone())]});
+                                shapes.insert(format!("@character_spec_length:{name}"),(TypeSpec::Integer(Some(8)),vec![Expr::Ident(saved.clone())]));
+                            }
+                            *kind = TypeSpec::Character(Some(capacity));
+                        }
+                    }
+                }
                 specialize_character_kind(kind,shapes,constants,absent)?;
                 for n in names {
                     shapes.insert(n.clone(), (kind.clone(), vec![]));
@@ -1570,7 +1595,7 @@ fn expand(
     }
     if body
         .iter()
-        .any(|s| matches!(s, Stmt::DummyIntent { intent, .. } if intent == "allocatable"))
+        .any(|s| matches!(s, Stmt::DummyIntent { intent, .. } if intent == "allocatable") || matches!(s, Stmt::VarDecl {kind:TypeSpec::CharacterLength(e),..} if !matches!(e.as_ref(),Expr::Ident(n) if n=="@deferred_character")))
     {
         let stable = stable(body);
         specialize(
@@ -2077,6 +2102,14 @@ fn expand(
                         // A copy of runtime length, of a deferred-length actual.
                         if crate::substrings::deferred(&kind) {
                             prefix.push(Stmt::DummyIntent { name: temp.clone(), intent: "allocatable".into() });
+                        }
+                        if kind == TypeSpec::Character(Some(crate::substrings::MAX_EXPRESSION_LENGTH)) {
+                            if let Some((_,length))=local.get(&format!("@character_spec_length:{p}")) {
+                                if let Some(Expr::Ident(length))=length.first() {
+                                    prefix.push(Stmt::DummyIntent{name:temp.clone(),intent:format!("@character_spec_length:{length}")});
+                                    prefix.push(Stmt::CallSub{name:"@automatic_character".into(),args:vec![Expr::Ident(temp.clone())]});
+                                }
+                            }
                         }
                         prefix.push(Stmt::VarDecl {
                             kind,
