@@ -226,7 +226,7 @@ pub fn resolve(mut program: Program) -> Result<Program> {
             Stmt::Module {body,..}=>procedures(body,names,returns),_=>{},
         }}
     }
-    let mut scope=DynamicScope::default();procedures(&program.body,&mut scope.procedures,&mut scope.function_results);
+    let mut scope=DynamicScope::default();procedures(&program.body,std::sync::Arc::make_mut(&mut scope.procedures),&mut scope.function_results);
     crate::compile_profile::run("substrings.dynamic", || dynamic_body(&mut program.body, &scope, true, &mut 0))?;
     crate::compile_profile::run("substrings.fixed", || body(&mut program.body, &Characters::new(), &mut 0))?;
     Ok(program)
@@ -257,12 +257,12 @@ impl std::ops::DerefMut for SharedSymbols {
 
 #[derive(Clone, Default)]
 struct DynamicScope {
-    characters: Characters,
-    lengths: HashMap<String, String>,
+    characters: crate::shared_map::SharedMap<usize>,
+    lengths: crate::shared_map::SharedMap<String>,
     fixed: std::collections::HashSet<String>,
     symbols: SharedSymbols,
-    procedures: std::collections::HashSet<String>,
-    function_results: HashMap<String,TypeSpec>,
+    procedures: std::sync::Arc<std::collections::HashSet<String>>,
+    function_results: crate::shared_map::SharedMap<TypeSpec>,
     procedure: bool,
     /// The deferred-length variables of the host, which a procedure cannot
     /// yet use, and the procedure's dummy arguments and result.
@@ -693,8 +693,8 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
         match s {
             Stmt::VarDecl { kind, names } => for name in names {
                 scope.host.remove(name);
-                scope.characters.remove(name);
-                scope.lengths.remove(name);
+                if scope.characters.contains_key(name) { scope.characters.remove(name); }
+                if scope.lengths.contains_key(name) { scope.lengths.remove(name); }
                 scope.fixed.remove(name);
                 scope.symbols.insert(name.clone(), (kind.clone(), vec![]));
                 if deferred(kind) {
@@ -722,8 +722,8 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
             },
             Stmt::ArrayDecl { kind, name, dims } => {
                 if deferred(kind) { bail!("deferred CHARACTER arrays are not yet supported"); }
-                scope.characters.remove(name);
-                scope.lengths.remove(name);
+                if scope.characters.contains_key(name) { scope.characters.remove(name); }
+                if scope.lengths.contains_key(name) { scope.lengths.remove(name); }
                 scope.symbols.insert(name.clone(), (kind.clone(), dims.clone()));
             }
             _ => {}
@@ -756,9 +756,18 @@ fn dynamic_body(statements: &mut Vec<Stmt>, inherited: &DynamicScope, local: boo
     // Only module binding keys are needed after consuming the statements.
     // Cloning entire nested procedure bodies here made each enclosing scope
     // repeatedly copy all of its descendants.
-    let module_keys: HashMap<_, _> = scope.lengths.keys()
-        .filter_map(|name| module_key(statements, name).map(|key| (name.clone(), key)))
-        .collect();
+    let mut module_keys = HashMap::new();
+    for statement in statements.iter() {
+        if let Stmt::CallSub { name, args } = statement {
+            if name == "@module_bind" {
+                if let [Expr::Ident(local), Expr::Str(key), ..] = args.as_slice() {
+                    if scope.lengths.contains_key(local) {
+                        module_keys.entry(local.clone()).or_insert_with(|| key.clone());
+                    }
+                }
+            }
+        }
+    }
     for mut statement in std::mem::take(statements) {
         if let Some(p) = crate::source_diagnostics::statement_offset(&statement) { statement_location.set(Some(p)); }
         let mut prefix = vec![];

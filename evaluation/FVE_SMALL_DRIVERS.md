@@ -300,3 +300,40 @@ takes 7.379 seconds, of which 6.792 is in the function-body/top-level-check stag
 The next investigation should profile repeated expansion and work within
 array-call lowering, using the matched probes before attempting another full FVE
 compile. The initialization error remains an independent correctness blocker.
+
+
+## Shared CHARACTER lowering metadata
+
+The dynamic substring pass now shares character-capacity, character-length, and
+function-result maps until mutation; its read-only procedure-name set is also
+shared. Removing a missing character binding no longer forces a copy. Module
+storage keys are collected with one scan per scope, retaining the first matching
+binding, instead of scanning all statements once per inherited deferred-length
+character name.
+
+| Stats calls | Previous dynamic substring stage (s) | Shared metadata stage (s) | New array-call stage (s) | New attempt total (s) |
+|---|---:|---:|---:|---:|
+| 1 | 3.677 | 0.072 | 9.191 | 18.027 |
+| 2 | 7.054 | 0.156 | 14.701 | 39.827 |
+| 4 | 17.097 | 0.454 | 56.571 | 110.593 |
+
+Same separate module snapshots and optimized development build settings, sequential
+single runs. All three rfort attempts still reach the generated-storage
+initialization error; all gfortran object compilations pass. The four-call overall
+time is essentially unchanged from the previous run because other stages vary.
+The stage-level reduction does not establish a controlled overall speedup or a
+successful FVE compilation.
+
+Reports, logs and compiler/source snapshots: `target/2015-compat/fve-character-metadata/`.
+
+All 22 integration tests in `test_substring_scope_sharing`,
+`test_scalar_substrings`, `test_deferred_character_locals`, and
+`test_parameter_substrings` pass. These cover runtime substring snapshots,
+shadowing, procedure-local deferred CHARACTER, and host/module storage.
+
+Next profiling targets within array-call lowering are allocatable finishing
+(21.624 seconds for four calls) and function-array lowering (10.654 seconds).
+The total array-call stage is 56.571 seconds; its nested timings must not be added
+to it. Reduction and section lowering outside that stage take 19.147 and 11.833
+seconds, respectively. Repeated expansion remains a broader investigation beyond
+these environment-management optimizations.

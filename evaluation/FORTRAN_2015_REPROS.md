@@ -693,3 +693,11 @@ procedure environments. Its one/two/four-call timings are 0.030/0.022/0.053 seco
 see [FVE_SMALL_DRIVERS.md](FVE_SMALL_DRIVERS.md#scoped-undefined-call-checking).
 Earlier array-call lowering now dominates the four-call probe. All rfort probes
 still stop at the existing generated-storage initialization error.
+
+
+CHARACTER lowering now shares scope metadata and collects module bindings in one
+scan. Dynamic substring lowering on the repeated stats probes drops from
+3.677/7.054/17.097 to 0.072/0.156/0.454 seconds; see
+[FVE_SMALL_DRIVERS.md](FVE_SMALL_DRIVERS.md#shared-character-lowering-metadata).
+The initialization blocker remains. Allocatable finishing and function-array
+lowering are now prominent costs within array-call lowering.
