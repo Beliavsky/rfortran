@@ -374,6 +374,20 @@ Disable with `-Wno-allocation-state` or `!#allow(allocation-state)`; promote
 with `-Werror=allocation-state`. Regression checks:
 `python tests/test_allocation_state.py`.
 
+`-Waction-mismatch` is **on by default**. It warns about a READ from a unit
+opened with `ACTION='WRITE'`, or a WRITE to one opened with `ACTION='READ'`,
+when that action holds on every path reaching the statement; either stops the
+program with an error when it runs. Units are integer literals or local named
+constants. An OPEN with a constant ACTION of READ or WRITE and without IOSTAT=
+gives the unit its action; CLOSE, another OPEN of the unit, an OPEN of a unit
+given by a variable, and a CALL of a procedure other than a known intrinsic
+make it unknown, and an action that depends on a branch is not reported.
+Transfers with IOSTAT= are not reported, since they handle the error, and
+procedures with GO TO or with ERR= or END= branches are skipped. Disable with
+`-Wno-action-mismatch` or `!#allow(action-mismatch)`; promote with
+`-Werror=action-mismatch`. Regression checks:
+`python tests/test_action_mismatch.py`.
+
 `-Wfixed-unit` is opt-in and enabled by `-Wextra`. It warns about an OPEN of a
 constant unit (an integer literal or a named constant) in a procedure or
 module, since a fixed number may already be connected elsewhere in the

@@ -4161,6 +4161,11 @@ STATUS='unknown', ACTION='readwrite' combination opens or creates a file;
 STATUS='unknown' also accepts ACTION='write' or 'read', and STATUS='new'
 accepts ACTION='write' or 'readwrite' (without checking that the file is
 absent). CLOSE accepts STATUS='keep' or 'delete'.
+A READ from a unit opened with ACTION='write', or a WRITE to one opened with
+ACTION='read', stops the program with an error; with IOSTAT=, a READ instead
+sets a positive status. `-Waction-mismatch`, on by default, reports such a
+transfer at compile time when the action is certain (see
+[usage](usage.md)).
 OPEN accepts constant POSITION='asis', 'rewind' or 'append'. For a new
 connection, ASIS and REWIND start at the beginning; APPEND positions at the end
 after opening or creating the file. APPEND does not force later writes to the
