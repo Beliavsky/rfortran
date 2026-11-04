@@ -25,12 +25,16 @@ pub const SCALE: u8 = b'p';
 pub const BLANK_NULL: u8 = b'n';
 pub const BLANK_ZERO: u8 = b'j';
 pub const NO_EFFECT: u8 = b'_';
+/// Defined-I/O data descriptor; dispatched by the compiler to a user procedure.
+pub const DT: u8 = b'q';
 /// Record break inserted by format reversion.
 pub const REVERSION: u8 = b'r';
 
 #[derive(Clone, Copy, Debug)]
 pub struct Descriptor<'a> {
     pub code: u8,
+    /// Original descriptor text, including its repeat count.
+    pub raw: &'a [u8],
     pub width: usize,
     pub precision: usize,
     /// Exponent digits of Ew.dEe, ESw.dEe, ENw.dEe and Gw.dEe; 0 if absent.
@@ -45,7 +49,7 @@ pub struct Descriptor<'a> {
 
 /// Data edit descriptors, which consume an output list item.
 pub fn is_data(code: u8) -> bool {
-    matches!(code, b'a' | AT | b'i' | b'b' | b'o' | b'z' | b'f' | b'e' | ES | EN | b'd' | b'g' | b'l')
+    matches!(code, DT | b'a' | AT | b'i' | b'b' | b'o' | b'z' | b'f' | b'e' | ES | EN | b'd' | b'g' | b'l')
 }
 
 #[derive(Clone, Copy)]
@@ -106,7 +110,9 @@ impl<'a> Parser<'a> {
         if self.pos == self.bytes.len() {
             return Ok(None);
         }
+        let start = self.pos;
         let mut d = Descriptor {
+            raw: &[],
             code: 0,
             width: 0,
             precision: 0,
@@ -162,6 +168,7 @@ impl<'a> Parser<'a> {
                 }
                 d.repeat = count.unwrap_or(1);
                 d.code = match (code, self.letter(0)) {
+                    (b'd', b't') => { self.pos += 1; DT }
                     (b'a', b't') => { self.pos += 1; AT }
                     (b'e', b's') => { self.pos += 1; ES }
                     (b'e', b'n') => { self.pos += 1; EN }
@@ -179,7 +186,27 @@ impl<'a> Parser<'a> {
                     (b'a' | b'i' | b'b' | b'o' | b'z' | b'f' | b'e' | b'd' | b'g' | b'l' | b'x' | b'/' | b':', _) => code,
                     _ => return Err("unsupported output descriptor"),
                 };
-                if matches!(d.code, T | TL | TR) {
+                if d.code == DT {
+                    self.spaces();
+                    if let Some(&quote @ (b'\'' | b'"')) = self.bytes.get(self.pos) {
+                        self.pos += 1;
+                        loop {
+                            let ch = *self.bytes.get(self.pos).ok_or("unterminated DT character string")?;
+                            self.pos += 1;
+                            if ch == quote {
+                                if self.bytes.get(self.pos) == Some(&quote) { self.pos += 1; }
+                                else { break; }
+                            }
+                        }
+                    }
+                    self.spaces();
+                    if self.bytes.get(self.pos) == Some(&b'(') {
+                        self.pos += 1;
+                        while self.bytes.get(self.pos).is_some_and(|c| *c != b')') { self.pos += 1; }
+                        if self.bytes.get(self.pos) != Some(&b')') { return Err("unterminated DT v-list"); }
+                        self.pos += 1;
+                    }
+                } else if matches!(d.code, T | TL | TR) {
                     if count.is_some() {
                         return Err("T, TL and TR edit descriptors cannot have a repeat count");
                     }
@@ -237,6 +264,7 @@ impl<'a> Parser<'a> {
                 return Err("expected comma between output descriptors");
             }
         }
+        d.raw = &self.bytes[start..self.pos];
         Ok(Some(d))
     }
 }
@@ -444,6 +472,7 @@ impl<'a> GroupParser<'a> {
                     frame.parser.pos = self.reversion;
                     return Ok(Some(Descriptor {
                         code: REVERSION,
+                        raw: b"/",
                         width: 0,
                         precision: 0,
                         exponent: 0,

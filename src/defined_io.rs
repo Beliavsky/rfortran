@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Beliavsky
-//! Initial type-bound defined formatted output: scalar objects on external output units.
+//! Type-bound defined formatted output on external units.
 use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Context, Result};
 use std::collections::{HashMap, HashSet};
@@ -189,8 +189,7 @@ fn validate(ty: &str, target: &str, procedure: &Stmt) -> Result<()> {
     Ok(())
 }
 
-/// Accept a single DT descriptor, optionally with its character string and v-list.
-/// More general parent formats need resumable format traversal, not splitting strings.
+/// Decode one DT descriptor supplied by the shared format traversal.
 fn dt(format: &Expr) -> Result<(String, Vec<Expr>)> {
     let Expr::Str(format) = format else {
         bail!(
@@ -246,6 +245,57 @@ fn dt(format: &Expr) -> Result<(String, Vec<Expr>)> {
         }
     }
     Ok((iotype, values))
+}
+
+/// Plan a literal scalar format with the shared group/reversion traversal.
+struct FormatItem {
+    before: String,
+    data: String,
+    defined: Option<(String, Vec<Expr>)>,
+}
+fn format_items(format: &Expr, count: usize) -> Result<(Vec<FormatItem>, String)> {
+    use crate::format_spec::{self as f, GroupParser};
+    let Expr::Str(text) = format else {
+        bail!("defined formatted output currently requires a literal parent format");
+    };
+    let mut parser = GroupParser::new(text.as_bytes(), count).map_err(anyhow::Error::msg)?;
+    let mut items = vec![];
+    let mut pending = String::new();
+    let mut scale = String::new();
+    let mut sign = String::new();
+    while let Some(d) = parser.next().map_err(anyhow::Error::msg)? {
+        let raw = std::str::from_utf8(d.raw)?.trim();
+        if matches!(d.code, f::T | f::TL) {
+            bail!("T/TL positioning across defined output transfers is not yet supported");
+        }
+        if f::is_data(d.code) {
+            let defined = if d.code == f::DT {
+                let descriptor =
+                    raw.trim_start_matches(|c: char| c.is_ascii_digit() || c.is_ascii_whitespace());
+                Some(dt(&Expr::Str(format!("({descriptor})")))?)
+            } else {
+                None
+            };
+            for _ in 0..d.repeat {
+                items.push(FormatItem {
+                    before: format!("({pending})"),
+                    data: format!("({scale}{sign}{pending}{raw})"),
+                    defined: defined.clone(),
+                });
+                pending.clear();
+            }
+        } else {
+            if d.code == f::SCALE {
+                scale = format!("{raw},");
+            }
+            if matches!(d.code, f::SIGN_PLUS | f::SIGN_DEFAULT) {
+                sign = format!("{raw},");
+            }
+            pending.push_str(raw);
+            pending.push(',');
+        }
+    }
+    Ok((items, format!("({pending})")))
 }
 
 type Objects = HashMap<String, (String, usize)>;
@@ -511,29 +561,20 @@ fn lower(
                     let list = format
                         .as_ref()
                         .is_none_or(|e| matches!(e,Expr::Call(n,_) if n=="@list_directed"));
-                    let (iotype, values) = if list {
-                        ("LISTDIRECTED".into(), vec![])
+                    let (plan, trailing) = if list {
+                        (vec![], "()".into())
                     } else {
-                        if items.len() != 1 {
-                            bail!("explicit defined output currently requires one scalar object and one DT descriptor");
-                        }
-                        dt(format.as_ref().unwrap())?
+                        format_items(format.as_ref().unwrap(), items.len())?
                     };
                     *serial += 1;
                     let prefix = format!("@defined_output_{serial}");
                     let ios = format!("{prefix}_status");
                     let msg = format!("{prefix}_message");
-                    let vlist = format!("{prefix}_vlist");
                     let parent_unit = format!("{prefix}_unit");
                     let mut out = vec![
                         decl(&ios, TypeSpec::Integer(None)),
                         decl(&parent_unit, TypeSpec::Integer(None)),
                         decl(&msg, TypeSpec::Character(Some(256))),
-                        Stmt::ArrayDecl {
-                            name: vlist.clone(),
-                            kind: TypeSpec::Integer(None),
-                            dims: vec![int(values.len() as i64)],
-                        },
                     ];
                     out.push(assign(&parent_unit, unit));
                     out.push(assign(&msg, Expr::Str(String::new())));
@@ -545,17 +586,49 @@ fn lower(
                         &ios,
                         &msg,
                     ));
-                    for (i, v) in values.iter().enumerate() {
-                        out.push(Stmt::AssignIndex {
-                            name: vlist.clone(),
-                            indices: vec![int(i as i64 + 1)],
-                            value: v.clone(),
-                        });
-                    }
                     for (item_number, item) in items.into_iter().enumerate() {
+                        let planned = plan.get(item_number);
+                        let defined = target(&item)?;
+                        if !list {
+                            let (element, rank) = expression_types
+                                .type_rank(&item, &declarations, &objects)?
+                                .context(
+                                    "cannot determine explicitly formatted output item type",
+                                )?;
+                            if matches!(
+                                element,
+                                crate::operators::ExpressionElement::Intrinsic(TypeSpec::Complex(
+                                    _
+                                ))
+                            ) {
+                                bail!("COMPLEX items mixed with defined formatted output are not yet supported");
+                            }
+                            if rank != 0 {
+                                bail!("defined formatted array output currently requires a list-directed format");
+                            }
+                            if defined.is_some() != planned.unwrap().defined.is_some() {
+                                bail!("DT edit descriptor requires a derived item with a defined writer; intrinsic items require intrinsic data descriptors");
+                            }
+                        }
+                        let (iotype, values) = planned
+                            .and_then(|p| p.defined.clone())
+                            .unwrap_or_else(|| ("LISTDIRECTED".into(), vec![]));
+                        let vlist = format!("{prefix}_vlist_{item_number}");
+                        out.push(Stmt::ArrayDecl {
+                            name: vlist.clone(),
+                            kind: TypeSpec::Integer(None),
+                            dims: vec![int(values.len() as i64)],
+                        });
+                        for (i, value) in values.into_iter().enumerate() {
+                            out.push(Stmt::AssignIndex {
+                                name: vlist.clone(),
+                                indices: vec![int(i as i64 + 1)],
+                                value,
+                            });
+                        }
                         let start = out.len();
                         let mut array_loop = None;
-                        if let Some((procedure, rank)) = target(&item)? {
+                        if let Some((procedure, rank)) = defined {
                             let item = if rank != 0 {
                                 if !list {
                                     bail!("defined formatted array output currently requires a list-directed format");
@@ -576,6 +649,16 @@ fn lower(
                                 out.push(checked_write(
                                     id(&parent_unit),
                                     "(1x)",
+                                    vec![],
+                                    false,
+                                    &ios,
+                                    &msg,
+                                ));
+                            }
+                            if let Some(p) = planned {
+                                out.push(checked_write(
+                                    id(&parent_unit),
+                                    &p.before,
                                     vec![],
                                     false,
                                     &ios,
@@ -606,7 +689,7 @@ fn lower(
                         } else {
                             out.push(checked_write(
                                 id(&parent_unit),
-                                "(1x,g0)",
+                                planned.map_or("(1x,g0)", |p| p.data.as_str()),
                                 vec![item],
                                 false,
                                 &ios,
@@ -647,7 +730,7 @@ fn lower(
                         cond: Expr::Bin(BinOp::Eq, Box::new(id(&ios)), Box::new(int(0))),
                         then_body: vec![checked_write(
                             id(&parent_unit),
-                            "()",
+                            &trailing,
                             vec![],
                             true,
                             &ios,

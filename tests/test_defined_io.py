@@ -481,8 +481,63 @@ print *,box%points(2:1:-1)
         source=source.replace('type(point) :: a,b','type(point) :: a,b\ntype(container) :: box')
         self.check(source,'2 1\n')
 
-    def test_reject_unsupported_parent_forms(self):
-        self.reject(self.source('iostat=0',"write(*,'(dt,dt)') a,b"),'one scalar object')
+    def test_mixed_parent_format(self):
+        self.check(self.source("write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x",
+            "write(*,'(a,dt,a,i3,1x,dt,a)') 'left=',a,', n=',12,b,'!'"),
+            'left=7, n= 12 9!\n')
+
+    def test_repeated_parent_dt(self):
+        self.check(self.source("write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x",
+            "write(*,'(2(dt,1x))') a,b"), '7 9\n')
+
+    def test_parent_format_reversion(self):
+        self.check(self.source("write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x",
+            "write(*,'(dt)') a,b"), '7\n9\n')
+
+    def test_parent_dt_parameters_and_colon(self):
+        self.check(self.source("write(unit,'(a,i0,i0)',iostat=iostat,iomsg=iomsg) iotype,v_list(1),dtv%x",
+            """write(*,'(dt"x"(1),1x,dt"y"(2),:,"unused")') a,b"""), 'DTx17 DTy29\n')
+
+    def test_parent_modes_persist(self):
+        self.check(self.source("write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x",
+            "write(*,'(sp,i0,1x,dt,1x,i0,ss,1x,i0)') 2,a,3,4"), '+2 7 +3 4\n')
+
+    def test_unlimited_parent_group(self):
+        self.check(self.source("write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x",
+            "write(*,'(*(dt,:,1x))') a,b,a"), '7 9 7\n')
+
+    def test_parent_reversion_to_last_group(self):
+        self.check(self.source("write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x",
+            "write(*,'(a,(dt,1x))') 'start=',a,b,a"), 'start=7\n9\n7\n')
+
+    def test_parent_repeated_descriptors(self):
+        self.check(self.source("write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x",
+            "write(*,'(2i2,2dt)') 1,2,a,b"), '1 279\n')
+
+    def test_mixed_parent_error_stops_output(self):
+        source=self.file_source("""iostat=17
+iomsg='writer failed'""", """open(newunit=u,status='scratch')
+write(u,'(a,dt,a)',iostat=status,iomsg=message) 'before',a,'after'
+print *,status,trim(message)
+close(u)
+""")
+        self.check(source,'17 writer failed\n')
+
+    def test_reject_parent_descriptor_mismatch(self):
+        self.reject(self.source('iostat=0',"write(*,'(i0)') a"),'DT edit descriptor requires')
+        self.reject(self.source('iostat=0',"write(*,'(dt,dt)') a,1"),'DT edit descriptor requires')
+
+    def test_reject_complex_mixed_parent(self):
+        self.reject(self.source('iostat=0',"write(*,'(dt,2f8.2)') a,(1.0,2.0)"),
+                    'COMPLEX items mixed with defined formatted output')
+
+    def test_reject_runtime_parent_format(self):
+        source=self.source('iostat=0',"write(*,fmt) a").replace('type(point) :: a,b',
+            "type(point) :: a,b\ncharacter(4) :: fmt='(dt)'")
+        self.reject(source,'literal parent format')
+
+    def test_reject_parent_positioning(self):
+        self.reject(self.source('iostat=0',"write(*,'(dt,t1,a)') a,'x'"),'T/TL positioning')
 
 
 

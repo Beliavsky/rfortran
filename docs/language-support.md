@@ -4132,10 +4132,10 @@ IOSTAT, and assumed-length CHARACTER `INTENT(INOUT)` IOMSG. UNIT, IOTYPE, and
 V_LIST require `INTENT(IN)`.
 
 List-directed parent output passes `LISTDIRECTED` and an empty V_LIST. An
-explicit parent format can contain a single `DT` descriptor for one object,
+explicit parent format uses a `DT` descriptor for each derived object,
 including its optional string and integer parameters, for example
 `write(*,"(dt'label'(3,2))") object`. The procedure receives `DTlabel` and
-`[3,2]`. Multiple scalar objects may appear in a list-directed parent statement.
+`[3,2]`. Multiple scalar objects may appear in either a list-directed or a literal formatted parent statement.
 Scalar components, array elements (including multidimensional elements),
 structure constructors, and scalar derived function results use the same
 binding as named scalar variables. Subscripts and function results are
@@ -4151,6 +4151,13 @@ positive or negative runtime strides, array components, and runtime-sized
 arrays. Bounds, strides, and scalar subscripts are evaluated once before
 iteration. Omitted bounds use the declared bounds regardless of stride sign;
 zero stride is diagnosed. Sections retain Fortran array element order.
+Literal parent formats can mix scalar intrinsic items with defined derived items,
+use multiple DT descriptors with separate character strings and v-lists, repeat
+nested groups, use an unlimited final group, and revert the format onto new records.
+Colon termination, literals, spacing, slash editing, sign modes, and scale factors
+are retained across transfers. See `tests/programs/xdefined_formatted_mixed.f90`.
+Explicitly formatted arrays, mixed COMPLEX items, and parent T/TL positioning
+remain unsupported; list-directed array output is described above.
 INTEGER vector subscripts are accepted, including repeated and empty vectors,
 nonunit lower bounds, runtime-sized vectors, and mixtures of scalar, triplet,
 and vector subscripts. Each vector expression is captured once before iteration;
@@ -4173,7 +4180,7 @@ This is partial support. Internal parent units, READ, unformatted
 transfers, namelist defined I/O, generic interface blocks, private and inherited defined
 bindings, array-valued expressions, explicitly formatted
 array transfers, runtime parent
-formats, and general formats mixing DT with other descriptors remain outside
+formats remain outside
 the supported subset. Child ADVANCE currently requires a constant YES/NO value.
 T/TL positioning in
 child output is diagnosed rather than treating the child as a fresh record.
