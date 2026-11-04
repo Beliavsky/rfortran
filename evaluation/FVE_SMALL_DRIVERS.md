@@ -505,3 +505,52 @@ object in 0.271 seconds. Report:
 an initialization error; fixing that error exposed additional work in this pass.
 A successful full FVE build is still not established. Next: profile initialization
 analysis on the full main, while retaining the now-working stats probes.
+
+
+## Initialization snapshot and scope setup costs
+
+The instrumented baseline still hits the 300-second limit in initialization
+analysis (`target/2015-compat/fve-init-profile/`). Its subroutine-resolution step
+took 24.627 seconds and heap cleanup 0.856 seconds. Scope setup had accumulated
+10.793 seconds when the last progress sample was written; the largest individual
+setup was 5.693 seconds. These are diagnostic timings, with a build running
+concurrently during part of this baseline, not benchmark medians.
+
+Initialization environments now share unchanged variable records across branch,
+loop, and scope snapshots. Mutating a state detaches that record, keeping branch
+states independent. Merging skips identical records or identical state/element
+maps. Runtime heap-state widening avoids copying element maps that contain no
+undefined elements. This preserves the existing analysis and runtime guards.
+
+Scope-local declarations, intents, runtime bounds markers, character lengths,
+character element widths, and heap-character bindings are indexed in one pass
+instead of repeatedly scanning the body for each variable. Subroutine resolution
+also returns immediately when earlier specialization left no candidate subroutines.
+
+The three initialization Rust unit tests and all 43 integration tests in
+`test_large_initialization_scope`, `test_main_initialization`,
+`test_intent_spellings`, `test_character_lengths`, `test_dummy_character_lengths`,
+and `test_runtime_allocatables` pass. The new regression generates 2,000 variables
+and checks valid reads, compile-time uninitialized reads, runtime uncertain reads,
+and independent array-element states across branches. Execution checks include
+the interpreter and native O0/O2; valid cases use gfortran as a reference.
+
+The full-main retry still times out at 300.180 seconds in initialization analysis;
+gfortran object compilation passes in 0.400 seconds. The latest scope-setup sample
+records 5,769 scopes, 6.039 seconds accumulated setup, and a maximum setup of
+0.084 seconds. The baseline's last sample recorded 1,468 scopes and 10.793 seconds
+of setup, with a 5.693-second maximum. These partial samples show cheaper setup
+and greater progress, not completed full-main compilation. Report:
+`target/2015-compat/fve-init-shared-records/`.
+
+Both smaller stats probes still compile, link with the saved module objects, and
+run correctly (`0.01` for the scalar case, `0.02` for the two-name vector case).
+Initialization takes 8.328/7.654 seconds, compared with 14.650/10.666 seconds in the
+saved single-pass-allocator runs. Total times are 69.233/65.185 seconds, versus
+63.634/53.078 previously: native emission was slower in these new runs, so this
+is not evidence of an overall compilation speedup. Reports and execution records:
+`target/2015-compat/fve-stats-init-shared-records/`.
+
+Next investigate the remaining branch/loop dataflow cost: environment-map copies
+and joins still traverse all visible variables even though their records are now
+shared. Profile those operations before changing their representation or semantics.

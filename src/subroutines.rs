@@ -363,6 +363,9 @@ pub fn resolve(mut program: Program) -> Result<Program> {
         }
     }
     let mut routines = HashMap::new(); collect(&program.body, &mut routines);
+    // Earlier specialization can have expanded every subroutine already. With
+    // no candidates, expand would only walk scopes and clone array-name sets.
+    if routines.is_empty() { return Ok(program); }
     // Array/CHARACTER call specialization can already have expanded some
     // calls using this namespace. Continue its numbering for the scalar calls.
     let mut serial=maximum_serial(&program.body,&["@sub_local_","@sub_returned_","@sub_index_","@sub_element_"]);

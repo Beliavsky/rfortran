@@ -26,7 +26,18 @@ struct Variable {
     /// so once the whole variable is defined its flags stay set.
     stable: bool,
 }
-type Env = BTreeMap<String, Variable>;
+// Branch snapshots share unchanged variable records. A write detaches only the
+// affected record, including its per-element initialization state.
+#[derive(Clone)]
+struct SharedVariable(std::rc::Rc<Variable>);
+impl std::ops::Deref for SharedVariable {
+    type Target = Variable;
+    fn deref(&self) -> &Variable { &self.0 }
+}
+impl std::ops::DerefMut for SharedVariable {
+    fn deref_mut(&mut self) -> &mut Variable { std::rc::Rc::make_mut(&mut self.0) }
+}
+type Env = BTreeMap<String, SharedVariable>;
 fn int(n: i64) -> Expr { Expr::IntLit(n.to_string()) }
 fn key(e: &Expr) -> Option<(&str, Option<&Expr>)> {
     match e {
@@ -141,6 +152,8 @@ fn merge(a: &Env, b: &Env) -> Env {
     let mut result = a.clone();
     for (name, v) in &mut result {
         if let Some(other) = b.get(name) {
+            if std::rc::Rc::ptr_eq(&v.0, &other.0)
+                || (v.state == other.state && v.elements == other.elements) { continue; }
             for i in v.elements.keys().chain(other.elements.keys()).copied().collect::<Vec<_>>() {
                 v.elements.insert(i, join(*a[name].elements.get(&i).unwrap_or(&a[name].state), *other.elements.get(&i).unwrap_or(&other.state)));
             }
@@ -292,13 +305,13 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                     output.push(Stmt::If{cond:bin(crate::ast::BinOp::Ne,id(&status),int(0)),then_body:vec![
                         assign(to.clone(),Expr::Str(" ".repeat(usize::try_from(constant(capacity).context("CHARACTER transport requires a fixed capacity")?)?))),
                         each(vec![Stmt::CallSub{name:"@character_code_store".into(),args:vec![id(to),id(&index),Expr::Index(from.clone(),vec![position])]}])],else_body:None});
-                    output.push(assign(dst.flag,id(&status)));
+                    output.push(assign(dst.flag.clone(),id(&status)));
                 } else {
                     output.push(each(vec![
                         Stmt::If{cond:bin(crate::ast::BinOp::Ne,flag(&src,None),int(0)),then_body:vec![
                             Stmt::CallSub{name:"@internal_read_byte".into(),args:vec![id(&code),id(from),id(&index),capacity.clone()]},
                             Stmt::AssignIndex{name:to.clone(),indices:vec![position.clone()],value:id(&code)}],else_body:None},
-                        Stmt::AssignIndex{name:dst.flag,indices:vec![position],value:flag(&src,None)}]));
+                        Stmt::AssignIndex{name:dst.flag.clone(),indices:vec![position],value:flag(&src,None)}]));
                 }
                 let dst=env.get_mut(to).unwrap();dst.state=State::Maybe;dst.elements.clear();
                 continue;
@@ -343,8 +356,8 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                             output.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![index.clone()]});
                             output.push(Stmt::Do {var:index.clone(),start:int(1),
                                 end:src.heap_length.clone().unwrap_or_else(||int(src.extent.unwrap())),
-                                body:vec![Stmt::AssignIndex{name:dst.flag,indices:vec![Expr::Ident(index.clone())],
-                                    value:Expr::Index(src.flag,vec![Expr::Ident(index)])}]});
+                                body:vec![Stmt::AssignIndex{name:dst.flag.clone(),indices:vec![Expr::Ident(index.clone())],
+                                    value:Expr::Index(src.flag.clone(),vec![Expr::Ident(index)])}]});
                             let dst=env.get_mut(*target).unwrap();
                             dst.state=State::Maybe;
                             dst.elements.clear();
@@ -591,8 +604,10 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                     for branch in [&mut a, &mut b] {
                         for v in branch.values_mut().filter(|v| v.heap_length.is_some()) {
                             if v.state == State::No { v.state = State::Maybe; }
-                            for state in v.elements.values_mut() {
-                                if *state == State::No { *state = State::Maybe; }
+                            if v.elements.values().any(|state| *state == State::No) {
+                                for state in v.elements.values_mut() {
+                                    if *state == State::No { *state = State::Maybe; }
+                                }
                             }
                         }
                     }
@@ -737,18 +752,44 @@ fn undefining(body: &[Stmt], names: &mut std::collections::BTreeSet<String>) {
 }
 
 fn scope(body: &mut Vec<Stmt>, inherited: &mut Env, params: &[String], result: Option<&str>, serial: &mut usize, capture: Option<&mut BTreeMap<String,String>>) -> Result<()> {
+    let setup = crate::compile_profile::Work::new("initialized.scope_setup");
     let mut names = BTreeMap::new(); collect(body, &mut names);
-    let declared: Vec<String> = body.iter().flat_map(|s| match s {
-        Stmt::VarDecl { names, .. } => names.clone(),
-        Stmt::ArrayDecl { name, .. } => vec![name.clone()],
-        _ => vec![],
-    }).collect();
+    // Index scope-local declaration metadata once. Searching the full body for
+    // every variable made setup quadratic on heavily specialized procedures.
+    let mut declared = std::collections::BTreeSet::new();
+    let mut outputs = std::collections::BTreeSet::new();
+    let mut bounded = std::collections::BTreeSet::new();
+    let mut widths = BTreeMap::new();
+    let mut character_lengths = BTreeMap::new();
+    let mut zero_characters = std::collections::BTreeSet::new();
+    let mut heap_characters = std::collections::BTreeSet::new();
+    for stmt in body.iter() {
+        match stmt {
+            Stmt::VarDecl { kind, names } => {
+                declared.extend(names.iter().cloned());
+                if let TypeSpec::Character(length) = kind {
+                    for name in names {
+                        character_lengths.insert(name.clone(), length.unwrap_or(1));
+                        if *length == Some(0) { zero_characters.insert(name.clone()); }
+                    }
+                }
+            }
+            Stmt::ArrayDecl { name, .. } => { declared.insert(name.clone()); }
+            Stmt::DummyIntent { name, intent } => {
+                if intent == "intent(out)" { outputs.insert(name.clone()); }
+                if intent.starts_with("@bounded:") { bounded.insert(name.clone()); }
+                if let Some(width) = intent.strip_prefix("@character_element_width:").and_then(|n| n.parse::<i64>().ok()) {
+                    widths.entry(name.clone()).or_insert(width);
+                }
+            }
+            Stmt::CallSub { name, args } if name == "@heap_character_bind" => {
+                if let Some(Expr::Ident(name)) = args.first() { heap_characters.insert(name.clone()); }
+            }
+            _ => {}
+        }
+    }
     if let Some(name) = result { names.entry(name.into()).or_insert(None); }
     let mut heap_shapes=crate::allocatables::Shapes::new();crate::allocatables::metadata(body,&mut heap_shapes);
-    let character_lengths=body.iter().filter_map(|s|match s {
-        Stmt::VarDecl{kind:TypeSpec::Character(length),names}=>Some(names.iter().map(move |name|(name.clone(),length.unwrap_or(1)))),
-        _=>None,
-    }).flatten().collect::<BTreeMap<_,_>>();
     let mut env = inherited.clone();
     let mut prefix = Vec::new();
     let mut unstable = std::collections::BTreeSet::new();
@@ -757,11 +798,10 @@ fn scope(body: &mut Vec<Stmt>, inherited: &mut Env, params: &[String], result: O
         if env.contains_key(&name) && !declared.contains(&name) { continue; }
         *serial += 1;
         let flag = format!("@initialized_{serial}");
-        let assigned = params.contains(&name) && !body.iter().any(|s| matches!(s, Stmt::DummyIntent { name: n, intent } if n == &name && intent == "intent(out)"));
-        let runtime_sized=name.starts_with("@pointer_") || body.iter().any(|s|matches!(s,Stmt::DummyIntent {name:n,intent} if n==&name && intent.starts_with("@bounded:")));
-        let element_width=body.iter().find_map(|s|match s {Stmt::DummyIntent{name:n,intent} if n==&name=>intent.strip_prefix("@character_element_width:").and_then(|n|n.parse().ok()),_=>None}).unwrap_or(1);
-        let zero_sized=body.iter().any(|s|matches!(s,Stmt::VarDecl{kind:TypeSpec::Character(Some(0)),names} if names.contains(&name)))
-            && !body.iter().any(|s|matches!(s,Stmt::CallSub{name:n,args} if n=="@heap_character_bind" && args.first()==Some(&Expr::Ident(name.clone()))));
+        let assigned = params.contains(&name) && !outputs.contains(&name);
+        let runtime_sized = name.starts_with("@pointer_") || bounded.contains(&name);
+        let element_width = widths.get(&name).copied().unwrap_or(1);
+        let zero_sized = zero_characters.contains(&name) && !heap_characters.contains(&name);
         let character_length=character_lengths.get(&name).copied();
         let v = Variable { zero_sized, element_width, character_length, stable: !unstable.contains(&name), flag: flag.clone(), extent, state: if assigned { State::Yes } else { State::No }, elements: BTreeMap::new(), runtime_sized, heap_length: heap_shapes.contains_key(&format!("@heap:{name}")).then(||crate::allocatables::length(&name,&heap_shapes).unwrap()), heap_allocated:crate::allocatables::allocated(&name,&heap_shapes) };
         if let Some(n) = extent {
@@ -773,8 +813,9 @@ fn scope(body: &mut Vec<Stmt>, inherited: &mut Env, params: &[String], result: O
             prefix.push(Stmt::VarDecl { kind: TypeSpec::Integer(None), names: vec![flag.clone()] });
             prefix.push(Stmt::Assign { name: flag, value: int(i64::from(assigned)) });
         }
-        env.insert(name, v);
+        env.insert(name, SharedVariable(std::rc::Rc::new(v)));
     }
+    drop(setup);
     let terminated = flow(body, &mut env, result, serial)?;
     if !terminated { if let Some(name) = result { check(name, None, &env, body, serial)?; } }
     for (name, value) in inherited { if !declared.contains(name) { if let Some(v) = env.get(name) { *value = v.clone(); } } }
@@ -783,8 +824,8 @@ fn scope(body: &mut Vec<Stmt>, inherited: &mut Env, params: &[String], result: O
     Ok(())
 }
 pub fn instrument(mut program: Program) -> Result<Program> {
-    program = crate::subroutines::resolve(program)?;
-    program = crate::heap::cleanup(program);
+    program = crate::compile_profile::run("initialized.resolve", || crate::subroutines::resolve(program))?;
+    program = crate::compile_profile::run("initialized.cleanup", || crate::heap::cleanup(program));
     // An earlier failed instrumentation may have left a region open.
     UNCHECKED.with(|c| c.set(0));
     scope(&mut program.body, &mut Env::new(), &[], None, &mut 0, None)?;
@@ -793,8 +834,8 @@ pub fn instrument(mut program: Program) -> Result<Program> {
 
 /// Instrument a fresh scalar submission and expose its initialization flags.
 pub(crate) fn instrument_scalars(mut program: Program) -> Result<(Program, BTreeMap<String,String>)> {
-    program = crate::subroutines::resolve(program)?;
-    program = crate::heap::cleanup(program);
+    program = crate::compile_profile::run("initialized.resolve", || crate::subroutines::resolve(program))?;
+    program = crate::compile_profile::run("initialized.cleanup", || crate::heap::cleanup(program));
     UNCHECKED.with(|c| c.set(0));
     let mut flags = BTreeMap::new();
     scope(&mut program.body, &mut Env::new(), &[], None, &mut 0, Some(&mut flags))?;

@@ -759,3 +759,20 @@ before native code generation; gfortran object compilation passes in 0.271 secon
 Next investigate initialization-analysis cost. Report:
 `target/2015-compat/fve-main-single-pass/`; details and the register-allocation
 tradeoff are in [FVE_SMALL_DRIVERS.md](FVE_SMALL_DRIVERS.md#large-procedure-register-allocation).
+
+
+Initialization analysis now indexes scope metadata once and shares unchanged
+variable records between branch/loop snapshots. Merges skip identical states;
+subroutine resolution avoids an empty-candidate traversal. All three initialization
+Rust tests and 43 integration tests pass, including large scopes and independent
+per-element branch states.
+
+Both stats probes still compile, link, and run correctly. Their initialization
+phases take 8.328/7.654 seconds (previous saved runs: 14.650/10.666), but total times
+are 69.233/65.185 seconds because native emission was slower; no overall speedup
+is claimed. The full main still reaches its 300-second limit in initialization,
+despite cheaper scope setup. Next profile environment-map copies and joins.
+Reports: `target/2015-compat/fve-init-profile/`,
+`target/2015-compat/fve-init-shared-records/`, and
+`target/2015-compat/fve-stats-init-shared-records/`. See
+[FVE_SMALL_DRIVERS.md](FVE_SMALL_DRIVERS.md#initialization-snapshot-and-scope-setup-costs).
