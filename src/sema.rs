@@ -5,6 +5,28 @@ use crate::ast::{CaseItem, Expr, Implicit, LetterRange, Program, Stmt, TypeSpec}
 use crate::errors::{CompileError, CompileErrorKind};
 use crate::lexer::{Token, TokenKind};
 
+// Preserve the first-token lookup used by diagnostics while avoiding a full
+// source scan for each declaration (including generated names absent in source).
+struct SourceTokenIndex {
+    identifiers: HashMap<String, usize>,
+    spans: HashMap<std::ops::Range<usize>, usize>,
+}
+impl SourceTokenIndex {
+    fn new(tokens: &[Token]) -> Self {
+        let mut index = Self { identifiers: HashMap::new(), spans: HashMap::new() };
+        for (i, token) in tokens.iter().enumerate() {
+            if let TokenKind::Ident(name) = &token.kind {
+                index.identifiers.entry(name.to_ascii_lowercase()).or_insert(i);
+            }
+            index.spans.entry(token.span.clone()).or_insert(i);
+        }
+        index
+    }
+    fn identifier(&self, name: &str) -> Option<usize> {
+        self.identifiers.get(&name.to_ascii_lowercase()).copied()
+    }
+}
+
 pub(crate) fn show_type(type_spec: &TypeSpec) -> String {
     match type_spec {
         TypeSpec::Referenced {polymorphic,..} => if *polymorphic {"CLASSOF"} else {"TYPEOF"}.into(),
@@ -1070,15 +1092,9 @@ pub fn analyze_with_origins(
 
     drop(sema_phase);
     let sema_phase = crate::compile_profile::Pass::new("sema.source_spans_and_interfaces");
+    let token_index = SourceTokenIndex::new(tokens);
     let find_ident_span = |name: &str| -> std::ops::Range<usize> {
-        if let Some(t) = tokens.iter().find(|t| match &t.kind {
-            TokenKind::Ident(s) => s.eq_ignore_ascii_case(name),
-            _ => false,
-        }) {
-            t.span.clone()
-        } else {
-            0..0
-        }
+        token_index.identifier(name).map(|i| tokens[i].span.clone()).unwrap_or(0..0)
     };
     let mut type_span_map: HashMap<String, std::ops::Range<usize>> = HashMap::new();
     let find_type_keyword_before = |ident_index: usize| -> Option<std::ops::Range<usize>> {
@@ -1119,12 +1135,10 @@ pub fn analyze_with_origins(
             for n in names {
                 let lname = n.to_ascii_lowercase();
                 if !type_span_map.contains_key(&lname) {
-                    if let Some(tok_idx) = tokens.iter().position(
-                        |t| matches!(&t.kind, TokenKind::Ident(s) if s.eq_ignore_ascii_case(n)),
-                    ) {
+                    if let Some(tok_idx) = token_index.identifier(n) {
                         if let Some(ts) = find_type_keyword_before(tok_idx) {
                             type_span_map.insert(lname.clone(), ts.clone());
-                            if let Some(type_tok_idx) = tokens.iter().position(|t| t.span == ts) {
+                            if let Some(type_tok_idx) = token_index.spans.get(&ts).copied() {
                                 let mut intent_found = ParamIntent::None;
                                 let mut i = type_tok_idx + 1;
                                 while i < tokens.len() {
@@ -1173,9 +1187,7 @@ pub fn analyze_with_origins(
             if return_type.is_some() {
                 let lname = name.to_ascii_lowercase();
                 if !type_span_map.contains_key(&lname) {
-                    if let Some(tok_idx) = tokens.iter().position(
-                        |t| matches!(&t.kind, TokenKind::Ident(s) if s.eq_ignore_ascii_case(name)),
-                    ) {
+                    if let Some(tok_idx) = token_index.identifier(name) {
                         if let Some(ts) = find_type_keyword_before(tok_idx) {
                             type_span_map.insert(lname, ts);
                         }
@@ -1411,6 +1423,7 @@ pub fn analyze_with_origins(
         find_ident_span: &dyn Fn(&str) -> std::ops::Range<usize>,
         find_type_keyword_before: &dyn Fn(usize) -> Option<std::ops::Range<usize>>,
         tokens: &[Token],
+        token_index: &SourceTokenIndex,
         errors: &mut Vec<CompileError>,
         stderr: &mut codespan_reporting::term::termcolor::StandardStream,
         file: &crate::source_diagnostics::SourceFile<'_>,
@@ -1466,12 +1479,9 @@ pub fn analyze_with_origins(
         for s in body {
             if let Stmt::VarDecl { kind: _, names } = s {
                 for n in names {
-                    if let Some(tok_idx) = tokens.iter().position(|t| match &t.kind {
-                        TokenKind::Ident(sid) => sid.eq_ignore_ascii_case(n),
-                        _ => false,
-                    }) {
+                    if let Some(tok_idx) = token_index.identifier(n) {
                         if let Some(ts) = find_type_keyword_before(tok_idx) {
-                            if let Some(type_tok_idx) = tokens.iter().position(|t| t.span == ts) {
+                            if let Some(type_tok_idx) = token_index.spans.get(&ts).copied() {
                                 let mut i = type_tok_idx + 1;
                                 while i < tokens.len() {
                                     if !crate::lexer::same_statement(&file.source()[tokens[i-1].span.end..tokens[i].span.start]) {
@@ -2217,7 +2227,7 @@ pub fn analyze_with_origins(
     }
     drop(sema_phase);
     let sema_phase = crate::compile_profile::Pass::new("sema.function_bodies");
-    for (fname, info) in fn_map.clone() {
+    for (fname, info) in &fn_map {
         analyze_fn_body(
             &fname,
             info.is_function,
@@ -2231,6 +2241,7 @@ pub fn analyze_with_origins(
             &find_ident_span,
             &find_type_keyword_before,
             tokens,
+            &token_index,
             &mut errors,
             &mut stderr,
             &file,
@@ -2946,4 +2957,26 @@ pub fn analyze_with_origins(
     }
     drop(sema_phase);
     errors
+}
+
+#[cfg(test)]
+mod source_token_index_tests {
+    use super::*;
+
+    #[test]
+    fn indexed_lookups_match_linear_first_occurrence_search() {
+        let source = "program example\nreal :: X, y\nx=1.0; Y=x\nblock\ninteger :: x\nx=2\nend block\nend program\n";
+        let tokens = crate::lexer::lex(source);
+        let index = SourceTokenIndex::new(&tokens);
+        for name in ["x", "X", "y", "Y", "example", "missing", "@generated_42", "real"] {
+            let linear = tokens.iter().position(|t| matches!(&t.kind,
+                TokenKind::Ident(id) if id.eq_ignore_ascii_case(name)));
+            assert_eq!(index.identifier(name), linear, "{name}");
+        }
+        for token in &tokens {
+            assert_eq!(index.spans.get(&token.span).copied(),
+                tokens.iter().position(|t| t.span == token.span));
+        }
+        assert_eq!(SourceTokenIndex::new(&[]).identifier("x"), None);
+    }
 }

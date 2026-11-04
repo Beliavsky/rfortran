@@ -186,3 +186,40 @@ Reports, logs, and compiler/source snapshots:
 Validation includes direct semantic tests for invalid math/random calls and nested
 scalar/array and real/integer shadowing. The existing intrinsic generic integration
 tests exercise interpreter execution, native execution, and reference comparisons.
+
+
+## Indexed semantic source lookups
+
+Semantic analysis now builds a first-occurrence identifier/token-span index once,
+replacing repeated whole-source scans in diagnostic and declaration handling.
+Case-insensitive lookup, first-occurrence selection, and missing-name behavior
+are preserved. Procedure analysis also borrows its procedure table instead of
+cloning all procedure bodies before iteration.
+
+The following sequential single-run measurements use the same release development
+settings and module snapshots as the scoped math-check measurements above.
+
+| Stats calls | Previous source/interface stage (s) | Indexed stage (s) | New semantic total (s) | New attempt total (s) |
+|---|---:|---:|---:|---:|
+| 1 | 0.663 | 0.031 | 3.010 | 21.939 |
+| 2 | 3.645 | 0.064 | 12.024 | 67.099 |
+| 4 | 4.789 | 0.061 | 53.836 | 232.173 |
+
+All rfort probes still reach the generated-storage initialization error; all
+three gfortran object compilations pass. Timing variability remains substantial:
+the new one-call total is higher than the previous run despite faster source
+lookups, while unchanged reduction lowering is faster in the four-call run.
+These results demonstrate a stage-level improvement, not a controlled overall
+speedup or successful compilation. Logs, source/compiler snapshots and the report
+are in `target/2015-compat/fve-token-index/`.
+
+Validation: the Rust lookup-equivalence test passes, as do all 23 integration tests
+in `test_source_diagnostics`, `test_declaration_warnings`, and
+`test_intent_spellings`.
+
+Next target: the nested procedure-body checker still clones its symbol table for
+every scope. The `sema.function_bodies` stage (which also includes subsequent
+top-level checks) takes 2.119, 9.379, and 33.992 seconds in these runs. Scoped
+insert/restore handling, with tests for nested declarations and assignment/return
+type diagnostics, is the next candidate. Undefined-call checking and expansion
+costs also remain significant.

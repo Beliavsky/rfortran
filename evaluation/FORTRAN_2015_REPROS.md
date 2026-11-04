@@ -673,3 +673,9 @@ The subsequent scoped math-check optimization and one/two/four-call measurements
 are documented in [FVE_SMALL_DRIVERS.md](FVE_SMALL_DRIVERS.md#scoped-semantic-math-checks).
 Math checking is now subsecond for these probes; generated-storage initialization
 errors and expensive earlier passes still prevent a successful FVE build.
+
+
+Semantic source-token lookups are now indexed; the one/two/four-call probes take
+0.031/0.064/0.061 seconds in the source/interface stage. See
+[FVE_SMALL_DRIVERS.md](FVE_SMALL_DRIVERS.md#indexed-semantic-source-lookups) for
+validation, timing limitations, and remaining procedure-scope costs.
