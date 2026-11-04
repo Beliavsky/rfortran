@@ -398,10 +398,97 @@ close(u)
         source=source.replace('implicit none','implicit none\ninteger :: calls=0',1)
         self.check(source,'21 first element failed 1\n',reference=False)
 
-    def test_array_dt_format_still_rejected(self):
-        source=self.source('iostat=0',"write(*,'(dt)') points").replace(
-            'type(point) :: a,b','type(point) :: a,b,points(2)')
-        self.reject(source,'requires a list-directed format')
+    def test_formatted_array_example(self):
+        self.check((ROOT/'tests/programs/xdefined_formatted_array_formats.f90').read_text(),
+                   '22, 20, 22, 12, 10, 12\n21 20\n11 10\n21 20\n')
+
+    def test_partial_repeated_dt_descriptor(self):
+        source=self.source("write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x", """points(1)=point(7)
+write(*,'(2dt,"unreached")') points
+write(*,'(2dt,"unreached")') a
+""").replace('type(point) :: a,b','type(point) :: a,b,points(1)')
+        self.check(source,'7\n7\n')
+
+    def test_formatted_array_reversion(self):
+        source=self.source("write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x", """points(1)=point(1)
+points(2)=point(2)
+points(3)=point(3)
+write(*,'(2(dt,1x))') points,b
+""").replace('type(point) :: a,b','type(point) :: a,b,points(3)')
+        self.check(source,'1 2\n3 9\n')
+
+    def test_formatted_mixed_arrays(self):
+        source=self.source("write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x", """points(1)=point(7)
+points(2)=point(9)
+values=[2,3]
+write(*,'(a,2(i0,1x),2(dt,1x),a)') 'start ',values,points,'end'
+""").replace('type(point) :: a,b','type(point) :: a,b,points(2)\ninteger :: values(2)')
+        self.check(source,'start 2 3 7 9 end\n')
+
+    def test_formatted_runtime_array_sections(self):
+        source=self.source("write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x", """n=4
+allocate(points(0:n))
+do i=0,n
+ points(i)=point(i)
+end do
+write(*,'(*(dt,:,", "))') points(n:0:-2),points([1,3])
+write(*,'(*(dt,:,", "))') points(1:0)
+deallocate(points)
+""").replace('type(point) :: a,b','type(point) :: a,b\ntype(point),allocatable :: points(:)\ninteger :: i,n')
+        self.check(source,'4, 2, 0, 1, 3\n\n')
+
+    def test_formatted_array_different_vlists(self):
+        source=self.source("write(unit,'(a,i0,i0)',iostat=iostat,iomsg=iomsg) iotype,v_list(1),dtv%x", """points(1)=point(7)
+points(2)=point(9)
+write(*,'(dt"x"(1),1x,dt"y"(2))') points
+""").replace('type(point) :: a,b','type(point) :: a,b,points(2)')
+        self.check(source,'DTx17 DTy29\n')
+
+    def test_formatted_array_error_stops_iteration(self):
+        source=(ROOT/'tests/programs/xdefined_formatted_array_error.f90').read_text()
+        source=source.replace('write(u,*,iostat=',"write(u,'(*(dt,1x))',iostat=")
+        self.check(source,'17 element failed 2\n',reference=False)
+
+    def test_formatted_empty_array_controls(self):
+        source=self.source("write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x", """write(*,'("outer",*("inner",dt))') points
+write(*,'("before",dt,"after")') points
+write(*,'(dt,"between",:,"after")') a,points
+""").replace('type(point) :: a,b','type(point) :: a,b,points(0)')
+        self.check(source,'outerinner\nbefore\n7between\n')
+
+    def test_formatted_assumed_shape_matrix(self):
+        source=self.source("write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x", """do j=1,2
+ do i=0,2
+  points(i,j)=point(10*j+i)
+ end do
+end do
+call emit(points)
+""").replace('type(point) :: a,b','type(point) :: a,b,points(0:2,2)\ninteger :: i,j')
+        source=source.replace('end module', """subroutine emit(values)
+type(point),intent(in) :: values(:,:)
+write(*,'(*(dt,:,", "))') values(3:1:-1,[2,1])
+end subroutine
+end module""")
+        self.check(source,'22, 21, 20, 12, 11, 10\n')
+
+    def test_formatted_array_large_runtime_extent(self):
+        source=self.source("calls=calls+1\niostat=0", """n=2000
+allocate(points(n))
+points%x=1
+write(*,'(*(dt))') points
+print *,calls
+""").replace('type(point) :: a,b','type(point) :: a,b\ntype(point),allocatable :: points(:)\ninteger :: n')
+        source=source.replace('implicit none','implicit none\ninteger :: calls=0',1)
+        self.check(source,'2000\n')
+
+    def test_formatted_array_mismatch_status(self):
+        source=self.file_source('iostat=0', """points(1)=point(1)
+open(newunit=u,status='scratch')
+write(u,'(i0)',iostat=status,iomsg=message) points
+print *,status>0,len_trim(message)>0
+close(u)
+""").replace('type(point) :: a,b','type(point) :: a,b,points(1)')
+        self.check(source,'T T\n',reference=False)
 
     def test_triplet_sections(self):
         source=self.source("write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x", """do i=0,5

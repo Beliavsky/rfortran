@@ -317,6 +317,8 @@ pub struct GroupParser<'a> {
     data: bool,
     /// Start of the rightmost top-level group, including its repeat count.
     reversion: usize,
+    preserve_boundaries: bool,
+    stop_after_data: bool,
 }
 impl<'a> Parser<'a> {
     fn separator(&mut self) {
@@ -447,19 +449,34 @@ impl<'a> GroupParser<'a> {
             operations: 0,
             data,
             reversion,
+            preserve_boundaries: false,
+            stop_after_data: false,
         })
     }
+    /// Compiler cursor planning retains colon boundaries.
+    pub fn preserve_boundaries(&mut self) { self.preserve_boundaries = true; }
+    /// Position without the output count: repeated positions form cursor cycles.
+    pub fn position(&self) -> (usize, [(usize, usize, usize); 32]) {
+        let mut frames = [(0, 0, 0); 32];
+        for (key, frame) in frames.iter_mut().zip(&self.frames).take(self.depth) {
+            *key = (frame.parser.bytes.as_ptr() as usize, frame.parser.pos, frame.remaining);
+        }
+        (self.depth, frames)
+    }
     pub fn next(&mut self) -> Result<Option<Descriptor<'a>>, &'static str> {
+        if self.stop_after_data { self.depth = 0; return Ok(None); }
         while self.depth > 0 {
             self.operations += 1;
-            if self.operations > self.count.saturating_mul(256).saturating_add(100000) {
+            if self.operations > self.count.saturating_mul(256).saturating_add(100000).min(if self.preserve_boundaries { 100000 } else { usize::MAX }) {
                 return Err("output format expansion exceeds supported limits");
             }
             let index = self.depth - 1;
             self.frames[index].parser.separator();
             if self.frames[index].parser.pos == self.frames[index].parser.bytes.len() {
                 let frame = &mut self.frames[index];
-                if (frame.unlimited && self.consumed < self.count)
+                // Unlimited repetition stops at the next data/colon descriptor,
+                // not before leading control or character-string descriptors.
+                if frame.unlimited
                     || (!frame.unlimited && frame.remaining > 1)
                 {
                     if !frame.unlimited {
@@ -487,9 +504,6 @@ impl<'a> GroupParser<'a> {
                 continue;
             }
             if let Some((body, repeat, unlimited)) = self.frames[index].parser.group()? {
-                if unlimited && self.consumed >= self.count {
-                    continue;
-                }
                 self.frames[self.depth] = Frame {
                     parser: Parser {
                         bytes: body,
@@ -505,12 +519,13 @@ impl<'a> GroupParser<'a> {
                 // Count expanded descriptors, not only group traversal. Nested
                 // literal/spacing repeats must not create unbounded field lists.
                 self.operations = self.operations.saturating_add(d.repeat);
-                if self.operations > self.count.saturating_mul(256).saturating_add(100000) {
+                if self.operations > self.count.saturating_mul(256).saturating_add(100000).min(if self.preserve_boundaries { 100000 } else { usize::MAX }) {
                     return Err("output format expansion exceeds supported limits");
                 }
                 if d.code==b':' {
                     if d.repeat!=1 {return Err("colon edit descriptor cannot have a repeat count");}
                     if self.consumed>=self.count {self.depth=0;return Ok(None);}
+                    if self.preserve_boundaries { return Ok(Some(d)); }
                     continue;
                 }
                 if is_data(d.code) {
@@ -518,6 +533,9 @@ impl<'a> GroupParser<'a> {
                         self.depth = 0;
                         return Ok(None);
                     }
+                    // If the list ends inside rD, the next repeated data edit
+                    // terminates processing before any following controls.
+                    self.stop_after_data = d.repeat > self.count - self.consumed;
                     d.repeat = d.repeat.min(self.count - self.consumed);
                     self.consumed += d.repeat;
                 }

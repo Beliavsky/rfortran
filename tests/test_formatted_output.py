@@ -12,6 +12,20 @@ import test_deallocate
 class FormattedOutput(unittest.TestCase):
     check = test_deallocate.Deallocate.check
 
+    def test_unlimited_group_leading_literals(self):
+        self.check("""implicit none
+integer :: empty(0)
+print '("outer",*("inner",i0))',empty
+print '(*("prefix",i0))',1,2
+print '(*(i0,:,","))',1,2
+end
+""", 'outerinner\nprefix1prefix2prefix\n1,2\n')
+
+    def test_partial_repeated_data_descriptor(self):
+        self.check("""print '(3i0,"unreached")',1,2
+end
+""", '12\n')
+
     def test_real_descriptors(self):
         self.check("""program p
 implicit none

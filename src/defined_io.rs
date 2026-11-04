@@ -298,6 +298,301 @@ fn format_items(format: &Expr, count: usize) -> Result<(Vec<FormatItem>, String)
     Ok((items, format!("({pending})")))
 }
 
+/// One cursor state consumes one scalar item; `finish` is the control editing
+/// performed instead if the output list ends at this position.
+struct FormatState {
+    item: FormatItem,
+    finish: String,
+    next: usize,
+}
+fn format_states(format: &Expr) -> Result<Vec<FormatState>> {
+    use crate::format_spec::{self as f, GroupParser};
+    let Expr::Str(text) = format else {
+        bail!("defined formatted output currently requires a literal parent format");
+    };
+    let mut parser = GroupParser::new(text.as_bytes(), usize::MAX).map_err(anyhow::Error::msg)?;
+    parser.preserve_boundaries();
+    let mut states: Vec<FormatState> = vec![];
+    let mut seen = HashMap::new();
+    let mut repeat = None;
+    let mut remaining = 0usize;
+    let mut scale = String::new();
+    let mut sign = String::new();
+    loop {
+        let key = (parser.position(), remaining, scale.clone(), sign.clone());
+        if let Some(&next) = seen.get(&key) {
+            states.last_mut().unwrap().next = next;
+            break;
+        }
+        if states.len() == 1024 {
+            bail!("defined output format cursor exceeds 1024 states");
+        }
+        seen.insert(key, states.len());
+        let mut pending = String::new();
+        let mut finish = String::new();
+        let mut finished = false;
+        let mut found = None;
+        for _ in 0..10000 {
+            let d = if remaining > 0 {
+                remaining -= 1;
+                repeat.unwrap()
+            } else {
+                let d = parser
+                    .next()
+                    .map_err(anyhow::Error::msg)?
+                    .context("defined output format has no next data descriptor")?;
+                if f::is_data(d.code) {
+                    remaining = d.repeat - 1;
+                    repeat = Some(d);
+                }
+                d
+            };
+            let raw = std::str::from_utf8(d.raw)?.trim();
+            if matches!(d.code, f::T | f::TL) {
+                bail!("T/TL positioning across defined output transfers is not yet supported");
+            }
+            if f::is_data(d.code) {
+                let defined = if d.code == f::DT {
+                    let descriptor = raw.trim_start_matches(|c: char| {
+                        c.is_ascii_digit() || c.is_ascii_whitespace()
+                    });
+                    Some(dt(&Expr::Str(format!("({descriptor})")))?)
+                } else {
+                    None
+                };
+                found = Some(FormatItem {
+                    before: format!("({pending})"),
+                    data: format!("({scale}{sign}{pending}{raw})"),
+                    defined,
+                });
+                break;
+            }
+            if matches!(d.code, b':' | f::REVERSION) {
+                finished = true;
+            }
+            if matches!(d.code, b':') {
+                continue;
+            }
+            if d.code == f::SCALE {
+                scale = format!("{raw},");
+            }
+            if matches!(d.code, f::SIGN_PLUS | f::SIGN_DEFAULT) {
+                sign = format!("{raw},");
+            }
+            pending.push_str(raw);
+            pending.push(',');
+            if !finished {
+                finish.push_str(raw);
+                finish.push(',');
+            }
+        }
+        let item =
+            found.context("defined output format control expansion exceeds supported limits")?;
+        let next = states.len() + 1;
+        states.push(FormatState {
+            item,
+            finish: format!("({finish})"),
+            next,
+        });
+    }
+    Ok(states)
+}
+
+fn when_equal(name: &str, value: i64, then_body: Vec<Stmt>, else_body: Option<Vec<Stmt>>) -> Stmt {
+    Stmt::If {
+        cond: Expr::Bin(BinOp::Eq, Box::new(id(name)), Box::new(int(value))),
+        then_body,
+        else_body,
+    }
+}
+
+/// Runtime array loops advance a small finite format cursor. Storage and code
+/// size depend on the format, never on the number of array elements.
+fn formatted_arrays(
+    unit: Expr,
+    format: &Expr,
+    items: Vec<Expr>,
+    prefix: &str,
+    types: &crate::operators::ExpressionTypes,
+    declarations: &Declarations,
+    objects: &Objects,
+    bindings: &HashMap<String, String>,
+    status_target: Option<String>,
+    message_target: Option<String>,
+) -> Result<Stmt> {
+    let states = format_states(format)?;
+    let ios = format!("{prefix}_status");
+    let msg = format!("{prefix}_message");
+    let parent_unit = format!("{prefix}_unit");
+    let cursor = format!("{prefix}_cursor");
+    let mut out = vec![
+        decl(&ios, TypeSpec::Integer(None)),
+        decl(&parent_unit, TypeSpec::Integer(None)),
+        decl(&cursor, TypeSpec::Integer(None)),
+        decl(&msg, TypeSpec::Character(Some(256))),
+        assign(&parent_unit, unit),
+        assign(&cursor, int(0)),
+        assign(&msg, Expr::Str(String::new())),
+        checked_write(id(&parent_unit), "()", vec![], false, &ios, &msg),
+    ];
+    for (index, state) in states.iter().enumerate() {
+        if let Some((_, values)) = &state.item.defined {
+            let vlist = format!("{prefix}_vlist_{index}");
+            out.push(Stmt::ArrayDecl {
+                name: vlist.clone(),
+                kind: TypeSpec::Integer(None),
+                dims: vec![int(values.len() as i64)],
+            });
+            for (i, value) in values.iter().enumerate() {
+                out.push(Stmt::AssignIndex {
+                    name: vlist.clone(),
+                    indices: vec![int(i as i64 + 1)],
+                    value: value.clone(),
+                });
+            }
+        }
+    }
+    for (item_number, item) in items.into_iter().enumerate() {
+        let (element, rank) = types
+            .type_rank(&item, declarations, objects)?
+            .context("cannot determine explicitly formatted output item type")?;
+        if matches!(
+            element,
+            crate::operators::ExpressionElement::Intrinsic(TypeSpec::Complex(_))
+        ) {
+            bail!("COMPLEX items mixed with defined formatted output are not yet supported");
+        }
+        let procedure = match element {
+            crate::operators::ExpressionElement::Derived(ty) => Some(
+                bindings
+                    .get(&ty)
+                    .with_context(|| {
+                        format!("derived output item `{ty}` requires a defined writer")
+                    })?
+                    .clone(),
+            ),
+            _ => None,
+        };
+        let (item, mut before, loops) = if rank > 0 {
+            array_item(
+                item,
+                &format!("{prefix}_item_{item_number}"),
+                types,
+                declarations,
+                objects,
+            )?
+        } else {
+            (item, vec![], vec![])
+        };
+        let mut dispatch = vec![];
+        for (index, state) in states.iter().enumerate().rev() {
+            let mut body = match (&procedure, &state.item.defined) {
+                (Some(procedure), Some((iotype, _))) => vec![
+                    checked_write(
+                        id(&parent_unit),
+                        &state.item.before,
+                        vec![],
+                        false,
+                        &ios,
+                        &msg,
+                    ),
+                    when_equal(
+                        &ios,
+                        0,
+                        vec![
+                            assign(&msg, Expr::Str(String::new())),
+                            call("@defined_output_enter", vec![id(&parent_unit)]),
+                            call(
+                                procedure,
+                                vec![
+                                    item.clone(),
+                                    id(&parent_unit),
+                                    Expr::Str(iotype.clone()),
+                                    id(&format!("{prefix}_vlist_{index}")),
+                                    id(&ios),
+                                    id(&msg),
+                                ],
+                            ),
+                            call("@defined_output_leave", vec![]),
+                        ],
+                        None,
+                    ),
+                ],
+                (None, None) => vec![checked_write(
+                    id(&parent_unit),
+                    &state.item.data,
+                    vec![item.clone()],
+                    false,
+                    &ios,
+                    &msg,
+                )],
+                _ => vec![
+                    assign(&ios, int(1)),
+                    assign(
+                        &msg,
+                        Expr::Str("DT edit descriptor and output item type do not match".into()),
+                    ),
+                ],
+            };
+            body.push(assign(&cursor, int(state.next as i64)));
+            dispatch = vec![when_equal(&cursor, index as i64, body, Some(dispatch))];
+        }
+        for (index, first, last, step) in loops {
+            let mut body = vec![
+                call("@do_step", vec![id(&index), first, last, step]),
+                Stmt::If {
+                    cond: Expr::Bin(BinOp::Ne, Box::new(id(&ios)), Box::new(int(0))),
+                    then_body: vec![Stmt::Exit],
+                    else_body: None,
+                },
+            ];
+            body.extend(dispatch);
+            dispatch = vec![Stmt::Block { body }];
+        }
+        before.extend(dispatch);
+        out.push(when_equal(
+            &ios,
+            0,
+            vec![Stmt::Block { body: before }],
+            None,
+        ));
+    }
+    let mut finish = vec![];
+    for (index, state) in states.iter().enumerate().rev() {
+        finish = vec![when_equal(
+            &cursor,
+            index as i64,
+            vec![checked_write(
+                id(&parent_unit),
+                &state.finish,
+                vec![],
+                true,
+                &ios,
+                &msg,
+            )],
+            Some(finish),
+        )];
+    }
+    out.push(when_equal(&ios, 0, finish, None));
+    if let Some(dest) = status_target {
+        out.push(assign(&dest, id(&ios)));
+    } else {
+        out.push(Stmt::If {
+            cond: Expr::Bin(BinOp::Ne, Box::new(id(&ios)), Box::new(int(0))),
+            then_body: vec![call("@error_stop", vec![id(&msg)])],
+            else_body: None,
+        });
+    }
+    if let Some(dest) = message_target {
+        out.push(Stmt::If {
+            cond: Expr::Bin(BinOp::Ne, Box::new(id(&ios)), Box::new(int(0))),
+            then_body: vec![assign(&dest, id(&msg))],
+            else_body: None,
+        });
+    }
+    Ok(Stmt::Block { body: out })
+}
+
 type Objects = HashMap<String, (String, usize)>;
 type Declarations = HashMap<String, (TypeSpec, usize)>;
 type OutputLoop = (String, Expr, Expr, Expr);
@@ -330,11 +625,12 @@ fn array_item(
         Expr::Call(n, a) | Expr::Index(n, a) => (n, Some(a)),
         _ => bail!("defined formatted array output requires a whole array or triplet section"),
     };
-    if !objects.contains_key(array.split('%').next().unwrap()) {
+    if !objects.contains_key(array.split('%').next().unwrap()) && !declarations.contains_key(&array)
+    {
         bail!("defined formatted array output requires a whole array or triplet section");
     }
     let rank = match types.type_rank(&id(&array), declarations, objects)? {
-        Some((crate::operators::ExpressionElement::Derived(_), rank)) if rank > 0 => rank,
+        Some((_, rank)) if rank > 0 => rank,
         _ => bail!("defined formatted array output requires a whole array or triplet section"),
     };
     let subscripts = supplied.unwrap_or_else(|| {
@@ -561,6 +857,29 @@ fn lower(
                     let list = format
                         .as_ref()
                         .is_none_or(|e| matches!(e,Expr::Call(n,_) if n=="@list_directed"));
+                    if !list
+                        && items
+                            .iter()
+                            .map(|e| expression_types.type_rank(e, &declarations, &objects))
+                            .collect::<Result<Vec<_>>>()?
+                            .iter()
+                            .any(|ty| ty.as_ref().is_some_and(|(_, rank)| *rank > 0))
+                    {
+                        *serial += 1;
+                        *s = formatted_arrays(
+                            unit,
+                            format.as_ref().unwrap(),
+                            items,
+                            &format!("@defined_output_{serial}"),
+                            expression_types,
+                            &declarations,
+                            &objects,
+                            bindings,
+                            status_target,
+                            message_target,
+                        )?;
+                        return Ok(());
+                    }
                     let (plan, trailing) = if list {
                         (vec![], "()".into())
                     } else {
@@ -912,4 +1231,40 @@ pub fn resolve(mut program: Program) -> Result<Program> {
         &mut 0,
     )?;
     Ok(program)
+}
+
+#[cfg(test)]
+mod cursor_tests {
+    use super::*;
+    #[test]
+    fn cursor_matches_counted_format_traversal() {
+        for text in [
+            "(dt)",
+            "(2(dt,1x))",
+            "(dt,3(dt,'!'))",
+            "(*(dt,:,','))",
+            "('outer',*('inner',dt))",
+            "(sp,i0,dt,(ss,i0,1x,dt))",
+            "(dt,/,dt,:,'end')",
+            "(2dt'quoted'(1,2),1x,dt'other'(3))",
+        ] {
+            let format = Expr::Str(text.into());
+            let states = format_states(&format).unwrap();
+            for count in 0..12 {
+                let (expected, tail) = format_items(&format, count).unwrap();
+                let mut cursor = 0;
+                for item in expected {
+                    let actual = &states[cursor];
+                    assert_eq!(actual.item.before, item.before, "{text}, count={count}");
+                    assert_eq!(actual.item.data, item.data, "{text}, count={count}");
+                    assert_eq!(
+                        format!("{:?}", actual.item.defined),
+                        format!("{:?}", item.defined)
+                    );
+                    cursor = actual.next;
+                }
+                assert_eq!(states[cursor].finish, tail, "{text}, count={count}");
+            }
+        }
+    }
 }

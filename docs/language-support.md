@@ -4151,13 +4151,21 @@ positive or negative runtime strides, array components, and runtime-sized
 arrays. Bounds, strides, and scalar subscripts are evaluated once before
 iteration. Omitted bounds use the declared bounds regardless of stride sign;
 zero stride is diagnosed. Sections retain Fortran array element order.
-Literal parent formats can mix scalar intrinsic items with defined derived items,
+Literal parent formats can mix intrinsic items with defined derived items,
 use multiple DT descriptors with separate character strings and v-lists, repeat
 nested groups, use an unlimited final group, and revert the format onto new records.
 Colon termination, literals, spacing, slash editing, sign modes, and scale factors
 are retained across transfers. See `tests/programs/xdefined_formatted_mixed.f90`.
-Explicitly formatted arrays, mixed COMPLEX items, and parent T/TL positioning
-remain unsupported; list-directed array output is described above.
+Explicit formats also accept whole arrays and supported triplet/vector sections,
+including runtime-sized and assumed-shape arrays. A runtime cursor advances once
+per scalar element across all output items, retaining Fortran element order and
+stopping on writer errors. Empty arrays consume no data descriptors. Counted
+loops avoid expanding the source once per element. The cursor currently permits
+up to 1024 distinct format states; runtime parent format strings, mixed COMPLEX
+items, and parent T/TL positioning remain unsupported.
+See `tests/programs/xdefined_formatted_array_formats.f90`.
+Leading literals in unlimited groups are processed even when no items remain;
+colon editing can suppress these trailing literals.
 INTEGER vector subscripts are accepted, including repeated and empty vectors,
 nonunit lower bounds, runtime-sized vectors, and mixtures of scalar, triplet,
 and vector subscripts. Each vector expression is captured once before iteration;
@@ -4178,8 +4186,7 @@ The current message temporary holds 256 characters.
 
 This is partial support. Internal parent units, READ, unformatted
 transfers, namelist defined I/O, generic interface blocks, private and inherited defined
-bindings, array-valued expressions, explicitly formatted
-array transfers, runtime parent
+bindings, array-valued expressions, runtime parent
 formats remain outside
 the supported subset. Child ADVANCE currently requires a constant YES/NO value.
 T/TL positioning in
