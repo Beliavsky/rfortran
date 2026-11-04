@@ -1551,7 +1551,7 @@ pub fn analyze_with_origins(
             fname: &str,
             is_function: bool,
             declared_ret: &Option<TypeSpec>,
-            local: &HashMap<String, TypeSpec>,
+            local: &mut HashMap<String, TypeSpec>,
             fn_map: &HashMap<String, FnInfo>,
             external_fn_ret: &HashMap<String, TypeSpec>,
             find_ident_span: &dyn Fn(&str) -> std::ops::Range<usize>,
@@ -1568,14 +1568,23 @@ pub fn analyze_with_origins(
         ) {
             // Lowering may declare temporaries inside a loop or branch. Their
             // explicit types take precedence over implicit/global symbol entries.
-            let mut scoped=local.clone();
+            // Borrow the enclosing environment and undo only local declarations.
+            let mut shadowed = Vec::new();
             for st in stmts {
                 match st {
-                    Stmt::VarDecl {kind,names}=>for n in names {scoped.insert(n.to_ascii_lowercase(),kind.clone());},
-                    Stmt::ArrayDecl {kind,name,..}=>{scoped.insert(name.to_ascii_lowercase(),kind.clone());},_=>{}
+                    Stmt::VarDecl { kind, names } => for name in names {
+                        let key = name.to_ascii_lowercase();
+                        let previous = local.insert(key.clone(), kind.clone());
+                        shadowed.push((key, previous));
+                    },
+                    Stmt::ArrayDecl { kind, name, .. } => {
+                        let key = name.to_ascii_lowercase();
+                        let previous = local.insert(key.clone(), kind.clone());
+                        shadowed.push((key, previous));
+                    }
+                    _ => {}
                 }
             }
-            let local=&scoped;
             for st in stmts {
                 match st {
                     Stmt::Assign { name, value } => {
@@ -1716,9 +1725,9 @@ pub fn analyze_with_origins(
                     } => {
                         let lname = var.to_ascii_lowercase();
                         read_vars.insert(lname.clone());
-                        let mut new_local = local.clone();
-                        if !new_local.contains_key(&lname) {
-                            new_local.insert(lname.clone(), TypeSpec::Integer(None));
+                        let implicit_index = !local.contains_key(&lname);
+                        if implicit_index {
+                            local.insert(lname.clone(), TypeSpec::Integer(None));
                         }
                         walk_reads_in_expr(start, read_vars);
                         walk_reads_in_expr(end, read_vars);
@@ -1727,7 +1736,7 @@ pub fn analyze_with_origins(
                             fname,
                             is_function,
                             declared_ret,
-                            &new_local,
+                            local,
                             fn_map,
                             external_fn_ret,
                             find_ident_span,
@@ -1742,6 +1751,7 @@ pub fn analyze_with_origins(
                             read_vars,
                             settings,
                         );
+                        if implicit_index { local.remove(&lname); }
                     }
                     Stmt::SelectCase { expr, cases, default } => {
                         walk_reads_in_expr(expr, read_vars);
@@ -1764,22 +1774,8 @@ pub fn analyze_with_origins(
                         );
                     }
                     Stmt::Block { body } => {
-                        let mut scoped = local.clone();
-                        for s in body {
-                            match s {
-                                Stmt::VarDecl { kind, names } => {
-                                    for name in names {
-                                        scoped.insert(name.clone(), kind.clone());
-                                    }
-                                }
-                                Stmt::ArrayDecl { kind, name, .. } => {
-                                    scoped.insert(name.clone(), kind.clone());
-                                }
-                                _ => {}
-                            }
-                        }
                         inner(
-                            body, fname, is_function, declared_ret, &scoped,
+                            body, fname, is_function, declared_ret, local,
                             fn_map, external_fn_ret, find_ident_span, errors,
                             has_path, stderr, file, type_span_map, params,
                             local_param_intent, assigned, read_vars, settings,
@@ -1812,6 +1808,10 @@ pub fn analyze_with_origins(
                     _ => {}
                 }
             }
+            for (name, previous) in shadowed.into_iter().rev() {
+                if let Some(kind) = previous { local.insert(name, kind); }
+                else { local.remove(&name); }
+            }
         }
         fn walk_reads_in_expr(e: &Expr, read_vars: &mut HashSet<String>) {
             match e {
@@ -1843,7 +1843,7 @@ pub fn analyze_with_origins(
             fname,
             is_function,
             declared_ret,
-            &local,
+            &mut local,
             fn_map,
             external_fn_ret,
             find_ident_span,
@@ -2962,6 +2962,27 @@ pub fn analyze_with_origins(
 #[cfg(test)]
 mod source_token_index_tests {
     use super::*;
+
+    #[test]
+    fn procedure_scopes_restore_shadowed_assignment_types() {
+        for (body, mismatches) in [
+            ("block\nreal :: x\nx=1.0\nend block\nx=.true.", 0),
+            ("block\nreal :: x\nx=.true.\nend block\nx=1.0", 2),
+            ("block\nreal :: x(2)\nx=1.0\nend block\nx=.true.", 0),
+            ("do i=1,2\nblock\nreal :: x\nx=1.0\nend block\nend do\nx=.true.", 0),
+            ("if (.true.) then\nblock\nreal :: x\nx=1.0\nend block\nelse\nx=.false.\nend if\nx=.true.", 0),
+            ("block\nreal :: x\nx=1.0\nblock\ncharacter :: x\nx='a'\nend block\nx=2.0\nend block\nx=.true.", 0),
+        ] {
+            let source = format!("program main\nimplicit none\ncall work()\ncontains\nsubroutine work()\nlogical :: x\ninteger :: i\n{body}\nprint *,x\nend subroutine\nend program\n");
+            let tokens = crate::lexer::lex(&source);
+            let program = crate::parser::parse_with_src(&source, &tokens, "scope.f90").unwrap();
+            let errors = analyze_with_src(&program, &source, &tokens, "scope.f90",
+                &SemaSettings::default(), &HashSet::new(), false);
+            assert_eq!(errors.iter().filter(|e| e.message.contains("type mismatch in assignment")).count(),
+                mismatches, "{body}: {errors:?}");
+            if mismatches == 0 { assert!(errors.iter().all(|e| matches!(e.kind, CompileErrorKind::Warning)), "{body}: {errors:?}"); }
+        }
+    }
 
     #[test]
     fn indexed_lookups_match_linear_first_occurrence_search() {

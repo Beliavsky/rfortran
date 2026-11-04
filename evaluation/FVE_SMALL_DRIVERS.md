@@ -223,3 +223,42 @@ top-level checks) takes 2.119, 9.379, and 33.992 seconds in these runs. Scoped
 insert/restore handling, with tests for nested declarations and assignment/return
 type diagnostics, is the next candidate. Undefined-call checking and expansion
 costs also remain significant.
+
+
+## Scoped procedure-body type checking
+
+The nested procedure checker now borrows its type environment, records local
+scalar/array declarations, and restores them on scope exit. BLOCK no longer makes
+an extra copy before recursive checking; DO temporarily inserts an otherwise
+missing loop-index type and removes it afterward. Existing assignment, return,
+INTENT, and read-tracking checks remain in place.
+
+Sequential single-run results with the same module snapshots and optimized
+development build settings:
+
+| Stats calls | Previous function-body stage (s) | Scoped stage (s) | Previous semantic total (s) | New semantic total (s) | New attempt total (s) |
+|---|---:|---:|---:|---:|---:|
+| 1 | 2.119 | 0.811 | 3.010 | 1.797 | 22.731 |
+| 2 | 9.379 | 3.884 | 12.024 | 7.707 | 79.627 |
+| 4 | 33.992 | 10.315 | 53.836 | 20.907 | 187.346 |
+
+The function-body stage also includes subsequent top-level checks. Other stages
+still vary substantially: the first two complete attempts are slower than the
+previous runs despite faster semantic checking. Do not infer a controlled overall
+speedup from these single runs. All three rfort probes still reach the same
+`@alloc_block_7316` initialization error; all gfortran object compilations pass.
+The full FVE program has not been shown to compile successfully.
+
+Reports and compiler/source snapshots: `target/2015-compat/fve-procedure-scopes/`.
+
+Validation: both focused Rust tests pass, including six procedure-scope cases
+covering nested and sibling blocks, array/scalar shadowing, loops, and invalid
+assignments before/after restoration. All 23 integration tests in
+`test_function_scope_metadata`, `test_function_result_types`,
+`test_select_case_function_result`, and `test_intent_spellings` pass.
+
+Undefined-call checking takes 0.800/3.358/9.945 seconds for one/two/four calls.
+It still clones procedure and block environments and is the next semantic
+optimization candidate. Unlike the type-only checker, it introduces implicit
+symbols during expression traversal; any scoped replacement must preserve those
+rules and prevent declarations leaking between procedures or blocks.

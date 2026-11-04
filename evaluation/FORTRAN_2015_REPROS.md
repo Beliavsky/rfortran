@@ -679,3 +679,10 @@ Semantic source-token lookups are now indexed; the one/two/four-call probes take
 0.031/0.064/0.061 seconds in the source/interface stage. See
 [FVE_SMALL_DRIVERS.md](FVE_SMALL_DRIVERS.md#indexed-semantic-source-lookups) for
 validation, timing limitations, and remaining procedure-scope costs.
+
+
+Nested procedure type checking now uses scoped environment updates. Its measured
+stage drops from 2.119/9.379/33.992 to 0.811/3.884/10.315 seconds on the repeated
+stats probes; see [FVE_SMALL_DRIVERS.md](FVE_SMALL_DRIVERS.md#scoped-procedure-body-type-checking).
+The initialization blocker remains; undefined-call scope handling is the next
+semantic performance candidate.
