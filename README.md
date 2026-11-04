@@ -1,6 +1,6 @@
 # rfortran - Fortran compiler in Rust
 
-**rfortran is an experimental Fortran compiler written in Rust**, forked from
+**rfortran is an alpha-stage Fortran compiler written in Rust**, forked from
 [SirPigari/f90c](https://github.com/SirPigari/f90c). The compiler executable is
 named `rfort`; the Cargo package and repository are named `rfortran`. The project
 is not limited to Fortran 90, but it does not yet implement a complete Fortran
@@ -18,6 +18,10 @@ Windows x64, Linux x86-64 and macOS Apple Silicon prerelease packaging instructi
 native compilation, interpretation (`rfort run file.f90`) and the REPL (`rfort repl`).
 
 ## Current status
+
+Performance varies by workload, and some larger programs compile slowly. See
+[performance results versus gfortran](benchmarks/RESULTS.md) for execution and
+compilation measurements, known slow cases, and reproduction commands.
 
 Development is focused on compiling small programs correctly and extending
 coverage through local regressions and cases from the external ofort test suite.

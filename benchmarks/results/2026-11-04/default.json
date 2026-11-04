@@ -1,0 +1,3660 @@
+{
+  "schema_version": 1,
+  "created_utc": "2026-11-04T13:44:57.462303+00:00",
+  "machine": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "processor": "Intel64 Family 6 Model 140 Stepping 1, GenuineIntel",
+    "architecture": "AMD64",
+    "logical_cpus": 8,
+    "python": "3.13.3 (tags/v3.13.3:6280bb5, Apr  8 2025, 14:47:33) [MSC v.1943 64 bit (AMD64)]"
+  },
+  "settings": {
+    "compilers": [
+      "gfortran"
+    ],
+    "rfort": "C:\\rust\\public_domain\\github\\rfortran\\target\\release\\rfort.exe",
+    "gfortran": "gfortran",
+    "compiler_path": [],
+    "rfort_flag": [],
+    "gfortran_flag": [],
+    "compiler_flag": [],
+    "no_default_flags": false,
+    "checks": "default",
+    "size": "medium",
+    "bench": [
+      "*"
+    ],
+    "runs": 5,
+    "warmups": 1,
+    "seed": 3,
+    "timeout": 30,
+    "compile_timeout": 120,
+    "min_seconds": 0.02,
+    "output": "target\\benchmarks\\announcement-20261104-default",
+    "allow_failures": false,
+    "list": false
+  },
+  "thread_environment": {
+    "OMP_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "VECLIB_MAXIMUM_THREADS": "1"
+  },
+  "compilers": {
+    "rfort": {
+      "name": "rfort",
+      "requested": "C:\\rust\\public_domain\\github\\rfortran\\target\\release\\rfort.exe",
+      "path": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\toolchain\\rfort.exe",
+      "available": true,
+      "sha256": "7827b4c85c28446089c887178aae93b9cd64170a4e2f5247666b2a65fe5f6c5d",
+      "original_path": "C:\\rust\\public_domain\\github\\rfortran\\target\\release\\rfort.exe",
+      "version": "rfort version: 0.1.0-alpha.1\nHost target: x86_64-pc-windows-msvc"
+    },
+    "gfortran": {
+      "name": "gfortran",
+      "requested": "gfortran",
+      "path": "c:\\equation\\bin\\gfortran.EXE",
+      "available": true,
+      "sha256": "f2651a8a1572aa9c4db4080bf3e50c057fbecdec74195f5bfe7cc0798eb9d3e4",
+      "original_path": "C:\\equation\\bin\\gfortran.exe",
+      "version": "GNU Fortran (GCC) 17.0.0 20260510 (experimental)\nCopyright (C) 2026 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE."
+    }
+  },
+  "benchmarks": [
+    {
+      "name": "integer_sum",
+      "source": "programs/integer_sum.f90",
+      "description": "INTEGER(64) modular accumulation",
+      "reference": "integer_sum",
+      "profiles": {
+        "smoke": {
+          "n": 10000,
+          "repetitions": 1
+        },
+        "small": {
+          "n": 2000000,
+          "repetitions": 1
+        },
+        "medium": {
+          "n": 20000000,
+          "repetitions": 1
+        },
+        "large": {
+          "n": 100000000,
+          "repetitions": 1
+        }
+      },
+      "rtol": 0.0,
+      "atol": 0.0,
+      "error_limit": 0.0
+    },
+    {
+      "name": "scalar_recurrence",
+      "source": "programs/scalar_recurrence.f90",
+      "description": "Dependent REAL(64) recurrence",
+      "reference": "recurrence",
+      "profiles": {
+        "smoke": {
+          "n": 10000,
+          "repetitions": 1
+        },
+        "small": {
+          "n": 2000000,
+          "repetitions": 1
+        },
+        "medium": {
+          "n": 20000000,
+          "repetitions": 1
+        },
+        "large": {
+          "n": 100000000,
+          "repetitions": 1
+        }
+      },
+      "rtol": 1e-08,
+      "atol": 1e-10,
+      "error_limit": 1e-08
+    },
+    {
+      "name": "procedure_calls",
+      "source": "programs/procedure_calls.f90",
+      "description": "Same recurrence through a pure scalar function",
+      "reference": "recurrence",
+      "profiles": {
+        "smoke": {
+          "n": 10000,
+          "repetitions": 1
+        },
+        "small": {
+          "n": 2000000,
+          "repetitions": 1
+        },
+        "medium": {
+          "n": 20000000,
+          "repetitions": 1
+        },
+        "large": {
+          "n": 100000000,
+          "repetitions": 1
+        }
+      },
+      "rtol": 1e-08,
+      "atol": 1e-10,
+      "error_limit": 1e-08
+    },
+    {
+      "name": "pi_integral",
+      "source": "programs/pi_integral.f90",
+      "description": "Midpoint numerical integration",
+      "reference": "pi",
+      "profiles": {
+        "smoke": {
+          "n": 4096,
+          "repetitions": 1
+        },
+        "small": {
+          "n": 200000,
+          "repetitions": 1
+        },
+        "medium": {
+          "n": 5000000,
+          "repetitions": 1
+        },
+        "large": {
+          "n": 25000000,
+          "repetitions": 1
+        }
+      },
+      "rtol": 1e-08,
+      "atol": 1e-10,
+      "error_limit": 1e-08
+    },
+    {
+      "name": "vector_loop",
+      "source": "programs/vector_loop.f90",
+      "description": "Vector update using explicit loops",
+      "reference": "vector",
+      "profiles": {
+        "smoke": {
+          "n": 512,
+          "repetitions": 2
+        },
+        "small": {
+          "n": 100000,
+          "repetitions": 20
+        },
+        "medium": {
+          "n": 1000000,
+          "repetitions": 100
+        },
+        "large": {
+          "n": 4000000,
+          "repetitions": 200
+        }
+      },
+      "rtol": 1e-09,
+      "atol": 1e-10,
+      "error_limit": 1e-08
+    },
+    {
+      "name": "vector_array",
+      "source": "programs/vector_array.f90",
+      "description": "Same vector update using array syntax",
+      "reference": "vector",
+      "profiles": {
+        "smoke": {
+          "n": 512,
+          "repetitions": 2
+        },
+        "small": {
+          "n": 100000,
+          "repetitions": 20
+        },
+        "medium": {
+          "n": 1000000,
+          "repetitions": 100
+        },
+        "large": {
+          "n": 4000000,
+          "repetitions": 200
+        }
+      },
+      "rtol": 1e-09,
+      "atol": 1e-10,
+      "error_limit": 1e-08
+    },
+    {
+      "name": "dot_product",
+      "source": "programs/dot_product.f90",
+      "description": "DOT_PRODUCT with changing input",
+      "reference": "dot",
+      "profiles": {
+        "smoke": {
+          "n": 512,
+          "repetitions": 2
+        },
+        "small": {
+          "n": 100000,
+          "repetitions": 20
+        },
+        "medium": {
+          "n": 1000000,
+          "repetitions": 100
+        },
+        "large": {
+          "n": 4000000,
+          "repetitions": 200
+        }
+      },
+      "rtol": 1e-09,
+      "atol": 1e-10,
+      "error_limit": 1e-08
+    },
+    {
+      "name": "array_reductions",
+      "source": "programs/array_reductions.f90",
+      "description": "SUM, MAXVAL and MINVAL with changing input",
+      "reference": "reductions",
+      "profiles": {
+        "smoke": {
+          "n": 512,
+          "repetitions": 2
+        },
+        "small": {
+          "n": 100000,
+          "repetitions": 20
+        },
+        "medium": {
+          "n": 1000000,
+          "repetitions": 100
+        },
+        "large": {
+          "n": 4000000,
+          "repetitions": 200
+        }
+      },
+      "rtol": 1e-09,
+      "atol": 1e-10,
+      "error_limit": 1e-08
+    },
+    {
+      "name": "matmul_loop",
+      "source": "programs/matmul_loop.f90",
+      "description": "Column-major matrix product using loops",
+      "reference": "matrix",
+      "profiles": {
+        "smoke": {
+          "n": 8,
+          "repetitions": 1
+        },
+        "small": {
+          "n": 64,
+          "repetitions": 3
+        },
+        "medium": {
+          "n": 192,
+          "repetitions": 5
+        },
+        "large": {
+          "n": 384,
+          "repetitions": 10
+        }
+      },
+      "rtol": 1e-09,
+      "atol": 1e-10,
+      "error_limit": 1e-08
+    },
+    {
+      "name": "matmul_intrinsic",
+      "source": "programs/matmul_intrinsic.f90",
+      "description": "Same matrix product using MATMUL",
+      "reference": "matrix",
+      "profiles": {
+        "smoke": {
+          "n": 8,
+          "repetitions": 1
+        },
+        "small": {
+          "n": 64,
+          "repetitions": 3
+        },
+        "medium": {
+          "n": 192,
+          "repetitions": 5
+        },
+        "large": {
+          "n": 384,
+          "repetitions": 10
+        }
+      },
+      "rtol": 1e-09,
+      "atol": 1e-10,
+      "error_limit": 1e-08
+    },
+    {
+      "name": "stencil_2d",
+      "source": "programs/stencil_2d.f90",
+      "description": "Jacobi stencil with an analytic eigenmode",
+      "reference": "stencil",
+      "profiles": {
+        "smoke": {
+          "n": 12,
+          "repetitions": 2
+        },
+        "small": {
+          "n": 96,
+          "repetitions": 20
+        },
+        "medium": {
+          "n": 384,
+          "repetitions": 100
+        },
+        "large": {
+          "n": 768,
+          "repetitions": 200
+        }
+      },
+      "rtol": 1e-09,
+      "atol": 1e-10,
+      "error_limit": 1e-08
+    },
+    {
+      "name": "allocation_fill",
+      "source": "programs/allocation_fill.f90",
+      "description": "Allocate, fill, reduce and deallocate",
+      "reference": "allocation",
+      "profiles": {
+        "smoke": {
+          "n": 32,
+          "repetitions": 3
+        },
+        "small": {
+          "n": 4096,
+          "repetitions": 100
+        },
+        "medium": {
+          "n": 16384,
+          "repetitions": 500
+        },
+        "large": {
+          "n": 65536,
+          "repetitions": 1000
+        }
+      },
+      "rtol": 1e-09,
+      "atol": 1e-10,
+      "error_limit": 1e-08
+    }
+  ],
+  "results": [
+    {
+      "benchmark": "integer_sum",
+      "compiler": "rfort",
+      "profile": {
+        "n": 20000000,
+        "repetitions": 1
+      },
+      "status": "passed",
+      "directory": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\integer_sum",
+      "samples": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\integer_sum\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.10950300004333258,
+          "stdout": "BENCH_SECONDS    4.8146099999999997E-02\nBENCH_CHECKSUM    9.5999906500000000E+08\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0481461,
+            "BENCH_CHECKSUM": 959999065.0,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 959999065.0
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\integer_sum\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.1086480999365449,
+          "stdout": "BENCH_SECONDS    5.1708999999999998E-02\nBENCH_CHECKSUM    9.5999906500000000E+08\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.051709,
+            "BENCH_CHECKSUM": 959999065.0,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 959999065.0
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\integer_sum\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.11135119991376996,
+          "stdout": "BENCH_SECONDS    5.1668199999999997E-02\nBENCH_CHECKSUM    9.5999906500000000E+08\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0516682,
+            "BENCH_CHECKSUM": 959999065.0,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 959999065.0
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\integer_sum\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.21968029998242855,
+          "stdout": "BENCH_SECONDS    5.1212599999999997E-02\nBENCH_CHECKSUM    9.5999906500000000E+08\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0512126,
+            "BENCH_CHECKSUM": 959999065.0,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 959999065.0
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\integer_sum\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.09665979980491102,
+          "stdout": "BENCH_SECONDS    5.0296500000000001E-02\nBENCH_CHECKSUM    9.5999906500000000E+08\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0502965,
+            "BENCH_CHECKSUM": 959999065.0,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 959999065.0
+        }
+      ],
+      "warmups": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\integer_sum\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.12511279992759228,
+          "stdout": "BENCH_SECONDS    4.8589800000000002E-02\nBENCH_CHECKSUM    9.5999906500000000E+08\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0485898,
+            "BENCH_CHECKSUM": 959999065.0,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 959999065.0
+        }
+      ],
+      "build": {
+        "command": [
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\toolchain\\rfort.exe",
+          "-O2",
+          "bench_config.f90",
+          "bench_support.f90",
+          "integer_sum.f90",
+          "-o",
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\integer_sum\\benchmark.exe"
+        ],
+        "returncode": 0,
+        "timeout": false,
+        "seconds": 0.45785530004650354,
+        "stdout": "",
+        "stderr": ""
+      },
+      "executable": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\integer_sum\\benchmark.exe",
+      "timing": {
+        "median": 0.0512126,
+        "minimum": 0.0481461,
+        "maximum": 0.051709,
+        "stdev": 0.0014882656439627973,
+        "median_wall": 0.10950300004333258,
+        "reliable_duration": true
+      }
+    },
+    {
+      "benchmark": "integer_sum",
+      "compiler": "gfortran",
+      "profile": {
+        "n": 20000000,
+        "repetitions": 1
+      },
+      "status": "passed",
+      "directory": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\integer_sum",
+      "samples": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\integer_sum\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.08008789992891252,
+          "stdout": "BENCH_SECONDS    2.5154300000000001E-02\nBENCH_CHECKSUM    9.5999906500000000E+08\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0251543,
+            "BENCH_CHECKSUM": 959999065.0,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 959999065.0
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\integer_sum\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.09517510002478957,
+          "stdout": "BENCH_SECONDS    2.5931599999999999E-02\nBENCH_CHECKSUM    9.5999906500000000E+08\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0259316,
+            "BENCH_CHECKSUM": 959999065.0,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 959999065.0
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\integer_sum\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.093633399810642,
+          "stdout": "BENCH_SECONDS    2.9911799999999999E-02\nBENCH_CHECKSUM    9.5999906500000000E+08\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0299118,
+            "BENCH_CHECKSUM": 959999065.0,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 959999065.0
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\integer_sum\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.11055209999904037,
+          "stdout": "BENCH_SECONDS    3.3439499999999997E-02\nBENCH_CHECKSUM    9.5999906500000000E+08\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0334395,
+            "BENCH_CHECKSUM": 959999065.0,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 959999065.0
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\integer_sum\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.09325370006263256,
+          "stdout": "BENCH_SECONDS    2.7021799999999999E-02\nBENCH_CHECKSUM    9.5999906500000000E+08\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0270218,
+            "BENCH_CHECKSUM": 959999065.0,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 959999065.0
+        }
+      ],
+      "warmups": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\integer_sum\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.11095659993588924,
+          "stdout": "BENCH_SECONDS    2.6982300000000001E-02\nBENCH_CHECKSUM    9.5999906500000000E+08\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0269823,
+            "BENCH_CHECKSUM": 959999065.0,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 959999065.0
+        }
+      ],
+      "build": {
+        "command": [
+          "c:\\equation\\bin\\gfortran.EXE",
+          "-O2",
+          "bench_config.f90",
+          "bench_support.f90",
+          "integer_sum.f90",
+          "-o",
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\integer_sum\\benchmark.exe"
+        ],
+        "returncode": 0,
+        "timeout": false,
+        "seconds": 0.9565224999096245,
+        "stdout": "",
+        "stderr": ""
+      },
+      "executable": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\integer_sum\\benchmark.exe",
+      "timing": {
+        "median": 0.0270218,
+        "minimum": 0.0251543,
+        "maximum": 0.0334395,
+        "stdev": 0.003396710378439703,
+        "median_wall": 0.093633399810642,
+        "reliable_duration": true
+      }
+    },
+    {
+      "benchmark": "scalar_recurrence",
+      "compiler": "rfort",
+      "profile": {
+        "n": 20000000,
+        "repetitions": 1
+      },
+      "status": "passed",
+      "directory": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\scalar_recurrence",
+      "samples": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\scalar_recurrence\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.17576680006459355,
+          "stdout": "BENCH_SECONDS    1.0648650000000000E-01\nBENCH_CHECKSUM    1.0000000040663715E+00\nBENCH_ERROR    5.5894622033550852E-11\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.1064865,
+            "BENCH_CHECKSUM": 1.0000000040663715,
+            "BENCH_ERROR": 5.589462203355085e-11
+          },
+          "expected_checksum": 1.000000004122266
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\scalar_recurrence\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.15805270010605454,
+          "stdout": "BENCH_SECONDS    1.0128340000000000E-01\nBENCH_CHECKSUM    1.0000000040663715E+00\nBENCH_ERROR    5.5894622033550852E-11\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.1012834,
+            "BENCH_CHECKSUM": 1.0000000040663715,
+            "BENCH_ERROR": 5.589462203355085e-11
+          },
+          "expected_checksum": 1.000000004122266
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\scalar_recurrence\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.15847490006126463,
+          "stdout": "BENCH_SECONDS    9.7266599999999995E-02\nBENCH_CHECKSUM    1.0000000040663715E+00\nBENCH_ERROR    5.5894622033550852E-11\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0972666,
+            "BENCH_CHECKSUM": 1.0000000040663715,
+            "BENCH_ERROR": 5.589462203355085e-11
+          },
+          "expected_checksum": 1.000000004122266
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\scalar_recurrence\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.1507802999112755,
+          "stdout": "BENCH_SECONDS    9.9977099999999999E-02\nBENCH_CHECKSUM    1.0000000040663715E+00\nBENCH_ERROR    5.5894622033550852E-11\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0999771,
+            "BENCH_CHECKSUM": 1.0000000040663715,
+            "BENCH_ERROR": 5.589462203355085e-11
+          },
+          "expected_checksum": 1.000000004122266
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\scalar_recurrence\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.17514439998194575,
+          "stdout": "BENCH_SECONDS    1.0596760000000000E-01\nBENCH_CHECKSUM    1.0000000040663715E+00\nBENCH_ERROR    5.5894622033550852E-11\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.1059676,
+            "BENCH_CHECKSUM": 1.0000000040663715,
+            "BENCH_ERROR": 5.589462203355085e-11
+          },
+          "expected_checksum": 1.000000004122266
+        }
+      ],
+      "warmups": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\scalar_recurrence\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.17356149991974235,
+          "stdout": "BENCH_SECONDS    1.0646129999999999E-01\nBENCH_CHECKSUM    1.0000000040663715E+00\nBENCH_ERROR    5.5894622033550852E-11\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.1064613,
+            "BENCH_CHECKSUM": 1.0000000040663715,
+            "BENCH_ERROR": 5.589462203355085e-11
+          },
+          "expected_checksum": 1.000000004122266
+        }
+      ],
+      "build": {
+        "command": [
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\toolchain\\rfort.exe",
+          "-O2",
+          "bench_config.f90",
+          "bench_support.f90",
+          "scalar_recurrence.f90",
+          "-o",
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\scalar_recurrence\\benchmark.exe"
+        ],
+        "returncode": 0,
+        "timeout": false,
+        "seconds": 0.33094780007377267,
+        "stdout": "",
+        "stderr": ""
+      },
+      "executable": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\scalar_recurrence\\benchmark.exe",
+      "timing": {
+        "median": 0.1012834,
+        "minimum": 0.0972666,
+        "maximum": 0.1064865,
+        "stdev": 0.003958809696487064,
+        "median_wall": 0.15847490006126463,
+        "reliable_duration": true
+      }
+    },
+    {
+      "benchmark": "scalar_recurrence",
+      "compiler": "gfortran",
+      "profile": {
+        "n": 20000000,
+        "repetitions": 1
+      },
+      "status": "passed",
+      "directory": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\scalar_recurrence",
+      "samples": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\scalar_recurrence\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.12319620000198483,
+          "stdout": "BENCH_SECONDS    6.1859900000000002E-02\nBENCH_CHECKSUM    1.0000000040663715E+00\nBENCH_ERROR    5.5894622033550852E-11\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0618599,
+            "BENCH_CHECKSUM": 1.0000000040663715,
+            "BENCH_ERROR": 5.589462203355085e-11
+          },
+          "expected_checksum": 1.000000004122266
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\scalar_recurrence\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.1262523999903351,
+          "stdout": "BENCH_SECONDS    6.1995200000000000E-02\nBENCH_CHECKSUM    1.0000000040663715E+00\nBENCH_ERROR    5.5894622033550852E-11\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0619952,
+            "BENCH_CHECKSUM": 1.0000000040663715,
+            "BENCH_ERROR": 5.589462203355085e-11
+          },
+          "expected_checksum": 1.000000004122266
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\scalar_recurrence\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.12702209991402924,
+          "stdout": "BENCH_SECONDS    6.0272800000000001E-02\nBENCH_CHECKSUM    1.0000000040663715E+00\nBENCH_ERROR    5.5894622033550852E-11\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0602728,
+            "BENCH_CHECKSUM": 1.0000000040663715,
+            "BENCH_ERROR": 5.589462203355085e-11
+          },
+          "expected_checksum": 1.000000004122266
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\scalar_recurrence\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.10026860004290938,
+          "stdout": "BENCH_SECONDS    5.9535999999999999E-02\nBENCH_CHECKSUM    1.0000000040663715E+00\nBENCH_ERROR    5.5894622033550852E-11\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.059536,
+            "BENCH_CHECKSUM": 1.0000000040663715,
+            "BENCH_ERROR": 5.589462203355085e-11
+          },
+          "expected_checksum": 1.000000004122266
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\scalar_recurrence\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.1260194000788033,
+          "stdout": "BENCH_SECONDS    6.4878400000000003E-02\nBENCH_CHECKSUM    1.0000000040663715E+00\nBENCH_ERROR    5.5894622033550852E-11\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0648784,
+            "BENCH_CHECKSUM": 1.0000000040663715,
+            "BENCH_ERROR": 5.589462203355085e-11
+          },
+          "expected_checksum": 1.000000004122266
+        }
+      ],
+      "warmups": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\scalar_recurrence\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.15527749992907047,
+          "stdout": "BENCH_SECONDS    6.6890400000000003E-02\nBENCH_CHECKSUM    1.0000000040663715E+00\nBENCH_ERROR    5.5894622033550852E-11\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0668904,
+            "BENCH_CHECKSUM": 1.0000000040663715,
+            "BENCH_ERROR": 5.589462203355085e-11
+          },
+          "expected_checksum": 1.000000004122266
+        }
+      ],
+      "build": {
+        "command": [
+          "c:\\equation\\bin\\gfortran.EXE",
+          "-O2",
+          "bench_config.f90",
+          "bench_support.f90",
+          "scalar_recurrence.f90",
+          "-o",
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\scalar_recurrence\\benchmark.exe"
+        ],
+        "returncode": 0,
+        "timeout": false,
+        "seconds": 0.8114538001827896,
+        "stdout": "",
+        "stderr": ""
+      },
+      "executable": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\scalar_recurrence\\benchmark.exe",
+      "timing": {
+        "median": 0.0618599,
+        "minimum": 0.059536,
+        "maximum": 0.0648784,
+        "stdev": 0.0020575699011212245,
+        "median_wall": 0.1260194000788033,
+        "reliable_duration": true
+      }
+    },
+    {
+      "benchmark": "procedure_calls",
+      "compiler": "rfort",
+      "profile": {
+        "n": 20000000,
+        "repetitions": 1
+      },
+      "status": "passed",
+      "directory": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\procedure_calls",
+      "samples": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\procedure_calls\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.20626570004969835,
+          "stdout": "BENCH_SECONDS    1.4447610000000000E-01\nBENCH_CHECKSUM    1.0000000040663715E+00\nBENCH_ERROR    5.5894622033550852E-11\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.1444761,
+            "BENCH_CHECKSUM": 1.0000000040663715,
+            "BENCH_ERROR": 5.589462203355085e-11
+          },
+          "expected_checksum": 1.000000004122266
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\procedure_calls\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.22043420001864433,
+          "stdout": "BENCH_SECONDS    1.5897010000000000E-01\nBENCH_CHECKSUM    1.0000000040663715E+00\nBENCH_ERROR    5.5894622033550852E-11\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.1589701,
+            "BENCH_CHECKSUM": 1.0000000040663715,
+            "BENCH_ERROR": 5.589462203355085e-11
+          },
+          "expected_checksum": 1.000000004122266
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\procedure_calls\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.2209828000050038,
+          "stdout": "BENCH_SECONDS    1.5285950000000001E-01\nBENCH_CHECKSUM    1.0000000040663715E+00\nBENCH_ERROR    5.5894622033550852E-11\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.1528595,
+            "BENCH_CHECKSUM": 1.0000000040663715,
+            "BENCH_ERROR": 5.589462203355085e-11
+          },
+          "expected_checksum": 1.000000004122266
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\procedure_calls\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.20646060002036393,
+          "stdout": "BENCH_SECONDS    1.5124710000000000E-01\nBENCH_CHECKSUM    1.0000000040663715E+00\nBENCH_ERROR    5.5894622033550852E-11\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.1512471,
+            "BENCH_CHECKSUM": 1.0000000040663715,
+            "BENCH_ERROR": 5.589462203355085e-11
+          },
+          "expected_checksum": 1.000000004122266
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\procedure_calls\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.2065079000312835,
+          "stdout": "BENCH_SECONDS    1.4666219999999999E-01\nBENCH_CHECKSUM    1.0000000040663715E+00\nBENCH_ERROR    5.5894622033550852E-11\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.1466622,
+            "BENCH_CHECKSUM": 1.0000000040663715,
+            "BENCH_ERROR": 5.589462203355085e-11
+          },
+          "expected_checksum": 1.000000004122266
+        }
+      ],
+      "warmups": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\procedure_calls\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.23402159987017512,
+          "stdout": "BENCH_SECONDS    1.5033099999999999E-01\nBENCH_CHECKSUM    1.0000000040663715E+00\nBENCH_ERROR    5.5894622033550852E-11\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.150331,
+            "BENCH_CHECKSUM": 1.0000000040663715,
+            "BENCH_ERROR": 5.589462203355085e-11
+          },
+          "expected_checksum": 1.000000004122266
+        }
+      ],
+      "build": {
+        "command": [
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\toolchain\\rfort.exe",
+          "-O2",
+          "bench_config.f90",
+          "bench_support.f90",
+          "procedure_calls.f90",
+          "-o",
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\procedure_calls\\benchmark.exe"
+        ],
+        "returncode": 0,
+        "timeout": false,
+        "seconds": 0.34478879999369383,
+        "stdout": "",
+        "stderr": ""
+      },
+      "executable": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\procedure_calls\\benchmark.exe",
+      "timing": {
+        "median": 0.1512471,
+        "minimum": 0.1444761,
+        "maximum": 0.1589701,
+        "stdev": 0.005663387407726938,
+        "median_wall": 0.2065079000312835,
+        "reliable_duration": true
+      }
+    },
+    {
+      "benchmark": "procedure_calls",
+      "compiler": "gfortran",
+      "profile": {
+        "n": 20000000,
+        "repetitions": 1
+      },
+      "status": "passed",
+      "directory": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\procedure_calls",
+      "samples": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\procedure_calls\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.12480919994413853,
+          "stdout": "BENCH_SECONDS    6.2201899999999997E-02\nBENCH_CHECKSUM    1.0000000040663715E+00\nBENCH_ERROR    5.5894622033550852E-11\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0622019,
+            "BENCH_CHECKSUM": 1.0000000040663715,
+            "BENCH_ERROR": 5.589462203355085e-11
+          },
+          "expected_checksum": 1.000000004122266
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\procedure_calls\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.12701159995049238,
+          "stdout": "BENCH_SECONDS    6.2476100000000000E-02\nBENCH_CHECKSUM    1.0000000040663715E+00\nBENCH_ERROR    5.5894622033550852E-11\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0624761,
+            "BENCH_CHECKSUM": 1.0000000040663715,
+            "BENCH_ERROR": 5.589462203355085e-11
+          },
+          "expected_checksum": 1.000000004122266
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\procedure_calls\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.14188999985344708,
+          "stdout": "BENCH_SECONDS    6.7653099999999994E-02\nBENCH_CHECKSUM    1.0000000040663715E+00\nBENCH_ERROR    5.5894622033550852E-11\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0676531,
+            "BENCH_CHECKSUM": 1.0000000040663715,
+            "BENCH_ERROR": 5.589462203355085e-11
+          },
+          "expected_checksum": 1.000000004122266
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\procedure_calls\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.12437049997970462,
+          "stdout": "BENCH_SECONDS    6.7076499999999997E-02\nBENCH_CHECKSUM    1.0000000040663715E+00\nBENCH_ERROR    5.5894622033550852E-11\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0670765,
+            "BENCH_CHECKSUM": 1.0000000040663715,
+            "BENCH_ERROR": 5.589462203355085e-11
+          },
+          "expected_checksum": 1.000000004122266
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\procedure_calls\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.126585700083524,
+          "stdout": "BENCH_SECONDS    6.2850500000000004E-02\nBENCH_CHECKSUM    1.0000000040663715E+00\nBENCH_ERROR    5.5894622033550852E-11\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0628505,
+            "BENCH_CHECKSUM": 1.0000000040663715,
+            "BENCH_ERROR": 5.589462203355085e-11
+          },
+          "expected_checksum": 1.000000004122266
+        }
+      ],
+      "warmups": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\procedure_calls\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.12461109994910657,
+          "stdout": "BENCH_SECONDS    6.6003900000000004E-02\nBENCH_CHECKSUM    1.0000000040663715E+00\nBENCH_ERROR    5.5894622033550852E-11\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0660039,
+            "BENCH_CHECKSUM": 1.0000000040663715,
+            "BENCH_ERROR": 5.589462203355085e-11
+          },
+          "expected_checksum": 1.000000004122266
+        }
+      ],
+      "build": {
+        "command": [
+          "c:\\equation\\bin\\gfortran.EXE",
+          "-O2",
+          "bench_config.f90",
+          "bench_support.f90",
+          "procedure_calls.f90",
+          "-o",
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\procedure_calls\\benchmark.exe"
+        ],
+        "returncode": 0,
+        "timeout": false,
+        "seconds": 0.9730261999648064,
+        "stdout": "",
+        "stderr": ""
+      },
+      "executable": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\procedure_calls\\benchmark.exe",
+      "timing": {
+        "median": 0.0628505,
+        "minimum": 0.0622019,
+        "maximum": 0.0676531,
+        "stdev": 0.0026770774086678903,
+        "median_wall": 0.126585700083524,
+        "reliable_duration": true
+      }
+    },
+    {
+      "benchmark": "pi_integral",
+      "compiler": "rfort",
+      "profile": {
+        "n": 5000000,
+        "repetitions": 1
+      },
+      "status": "passed",
+      "directory": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\pi_integral",
+      "samples": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\pi_integral\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.20614530006423593,
+          "stdout": "BENCH_SECONDS    2.3897100000000001E-02\nBENCH_CHECKSUM    3.1415926535897758E+00\nBENCH_ERROR    5.5129614478700954E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0238971,
+            "BENCH_CHECKSUM": 3.141592653589776,
+            "BENCH_ERROR": 5.512961447870095e-15
+          },
+          "expected_checksum": 3.141592653589793
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\pi_integral\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.09400880010798573,
+          "stdout": "BENCH_SECONDS    2.1630799999999999E-02\nBENCH_CHECKSUM    3.1415926535897758E+00\nBENCH_ERROR    5.5129614478700954E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0216308,
+            "BENCH_CHECKSUM": 3.141592653589776,
+            "BENCH_ERROR": 5.512961447870095e-15
+          },
+          "expected_checksum": 3.141592653589793
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\pi_integral\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.0945673999376595,
+          "stdout": "BENCH_SECONDS    2.2535300000000001E-02\nBENCH_CHECKSUM    3.1415926535897758E+00\nBENCH_ERROR    5.5129614478700954E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0225353,
+            "BENCH_CHECKSUM": 3.141592653589776,
+            "BENCH_ERROR": 5.512961447870095e-15
+          },
+          "expected_checksum": 3.141592653589793
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\pi_integral\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.09255910012871027,
+          "stdout": "BENCH_SECONDS    2.2225999999999999E-02\nBENCH_CHECKSUM    3.1415926535897758E+00\nBENCH_ERROR    5.5129614478700954E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.022226,
+            "BENCH_CHECKSUM": 3.141592653589776,
+            "BENCH_ERROR": 5.512961447870095e-15
+          },
+          "expected_checksum": 3.141592653589793
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\pi_integral\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.09424160001799464,
+          "stdout": "BENCH_SECONDS    2.1006100000000000E-02\nBENCH_CHECKSUM    3.1415926535897758E+00\nBENCH_ERROR    5.5129614478700954E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0210061,
+            "BENCH_CHECKSUM": 3.141592653589776,
+            "BENCH_ERROR": 5.512961447870095e-15
+          },
+          "expected_checksum": 3.141592653589793
+        }
+      ],
+      "warmups": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\pi_integral\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.10849749995395541,
+          "stdout": "BENCH_SECONDS    1.9670199999999999E-02\nBENCH_CHECKSUM    3.1415926535897758E+00\nBENCH_ERROR    5.5129614478700954E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0196702,
+            "BENCH_CHECKSUM": 3.141592653589776,
+            "BENCH_ERROR": 5.512961447870095e-15
+          },
+          "expected_checksum": 3.141592653589793
+        }
+      ],
+      "build": {
+        "command": [
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\toolchain\\rfort.exe",
+          "-O2",
+          "bench_config.f90",
+          "bench_support.f90",
+          "pi_integral.f90",
+          "-o",
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\pi_integral\\benchmark.exe"
+        ],
+        "returncode": 0,
+        "timeout": false,
+        "seconds": 0.3608117999974638,
+        "stdout": "",
+        "stderr": ""
+      },
+      "executable": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\pi_integral\\benchmark.exe",
+      "timing": {
+        "median": 0.022226,
+        "minimum": 0.0210061,
+        "maximum": 0.0238971,
+        "stdev": 0.0010868757900514673,
+        "median_wall": 0.09424160001799464,
+        "reliable_duration": true
+      }
+    },
+    {
+      "benchmark": "pi_integral",
+      "compiler": "gfortran",
+      "profile": {
+        "n": 5000000,
+        "repetitions": 1
+      },
+      "status": "passed",
+      "directory": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\pi_integral",
+      "samples": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\pi_integral\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.09533019992522895,
+          "stdout": "BENCH_SECONDS    1.0084800000000000E-02\nBENCH_CHECKSUM    3.1415926535897758E+00\nBENCH_ERROR    5.5129614478700954E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0100848,
+            "BENCH_CHECKSUM": 3.141592653589776,
+            "BENCH_ERROR": 5.512961447870095e-15
+          },
+          "expected_checksum": 3.141592653589793
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\pi_integral\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.06199209997430444,
+          "stdout": "BENCH_SECONDS    9.3921000000000004E-03\nBENCH_CHECKSUM    3.1415926535897758E+00\nBENCH_ERROR    5.5129614478700954E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0093921,
+            "BENCH_CHECKSUM": 3.141592653589776,
+            "BENCH_ERROR": 5.512961447870095e-15
+          },
+          "expected_checksum": 3.141592653589793
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\pi_integral\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.06424239999614656,
+          "stdout": "BENCH_SECONDS    9.3670000000000003E-03\nBENCH_CHECKSUM    3.1415926535897758E+00\nBENCH_ERROR    5.5129614478700954E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.009367,
+            "BENCH_CHECKSUM": 3.141592653589776,
+            "BENCH_ERROR": 5.512961447870095e-15
+          },
+          "expected_checksum": 3.141592653589793
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\pi_integral\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.06594199989922345,
+          "stdout": "BENCH_SECONDS    9.5797000000000000E-03\nBENCH_CHECKSUM    3.1415926535897758E+00\nBENCH_ERROR    5.5129614478700954E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0095797,
+            "BENCH_CHECKSUM": 3.141592653589776,
+            "BENCH_ERROR": 5.512961447870095e-15
+          },
+          "expected_checksum": 3.141592653589793
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\pi_integral\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.07688139984384179,
+          "stdout": "BENCH_SECONDS    9.5464999999999994E-03\nBENCH_CHECKSUM    3.1415926535897758E+00\nBENCH_ERROR    5.5129614478700954E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0095465,
+            "BENCH_CHECKSUM": 3.141592653589776,
+            "BENCH_ERROR": 5.512961447870095e-15
+          },
+          "expected_checksum": 3.141592653589793
+        }
+      ],
+      "warmups": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\pi_integral\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.09430669993162155,
+          "stdout": "BENCH_SECONDS    9.3904999999999995E-03\nBENCH_CHECKSUM    3.1415926535897758E+00\nBENCH_ERROR    5.5129614478700954E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0093905,
+            "BENCH_CHECKSUM": 3.141592653589776,
+            "BENCH_ERROR": 5.512961447870095e-15
+          },
+          "expected_checksum": 3.141592653589793
+        }
+      ],
+      "build": {
+        "command": [
+          "c:\\equation\\bin\\gfortran.EXE",
+          "-O2",
+          "bench_config.f90",
+          "bench_support.f90",
+          "pi_integral.f90",
+          "-o",
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\pi_integral\\benchmark.exe"
+        ],
+        "returncode": 0,
+        "timeout": false,
+        "seconds": 0.9254035998601466,
+        "stdout": "",
+        "stderr": ""
+      },
+      "executable": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\pi_integral\\benchmark.exe",
+      "timing": {
+        "median": 0.0095465,
+        "minimum": 0.009367,
+        "maximum": 0.0100848,
+        "stdev": 0.0002896713603378833,
+        "median_wall": 0.06594199989922345,
+        "reliable_duration": false
+      }
+    },
+    {
+      "benchmark": "vector_loop",
+      "compiler": "rfort",
+      "profile": {
+        "n": 1000000,
+        "repetitions": 100
+      },
+      "status": "passed",
+      "directory": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\vector_loop",
+      "samples": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\vector_loop\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.25527429999783635,
+          "stdout": "BENCH_SECONDS    1.4649540000000000E-01\nBENCH_CHECKSUM    1.2618336664948454E+07\nBENCH_ERROR    6.3948846218409017E-14\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.1464954,
+            "BENCH_CHECKSUM": 12618336.664948454,
+            "BENCH_ERROR": 6.394884621840902e-14
+          },
+          "expected_checksum": 12618336.664948454
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\vector_loop\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.32535959989763796,
+          "stdout": "BENCH_SECONDS    1.9124089999999999E-01\nBENCH_CHECKSUM    1.2618336664948454E+07\nBENCH_ERROR    6.3948846218409017E-14\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.1912409,
+            "BENCH_CHECKSUM": 12618336.664948454,
+            "BENCH_ERROR": 6.394884621840902e-14
+          },
+          "expected_checksum": 12618336.664948454
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\vector_loop\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.26162190013565123,
+          "stdout": "BENCH_SECONDS    1.5364200000000000E-01\nBENCH_CHECKSUM    1.2618336664948454E+07\nBENCH_ERROR    6.3948846218409017E-14\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.153642,
+            "BENCH_CHECKSUM": 12618336.664948454,
+            "BENCH_ERROR": 6.394884621840902e-14
+          },
+          "expected_checksum": 12618336.664948454
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\vector_loop\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.23953079991042614,
+          "stdout": "BENCH_SECONDS    1.3866180000000000E-01\nBENCH_CHECKSUM    1.2618336664948454E+07\nBENCH_ERROR    6.3948846218409017E-14\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.1386618,
+            "BENCH_CHECKSUM": 12618336.664948454,
+            "BENCH_ERROR": 6.394884621840902e-14
+          },
+          "expected_checksum": 12618336.664948454
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\vector_loop\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.2550712001975626,
+          "stdout": "BENCH_SECONDS    1.4840110000000001E-01\nBENCH_CHECKSUM    1.2618336664948454E+07\nBENCH_ERROR    6.3948846218409017E-14\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.1484011,
+            "BENCH_CHECKSUM": 12618336.664948454,
+            "BENCH_ERROR": 6.394884621840902e-14
+          },
+          "expected_checksum": 12618336.664948454
+        }
+      ],
+      "warmups": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\vector_loop\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.23929230007342994,
+          "stdout": "BENCH_SECONDS    1.3136590000000001E-01\nBENCH_CHECKSUM    1.2618336664948454E+07\nBENCH_ERROR    6.3948846218409017E-14\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.1313659,
+            "BENCH_CHECKSUM": 12618336.664948454,
+            "BENCH_ERROR": 6.394884621840902e-14
+          },
+          "expected_checksum": 12618336.664948454
+        }
+      ],
+      "build": {
+        "command": [
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\toolchain\\rfort.exe",
+          "-O2",
+          "bench_config.f90",
+          "bench_support.f90",
+          "vector_loop.f90",
+          "-o",
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\vector_loop\\benchmark.exe"
+        ],
+        "returncode": 0,
+        "timeout": false,
+        "seconds": 0.3617783999070525,
+        "stdout": "",
+        "stderr": ""
+      },
+      "executable": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\vector_loop\\benchmark.exe",
+      "timing": {
+        "median": 0.1484011,
+        "minimum": 0.1386618,
+        "maximum": 0.1912409,
+        "stdev": 0.020589372907716248,
+        "median_wall": 0.25527429999783635,
+        "reliable_duration": true
+      }
+    },
+    {
+      "benchmark": "vector_loop",
+      "compiler": "gfortran",
+      "profile": {
+        "n": 1000000,
+        "repetitions": 100
+      },
+      "status": "passed",
+      "directory": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\vector_loop",
+      "samples": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\vector_loop\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.17208529985509813,
+          "stdout": "BENCH_SECONDS    9.5331299999999994E-02\nBENCH_CHECKSUM    1.2618336664948454E+07\nBENCH_ERROR    6.3948846218409017E-14\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0953313,
+            "BENCH_CHECKSUM": 12618336.664948454,
+            "BENCH_ERROR": 6.394884621840902e-14
+          },
+          "expected_checksum": 12618336.664948454
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\vector_loop\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.3011027998290956,
+          "stdout": "BENCH_SECONDS    9.0883099999999994E-02\nBENCH_CHECKSUM    1.2618336664948454E+07\nBENCH_ERROR    6.3948846218409017E-14\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0908831,
+            "BENCH_CHECKSUM": 12618336.664948454,
+            "BENCH_ERROR": 6.394884621840902e-14
+          },
+          "expected_checksum": 12618336.664948454
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\vector_loop\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.17309920000843704,
+          "stdout": "BENCH_SECONDS    8.9928499999999995E-02\nBENCH_CHECKSUM    1.2618336664948454E+07\nBENCH_ERROR    6.3948846218409017E-14\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0899285,
+            "BENCH_CHECKSUM": 12618336.664948454,
+            "BENCH_ERROR": 6.394884621840902e-14
+          },
+          "expected_checksum": 12618336.664948454
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\vector_loop\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.17361599998548627,
+          "stdout": "BENCH_SECONDS    9.0205300000000002E-02\nBENCH_CHECKSUM    1.2618336664948454E+07\nBENCH_ERROR    6.3948846218409017E-14\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0902053,
+            "BENCH_CHECKSUM": 12618336.664948454,
+            "BENCH_ERROR": 6.394884621840902e-14
+          },
+          "expected_checksum": 12618336.664948454
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\vector_loop\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.17125999997369945,
+          "stdout": "BENCH_SECONDS    9.7901799999999997E-02\nBENCH_CHECKSUM    1.2618336664948454E+07\nBENCH_ERROR    6.3948846218409017E-14\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0979018,
+            "BENCH_CHECKSUM": 12618336.664948454,
+            "BENCH_ERROR": 6.394884621840902e-14
+          },
+          "expected_checksum": 12618336.664948454
+        }
+      ],
+      "warmups": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\vector_loop\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.18780050007626414,
+          "stdout": "BENCH_SECONDS    9.3474199999999993E-02\nBENCH_CHECKSUM    1.2618336664948454E+07\nBENCH_ERROR    6.3948846218409017E-14\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0934742,
+            "BENCH_CHECKSUM": 12618336.664948454,
+            "BENCH_ERROR": 6.394884621840902e-14
+          },
+          "expected_checksum": 12618336.664948454
+        }
+      ],
+      "build": {
+        "command": [
+          "c:\\equation\\bin\\gfortran.EXE",
+          "-O2",
+          "bench_config.f90",
+          "bench_support.f90",
+          "vector_loop.f90",
+          "-o",
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\vector_loop\\benchmark.exe"
+        ],
+        "returncode": 0,
+        "timeout": false,
+        "seconds": 0.9091876000165939,
+        "stdout": "",
+        "stderr": ""
+      },
+      "executable": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\vector_loop\\benchmark.exe",
+      "timing": {
+        "median": 0.0908831,
+        "minimum": 0.0899285,
+        "maximum": 0.0979018,
+        "stdev": 0.0035733677700455066,
+        "median_wall": 0.17309920000843704,
+        "reliable_duration": true
+      }
+    },
+    {
+      "benchmark": "vector_array",
+      "compiler": "rfort",
+      "profile": {
+        "n": 1000000,
+        "repetitions": 100
+      },
+      "status": "passed",
+      "directory": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\vector_array",
+      "samples": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\vector_array\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.25309650017879903,
+          "stdout": "BENCH_SECONDS    1.3862040000000000E-01\nBENCH_CHECKSUM    1.2618336664948454E+07\nBENCH_ERROR    6.3948846218409017E-14\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.1386204,
+            "BENCH_CHECKSUM": 12618336.664948454,
+            "BENCH_ERROR": 6.394884621840902e-14
+          },
+          "expected_checksum": 12618336.664948454
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\vector_array\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.25979960011318326,
+          "stdout": "BENCH_SECONDS    1.5023790000000001E-01\nBENCH_CHECKSUM    1.2618336664948454E+07\nBENCH_ERROR    6.3948846218409017E-14\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.1502379,
+            "BENCH_CHECKSUM": 12618336.664948454,
+            "BENCH_ERROR": 6.394884621840902e-14
+          },
+          "expected_checksum": 12618336.664948454
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\vector_array\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.2545503000728786,
+          "stdout": "BENCH_SECONDS    1.4214399999999999E-01\nBENCH_CHECKSUM    1.2618336664948454E+07\nBENCH_ERROR    6.3948846218409017E-14\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.142144,
+            "BENCH_CHECKSUM": 12618336.664948454,
+            "BENCH_ERROR": 6.394884621840902e-14
+          },
+          "expected_checksum": 12618336.664948454
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\vector_array\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.21801710012368858,
+          "stdout": "BENCH_SECONDS    1.3407669999999999E-01\nBENCH_CHECKSUM    1.2618336664948454E+07\nBENCH_ERROR    6.3948846218409017E-14\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.1340767,
+            "BENCH_CHECKSUM": 12618336.664948454,
+            "BENCH_ERROR": 6.394884621840902e-14
+          },
+          "expected_checksum": 12618336.664948454
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\vector_array\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.2439690998289734,
+          "stdout": "BENCH_SECONDS    1.3866539999999999E-01\nBENCH_CHECKSUM    1.2618336664948454E+07\nBENCH_ERROR    6.3948846218409017E-14\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.1386654,
+            "BENCH_CHECKSUM": 12618336.664948454,
+            "BENCH_ERROR": 6.394884621840902e-14
+          },
+          "expected_checksum": 12618336.664948454
+        }
+      ],
+      "warmups": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\vector_array\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.23908580001443624,
+          "stdout": "BENCH_SECONDS    1.3778520000000000E-01\nBENCH_CHECKSUM    1.2618336664948454E+07\nBENCH_ERROR    6.3948846218409017E-14\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.1377852,
+            "BENCH_CHECKSUM": 12618336.664948454,
+            "BENCH_ERROR": 6.394884621840902e-14
+          },
+          "expected_checksum": 12618336.664948454
+        }
+      ],
+      "build": {
+        "command": [
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\toolchain\\rfort.exe",
+          "-O2",
+          "bench_config.f90",
+          "bench_support.f90",
+          "vector_array.f90",
+          "-o",
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\vector_array\\benchmark.exe"
+        ],
+        "returncode": 0,
+        "timeout": false,
+        "seconds": 0.3618551001418382,
+        "stdout": "",
+        "stderr": ""
+      },
+      "executable": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\vector_array\\benchmark.exe",
+      "timing": {
+        "median": 0.1386654,
+        "minimum": 0.1340767,
+        "maximum": 0.1502379,
+        "stdev": 0.006028622611094515,
+        "median_wall": 0.25309650017879903,
+        "reliable_duration": true
+      }
+    },
+    {
+      "benchmark": "vector_array",
+      "compiler": "gfortran",
+      "profile": {
+        "n": 1000000,
+        "repetitions": 100
+      },
+      "status": "passed",
+      "directory": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\vector_array",
+      "samples": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\vector_array\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.2833819000516087,
+          "stdout": "BENCH_SECONDS    8.9059799999999995E-02\nBENCH_CHECKSUM    1.2618336664948454E+07\nBENCH_ERROR    6.3948846218409017E-14\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0890598,
+            "BENCH_CHECKSUM": 12618336.664948454,
+            "BENCH_ERROR": 6.394884621840902e-14
+          },
+          "expected_checksum": 12618336.664948454
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\vector_array\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.15400829981081188,
+          "stdout": "BENCH_SECONDS    8.5227200000000003E-02\nBENCH_CHECKSUM    1.2618336664948454E+07\nBENCH_ERROR    6.3948846218409017E-14\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0852272,
+            "BENCH_CHECKSUM": 12618336.664948454,
+            "BENCH_ERROR": 6.394884621840902e-14
+          },
+          "expected_checksum": 12618336.664948454
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\vector_array\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.17106780014000833,
+          "stdout": "BENCH_SECONDS    8.7100700000000003E-02\nBENCH_CHECKSUM    1.2618336664948454E+07\nBENCH_ERROR    6.3948846218409017E-14\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0871007,
+            "BENCH_CHECKSUM": 12618336.664948454,
+            "BENCH_ERROR": 6.394884621840902e-14
+          },
+          "expected_checksum": 12618336.664948454
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\vector_array\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.17324159992858768,
+          "stdout": "BENCH_SECONDS    8.8619400000000001E-02\nBENCH_CHECKSUM    1.2618336664948454E+07\nBENCH_ERROR    6.3948846218409017E-14\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0886194,
+            "BENCH_CHECKSUM": 12618336.664948454,
+            "BENCH_ERROR": 6.394884621840902e-14
+          },
+          "expected_checksum": 12618336.664948454
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\vector_array\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.1723626998718828,
+          "stdout": "BENCH_SECONDS    8.4220000000000003E-02\nBENCH_CHECKSUM    1.2618336664948454E+07\nBENCH_ERROR    6.3948846218409017E-14\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.08422,
+            "BENCH_CHECKSUM": 12618336.664948454,
+            "BENCH_ERROR": 6.394884621840902e-14
+          },
+          "expected_checksum": 12618336.664948454
+        }
+      ],
+      "warmups": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\vector_array\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.17401139996945858,
+          "stdout": "BENCH_SECONDS    8.6960200000000001E-02\nBENCH_CHECKSUM    1.2618336664948454E+07\nBENCH_ERROR    6.3948846218409017E-14\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0869602,
+            "BENCH_CHECKSUM": 12618336.664948454,
+            "BENCH_ERROR": 6.394884621840902e-14
+          },
+          "expected_checksum": 12618336.664948454
+        }
+      ],
+      "build": {
+        "command": [
+          "c:\\equation\\bin\\gfortran.EXE",
+          "-O2",
+          "bench_config.f90",
+          "bench_support.f90",
+          "vector_array.f90",
+          "-o",
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\vector_array\\benchmark.exe"
+        ],
+        "returncode": 0,
+        "timeout": false,
+        "seconds": 0.812645300058648,
+        "stdout": "",
+        "stderr": ""
+      },
+      "executable": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\vector_array\\benchmark.exe",
+      "timing": {
+        "median": 0.0871007,
+        "minimum": 0.08422,
+        "maximum": 0.0890598,
+        "stdev": 0.002099233065193093,
+        "median_wall": 0.1723626998718828,
+        "reliable_duration": true
+      }
+    },
+    {
+      "benchmark": "dot_product",
+      "compiler": "rfort",
+      "profile": {
+        "n": 1000000,
+        "repetitions": 100
+      },
+      "status": "passed",
+      "directory": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\dot_product",
+      "samples": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\dot_product\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.47921880008652806,
+          "stdout": "BENCH_SECONDS    3.8527289999999997E-01\nBENCH_CHECKSUM    2.4462819457872324E+07\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.3852729,
+            "BENCH_CHECKSUM": 24462819.457872324,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 24462819.457868643
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\dot_product\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.4729132999200374,
+          "stdout": "BENCH_SECONDS    3.8332189999999999E-01\nBENCH_CHECKSUM    2.4462819457872324E+07\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.3833219,
+            "BENCH_CHECKSUM": 24462819.457872324,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 24462819.457868643
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\dot_product\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.46583310002461076,
+          "stdout": "BENCH_SECONDS    3.9156220000000003E-01\nBENCH_CHECKSUM    2.4462819457872324E+07\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.3915622,
+            "BENCH_CHECKSUM": 24462819.457872324,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 24462819.457868643
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\dot_product\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.4731793999671936,
+          "stdout": "BENCH_SECONDS    3.8585199999999997E-01\nBENCH_CHECKSUM    2.4462819457872324E+07\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.385852,
+            "BENCH_CHECKSUM": 24462819.457872324,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 24462819.457868643
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\dot_product\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.4898477999959141,
+          "stdout": "BENCH_SECONDS    3.8991409999999999E-01\nBENCH_CHECKSUM    2.4462819457872324E+07\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.3899141,
+            "BENCH_CHECKSUM": 24462819.457872324,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 24462819.457868643
+        }
+      ],
+      "warmups": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\dot_product\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.5364790998864919,
+          "stdout": "BENCH_SECONDS    4.2195430000000000E-01\nBENCH_CHECKSUM    2.4462819457872324E+07\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.4219543,
+            "BENCH_CHECKSUM": 24462819.457872324,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 24462819.457868643
+        }
+      ],
+      "build": {
+        "command": [
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\toolchain\\rfort.exe",
+          "-O2",
+          "bench_config.f90",
+          "bench_support.f90",
+          "dot_product.f90",
+          "-o",
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\dot_product\\benchmark.exe"
+        ],
+        "returncode": 0,
+        "timeout": false,
+        "seconds": 0.3785926999989897,
+        "stdout": "",
+        "stderr": ""
+      },
+      "executable": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\dot_product\\benchmark.exe",
+      "timing": {
+        "median": 0.385852,
+        "minimum": 0.3833219,
+        "maximum": 0.3915622,
+        "stdev": 0.0034265296929984566,
+        "median_wall": 0.4731793999671936,
+        "reliable_duration": true
+      }
+    },
+    {
+      "benchmark": "dot_product",
+      "compiler": "gfortran",
+      "profile": {
+        "n": 1000000,
+        "repetitions": 100
+      },
+      "status": "passed",
+      "directory": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\dot_product",
+      "samples": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\dot_product\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.26253860001452267,
+          "stdout": "BENCH_SECONDS    1.7527560000000000E-01\nBENCH_CHECKSUM    2.4462819457872324E+07\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.1752756,
+            "BENCH_CHECKSUM": 24462819.457872324,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 24462819.457868643
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\dot_product\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.24954249989241362,
+          "stdout": "BENCH_SECONDS    1.7411900000000000E-01\nBENCH_CHECKSUM    2.4462819457872324E+07\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.174119,
+            "BENCH_CHECKSUM": 24462819.457872324,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 24462819.457868643
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\dot_product\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.25197180011309683,
+          "stdout": "BENCH_SECONDS    1.7261090000000001E-01\nBENCH_CHECKSUM    2.4462819457872324E+07\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.1726109,
+            "BENCH_CHECKSUM": 24462819.457872324,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 24462819.457868643
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\dot_product\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.24928159988485277,
+          "stdout": "BENCH_SECONDS    1.7191980000000001E-01\nBENCH_CHECKSUM    2.4462819457872324E+07\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.1719198,
+            "BENCH_CHECKSUM": 24462819.457872324,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 24462819.457868643
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\dot_product\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.3609871999360621,
+          "stdout": "BENCH_SECONDS    1.8132930000000000E-01\nBENCH_CHECKSUM    2.4462819457872324E+07\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.1813293,
+            "BENCH_CHECKSUM": 24462819.457872324,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 24462819.457868643
+        }
+      ],
+      "warmups": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\dot_product\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.2391580999828875,
+          "stdout": "BENCH_SECONDS    1.7107670000000000E-01\nBENCH_CHECKSUM    2.4462819457872324E+07\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.1710767,
+            "BENCH_CHECKSUM": 24462819.457872324,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 24462819.457868643
+        }
+      ],
+      "build": {
+        "command": [
+          "c:\\equation\\bin\\gfortran.EXE",
+          "-O2",
+          "bench_config.f90",
+          "bench_support.f90",
+          "dot_product.f90",
+          "-o",
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\dot_product\\benchmark.exe"
+        ],
+        "returncode": 0,
+        "timeout": false,
+        "seconds": 1.2359503998886794,
+        "stdout": "",
+        "stderr": ""
+      },
+      "executable": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\dot_product\\benchmark.exe",
+      "timing": {
+        "median": 0.174119,
+        "minimum": 0.1719198,
+        "maximum": 0.1813293,
+        "stdev": 0.0037448171339866474,
+        "median_wall": 0.25197180011309683,
+        "reliable_duration": true
+      }
+    },
+    {
+      "benchmark": "array_reductions",
+      "compiler": "rfort",
+      "profile": {
+        "n": 1000000,
+        "repetitions": 100
+      },
+      "status": "passed",
+      "directory": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\array_reductions",
+      "samples": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\array_reductions\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.7927032001316547,
+          "stdout": "BENCH_SECONDS    7.1274610000000005E-01\nBENCH_CHECKSUM    4.9483772669948399E+07\nBENCH_ERROR    1.2045291124617219E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.7127461,
+            "BENCH_CHECKSUM": 49483772.6699484,
+            "BENCH_ERROR": 1.204529112461722e-15
+          },
+          "expected_checksum": 49483772.66994845
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\array_reductions\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.8315935998689383,
+          "stdout": "BENCH_SECONDS    7.4668199999999996E-01\nBENCH_CHECKSUM    4.9483772669948399E+07\nBENCH_ERROR    1.2045291124617219E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.746682,
+            "BENCH_CHECKSUM": 49483772.6699484,
+            "BENCH_ERROR": 1.204529112461722e-15
+          },
+          "expected_checksum": 49483772.66994845
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\array_reductions\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.8547012000344694,
+          "stdout": "BENCH_SECONDS    7.7309450000000002E-01\nBENCH_CHECKSUM    4.9483772669948399E+07\nBENCH_ERROR    1.2045291124617219E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.7730945,
+            "BENCH_CHECKSUM": 49483772.6699484,
+            "BENCH_ERROR": 1.204529112461722e-15
+          },
+          "expected_checksum": 49483772.66994845
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\array_reductions\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.7939184000715613,
+          "stdout": "BENCH_SECONDS    7.3268449999999996E-01\nBENCH_CHECKSUM    4.9483772669948399E+07\nBENCH_ERROR    1.2045291124617219E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.7326845,
+            "BENCH_CHECKSUM": 49483772.6699484,
+            "BENCH_ERROR": 1.204529112461722e-15
+          },
+          "expected_checksum": 49483772.66994845
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\array_reductions\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.8246169001795352,
+          "stdout": "BENCH_SECONDS    7.6398880000000002E-01\nBENCH_CHECKSUM    4.9483772669948399E+07\nBENCH_ERROR    1.2045291124617219E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.7639888,
+            "BENCH_CHECKSUM": 49483772.6699484,
+            "BENCH_ERROR": 1.204529112461722e-15
+          },
+          "expected_checksum": 49483772.66994845
+        }
+      ],
+      "warmups": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\array_reductions\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.8388768997974694,
+          "stdout": "BENCH_SECONDS    7.5012060000000003E-01\nBENCH_CHECKSUM    4.9483772669948399E+07\nBENCH_ERROR    1.2045291124617219E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.7501206,
+            "BENCH_CHECKSUM": 49483772.6699484,
+            "BENCH_ERROR": 1.204529112461722e-15
+          },
+          "expected_checksum": 49483772.66994845
+        }
+      ],
+      "build": {
+        "command": [
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\toolchain\\rfort.exe",
+          "-O2",
+          "bench_config.f90",
+          "bench_support.f90",
+          "array_reductions.f90",
+          "-o",
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\array_reductions\\benchmark.exe"
+        ],
+        "returncode": 0,
+        "timeout": false,
+        "seconds": 0.33905760012567043,
+        "stdout": "",
+        "stderr": ""
+      },
+      "executable": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\array_reductions\\benchmark.exe",
+      "timing": {
+        "median": 0.746682,
+        "minimum": 0.7127461,
+        "maximum": 0.7730945,
+        "stdev": 0.024192814376318435,
+        "median_wall": 0.8246169001795352,
+        "reliable_duration": true
+      }
+    },
+    {
+      "benchmark": "array_reductions",
+      "compiler": "gfortran",
+      "profile": {
+        "n": 1000000,
+        "repetitions": 100
+      },
+      "status": "passed",
+      "directory": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\array_reductions",
+      "samples": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\array_reductions\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.6630918001756072,
+          "stdout": "BENCH_SECONDS    4.9642069999999999E-01\nBENCH_CHECKSUM    4.9483772669948399E+07\nBENCH_ERROR    1.2045291124617219E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.4964207,
+            "BENCH_CHECKSUM": 49483772.6699484,
+            "BENCH_ERROR": 1.204529112461722e-15
+          },
+          "expected_checksum": 49483772.66994845
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\array_reductions\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.5550540001131594,
+          "stdout": "BENCH_SECONDS    4.7885329999999998E-01\nBENCH_CHECKSUM    4.9483772669948399E+07\nBENCH_ERROR    1.2045291124617219E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.4788533,
+            "BENCH_CHECKSUM": 49483772.6699484,
+            "BENCH_ERROR": 1.204529112461722e-15
+          },
+          "expected_checksum": 49483772.66994845
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\array_reductions\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.585268700029701,
+          "stdout": "BENCH_SECONDS    5.0445879999999998E-01\nBENCH_CHECKSUM    4.9483772669948399E+07\nBENCH_ERROR    1.2045291124617219E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.5044588,
+            "BENCH_CHECKSUM": 49483772.6699484,
+            "BENCH_ERROR": 1.204529112461722e-15
+          },
+          "expected_checksum": 49483772.66994845
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\array_reductions\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.5529218001756817,
+          "stdout": "BENCH_SECONDS    4.7145199999999998E-01\nBENCH_CHECKSUM    4.9483772669948399E+07\nBENCH_ERROR    1.2045291124617219E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.471452,
+            "BENCH_CHECKSUM": 49483772.6699484,
+            "BENCH_ERROR": 1.204529112461722e-15
+          },
+          "expected_checksum": 49483772.66994845
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\array_reductions\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.5303446999751031,
+          "stdout": "BENCH_SECONDS    4.5826149999999999E-01\nBENCH_CHECKSUM    4.9483772669948399E+07\nBENCH_ERROR    1.2045291124617219E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.4582615,
+            "BENCH_CHECKSUM": 49483772.6699484,
+            "BENCH_ERROR": 1.204529112461722e-15
+          },
+          "expected_checksum": 49483772.66994845
+        }
+      ],
+      "warmups": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\array_reductions\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.5848981000017375,
+          "stdout": "BENCH_SECONDS    4.8530940000000000E-01\nBENCH_CHECKSUM    4.9483772669948399E+07\nBENCH_ERROR    1.2045291124617219E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.4853094,
+            "BENCH_CHECKSUM": 49483772.6699484,
+            "BENCH_ERROR": 1.204529112461722e-15
+          },
+          "expected_checksum": 49483772.66994845
+        }
+      ],
+      "build": {
+        "command": [
+          "c:\\equation\\bin\\gfortran.EXE",
+          "-O2",
+          "bench_config.f90",
+          "bench_support.f90",
+          "array_reductions.f90",
+          "-o",
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\array_reductions\\benchmark.exe"
+        ],
+        "returncode": 0,
+        "timeout": false,
+        "seconds": 0.9242382999509573,
+        "stdout": "",
+        "stderr": ""
+      },
+      "executable": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\array_reductions\\benchmark.exe",
+      "timing": {
+        "median": 0.4788533,
+        "minimum": 0.4582615,
+        "maximum": 0.5044588,
+        "stdev": 0.01868804013488306,
+        "median_wall": 0.5550540001131594,
+        "reliable_duration": true
+      }
+    },
+    {
+      "benchmark": "matmul_loop",
+      "compiler": "rfort",
+      "profile": {
+        "n": 192,
+        "repetitions": 5
+      },
+      "status": "passed",
+      "directory": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\matmul_loop",
+      "samples": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\matmul_loop\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.10984029993414879,
+          "stdout": "BENCH_SECONDS    4.6366400000000002E-02\nBENCH_CHECKSUM    1.7872481557413384E+06\nBENCH_ERROR    4.6606237387910357E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0463664,
+            "BENCH_CHECKSUM": 1787248.1557413384,
+            "BENCH_ERROR": 4.660623738791036e-15
+          },
+          "expected_checksum": 1787248.155741349
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\matmul_loop\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.11025719996541739,
+          "stdout": "BENCH_SECONDS    4.7748600000000002E-02\nBENCH_CHECKSUM    1.7872481557413384E+06\nBENCH_ERROR    4.6606237387910357E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0477486,
+            "BENCH_CHECKSUM": 1787248.1557413384,
+            "BENCH_ERROR": 4.660623738791036e-15
+          },
+          "expected_checksum": 1787248.155741349
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\matmul_loop\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.11057460005395114,
+          "stdout": "BENCH_SECONDS    4.7952500000000002E-02\nBENCH_CHECKSUM    1.7872481557413384E+06\nBENCH_ERROR    4.6606237387910357E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0479525,
+            "BENCH_CHECKSUM": 1787248.1557413384,
+            "BENCH_ERROR": 4.660623738791036e-15
+          },
+          "expected_checksum": 1787248.155741349
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\matmul_loop\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.1108546000905335,
+          "stdout": "BENCH_SECONDS    4.8533899999999998E-02\nBENCH_CHECKSUM    1.7872481557413384E+06\nBENCH_ERROR    4.6606237387910357E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0485339,
+            "BENCH_CHECKSUM": 1787248.1557413384,
+            "BENCH_ERROR": 4.660623738791036e-15
+          },
+          "expected_checksum": 1787248.155741349
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\matmul_loop\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.111815300071612,
+          "stdout": "BENCH_SECONDS    4.8080699999999997E-02\nBENCH_CHECKSUM    1.7872481557413384E+06\nBENCH_ERROR    4.6606237387910357E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0480807,
+            "BENCH_CHECKSUM": 1787248.1557413384,
+            "BENCH_ERROR": 4.660623738791036e-15
+          },
+          "expected_checksum": 1787248.155741349
+        }
+      ],
+      "warmups": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\matmul_loop\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.12559169996529818,
+          "stdout": "BENCH_SECONDS    4.6173899999999997E-02\nBENCH_CHECKSUM    1.7872481557413384E+06\nBENCH_ERROR    4.6606237387910357E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0461739,
+            "BENCH_CHECKSUM": 1787248.1557413384,
+            "BENCH_ERROR": 4.660623738791036e-15
+          },
+          "expected_checksum": 1787248.155741349
+        }
+      ],
+      "build": {
+        "command": [
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\toolchain\\rfort.exe",
+          "-O2",
+          "bench_config.f90",
+          "bench_support.f90",
+          "matmul_loop.f90",
+          "-o",
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\matmul_loop\\benchmark.exe"
+        ],
+        "returncode": 0,
+        "timeout": false,
+        "seconds": 0.34577369992621243,
+        "stdout": "",
+        "stderr": ""
+      },
+      "executable": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\matmul_loop\\benchmark.exe",
+      "timing": {
+        "median": 0.0479525,
+        "minimum": 0.0463664,
+        "maximum": 0.0485339,
+        "stdev": 0.0008182751352693038,
+        "median_wall": 0.11057460005395114,
+        "reliable_duration": true
+      }
+    },
+    {
+      "benchmark": "matmul_loop",
+      "compiler": "gfortran",
+      "profile": {
+        "n": 192,
+        "repetitions": 5
+      },
+      "status": "passed",
+      "directory": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\matmul_loop",
+      "samples": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\matmul_loop\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.17435070010833442,
+          "stdout": "BENCH_SECONDS    1.3231700000000001E-02\nBENCH_CHECKSUM    1.7872481557413384E+06\nBENCH_ERROR    4.6606237387910357E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0132317,
+            "BENCH_CHECKSUM": 1787248.1557413384,
+            "BENCH_ERROR": 4.660623738791036e-15
+          },
+          "expected_checksum": 1787248.155741349
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\matmul_loop\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.07978180004283786,
+          "stdout": "BENCH_SECONDS    1.3741800000000000E-02\nBENCH_CHECKSUM    1.7872481557413384E+06\nBENCH_ERROR    4.6606237387910357E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0137418,
+            "BENCH_CHECKSUM": 1787248.1557413384,
+            "BENCH_ERROR": 4.660623738791036e-15
+          },
+          "expected_checksum": 1787248.155741349
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\matmul_loop\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.07947729993611574,
+          "stdout": "BENCH_SECONDS    1.3879400000000000E-02\nBENCH_CHECKSUM    1.7872481557413384E+06\nBENCH_ERROR    4.6606237387910357E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0138794,
+            "BENCH_CHECKSUM": 1787248.1557413384,
+            "BENCH_ERROR": 4.660623738791036e-15
+          },
+          "expected_checksum": 1787248.155741349
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\matmul_loop\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.0795464999973774,
+          "stdout": "BENCH_SECONDS    1.3930500000000000E-02\nBENCH_CHECKSUM    1.7872481557413384E+06\nBENCH_ERROR    4.6606237387910357E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0139305,
+            "BENCH_CHECKSUM": 1787248.1557413384,
+            "BENCH_ERROR": 4.660623738791036e-15
+          },
+          "expected_checksum": 1787248.155741349
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\matmul_loop\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.07920409995131195,
+          "stdout": "BENCH_SECONDS    1.3934500000000001E-02\nBENCH_CHECKSUM    1.7872481557413384E+06\nBENCH_ERROR    4.6606237387910357E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0139345,
+            "BENCH_CHECKSUM": 1787248.1557413384,
+            "BENCH_ERROR": 4.660623738791036e-15
+          },
+          "expected_checksum": 1787248.155741349
+        }
+      ],
+      "warmups": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\matmul_loop\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.09492150018922985,
+          "stdout": "BENCH_SECONDS    1.6073799999999999E-02\nBENCH_CHECKSUM    1.7872481557413384E+06\nBENCH_ERROR    4.6606237387910357E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0160738,
+            "BENCH_CHECKSUM": 1787248.1557413384,
+            "BENCH_ERROR": 4.660623738791036e-15
+          },
+          "expected_checksum": 1787248.155741349
+        }
+      ],
+      "build": {
+        "command": [
+          "c:\\equation\\bin\\gfortran.EXE",
+          "-O2",
+          "bench_config.f90",
+          "bench_support.f90",
+          "matmul_loop.f90",
+          "-o",
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\matmul_loop\\benchmark.exe"
+        ],
+        "returncode": 0,
+        "timeout": false,
+        "seconds": 0.9576312000863254,
+        "stdout": "",
+        "stderr": ""
+      },
+      "executable": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\matmul_loop\\benchmark.exe",
+      "timing": {
+        "median": 0.0138794,
+        "minimum": 0.0132317,
+        "maximum": 0.0139345,
+        "stdev": 0.0002965893238132484,
+        "median_wall": 0.0795464999973774,
+        "reliable_duration": false
+      }
+    },
+    {
+      "benchmark": "matmul_intrinsic",
+      "compiler": "rfort",
+      "profile": {
+        "n": 192,
+        "repetitions": 5
+      },
+      "status": "passed",
+      "directory": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\matmul_intrinsic",
+      "samples": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\matmul_intrinsic\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.11197130009531975,
+          "stdout": "BENCH_SECONDS    4.8032800000000000E-02\nBENCH_CHECKSUM    1.7872481557413384E+06\nBENCH_ERROR    4.6606237387910357E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0480328,
+            "BENCH_CHECKSUM": 1787248.1557413384,
+            "BENCH_ERROR": 4.660623738791036e-15
+          },
+          "expected_checksum": 1787248.155741349
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\matmul_intrinsic\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.11110839992761612,
+          "stdout": "BENCH_SECONDS    4.7209300000000003E-02\nBENCH_CHECKSUM    1.7872481557413384E+06\nBENCH_ERROR    4.6606237387910357E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0472093,
+            "BENCH_CHECKSUM": 1787248.1557413384,
+            "BENCH_ERROR": 4.660623738791036e-15
+          },
+          "expected_checksum": 1787248.155741349
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\matmul_intrinsic\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.19318200019188225,
+          "stdout": "BENCH_SECONDS    4.6658900000000003E-02\nBENCH_CHECKSUM    1.7872481557413384E+06\nBENCH_ERROR    4.6606237387910357E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0466589,
+            "BENCH_CHECKSUM": 1787248.1557413384,
+            "BENCH_ERROR": 4.660623738791036e-15
+          },
+          "expected_checksum": 1787248.155741349
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\matmul_intrinsic\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.1261974999215454,
+          "stdout": "BENCH_SECONDS    5.2748400000000001E-02\nBENCH_CHECKSUM    1.7872481557413384E+06\nBENCH_ERROR    4.6606237387910357E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0527484,
+            "BENCH_CHECKSUM": 1787248.1557413384,
+            "BENCH_ERROR": 4.660623738791036e-15
+          },
+          "expected_checksum": 1787248.155741349
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\matmul_intrinsic\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.11131699988618493,
+          "stdout": "BENCH_SECONDS    4.7617899999999998E-02\nBENCH_CHECKSUM    1.7872481557413384E+06\nBENCH_ERROR    4.6606237387910357E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0476179,
+            "BENCH_CHECKSUM": 1787248.1557413384,
+            "BENCH_ERROR": 4.660623738791036e-15
+          },
+          "expected_checksum": 1787248.155741349
+        }
+      ],
+      "warmups": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\matmul_intrinsic\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.11531350016593933,
+          "stdout": "BENCH_SECONDS    5.2975500000000002E-02\nBENCH_CHECKSUM    1.7872481557413384E+06\nBENCH_ERROR    4.6606237387910357E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0529755,
+            "BENCH_CHECKSUM": 1787248.1557413384,
+            "BENCH_ERROR": 4.660623738791036e-15
+          },
+          "expected_checksum": 1787248.155741349
+        }
+      ],
+      "build": {
+        "command": [
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\toolchain\\rfort.exe",
+          "-O2",
+          "bench_config.f90",
+          "bench_support.f90",
+          "matmul_intrinsic.f90",
+          "-o",
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\matmul_intrinsic\\benchmark.exe"
+        ],
+        "returncode": 0,
+        "timeout": false,
+        "seconds": 0.4401852998416871,
+        "stdout": "",
+        "stderr": ""
+      },
+      "executable": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\matmul_intrinsic\\benchmark.exe",
+      "timing": {
+        "median": 0.0476179,
+        "minimum": 0.0466589,
+        "maximum": 0.0527484,
+        "stdev": 0.002454078475314104,
+        "median_wall": 0.11197130009531975,
+        "reliable_duration": true
+      }
+    },
+    {
+      "benchmark": "matmul_intrinsic",
+      "compiler": "gfortran",
+      "profile": {
+        "n": 192,
+        "repetitions": 5
+      },
+      "status": "passed",
+      "directory": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\matmul_intrinsic",
+      "samples": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\matmul_intrinsic\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.06149629992432892,
+          "stdout": "BENCH_SECONDS    2.7845000000000001E-03\nBENCH_CHECKSUM    1.7872481557413386E+06\nBENCH_ERROR    6.0137080500529306E-16\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0027845,
+            "BENCH_CHECKSUM": 1787248.1557413386,
+            "BENCH_ERROR": 6.013708050052931e-16
+          },
+          "expected_checksum": 1787248.155741349
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\matmul_intrinsic\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.06403060001321137,
+          "stdout": "BENCH_SECONDS    2.6743000000000001E-03\nBENCH_CHECKSUM    1.7872481557413386E+06\nBENCH_ERROR    6.0137080500529306E-16\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0026743,
+            "BENCH_CHECKSUM": 1787248.1557413386,
+            "BENCH_ERROR": 6.013708050052931e-16
+          },
+          "expected_checksum": 1787248.155741349
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\matmul_intrinsic\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.05894839996472001,
+          "stdout": "BENCH_SECONDS    2.8557999999999999E-03\nBENCH_CHECKSUM    1.7872481557413386E+06\nBENCH_ERROR    6.0137080500529306E-16\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0028558,
+            "BENCH_CHECKSUM": 1787248.1557413386,
+            "BENCH_ERROR": 6.013708050052931e-16
+          },
+          "expected_checksum": 1787248.155741349
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\matmul_intrinsic\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.0632895000744611,
+          "stdout": "BENCH_SECONDS    2.7444000000000001E-03\nBENCH_CHECKSUM    1.7872481557413386E+06\nBENCH_ERROR    6.0137080500529306E-16\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0027444,
+            "BENCH_CHECKSUM": 1787248.1557413386,
+            "BENCH_ERROR": 6.013708050052931e-16
+          },
+          "expected_checksum": 1787248.155741349
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\matmul_intrinsic\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.06207640003412962,
+          "stdout": "BENCH_SECONDS    3.3982000000000001E-03\nBENCH_CHECKSUM    1.7872481557413386E+06\nBENCH_ERROR    6.0137080500529306E-16\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0033982,
+            "BENCH_CHECKSUM": 1787248.1557413386,
+            "BENCH_ERROR": 6.013708050052931e-16
+          },
+          "expected_checksum": 1787248.155741349
+        }
+      ],
+      "warmups": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\matmul_intrinsic\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.07270399993285537,
+          "stdout": "BENCH_SECONDS    3.0468000000000001E-03\nBENCH_CHECKSUM    1.7872481557413386E+06\nBENCH_ERROR    6.0137080500529306E-16\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0030468,
+            "BENCH_CHECKSUM": 1787248.1557413386,
+            "BENCH_ERROR": 6.013708050052931e-16
+          },
+          "expected_checksum": 1787248.155741349
+        }
+      ],
+      "build": {
+        "command": [
+          "c:\\equation\\bin\\gfortran.EXE",
+          "-O2",
+          "bench_config.f90",
+          "bench_support.f90",
+          "matmul_intrinsic.f90",
+          "-o",
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\matmul_intrinsic\\benchmark.exe"
+        ],
+        "returncode": 0,
+        "timeout": false,
+        "seconds": 0.940528100123629,
+        "stdout": "",
+        "stderr": ""
+      },
+      "executable": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\matmul_intrinsic\\benchmark.exe",
+      "timing": {
+        "median": 0.0027845,
+        "minimum": 0.0026743,
+        "maximum": 0.0033982,
+        "stdev": 0.0002908103385369922,
+        "median_wall": 0.06207640003412962,
+        "reliable_duration": false
+      }
+    },
+    {
+      "benchmark": "stencil_2d",
+      "compiler": "rfort",
+      "profile": {
+        "n": 384,
+        "repetitions": 100
+      },
+      "status": "passed",
+      "directory": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\stencil_2d",
+      "samples": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\stencil_2d\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.31604159995913506,
+          "stdout": "BENCH_SECONDS    1.0895940000000000E-01\nBENCH_CHECKSUM    1.7775144540922507E+05\nBENCH_ERROR    1.1842378929335002E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.1089594,
+            "BENCH_CHECKSUM": 177751.44540922507,
+            "BENCH_ERROR": 1.1842378929335002e-15
+          },
+          "expected_checksum": 177751.44540922728
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\stencil_2d\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.3896009000018239,
+          "stdout": "BENCH_SECONDS    1.5240480000000001E-01\nBENCH_CHECKSUM    1.7775144540922507E+05\nBENCH_ERROR    1.1842378929335002E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.1524048,
+            "BENCH_CHECKSUM": 177751.44540922507,
+            "BENCH_ERROR": 1.1842378929335002e-15
+          },
+          "expected_checksum": 177751.44540922728
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\stencil_2d\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.41146470000967383,
+          "stdout": "BENCH_SECONDS    1.6180539999999999E-01\nBENCH_CHECKSUM    1.7775144540922507E+05\nBENCH_ERROR    1.1842378929335002E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.1618054,
+            "BENCH_CHECKSUM": 177751.44540922507,
+            "BENCH_ERROR": 1.1842378929335002e-15
+          },
+          "expected_checksum": 177751.44540922728
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\stencil_2d\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.33209119993261993,
+          "stdout": "BENCH_SECONDS    9.9239700000000000E-02\nBENCH_CHECKSUM    1.7775144540922507E+05\nBENCH_ERROR    1.1842378929335002E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0992397,
+            "BENCH_CHECKSUM": 177751.44540922507,
+            "BENCH_ERROR": 1.1842378929335002e-15
+          },
+          "expected_checksum": 177751.44540922728
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\stencil_2d\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.17540790000930429,
+          "stdout": "BENCH_SECONDS    8.9239600000000002E-02\nBENCH_CHECKSUM    1.7775144540922507E+05\nBENCH_ERROR    1.1842378929335002E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0892396,
+            "BENCH_CHECKSUM": 177751.44540922507,
+            "BENCH_ERROR": 1.1842378929335002e-15
+          },
+          "expected_checksum": 177751.44540922728
+        }
+      ],
+      "warmups": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\stencil_2d\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.30123410001397133,
+          "stdout": "BENCH_SECONDS    9.4380199999999997E-02\nBENCH_CHECKSUM    1.7775144540922507E+05\nBENCH_ERROR    1.1842378929335002E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0943802,
+            "BENCH_CHECKSUM": 177751.44540922507,
+            "BENCH_ERROR": 1.1842378929335002e-15
+          },
+          "expected_checksum": 177751.44540922728
+        }
+      ],
+      "build": {
+        "command": [
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\toolchain\\rfort.exe",
+          "-O2",
+          "bench_config.f90",
+          "bench_support.f90",
+          "stencil_2d.f90",
+          "-o",
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\stencil_2d\\benchmark.exe"
+        ],
+        "returncode": 0,
+        "timeout": false,
+        "seconds": 0.4004767001606524,
+        "stdout": "",
+        "stderr": ""
+      },
+      "executable": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\stencil_2d\\benchmark.exe",
+      "timing": {
+        "median": 0.1089594,
+        "minimum": 0.0892396,
+        "maximum": 0.1618054,
+        "stdev": 0.03267151003002463,
+        "median_wall": 0.33209119993261993,
+        "reliable_duration": true
+      }
+    },
+    {
+      "benchmark": "stencil_2d",
+      "compiler": "gfortran",
+      "profile": {
+        "n": 384,
+        "repetitions": 100
+      },
+      "status": "passed",
+      "directory": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\stencil_2d",
+      "samples": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\stencil_2d\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.2193118000868708,
+          "stdout": "BENCH_SECONDS    2.0371299999999998E-02\nBENCH_CHECKSUM    1.7775144540922507E+05\nBENCH_ERROR    1.1842378929335002E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0203713,
+            "BENCH_CHECKSUM": 177751.44540922507,
+            "BENCH_ERROR": 1.1842378929335002e-15
+          },
+          "expected_checksum": 177751.44540922728
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\stencil_2d\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.21377780009061098,
+          "stdout": "BENCH_SECONDS    2.8088800000000001E-02\nBENCH_CHECKSUM    1.7775144540922507E+05\nBENCH_ERROR    1.1842378929335002E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0280888,
+            "BENCH_CHECKSUM": 177751.44540922507,
+            "BENCH_ERROR": 1.1842378929335002e-15
+          },
+          "expected_checksum": 177751.44540922728
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\stencil_2d\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.2839279000181705,
+          "stdout": "BENCH_SECONDS    3.5995600000000003E-02\nBENCH_CHECKSUM    1.7775144540922507E+05\nBENCH_ERROR    1.1842378929335002E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0359956,
+            "BENCH_CHECKSUM": 177751.44540922507,
+            "BENCH_ERROR": 1.1842378929335002e-15
+          },
+          "expected_checksum": 177751.44540922728
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\stencil_2d\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.12320540007203817,
+          "stdout": "BENCH_SECONDS    3.3203600000000000E-02\nBENCH_CHECKSUM    1.7775144540922507E+05\nBENCH_ERROR    1.1842378929335002E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0332036,
+            "BENCH_CHECKSUM": 177751.44540922507,
+            "BENCH_ERROR": 1.1842378929335002e-15
+          },
+          "expected_checksum": 177751.44540922728
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\stencil_2d\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.10935739986598492,
+          "stdout": "BENCH_SECONDS    2.1931900000000001E-02\nBENCH_CHECKSUM    1.7775144540922507E+05\nBENCH_ERROR    1.1842378929335002E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0219319,
+            "BENCH_CHECKSUM": 177751.44540922507,
+            "BENCH_ERROR": 1.1842378929335002e-15
+          },
+          "expected_checksum": 177751.44540922728
+        }
+      ],
+      "warmups": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\stencil_2d\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.23592910007573664,
+          "stdout": "BENCH_SECONDS    2.2382400000000000E-02\nBENCH_CHECKSUM    1.7775144540922507E+05\nBENCH_ERROR    1.1842378929335002E-15\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0223824,
+            "BENCH_CHECKSUM": 177751.44540922507,
+            "BENCH_ERROR": 1.1842378929335002e-15
+          },
+          "expected_checksum": 177751.44540922728
+        }
+      ],
+      "build": {
+        "command": [
+          "c:\\equation\\bin\\gfortran.EXE",
+          "-O2",
+          "bench_config.f90",
+          "bench_support.f90",
+          "stencil_2d.f90",
+          "-o",
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\stencil_2d\\benchmark.exe"
+        ],
+        "returncode": 0,
+        "timeout": false,
+        "seconds": 1.12009929982014,
+        "stdout": "",
+        "stderr": ""
+      },
+      "executable": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\stencil_2d\\benchmark.exe",
+      "timing": {
+        "median": 0.0280888,
+        "minimum": 0.0203713,
+        "maximum": 0.0359956,
+        "stdev": 0.006819098832910402,
+        "median_wall": 0.21377780009061098,
+        "reliable_duration": true
+      }
+    },
+    {
+      "benchmark": "allocation_fill",
+      "compiler": "rfort",
+      "profile": {
+        "n": 16384,
+        "repetitions": 500
+      },
+      "status": "passed",
+      "directory": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\allocation_fill",
+      "samples": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\allocation_fill\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.13407750008627772,
+          "stdout": "BENCH_SECONDS    8.8538599999999995E-02\nBENCH_CHECKSUM    4.0538202577319588E+06\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0885386,
+            "BENCH_CHECKSUM": 4053820.2577319588,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 4053820.2577319588
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\allocation_fill\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.15383490012027323,
+          "stdout": "BENCH_SECONDS    9.1139999999999999E-02\nBENCH_CHECKSUM    4.0538202577319588E+06\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.09114,
+            "BENCH_CHECKSUM": 4053820.2577319588,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 4053820.2577319588
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\allocation_fill\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.15413310006260872,
+          "stdout": "BENCH_SECONDS    8.5632299999999995E-02\nBENCH_CHECKSUM    4.0538202577319588E+06\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0856323,
+            "BENCH_CHECKSUM": 4053820.2577319588,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 4053820.2577319588
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\allocation_fill\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.15698909992352128,
+          "stdout": "BENCH_SECONDS    8.9360800000000004E-02\nBENCH_CHECKSUM    4.0538202577319588E+06\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0893608,
+            "BENCH_CHECKSUM": 4053820.2577319588,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 4053820.2577319588
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\allocation_fill\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.15166369988583028,
+          "stdout": "BENCH_SECONDS    8.4980299999999995E-02\nBENCH_CHECKSUM    4.0538202577319588E+06\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0849803,
+            "BENCH_CHECKSUM": 4053820.2577319588,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 4053820.2577319588
+        }
+      ],
+      "warmups": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\allocation_fill\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.18880450003780425,
+          "stdout": "BENCH_SECONDS    1.0023140000000000E-01\nBENCH_CHECKSUM    4.0538202577319588E+06\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.1002314,
+            "BENCH_CHECKSUM": 4053820.2577319588,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 4053820.2577319588
+        }
+      ],
+      "build": {
+        "command": [
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\toolchain\\rfort.exe",
+          "-O2",
+          "bench_config.f90",
+          "bench_support.f90",
+          "allocation_fill.f90",
+          "-o",
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\allocation_fill\\benchmark.exe"
+        ],
+        "returncode": 0,
+        "timeout": false,
+        "seconds": 0.4867578998673707,
+        "stdout": "",
+        "stderr": ""
+      },
+      "executable": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\rfort\\allocation_fill\\benchmark.exe",
+      "timing": {
+        "median": 0.0885386,
+        "minimum": 0.0849803,
+        "maximum": 0.09114,
+        "stdev": 0.0025836910215813374,
+        "median_wall": 0.15383490012027323,
+        "reliable_duration": true
+      }
+    },
+    {
+      "benchmark": "allocation_fill",
+      "compiler": "gfortran",
+      "profile": {
+        "n": 16384,
+        "repetitions": 500
+      },
+      "status": "passed",
+      "directory": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\allocation_fill",
+      "samples": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\allocation_fill\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.0947879001032561,
+          "stdout": "BENCH_SECONDS    3.0346000000000001E-02\nBENCH_CHECKSUM    4.0538202577319588E+06\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.030346,
+            "BENCH_CHECKSUM": 4053820.2577319588,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 4053820.2577319588
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\allocation_fill\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.09085220005363226,
+          "stdout": "BENCH_SECONDS    2.6215800000000001E-02\nBENCH_CHECKSUM    4.0538202577319588E+06\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0262158,
+            "BENCH_CHECKSUM": 4053820.2577319588,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 4053820.2577319588
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\allocation_fill\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.09043220011517406,
+          "stdout": "BENCH_SECONDS    2.5466599999999999E-02\nBENCH_CHECKSUM    4.0538202577319588E+06\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0254666,
+            "BENCH_CHECKSUM": 4053820.2577319588,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 4053820.2577319588
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\allocation_fill\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.07118569989688694,
+          "stdout": "BENCH_SECONDS    2.6185300000000002E-02\nBENCH_CHECKSUM    4.0538202577319588E+06\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0261853,
+            "BENCH_CHECKSUM": 4053820.2577319588,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 4053820.2577319588
+        },
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\allocation_fill\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.09108049981296062,
+          "stdout": "BENCH_SECONDS    2.5134000000000000E-02\nBENCH_CHECKSUM    4.0538202577319588E+06\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.025134,
+            "BENCH_CHECKSUM": 4053820.2577319588,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 4053820.2577319588
+        }
+      ],
+      "warmups": [
+        {
+          "command": [
+            "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\allocation_fill\\benchmark.exe"
+          ],
+          "returncode": 0,
+          "timeout": false,
+          "seconds": 0.10654810001142323,
+          "stdout": "BENCH_SECONDS    2.7085700000000001E-02\nBENCH_CHECKSUM    4.0538202577319588E+06\nBENCH_ERROR    0.0000000000000000E+00\n",
+          "stderr": "",
+          "values": {
+            "BENCH_SECONDS": 0.0270857,
+            "BENCH_CHECKSUM": 4053820.2577319588,
+            "BENCH_ERROR": 0.0
+          },
+          "expected_checksum": 4053820.2577319588
+        }
+      ],
+      "build": {
+        "command": [
+          "c:\\equation\\bin\\gfortran.EXE",
+          "-O2",
+          "bench_config.f90",
+          "bench_support.f90",
+          "allocation_fill.f90",
+          "-o",
+          "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\allocation_fill\\benchmark.exe"
+        ],
+        "returncode": 0,
+        "timeout": false,
+        "seconds": 1.7741272998973727,
+        "stdout": "",
+        "stderr": ""
+      },
+      "executable": "C:\\rust\\public_domain\\github\\rfortran\\target\\benchmarks\\announcement-20261104-default\\gfortran\\allocation_fill\\benchmark.exe",
+      "timing": {
+        "median": 0.0261853,
+        "minimum": 0.025134,
+        "maximum": 0.030346,
+        "stdev": 0.0021072300676480494,
+        "median_wall": 0.09085220005363226,
+        "reliable_duration": true
+      }
+    }
+  ],
+  "source_sha256": {
+    "run.py": "81a64e9bc89f20aab7e7e87c981af17644c2d963abae021aba01d8f3d8cc9012",
+    "manifest.json": "440c154f1a035341c897075c82545bad958ed9884a120dc2ace037b50db7ef37",
+    "bench_support.f90": "dd452484fe86beab1742d8855468aaae817a08c6c0b0f6cbcfa87c2543e870bc",
+    "programs\\integer_sum.f90": "98481987619af65075d961102a3bbdd581ce85cdac0f610c416e3c6da52450ed",
+    "programs\\scalar_recurrence.f90": "c27a564ecc338faae3651cdc64c1ecb92d4894efaaaf203fa3f93591c7467545",
+    "programs\\procedure_calls.f90": "f0facdb747c7feac42e5007e59b44b8e2bb2c4cc00edd742eec6c314e349aaed",
+    "programs\\pi_integral.f90": "c86204bfea3feed1f148ec1a27838242bec2bde8d49dbbf106ecf32b5cad18c7",
+    "programs\\vector_loop.f90": "f3030e03fc68a34bd7e4e7a4be1026d3bddeb78dde5f4e220176ab7eb58b5f64",
+    "programs\\vector_array.f90": "b017c742d1cc90580b57051cdc72cec10d2c644c1ee70e82c3dab4ea427be610",
+    "programs\\dot_product.f90": "9534f725addcc444cd4a27c28988b470eee6cad9e1b0a3e0de15b2917779826f",
+    "programs\\array_reductions.f90": "a8da5eeef159aaf5734629c9ae228dfe1233f3a9adee4f861c406ba21274615f",
+    "programs\\matmul_loop.f90": "0ff2f0827d09d0fac822957b12b7467f9b9702301af7cd19481aa2d3c9f1eceb",
+    "programs\\matmul_intrinsic.f90": "c429dd41b3d8190b3ba7b664545a061739378011ddf6052320190c7413893710",
+    "programs\\stencil_2d.f90": "80abb5093657b4aba7db11f028a561192b84e5d5d88a633c058a02c5d75e47a1",
+    "programs\\allocation_fill.f90": "8d5274a7ce223085847fa4d2f15842526f4b9c2cd3ae382652e17085ac459335"
+  },
+  "ratio_summary": {
+    "gfortran": {
+      "count": 12,
+      "short_timing": 3,
+      "median": 2.2721038882682807,
+      "geometric_mean": 2.651991479328017,
+      "mean": 3.5903119507068184,
+      "sd": 4.329666410180513,
+      "min": 1.559312632908659,
+      "max": 17.10105943616448
+    }
+  }
+}

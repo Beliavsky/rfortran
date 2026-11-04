@@ -1,5 +1,7 @@
 # rfort / gfortran benchmarks
 
+See [published performance results](RESULTS.md) for dated comparisons with gfortran.
+
 This independent suite measures correctness, kernel execution time, process wall
 time, and compilation time. It uses existing compiler executables and never runs
 Cargo or modifies compiler source files. The twelve Fortran kernels are original
