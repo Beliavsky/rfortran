@@ -28,7 +28,7 @@ fn cycles(body: &mut [Stmt], increment: &[Stmt]) {
                 for case in cases { cycles(&mut case.body, increment); }
                 if let Some(body) = default { cycles(body, increment); }
             }
-            Stmt::Block { body } if !matches!(body.first(), Some(Stmt::CallSub {name,..}) if name == "@do_step" || name == "@forall") => cycles(body, increment),
+            Stmt::Block { body } if !body.iter().any(|s| matches!(s, Stmt::CallSub {name,..} if name == "@do_step" || name == "@forall")) => cycles(body, increment),
             // CYCLE inside a nested loop belongs to that loop.
             _ => {}
         }
@@ -36,6 +36,18 @@ fn cycles(body: &mut [Stmt], increment: &[Stmt]) {
 }
 
 pub fn lower(body: &mut Vec<Stmt>, symbols: &HashMap<String,(TypeSpec,Vec<Expr>)>, serial: &mut usize) -> Result<()> {
+    // Bound-expression lowering can prepend allocation checks or captures.
+    // They run once, before the loop initializes its control variable.
+    let Some(marker) = body.iter().position(|s| matches!(s,
+        Stmt::CallSub { name, .. } if name == "@do_step")) else { return Ok(()); };
+    if marker == 0 { return lower_loop(body, symbols, serial); }
+    let mut loop_body = body.split_off(marker);
+    let result = lower_loop(&mut loop_body, symbols, serial);
+    body.extend(loop_body);
+    result
+}
+
+fn lower_loop(body: &mut Vec<Stmt>, symbols: &HashMap<String,(TypeSpec,Vec<Expr>)>, serial: &mut usize) -> Result<()> {
     let Some(Stmt::CallSub { name, args }) = body.first() else { return Ok(()); };
     if name != "@do_step" { return Ok(()); }
     let [Expr::Ident(var), start, end, step] = args.as_slice() else { bail!("DO variable must be a writable scalar INTEGER"); };

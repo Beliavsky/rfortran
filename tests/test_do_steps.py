@@ -5,9 +5,33 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import test_deallocate
 from test_record_read import ROOT, COMPILER, build_commands
 
 class DoSteps(unittest.TestCase):
+    def test_allocated_expression_descending_search(self):
+        source = (ROOT / "tests/programs/xfve_last_true_expression.f90").read_text()
+        for n, expected in [(0, "0\n"), (1, "0\n"), (4, "2\n")]:
+            with self.subTest(n=n):
+                test_deallocate.Deallocate.check(self, source, expected, data=f"{n}\n")
+
+    def test_allocated_bounds_runtime_step_and_nested_cycle(self):
+        test_deallocate.Deallocate.check(self, """implicit none
+integer, allocatable :: x(:)
+integer :: n,step,i,j,total
+read *,n,step
+allocate(x(n))
+total=0
+do i=size(x),1,step
+   do j=size(x),1,-1
+      if (j==2) cycle
+      total=total+1
+   end do
+end do
+print *,total
+end
+""", "6\n", data="3 -1\n")
+
     def test_execution(self):
         source = ROOT / "tests/87_do_steps.f90"
         expected = json.loads((ROOT / "tests/expectations.json").read_text(encoding="utf-8"))["cases"][source.stem]["program_stdout"]

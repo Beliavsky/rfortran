@@ -395,3 +395,38 @@ The next useful correctness investigation is the generated-storage initializatio
 failure in the one-call stats probe, which reaches it in about seven seconds in
 this run. Compilation is still slow and incomplete, but the small reproducer
 avoids repeating the three-minute full-main attempt during diagnosis.
+
+
+## Descending-loop initialization blocker fixed
+
+The generated uninitialized loop index was caused by a surviving `@do_step`
+marker. Array-bound lowering inserted an allocation guard before that marker,
+but explicit-step DO lowering recognized it only as the block's first statement.
+The resulting block never initialized its loop index; in the scalar stats case,
+the unlowered loop also caused an EXIT-outside-loop diagnostic.
+
+Explicit-step lowering now finds the marker after any generated prefix, preserves
+that prefix before loop initialization, and lowers constant or runtime steps.
+CYCLE rewriting recognizes nested step-loop markers after a prefix too, preventing
+an inner CYCLE from acquiring the enclosing loop's increment.
+
+Standalone runnable reproducer: `tests/programs/xfve_last_true_expression.f90`.
+It calls a descending `last_true` search with the logical expression `x>0` over
+runtime-allocated storage. Inputs 0, 1, and 4 produce 0, 0, and 2 respectively.
+
+All 11 tests in `test_do_steps` and `test_named_loops` pass with the debug compiler,
+including two new regressions covering empty searches, early RETURN, runtime
+steps, and nested CYCLE. The two new tests also pass with the release compiler;
+their helper checks interpreter/native execution and the gfortran reference.
+
+The original repeat1 and literal-name stats probes now pass semantic and
+initialization analysis. They reach a later native-code-generation panic at
+`src/codegen/cranelift.rs:3268` (heap operation argument handling, index 1 into a
+one-element argument list). Attempts take 40.945 and 35.501 seconds respectively;
+these times are not comparable with earlier timings that stopped before codegen.
+Gfortran object compilation passes for both. No successful stats or FVE executable
+is claimed, and the full FVE main was not rerun for this change.
+
+Reports: `target/2015-compat/fve-after-step-prefix/`. The next investigation is
+missing initialization-mask metadata on a lowered heap operation reaching native
+code generation; the precise operation and reason still need tracing.

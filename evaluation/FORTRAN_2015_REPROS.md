@@ -715,3 +715,16 @@ object compilation passes; rfort still produces no executable. See
 [FVE_SMALL_DRIVERS.md](FVE_SMALL_DRIVERS.md#reused-checked-array-offset-helpers)
 and `target/2015-compat/fve-main-after-helper-reuse/`. Investigate the small stats
 initialization repro next; it reports the same source location as the full main.
+
+
+The generated loop-index initialization blocker is fixed: bound checks preceding
+an explicit-step DO marker prevented the loop from being lowered. Prefix-preserving
+loop lowering also resolves the scalar stats EXIT diagnostic. A standalone runnable
+case is `tests/programs/xfve_last_true_expression.f90`; all 11 loop regression
+tests pass, and the new cases also pass against the release compiler.
+
+The one-call and literal stats probes now pass initialization and reach a later
+native heap-operation argument panic (`cranelift.rs:3268`). Reports are saved in
+`target/2015-compat/fve-after-step-prefix/`; see
+[FVE_SMALL_DRIVERS.md](FVE_SMALL_DRIVERS.md#descending-loop-initialization-blocker-fixed).
+The full FVE main has not been rerun after this correctness change.
