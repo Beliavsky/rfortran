@@ -4146,6 +4146,11 @@ uses the scalar defined writer, in Fortran array element order (first subscript
 varies fastest). Runtime bounds and nonunit lower bounds are respected; empty
 arrays make no writer calls. The lowering handles ranks through 15. A writer
 error stops the remaining elements and subsequent parent output items.
+Triplet sections are also accepted, including mixed scalar/triplet subscripts,
+positive or negative runtime strides, array components, and runtime-sized
+arrays. Bounds, strides, and scalar subscripts are evaluated once before
+iteration. Omitted bounds use the declared bounds regardless of stride sign;
+zero stride is diagnosed. Sections retain Fortran array element order.
 Child formatted writes to the parent's unit do not terminate its record.
 Writes to other units retain their normal record endings. This also works through directly called helper subroutines, and normal
 advancing output resumes after the defined procedure returns.
@@ -4165,7 +4170,7 @@ The current message temporary holds 256 characters.
 
 This is partial support. Internal parent units, READ, unformatted
 transfers, namelist defined I/O, generic interface blocks, private and inherited defined
-bindings, array sections and array-valued expressions, explicitly formatted
+bindings, vector-subscribed sections and array-valued expressions, explicitly formatted
 array transfers, runtime parent
 formats, and general formats mixing DT with other descriptors remain outside
 the supported subset. Child ADVANCE currently requires a constant YES/NO value.
@@ -4176,7 +4181,8 @@ Standalone examples are `tests/programs/xdefined_formatted_output.f90` for
 standard output and `tests/programs/xdefined_formatted_file.f90` for a scratch
 file with parent/child status controls. `tests/programs/xdefined_formatted_values.f90`
 demonstrates scalar components and constructors, and
-`tests/programs/xdefined_formatted_arrays.f90` demonstrates whole-array output.
+`tests/programs/xdefined_formatted_arrays.f90` demonstrates whole-array output;
+`tests/programs/xdefined_formatted_sections.f90` demonstrates strided sections.
 `tests/programs/xdefined_formatted_array_error.f90` checks stopping on an element
 error: expected status 17 and two writer calls. The local gfortran 17 build
 continues to four calls and returns zero, so this regression uses explicit

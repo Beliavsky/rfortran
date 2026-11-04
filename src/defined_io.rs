@@ -250,6 +250,128 @@ fn dt(format: &Expr) -> Result<(String, Vec<Expr>)> {
 
 type Objects = HashMap<String, (String, usize)>;
 type Declarations = HashMap<String, (TypeSpec, usize)>;
+type OutputLoop = (String, Expr, Expr, Expr);
+
+/// Capture every section control before iterating, including scalar subscripts
+/// on other axes. Impure bounds must not be evaluated for each output element.
+fn array_item(
+    item: Expr,
+    prefix: &str,
+    types: &crate::operators::ExpressionTypes,
+    declarations: &Declarations,
+    objects: &Objects,
+) -> Result<(Expr, Vec<Stmt>, Vec<OutputLoop>)> {
+    let (array, supplied) = match item {
+        Expr::Ident(n) => (n, None),
+        Expr::Section {
+            name,
+            lower,
+            upper,
+            stride,
+        } => (
+            name,
+            Some(vec![Expr::Section {
+                name: String::new(),
+                lower,
+                upper,
+                stride,
+            }]),
+        ),
+        Expr::Call(n, a) | Expr::Index(n, a) => (n, Some(a)),
+        _ => bail!("defined formatted array output requires a whole array or triplet section"),
+    };
+    if !objects.contains_key(array.split('%').next().unwrap()) {
+        bail!("defined formatted array output requires a whole array or triplet section");
+    }
+    let rank = match types.type_rank(&id(&array), declarations, objects)? {
+        Some((crate::operators::ExpressionElement::Derived(_), rank)) if rank > 0 => rank,
+        _ => bail!("defined formatted array output requires a whole array or triplet section"),
+    };
+    let subscripts = supplied.unwrap_or_else(|| {
+        (0..rank)
+            .map(|_| Expr::Section {
+                name: String::new(),
+                lower: None,
+                upper: None,
+                stride: None,
+            })
+            .collect()
+    });
+    if subscripts.len() != rank {
+        bail!("defined output array requires {rank} subscripts");
+    }
+    let mut before = vec![];
+    let mut indices = vec![];
+    let mut loops = vec![];
+    for (axis, subscript) in subscripts.into_iter().enumerate() {
+        let subscript = match subscript {
+            Expr::Call(n, mut a) if n == "@section_subscript" && a.len() == 1 => a.remove(0),
+            other => other,
+        };
+        let name = format!("{prefix}_axis_{axis}");
+        if let Expr::Section {
+            lower,
+            upper,
+            stride,
+            ..
+        } = subscript
+        {
+            let bound = |n: &str| Expr::Call(n.into(), vec![id(&array), int(axis as i64 + 1)]);
+            let controls = [
+                lower.map(|e| *e).unwrap_or_else(|| bound("lbound")),
+                upper.map(|e| *e).unwrap_or_else(|| bound("ubound")),
+                stride.map(|e| *e).unwrap_or(int(1)),
+            ];
+            let mut captured = vec![];
+            for (control, value) in controls.into_iter().enumerate() {
+                if !matches!(
+                    types.type_rank(&value, declarations, objects)?,
+                    Some((
+                        crate::operators::ExpressionElement::Intrinsic(TypeSpec::Integer(_)),
+                        0
+                    ))
+                ) {
+                    bail!("defined output section bounds and stride must be scalar INTEGER");
+                }
+                let temp = format!("{name}_control_{control}");
+                before.push(decl(&temp, TypeSpec::Integer(None)));
+                before.push(assign(&temp, value));
+                captured.push(id(&temp));
+            }
+            before.push(Stmt::If {
+                cond: Expr::Bin(BinOp::Eq, Box::new(captured[2].clone()), Box::new(int(0))),
+                then_body: vec![call(
+                    "@error_stop",
+                    vec![Expr::Str("array section stride must not be zero".into())],
+                )],
+                else_body: None,
+            });
+            before.push(decl(&name, TypeSpec::Integer(None)));
+            indices.push(id(&name));
+            loops.push((
+                name,
+                captured[0].clone(),
+                captured[1].clone(),
+                captured[2].clone(),
+            ));
+        } else {
+            if !matches!(
+                types.type_rank(&subscript, declarations, objects)?,
+                Some((
+                    crate::operators::ExpressionElement::Intrinsic(TypeSpec::Integer(_)),
+                    0
+                ))
+            ) {
+                bail!("defined formatted output vector subscripts are not yet supported");
+            }
+            before.push(decl(&name, TypeSpec::Integer(None)));
+            before.push(assign(&name, subscript));
+            indices.push(id(&name));
+        }
+    }
+    Ok((Expr::Call(array, indices), before, loops))
+}
+
 fn lower(
     body: &mut Vec<Stmt>,
     inherited: &Objects,
@@ -391,20 +513,17 @@ fn lower(
                         let mut array_loop = None;
                         if let Some((procedure, rank)) = target(&item)? {
                             let item = if rank != 0 {
-                                let Expr::Ident(array) = item else {
-                                    bail!("defined formatted array output currently requires a whole array variable and list-directed format");
-                                };
                                 if !list {
-                                    bail!("defined formatted array output currently requires a whole array variable and list-directed format");
+                                    bail!("defined formatted array output currently requires a list-directed format");
                                 }
-                                let indices: Vec<_> = (1..=rank)
-                                    .map(|axis| format!("{prefix}_item_{item_number}_index_{axis}"))
-                                    .collect();
-                                let element = Expr::Call(
-                                    array.clone(),
-                                    indices.iter().map(|n| id(n)).collect(),
-                                );
-                                array_loop = Some((array, indices));
+                                let (element, before, loops) = array_item(
+                                    item,
+                                    &format!("{prefix}_item_{item_number}"),
+                                    expression_types,
+                                    &declarations,
+                                    &objects,
+                                )?;
+                                array_loop = Some((before, loops));
                                 element
                             } else {
                                 item
@@ -451,9 +570,9 @@ fn lower(
                             ));
                         }
                         let mut group = out.split_off(start);
-                        if let Some((array, indices)) = array_loop {
+                        if let Some((mut before, loops)) = array_loop {
                             // First subscript varies fastest in Fortran array element order.
-                            for (axis, index) in indices.iter().enumerate() {
+                            for (index, first, last, step) in loops {
                                 let mut body = vec![Stmt::If {
                                     cond: Expr::Bin(
                                         BinOp::Ne,
@@ -464,25 +583,13 @@ fn lower(
                                     else_body: None,
                                 }];
                                 body.extend(group);
-                                group = vec![Stmt::Do {
-                                    var: index.clone(),
-                                    start: Expr::Call(
-                                        "lbound".into(),
-                                        vec![id(&array), int(axis as i64 + 1)],
-                                    ),
-                                    end: Expr::Call(
-                                        "ubound".into(),
-                                        vec![id(&array), int(axis as i64 + 1)],
-                                    ),
-                                    body,
-                                }];
+                                let mut loop_body =
+                                    vec![call("@do_step", vec![id(&index), first, last, step])];
+                                loop_body.extend(body);
+                                group = vec![Stmt::Block { body: loop_body }];
                             }
-                            let mut declarations: Vec<_> = indices
-                                .iter()
-                                .map(|n| decl(n, TypeSpec::Integer(None)))
-                                .collect();
-                            declarations.extend(group);
-                            group = declarations;
+                            before.extend(group);
+                            group = before;
                         }
                         out.push(Stmt::If {
                             cond: Expr::Bin(BinOp::Eq, Box::new(id(&ios)), Box::new(int(0))),

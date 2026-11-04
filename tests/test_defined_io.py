@@ -69,10 +69,7 @@ print *, 'after'""")
                     'must be CHARACTER(len=*) scalar')
 
     def test_reject_array_items_and_private_bindings(self):
-        source=self.source('iostat=0', 'print *, a(:)')
-        source=source.replace('type(point) :: a,b','type(point) :: a(2),b').replace('a%x=7','a%x=7')
-        self.reject(source,'requires a whole array variable and list-directed format')
-        self.reject(self.source('iostat=0','print *, [a,b]'),'requires a whole array variable and list-directed format')
+        self.reject(self.source('iostat=0','print *, [a,b]'),'requires a whole array or triplet section')
         self.reject(self.source('iostat=0').replace('generic :: write', 'generic,private :: write'),
                     'PUBLIC accessibility only')
 
@@ -232,14 +229,12 @@ print *, box%items(2),box%items(1)
         source=source.replace('type(point) :: a,b','type(point) :: a,b\ntype(container) :: box')
         self.check(source,'52 51\n')
 
-    def test_reject_vector_and_multidimensional_sections(self):
+    def test_reject_vector_subscripts(self):
         source=self.source('iostat=0','print *, points(indices)').replace('type(point) :: a,b',
             'type(point) :: a,b,points(2)\ninteger :: indices(2)')
-        self.reject(source,'requires a whole array variable and list-directed format')
+        self.reject(source,'vector subscripts are not yet supported')
         source=source.replace('points(indices)','points([1,2])')
-        self.reject(source,'requires a whole array variable and list-directed format')
-        source=source.replace('points(2)','points(2,2)').replace('points([1,2])','points(:,1)')
-        self.reject(source,'requires a whole array variable and list-directed format')
+        self.reject(source,'vector subscripts are not yet supported')
 
     def test_subscript_evaluated_once(self):
         source=self.source("write(unit,'(i0,1x,i0)',iostat=iostat,iomsg=iomsg) dtv%x,dtv%y", """points(1)=point(61,62)
@@ -268,7 +263,7 @@ p(1)=point(1)
 p(2)=point(2)
 end function
 end module""")
-        self.reject(source,'requires a whole array variable and list-directed format')
+        self.reject(source,'requires a whole array or triplet section')
 
     def test_whole_array_list_output(self):
         source=self.source("write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x", """points(-1)=point(10)
@@ -354,7 +349,85 @@ close(u)
     def test_array_dt_format_still_rejected(self):
         source=self.source('iostat=0',"write(*,'(dt)') points").replace(
             'type(point) :: a,b','type(point) :: a,b,points(2)')
-        self.reject(source,'requires a whole array variable and list-directed format')
+        self.reject(source,'requires a list-directed format')
+
+    def test_triplet_sections(self):
+        source=self.source("write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x", """do i=0,5
+ points(i)=point(i)
+end do
+step=-2
+print *, points(::2)
+print *, points(5:1:step)
+print *, 10,points(5:1),20
+print *, 10,points(::-1),20
+""").replace('type(point) :: a,b','type(point) :: a,b,points(0:5)\ninteger :: i,step')
+        self.check(source,'0 2 4\n5 3 1\n10 20\n10 20\n')
+
+    def test_multidimensional_triplet_sections(self):
+        self.check((ROOT/'tests/programs/xdefined_formatted_sections.f90').read_text(),
+                   '12 11 10 22 21 20\n21 11\n')
+
+    def test_section_controls_evaluated_once(self):
+        source=self.source("write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x", """points(1,1)=point(1)
+points(2,1)=point(2)
+points(3,1)=point(3)
+print *, points(bound(1):bound(3):bound(2),bound(1))
+print *, calls
+""").replace('type(point) :: a,b','type(point) :: a,b,points(3,1)')
+        source=source.replace('implicit none','implicit none\ninteger :: calls=0',1)
+        source=source.replace('end module', """integer function bound(i) result(j)
+integer,intent(in) :: i
+calls=calls+1
+j=i
+end function
+end module""")
+        self.check(source,'1 3\n4\n')
+
+    def test_zero_section_stride(self):
+        source=self.source('iostat=0',"step=0\nprint *, points(1:2:step)").replace(
+            'type(point) :: a,b','type(point) :: a,b,points(2)\ninteger :: step')
+        self.check(source,error='array section stride must not be zero',reference=False)
+
+    def test_runtime_allocatable_section_to_file(self):
+        source=self.file_source("write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x", """n=5
+allocate(points(-1:n))
+do i=-1,n
+ points(i)=point(i)
+end do
+open(newunit=u,status='scratch')
+call emit(u,points)
+rewind(u)
+read(u,'(a)') line
+print '(a)',trim(line)
+close(u)
+deallocate(points)
+""").replace('type(point) :: a,b','type(point) :: a,b\ntype(point),allocatable :: points(:)\ninteger :: n,i')
+        source=source.replace('end module', """subroutine emit(unit,values)
+integer,intent(in) :: unit
+type(point),intent(in) :: values(:)
+write(unit,*) values(size(values):1:-2)
+end subroutine
+end module""")
+        self.check(source,'5 3 1 -1\n')
+
+    def test_section_error_stops_iteration(self):
+        source=(ROOT/'tests/programs/xdefined_formatted_array_error.f90').read_text()
+        source=source.replace(') points,b',') points(1:3),b')
+        self.check(source,'17 element failed 2\n',reference=False)
+
+    def test_reject_noninteger_section_bound(self):
+        source=self.source('iostat=0','print *, points(first:2)').replace(
+            'type(point) :: a,b','type(point) :: a,b,points(2)\nreal :: first=1.0')
+        self.reject(source,'section bounds and stride must be scalar INTEGER')
+
+    def test_array_component_section(self):
+        source=self.source("write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x", """box%points(1)=point(1)
+box%points(2)=point(2)
+print *,box%points(2:1:-1)
+""")
+        source=source.replace('end type','end type\ntype :: container\n type(point) :: points(2)\nend type',1)
+        source=source.replace('type(point) :: a,b','type(point) :: a,b\ntype(container) :: box')
+        self.check(source,'2 1\n')
 
     def test_reject_unsupported_parent_forms(self):
         self.reject(self.source('iostat=0',"write(*,'(dt,dt)') a,b"),'one scalar object')
