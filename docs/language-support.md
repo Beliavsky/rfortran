@@ -4151,6 +4151,11 @@ positive or negative runtime strides, array components, and runtime-sized
 arrays. Bounds, strides, and scalar subscripts are evaluated once before
 iteration. Omitted bounds use the declared bounds regardless of stride sign;
 zero stride is diagnosed. Sections retain Fortran array element order.
+INTEGER vector subscripts are accepted, including repeated and empty vectors,
+nonunit lower bounds, runtime-sized vectors, and mixtures of scalar, triplet,
+and vector subscripts. Each vector expression is captured once before iteration;
+multiple vector subscripts select a Cartesian product in array element order.
+See `tests/programs/xdefined_formatted_vectors.f90`.
 Child formatted writes to the parent's unit do not terminate its record.
 Writes to other units retain their normal record endings. This also works through directly called helper subroutines, and normal
 advancing output resumes after the defined procedure returns.
@@ -4162,15 +4167,11 @@ Child WRITE also accepts scalar-variable IOSTAT/IOMSG: runtime format errors,
 connection/action errors, and output failures return a nonzero status rather
 than terminating when IOSTAT is supplied. The defined procedure can return
 that status and message to the parent. IOMSG is unchanged on success.
-Child WRITE also accepts scalar-variable IOSTAT/IOMSG: runtime format errors,
-connection/action errors, and output failures return a nonzero status rather
-than terminating when IOSTAT is supplied. The defined procedure can return
-that status and message to the parent. IOMSG is unchanged on success.
 The current message temporary holds 256 characters.
 
 This is partial support. Internal parent units, READ, unformatted
 transfers, namelist defined I/O, generic interface blocks, private and inherited defined
-bindings, vector-subscribed sections and array-valued expressions, explicitly formatted
+bindings, array-valued expressions, explicitly formatted
 array transfers, runtime parent
 formats, and general formats mixing DT with other descriptors remain outside
 the supported subset. Child ADVANCE currently requires a constant YES/NO value.

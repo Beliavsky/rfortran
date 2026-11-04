@@ -229,12 +229,64 @@ print *, box%items(2),box%items(1)
         source=source.replace('type(point) :: a,b','type(point) :: a,b\ntype(container) :: box')
         self.check(source,'52 51\n')
 
-    def test_reject_vector_subscripts(self):
-        source=self.source('iostat=0','print *, points(indices)').replace('type(point) :: a,b',
-            'type(point) :: a,b,points(2)\ninteger :: indices(2)')
-        self.reject(source,'vector subscripts are not yet supported')
-        source=source.replace('points(indices)','points([1,2])')
-        self.reject(source,'vector subscripts are not yet supported')
+    def test_vector_subscripts(self):
+        source=self.source("write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x", """points(1)=point(10)
+points(2)=point(20)
+points(3)=point(30)
+indices=[3,1,3]
+print *, points(indices)
+print *, points([2,1,2])
+print *, 1,points([integer ::]),2
+""").replace('type(point) :: a,b',
+            'type(point) :: a,b,points(3)\ninteger :: indices(-1:1)')
+        self.check(source,'30 10 30\n20 10 20\n1 2\n')
+
+    def test_mixed_vector_sections(self):
+        self.check((ROOT/'tests/programs/xdefined_formatted_vectors.f90').read_text(),
+                   '22 20 22 12 10 12\n21 20 11 10 21 20\n')
+
+    def test_vector_expression_evaluated_once(self):
+        source=self.source("write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x", """points(1)=point(10)
+points(2)=point(20)
+print *,points(indices())
+print *,calls
+""").replace('type(point) :: a,b','type(point) :: a,b,points(2)')
+        source=source.replace('implicit none','implicit none\ninteger :: calls=0',1)
+        source=source.replace('end module', """function indices() result(v)
+integer :: v(3)
+calls=calls+1
+v=[2,1,2]
+end function
+end module""")
+        self.check(source,'20 10 20\n1\n')
+
+    def test_runtime_vector_dummy(self):
+        source=self.source("write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x", """points(1)=point(10)
+points(2)=point(20)
+call emit(points,[2,1,2])
+call emit(points,[integer ::])
+""").replace('type(point) :: a,b','type(point) :: a,b,points(2)')
+        source=source.replace('end module', """subroutine emit(values,indices)
+type(point),intent(in) :: values(:)
+integer,intent(in) :: indices(:)
+print *,1,values(indices),2
+end subroutine
+end module""")
+        self.check(source,'1 20 10 20 2\n1 2\n')
+
+    def test_vector_wide_integer_kind(self):
+        source=self.source("write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x", """points(1)=point(10)
+points(2)=point(20)
+indices=[2,1]
+print *,points(indices)
+""").replace('type(point) :: a,b',
+            'type(point) :: a,b,points(2)\ninteger(kind=selected_int_kind(18)) :: indices(2)')
+        self.check(source,'20 10\n')
+
+    def test_vector_error_stops_iteration(self):
+        source=(ROOT/'tests/programs/xdefined_formatted_array_error.f90').read_text()
+        source=source.replace(') points,b',') points([3,2,1,2]),b')
+        self.check(source,'17 element failed 2\n',reference=False)
 
     def test_subscript_evaluated_once(self):
         source=self.source("write(unit,'(i0,1x,i0)',iostat=iostat,iomsg=iomsg) dtv%x,dtv%y", """points(1)=point(61,62)

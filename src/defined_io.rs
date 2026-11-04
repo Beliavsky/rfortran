@@ -327,7 +327,9 @@ fn array_item(
                 if !matches!(
                     types.type_rank(&value, declarations, objects)?,
                     Some((
-                        crate::operators::ExpressionElement::Intrinsic(TypeSpec::Integer(_)),
+                        crate::operators::ExpressionElement::Intrinsic(
+                            TypeSpec::Integer(_) | TypeSpec::IntegerKind(_)
+                        ),
                         0
                     ))
                 ) {
@@ -355,18 +357,60 @@ fn array_item(
                 captured[2].clone(),
             ));
         } else {
-            if !matches!(
-                types.type_rank(&subscript, declarations, objects)?,
+            match types.type_rank(&subscript, declarations, objects)? {
                 Some((
-                    crate::operators::ExpressionElement::Intrinsic(TypeSpec::Integer(_)),
-                    0
-                ))
-            ) {
-                bail!("defined formatted output vector subscripts are not yet supported");
+                    crate::operators::ExpressionElement::Intrinsic(
+                        kind @ (TypeSpec::Integer(_) | TypeSpec::IntegerKind(_)),
+                    ),
+                    1,
+                )) => {
+                    // Assignment captures the complete vector exactly once, including
+                    // function results. Iterate its actual bounds after allocation.
+                    let vector = format!("{name}_vector");
+                    before.push(Stmt::ArrayDecl {
+                        kind,
+                        name: vector.clone(),
+                        dims: vec![id("@deferred_extent")],
+                    });
+                    before.push(Stmt::DummyIntent {
+                        name: vector.clone(),
+                        intent: "allocatable".into(),
+                    });
+                    before.push(Stmt::DummyIntent {
+                        name: vector.clone(),
+                        intent: "@scalar_heap".into(),
+                    });
+                    // Force descriptor storage even for a constant vector. Start
+                    // allocated so allocation analysis need not infer the shape
+                    // of an enclosing scope's index variable.
+                    before.push(call(
+                        "@allocate",
+                        vec![Expr::Call(vector.clone(), vec![int(0)])],
+                    ));
+                    before.push(assign(&vector, subscript));
+                    before.push(decl(&name, TypeSpec::Integer(None)));
+                    indices.push(Expr::Index(vector.clone(), vec![id(&name)]));
+                    loops.push((
+                        name,
+                        Expr::Call("lbound".into(), vec![id(&vector), int(1)]),
+                        Expr::Call("ubound".into(), vec![id(&vector), int(1)]),
+                        int(1),
+                    ));
+                }
+                Some((
+                    crate::operators::ExpressionElement::Intrinsic(
+                        TypeSpec::Integer(_) | TypeSpec::IntegerKind(_),
+                    ),
+                    0,
+                )) => {
+                    before.push(decl(&name, TypeSpec::Integer(None)));
+                    before.push(assign(&name, subscript));
+                    indices.push(id(&name));
+                }
+                _ => bail!(
+                    "defined output subscripts must be scalar INTEGER or rank-one INTEGER vectors"
+                ),
             }
-            before.push(decl(&name, TypeSpec::Integer(None)));
-            before.push(assign(&name, subscript));
-            indices.push(id(&name));
         }
     }
     Ok((Expr::Call(array, indices), before, loops))
@@ -589,7 +633,9 @@ fn lower(
                                 group = vec![Stmt::Block { body: loop_body }];
                             }
                             before.extend(group);
-                            group = before;
+                            // Give captured arrays a local scope for descriptor
+                            // initialization and cleanup, including on writer error.
+                            group = vec![Stmt::Block { body: before }];
                         }
                         out.push(Stmt::If {
                             cond: Expr::Bin(BinOp::Eq, Box::new(id(&ios)), Box::new(int(0))),
