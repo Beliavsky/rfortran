@@ -71,8 +71,8 @@ print *, 'after'""")
     def test_reject_array_items_and_private_bindings(self):
         source=self.source('iostat=0', 'print *, a(:)')
         source=source.replace('type(point) :: a,b','type(point) :: a(2),b').replace('a%x=7','a%x=7')
-        self.reject(source,'requires scalar derived variables')
-        self.reject(self.source('iostat=0','print *, [a,b]'),'requires scalar derived variables')
+        self.reject(source,'requires a whole array variable and list-directed format')
+        self.reject(self.source('iostat=0','print *, [a,b]'),'requires a whole array variable and list-directed format')
         self.reject(self.source('iostat=0').replace('generic :: write', 'generic,private :: write'),
                     'PUBLIC accessibility only')
 
@@ -235,11 +235,11 @@ print *, box%items(2),box%items(1)
     def test_reject_vector_and_multidimensional_sections(self):
         source=self.source('iostat=0','print *, points(indices)').replace('type(point) :: a,b',
             'type(point) :: a,b,points(2)\ninteger :: indices(2)')
-        self.reject(source,'requires scalar derived variables')
+        self.reject(source,'requires a whole array variable and list-directed format')
         source=source.replace('points(indices)','points([1,2])')
-        self.reject(source,'requires scalar derived variables')
+        self.reject(source,'requires a whole array variable and list-directed format')
         source=source.replace('points(2)','points(2,2)').replace('points([1,2])','points(:,1)')
-        self.reject(source,'requires scalar derived variables')
+        self.reject(source,'requires a whole array variable and list-directed format')
 
     def test_subscript_evaluated_once(self):
         source=self.source("write(unit,'(i0,1x,i0)',iostat=iostat,iomsg=iomsg) dtv%x,dtv%y", """points(1)=point(61,62)
@@ -268,7 +268,93 @@ p(1)=point(1)
 p(2)=point(2)
 end function
 end module""")
-        self.reject(source,'requires scalar derived variables')
+        self.reject(source,'requires a whole array variable and list-directed format')
+
+    def test_whole_array_list_output(self):
+        source=self.source("write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x", """points(-1)=point(10)
+points(0)=point(20)
+points(1)=point(30)
+print *, 'values',points,'end'
+""").replace('type(point) :: a,b','type(point) :: a,b,points(-1:1)')
+        self.check(source,' values 10 20 30 end\n')
+
+    def test_multidimensional_array_element_order(self):
+        self.check((ROOT/'tests/programs/xdefined_formatted_arrays.f90').read_text(),
+                   '1 2 3 4\n')
+
+    def test_allocatable_array_and_empty_array(self):
+        source=self.source("write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x", """n=3
+allocate(points(n))
+points(1)=point(7)
+points(2)=point(8)
+points(3)=point(9)
+print *, points
+print *, 1,empty,2
+deallocate(points)
+""").replace('type(point) :: a,b','type(point) :: a,b,empty(0)\ntype(point),allocatable :: points(:)\ninteger :: n')
+        self.check(source,'7 8 9\n1 2\n')
+
+    def test_array_stops_after_writer_error(self):
+        # Positive defined-I/O IOSTAT signals an error (NAG Fortran manual 9.7).
+        # Local gfortran 17 continues the array and overwrites status with zero.
+        # https://support.nag.com/nagware/np/r72_doc/manual/compiler_9_7.html
+        self.check((ROOT/'tests/programs/xdefined_formatted_array_error.f90').read_text(),
+                   '17 element failed 2\n',reference=False)
+
+    def test_rank_three_allocatable_and_assumed_shape(self):
+        source=self.source("write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x", """allocate(points(2,1,2))
+points(1,1,1)=point(1)
+points(2,1,1)=point(2)
+points(1,1,2)=point(3)
+points(2,1,2)=point(4)
+call emit(points)
+deallocate(points)
+""").replace('type(point) :: a,b','type(point) :: a,b\ntype(point),allocatable :: points(:,:,:)')
+        source=source.replace('end module', """subroutine emit(values)
+type(point),intent(in) :: values(:,:,:)
+print *,values
+end subroutine
+end module""")
+        self.check(source,'1 2 3 4\n')
+
+    def test_rank_fifteen_single_element(self):
+        dimensions=','.join(['1']*15)
+        source=self.source("write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x",
+                           f'points({dimensions})=point(15)\nprint *, points')
+        source=source.replace('type(point) :: a,b',f'type(point) :: a,b,points({dimensions})')
+        self.check(source,'15\n')
+
+    def test_whole_array_component_to_file(self):
+        source=self.file_source("write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x", """box%points(1)=point(91)
+box%points(2)=point(92)
+open(newunit=u,status='scratch')
+write(u,*) box%points
+rewind(u)
+read(u,'(a)') line
+print '(a)',trim(line)
+close(u)
+""")
+        source=source.replace('end type','end type\ntype :: container\n type(point) :: points(2)\nend type',1)
+        source=source.replace('type(point) :: a,b','type(point) :: a,b\ntype(container) :: box')
+        self.check(source,'91 92\n')
+
+    def test_multidimensional_error_stops_outer_iterations(self):
+        source=self.file_source("""calls=calls+1
+iostat=21
+iomsg='first element failed'
+""", """points%x=1
+open(newunit=u,status='scratch')
+write(u,*,iostat=status,iomsg=message) points
+print *,status,trim(message),calls
+close(u)
+""").replace('type(point) :: a,b','type(point) :: a,b,points(2,2,2)')
+        source=source.replace('implicit none','implicit none\ninteger :: calls=0',1)
+        self.check(source,'21 first element failed 1\n',reference=False)
+
+    def test_array_dt_format_still_rejected(self):
+        source=self.source('iostat=0',"write(*,'(dt)') points").replace(
+            'type(point) :: a,b','type(point) :: a,b,points(2)')
+        self.reject(source,'requires a whole array variable and list-directed format')
 
     def test_reject_unsupported_parent_forms(self):
         self.reject(self.source('iostat=0',"write(*,'(dt,dt)') a,b"),'one scalar object')

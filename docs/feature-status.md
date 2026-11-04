@@ -338,7 +338,7 @@ current limits.
 | [Unformatted stream access](language-support.md#file-and-standard-input) | F2003 | 🟡 | READ and WRITE of INTEGER, REAL, LOGICAL, CHARACTER and derived-type data, POS= on READ, IOSTAT; not COMPLEX | test_stream_io.py |
 | Unformatted sequential and direct access | F77 or earlier | 🟡 | Sequential access; direct access (REC=) is not yet supported |  |
 | [NAMELIST](language-support.md#namelist) | Mixed | 🟡 | External NAMELIST: F90; internal input and IOMSG: F2003. Intrinsic scalars/fixed arrays, element designators, partial updates, repetitions/nulls, IOSTAT/IOMSG. Internal output, sections, allocatable/pointer/derived objects and USE-associated groups remain unsupported | test_namelist.py |
-| [Defined derived-type I/O](language-support.md#defined-derived-type-output) | F2003 | 🟡 | Type-bound formatted output of scalar variables, components, elements, constructors, and function results to standard output and external files; list-directed and single-DT formats, unit-specific child record continuation, and parent/child IOSTAT/IOMSG. Input, unformatted transfers, internal units, and general DT formats remain unsupported | test_defined_io.py |
+| [Defined derived-type I/O](language-support.md#defined-derived-type-output) | F2003 | 🟡 | Type-bound formatted output of scalar variables, components, elements, constructors, and function results to standard output and external files; list-directed and single-DT formats, unit-specific child record continuation, parent/child IOSTAT/IOMSG, and list-directed whole-array output through rank 15. Input, unformatted transfers, internal units, and general DT formats remain unsupported | test_defined_io.py |
 
 ## Intrinsic procedures
 

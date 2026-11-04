@@ -307,11 +307,11 @@ fn lower(
             if let Some((unit, format, mut items)) = selected {
                 // Share type/rank inference with generic procedure resolution, so
                 // constructors, components and function results retain their type.
-                let target = |e: &Expr| -> Result<Option<(String, bool)>> {
+                let target = |e: &Expr| -> Result<Option<(String, usize)>> {
                     Ok(
                         match expression_types.type_rank(e, &declarations, &objects)? {
                             Some((crate::operators::ExpressionElement::Derived(ty), rank)) => {
-                                bindings.get(&ty).map(|p| (p.clone(), rank != 0))
+                                bindings.get(&ty).map(|p| (p.clone(), rank))
                             }
                             _ => None,
                         },
@@ -386,12 +386,29 @@ fn lower(
                             value: v.clone(),
                         });
                     }
-                    for item in items {
+                    for (item_number, item) in items.into_iter().enumerate() {
                         let start = out.len();
-                        if let Some((procedure, array)) = target(&item)? {
-                            if array {
-                                bail!("defined formatted output currently requires scalar derived variables");
-                            }
+                        let mut array_loop = None;
+                        if let Some((procedure, rank)) = target(&item)? {
+                            let item = if rank != 0 {
+                                let Expr::Ident(array) = item else {
+                                    bail!("defined formatted array output currently requires a whole array variable and list-directed format");
+                                };
+                                if !list {
+                                    bail!("defined formatted array output currently requires a whole array variable and list-directed format");
+                                }
+                                let indices: Vec<_> = (1..=rank)
+                                    .map(|axis| format!("{prefix}_item_{item_number}_index_{axis}"))
+                                    .collect();
+                                let element = Expr::Call(
+                                    array.clone(),
+                                    indices.iter().map(|n| id(n)).collect(),
+                                );
+                                array_loop = Some((array, indices));
+                                element
+                            } else {
+                                item
+                            };
                             if list {
                                 out.push(checked_write(
                                     id(&parent_unit),
@@ -433,7 +450,40 @@ fn lower(
                                 &msg,
                             ));
                         }
-                        let group = out.split_off(start);
+                        let mut group = out.split_off(start);
+                        if let Some((array, indices)) = array_loop {
+                            // First subscript varies fastest in Fortran array element order.
+                            for (axis, index) in indices.iter().enumerate() {
+                                let mut body = vec![Stmt::If {
+                                    cond: Expr::Bin(
+                                        BinOp::Ne,
+                                        Box::new(id(&ios)),
+                                        Box::new(int(0)),
+                                    ),
+                                    then_body: vec![Stmt::Exit],
+                                    else_body: None,
+                                }];
+                                body.extend(group);
+                                group = vec![Stmt::Do {
+                                    var: index.clone(),
+                                    start: Expr::Call(
+                                        "lbound".into(),
+                                        vec![id(&array), int(axis as i64 + 1)],
+                                    ),
+                                    end: Expr::Call(
+                                        "ubound".into(),
+                                        vec![id(&array), int(axis as i64 + 1)],
+                                    ),
+                                    body,
+                                }];
+                            }
+                            let mut declarations: Vec<_> = indices
+                                .iter()
+                                .map(|n| decl(n, TypeSpec::Integer(None)))
+                                .collect();
+                            declarations.extend(group);
+                            group = declarations;
+                        }
                         out.push(Stmt::If {
                             cond: Expr::Bin(BinOp::Eq, Box::new(id(&ios)), Box::new(int(0))),
                             then_body: group,

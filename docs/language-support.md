@@ -4140,6 +4140,12 @@ Scalar components, array elements (including multidimensional elements),
 structure constructors, and scalar derived function results use the same
 binding as named scalar variables. Subscripts and function results are
 materialized by the existing derived-argument lowering and evaluated once.
+List-directed parent output also accepts whole derived arrays, including
+array components, allocatable arrays, and assumed-shape dummies. Each element
+uses the scalar defined writer, in Fortran array element order (first subscript
+varies fastest). Runtime bounds and nonunit lower bounds are respected; empty
+arrays make no writer calls. The lowering handles ranks through 15. A writer
+error stops the remaining elements and subsequent parent output items.
 Child formatted writes to the parent's unit do not terminate its record.
 Writes to other units retain their normal record endings. This also works through directly called helper subroutines, and normal
 advancing output resumes after the defined procedure returns.
@@ -4159,7 +4165,8 @@ The current message temporary holds 256 characters.
 
 This is partial support. Internal parent units, READ, unformatted
 transfers, namelist defined I/O, generic interface blocks, private and inherited defined
-bindings, derived-array items and sections, runtime parent
+bindings, array sections and array-valued expressions, explicitly formatted
+array transfers, runtime parent
 formats, and general formats mixing DT with other descriptors remain outside
 the supported subset. Child ADVANCE currently requires a constant YES/NO value.
 T/TL positioning in
@@ -4168,7 +4175,12 @@ child output is diagnosed rather than treating the child as a fresh record.
 Standalone examples are `tests/programs/xdefined_formatted_output.f90` for
 standard output and `tests/programs/xdefined_formatted_file.f90` for a scratch
 file with parent/child status controls. `tests/programs/xdefined_formatted_values.f90`
-demonstrates scalar components and constructors.
+demonstrates scalar components and constructors, and
+`tests/programs/xdefined_formatted_arrays.f90` demonstrates whole-array output.
+`tests/programs/xdefined_formatted_array_error.f90` checks stopping on an element
+error: expected status 17 and two writer calls. The local gfortran 17 build
+continues to four calls and returns zero, so this regression uses explicit
+rfort assertions rather than a gfortran output comparison.
 Run `python tests/test_defined_io.py` for interpreter/native O0/O2 checks,
 gfortran output comparisons, and interface/unsupported-form diagnostics.
 
