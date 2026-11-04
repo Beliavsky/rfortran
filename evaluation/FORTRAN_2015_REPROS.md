@@ -165,6 +165,128 @@ pass in this run. No full rfort executable was produced or executed. The new
 scope regression also passes against the rebuilt optimized binary. The release
 path still contains the LTO-disabled development build used for these profiles.
 
+## Reduction and multidimensional lowering compilation-speed follow-up
+
+Both passes now use copy-on-write scope tables (`src/shared_map.rs`).
+Multidimensional lowering shares unchanged shapes and scalar types while local
+updates remain isolated. Reduction lowering shares variables, elemental and
+scalar-function signatures, character-function signatures, and procedure names.
+Its implicit READ-destination discovery now walks immutable child bodies directly
+instead of cloning complete statement subtrees at every nesting level.
+
+All 90 targeted regression tests pass, covering fixed/runtime DIM reductions,
+logical and masked reductions, section assignments, multidimensional arguments,
+WHERE, FORALL, and list-directed READ. The new
+`tests/test_reduction_multidim_scope_sharing.py` checks nested implicit READ
+variables and restoration of shapes/types after shadowing blocks, against
+interpreter/native O0/O2 execution and gfortran. Both new tests also pass against
+the rebuilt optimized executable.
+
+The first attempt, sharing variable/shape tables only, completed multidimensional
+lowering in 20.835 seconds but still timed out inside reduction lowering at the
+300-second overall limit (`target/2015-compat/fve-reduction-multidim-sharing/`).
+Sharing the remaining procedure metadata then allowed reduction lowering to finish.
+The final profile (`target/2015-compat/fve-reduction-multidim-final/`) records:
+
+| Pass | Seconds |
+|---|---:|
+| Multidimensional lowering | 19.764 |
+| Reduction lowering | 66.327 |
+| Section lowering | 30.302 |
+
+The earlier multidimensional pass took 92.126 seconds. Reduction lowering had no
+completed baseline time because it was interrupted at the overall limit. Some
+unchanged passes were slower in this run, so these results do not establish a
+controlled total-build speedup ratio. Build settings remain LTO disabled and
+16 codegen units, as in the previous profiles.
+
+The full compilation still times out after 300.058 seconds, now after starting
+semantic analysis; gfortran completes in 7.955 seconds. Semantic analysis has not
+yet been measured to completion and is not established as the next bottleneck.
+No complete rfort executable was produced or executed. The profiles retain
+compiler/source snapshots, commands and full logs. Opt-in reduction counters
+separate symbol setup from implicit READ discovery; the latter used roughly
+0.32 seconds across the first 98,000 scopes, while symbol setup still accumulated
+about 25 seconds. Further declaration-scope optimization remains worthwhile.
+
+`target/release/rfort.exe` contains the LTO-disabled development build used here.
+
+## Separate main-program profile after lowering optimizations
+
+A fresh separate-compilation run used the current optimized compiler snapshot,
+compiled all sources in `C:/fortran/2015/fve_files.txt` in list order, and supplied
+the resulting module files through `-I`/`-J` when compiling subsequent files.
+Each compiler had an isolated workspace. This was compilation only (`-c`),
+without linking or execution. Per-file timeout was 600 seconds. rfort used its
+default O2 and the LTO-disabled development compiler build; gfortran used O0 and
+`-ffree-line-length-none`, so this is not an equal-optimization benchmark.
+
+| Measurement | Result |
+|---|---:|
+| rfort, all 12 module files | Passed; 34.476 seconds total |
+| rfort, main `xfwd_vol_ema_pred.f90` | Timed out after 600.051 seconds |
+| gfortran, main `xfwd_vol_ema_pred.f90` | Passed in 0.533 seconds |
+
+All gfortran module compilations also passed. rfort's main-program compile
+finished array-call lowering in 220.009 seconds, reductions in 83.611 seconds,
+and sections in 46.011 seconds. These are sequential top-level pass times;
+array-call lowering already includes the vector, allocation, substring,
+function-array and multidimensional subpasses, so those must not be added again.
+Completed top-level timers sum to 370.232 seconds. The last active pass was
+`sema`, leaving roughly 230 seconds of the run in semantic analysis (an
+approximation because startup and untimed work also contribute to elapsed time).
+No semantic diagnostic was emitted before timeout.
+
+Thus separately compiling the modules still leaves a very slow main-program
+compilation. Semantic analysis is now a confirmed later hotspot and should be
+profiled internally next. There is no completed combined-build timing for the
+same binary with which to claim that both approaches take equal total time.
+
+The snapshot, per-file commands/timings, source manifests, module/object files,
+and pass logs are saved locally under
+`target/2015-compat/fve-separate-after-lowering/` (`report.json`, `report.md`, and
+`rfort/xfwd_vol_ema_pred.compile.log`). The driver used for this run is
+`target/profile_fve_separate_current.py`. No compiler source was changed for
+this measurement.
+
+## Internal semantic-analysis profile
+
+Opt-in `RFORT_TIME_PASSES=1` timers now divide semantic analysis into stages.
+The instrumented main-only run reused the separately compiled modules from
+`fve-separate-after-lowering` and ran with a 600-second timeout. It changed no
+semantic rules. The snapshot, command, module origin, report and log are under
+`target/2015-compat/fve-separate-sema-profile/`; the local driver is
+`target/profile_fve_sema.py`.
+
+| Semantic stage | Seconds |
+|---|---:|
+| Declarations | 0.009 |
+| Early targets and loop checks | 0.046 |
+| Initial procedure tables | 0.010 |
+| Program reads | 0.123 |
+| Source spans and interface collection | 41.816 |
+| Reads before assignment | 0.128 |
+| Procedure bodies and subsequent top-level checks | 130.850 |
+| Undefined calls | 29.166 |
+| Unused functions | 0.091 |
+| Math checks | Unfinished at overall timeout |
+
+The timer named `sema.function_bodies` includes procedure-body analysis plus
+subsequent top-level declaration/assignment checks; it does not establish that
+procedure bodies alone take 130.850 seconds. This is the largest completed stage
+and the first target for finer profiling and optimization. Source-span processing
+and undefined-call checks are also material. Inspection finds repeated token
+searches and copied scope tables, but their individual contributions have not
+been isolated by these stage timers.
+
+The overall timeout was 600.119 seconds. Completed top-level pre-semantic timers
+sum to 342.522 seconds; completed semantic substage timers sum to 202.239 seconds.
+The remaining roughly 55 seconds includes unfinished math checks and untimed
+startup/work, so it is not an exact math-pass time. No full executable was
+produced. Two scope/input smoke tests pass against the instrumented release
+binary. Ordinary output remains unchanged unless pass timing is enabled.
+The optimized compiler still uses LTO disabled and 16 codegen units.
+
 ## Compilation-speed follow-up: fve
 
 The initial release profile timed out after 180 seconds in the final
@@ -534,3 +656,9 @@ document preserve the repros in the repository.
 
 The earlier verified gnuplot FORALL/constructor repro is
 [xforall_constructor_implied_do.f90](../xforall_constructor_implied_do.f90).
+
+## Small fve drivers
+
+[Small-driver results and commands](FVE_SMALL_DRIVERS.md) isolate the forecast
+statistics-reporting calls: the reduced caller times out at 180 seconds, whereas
+a matched module with only those two calls removed compiles in 34.230 seconds.

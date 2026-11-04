@@ -281,6 +281,7 @@ pub fn analyze_with_origins(
     silent_undefined: bool,
     origins: Option<&[crate::source_diagnostics::SourceOrigin]>,
 ) -> Vec<CompileError> {
+    let sema_phase = crate::compile_profile::Pass::new("sema.declarations");
     let mut sym: HashMap<String, TypeSpec> = HashMap::new();
     let mut errors: Vec<CompileError> = Vec::new();
     let mut implicit_typing = ImplicitTyping::new();
@@ -442,6 +443,8 @@ pub fn analyze_with_origins(
         }
     }
 
+    drop(sema_phase);
+    let sema_phase = crate::compile_profile::Pass::new("sema.early_targets");
     fn collect_do_vars(s: &Stmt, out: &mut HashMap<String, TypeSpec>) {
         match s {
             // FORALL indices, like DO variables, are INTEGER.
@@ -674,6 +677,8 @@ pub fn analyze_with_origins(
         check_loop_usage(stmt, 0, tokens, &mut stderr, &file, &mut errors);
     }
 
+    drop(sema_phase);
+    let sema_phase = crate::compile_profile::Pass::new("sema.procedure_tables");
     let mut known_intrinsics: HashMap<String, TypeSpec> = HashMap::new();
     for (name, _) in crate::intrinsics::REAL_MATH {
         known_intrinsics.insert(name.to_string(), TypeSpec::Real);
@@ -785,6 +790,8 @@ pub fn analyze_with_origins(
     let mut fn_map: HashMap<String, FnInfo> = HashMap::new();
     let mut module_fn_names: HashSet<String> = HashSet::new();
     let mut param_intent_map: HashMap<String, ParamIntent> = HashMap::new();
+    drop(sema_phase);
+    let sema_phase = crate::compile_profile::Pass::new("sema.program_reads");
     let mut program_level_reads: HashSet<String> = HashSet::new();
     fn walk_reads_for_program(e: &Expr, out: &mut HashSet<String>) {
         match e {
@@ -1061,6 +1068,8 @@ pub fn analyze_with_origins(
         }
     }
 
+    drop(sema_phase);
+    let sema_phase = crate::compile_profile::Pass::new("sema.source_spans_and_interfaces");
     let find_ident_span = |name: &str| -> std::ops::Range<usize> {
         if let Some(t) = tokens.iter().find(|t| match &t.kind {
             TokenKind::Ident(s) => s.eq_ignore_ascii_case(name),
@@ -2192,6 +2201,8 @@ pub fn analyze_with_origins(
             settings,
         );
     }
+    drop(sema_phase);
+    let sema_phase = crate::compile_profile::Pass::new("sema.reads_before_assignment");
     for (_fname, info) in fn_map.iter() {
         check_reads_before_assignment(
             &info.params,
@@ -2204,6 +2215,8 @@ pub fn analyze_with_origins(
             settings,
         );
     }
+    drop(sema_phase);
+    let sema_phase = crate::compile_profile::Pass::new("sema.function_bodies");
     for (fname, info) in fn_map.clone() {
         analyze_fn_body(
             &fname,
@@ -2609,6 +2622,8 @@ pub fn analyze_with_origins(
             _ => {}
         }
     }
+    drop(sema_phase);
+    let sema_phase = crate::compile_profile::Pass::new("sema.undefined_calls");
     let mut undef_calls: Vec<&str> = Vec::new();
     for stmt in &program.body {
         walk_stmt_undef(
@@ -2639,6 +2654,8 @@ pub fn analyze_with_origins(
             );
         }
     }
+    drop(sema_phase);
+    let sema_phase = crate::compile_profile::Pass::new("sema.unused_functions");
     let mut called_fns: HashSet<String> = HashSet::new();
     fn walk_calls<'a>(e: &'a Expr, called: &mut HashSet<String>) {
         match e {
@@ -2908,10 +2925,13 @@ pub fn analyze_with_origins(
         }
     }
 
+    drop(sema_phase);
+    let sema_phase = crate::compile_profile::Pass::new("sema.math_checks");
     let mut math_problems = Vec::new();
     check_math_body(&program.body, &sym, &HashSet::new(), &fn_map, &external_fn_ret, &mut math_problems);
     for (name, message) in math_problems {
         report_error(&message, find_ident_span(&name), &mut stderr, &file, &mut errors, false);
     }
+    drop(sema_phase);
     errors
 }

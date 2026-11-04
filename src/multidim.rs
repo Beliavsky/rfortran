@@ -274,7 +274,7 @@ struct Lowerer {
     defer_forall_shapes: bool,
     pure_functions: HashMap<String, bool>,
     elementals: std::collections::HashSet<String>,
-    types: HashMap<String, TypeSpec>,
+    types: crate::shared_map::SharedMap<TypeSpec>,
     functions: HashMap<String, TypeSpec>,
     module_arrays: std::collections::HashSet<String>,
     // Arrays whose storage is on the heap: their declared extent is a
@@ -1191,7 +1191,7 @@ impl Lowerer {
         Ok(())
     }
 
-    fn body(&mut self, body: &mut [Stmt], inherited: &Shapes) -> Result<()> {
+    fn body(&mut self, body: &mut [Stmt], inherited: &crate::shared_map::SharedMap<Vec<i64>>) -> Result<()> {
         let statement_location = std::cell::Cell::new(None);
         let result = (|| -> Result<()> {
         let mut shapes = inherited.clone();
@@ -1359,7 +1359,7 @@ impl Lowerer {
                 }
                 Stmt::Module { body, .. } => {
                     let saved = std::mem::take(&mut self.types);
-                    self.body(body, &Shapes::new())?;
+                    self.body(body, &Default::default())?;
                     self.types = saved;
                 }
                 Stmt::SelectCase {
@@ -1575,7 +1575,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
         }
     }
     functions(&p.body, &mut lower.functions);
-    lower.body(&mut p.body, &Shapes::new())?;
+    lower.body(&mut p.body, &Default::default())?;
     p.body.extend(lower.guards);
     Ok(p)
 }

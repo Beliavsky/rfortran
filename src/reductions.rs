@@ -9,17 +9,17 @@ use std::collections::{HashMap, HashSet};
 
 #[derive(Clone,Default)]
 struct Symbols {
-    variables: HashMap<String,(TypeSpec,Vec<Expr>)>,
-    elementals: HashMap<String,TypeSpec>,
-    scalar_functions: HashMap<String,TypeSpec>,
-    character_functions: HashMap<String,Vec<Option<usize>>>,
-    procedures: HashSet<String>,
+    variables: crate::shared_map::SharedMap<(TypeSpec,Vec<Expr>)>,
+    elementals: crate::shared_map::SharedMap<TypeSpec>,
+    scalar_functions: crate::shared_map::SharedMap<TypeSpec>,
+    character_functions: crate::shared_map::SharedMap<Vec<Option<usize>>>,
+    procedures: std::sync::Arc<HashSet<String>>,
 }
 impl Symbols {
     fn new() -> Self { Self::default() }
     fn from_shapes(shapes: &HashMap<String,(TypeSpec,Vec<Expr>)>) -> Self {
         Self {
-            variables: shapes.clone(),
+            variables: shapes.clone().into(),
             elementals: shapes.iter().filter_map(|(name,(kind,_))|
                 name.strip_prefix("@elemental:").map(|name|(name.to_owned(),kind.clone()))).collect(),
             ..Self::default()
@@ -1588,7 +1588,7 @@ pub(crate) fn advance_control(value:&Expr,variables:&HashMap<String,(TypeSpec,Ve
             "yes"=>Ok(int(1)),"no"=>Ok(int(0)),_=>bail!("ADVANCE must be 'yes' or 'no'"),
         };
     }
-    let mut symbols=Symbols::new();symbols.variables=variables.clone();
+    let mut symbols=Symbols::new();symbols.variables=variables.clone().into();
     let width=character_capacity(value,&symbols)?.context("ADVANCE must be scalar CHARACTER with a known storage length")?;
     let start=prefix.len();
     *serial+=1;let text=format!("@advance_text_{serial}");let flag=format!("@advance_flag_{serial}");
@@ -1643,10 +1643,16 @@ fn implicit_read_destinations(body: &[Stmt], symbols: &mut Symbols) {
                     }
                 }
                 Stmt::Function { .. } | Stmt::Subroutine { .. } | Stmt::Module { .. } => {}
-                _ => {
-                    let mut s = s.clone();
-                    for b in crate::procedure_arguments::children(&mut s) { visit(b, rules, symbols); }
+                Stmt::Block { body } | Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } => visit(body, rules, symbols),
+                Stmt::If { then_body, else_body, .. } => {
+                    visit(then_body, rules, symbols);
+                    if let Some(body) = else_body { visit(body, rules, symbols); }
                 }
+                Stmt::SelectCase { cases, default, .. } => {
+                    for case in cases { visit(&case.body, rules, symbols); }
+                    if let Some(body) = default { visit(body, rules, symbols); }
+                }
+                _ => {}
             }
         }
     }
@@ -1654,6 +1660,7 @@ fn implicit_read_destinations(body: &[Stmt], symbols: &mut Symbols) {
 }
 
 fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> Result<()> {
+    let symbol_timer = crate::compile_profile::Work::new("reductions.symbols");
     let mut symbols = inherited.clone();
     for stmt in body.iter() {
         match stmt {
@@ -1662,7 +1669,9 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
             _ => {}
         }
     }
-    implicit_read_destinations(body, &mut symbols);
+    drop(symbol_timer);
+    { let _timer = crate::compile_profile::Work::new("reductions.implicit_read");
+    implicit_read_destinations(body, &mut symbols); }
     let mut output = Vec::new();
     let mut source_offset=None;
     (||->Result<()> {
@@ -2253,8 +2262,8 @@ pub fn resolve(mut program: Program) -> Result<Program> {
             }
         }
     }
-    procedures(&program.body,&mut symbols.procedures);
-    symbols.elementals=crate::elemental::functions(&program);
+    procedures(&program.body,std::sync::Arc::make_mut(&mut symbols.procedures));
+    symbols.elementals=crate::elemental::functions(&program).into();
     fn scalar_functions(body:&[Stmt],out:&mut HashMap<String,TypeSpec>) {
         for stmt in body {match stmt {
             Stmt::Function{name,return_type,body,elemental:false,..}=>{
