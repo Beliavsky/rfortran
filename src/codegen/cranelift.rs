@@ -2547,20 +2547,20 @@ fn gen_stmts(
                 if let Some(after) = current_loop_after {
                     b.ins().jump(after, &[]);
 
-                    let nb = b.create_block();
-                    b.switch_to_block(nb);
-                    b.seal_block(nb);
-                    continue;
+                    // No statement after this transfer is reachable in this
+                    // body. In particular, initialization analysis intentionally
+                    // leaves unreachable heap cleanup uninstrumented.
+                    return Ok(true);
                 }
                 return Err(anyhow::anyhow!("EXIT used outside of a loop"));
             }
             IStmt::Cycle => {
                 if let Some(cont) = current_loop_continue {
                     b.ins().jump(cont, &[]);
-                    let nb = b.create_block();
-                    b.switch_to_block(nb);
-                    b.seal_block(nb);
-                    continue;
+                    // No statement after this transfer is reachable in this
+                    // body. In particular, initialization analysis intentionally
+                    // leaves unreachable heap cleanup uninstrumented.
+                    return Ok(true);
                 }
                 return Err(anyhow::anyhow!("CYCLE used outside of a loop"));
             }
@@ -3265,7 +3265,8 @@ fn gen_stmts(
                     let storage=|n:&str|ints.get(n).or_else(||reals.get(n)).or_else(||bools.get(n)).copied();
                     let IExpr::Ident(local)=&args[0] else{bail!("invalid heap allocation")};
                     let cell=heap_cell(b,ptr_ty,storage(local).context("missing array storage")?)?;
-                    let IExpr::Ident(mask)=&args[if name=="@heap_allocate" || resize{2}else{1}] else{bail!("missing allocation initialization mask")};
+                    let mask_arg=args.get(if name=="@heap_allocate" || resize{2}else{1}).with_context(||format!("internal error: {name} for `{local}` is missing its initialization mask"))?;
+                    let IExpr::Ident(mask)=mask_arg else{bail!("missing allocation initialization mask")};
                     let mask_cell=heap_cell(b,ptr_ty,storage(mask).context("missing initialization storage")?)?;
                     if name!="@heap_allocate" && !resize {
                         let mut signature=module.make_signature();signature.params.push(ir::AbiParam::new(ptr_ty));

@@ -728,3 +728,18 @@ native heap-operation argument panic (`cranelift.rs:3268`). Reports are saved in
 `target/2015-compat/fve-after-step-prefix/`; see
 [FVE_SMALL_DRIVERS.md](FVE_SMALL_DRIVERS.md#descending-loop-initialization-blocker-fixed).
 The full FVE main has not been rerun after this correctness change.
+
+
+The heap-operation panic is fixed by stopping native code generation after EXIT
+and CYCLE rather than visiting unreachable, uninstrumented array cleanup.
+Standalone reproducer: `tests/programs/xheap_cleanup_after_exit.f90` (replace
+EXIT with CYCLE for the companion case). All 33 loop/deallocation tests pass;
+the three new regressions also pass with the rebuilt release compiler.
+
+The literal stats and one-call vector stats probes now pass initialization and IR
+lowering, but each times out after 180 seconds during native code generation.
+Gfortran compiles both objects successfully. Reports are in
+`target/2015-compat/fve-after-loop-transfer-cleanup/`; see
+[FVE_SMALL_DRIVERS.md](FVE_SMALL_DRIVERS.md#heap-cleanup-after-loop-transfers-fixed).
+Next: profile native IR construction and Cranelift optimization/emission. The
+full FVE main has not been rerun, and no successful FVE build is claimed.

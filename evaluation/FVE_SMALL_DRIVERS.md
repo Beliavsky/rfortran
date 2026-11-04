@@ -430,3 +430,36 @@ is claimed, and the full FVE main was not rerun for this change.
 Reports: `target/2015-compat/fve-after-step-prefix/`. The next investigation is
 missing initialization-mask metadata on a lowered heap operation reaching native
 code generation; the precise operation and reason still need tracing.
+
+
+## Heap cleanup after loop transfers fixed
+
+The native-code-generation panic was caused by code generation continuing after
+EXIT or CYCLE in an unreachable block. Initialization analysis had correctly
+stopped at the transfer, leaving subsequent unreachable cleanup without its
+initialization-mask argument. Native code generation now reports the current
+body as terminated after emitting either transfer, just as it does for RETURN.
+Cleanup inserted before the transfer still executes. A defensive mask-argument
+check also replaces the previous unchecked indexing.
+
+Standalone reproducer: `tests/programs/xheap_cleanup_after_exit.f90`. An allocated
+array inside a BLOCK is followed by EXIT; before the fix this fails with a missing
+mask on `@heap_drop`. Replacing EXIT with CYCLE reproduces the same bug.
+
+All 33 tests in `test_named_loops`, `test_do_steps`, and `test_deallocate` pass
+with the debug compiler (32 together, then the additional DO WHILE regression).
+The three new tests cover EXIT/CYCLE cleanup, conditional named transfers from
+nested loops, and both branches transferring from a DO WHILE. They check native
+O0/O2 and interpreter execution against gfortran.
+
+The rebuilt release compiler also passes all three new tests. The scalar literal
+and one-call vector stats probes now pass initialization and IR lowering but both
+hit a **180-second timeout during native code generation** (180.633 and 180.661
+seconds total). Initialization took 17.913/16.468 seconds and IR lowering
+4.330/4.259 seconds. Gfortran compiled their objects in 0.458/0.440 seconds.
+Reports: `target/2015-compat/fve-after-loop-transfer-cleanup/`.
+
+These runs do not establish successful compilation of either stats probe or FVE.
+The full main was not retried. The next step is native-code-generation profiling:
+distinguish native IR construction from Cranelift optimization/emission and
+identify the expensive generated procedure or main body.

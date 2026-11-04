@@ -7,6 +7,55 @@ class NamedLoops(unittest.TestCase):
     check=test_deallocate.Deallocate.check
     reject=test_deallocate.Deallocate.reject
 
+    def test_owned_array_cleanup_after_loop_transfer(self):
+        source = (test_deallocate.ROOT / "tests/programs/xheap_cleanup_after_exit.f90").read_text()
+        self.check(source, "2 passed\n")
+        self.check(source.replace("      exit", "      cycle"), "2 4 6 passed\n")
+
+    def test_conditional_loop_transfers_with_owned_array(self):
+        self.check("""program main
+implicit none
+integer :: i,j,total
+total=0
+outer: do i=1,4
+   do j=1,2
+      block
+         real, allocatable :: x(:)
+         allocate(x(i))
+         x=2
+         if (i==2) cycle outer
+         if (i==4) exit outer
+         total=total+int(sum(x))
+      end block
+   end do
+end do outer
+print *,total,i
+end program
+""", "16 4\n")
+
+    def test_while_both_branches_transfer_with_owned_array(self):
+        self.check("""program main
+implicit none
+integer :: i
+i=0
+do while(i<5)
+   block
+      real, allocatable :: x(:)
+      i=i+1
+      allocate(x(i))
+      x=3
+      print *,sum(x)
+      if (i<3) then
+         cycle
+      else
+         exit
+      end if
+   end block
+end do
+print *,i
+end program
+""", "3 6 9 3\n")
+
     def test_outer_cycle_and_exit(self):
         self.check('''implicit none
 integer::i,j,k,n
