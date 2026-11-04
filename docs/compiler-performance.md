@@ -149,3 +149,18 @@ allocation_fill from 10.4 to about 3.5, and matmul_intrinsic from 83 to about 18
 Timings on the measurement machine varied by a factor of two during the session,
 so the ratios are from interleaved runs of both executables. The remaining gaps
 come mainly from gfortran's SIMD vectorization and its blocked library MATMUL.
+
+## Module-storage declaration scan
+
+Before generating functions, the native backend scans their IR to declare module
+and saved storage. The `codegen.module_data` pass timing isolates this work.
+Its type environment is shared during traversal, saving and restoring only the
+declarations introduced by each nested scope. This avoids copying all visible
+types for every branch, loop and block in heavily specialized main programs.
+Shadowed declarations are restored before visiting sibling scopes.
+
+The standalone driver `tests/programs/xmomentum_compile_stats.f90` isolates a
+`print_stats` call from the Fortran 2015 momentum main. It requires the external
+`kind_mod` and `statistics_mod` module interfaces; it is not a self-contained test.
+Use `tests/run_fve_compile_probes.py` with `--modules` and, for a gfortran
+comparison, `--reference-modules` pointing to the appropriate compiled interfaces.

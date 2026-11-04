@@ -113,3 +113,100 @@ The run contains 151 unique compile invocations and 44 reused dependency results
 Compiler snapshot SHA-256: `7827b4c85c28446089c887178aae93b9cd64170a4e2f5247666b2a65fe5f6c5d`.
 
 Reference: `GNU Fortran (GCC) 17.0.0 20260510 (experimental)`.
+
+## Momentum reduction and module-storage scan follow-up (2026-11-04)
+
+Removing the two `print_stats` calls from a copied momentum main reduced its
+compilation to 4.033 seconds with the saved compiler. Removing the random-normal
+calculation or replacing the trading-system call did not remove the slow path.
+Those exploratory runs overlapped part of a compiler rebuild and are not used
+as controlled timing comparisons.
+
+The new [small statistics driver](../tests/programs/xmomentum_compile_stats.f90)
+contains just a fixed 10-by-2 matrix and one `print_stats([iimean], ...)` call.
+It requires the external `kind_mod` and `statistics_mod` interfaces. This isolates
+the problematic call path without copying the external statistics library into
+this repository.
+
+The native module-storage declaration scan used to clone its complete visible
+type map at every block, branch and loop. It now saves and restores only the
+declarations introduced by each scope. This preserves inherited and shadowed
+types without repeatedly copying unrelated bindings. The new
+`codegen.module_data` timer isolates the scan; it takes 0.018 seconds on the full
+momentum main in both patched runs.
+
+### Measurements and variability
+
+These are sequential compile-only runs against the same saved momentum module
+interfaces, using default rfort optimization level 2 and pass timing. The full
+main was allowed 180 seconds rather than the original survey's 120 seconds.
+No compiler rebuild was running during the measurements in this table.
+
+| Main/probe | Saved compiler seconds | Patched compiler seconds |
+|---|---:|---:|
+| Small `print_stats` driver | 28.681 | 22.360 |
+| Full momentum main | 90.648 | 109.195; repeat 68.560 |
+| Statistics vector main | 15.810 | 17.018 |
+| Statistics tensor main | 13.178 | 16.268 |
+
+The historical 37?44-second statistics timings are **not** a reliable before/after
+baseline: fresh runs of the saved compiler also finished much sooner. The matched
+statistics runs do not demonstrate an overall speedup. Keep all measurements,
+rather than choosing only the fastest patched run. The timing variation is not
+explained by this experiment and these are not benchmark medians.
+
+The momentum phase breakdown provides more specific evidence:
+
+| Phase | Saved compiler | Patched first run | Patched repeat |
+|---|---:|---:|---:|
+| Initialization analysis | 24.700 | 43.896 | 22.927 |
+| IR lowering | 18.118 | 26.428 | 17.643 |
+| Code generation, including module-storage scan | 36.008 | 18.318 | 17.462 |
+
+The patch does not change initialization analysis or IR lowering. Their variation
+explains why the first patched whole-compilation time was worse despite less time
+in code generation. The small driver's code-generation phase fell from 11.501 to
+5.789 seconds. Further repeated, controlled measurements are needed before
+claiming a stable overall speed ratio.
+
+### Validation and remaining work
+
+All 18 module-scope and 14 separate-module-compilation tests pass against the
+rebuilt release compiler. The added scope regression exercises saved INTEGER,
+REAL and CHARACTER values in nested/sibling blocks across repeated calls, with
+interpreter, native O0/O2 and gfortran checks.
+
+The small statistics driver links against the saved module objects and prints
+two means of 1.0000, matching gfortran. The existing FVE scalar statistics probe
+also compiles (56.471 seconds), links and prints 0.01 for input 3, numerically
+matching gfortran. The **full FVE main was not rerun** in this follow-up; its last
+recorded blocker remains initialization-analysis time. Neither the full momentum
+application nor the random statistics mains was executed in this timing check.
+
+Next priorities remain initialization environment copies/joins and IR-lowering
+type-map copies. Both passes still do substantial work before native code
+generation. Use the small driver, the full momentum main, statistics mains and
+FVE probes together when checking subsequent optimizations.
+
+### Artifacts and reproduction
+
+Local reports are under `target/momentum-reduction/`:
+
+- `baseline/`: exploratory call-removal variants.
+- `small-before/`, `full-before/`, `statistics-before/`: saved-compiler measurements.
+- `after/`, `after-repeat/`: patched-compiler measurements and pass logs.
+- `execution.json`: link/run commands and outputs for the two checked probes.
+
+Saved compiler SHA-256: `7827b4c85c28446089c887178aae93b9cd64170a4e2f5247666b2a65fe5f6c5d`.
+Patched compiler SHA-256: `a20a12d80a8eae73abf0ea455e7c9cfa0f5d24dd024348cb35f7d2c52b87e664`.
+
+With the earlier survey's module interfaces available, run from Windows CMD:
+
+```cmd
+python tests\run_fve_compile_probes.py --modules target\2015-compat\main-survey-20261104\cases\rfort\mom_files --output target\momentum-reduction\new-run --timeout 180 tests\programs\xmomentum_compile_stats.f90
+```
+
+Choose a fresh output directory. Add `--compiler PATH` to measure another binary.
+The helper's optional gfortran comparison uses `-O0`; it was used only as a
+reference for the small-driver baseline, not to claim matched optimized compiler
+speed. The execution verification compiled its gfortran probes with `-O2`.

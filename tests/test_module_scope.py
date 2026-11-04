@@ -9,6 +9,37 @@ class ModuleScope(unittest.TestCase):
     def test_character_array_constant_reproducer(self):
         self.check((ROOT/'tests/174_module_scope.f90').read_text(encoding='utf-8'),'2\n')
 
+    def test_saved_bindings_in_sibling_and_nested_scopes(self):
+        self.check("""module scoped_saves
+implicit none
+contains
+subroutine step()
+integer, save :: value = 1
+block
+  real, save :: value = 1.5
+  value = value + 0.5
+  print '(f4.1)', value
+  block
+    character(3), save :: value = 'abc'
+    print '(a)', value
+  end block
+end block
+block
+  integer, save :: value = 10
+  value = value + 2
+  print '(i0)', value
+end block
+value = value + 1
+print '(i0)', value
+end subroutine
+end module
+program main
+use scoped_saves
+call step()
+call step()
+end program
+""", '2.0\nabc\n12\n2\n2.5\nabc\n14\n3\n')
+
     def test_shared_scalar_and_caller_shadowing(self):
         self.check("""module counter_mod
 implicit none

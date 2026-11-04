@@ -75,9 +75,13 @@ fn walk(
     owners: &HashSet<String>,
     types: &mut HashMap<String, TypeSpec>,
 ) -> Result<()> {
+    // Child scopes inherit types, but must not change the parent's bindings.
+    // Save only declarations introduced here instead of cloning every visible
+    // type at every branch/loop of a heavily specialized main program.
+    let mut previous = Vec::new();
     for statement in body {
         if let IStmt::DeclVar(kind, name, _) = statement {
-            types.insert(name.clone(), kind.clone());
+            previous.push((name, types.insert(name.clone(), kind.clone())));
         }
     }
     for statement in body {
@@ -159,27 +163,34 @@ fn walk(
                 }
             }
             IStmt::Block { body } | IStmt::Do { body, .. } | IStmt::DoWhile { body, .. } => {
-                walk(obj, body, owners, &mut types.clone())?
+                walk(obj, body, owners, types)?
             }
             IStmt::If {
                 then_body,
                 else_body,
                 ..
             } => {
-                walk(obj, then_body, owners, &mut types.clone())?;
+                walk(obj, then_body, owners, types)?;
                 if let Some(body) = else_body {
-                    walk(obj, body, owners, &mut types.clone())?;
+                    walk(obj, body, owners, types)?;
                 }
             }
             IStmt::SelectCase { cases, default, .. } => {
                 for case in cases {
-                    walk(obj, &case.body, owners, &mut types.clone())?;
+                    walk(obj, &case.body, owners, types)?;
                 }
                 if let Some(body) = default {
-                    walk(obj, body, owners, &mut types.clone())?;
+                    walk(obj, body, owners, types)?;
                 }
             }
             _ => {}
+        }
+    }
+    for (name, old) in previous.into_iter().rev() {
+        if let Some(kind) = old {
+            types.insert(name.clone(), kind);
+        } else {
+            types.remove(name);
         }
     }
     Ok(())

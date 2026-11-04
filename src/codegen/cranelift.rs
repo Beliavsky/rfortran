@@ -4041,7 +4041,7 @@ impl CraneliftBackend {
         )?;
         let mut obj = ObjectModule::new(builder);
         if let Some(owners) = &self.module_owners {
-            module_data::declare(&mut obj, module, owners)?;
+            crate::compile_profile::run("codegen.module_data", || module_data::declare(&mut obj, module, owners))?;
         }
         let file_units = obj.declare_data(".rfort.file_units", Linkage::Local, true, false)?;
         let mut file_data = DataDescription::new();
