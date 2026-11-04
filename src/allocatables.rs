@@ -470,11 +470,24 @@ fn logical_shape(
     }
 }
 
+#[derive(Default)]
+struct GeneratedChecks {
+    statements: Vec<Stmt>,
+    offsets: HashMap<(String, usize), String>,
+}
+impl std::ops::Deref for GeneratedChecks {
+    type Target = Vec<Stmt>;
+    fn deref(&self) -> &Self::Target { &self.statements }
+}
+impl std::ops::DerefMut for GeneratedChecks {
+    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.statements }
+}
+
 fn linear_index(
     name: &str,
     indices: &mut Vec<Expr>,
     shapes: &mut SharedShapes,
-    checks: &mut Vec<Stmt>,
+    checks: &mut GeneratedChecks,
     serial: &mut usize,
 ) -> Result<()> {
     let Some(axes) = axes(name, shapes) else {
@@ -489,8 +502,14 @@ fn linear_index(
     }
     // A rank-dependent nested offset expression can overflow the compiler's
     // Windows stack. Keep offset calculation in a small scalar helper instead.
-    *serial+=1;
-    let function=format!("@alloc_offset_{serial}");
+    // Only rank and diagnostic text belong to the helper; current bounds and
+    // subscripts are actual arguments, including after reallocation/shadowing.
+    let key = (name.to_owned(), axes.len());
+    let existing = checks.offsets.get(&key).cloned();
+    let function = if let Some(function) = &existing { function.clone() } else {
+        *serial += 1;
+        format!("@alloc_offset_{serial}")
+    };
     let offset=format!("@alloc_offset_value_{serial}");let stride=format!("@alloc_stride_value_{serial}");
     let mut params=vec![];let mut actuals=vec![];let mut body=vec![];let mut terms=vec![];
     for (axis,(index,extent)) in indices.iter().zip(axes).enumerate() {
@@ -511,9 +530,15 @@ fn linear_index(
         body.push(assign(&stride,bin(BinOp::Mul,id(&stride),id(&limit))));
     }
     body.push(Stmt::Return(Some(id(&offset))));
-    checks.push(Stmt::Function{name:function.clone(),params,pure:true,elemental:true,return_type:Some(TypeSpec::Integer(Some(8))),body});
+    if existing.is_none() {
+        checks.push(Stmt::Function{name:function.clone(),params,pure:true,elemental:true,return_type:Some(TypeSpec::Integer(Some(8))),body});
+        checks.offsets.insert(key, function.clone());
+    }
     // Scalarizing an array expression must retain the checked offset's type.
-    shapes.insert(format!("@elemental:{function}"),(TypeSpec::Integer(Some(8)),vec![]));
+    let result_key = format!("@elemental:{function}");
+    if !shapes.contains_key(&result_key) {
+        shapes.insert(result_key, (TypeSpec::Integer(Some(8)), vec![]));
+    }
     let offset=Expr::Call(function,actuals);
     *indices = vec![offset];
     Ok(())
@@ -1043,7 +1068,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
         e: &mut Expr,
         shapes: &mut SharedShapes,
         guards: &mut Vec<Stmt>,
-        checks: &mut Vec<Stmt>,
+        checks: &mut GeneratedChecks,
         serial: &mut usize,
     ) -> Result<()> {
         if let Expr::Call(n, args) = e {
@@ -1180,7 +1205,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
         }
         Ok(())
     }
-    fn runtime_reduction(e: &mut Expr, shapes: &mut SharedShapes, prefix: &mut Vec<Stmt>, checks: &mut Vec<Stmt>, serial: &mut usize) -> Result<()> {
+    fn runtime_reduction(e: &mut Expr, shapes: &mut SharedShapes, prefix: &mut Vec<Stmt>, checks: &mut GeneratedChecks, serial: &mut usize) -> Result<()> {
         let Expr::Call(name,args)=e else {return Ok(())};
         let location=matches!(name.as_str(),"@minloc"|"@maxloc"|"@findloc");
         if !(crate::reductions::reduction(name)||location) || shapes.contains_key(name) {return Ok(());}
@@ -1311,7 +1336,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
         body: &mut Vec<Stmt>,
         inherited: &SharedShapes,
         serial: &mut usize,
-        checks: &mut Vec<Stmt>,
+        checks: &mut GeneratedChecks,
     ) -> Result<()> {
         let statement_location = std::cell::Cell::new(None);
         let result = (|| -> Result<()> {
@@ -2052,7 +2077,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
             })();
         result.map_err(|e| crate::source_diagnostics::at(e, statement_location.get()))
     }
-    let mut checks = vec![];
+    let mut checks = GeneratedChecks::default();
     // Function specialization can already have lowered allocation blocks.
     // Continue its numbering when finishing the enclosing program.
     let mut serial=crate::subroutines::maximum_serial(&p.body,&["@alloc_","@reduction_","@location_"]);
@@ -2066,13 +2091,39 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
         }
     }
     lower(&mut p.body, &SharedShapes(std::sync::Arc::new(elemental_shapes)), &mut serial, &mut checks)?;
-    p.body.extend(checks);
+    p.body.extend(checks.statements);
     Ok(p)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn offset_helpers_reuse_code_but_take_current_bounds() {
+        let mut shapes = SharedShapes(std::sync::Arc::new(Shapes::from([
+            ("x".into(), (TypeSpec::Real, vec![int(6)])),
+            ("@axes:x".into(), (TypeSpec::Integer(None), vec![int(2), int(3)])),
+        ])));
+        let mut checks = GeneratedChecks::default();
+        let mut serial = 0;
+        let mut first = vec![int(1), int(2)];
+        linear_index("x", &mut first, &mut shapes, &mut checks, &mut serial).unwrap();
+        shapes.insert("@axes:x".into(), (TypeSpec::Integer(None), vec![int(4), int(5)]));
+        let mut second = vec![int(3), int(4)];
+        linear_index("x", &mut second, &mut shapes, &mut checks, &mut serial).unwrap();
+        let (Expr::Call(f, a), Expr::Call(g, b)) = (&first[0], &second[0]) else { panic!("offset calls expected") };
+        assert_eq!(f, g);
+        assert_eq!(a, &vec![int(1), int(2), int(2), int(3)]);
+        assert_eq!(b, &vec![int(3), int(4), int(4), int(5)]);
+        assert_eq!(checks.len(), 1);
+        let mut invalid = vec![Expr::RealLit("1.0".into()), int(1)];
+        assert!(linear_index("x", &mut invalid, &mut shapes, &mut checks, &mut serial).is_err());
+        shapes.insert("@axes:x".into(), (TypeSpec::Integer(None), vec![int(2), int(3), int(4)]));
+        let mut third = vec![int(1), int(1), int(1)];
+        linear_index("x", &mut third, &mut shapes, &mut checks, &mut serial).unwrap();
+        assert_eq!(checks.len(), 2);
+    }
 
     #[test]
     fn finishing_specialized_blocks_preserves_outer_shape_storage() {

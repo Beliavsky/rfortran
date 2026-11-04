@@ -17,6 +17,23 @@ class RuntimeAllocatables(unittest.TestCase):
     check = test_deallocate.Deallocate.check
     reject = test_deallocate.Deallocate.reject
 
+    def test_repeated_offsets_after_reallocation_with_new_bounds(self):
+        self.check("""implicit none
+integer :: n
+integer, allocatable :: x(:,:)
+read *,n
+allocate(x(-1:n,3:4))
+x=0
+x(n,4)=11
+print *,x(n,4)
+deallocate(x)
+allocate(x(5:n+6,10:12))
+x=0
+x(n+6,12)=22
+print *,x(n+6,12),x(5,10)
+end
+""", "11\n22 0\n", data="3\n")
+
     def test_fixture(self):
         fixture = ROOT / "tests/129_runtime_allocatables.f90"
         expected = json.loads((ROOT / "tests/expectations.json").read_text(

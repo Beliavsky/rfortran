@@ -337,3 +337,61 @@ The total array-call stage is 56.571 seconds; its nested timings must not be add
 to it. Reduction and section lowering outside that stage take 19.147 and 11.833
 seconds, respectively. Repeated expansion remains a broader investigation beyond
 these environment-management optimizations.
+
+
+## Reused checked array-offset helpers
+
+Allocatable finishing now reuses its checked offset helpers for references to the
+same array name and rank within a finish invocation. Helper code depends on rank
+and the array name used in bounds diagnostics; actual indices and current extents
+are passed at every call. Lower-bound adjustment remains at the call site. Every
+reference still validates its subscript types. Different ranks get distinct
+helpers, and result-type metadata is registered in each relevant scope.
+
+| Stats calls | Previous attempt (s) | New attempt (s) | New allocatable finish (s) | New semantic total (s) |
+|---|---:|---:|---:|---:|
+| 1 | 18.027 | 7.335 | 0.622 | 0.082 |
+| 2 | 39.827 | 16.898 | 3.495 | 0.228 |
+| 4 | 110.593 | 44.560 | 11.735 | 0.570 |
+
+Sequential single runs, same optimized development settings and separate module
+snapshots. The reductions are observations rather than controlled speedup ratios;
+unchanged stages still vary. All rfort probes reach an initialization error at the
+same reported source location as before. Its generated name changes from
+`@alloc_block_7316` to `@alloc_block_5379` because helper numbering changes.
+All gfortran object compilations pass. No runtime correctness claim is made for
+these failing probes.
+
+Reports and compiler/source snapshots: `target/2015-compat/fve-offset-helper-reuse/`.
+
+Both focused Rust tests pass, including helper reuse with changed extents, rank
+changes, and subscript-type validation even when a cached helper exists. All 35
+integration tests in `test_runtime_allocatables`, `test_allocatable_reallocation`,
+and `test_explicit_bounds` pass. A new regression reallocates the same array with
+different lower bounds and extents, writes and reads the new endpoint, and checks
+an untouched element. Existing tests retain axis-specific runtime bounds checks.
+
+
+### Full main retry after offset-helper reuse
+
+Reusing the saved separately compiled modules, `xfwd_vol_ema_pred.f90` reaches
+an initialization diagnostic in **175.006 seconds** (300-second limit), rather
+than the historical 600-second timeout before these optimizations. This is an
+accumulated improvement across several changes, not a baseline for helper reuse
+alone. Gfortran object compilation passes in 0.226 seconds. No rfort executable
+was produced or run.
+
+The error is a read of `@alloc_block_17912` before assignment, at the same reported
+imported source location as the small stats probes (`statistics.f90:3934`, showing
+`do i=size(tf),1,-1`). As noted earlier, expanded/imported source mappings need
+checking before attributing the error to a literal source line.
+
+Main attempt stages: array-call lowering 92.371 seconds (including allocatable
+finishing 39.631), reduction lowering 11.078, section lowering 17.852, semantic
+analysis 1.947, and initialization analysis 39.285. Nested stages are not additive.
+
+Report and source/compiler snapshots: `target/2015-compat/fve-main-after-helper-reuse/`.
+The next useful correctness investigation is the generated-storage initialization
+failure in the one-call stats probe, which reaches it in about seven seconds in
+this run. Compilation is still slow and incomplete, but the small reproducer
+avoids repeating the three-minute full-main attempt during diagnosis.

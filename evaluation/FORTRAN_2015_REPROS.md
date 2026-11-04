@@ -701,3 +701,17 @@ scan. Dynamic substring lowering on the repeated stats probes drops from
 [FVE_SMALL_DRIVERS.md](FVE_SMALL_DRIVERS.md#shared-character-lowering-metadata).
 The initialization blocker remains. Allocatable finishing and function-array
 lowering are now prominent costs within array-call lowering.
+
+
+Checked array-offset helpers are now reused by array name and rank, with current
+bounds and subscripts passed as arguments. The repeated stats attempts reach the
+initialization blocker in 7.335/16.898/44.560 seconds. Both focused Rust tests and
+35 allocation/reallocation/bounds integration tests pass.
+
+A full `xfwd_vol_ema_pred.f90` main-only retry with the saved modules now reaches
+the corresponding initialization diagnostic in **175.006 seconds**, instead of
+the historical 600-second timeout. Semantic analysis is 1.947 seconds. Gfortran
+object compilation passes; rfort still produces no executable. See
+[FVE_SMALL_DRIVERS.md](FVE_SMALL_DRIVERS.md#reused-checked-array-offset-helpers)
+and `target/2015-compat/fve-main-after-helper-reuse/`. Investigate the small stats
+initialization repro next; it reports the same source location as the full main.
