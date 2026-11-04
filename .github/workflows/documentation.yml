@@ -1,0 +1,30 @@
+name: Check generated documentation
+
+on:
+  push:
+    paths:
+      - 'docs/feature-status.md'
+      - 'docs/unsupported-features.md'
+      - 'tools/generate_unsupported_features.py'
+      - '.github/workflows/documentation.yml'
+  pull_request:
+    paths:
+      - 'docs/feature-status.md'
+      - 'docs/unsupported-features.md'
+      - 'tools/generate_unsupported_features.py'
+      - '.github/workflows/documentation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  generated-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check unsupported-feature page
+        run: python tools/generate_unsupported_features.py --check

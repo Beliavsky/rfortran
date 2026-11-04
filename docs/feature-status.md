@@ -1,6 +1,10 @@
 # Feature status
 
 A checklist of Fortran language features and whether rfort supports them.
+For a shorter list, see the generated [unsupported features](unsupported-features.md)
+page, which includes only rows marked ❌. After editing this checklist, regenerate
+it with `python tools/generate_unsupported_features.py`.
+
 [language-support.md](language-support.md) has the details, restrictions and
 tests for each supported feature; the links in the **Feature** column go there.
 The [limitation repro index](limitation-repros.md) maps partial and missing
