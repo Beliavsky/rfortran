@@ -98,6 +98,13 @@ check("WASM diagnoses syntax errors with a source location",async()=>{
   const result=await run('implicit none\ninteger :: x\nx = )\nend');
   assert.equal(result.ok,false);assert.match(result.errors,/program.f90:3/);
 });
+check("WASM assumes a missing final END with a warning, but not a missing END DO",async()=>{
+  const result=await run('print *, 2**5');
+  assert.equal(result.ok,true,result.errors);assert.equal(words(result.output),"32");
+  assert.match(result.errors,/warning: missing END statement/);
+  const open=await run('integer :: i\ndo i = 1, 2\n  print *, i\n');
+  assert.equal(open.ok,false);assert.match(open.errors,/missing END DO and END statements/);
+});
 check("WASM diagnoses unset variables at compile time and runtime",async()=>{
   const staticError=await run('implicit none\ninteger::x\nprint *,x\nend');
   assert.equal(staticError.ok,false);assert.match(staticError.errors,/uninitialized/);

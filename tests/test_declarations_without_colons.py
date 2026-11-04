@@ -98,8 +98,8 @@ end program main
             ("integer i=1", "declaration initialization requires `::`"),
             ("character(3) s='yes'", "declaration initialization requires `::`"),
             ("integer i(2)=[1,2]", "declaration initialization requires `::`"),
-            ("integer,parameter n=3", "Parse:"),
-            ("real,dimension(2) x", "Parse:"),
+            ("integer,parameter n=3", "error: unexpected identifier n"),
+            ("real,dimension(2) x", "error: unexpected"),
         ]:
             with self.subTest(declaration=declaration), tempfile.TemporaryDirectory() as tmp:
                 source=Path(tmp)/"bad.f90"

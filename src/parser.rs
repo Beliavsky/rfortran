@@ -285,6 +285,18 @@ mod tests {
     }
 
     #[test]
+    fn missing_closers_are_named_innermost_first() {
+        let closers = |src: &str| super::missing_closers(&crate::lexer::lex(src), src.len());
+        assert_eq!(closers("print *, 1\n"), Some(vec!["END"]));
+        assert_eq!(closers("integer :: i\ndo i = 1, 2\nif (i > 1) then\nprint *, i\n"), Some(vec!["END IF", "END DO", "END"]));
+        assert_eq!(closers("module m\ncontains\nsubroutine s()\n"), Some(vec!["END SUBROUTINE", "END MODULE"]));
+        assert_eq!(closers("integer function f()\nf = 1\n"), Some(vec!["END FUNCTION"]));
+        // A complete program, and one that closing statements cannot complete.
+        assert_eq!(closers("print *, 1\nend\n"), None);
+        assert_eq!(closers("call f(1,\n"), None);
+    }
+
+    #[test]
     fn bare_end_is_an_empty_main_program() {
         for src in ["end\n", "! Empty main program\nEND ! done\n"] {
             let tokens = crate::lexer::lex(src);
@@ -294,6 +306,82 @@ mod tests {
             assert!(program.body.is_empty());
         }
     }
+}
+
+/// A readable account of the tokens the parser expected: "a statement" or
+/// "an expression" for the usual long lists, otherwise the tokens, at most
+/// eight of them.
+fn expected_summary(expected: &[String]) -> String {
+    let has = |n: &str| expected.iter().any(|e| e == n);
+    if has("KW_PRINT") && has("KW_CALL") {
+        return "a statement".into();
+    }
+    if has("ID") && has("INT") && has("FLOAT") && has("STR") {
+        return "an expression".into();
+    }
+    let mut human: Vec<String> = vec![];
+    for e in expected {
+        let h = human_expected(e);
+        if !human.contains(&h) { human.push(h); }
+    }
+    match human.len() {
+        0 => "nothing more".into(),
+        1 => human.remove(0),
+        n if n > 8 => format!("one of: {}, ...", human[..8].join(", ")),
+        _ => format!("one of: {}", human.join(", ")),
+    }
+}
+
+/// "a", "a and b", "a, b and c".
+fn and_list(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+/// The statements that would complete a source ending inside open
+/// constructs, innermost first, such as `["END DO", "END"]`; None when
+/// closing statements alone do not complete it.
+pub(crate) fn missing_closers(tokens: &[Token], end: usize) -> Option<Vec<&'static str>> {
+    const CLOSERS: &[(&str, &[TokenKind])] = &[
+        ("END DO", &[TokenKind::KwEnd, TokenKind::KwDo]),
+        ("END IF", &[TokenKind::KwEnd, TokenKind::KwIf]),
+        ("END SELECT", &[TokenKind::KwEnd, TokenKind::KwSelect]),
+        ("END BLOCK", &[TokenKind::KwEnd, TokenKind::KwBlock]),
+        ("END ASSOCIATE", &[TokenKind::KwEnd, TokenKind::KwAssociate]),
+        ("END SUBROUTINE", &[TokenKind::KwEnd, TokenKind::KwSubroutine]),
+        ("END FUNCTION", &[TokenKind::KwEnd, TokenKind::KwFunction]),
+        ("END MODULE", &[TokenKind::KwEnd, TokenKind::KwModule]),
+        // A bare END closes a main program.
+        ("END", &[TokenKind::BareEnd]),
+    ];
+    use lalrpop_util::ParseError;
+    let parse = |extra: &[TokenKind]| {
+        let triples = tokens.iter().map(|t| (t.span.start, t.kind.clone(), t.span.end))
+            .chain(extra.iter().map(|k| (end, k.clone(), end)));
+        fortran::ProgramParser::new().parse(triples).map(|_| ())
+    };
+    let mut appended: Vec<TokenKind> = vec![];
+    let mut names = vec![];
+    for _ in 0..8 {
+        match parse(&appended) {
+            Ok(()) => return (!names.is_empty()).then_some(names),
+            Err(ParseError::UnrecognizedEof { .. }) => {
+                // The first closing statement the parser accepts here.
+                let (name, closer) = CLOSERS.iter().find(|(_, closer)| {
+                    let mut tried = appended.clone();
+                    tried.extend(closer.iter().cloned());
+                    matches!(parse(&tried), Ok(()) | Err(ParseError::UnrecognizedEof { .. }))
+                })?;
+                appended.extend(closer.iter().cloned());
+                names.push(*name);
+            }
+            Err(_) => return None,
+        }
+    }
+    None
 }
 
 fn human_expected(name: &str) -> String {
@@ -675,31 +763,34 @@ pub fn parse_with_origins(
                     ((location)..(location + 1), "invalid token".to_string())
                 }
                 lalrpop_util::ParseError::UnrecognizedEof { expected, .. } => {
-                    let mut human: Vec<String> = expected.iter().map(|s| human_expected(s)).collect();
-                    human.dedup();
+                    if let Some(closers) = missing_closers(tokens, src.len()) {
+                        // Label the last line of the source.
+                        let last = tokens.last().map_or(0, |t| t.span.start);
+                        let line = src[..last].rfind('\n').map_or(0, |n| n + 1);
+                        let span = line..src[last..].find('\n').map_or(src.len(), |n| last + n);
+                        let lines: Vec<String> = closers.iter().map(|c| format!("`{}`", c.to_ascii_lowercase())).collect();
+                        let msg = format!("missing {} statement{}", and_list(&closers.iter().map(|c| c.to_string()).collect::<Vec<_>>()),
+                            if closers.len() > 1 { "s" } else { "" });
+                        let diag = Diagnostic::error()
+                            .with_message(&msg)
+                            .with_labels(vec![Label::primary((), span.clone()).with_message("the source ends after this line")])
+                            .with_notes(vec![format!("add {} at the end of the source", and_list(&lines))]);
+                        let _ = emit_to_io_write(&mut stderr, &Config::default(), &file, &diag);
+                        errs.push(CompileError::new(CompileErrorKind::Parse, msg, span));
+                        return Err(errs);
+                    }
                     (
                         (src.len())..(src.len()),
-                        format!(
-                            "unexpected end of input, expected one of: {}",
-                            human.join(", ")
-                        ),
+                        format!("unexpected end of input: expected {}", expected_summary(&expected)),
                     )
                 }
                 lalrpop_util::ParseError::UnrecognizedToken {
                     token: (start, tok, end),
                     expected,
-                } => {
-                    let mut human: Vec<String> = expected.iter().map(|s| human_expected(s)).collect();
-                    human.dedup();
-                    (
-                        (start)..(end),
-                        format!(
-                            "unexpected {}: expected one of: {}",
-                            human_token(&tok),
-                            human.join(", ")
-                        ),
-                    )
-                }
+                } => (
+                    (start)..(end),
+                    format!("unexpected {}: expected {}", human_token(&tok), expected_summary(&expected)),
+                ),
                 lalrpop_util::ParseError::ExtraToken {
                     token: (start, tok, end),
                 } => ((start)..(end), format!("extra token {}", human_token(&tok))),

@@ -7,7 +7,14 @@ use structopt::StructOpt;
 fn run_program() -> Result<()> {
     let path = std::path::Path::new("/program.f90");
     let args = cli::Cli::from_iter_safe(["rfort", "run", "/program.f90"])?;
-    let input = source_includes::read(path, &args)?;
+    let mut input = source_includes::read(path, &args)?;
+    // The playground runs a program without its final END, which Fortran
+    // requires, and says so. A construct left open is still an error.
+    if parser::missing_closers(&lexer::lex(&input.text), input.text.len()).as_deref() == Some(&["END"]) {
+        eprintln!("warning: missing END statement; `end` is assumed at the end of the source");
+        if !input.text.ends_with('\n') { input.text.push('\n'); }
+        input.text.push_str("end\n");
+    }
     let tokens = lexer::lex(&input.text);
     let parsed = parser::parse_with_origins(&input.text, &tokens, "program.f90", Some(&input.origins))
         .map_err(|_| anyhow::anyhow!("parse failed"))?;

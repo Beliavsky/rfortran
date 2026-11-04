@@ -112,10 +112,8 @@ fn compiler_main(started: std::time::Instant) -> Result<()> {
                         println!("{:#?}", p);
                     }
                 }
-                Err(errs) => {
-                    for e in errs {
-                        eprintln!("{}", e);
-                    }
+                // The parser has reported each error.
+                Err(_) => {
                     anyhow::bail!("compilation failed");
                 }
             }
@@ -136,11 +134,9 @@ fn compiler_main(started: std::time::Instant) -> Result<()> {
                 Some(&source_input.origins),
             ) {
                 Ok(p) => p,
-                Err(errs) => {
+                // The parser has reported each error.
+                Err(_) => {
                     any_err = true;
-                    for e in &errs {
-                        eprintln!("{}", e);
-                    }
                     crate::ast::Program {
                         name: "<error>".into(),
                         body: vec![],
@@ -209,10 +205,8 @@ fn compiler_main(started: std::time::Instant) -> Result<()> {
                 Some(&source_input.origins),
             ) {
                 Ok(p) => p,
-                Err(errs) => {
-                    for e in &errs {
-                        eprintln!("{}", e);
-                    }
+                // The parser has reported each error.
+                Err(_) => {
                     anyhow::bail!("parse failed");
                 }
             };
@@ -281,10 +275,8 @@ fn compile_to_object(
     let parse_result = compile_profile::run("parse", || parser::parse_with_origins(&src, &tokens, input.to_str().unwrap_or("<unknown>"), Some(&source_input.origins)));
     let program = match parse_result {
         Ok(p) => p,
-        Err(errs) => {
-            for e in &errs {
-                eprintln!("{}", e);
-            }
+        // The parser has reported each error.
+        Err(_) => {
             return Err(anyhow::anyhow!("parse failed"));
         }
     };

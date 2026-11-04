@@ -67,7 +67,7 @@ end program main
                     path.write_text("program main\n" + body + "\nend program main\n")
                     result = subprocess.run([COMPILER, "parse", path], capture_output=True, text=True, timeout=15)
                     self.assertNotEqual(result.returncode, 0)
-                    self.assertIn("Parse:", result.stderr)
+                    self.assertIn("error: unexpected", result.stderr)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

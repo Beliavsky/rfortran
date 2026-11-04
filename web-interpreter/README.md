@@ -35,6 +35,11 @@ Rebuild after changing Rust sources. The native compiler executable is not used.
 
 In Program mode, enter a complete free-form program. Same-source modules and
 procedures use the existing compiler frontend. Supply READ input before Run.
+A program without its final END statement, such as the single line
+`print *, 2**5`, runs with a warning that `end` was assumed; Fortran requires
+the END, and the native compiler reports it as missing. A construct left open,
+such as a DO without END DO, is still an error that names the missing
+statements.
 In REPL mode, try:
 
 ```fortran
