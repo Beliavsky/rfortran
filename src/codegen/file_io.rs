@@ -250,6 +250,40 @@ pub(super) fn read_handle(
     Ok((b.block_params(done)[0],b.block_params(done)[1]))
 }
 
+// Fallible output lookup; a null stream denotes stdout.
+pub(super) fn write_handle_status(
+    module: &mut ObjectModule, b: &mut FunctionBuilder, ptr: ir::Type,
+    unit: ir::Value,
+) -> Result<(ir::Value, ir::Value)> {
+    anyhow::ensure!(ptr == types::I64, "file I/O currently requires a 64-bit target");
+    let done=b.create_block();let file=b.create_block();let lookup=b.create_block();let invalid=b.create_block();
+    b.append_block_param(done,ptr);b.append_block_param(done,types::I64);
+    let zero=b.ins().iconst(ptr,0);let error=b.ins().iconst(types::I64,1);
+    let stdout=b.ins().icmp_imm(IntCC::Equal,unit,6);
+    b.ins().brif(stdout,done,&[zero.into(),zero.into()],file,&[]);
+    b.switch_to_block(file);b.seal_block(file);
+    let (index,range)=unit_index(b,unit);
+    let not_stdin=b.ins().icmp_imm(IntCC::NotEqual,unit,5);
+    let valid=b.ins().band(range,not_stdin);
+    b.ins().brif(valid,lookup,&[],invalid,&[]);
+    b.switch_to_block(invalid);b.seal_block(invalid);
+    b.ins().jump(done,&[zero.into(),error.into()]);
+    b.switch_to_block(lookup);b.seal_block(lookup);
+    let _ = index;
+    let handle=implicit(module,b,ptr,unit)?;
+    let stderr=call(module,b,"rfort_stderr_stream",&[],ptr)?;
+    let is_zero=b.ins().icmp_imm(IntCC::Equal,unit,0);
+    let absent=b.ins().icmp_imm(IntCC::Equal,handle,0);
+    let error_unit=b.ins().band(is_zero,absent);
+    let handle=b.ins().select(error_unit,stderr,handle);
+    let connected=b.ins().icmp_imm(IntCC::NotEqual,handle,0);
+    let readable=permits(module,b,ptr,unit,false)?;let connected=b.ins().band(connected,readable);
+    let status=b.ins().select(connected,zero,error);
+    b.ins().jump(done,&[handle.into(),status.into()]);
+    b.switch_to_block(done);b.seal_block(done);
+    Ok((b.block_params(done)[0],b.block_params(done)[1]))
+}
+
 fn seek(
     module: &mut ObjectModule,
     b: &mut FunctionBuilder,

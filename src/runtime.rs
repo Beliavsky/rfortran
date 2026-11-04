@@ -38,8 +38,8 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
     RECORD_ALLOCATIONS.with(|records| *records.borrow_mut()=vec![None]);
     thread_local! { static RANDOM_STATE: std::cell::Cell<u64> = const { std::cell::Cell::new(1) }; }
     RANDOM_STATE.with(|state| state.set(session.as_ref().map_or(1, |(_, seed)| **seed)));
-    thread_local! {static DEFINED_OUTPUT_DEPTH:std::cell::Cell<usize>=const {std::cell::Cell::new(0)};}
-    DEFINED_OUTPUT_DEPTH.with(|depth|depth.set(0));
+    thread_local! {static DEFINED_OUTPUT_UNITS:std::cell::RefCell<Vec<i64>>=const {std::cell::RefCell::new(Vec::new())};}
+    DEFINED_OUTPUT_UNITS.with(|units|units.borrow_mut().clear());
     thread_local! { static FILES: std::cell::RefCell<crate::file_io::Files> = std::cell::RefCell::new(crate::file_io::Files::default()); }
     FILES.with(|files| *files.borrow_mut() = crate::file_io::Files::default());
     thread_local! { static POINTER_STORAGE: std::cell::RefCell<Vec<PointerStorage>> = std::cell::RefCell::new(vec![PointerStorage::Frame(usize::MAX,String::new())]); }
@@ -2034,7 +2034,11 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         idx+=1;continue;
                     }
                     if name=="@defined_output_enter" || name=="@defined_output_leave" {
-                        DEFINED_OUTPUT_DEPTH.with(|depth|depth.set(if name=="@defined_output_enter" {depth.get()+1} else {depth.get().checked_sub(1).expect("unbalanced defined output context")}));
+                        if name=="@defined_output_enter" {
+                            let fr=call_stack.last().unwrap().clone();
+                            let unit=eval_expr(&args[0],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
+                            DEFINED_OUTPUT_UNITS.with(|units|units.borrow_mut().push(unit));
+                        }else{DEFINED_OUTPUT_UNITS.with(|units|units.borrow_mut().pop().expect("unbalanced defined output context"));}
                         idx+=1;continue;
                     }
                     if name=="@format_begin" {
@@ -2045,6 +2049,44 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         let handle=OUTPUT_SERIAL.with(|serial|{let value=serial.get()+1;serial.set(value);value});
                         OUTPUT_LISTS.with(|lists|lists.borrow_mut().insert(handle,(format,advance,vec![])));
                         call_stack.last_mut().unwrap().env_int.insert(dest.clone(),handle);
+                        idx+=1;continue;
+                    }
+                    if name=="@format_end_checked" {
+                        let fr=call_stack.last().unwrap().clone();
+                        let handle=eval_expr(&args[0],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
+                        let unit=eval_expr(&args[1],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
+                        let (format,advance,items)=OUTPUT_LISTS.with(|lists|lists.borrow_mut().remove(&handle).unwrap());
+                        let child=DEFINED_OUTPUT_UNITS.with(|units|units.borrow().contains(&unit));
+                        let advance=advance && !child;
+                        let values:Vec<_>=items.iter().map(|e|eval_expr(e,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack)).collect();
+                        let result=(||->anyhow::Result<()> {
+                            if child {crate::format_spec::check_child_output(format.as_bytes(),items.len()).map_err(anyhow::Error::msg)?;}
+                            let mut bytes=Vec::new();
+                            crate::format_spec::render_with(format.as_bytes(),items.len(),&|i,f| {
+                                use crate::format_spec::Value;
+                                let v=&values[i];
+                                f(if let Some(s)=&v.3 {Value::Character(s.as_bytes())}
+                                    else if let Some(b)=v.2 {Value::Logical(b)}
+                                    else if let Some(x)=v.1 {Value::Real(x,if matches!(&items[i],Expr::Call(n,_) if n=="dble") {8}else{4})}
+                                    else {let x=v.0.unwrap();Value::Integer(x,if x==x as i32 as i64 {4}else{8})});
+                            },&mut |b|bytes.push(b),advance).map_err(anyhow::Error::msg)?;
+                            if unit==6 {
+                                use std::io::Write;
+                                let mut stdout=std::io::stdout().lock();stdout.write_all(&bytes)?;
+                                if advance {stdout.write_all(b"\n")?;}stdout.flush()?;
+                            }else{
+                                FILES.with(|files|files.borrow_mut().write_fragment(unit,&String::from_utf8_lossy(&bytes),advance))?;
+                            }
+                            Ok(())
+                        })();
+                        let Expr::Ident(status)=&args[2] else {unreachable!()};
+                        call_stack.last_mut().unwrap().env_int.insert(status.clone(),i64::from(result.is_err()));
+                        if let Err(error)=result {
+                            let Expr::Ident(message)=&args[3] else {unreachable!()};
+                            let length=fr.env_str.get(message).map(String::len).unwrap_or(256);
+                            let mut text=error.to_string();text.truncate(length);text.extend(std::iter::repeat_n(' ',length-text.len()));
+                            call_stack.last_mut().unwrap().env_str.insert(message.clone(),text);
+                        }
                         idx+=1;continue;
                     }
                     if name=="@format_item" || name=="@format_end" || name=="@internal_format_end" || name=="@format_end_file" {
@@ -2072,7 +2114,7 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                     if name == "@formatted_print" || name == "@formatted_write_noadvance" || name=="@internal_formatted_record" || name=="@file_formatted_record" || name=="@file_formatted_fragment" {
                         let internal=name=="@internal_formatted_record";
                         let external=name=="@file_formatted_record" || name=="@file_formatted_fragment";
-                        let child=!internal && !external && DEFINED_OUTPUT_DEPTH.with(|depth|depth.get()!=0);
+                        let child=!internal && !external && DEFINED_OUTPUT_UNITS.with(|units|units.borrow().contains(&6));
                         let advance=name!="@formatted_write_noadvance" && name!="@file_formatted_fragment" && !child;
                         let end=args.len()-if internal {2} else if external {1}else {0};
                         let fr=call_stack.last().unwrap().clone();

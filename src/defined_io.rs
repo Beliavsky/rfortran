@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Beliavsky
-//! Initial type-bound defined formatted output: scalar objects on output unit 6.
+//! Initial type-bound defined formatted output: scalar objects on external output units.
 use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Context, Result};
 use std::collections::{HashMap, HashSet};
@@ -28,6 +28,25 @@ fn assign(n: &str, value: Expr) -> Stmt {
         name: n.into(),
         value,
     }
+}
+
+fn checked_write(
+    unit: Expr,
+    format: &str,
+    items: Vec<Expr>,
+    advance: bool,
+    ios: &str,
+    msg: &str,
+) -> Stmt {
+    let mut args = vec![
+        unit,
+        Expr::Str(format.into()),
+        int(i64::from(advance)),
+        id(ios),
+        id(msg),
+    ];
+    args.extend(items);
+    call("@write_checked", args)
 }
 
 fn collect(
@@ -330,9 +349,6 @@ fn lower(
                     _ => None,
                 };
                 if items.iter().any(|e| target(e).is_some()) {
-                    if crate::parameters::integer_constant(&unit).ok() != Some(6) {
-                        bail!("defined formatted output currently requires standard output (UNIT=* or 6)");
-                    }
                     let mut status_target = None;
                     let mut message_target = None;
                     while matches!(items.first(),Some(Expr::Call(n,_)) if n.starts_with("@write_option:"))
@@ -367,8 +383,10 @@ fn lower(
                     let ios = format!("{prefix}_status");
                     let msg = format!("{prefix}_message");
                     let vlist = format!("{prefix}_vlist");
+                    let parent_unit = format!("{prefix}_unit");
                     let mut out = vec![
                         decl(&ios, TypeSpec::Integer(None)),
+                        decl(&parent_unit, TypeSpec::Integer(None)),
                         decl(&msg, TypeSpec::Character(Some(256))),
                         Stmt::ArrayDecl {
                             name: vlist.clone(),
@@ -376,7 +394,16 @@ fn lower(
                             dims: vec![int(values.len() as i64)],
                         },
                     ];
-                    out.push(assign(&ios, int(0)));
+                    out.push(assign(&parent_unit, unit));
+                    out.push(assign(&msg, Expr::Str(String::new())));
+                    out.push(checked_write(
+                        id(&parent_unit),
+                        "()",
+                        vec![],
+                        false,
+                        &ios,
+                        &msg,
+                    ));
                     for (i, v) in values.iter().enumerate() {
                         out.push(Stmt::AssignIndex {
                             name: vlist.clone(),
@@ -391,19 +418,23 @@ fn lower(
                                 bail!("defined formatted output currently requires scalar derived variables");
                             }
                             if list {
-                                out.push(call(
-                                    "@formatted_write_noadvance",
-                                    vec![Expr::Str("(1x)".into())],
+                                out.push(checked_write(
+                                    id(&parent_unit),
+                                    "(1x)",
+                                    vec![],
+                                    false,
+                                    &ios,
+                                    &msg,
                                 ));
                             }
-                            out.extend([
+                            let invoke = vec![
                                 assign(&msg, Expr::Str(String::new())),
-                                call("@defined_output_enter", vec![]),
+                                call("@defined_output_enter", vec![id(&parent_unit)]),
                                 call(
                                     &procedure,
                                     vec![
                                         item,
-                                        int(6),
+                                        id(&parent_unit),
                                         Expr::Str(iotype.clone()),
                                         id(&vlist),
                                         id(&ios),
@@ -411,22 +442,20 @@ fn lower(
                                     ],
                                 ),
                                 call("@defined_output_leave", vec![]),
-                            ]);
-                            if status_target.is_none() {
-                                out.push(Stmt::If {
-                                    cond: Expr::Bin(
-                                        BinOp::Ne,
-                                        Box::new(id(&ios)),
-                                        Box::new(int(0)),
-                                    ),
-                                    then_body: vec![call("@error_stop", vec![id(&msg)])],
-                                    else_body: None,
-                                });
-                            }
+                            ];
+                            out.push(Stmt::If {
+                                cond: Expr::Bin(BinOp::Eq, Box::new(id(&ios)), Box::new(int(0))),
+                                then_body: invoke,
+                                else_body: None,
+                            });
                         } else {
-                            out.push(call(
-                                "@formatted_write_noadvance",
-                                vec![Expr::Str("(1x,g0)".into()), item],
+                            out.push(checked_write(
+                                id(&parent_unit),
+                                "(1x,g0)",
+                                vec![item],
+                                false,
+                                &ios,
+                                &msg,
                             ));
                         }
                         let group = out.split_off(start);
@@ -438,9 +467,23 @@ fn lower(
                     }
                     out.push(Stmt::If {
                         cond: Expr::Bin(BinOp::Eq, Box::new(id(&ios)), Box::new(int(0))),
-                        then_body: vec![call("@formatted_print", vec![Expr::Str("()".into())])],
+                        then_body: vec![checked_write(
+                            id(&parent_unit),
+                            "()",
+                            vec![],
+                            true,
+                            &ios,
+                            &msg,
+                        )],
                         else_body: None,
                     });
+                    if status_target.is_none() {
+                        out.push(Stmt::If {
+                            cond: Expr::Bin(BinOp::Ne, Box::new(id(&ios)), Box::new(int(0))),
+                            then_body: vec![call("@error_stop", vec![id(&msg)])],
+                            else_body: None,
+                        });
+                    }
                     if let Some(dest) = status_target {
                         out.push(assign(&dest, id(&ios)));
                     }
@@ -454,23 +497,69 @@ fn lower(
                     *s = Stmt::Block { body: out };
                     return Ok(());
                 }
-                // Route child list output through the formatted runtime so its
-                // record terminator is suppressed by the active parent context.
+                // Child statements need fallible output and unit-specific record continuation.
                 if child {
-                    match s {
-                        Stmt::CallSub { name, args }
-                            if name == "@write"
-                                && matches!(&args[1],Expr::Call(n,_) if n=="@list_directed") =>
-                        {
-                            args[1] = Expr::Str("(*(1x,g0))".into());
+                    *serial += 1;
+                    let ios = format!("@child_output_{serial}_status");
+                    let msg = format!("@child_output_{serial}_message");
+                    let mut out = vec![
+                        decl(&ios, TypeSpec::Integer(None)),
+                        decl(&msg, TypeSpec::Character(Some(256))),
+                    ];
+                    let mut status_target = None;
+                    let mut message_target = None;
+                    let mut advance = int(1);
+                    while matches!(items.first(),Some(Expr::Call(n,_)) if n.starts_with("@write_option:"))
+                    {
+                        let Expr::Call(n, a) = items.remove(0) else {
+                            unreachable!()
+                        };
+                        match n.as_str() {
+                            "@write_option:iostat" => status_target = Some(a[0].clone()),
+                            "@write_option:iomsg" => message_target = Some(a[0].clone()),
+                            "@write_option:advance" => {
+                                advance = match crate::parameters::character_constant(&a[0])?
+                                    .trim()
+                                    .to_ascii_lowercase()
+                                    .as_str()
+                                {
+                                    "yes" => int(1),
+                                    "no" => int(0),
+                                    _ => bail!("ADVANCE must be YES or NO"),
+                                };
+                            }
+                            _ => bail!("unsupported defined child WRITE control `{n}`"),
                         }
-                        Stmt::Print { items } => {
-                            let mut args = vec![Expr::Str("(*(1x,g0))".into())];
-                            args.append(items);
-                            *s = call("@formatted_print", args);
-                        }
-                        _ => {}
                     }
+                    let format = format
+                        .filter(|e| !matches!(e,Expr::Call(n,_) if n=="@list_directed"))
+                        .unwrap_or(Expr::Str("(*(1x,g0))".into()));
+                    out.push(assign(&msg, Expr::Str(String::new())));
+                    let mut args = vec![unit, format, advance, id(&ios), id(&msg)];
+                    args.extend(items);
+                    out.push(call("@write_checked", args));
+                    if let Some(Expr::Ident(dest)) = status_target {
+                        out.push(assign(&dest, id(&ios)));
+                    } else if status_target.is_some() {
+                        bail!("child IOSTAT requires a scalar variable");
+                    } else {
+                        out.push(Stmt::If {
+                            cond: Expr::Bin(BinOp::Ne, Box::new(id(&ios)), Box::new(int(0))),
+                            then_body: vec![call("@error_stop", vec![id(&msg)])],
+                            else_body: None,
+                        });
+                    }
+                    if let Some(Expr::Ident(dest)) = message_target {
+                        out.push(Stmt::If {
+                            cond: Expr::Bin(BinOp::Ne, Box::new(id(&ios)), Box::new(int(0))),
+                            then_body: vec![assign(&dest, id(&msg))],
+                            else_body: None,
+                        });
+                    } else if message_target.is_some() {
+                        bail!("child IOMSG requires a scalar variable");
+                    }
+                    *s = Stmt::Block { body: out };
+                    return Ok(());
                 }
             }
             let nested_child = match s {

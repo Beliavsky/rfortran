@@ -476,6 +476,10 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                 let Expr::Ident(local)=&args[0] else{unreachable!()};
                 args.push(Expr::Ident(env[local].flag.clone()));
             }
+            Stmt::CallSub {name,args} if name=="@format_end_checked" => {
+                for arg in &args[..2] {read(arg,env,&mut before,serial)?;}
+                for arg in &args[2..] {let Expr::Ident(dest)=arg else {unreachable!()};write(dest,None,env,&mut after,serial);}
+            }
             Stmt::CallSub {name,args} if name=="@format_begin" => {
                 for arg in &args[1..] {read(arg,env,&mut before,serial)?;}
                 let Expr::Ident(dest)=&args[0] else {unreachable!()};

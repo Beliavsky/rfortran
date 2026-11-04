@@ -541,14 +541,14 @@ fn checked<T>(result: Result<T, &'static str>) -> T {
 /// Items. CHARACTER items contain a valid pointer and length; other items hold
 /// INTEGER, REAL, or LOGICAL bits, with the kind in `length` (0 if unknown).
 /// All storage remains live for this call.
-unsafe fn render_format(
+unsafe fn try_render_format(
     format: *const u8,
     length: usize,
     items: *const Item,
     count: usize,
     emit: &mut impl FnMut(u8),
     advancing: bool,
-) {
+) -> Result<(), &'static str> {
     let bytes = core::slice::from_raw_parts(format, length);
     let items = core::slice::from_raw_parts(items, count);
     let value = |i: usize, f: &mut dyn FnMut(format_spec::Value<'_>)| {
@@ -564,23 +564,65 @@ unsafe fn render_format(
             _ => format_spec::Value::Character(core::slice::from_raw_parts(item.bits as usize as *const u8, item.length as usize)),
         })
     };
-    checked(format_spec::render_with(bytes, count, &value, &mut |b| emit(b), advancing));
+    format_spec::render_with(bytes, count, &value, &mut |b| emit(b), advancing)
 }
 
-// Defined output is synchronous; nested child statements retain the parent's record.
-static mut DEFINED_OUTPUT_DEPTH: usize = 0;
+unsafe fn render_format(format:*const u8,length:usize,items:*const Item,count:usize,emit:&mut impl FnMut(u8),advancing:bool) {
+    checked(try_render_format(format,length,items,count,emit,advancing));
+}
+
+// A stack preserves nested parent units without imposing a nesting limit.
+struct DefinedOutput {unit:i64, previous:*mut DefinedOutput}
+static mut DEFINED_OUTPUT: *mut DefinedOutput = core::ptr::null_mut();
+unsafe fn child_output(unit:i64)->bool {
+    let mut context=DEFINED_OUTPUT;
+    while !context.is_null() {if (*context).unit==unit {return true;}context=(*context).previous;}
+    false
+}
 #[no_mangle]
-pub unsafe extern "C" fn rfort_defined_output_enter() -> i32 {
-    DEFINED_OUTPUT_DEPTH += 1; 0
+pub unsafe extern "C" fn rfort_defined_output_enter(unit:i64) -> i32 {
+    let context=malloc(core::mem::size_of::<DefinedOutput>()).cast::<DefinedOutput>();
+    if context.is_null() {fail("cannot allocate defined output context");}
+    context.write(DefinedOutput{unit,previous:DEFINED_OUTPUT});DEFINED_OUTPUT=context;0
 }
 #[no_mangle]
 pub unsafe extern "C" fn rfort_defined_output_leave() -> i32 {
-    if DEFINED_OUTPUT_DEPTH == 0 { fail("unbalanced defined output context"); }
-    DEFINED_OUTPUT_DEPTH -= 1; 0
+    if DEFINED_OUTPUT.is_null() {fail("unbalanced defined output context");}
+    let context=DEFINED_OUTPUT;DEFINED_OUTPUT=(*context).previous;free(context.cast());0
+}
+/// Complete a buffered WRITE, returning format/connection/transfer errors to IOSTAT.
+#[no_mangle]
+pub unsafe extern "C" fn rfort_format_end_checked(pointer:*mut core::ffi::c_void,stream:*mut core::ffi::c_void,unit:i64,status:i64,message:*mut u8,message_length:usize)->i64 {
+    let list=&*pointer.cast::<OutputList>();
+    let child=child_output(unit);
+    let advancing=list.advance!=0 && !child;
+    let result=(||->Result<(), &'static str> {
+        if status!=0 {return Err("file unit is not connected or not open for writing");}
+        if child {format_spec::check_child_output(core::slice::from_raw_parts(list.format,list.length),list.count)?;}
+        let mut failed=false;
+        let seekable=!stream.is_null() && stream!=rfort_stderr_stream();
+        // Validate the complete format before repositioning or emitting anything.
+        try_render_format(list.format,list.length,list.items,list.count,&mut |_|{},advancing)?;
+        if seekable && fseek(stream,0,1)!=0 {return Err("formatted file WRITE positioning failed");}
+        let mut emit=|c:u8| {let code=if stream.is_null() {putchar(c as i32)}else{fputc(c as i32,stream)};if code<0 {failed=true;}};
+        try_render_format(list.format,list.length,list.items,list.count,&mut emit,advancing)?;
+        if advancing {emit(10);}
+        if fflush(stream)!=0 {failed=true;}
+        if seekable {
+            #[cfg(windows)] {let pos=_ftelli64(stream);if pos<0 || _chsize_s(_fileno(stream),pos)!=0 {failed=true;}}
+            #[cfg(not(windows))] {let pos=ftello(stream);if pos<0 || ftruncate(fileno(stream),pos)!=0 {failed=true;}}
+        }
+        if failed {Err("formatted file WRITE failed")}else{Ok(())}
+    })();
+    free_output_list(pointer);
+    if let Err(error)=result {
+        core::ptr::write_bytes(message,b' ',message_length);
+        core::ptr::copy_nonoverlapping(error.as_ptr(),message,error.len().min(message_length));1
+    }else{0}
 }
 #[no_mangle]
 pub unsafe extern "C" fn rfort_formatted_write(format:*const u8,length:usize,items:*const Item,count:usize,advance:i32) {
-    let advance=if DEFINED_OUTPUT_DEPTH!=0 {
+    let advance=if child_output(6) {
         checked(format_spec::check_child_output(core::slice::from_raw_parts(format,length),count));
         0
     } else {advance};

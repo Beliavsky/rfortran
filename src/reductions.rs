@@ -1750,6 +1750,16 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                     crate::format_spec::GroupParser::new(format.as_bytes(),0).map_err(anyhow::Error::msg)?;
                 }
             }
+            if name=="@write_checked" {
+                if crate::parameters::integer_constant(&args[0]).ok()!=Some(6) {crate::file_io::unit(&args[0], &symbols.variables)?;}
+                if !matches!(&args[3],Expr::Ident(n) if matches!(symbols.get(n),Some((TypeSpec::Integer(_),d)) if d.is_empty())) {bail!("IOSTAT requires a scalar INTEGER variable");}
+                if !matches!(&args[4],Expr::Ident(n) if matches!(symbols.get(n),Some((TypeSpec::Character(_),d)) if d.is_empty())) {bail!("IOMSG requires a scalar CHARACTER variable");}
+                let mut capture=formatted_capture(args[1].clone(),&args[5..],args[2].clone(),&symbols,serial)?;
+                if let Some(Stmt::CallSub{name,args:end})=capture.last_mut() {
+                    *name="@format_end_checked".into();end.extend([args[0].clone(),args[3].clone(),args[4].clone()]);
+                }
+                output.push(Stmt::Block{body:capture});continue;
+            }
             if name=="@write" {
                 if crate::parameters::integer_constant(&args[0]).ok()!=Some(6) {
                     crate::file_io::unit(&args[0], &symbols.variables)?;

@@ -76,8 +76,118 @@ print *, 'after'""")
         self.reject(self.source('iostat=0').replace('generic :: write', 'generic,private :: write'),
                     'PUBLIC accessibility only')
 
+    def file_source(self, child, main):
+        return self.source(child, main).replace('type(point) :: a,b',
+            'type(point) :: a,b\ninteger :: u,status\ncharacter(100) :: line,message')
+
+    def test_scratch_file_child_records(self):
+        self.check((ROOT/'tests/programs/xdefined_formatted_file.f90').read_text(),
+                   '0 unchanged\n begin [7]! [9]! end\n[7]!\n')
+
+    def test_child_format_error_returns_status(self):
+        source=self.file_source('''character(8) :: fmt
+fmt='(f5.1)'
+write(unit,fmt,iostat=iostat,iomsg=iomsg) dtv%x''', '''message='unchanged'
+write(*,"(dt'(a)')",iostat=status,iomsg=message) a
+print *,status/=0,len_trim(message)>0
+print *, 'after'
+''')
+        self.check(source,'T T\n after\n')
+
+    def test_other_unit_keeps_records(self):
+        self.check(self.file_source('''write(*,'(a)') 'other'
+write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x''', '''open(newunit=u,status='scratch')
+write(u,*) a,b
+rewind(u)
+read(u,'(a)') line
+print '(a)',trim(line)
+close(u)'''), 'other\nother\n 7 9\n')
+
+    def test_invalid_parent_unit_returns_status(self):
+        self.check(self.file_source('iostat=0', '''u=-99
+message='unchanged'
+write(u,'(dt)',iostat=status,iomsg=message) a
+print *,status/=0,len_trim(message)>0
+print *, 'after'
+'''), 'T T\n after\n')
+
+    def test_dynamic_stdout_and_positive_file(self):
+        self.check(self.file_source('''write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x''', '''u=6
+write(u,'(dt)') a
+open(unit=21,status='scratch')
+write(21,'(dt)') b
+rewind(21)
+read(21,'(a)') line
+print '(a)',trim(line)
+close(21)'''), '7\n9\n')
+
+    def test_readonly_parent_returns_status(self):
+        self.check(self.file_source("iostat=0", """open(newunit=u,file='readonly.txt',status='replace')
+write(u,'(a)') 'original'
+close(u)
+open(newunit=u,file='readonly.txt',status='old',action='read')
+write(u,'(dt)',iostat=status,iomsg=message) a
+print *,status/=0,len_trim(message)>0
+read(u,'(a)') line
+print '(a)',trim(line)
+close(u)"""), 'T T\noriginal\n')
+
+    def test_malformed_child_format_and_context_restoration(self):
+        self.check(self.file_source("""character(8) :: fmt
+fmt='invalid'
+write(unit,fmt,iostat=iostat,iomsg=iomsg) dtv%x""", """open(newunit=u,status='scratch')
+write(u,'(dt)',iostat=status,iomsg=message) a
+print *,status/=0,len_trim(message)>0
+close(u)
+open(newunit=u,status='scratch')
+write(u,'(a)') 'after'
+rewind(u)
+read(u,'(a)') line
+print '(a)',trim(line)
+close(u)"""), 'T T\nafter\n')
+
+    def test_child_iomsg_unchanged_on_success(self):
+        self.check(self.file_source("""iomsg='unchanged'
+write(unit,'(i0)',iostat=iostat,iomsg=iomsg) dtv%x
+if (iostat==0 .and. iomsg/='unchanged') error stop 'IOMSG changed'
+""", """write(*,'(dt)') a
+print *, 'after'
+"""), '7\n after\n')
+
+    def test_nested_defined_output(self):
+        source=self.file_source("""type(leaf) :: inner
+inner%x=dtv%x
+write(unit,'(dt)',iostat=iostat,iomsg=iomsg) inner
+if(iostat/=0) return
+write(unit,'(a)',iostat=iostat,iomsg=iomsg) '!'
+""", """open(newunit=u,status='scratch')
+write(u,*) a,b
+rewind(u)
+read(u,'(a)') line
+print '(a)',trim(line)
+close(u)
+print *, 'after'
+""")
+        source=source.replace('end type', """end type
+type :: leaf
+ integer :: x
+contains
+ procedure :: write_leaf
+ generic :: write(formatted) => write_leaf
+end type""",1)
+        source=source.replace('end module', """subroutine write_leaf(dtv,unit,iotype,v_list,iostat,iomsg)
+class(leaf),intent(in) :: dtv
+integer,intent(in) :: unit
+character(len=*),intent(in) :: iotype
+integer,intent(in) :: v_list(:)
+integer,intent(out) :: iostat
+character(len=*),intent(inout) :: iomsg
+write(unit,'("[",i0,"]")',iostat=iostat,iomsg=iomsg) dtv%x
+end subroutine
+end module""")
+        self.check(source,' [7]! [9]!\n after\n')
+
     def test_reject_unsupported_parent_forms(self):
-        self.reject(self.source('iostat=0',"write(10,'(dt)') a"),'requires standard output')
         self.reject(self.source('iostat=0',"write(*,'(dt,dt)') a,b"),'one scalar object')
 
 

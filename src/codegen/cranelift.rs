@@ -2889,6 +2889,15 @@ fn gen_stmts(
                     let unit=file_io::open_dynamic(module,b,ptr_ty,dc,requested,path.address,path.length,mode,newunit,append,name=="@file_open_dynamic")?;
                     let address=storage_addr(b,ptr_ty,ints[dest]);b.ins().store(MemFlags::new(),unit,address,0);continue;
                 }
+                if name=="@format_end_checked" {
+                    let h=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);let h=to_i64(b,h);
+                    let unit=eval_expr(b,ex,ptr_ty,&args[1],ints,reals,bools,func_meta);let unit=to_i64(b,unit);
+                    let (file,status)=file_io::write_handle_status(module,b,ptr_ty,unit)?;
+                    let message=characters::view(module,b,ptr_ty,dc,chars,ints,&args[3])?;
+                    let code=file_io::call(module,b,"rfort_format_end_checked",&[h,file,unit,status,message.address,message.length],types::I64)?;
+                    let IExpr::Ident(dest)=&args[2] else {anyhow::bail!("invalid WRITE status destination");};
+                    let address=storage_addr(b,ptr_ty,ints[dest]);b.ins().store(MemFlags::new(),code,address,0);continue;
+                }
                 if name=="@format_end_file" {
                     let h=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);let h=to_i64(b,h);
                     let unit=eval_expr(b,ex,ptr_ty,&args[1],ints,reals,bools,func_meta);let unit=to_i64(b,unit);
@@ -3103,7 +3112,10 @@ fn gen_stmts(
                     continue;
                 }
                 if name=="@defined_output_enter" || name=="@defined_output_leave" {
-                    file_io::call(module,b,if name=="@defined_output_enter" {"rfort_defined_output_enter"} else {"rfort_defined_output_leave"},&[],types::I32)?;
+                    let values=if name=="@defined_output_enter" {
+                        let unit=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);vec![to_i64(b,unit)]
+                    } else {vec![]};
+                    file_io::call(module,b,if name=="@defined_output_enter" {"rfort_defined_output_enter"} else {"rfort_defined_output_leave"},&values,types::I32)?;
                     continue;
                 }
                 if name=="@format_begin" {
