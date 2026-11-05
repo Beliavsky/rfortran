@@ -55,6 +55,8 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
         static OUTPUT_LISTS: std::cell::RefCell<HashMap<i64,(String,bool,Vec<Expr>)>> = std::cell::RefCell::new(HashMap::new());
         static OUTPUT_SERIAL: std::cell::Cell<i64> = const {std::cell::Cell::new(0)};
     }
+    thread_local! {static DEFINED_INPUT:std::cell::RefCell<Vec<(i64,Option<i64>)>>=const{std::cell::RefCell::new(Vec::new())};}
+    DEFINED_INPUT.with(|contexts|contexts.borrow_mut().clear());
     thread_local! {static INPUT_LISTS:std::cell::RefCell<HashMap<i64,(i64,crate::list_input::Session,Option<(Vec<u8>,usize)>)>>=std::cell::RefCell::new(HashMap::new());}
     thread_local! {static NAMELISTS:std::cell::RefCell<HashMap<i64,(i64,crate::namelist_input::Session,Option<(Vec<u8>,usize)>)>>=std::cell::RefCell::new(HashMap::new());}
     NAMELISTS.with(|lists|lists.borrow_mut().clear());
@@ -1921,8 +1923,12 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         let internal=name=="@list_read_internal_begin";
                         let unit=if internal {0}else{value.0.unwrap()};
                         let source=if internal {Some((value.3.unwrap().into_bytes(),0usize))}else{None};
-                        let h=OUTPUT_SERIAL.with(|s|{let n=s.get()+1;s.set(n);n});
-                        INPUT_LISTS.with(|lists|lists.borrow_mut().insert(h,(unit,crate::list_input::Session::new(),source)));
+                        let existing=if internal {None}else{DEFINED_INPUT.with(|contexts|contexts.borrow().iter().rev().find_map(|(u,h)|if *u==unit {*h}else{None}))};
+                        let h=existing.unwrap_or_else(||OUTPUT_SERIAL.with(|s|{let n=s.get()+1;s.set(n);n}));
+                        if existing.is_none() {
+                            INPUT_LISTS.with(|lists|lists.borrow_mut().insert(h,(unit,crate::list_input::Session::new(),source)));
+                            if !internal {DEFINED_INPUT.with(|contexts|{if let Some((_,handle))=contexts.borrow_mut().iter_mut().find(|(u,_)|*u==unit) {*handle=Some(h);}});}
+                        }
                         let fr=call_stack.last_mut().unwrap();fr.env_int.insert(handle.clone(),h);fr.env_int.insert(status.clone(),0);idx+=1;continue;
                     }
                     // Unformatted stream transfers of one scalar value, as the
@@ -1970,6 +1976,7 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                     if name=="@list_read_next" || name=="@list_read_complex_next" || name=="@list_read_end" {
                         let fr=call_stack.last().unwrap();let Expr::Ident(h)=&args[if name=="@list_read_next" {2}else if name=="@list_read_complex_next" {3}else{1}] else {unreachable!()};let h=fr.env_int[h];
                         if name=="@list_read_end" {
+                            if DEFINED_INPUT.with(|contexts|contexts.borrow().iter().any(|(_,handle)|*handle==Some(h))) {idx+=1;continue;}
                             let (unit,mut session,mut source)=INPUT_LISTS.with(|lists|lists.borrow_mut().remove(&h).unwrap());
                             let code=FILES.with(|files|session.finish(||if let Some((text,offset))=&mut source {let c=text.get(*offset).copied();*offset+=usize::from(c.is_some());Ok(c)}else{files.borrow_mut().input_byte(unit)}));
                             let Expr::Ident(status)=&args[0] else {unreachable!()};let fr=call_stack.last_mut().unwrap();if fr.env_int[status]==0 {fr.env_int.insert(status.clone(),code);}idx+=1;continue;
@@ -2031,6 +2038,24 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         input.truncate(length);
                         input.push_str(&" ".repeat(length-input.len()));
                         call_stack.last_mut().unwrap().env_str.insert(dest.clone(),input);
+                        idx+=1;continue;
+                    }
+                    if name=="@defined_input_enter" {
+                        let fr=call_stack.last().unwrap().clone();
+                        let unit=eval_expr(&args[0],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
+                        DEFINED_INPUT.with(|contexts|contexts.borrow_mut().push((unit,None)));idx+=1;continue;
+                    }
+                    if name=="@defined_input_leave" {
+                        let (_,handle)=DEFINED_INPUT.with(|contexts|contexts.borrow_mut().pop().expect("unbalanced defined input"));
+                        let mut code=0;
+                        if let Some(h)=handle {
+                            if !DEFINED_INPUT.with(|contexts|contexts.borrow().iter().any(|(_,handle)|*handle==Some(h))) {
+                                let (unit,mut session,_)=INPUT_LISTS.with(|lists|lists.borrow_mut().remove(&h).unwrap());
+                                code=FILES.with(|files|session.finish(||files.borrow_mut().input_byte(unit)));
+                            }
+                        }
+                        let Expr::Ident(status)=&args[0] else {unreachable!()};
+                        let fr=call_stack.last_mut().unwrap();if fr.env_int[status]==0 {fr.env_int.insert(status.clone(),code);}
                         idx+=1;continue;
                     }
                     if name=="@defined_output_enter" || name=="@defined_output_leave" {

@@ -289,6 +289,44 @@ unsafe fn input_stream(stream:*mut core::ffi::c_void)->*mut core::ffi::c_void {
 }
 #[repr(C)]
 struct ListReader {session:list_input::Session,stream:*mut core::ffi::c_void,source:*mut u8,length:usize,offset:usize}
+struct DefinedInput {unit:i64, reader:*mut core::ffi::c_void, previous:*mut DefinedInput}
+static mut DEFINED_INPUT:*mut DefinedInput=core::ptr::null_mut();
+#[no_mangle]
+pub unsafe extern "C" fn rfort_defined_input_enter(unit:i64)->i32 {
+    let p=malloc(core::mem::size_of::<DefinedInput>()).cast::<DefinedInput>();
+    if p.is_null() {fail("cannot allocate defined input context");}
+    p.write(DefinedInput{unit,reader:core::ptr::null_mut(),previous:DEFINED_INPUT});DEFINED_INPUT=p;0
+}
+#[no_mangle]
+pub unsafe extern "C" fn rfort_list_read_begin_unit(stream:*mut core::ffi::c_void,unit:i64)->*mut core::ffi::c_void {
+    let mut context=DEFINED_INPUT;
+    let mut owner=core::ptr::null_mut();
+    while !context.is_null() {
+        if (*context).unit==unit {
+            owner=context;
+            if !(*context).reader.is_null() {return (*context).reader;}
+        }
+        context=(*context).previous;
+    }
+    let reader=rfort_list_read_begin(stream);
+    if !owner.is_null() {(*owner).reader=reader;}
+    reader
+}
+#[no_mangle]
+pub unsafe extern "C" fn rfort_defined_input_leave()->i64 {
+    if DEFINED_INPUT.is_null() {fail("unbalanced defined input context");}
+    let context=DEFINED_INPUT;let reader=(*context).reader;
+    DEFINED_INPUT=(*context).previous;free(context.cast());
+    if reader.is_null() {0}else{rfort_list_read_end(reader)}
+}
+unsafe fn borrowed_input(reader:*mut core::ffi::c_void)->bool {
+    let mut context=DEFINED_INPUT;
+    while !context.is_null() {
+        if (*context).reader==reader {return true;}
+        context=(*context).previous;
+    }
+    false
+}
 #[no_mangle]
 pub unsafe extern "C" fn rfort_list_read_begin(stream:*mut core::ffi::c_void)->*mut core::ffi::c_void {
     let p=malloc(core::mem::size_of::<ListReader>()).cast::<ListReader>();
@@ -365,7 +403,9 @@ pub unsafe extern "C" fn rfort_list_read_complex_next(handle:*mut core::ffi::c_v
 }
 #[no_mangle]
 pub unsafe extern "C" fn rfort_list_read_end(handle:*mut core::ffi::c_void)->i64 {
-    if handle.is_null() {return 1;}let r=&mut *handle.cast::<ListReader>();
+    if handle.is_null() {return 1;}
+    if borrowed_input(handle) {return 0;}
+    let r=&mut *handle.cast::<ListReader>();
     let code=r.session.finish(||reader_byte(r.stream,r.source,r.length,&mut r.offset));free(r.source.cast());core::ptr::drop_in_place(r);free(handle);code
 }
 

@@ -4198,7 +4198,7 @@ are evaluated once; sections retain array element order.
 See tests/programs/xdefined_formatted_inherited.f90 and
 tests/programs/xdefined_formatted_parent_views.f90.
 
-This is partial support. Internal parent units, READ, unformatted
+This is partial support. Internal parent units and unformatted
 transfers, namelist defined I/O, generic interface blocks, private generic
 bindings, array-valued expressions, runtime parent
 formats remain outside
@@ -4218,6 +4218,44 @@ continues to four calls and returns zero, so this regression uses explicit
 rfort assertions rather than a gfortran output comparison.
 Run `python tests/test_defined_io.py` for interpreter/native O0/O2 checks,
 gfortran output comparisons, and interface/unsupported-form diagnostics.
+
+### Defined formatted input
+
+Initial type-bound input supports `generic :: read(formatted) => binding`.
+The reader has the same six dummies as formatted output, except that DTV
+requires `CLASS(type), INTENT(INOUT)`. Named concrete scalar objects and scalar
+components can be read from external units with list-directed parent input or
+literal DT-only parent formats, including DT strings and integer v-lists.
+Multiple scalar derived items may share one parent READ. Inherited readers,
+public bindings with private implementations, and USE ONLY are supported.
+
+The initial child-transfer subset is list-directed READ. Child reads on the
+parent's unit, including directly called helper subroutines and nested defined
+readers, share an input session. They continue from the current position;
+completion of the outer parent READ discards the rest of its final record.
+Reads on other units retain normal record advancement.
+
+Parent and child IOSTAT/IOMSG are supported. Reader errors stop subsequent parent
+items, preserve negative EOF statuses and user-provided messages, and propagate
+to the parent. IOMSG remains unchanged on success. Without parent IOSTAT, an
+error terminates execution with the returned message. The message temporary has
+the same 256-character capacity as defined output.
+
+Defined input of arrays/sections or indexed items, polymorphic input dispatch,
+internal parent units, mixed intrinsic/derived parent lists, runtime parent
+formats and parent positioning/reversion remain unsupported. Explicitly
+formatted, empty and unformatted child reads are diagnosed in reader procedures
+and their directly called subroutines. These limits are separate from ordinary
+READ support.
+
+Run `python tests/test_defined_input.py`; the standalone example is
+`tests/programs/xdefined_formatted_input.f90`. Tests compare interpreter and
+native O0/O2 behavior with gfortran, including record continuation, EOF,
+malformed data, nested readers, and both input/output bindings on one type.
+Two tests use explicit rfort assertions instead of reference-output comparison:
+the local gfortran 17 build skips a value between two DT input objects and invokes
+a second reader after the first returns an error. These observed discrepancies
+are recorded in test_defined_input.py.
 
 ### File and standard input
 

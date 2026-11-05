@@ -2948,7 +2948,7 @@ fn gen_stmts(
                     let begin=b.create_block();let done=b.create_block();b.append_block_param(done,ptr_ty);b.append_block_param(done,types::I64);
                     let null=b.ins().iconst(ptr_ty,0);b.ins().brif(okay,begin,&[],done,&[null.into(),code.into()]);
                     b.switch_to_block(begin);b.seal_block(begin);
-                    let handle=file_io::call(module,b,"rfort_list_read_begin",&[file],ptr_ty)?;
+                    let handle=file_io::call(module,b,"rfort_list_read_begin_unit",&[file,unit],ptr_ty)?;
                     let failed=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,handle,0);let code=b.ins().uextend(types::I64,failed);
                     b.ins().jump(done,&[handle.into(),code.into()]);b.switch_to_block(done);b.seal_block(done);
                     let handle=b.block_params(done)[0];let code=b.block_params(done)[1];
@@ -3110,6 +3110,17 @@ fn gen_stmts(
                     let width=if ptr_ty==types::I64 {width} else {b.ins().ireduce(ptr_ty,width)};
                     file_io::call(module,b,"rfort_internal_format_end",&[handle,view.address,width],types::I32)?;
                     continue;
+                }
+                if name=="@defined_input_enter" {
+                    let unit=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);let unit=to_i64(b,unit);
+                    file_io::call(module,b,"rfort_defined_input_enter",&[unit],types::I32)?;continue;
+                }
+                if name=="@defined_input_leave" {
+                    let code=file_io::call(module,b,"rfort_defined_input_leave",&[],types::I64)?;
+                    let IExpr::Ident(status)=&args[0] else {anyhow::bail!("invalid defined input status");};
+                    let address=storage_addr(b,ptr_ty,ints[status]);let previous=b.ins().load(types::I64,MemFlags::new(),address,0);
+                    let okay=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,previous,0);
+                    let code=b.ins().select(okay,code,previous);b.ins().store(MemFlags::new(),code,address,0);continue;
                 }
                 if name=="@defined_output_enter" || name=="@defined_output_leave" {
                     let values=if name=="@defined_output_enter" {

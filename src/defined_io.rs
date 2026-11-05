@@ -54,6 +54,7 @@ fn collect(
     bindings: &mut HashMap<String, String>,
     procedures: &mut HashMap<String, Stmt>,
     owners: &mut HashMap<String, String>,
+    input: bool,
 ) -> Result<()> {
     for stmt in body {
         match stmt {
@@ -67,15 +68,31 @@ fn collect(
                     .any(|(key, value)| key == "@binding_default_access" && value == "@private");
                 for (key, target) in entries.iter() {
                     if key.starts_with("@defined_io:") {
+                        let wanted = if input {
+                            "@defined_io:read:formatted"
+                        } else {
+                            "@defined_io:write:formatted"
+                        };
+                        if key != wanted
+                            && matches!(
+                                key.as_str(),
+                                "@defined_io:read:formatted" | "@defined_io:write:formatted"
+                            )
+                        {
+                            continue;
+                        }
                         if private_default
                             && !entries.iter().any(|(key, value)| {
-                                key == "@defined_io_access:write:formatted" && value == "@public"
+                                key == &format!(
+                                    "@defined_io_access:{}:formatted",
+                                    if input { "read" } else { "write" }
+                                ) && value == "@public"
                             })
                         {
                             bail!("private defined I/O bindings are not yet supported");
                         }
-                        if key != "@defined_io:write:formatted" {
-                            bail!("defined I/O currently supports WRITE(FORMATTED) only");
+                        if key != wanted {
+                            bail!("defined I/O currently supports formatted READ and WRITE only");
                         }
                         // The generic names a binding, not just an implementation.
                         // An extension may override that binding while another alias
@@ -116,12 +133,12 @@ fn collect(
             _ => {}
         }
         for child in crate::procedure_arguments::children(stmt) {
-            collect(child, bindings, procedures, owners)?;
+            collect(child, bindings, procedures, owners, input)?;
         }
     }
     Ok(())
 }
-fn validate(ty: &str, target: &str, procedure: &Stmt) -> Result<()> {
+fn validate(ty: &str, target: &str, procedure: &Stmt, input: bool) -> Result<()> {
     let Stmt::Subroutine { params, body, .. } = procedure else {
         bail!("defined formatted output `{target}` must be a subroutine");
     };
@@ -176,7 +193,7 @@ fn validate(ty: &str, target: &str, procedure: &Stmt) -> Result<()> {
         bail!("defined formatted output DTV must be a scalar CLASS({ty}) dummy");
     }
     for (i, required) in [
-        "intent(in)",
+        if input { "intent(inout)" } else { "intent(in)" },
         "intent(in)",
         "intent(in)",
         "intent(in)",
@@ -1224,7 +1241,10 @@ fn lower(
     Ok(())
 }
 
+mod input;
+
 pub fn resolve(mut program: Program) -> Result<Program> {
+    input::resolve(&mut program)?;
     fn contains(body: &mut [Stmt]) -> bool {
         body.iter_mut().any(|s| {
             if matches!(s,Stmt::DerivedType{bindings,..} if bindings.iter().any(|(n,_)|n.starts_with("@defined_io:"))) {return true;}
@@ -1242,6 +1262,7 @@ pub fn resolve(mut program: Program) -> Result<Program> {
         &mut bindings,
         &mut procedures,
         &mut owners,
+        false,
     )?;
     if bindings.is_empty() {
         return Ok(program);
@@ -1256,7 +1277,7 @@ pub fn resolve(mut program: Program) -> Result<Program> {
                 .find_map(crate::source_diagnostics::statement_offset),
             _ => None,
         };
-        validate(&owners[ty], target, procedure)
+        validate(&owners[ty], target, procedure, false)
             .map_err(|e| crate::source_diagnostics::at(e, offset))?;
     }
     // Include helper subroutines so child I/O is not tied to lexical placement.
