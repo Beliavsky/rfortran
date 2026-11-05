@@ -4184,8 +4184,20 @@ than terminating when IOSTAT is supplied. The defined procedure can return
 that status and message to the parent. IOMSG is unchanged on success.
 The current message temporary holds 256 characters.
 
+Inherited formatted-output bindings and overrides of their specific binding
+are supported, including multilevel extension and array output. Binding identity
+is retained when two specific bindings originally name the same implementation.
+Scalar CLASS dummy arguments select the dynamic type's writer; scalar
+ALLOCATABLE polymorphic objects are also covered. USE ONLY and private module
+implementation procedures do not prevent use of a public defined-output binding.
+Bare explicit parent-component designators, such as object%base and
+objects%base, select the parent's writer, including child writers delegating
+to their parent. Nested ordinary-component/indexed parent designators are not
+covered by this parent-view support.
+See tests/programs/xdefined_formatted_inherited.f90.
+
 This is partial support. Internal parent units, READ, unformatted
-transfers, namelist defined I/O, generic interface blocks, private and inherited defined
+transfers, namelist defined I/O, generic interface blocks, private generic
 bindings, array-valued expressions, runtime parent
 formats remain outside
 the supported subset. Child ADVANCE currently requires a constant YES/NO value.

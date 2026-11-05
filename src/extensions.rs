@@ -35,6 +35,12 @@ fn collect(body: &mut Vec<Stmt>, types: &mut HashMap<String, Definition>, parent
     for s in body.iter_mut() {
         match s {
             Stmt::DerivedType { name, components, bindings } => {
+                // Retain the declaring type of each specific binding through
+                // flattening, so inherited defined I/O validates its original
+                // passed-object type rather than the extended object's type.
+                let owners: Vec<_> = bindings.iter().filter(|(n,_)| !n.starts_with('@'))
+                    .map(|(n,_)| (format!("@defined_io_binding_owner:{n}"), name.clone())).collect();
+                bindings.extend(owners);
                 types.insert(name.clone(), (components.clone(), bindings.clone()));
             }
             Stmt::Module { body, .. } | Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } | Stmt::Block { body } => {
@@ -149,6 +155,55 @@ fn parent_components(value: &mut serde_json::Value, parents: &HashSet<String>) {
     }
 }
 
+// Output of an explicit parent component retains its declared type when
+// storage flattening removes the parent selector from its designator.
+fn preserve_output_views(body: &mut [Stmt], parents: &HashMap<String, String>,
+    types: &HashMap<String, Definition>, inherited: &HashMap<String, String>) {
+    use crate::ast::Expr;
+    let mut objects = inherited.clone();
+    for s in body.iter() {
+        match s {
+            Stmt::DerivedDecl { type_name, names, .. } => {
+                for n in names { objects.insert(n.clone(), type_name.clone()); }
+            }
+            Stmt::VarDecl { names, .. } => { for n in names { objects.remove(n); } }
+            Stmt::ArrayDecl { name, .. } => { objects.remove(name); }
+            Stmt::InitializedDecl { entities, .. } => { for (n, _) in entities { objects.remove(n); } }
+            _ => {}
+        }
+    }
+    for s in body {
+        let items: &mut [Expr] = match s {
+            Stmt::Print { items } => items,
+            Stmt::CallSub { name, args } if name == "@write" => &mut args[2..],
+            Stmt::CallSub { name, args } if name == "@formatted_print" => &mut args[1..],
+            _ => &mut [],
+        };
+        for item in items {
+            let Expr::Ident(n) = item else { continue };
+            let mut parts = n.split('%');
+            let Some(mut ty) = parts.next().and_then(|root| objects.get(root)) else { continue };
+            let mut parent_view = false;
+            for selector in parts {
+                let mut ancestor = parents.get(ty);
+                while let Some(parent) = ancestor {
+                    if parent.rsplit('$').next() == Some(selector) { break; }
+                    ancestor = parents.get(parent);
+                }
+                let Some(parent) = ancestor else { parent_view = false; break };
+                ty = parent;
+                parent_view = true;
+            }
+            if parent_view && types.get(ty).is_some_and(|(_, b)| b.iter().any(|(n, _)| n == "@defined_io:write:formatted")) {
+                *item = Expr::Call(format!("@defined_output_parent:{ty}"), vec![item.clone()]);
+            }
+        }
+        for child in crate::procedure_arguments::children(s) {
+            preserve_output_views(child, parents, types, &objects);
+        }
+    }
+}
+
 pub(crate) fn resolve(mut program: Program) -> Result<Program> {
     let mut types = HashMap::new();
     let mut parents = HashMap::new();
@@ -170,6 +225,9 @@ pub(crate) fn resolve(mut program: Program) -> Result<Program> {
     if let Some(n) = parent_names.iter().find(|n| components.contains(*n)) {
         bail!("a component named `{n}`, like a parent type, is not yet supported");
     }
+    let mut output_types = types.clone();
+    output_types.extend(done.clone());
+    preserve_output_views(&mut program.body, &parents, &output_types, &HashMap::new());
     constructors::preserve_parent_views(&mut program.body, &parents);
     let mut value = serde_json::to_value(&program.body)?;
     parent_components(&mut value, &parent_names);

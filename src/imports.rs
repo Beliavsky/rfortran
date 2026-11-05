@@ -225,10 +225,14 @@ impl Validator {
                     ..
                 } => {
                     self.body(components, &visible)?;
+                    // Extension lowering retains the declaring owner after the
+                    // source bindings have been access-checked. Inherited targets
+                    // need not be USE-associated in the extension's module.
+                    let inherited = bindings.iter().any(|(n,_)| n.starts_with("@defined_io_binding_owner:"));
                     for (binding, procedure) in bindings {
                         // FINAL procedures are accessible wherever their type is,
                         // even when the module procedure itself is PRIVATE.
-                        if !binding.starts_with("@final:") {self.name(procedure, &visible)?;}
+                        if !inherited && !binding.starts_with("@final:") {self.name(procedure, &visible)?;}
                     }
                 }
                 Stmt::OperatorInterface { procedures, .. }

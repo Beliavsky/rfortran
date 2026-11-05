@@ -330,7 +330,9 @@ pub fn generic_bindings(bindings: Vec<(String, String)>) -> Vec<(String, String)
         true => (n.clone(), specific(t).unwrap_or_else(|| t.clone())),
         false => (n.clone(), t.clone()),
     }).chain(bindings.iter().filter_map(|(n,b)|n.strip_prefix("@generic:").map(|g|
-        (format!("@generic_binding:{g}:{b}"),specific(b).unwrap_or_else(||b.clone()))))).collect()
+        (format!("@generic_binding:{g}:{b}"),specific(b).unwrap_or_else(||b.clone())))))
+        .chain(bindings.iter().filter_map(|(n,b)|n.strip_prefix("@defined_io:").map(|g|
+            (format!("@defined_io_binding:{g}:{b}"),specific(b).unwrap_or_else(||b.clone()))))).collect()
 }
 
 /// Check the attributes of a type-bound procedure binding.

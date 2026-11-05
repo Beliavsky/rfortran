@@ -8,6 +8,92 @@ class DefinedIO(unittest.TestCase):
     check = test_deallocate.Deallocate.check
     reject = test_deallocate.Deallocate.reject
 
+    def test_inherited_and_overridden_writers(self):
+        source=(ROOT/'tests/programs/xdefined_formatted_inherited.f90').read_text()
+        self.check(source,'base1 child2:20 base3 child4:40\nbase1 child2:20 base3 child4:40\n')
+
+    def test_inherited_writer_array(self):
+        source=(ROOT/'tests/programs/xdefined_formatted_inherited.f90').read_text()
+        source=source.replace('type(grandchild) :: d','type(grandchild) :: d,values(2)')
+        source=source.replace('print *,a,b,c,d',"values(1)=d\nvalues(2)=d\nwrite(*,'(*(dt,:,1x))') values")
+        self.check(source,'child4:40 child4:40\nbase1 child2:20 base3 child4:40\n')
+
+    def test_inherited_writer_wrong_override_dummy(self):
+        source=(ROOT/'tests/programs/xdefined_formatted_inherited.f90').read_text()
+        source=source.replace('procedure :: emit => write_child','procedure :: emit => write_base')
+        self.reject(source,'defined formatted output DTV must be a scalar CLASS(')
+
+    def test_inherited_writer_through_class_dummy(self):
+        source=(ROOT/'tests/programs/xdefined_formatted_inherited.f90').read_text()
+        source=source.replace('print *,a,b,c,d','call show(b)')
+        source=source.replace('end module', """subroutine show(value)
+class(base),intent(in) :: value
+write(*,'(dt)') value
+end subroutine
+end module""")
+        self.check(source,'child2:20\nbase1 child2:20 base3 child4:40\n')
+
+    def test_inherited_writer_use_only(self):
+        source=(ROOT/'tests/programs/xdefined_formatted_inherited.f90').read_text()
+        source=source.replace('use inherited_output','use inherited_output, only: base, child, alias_child, grandchild')
+        self.check(source,'base1 child2:20 base3 child4:40\nbase1 child2:20 base3 child4:40\n')
+
+    def test_inherited_writer_private_implementation(self):
+        source=(ROOT/'tests/programs/xdefined_formatted_inherited.f90').read_text()
+        source=source.replace('implicit none','implicit none\nprivate\npublic :: base, child, alias_child, grandchild',1)
+        self.check(source,'base1 child2:20 base3 child4:40\nbase1 child2:20 base3 child4:40\n')
+
+    def test_inherited_writer_allocatable_dynamic_object(self):
+        source=(ROOT/'tests/programs/xdefined_formatted_inherited.f90').read_text()
+        source=source.replace('type(base) :: a','type(base) :: a\nclass(base),allocatable :: poly')
+        source=source.replace('print *,a,b,c,d',"""allocate(child::poly)
+select type(poly)
+type is(child)
+ poly%x=5
+ poly%y=50
+end select
+print *,poly
+""")
+        self.check(source,'child5:50\nbase1 child2:20 base3 child4:40\n')
+
+    def test_inherited_writer_across_modules(self):
+        source=(ROOT/'tests/programs/xdefined_formatted_inherited.f90').read_text()
+        start=source.index('type, extends(base)')
+        definitions_end=source.index('contains\nsubroutine write_base')
+        base_start=source.index('subroutine write_base')
+        base_end=source.index('end subroutine',base_start)+len('end subroutine')
+        module_end=source.index('end module')
+        source=(source[:start]+'contains\n'+source[base_start:base_end]+'\nend module\n'
+                +'module children\nuse inherited_output, only: base\nimplicit none\n'
+                +source[start:definitions_end]+'contains\n'+source[base_end:module_end]
+                +'end module\n'+source[module_end+len('end module'):].replace('use inherited_output','use children'))
+        self.check(source,'base1 child2:20 base3 child4:40\nbase1 child2:20 base3 child4:40\n')
+
+    def test_defined_writer_reference_does_not_expose_implementation(self):
+        source=(ROOT/'tests/programs/xdefined_formatted_inherited.f90').read_text()
+        source=source.replace('use inherited_output','use inherited_output, only: base, child, alias_child, grandchild')
+        source=source.replace('print *,a,b,c,d','print *,a,b,c,d\ncall write_base()')
+        self.reject(source,'is not accessible in this scope')
+
+    def test_explicit_parent_output(self):
+        source=(ROOT/'tests/programs/xdefined_formatted_inherited.f90').read_text()
+        source=source.replace('print *,a,b,c,d','print *,b%base,d%child,d%child%base')
+        self.check(source,'base2 child4:40 base4\nbase1 child2:20 base3 child4:40\n')
+
+    def test_explicit_parent_array_output(self):
+        source=(ROOT/'tests/programs/xdefined_formatted_inherited.f90').read_text()
+        source=source.replace('type(grandchild) :: d','type(grandchild) :: d,values(2)')
+        source=source.replace('print *,a,b,c,d',
+            "values(1)=d\nvalues(2)=d\nprint *,values%base\nwrite(*,'(*(dt,:,1x))') values%child")
+        self.check(source,'base4 base4\nchild4:40 child4:40\nbase1 child2:20 base3 child4:40\n')
+
+    def test_child_writer_delegates_to_parent(self):
+        source=(ROOT/'tests/programs/xdefined_formatted_inherited.f90').read_text()
+        start=source.index('write(unit,',source.index('subroutine write_child'))
+        end=source.index('\n',start)
+        source=source[:start]+"write(unit,'(dt)',iostat=iostat,iomsg=iomsg) dtv%base"+source[end:]
+        self.check(source,'base1 base2 base3 base4\nbase1 base2 base3 base4\n')
+
     def test_scalar_parent_and_child_records(self):
         self.check((ROOT/'tests/programs/xdefined_formatted_output.f90').read_text(),
                    ' begin [7]! [9]! end\n[7]!\n done\n')

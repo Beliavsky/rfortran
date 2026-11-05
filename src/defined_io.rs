@@ -53,6 +53,7 @@ fn collect(
     body: &mut [Stmt],
     bindings: &mut HashMap<String, String>,
     procedures: &mut HashMap<String, Stmt>,
+    owners: &mut HashMap<String, String>,
 ) -> Result<()> {
     for stmt in body {
         match stmt {
@@ -76,7 +77,34 @@ fn collect(
                         if key != "@defined_io:write:formatted" {
                             bail!("defined I/O currently supports WRITE(FORMATTED) only");
                         }
-                        if bindings.insert(name.clone(), target.clone()).is_some() {
+                        // The generic names a binding, not just an implementation.
+                        // An extension may override that binding while another alias
+                        // still names the parent's implementation.
+                        let marker =
+                            format!("@defined_io_binding:{}:", &key["@defined_io:".len()..]);
+                        let selected = entries.iter().find_map(|(n, original)| {
+                            let binding = n.strip_prefix(&marker)?;
+                            if original != target {
+                                return None;
+                            }
+                            entries
+                                .iter()
+                                .find(|(n, _)| n == binding)
+                                .map(|(_, procedure)| (binding, procedure))
+                        });
+                        let resolved = selected.map_or(target, |(_, procedure)| procedure);
+                        let owner = selected
+                            .and_then(|(binding, _)| {
+                                let key = format!("@defined_io_binding_owner:{binding}");
+                                entries
+                                    .iter()
+                                    .rev()
+                                    .find(|(n, _)| n == &key)
+                                    .map(|(_, owner)| owner)
+                            })
+                            .unwrap_or(name);
+                        owners.insert(name.clone(), owner.clone());
+                        if bindings.insert(name.clone(), resolved.clone()).is_some() {
                             bail!("multiple defined formatted output bindings for type `{name}` are not yet supported");
                         }
                     }
@@ -88,7 +116,7 @@ fn collect(
             _ => {}
         }
         for child in crate::procedure_arguments::children(stmt) {
-            collect(child, bindings, procedures)?;
+            collect(child, bindings, procedures, owners)?;
         }
     }
     Ok(())
@@ -453,8 +481,7 @@ fn formatted_arrays(
         }
     }
     for (item_number, item) in items.into_iter().enumerate() {
-        let (element, rank) = types
-            .type_rank(&item, declarations, objects)?
+        let (element, rank) = output_type(types, &item, declarations, objects)?
             .context("cannot determine explicitly formatted output item type")?;
         if matches!(
             element,
@@ -473,6 +500,7 @@ fn formatted_arrays(
             ),
             _ => None,
         };
+        let item = output_value(item);
         let (item, mut before, loops) = if rank > 0 {
             array_item(
                 item,
@@ -500,6 +528,7 @@ fn formatted_arrays(
                         &ios,
                         0,
                         vec![
+                            crate::imports::reference(procedure.clone()),
                             assign(&msg, Expr::Str(String::new())),
                             call("@defined_output_enter", vec![id(&parent_unit)]),
                             call(
@@ -591,6 +620,32 @@ fn formatted_arrays(
         });
     }
     Ok(Stmt::Block { body: out })
+}
+
+fn output_type(
+    types: &crate::operators::ExpressionTypes,
+    item: &Expr,
+    declarations: &Declarations,
+    objects: &Objects,
+) -> Result<Option<(crate::operators::ExpressionElement, usize)>> {
+    if let Expr::Call(name, args) = item {
+        if let Some(parent) = name.strip_prefix("@defined_output_parent:") {
+            let (_, rank) = types
+                .type_rank(&args[0], declarations, objects)?
+                .context("cannot determine parent output object rank")?;
+            return Ok(Some((
+                crate::operators::ExpressionElement::Derived(parent.into()),
+                rank,
+            )));
+        }
+    }
+    types.type_rank(item, declarations, objects)
+}
+fn output_value(item: Expr) -> Expr {
+    match item {
+        Expr::Call(n, mut a) if n.starts_with("@defined_output_parent:") => a.remove(0),
+        item => item,
+    }
 }
 
 type Objects = HashMap<String, (String, usize)>;
@@ -821,7 +876,7 @@ fn lower(
                 // constructors, components and function results retain their type.
                 let target = |e: &Expr| -> Result<Option<(String, usize)>> {
                     Ok(
-                        match expression_types.type_rank(e, &declarations, &objects)? {
+                        match output_type(expression_types, e, &declarations, &objects)? {
                             Some((crate::operators::ExpressionElement::Derived(ty), rank)) => {
                                 bindings.get(&ty).map(|p| (p.clone(), rank))
                             }
@@ -860,7 +915,7 @@ fn lower(
                     if !list
                         && items
                             .iter()
-                            .map(|e| expression_types.type_rank(e, &declarations, &objects))
+                            .map(|e| output_type(expression_types, e, &declarations, &objects))
                             .collect::<Result<Vec<_>>>()?
                             .iter()
                             .any(|ty| ty.as_ref().is_some_and(|(_, rank)| *rank > 0))
@@ -909,11 +964,11 @@ fn lower(
                         let planned = plan.get(item_number);
                         let defined = target(&item)?;
                         if !list {
-                            let (element, rank) = expression_types
-                                .type_rank(&item, &declarations, &objects)?
-                                .context(
-                                    "cannot determine explicitly formatted output item type",
-                                )?;
+                            let (element, rank) =
+                                output_type(expression_types, &item, &declarations, &objects)?
+                                    .context(
+                                        "cannot determine explicitly formatted output item type",
+                                    )?;
                             if matches!(
                                 element,
                                 crate::operators::ExpressionElement::Intrinsic(TypeSpec::Complex(
@@ -929,6 +984,7 @@ fn lower(
                                 bail!("DT edit descriptor requires a derived item with a defined writer; intrinsic items require intrinsic data descriptors");
                             }
                         }
+                        let item = output_value(item);
                         let (iotype, values) = planned
                             .and_then(|p| p.defined.clone())
                             .unwrap_or_else(|| ("LISTDIRECTED".into(), vec![]));
@@ -985,6 +1041,7 @@ fn lower(
                                 ));
                             }
                             let invoke = vec![
+                                crate::imports::reference(procedure.clone()),
                                 assign(&msg, Expr::Str(String::new())),
                                 call("@defined_output_enter", vec![id(&parent_unit)]),
                                 call(
@@ -1179,7 +1236,13 @@ pub fn resolve(mut program: Program) -> Result<Program> {
     }
     let mut bindings = HashMap::new();
     let mut procedures = HashMap::new();
-    collect(&mut program.body, &mut bindings, &mut procedures)?;
+    let mut owners = HashMap::new();
+    collect(
+        &mut program.body,
+        &mut bindings,
+        &mut procedures,
+        &mut owners,
+    )?;
     if bindings.is_empty() {
         return Ok(program);
     }
@@ -1193,7 +1256,8 @@ pub fn resolve(mut program: Program) -> Result<Program> {
                 .find_map(crate::source_diagnostics::statement_offset),
             _ => None,
         };
-        validate(ty, target, procedure).map_err(|e| crate::source_diagnostics::at(e, offset))?;
+        validate(&owners[ty], target, procedure)
+            .map_err(|e| crate::source_diagnostics::at(e, offset))?;
     }
     // Include helper subroutines so child I/O is not tied to lexical placement.
     let mut children: HashSet<_> = bindings.values().cloned().collect();

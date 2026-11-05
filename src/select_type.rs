@@ -171,6 +171,7 @@ struct Definitions {
     fields: HashMap<String, HashMap<String, Option<String>>>,
     members: HashMap<String, HashMap<String, Object>>,
     has_polymorphic_components: bool,
+    defined_output_types: HashSet<String>,
     bindings: HashMap<String, HashMap<String, String>>,
 }
 impl Definitions {
@@ -192,6 +193,9 @@ impl Definitions {
                     components,
                     bindings,
                 } => {
+                    if bindings.iter().any(|(n,_)| n == "@defined_io:write:formatted") {
+                        self.defined_output_types.insert(name.clone());
+                    }
                     let mut fields = HashMap::new();
                     let mut members = HashMap::new();
                     for s in components {
@@ -259,6 +263,16 @@ impl Definitions {
             }
             t = self.parents.get(t)?;
             d += 1;
+        }
+    }
+    fn defined_output(&self, kind: &str) -> bool {
+        let mut kind = kind;
+        let mut seen = HashSet::new();
+        loop {
+            if !seen.insert(kind) { return false; }
+            if self.defined_output_types.contains(kind) { return true; }
+            let Some(parent) = self.parents.get(kind) else { return false; };
+            kind = parent;
         }
     }
     fn binding(&self, kind: &str, method: &str) -> Option<String> {
@@ -1037,6 +1051,24 @@ impl Lowerer {
                 if matches!(s,Stmt::SelectCase{expr,..} if selection(expr).is_some()) {
                     bail!("SELECT TYPE selector must be a supported scalar CLASS dummy argument");
                 }
+                // Defined I/O dispatch follows the dynamic view of a CLASS
+                // dummy, just like an explicit type-bound procedure call.
+                let output = match s {
+                    Stmt::Print { items } => Some(items.as_mut_slice()),
+                    Stmt::CallSub { name, args } if name == "@write" => Some(&mut args[2..]),
+                    Stmt::CallSub { name, args } if name == "@formatted_print" => Some(&mut args[1..]),
+                    _ => None,
+                };
+                if let Some(items) = output {
+                    for item in items {
+                        if let Expr::Ident(n) = item {
+                            if vars.get(n).is_some_and(|v| v.polymorphic && self.defs.defined_output(&v.kind)) {
+                                let view = dynamic.get(n).with_context(|| format!("cannot determine dynamic type of CLASS object `{n}` for defined output"))?;
+                                *item = view.value.clone();
+                            }
+                        }
+                    }
+                }
                 if let Stmt::CallSub { name, args } = s {
                     self.call(name, args, &vars, dynamic)?;
                 }
@@ -1246,9 +1278,19 @@ fn needed(body: &[Stmt]) -> bool {
         _ => false,
     })
 }
+fn output_items(statement: &Stmt) -> &[Expr] {
+    match statement {
+        Stmt::Print { items } => items,
+        Stmt::CallSub { name, args } if name == "@write" => &args[2..],
+        Stmt::CallSub { name, args } if name == "@formatted_print" => &args[1..],
+        _ => &[],
+    }
+}
 fn bound_dispatch_needed(body: &[Stmt], inherited: &Objects, defs: &Definitions) -> bool {
     let vars = objects(body, inherited);
     for s in body {
+        if output_items(s).iter().any(|e| matches!(e, Expr::Ident(n) if vars.get(n)
+            .is_some_and(|v| v.polymorphic && defs.defined_output(&v.kind)))) { return true; }
         if let Stmt::CallSub { name, .. } = s {
             if let Some((object, method)) = name.rsplit_once('%') {
                 if vars
