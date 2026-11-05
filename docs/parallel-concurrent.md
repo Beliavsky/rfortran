@@ -18,12 +18,15 @@ jobs to stderr; unset it for timing runs.
 
 ## Supported subset
 
-- Main-program loops with one explicitly declared integer index and unit stride.
-- Rank-one INTEGER, REAL, DOUBLE PRECISION, or LOGICAL arrays: fixed-size
-  arrays with default lower bounds, and ALLOCATABLE arrays with runtime extents
-  and arbitrary lower bounds. Constant extents may use named constants.
-- Writes of the form `a(i)`, with reads of that written array also restricted to
-  `a(i)`. Read-only arrays may use other scalar subscripts.
+- Main-program and procedure loops with explicitly declared integer indices
+  and unit strides. Captured dummy arguments require explicit INTENT.
+- INTEGER, REAL, DOUBLE PRECISION, or LOGICAL arrays: fixed-size
+  arrays with constant bounds, and ALLOCATABLE arrays with runtime extents
+  and arbitrary lower bounds. Supported assumed-shape dummy arrays are also
+  accepted. Constant extents may use named constants.
+- Writes such as `a(i)` or `a(i,j,k)`, using every concurrent index exactly
+  once. Every access to a written array must use the same index tuple. Read-only
+  arrays may use other scalar subscripts.
 - Scalar `LOCAL` and `LOCAL_INIT`, shared scalar inputs, masks, and IF statements.
 - Scalar INTEGER/REAL/DOUBLE PRECISION `REDUCE(+:...)`, `REDUCE(*:...)`,
   `REDUCE(MIN:...)`, and `REDUCE(MAX:...)`; scalar LOGICAL `.AND.`, `.OR.`,
@@ -39,13 +42,33 @@ storage. Initialization and bounds checks remain enabled unless `--nocheck`
 is requested. A job completes before execution continues after the loop.
 
 Other constructs use the existing serial lowering. In particular this stage
-does not parallelize array REDUCE, procedure bodies, user procedure calls, allocation,
+does not parallelize array REDUCE, user procedure calls inside loops, allocation,
 I/O, outer constructs containing loops, named constructs, non-unit strides, derived
-types, CHARACTER, complex arrays, or pointer/dummy array storage. Arrays with
+types, CHARACTER, complex arrays, or pointer array storage. Arrays with
 TARGET and other unsupported attributes also fall back to serial execution.
 This conservative selection is not a complete checker of all Fortran
 DO CONCURRENT restrictions. Serial fallback does not establish that an otherwise
 invalid DO CONCURRENT program is conforming.
+
+## Multiple indices and multidimensional arrays
+
+Multiple controls are flattened to one work range, with the first written
+array's first subscript varying fastest for column-major locality. The mapping
+is rank-independent; tests cover ranks two, three, and fifteen. Fixed arrays,
+runtime-sized allocatables, and assumed-shape procedure arguments use their
+existing storage mapping and checks. Masks and scalar reductions work across
+the whole iteration space. An empty dimension makes the entire space empty.
+Extent and product overflow beyond signed 64-bit range is diagnosed before
+dispatch, including when runtime bounds checks are disabled.
+
+The initial proof requires a permutation of all concurrent indices in each
+write. Slices such as `a(i,1)` and accesses such as both `a(i,j)` and `a(j,i)`
+to the same written array retain serial execution. This is deliberately more
+restrictive than the full language.
+
+```cmd
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_matrix.f90 --run
+```
 
 ## Scalar reductions
 
@@ -63,8 +86,8 @@ rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_reduce.f
 ```
 
 Array reductions retain the serial fallback, as do unsupported captures and
-procedure calls. Assumed-shape dummy arrays and multidimensional loops remain
-future work.
+procedure calls inside loops. Multidimensional arrays and loops remain future
+work.
 
 ## Runtime-sized arrays
 
@@ -82,6 +105,25 @@ at the current iteration's subscript. Read-only arrays may use other subscripts.
 
 ```cmd
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_allocatable.f90 --run
+```
+
+## Procedure arguments
+
+Loops inside procedures can use assumed-shape arrays with explicit
+`INTENT(IN)`, `INTENT(OUT)`, or `INTENT(INOUT)`. Fixed-size and allocatable actual
+arrays are supported, together with regular strided sections handled by the
+existing argument specialization. The workers use that established argument
+mapping and its bounds and initialization checks. Scalar LOCAL/LOCAL_INIT and
+REDUCE may be combined with these array arguments.
+
+POINTER, TARGET, OPTIONAL, missing INTENT, captured host/module state, and saved
+local storage retain conservative serial fallbacks. These checks are not a
+complete validator of Fortran argument aliasing rules: callers must still obey
+those rules, particularly when one dummy argument is modified. Calls to user
+procedures inside the concurrent body remain outside the parallel subset.
+
+```cmd
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_dummy.f90 --run
 ```
 
 ## Implementation and testing

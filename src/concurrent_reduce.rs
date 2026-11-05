@@ -494,7 +494,11 @@ fn lower(
             *e = id(&temporary);
         }
     }
-    let mut loop_stmt = crate::ast::do_concurrent(controls, Some(mask), body);
+    let mut loop_stmt = if parallel && controls.len() > 4 {
+        parallel::flatten(controls, mask, body, &mut prefix, serial)
+    } else {
+        crate::ast::do_concurrent(controls, Some(mask), body)
+    };
     let mut fold = vec![];
     if parallel {
         let mut metadata = vec![];
@@ -507,13 +511,15 @@ fn lower(
             prefix.push(Stmt::VarDecl { kind: TypeSpec::Integer(None), names: vec![worker.clone()] });
             prefix.push(Stmt::ArrayDecl { kind: TypeSpec::Logical, name: flags.clone(), dims: vec![int(64)] });
             prefix.push(set(&flags, Expr::Logical(false)));
-            metadata.extend([Expr::Str(active.clone()), Expr::Str(flags.clone())]);
+            // Keep storage references as identifiers so procedure specialization
+            // renames the marker together with its declarations and uses.
+            metadata.extend([id(&active), id(&flags)]);
             let mut combines = vec![set(&active, Expr::Logical(true))];
             for (temporary, op, kind) in partials {
                 let array = format!("{temporary}_workers");
                 prefix.push(Stmt::ArrayDecl { kind: kind.clone(), name: array.clone(), dims: vec![int(64)] });
                 prefix.push(set(&array, identity(&op, &kind, &temporary)?));
-                metadata.extend([Expr::Str(temporary.clone()), Expr::Str(array.clone())]);
+                metadata.extend([id(&temporary), id(&array)]);
                 combines.push(set(&temporary, combine(&op, id(&temporary), Expr::Index(array, vec![id(&worker)]))));
             }
             fold.push(Stmt::Do { var: worker.clone(), start: int(1), end: int(64), body: vec![Stmt::If {
@@ -580,9 +586,15 @@ fn walk(
             },
             _ => None,
         };
-        let procedure_scope = if matches!(s,Stmt::Function{..}|Stmt::Subroutine{..}) {
+        let procedure_scope = if let Stmt::Function{params,..}|Stmt::Subroutine{params,..} = s {
             let mut child_scope=scope.clone();
-            child_scope.insert("@parallel_procedure".into(),Object {kind:TypeSpec::Integer(None),dims:vec![],attrs:HashSet::new(),derived:false});
+            child_scope.retain(|n,_| !n.starts_with("@parallel_dummy:"));
+            for object in child_scope.values_mut() {
+                object.attrs.insert("@parallel_host".into());
+            }
+            let marker=Object {kind:TypeSpec::Integer(None),dims:vec![],attrs:HashSet::new(),derived:false};
+            child_scope.insert("@parallel_procedure".into(),marker.clone());
+            for n in params {child_scope.insert(format!("@parallel_dummy:{n}"),marker.clone());}
             Some(child_scope)
         } else {None};
         for b in children(s) {

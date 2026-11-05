@@ -75,19 +75,25 @@ fn check(
     scope: &Scope,
     name: Option<&str>,
 ) -> Result<()> {
-    if scope.contains_key("@parallel_procedure") {
-        bail!("procedure captures require further alias analysis");
-    }
     if name.is_some() {
         bail!("named constructs are not yet supported");
     }
-    if controls.len() != 4 || !matches!(&controls[3],Expr::IntLit(n) if n=="1") {
-        bail!("requires one index and unit stride");
+    if controls.is_empty()
+        || controls.len() % 4 != 0
+        || controls
+            .chunks(4)
+            .any(|c| !matches!(&c[3],Expr::IntLit(n) if n=="1"))
+    {
+        bail!("requires unit stride");
     }
-    let Expr::Ident(index) = &controls[0] else {
-        bail!("missing index")
-    };
-    let mut locals = HashSet::from([index.clone()]);
+    let indices: HashSet<String> = controls
+        .chunks(4)
+        .map(|c| match &c[0] {
+            Expr::Ident(n) => Ok(n.clone()),
+            _ => bail!("missing index"),
+        })
+        .collect::<Result<_>>()?;
+    let mut locals = indices.clone();
     let mut reductions = false;
     for clause in clauses {
         if let Expr::Call(tag, args) = clause {
@@ -124,30 +130,60 @@ fn check(
     fn writes(
         body: &[Stmt],
         locals: &HashSet<String>,
-        written: &mut HashSet<String>,
-        index: &str,
+        written: &mut HashMap<String, Vec<Expr>>,
+        indices_set: &HashSet<String>,
     ) -> Result<()> {
         for s in body {
             match s {
                 Stmt::SourceLocation(_)=>{},
                 Stmt::Assign{name,..} if locals.contains(name)=>{},
-                Stmt::AssignIndex{name,indices,..} if indices.len()==1 && matches!(&indices[0],Expr::Ident(n) if n==index)=>{written.insert(name.clone());},
-                Stmt::If{then_body,else_body,..}=>{writes(then_body,locals,written,index)?;if let Some(b)=else_body {writes(b,locals,written,index)?;}},
+                Stmt::AssignIndex{name,indices,..} => {
+                    let names: HashSet<String> = indices.iter().filter_map(|e| if let Expr::Ident(n)=e {Some(n.clone())} else {None}).collect();
+                    if indices.len()!=indices_set.len() || names!=*indices_set {
+                        bail!("independent array-element writes must use every concurrent index exactly once");
+                    }
+                    if written.get(name).is_some_and(|old| old!=indices) {
+                        bail!("array writes must use the same index tuple");
+                    }
+                    written.insert(name.clone(),indices.clone());
+                },
+                Stmt::If{then_body,else_body,..}=>{writes(then_body,locals,written,indices_set)?;if let Some(b)=else_body {writes(b,locals,written,indices_set)?;}},
                 _=>bail!("body requires scalar local assignments, independent array-element writes, and IF statements"),
             }
         }
         Ok(())
     }
-    let mut written = HashSet::new();
-    writes(body, &locals, &mut written, index)?;
+    let mut written = HashMap::new();
+    writes(body, &locals, &mut written, &indices)?;
     if written.is_empty() && !reductions {
         bail!("no independent array output");
     }
-    fn expr(e: &Expr, scope: &Scope, written: &HashSet<String>, index: &str) -> Result<()> {
+    fn expr(e: &Expr, scope: &Scope, written: &HashMap<String, Vec<Expr>>) -> Result<()> {
         fn object(n: &str, scope: &Scope) -> Result<()> {
+            if scope.contains_key("@parallel_procedure") && n.starts_with("@module$") {
+                bail!("procedure captures of host or module state require further alias analysis");
+            }
             let o = scope
                 .get(n)
                 .with_context(|| format!("capture `{n}` requires an explicit declaration"))?;
+            let procedure = scope.contains_key("@parallel_procedure");
+            let dummy = scope.contains_key(&format!("@parallel_dummy:{n}"));
+            if procedure && o.attrs.contains("@parallel_host") && !o.attrs.contains("parameter") {
+                bail!("procedure captures of host or module state require further alias analysis");
+            }
+            if dummy
+                && !o.attrs.iter().any(|a| {
+                    matches!(
+                        a.as_str(),
+                        "in" | "out" | "inout" | "intent(in)" | "intent(out)" | "intent(inout)"
+                    )
+                })
+            {
+                bail!("procedure captures require explicit INTENT on dummy `{n}`");
+            }
+            if procedure && o.attrs.contains("save") && !o.attrs.contains("parameter") {
+                bail!("procedure captures of SAVE storage are not yet supported");
+            }
             if o.derived
                 || !matches!(
                     o.kind,
@@ -168,12 +204,20 @@ fn check(
             }
             if o.attrs.iter().any(|a| {
                 !matches!(a.as_str(), "parameter" | "save")
-                    && !(a == "allocatable" && o.dims.len() == 1)
+                    && !(a == "allocatable" && !o.dims.is_empty())
+                    && !(a == "@parallel_host" && o.attrs.contains("parameter"))
+                    && !(dummy
+                        && matches!(
+                            a.as_str(),
+                            "in" | "out"
+                                | "inout"
+                                | "intent(in)"
+                                | "intent(out)"
+                                | "intent(inout)"
+                                | "contiguous"
+                        ))
             }) {
                 bail!("capture `{n}` has unsupported attributes");
-            }
-            if o.dims.len() > 1 {
-                bail!("capture `{n}` requires a rank-one array");
             }
             fn constant(e: &Expr, scope: &Scope) -> bool {
                 match e {
@@ -181,17 +225,20 @@ fn check(
                     Expr::Ident(n) => scope.get(n).is_some_and(|o| o.attrs.contains("parameter")),
                     Expr::Bin(_, a, b) => constant(a, scope) && constant(b, scope),
                     Expr::Un(_, a) => constant(a, scope),
+                    Expr::Call(n, a) if n == "@declared_bounds" => {
+                        a.iter().all(|e| constant(e, scope))
+                    }
                     _ => false,
                 }
             }
             for d in &o.dims {
-                if o.attrs.contains("allocatable")
-                    && matches!(d, Expr::Ident(n) if n == "@deferred_extent")
+                if (o.attrs.contains("allocatable") || dummy)
+                    && matches!(d, Expr::Ident(n) if matches!(n.as_str(), "@deferred_extent" | "@assumed_extent"))
                 {
                     continue;
                 }
                 if !constant(d, scope) {
-                    bail!("array `{n}` requires constant extents and default lower bounds");
+                    bail!("array `{n}` requires constant bounds or supported runtime dimensions");
                 }
             }
             Ok(())
@@ -209,22 +256,22 @@ fn check(
                 if scope.get(n).is_some_and(|o| !o.dims.is_empty()) =>
             {
                 object(n, scope)?;
-                if args.len() != 1 {
-                    bail!("requires a scalar rank-one subscript");
+                if args.len() != scope[n].dims.len() {
+                    bail!("requires scalar subscripts matching the array rank");
                 }
-                if written.contains(n) && !matches!(&args[0],Expr::Ident(v) if v==index) {
+                if written.get(n).is_some_and(|tuple| tuple != args) {
                     bail!("read of written array `{n}` is not confined to the current iteration");
                 }
                 for a in args {
-                    expr(a, scope, written, index)?;
+                    expr(a, scope, written)?;
                 }
                 Ok(())
             }
             Expr::Bin(_, a, b) => {
-                expr(a, scope, written, index)?;
-                expr(b, scope, written, index)
+                expr(a, scope, written)?;
+                expr(b, scope, written)
             }
-            Expr::Un(_, a) => expr(a, scope, written, index),
+            Expr::Un(_, a) => expr(a, scope, written),
             // Functions with no mutable runtime state, implemented directly by codegen.
             Expr::Call(n, args)
                 if !scope.contains_key(n)
@@ -245,35 +292,166 @@ fn check(
                     ) =>
             {
                 for a in args {
-                    expr(a, scope, written, index)?;
+                    expr(a, scope, written)?;
                 }
                 Ok(())
             }
             _ => bail!("expression or procedure call is outside the parallel subset"),
         }
     }
-    for n in &written {
-        expr(
-            &Expr::Index(n.clone(), vec![Expr::Ident(index.clone())]),
-            scope,
-            &written,
-            index,
-        )?;
+    for (n, tuple) in &written {
+        expr(&Expr::Index(n.clone(), tuple.clone()), scope, &written)?;
     }
-    expr(mask, scope, &written, index)?;
-    fn visit(body: &[Stmt], scope: &Scope, written: &HashSet<String>, index: &str) -> Result<()> {
+    expr(mask, scope, &written)?;
+    fn visit(body: &[Stmt], scope: &Scope, written: &HashMap<String, Vec<Expr>>) -> Result<()> {
         for s in body {
             let mut s = s.clone();
             for e in expressions(&mut s) {
-                expr(e, scope, written, index)?;
+                expr(e, scope, written)?;
             }
             for b in children(&mut s) {
-                visit(b, scope, written, index)?;
+                visit(b, scope, written)?;
             }
         }
         Ok(())
     }
-    visit(body, scope, &written, index)
+    visit(body, scope, &written)
+}
+
+/// Flatten a Cartesian iteration space. The first written array determines the
+/// fastest-varying axis, preserving column-major locality independently of the
+/// order of the controls. The pool still sees a single inclusive integer range.
+pub(super) fn flatten(
+    controls: Vec<Expr>,
+    mask: Expr,
+    body: Vec<Stmt>,
+    prefix: &mut Vec<Stmt>,
+    serial: &mut usize,
+) -> Stmt {
+    fn temporary(prefix: &mut Vec<Stmt>, serial: &mut usize) -> String {
+        *serial += 1;
+        let n = format!("@parallel_extent_{serial}");
+        prefix.push(Stmt::VarDecl {
+            kind: TypeSpec::Integer(Some(8)),
+            names: vec![n.clone()],
+        });
+        n
+    }
+    fn binary(op: BinOp, a: Expr, b: Expr) -> Expr {
+        Expr::Bin(op, Box::new(a), Box::new(b))
+    }
+    fn guard(cond: Expr) -> Stmt {
+        Stmt::If {
+            cond,
+            then_body: vec![Stmt::CallSub {
+                name: "@error_stop".into(),
+                args: vec![Expr::Str(
+                    "parallel iteration space exceeds signed 64-bit range".into(),
+                )],
+            }],
+            else_body: None,
+        }
+    }
+    fn first_write(body: &[Stmt]) -> Option<Vec<Expr>> {
+        for s in body {
+            match s {
+                Stmt::AssignIndex { indices, .. } => return Some(indices.clone()),
+                Stmt::If {
+                    then_body,
+                    else_body,
+                    ..
+                } => {
+                    if let Some(v) = first_write(then_body)
+                        .or_else(|| else_body.as_ref().and_then(|b| first_write(b)))
+                    {
+                        return Some(v);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+    let total = temporary(prefix, serial);
+    let linear = temporary(prefix, serial);
+    let remaining = temporary(prefix, serial);
+    let max = Expr::Call(
+        "@integer_literal".into(),
+        vec![Expr::IntLit(i64::MAX.to_string()), int(8)],
+    );
+    let mut dimensions = vec![];
+    let mut nonempty = Expr::Logical(true);
+    for c in controls.chunks(4) {
+        let low = temporary(prefix, serial);
+        let high = temporary(prefix, serial);
+        let extent = temporary(prefix, serial);
+        prefix.push(set(&low, c[1].clone()));
+        prefix.push(set(&high, c[2].clone()));
+        prefix.push(set(&extent, int(1)));
+        nonempty = binary(BinOp::And, nonempty, binary(BinOp::Ge, id(&high), id(&low)));
+        dimensions.push((c[0].clone(), low, high, extent));
+    }
+    prefix.push(set(&total, int(0)));
+    let mut calculate = vec![set(&total, int(1))];
+    for (_, low, high, extent) in &dimensions {
+        // Test emptiness for *all* axes before doing any extent arithmetic.
+        // A nonempty extent and its product must fit the callback ABI's i64.
+        calculate.push(Stmt::If {
+            cond: binary(BinOp::Le, id(low), int(0)),
+            then_body: vec![guard(binary(
+                BinOp::Gt,
+                id(high),
+                Expr::sub(Expr::add(max.clone(), id(low)), int(1)),
+            ))],
+            else_body: None,
+        });
+        calculate.push(set(extent, Expr::add(Expr::sub(id(high), id(low)), int(1))));
+        calculate.push(guard(binary(
+            BinOp::Gt,
+            id(&total),
+            Expr::div(max.clone(), id(extent)),
+        )));
+        calculate.push(set(&total, Expr::mul(id(&total), id(extent))));
+    }
+    prefix.push(Stmt::If {
+        cond: nonempty,
+        then_body: calculate,
+        else_body: None,
+    });
+    let order = first_write(&body)
+        .unwrap_or_else(|| dimensions.iter().rev().map(|d| d.0.clone()).collect());
+    let mut iterations = vec![set(&remaining, id(&linear))];
+    for index in order {
+        let (_, low, _, extent) = dimensions
+            .iter()
+            .find(|d| d.0 == index)
+            .expect("proved concurrent index");
+        let Expr::Ident(n) = index else {
+            unreachable!()
+        };
+        iterations.push(set(
+            &n,
+            Expr::add(
+                id(low),
+                Expr::sub(
+                    id(&remaining),
+                    Expr::mul(Expr::div(id(&remaining), id(extent)), id(extent)),
+                ),
+            ),
+        ));
+        iterations.push(set(&remaining, Expr::div(id(&remaining), id(extent))));
+    }
+    iterations.push(Stmt::If {
+        cond: mask,
+        then_body: body,
+        else_body: None,
+    });
+    Stmt::Do {
+        var: linear,
+        start: int(0),
+        end: Expr::sub(id(&total), int(1)),
+        body: iterations,
+    }
 }
 
 #[cfg(test)]

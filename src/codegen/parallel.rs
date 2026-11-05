@@ -125,7 +125,9 @@ pub(super) fn emit(
         .unwrap_or_default()
         .chunks_exact(2)
         .filter_map(|pair| {
-            if let [IExpr::Str(value), IExpr::Str(array)] = pair {
+            if let [IExpr::Ident(value), IExpr::Ident(array)]
+            | [IExpr::Str(value), IExpr::Str(array)] = pair
+            {
                 Some((value.clone(), array.clone()))
             } else {
                 None
