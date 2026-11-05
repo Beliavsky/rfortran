@@ -4225,9 +4225,9 @@ Initial type-bound input supports `generic :: read(formatted) => binding`.
 The reader has the same six dummies as formatted output, except that DTV
 requires `CLASS(type), INTENT(INOUT)`. Named concrete scalar objects and scalar
 components can be read from external units with list-directed parent input or
-literal DT-only parent formats, including DT strings and integer v-lists.
+literal parent formats with DT descriptors, including DT strings and integer v-lists.
 Multiple scalar derived items may share one parent READ. List-directed parent
-READs and literal DT-only formats also accept whole arrays, elements, and triplet/vector sections, including
+READs and literal formats also accept whole arrays, elements, and triplet/vector sections, including
 allocated and assumed-shape arrays. Counted loops preserve Fortran element order;
 section controls and subscript vectors are captured once. Empty sections transfer
 no items, and reader errors stop both inner and outer loops before later elements
@@ -4250,7 +4250,7 @@ error terminates execution with the returned message. The message temporary has
 the same 256-character capacity as defined output.
 
 Polymorphic input dispatch,
-internal parent units, mixed intrinsic/derived parent lists, runtime parent
+internal parent units, runtime parent
 formats and parent T/TL positioning remain unsupported. Runtime child
 formats, T/TL positioning, empty list-directed and unformatted child reads are
 diagnosed in reader procedures
@@ -4268,6 +4268,15 @@ the local gfortran 17 build skips a value between two DT input objects and invok
 a second reader after the first returns an error. It also skips a field in two
 cases combining a list-directed parent with explicitly formatted child reads.
 These observed discrepancies are recorded in test_defined_input.py.
+
+Parent lists can mix intrinsic and derived items, including arrays and sections.
+INTEGER, REAL, LOGICAL and CHARACTER items use the existing list-directed or
+constant-field input lowering; list-directed COMPLEX items are also supported.
+Explicitly formatted COMPLEX items remain unsupported in mixed lists. Intrinsic
+and defined transfers share the record position and parent error handling; an
+error stops later items. A mismatched intrinsic/DT descriptor returns a nonzero
+IOSTAT without modifying that item. See `tests/test_defined_input_mixed.py` and
+`tests/programs/xdefined_formatted_input_mixed.f90`.
 
 Literal parent formats use a runtime cursor across all scalar and array items.
 Repeated DT descriptors, nested and unlimited groups, separate DT strings and

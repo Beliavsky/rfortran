@@ -154,9 +154,6 @@ fn lower_one(
     }
     let states = if let Some(format) = &format {
         let states=format_states(format).map_err(|e|anyhow::anyhow!(e.to_string().replace("defined output","defined input").replace("formatted output","formatted input")))?;
-        if states.iter().any(|s|s.item.defined.is_none()) {
-            bail!("defined input parent format currently requires DT descriptors without intrinsic items");
-        }
         states
     } else {
         vec![FormatState{item:FormatItem{before:"()".into(),data:String::new(),defined:Some(("LISTDIRECTED".into(),vec![]))},finish:"()".into(),next:0}]
@@ -188,7 +185,7 @@ fn lower_one(
         ),
     ];
     for (i,state) in states.iter().enumerate() {
-        let (_,values)=state.item.defined.as_ref().unwrap();
+        let Some((_,values))=state.item.defined.as_ref() else {continue;};
         let vlist=format!("{prefix}_vlist_{i}");
         out.push(Stmt::ArrayDecl{name:vlist.clone(),kind:TypeSpec::Integer(None),dims:vec![int(values.len() as i64)]});
         for (j,value) in values.iter().enumerate() {
@@ -196,9 +193,22 @@ fn lower_one(
         }
     }
     for (i, (item, writer)) in items.into_iter().zip(writers).enumerate() {
-        let Some((procedure, rank)) = writer else {
-            bail!("defined input currently requires only derived items");
+        let (element,rank)=types.type_rank(&item,declarations,objects)?
+            .context("cannot determine mixed input item type")?;
+        let tag=match &element {
+            crate::operators::ExpressionElement::Derived(_) => {
+                if writer.is_none() {bail!("derived item in mixed input requires a defined reader");} 0
+            }
+            crate::operators::ExpressionElement::Intrinsic(kind) => match kind {
+                TypeSpec::Integer(_) | TypeSpec::IntegerKind(_) => 1,
+                TypeSpec::Real | TypeSpec::RealKind(_) | TypeSpec::DoublePrecision => 2,
+                TypeSpec::Logical | TypeSpec::LogicalKind(_) => 3,
+                TypeSpec::Character(_) | TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed => 4,
+                TypeSpec::Complex(_) if format.is_none() => 5,
+                _ => bail!("this intrinsic type is not yet supported in mixed formatted input"),
+            }
         };
+        let procedure=writer.map(|(p,_)|p);
         let indexed = matches!(&item, Expr::Call(n,_) | Expr::Index(n,_)
             if matches!(types.type_rank(&id(n),declarations,objects)?,Some((_,r)) if r>0));
         let (item, mut before, loops) = if rank != 0 || indexed {
@@ -207,19 +217,41 @@ fn lower_one(
         } else if matches!(item,Expr::Ident(_)) {
             (item,vec![],vec![])
         } else {
-            bail!("defined input requires writable derived variables, elements or sections");
+            bail!("defined input requires writable variables, elements or sections");
         };
         let mut transfer=vec![];
         for (index,state) in states.iter().enumerate().rev() {
-            let (iotype,_)=state.item.defined.as_ref().unwrap();
-            let mut body=controls(&state.item.before,&unit_name,&ios,&scratch)?;
-            body.push(when_equal(&ios,0,vec![
-                crate::imports::reference(procedure.clone()),
-                assign(&msg,Expr::Str(String::new())),
-                call(&procedure,vec![item.clone(),id(&unit_name),Expr::Str(iotype.clone()),
-                    id(&format!("{prefix}_vlist_{index}")),id(&ios),id(&msg)]),
-                assign(&cursor,int(state.next as i64)),
-            ],None));
+            let mut body=vec![assign(&msg,Expr::Str(String::new()))];
+            if let Some(procedure)=&procedure {
+                if let Some((iotype,_))=&state.item.defined {
+                    body.extend(controls(&state.item.before,&unit_name,&ios,&scratch)?);
+                    body.push(when_equal(&ios,0,vec![
+                        crate::imports::reference(procedure.clone()),
+                        call(procedure,vec![item.clone(),id(&unit_name),Expr::Str(iotype.clone()),
+                            id(&format!("{prefix}_vlist_{index}")),id(&ios),id(&msg)]),
+                    ],None));
+                } else {
+                    body.extend([assign(&ios,int(1)),assign(&msg,Expr::Str("derived input item requires a DT edit descriptor".into()))]);
+                }
+            } else if format.is_none() {
+                body.push(call("@internal_read",vec![id(&unit_name),Expr::Str("iostat".into()),id(&ios),item.clone()]));
+            } else {
+                let mut parser=crate::format_spec::GroupParser::new(state.item.data.as_bytes(),1).map_err(anyhow::Error::msg)?;
+                let mut compatible=false;
+                while let Some(d)=parser.next().map_err(anyhow::Error::msg)? {
+                    if crate::format_spec::is_data(d.code) {
+                        compatible=crate::format_spec::matches_type(d.code,tag);
+                        break;
+                    }
+                }
+                if compatible {
+                    body.push(call("@formatted_read_status",vec![id(&unit_name),Expr::Str(state.item.data.clone()),
+                        Expr::Str("iostat".into()),id(&ios),item.clone()]));
+                } else {
+                    body.extend([assign(&ios,int(1)),assign(&msg,Expr::Str("input item and edit descriptor type do not match".into()))]);
+                }
+            }
+            body.push(assign(&cursor,int(state.next as i64)));
             transfer=vec![when_equal(&cursor,index as i64,body,Some(transfer))];
         }
         // Wrap axis one first so it varies fastest in Fortran element order.
