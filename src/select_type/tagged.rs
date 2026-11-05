@@ -440,7 +440,7 @@ impl Lower<'_> {
         // Keep READ and its IOMSG definition marker together: defined-input
         // lowering consumes this pair after dynamic-type dispatch.
         let read_message = matches!(&s, Stmt::Block { body } if matches!(body.as_slice(),
-            [read, Stmt::CallSub { name, args }] if super::is_input(read)
+            [read, Stmt::CallSub { name, args }] if super::message_transfer(read)
                 && name == crate::initialized::MAY_DEFINE && args.len() == 1));
         if read_message && tags.keys().any(|n| uses(&s, n)) {
             return self.dispatch(s, tags, vars);

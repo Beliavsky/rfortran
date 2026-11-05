@@ -949,7 +949,7 @@ impl Lower<'_> {
                 // READ and its IOMSG marker must enter the same specialized
                 // wrapper; separating them loses the message destination.
                 let read_message = matches!(&s, Stmt::Block{body} if matches!(body.as_slice(),
-                    [read,Stmt::CallSub{name,args}] if super::is_input(read) && name==crate::initialized::MAY_DEFINE && args.len()==1));
+                    [read,Stmt::CallSub{name,args}] if super::message_transfer(read) && name==crate::initialized::MAY_DEFINE && args.len()==1));
                 if read_message {
                     let used:Vec<_>=vars.iter().filter(|(n,_)|uses(&s,n)).collect();
                     if !used.is_empty() {return self.dispatch(s,&used,0,&mut vec![],decls,pure,location);}

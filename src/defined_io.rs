@@ -3,6 +3,7 @@
 //! Type-bound defined formatted output on external units.
 mod dynamic;
 mod internal;
+mod unformatted;
 use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Context, Result};
 use std::collections::{HashMap, HashSet};
@@ -58,6 +59,16 @@ fn collect(
     owners: &mut HashMap<String, String>,
     input: bool,
 ) -> Result<()> {
+    collect_form(body, bindings, procedures, owners, input, true)
+}
+fn collect_form(
+    body: &mut [Stmt], bindings: &mut HashMap<String, String>,
+    procedures: &mut HashMap<String, Stmt>, owners: &mut HashMap<String, String>,
+    input: bool, formatted: bool,
+) -> Result<()> {
+    let direction = if input { "read" } else { "write" };
+    let form = if formatted { "formatted" } else { "unformatted" };
+    let wanted = format!("@defined_io:{direction}:{form}");
     for stmt in body {
         match stmt {
             Stmt::DerivedType {
@@ -70,31 +81,18 @@ fn collect(
                     .any(|(key, value)| key == "@binding_default_access" && value == "@private");
                 for (key, target) in entries.iter() {
                     if key.starts_with("@defined_io:") {
-                        let wanted = if input {
-                            "@defined_io:read:formatted"
-                        } else {
-                            "@defined_io:write:formatted"
-                        };
-                        if key != wanted
-                            && matches!(
-                                key.as_str(),
-                                "@defined_io:read:formatted" | "@defined_io:write:formatted"
-                            )
-                        {
+                        if key != &wanted {
                             continue;
                         }
                         if private_default
                             && !entries.iter().any(|(key, value)| {
                                 key == &format!(
-                                    "@defined_io_access:{}:formatted",
+                                    "@defined_io_access:{}:{form}",
                                     if input { "read" } else { "write" }
                                 ) && value == "@public"
                             })
                         {
                             bail!("private defined I/O bindings are not yet supported");
-                        }
-                        if key != wanted {
-                            bail!("defined I/O currently supports formatted READ and WRITE only");
                         }
                         // The generic names a binding, not just an implementation.
                         // An extension may override that binding while another alias
@@ -135,17 +133,23 @@ fn collect(
             _ => {}
         }
         for child in crate::procedure_arguments::children(stmt) {
-            collect(child, bindings, procedures, owners, input)?;
+            collect_form(child, bindings, procedures, owners, input, formatted)?;
         }
     }
     Ok(())
 }
 fn validate(ty: &str, target: &str, procedure: &Stmt, input: bool) -> Result<()> {
+    validate_form(ty, target, procedure, input, true)
+}
+fn validate_form(ty: &str, target: &str, procedure: &Stmt, input: bool, formatted: bool) -> Result<()> {
     let Stmt::Subroutine { params, body, .. } = procedure else {
         bail!("defined formatted output `{target}` must be a subroutine");
     };
-    if params.len() != 6 {
-        bail!("defined formatted output `{target}` requires six dummy arguments: DTV, UNIT, IOTYPE, V_LIST, IOSTAT, IOMSG");
+    if params.len() != if formatted { 6 } else { 4 } {
+        if formatted {
+            bail!("defined formatted output `{target}` requires six dummy arguments: DTV, UNIT, IOTYPE, V_LIST, IOSTAT, IOMSG");
+        }
+        bail!("defined unformatted I/O `{target}` requires four dummy arguments: DTV, UNIT, IOSTAT, IOMSG");
     }
     let mut kinds = HashMap::new();
     let mut intents = HashMap::new();
@@ -194,17 +198,10 @@ fn validate(ty: &str, target: &str, procedure: &Stmt, input: bool) -> Result<()>
     if !derived.is_some_and(|(t, d, poly)| t == ty && d.is_empty() && poly) {
         bail!("defined formatted output DTV must be a scalar CLASS({ty}) dummy");
     }
-    for (i, required) in [
-        if input { "intent(inout)" } else { "intent(in)" },
-        "intent(in)",
-        "intent(in)",
-        "intent(in)",
-        "intent(out)",
-        "intent(inout)",
-    ]
-    .iter()
-    .enumerate()
-    {
+    let mut required_intents = vec![if input { "intent(inout)" } else { "intent(in)" }, "intent(in)"];
+    if formatted { required_intents.extend(["intent(in)", "intent(in)"]); }
+    required_intents.extend(["intent(out)", "intent(inout)"]);
+    for (i, required) in required_intents.iter().enumerate() {
         if intents.get(&params[i]).map(String::as_str) != Some(*required) {
             bail!(
                 "defined formatted output dummy `{}` requires {required}",
@@ -212,7 +209,7 @@ fn validate(ty: &str, target: &str, procedure: &Stmt, input: bool) -> Result<()>
             );
         }
     }
-    for i in [1, 4] {
+    for i in [1, params.len()-2] {
         if !matches!(kinds.get(&params[i]),Some((TypeSpec::Integer(None|Some(4)),d)) if d.is_empty())
         {
             bail!(
@@ -221,7 +218,7 @@ fn validate(ty: &str, target: &str, procedure: &Stmt, input: bool) -> Result<()>
             );
         }
     }
-    for i in [2, 5] {
+    for i in if formatted { vec![2, 5] } else { vec![3] } {
         if !matches!(kinds.get(&params[i]),Some((TypeSpec::CharacterAssumed,d)) if d.is_empty()) {
             bail!(
                 "defined formatted output dummy `{}` must be CHARACTER(len=*) scalar",
@@ -229,7 +226,7 @@ fn validate(ty: &str, target: &str, procedure: &Stmt, input: bool) -> Result<()>
             );
         }
     }
-    if !matches!(kinds.get(&params[3]),Some((TypeSpec::Integer(None|Some(4)),d)) if d.len()==1 && matches!(&d[0],Expr::Ident(n) if n=="@deferred_extent"))
+    if formatted && !matches!(kinds.get(&params[3]),Some((TypeSpec::Integer(None|Some(4)),d)) if d.len()==1 && matches!(&d[0],Expr::Ident(n) if n=="@deferred_extent"))
     {
         bail!("defined formatted output V_LIST must be an assumed-shape default INTEGER vector");
     }
@@ -1248,6 +1245,7 @@ fn lower(
 mod input;
 
 pub fn resolve(mut program: Program) -> Result<Program> {
+    unformatted::resolve(&mut program)?;
     input::resolve(&mut program)?;
     fn contains(body: &mut [Stmt]) -> bool {
         body.iter_mut().any(|s| {

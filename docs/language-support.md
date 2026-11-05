@@ -4350,8 +4350,8 @@ Section actuals with function calls in their subscripts are diagnosed until
 the declared and dynamic views can share a single evaluation. Nonunit lower
 bounds on assumed-shape derived-type dummies, non-ALLOCATABLE CLASS(*) array
 dummies and polymorphic POINTER arrays retain their existing restrictions.
-Empty list-directed and unformatted child reads remain unsupported. These
-limits are separate from ordinary READ support.
+Empty list-directed child reads, and unformatted child reads inside a formatted
+reader, remain unsupported. Defined unformatted stream I/O is described below.
 
 Mixed formatted COMPLEX input and output support scalar values, arrays and
 sections, literal/runtime formats, and external/internal files. Output expressions
@@ -4407,6 +4407,38 @@ example in `tests/programs/xdefined_formatted_input_arrays.f90`. Error tests
 use explicit expected results: the local gfortran build loses the expected
 parent status for malformed input and EOF during an array transfer.
 
+### Defined unformatted stream I/O
+
+Type-bound `generic :: read(unformatted)` and `write(unformatted)` bindings
+are supported for files opened with `access='stream', form='unformatted'`.
+Their procedures take four arguments: DTV, UNIT, IOSTAT and IOMSG. DTV is a
+scalar CLASS dummy with INTENT(INOUT) for reading and INTENT(IN) for writing;
+UNIT and IOSTAT are default INTEGER scalars with INTENT(IN) and INTENT(OUT),
+and IOMSG is CHARACTER(len=*) with INTENT(INOUT).
+
+Parent and child transfers share the stream position. Supported cases include
+scalars, arrays, triplet/vector sections, implied-DO lists, runtime-sized arrays,
+mixed intrinsic/derived lists, nested defined transfers, inherited/overridden
+bindings, CLASS array dummies and polymorphic ALLOCATABLE objects. Formatted and
+unformatted bindings can coexist on the same type. Parent UNIT expressions are
+evaluated once; POS= seeks before the transfer. A nonzero child IOSTAT stops
+later parent items and is propagated with IOMSG. Successful transfers leave the
+parent IOMSG unchanged; without IOSTAT, transfer failure stops execution.
+
+This uses the existing stream backend: sequential unformatted record framing,
+direct access, and COMPLEX byte transfers are not implemented. Generic interface
+blocks remain outside the type-bound implementation. A default transfer of an
+enclosing type whose components require defined I/O is diagnosed; give the
+enclosing type its own binding and transfer its components inside that procedure.
+Run
+`python tests/test_defined_unformatted_io.py`; the standalone example is
+`tests/programs/xdefined_unformatted_io.f90`. Its custom binary layout differs
+from the default component order, so the test verifies that the bindings run.
+Tests cover interpreter/native O0/O2 execution and gfortran comparisons. The
+user-error cases assert rfort's termination of later items directly: the local
+gfortran build continues a trailing intrinsic transfer after a defined procedure
+returns an error.
+
 ### File and standard input
 
 FLUSH writes all buffered output, and ENDFILE ends a file at its current
@@ -4444,7 +4476,8 @@ DOUBLE PRECISION, LOGICAL (4 bytes) and CHARACTER (its length in bytes). Items m
 be scalars, expressions such as `size(a)` and `shape(a)`, whole arrays and
 sections (fixed or runtime-sized, including runtime CHARACTER arrays) in array
 element order, implied-DO lists, and derived-type objects and arrays,
-component by component. READ accepts `pos=` (the byte position, counted from 1),
+component by component unless a supported defined unformatted binding is present.
+READ and WRITE accept `pos=` (the byte position, counted from 1),
 IOSTAT (negative at end of file) and IOMSG; without IOSTAT, an end of file or
 error stops the program. REWIND repositions the file. COMPLEX values, ERR=,
 END= and unformatted sequential or direct access are not yet supported.

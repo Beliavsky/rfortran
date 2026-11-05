@@ -42,7 +42,7 @@ fn read(s: &Stmt) -> Option<(Expr, Option<Expr>, String, Expr, Vec<Expr>)> {
         _ => None,
     }
 }
-fn nonzero(n: &str, body: Vec<Stmt>) -> Stmt {
+pub(super) fn nonzero(n: &str, body: Vec<Stmt>) -> Stmt {
     Stmt::If {
         cond: Expr::Bin(BinOp::Ne, Box::new(id(n)), Box::new(int(0))),
         then_body: body,

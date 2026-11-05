@@ -194,10 +194,10 @@ impl Definitions {
                     components,
                     bindings,
                 } => {
-                    if bindings.iter().any(|(n,_)| n == "@defined_io:write:formatted") {
+                    if bindings.iter().any(|(n,_)| matches!(n.as_str(), "@defined_io:write:formatted" | "@defined_io:write:unformatted")) {
                         self.defined_output_types.insert(name.clone());
                     }
-                    if bindings.iter().any(|(n,_)| n == "@defined_io:read:formatted") {
+                    if bindings.iter().any(|(n,_)| matches!(n.as_str(), "@defined_io:read:formatted" | "@defined_io:read:unformatted")) {
                         self.defined_input_types.insert(name.clone());
                     }
                     let mut fields = HashMap::new();
@@ -1103,7 +1103,7 @@ impl Lowerer {
                     Stmt::CallSub { name, args } if name == "@formatted_print" => Some(&mut args[1..]),
                     Stmt::CallSub { name, args } if name == "@internal_read" => Some(&mut args[3..]),
                     Stmt::CallSub { name, args } if name == "@formatted_read" => Some(&mut args[2..]),
-                    Stmt::CallSub { name, args } if name == "@formatted_read_status" => Some(&mut args[4..]),
+                    Stmt::CallSub { name, args } if matches!(name.as_str(), "@formatted_read_status" | "@unformatted_read" | "@unformatted_write") => Some(&mut args[4..]),
                     _ => None,
                 };
                 if let Some(items) = io_items {
@@ -1333,7 +1333,10 @@ fn io_root(item: &Expr) -> Option<&str> {
     match item {Expr::Ident(n)|Expr::Call(n,_)|Expr::Index(n,_)|Expr::Section{name:n,..}=>Some(n),_=>None}
 }
 fn is_input(statement: &Stmt) -> bool {
-    matches!(statement, Stmt::CallSub{name,..} if matches!(name.as_str(),"@internal_read"|"@formatted_read"|"@formatted_read_status"))
+    matches!(statement, Stmt::CallSub{name,..} if matches!(name.as_str(),"@internal_read"|"@formatted_read"|"@formatted_read_status"|"@unformatted_read"))
+}
+fn message_transfer(statement: &Stmt) -> bool {
+    is_input(statement) || matches!(statement, Stmt::CallSub { name, .. } if name == "@unformatted_write")
 }
 fn io_items(statement: &Stmt) -> &[Expr] {
     match statement {
@@ -1342,7 +1345,7 @@ fn io_items(statement: &Stmt) -> &[Expr] {
         Stmt::CallSub { name, args } if name == "@formatted_print" => &args[1..],
         Stmt::CallSub { name, args } if name == "@internal_read" => &args[3..],
         Stmt::CallSub { name, args } if name == "@formatted_read" => &args[2..],
-        Stmt::CallSub { name, args } if name == "@formatted_read_status" => &args[4..],
+        Stmt::CallSub { name, args } if matches!(name.as_str(), "@formatted_read_status" | "@unformatted_read" | "@unformatted_write") => &args[4..],
         _ => &[],
     }
 }
