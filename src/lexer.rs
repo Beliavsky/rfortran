@@ -352,6 +352,9 @@ pub enum TokenKind {
     KwPure,
     KwSimple,
     KwReduce,
+    KwLocal,
+    KwLocalInit,
+    KwShared,
     KwEnumeration,
     KwEnum,
     KwEnumerator,
@@ -1340,6 +1343,10 @@ pub fn lex(input: &str) -> Vec<Token> {
                     TokenKind::LParen => {depth+=1;header=true;},
                     TokenKind::RParen => depth-=1,
                     TokenKind::Ident(n) if header && depth==0 && n=="reduce" => tokens[next].kind=TokenKind::KwReduce,
+                    TokenKind::Ident(n) if header && depth==0 && n=="local" => tokens[next].kind=TokenKind::KwLocal,
+                    TokenKind::Ident(n) if header && depth==0 && n=="local_init" => tokens[next].kind=TokenKind::KwLocalInit,
+                    TokenKind::Ident(n) if header && depth==0 && n=="shared" => tokens[next].kind=TokenKind::KwShared,
+                    TokenKind::Ident(n) if header && depth==0 && n=="default" => tokens[next].kind=TokenKind::KwDefault,
                     _ => {},
                 }
             }
@@ -1962,7 +1969,7 @@ pub fn lex(input: &str) -> Vec<Token> {
     for i in 0..normalized.len() {
         if !matches!(normalized[i].kind,TokenKind::LParen){continue;}
         if i>0 && same_statement(&input[normalized[i-1].span.end..normalized[i].span.start])
-            && matches!(normalized[i-1].kind,TokenKind::Ident(_)|TokenKind::RParen|TokenKind::RBracket|TokenKind::KwReal|TokenKind::KwComplex|TokenKind::KwInteger|TokenKind::KwCharacter|TokenKind::KwLogical|TokenKind::KwDimension|TokenKind::KwKind|TokenKind::KwLen|TokenKind::KwCase|TokenKind::KwIf|TokenKind::KwWhile|TokenKind::KwRead|TokenKind::KwReadEmpty|TokenKind::KwWrite|TokenKind::KwWriteEmpty|TokenKind::KwOperator|TokenKind::KwAllocate|TokenKind::KwDeallocate|TokenKind::KwNullify|TokenKind::KwNone){continue;}
+            && matches!(normalized[i-1].kind,TokenKind::Ident(_)|TokenKind::RParen|TokenKind::RBracket|TokenKind::KwReal|TokenKind::KwComplex|TokenKind::KwInteger|TokenKind::KwCharacter|TokenKind::KwLogical|TokenKind::KwDimension|TokenKind::KwKind|TokenKind::KwLen|TokenKind::KwCase|TokenKind::KwIf|TokenKind::KwWhile|TokenKind::KwRead|TokenKind::KwReadEmpty|TokenKind::KwWrite|TokenKind::KwWriteEmpty|TokenKind::KwOperator|TokenKind::KwAllocate|TokenKind::KwDeallocate|TokenKind::KwNullify|TokenKind::KwNone|TokenKind::KwLocal|TokenKind::KwLocalInit|TokenKind::KwShared){continue;}
         let mut end=i+1;
         while end<normalized.len() && !matches!(normalized[end].kind,TokenKind::RParen|TokenKind::LParen|TokenKind::Eq|TokenKind::LBracket) {end+=1;}
         if end>=normalized.len() || !matches!(normalized[end].kind,TokenKind::RParen){continue;}

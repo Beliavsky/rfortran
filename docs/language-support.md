@@ -694,8 +694,14 @@ loops may share it. DO CONCURRENT accepts several index controls with strides
 and a final mask, as in `do concurrent (i = 1:n, j = 1:m:2, a(i) > 0)`, and runs
 its iterations in order as nested DO loops. Fortran 2023
 [REDUCE locality](fortran2023.md#do-concurrent-reductions-us-20) supports scalar
-and fixed-size explicit-shape intrinsic arrays. A type specification and other locality
-specifiers such as LOCAL are not supported.
+and fixed-size explicit-shape intrinsic arrays. F2018 `LOCAL`, `LOCAL_INIT`,
+`SHARED`, and `DEFAULT(NONE)` are supported with serial execution. Indices are
+construct-local. `LOCAL` starts undefined each iteration; `LOCAL_INIT` starts
+with a copy of the outside value. Local storage currently supports intrinsic
+scalars and constant explicit-shape arrays; derived, pointer, allocatable, and
+runtime-shaped local storage are rejected. Locality names require declarations.
+A loop index type specification is not supported. See
+[`xconcurrent_locality.f90`](../tests/programs/xconcurrent_locality.f90).
 
 Counted, unbounded, and DO WHILE loops accept construct names, for example
 `do_i: do i=1,ni` with `end do do_i` (or `enddo do_i`). `CYCLE do_i` and

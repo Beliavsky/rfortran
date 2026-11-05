@@ -9,16 +9,46 @@ use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec};
 use crate::procedure_arguments::{children, expressions, visit_expr};
 use anyhow::{bail, Context, Result};
 use std::collections::{HashMap, HashSet};
+mod locality;
 
 #[derive(Clone)]
 struct Object {
     kind: TypeSpec,
     dims: Vec<Expr>,
     attrs: HashSet<String>,
+    derived: bool,
 }
 type Scope = HashMap<String, Object>;
 fn declarations(body: &[Stmt], parent: &Scope) -> Scope {
     let mut scope = parent.clone();
+    for s in body {
+        let rules: Vec<(&TypeSpec, &[crate::ast::LetterRange])> = match s {
+            Stmt::Implicit(crate::ast::Implicit::Rule {
+                type_spec,
+                letter_ranges,
+            }) => vec![(type_spec, letter_ranges)],
+            Stmt::Implicit(crate::ast::Implicit::Rules { rules }) => rules
+                .iter()
+                .map(|r| (&r.type_spec, r.letter_ranges.as_slice()))
+                .collect(),
+            _ => vec![],
+        };
+        for (kind, ranges) in rules {
+            for range in ranges {
+                for letter in range.start..=range.end.unwrap_or(range.start) {
+                    scope.insert(
+                        format!("@implicit:{letter}"),
+                        Object {
+                            kind: kind.clone(),
+                            dims: vec![],
+                            attrs: HashSet::new(),
+                            derived: false,
+                        },
+                    );
+                }
+            }
+        }
+    }
     for s in body {
         match s {
             Stmt::VarDecl { kind, names } => {
@@ -29,6 +59,7 @@ fn declarations(body: &[Stmt], parent: &Scope) -> Scope {
                             kind: kind.clone(),
                             dims: vec![],
                             attrs: HashSet::new(),
+                            derived: false,
                         },
                     );
                 }
@@ -40,6 +71,7 @@ fn declarations(body: &[Stmt], parent: &Scope) -> Scope {
                         kind: kind.clone(),
                         dims: dims.clone(),
                         attrs: HashSet::new(),
+                        derived: false,
                     },
                 );
             }
@@ -55,13 +87,27 @@ fn declarations(body: &[Stmt], parent: &Scope) -> Scope {
                             kind: kind.clone(),
                             dims: vec![],
                             attrs: attributes.iter().cloned().collect(),
+                            derived: false,
                         },
                     );
                 }
             }
-            Stmt::DerivedDecl { names, .. } => {
+            Stmt::DerivedDecl {
+                names,
+                dims,
+                attributes,
+                ..
+            } => {
                 for n in names {
-                    scope.remove(n);
+                    scope.insert(
+                        n.clone(),
+                        Object {
+                            kind: TypeSpec::Integer(None),
+                            dims: dims.clone(),
+                            attrs: attributes.iter().cloned().collect(),
+                            derived: true,
+                        },
+                    );
                 }
             }
             _ => {}
@@ -308,13 +354,24 @@ fn lower(
     serial: &mut usize,
     offset: Option<usize>,
     loop_name: Option<&str>,
+    implicit_none: bool,
 ) -> Result<Vec<Stmt>> {
     let mut args = args.into_iter();
     let Expr::Call(_, mut controls) = args.next().context("missing concurrent controls")? else {
         bail!("invalid concurrent controls")
     };
-    let mask = args.next().context("missing concurrent mask")?;
-    let mut prefix = vec![];
+    let mut mask = args.next().context("missing concurrent mask")?;
+    let mut args: Vec<_> = args.collect();
+    let mut scope = scope.clone();
+    let mut prefix = locality::prepare(
+        &mut controls,
+        &mut mask,
+        &mut body,
+        &mut args,
+        &mut scope,
+        serial,
+        implicit_none,
+    )?;
     let mut ops = HashMap::new();
     let mut suffix = vec![];
     for clause in args {
@@ -340,6 +397,9 @@ fn lower(
             let object = scope.get(&n).with_context(|| {
                 format!("REDUCE variable `{n}` requires a declared intrinsic type")
             })?;
+            if object.derived {
+                bail!("REDUCE variable `{n}` requires a declared intrinsic type");
+            }
             for attr in [
                 "parameter",
                 "intent(in)",
@@ -416,7 +476,7 @@ fn lower(
                 .unwrap_or(TypeSpec::Integer(None)),
             _ => TypeSpec::Integer(None),
         };
-        for e in &mut c[1..3] {
+        for e in &mut c[1..4] {
             *serial += 1;
             let temporary = format!("@reduce_bound_{serial}");
             prefix.push(Stmt::VarDecl {
@@ -441,8 +501,13 @@ fn walk(
     serial: &mut usize,
     mut offset: Option<usize>,
     loop_name: Option<&str>,
+    implicit_none: bool,
 ) -> Result<()> {
     let scope = declarations(body, parent);
+    let implicit_none = implicit_none
+        || body
+            .iter()
+            .any(|s| matches!(s, Stmt::Implicit(crate::ast::Implicit::None)));
     for s in body {
         if let Stmt::SourceLocation(p) = s {
             offset = Some(*p);
@@ -450,7 +515,8 @@ fn walk(
         }
         // Lower before walking children, while the marker still owns its body.
         if let Stmt::Block { body } = s {
-            if matches!(body.first(),Some(Stmt::CallSub{name,..}) if name=="@concurrent_reduce") {
+            if matches!(body.first(),Some(Stmt::CallSub{name,..}) if matches!(name.as_str(),"@concurrent_reduce"|"@do_concurrent"))
+            {
                 let Stmt::CallSub { args, .. } = body.remove(0) else {
                     unreachable!()
                 };
@@ -461,6 +527,7 @@ fn walk(
                     serial,
                     offset,
                     loop_name,
+                    implicit_none,
                 )
                 .map_err(|e| crate::source_diagnostics::at(e, offset))?;
             }
@@ -476,7 +543,14 @@ fn walk(
             _ => None,
         };
         for b in children(s) {
-            walk(b, &scope, serial, offset, child_name.as_deref())?;
+            walk(
+                b,
+                &scope,
+                serial,
+                offset,
+                child_name.as_deref(),
+                implicit_none,
+            )?;
         }
         // Keep a named-loop wrapper around the generated DO, not around the
         // declarations and final outside-value combination.
@@ -522,6 +596,6 @@ fn name_iteration(mut stmt: Stmt, marker: Stmt) -> Stmt {
     }
 }
 pub fn resolve(mut program: Program) -> Result<Program> {
-    walk(&mut program.body, &Scope::new(), &mut 0, None, None)?;
+    walk(&mut program.body, &Scope::new(), &mut 0, None, None, false)?;
     Ok(program)
 }

@@ -33,6 +33,16 @@ class Standards(unittest.TestCase):
         self.assertEqual(accepted.returncode,0,accepted.stderr)
         self.assertNotIn("requires Fortran",accepted.stderr)
 
+    def test_concurrent_locality(self):
+        self.assert_feature("integer :: i,x\ndo concurrent(i=1:2) local(x) default(none)\nx=i\nend do\nend\n", "f2008", "f2018", "locality")
+
+    def test_concurrent_parse_retains_construct(self):
+        result=self.invoke("integer :: i,x\ndo concurrent(i=1:2,i/=2) local(x) default(none)\nx=i\nend do\nend\n")
+        self.assertEqual(result.returncode,0,result.stderr)
+        ast=(self.work / "ast.json").read_text(encoding="utf-8")
+        for marker in ("@do_concurrent", "@controls", "@locality:local", "@locality:default_none"):
+            self.assertIn(marker,ast)
+
     def test_f90_baseline_runs_in_every_mode(self):
         source="implicit none\ninteger :: a(2)\na=(/1,2/)\nprint *,sum(a)\nend\n"
         for standard in (None,"f90","f95","f2003","f2008","f2018","f2023"):

@@ -765,6 +765,15 @@ impl Checker<'_> {
                         self.require("C_F_POINTER LOWER argument",2023,offset);
                     }
                     if name=="@concurrent_reduce" {self.require("DO CONCURRENT REDUCE",2023,offset);}
+                    if name=="@do_concurrent" {
+                        self.require("DO CONCURRENT",2008,offset);
+                        for arg in args.iter() {
+                            if let Expr::Call(n,_) = arg {
+                                if n.starts_with("@reduce:") {self.require("DO CONCURRENT REDUCE",2023,offset);}
+                                if n.starts_with("@locality:") {self.require("DO CONCURRENT locality specifiers",2018,offset);}
+                            }
+                        }
+                    }
                     let format = match name.as_str() {
                         "@formatted_print" | "@formatted_write_noadvance" => args.first(),
                         "@write" => args.get(1),

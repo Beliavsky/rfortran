@@ -53,7 +53,7 @@ fn rename_kind(kind: &mut TypeSpec, from: &str, to: &str) {
     }
 }
 
-fn rename(body: &mut [Stmt], from: &str, to: &str) {
+pub(crate) fn rename(body: &mut [Stmt], from: &str, to: &str) {
     for s in body.iter_mut() {
         if let Stmt::VarDecl { kind, .. } | Stmt::ArrayDecl { kind, .. } | Stmt::InitializedDecl { kind, .. } = s {
             rename_kind(kind, from, to);
