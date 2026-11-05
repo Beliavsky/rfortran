@@ -7,7 +7,66 @@ The idea: translate Fortran to C and compile it with gcc or clang, as an
 optional backend alongside Cranelift and the interpreter. It would not replace
 either of them.
 
-## Why it is doable
+## A backend and a readable translator are different tools
+
+A C backend is not a readable Fortran-to-C translator like xf2c (see below).
+The two should stay separate projects that share at most rfort's front end.
+
+**A readable translator** produces C that a person will maintain.
+
+- **Output:** names, structure and, ideally, comments survive. Array
+  expressions become loops that look hand-written.
+- **Starting point:** the source, or an AST close to it.
+- **Limits:** it must know when to stop and refuse or flag a construct rather
+  than emit unreadable C.
+- **Runtime:** small and readable, like xf2c's `fortran_runtime.c`. Simpler
+  semantics are acceptable if they are documented.
+- **Success:** someone can edit the C and keep using it.
+
+**A compiler backend** produces C that a C compiler optimizes well.
+
+- **Output:** C that behaves exactly like the other rfort backends.
+- **Starting point:** the lowered IR, which is already full of temporaries,
+  mangled names, descriptor bookkeeping and about 470 `@` helper calls.
+  Readability is gone by then, and that is fine for a backend.
+- **Runtime:** full semantics, shared with Cranelift.
+- **Success:** speed, and output that matches byte for byte.
+
+### What a readable translator in Rust would gain from rfort
+
+The main gain is rfort's front end, not Rust itself. A pattern-based Python
+scanner has to guess things that rfort's parser and semantic checks know
+exactly:
+
+- implicit typing and kinds
+- which specific procedure a generic call resolves to, and which operator
+  overload applies
+- whether a name is an array or a function
+- constant values
+- the interfaces of procedures from other modules
+
+A translator built on rfort's checked AST, before lowering, would be more
+correct throughout. It would also need:
+
+- **Comments kept.** rfort's lexer probably drops them (not checked). Trailing
+  comments and their placement would have to be carried through.
+- **The source structure kept.** That means emitting C before the lowering
+  passes that rewrite constructs into helper calls.
+- **Its own emitter.** Little is shared with the backend emitter beyond type
+  information and perhaps a few runtime functions.
+
+### Which to build
+
+- **If the goal is speed,** build the backend from the IR, as described in the
+  rest of this document, and drop readability as a requirement.
+- **If the goal is readable C,** an `rfort to-c` subcommand built on rfort's
+  parser and semantic checks could eventually replace the scanning half of xf2c.
+  xf2c's rules for generating C and its readable runtime would carry over in
+  substance, ported to Rust.
+- **Doing both** is possible. It means two emitters and two runtimes sharing
+  only the front end, so each should be decided on its own merits.
+
+## Why a backend is doable
 
 - **The IR keeps the program's structure.** It has functions, IF, DO, DO WHILE,
   SELECT CASE, BLOCK, EXIT and CYCLE (`src/ir.rs`), which map almost one to one
