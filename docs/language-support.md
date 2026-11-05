@@ -4266,9 +4266,8 @@ input errors and errors returned by defined procedures; later items are skipped.
 Current runtime limits are 4096 bytes per expanded field/control format, 128
 integers per DT v-list, and 4096 characters per input field. Assumed/runtime-length
 format variables have a checked 4096-character capture limit; fixed-length format
-variables use their declared capacity. T/TL positioning, mixed explicitly formatted
-COMPLEX items and runtime formats in child READs remain
-unsupported. Ordinary READ statements without defined-I/O items retain their
+variables use their declared capacity. T/TL positioning and mixed explicitly formatted
+COMPLEX items remain unsupported. Ordinary READ statements without defined-I/O items retain their
 existing runtime-format restrictions.
 
 Run `python tests/test_defined_io_dynamic.py`. The standalone example is
@@ -4293,9 +4292,15 @@ no items, and reader errors stop both inner and outer loops before later element
 are modified. Inherited readers,
 public bindings with private implementations, and USE ONLY are supported.
 
-Child transfers support list-directed READ and the existing constant field
+Child transfers support list-directed READ and constant or runtime field
 formats, including I, F, A and L fields, X/TR spacing, slash editing and format
-reversion. Child reads on the parent's unit, including directly called helper
+reversion. Runtime format variables, assumed-length format arguments and
+expressions of known result length are evaluated once per READ. Readers can
+construct formats from IOTYPE or V_LIST. The same runtime format cursor handles
+intrinsic scalar and array items and nested DT transfers; format/type errors
+and malformed data propagate through child and parent IOSTAT/IOMSG. Reads in
+helper subroutines called by defined readers use this path too. Temporary internal
+files and reads on other external units remain independent of the parent. Child reads on the parent's unit, including directly called helper
 subroutines and nested defined readers, share an input session. They continue from the current position;
 completion of the outer parent READ discards the rest of its final record.
 Reads on other units retain normal record advancement. Explicit fields and
@@ -4308,12 +4313,20 @@ to the parent. IOMSG remains unchanged on success. Without parent IOSTAT, an
 error terminates execution with the returned message. The message temporary has
 the same 256-character capacity as defined output.
 
-Polymorphic input dispatch,
-Parent T/TL positioning remains unsupported. Runtime child
-formats, T/TL positioning, empty list-directed and unformatted child reads are
-diagnosed in reader procedures
+Polymorphic input dispatch and parent T/TL positioning remain unsupported.
+T/TL positioning, empty list-directed and unformatted child reads are diagnosed
+in reader procedures
 and their directly called subroutines. These limits are separate from ordinary
-READ support.
+READ support. Unsupported T/TL editing in runtime child formats reports an
+IOSTAT/IOMSG error during execution; constant child formats are checked during
+compilation.
+
+Run `python tests/test_defined_input_dynamic_child.py` for runtime child-format
+coverage. The standalone example `tests/programs/xdefined_input_runtime_child.f90`
+builds a child format from DT v-list metadata and reads a CHARACTER-array file.
+Tests exercise interpreter/native O0/O2 modes, successful gfortran comparisons,
+nested readers, helper calls, independent units, format capture, array items,
+record continuation, reversion, and error propagation.
 
 Run `python tests/test_defined_input.py`; the standalone example is
 `tests/programs/xdefined_formatted_input.f90`;

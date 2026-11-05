@@ -88,8 +88,9 @@ print *,status<0,len_trim(message)>0"""),'T T\n')
     def test_child_left_tab_diagnosed(self):
         self.reject(self.fixed().replace('(i3)','(i3,t1)'),'T or TL positioning')
 
-    def test_child_runtime_format_diagnosed(self):
-        self.reject(self.source().replace('read(unit,*,','read(unit,iotype,'),'constant format')
+    def test_child_invalid_runtime_format(self):
+        source=self.source().replace('read(unit,*,','read(unit,iotype,')
+        self.check(self.main(source,'read(u,*,iostat=status,iomsg=message) a\nprint *,status>0,len_trim(message)>0'), 'T T\n',reference=False)
 
     def test_explicit_child_trailing_spaces(self):
         source=self.fixed().replace('read(unit,"(i3)",iostat=iostat,iomsg=iomsg) dtv%x','read(unit,"(i3,2x)",iostat=iostat,iomsg=iomsg) dtv%x')

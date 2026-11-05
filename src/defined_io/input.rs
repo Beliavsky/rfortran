@@ -87,6 +87,7 @@ fn lower_one(
     types: &crate::operators::ExpressionTypes,
     serial: &mut usize,
     polymorphic: &HashSet<String>,
+    child: bool,
 ) -> Result<Option<Stmt>> {
     let Some((unit, format, control, status, items)) = read(s) else {
         return Ok(None);
@@ -100,7 +101,10 @@ fn lower_one(
             _ => None,
         });
     }
-    if !writers.iter().any(Option::is_some) {
+    // Reuse the runtime cursor for intrinsic child transfers as well as DT parents.
+    // Its nested input session borrows an existing parent session on the same unit.
+    let runtime_child = child && format.as_ref().is_some_and(|f| crate::parameters::character_constant(f).is_err());
+    if !writers.iter().any(Option::is_some) && !runtime_child {
         return Ok(None);
     }
     if items
@@ -162,7 +166,7 @@ fn lower_one(
         let mut body=super::internal::wrap(unit,kind,format,items,false,
             if control.is_empty(){None}else{let Expr::Ident(n)=status else{unreachable!()};Some(n)},
             message.and_then(|e|if let Expr::Ident(n)=e{Some(n.clone())}else{None}),&format!("@defined_internal_input_{serial}"),rank,types,declarations,objects)?;
-        lower(&mut body,objects,declarations,bindings,types,serial,polymorphic)?;
+        lower(&mut body,objects,declarations,bindings,types,serial,polymorphic,&HashSet::new(),child)?;
         return Ok(Some(Stmt::Block{body}));
     }
     if let Some(format)=&format {
@@ -328,6 +332,8 @@ fn lower(
     types: &crate::operators::ExpressionTypes,
     serial: &mut usize,
     inherited_polymorphic: &HashSet<String>,
+    readers: &HashSet<String>,
+    active: bool,
 ) -> Result<()> {
     let mut polymorphic = inherited_polymorphic.clone();
     let mut objects = inherited.clone();
@@ -386,6 +392,7 @@ fn lower(
                             types,
                             serial,
                             &polymorphic,
+                            active,
                         )?;
                     }
                 }
@@ -400,12 +407,17 @@ fn lower(
                     types,
                     serial,
                     &polymorphic,
+                    active,
                 )?;
             }
             if let Some(new) = replacement {
                 *s = new;
                 return Ok(());
             }
+            let active = match s {
+                Stmt::Subroutine { name, .. } | Stmt::Function { name, .. } => readers.contains(name),
+                _ => active,
+            };
             for child in crate::procedure_arguments::children(s) {
                 lower(
                     child,
@@ -415,6 +427,8 @@ fn lower(
                     types,
                     serial,
                     &polymorphic,
+                    readers,
+                    active,
                 )?;
             }
             Ok(())
@@ -474,14 +488,14 @@ pub(super) fn resolve(program: &mut Program) -> Result<()> {
                 bail!("defined input does not yet support empty or unformatted child READ statements");
             }
             if matches!(name.as_str(), "@formatted_read" | "@formatted_read_status") {
-                let text=crate::parameters::character_constant(&args[1])
-                    .map_err(|_|anyhow::anyhow!("defined input child READ currently requires a constant format"))?;
-                // Until a bidirectional record buffer is available, reject left
-                // tabbing rather than consuming past the requested final position.
-                let mut parser=crate::format_spec::GroupParser::new(text.as_bytes(),args.len()-if name=="@formatted_read" {2}else{4}).map_err(anyhow::Error::msg)?;
-                while let Some(d)=parser.next().map_err(anyhow::Error::msg)? {
-                    if matches!(d.code,crate::format_spec::T | crate::format_spec::TL) {
-                        bail!("defined input child READ does not yet support T or TL positioning");
+                if let Ok(text)=crate::parameters::character_constant(&args[1]) {
+                    // Until a bidirectional record buffer is available, reject left
+                    // tabbing rather than consuming past the requested final position.
+                    let mut parser=crate::format_spec::GroupParser::new(text.as_bytes(),args.len()-if name=="@formatted_read" {2}else{4}).map_err(anyhow::Error::msg)?;
+                    while let Some(d)=parser.next().map_err(anyhow::Error::msg)? {
+                        if matches!(d.code,crate::format_spec::T | crate::format_spec::TL) {
+                            bail!("defined input child READ does not yet support T or TL positioning");
+                        }
                     }
                 }
             }
@@ -544,6 +558,8 @@ pub(super) fn resolve(program: &mut Program) -> Result<()> {
         &types,
         &mut 0,
         &HashSet::new(),
+        &seen,
+        false,
     )?;
     messages(&mut program.body, &seen, false);
     Ok(())
