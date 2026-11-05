@@ -313,6 +313,25 @@ pub unsafe extern "C" fn rfort_list_read_begin_unit(stream:*mut core::ffi::c_voi
     reader
 }
 #[no_mangle]
+pub unsafe extern "C" fn rfort_read_fields(stream:*mut core::ffi::c_void,unit:i64,out:*mut u8,
+    capacity:usize,width:usize,advance:i64)->i64 {
+    let mut context=DEFINED_INPUT;
+    while !context.is_null() {
+        if (*context).unit==unit {
+            if advance<0 {return record_input::INVALID_FORMAT;}
+            let reader=rfort_list_read_begin_unit(stream,unit);
+            if reader.is_null() {return 1;}
+            let r=&mut *reader.cast::<ListReader>();
+            let buffer=core::slice::from_raw_parts_mut(out,capacity);
+            buffer.fill(b' ');*out.add(capacity)=0;
+            return r.session.fields(&mut buffer[..width],advance!=0,
+                ||reader_byte(r.stream,r.source,r.length,&mut r.offset));
+        }
+        context=(*context).previous;
+    }
+    rfort_read_record(stream,out,capacity)
+}
+#[no_mangle]
 pub unsafe extern "C" fn rfort_defined_input_leave()->i64 {
     if DEFINED_INPUT.is_null() {fail("unbalanced defined input context");}
     let context=DEFINED_INPUT;let reader=(*context).reader;
@@ -430,6 +449,19 @@ unsafe fn read_record(stream:*mut core::ffi::c_void,destination:*mut u8,length:u
         #[cfg(not(any(windows, target_os = "macos")))]
         { stdin }
     } else { stream };
+    if !checked {
+        let mut context=DEFINED_INPUT;
+        while !context.is_null() {
+            let reader=(*context).reader.cast::<ListReader>();
+            if !reader.is_null() && (*reader).stream==stream {
+                let r=&mut *reader;
+                *destination.add(length)=0;
+                return r.session.fields(core::slice::from_raw_parts_mut(destination,length),false,
+                    ||reader_byte(r.stream,r.source,r.length,&mut r.offset));
+            }
+            context=(*context).previous;
+        }
+    }
     let buffer = core::slice::from_raw_parts_mut(destination, length);
     let byte=|| {
         let value = fgetc(stream);

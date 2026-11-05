@@ -365,12 +365,24 @@ pub(super) fn resolve(program: &mut Program) -> Result<()> {
     }
     // Reject child transfers that do not yet preserve the shared input position.
     fn check(s: &mut Stmt, called: &mut HashSet<String>) -> Result<()> {
-        if let Stmt::CallSub { name, .. } = s {
+        if let Stmt::CallSub { name, args } = s {
             if matches!(
                 name.as_str(),
-                "@formatted_read" | "@formatted_read_status" | "@empty_read" | "@unformatted_read"
+                "@empty_read" | "@unformatted_read"
             ) {
-                bail!("defined input currently supports list-directed child READ statements only");
+                bail!("defined input does not yet support empty or unformatted child READ statements");
+            }
+            if matches!(name.as_str(), "@formatted_read" | "@formatted_read_status") {
+                let text=crate::parameters::character_constant(&args[1])
+                    .map_err(|_|anyhow::anyhow!("defined input child READ currently requires a constant format"))?;
+                // Until a bidirectional record buffer is available, reject left
+                // tabbing rather than consuming past the requested final position.
+                let mut parser=crate::format_spec::GroupParser::new(text.as_bytes(),args.len()-if name=="@formatted_read" {2}else{4}).map_err(anyhow::Error::msg)?;
+                while let Some(d)=parser.next().map_err(anyhow::Error::msg)? {
+                    if matches!(d.code,crate::format_spec::T | crate::format_spec::TL) {
+                        bail!("defined input child READ does not yet support T or TL positioning");
+                    }
+                }
             }
             called.insert(name.clone());
         }
@@ -398,10 +410,11 @@ pub(super) fn resolve(program: &mut Program) -> Result<()> {
                 if active {
                     if let [statement, Stmt::CallSub { name, args }] = body.as_slice() {
                         if name == crate::initialized::MAY_DEFINE && args.len() == 1 {
-                            if let Some((_, _, control, Expr::Ident(status), _)) = read(statement) {
+                            if let Some((_, format, control, Expr::Ident(status), _)) = read(statement) {
                                 if control == "iostat" {
                                     if let Expr::Ident(message) = &args[0] {
-                                        body.push(nonzero(&status,vec![assign(message,Expr::Str("list-directed input failed: invalid input or end of file".into()))]));
+                                        let text=if format.is_some() {"formatted input failed: invalid input or end of file"}else{"list-directed input failed: invalid input or end of file"};
+                                        body.push(nonzero(&status,vec![assign(message,Expr::Str(text.into()))]));
                                     }
                                 }
                             }

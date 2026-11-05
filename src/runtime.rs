@@ -2005,11 +2005,18 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         let fr=call_stack.last().unwrap().clone();
                         let unit=eval_expr(unit,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
                         let mut buffer=vec![b' ';length.parse().unwrap()];
-                        let valid=args.get(4).is_none_or(|format| {
+                        let valid=args.len()==6 || args.get(4).is_none_or(|format| {
                             let text=eval_expr(format,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).3.unwrap();
                             crate::record_input::valid_format(text.as_bytes())
                         });
-                        let code=if valid {FILES.with(|files| files.borrow_mut().record_status_mode(unit,&mut buffer,name=="@read_record_checked"))} else {crate::record_input::INVALID_FORMAT};
+                        let handle=if valid && name!="@read_record_checked" {DEFINED_INPUT.with(|contexts|contexts.borrow().iter().find_map(|(u,h)|if *u==unit {*h}else{None}))}else{None};
+                        let code=if let Some(h)=handle {
+                            let width=if args.len()==6 {let Expr::IntLit(n)=&args[4] else {unreachable!()};n.parse::<usize>().unwrap()}else{buffer.len()};
+                            let advance=matches!(args.get(5),Some(Expr::IntLit(n)) if n!="0");
+                            INPUT_LISTS.with(|lists|{let mut lists=lists.borrow_mut();let (_,session,_)=lists.get_mut(&h).unwrap();
+                                if matches!(args.get(5),Some(Expr::IntLit(n)) if n=="-1") {crate::record_input::INVALID_FORMAT}
+                                else {FILES.with(|files|session.fields(&mut buffer[..width],advance,||files.borrow_mut().input_byte(unit)))}})
+                        } else if valid {FILES.with(|files| files.borrow_mut().record_status_mode(unit,&mut buffer,name=="@read_record_checked"))} else {crate::record_input::INVALID_FORMAT};
                         let frame=call_stack.last_mut().unwrap();
                         frame.env_int.insert(status.clone(),code);
                         if code == 0 { frame.env_str.insert(dest.clone(),String::from_utf8(buffer).unwrap()); }
@@ -2019,6 +2026,16 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         let Expr::Ident(dest)=&args[0] else {unreachable!()};
                         let Expr::IntLit(length)=&args[1] else {unreachable!()};
                         let length:usize=length.parse().unwrap();
+                        let fr=call_stack.last().unwrap().clone();
+                        let unit=args.get(2).map(|u|eval_expr(u,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap()).unwrap_or(5);
+                        if let Some(h)=DEFINED_INPUT.with(|contexts|contexts.borrow().iter().find_map(|(u,h)|if *u==unit {*h}else{None})) {
+                            let mut buffer=vec![b' ';length];
+                            let code=INPUT_LISTS.with(|lists|{let mut lists=lists.borrow_mut();let (_,session,_)=lists.get_mut(&h).unwrap();
+                                FILES.with(|files|session.fields(&mut buffer,false,||files.borrow_mut().input_byte(unit)))});
+                            if code!=0 {eprintln!("Runtime error: end of file or input error in formatted READ");std::process::exit(1);}
+                            call_stack.last_mut().unwrap().env_str.insert(dest.clone(),String::from_utf8(buffer).unwrap());
+                            idx+=1;continue;
+                        }
                         if let Some(unit) = args.get(2) {
                             let fr=call_stack.last().unwrap().clone();
                             let unit=eval_expr(unit,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();

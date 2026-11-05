@@ -761,6 +761,8 @@ pub(crate) fn lower_field_read(
     // Records, each a list of (item, kind, first column, width, decimals).
     let mut records: Vec<Vec<(Expr, TypeSpec, usize, usize, Option<usize>, u8, bool, Vec<Stmt>)>> = vec![vec![]];
     let mut column = 1usize;
+    let mut widths = vec![0usize];
+    let mut child_positioning = false;
     let mut blank_zero = false;
     let mut next = targets.into_iter();
     while let Some(d) = parser.next().map_err(anyhow::Error::msg)? {
@@ -791,14 +793,16 @@ pub(crate) fn lower_field_read(
             spec::BLANK_NULL => blank_zero = false,
             spec::BLANK_ZERO => blank_zero = true,
             b'x' | spec::TR => column += if d.width > 0 { d.width } else { d.repeat.max(1) },
-            spec::TL => column = column.saturating_sub(d.width.max(1)).max(1),
-            spec::T => column = d.width.max(1),
+            spec::TL => { child_positioning = true; column = column.saturating_sub(d.width.max(1)).max(1); },
+            spec::T => { child_positioning = true; column = d.width.max(1); },
             b'/' | spec::REVERSION => {
-                for _ in 0..d.repeat.max(1) { records.push(vec![]); }
+                for _ in 0..d.repeat.max(1) { records.push(vec![]); widths.push(0); }
                 column = 1;
             }
             _ => {}
         }
+        let width = widths.last_mut().unwrap();
+        *width = (*width).max(column - 1);
     }
     *serial += 1;
     let buffer = format!("@field_record_{serial}");
@@ -806,12 +810,14 @@ pub(crate) fn lower_field_read(
     let code = format!("@field_status_{serial}");
     let widest = records.iter().flatten().map(|f| f.3).max().unwrap_or(1);
     let iostat = !control.is_empty();
-    let read_record = |index: usize| if !internal && items.is_empty() {
+    let capacity = (if items.is_empty() && !internal {0}else{FIELD_RECORD.max(record_length)}).max(widths.iter().copied().max().unwrap_or(0));
+    // The six-argument record helper carries the field span and record advance.
+    // Within defined input it consumes only that span; ordinary input still
+    // consumes a whole record. Advance -1 diagnoses unsupported child tabbing.
+    let read_record = |index: usize| if !internal {
         Stmt::CallSub { name: "@read_record_status".into(),
-            args: vec![var(&code), var(&buffer), int(0), unit.clone()] }
-    } else if !internal {
-        Stmt::CallSub { name: "@formatted_read_status".into(),
-            args: vec![unit.clone(), Expr::Str("(a)".into()), Expr::Str("iostat".into()), var(&code), var(&buffer)] }
+            args: vec![var(&code), var(&buffer), int(capacity as i64), unit.clone(),
+                int(widths[index] as i64), int(if child_positioning {-1}else{i64::from(index > 0)})] }
     } else if items.is_empty() {
         // With no transfer, an internal file has no external record position
         // to advance and its contents remain unchanged.
@@ -868,7 +874,7 @@ pub(crate) fn lower_field_read(
         nested = segment;
     }
     let mut body = vec![
-        Stmt::VarDecl { kind: TypeSpec::Character(Some(if items.is_empty() && !internal {0} else {FIELD_RECORD.max(record_length)})), names: vec![buffer.clone()] },
+        Stmt::VarDecl { kind: TypeSpec::Character(Some(capacity)), names: vec![buffer.clone()] },
         Stmt::VarDecl { kind: TypeSpec::Character(Some(widest)), names: vec![field] },
         Stmt::VarDecl { kind: TypeSpec::Integer(None), names: vec![code.clone()] },
         set(&code, int(0)),

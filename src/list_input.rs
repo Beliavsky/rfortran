@@ -295,6 +295,38 @@ impl Session {
         }
         Ok(())
     }
+    /// A child formatted READ consumes fields without terminating the parent record.
+    /// Use the list scanner's lookahead so switching between list and explicit
+    /// formats cannot lose the delimiter already fetched from the stream.
+    pub(crate) fn fields(&mut self, out: &mut [u8], advance: bool,
+        mut byte: impl FnMut() -> Result<Option<u8>, ()>) -> i64 {
+        if advance {
+            let code = self.finish(&mut byte);
+            if code != 0 { return code; }
+            self.at_record_end = false;
+            self.after = false;
+        }
+        self.remaining = 0;
+        self.ended = false;
+        out.fill(b' ');
+        let mut count = 0;
+        while count < out.len() {
+            match self.peek(&mut byte) {
+                Ok(Some(b'\n')) => break,
+                Ok(Some(b'\r')) => { self.take(&mut byte).ok(); }
+                Ok(Some(c)) => {
+                    if c == 0 || c > 127 { return 2; }
+                    self.take(&mut byte).ok();
+                    out[count] = c;
+                    count += 1;
+                    self.after = true;
+                }
+                Ok(None) => return if self.after { 0 } else { -1 },
+                Err(code) => return code,
+            }
+        }
+        0
+    }
     pub(crate) fn finish(&mut self, mut byte: impl FnMut() -> Result<Option<u8>, ()>) -> i64 {
         // A token may have looked ahead at EOR; consume it, but never the next record.
         let mut consumed = self.after;
@@ -355,6 +387,36 @@ fn separator(c: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn fields_share_lookahead_and_record_position() {
+        let mut input=b"7  9 rest\r\n 11 13\nnext\n".iter().copied();
+        let mut s=Session::new();
+        let mut number=[0;8];
+        assert_eq!(s.next(1,4,&mut number,||Ok(input.next())),0);
+        assert_eq!(i64::from_ne_bytes(number),7);
+        let mut field=[0;3];
+        assert_eq!(s.fields(&mut field,false,||Ok(input.next())),0);
+        assert_eq!(&field,b"  9");
+        assert_eq!(s.fields(&mut field,true,||Ok(input.next())),0);
+        assert_eq!(&field,b" 11");
+        assert_eq!(s.next(1,4,&mut number,||Ok(input.next())),0);
+        assert_eq!(i64::from_ne_bytes(number),13);
+        assert_eq!(s.finish(||Ok(input.next())),0);
+        assert_eq!(input.next(),Some(b'n'));
+    }
+    #[test]
+    fn fields_pad_without_consuming_the_next_record() {
+        let mut input=b"a\r\nnext\n".iter().copied();
+        let mut s=Session::new();let mut field=[0;3];
+        assert_eq!(s.fields(&mut field,false,||Ok(input.next())),0);
+        assert_eq!(&field,b"a  ");
+        assert_eq!(s.fields(&mut field,false,||Ok(input.next())),0);
+        assert_eq!(&field,b"   ");
+        assert_eq!(s.finish(||Ok(input.next())),0);
+        assert_eq!(input.next(),Some(b'n'));
+        let mut s=Session::new();
+        assert_eq!(s.fields(&mut field,false,||Ok(None)),-1);
+    }
     #[test]
     fn records_repeats_nulls_and_slash() {
         let mut input = b"1,2*3, ,\n4 / discard\n9\n".iter().copied();

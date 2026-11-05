@@ -4229,11 +4229,14 @@ literal DT-only parent formats, including DT strings and integer v-lists.
 Multiple scalar derived items may share one parent READ. Inherited readers,
 public bindings with private implementations, and USE ONLY are supported.
 
-The initial child-transfer subset is list-directed READ. Child reads on the
-parent's unit, including directly called helper subroutines and nested defined
-readers, share an input session. They continue from the current position;
+Child transfers support list-directed READ and the existing constant field
+formats, including I, F, A and L fields, X/TR spacing, slash editing and format
+reversion. Child reads on the parent's unit, including directly called helper
+subroutines and nested defined readers, share an input session. They continue from the current position;
 completion of the outer parent READ discards the rest of its final record.
-Reads on other units retain normal record advancement.
+Reads on other units retain normal record advancement. Explicit fields and
+list-directed tokens share lookahead, so switching between these forms does not
+lose a character. Short explicit fields are blank padded at the end of a record.
 
 Parent and child IOSTAT/IOMSG are supported. Reader errors stop subsequent parent
 items, preserve negative EOF statuses and user-provided messages, and propagate
@@ -4243,19 +4246,23 @@ the same 256-character capacity as defined output.
 
 Defined input of arrays/sections or indexed items, polymorphic input dispatch,
 internal parent units, mixed intrinsic/derived parent lists, runtime parent
-formats and parent positioning/reversion remain unsupported. Explicitly
-formatted, empty and unformatted child reads are diagnosed in reader procedures
+formats and parent positioning/reversion remain unsupported. Runtime child
+formats, T/TL positioning, empty list-directed and unformatted child reads are
+diagnosed in reader procedures
 and their directly called subroutines. These limits are separate from ordinary
 READ support.
 
 Run `python tests/test_defined_input.py`; the standalone example is
-`tests/programs/xdefined_formatted_input.f90`. Tests compare interpreter and
+`tests/programs/xdefined_formatted_input.f90`;
+`tests/programs/xdefined_formatted_input_fields.f90` exercises explicit child
+fields. Tests compare interpreter and
 native O0/O2 behavior with gfortran, including record continuation, EOF,
 malformed data, nested readers, and both input/output bindings on one type.
-Two tests use explicit rfort assertions instead of reference-output comparison:
+Some tests use explicit rfort assertions instead of reference-output comparison:
 the local gfortran 17 build skips a value between two DT input objects and invokes
-a second reader after the first returns an error. These observed discrepancies
-are recorded in test_defined_input.py.
+a second reader after the first returns an error. It also skips a field in two
+cases combining a list-directed parent with explicitly formatted child reads.
+These observed discrepancies are recorded in test_defined_input.py.
 
 ### File and standard input
 

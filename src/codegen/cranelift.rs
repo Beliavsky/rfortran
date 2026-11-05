@@ -235,102 +235,14 @@ fn read_record(
     module: &mut ObjectModule, b: &mut FunctionBuilder, ptr_ty: ir::Type,
     dc: &mut u32, destination: ir::Value, length: usize, file: Option<ir::Value>,
 ) -> Result<()> {
-    use ir::{types, AbiParam, MemFlags, condcodes::IntCC};
-    let mut sig=module.make_signature();
-    if file.is_some() { sig.params.push(AbiParam::new(ptr_ty)); }
-    sig.returns.push(AbiParam::new(types::I32));
-    let id=module.declare_function(if file.is_some() { "fgetc" } else { "getchar" },Linkage::Import,&sig)?;
-    let getchar=module.declare_func_in_func(id,b.func);
-    let mut sig=module.make_signature();
-    sig.params.extend([AbiParam::new(ptr_ty),AbiParam::new(types::I32),AbiParam::new(ptr_ty)]);
-    sig.returns.push(AbiParam::new(ptr_ty));
-    let id=module.declare_function("memset",Linkage::Import,&sig)?;
-    let memset=module.declare_func_in_func(id,b.func);
-    let space=b.ins().iconst(types::I32,32);
+    use ir::{types, condcodes::IntCC};
+    let stream=file.unwrap_or_else(||b.ins().iconst(ptr_ty,0));
     let size=b.ins().iconst(ptr_ty,length as i64);
-    b.ins().call(memset,&[destination,space,size]);
-    let terminator=b.ins().iadd_imm(destination,length as i64);
-    let zero_byte=b.ins().iconst(types::I8,0);
-    b.ins().store(MemFlags::new(),zero_byte,terminator,0);
-    let read=b.create_block();let eof=b.create_block();let check=b.create_block();
-    let store=b.create_block();let advance=b.create_block();let done=b.create_block();
-    let invalid=b.create_block();let failure=b.create_block();
-    b.append_block_param(read,ptr_ty);
-    let zero=b.ins().iconst(ptr_ty,0);
-    b.ins().jump(read,&[zero.into()]);
-    b.switch_to_block(read);
-    let count=b.block_params(read)[0];
-    let call=b.ins().call(getchar,&file.into_iter().collect::<Vec<_>>());let ch=b.inst_results(call)[0];
-    let is_eof=b.ins().icmp_imm(IntCC::SignedLessThan,ch,0);
-    b.ins().brif(is_eof,eof,&[],check,&[]);
-    b.switch_to_block(eof);b.seal_block(eof);
-    let empty=b.ins().icmp_imm(IntCC::Equal,count,0);
-    b.ins().brif(empty,failure,&[],done,&[]);
-    b.switch_to_block(check);b.seal_block(check);
-    let newline=b.ins().icmp_imm(IntCC::Equal,ch,10);
-    let validate=b.create_block();
-    b.ins().brif(newline,done,&[],validate,&[]);
-    b.switch_to_block(validate);b.seal_block(validate);
-    let nul=b.ins().icmp_imm(IntCC::Equal,ch,0);
-    let non_ascii=b.ins().icmp_imm(IntCC::UnsignedGreaterThan,ch,127);
-    let bad=b.ins().bor(nul,non_ascii);
-    let capacity=b.create_block();b.ins().brif(bad,invalid,&[],capacity,&[]);
-    b.switch_to_block(capacity);b.seal_block(capacity);
-    let fits=b.ins().icmp_imm(IntCC::UnsignedLessThan,count,length as i64);
-    b.ins().brif(fits,store,&[],advance,&[]);
-    b.switch_to_block(store);b.seal_block(store);
-    let address=b.ins().iadd(destination,count);
-    let byte=b.ins().ireduce(types::I8,ch);
-    b.ins().store(MemFlags::new(),byte,address,0);
-    b.ins().jump(advance,&[]);
-    b.switch_to_block(advance);b.seal_block(advance);
-    // Saturate beyond capacity: still distinguishes an empty file for LEN=0.
-    let next=b.ins().iadd_imm(count,1);
-    let limit=b.ins().iconst(ptr_ty,length as i64+1);
-    let next=b.ins().umin(next,limit);
-    b.ins().jump(read,&[next.into()]);b.seal_block(read);
-    for (block,message) in [
-        (failure,"Runtime error: end of file or input error in formatted READ\n"),
-        (invalid,"Runtime error: formatted READ currently requires non-NUL ASCII input\n"),
-    ] {
-        b.switch_to_block(block);b.seal_block(block);
-        let pointer=make_data(module,b,ptr_ty,dc,message.as_bytes())?;
-        let mut sig=module.make_signature();
-        sig.params.extend([AbiParam::new(types::I32),AbiParam::new(ptr_ty),AbiParam::new(types::I32)]);
-        sig.returns.push(AbiParam::new(types::I32));
-        let id=module.declare_function(if cfg!(windows) { "_write" } else { "rfort_write" },Linkage::Import,&sig)?;
-        let write=module.declare_func_in_func(id,b.func);
-        let stderr=b.ins().iconst(types::I32,2);
-        let size=b.ins().iconst(types::I32,message.len() as i64);
-        b.ins().call(write,&[stderr,pointer,size]);
-        let mut sig=module.make_signature();sig.params.push(AbiParam::new(types::I32));
-        let id=module.declare_function("exit",Linkage::Import,&sig)?;
-        let exit=module.declare_func_in_func(id,b.func);
-        let code=b.ins().iconst(types::I32,1);b.ins().call(exit,&[code]);
-        b.ins().trap(ir::TrapCode::unwrap_user(1));
-    }
-    b.switch_to_block(done);b.seal_block(done);
-    if let Some(file) = file {
-        let error=file_io::call(module,b,"ferror",&[file],types::I32)?;
-        let okay=b.ins().icmp_imm(IntCC::Equal,error,0);
-        file_io::require(module,b,ptr_ty,dc,okay,"file input failed")?;
-        // Binary file streams preserve CR. Strip it only immediately before LF,
-        // and only if it was stored rather than truncated past the destination.
-        let newline=b.ins().icmp_imm(IntCC::Equal,ch,10);
-        let nonempty=b.ins().icmp_imm(IntCC::UnsignedGreaterThan,count,0);
-        let fits=b.ins().icmp_imm(IntCC::UnsignedLessThanOrEqual,count,length as i64);
-        let strip=b.ins().band(newline,nonempty);let strip=b.ins().band(strip,fits);
-        let inspect=b.create_block();let finish=b.create_block();
-        b.ins().brif(strip,inspect,&[],finish,&[]);
-        b.switch_to_block(inspect);b.seal_block(inspect);
-        let offset=b.ins().iadd_imm(count,-1);let address=b.ins().iadd(destination,offset);
-        let byte=b.ins().load(types::I8,MemFlags::new(),address,0);
-        let cr=b.ins().icmp_imm(IntCC::Equal,byte,13);
-        let blank=b.ins().iconst(types::I8,32);let value=b.ins().select(cr,blank,byte);
-        b.ins().store(MemFlags::new(),value,address,0);
-        b.ins().jump(finish,&[]);b.switch_to_block(finish);b.seal_block(finish);
-    }
-    Ok(())
+    let code=file_io::call(module,b,"rfort_read_record",&[stream,destination,size],types::I64)?;
+    let valid=b.ins().icmp_imm(IntCC::NotEqual,code,crate::record_input::INVALID);
+    file_io::require(module,b,ptr_ty,dc,valid,"formatted READ currently requires non-NUL ASCII input")?;
+    let okay=b.ins().icmp_imm(IntCC::Equal,code,0);
+    file_io::require(module,b,ptr_ty,dc,okay,"end of file or input error in formatted READ")
 }
 
 struct Externs {
@@ -3069,13 +2981,20 @@ fn gen_stmts(
                         let unit=to_i64(b,value);
                         file_io::read_handle(module,b,ptr_ty,unit)?
                     };
-                    let format=args.get(4).map(|format| characters::view(module,b,ptr_ty,dc,chars,ints,format)).transpose()?;
+                    let format=if args.len()==6 {None}else{args.get(4).map(|format| characters::view(module,b,ptr_ty,dc,chars,ints,format)).transpose()?};
                     let read=b.create_block();let done=b.create_block();b.append_block_param(done,types::I64);
                     let okay=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,code,0);
                     b.ins().brif(okay,read,&[],done,&[code.into()]);
                     b.switch_to_block(read);b.seal_block(read);
                     let size=b.ins().iconst(ptr_ty,length as i64);
-                    let code=if let Some(format)=format {
+                    let code=if args.len()==6 {
+                        let unit=eval_expr(b,ex,ptr_ty,unit,ints,reals,bools,func_meta);let unit=to_i64(b,unit);
+                        let IExpr::IntLit(width)=&args[4] else {unreachable!()};
+                        let width=b.ins().iconst(ptr_ty,width.parse::<i64>()?);
+                        let IExpr::IntLit(advance)=&args[5] else {unreachable!()};
+                        let advance=b.ins().iconst(types::I64,advance.parse::<i64>()?);
+                        file_io::call(module,b,"rfort_read_fields",&[file,unit,pointer,size,width,advance],types::I64)?
+                    } else if let Some(format)=format {
                         file_io::call(module,b,"rfort_read_record_format",&[file,pointer,size,format.address,format.length],types::I64)?
                     } else {file_io::call(module,b,if name=="@read_record_checked" {"rfort_read_record_checked"} else {"rfort_read_record"},&[file,pointer,size],types::I64)?};
                     b.ins().jump(done,&[code.into()]);
