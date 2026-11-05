@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Beliavsky
-//! Initial scalar defined input, with list-directed child sessions.
+//! Defined formatted input with shared child sessions and counted array transfers.
 use super::*;
 
 fn read(s: &Stmt) -> Option<(Expr, Option<Expr>, String, Expr, Vec<Expr>)> {
@@ -49,6 +49,35 @@ fn nonzero(n: &str, body: Vec<Stmt>) -> Stmt {
         else_body: None,
     }
 }
+/// Parent control editing shares the child session's record position.
+/// The existing field helper discards a span or advances explicitly; it does
+/// not terminate the parent record on return.
+fn controls(text: &str, unit: &str, ios: &str, scratch: &str) -> Result<Vec<Stmt>> {
+    use crate::format_spec as f;
+    let mut parser=f::GroupParser::new(text.as_bytes(),0).map_err(anyhow::Error::msg)?;
+    let mut out=vec![];
+    while let Some(d)=parser.next().map_err(anyhow::Error::msg)? {
+        let (width,advance,count)=match d.code {
+            b'/' => (0,1,d.repeat.max(1)),
+            b'x' | f::TR => (if d.width>0 {d.width}else{d.repeat.max(1)},0,1),
+            _ => bail!("defined input parent format currently supports DT descriptors, X/TR spacing, slash and colon editing only"),
+        };
+        // One byte is enough: discard spacing one character at a time so a
+        // large repeat count cannot create a large CHARACTER temporary.
+        for _ in 0..count {
+            if width==0 {
+                out.push(when_equal(ios,0,vec![call("@read_record_status",vec![id(ios),id(scratch),int(1),id(unit),int(0),int(advance)])],None));
+            } else {
+                let index=format!("{scratch}_skip");
+                out.push(Stmt::Block{body:vec![
+                    call("@do_step",vec![id(&index),int(1),int(width as i64),int(1)]),
+                    nonzero(ios,vec![Stmt::Exit]),
+                    call("@read_record_status",vec![id(ios),id(scratch),int(1),id(unit),int(1),int(0)])]});
+            }
+        }
+    }
+    Ok(out)
+}
 fn lower_one(
     s: &Stmt,
     message: Option<&Expr>,
@@ -76,7 +105,11 @@ fn lower_one(
     }
     if items
         .iter()
-        .any(|e| matches!(e,Expr::Ident(n) if polymorphic.contains(n)))
+        .any(|e| match e {
+            Expr::Ident(n) | Expr::Call(n,_) | Expr::Index(n,_) | Expr::Section{name:n,..} =>
+                polymorphic.contains(n),
+            _ => false,
+        })
     {
         bail!("polymorphic defined input dispatch is not yet supported");
     }
@@ -119,14 +152,14 @@ fn lower_one(
             bail!("defined input IOMSG requires a scalar CHARACTER variable");
         }
     }
-    let plan = if let Some(format) = &format {
-        let (plan, trailing) = format_items(format, items.len())?;
-        if trailing != "()" || plan.iter().any(|p| p.before != "()" || p.defined.is_none()) {
-            bail!("defined input parent format currently requires DT descriptors without positioning or intrinsic items");
+    let states = if let Some(format) = &format {
+        let states=format_states(format).map_err(|e|anyhow::anyhow!(e.to_string().replace("defined output","defined input").replace("formatted output","formatted input")))?;
+        if states.iter().any(|s|s.item.defined.is_none()) {
+            bail!("defined input parent format currently requires DT descriptors without intrinsic items");
         }
-        plan
+        states
     } else {
-        vec![]
+        vec![FormatState{item:FormatItem{before:"()".into(),data:String::new(),defined:Some(("LISTDIRECTED".into(),vec![]))},finish:"()".into(),next:0}]
     };
     *serial += 1;
     let prefix = format!("@defined_input_{serial}");
@@ -134,7 +167,13 @@ fn lower_one(
     let ios = format!("{prefix}_status");
     let msg = format!("{prefix}_message");
     let handle = format!("{prefix}_handle");
+    let cursor = format!("{prefix}_cursor");
+    let scratch = format!("{prefix}_scratch");
     let mut out = vec![
+        decl(&cursor, TypeSpec::Integer(None)),
+        decl(&scratch, TypeSpec::Character(Some(1))),
+        decl(&format!("{scratch}_skip"),TypeSpec::Integer(None)),
+        assign(&cursor,int(0)),
         decl(&unit_name, TypeSpec::Integer(None)),
         decl(&ios, TypeSpec::Integer(None)),
         decl(&handle, TypeSpec::Integer(Some(8))),
@@ -148,51 +187,57 @@ fn lower_one(
             vec![id(&handle), id(&ios), id(&unit_name)],
         ),
     ];
+    for (i,state) in states.iter().enumerate() {
+        let (_,values)=state.item.defined.as_ref().unwrap();
+        let vlist=format!("{prefix}_vlist_{i}");
+        out.push(Stmt::ArrayDecl{name:vlist.clone(),kind:TypeSpec::Integer(None),dims:vec![int(values.len() as i64)]});
+        for (j,value) in values.iter().enumerate() {
+            out.push(Stmt::AssignIndex{name:vlist.clone(),indices:vec![int(j as i64+1)],value:value.clone()});
+        }
+    }
     for (i, (item, writer)) in items.into_iter().zip(writers).enumerate() {
         let Some((procedure, rank)) = writer else {
-            bail!("defined input currently requires only derived scalar items");
+            bail!("defined input currently requires only derived items");
         };
-        if rank != 0 || !matches!(item, Expr::Ident(_)) {
-            bail!("defined input currently requires named scalar derived variables or scalar components");
-        }
-        let (iotype, values) = plan
-            .get(i)
-            .and_then(|p| p.defined.clone())
-            .unwrap_or(("LISTDIRECTED".into(), vec![]));
-        let vlist = format!("{prefix}_vlist_{i}");
-        out.push(Stmt::ArrayDecl {
-            name: vlist.clone(),
-            kind: TypeSpec::Integer(None),
-            dims: vec![int(values.len() as i64)],
-        });
-        for (j, value) in values.into_iter().enumerate() {
-            out.push(Stmt::AssignIndex {
-                name: vlist.clone(),
-                indices: vec![int(j as i64 + 1)],
-                value,
-            });
-        }
-        out.push(when_equal(
-            &ios,
-            0,
-            vec![
+        let indexed = matches!(&item, Expr::Call(n,_) | Expr::Index(n,_)
+            if matches!(types.type_rank(&id(n),declarations,objects)?,Some((_,r)) if r>0));
+        let (item, mut before, loops) = if rank != 0 || indexed {
+            array_item(item,&format!("{prefix}_item_{i}"),types,declarations,objects)
+                .map_err(|e|anyhow::anyhow!(e.to_string().replace("output","input")))?
+        } else if matches!(item,Expr::Ident(_)) {
+            (item,vec![],vec![])
+        } else {
+            bail!("defined input requires writable derived variables, elements or sections");
+        };
+        let mut transfer=vec![];
+        for (index,state) in states.iter().enumerate().rev() {
+            let (iotype,_)=state.item.defined.as_ref().unwrap();
+            let mut body=controls(&state.item.before,&unit_name,&ios,&scratch)?;
+            body.push(when_equal(&ios,0,vec![
                 crate::imports::reference(procedure.clone()),
-                assign(&msg, Expr::Str(String::new())),
-                call(
-                    &procedure,
-                    vec![
-                        item,
-                        id(&unit_name),
-                        Expr::Str(iotype),
-                        id(&vlist),
-                        id(&ios),
-                        id(&msg),
-                    ],
-                ),
-            ],
-            None,
-        ));
+                assign(&msg,Expr::Str(String::new())),
+                call(&procedure,vec![item.clone(),id(&unit_name),Expr::Str(iotype.clone()),
+                    id(&format!("{prefix}_vlist_{index}")),id(&ios),id(&msg)]),
+                assign(&cursor,int(state.next as i64)),
+            ],None));
+            transfer=vec![when_equal(&cursor,index as i64,body,Some(transfer))];
+        }
+        // Wrap axis one first so it varies fastest in Fortran element order.
+        for (index, first, last, step) in loops {
+            let mut body=vec![call("@do_step",vec![id(&index),first,last,step]),
+                nonzero(&ios,vec![Stmt::Exit])];
+            body.extend(transfer);
+            transfer=vec![Stmt::Block{body}];
+        }
+        before.extend(transfer);
+        out.push(when_equal(&ios,0,vec![Stmt::Block{body:before}],None));
     }
+    let mut finish=vec![];
+    for (index,state) in states.iter().enumerate().rev() {
+        finish=vec![when_equal(&cursor,index as i64,
+            controls(&state.finish,&unit_name,&ios,&scratch)?,Some(finish))];
+    }
+    out.push(when_equal(&ios,0,finish,None));
     out.push(call("@defined_input_leave", vec![id(&ios)]));
     out.push(nonzero(
         &ios,

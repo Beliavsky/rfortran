@@ -4226,7 +4226,12 @@ The reader has the same six dummies as formatted output, except that DTV
 requires `CLASS(type), INTENT(INOUT)`. Named concrete scalar objects and scalar
 components can be read from external units with list-directed parent input or
 literal DT-only parent formats, including DT strings and integer v-lists.
-Multiple scalar derived items may share one parent READ. Inherited readers,
+Multiple scalar derived items may share one parent READ. List-directed parent
+READs and literal DT-only formats also accept whole arrays, elements, and triplet/vector sections, including
+allocated and assumed-shape arrays. Counted loops preserve Fortran element order;
+section controls and subscript vectors are captured once. Empty sections transfer
+no items, and reader errors stop both inner and outer loops before later elements
+are modified. Inherited readers,
 public bindings with private implementations, and USE ONLY are supported.
 
 Child transfers support list-directed READ and the existing constant field
@@ -4244,9 +4249,9 @@ to the parent. IOMSG remains unchanged on success. Without parent IOSTAT, an
 error terminates execution with the returned message. The message temporary has
 the same 256-character capacity as defined output.
 
-Defined input of arrays/sections or indexed items, polymorphic input dispatch,
+Polymorphic input dispatch,
 internal parent units, mixed intrinsic/derived parent lists, runtime parent
-formats and parent positioning/reversion remain unsupported. Runtime child
+formats and parent T/TL positioning remain unsupported. Runtime child
 formats, T/TL positioning, empty list-directed and unformatted child reads are
 diagnosed in reader procedures
 and their directly called subroutines. These limits are separate from ordinary
@@ -4263,6 +4268,19 @@ the local gfortran 17 build skips a value between two DT input objects and invok
 a second reader after the first returns an error. It also skips a field in two
 cases combining a list-directed parent with explicitly formatted child reads.
 These observed discrepancies are recorded in test_defined_input.py.
+
+Literal parent formats use a runtime cursor across all scalar and array items.
+Repeated DT descriptors, nested and unlimited groups, separate DT strings and
+v-lists, X/TR spacing, slash editing, colon termination and format reversion
+are supported. Empty arrays consume no data descriptors. The cursor permits
+up to 1024 distinct format states, independently of the number of elements.
+See `tests/test_defined_input_formats.py` and
+`tests/programs/xdefined_formatted_input_formats.f90`.
+
+Array coverage is in `tests/test_defined_input_arrays.py`, with a standalone
+example in `tests/programs/xdefined_formatted_input_arrays.f90`. Error tests
+use explicit expected results: the local gfortran build loses the expected
+parent status for malformed input and EOF during an array transfer.
 
 ### File and standard input
 
