@@ -376,6 +376,7 @@ fn lower(
     )?;
     let mut ops = HashMap::new();
     let mut suffix = vec![];
+    let mut partials = vec![];
     for clause in args {
         let Expr::Call(tag, variables) = clause else {
             bail!("invalid reduction clause")
@@ -448,6 +449,9 @@ fn lower(
             });
             prefix.push(set(&temporary, initial));
             suffix.push(set(&n, combine(op, id(&n), id(&temporary))));
+            if parallel {
+                partials.push((temporary.clone(), op.to_string(), object.kind.clone()));
+            }
             ops.insert(n, (op.to_string(), temporary));
         }
     }
@@ -491,12 +495,37 @@ fn lower(
         }
     }
     let mut loop_stmt = crate::ast::do_concurrent(controls, Some(mask), body);
+    let mut fold = vec![];
     if parallel {
+        let mut metadata = vec![];
+        if !partials.is_empty() {
+            // The runtime caps the pool at 64. Initialize every slot so empty
+            // chunks need no callback, and a backend serial fallback leaves
+            // this fold inactive while retaining the ordinary accumulator.
+            let worker = format!("@reduce_worker_{serial}");
+            let flags = format!("@reduce_workers_active_{serial}");
+            prefix.push(Stmt::VarDecl { kind: TypeSpec::Integer(None), names: vec![worker.clone()] });
+            prefix.push(Stmt::ArrayDecl { kind: TypeSpec::Logical, name: flags.clone(), dims: vec![int(64)] });
+            prefix.push(set(&flags, Expr::Logical(false)));
+            metadata.extend([Expr::Str(active.clone()), Expr::Str(flags.clone())]);
+            let mut combines = vec![set(&active, Expr::Logical(true))];
+            for (temporary, op, kind) in partials {
+                let array = format!("{temporary}_workers");
+                prefix.push(Stmt::ArrayDecl { kind: kind.clone(), name: array.clone(), dims: vec![int(64)] });
+                prefix.push(set(&array, identity(&op, &kind, &temporary)?));
+                metadata.extend([Expr::Str(temporary.clone()), Expr::Str(array.clone())]);
+                combines.push(set(&temporary, combine(&op, id(&temporary), Expr::Index(array, vec![id(&worker)]))));
+            }
+            fold.push(Stmt::Do { var: worker.clone(), start: int(1), end: int(64), body: vec![Stmt::If {
+                cond: Expr::Index(flags, vec![id(&worker)]), then_body: combines, else_body: None,
+            }] });
+        }
         if let Stmt::Do { body, .. } = &mut loop_stmt {
-            body.insert(0, Stmt::CallSub { name: "@parallel_iteration".into(), args: vec![] });
+            body.insert(0, Stmt::CallSub { name: "@parallel_iteration".into(), args: metadata });
         }
     }
     prefix.push(loop_stmt);
+    prefix.extend(fold);
     prefix.push(Stmt::If {
         cond: id(&active),
         then_body: suffix,

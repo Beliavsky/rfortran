@@ -232,9 +232,10 @@ out of the concurrent construct receive source-located errors. POINTER,
 ALLOCATABLE, runtime-sized, and assumed-shape/assumed-size reduction objects are not implemented
 yet. Named EXIT within a reduction construct is currently rejected, including
 when its target is a nested ordinary loop. F2018 locality specifiers have
-[serial support](language-support.md#do-loops), and a restricted non-reduction
-subset supports [opt-in native parallelism](parallel-concurrent.md). REDUCE
-itself still executes serially. Existing DO CONCURRENT
+[serial support](language-support.md#do-loops), and a restricted subset,
+including scalar numeric and logical reductions, supports
+[opt-in native parallelism](parallel-concurrent.md). Array reductions still
+execute serially. Existing DO CONCURRENT
 semantic checking is partial; this addition does not claim full validation of
 iteration independence or procedure purity.
 

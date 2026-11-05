@@ -7,7 +7,8 @@ use core::{
     ffi::c_void,
     sync::atomic::{AtomicBool, AtomicUsize, Ordering::*},
 };
-type Kernel = unsafe extern "C" fn(*mut c_void, i64, i64);
+// Callback arguments: captures, inclusive first/last indices, worker index.
+type Kernel = unsafe extern "C" fn(*mut c_void, i64, i64, i64);
 #[derive(Clone, Copy)]
 struct Job {
     kernel: Option<Kernel>,
@@ -127,6 +128,7 @@ unsafe fn portion(id: usize, job: Job) {
             job.context,
             (job.start as i128 + first) as i64,
             (job.start as i128 + last - 1) as i64,
+            id as i64,
         );
     }
 }
@@ -224,7 +226,7 @@ pub unsafe extern "C" fn rfort_parallel_for(
         return 0;
     }
     if end as i128 - start as i128 + 1 < 4096 || requested() == 1 {
-        kernel(context, start, end);
+        kernel(context, start, end, 0);
         return 0;
     }
     while LOCK
@@ -297,7 +299,7 @@ mod tests {
         hits: Vec<AtomicUsize>,
         threads: Mutex<std::collections::HashSet<std::thread::ThreadId>>,
     }
-    unsafe extern "C" fn fill(context: *mut c_void, first: i64, last: i64) {
+    unsafe extern "C" fn fill(context: *mut c_void, first: i64, last: i64, _worker: i64) {
         let probe = &*(context as *const Probe);
         probe
             .threads

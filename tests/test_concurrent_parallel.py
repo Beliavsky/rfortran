@@ -84,14 +84,84 @@ print *,a
 end
 ''','1 0 3 0 5 0',reason='unit stride',opts=('2',))
 
-    def test_reduction_fallback(self):
+    def test_scalar_reduction(self):
         self.build_run('''integer :: i,s=0
 do concurrent(i=1:10000) reduce(+:s)
 s=s+i
 end do
 print *,s
 end
-''','50005000',reason='parallel REDUCE',opts=('2',))
+''','50005000')
+
+    def test_multiple_reductions(self):
+        self.build_run((ROOT/'tests/programs/xconcurrent_parallel_reduce.f90').read_text(),
+                       '50005007 2.0 1 10000 T T T F 10007.0')
+
+    def test_reduction_empty_mask_and_small(self):
+        self.build_run("""implicit none
+integer :: i,s=17,m=100
+logical :: flag=.true.
+do concurrent(i=1:9000,i<0) reduce(+:s) reduce(min:m) reduce(.neqv.:flag)
+s=s+i
+m=min(m,i)
+flag=flag .neqv. .true.
+end do
+print *,s,m,flag
+do concurrent(i=1:0) reduce(+:s)
+s=s+i
+end do
+do concurrent(i=1:3) reduce(+:s)
+s=s+i
+end do
+print *,s
+end
+""",'17 100 T 23')
+
+    def test_reduction_partial_mask(self):
+        self.build_run("""implicit none
+integer :: i,s=13,a(9000)
+a=0
+do concurrent(i=1:9000,i>8990) reduce(+:s) shared(a) default(none)
+s=s+i
+a(i)=i
+end do
+print *,s,a(9000),a(1)
+end
+""",'89968 9000 0')
+
+    def test_double_dot_product_and_integer_product(self):
+        self.build_run("""implicit none
+integer :: i,p
+integer(kind=8) :: big
+real(kind=8) :: x(9001),y(9001),dot,lo,hi
+x=0.25d0
+y=0.5d0
+dot=7.0d0
+lo=100.0d0
+hi=-100.0d0
+p=2
+big=3000000000_8
+do concurrent(i=1:9001) shared(x,y) reduce(+:dot,big) reduce(*:p) reduce(min:lo) reduce(max:hi)
+dot=dot+x(i)*y(i)
+big=big+1_8
+lo=min(lo,x(i))
+hi=max(hi,y(i))
+if(i==9001) p=p*3
+end do
+if(abs(dot-1132.125d0)>1d-10) stop 1
+print *,p,big,lo,hi
+end
+""",'6 3000009001 0.25 0.5')
+
+    def test_array_reduction_fallback(self):
+        self.build_run("""integer :: i,s(2)
+s=0
+do concurrent(i=1:10000) reduce(+:s)
+s=s+[i,1]
+end do
+print *,s
+end
+""",'50005000 10000',reason='parallel array REDUCE',opts=('2',))
 
     def test_procedure_fallback(self):
         self.build_run('''program p

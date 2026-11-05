@@ -16,7 +16,7 @@ first parallel job. Ranges shorter than 4096 iterations execute on the calling
 thread. Set `RFORT_PARALLEL_TRACE=1` to print the actual thread count for larger
 jobs to stderr; unset it for timing runs.
 
-## First supported subset
+## Supported subset
 
 - Main-program loops with one explicitly declared integer index and unit stride.
 - Fixed-size, rank-one INTEGER, REAL, DOUBLE PRECISION, or LOGICAL arrays with
@@ -24,6 +24,10 @@ jobs to stderr; unset it for timing runs.
 - Writes of the form `a(i)`, with reads of that written array also restricted to
   `a(i)`. Read-only arrays may use other scalar subscripts.
 - Scalar `LOCAL` and `LOCAL_INIT`, shared scalar inputs, masks, and IF statements.
+- Scalar INTEGER/REAL/DOUBLE PRECISION `REDUCE(+:...)`, `REDUCE(*:...)`,
+  `REDUCE(MIN:...)`, and `REDUCE(MAX:...)`; scalar LOGICAL `.AND.`, `.OR.`,
+  `.EQV.`, and `.NEQV.` reductions. Multiple reductions and reduction-only
+  loops are supported.
 - Arithmetic, comparisons, and a small set of scalar intrinsics: SQRT, ABS, INT,
   REAL, DBLE, SIN, COS, EXP, LOG, MIN, and MAX. Procedures shadowing these names
   do not qualify as intrinsic calls.
@@ -34,12 +38,31 @@ storage. Initialization and bounds checks remain enabled unless `--nocheck`
 is requested. A job completes before execution continues after the loop.
 
 Other constructs use the existing serial lowering. In particular this stage
-does not parallelize REDUCE, procedure bodies, user procedure calls, allocation,
+does not parallelize array REDUCE, procedure bodies, user procedure calls, allocation,
 I/O, outer constructs containing loops, named constructs, non-unit strides, derived
 types, CHARACTER, complex arrays, or pointer/allocatable/dummy array storage.
 This conservative selection is not a complete checker of all Fortran
 DO CONCURRENT restrictions. Serial fallback does not establish that an otherwise
 invalid DO CONCURRENT program is conforming.
+
+## Scalar reductions
+
+Each worker starts with the operation's identity and writes its partial result
+into a separate slot. After the workers finish, the calling thread combines
+active workers' results in worker-index order and incorporates the outside
+variable's initial value once. Empty ranges and masks selecting no iterations
+leave that outside value unchanged. This also works when only some workers have
+active iterations. Floating-point results may differ from serial execution or
+from another thread count because the additions and multiplications are grouped
+differently.
+
+```cmd
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_reduce.f90 --run
+```
+
+Array reductions retain the serial fallback, as do unsupported captures and
+procedure calls. Runtime-sized arrays and multidimensional loops remain future
+work.
 
 ## Implementation and testing
 
@@ -55,7 +78,7 @@ cargo test --bin rfort parallel_runtime_tests
 ```
 
 Tests compare results with one, two, and four threads, check repeated dispatch,
-masks, local storage, serial fallback, and runtime diagnostics. The runtime test
+masks, local storage, scalar reductions, serial fallback, and runtime diagnostics. The runtime test
 also checks simultaneous callers, negative iteration bounds, and exact-once
 coverage. Release smoke tests require a two-thread run on each release platform.
 Local verification was performed on Windows x86-64; Linux and Apple Silicon

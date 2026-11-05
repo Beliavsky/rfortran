@@ -111,8 +111,60 @@ pub(super) fn emit(
     func_meta: &HashMap<String, FuncMeta>,
     tokens: Option<&[crate::lexer::Token]>,
 ) -> Result<bool> {
+    let outputs: Vec<(String, String)> = body
+        .iter()
+        .find_map(|s| {
+            if let IStmt::Call(n, args) = s {
+                if n == "@parallel_iteration" {
+                    return Some(
+                        args.chunks_exact(2)
+                            .filter_map(|pair| {
+                                if let [IExpr::Str(value), IExpr::Str(array)] = pair {
+                                    Some((value.clone(), array.clone()))
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect(),
+                    );
+                }
+            }
+            None
+        })
+        .unwrap_or_default();
     let mut used = HashSet::new();
+    for (value, array) in &outputs {
+        used.insert(value.clone());
+        used.insert(array.clone());
+    }
     references(body, &mut used);
+    // Later lowering can introduce per-iteration temporaries (for example
+    // kind-qualified integer literals). Their declarations belong to the
+    // callback, not to the caller's capture record.
+    fn private_declarations(body: &[IStmt], used: &mut HashSet<String>) {
+        for s in body {
+            match s {
+                IStmt::DeclVar(_, n, _) => {
+                    used.remove(n);
+                }
+                IStmt::If {
+                    then_body,
+                    else_body,
+                    ..
+                } => {
+                    private_declarations(then_body, used);
+                    if let Some(body) = else_body {
+                        private_declarations(body, used);
+                    }
+                }
+                IStmt::Do { body, .. } | IStmt::DoWhile { body, .. } | IStmt::Block { body } => {
+                    private_declarations(body, used)
+                }
+                _ => {}
+            }
+        }
+    }
+    private_declarations(body, &mut used);
     used.insert(var.into());
     let mut names = used.into_iter().collect::<Vec<_>>();
     names.sort();
@@ -126,9 +178,9 @@ pub(super) fn emit(
             .or_else(|| reals.get(&n).map(|s| (*s, 1)))
             .or_else(|| bools.get(&n).map(|s| (*s, 2)));
         let Some((storage, kind)) = item else {
-            crate::concurrent_reduce::parallel::report(
-                "serial fallback: unsupported lowered capture",
-            );
+            crate::concurrent_reduce::parallel::report(&format!(
+                "serial fallback: unsupported lowered capture `{n}`"
+            ));
             return Ok(false);
         };
         if !matches!(storage, Storage::Stack(_) | Storage::Static(_)) {
@@ -142,6 +194,7 @@ pub(super) fn emit(
     let mut context = module.make_context();
     context.func.signature.params.extend([
         ir::AbiParam::new(ptr),
+        ir::AbiParam::new(ir::types::I64),
         ir::AbiParam::new(ir::types::I64),
         ir::AbiParam::new(ir::types::I64),
     ]);
@@ -259,6 +312,28 @@ pub(super) fn emit(
             &mut wa,
             tokens,
         )?;
+        // Each worker owns one slot. The synchronous dispatch joins before
+        // the source-level fold reads these slots in worker-index order.
+        for (value, array) in &outputs {
+            let (storage, ty) = if let Some(s) = wi.get(value) {
+                (*s, ir::types::I64)
+            } else if let Some(s) = wr.get(value) {
+                (*s, ir::types::F64)
+            } else {
+                (wb[value], ir::types::I8)
+            };
+            let source = storage_addr(&mut w, ptr, storage);
+            let result = w.ins().load(ty, ir::MemFlags::new(), source, 0);
+            let destination = wi
+                .get(array)
+                .or_else(|| wr.get(array))
+                .or_else(|| wb.get(array))
+                .unwrap();
+            let address = storage_addr(&mut w, ptr, *destination);
+            let offset = w.ins().imul_imm(params[3], 8);
+            let address = w.ins().iadd(address, offset);
+            w.ins().store(ir::MemFlags::new(), result, address, 0);
+        }
         w.ins().return_(&[]);
         w.seal_all_blocks();
         w.finalize();
@@ -314,12 +389,30 @@ mod tests {
                         "a".into(),
                         vec![IExpr::IntLit("10000".into())],
                     ),
+                    IStmt::DeclVar(TypeSpec::Integer(None), "s".into(), vec![]),
+                    IStmt::AssignIntLit("s".into(), "0".into()),
+                    IStmt::DeclVar(
+                        TypeSpec::Integer(None),
+                        "partial".into(),
+                        vec![IExpr::IntLit("64".into())],
+                    ),
                     IStmt::Do {
                         var: "i".into(),
                         start: IExpr::IntLit("1".into()),
                         end: IExpr::IntLit("10000".into()),
                         body: vec![
-                            IStmt::Call("@parallel_iteration".into(), vec![]),
+                            IStmt::Call(
+                                "@parallel_iteration".into(),
+                                vec![IExpr::Str("s".into()), IExpr::Str("partial".into())],
+                            ),
+                            IStmt::AssignExpr(
+                                "s".into(),
+                                IExpr::Bin(
+                                    crate::ast::BinOp::Add,
+                                    Box::new(IExpr::Ident("s".into())),
+                                    Box::new(IExpr::Ident("i".into())),
+                                ),
+                            ),
                             IStmt::AssignIndex(
                                 "a".into(),
                                 vec![IExpr::Ident("i".into())],

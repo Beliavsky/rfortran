@@ -88,10 +88,22 @@ fn check(
         bail!("missing index")
     };
     let mut locals = HashSet::from([index.clone()]);
+    let mut reductions = false;
     for clause in clauses {
         if let Expr::Call(tag, args) = clause {
             if tag.starts_with("@reduce:") {
-                bail!("parallel REDUCE is not yet supported");
+                for a in args {
+                    if let Expr::Ident(n) = a {
+                        let o = scope
+                            .get(n)
+                            .context("reduction requires an explicit declaration")?;
+                        if !o.dims.is_empty() {
+                            bail!("parallel array REDUCE is not yet supported");
+                        }
+                        locals.insert(n.clone());
+                        reductions = true;
+                    }
+                }
             }
             if matches!(tag.as_str(), "@locality:local" | "@locality:local_init") {
                 for a in args {
@@ -128,7 +140,7 @@ fn check(
     }
     let mut written = HashSet::new();
     writes(body, &locals, &mut written, index)?;
-    if written.is_empty() {
+    if written.is_empty() && !reductions {
         bail!("no independent array output");
     }
     fn expr(e: &Expr, scope: &Scope, written: &HashSet<String>, index: &str) -> Result<()> {
@@ -140,6 +152,7 @@ fn check(
                 || !matches!(
                     o.kind,
                     TypeSpec::Integer(_)
+                        | TypeSpec::IntegerKind(_)
                         | TypeSpec::Real
                         | TypeSpec::RealKind(_)
                         | TypeSpec::DoublePrecision
@@ -147,6 +160,12 @@ fn check(
                 )
             {
                 bail!("capture `{n}` requires an ordinary numeric or LOGICAL type");
+            }
+            if matches!(&o.kind, TypeSpec::Integer(Some(k)) if *k > 8)
+                || matches!(&o.kind, TypeSpec::IntegerKind(k) if !matches!(k.as_str(), "1" | "2" | "4" | "8"))
+
+            {
+                bail!("capture `{n}` requires a supported native scalar kind");
             }
             if o.attrs
                 .iter()
