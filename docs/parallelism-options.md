@@ -15,7 +15,7 @@ rfort executes serially by default. See [native DO CONCURRENT parallelism](paral
   LOCAL, LOCAL_INIT, SHARED, DEFAULT(NONE), and REDUCE are supported with the
   storage limits documented in [language support](language-support.md#do-loops).
   An opt-in native path outlines supported main-program loops and dispatches
-  them to a reusable pool, including scalar numeric and logical reductions; unsupported loops remain serial.
+  them to a reusable pool, including rank-one allocatable arrays and scalar numeric and logical reductions; unsupported loops remain serial.
 
 ## Coarrays in three stages
 
@@ -156,7 +156,7 @@ is mostly OpenMP, then MPI, with coarrays a distant third.
   - **Benefit:** existing code speeds up without being rewritten, and rfort
     already analyzes these loops.
   - **Implemented:** an opt-in pool and outlined workers for a conservative
-    main-program subset, including scalar reductions, with serial fallback.
+    main-program subset, including scalar reductions and rank-one allocatable arrays, with serial fallback.
   - **Next:** broader capture analysis, parallel array reductions, and thread-safety
     checks for called procedures.
     SAVE and module variables retain their Fortran sharing semantics; making

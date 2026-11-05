@@ -19,8 +19,9 @@ jobs to stderr; unset it for timing runs.
 ## Supported subset
 
 - Main-program loops with one explicitly declared integer index and unit stride.
-- Fixed-size, rank-one INTEGER, REAL, DOUBLE PRECISION, or LOGICAL arrays with
-  default lower bounds. Constant extents may use named constants.
+- Rank-one INTEGER, REAL, DOUBLE PRECISION, or LOGICAL arrays: fixed-size
+  arrays with default lower bounds, and ALLOCATABLE arrays with runtime extents
+  and arbitrary lower bounds. Constant extents may use named constants.
 - Writes of the form `a(i)`, with reads of that written array also restricted to
   `a(i)`. Read-only arrays may use other scalar subscripts.
 - Scalar `LOCAL` and `LOCAL_INIT`, shared scalar inputs, masks, and IF statements.
@@ -40,7 +41,8 @@ is requested. A job completes before execution continues after the loop.
 Other constructs use the existing serial lowering. In particular this stage
 does not parallelize array REDUCE, procedure bodies, user procedure calls, allocation,
 I/O, outer constructs containing loops, named constructs, non-unit strides, derived
-types, CHARACTER, complex arrays, or pointer/allocatable/dummy array storage.
+types, CHARACTER, complex arrays, or pointer/dummy array storage. Arrays with
+TARGET and other unsupported attributes also fall back to serial execution.
 This conservative selection is not a complete checker of all Fortran
 DO CONCURRENT restrictions. Serial fallback does not establish that an otherwise
 invalid DO CONCURRENT program is conforming.
@@ -61,8 +63,26 @@ rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_reduce.f
 ```
 
 Array reductions retain the serial fallback, as do unsupported captures and
-procedure calls. Runtime-sized arrays and multidimensional loops remain future
-work.
+procedure calls. Assumed-shape dummy arrays and multidimensional loops remain
+future work.
+
+## Runtime-sized arrays
+
+Rank-one allocatable arrays can be allocated before a concurrent loop and
+read or written by its workers. The capture record references the live data
+and initialization-mask cells; bounds, extents, and allocation status are
+copied into each worker. Allocation and deallocation must stay outside the
+loop, and the synchronous join finishes before the caller can change storage.
+Reallocation between successive loops is supported.
+
+Bounds and initialization checks remain active, including with negative lower
+bounds. Empty arrays and empty iteration ranges require no worker access.
+The same independence rules apply: a written array may only be read or written
+at the current iteration's subscript. Read-only arrays may use other subscripts.
+
+```cmd
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_allocatable.f90 --run
+```
 
 ## Implementation and testing
 
@@ -78,7 +98,8 @@ cargo test --bin rfort parallel_runtime_tests
 ```
 
 Tests compare results with one, two, and four threads, check repeated dispatch,
-masks, local storage, scalar reductions, serial fallback, and runtime diagnostics. The runtime test
+masks, local storage, scalar reductions, allocatable arrays, serial fallback,
+and runtime diagnostics. The runtime test
 also checks simultaneous callers, negative iteration bounds, and exact-once
 coverage. Release smoke tests require a two-thread run on each release platform.
 Local verification was performed on Windows x86-64; Linux and Apple Silicon

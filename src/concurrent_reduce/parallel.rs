@@ -163,14 +163,13 @@ fn check(
             }
             if matches!(&o.kind, TypeSpec::Integer(Some(k)) if *k > 8)
                 || matches!(&o.kind, TypeSpec::IntegerKind(k) if !matches!(k.as_str(), "1" | "2" | "4" | "8"))
-
             {
                 bail!("capture `{n}` requires a supported native scalar kind");
             }
-            if o.attrs
-                .iter()
-                .any(|a| !matches!(a.as_str(), "parameter" | "save"))
-            {
+            if o.attrs.iter().any(|a| {
+                !matches!(a.as_str(), "parameter" | "save")
+                    && !(a == "allocatable" && o.dims.len() == 1)
+            }) {
                 bail!("capture `{n}` has unsupported attributes");
             }
             if o.dims.len() > 1 {
@@ -186,6 +185,11 @@ fn check(
                 }
             }
             for d in &o.dims {
+                if o.attrs.contains("allocatable")
+                    && matches!(d, Expr::Ident(n) if n == "@deferred_extent")
+                {
+                    continue;
+                }
                 if !constant(d, scope) {
                     bail!("array `{n}` requires constant extents and default lower bounds");
                 }

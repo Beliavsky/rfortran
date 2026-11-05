@@ -7,17 +7,19 @@ import unittest
 from test_record_read import COMPILER, ROOT
 
 class ParallelConcurrent(unittest.TestCase):
-    def build_run(self, source, expected, parallel=True, reason=None, threads=(1,2,4), opts=('0','2')):
+    def build_run(self, source, expected, parallel=True, reason=None, threads=(1,2,4), opts=('0','2'), checks=True):
         with tempfile.TemporaryDirectory(prefix='rfort-parallel-') as tmp:
             directory=Path(tmp); path=directory/'case.f90';path.write_text(source)
             for optimization in opts:
                 exe=directory/'case.exe'
                 command=[str(COMPILER),'-O',optimization,'--parallel-report']
                 if parallel: command+=['--parallel']
+                if not checks: command+=['--nocheck']
                 result=subprocess.run(command+[str(path),'-o',str(exe)],capture_output=True,text=True,timeout=90)
                 self.assertEqual(result.returncode,0,result.stderr)
                 if parallel:
                     self.assertIn(reason or 'native parallel worker emitted',result.stderr)
+                    if reason is None: self.assertNotIn('serial fallback',result.stderr)
                 else: self.assertNotIn('native parallel worker',result.stderr)
                 for n in threads:
                     env=os.environ.copy();env['RFORT_NUM_THREADS']=str(n);env['RFORT_PARALLEL_TRACE']='1'
@@ -240,6 +242,105 @@ end
                 result=subprocess.run([str(exe)],env=dict(os.environ,RFORT_NUM_THREADS='4'),capture_output=True,text=True,timeout=30)
                 self.assertNotEqual(result.returncode,0)
                 self.assertIn(message,result.stderr)
+
+    def test_allocatable_reallocation_and_reduction(self):
+        self.build_run((ROOT/'tests/programs/xconcurrent_parallel_allocatable.f90').read_text(),
+                       '20007.0 2.0 2.0 20009.0 2.0 2.0 20011.0 2.0 2.0')
+
+    def test_allocatable_without_checks(self):
+        self.build_run((ROOT/'tests/programs/xconcurrent_parallel_allocatable.f90').read_text(),
+                       '20007.0 2.0 2.0 20009.0 2.0 2.0 20011.0 2.0 2.0', checks=False)
+
+    def test_allocatable_types_and_lower_bounds(self):
+        self.build_run("""implicit none
+integer :: n,i
+integer, allocatable :: a(:)
+logical, allocatable :: b(:)
+real(kind=8), allocatable :: x(:)
+n=9000
+allocate(a(-7:n),b(-7:n),x(-7:n))
+do concurrent(i=lbound(a,1):ubound(a,1)) shared(a,b,x)
+a(i)=i
+b(i)=i>0
+x(i)=dble(i)*0.5d0
+end do
+print *,a(-7),a(n),b(-7),b(n),x(-7),x(n)
+end
+""",'-7 9000 F T -3.5 4500.0')
+
+    def test_allocatable_mask_and_readonly_reverse(self):
+        self.build_run("""implicit none
+integer :: n,i
+real,allocatable :: x(:),y(:)
+n=9000
+allocate(x(n),y(n))
+x=4.0
+y=-1.0
+do concurrent(i=1:n,i>2) shared(x,y,n) default(none)
+y(i)=sqrt(x(n+1-i))
+end do
+print *,y(1),y(3),y(n)
+end
+""",'-1.0 2.0 2.0')
+
+    def test_allocatable_empty_and_small(self):
+        self.build_run("""implicit none
+integer :: n,i
+integer,allocatable :: a(:)
+n=0
+allocate(a(n))
+do concurrent(i=1:n)
+a(i)=i
+end do
+deallocate(a)
+n=3
+allocate(a(n))
+do concurrent(i=1:n)
+a(i)=i
+end do
+print *,a
+end
+""",'1 2 3',threads=(1,),opts=('2',))
+
+    def test_allocatable_target_fallback(self):
+        self.build_run("""implicit none
+integer :: n,i
+integer,allocatable,target :: a(:)
+n=9000
+allocate(a(n))
+do concurrent(i=1:n)
+a(i)=i
+end do
+print *,a(1),a(n)
+end
+""",'1 9000',reason='unsupported attributes',opts=('2',))
+
+    def test_allocatable_runtime_checks(self):
+        template="""implicit none
+integer :: n,i
+real,allocatable :: x(:),y(:)
+n=9000
+allocate(x(n),y(n))
+INITIALIZE
+do concurrent(i=1:LAST) shared(x,y)
+y(i)=x(i)
+end do
+print *,y(n)
+end
+"""
+        with tempfile.TemporaryDirectory(prefix='parallel-alloc-check-') as tmp:
+            path=Path(tmp)/'case.f90';exe=Path(tmp)/'case.exe'
+            for initialization,last,message in [('x=1.0','n+1','bounds'),
+                                                 ('x(1:n-1)=1.0','n','uninitialized')]:
+                path.write_text(template.replace('INITIALIZE',initialization).replace('LAST',last))
+                for opt in ('0','2'):
+                    result=subprocess.run([str(COMPILER),'-O',opt,'--parallel','--parallel-report',str(path),'-o',str(exe)],capture_output=True,text=True,timeout=90)
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    self.assertIn('native parallel worker emitted',result.stderr)
+                    for n in (1,2,4):
+                        result=subprocess.run([str(exe)],env=dict(os.environ,RFORT_NUM_THREADS=str(n)),capture_output=True,text=True,timeout=30)
+                        self.assertNotEqual(result.returncode,0)
+                        self.assertIn(message,result.stderr)
 
     def test_interpreter_option_rejected(self):
         result=subprocess.run([str(COMPILER),'--parallel','run',str(ROOT/'tests/programs/xconcurrent_parallel.f90')],capture_output=True,text=True,timeout=30)

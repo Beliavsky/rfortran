@@ -2488,7 +2488,7 @@ fn gen_stmts(
                 end,
                 body,
             } => {
-                if body.iter().any(|s| matches!(s,IStmt::Call(n,_) if n=="@parallel_iteration"))
+                if parallel::marker(body).is_some()
                     && parallel::emit(b,ex,ptr_ty,module,var,start,end,body,ints,reals,bools,real_kind,arrays,func_meta,tokens)? {
                     continue;
                 }

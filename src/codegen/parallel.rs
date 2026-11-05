@@ -2,6 +2,16 @@
 //! Outline a proven loop as a native callback with an explicit capture record.
 use super::*;
 
+// Array lowering may wrap a loop body in lexical blocks. Do not search
+// nested loops or conditional branches: their markers belong to other loops.
+pub(super) fn marker(body: &[IStmt]) -> Option<&[IExpr]> {
+    body.iter().find_map(|s| match s {
+        IStmt::Call(n, args) if n == "@parallel_iteration" => Some(args.as_slice()),
+        IStmt::Block { body } => marker(body),
+        _ => None,
+    })
+}
+
 fn references(body: &[IStmt], out: &mut HashSet<String>) {
     fn expr(e: &IExpr, out: &mut HashSet<String>) {
         match e {
@@ -111,27 +121,17 @@ pub(super) fn emit(
     func_meta: &HashMap<String, FuncMeta>,
     tokens: Option<&[crate::lexer::Token]>,
 ) -> Result<bool> {
-    let outputs: Vec<(String, String)> = body
-        .iter()
-        .find_map(|s| {
-            if let IStmt::Call(n, args) = s {
-                if n == "@parallel_iteration" {
-                    return Some(
-                        args.chunks_exact(2)
-                            .filter_map(|pair| {
-                                if let [IExpr::Str(value), IExpr::Str(array)] = pair {
-                                    Some((value.clone(), array.clone()))
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect(),
-                    );
-                }
+    let outputs: Vec<(String, String)> = marker(body)
+        .unwrap_or_default()
+        .chunks_exact(2)
+        .filter_map(|pair| {
+            if let [IExpr::Str(value), IExpr::Str(array)] = pair {
+                Some((value.clone(), array.clone()))
+            } else {
+                None
             }
-            None
         })
-        .unwrap_or_default();
+        .collect();
     let mut used = HashSet::new();
     for (value, array) in &outputs {
         used.insert(value.clone());
@@ -168,7 +168,7 @@ pub(super) fn emit(
     used.insert(var.into());
     let mut names = used.into_iter().collect::<Vec<_>>();
     names.sort();
-    // The current path shares only fixed, non-aliased storage. Scalar captures
+    // Source analysis excludes aliased storage and descriptor mutation. Scalar captures
     // become private copies; source analysis forbids writes to shared scalars.
     let mut captures = vec![];
     for n in names {
@@ -183,9 +183,18 @@ pub(super) fn emit(
             ));
             return Ok(false);
         };
-        if !matches!(storage, Storage::Stack(_) | Storage::Static(_)) {
+        if !matches!(
+            storage,
+            Storage::Stack(_) | Storage::Static(_) | Storage::HeapStack(_) | Storage::HeapStatic(_)
+        ) {
+            crate::concurrent_reduce::parallel::report("serial fallback: aliased storage");
+            return Ok(false);
+        }
+        if matches!(storage, Storage::HeapStack(_) | Storage::HeapStatic(_))
+            && !arrays.contains_key(&n)
+        {
             crate::concurrent_reduce::parallel::report(
-                "serial fallback: aliased or heap-backed storage",
+                "serial fallback: unsupported heap scalar capture",
             );
             return Ok(false);
         }
@@ -232,7 +241,7 @@ pub(super) fn emit(
         let mut wr = HashMap::new();
         let mut wb = HashMap::new();
         let mut wa = HashMap::new();
-        for (i, (n, _, kind)) in captures.iter().enumerate() {
+        for (i, (n, original, kind)) in captures.iter().enumerate() {
             let address = w
                 .ins()
                 .load(ptr, ir::MemFlags::new(), params[0], (i * 8) as i32);
@@ -247,7 +256,7 @@ pub(super) fn emit(
                 Storage::Borrowed {
                     cell: slot,
                     original: BorrowedOriginal::Stack(slot),
-                    heap: false,
+                    heap: matches!(original, Storage::HeapStack(_) | Storage::HeapStatic(_)),
                 }
             } else {
                 let ty = match kind {
@@ -280,11 +289,18 @@ pub(super) fn emit(
             w.ins().stack_store(value, slot, 0);
             wi.insert(n.into(), slot.into());
         }
-        let body = body
-            .iter()
-            .filter(|s| !matches!(s,IStmt::Call(n,_) if n=="@parallel_iteration"))
-            .cloned()
-            .collect();
+        fn worker_body(body: &[IStmt]) -> Vec<IStmt> {
+            body.iter()
+                .filter_map(|s| match s {
+                    IStmt::Call(n, _) if n == "@parallel_iteration" => None,
+                    IStmt::Block { body } => Some(IStmt::Block {
+                        body: worker_body(body),
+                    }),
+                    _ => Some(s.clone()),
+                })
+                .collect()
+        }
+        let body = worker_body(body);
         let loop_stmt = IStmt::Do {
             var: var.into(),
             start: IExpr::Ident("@parallel_start".into()),
@@ -348,7 +364,11 @@ pub(super) fn emit(
         3,
     ));
     for (i, (_, storage, _)) in captures.iter().enumerate() {
-        let address = storage_addr(b, ptr, *storage);
+        let address = if matches!(storage, Storage::HeapStack(_) | Storage::HeapStatic(_)) {
+            heap_cell(b, ptr, *storage)?
+        } else {
+            storage_addr(b, ptr, *storage)
+        };
         b.ins().stack_store(address, record, (i * 8) as i32);
     }
     let record = b.ins().stack_addr(ptr, record, 0);
@@ -428,10 +448,24 @@ mod tests {
             "x86_64-unknown-linux-gnu",
             "aarch64-apple-darwin",
         ] {
-            let mut backend = CraneliftBackend::default();
-            backend.triple = Some(target.parse().unwrap());
-            let object = backend.compile(&module, None).unwrap();
-            assert!(!object.is_empty(), "{target}");
+            for heap in [false, true] {
+                let mut module = module.clone();
+                if heap {
+                    module.funcs[0].body.insert(
+                        2,
+                        IStmt::Call("@heap_bind".into(), vec![IExpr::Ident("a".into())]),
+                    );
+                    if let Some(IStmt::Do { body, .. }) = module.funcs[0].body.last_mut() {
+                        *body = vec![IStmt::Block {
+                            body: std::mem::take(body),
+                        }];
+                    }
+                }
+                let mut backend = CraneliftBackend::default();
+                backend.triple = Some(target.parse().unwrap());
+                let object = backend.compile(&module, None).unwrap();
+                assert!(!object.is_empty(), "{target}, heap={heap}");
+            }
         }
     }
 }
