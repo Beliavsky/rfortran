@@ -4162,7 +4162,9 @@ per scalar element across all output items, retaining Fortran element order and
 stopping on writer errors. Empty arrays consume no data descriptors. Counted
 loops avoid expanding the source once per element. The cursor currently permits
 up to 1024 distinct format states for literal formats. Runtime formats use the
-shared parser during execution instead. Mixed COMPLEX items remain unsupported.
+shared parser during execution instead. Mixed COMPLEX items also use the shared
+cursor: each scalar element transfers its real and imaginary parts using two
+real edit descriptors, preserving the component kind.
 See `tests/programs/xdefined_formatted_array_formats.f90`.
 Leading literals in unlimited groups are processed even when no items remain;
 colon editing can suppress these trailing literals.
@@ -4270,8 +4272,8 @@ input errors and errors returned by defined procedures; later items are skipped.
 Current runtime limits are 4096 bytes per expanded field/control format, 128
 integers per DT v-list, and 4096 characters per input field. Assumed/runtime-length
 format variables have a checked 4096-character capture limit; fixed-length format
-variables use their declared capacity. Mixed explicitly formatted COMPLEX items
-remain unsupported. Ordinary READ statements without defined-I/O items retain their
+variables use their declared capacity. Explicitly formatted COMPLEX items are
+supported in mixed lists. Ordinary READ statements without defined-I/O items retain their
 existing runtime-format restrictions.
 
 Run `python tests/test_defined_io_dynamic.py`. The standalone example is
@@ -4326,6 +4328,13 @@ files use the same record model.
 Polymorphic input dispatch, empty list-directed and unformatted child reads
 remain unsupported. These limits are separate from ordinary READ support.
 
+Mixed formatted COMPLEX input and output support scalar values, arrays and
+sections, literal/runtime formats, and external/internal files. Output expressions
+are evaluated once per scalar item; input assigns a COMPLEX value after both
+components have been read successfully. Transfer errors stop subsequent items
+and propagate through IOSTAT/IOMSG. See `tests/test_defined_io_complex.py` and
+`tests/programs/xdefined_io_complex.f90`.
+
 Run `python tests/test_defined_io_positioning.py` for parent/child T/TL tests,
 including overwrites, nested writers, input lookahead, multiple internal records,
 and long records. The standalone example is
@@ -4353,7 +4362,8 @@ These observed discrepancies are recorded in test_defined_input.py.
 Parent lists can mix intrinsic and derived items, including arrays and sections.
 INTEGER, REAL, LOGICAL and CHARACTER items use the existing list-directed or
 constant-field input lowering; list-directed COMPLEX items are also supported.
-Explicitly formatted COMPLEX items remain unsupported in mixed lists. Intrinsic
+Explicitly formatted COMPLEX items consume two real edit descriptors, including
+when repetition or reversion separates the components. Intrinsic
 and defined transfers share the record position and parent error handling; an
 error stops later items. A mismatched intrinsic/DT descriptor returns a nonzero
 IOSTAT without modifying that item. See `tests/test_defined_input_mixed.py` and

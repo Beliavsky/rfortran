@@ -170,7 +170,7 @@ fn lower_one(
         return Ok(Some(Stmt::Block{body}));
     }
     if let Some(format)=&format {
-        if child || !matches!(format,Expr::Str(_)) || super::has_tabs(format)? {
+        if child || !matches!(format,Expr::Str(_)) || super::has_tabs(format)? || items.iter().map(|e| types.type_rank(e,declarations,objects)).collect::<Result<Vec<_>>>()?.iter().any(|t| matches!(t,Some((crate::operators::ExpressionElement::Intrinsic(TypeSpec::Complex(_)),_)))) {
             *serial+=1;
             return Ok(Some(super::dynamic::input(unit,format.clone(),items,&format!("@defined_dynamic_input_{serial}"),types,declarations,objects,bindings,
                 if control.is_empty(){None}else{let Expr::Ident(n)=status else{unreachable!()};Some(n)},

@@ -32,11 +32,11 @@ class DefinedInputMixed(unittest.TestCase):
             'n=-1\nread(u,"(dt)") n(2:1),a\nprint *,n,a%x,a%y',
             ['  1  2']),'-1 -1 1 2\n')
 
-    def test_explicit_complex_boundary(self):
-        self.reject(formats.DefinedInputFormats().source(
+    def test_explicit_complex(self):
+        self.check(formats.DefinedInputFormats().source(
             'complex :: z\ntype(point) :: a',
-            'read(u,"(2f5.1,dt)") z,a'),
-            'this intrinsic type is not yet supported in mixed formatted input')
+            'read(u,"(2f5.1,dt)") z,a\nprint *,real(z),aimag(z),a%x,a%y',
+            ['  3.0  4.0  1  2']), '3 4 1 2\n')
 
     def test_list_scalar(self):
         self.check(arrays.DefinedInputArrays().source(

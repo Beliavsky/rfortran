@@ -760,9 +760,9 @@ close(u)
         self.reject(self.source('iostat=0',"write(*,'(i0)') a"),'DT edit descriptor requires')
         self.reject(self.source('iostat=0',"write(*,'(dt,dt)') a,1"),'DT edit descriptor requires')
 
-    def test_reject_complex_mixed_parent(self):
-        self.reject(self.source('iostat=0',"write(*,'(dt,2f8.2)') a,(1.0,2.0)"),
-                    'COMPLEX items mixed with defined formatted output')
+    def test_complex_mixed_parent(self):
+        self.check(self.source('iostat=0',"write(*,'(dt,2f8.2)') a,(1.0,2.0)"),
+                   '1.00 2.00\n')
 
     def test_runtime_parent_format(self):
         source=self.source('iostat=0',"write(*,fmt) a").replace('type(point) :: a,b',

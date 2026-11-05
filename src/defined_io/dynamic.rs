@@ -224,10 +224,16 @@ pub(super) fn output(
         format.clone(),
         capacity(&format, types, declarations, objects)?,
     );
-    out.push(call("@defined_output_record_begin",vec![id(&s.unit)]));
+    out.push(call("@defined_output_record_begin", vec![id(&s.unit)]));
     for (i, item) in items.into_iter().enumerate() {
         let (element, rank) = output_type(types, &item, declarations, objects)?
             .context("cannot determine runtime formatted item type")?;
+        let complex = match &element {
+            crate::operators::ExpressionElement::Intrinsic(t @ TypeSpec::Complex(_)) => {
+                Some(t.clone())
+            }
+            _ => None,
+        };
         let procedure = match element {
             crate::operators::ExpressionElement::Derived(ty) => Some(
                 bindings
@@ -235,9 +241,6 @@ pub(super) fn output(
                     .context("derived output item requires a defined writer")?
                     .clone(),
             ),
-            crate::operators::ExpressionElement::Intrinsic(TypeSpec::Complex(_)) => {
-                bail!("COMPLEX items mixed with defined formatted output are not yet supported")
-            }
             _ => None,
         };
         let item = output_value(item);
@@ -252,47 +255,63 @@ pub(super) fn output(
         } else {
             (item, vec![], vec![])
         };
-        let mut body = vec![assign(&s.msg, Expr::Str(String::new()))];
-        body.extend(s.operation(1));
-        body.push(assign(&s.code, id(&s.value)));
-        let transfer = if let Some(procedure) = procedure {
-            let mut b = s.operation(2);
-            b.push(s.guard(vec![s.write(vec![], false)]));
-            let mut invoke = s.metadata();
-            invoke.extend([
-                crate::imports::reference(procedure.clone()),
-                call("@defined_output_enter", vec![id(&s.unit)]),
-                call(
-                    &procedure,
-                    vec![
-                        item,
-                        id(&s.unit),
-                        function("trim", vec![id(&s.text)]),
-                        section(&s.values, id(&s.count)),
-                        id(&s.ios),
-                        id(&s.msg),
-                    ],
-                ),
-                call("@defined_output_leave", vec![]),
-            ]);
-            b.push(s.guard(invoke));
-            when_equal(
-                &s.code,
-                crate::format_spec::DT as i64,
-                b,
-                Some(s.mismatch()),
-            )
+        // Capture a complex expression once, then transfer its two real components.
+        let mut body = vec![];
+        let parts = if let Some(kind) = complex {
+            let temp = format!("{prefix}_complex_{i}");
+            before.push(decl(&temp, kind));
+            body.push(assign(&temp, item));
+            vec![
+                function("real", vec![id(&temp)]),
+                function("aimag", vec![id(&temp)]),
+            ]
         } else {
-            let mut b = s.operation(3);
-            b.push(s.guard(vec![s.write(vec![item], false)]));
-            when_equal(
-                &s.code,
-                crate::format_spec::DT as i64,
-                s.mismatch(),
-                Some(b),
-            )
+            vec![item]
         };
-        body.push(s.guard(vec![transfer]));
+        for item in parts {
+            let mut part = vec![assign(&s.msg, Expr::Str(String::new()))];
+            part.extend(s.operation(1));
+            part.push(assign(&s.code, id(&s.value)));
+            let transfer = if let Some(procedure) = procedure.clone() {
+                let mut b = s.operation(2);
+                b.push(s.guard(vec![s.write(vec![], false)]));
+                let mut invoke = s.metadata();
+                invoke.extend([
+                    crate::imports::reference(procedure.clone()),
+                    call("@defined_output_enter", vec![id(&s.unit)]),
+                    call(
+                        &procedure,
+                        vec![
+                            item,
+                            id(&s.unit),
+                            function("trim", vec![id(&s.text)]),
+                            section(&s.values, id(&s.count)),
+                            id(&s.ios),
+                            id(&s.msg),
+                        ],
+                    ),
+                    call("@defined_output_leave", vec![]),
+                ]);
+                b.push(s.guard(invoke));
+                when_equal(
+                    &s.code,
+                    crate::format_spec::DT as i64,
+                    b,
+                    Some(s.mismatch()),
+                )
+            } else {
+                let mut b = s.operation(3);
+                b.push(s.guard(vec![s.write(vec![item], false)]));
+                when_equal(
+                    &s.code,
+                    crate::format_spec::DT as i64,
+                    s.mismatch(),
+                    Some(b),
+                )
+            };
+            part.push(s.guard(vec![transfer]));
+            body.push(s.guard(part));
+        }
         for (index, first, last, step) in loops {
             let mut b = vec![
                 call("@do_step", vec![id(&index), first, last, step]),
@@ -312,7 +331,10 @@ pub(super) fn output(
     finish.extend(s.operation(7));
     finish.push(s.guard(vec![s.write(vec![], true)]));
     out.push(s.guard(finish));
-    out.push(call("@defined_output_record_end",vec![id(&s.unit),id(&s.ios),id(&s.msg)]));
+    out.push(call(
+        "@defined_output_record_end",
+        vec![id(&s.unit), id(&s.ios), id(&s.msg)],
+    ));
     out.extend(s.finish(status, message));
     Ok(Stmt::Block { body: out })
 }
@@ -362,6 +384,10 @@ pub(super) fn input(
         let (element, rank) = types
             .type_rank(&item, declarations, objects)?
             .context("cannot determine runtime formatted input item type")?;
+        let complex = match &element {
+            crate::operators::ExpressionElement::Intrinsic(TypeSpec::Complex(k)) => Some(k.clone()),
+            _ => None,
+        };
         let (procedure, tag) = match element {
             crate::operators::ExpressionElement::Derived(ty) => (
                 Some(
@@ -376,7 +402,10 @@ pub(super) fn input(
                 None,
                 match kind {
                     TypeSpec::Integer(_) | TypeSpec::IntegerKind(_) => 1,
-                    TypeSpec::Real | TypeSpec::RealKind(_) | TypeSpec::DoublePrecision => 2,
+                    TypeSpec::Real
+                    | TypeSpec::RealKind(_)
+                    | TypeSpec::DoublePrecision
+                    | TypeSpec::Complex(_) => 2,
                     TypeSpec::Logical | TypeSpec::LogicalKind(_) => 3,
                     TypeSpec::Character(_)
                     | TypeSpec::CharacterLength(_)
@@ -399,58 +428,86 @@ pub(super) fn input(
         } else {
             bail!("defined input requires writable variables, elements or sections")
         };
-        let mut body = vec![assign(&s.msg, Expr::Str(String::new()))];
-        body.extend(s.operation(1));
-        body.push(assign(&s.code, id(&s.value)));
-        let transfer = if let Some(procedure) = procedure {
-            let mut b = vec![field(0, int(0))];
-            let mut invoke = s.metadata();
-            invoke.extend([
-                crate::imports::reference(procedure.clone()),
-                call(
-                    &procedure,
-                    vec![
-                        item,
-                        id(&s.unit),
-                        function("trim", vec![id(&s.text)]),
-                        section(&s.values, id(&s.count)),
-                        id(&s.ios),
-                        id(&s.msg),
-                    ],
-                ),
-            ]);
-            b.push(s.guard(invoke));
-            when_equal(
-                &s.code,
-                crate::format_spec::DT as i64,
-                b,
-                Some(s.mismatch()),
-            )
-        } else {
-            let len = if tag == 4 {
-                function("len", vec![item.clone()])
+        let mut body = vec![];
+        let mut complete = None;
+        let parts = if let Some(k) = complex {
+            let re = format!("{prefix}_real_{i}");
+            let im = format!("{prefix}_imag_{i}");
+            let kind_arg = if let Some(json) = k.strip_prefix(crate::ast::KIND_EXPRESSION) {
+                serde_json::from_str(json)?
+            } else if k.as_bytes().first().is_some_and(u8::is_ascii_digit) {
+                Expr::IntLit(k.clone())
             } else {
-                int(0)
+                id(&k)
             };
-            let b = vec![
-                field(tag, len),
-                s.guard(if tag == 4 {
-                    vec![store(&item, id(&s.text))]
-                } else {
-                    vec![call(
-                        "@internal_read",
-                        vec![id(&s.text), Expr::Str("iostat".into()), id(&s.ios), item],
-                    )]
-                }),
-            ];
-            when_equal(
-                &s.code,
-                crate::format_spec::DT as i64,
-                s.mismatch(),
-                Some(b),
-            )
+            let kind = TypeSpec::RealKind(k);
+            before.extend([decl(&re, kind.clone()), decl(&im, kind)]);
+            complete = Some(store(
+                &item,
+                function("cmplx", vec![id(&re), id(&im), kind_arg]),
+            ));
+            vec![id(&re), id(&im)]
+        } else {
+            vec![item]
         };
-        body.push(s.guard(vec![transfer]));
+        for item in parts {
+            let mut part = vec![assign(&s.msg, Expr::Str(String::new()))];
+            part.extend(s.operation(1));
+            part.push(assign(&s.code, id(&s.value)));
+            let transfer = if let Some(procedure) = procedure.clone() {
+                let mut b = vec![field(0, int(0))];
+                let mut invoke = s.metadata();
+                invoke.extend([
+                    crate::imports::reference(procedure.clone()),
+                    call(
+                        &procedure,
+                        vec![
+                            item,
+                            id(&s.unit),
+                            function("trim", vec![id(&s.text)]),
+                            section(&s.values, id(&s.count)),
+                            id(&s.ios),
+                            id(&s.msg),
+                        ],
+                    ),
+                ]);
+                b.push(s.guard(invoke));
+                when_equal(
+                    &s.code,
+                    crate::format_spec::DT as i64,
+                    b,
+                    Some(s.mismatch()),
+                )
+            } else {
+                let len = if tag == 4 {
+                    function("len", vec![item.clone()])
+                } else {
+                    int(0)
+                };
+                let b = vec![
+                    field(tag, len),
+                    s.guard(if tag == 4 {
+                        vec![store(&item, id(&s.text))]
+                    } else {
+                        vec![call(
+                            "@internal_read",
+                            vec![id(&s.text), Expr::Str("iostat".into()), id(&s.ios), item],
+                        )]
+                    }),
+                ];
+                when_equal(
+                    &s.code,
+                    crate::format_spec::DT as i64,
+                    s.mismatch(),
+                    Some(b),
+                )
+            };
+            part.push(s.guard(vec![transfer]));
+            body.push(s.guard(part));
+        }
+        if let Some(complete) = complete {
+            body.push(s.guard(vec![complete]));
+        }
         for (index, first, last, step) in loops {
             let mut b = vec![
                 call("@do_step", vec![id(&index), first, last, step]),

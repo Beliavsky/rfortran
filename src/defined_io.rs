@@ -501,12 +501,6 @@ fn formatted_arrays(
     for (item_number, item) in items.into_iter().enumerate() {
         let (element, rank) = output_type(types, &item, declarations, objects)?
             .context("cannot determine explicitly formatted output item type")?;
-        if matches!(
-            element,
-            crate::operators::ExpressionElement::Intrinsic(TypeSpec::Complex(_))
-        ) {
-            bail!("COMPLEX items mixed with defined formatted output are not yet supported");
-        }
         let procedure = match element {
             crate::operators::ExpressionElement::Derived(ty) => Some(
                 bindings
@@ -940,7 +934,7 @@ fn lower(
                     let list = format
                         .as_ref()
                         .is_none_or(|e| matches!(e,Expr::Call(n,_) if n=="@list_directed"));
-                    if !list && !matches!(format.as_ref(),Some(Expr::Str(_))) {
+                    if !list && (!matches!(format.as_ref(),Some(Expr::Str(_))) || items.iter().map(|e| output_type(expression_types,e,&declarations,&objects)).collect::<Result<Vec<_>>>()?.iter().any(|t| matches!(t,Some((crate::operators::ExpressionElement::Intrinsic(TypeSpec::Complex(_)),_))))) {
                         *serial+=1;
                         *s=dynamic::output(unit,format.clone().unwrap(),items,&format!("@defined_dynamic_{serial}"),expression_types,&declarations,&objects,bindings,status_target,message_target)?;
                         return Ok(());
@@ -998,19 +992,11 @@ fn lower(
                         let planned = plan.get(item_number);
                         let defined = target(&item)?;
                         if !list {
-                            let (element, rank) =
+                            let (_, rank) =
                                 output_type(expression_types, &item, &declarations, &objects)?
                                     .context(
                                         "cannot determine explicitly formatted output item type",
                                     )?;
-                            if matches!(
-                                element,
-                                crate::operators::ExpressionElement::Intrinsic(TypeSpec::Complex(
-                                    _
-                                ))
-                            ) {
-                                bail!("COMPLEX items mixed with defined formatted output are not yet supported");
-                            }
                             if rank != 0 {
                                 bail!("defined formatted array output currently requires a list-directed format");
                             }
