@@ -300,6 +300,10 @@ struct FormatItem {
     data: String,
     defined: Option<(String, Vec<Expr>)>,
 }
+fn has_tabs(format: &Expr) -> Result<bool> {
+    let Expr::Str(text)=format else {return Ok(false)};
+    crate::format_spec::uses_tabs(text.as_bytes()).map_err(anyhow::Error::msg)
+}
 fn format_items(format: &Expr, count: usize) -> Result<(Vec<FormatItem>, String)> {
     use crate::format_spec::{self as f, GroupParser};
     let Expr::Str(text) = format else {
@@ -312,9 +316,6 @@ fn format_items(format: &Expr, count: usize) -> Result<(Vec<FormatItem>, String)
     let mut sign = String::new();
     while let Some(d) = parser.next().map_err(anyhow::Error::msg)? {
         let raw = std::str::from_utf8(d.raw)?.trim();
-        if matches!(d.code, f::T | f::TL) {
-            bail!("T/TL positioning across defined output transfers is not yet supported");
-        }
         if f::is_data(d.code) {
             let defined = if d.code == f::DT {
                 let descriptor =
@@ -395,9 +396,6 @@ fn format_states(format: &Expr) -> Result<Vec<FormatState>> {
                 d
             };
             let raw = std::str::from_utf8(d.raw)?.trim();
-            if matches!(d.code, f::T | f::TL) {
-                bail!("T/TL positioning across defined output transfers is not yet supported");
-            }
             if f::is_data(d.code) {
                 let defined = if d.code == f::DT {
                     let descriptor = raw.trim_start_matches(|c: char| {
@@ -480,6 +478,7 @@ fn formatted_arrays(
         assign(&parent_unit, unit),
         assign(&cursor, int(0)),
         assign(&msg, Expr::Str(String::new())),
+        call("@defined_output_record_begin",vec![id(&parent_unit)]),
         checked_write(id(&parent_unit), "()", vec![], false, &ios, &msg),
     ];
     for (index, state) in states.iter().enumerate() {
@@ -622,6 +621,7 @@ fn formatted_arrays(
         )];
     }
     out.push(when_equal(&ios, 0, finish, None));
+    out.push(call("@defined_output_record_end",vec![id(&parent_unit),id(&ios),id(&msg)]));
     if let Some(dest) = status_target {
         out.push(assign(&dest, id(&ios)));
     } else {
@@ -984,6 +984,7 @@ fn lower(
                         decl(&msg, TypeSpec::Character(Some(256))),
                     ];
                     out.push(assign(&parent_unit, unit));
+                    out.push(call("@defined_output_record_begin",vec![id(&parent_unit)]));
                     out.push(assign(&msg, Expr::Str(String::new())));
                     out.push(checked_write(
                         id(&parent_unit),
@@ -1147,6 +1148,7 @@ fn lower(
                         )],
                         else_body: None,
                     });
+                    out.push(call("@defined_output_record_end",vec![id(&parent_unit),id(&ios),id(&msg)]));
                     if status_target.is_none() {
                         out.push(Stmt::If {
                             cond: Expr::Bin(BinOp::Ne, Box::new(id(&ios)), Box::new(int(0))),

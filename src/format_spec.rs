@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Beliavsky
 // See LICENSE-MIT in the repository root.
 
-//! Allocation-free format parser and renderer shared by the interpreter and
+//! Format parser and renderer shared by the interpreter and
 //! the standalone native runtime.
 //!
 //! Supported edit descriptors: A, AT, I, B, O, Z, F, E, EN, ES, D, G, L, X, T, TL,
@@ -255,7 +255,7 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        if d.repeat == 0 || d.repeat > 10000 || d.width > 256 || d.precision > 256 || d.exponent > 9 || !(-128..=128).contains(&d.scale) {
+        if d.repeat == 0 || d.repeat > 10000 || (d.width > 256 && !matches!(d.code,T|TL|TR)) || d.precision > 256 || d.exponent > 9 || !(-128..=128).contains(&d.scale) {
             return Err("output descriptor exceeds supported limits");
         }
         self.spaces();
@@ -1014,15 +1014,57 @@ fn render_item(d: &Descriptor<'_>, value: Value<'_>, style: &Style, emit: &mut d
     Ok(())
 }
 
+/// Inspect syntax once, without expanding repetitions or format reversion.
+pub fn uses_tabs(format: &[u8]) -> Result<bool, &'static str> {
+    fn scan(mut p: Parser<'_>, depth: usize) -> Result<bool, &'static str> {
+        if depth>32 {return Err("format nesting exceeds supported limit");}
+        loop {
+            p.separator();
+            if p.pos==p.bytes.len() {return Ok(false);}
+            if let Some((body,_,_))=p.group()? {
+                if scan(Parser{bytes:body,pos:0},depth+1)? {return Ok(true);}
+            }else if let Some(d)=p.next()? {
+                if matches!(d.code,T|TL) {return Ok(true);}
+            }
+        }
+    }
+    scan(Parser::new(format)?,0)
+}
+
+pub struct OutputRecord {
+    bytes: *mut u8,
+    capacity: usize,
+    len: usize,
+    position: usize,
+    pub limit: usize,
+}
+impl OutputRecord {
+    pub fn new() -> Self {Self {bytes:core::ptr::null_mut(),capacity:0,len:0,position:0,limit:usize::MAX}}
+    fn reserve(&mut self, n: usize) -> Result<(), &'static str> {
+        if n<=self.capacity {return Ok(());}
+        let capacity=n.max(self.capacity.saturating_mul(2)).max(64);
+        extern "C" {fn realloc(p:*mut core::ffi::c_void,n:usize)->*mut core::ffi::c_void;}
+        let p=unsafe {realloc(self.bytes.cast(),capacity).cast::<u8>()};
+        if p.is_null() {return Err("could not allocate formatted output record");}
+        self.bytes=p;self.capacity=capacity;Ok(())
+    }
+    pub fn flush(&mut self, emit:&mut dyn FnMut(u8)) {
+        for i in 0..self.len {emit(unsafe{*self.bytes.add(i)});}
+        self.len=0;self.position=0;
+    }
+}
+impl Drop for OutputRecord {
+    fn drop(&mut self) {extern "C" {fn free(p:*mut core::ffi::c_void);}unsafe{free(self.bytes.cast());}}
+}
 /// The record being written. Without T or TL editing, bytes go straight to
 /// `emit`; with them, a record is kept until it ends so positions can move left.
 struct Record<'e> {
     emit: &'e mut dyn FnMut(u8),
     buffered: bool,
-    bytes: [u8; 4096],
-    len: usize,
-    position: usize,
+    state: &'e mut OutputRecord,
 }
+impl core::ops::Deref for Record<'_> {type Target=OutputRecord;fn deref(&self)->&OutputRecord{self.state}}
+impl core::ops::DerefMut for Record<'_> {fn deref_mut(&mut self)->&mut OutputRecord{self.state}}
 impl Record<'_> {
     fn put(&mut self, byte: u8) -> Result<(), &'static str> {
         if byte == b'\n' {
@@ -1040,14 +1082,14 @@ impl Record<'_> {
             self.position += 1;
             return Ok(());
         }
-        if self.position >= self.bytes.len() {
-            return Err("a record with T or TL editing exceeds 4096 characters");
-        }
+        if self.position >= self.limit {return Err("end of internal file record");}
+        let capacity=self.position.checked_add(1).ok_or("formatted output column overflow")?;
+        self.reserve(capacity)?;
         while self.len < self.position {
-            self.bytes[self.len] = b' ';
+            unsafe{*self.bytes.add(self.len)=b' ';}
             self.len += 1;
         }
-        self.bytes[self.position] = byte;
+        unsafe{*self.bytes.add(self.position)=byte;}
         self.position += 1;
         self.len = self.len.max(self.position);
         Ok(())
@@ -1055,7 +1097,8 @@ impl Record<'_> {
     fn end(&mut self) {
         if self.buffered {
             for i in 0..self.len {
-                (self.emit)(self.bytes[i]);
+                let byte=unsafe{*self.bytes.add(i)};
+                (self.emit)(byte);
             }
         }
         self.len = 0;
@@ -1063,11 +1106,11 @@ impl Record<'_> {
     }
 }
 
-/// Reject positioning that needs a shared, seekable parent-record buffer.
+/// Validate child formats; shared record buffers handle positioning.
 pub fn check_child_output(format:&[u8], count:usize)->Result<(), &'static str> {
     let mut parser=GroupParser::new(format,count)?;
     while let Some(d)=parser.next()? {
-        if matches!(d.code,T|TL) {return Err("T/TL positioning in defined child output is not yet supported");}
+        let _ = d;
     }
     Ok(())
 }
@@ -1077,7 +1120,11 @@ pub fn check_child_output(format:&[u8], count:usize)->Result<(), &'static str> {
 /// is a newline, and the final record is not terminated. Trailing X or TR
 /// positioning writes blanks only when the output is nonadvancing, where the
 /// next statement continues the record.
+#[allow(dead_code)] // Convenience entry point for standalone records and runtime tests.
 pub fn render_with(format: &[u8], count: usize, item: &dyn Fn(usize, &mut dyn FnMut(Value<'_>)), emit: &mut dyn FnMut(u8), advancing: bool) -> Result<(), &'static str> {
+    render_shared(format,count,item,emit,advancing,None)
+}
+pub fn render_shared(format: &[u8], count: usize, item: &dyn Fn(usize, &mut dyn FnMut(Value<'_>)), emit: &mut dyn FnMut(u8), advancing: bool, state: Option<&mut OutputRecord>) -> Result<(), &'static str> {
     let mut parser = GroupParser::new(format, count)?;
     let mut index = 0;
     let mut tabs = false;
@@ -1101,7 +1148,9 @@ pub fn render_with(format: &[u8], count: usize, item: &dyn Fn(usize, &mut dyn Fn
     if let Some(e) = error {
         return Err(e);
     }
-    let mut record = Record { emit, buffered: tabs, bytes: [0; 4096], len: 0, position: 0 };
+    let shared=state.is_some();
+    let mut local=OutputRecord::new();
+    let mut record = Record { emit, buffered: tabs || shared, state: state.unwrap_or(&mut local) };
     let mut style = Style { plus: false, scale: 0 };
     let mut parser = GroupParser::new(format, count)?;
     index = 0;
@@ -1119,11 +1168,11 @@ pub fn render_with(format: &[u8], count: usize, item: &dyn Fn(usize, &mut dyn Fn
                         }
                     }
                 }
-                b'x' => record.position += 1,
+                b'x' => record.position = record.position.checked_add(1).ok_or("formatted output column overflow")?,
                 b'/' | REVERSION => record.put(b'\n')?,
                 T => record.position = d.width - 1,
                 TL => record.position = record.position.saturating_sub(d.width),
-                TR => record.position += d.width,
+                TR => record.position = record.position.checked_add(d.width).ok_or("formatted output column overflow")?,
                 SIGN_PLUS => style.plus = true,
                 SIGN_DEFAULT => style.plus = false,
                 SCALE => style.scale = d.scale,
@@ -1148,6 +1197,7 @@ pub fn render_with(format: &[u8], count: usize, item: &dyn Fn(usize, &mut dyn Fn
             }
         }
     }
+    if shared && !advancing {return Ok(());}
     if advancing {
         record.position = record.position.min(record.len);
     } else if record.position > record.len {

@@ -60,6 +60,7 @@ pub unsafe fn mode(unit: i64) -> i64 {
         (*p).mode
     }
 }
+pub unsafe fn width(unit:i64)->Option<usize> {let p=find(unit);if p.is_null(){None}else{Some((*p).width)}}
 pub unsafe fn begin(unit: i64, source: &[u8], width: usize, records: usize, writing: bool) -> i64 {
     if mode(unit) != 0 || width.checked_mul(records) != Some(source.len()) {
         return 1;

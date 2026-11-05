@@ -85,8 +85,8 @@ print *,status<0,len_trim(message)>0"""),'T T\n')
         # Same local gfortran list-parent field-skipping discrepancy.
         self.check(source,'7 9 11 13 0 unchanged\n',reference=False)
 
-    def test_child_left_tab_diagnosed(self):
-        self.reject(self.fixed().replace('(i3)','(i3,t1)'),'T or TL positioning')
+    def test_child_left_tab(self):
+        self.check(self.main(self.fixed().replace('(i3)','(i3,t1)'), 'read(u,"(dt)") a\nprint *,a%x,a%y'), '7 7\n')
 
     def test_child_invalid_runtime_format(self):
         source=self.source().replace('read(unit,*,','read(unit,iotype,')

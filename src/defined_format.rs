@@ -109,9 +109,6 @@ impl Cursor {
                 self.before.add(b")")?;
                 return Ok(0);
             }
-            if matches!(d.code, f::T | f::TL) {
-                return Err("T/TL positioning across defined I/O transfers is not yet supported");
-            }
             if f::is_data(d.code) {
                 self.before.add(b")")?;
                 self.data.add(b"(")?;
@@ -268,7 +265,7 @@ pub unsafe fn input(
     tag: i64,
     dest_len: usize,
     text: &mut [u8],
-    mut fields: impl FnMut(&mut [u8], bool) -> i64,
+    mut fields: impl FnMut(&mut [u8], i64) -> i64,
 ) -> i64 {
     let result = (|| -> Result<(), i64> {
         if handle == 0 {
@@ -289,15 +286,19 @@ pub unsafe fn input(
                 let mut left = d.width.max(1).checked_mul(d.repeat).ok_or(1)?;
                 while left > 0 {
                     let n = left.min(CAP);
-                    let code = fields(&mut buffer[..n], false);
+                    let code = fields(&mut buffer[..n], 0);
                     if code != 0 {
                         return Err(code);
                     }
                     left -= n;
                 }
+            } else if matches!(d.code, f::T | f::TL) {
+                let width=i64::try_from(d.width).map_err(|_|1)?;
+                let action=if d.code==f::T {width.checked_add(1).ok_or(1)?}else{-width};
+                let code=fields(&mut [],action);if code!=0 {return Err(code);}
             } else if matches!(d.code, b'/' | f::REVERSION) {
                 for _ in 0..d.repeat {
-                    let code = fields(&mut [], true);
+                    let code = fields(&mut [], 1);
                     if code != 0 {
                         return Err(code);
                     }
@@ -321,7 +322,7 @@ pub unsafe fn input(
                 if (width == 0 && tag != 4) || width > CAP {
                     return Err(1);
                 }
-                let code = fields(&mut buffer[..width], false);
+                let code = fields(&mut buffer[..width], 0);
                 if code != 0 {
                     return Err(code);
                 }

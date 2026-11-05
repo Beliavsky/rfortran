@@ -40,8 +40,8 @@ class DynamicChild(unittest.TestCase):
         source=source.replace("'  7  9 99'", "'bad  9 99'")
         self.check(self.main(source, 'a%y=-1\nread(u,"(dt)",iostat=status,iomsg=message) a\nprint *,status>0,a%y,len_trim(message)>0'), 'T -1 T\n',reference=False)
 
-    def test_runtime_left_tab_error(self):
-        self.check(self.main(self.source('(i3,t1)'), 'read(u,"(dt)",iostat=status,iomsg=message) a\nprint *,status>0,len_trim(message)>0'), 'T T\n',reference=False)
+    def test_runtime_left_tab(self):
+        self.check(self.main(self.source('(i3,t1)'), 'read(u,"(dt)",iostat=status) a\nprint *,status,a%x,a%y'), '0 7 7\n')
 
     def test_helper_assumed_length_format(self):
         source=self.source('(2i3)', 'call fields(unit,fmt,dtv%x,dtv%y,iostat,iomsg)')

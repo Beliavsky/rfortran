@@ -2801,6 +2801,19 @@ fn gen_stmts(
                     let unit=file_io::open_dynamic(module,b,ptr_ty,dc,requested,path.address,path.length,mode,newunit,append,name=="@file_open_dynamic")?;
                     let address=storage_addr(b,ptr_ty,ints[dest]);b.ins().store(MemFlags::new(),unit,address,0);continue;
                 }
+                if name=="@defined_output_record_begin" || name=="@defined_output_record_end" {
+                    let unit=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);let unit=to_i64(b,unit);
+                    if name=="@defined_output_record_begin" {
+                        file_io::call(module,b,"rfort_defined_output_record_begin",&[unit],types::I32)?;
+                    }else{
+                        let IExpr::Ident(status)=&args[1] else {unreachable!()};
+                        let address=storage_addr(b,ptr_ty,ints[status]);let previous=b.ins().load(types::I64,MemFlags::new(),address,0);
+                        let (file,_)=file_io::write_handle_status(module,b,ptr_ty,unit)?;
+                        let message=characters::view(module,b,ptr_ty,dc,chars,ints,&args[2])?;
+                        let code=file_io::call(module,b,"rfort_defined_output_record_end",&[unit,file,previous,message.address,message.length],types::I64)?;
+                        b.ins().store(MemFlags::new(),code,address,0);
+                    }continue;
+                }
                 if name=="@format_end_checked" {
                     let h=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);let h=to_i64(b,h);
                     let unit=eval_expr(b,ex,ptr_ty,&args[1],ints,reals,bools,func_meta);let unit=to_i64(b,unit);

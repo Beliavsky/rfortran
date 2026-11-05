@@ -103,8 +103,8 @@ fn lower_one(
     }
     // Reuse the runtime cursor for intrinsic child transfers as well as DT parents.
     // Its nested input session borrows an existing parent session on the same unit.
-    let runtime_child = child && format.as_ref().is_some_and(|f| crate::parameters::character_constant(f).is_err());
-    if !writers.iter().any(Option::is_some) && !runtime_child {
+    let formatted_child = child && format.is_some();
+    if !writers.iter().any(Option::is_some) && !formatted_child {
         return Ok(None);
     }
     if items
@@ -170,7 +170,7 @@ fn lower_one(
         return Ok(Some(Stmt::Block{body}));
     }
     if let Some(format)=&format {
-        if !matches!(format,Expr::Str(_)) {
+        if child || !matches!(format,Expr::Str(_)) || super::has_tabs(format)? {
             *serial+=1;
             return Ok(Some(super::dynamic::input(unit,format.clone(),items,&format!("@defined_dynamic_input_{serial}"),types,declarations,objects,bindings,
                 if control.is_empty(){None}else{let Expr::Ident(n)=status else{unreachable!()};Some(n)},
@@ -480,24 +480,12 @@ pub(super) fn resolve(program: &mut Program) -> Result<()> {
     }
     // Reject child transfers that do not yet preserve the shared input position.
     fn check(s: &mut Stmt, called: &mut HashSet<String>) -> Result<()> {
-        if let Stmt::CallSub { name, args } = s {
+        if let Stmt::CallSub { name, .. } = s {
             if matches!(
                 name.as_str(),
                 "@empty_read" | "@unformatted_read"
             ) {
                 bail!("defined input does not yet support empty or unformatted child READ statements");
-            }
-            if matches!(name.as_str(), "@formatted_read" | "@formatted_read_status") {
-                if let Ok(text)=crate::parameters::character_constant(&args[1]) {
-                    // Until a bidirectional record buffer is available, reject left
-                    // tabbing rather than consuming past the requested final position.
-                    let mut parser=crate::format_spec::GroupParser::new(text.as_bytes(),args.len()-if name=="@formatted_read" {2}else{4}).map_err(anyhow::Error::msg)?;
-                    while let Some(d)=parser.next().map_err(anyhow::Error::msg)? {
-                        if matches!(d.code,crate::format_spec::T | crate::format_spec::TL) {
-                            bail!("defined input child READ does not yet support T or TL positioning");
-                        }
-                    }
-                }
             }
             called.insert(name.clone());
         }

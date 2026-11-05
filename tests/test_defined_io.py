@@ -203,9 +203,8 @@ print *, 'after'""")
         source=source.replace('type(point) :: a,b','type(point) :: a,b\ninteger :: status\ncharacter(80) :: message')
         self.check(source,'17 defined output failure\n after\n')
 
-    def test_positioning_limit_is_diagnosed(self):
-        self.check(self.source("write(unit,'(t5,i0)') dtv%x\niostat=0"),
-                   error='T/TL positioning in defined child output',reference=False)
+    def test_child_positioning(self):
+        self.check(self.source("write(unit,'(t5,i0)') dtv%x\niostat=0"), '7\n')
 
     def test_reject_invalid_interface(self):
         source=self.source('iostat=0').replace('integer,intent(out) :: iostat',
@@ -770,8 +769,8 @@ close(u)
             "type(point) :: a,b\ncharacter(4) :: fmt='(dt)'")
         self.check(source,'\n')
 
-    def test_reject_parent_positioning(self):
-        self.reject(self.source('iostat=0',"write(*,'(dt,t1,a)') a,'x'"),'T/TL positioning')
+    def test_parent_positioning(self):
+        self.check(self.source('iostat=0',"write(*,'(dt,t1,a)') a,'x'"),'x\n')
 
 
 

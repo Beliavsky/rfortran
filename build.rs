@@ -6,7 +6,7 @@ fn main() {
     // native_runtime marks code compiled only into the native runtime library.
     println!("cargo::rustc-check-cfg=cfg(native_runtime)");
     lalrpop::process_root().unwrap();
-    for file in ["src/native_format.rs", "src/c_descriptor.rs", "src/timing.rs", "src/calendar.rs", "src/environment.rs", "src/format_spec.rs", "src/defined_format.rs", "src/internal_file.rs", "src/record_input.rs", "src/list_input.rs", "src/namelist_input.rs", "src/namelist_native.rs", "src/character_input.rs", "src/file_inquiry.rs"] {
+    for file in ["src/native_format.rs", "src/c_descriptor.rs", "src/timing.rs", "src/calendar.rs", "src/environment.rs", "src/format_spec.rs", "src/defined_format.rs", "src/internal_file.rs", "src/output_record.rs", "src/record_input.rs", "src/list_input.rs", "src/namelist_input.rs", "src/namelist_native.rs", "src/character_input.rs", "src/file_inquiry.rs"] {
         println!("cargo:rerun-if-changed={file}");
     }
     let out =

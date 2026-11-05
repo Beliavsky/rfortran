@@ -94,9 +94,9 @@ end function
 end module""")
         self.check(source,'7 9\n1\n')
 
-    def test_output_positioning_boundary(self):
-        self.check(self.out('fmt="(t1,dt)"\nwrite(*,fmt,iostat=status,iomsg=message) a\nprint *,status>0,index(message,"T/TL")>0',
-            declarations='integer :: status\ncharacter(100) :: message'),'T T\n',reference=False)
+    def test_output_positioning(self):
+        self.check(self.out('fmt="(t1,dt)"\nwrite(*,fmt,iostat=status,iomsg=message) a\nprint *,status',
+            declarations='integer :: status\ncharacter(100) :: message'),'7\n0\n')
 
     def test_output_empty_array(self):
         self.check(self.out('fmt="(2x,dt)"\nwrite(*,fmt) values',declarations='type(point) :: values(0)'), '\n')

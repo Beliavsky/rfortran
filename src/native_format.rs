@@ -38,6 +38,7 @@ mod environment;
 mod format_spec;
 mod defined_format;
 mod internal_file;
+mod output_record;
 mod record_input;
 mod list_input;
 mod namelist_input;
@@ -620,13 +621,14 @@ fn checked<T>(result: Result<T, &'static str>) -> T {
 /// Items. CHARACTER items contain a valid pointer and length; other items hold
 /// INTEGER, REAL, or LOGICAL bits, with the kind in `length` (0 if unknown).
 /// All storage remains live for this call.
-unsafe fn try_render_format(
+unsafe fn try_render_format_state(
     format: *const u8,
     length: usize,
     items: *const Item,
     count: usize,
     emit: &mut impl FnMut(u8),
     advancing: bool,
+    state:*mut format_spec::OutputRecord,
 ) -> Result<(), &'static str> {
     let bytes = core::slice::from_raw_parts(format, length);
     let items = core::slice::from_raw_parts(items, count);
@@ -643,9 +645,12 @@ unsafe fn try_render_format(
             _ => format_spec::Value::Character(core::slice::from_raw_parts(item.bits as usize as *const u8, item.length as usize)),
         })
     };
-    format_spec::render_with(bytes, count, &value, &mut |b| emit(b), advancing)
+    format_spec::render_shared(bytes, count, &value, &mut |b| emit(b), advancing,state.as_mut())
 }
 
+unsafe fn try_render_format(format:*const u8,length:usize,items:*const Item,count:usize,emit:&mut impl FnMut(u8),advancing:bool)->Result<(), &'static str> {
+    try_render_format_state(format,length,items,count,emit,advancing,core::ptr::null_mut())
+}
 unsafe fn render_format(format:*const u8,length:usize,items:*const Item,count:usize,emit:&mut impl FnMut(u8),advancing:bool) {
     checked(try_render_format(format,length,items,count,emit,advancing));
 }
@@ -684,14 +689,16 @@ pub unsafe extern "C" fn rfort_format_end_checked(pointer:*mut core::ffi::c_void
         // Validate the complete format before repositioning or emitting anything.
         try_render_format(list.format,list.length,list.items,list.count,&mut |_|{},advancing)?;
         if internal_file::mode(unit)!=0 {
-            try_render_format(list.format,list.length,list.items,list.count,&mut |byte| {
+            let result=try_render_format_state(list.format,list.length,list.items,list.count,&mut |byte| {
                 if internal_status==0 {internal_status=internal_file::write(unit,byte);}
-            },advancing)?;
+            },advancing,output_record::get(unit));
+            if result==Err("end of internal file record") {internal_status=-2;}
+            result?;
             return if internal_status==0 {Ok(())}else{Err("end of internal file record or invalid internal transfer")};
         }
         if seekable && fseek(stream,0,1)!=0 {return Err("formatted file WRITE positioning failed");}
         let mut emit=|c:u8| {let code=if stream.is_null() {putchar(c as i32)}else{fputc(c as i32,stream)};if code<0 {failed=true;}};
-        try_render_format(list.format,list.length,list.items,list.count,&mut emit,advancing)?;
+        try_render_format_state(list.format,list.length,list.items,list.count,&mut emit,advancing,output_record::get(unit))?;
         if advancing {emit(10);}
         if fflush(stream)!=0 {failed=true;}
         if seekable {
@@ -712,7 +719,7 @@ pub unsafe extern "C" fn rfort_formatted_write(format:*const u8,length:usize,ite
         checked(format_spec::check_child_output(core::slice::from_raw_parts(format,length),count));
         0
     } else {advance};
-    render_format(format,length,items,count,&mut |byte| {putchar(byte as i32);},advance!=0);
+    checked(try_render_format_state(format,length,items,count,&mut |byte| {putchar(byte as i32);},advance!=0,output_record::get(6)));
     if advance!=0 {putchar(10);} else {fflush(core::ptr::null_mut());}
 }
 
@@ -753,7 +760,7 @@ pub unsafe extern "C" fn rfort_defined_input_field(handle:i64,stream:*mut core::
     let reader=rfort_list_read_begin_unit(stream,unit);if reader.is_null(){return 1;}
     let r=&mut *reader.cast::<ListReader>();
     defined_format::input(handle,tag,length.max(0) as usize,core::slice::from_raw_parts_mut(text,capacity),|buffer,advance|
-        r.session.fields(buffer,advance,||reader_byte(r.stream,r.source,r.length,&mut r.offset)))
+        r.session.positioned_fields(buffer,advance,||reader_byte(r.stream,r.source,r.length,&mut r.offset)))
 }
 
 #[no_mangle]
@@ -779,4 +786,20 @@ pub unsafe extern "C" fn rfort_defined_internal_end(slots:*mut *mut core::ffi::c
 #[no_mangle]
 pub unsafe extern "C" fn rfort_defined_internal_record(unit:i64,text:*mut u8,length:usize,loading:i64,index:i64)->i64 {
     internal_file::record(unit,index,core::slice::from_raw_parts_mut(text,length),loading!=0)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rfort_defined_output_record_begin(unit:i64)->i32 {
+    if !output_record::begin(unit) {fail("could not allocate defined output record");}0
+}
+#[no_mangle]
+pub unsafe extern "C" fn rfort_defined_output_record_end(unit:i64,stream:*mut core::ffi::c_void,previous:i64,message:*mut u8,length:usize)->i64 {
+    let mut code=0;
+    output_record::end(unit,&mut |byte| {if code==0 {
+        if internal_file::mode(unit)!=0 {code=internal_file::write(unit,byte);}
+        else if (if stream.is_null(){putchar(byte as i32)}else{fputc(byte as i32,stream)})<0 {code=1;}
+    }});
+    if internal_file::mode(unit)==0 && fflush(stream)!=0 {code=1;}
+    if previous!=0 {return previous;}
+    if code!=0 {let text=b"could not finish defined output record";core::ptr::write_bytes(message,b' ',length);core::ptr::copy_nonoverlapping(text.as_ptr(),message,text.len().min(length));}code
 }

@@ -4162,8 +4162,7 @@ per scalar element across all output items, retaining Fortran element order and
 stopping on writer errors. Empty arrays consume no data descriptors. Counted
 loops avoid expanding the source once per element. The cursor currently permits
 up to 1024 distinct format states for literal formats. Runtime formats use the
-shared parser during execution instead. Mixed COMPLEX items and parent T/TL
-positioning remain unsupported.
+shared parser during execution instead. Mixed COMPLEX items remain unsupported.
 See `tests/programs/xdefined_formatted_array_formats.f90`.
 Leading literals in unlimited groups are processed even when no items remain;
 colon editing can suppress these trailing literals.
@@ -4202,8 +4201,13 @@ tests/programs/xdefined_formatted_parent_views.f90.
 This is partial support. Unformatted
 transfers, namelist defined I/O, generic interface blocks, private generic
 bindings and array-valued expressions remain outside the supported subset. Child ADVANCE currently requires a constant YES/NO value.
-T/TL positioning in
-child output is diagnosed rather than treating the child as a fresh record.
+Parent and child output share a growable record buffer: T and TL can overwrite
+characters emitted earlier in the same record, including nested defined writers.
+A child must not position before its defined procedure's entry position
+([Fortran 2023 draft, 12.6.4.8.3](https://j3-fortran.org/doc/year/23/23-007r1.pdf));
+parents may reposition over child output.
+Positions reset on slash editing and format reversion. The outermost statement
+flushes and releases its record buffer, including on errors.
 
 Standalone examples are `tests/programs/xdefined_formatted_output.f90` for
 standard output and `tests/programs/xdefined_formatted_file.f90` for a scratch
@@ -4266,8 +4270,8 @@ input errors and errors returned by defined procedures; later items are skipped.
 Current runtime limits are 4096 bytes per expanded field/control format, 128
 integers per DT v-list, and 4096 characters per input field. Assumed/runtime-length
 format variables have a checked 4096-character capture limit; fixed-length format
-variables use their declared capacity. T/TL positioning and mixed explicitly formatted
-COMPLEX items remain unsupported. Ordinary READ statements without defined-I/O items retain their
+variables use their declared capacity. Mixed explicitly formatted COMPLEX items
+remain unsupported. Ordinary READ statements without defined-I/O items retain their
 existing runtime-format restrictions.
 
 Run `python tests/test_defined_io_dynamic.py`. The standalone example is
@@ -4313,13 +4317,19 @@ to the parent. IOMSG remains unchanged on success. Without parent IOSTAT, an
 error terminates execution with the returned message. The message temporary has
 the same 256-character capacity as defined output.
 
-Polymorphic input dispatch and parent T/TL positioning remain unsupported.
-T/TL positioning, empty list-directed and unformatted child reads are diagnosed
-in reader procedures
-and their directly called subroutines. These limits are separate from ordinary
-READ support. Unsupported T/TL editing in runtime child formats reports an
-IOSTAT/IOMSG error during execution; constant child formats are checked during
-compilation.
+Input retains the current record in a growable buffer. T and TL can revisit
+characters consumed by the parent or child, including after list-directed token
+lookahead. Literal and runtime formats share this positioning behavior; slash
+editing and reversion move to a new record. External and scalar/array internal
+files use the same record model.
+
+Polymorphic input dispatch, empty list-directed and unformatted child reads
+remain unsupported. These limits are separate from ordinary READ support.
+
+Run `python tests/test_defined_io_positioning.py` for parent/child T/TL tests,
+including overwrites, nested writers, input lookahead, multiple internal records,
+and long records. The standalone example is
+`tests/programs/xdefined_io_positioning.f90`.
 
 Run `python tests/test_defined_input_dynamic_child.py` for runtime child-format
 coverage. The standalone example `tests/programs/xdefined_input_runtime_child.f90`

@@ -224,6 +224,7 @@ pub(super) fn output(
         format.clone(),
         capacity(&format, types, declarations, objects)?,
     );
+    out.push(call("@defined_output_record_begin",vec![id(&s.unit)]));
     for (i, item) in items.into_iter().enumerate() {
         let (element, rank) = output_type(types, &item, declarations, objects)?
             .context("cannot determine runtime formatted item type")?;
@@ -311,6 +312,7 @@ pub(super) fn output(
     finish.extend(s.operation(7));
     finish.push(s.guard(vec![s.write(vec![], true)]));
     out.push(s.guard(finish));
+    out.push(call("@defined_output_record_end",vec![id(&s.unit),id(&s.ios),id(&s.msg)]));
     out.extend(s.finish(status, message));
     Ok(Stmt::Block { body: out })
 }

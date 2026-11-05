@@ -40,7 +40,7 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
     RANDOM_STATE.with(|state| state.set(session.as_ref().map_or(1, |(_, seed)| **seed)));
     thread_local! {static DEFINED_OUTPUT_UNITS:std::cell::RefCell<Vec<i64>>=const {std::cell::RefCell::new(Vec::new())};}
     DEFINED_OUTPUT_UNITS.with(|units|units.borrow_mut().clear());
-    unsafe {crate::internal_file::clear();}
+    unsafe {crate::internal_file::clear();crate::output_record::clear();}
     thread_local! { static FILES: std::cell::RefCell<crate::file_io::Files> = std::cell::RefCell::new(crate::file_io::Files::default()); }
     FILES.with(|files| *files.borrow_mut() = crate::file_io::Files::default());
     thread_local! { static POINTER_STORAGE: std::cell::RefCell<Vec<PointerStorage>> = std::cell::RefCell::new(vec![PointerStorage::Frame(usize::MAX,String::new())]); }
@@ -2066,7 +2066,7 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         let code=if let Some(h)=DEFINED_INPUT.with(|contexts|contexts.borrow().iter().find_map(|(u,h)|if *u==unit {*h}else{None})) {
                             INPUT_LISTS.with(|lists|{let mut lists=lists.borrow_mut();let (_,session,_)=lists.get_mut(&h).unwrap();
                                 unsafe{crate::defined_format::input(values[0],values[2],values[3].max(0) as usize,&mut buffer,|field,advance|
-                                    FILES.with(|files|session.fields(field,advance,||files.borrow_mut().input_byte(unit))))}})
+                                    FILES.with(|files|session.positioned_fields(field,advance,||files.borrow_mut().input_byte(unit))))}})
                         }else{1};
                         let fr=call_stack.last_mut().unwrap();fr.env_int.insert(status.clone(),code);fr.env_str.insert(text.clone(),String::from_utf8(buffer).unwrap());idx+=1;continue;
                     }
@@ -2130,6 +2130,23 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         call_stack.last_mut().unwrap().env_int.insert(dest.clone(),handle);
                         idx+=1;continue;
                     }
+                    if name=="@defined_output_record_begin" || name=="@defined_output_record_end" {
+                        let fr=call_stack.last().unwrap().clone();let unit=eval_expr(&args[0],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
+                        if name=="@defined_output_record_begin" {
+                            if !unsafe{crate::output_record::begin(unit)} {eprintln!("Runtime error: could not allocate defined output record");std::process::exit(1);}
+                        }else{
+                            let mut bytes=Vec::new();unsafe{crate::output_record::end(unit,&mut |b|bytes.push(b));}
+                            let mut code=0;
+                            if unsafe{crate::internal_file::mode(unit)!=0} {
+                                for byte in bytes {code=unsafe{crate::internal_file::write(unit,byte)};if code!=0{break;}}
+                            }else if !bytes.is_empty() {
+                                if unit==6 {use std::io::Write;let mut stdout=std::io::stdout().lock();if stdout.write_all(&bytes).and_then(|_|stdout.flush()).is_err(){code=1;}}
+                                else if FILES.with(|files|files.borrow_mut().write_fragment(unit,&String::from_utf8_lossy(&bytes),false)).is_err(){code=1;}
+                            }
+                            let (Expr::Ident(status),Expr::Ident(message))=(&args[1],&args[2]) else {unreachable!()};
+                            if fr.env_int[status]==0 && code!=0 {let fr=call_stack.last_mut().unwrap();fr.env_int.insert(status.clone(),code);fr.env_str.insert(message.clone(),"could not finish defined output record".into());}
+                        }idx+=1;continue;
+                    }
                     if name=="@format_end_checked" {
                         let fr=call_stack.last().unwrap().clone();
                         let handle=eval_expr(&args[0],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
@@ -2142,14 +2159,14 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         let result=(||->anyhow::Result<()> {
                             if child {crate::format_spec::check_child_output(format.as_bytes(),items.len()).map_err(anyhow::Error::msg)?;}
                             let mut bytes=Vec::new();
-                            crate::format_spec::render_with(format.as_bytes(),items.len(),&|i,f| {
+                            crate::format_spec::render_shared(format.as_bytes(),items.len(),&|i,f| {
                                 use crate::format_spec::Value;
                                 let v=&values[i];
                                 f(if let Some(s)=&v.3 {Value::Character(s.as_bytes())}
                                     else if let Some(b)=v.2 {Value::Logical(b)}
                                     else if let Some(x)=v.1 {Value::Real(x,if matches!(&items[i],Expr::Call(n,_) if n=="dble") {8}else{4})}
                                     else {let x=v.0.unwrap();Value::Integer(x,if x==x as i32 as i64 {4}else{8})});
-                            },&mut |b|bytes.push(b),advance).map_err(anyhow::Error::msg)?;
+                            },&mut |b|bytes.push(b),advance,unsafe{crate::output_record::get(unit).as_mut()}).map_err(|e|{if e=="end of internal file record"{internal_status=-2;}anyhow::anyhow!(e)})?;
                             if unsafe{crate::internal_file::mode(unit)!=0} {
                                 for byte in bytes {internal_status=unsafe{crate::internal_file::write(unit,byte)};if internal_status!=0{anyhow::bail!("end of internal file record or invalid internal transfer");}}
                             }else if unit==6 {
@@ -2252,9 +2269,9 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         }).collect();
                         if child {io_result(crate::format_spec::check_child_output(format.as_bytes(),items.len()).map_err(anyhow::Error::msg));}
                         let mut bytes=Vec::new();
-                        let rendered=crate::format_spec::render_with(format.as_bytes(),items.len(),&|i,f|{
+                        let rendered=crate::format_spec::render_shared(format.as_bytes(),items.len(),&|i,f|{
                             match &items[i] {(_,Some(s))=>f(crate::format_spec::Value::Character(s.as_bytes())),(v,None)=>f(*v)}
-                        },&mut |b|bytes.push(b),advance);
+                        },&mut |b|bytes.push(b),advance,if child {unsafe{crate::output_record::get(6).as_mut()}}else{None});
                         if let Err(e)=rendered {eprintln!("Runtime error: invalid output format: {e}"); std::process::exit(1)}
                         let mut output=String::from_utf8_lossy(&bytes).into_owned();
                         if internal {

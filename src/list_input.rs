@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Beliavsky
 //! Statement-scoped list-directed input, shared by the interpreter and native runtime.
-//! Only tokens are buffered: record length is independent of destination size.
+//! Tokens and the current record are buffered so child transfers can reposition.
 use core::{ptr, slice, str};
 extern "C" {
     fn realloc(p: *mut core::ffi::c_void, n: usize) -> *mut core::ffi::c_void;
@@ -59,6 +59,9 @@ impl Drop for Bytes {
 }
 pub(crate) struct Session {
     token: Bytes,
+    record: Bytes,
+    column: usize,
+    record_end: bool,
     look: Option<u8>,
     eof: bool,
     after: bool,
@@ -73,6 +76,9 @@ impl Session {
     pub(crate) fn new() -> Self {
         Self {
             token: Bytes::new(),
+            record: Bytes::new(),
+            column: 0,
+            record_end: false,
             look: None,
             eof: false,
             after: false,
@@ -88,9 +94,18 @@ impl Session {
         &mut self,
         byte: &mut impl FnMut() -> Result<Option<u8>, ()>,
     ) -> Result<Option<u8>, i64> {
-        if self.look.is_none() && !self.eof {
-            self.look = byte().map_err(|_| 1)?;
-            self.eof = self.look.is_none();
+        if self.look.is_none() {
+            self.look = if self.column < self.record.len {
+                Some(self.record.bytes()[self.column])
+            } else if self.record_end {
+                Some(b'\n')
+            } else if !self.eof {
+                let c = loop { let c=byte().map_err(|_|1)?; if c!=Some(b'\r') {break c;} };
+                self.eof = c.is_none();
+                if c == Some(b'\n') { self.record_end=true; }
+                else if let Some(c)=c { self.record.push(c)?; }
+                c
+            } else { None };
         }
         Ok(self.look)
     }
@@ -102,6 +117,8 @@ impl Session {
         self.look = None;
         if let Some(c) = c {
             self.at_record_end = c == b'\n';
+            if c == b'\n' { self.record.len=0; self.column=0; self.record_end=false; }
+            else { self.column+=1; }
         }
         Ok(c)
     }
@@ -312,7 +329,7 @@ impl Session {
         let mut count = 0;
         while count < out.len() {
             match self.peek(&mut byte) {
-                Ok(Some(b'\n')) => break,
+                Ok(Some(b'\n')) => { self.column+=out.len()-count; break; },
                 Ok(Some(b'\r')) => { self.take(&mut byte).ok(); }
                 Ok(Some(c)) => {
                     if c == 0 || c > 127 { return 2; }
@@ -321,10 +338,27 @@ impl Session {
                     count += 1;
                     self.after = true;
                 }
-                Ok(None) => return if self.after { 0 } else { -1 },
+                Ok(None) => { self.column+=out.len()-count; return if self.after { 0 } else { -1 }; },
                 Err(code) => return code,
             }
         }
+        0
+    }
+    /// Action 0 transfers fields, 1 advances a record; positive values >=2
+    /// position absolutely (zero-based column +2), negatives move left.
+    pub(crate) fn positioned_fields(&mut self, out: &mut [u8], action: i64,
+        mut byte: impl FnMut() -> Result<Option<u8>, ()>) -> i64 {
+        if action==0 || action==1 { return self.fields(out,action==1,byte); }
+        let target=if action<0 {self.column.saturating_sub(action.unsigned_abs() as usize)}else{(action-2) as usize};
+        self.remaining=0; self.ended=false;
+        while self.column<target {
+            match self.peek(&mut byte) {
+                Ok(Some(b'\n')) | Ok(None) => break,
+                Ok(Some(_)) => {if let Err(code)=self.take(&mut byte) {return code;}self.after=true;},
+                Err(code) => return code,
+            }
+        }
+        self.column=target;self.look=None;
         0
     }
     pub(crate) fn finish(&mut self, mut byte: impl FnMut() -> Result<Option<u8>, ()>) -> i64 {
@@ -386,6 +420,28 @@ fn separator(c: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn reposition_record_and_padding() {
+        let mut input=b"12\n34\n".iter().copied();
+        let mut read=||Ok(input.next());
+        let mut session=super::Session::new();
+        let mut wide=[0;5];
+        assert_eq!(session.fields(&mut wide,false,&mut read),0);
+        assert_eq!(&wide,b"12   ");
+        assert_eq!(session.positioned_fields(&mut [],-5,&mut read),0);
+        let mut field=[0;2];
+        assert_eq!(session.fields(&mut field,false,&mut read),0);
+        assert_eq!(&field,b"12");
+        assert_eq!(session.fields(&mut [],true,&mut read),0);
+        assert_eq!(session.positioned_fields(&mut [],3,&mut read),0);
+        let mut one=[0;1];
+        assert_eq!(session.fields(&mut one,false,&mut read),0);
+        assert_eq!(&one,b"4");
+        assert_eq!(session.positioned_fields(&mut [],-20,&mut read),0);
+        assert_eq!(session.fields(&mut field,false,&mut read),0);
+        assert_eq!(&field,b"34");
+    }
+
     use super::*;
     #[test]
     fn fields_share_lookahead_and_record_position() {
