@@ -45,6 +45,10 @@ do concurrent(i=1:10000) reduce(+:runtime_totals)
    runtime_totals=runtime_totals+1
 end do
 if(any(runtime_totals/=10007)) stop 8
+do concurrent(i=1:10000) reduce(+:runtime_totals)
+   runtime_totals(1:n)=runtime_totals(1:n)+a(1:n)
+end do
+if(any(runtime_totals/=[20007,30007])) stop 9
 deallocate(runtime_totals)
 deallocate(b)
 print *,sum(a)

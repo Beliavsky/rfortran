@@ -250,7 +250,7 @@ end
     def test_runtime_array_reduction_no_checks(self):
         self.build_run((ROOT/'tests/programs/xconcurrent_parallel_runtime_reduce.f90').read_text(), '10007.0 10007.0 10007.0 10007.0', checks=False)
 
-    def test_runtime_array_reduction_runtime_section_fallback(self):
+    def test_runtime_array_reduction_runtime_section(self):
         self.build_run("""implicit none
 integer :: i,n
 integer,allocatable :: s(:)
@@ -262,7 +262,151 @@ s(1:n)=s(1:n)+1
 end do
 print *,s
 end
-""", '10007 10007 10007 10007',reason='private array extent depends on worker-local storage')
+""", '10007 10007 10007 10007')
+
+    def test_runtime_section_input_and_reduction(self):
+        self.build_run((ROOT/'tests/programs/xconcurrent_parallel_sections.f90').read_text(), '9007.0 18007.0 27007.0')
+
+    def test_runtime_section_changing_extent(self):
+        self.build_run("""implicit none
+integer :: i,k,n
+integer,allocatable :: s(:)
+n=4
+allocate(s(n))
+s=7
+do concurrent(i=1:9000) local(k) reduce(+:s)
+k=1
+if (i>4500) k=n
+s(1:k)=s(1:k)+1
+end do
+print *,s
+end
+""", '9007 4507 4507 4507')
+
+    def test_runtime_section_strides_and_masks(self):
+        self.build_run("""implicit none
+integer :: i,n
+integer,allocatable :: s(:),x(:,:)
+n=5
+allocate(s(-2:n-3),x(n,9000))
+s=7
+x=1
+do concurrent(i=1:9000,i>4500) reduce(+:s)
+s(2:-2:-2)=s(2:-2:-2)+x(n:1:-2,i)
+end do
+print *,s
+end
+""", '4507 7 4507 7 4507')
+
+    def test_runtime_section_logical_and_minmax(self):
+        self.build_run("""implicit none
+integer :: i,n
+real,allocatable :: lo(:),hi(:)
+logical,allocatable :: a(:),b(:)
+n=2
+allocate(lo(n),hi(n),a(n),b(n))
+lo=10000.0
+hi=-10000.0
+a=.true.
+b=.false.
+do concurrent(i=1:9000) reduce(min:lo) reduce(max:hi) reduce(.and.:a) reduce(.or.:b)
+lo(1:n)=min(lo(1:n),real(i))
+hi(n:1:-1)=max(hi(n:1:-1),real(i))
+a(1:n)=a(1:n).and.(i<2)
+b(1:n)=b(1:n).or.(i==2)
+end do
+print *,lo,hi,a,b
+end
+""", '1.0 1.0 9000.0 9000.0 F F T T')
+
+    def test_runtime_section_repeated_calls_and_shapes(self):
+        self.build_run("""implicit none
+integer :: pass,n
+integer,allocatable :: s(:)
+do pass=1,3
+n=pass+1
+allocate(s(n))
+s=7
+call accumulate(s,n)
+call accumulate(s,n)
+if(any(s/=18007)) stop 1
+print *,s(1),s(n)
+deallocate(s)
+end do
+contains
+subroutine accumulate(a,m)
+integer,intent(in)::m
+integer,intent(inout)::a(:)
+integer::i
+do concurrent(i=1:9000) reduce(+:a)
+a(1:m)=a(1:m)+1
+end do
+end subroutine
+end
+""", '18007 18007 18007 18007 18007 18007')
+
+    def test_runtime_section_empty_and_masked(self):
+        self.build_run("""implicit none
+integer :: i,k,n
+integer,allocatable :: s(:)
+n=3
+allocate(s(n))
+s=7
+do concurrent(i=1:9000) local(k) reduce(+:s)
+k=0
+if (i>4500) k=n
+s(1:k)=s(1:k)+1
+end do
+do concurrent(i=1:9000,i<0) reduce(+:s)
+s(1:n)=s(1:n)+1
+end do
+print *,s
+end
+""", '4507 4507 4507')
+
+    def test_runtime_section_rank_three(self):
+        self.build_run("""implicit none
+integer :: i,n
+integer,allocatable :: s(:,:,:)
+n=2
+allocate(s(-1:0,3:n+2,0:n-1))
+s=7
+do concurrent(i=1:9000) reduce(+:s)
+s(-1:0,3:n+2,0:n-1)=s(-1:0,3:n+2,0:n-1)+1
+end do
+print *,s
+end
+""", '9007 9007 9007 9007 9007 9007 9007 9007')
+
+    def test_runtime_section_uninitialized_input(self):
+        source="""implicit none
+integer :: i,m,n
+real,allocatable :: s(:),x(:,:)
+m=3
+n=9000
+allocate(s(m),x(m,n))
+x(:,1:n-1)=1.0
+s=7.0
+do concurrent(i=1:n) reduce(+:s)
+s(1:m)=s(1:m)+x(1:m,i)
+end do
+print *,s
+end
+"""
+        with tempfile.TemporaryDirectory(prefix='rfort-parallel-') as tmp:
+            path=Path(tmp)/'case.f90';path.write_text(source)
+            exe=Path(tmp)/'case.exe'
+            for opt in ('0','2'):
+                result=subprocess.run([str(COMPILER),'-O',opt,'--parallel','--parallel-report',str(path),'-o',str(exe)],capture_output=True,text=True,timeout=90)
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertIn('native parallel worker emitted',result.stderr)
+                env=os.environ.copy();env['RFORT_NUM_THREADS']='4'
+                result=subprocess.run([str(exe)],env=env,capture_output=True,text=True,timeout=30)
+                self.assertNotEqual(result.returncode,0)
+                self.assertIn('uninitialized variable `x`',result.stderr)
+
+    def test_runtime_section_no_checks(self):
+        self.build_run((ROOT/'tests/programs/xconcurrent_parallel_sections.f90').read_text(), '9007.0 18007.0 27007.0', checks=False)
 
     def test_runtime_array_reduction_numeric_logical(self):
         self.build_run("""implicit none

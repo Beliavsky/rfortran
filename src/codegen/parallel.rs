@@ -229,6 +229,38 @@ pub(super) fn emit(
             }
         })
         .collect::<HashSet<_>>();
+    // Generated heap temporaries are bound and allocated in the iteration.
+    // Their masks must start with empty private descriptors, rather than
+    // copying caller storage whose size has not been computed yet. Cleanup
+    // inserted by heap::cleanup frees both data and masks at lexical exits.
+    fn heap_bindings(body: &[IStmt], bound: &mut HashSet<String>) {
+        for stmt in body {
+            match stmt {
+                IStmt::Call(tag, args) if tag == "@heap_bind" => {
+                    if let Some(IExpr::Ident(n)) = args.first() {
+                        bound.insert(n.clone());
+                    }
+                }
+                IStmt::Do { body, .. } | IStmt::DoWhile { body, .. } | IStmt::Block { body } => {
+                    heap_bindings(body, bound)
+                }
+                IStmt::If {
+                    then_body,
+                    else_body,
+                    ..
+                } => {
+                    heap_bindings(then_body, bound);
+                    if let Some(body) = else_body {
+                        heap_bindings(body, bound);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut bound_heaps = HashSet::new();
+    heap_bindings(body, &mut bound_heaps);
+    let mut worker_heaps = vec![];
     used.insert(var.into());
     let mut names = used.into_iter().collect::<Vec<_>>();
     names.sort();
@@ -247,6 +279,12 @@ pub(super) fn emit(
             ));
             return Ok(false);
         };
+        if bound_heaps.contains(&n) && (private_names.contains(&n) || private_masks.contains(&n)) {
+            // The declaration may already be hoisted into caller storage, or
+            // may still be a placeholder until @heap_bind runs in the worker.
+            worker_heaps.push((n, kind));
+            continue;
+        }
         if !matches!(
             storage,
             Storage::Stack(_) | Storage::Static(_) | Storage::HeapStack(_) | Storage::HeapStatic(_)
@@ -398,6 +436,28 @@ pub(super) fn emit(
         let mut wb = HashMap::new();
         let mut wa = HashMap::new();
         let mut private_arrays = vec![];
+        for (n, kind) in &worker_heaps {
+            let cell = w.create_sized_stack_slot(ir::StackSlotData::new(
+                ir::StackSlotKind::ExplicitSlot,
+                8,
+                0,
+            ));
+            let zero = w.ins().iconst(ptr, 0);
+            w.ins().stack_store(zero, cell, 0);
+            let storage = Storage::HeapStack(cell);
+            match kind {
+                1 => {
+                    wr.insert(n.clone(), storage);
+                }
+                2 => {
+                    wb.insert(n.clone(), storage);
+                }
+                _ => {
+                    wi.insert(n.clone(), storage);
+                }
+            }
+            wa.insert(n.clone(), 1);
+        }
         for (i, (n, original, kind)) in captures.iter().enumerate() {
             let address = w
                 .ins()
@@ -797,6 +857,71 @@ mod tests {
                         }
                     }
                 }
+                if heap && array {
+                    let ident = |n: &str| IExpr::Ident(n.into());
+                    let call = |n: &str, args| IStmt::Call(n.into(), args);
+                    let position = module.funcs[0].body.len() - 1;
+                    module.funcs[0].body.splice(
+                        position..position,
+                        [
+                            IStmt::DeclVar(
+                                TypeSpec::Real,
+                                "dynamic_scratch".into(),
+                                vec![IExpr::IntLit("1".into())],
+                            ),
+                            IStmt::DeclVar(
+                                TypeSpec::Integer(Some(8)),
+                                "dynamic_mask".into(),
+                                vec![IExpr::IntLit("1".into())],
+                            ),
+                            call("@heap_bind", vec![ident("dynamic_scratch")]),
+                            call("@heap_bind", vec![ident("dynamic_mask")]),
+                        ],
+                    );
+                    if let Some(IStmt::Do { body, .. }) = module.funcs[0].body.last_mut() {
+                        if let IStmt::Call(_, args) = &mut body[0] {
+                            args.extend([
+                                IExpr::Call(
+                                    "@parallel_scratch".into(),
+                                    vec![ident("dynamic_scratch")],
+                                ),
+                                IExpr::IntLit("0".into()),
+                                IExpr::Call(
+                                    "@parallel_init".into(),
+                                    vec![ident("dynamic_scratch"), ident("dynamic_mask")],
+                                ),
+                                ident("dynamic_length"),
+                            ]);
+                        }
+                        body.extend([
+                            IStmt::DeclVar(
+                                TypeSpec::Integer(Some(8)),
+                                "dynamic_length".into(),
+                                vec![],
+                            ),
+                            call("@heap_bind", vec![ident("dynamic_scratch")]),
+                            call("@heap_bind", vec![ident("dynamic_mask")]),
+                            call(
+                                "@heap_allocate",
+                                vec![
+                                    ident("dynamic_scratch"),
+                                    ident("dynamic_length"),
+                                    ident("dynamic_mask"),
+                                    IExpr::IntLit("3".into()),
+                                ],
+                            ),
+                            IStmt::AssignIndex(
+                                "dynamic_scratch".into(),
+                                vec![IExpr::IntLit("1".into())],
+                                IExpr::RealLit("2.0".into()),
+                            ),
+                            call(
+                                "@heap_drop",
+                                vec![ident("dynamic_scratch"), ident("dynamic_mask")],
+                            ),
+                        ]);
+                    }
+                }
                 if heap {
                     let position = module.funcs[0]
                         .body
@@ -818,6 +943,12 @@ mod tests {
                 backend.triple = Some(target.parse().unwrap());
                 let object = backend.compile(&module, None).unwrap();
                 assert!(!object.is_empty(), "{target}, heap={heap}");
+                assert!(
+                    object
+                        .windows(b"rfort.parallel.".len())
+                        .any(|s| s == b"rfort.parallel."),
+                    "worker missing on {target}, heap={heap}, array={array}"
+                );
             }
         }
     }

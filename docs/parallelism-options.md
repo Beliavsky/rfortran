@@ -157,7 +157,7 @@ is mostly OpenMP, then MPI, with coarrays a distant third.
     already analyzes these loops.
   - **Implemented:** an opt-in pool and outlined workers for a conservative
     subset including scalar and memory-budgeted fixed/runtime-sized array reductions, multiple indices, signed strides, invariant subscript offsets, multidimensional arrays, and assumed-shape procedure arguments, with serial fallback.
-  - **Next:** broader capture analysis, runtime-sized section scratch storage, and thread-safety
+  - **Next:** broader capture analysis and thread-safety
     checks for called procedures.
     SAVE and module variables retain their Fortran sharing semantics; making
     them all thread-local would change program behavior. Unsupported captures

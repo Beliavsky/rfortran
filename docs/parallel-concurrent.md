@@ -129,10 +129,15 @@ assumed-shape and explicit-shape dummy arguments also work. Reallocation or
 changing shapes between calls is supported. POINTER reduction objects remain
 unsupported.
 
-Constant-size section temporaries are worker-private. Sections needing
-runtime-sized scratch buffers currently use serial fallback, reported by
-`--parallel-report`. Whole-array and scalar-element updates do not have this
-restriction.
+Fixed-size and runtime-sized section temporaries are worker-private, including
+their heap descriptors and initialization masks. Runtime storage is allocated
+inside the iteration after its section bounds are known and freed by the normal
+lexical cleanup. Section lengths may change between iterations; empty sections,
+negative strides, masks, and repeated calls with changing array shapes are supported.
+Temporary sizes use the ordinary allocation-size overflow and allocation-failure
+checks. The 4096-element reduction budget does not include expression temporaries.
+Scratch storage without a proven worker-local allocation retains serial fallback,
+reported by `--parallel-report`.
 
 ```cmd
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_array_reduce.f90 --run
@@ -144,6 +149,12 @@ A runtime-sized rank-two reduction with nondefault bounds:
 
 ```cmd
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_runtime_reduce.f90 --run
+```
+
+A runtime-sized input section and reduction section:
+
+```cmd
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_sections.f90 --run
 ```
 
 ## Runtime-sized arrays
