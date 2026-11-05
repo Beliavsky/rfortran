@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Beliavsky
 //! Type-bound defined formatted output on external units.
+mod dynamic;
 use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Context, Result};
 use std::collections::{HashMap, HashSet};
@@ -848,6 +849,9 @@ fn lower(
     let mut declarations = inherited_declarations.clone();
     for s in body.iter() {
         match s {
+            Stmt::InitializedDecl { kind, entities, .. } => {
+                for (n,_) in entities { objects.remove(n); declarations.insert(n.clone(),(kind.clone(),0)); }
+            }
             Stmt::VarDecl { kind, names } => {
                 for n in names {
                     objects.remove(n);
@@ -929,6 +933,11 @@ fn lower(
                     let list = format
                         .as_ref()
                         .is_none_or(|e| matches!(e,Expr::Call(n,_) if n=="@list_directed"));
+                    if !list && !matches!(format.as_ref(),Some(Expr::Str(_))) {
+                        *serial+=1;
+                        *s=dynamic::output(unit,format.clone().unwrap(),items,&format!("@defined_dynamic_{serial}"),expression_types,&declarations,&objects,bindings,status_target,message_target)?;
+                        return Ok(());
+                    }
                     if !list
                         && items
                             .iter()

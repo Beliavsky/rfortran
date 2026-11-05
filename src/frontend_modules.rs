@@ -97,6 +97,7 @@ mod multidim;
 mod forall_runtime;
 mod formatting;
 mod format_spec;
+mod defined_format;
 mod record_input;
 mod list_input;
 mod character_input;

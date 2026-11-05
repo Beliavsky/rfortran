@@ -3030,6 +3030,24 @@ fn gen_stmts(
                     file_io::call(module,b,"rfort_internal_format_end",&[handle,view.address,width],types::I32)?;
                     continue;
                 }
+                if name=="@defined_input_field" {
+                    let [handle,unit,tag,length,text,IExpr::Ident(status)]=args.as_slice() else {anyhow::bail!("invalid dynamic defined input field");};
+                    let mut values=vec![];
+                    for e in [handle,unit,tag,length] {let v=eval_expr(b,ex,ptr_ty,e,ints,reals,bools,func_meta);values.push(to_i64(b,v));}
+                    let stream=file_io::handle(module,b,ptr_ty,dc,values[1])?;
+                    let view=characters::view(module,b,ptr_ty,dc,chars,ints,text)?;
+                    let code=file_io::call(module,b,"rfort_defined_input_field",&[values[0],stream,values[1],values[2],values[3],view.address,view.length],types::I64)?;
+                    let address=storage_addr(b,ptr_ty,ints[status]);b.ins().store(MemFlags::new(),code,address,0);continue;
+                }
+                if name=="@defined_format" {
+                    let [IExpr::Ident(handle),op,IExpr::Ident(value),text,IExpr::Ident(status)]=args.as_slice() else {anyhow::bail!("invalid defined format cursor");};
+                    let handle=storage_addr(b,ptr_ty,ints[handle]);
+                    let value=storage_addr(b,ptr_ty,ints[value]);
+                    let op=eval_expr(b,ex,ptr_ty,op,ints,reals,bools,func_meta);let op=to_i64(b,op);
+                    let view=characters::view(module,b,ptr_ty,dc,chars,ints,text)?;
+                    let code=file_io::call(module,b,"rfort_defined_format",&[handle,op,value,view.address,view.length],types::I64)?;
+                    let address=storage_addr(b,ptr_ty,ints[status]);b.ins().store(MemFlags::new(),code,address,0);continue;
+                }
                 if name=="@defined_input_enter" {
                     let unit=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);let unit=to_i64(b,unit);
                     file_io::call(module,b,"rfort_defined_input_enter",&[unit],types::I32)?;continue;

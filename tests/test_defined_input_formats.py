@@ -104,9 +104,9 @@ end program""")
             'a%x=-1\nread(u,"(3dt)",iostat=status,iomsg=message) a\nprint *,status>0,a(1)%x,a(3)%x,len_trim(message)>0',
             ['  1  2bad  4  5  6']),'T 1 -1 T\n',reference=False)
 
-    def test_runtime_format_diagnosed(self):
-        self.reject(self.source('type(point) :: a(2)\ncharacter(10) :: fmt',
-            'fmt="(2dt)"\nread(u,fmt) a'),'literal parent format')
+    def test_runtime_format(self):
+        self.check(self.source('type(point) :: a(2)\ncharacter(10) :: fmt',
+            'fmt="(2dt)"\nread(u,fmt) a'),'')
 
 if __name__=='__main__':
     unittest.main()

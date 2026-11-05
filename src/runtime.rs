@@ -2057,6 +2057,29 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         call_stack.last_mut().unwrap().env_str.insert(dest.clone(),input);
                         idx+=1;continue;
                     }
+                    if name=="@defined_input_field" {
+                        let [handle,unit,tag,length,Expr::Ident(text),Expr::Ident(status)]=args.as_slice() else {unreachable!()};
+                        let fr=call_stack.last().unwrap().clone();let mut values=vec![];
+                        for e in [handle,unit,tag,length] {values.push(eval_expr(e,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap());}
+                        let unit=values[1];let mut buffer=fr.env_str[text].as_bytes().to_vec();
+                        let code=if let Some(h)=DEFINED_INPUT.with(|contexts|contexts.borrow().iter().find_map(|(u,h)|if *u==unit {*h}else{None})) {
+                            INPUT_LISTS.with(|lists|{let mut lists=lists.borrow_mut();let (_,session,_)=lists.get_mut(&h).unwrap();
+                                unsafe{crate::defined_format::input(values[0],values[2],values[3].max(0) as usize,&mut buffer,|field,advance|
+                                    FILES.with(|files|session.fields(field,advance,||files.borrow_mut().input_byte(unit))))}})
+                        }else{1};
+                        let fr=call_stack.last_mut().unwrap();fr.env_int.insert(status.clone(),code);fr.env_str.insert(text.clone(),String::from_utf8(buffer).unwrap());idx+=1;continue;
+                    }
+                    if name=="@defined_format" {
+                        let [Expr::Ident(handle),op,Expr::Ident(value),Expr::Ident(text),Expr::Ident(status)]=args.as_slice() else {unreachable!()};
+                        let fr=call_stack.last().unwrap().clone();
+                        let op=eval_expr(op,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
+                        let mut h=*fr.env_int.get(handle).unwrap_or(&0);let mut v=*fr.env_int.get(value).unwrap_or(&0);
+                        let mut buffer=fr.env_str[text].as_bytes().to_vec();
+                        let code=unsafe{crate::defined_format::operate(&mut h,op,&mut v,&mut buffer)};
+                        let fr=call_stack.last_mut().unwrap();fr.env_int.insert(handle.clone(),h);fr.env_int.insert(value.clone(),v);
+                        fr.env_int.insert(status.clone(),code);fr.env_str.insert(text.clone(),String::from_utf8(buffer).unwrap());
+                        idx+=1;continue;
+                    }
                     if name=="@defined_input_enter" {
                         let fr=call_stack.last().unwrap().clone();
                         let unit=eval_expr(&args[0],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();

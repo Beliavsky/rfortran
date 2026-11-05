@@ -4135,7 +4135,7 @@ List-directed parent output passes `LISTDIRECTED` and an empty V_LIST. An
 explicit parent format uses a `DT` descriptor for each derived object,
 including its optional string and integer parameters, for example
 `write(*,"(dt'label'(3,2))") object`. The procedure receives `DTlabel` and
-`[3,2]`. Multiple scalar objects may appear in either a list-directed or a literal formatted parent statement.
+`[3,2]`. Multiple scalar objects may appear in either a list-directed, literal-format, or runtime-format parent statement.
 Scalar components, array elements (including multidimensional elements),
 structure constructors, and scalar derived function results use the same
 binding as named scalar variables. Subscripts and function results are
@@ -4161,8 +4161,9 @@ including runtime-sized and assumed-shape arrays. A runtime cursor advances once
 per scalar element across all output items, retaining Fortran element order and
 stopping on writer errors. Empty arrays consume no data descriptors. Counted
 loops avoid expanding the source once per element. The cursor currently permits
-up to 1024 distinct format states; runtime parent format strings, mixed COMPLEX
-items, and parent T/TL positioning remain unsupported.
+up to 1024 distinct format states for literal formats. Runtime formats use the
+shared parser during execution instead. Mixed COMPLEX items and parent T/TL
+positioning remain unsupported.
 See `tests/programs/xdefined_formatted_array_formats.f90`.
 Leading literals in unlimited groups are processed even when no items remain;
 colon editing can suppress these trailing literals.
@@ -4200,9 +4201,7 @@ tests/programs/xdefined_formatted_parent_views.f90.
 
 This is partial support. Internal parent units and unformatted
 transfers, namelist defined I/O, generic interface blocks, private generic
-bindings, array-valued expressions, runtime parent
-formats remain outside
-the supported subset. Child ADVANCE currently requires a constant YES/NO value.
+bindings and array-valued expressions remain outside the supported subset. Child ADVANCE currently requires a constant YES/NO value.
 T/TL positioning in
 child output is diagnosed rather than treating the child as a fresh record.
 
@@ -4219,13 +4218,41 @@ rfort assertions rather than a gfortran output comparison.
 Run `python tests/test_defined_io.py` for interpreter/native O0/O2 checks,
 gfortran output comparisons, and interface/unsupported-form diagnostics.
 
+### Runtime parent formats for defined I/O
+
+Parent READ and WRITE accept scalar CHARACTER format variables, including
+assumed-length arguments, and format expressions with known result length.
+The format is evaluated and captured once before transfers. A shared runtime
+cursor handles mixed intrinsic/derived scalars and arrays, DT strings and v-lists,
+repeated/nested/unlimited groups, colon termination and format reversion.
+Output retains spacing, literals, sign and scale controls. Input retains X/TR
+spacing, slash editing, INTEGER radix fields, REAL implied decimal/scale handling,
+blank modes, and CHARACTER/LOGICAL fields. Child transfers share the parent's
+record position. IOSTAT/IOMSG report invalid formats, mismatched descriptors,
+input errors and errors returned by defined procedures; later items are skipped.
+
+Current runtime limits are 4096 bytes per expanded field/control format, 128
+integers per DT v-list, and 4096 characters per input field. Assumed/runtime-length
+format variables have a checked 4096-character capture limit; fixed-length format
+variables use their declared capacity. T/TL positioning, mixed explicitly formatted
+COMPLEX items, internal parent units, and runtime formats in child READs remain
+unsupported. Ordinary READ statements without defined-I/O items retain their
+existing runtime-format restrictions.
+
+Run `python tests/test_defined_io_dynamic.py`. The standalone example is
+`tests/programs/xdefined_formatted_runtime.f90`. Tests cover interpreter and native
+O0/O2 modes, with gfortran comparisons for successful transfers. The writer-error
+test uses explicit expected results because the local gfortran build writes a
+later intrinsic item after a defined writer reports failure. Shared Rust tests
+also cover signed metadata and more than 100,000 cursor advances.
+
 ### Defined formatted input
 
 Initial type-bound input supports `generic :: read(formatted) => binding`.
 The reader has the same six dummies as formatted output, except that DTV
 requires `CLASS(type), INTENT(INOUT)`. Named concrete scalar objects and scalar
 components can be read from external units with list-directed parent input or
-literal parent formats with DT descriptors, including DT strings and integer v-lists.
+literal or runtime parent formats with DT descriptors, including DT strings and integer v-lists.
 Multiple scalar derived items may share one parent READ. List-directed parent
 READs and literal formats also accept whole arrays, elements, and triplet/vector sections, including
 allocated and assumed-shape arrays. Counted loops preserve Fortran element order;
@@ -4250,8 +4277,7 @@ error terminates execution with the returned message. The message temporary has
 the same 256-character capacity as defined output.
 
 Polymorphic input dispatch,
-internal parent units, runtime parent
-formats and parent T/TL positioning remain unsupported. Runtime child
+internal parent units and parent T/TL positioning remain unsupported. Runtime child
 formats, T/TL positioning, empty list-directed and unformatted child reads are
 diagnosed in reader procedures
 and their directly called subroutines. These limits are separate from ordinary

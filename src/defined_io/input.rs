@@ -152,6 +152,14 @@ fn lower_one(
             bail!("defined input IOMSG requires a scalar CHARACTER variable");
         }
     }
+    if let Some(format)=&format {
+        if !matches!(format,Expr::Str(_)) {
+            *serial+=1;
+            return Ok(Some(super::dynamic::input(unit,format.clone(),items,&format!("@defined_dynamic_input_{serial}"),types,declarations,objects,bindings,
+                if control.is_empty(){None}else{let Expr::Ident(n)=status else{unreachable!()};Some(n)},
+                message.and_then(|e|if let Expr::Ident(n)=e {Some(n.clone())}else{None}))?));
+        }
+    }
     let states = if let Some(format) = &format {
         let states=format_states(format).map_err(|e|anyhow::anyhow!(e.to_string().replace("defined output","defined input").replace("formatted output","formatted input")))?;
         states
@@ -329,6 +337,9 @@ fn lower(
                     objects.insert(n.clone(), (type_name.clone(), dims.len()));
                     declarations.remove(n);
                 }
+            }
+            Stmt::InitializedDecl { kind, entities, .. } => {
+                for (n,_) in entities { objects.remove(n); declarations.insert(n.clone(),(kind.clone(),0)); }
             }
             Stmt::VarDecl { kind, names } => {
                 for n in names {

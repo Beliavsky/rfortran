@@ -765,10 +765,10 @@ close(u)
         self.reject(self.source('iostat=0',"write(*,'(dt,2f8.2)') a,(1.0,2.0)"),
                     'COMPLEX items mixed with defined formatted output')
 
-    def test_reject_runtime_parent_format(self):
+    def test_runtime_parent_format(self):
         source=self.source('iostat=0',"write(*,fmt) a").replace('type(point) :: a,b',
             "type(point) :: a,b\ncharacter(4) :: fmt='(dt)'")
-        self.reject(source,'literal parent format')
+        self.check(source,'\n')
 
     def test_reject_parent_positioning(self):
         self.reject(self.source('iostat=0',"write(*,'(dt,t1,a)') a,'x'"),'T/TL positioning')

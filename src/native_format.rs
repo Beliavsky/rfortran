@@ -36,6 +36,7 @@ pub extern "C" fn rfort_bessel_yn(x:f64,n:f64)->f64 {
 mod calendar;
 mod environment;
 mod format_spec;
+mod defined_format;
 mod record_input;
 mod list_input;
 mod namelist_input;
@@ -727,4 +728,17 @@ pub unsafe extern "C" fn rfort_checked_integer(value:f64,kind:i64,ceiling:i64)->
         exit(1);
     }
     value as i64
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rfort_defined_format(handle:*mut i64,op:i64,value:*mut i64,text:*mut u8,len:usize)->i64 {
+    defined_format::operate(&mut *handle,op,&mut *value,core::slice::from_raw_parts_mut(text,len))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rfort_defined_input_field(handle:i64,stream:*mut core::ffi::c_void,unit:i64,tag:i64,length:i64,text:*mut u8,capacity:usize)->i64 {
+    let reader=rfort_list_read_begin_unit(stream,unit);if reader.is_null(){return 1;}
+    let r=&mut *reader.cast::<ListReader>();
+    defined_format::input(handle,tag,length.max(0) as usize,core::slice::from_raw_parts_mut(text,capacity),|buffer,advance|
+        r.session.fields(buffer,advance,||reader_byte(r.stream,r.source,r.length,&mut r.offset)))
 }

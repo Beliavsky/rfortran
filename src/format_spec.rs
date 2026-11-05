@@ -455,6 +455,7 @@ impl<'a> GroupParser<'a> {
     }
     /// Compiler cursor planning retains colon boundaries.
     pub fn preserve_boundaries(&mut self) { self.preserve_boundaries = true; }
+    pub(crate) fn reset_operation_count(&mut self) { self.operations = 0; }
     /// Position without the output count: repeated positions form cursor cycles.
     pub fn position(&self) -> (usize, [(usize, usize, usize); 32]) {
         let mut frames = [(0, 0, 0); 32];
