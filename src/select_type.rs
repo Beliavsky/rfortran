@@ -601,8 +601,8 @@ impl Lowerer {
         let mut actuals = vec![];
         let mut kinds = vec![];
         for (position, dummy, formal) in &t.dummies {
-            if formal.rank != 0 {
-                bail!("polymorphic call specialization currently supports scalar CLASS dummies only (`{dummy}`)");
+            if formal.rank != 0 && formal.kind == "*" {
+                bail!("unlimited polymorphic array call specialization is not yet supported (`{dummy}`)");
             }
             if formal
                 .attrs
@@ -631,11 +631,16 @@ impl Lowerer {
                     continue;
                 }
             }
-            let (n, element) = match actual {
-                Expr::Ident(n) => (n, false),
+            let (n, actual_rank) = match actual {
+                Expr::Ident(n) => (n,vars.get(n).map_or(0,|v|v.rank)),
+                Expr::Section{name,..} if formal.rank>0 => (name,1),
+                Expr::Call(n,indices)|Expr::Index(n,indices) if formal.rank>0 && vars.get(n).is_some_and(|v|v.rank==indices.len()) => {
+                    let rank=indices.iter().filter(|e| matches!(e,Expr::Section{..}) || matches!(e,Expr::Call(tag,_) if tag=="@section_subscript"||tag=="@array_constructor") || matches!(e,Expr::Ident(n) if vars.get(n).is_some_and(|v|v.rank>0))).count();
+                    (n,rank)
+                },
                 Expr::Call(n, indices) | Expr::Index(n, indices)
                     if vars.get(n).is_some_and(|o| !o.polymorphic && o.rank == indices.len())
-                        && indices.iter().all(|e| matches!(e, Expr::IntLit(_))) => (n, true),
+                        && indices.iter().all(|e| matches!(e, Expr::IntLit(_))) => (n, 0),
                 _ => bail!("polymorphic call specialization currently requires a scalar variable actual for `{dummy}`"),
             };
             if vars
@@ -648,15 +653,30 @@ impl Lowerer {
             {
                 bail!("cannot pass INTENT(IN) entity `{n}` to writable CLASS dummy `{dummy}`");
             }
+            if actual_rank!=formal.rank {bail!("CLASS dummy `{dummy}` and actual argument have different ranks");}
+            if formal.rank>0 && !matches!(actual,Expr::Ident(_)) {
+                // Both declared and dynamic views borrow this selection. Until
+                // actual-index capture is shared, do not evaluate a function twice.
+                let mut probe=actual.clone();
+                let mut call=false;
+                visit_expr(&mut probe,&mut |e| {
+                    if let Expr::Call(name,_)=e {
+                        if name!=n && !matches!(name.as_str(),"@section_subscript"|"@array_constructor") {call=true;}
+                    }
+                });
+                if call {bail!("CLASS array section actuals with function calls in their subscripts are not yet supported");}
+            }
             let (kind, value) = if let Some(d) = dynamic.get(n) {
-                (d.kind.clone(), d.value.clone())
+                let mut value=actual.clone();
+                if matches!(actual,Expr::Ident(_)) {value=d.value.clone();}
+                else if let Expr::Ident(root)=&d.value {
+                    match &mut value {Expr::Call(n,_)|Expr::Index(n,_)|Expr::Section{name:n,..}=>*n=root.clone(),_=>unreachable!()}
+                } else {bail!("polymorphic section actual requires an array dynamic view");}
+                (d.kind.clone(), value)
             } else {
                 let obj = vars
                     .get(n)
                     .context("CLASS dummy requires a derived-type actual")?;
-                if obj.rank != 0 && !element {
-                    bail!("scalar CLASS dummy `{dummy}` requires a scalar actual");
-                }
                 if obj.polymorphic {
                     bail!(
                         "cannot determine dynamic type of polymorphic actual `{n}` for polymorphic calls"
@@ -724,11 +744,17 @@ impl Lowerer {
                                         }
                                     }
                                 }
+                                if dummy_names.contains(n) && !dims.is_empty() {
+                                    attrs.push("@class_array_view".into());
+                                }
                                 Stmt::DerivedDecl {
                                     type_name: type_name.clone(),
                                     names: vec![n.clone()],
                                     attributes: attrs,
-                                    polymorphic: *polymorphic,
+                                    // This specialized array dummy is a borrowed
+                                    // declared-type view; the extra dummy carries
+                                    // the concrete dynamic type.
+                                    polymorphic: *polymorphic && !(dummy_names.contains(n) && !dims.is_empty()),
                                     dims: dims.clone(),
                                 }
                             })
@@ -795,10 +821,13 @@ impl Lowerer {
                 if intrinsic::decode(&e.kind).is_some() {
                     body.extend(attrs.iter().map(|a| Stmt::DummyIntent {name:e.parameter.clone(), intent:a.clone()}));
                 }
-                body.insert(
-                    0,
-                    intrinsic::declaration(&e.kind, &e.parameter, &attrs, e.polymorphic)?,
-                );
+                let mut declaration=intrinsic::declaration(&e.kind, &e.parameter, &attrs, e.polymorphic)?;
+                if let Stmt::DerivedDecl{dims,..}=&mut declaration {
+                    if let Some(original_dims)=source.iter().find_map(|s|match s {
+                        Stmt::DerivedDecl{names,dims,..} if names.contains(original)=>Some(dims.clone()),_=>None
+                    }) {*dims=original_dims;}
+                }
+                body.insert(0,declaration);
             }
             self.extras.insert(unique.clone(), extras);
             let implicit = matches!(&t.statement,Stmt::Function{body,..} if !matches!(body.last(),Some(Stmt::Return(Some(Expr::Ident(n)))) if n!=name));
@@ -1079,10 +1108,14 @@ impl Lowerer {
                 };
                 if let Some(items) = io_items {
                     for item in items {
-                        if let Expr::Ident(n) = item {
-                            if vars.get(n).is_some_and(|v| v.polymorphic && if input { self.defs.defined_input(&v.kind) } else { self.defs.defined_output(&v.kind) }) {
-                                let view = dynamic.get(n).with_context(|| format!("cannot determine dynamic type of CLASS object `{n}` for defined I/O"))?;
-                                *item = view.value.clone();
+                        let root=io_root(item).map(str::to_owned);
+                        if let Some(n)=root {
+                            if vars.get(&n).is_some_and(|v| (v.polymorphic || dynamic.contains_key(&n)) && if input { self.defs.defined_input(&v.kind) } else { self.defs.defined_output(&v.kind) }) {
+                                let view = dynamic.get(&n).with_context(|| format!("cannot determine dynamic type of CLASS object `{n}` for defined I/O"))?;
+                                if matches!(item,Expr::Ident(_)) {*item=view.value.clone();}
+                                else if let Expr::Ident(replacement)=&view.value {
+                                    match item {Expr::Call(n,_)|Expr::Index(n,_)|Expr::Section{name:n,..}=>*n=replacement.clone(),_=>unreachable!()}
+                                } else {bail!("polymorphic array section requires an array dynamic view");}
                             }
                         }
                     }
@@ -1296,6 +1329,9 @@ fn needed(body: &[Stmt]) -> bool {
         _ => false,
     })
 }
+fn io_root(item: &Expr) -> Option<&str> {
+    match item {Expr::Ident(n)|Expr::Call(n,_)|Expr::Index(n,_)|Expr::Section{name:n,..}=>Some(n),_=>None}
+}
 fn is_input(statement: &Stmt) -> bool {
     matches!(statement, Stmt::CallSub{name,..} if matches!(name.as_str(),"@internal_read"|"@formatted_read"|"@formatted_read_status"))
 }
@@ -1313,8 +1349,8 @@ fn io_items(statement: &Stmt) -> &[Expr] {
 fn bound_dispatch_needed(body: &[Stmt], inherited: &Objects, defs: &Definitions) -> bool {
     let vars = objects(body, inherited);
     for s in body {
-        if io_items(s).iter().any(|e| matches!(e, Expr::Ident(n) if vars.get(n)
-            .is_some_and(|v| v.polymorphic && if is_input(s) {defs.defined_input(&v.kind)} else {defs.defined_output(&v.kind)}))) { return true; }
+        if io_items(s).iter().any(|e| io_root(e).and_then(|n|vars.get(n))
+            .is_some_and(|v| v.polymorphic && if is_input(s) {defs.defined_input(&v.kind)} else {defs.defined_output(&v.kind)})) { return true; }
         if let Stmt::CallSub { name, .. } = s {
             if let Some((object, method)) = name.rsplit_once('%') {
                 if vars

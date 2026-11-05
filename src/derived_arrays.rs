@@ -166,6 +166,7 @@ struct Object {
 struct Procedure {
     signature: crate::named_arguments::Signature,
     arrays: HashMap<String, Object>,
+    class_views: std::collections::HashSet<String>,
     result: Option<(String, Object)>,
 }
 type Objects = HashMap<String, Object>;
@@ -657,6 +658,11 @@ impl Lower {
                             Procedure {
                                 signature: crate::named_arguments::Signature::new(params, body),
                                 arrays,
+                                class_views: body.iter().flat_map(|s| match s {
+                                    Stmt::DerivedDecl { names, attributes, .. }
+                                        if attributes.iter().any(|a| a == "@class_array_view") => names.clone(),
+                                    _ => vec![],
+                                }).collect(),
                                 result,
                             },
                         );
@@ -1158,7 +1164,22 @@ impl Lower {
                 // association), which only by-reference calls support, and a
                 // scalar variable passes its parts.
                 let simple = |values: &[Expr]| values.iter().all(|v| matches!(v, Expr::Call(..) | Expr::Index(..) | Expr::Ident(_)));
-                let values = match self.prepared_parts(e.clone(), &o.ty, objects, prefix) {
+                // CLASS specialization has already checked type extension.
+                // Borrow only the declared parent's component arrays, without
+                // copying or changing the concrete dynamic object's storage.
+                let mut view_objects;
+                let part_objects = if p.class_views.contains(param) {
+                    view_objects = objects.clone();
+                    if let Expr::Ident(n) | Expr::Call(n, _) | Expr::Index(n, _) | Expr::Section { name: n, .. } = &e {
+                        if let Some(actual) = view_objects.get_mut(n) {
+                            actual.ty = o.ty.clone();
+                        }
+                    }
+                    &mut view_objects
+                } else {
+                    &mut *objects
+                };
+                let values = match self.prepared_parts(e.clone(), &o.ty, part_objects, prefix) {
                     Ok((values, array)) if array || simple(&values) => values,
                     _ if self.fields(&o.ty)?.iter().all(|f| f.dims.is_empty()) => {
                         // An expression passes its value in a scalar temporary.

@@ -2349,9 +2349,11 @@ so valid existing pointers continue to refer to the updated allocation.
 gfortran. Direct subscripted or section targets of the owned component remain unsupported; sections can be
 taken from an already associated pointer.
 
-Polymorphic arrays, saved arrays, derived PARAMETER arrays
+Saved arrays, derived PARAMETER arrays
 and a separate-object record ABI remain unsupported. See the finalization
 section above for supported FINAL procedures and remaining restrictions.
+Polymorphic ALLOCATABLE arrays use tagged storage; specialized CLASS(t) array
+dummies also support defined formatted I/O as described below.
 `tests/programs/xset_alloc_derived.f90` and `tests/185_allocated_derived_concat.f90` exercise empty
 and nonempty allocated inputs and replacement of an allocated output.
 Run `python tests/test_allocated_array_functions.py` for interpreter/native
@@ -2879,9 +2881,10 @@ parent component as nonpolymorphic, so it does not call the override again.
 Dispatch uses private call-site type specialization with borrowed component
 views, rather than a public runtime vtable/descriptor ABI. It currently requires
 simple scalar variable actuals and the default first passed-object dummy.
-Polymorphic array dummies that are not ALLOCATABLE, CLASS(*), CLASSOF dispatch,
+Whole-array binding receivers, CLASS(*), CLASSOF dispatch,
 POINTER/VALUE CLASS dummies, and generic interfaces containing
-specialized CLASS specifics remain unsupported. Elements of
+specialized CLASS specifics remain unsupported. Specialized CLASS(t) array
+dummies support defined formatted I/O through concrete dynamic views. Elements of
 [polymorphic ALLOCATABLE arrays](#polymorphic-allocatable-arrays-and-class-allocatable-objects) call the binding of the array's dynamic
 type. NOPASS and named PASS arguments
 retain their existing limitations.
@@ -4333,8 +4336,22 @@ external/internal files and propagate IOSTAT/IOMSG from the selected reader.
 See `tests/test_defined_input_polymorphic.py` and
 `tests/programs/xdefined_input_polymorphic.f90`.
 
-Polymorphic array/section input dispatch, empty list-directed and unformatted
-child reads remain unsupported. These limits are separate from ordinary READ support.
+CLASS(t) array dummies support defined formatted input and output through
+borrowed declared-type and dynamic-type views. Whole arrays, elements and
+triplet/vector sections select inherited or overridden readers/writers while
+ordinary generic calls retain the dummy's declared type. Input tests cover
+ranks 1, 2, 3 and 15, runtime-sized actual arrays, forwarding, reversed sections,
+runtime formats, and IOSTAT/IOMSG success and failure. Polymorphic ALLOCATABLE
+arrays support direct input and calls through these dummies. See
+`tests/test_defined_input_polymorphic_arrays.py` and
+`tests/programs/xdefined_input_polymorphic_arrays.f90`.
+
+Section actuals with function calls in their subscripts are diagnosed until
+the declared and dynamic views can share a single evaluation. Nonunit lower
+bounds on assumed-shape derived-type dummies, non-ALLOCATABLE CLASS(*) array
+dummies and polymorphic POINTER arrays retain their existing restrictions.
+Empty list-directed and unformatted child reads remain unsupported. These
+limits are separate from ordinary READ support.
 
 Mixed formatted COMPLEX input and output support scalar values, arrays and
 sections, literal/runtime formats, and external/internal files. Output expressions

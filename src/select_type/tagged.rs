@@ -437,6 +437,14 @@ impl Lower<'_> {
     }
 
     fn statement(&mut self, mut s: Stmt, tags: &Tags, vars: &Objects) -> Result<Vec<Stmt>> {
+        // Keep READ and its IOMSG definition marker together: defined-input
+        // lowering consumes this pair after dynamic-type dispatch.
+        let read_message = matches!(&s, Stmt::Block { body } if matches!(body.as_slice(),
+            [read, Stmt::CallSub { name, args }] if super::is_input(read)
+                && name == crate::initialized::MAY_DEFINE && args.len() == 1));
+        if read_message && tags.keys().any(|n| uses(&s, n)) {
+            return self.dispatch(s, tags, vars);
+        }
         if tags.is_empty() || !tags.keys().any(|n| uses(&s, n)) {
             // Plain ALLOCATE(type :: x) of a nonpolymorphic object.
             if let Stmt::CallSub { name, args } = &mut s {

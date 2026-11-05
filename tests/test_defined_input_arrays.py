@@ -97,9 +97,9 @@ end subroutine
 end program""")
         self.check(source,'9 11 5 7 1 3\n10 12 6 8 2 4\n')
 
-    def test_polymorphic_array_diagnosed(self):
+    def test_polymorphic_array_section(self):
         source=self.source('type(point) :: a(3)',
-            'call fill(u,a)').replace('close(u)\nend program',"""close(u)
+            'call fill(u,a)\nprint *,a(1)%x,a(1)%y,a(2)%x,a(2)%y').replace('close(u)\nend program',"""close(u)
 contains
 subroutine fill(unit,values)
 integer,intent(in) :: unit
@@ -107,7 +107,7 @@ class(point),intent(out) :: values(:)
 read(unit,*) values(1:2)
 end subroutine
 end program""")
-        self.reject(source,'polymorphic defined input dispatch')
+        self.check(source,'1 2 3 4\n')
 
     def test_vector_section(self):
         self.check(self.source('type(point) :: a(3)',
