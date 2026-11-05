@@ -15,7 +15,7 @@ rfort executes serially by default. See [native DO CONCURRENT parallelism](paral
   LOCAL, LOCAL_INIT, SHARED, DEFAULT(NONE), and REDUCE are supported with the
   storage limits documented in [language support](language-support.md#do-loops).
   An opt-in native path outlines supported main-program and procedure loops and dispatches
-  them to a reusable pool, including multidimensional allocatable arrays and scalar numeric and logical reductions; unsupported loops remain serial.
+  them to a reusable pool, including multidimensional allocatable arrays and scalar/array numeric and logical reductions; unsupported loops remain serial.
 
 ## Coarrays in three stages
 
@@ -156,8 +156,8 @@ is mostly OpenMP, then MPI, with coarrays a distant third.
   - **Benefit:** existing code speeds up without being rewritten, and rfort
     already analyzes these loops.
   - **Implemented:** an opt-in pool and outlined workers for a conservative
-    subset including scalar and bounded fixed-size array reductions, multiple indices, signed strides, invariant subscript offsets, multidimensional arrays, and assumed-shape procedure arguments, with serial fallback.
-  - **Next:** broader capture analysis, runtime-sized array reductions, and thread-safety
+    subset including scalar and memory-budgeted fixed/runtime-sized array reductions, multiple indices, signed strides, invariant subscript offsets, multidimensional arrays, and assumed-shape procedure arguments, with serial fallback.
+  - **Next:** broader capture analysis, runtime-sized section scratch storage, and thread-safety
     checks for called procedures.
     SAVE and module variables retain their Fortran sharing semantics; making
     them all thread-local would change program behavior. Unsupported captures

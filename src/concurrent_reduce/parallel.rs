@@ -111,33 +111,37 @@ fn check(
                                 })
                                 .collect::<HashMap<_, _>>();
                             let mut length = 1usize;
+                            let mut dynamic = o.attrs.contains("allocatable");
                             for d in &o.dims {
                                 let (lo, hi) = if let Expr::Call(tag, a) = d {
                                     if tag == "@declared_bounds" && a.len() == 2 {
                                         (&a[0], &a[1])
                                     } else {
-                                        bail!("parallel array REDUCE requires constant bounds")
+                                        dynamic = true;
+                                        break;
                                     }
                                 } else {
                                     (&Expr::IntLit("1".into()), d)
                                 };
-                                let lo = crate::parameters::evaluate(lo, &constants)
-                                    .context("parallel array REDUCE requires constant bounds")?
-                                    as i128;
-                                let hi = crate::parameters::evaluate(hi, &constants)
-                                    .context("parallel array REDUCE requires constant bounds")?
-                                    as i128;
+                                let (Ok(lo), Ok(hi)) = (
+                                    crate::parameters::evaluate(lo, &constants),
+                                    crate::parameters::evaluate(hi, &constants),
+                                ) else {
+                                    dynamic = true;
+                                    break;
+                                };
+                                let (lo, hi) = (lo as i128, hi as i128);
                                 let extent = usize::try_from((hi - lo + 1).max(0))
                                     .context("parallel array REDUCE size overflow")?;
                                 length = length
                                     .checked_mul(extent)
                                     .context("parallel array REDUCE size overflow")?;
                             }
-                            if length == 0 {
+                            if !dynamic && length == 0 {
                                 bail!("zero-sized parallel array REDUCE uses serial execution");
                             }
                             reduction_elements = reduction_elements
-                                .checked_add(length)
+                                .checked_add(if dynamic { 0 } else { length })
                                 .context("parallel array REDUCE size overflow")?;
                             if reduction_elements > 4096 {
                                 bail!("parallel array REDUCE exceeds private-storage budget (4096 elements across arrays)");
@@ -319,7 +323,7 @@ fn check(
                 {
                     continue;
                 }
-                if !constant(d, scope) {
+                if !dummy && !constant(d, scope) {
                     bail!("array `{n}` requires constant bounds or supported runtime dimensions");
                 }
             }

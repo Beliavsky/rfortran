@@ -203,8 +203,9 @@ be used as a DO control variable.
 `REDUCE(operation:variable-list)` supports `+`, `*`, `.AND.`, `.OR.`, `.EQV.`,
 `.NEQV.`, `MAX`, `MIN`, `IAND`, `IOR`, and `IEOR`, with multiple clauses and
 multiple variables per clause. Variables require an explicit intrinsic type
-suitable for the operation. Scalar and fixed-size explicit-shape array reductions support
-whole-array, element, and section updates.
+suitable for the operation. Scalar and fixed/runtime-sized array reductions
+(including allocated arrays and assumed-shape dummy arguments) support whole-array,
+element, and section updates.
 The implemented types are INTEGER, REAL, COMPLEX (`+` and `*`), and LOGICAL;
 CHARACTER reductions are not supported yet.
 
@@ -217,7 +218,7 @@ end do
 print *, total, largest    ! 25 5
 ```
 
-Execution is sequential. Each reduction uses private storage initialized to its
+Execution is serial by default. Each reduction uses private storage initialized to its
 operation's identity and combines the accumulated result with the outside value
 after the loop. Empty and entirely masked loops leave the outside value alone.
 Index bounds are captured before execution. Masks, multiple index controls,
@@ -228,15 +229,13 @@ standard modes.
 
 Only the standard reduction assignment forms are accepted; references elsewhere,
 duplicate variables, incompatible types, prohibited attributes, and transfers
-out of the concurrent construct receive source-located errors. POINTER,
-ALLOCATABLE, runtime-sized, and assumed-shape/assumed-size reduction objects are not implemented
-yet. Named EXIT within a reduction construct is currently rejected, including
-when its target is a nested ordinary loop. F2018 locality specifiers have
+out of the concurrent construct receive source-located errors. POINTER, scalar
+ALLOCATABLE, and assumed-size reduction objects remain unsupported. Named EXIT
+within a reduction construct is currently rejected, including when its target is a nested ordinary loop. F2018 locality specifiers have
 [serial support](language-support.md#do-loops), and a restricted subset,
-including scalar numeric and logical reductions, supports
-[opt-in native parallelism](parallel-concurrent.md). Array reductions still
-execute serially. Existing DO CONCURRENT
-semantic checking is partial; this addition does not claim full validation of
+including scalar and memory-budgeted fixed/runtime-sized numeric and logical
+array reductions, supports [opt-in native parallelism](parallel-concurrent.md).
+Existing DO CONCURRENT semantic checking is partial; this addition does not claim full validation of
 iteration independence or procedure purity.
 
 ## Enumeration types (US 21, section 9.2)

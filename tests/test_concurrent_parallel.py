@@ -7,7 +7,7 @@ import unittest
 from test_record_read import COMPILER, ROOT
 
 class ParallelConcurrent(unittest.TestCase):
-    def build_run(self, source, expected, parallel=True, reason=None, threads=(1,2,4), opts=('0','2'), checks=True):
+    def build_run(self, source, expected, parallel=True, reason=None, threads=(1,2,4), opts=('0','2'), checks=True, dispatch=True):
         with tempfile.TemporaryDirectory(prefix='rfort-parallel-') as tmp:
             directory=Path(tmp); path=directory/'case.f90';path.write_text(source)
             for optimization in opts:
@@ -26,9 +26,272 @@ class ParallelConcurrent(unittest.TestCase):
                     result=subprocess.run([str(exe)],env=env,capture_output=True,text=True,timeout=30)
                     self.assertEqual(result.returncode,0,result.stderr)
                     self.assertEqual(result.stdout.split(),expected.split())
-                    if parallel and reason is None and n>1:
+                    if parallel and reason is None and dispatch and n>1:
                         self.assertIn(f'rfort parallel: {n} threads',result.stderr)
                     else: self.assertNotIn('rfort parallel:',result.stderr)
+
+    def test_runtime_array_reduction_example(self):
+        self.build_run((ROOT/'tests/programs/xconcurrent_parallel_runtime_reduce.f90').read_text(), '10007.0 10007.0 10007.0 10007.0')
+
+    def test_runtime_array_reduction_assumed_shape(self):
+        self.build_run("""implicit none
+integer, allocatable :: a(:)
+allocate(a(6))
+a=7
+call accumulate(a(1:5:2))
+print *, a
+contains
+subroutine accumulate(s)
+integer, intent(inout) :: s(:)
+integer :: i
+do concurrent(i=1:10000) reduce(+:s)
+s=s+1
+end do
+end subroutine
+end
+""", '10007 7 10007 7 10007 7')
+
+    def test_runtime_array_reduction_reallocate(self):
+        self.build_run("""implicit none
+integer, allocatable :: s(:)
+integer :: n,i
+n=2
+allocate(s(-1:n))
+s=3
+do concurrent(i=1:10000) reduce(+:s)
+s=s+1
+end do
+print *, s
+deallocate(s)
+n=3
+allocate(s(n))
+s=5
+do concurrent(i=1:10000) reduce(+:s)
+s=s+2
+end do
+print *, s
+end
+""", '10003 10003 10003 10003 20005 20005 20005')
+
+    def test_runtime_array_reduction_budget_boundary(self):
+        self.build_run("""implicit none
+integer :: i,n
+integer,allocatable :: s(:)
+n=4096
+allocate(s(n))
+s=1
+do concurrent(i=1:4096) reduce(+:s)
+s(1)=s(1)+1
+end do
+print *,s(1),s(n)
+end
+""", '4097 1')
+
+    def test_runtime_array_reduction_unallocated(self):
+        source="""implicit none
+integer :: i
+integer,allocatable :: s(:)
+do concurrent(i=1:10000) reduce(+:s)
+s=s+1
+end do
+end
+"""
+        with tempfile.TemporaryDirectory(prefix='rfort-parallel-') as tmp:
+            path=Path(tmp)/'case.f90';path.write_text(source)
+            exe=Path(tmp)/'case.exe'
+            result=subprocess.run([str(COMPILER),'--parallel',str(path),'-o',str(exe),'--run'],capture_output=True,text=True,timeout=90)
+            self.assertNotEqual(result.returncode,0)
+            self.assertIn('unallocated',result.stderr.lower())
+
+    def test_runtime_array_reduction_budget_fallback(self):
+        self.build_run("""implicit none
+integer :: i,n
+integer,allocatable :: a(:),b(:)
+n=2050
+allocate(a(n),b(n))
+a=7
+b=9
+do concurrent(i=1:5000) reduce(+:a,b)
+a=a+1
+b=b+2
+end do
+if(any(a/=5007).or.any(b/=10009)) stop 1
+print *,a(1),b(n)
+end
+""", '5007 10009', dispatch=False, threads=(4,))
+
+    def test_runtime_array_reduction_empty_storage(self):
+        self.build_run("""implicit none
+integer :: i,n
+real,allocatable :: a(:,:)
+n=0
+allocate(a(2,n))
+a=3.0
+do concurrent(i=1:10000) reduce(+:a)
+a=a+1.0
+end do
+print *,size(a)
+end
+""", '0', dispatch=False)
+
+    def test_runtime_array_reduction_masks_and_empty_range(self):
+        self.build_run("""implicit none
+integer :: i,n
+integer,allocatable :: s(:)
+n=2
+allocate(s(n))
+s=7
+do concurrent(i=1:0) reduce(+:s)
+s=s+1
+end do
+do concurrent(i=1:10000,i<0) reduce(+:s)
+s=s+1
+end do
+print *,s
+end
+""", '7 7')
+
+    def test_runtime_array_reduction_partial_section(self):
+        self.build_run("""implicit none
+integer :: i,n
+integer,allocatable :: s(:)
+n=4
+allocate(s(-1:n))
+s=7
+do concurrent(i=1:10000) reduce(+:s)
+s(0:2)=s(0:2)+1
+end do
+print *,s
+end
+""", '7 10007 10007 10007 7 7')
+
+    def test_runtime_array_reduction_repeated_procedure(self):
+        self.build_run("""implicit none
+integer :: n
+integer,allocatable :: a(:)
+allocate(a(2))
+a=7
+call accumulate(a)
+call accumulate(a)
+print *,a
+deallocate(a)
+allocate(a(3))
+a=5
+call accumulate(a)
+print *,a
+contains
+subroutine accumulate(s)
+integer,intent(inout)::s(:)
+integer::i
+do concurrent(i=1:10000) reduce(+:s)
+s=s+1
+end do
+end subroutine
+end
+""", '20007 20007 10005 10005 10005')
+
+    def test_runtime_array_reduction_histogram(self):
+        self.build_run("""implicit none
+integer :: i,n,total,fixed(2),bins(10000)
+integer,allocatable :: hist(:)
+n=4
+allocate(hist(n))
+do i=1,10000
+bins(i)=mod(i,4)+1
+end do
+hist=1
+total=3
+fixed=5
+do concurrent(i=1:10000) reduce(+:hist,total,fixed)
+hist(bins(i))=hist(bins(i))+1
+total=total+1
+fixed=fixed+2
+end do
+print *,hist,total,fixed
+end
+""", '2501 2501 2501 2501 10003 20005 20005')
+
+    def test_runtime_array_reduction_rank_fifteen(self):
+        dims=','.join([':']*15)
+        bounds=','.join(['-1:0']+['1']*14)
+        self.build_run(f"""implicit none
+integer :: i
+integer,allocatable :: a({dims})
+allocate(a({bounds}))
+a=7
+do concurrent(i=1:10000) reduce(+:a)
+a=a+1
+end do
+print *,a
+end
+""", '10007 10007')
+
+    def test_runtime_array_reduction_explicit_dummy_bounds(self):
+        self.build_run("""implicit none
+integer,allocatable :: a(:,:)
+integer :: n
+n=2
+allocate(a(n,n))
+a=5
+call accumulate(a,n)
+print *,a
+contains
+subroutine accumulate(s,n)
+integer,intent(in)::n
+integer,intent(inout)::s(n,n)
+integer::i
+do concurrent(i=1:10000) reduce(+:s)
+s=s+1
+end do
+end subroutine
+end
+""", '10005 10005 10005 10005')
+
+    def test_runtime_array_reduction_no_checks(self):
+        self.build_run((ROOT/'tests/programs/xconcurrent_parallel_runtime_reduce.f90').read_text(), '10007.0 10007.0 10007.0 10007.0', checks=False)
+
+    def test_runtime_array_reduction_runtime_section_fallback(self):
+        self.build_run("""implicit none
+integer :: i,n
+integer,allocatable :: s(:)
+n=4
+allocate(s(n))
+s=7
+do concurrent(i=1:10000) reduce(+:s)
+s(1:n)=s(1:n)+1
+end do
+print *,s
+end
+""", '10007 10007 10007 10007',reason='private array extent depends on worker-local storage')
+
+    def test_runtime_array_reduction_numeric_logical(self):
+        self.build_run("""implicit none
+integer :: n,i
+integer,allocatable :: lo(:),hi(:)
+double precision,allocatable :: product(:)
+logical,allocatable :: both(:),either(:),eq(:),neq(:)
+n=2
+allocate(lo(n),hi(n),product(n),both(n),either(n),eq(n),neq(n))
+lo=99999
+hi=-99999
+product=3.0d0
+both=.true.
+either=.false.
+eq=.true.
+neq=.false.
+do concurrent(i=1:10000) reduce(min:lo) reduce(max:hi) reduce(*:product) &
+& reduce(.and.:both) reduce(.or.:either) reduce(.eqv.:eq) reduce(.neqv.:neq)
+lo=min(lo,i)
+hi=max(hi,i)
+product=product*1.0d0
+both=both.and.(i<2)
+either=either.or.(i==2)
+eq=eq.eqv.(i/=2)
+neq=neq.neqv.(i==2)
+end do
+print *,lo,hi,product,both,either,eq,neq
+end
+""", '1 1 10000 10000 3.0 3.0 F F T T F F T T')
 
     def test_multidimensional_fixed_mask_reduce(self):
         self.build_run("""implicit none

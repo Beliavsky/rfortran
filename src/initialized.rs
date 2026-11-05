@@ -598,13 +598,15 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                 terminated=true;
             }
             Stmt::CallSub { name,args } if name=="@parallel_iteration" => {
-                for arg in args.iter() {read(arg,env,&mut before,serial)?;}
+                for arg in args.iter() {
+                    if !matches!(arg,Expr::Call(tag,_) if tag=="@parallel_scratch") {read(arg,env,&mut before,serial)?;}
+                }
                 // The native outliner must privatize masks of reduction arrays
                 // and generated arrays declared inside the worker. Metadata is
                 // not a read of the possibly uninitialized associated data.
-                for (variable,state) in env.iter().filter(|(_,v)|v.extent.is_some()) {
+                for (variable,state) in env.iter().filter(|(_,v)|v.extent.is_some() || v.heap_length.is_some()) {
                     args.push(Expr::Call("@parallel_init".into(),vec![Expr::Ident(variable.clone()),Expr::Ident(state.flag.clone())]));
-                    args.push(int(0));
+                    args.push(state.heap_length.clone().unwrap_or_else(||int(0)));
                 }
             }
             Stmt::CallSub { args, .. } => for arg in args { read(arg, env, &mut before, serial)?; },
@@ -937,7 +939,8 @@ mod tests {
     #[test]
     fn parallel_mask_metadata_does_not_read_uninitialized_arrays() {
         let mut p=parse("integer :: scratch(2)\nend");
-        p.body.push(super::Stmt::CallSub{name:"@parallel_iteration".into(),args:vec![]});
+        p.body.push(super::Stmt::CallSub{name:"@parallel_iteration".into(),args:vec![
+            super::Expr::Call("@parallel_scratch".into(),vec![super::Expr::Ident("scratch".into())]),super::int(0)]});
         let p=super::instrument(p).unwrap();
         let dump=format!("{p:?}");
         assert!(dump.contains("@parallel_init"),"{dump}");

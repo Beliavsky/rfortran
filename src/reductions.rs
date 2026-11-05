@@ -716,6 +716,8 @@ fn lower_pack(e:&mut Expr,symbols:&mut Symbols,prefix:&mut Vec<Stmt>,serial:&mut
 }
 
 fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, serial: &mut usize, expand_elementals: bool) -> Result<()> {
+    // Scratch ownership is metadata, not an array-valued function invocation.
+    if matches!(e,Expr::Call(tag,_) if tag=="@parallel_scratch") {return Ok(());}
 
     match e {
         Expr::Call(name,args) if name=="selected_logical_kind" && !symbols.procedures.contains(name) && !symbols.contains_key(name) => {

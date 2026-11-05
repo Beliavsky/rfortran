@@ -31,8 +31,8 @@ jobs to stderr; unset it for timing runs.
   expressions. Every access to a written array must use the same subscript
   expressions. Read-only arrays may use other scalar subscripts.
 - Scalar `LOCAL` and `LOCAL_INIT`, shared scalar inputs, masks, and IF statements.
-- Scalar and fixed-size array INTEGER/REAL/DOUBLE PRECISION `REDUCE(+:...)`, `REDUCE(*:...)`,
-  `REDUCE(MIN:...)`, and `REDUCE(MAX:...)`; scalar and fixed-size array LOGICAL `.AND.`, `.OR.`,
+- Scalar and fixed-size or runtime-sized array INTEGER/REAL/DOUBLE PRECISION `REDUCE(+:...)`, `REDUCE(*:...)`,
+  `REDUCE(MIN:...)`, and `REDUCE(MAX:...)`; scalar and fixed-size or runtime-sized array LOGICAL `.AND.`, `.OR.`,
   `.EQV.`, and `.NEQV.` reductions. Multiple reductions and reduction-only
   loops are supported.
 - Arithmetic, comparisons, and a small set of scalar intrinsics: SQRT, ABS, INT,
@@ -45,7 +45,7 @@ storage. Initialization and bounds checks remain enabled unless `--nocheck`
 is requested. A job completes before execution continues after the loop.
 
 Other constructs use the existing serial lowering. In particular this stage
-does not parallelize runtime-sized array REDUCE, user procedure calls inside loops, allocation,
+does not parallelize user procedure calls inside loops, allocation,
 I/O, outer constructs containing loops, named constructs, derived
 types, CHARACTER, complex arrays, or pointer array storage. Arrays with
 TARGET and other unsupported attributes also fall back to serial execution.
@@ -107,7 +107,7 @@ rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_reduce.f
 
 ## Array reductions
 
-Fixed-size INTEGER, REAL, DOUBLE PRECISION, and LOGICAL arrays support the
+Fixed-size and runtime-sized INTEGER, REAL, DOUBLE PRECISION, and LOGICAL arrays support the
 same reduction operators as scalars. Tests cover ranks one, two, three, and
 fifteen, nondefault bounds, whole-array and element/section updates, section
 inputs, and repeated procedure calls. Each worker receives a heap-allocated
@@ -122,14 +122,29 @@ in a loop. Result buffers reserve 64 slots, matching the pool's maximum size;
 worker copies and result data/initialization masks use at most 6 MiB of payload.
 Ordinary caller storage, expression temporaries, and allocator overhead are
 additional. Larger reductions and zero-sized reduction arrays use the serial
-fallback. Runtime-sized, ALLOCATABLE, and POINTER reduction objects remain
-outside the supported reduction declarations.
+fallback. For runtime-sized arrays this budget is checked before allocating
+worker-result buffers. The ordinary serial accumulator still needs one copy of
+the reduction array. ALLOCATABLE arrays must already be allocated; supported
+assumed-shape and explicit-shape dummy arguments also work. Reallocation or
+changing shapes between calls is supported. POINTER reduction objects remain
+unsupported.
+
+Constant-size section temporaries are worker-private. Sections needing
+runtime-sized scratch buffers currently use serial fallback, reported by
+`--parallel-report`. Whole-array and scalar-element updates do not have this
+restriction.
 
 ```cmd
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_array_reduce.f90 --run
 ```
 
 Unsupported captures and procedure calls inside loops retain serial fallback.
+
+A runtime-sized rank-two reduction with nondefault bounds:
+
+```cmd
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_runtime_reduce.f90 --run
+```
 
 ## Runtime-sized arrays
 

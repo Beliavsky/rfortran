@@ -1,7 +1,7 @@
 implicit none
 integer :: i,j,a(10000),total,n,stride
 integer :: matrix(100,100),totals(2)
-integer,allocatable :: b(:)
+integer,allocatable :: b(:),runtime_totals(:)
 do concurrent(i=1:10000) shared(a) default(none)
    a(i)=i
 end do
@@ -38,6 +38,14 @@ do concurrent(i=1:10000) reduce(+:totals)
    totals=totals+[i,1]
 end do
 if(any(totals/=[50005007,10007])) stop 7
+n=2
+allocate(runtime_totals(n))
+runtime_totals=7
+do concurrent(i=1:10000) reduce(+:runtime_totals)
+   runtime_totals=runtime_totals+1
+end do
+if(any(runtime_totals/=10007)) stop 8
+deallocate(runtime_totals)
 deallocate(b)
 print *,sum(a)
 contains

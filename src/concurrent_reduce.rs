@@ -378,6 +378,8 @@ fn lower(
     let mut ops = HashMap::new();
     let mut suffix = vec![];
     let mut partials = vec![];
+    let mut dynamic_arrays = vec![];
+    let mut reduction_counts = vec![];
     for clause in args {
         let Expr::Call(tag, variables) = clause else {
             bail!("invalid reduction clause")
@@ -417,25 +419,30 @@ fn lower(
                     bail!("REDUCE variable `{n}` cannot have the {attr} attribute");
                 }
             }
-            if object.attrs.contains("pointer") || object.attrs.contains("allocatable") {
-                bail!("REDUCE of POINTER or ALLOCATABLE variable `{n}` is not yet supported");
+            if object.attrs.contains("pointer") || (object.attrs.contains("allocatable") && object.dims.is_empty()) {
+                bail!("REDUCE of POINTER or scalar ALLOCATABLE variable `{n}` is not yet supported");
             }
-            if object.dims.iter().any(|e|matches!(e,Expr::Ident(n)|Expr::Call(n,_) if matches!(n.as_str(),"@deferred_extent"|"@assumed_extent"))) {bail!("REDUCE variable `{n}` currently requires explicit array bounds");}
+            let mut assumed_size=false;
             for dimension in &object.dims {
-                let mut dimension = dimension.clone();
-                let mut runtime = false;
-                visit_expr(&mut dimension, &mut |e| {
-                    if let Expr::Ident(n) = e {
-                        runtime |= scope.get(n).is_some_and(|o| !o.attrs.contains("parameter"));
-                    }
+                let mut dimension=dimension.clone();
+                visit_expr(&mut dimension,&mut |e| {
+                    assumed_size |= matches!(e,Expr::Ident(n) if n=="@assumed_extent");
                 });
-                if runtime {
-                    bail!("REDUCE variable `{n}` currently requires constant array bounds; runtime-sized reduction storage is not yet supported");
-                }
             }
+            if assumed_size { bail!("REDUCE variable `{n}` cannot be an assumed-size array"); }
+            let constants = scope.iter().filter_map(|(n,o)| o.constant.as_ref().map(|e|(n.clone(),e.clone()))).collect::<HashMap<_,_>>();
+            let dynamic = !object.dims.is_empty() && (object.attrs.contains("allocatable") || object.dims.iter().any(|d| {
+                let bounds = match d { Expr::Call(tag,a) if tag=="@declared_bounds" => a.as_slice(), _ => std::slice::from_ref(d) };
+                bounds.iter().any(|e|crate::parameters::evaluate(e,&constants).is_err())
+            }));
             *serial += 1;
             let temporary = format!("@reduce_value_{serial}");
-            let initial = identity(op, &object.kind, &temporary)?;
+            let initial = if dynamic {
+                let mold=format!("{temporary}_mold");
+                prefix.push(Stmt::VarDecl{kind:object.kind.clone(),names:vec![mold.clone()]});
+                prefix.push(set(&mold,identity(op,&object.kind,&mold)?));
+                id(&mold)
+            } else {identity(op, &object.kind, &temporary)?};
             prefix.push(if object.dims.is_empty() {
                 Stmt::VarDecl {
                     kind: object.kind.clone(),
@@ -445,9 +452,16 @@ fn lower(
                 Stmt::ArrayDecl {
                     kind: object.kind.clone(),
                     name: temporary.clone(),
-                    dims: object.dims.clone(),
+                    dims: if dynamic { vec![id("@deferred_extent");object.dims.len()] } else { object.dims.clone() },
                 }
             });
+            if dynamic {
+                prefix.push(Stmt::DummyIntent{name:temporary.clone(),intent:"allocatable".into()});
+                let bounds=(1..=object.dims.len()).map(|axis|Expr::Call("@heap_bounds".into(),vec![Expr::Call("lbound".into(),vec![id(&n),int(axis as i64)]),Expr::Call("ubound".into(),vec![id(&n),int(axis as i64)])])).collect();
+                prefix.push(Stmt::CallSub{name:"@allocate".into(),args:vec![Expr::Call(temporary.clone(),bounds)]});
+                dynamic_arrays.push(temporary.clone());
+            }
+            if !object.dims.is_empty() { reduction_counts.push(Expr::Call("size".into(),vec![id(&temporary)])); }
             prefix.push(set(&temporary, initial));
             suffix.push(set(&n, combine(op, id(&n), id(&temporary))));
             if parallel {
@@ -500,6 +514,10 @@ fn lower(
     } else {
         crate::ast::do_concurrent(controls, Some(mask), body)
     };
+    // The runtime guard needs a marker-free copy for over-budget/empty arrays.
+    // Capture it before adding worker metadata.
+    let serial_loop = loop_stmt.clone();
+    let parallel_prefix_start = prefix.len();
     let mut fold = vec![];
     let mut cleanup = vec![];
     if parallel {
@@ -565,14 +583,32 @@ fn lower(
             body.insert(0, Stmt::CallSub { name: "@parallel_iteration".into(), args: metadata });
         }
     }
-    prefix.push(loop_stmt);
-    prefix.extend(fold);
-    prefix.extend(cleanup);
+    if parallel && !dynamic_arrays.is_empty() {
+        // Clamp individual contributions before summing: a large array must
+        // select serial execution without overflowing the budget calculation.
+        let mut total=int(0);
+        let mut condition=Expr::Logical(true);
+        for count in reduction_counts {
+            condition=Expr::Bin(BinOp::And,Box::new(condition),Box::new(Expr::Bin(BinOp::Gt,Box::new(count.clone()),Box::new(int(0)))));
+            total=Expr::add(total,Expr::Call("min".into(),vec![count,int(4097)]));
+        }
+        condition=Expr::Bin(BinOp::And,Box::new(condition),Box::new(Expr::Bin(BinOp::Le,Box::new(total),Box::new(int(4096)))));
+        let mut setup=prefix.split_off(parallel_prefix_start);
+        setup.push(loop_stmt);
+        setup.extend(fold);
+        setup.extend(cleanup);
+        prefix.push(Stmt::If{cond:condition,then_body:setup,else_body:Some(vec![serial_loop])});
+    } else {
+        prefix.push(loop_stmt);
+        prefix.extend(fold);
+        prefix.extend(cleanup);
+    }
     prefix.push(Stmt::If {
         cond: id(&active),
         then_body: suffix,
         else_body: None,
     });
+    for array in dynamic_arrays { prefix.push(Stmt::CallSub{name:"@deallocate".into(),args:vec![id(&array)]}); }
     Ok(prefix)
 }
 fn walk(

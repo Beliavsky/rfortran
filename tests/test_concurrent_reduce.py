@@ -206,8 +206,38 @@ end
         for declaration,attr in (("integer,parameter::s=1","parameter"),("integer,intent(in)::s","intent(in)"),("integer,optional::s","optional")):
             self.reject(f'subroutine f(s)\n{declaration}\ninteger::i\ndo concurrent(i=1:3) reduce(+:s)\nend do\nend subroutine\n',attr)
 
-    def test_unsupported_runtime_storage(self):
-        self.reject('integer,allocatable::s(:)\ninteger::i\nallocate(s(2))\ndo concurrent(i=1:3) reduce(+:s)\ns=s+i\nend do\nend\n', "not yet supported")
+    def test_runtime_storage(self):
+        self.check('integer,allocatable::s(:)\ninteger::i\nallocate(s(2))\ns=10\ndo concurrent(i=1:3) reduce(+:s)\ns=s+i\nend do\nprint *,s\nend\n', " 16 16\n")
+
+    def test_assumed_size_is_rejected(self):
+        self.reject("""integer::x(3)=1
+call accumulate(x)
+contains
+subroutine accumulate(s)
+integer,intent(inout)::s(*)
+integer::i
+do concurrent(i=1:3) reduce(+:s)
+s=s+1
+end do
+end subroutine
+end
+""", 'cannot be an assumed-size array')
+
+    def test_runtime_rank_two_minmax(self):
+        self.check("""implicit none
+integer::n,i
+real,allocatable::low(:,:),high(:,:)
+n=2
+allocate(low(-1:0,3:n+2),high(n,n))
+low=100.0
+high=-100.0
+do concurrent(i=1:3) reduce(min:low) reduce(max:high)
+low=min(low,real(i))
+high=max(high,real(i))
+end do
+print *,low,high
+end
+""", ' 1.0 1.0 1.0 1.0 3.0 3.0 3.0 3.0\n')
 
     def test_exit_and_return(self):
         for statement in ("exit","return"):
@@ -225,14 +255,19 @@ end
 ''', "CYCLE cannot leave a DO CONCURRENT")
 
     def test_assumed_shape_and_mismatched_designator(self):
-        self.reject('''subroutine f(a)
+        self.check('''integer::x(2)=10
+call f(x)
+print *,x
+contains
+subroutine f(a)
 integer,intent(inout)::a(:)
 integer::i
 do concurrent(i=1:2) reduce(+:a)
 a=a+i
 end do
 end subroutine
-''', "explicit array bounds")
+end
+''', " 13 13\n")
         self.reject('''integer::i,a(3)
 a=0
 do concurrent(i=1:2) reduce(+:a)
@@ -259,7 +294,7 @@ end
 ''', " 1 1 1 1 2 2 2 2 0 4294967299\n")
 
     def test_explicit_runtime_shape(self):
-        self.reject('''implicit none
+        self.check('''implicit none
 integer::a(3)
 a=10
 call f(a,3)
@@ -274,7 +309,7 @@ a(i)=a(i)+i
 end do
 end subroutine
 end
-''', "runtime-sized reduction storage is not yet supported")
+''', " 11 12 13\n")
 
     def test_reduce_is_contextual_and_array_can_be_named_reduce(self):
         self.check('''implicit none

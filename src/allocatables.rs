@@ -1073,6 +1073,8 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
         checks: &mut GeneratedChecks,
         serial: &mut usize,
     ) -> Result<()> {
+        // Ownership metadata refers to storage even before it is allocated.
+        if matches!(e,Expr::Call(tag,_) if tag=="@parallel_scratch") {return Ok(());}
         if let Expr::Call(n, args) = e {
             if matches!(
                 n.as_str(),

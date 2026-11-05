@@ -1740,6 +1740,46 @@ impl Lower {
             result.push(stmt);
             result.extend(suffix);
         }
+        // Preserve lexical ownership before later passes hoist scratch arrays.
+        // Only declarations inside this worker body qualify; caller-created
+        // section buffers passed as actual arguments must remain shared.
+        fn private_arrays(body:&[Stmt],out:&mut Vec<String>) {
+            for stmt in body {
+                if let Stmt::ArrayDecl{name,..}=stmt {out.push(name.clone());}
+                match stmt {
+                    Stmt::Do{body,..}|Stmt::DoWhile{body,..}|Stmt::Block{body}=>private_arrays(body,out),
+                    Stmt::If{then_body,else_body,..}=>{private_arrays(then_body,out);if let Some(body)=else_body {private_arrays(body,out);}},
+                    _=>{}
+                }
+            }
+        }
+        fn mark(body:&mut [Stmt],names:&[String]) {
+            for stmt in body {
+                match stmt {
+                    Stmt::CallSub{name,args} if name=="@parallel_iteration"=>{
+                        for n in names {
+                            let entry=Expr::Call("@parallel_scratch".into(),vec![id(n)]);
+                            if !args.contains(&entry) {args.extend([entry,int(0)]);}
+                        }
+                    },
+                    Stmt::Block{body}=>mark(body,names),
+                    _=>{}
+                }
+            }
+        }
+        // Avoid traversing every subtree when this scope has no worker marker.
+        fn has_marker(body:&[Stmt])->bool {
+            body.iter().any(|s|match s {
+                Stmt::CallSub{name,..}=>name=="@parallel_iteration",
+                Stmt::Block{body}=>has_marker(body),
+                _=>false,
+            })
+        }
+        if has_marker(&result) {
+            let mut names=vec![];
+            private_arrays(&result,&mut names);
+            mark(&mut result,&names);
+        }
         *body = result;
         Ok(())
             })();
