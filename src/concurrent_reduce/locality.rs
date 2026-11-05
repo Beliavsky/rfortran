@@ -16,7 +16,7 @@ fn implicit_object(name: &str, scope: &Scope) -> Object {
             },
             dims: vec![],
             attrs: HashSet::new(),
-            derived: false,
+            derived: false, constant: None,
         })
 }
 

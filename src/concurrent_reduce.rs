@@ -18,6 +18,7 @@ struct Object {
     dims: Vec<Expr>,
     attrs: HashSet<String>,
     derived: bool,
+    constant: Option<Expr>,
 }
 type Scope = HashMap<String, Object>;
 fn declarations(body: &[Stmt], parent: &Scope) -> Scope {
@@ -43,7 +44,7 @@ fn declarations(body: &[Stmt], parent: &Scope) -> Scope {
                             kind: kind.clone(),
                             dims: vec![],
                             attrs: HashSet::new(),
-                            derived: false,
+                            derived: false, constant: None,
                         },
                     );
                 }
@@ -60,7 +61,7 @@ fn declarations(body: &[Stmt], parent: &Scope) -> Scope {
                             kind: kind.clone(),
                             dims: vec![],
                             attrs: HashSet::new(),
-                            derived: false,
+                            derived: false, constant: None,
                         },
                     );
                 }
@@ -72,7 +73,7 @@ fn declarations(body: &[Stmt], parent: &Scope) -> Scope {
                         kind: kind.clone(),
                         dims: dims.clone(),
                         attrs: HashSet::new(),
-                        derived: false,
+                        derived: false, constant: None,
                     },
                 );
             }
@@ -81,14 +82,14 @@ fn declarations(body: &[Stmt], parent: &Scope) -> Scope {
                 attributes,
                 entities,
             } => {
-                for (n, _) in entities {
+                for (n, value) in entities {
                     scope.insert(
                         n.clone(),
                         Object {
                             kind: kind.clone(),
                             dims: vec![],
                             attrs: attributes.iter().cloned().collect(),
-                            derived: false,
+                            derived: false, constant: if attributes.iter().any(|a|a=="parameter") {value.clone()}else{None},
                         },
                     );
                 }
@@ -106,7 +107,7 @@ fn declarations(body: &[Stmt], parent: &Scope) -> Scope {
                             kind: TypeSpec::Integer(None),
                             dims: dims.clone(),
                             attrs: attributes.iter().cloned().collect(),
-                            derived: true,
+                            derived: true, constant: None,
                         },
                     );
                 }
@@ -450,7 +451,7 @@ fn lower(
             prefix.push(set(&temporary, initial));
             suffix.push(set(&n, combine(op, id(&n), id(&temporary))));
             if parallel {
-                partials.push((temporary.clone(), op.to_string(), object.kind.clone()));
+                partials.push((temporary.clone(), op.to_string(), object.kind.clone(), object.dims.clone()));
             }
             ops.insert(n, (op.to_string(), temporary));
         }
@@ -482,7 +483,7 @@ fn lower(
                 .unwrap_or(TypeSpec::Integer(None)),
             _ => TypeSpec::Integer(None),
         };
-        let last = if parallel { 3 } else { 4 };
+        let last = if parallel && matches!(&c[3],Expr::IntLit(n) if n=="1") { 3 } else { 4 };
         for e in &mut c[1..last] {
             *serial += 1;
             let temporary = format!("@reduce_bound_{serial}");
@@ -494,12 +495,13 @@ fn lower(
             *e = id(&temporary);
         }
     }
-    let mut loop_stmt = if parallel && controls.len() > 4 {
+    let mut loop_stmt = if parallel && (controls.len() > 4 || !matches!(&controls[3],Expr::IntLit(n) if n=="1")) {
         parallel::flatten(controls, mask, body, &mut prefix, serial)
     } else {
         crate::ast::do_concurrent(controls, Some(mask), body)
     };
     let mut fold = vec![];
+    let mut cleanup = vec![];
     if parallel {
         let mut metadata = vec![];
         if !partials.is_empty() {
@@ -515,12 +517,45 @@ fn lower(
             // renames the marker together with its declarations and uses.
             metadata.extend([id(&active), id(&flags)]);
             let mut combines = vec![set(&active, Expr::Logical(true))];
-            for (temporary, op, kind) in partials {
+            for (temporary, op, kind, dims) in partials {
                 let array = format!("{temporary}_workers");
-                prefix.push(Stmt::ArrayDecl { kind: kind.clone(), name: array.clone(), dims: vec![int(64)] });
-                prefix.push(set(&array, identity(&op, &kind, &temporary)?));
                 metadata.extend([id(&temporary), id(&array)]);
-                combines.push(set(&temporary, combine(&op, id(&temporary), Expr::Index(array, vec![id(&worker)]))));
+                if dims.is_empty() {
+                    prefix.push(Stmt::ArrayDecl { kind: kind.clone(), name: array.clone(), dims: vec![int(64)] });
+                    prefix.push(set(&array, identity(&op, &kind, &temporary)?));
+                    combines.push(set(&temporary, combine(&op, id(&temporary), Expr::Index(array, vec![id(&worker)]))));
+                } else {
+                    let count=Expr::Call("size".into(),vec![id(&temporary)]);
+                    prefix.push(Stmt::ArrayDecl {kind:kind.clone(),name:array.clone(),dims:vec![id("@deferred_extent")]});
+                    prefix.push(Stmt::DummyIntent{name:array.clone(),intent:"allocatable".into()});
+                    prefix.push(Stmt::CallSub{name:"@allocate".into(),args:vec![Expr::Call(array.clone(),vec![Expr::mul(count.clone(),int(64))])]});
+                    let mold=format!("{temporary}_identity");
+                    prefix.push(Stmt::VarDecl{kind:kind.clone(),names:vec![mold.clone()]});
+                    prefix.push(set(&mold,identity(&op,&kind,&mold)?));
+                    prefix.push(set(&array,id(&mold)));
+                    let mut indices=vec![];
+                    let mut bounds=vec![];
+                    for (axis,_) in dims.iter().enumerate() {
+                        *serial+=1;
+                        let index=format!("@reduce_fold_{serial}");
+                        prefix.push(Stmt::VarDecl{kind:TypeSpec::Integer(None),names:vec![index.clone()]});
+                        indices.push(id(&index));
+                        bounds.push((index,Expr::Call("lbound".into(),vec![id(&temporary),int(axis as i64+1)]),Expr::Call("ubound".into(),vec![id(&temporary),int(axis as i64+1)])));
+                    }
+                    let mut offset=int(0);
+                    let mut stride=int(1);
+                    for (index,lo,hi) in &bounds {
+                        offset=Expr::add(offset,Expr::mul(Expr::sub(id(index),lo.clone()),stride.clone()));
+                        stride=Expr::mul(stride,Expr::add(Expr::sub(hi.clone(),lo.clone()),int(1)));
+                    }
+                    let slot=Expr::add(Expr::add(Expr::mul(Expr::sub(id(&worker),int(1)),count),offset),int(1));
+                    let mut statements=vec![Stmt::AssignIndex{name:temporary.clone(),indices:indices.clone(),value:combine(&op,Expr::Index(temporary.clone(),indices),Expr::Index(array.clone(),vec![slot]))}];
+                    for (index,lo,hi) in bounds {
+                        statements=vec![Stmt::Do{var:index,start:lo,end:hi,body:statements}];
+                    }
+                    combines.extend(statements);
+                    cleanup.push(Stmt::CallSub{name:"@deallocate".into(),args:vec![id(&array)]});
+                }
             }
             fold.push(Stmt::Do { var: worker.clone(), start: int(1), end: int(64), body: vec![Stmt::If {
                 cond: Expr::Index(flags, vec![id(&worker)]), then_body: combines, else_body: None,
@@ -532,6 +567,7 @@ fn lower(
     }
     prefix.push(loop_stmt);
     prefix.extend(fold);
+    prefix.extend(cleanup);
     prefix.push(Stmt::If {
         cond: id(&active),
         then_body: suffix,
@@ -592,7 +628,7 @@ fn walk(
             for object in child_scope.values_mut() {
                 object.attrs.insert("@parallel_host".into());
             }
-            let marker=Object {kind:TypeSpec::Integer(None),dims:vec![],attrs:HashSet::new(),derived:false};
+            let marker=Object {kind:TypeSpec::Integer(None),dims:vec![],attrs:HashSet::new(),derived:false,constant:None};
             child_scope.insert("@parallel_procedure".into(),marker.clone());
             for n in params {child_scope.insert(format!("@parallel_dummy:{n}"),marker.clone());}
             Some(child_scope)

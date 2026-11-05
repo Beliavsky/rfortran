@@ -19,31 +19,34 @@ jobs to stderr; unset it for timing runs.
 ## Supported subset
 
 - Main-program and procedure loops with explicitly declared integer indices
-  and unit strides. Captured dummy arguments require explicit INTENT.
+  and nonzero positive or negative strides, including runtime stride values.
+  Captured dummy arguments require explicit INTENT.
 - INTEGER, REAL, DOUBLE PRECISION, or LOGICAL arrays: fixed-size
   arrays with constant bounds, and ALLOCATABLE arrays with runtime extents
   and arbitrary lower bounds. Supported assumed-shape dummy arrays are also
   accepted. Constant extents may use named constants.
-- Writes such as `a(i)` or `a(i,j,k)`, using every concurrent index exactly
-  once. Every access to a written array must use the same index tuple. Read-only
-  arrays may use other scalar subscripts.
+- Writes such as `a(i)`, `a(i+1)`, `a(i,1)`, and `a(i+offset,j,slot)`.
+  Every concurrent index must occur exactly once in the destination tuple;
+  additional subscripts and additive offsets must be loop-invariant integer
+  expressions. Every access to a written array must use the same subscript
+  expressions. Read-only arrays may use other scalar subscripts.
 - Scalar `LOCAL` and `LOCAL_INIT`, shared scalar inputs, masks, and IF statements.
-- Scalar INTEGER/REAL/DOUBLE PRECISION `REDUCE(+:...)`, `REDUCE(*:...)`,
-  `REDUCE(MIN:...)`, and `REDUCE(MAX:...)`; scalar LOGICAL `.AND.`, `.OR.`,
+- Scalar and fixed-size array INTEGER/REAL/DOUBLE PRECISION `REDUCE(+:...)`, `REDUCE(*:...)`,
+  `REDUCE(MIN:...)`, and `REDUCE(MAX:...)`; scalar and fixed-size array LOGICAL `.AND.`, `.OR.`,
   `.EQV.`, and `.NEQV.` reductions. Multiple reductions and reduction-only
   loops are supported.
 - Arithmetic, comparisons, and a small set of scalar intrinsics: SQRT, ABS, INT,
   REAL, DBLE, SIN, COS, EXP, LOG, MIN, and MAX. Procedures shadowing these names
   do not qualify as intrinsic calls.
 
-Loop bounds are evaluated before dispatch. Workers receive explicit captures;
-scalar captures are private copies and supported arrays share their existing
+Loop bounds and strides are evaluated once before dispatch. Workers receive
+explicit captures; scalar captures are private copies and supported arrays share their existing
 storage. Initialization and bounds checks remain enabled unless `--nocheck`
 is requested. A job completes before execution continues after the loop.
 
 Other constructs use the existing serial lowering. In particular this stage
-does not parallelize array REDUCE, user procedure calls inside loops, allocation,
-I/O, outer constructs containing loops, named constructs, non-unit strides, derived
+does not parallelize runtime-sized array REDUCE, user procedure calls inside loops, allocation,
+I/O, outer constructs containing loops, named constructs, derived
 types, CHARACTER, complex arrays, or pointer array storage. Arrays with
 TARGET and other unsupported attributes also fall back to serial execution.
 This conservative selection is not a complete checker of all Fortran
@@ -58,16 +61,33 @@ is rank-independent; tests cover ranks two, three, and fifteen. Fixed arrays,
 runtime-sized allocatables, and assumed-shape procedure arguments use their
 existing storage mapping and checks. Masks and scalar reductions work across
 the whole iteration space. An empty dimension makes the entire space empty.
-Extent and product overflow beyond signed 64-bit range is diagnosed before
-dispatch, including when runtime bounds checks are disabled.
+The mapping reconstructs each index from its starting value and signed stride.
+An endpoint need not be reached exactly; a stride pointing away from the end
+produces an empty range. Zero strides are diagnosed even with `--nocheck`.
 
-The initial proof requires a permutation of all concurrent indices in each
-write. Slices such as `a(i,1)` and accesses such as both `a(i,j)` and `a(j,i)`
-to the same written array retain serial execution. This is deliberately more
-restrictive than the full language.
+The current mapping requires the normalized inclusive bound span, stride
+magnitude, and total iteration count to fit signed 64-bit arithmetic. It
+checks these limits before dispatch, even with `--nocheck`. The bound-span
+check is conservative: extremely wide ranges may be rejected even when a
+large stride would make the iteration count fit. Empty dimensions skip span
+and product calculations.
+
+Offsets and fixed subscripts may use shared read-only integer scalars or
+named constants, together with addition, subtraction, and unary negation.
+LOCAL, LOCAL_INIT, and REDUCE variables cannot supply invariant offsets or
+fixed subscripts. Index scaling, mixed indices in one subscript, and changes
+of subscript expression between accesses to the same written array retain
+serial execution. This proof is deliberately more restrictive than the full
+language.
 
 ```cmd
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_matrix.f90 --run
+```
+
+A strided example with a fixed column, an offset, and a scalar reduction:
+
+```cmd
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_stride.f90 --run
 ```
 
 ## Scalar reductions
@@ -85,13 +105,35 @@ differently.
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_reduce.f90 --run
 ```
 
-Array reductions retain the serial fallback, as do unsupported captures and
-procedure calls inside loops. Multidimensional arrays and loops remain future
-work.
+## Array reductions
+
+Fixed-size INTEGER, REAL, DOUBLE PRECISION, and LOGICAL arrays support the
+same reduction operators as scalars. Tests cover ranks one, two, three, and
+fifteen, nondefault bounds, whole-array and element/section updates, section
+inputs, and repeated procedure calls. Each worker receives a heap-allocated
+copy initialized to the reduction identity. Its result goes into a separate
+slice of an allocatable result buffer. The caller folds active slices in
+worker order, then incorporates the original array once. Worker copies and
+result buffers are freed after use. Empty ranges and fully masked loops leave
+the original array unchanged.
+
+The conservative budget is 4096 elements summed across all reduction arrays
+in a loop. Result buffers reserve 64 slots, matching the pool's maximum size;
+worker copies and result data/initialization masks use at most 6 MiB of payload.
+Ordinary caller storage, expression temporaries, and allocator overhead are
+additional. Larger reductions and zero-sized reduction arrays use the serial
+fallback. Runtime-sized, ALLOCATABLE, and POINTER reduction objects remain
+outside the supported reduction declarations.
+
+```cmd
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_array_reduce.f90 --run
+```
+
+Unsupported captures and procedure calls inside loops retain serial fallback.
 
 ## Runtime-sized arrays
 
-Rank-one allocatable arrays can be allocated before a concurrent loop and
+Allocatable arrays can be allocated before a concurrent loop and
 read or written by its workers. The capture record references the live data
 and initialization-mask cells; bounds, extents, and allocation status are
 copied into each worker. Allocation and deallocation must stay outside the

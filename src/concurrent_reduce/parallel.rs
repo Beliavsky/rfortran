@@ -78,13 +78,8 @@ fn check(
     if name.is_some() {
         bail!("named constructs are not yet supported");
     }
-    if controls.is_empty()
-        || controls.len() % 4 != 0
-        || controls
-            .chunks(4)
-            .any(|c| !matches!(&c[3],Expr::IntLit(n) if n=="1"))
-    {
-        bail!("requires unit stride");
+    if controls.is_empty() || controls.len() % 4 != 0 {
+        bail!("missing concurrent controls");
     }
     let indices: HashSet<String> = controls
         .chunks(4)
@@ -95,6 +90,8 @@ fn check(
         .collect::<Result<_>>()?;
     let mut locals = indices.clone();
     let mut reductions = false;
+    let mut reduction_arrays = HashSet::new();
+    let mut reduction_elements = 0usize;
     for clause in clauses {
         if let Expr::Call(tag, args) = clause {
             if tag.starts_with("@reduce:") {
@@ -104,7 +101,48 @@ fn check(
                             .get(n)
                             .context("reduction requires an explicit declaration")?;
                         if !o.dims.is_empty() {
-                            bail!("parallel array REDUCE is not yet supported");
+                            let constants = scope
+                                .iter()
+                                .filter_map(|(n, o)| {
+                                    o.constant
+                                        .as_ref()
+                                        .filter(|_| o.attrs.contains("parameter"))
+                                        .map(|e| (n.clone(), e.clone()))
+                                })
+                                .collect::<HashMap<_, _>>();
+                            let mut length = 1usize;
+                            for d in &o.dims {
+                                let (lo, hi) = if let Expr::Call(tag, a) = d {
+                                    if tag == "@declared_bounds" && a.len() == 2 {
+                                        (&a[0], &a[1])
+                                    } else {
+                                        bail!("parallel array REDUCE requires constant bounds")
+                                    }
+                                } else {
+                                    (&Expr::IntLit("1".into()), d)
+                                };
+                                let lo = crate::parameters::evaluate(lo, &constants)
+                                    .context("parallel array REDUCE requires constant bounds")?
+                                    as i128;
+                                let hi = crate::parameters::evaluate(hi, &constants)
+                                    .context("parallel array REDUCE requires constant bounds")?
+                                    as i128;
+                                let extent = usize::try_from((hi - lo + 1).max(0))
+                                    .context("parallel array REDUCE size overflow")?;
+                                length = length
+                                    .checked_mul(extent)
+                                    .context("parallel array REDUCE size overflow")?;
+                            }
+                            if length == 0 {
+                                bail!("zero-sized parallel array REDUCE uses serial execution");
+                            }
+                            reduction_elements = reduction_elements
+                                .checked_add(length)
+                                .context("parallel array REDUCE size overflow")?;
+                            if reduction_elements > 4096 {
+                                bail!("parallel array REDUCE exceeds private-storage budget (4096 elements across arrays)");
+                            }
+                            reduction_arrays.insert(n.clone());
                         }
                         locals.insert(n.clone());
                         reductions = true;
@@ -122,9 +160,46 @@ fn check(
     }
     for n in &locals {
         if let Some(o) = scope.get(n) {
-            if !o.dims.is_empty() {
+            if !o.dims.is_empty() && !reduction_arrays.contains(n) {
                 bail!("parallel local arrays are not yet supported");
             }
+        }
+    }
+    // A subscript is either invariant, or one index plus/minus an invariant
+    // offset. Every index must occur exactly once across the destination tuple.
+    // Exclude LOCAL, LOCAL_INIT and REDUCE objects from invariant expressions.
+    fn invariant(e: &Expr, locals: &HashSet<String>, scope: &Scope) -> bool {
+        match e {
+            Expr::IntLit(_) => true,
+            Expr::Ident(n) => {
+                !locals.contains(n)
+                    && scope.get(n).is_some_and(|o| {
+                        o.dims.is_empty()
+                            && matches!(o.kind, TypeSpec::Integer(_) | TypeSpec::IntegerKind(_))
+                    })
+            }
+            Expr::Bin(BinOp::Add | BinOp::Sub, a, b) => {
+                invariant(a, locals, scope) && invariant(b, locals, scope)
+            }
+            Expr::Un(crate::ast::UnOp::Neg, a) => invariant(a, locals, scope),
+            _ => false,
+        }
+    }
+    fn axis(
+        e: &Expr,
+        indices: &HashSet<String>,
+        locals: &HashSet<String>,
+        scope: &Scope,
+    ) -> Option<String> {
+        match e {
+            Expr::Ident(n) if indices.contains(n) => Some(n.clone()),
+            Expr::Bin(BinOp::Add | BinOp::Sub, a, b) if invariant(b, locals, scope) => {
+                axis(a, indices, locals, scope)
+            }
+            Expr::Bin(BinOp::Add, a, b) if invariant(a, locals, scope) => {
+                axis(b, indices, locals, scope)
+            }
+            _ => None,
         }
     }
     fn writes(
@@ -132,29 +207,36 @@ fn check(
         locals: &HashSet<String>,
         written: &mut HashMap<String, Vec<Expr>>,
         indices_set: &HashSet<String>,
+        scope: &Scope,
     ) -> Result<()> {
         for s in body {
             match s {
                 Stmt::SourceLocation(_)=>{},
                 Stmt::Assign{name,..} if locals.contains(name)=>{},
+                Stmt::AssignIndex{name,..} if locals.contains(name)=>{},
                 Stmt::AssignIndex{name,indices,..} => {
-                    let names: HashSet<String> = indices.iter().filter_map(|e| if let Expr::Ident(n)=e {Some(n.clone())} else {None}).collect();
-                    if indices.len()!=indices_set.len() || names!=*indices_set {
-                        bail!("independent array-element writes must use every concurrent index exactly once");
+                    let mut seen=HashSet::new();
+                    for e in indices {
+                        if invariant(e,locals,scope) {continue;}
+                        let Some(n)=axis(e,indices_set,locals,scope) else {
+                            bail!("independent array-element writes require invariant subscripts or index offsets");
+                        };
+                        if !seen.insert(n) {bail!("array writes must use every concurrent index exactly once");}
                     }
+                    if seen!=*indices_set {bail!("array writes must use every concurrent index exactly once");}
                     if written.get(name).is_some_and(|old| old!=indices) {
                         bail!("array writes must use the same index tuple");
                     }
                     written.insert(name.clone(),indices.clone());
                 },
-                Stmt::If{then_body,else_body,..}=>{writes(then_body,locals,written,indices_set)?;if let Some(b)=else_body {writes(b,locals,written,indices_set)?;}},
+                Stmt::If{then_body,else_body,..}=>{writes(then_body,locals,written,indices_set,scope)?;if let Some(b)=else_body {writes(b,locals,written,indices_set,scope)?;}},
                 _=>bail!("body requires scalar local assignments, independent array-element writes, and IF statements"),
             }
         }
         Ok(())
     }
     let mut written = HashMap::new();
-    writes(body, &locals, &mut written, &indices)?;
+    writes(body, &locals, &mut written, &indices, scope)?;
     if written.is_empty() && !reductions {
         bail!("no independent array output");
     }
@@ -247,7 +329,7 @@ fn check(
             Expr::IntLit(_) | Expr::RealLit(_) | Expr::Logical(_) => Ok(()),
             Expr::Ident(n) => {
                 object(n, scope)?;
-                if !scope[n].dims.is_empty() {
+                if !scope[n].dims.is_empty() && written.contains_key(n) {
                     bail!("whole-array expressions require serial execution");
                 }
                 Ok(())
@@ -264,6 +346,33 @@ fn check(
                 }
                 for a in args {
                     expr(a, scope, written)?;
+                }
+                Ok(())
+            }
+            Expr::Section {
+                name,
+                lower,
+                upper,
+                stride,
+            } => {
+                if !name.is_empty() {
+                    object(name, scope)?;
+                    if written.contains_key(name) {
+                        bail!("sections of written arrays require serial execution");
+                    }
+                }
+                for e in [lower, upper, stride].into_iter().flatten() {
+                    expr(e, scope, written)?;
+                }
+                Ok(())
+            }
+            Expr::Call(n, args)
+                if n == "@array_constructor"
+                    || matches!(n.as_str(), "@vector_subscript" | "@section_subscript")
+                        && matches!(args.as_slice(), [Expr::Section { .. }]) =>
+            {
+                for e in args {
+                    expr(e, scope, written)?;
                 }
                 Ok(())
             }
@@ -385,15 +494,43 @@ pub(super) fn flatten(
         let low = temporary(prefix, serial);
         let high = temporary(prefix, serial);
         let extent = temporary(prefix, serial);
+        let start = temporary(prefix, serial);
+        let step = temporary(prefix, serial);
+        let magnitude = temporary(prefix, serial);
+        prefix.push(set(&start, c[1].clone()));
+        prefix.push(set(&step, c[3].clone()));
+        prefix.push(Stmt::If {
+            cond: binary(BinOp::Eq, id(&step), int(0)),
+            then_body: vec![Stmt::CallSub {
+                name: "@error_stop".into(),
+                args: vec![Expr::Str("DO CONCURRENT stride must not be zero".into())],
+            }],
+            else_body: None,
+        });
+        prefix.push(guard(binary(
+            BinOp::Lt,
+            id(&step),
+            Expr::sub(int(0), max.clone()),
+        )));
+        prefix.push(set(&magnitude, id(&step)));
         prefix.push(set(&low, c[1].clone()));
         prefix.push(set(&high, c[2].clone()));
+        prefix.push(Stmt::If {
+            cond: binary(BinOp::Lt, id(&step), int(0)),
+            then_body: vec![
+                set(&low, c[2].clone()),
+                set(&high, c[1].clone()),
+                set(&magnitude, Expr::sub(int(0), id(&step))),
+            ],
+            else_body: None,
+        });
         prefix.push(set(&extent, int(1)));
         nonempty = binary(BinOp::And, nonempty, binary(BinOp::Ge, id(&high), id(&low)));
-        dimensions.push((c[0].clone(), low, high, extent));
+        dimensions.push((c[0].clone(), low, high, extent, start, step, magnitude));
     }
     prefix.push(set(&total, int(0)));
     let mut calculate = vec![set(&total, int(1))];
-    for (_, low, high, extent) in &dimensions {
+    for (_, low, high, extent, _, _, magnitude) in &dimensions {
         // Test emptiness for *all* axes before doing any extent arithmetic.
         // A nonempty extent and its product must fit the callback ABI's i64.
         calculate.push(Stmt::If {
@@ -405,7 +542,13 @@ pub(super) fn flatten(
             ))],
             else_body: None,
         });
-        calculate.push(set(extent, Expr::add(Expr::sub(id(high), id(low)), int(1))));
+        calculate.push(set(
+            extent,
+            Expr::add(
+                Expr::div(Expr::sub(id(high), id(low)), id(magnitude)),
+                int(1),
+            ),
+        ));
         calculate.push(guard(binary(
             BinOp::Gt,
             id(&total),
@@ -418,11 +561,39 @@ pub(super) fn flatten(
         then_body: calculate,
         else_body: None,
     });
-    let order = first_write(&body)
-        .unwrap_or_else(|| dimensions.iter().rev().map(|d| d.0.clone()).collect());
+    fn indices_in(e: &Expr, controls: &[Expr], order: &mut Vec<Expr>) {
+        if controls.chunks(4).any(|c| c[0] == *e) {
+            order.push(e.clone());
+            return;
+        }
+        if let Expr::Bin(_, a, b) = e {
+            indices_in(a, controls, order);
+            indices_in(b, controls, order);
+        }
+    }
+    let order = if let Some(tuple) = first_write(&body) {
+        let mut order = vec![];
+        for e in tuple {
+            indices_in(&e, &controls, &mut order);
+        }
+        if order.len() == dimensions.len()
+            && order
+                .iter()
+                .collect::<Vec<_>>()
+                .iter()
+                .enumerate()
+                .all(|(i, e)| !order[..i].contains(e))
+        {
+            order
+        } else {
+            dimensions.iter().rev().map(|d| d.0.clone()).collect()
+        }
+    } else {
+        dimensions.iter().rev().map(|d| d.0.clone()).collect()
+    };
     let mut iterations = vec![set(&remaining, id(&linear))];
     for index in order {
-        let (_, low, _, extent) = dimensions
+        let (_, _, _, extent, start, step, _) = dimensions
             .iter()
             .find(|d| d.0 == index)
             .expect("proved concurrent index");
@@ -432,10 +603,13 @@ pub(super) fn flatten(
         iterations.push(set(
             &n,
             Expr::add(
-                id(low),
-                Expr::sub(
-                    id(&remaining),
-                    Expr::mul(Expr::div(id(&remaining), id(extent)), id(extent)),
+                id(start),
+                Expr::mul(
+                    id(step),
+                    Expr::sub(
+                        id(&remaining),
+                        Expr::mul(Expr::div(id(&remaining), id(extent)), id(extent)),
+                    ),
                 ),
             ),
         ));
@@ -469,6 +643,7 @@ mod tests {
                     dims: vec![],
                     attrs: HashSet::new(),
                     derived: false,
+                    constant: None,
                 },
             ),
             (
@@ -478,6 +653,7 @@ mod tests {
                     dims: vec![int(9000)],
                     attrs: HashSet::new(),
                     derived: false,
+                    constant: None,
                 },
             ),
         ]);

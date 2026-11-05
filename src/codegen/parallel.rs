@@ -93,6 +93,7 @@ fn references(body: &[IStmt], out: &mut HashSet<String>) {
                 references(body, out);
             }
             IStmt::Block { body } => references(body, out),
+            IStmt::Call(n, _) if n == "@parallel_iteration" => {}
             IStmt::Call(_, args) | IStmt::Print(args) | IStmt::Read(args) => {
                 for a in args {
                     expr(a, out);
@@ -121,19 +122,37 @@ pub(super) fn emit(
     func_meta: &HashMap<String, FuncMeta>,
     tokens: Option<&[crate::lexer::Token]>,
 ) -> Result<bool> {
-    let outputs: Vec<(String, String)> = marker(body)
-        .unwrap_or_default()
-        .chunks_exact(2)
-        .filter_map(|pair| {
-            if let [IExpr::Ident(value), IExpr::Ident(array)]
-            | [IExpr::Str(value), IExpr::Str(array)] = pair
-            {
-                Some((value.clone(), array.clone()))
-            } else {
-                None
+    fn storage_name(e: &IExpr) -> Option<String> {
+        match e {
+            IExpr::Ident(n) | IExpr::Str(n) => Some(n.clone()),
+            IExpr::Call(tag, args) if tag == "@packed_view" => args.first().and_then(storage_name),
+            _ => None,
+        }
+    }
+    let metadata = marker(body).unwrap_or_default();
+    let mut outputs = Vec::new();
+    let mut initialization_masks = Vec::new();
+    if metadata.len() % 2 != 0 {
+        bail!("invalid parallel reduction metadata");
+    }
+    for pair in metadata.chunks_exact(2) {
+        if let IExpr::Call(tag, args) = &pair[0] {
+            if tag == "@parallel_init" {
+                if let [IExpr::Ident(value), IExpr::Ident(flag)] = args.as_slice() {
+                    initialization_masks.push((value.clone(), flag.clone()));
+                    continue;
+                }
+                bail!("invalid parallel initialization metadata");
             }
-        })
-        .collect();
+        }
+        let (Some(value), Some(array)) = (storage_name(&pair[0]), storage_name(&pair[1])) else {
+            crate::concurrent_reduce::parallel::report(
+                "serial fallback: unsupported reduction storage view",
+            );
+            return Ok(false);
+        };
+        outputs.push((value, array));
+    }
     let mut used = HashSet::new();
     for (value, array) in &outputs {
         used.insert(value.clone());
@@ -143,30 +162,43 @@ pub(super) fn emit(
     // Later lowering can introduce per-iteration temporaries (for example
     // kind-qualified integer literals). Their declarations belong to the
     // callback, not to the caller's capture record.
-    fn private_declarations(body: &[IStmt], used: &mut HashSet<String>) {
+    fn private_declarations(
+        body: &[IStmt],
+        used: &mut HashSet<String>,
+        private: &mut HashSet<String>,
+    ) {
         for s in body {
             match s {
                 IStmt::DeclVar(_, n, _) => {
                     used.remove(n);
+                    private.insert(n.clone());
                 }
                 IStmt::If {
                     then_body,
                     else_body,
                     ..
                 } => {
-                    private_declarations(then_body, used);
+                    private_declarations(then_body, used, private);
                     if let Some(body) = else_body {
-                        private_declarations(body, used);
+                        private_declarations(body, used, private);
                     }
                 }
                 IStmt::Do { body, .. } | IStmt::DoWhile { body, .. } | IStmt::Block { body } => {
-                    private_declarations(body, used)
+                    private_declarations(body, used, private)
                 }
                 _ => {}
             }
         }
     }
-    private_declarations(body, &mut used);
+    let mut private_names = outputs
+        .iter()
+        .map(|(n, _)| n.clone())
+        .collect::<HashSet<_>>();
+    private_declarations(body, &mut used, &mut private_names);
+    let private_masks = initialization_masks
+        .into_iter()
+        .filter_map(|(n, flag)| private_names.contains(&n).then_some(flag))
+        .collect::<HashSet<_>>();
     used.insert(var.into());
     let mut names = used.into_iter().collect::<Vec<_>>();
     names.sort();
@@ -243,6 +275,7 @@ pub(super) fn emit(
         let mut wr = HashMap::new();
         let mut wb = HashMap::new();
         let mut wa = HashMap::new();
+        let mut private_arrays = vec![];
         for (i, (n, original, kind)) in captures.iter().enumerate() {
             let address = w
                 .ins()
@@ -254,11 +287,32 @@ pub(super) fn emit(
             ));
             let storage = if let Some(length) = arrays.get(n) {
                 wa.insert(n.clone(), *length);
+                let private =
+                    outputs.iter().any(|(value, _)| value == n) || private_masks.contains(n);
+                let address = if private {
+                    let bytes = w.ins().iconst(ptr, (*length * 8) as i64);
+                    let data = file_io::call(module, &mut w, "malloc", &[bytes], ptr)?;
+                    let okay = w.ins().icmp_imm(ir::condcodes::IntCC::NotEqual, data, 0);
+                    file_io::require(
+                        module,
+                        &mut w,
+                        ptr,
+                        &mut 0,
+                        okay,
+                        "parallel reduction allocation failed",
+                    )?;
+                    file_io::call(module, &mut w, "memcpy", &[data, address, bytes], ptr)?;
+                    private_arrays.push(data);
+                    data
+                } else {
+                    address
+                };
                 w.ins().stack_store(address, slot, 0);
                 Storage::Borrowed {
                     cell: slot,
                     original: BorrowedOriginal::Stack(slot),
-                    heap: matches!(original, Storage::HeapStack(_) | Storage::HeapStatic(_)),
+                    heap: !private
+                        && matches!(original, Storage::HeapStack(_) | Storage::HeapStatic(_)),
                 }
             } else {
                 let ty = match kind {
@@ -341,16 +395,33 @@ pub(super) fn emit(
                 (wb[value], ir::types::I8)
             };
             let source = storage_addr(&mut w, ptr, storage);
-            let result = w.ins().load(ty, ir::MemFlags::new(), source, 0);
+            let length = wa.get(value).copied();
             let destination = wi
                 .get(array)
                 .or_else(|| wr.get(array))
                 .or_else(|| wb.get(array))
                 .unwrap();
             let address = storage_addr(&mut w, ptr, *destination);
-            let offset = w.ins().imul_imm(params[3], 8);
+            let offset = w
+                .ins()
+                .imul_imm(params[3], (length.unwrap_or(1) * 8) as i64);
             let address = w.ins().iadd(address, offset);
-            w.ins().store(ir::MemFlags::new(), result, address, 0);
+            if let Some(length) = length {
+                let bytes = w.ins().iconst(ptr, (length * 8) as i64);
+                file_io::call(module, &mut w, "memcpy", &[address, source, bytes], ptr)?;
+            } else {
+                let result = w.ins().load(ty, ir::MemFlags::new(), source, 0);
+                w.ins().store(ir::MemFlags::new(), result, address, 0);
+            }
+        }
+        if !private_arrays.is_empty() {
+            let mut sig = module.make_signature();
+            sig.params.push(ir::AbiParam::new(ptr));
+            let free = module.declare_function("free", Linkage::Import, &sig)?;
+            let free = module.declare_func_in_func(free, w.func);
+            for data in private_arrays {
+                w.ins().call(free, &[data]);
+            }
         }
         w.ins().return_(&[]);
         w.seal_all_blocks();
@@ -450,8 +521,90 @@ mod tests {
             "x86_64-unknown-linux-gnu",
             "aarch64-apple-darwin",
         ] {
-            for heap in [false, true] {
+            for (heap, array) in [(false, false), (true, false), (false, true), (true, true)] {
                 let mut module = module.clone();
+                if array {
+                    for stmt in &mut module.funcs[0].body {
+                        match stmt {
+                            IStmt::DeclVar(_, n, dims) if n == "s" => {
+                                *dims = vec![IExpr::IntLit("3".into())]
+                            }
+                            IStmt::DeclVar(_, n, dims) if n == "partial" => {
+                                *dims = vec![IExpr::IntLit("192".into())]
+                            }
+                            IStmt::AssignIntLit(n, _) if n == "s" => {
+                                *stmt = IStmt::AssignIndex(
+                                    "s".into(),
+                                    vec![IExpr::IntLit("1".into())],
+                                    IExpr::IntLit("0".into()),
+                                )
+                            }
+                            IStmt::Do { body, .. } => {
+                                body[0] = IStmt::Call(
+                                    "@parallel_iteration".into(),
+                                    vec![
+                                        IExpr::Ident("s".into()),
+                                        IExpr::Call(
+                                            "@packed_view".into(),
+                                            vec![
+                                                IExpr::Ident("partial".into()),
+                                                IExpr::IntLit("192".into()),
+                                            ],
+                                        ),
+                                    ],
+                                );
+                                body[1] = IStmt::AssignIndex(
+                                    "s".into(),
+                                    vec![IExpr::IntLit("1".into())],
+                                    IExpr::Bin(
+                                        crate::ast::BinOp::Add,
+                                        Box::new(IExpr::Index(
+                                            "s".into(),
+                                            vec![IExpr::IntLit("1".into())],
+                                        )),
+                                        Box::new(IExpr::Ident("i".into())),
+                                    ),
+                                );
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                if array {
+                    let position = module.funcs[0].body.len() - 1;
+                    module.funcs[0].body.insert(
+                        position,
+                        IStmt::DeclVar(
+                            TypeSpec::Integer(None),
+                            "scratch_mask".into(),
+                            vec![IExpr::IntLit("2".into())],
+                        ),
+                    );
+                    if let Some(IStmt::Do { body, .. }) = module.funcs[0].body.last_mut() {
+                        if let IStmt::Call(_, args) = &mut body[0] {
+                            args.extend([
+                                IExpr::Call(
+                                    "@parallel_init".into(),
+                                    vec![
+                                        IExpr::Ident("scratch".into()),
+                                        IExpr::Ident("scratch_mask".into()),
+                                    ],
+                                ),
+                                IExpr::IntLit("0".into()),
+                            ]);
+                        }
+                        body.push(IStmt::DeclVar(
+                            TypeSpec::Integer(None),
+                            "scratch".into(),
+                            vec![IExpr::IntLit("2".into())],
+                        ));
+                        body.push(IStmt::AssignIndex(
+                            "scratch_mask".into(),
+                            vec![IExpr::IntLit("1".into())],
+                            IExpr::IntLit("1".into()),
+                        ));
+                    }
+                }
                 if heap {
                     module.funcs[0].body.insert(
                         2,

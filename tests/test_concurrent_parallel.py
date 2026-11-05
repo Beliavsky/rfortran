@@ -210,6 +210,202 @@ end
     def test_multidimensional_example(self):
         self.build_run((ROOT/'tests/programs/xconcurrent_parallel_matrix.f90').read_text(),'8000 1.0 58.0')
 
+    def test_stride_positive_offsets(self):
+        self.build_run("""implicit none
+integer :: i,n,step,slot,total,a(18001,2)
+n=18000
+step=2
+slot=2
+total=0
+a=-1
+do concurrent(i=1:n:step) reduce(+:total)
+a(i+1,slot)=i
+total=total+a(i+1,slot)
+end do
+print *,a(1,2),a(2,2),a(18000,2),a(18001,2),total
+end
+""",'-1 1 17999 -1 81000000')
+
+    def test_stride_negative_allocatable(self):
+        self.build_run("""implicit none
+integer :: i,n,step,total
+integer,allocatable :: a(:,:)
+n=18000
+step=-2
+allocate(a(0:n,2))
+a=-1
+total=0
+do concurrent(i=n:1:step) reduce(+:total)
+a(2+i-2,2)=i
+total=total+a(2+i-2,2)
+end do
+print *,a(n,2),a(2,2),a(1,2),total
+end
+""",'18000 2 -1 81009000')
+
+    def test_stride_multiple_controls_mask(self):
+        self.build_run("""implicit none
+integer :: i,j,total,a(101,180,2)
+a=0
+total=0
+do concurrent(j=1:180:2,i=100:1:-1,i>2) reduce(+:total)
+a(i+1,j,2)=i+j
+total=total+1
+end do
+print *,a(2,1,2),a(4,1,2),a(101,179,2),total
+end
+""",'0 4 279 8820')
+
+    def test_stride_empty_and_uneven(self):
+        self.build_run("""implicit none
+integer :: i,s=17,a(12)
+a=0
+do concurrent(i=1:10:-2) reduce(+:s)
+s=s+i
+end do
+do concurrent(i=10:1:2) reduce(+:s)
+s=s+i
+end do
+do concurrent(i=2:12:3)
+a(i)=i
+end do
+do concurrent(i=12:2:-3)
+a(i)=i
+end do
+print *,s,a
+end
+""",'17 0 2 3 0 5 6 0 8 9 0 11 12',threads=(1,))
+
+    def test_stride_assumed_shape_offsets(self):
+        self.build_run("""implicit none
+real :: a(18002,2)
+a=-1.0
+call fill(a,-2)
+print *,a(18001,2),a(3,2),a(2,2)
+contains
+subroutine fill(x,stride)
+real,intent(inout)::x(:,:)
+integer,intent(in)::stride
+integer::i,n
+n=size(x,1)-2
+do concurrent(i=n:1:stride)
+x(i+1,2)=real(i)
+end do
+end subroutine
+end
+""",'18000.0 2.0 -1.0')
+
+    def test_stride_fixed_subscript_unit(self):
+        self.build_run("""implicit none
+integer :: i,a(9001,2)
+a=-1
+do concurrent(i=1:9000)
+a(i+1,1)=i
+end do
+print *,a(1,1),a(2,1),a(9001,1),a(1,2)
+end
+""",'-1 1 9000 -1')
+
+    def test_stride_mutable_offset_fallback(self):
+        self.build_run("""implicit none
+integer :: i,k=1,a(3,2)
+a=0
+do concurrent(i=1:3) local_init(k)
+k=2
+a(i,k)=i
+end do
+print *,a(:,2)
+end
+""",'1 2 3',reason='invariant subscripts or index offsets',threads=(1,))
+
+    def test_stride_different_offset_fallback(self):
+        self.build_run("""implicit none
+integer :: i,a(4)
+a=0
+do concurrent(i=1:3)
+a(i)=1
+a(i+1)=1
+end do
+print *,a
+end
+""",'1 1 1 1',reason='same index tuple',threads=(1,))
+
+    def test_stride_missing_index_fallback(self):
+        self.build_run("""implicit none
+integer :: i,j,a(3)
+a=0
+do concurrent(i=1:3,j=1:2)
+a(i)=1
+end do
+print *,a
+end
+""",'1 1 1',reason='every concurrent index exactly once',threads=(1,))
+
+    def test_stride_zero_diagnostic(self):
+        with tempfile.TemporaryDirectory(prefix='parallel-stride-') as tmp:
+            path=Path(tmp)/'case.f90';exe=Path(tmp)/'case.exe'
+            path.write_text('integer :: i,k,s=0\nk=0\ndo concurrent(i=1:9:k) reduce(+:s)\ns=s+i\nend do\nend\n')
+            for opt in ('0','2'):
+                result=subprocess.run([str(COMPILER),'-O',opt,'--parallel','--nocheck',str(path),'-o',str(exe)],capture_output=True,text=True,timeout=90)
+                self.assertEqual(result.returncode,0,result.stderr)
+                result=subprocess.run([str(exe)],capture_output=True,text=True,timeout=10)
+                self.assertNotEqual(result.returncode,0)
+                self.assertIn('stride must not be zero',result.stderr)
+
+    def test_stride_snapshot_before_reduction(self):
+        self.build_run("""implicit none
+integer :: i,stride=2
+do concurrent(i=1:18000:stride) reduce(+:stride)
+stride=stride+1
+end do
+print *,stride
+end
+""",'9002')
+
+    def test_stride_runtime_bounds_and_initialization(self):
+        template="""implicit none
+integer :: i,stride
+real,allocatable :: a(:),b(:)
+stride=-2
+allocate(a(18000),b(18000))
+a=1.0
+INITIALIZE
+do concurrent(i=18000:1:stride)
+b(i+OFFSET)=a(i)
+end do
+end
+"""
+        with tempfile.TemporaryDirectory(prefix='parallel-stride-check-') as tmp:
+            path=Path(tmp)/'case.f90';exe=Path(tmp)/'case.exe'
+            for message,source in [('bounds',template.replace('INITIALIZE','').replace('OFFSET','1')),
+                                   ('uninitialized',template.replace('a=1.0','a(1:17999)=1.0').replace('INITIALIZE','').replace('OFFSET','0'))]:
+                path.write_text(source)
+                for opt in ('0','2'):
+                    result=subprocess.run([str(COMPILER),'-O',opt,'--parallel','--parallel-report',str(path),'-o',str(exe)],capture_output=True,text=True,timeout=90)
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    self.assertIn('native parallel worker emitted',result.stderr)
+                    for n in (1,2,4):
+                        result=subprocess.run([str(exe)],env=dict(os.environ,RFORT_NUM_THREADS=str(n)),capture_output=True,text=True,timeout=30)
+                        self.assertNotEqual(result.returncode,0)
+                        self.assertIn(message,result.stderr)
+
+    def test_stride_example_without_checks(self):
+        self.build_run((ROOT/'tests/programs/xconcurrent_parallel_stride.f90').read_text(),'81009000 2 18000',checks=False)
+
+    def test_stride_negative_bounds(self):
+        self.build_run("""implicit none
+integer :: i,a(-7:8,2)
+a=0
+do concurrent(i=-7:8:3)
+a(i,1)=i
+end do
+do concurrent(i=8:-7:-3)
+a(i,2)=i
+end do
+print *,a(-7,:),a(8,:),sum(a(:,1)),sum(a(:,2))
+end
+""",'-7 -7 8 8 3 3',threads=(1,))
+
     def test_locality_repeated_jobs(self):
         self.build_run((ROOT/'tests/programs/xconcurrent_parallel.f90').read_text(),'16.0 40014.0 99 -1 10')
 
@@ -256,7 +452,7 @@ print *,a
 end
 ''','1 2 3 4',threads=(1,),opts=('2',))
 
-    def test_strided_fallback(self):
+    def test_strided_small_range(self):
         self.build_run('''integer :: i,a(6)
 a=0
 do concurrent(i=1:6:2)
@@ -264,7 +460,7 @@ a(i)=i
 end do
 print *,a
 end
-''','1 0 3 0 5 0',reason='unit stride',opts=('2',))
+''','1 0 3 0 5 0',threads=(1,),opts=('2',))
 
     def test_scalar_reduction(self):
         self.build_run('''integer :: i,s=0
@@ -335,7 +531,201 @@ print *,p,big,lo,hi
 end
 """,'6 3000009001 0.25 0.5')
 
-    def test_array_reduction_fallback(self):
+    def test_array_reduction_rank_two_sections(self):
+        self.build_run("""implicit none
+integer :: i
+real :: x(2,2,9000),s(-1:0,3:4)
+x=2.0
+s=7.0
+do concurrent(i=1:9000) reduce(+:s)
+s=s+x(:,:,i)
+end do
+print *,s
+end
+""",'18007.0 18007.0 18007.0 18007.0')
+
+    def test_array_reduction_element_updates(self):
+        self.build_run("""implicit none
+integer :: i,s(2)
+s=7
+do concurrent(i=1:9000) reduce(+:s)
+s(1)=s(1)+1
+s(2)=s(2)+2
+end do
+print *,s
+end
+""",'9007 18007')
+
+    def test_array_reduction_numeric_operations(self):
+        self.build_run("""implicit none
+integer :: i,lo(2),hi(2)
+double precision :: product(2)
+lo=20000
+hi=-1
+product=3.0d0
+do concurrent(i=1:9000) reduce(min:lo) reduce(max:hi) reduce(*:product)
+lo=min(lo,[i,-i])
+hi=max(hi,[i,-i])
+product=product*[1.0d0,1.0d0]
+end do
+print *,lo,hi,product
+end
+""",'1 -9000 9000 -1 3.0 3.0')
+
+    def test_array_reduction_logical_operations(self):
+        self.build_run("""implicit none
+integer :: i
+logical :: a(2),b(2),c(2),d(2)
+a=.true.
+b=.false.
+c=.true.
+d=.false.
+do concurrent(i=1:9001) reduce(.and.:a) reduce(.or.:b) reduce(.eqv.:c) reduce(.neqv.:d)
+a=a .and. [.true.,i<9001]
+b=b .or. [.false.,i==9001]
+c=c .eqv. [.true.,.false.]
+d=d .neqv. [.false.,.true.]
+end do
+print *,a,b,c,d
+end
+""",'T F F T T F F T')
+
+    def test_array_reduction_empty_and_masks(self):
+        self.build_run("""implicit none
+integer :: i,s(2)
+s=[7,9]
+do concurrent(i=1:0) reduce(+:s)
+s=s+[1,1]
+end do
+do concurrent(i=1:9000,i<0) reduce(+:s)
+s=s+[1,1]
+end do
+do concurrent(i=1:3,i==2) reduce(+:s)
+s=s+[2,3]
+end do
+print *,s
+end
+""",'9 12',threads=(1,2,4))
+
+    def test_array_reduction_procedure(self):
+        self.build_run("""implicit none
+real :: s(2),x(2,9000)
+x=1.0
+s=5.0
+call accumulate(x,s)
+call accumulate(x,s)
+print *,s
+contains
+subroutine accumulate(x,s)
+real,intent(in)::x(:,:)
+real,intent(inout)::s(2)
+integer::i,n
+n=size(x,2)
+do concurrent(i=1:n) reduce(+:s)
+s=s+x(:,i)
+end do
+end subroutine
+end
+""",'18005.0 18005.0')
+
+    def test_array_reduction_budget_fallback(self):
+        self.build_run("""implicit none
+integer,parameter::n=4097
+integer :: i,s(n)
+s=0
+do concurrent(i=1:2) reduce(+:s)
+s=s+1
+end do
+print *,s(1),s(n)
+end
+""",'2 2',reason='private-storage budget',threads=(1,),opts=('2',))
+
+    def test_array_reduction_rank_three_and_scalar(self):
+        self.build_run("""implicit none
+integer,parameter :: n=2
+integer :: i,j,total=7,s(n,n,n)
+s=3
+do concurrent(i=100:1:-1,j=1:90) reduce(+:s,total)
+s=s+1
+total=total+1
+end do
+print *,minval(s),maxval(s),total
+end
+""",'9003 9003 9007')
+
+    def test_array_reduction_rank_fifteen(self):
+        dims=','.join(['2']+['1']*14)
+        self.build_run(f"""implicit none
+integer :: i,s({dims})
+s=1
+do concurrent(i=1:9000) reduce(+:s)
+s=s+1
+end do
+print *,sum(s)
+end
+""",'18002',opts=('2',))
+
+    def test_array_reduction_empty_storage_fallback(self):
+        self.build_run("""implicit none
+integer :: i,s(0)
+s=0
+do concurrent(i=1:10) reduce(+:s)
+s=s+1
+end do
+print *,size(s)
+end
+""",'0',reason='zero-sized parallel array REDUCE',threads=(1,),opts=('2',))
+
+    def test_array_reduction_combined_budget(self):
+        self.build_run("""implicit none
+integer :: i,s(3000),t(3000)
+s=0
+t=0
+do concurrent(i=1:2) reduce(+:s,t)
+s=s+1
+t=t+1
+end do
+print *,s(1),t(1)
+end
+""",'2 2',reason='private-storage budget',threads=(1,),opts=('2',))
+
+    def test_array_reduction_partial_section(self):
+        self.build_run("""implicit none
+integer :: i,s(4)
+s=5
+do concurrent(i=1:9000) reduce(+:s)
+s(2:3)=s(2:3)+[1,2]
+end do
+print *,s
+end
+""",'5 9005 18005 5')
+
+    def test_array_reduction_no_checks(self):
+        self.build_run("""implicit none
+integer :: i,s(2)
+s=3
+do concurrent(i=1:9000) reduce(+:s)
+s=s+[1,2]
+end do
+print *,s
+end
+""",'9003 18003',checks=False)
+
+    def test_array_reduction_histogram(self):
+        self.build_run("""implicit none
+integer :: i,bins(10000),hist(4)
+do i=1,10000
+bins(i)=mod(i,4)+1
+end do
+hist=1
+do concurrent(i=1:10000) reduce(+:hist)
+hist(bins(i))=hist(bins(i))+1
+end do
+print *,hist
+end
+""",'2501 2501 2501 2501')
+
+    def test_array_reduction(self):
         self.build_run("""integer :: i,s(2)
 s=0
 do concurrent(i=1:10000) reduce(+:s)
@@ -343,7 +733,7 @@ s=s+[i,1]
 end do
 print *,s
 end
-""",'50005000 10000',reason='parallel array REDUCE',opts=('2',))
+""",'50005000 10000')
 
     def test_procedure_missing_intent_fallback(self):
         self.build_run('''program p

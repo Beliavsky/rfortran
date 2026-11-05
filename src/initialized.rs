@@ -597,6 +597,16 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                 for argument in args {read(argument,env,&mut before,serial)?;}
                 terminated=true;
             }
+            Stmt::CallSub { name,args } if name=="@parallel_iteration" => {
+                for arg in args.iter() {read(arg,env,&mut before,serial)?;}
+                // The native outliner must privatize masks of reduction arrays
+                // and generated arrays declared inside the worker. Metadata is
+                // not a read of the possibly uninitialized associated data.
+                for (variable,state) in env.iter().filter(|(_,v)|v.extent.is_some()) {
+                    args.push(Expr::Call("@parallel_init".into(),vec![Expr::Ident(variable.clone()),Expr::Ident(state.flag.clone())]));
+                    args.push(int(0));
+                }
+            }
             Stmt::CallSub { args, .. } => for arg in args { read(arg, env, &mut before, serial)?; },
             Stmt::If { cond, then_body, else_body } => {
                 read(cond, env, &mut before, serial)?;
@@ -923,6 +933,16 @@ mod tests {
         let tokens = crate::lexer::lex(source);
         let program=crate::parser::parse_with_src(source, &tokens, "initialization.f90").unwrap();
         crate::reductions::resolve(crate::parameters::resolve(program).unwrap()).unwrap()
+    }
+    #[test]
+    fn parallel_mask_metadata_does_not_read_uninitialized_arrays() {
+        let mut p=parse("integer :: scratch(2)\nend");
+        p.body.push(super::Stmt::CallSub{name:"@parallel_iteration".into(),args:vec![]});
+        let p=super::instrument(p).unwrap();
+        let dump=format!("{p:?}");
+        assert!(dump.contains("@parallel_init"),"{dump}");
+        assert!(dump.contains("scratch"));
+        assert!(!dump.contains("@check_initialized"),"{dump}");
     }
     #[test]
     fn rejects_definite_unassigned_reads() {
