@@ -172,6 +172,8 @@ pub fn print_help() {
     println!("  --quiet              Suppress build progress (warnings remain visible)");
     println!("  --help               Show this help message");
     println!("  --debug-ir           Show IR before and after optimizations");
+    println!("  --parallel           Enable experimental native DO CONCURRENT parallelism");
+    println!("  --parallel-report    Explain parallel workers and serial fallback");
     println!("  --time               Report elapsed times on stderr");
     println!("  --run                Run the executable after building");
     println!("  -- <arguments>       Pass arguments to --run or the run subcommand");

@@ -1,3 +1,5 @@
+#[path = "parallel.rs"]
+mod parallel;
 #[path = "file_io.rs"]
 mod file_io;
 #[path = "characters.rs"]
@@ -2057,6 +2059,7 @@ fn gen_stmts(
             } else { st }
         } else { st };
         match st {
+            IStmt::Call(name,_) if name=="@parallel_iteration" => {},
             IStmt::Print(items) => {
                 let space = make_data(module, b, ptr_ty, dc, b" ")?;
                 let mut previous_character = None;
@@ -2485,6 +2488,10 @@ fn gen_stmts(
                 end,
                 body,
             } => {
+                if body.iter().any(|s| matches!(s,IStmt::Call(n,_) if n=="@parallel_iteration"))
+                    && parallel::emit(b,ex,ptr_ty,module,var,start,end,body,ints,reals,bools,real_kind,arrays,func_meta,tokens)? {
+                    continue;
+                }
                 if let Some(ss) = ints.get(var).copied() {
                     let ss = &ss;
                     let sv = eval_expr(b, ex, ptr_ty, start, ints, reals, bools, func_meta);

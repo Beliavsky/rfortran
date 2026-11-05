@@ -9,6 +9,9 @@ mod codegen;
 mod ir;
 mod command_time;
 mod linker;
+#[cfg(test)]
+#[path = "parallel_runtime.rs"]
+mod parallel_runtime_tests;
 
 #[cfg(all(target_os = "windows", feature = "bundled-objdump"))]
 const OBJDUMP_BYTES: Option<&[u8]> = Some(include_bytes!("bin/tools/objdump.exe"));
@@ -43,6 +46,11 @@ fn compiler_main(started: std::time::Instant) -> Result<()> {
     env_logger::init();
     let args = cli::Cli::from_command_line().normalize();
 
+    concurrent_reduce::parallel::configure(args.parallel && matches!(args.cmd,
+        Some(cli::Command::Build { .. } | cli::Command::EmitObj { .. })), args.parallel_report);
+    if args.parallel && !matches!(args.cmd, Some(cli::Command::Build { .. } | cli::Command::EmitObj { .. } | cli::Command::Link { .. })) {
+        anyhow::bail!("--parallel is available for native compilation; the interpreter remains serial");
+    }
     let _overall = command_time::Overall::new(args.time, started);
     unused::validate_options(&args.warnings)?;
 

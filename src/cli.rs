@@ -62,6 +62,12 @@ pub struct Cli {
     )]
     pub lto: bool,
 
+    #[structopt(long, global = true, help = "Parallelize supported native DO CONCURRENT loops (experimental)")]
+    pub parallel: bool,
+
+    #[structopt(long, global = true, help = "Explain DO CONCURRENT parallelization and serial fallback")]
+    pub parallel_report: bool,
+
     #[structopt(long = "nocheck", help = "Compile without run-time checks of uninitialized reads and array subscripts")]
     pub nocheck: bool,
 

@@ -1,20 +1,21 @@
 # Parallelism options for rfort: coarrays, DO CONCURRENT, OpenMP
 
-Planning notes, November 2026. Serial DO CONCURRENT locality is implemented; parallel execution remains proposed.
+Planning notes, November 2026. Serial DO CONCURRENT locality and an opt-in native parallel subset are implemented; broader parallelism remains proposed.
 
 ## Current state
 
-rfort executes everything serially.
+rfort executes serially by default. See [native DO CONCURRENT parallelism](parallel-concurrent.md) for the experimental `--parallel` option.
 
 - Coarrays are unsupported (`docs/feature-status.md`). Nothing in `src/`
   parses codimensions, image selectors or SYNC statements.
 - OpenMP and OpenACC directives are treated as comments, and `_OPENMP` is not
   defined.
-- DO CONCURRENT runs serially. Its controls, mask, locality clauses and body
+- DO CONCURRENT has a serial fallback. Its controls, mask, locality clauses and body
   remain together in the parser representation until semantic lowering.
   LOCAL, LOCAL_INIT, SHARED, DEFAULT(NONE), and REDUCE are supported with the
   storage limits documented in [language support](language-support.md#do-loops).
-  These changes prepare for parallel lowering; they do not create threads.
+  An opt-in native path outlines supported main-program loops and dispatches
+  them to a reusable pool; unsupported loops remain serial.
 
 ## Coarrays in three stages
 
@@ -154,8 +155,10 @@ is mostly OpenMP, then MPI, with coarrays a distant third.
 - **Parallel DO CONCURRENT.**
   - **Benefit:** existing code speeds up without being rewritten, and rfort
     already analyzes these loops.
-  - **Needs:** a thread pool, outlined iteration bodies, capture analysis,
-    parallel reductions, and thread-safety checks for called procedures.
+  - **Implemented:** an opt-in pool and outlined workers for a conservative
+    main-program subset, with serial fallback.
+  - **Next:** broader capture analysis, parallel reductions, and thread-safety
+    checks for called procedures.
     SAVE and module variables retain their Fortran sharing semantics; making
     them all thread-local would change program behavior. Unsupported captures
     should use the serial fallback with an explanatory diagnostic.

@@ -121,6 +121,10 @@ rfort --verbose main.f90
 On Linux/macOS, choose names such as `myprogram` and `main.o` instead.
 Successful builds are silent by default; warnings and errors remain visible.
 
+Experimental native DO CONCURRENT parallelism is available with `--parallel`.
+Use `--parallel-report` to explain worker generation and serial fallback; see
+[the supported subset and thread controls](docs/parallel-concurrent.md).
+
 The default optimization level is `-O2`. `--verbose` shows compilation progress
 and tool commands; `--quiet` suppresses that progress. `--run` executes the
 linked program and propagates its failure status.

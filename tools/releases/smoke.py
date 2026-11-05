@@ -61,6 +61,14 @@ def smoke(binary, examples, expected_version=None):
         run([binary, sources / 'c_interop.f90', '-o', executable], work)
         run([executable], work, env=standalone, expected='42')
         results.append('native C interoperability: libc abs with BIND(C), VALUE')
+        shutil.copyfile(examples / 'parallel.f90', sources / 'parallel.f90')
+        executable = work / ('parallel.exe' if os.name == 'nt' else 'parallel')
+        run([binary, '--parallel', sources / 'parallel.f90', '-o', executable], work)
+        parallel_env = dict(standalone, RFORT_NUM_THREADS='2', RFORT_PARALLEL_TRACE='1')
+        result = run([executable], work, env=parallel_env, expected='50005000')
+        if 'rfort parallel: 2 threads' not in result.stderr:
+            raise RuntimeError('Native parallel smoke test did not use two threads: ' + result.stderr)
+        results.append('native DO CONCURRENT with two threads')
         modules = work / 'module interfaces'
         modules.mkdir()
         objects = []

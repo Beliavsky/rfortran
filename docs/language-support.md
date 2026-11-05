@@ -702,6 +702,8 @@ scalars and constant explicit-shape arrays; derived, pointer, allocatable, and
 runtime-shaped local storage are rejected. Locality names require declarations.
 A loop index type specification is not supported. See
 [`xconcurrent_locality.f90`](../tests/programs/xconcurrent_locality.f90).
+Native compilation can opt into a restricted parallel subset using
+[`--parallel`](parallel-concurrent.md); unsupported constructs remain serial.
 
 Counted, unbounded, and DO WHILE loops accept construct names, for example
 `do_i: do i=1,ni` with `end do do_i` (or `enddo do_i`). `CYCLE do_i` and

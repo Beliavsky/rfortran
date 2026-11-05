@@ -222,7 +222,7 @@ pub fn link(objects: &[PathBuf], out: &Path, cli: &Cli) -> Result<()> {
         let mut command = make_command();
         command.args(objects).arg(&object).arg(&format_runtime).arg("-o").arg(out);
         #[cfg(target_os = "linux")]
-        command.args(["-no-pie", "-lm"]);
+        command.args(["-no-pie", "-lm", "-pthread"]);
         run(&mut command, cli)?;
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]

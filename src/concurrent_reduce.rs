@@ -10,6 +10,7 @@ use crate::procedure_arguments::{children, expressions, visit_expr};
 use anyhow::{bail, Context, Result};
 use std::collections::{HashMap, HashSet};
 mod locality;
+pub(crate) mod parallel;
 
 #[derive(Clone)]
 struct Object {
@@ -363,6 +364,7 @@ fn lower(
     let mut mask = args.next().context("missing concurrent mask")?;
     let mut args: Vec<_> = args.collect();
     let mut scope = scope.clone();
+    let parallel = parallel::eligible(&controls, &mask, &body, &args, &scope, loop_name);
     let mut prefix = locality::prepare(
         &mut controls,
         &mut mask,
@@ -476,7 +478,8 @@ fn lower(
                 .unwrap_or(TypeSpec::Integer(None)),
             _ => TypeSpec::Integer(None),
         };
-        for e in &mut c[1..4] {
+        let last = if parallel { 3 } else { 4 };
+        for e in &mut c[1..last] {
             *serial += 1;
             let temporary = format!("@reduce_bound_{serial}");
             prefix.push(Stmt::VarDecl {
@@ -487,7 +490,13 @@ fn lower(
             *e = id(&temporary);
         }
     }
-    prefix.push(crate::ast::do_concurrent(controls, Some(mask), body));
+    let mut loop_stmt = crate::ast::do_concurrent(controls, Some(mask), body);
+    if parallel {
+        if let Stmt::Do { body, .. } = &mut loop_stmt {
+            body.insert(0, Stmt::CallSub { name: "@parallel_iteration".into(), args: vec![] });
+        }
+    }
+    prefix.push(loop_stmt);
     prefix.push(Stmt::If {
         cond: id(&active),
         then_body: suffix,
@@ -542,10 +551,15 @@ fn walk(
             },
             _ => None,
         };
+        let procedure_scope = if matches!(s,Stmt::Function{..}|Stmt::Subroutine{..}) {
+            let mut child_scope=scope.clone();
+            child_scope.insert("@parallel_procedure".into(),Object {kind:TypeSpec::Integer(None),dims:vec![],attrs:HashSet::new(),derived:false});
+            Some(child_scope)
+        } else {None};
         for b in children(s) {
             walk(
                 b,
-                &scope,
+                procedure_scope.as_ref().unwrap_or(&scope),
                 serial,
                 offset,
                 child_name.as_deref(),
@@ -596,6 +610,7 @@ fn name_iteration(mut stmt: Stmt, marker: Stmt) -> Stmt {
     }
 }
 pub fn resolve(mut program: Program) -> Result<Program> {
+    parallel::procedures(&program);
     walk(&mut program.body, &Scope::new(), &mut 0, None, None, false)?;
     Ok(program)
 }
