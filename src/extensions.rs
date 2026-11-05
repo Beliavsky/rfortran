@@ -155,6 +155,59 @@ fn parent_components(value: &mut serde_json::Value, parents: &HashSet<String>) {
     }
 }
 
+// Follow ordinary and parent components while retaining the final declared
+// type. Parent selectors do not occupy separate storage in the flattened AST.
+fn output_component_path<'a>(mut ty: &'a str, path: &str,
+    parents: &'a HashMap<String, String>, types: &'a HashMap<String, Definition>,
+) -> Option<(&'a str, bool, Vec<String>)> {
+    let mut parent_view = false;
+    let mut kept = vec![];
+    for selector in path.split('%').filter(|s| !s.is_empty()) {
+        let mut ancestor = parents.get(ty);
+        while let Some(parent) = ancestor {
+            if parent.rsplit('$').next() == Some(selector) { break; }
+            ancestor = parents.get(parent);
+        }
+        if let Some(parent) = ancestor {
+            ty = parent;
+            parent_view = true;
+        } else {
+            ty = types.get(ty)?.0.iter().find_map(|s| match s {
+                Stmt::DerivedDecl { type_name, names, .. } if names.iter().any(|n| n == selector) => Some(type_name.as_str()),
+                _ => None,
+            })?;
+            kept.push(selector.to_owned());
+            parent_view = false;
+        }
+    }
+    Some((ty, parent_view, kept))
+}
+fn output_view(item: &mut crate::ast::Expr, objects: &HashMap<String, String>,
+    parents: &HashMap<String, String>, types: &HashMap<String, Definition>,
+) -> Option<(String, bool)> {
+    use crate::ast::Expr;
+    if let Expr::Call(n, args) = item {
+        if let Some(path) = n.strip_prefix("@record_component:") {
+            let (owner, _) = output_view(args.first_mut()?, objects, parents, types)?;
+            let (ty, parent, kept) = output_component_path(&owner, path, parents, types)?;
+            let result = (ty.to_owned(), parent);
+            if kept.is_empty() && args.len() == 1 {
+                *item = args[0].clone();
+            } else {
+                *n = format!("@record_component:{}", kept.join("%"));
+            }
+            return Some(result);
+        }
+    }
+    let n = match item {
+        Expr::Ident(n) | Expr::Call(n, _) | Expr::Index(n, _) | Expr::Section { name: n, .. } => n,
+        _ => return None,
+    };
+    let (root, path) = n.split_once('%').unwrap_or((n.as_str(), ""));
+    let (ty, parent, _) = output_component_path(objects.get(root)?, path, parents, types)?;
+    Some((ty.to_owned(), parent))
+}
+
 // Output of an explicit parent component retains its declared type when
 // storage flattening removes the parent selector from its designator.
 fn preserve_output_views(body: &mut [Stmt], parents: &HashMap<String, String>,
@@ -180,22 +233,10 @@ fn preserve_output_views(body: &mut [Stmt], parents: &HashMap<String, String>,
             _ => &mut [],
         };
         for item in items {
-            let Expr::Ident(n) = item else { continue };
-            let mut parts = n.split('%');
-            let Some(mut ty) = parts.next().and_then(|root| objects.get(root)) else { continue };
-            let mut parent_view = false;
-            for selector in parts {
-                let mut ancestor = parents.get(ty);
-                while let Some(parent) = ancestor {
-                    if parent.rsplit('$').next() == Some(selector) { break; }
-                    ancestor = parents.get(parent);
-                }
-                let Some(parent) = ancestor else { parent_view = false; break };
-                ty = parent;
-                parent_view = true;
-            }
-            if parent_view && types.get(ty).is_some_and(|(_, b)| b.iter().any(|(n, _)| n == "@defined_io:write:formatted")) {
-                *item = Expr::Call(format!("@defined_output_parent:{ty}"), vec![item.clone()]);
+            let mut value = item.clone();
+            let Some((ty, parent_view)) = output_view(&mut value, &objects, parents, types) else { continue };
+            if parent_view && types.get(&ty).is_some_and(|(_, b)| b.iter().any(|(n, _)| n == "@defined_io:write:formatted")) {
+                *item = Expr::Call(format!("@defined_output_parent:{ty}"), vec![value]);
             }
         }
         for child in crate::procedure_arguments::children(s) {

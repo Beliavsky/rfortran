@@ -4190,11 +4190,13 @@ is retained when two specific bindings originally name the same implementation.
 Scalar CLASS dummy arguments select the dynamic type's writer; scalar
 ALLOCATABLE polymorphic objects are also covered. USE ONLY and private module
 implementation procedures do not prevent use of a public defined-output binding.
-Bare explicit parent-component designators, such as object%base and
-objects%base, select the parent's writer, including child writers delegating
-to their parent. Nested ordinary-component/indexed parent designators are not
-covered by this parent-view support.
-See tests/programs/xdefined_formatted_inherited.f90.
+Explicit parent-component designators select the parent's writer, including
+child writers delegating to their parent. Indexed and nested designators such
+as values(i)%base and holder%value%base, array components, and triplet/vector
+sections retain the parent type through storage lowering. Subscript expressions
+are evaluated once; sections retain array element order.
+See tests/programs/xdefined_formatted_inherited.f90 and
+tests/programs/xdefined_formatted_parent_views.f90.
 
 This is partial support. Internal parent units, READ, unformatted
 transfers, namelist defined I/O, generic interface blocks, private generic

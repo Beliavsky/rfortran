@@ -87,6 +87,67 @@ print *,poly
             "values(1)=d\nvalues(2)=d\nprint *,values%base\nwrite(*,'(*(dt,:,1x))') values%child")
         self.check(source,'base4 base4\nchild4:40 child4:40\nbase1 child2:20 base3 child4:40\n')
 
+    def test_indexed_parent_output(self):
+        source=(ROOT/'tests/programs/xdefined_formatted_inherited.f90').read_text()
+        source=source.replace('type(grandchild) :: d','type(grandchild) :: d,values(2)')
+        source=source.replace('print *,a,b,c,d',
+            "values(1)=d\nvalues(2)=d\nprint *,values(2)%base\nwrite(*,'(dt)') values(1)%child%base")
+        self.check(source,'base4\nbase4\nbase1 child2:20 base3 child4:40\n')
+
+    def test_nested_parent_output(self):
+        source=(ROOT/'tests/programs/xdefined_formatted_inherited.f90').read_text()
+        source=source.replace('contains\nsubroutine write_base',
+            'type :: wrapper\ntype(child) :: value\nend type\ncontains\nsubroutine write_base')
+        source=source.replace('type(base) :: a','type(base) :: a\ntype(wrapper) :: holder')
+        source=source.replace('print *,a,b,c,d',
+            "holder%value=b\nprint *,holder%value%base\nwrite(*,'(dt)') holder%value%base")
+        self.check(source,'base2\nbase2\nbase1 child2:20 base3 child4:40\n')
+
+    def test_parent_sections_and_vectors(self):
+        source=(ROOT/'tests/programs/xdefined_formatted_inherited.f90').read_text()
+        source=source.replace('type(grandchild) :: d','type(grandchild) :: d,values(2)')
+        source=source.replace('print *,a,b,c,d',
+            "values(1)=d\nvalues(2)=d\nvalues(2)%x=5\nprint *,values(2:1:-1)%base\n"
+            "write(*,'(*(dt,:,1x))') values([2,1,2])%child%base")
+        self.check(source,'base5 base4\nbase5 base4 base5\nbase1 child2:20 base3 child4:40\n')
+
+    def test_nested_indexed_parent_output(self):
+        source=(ROOT/'tests/programs/xdefined_formatted_inherited.f90').read_text()
+        source=source.replace('contains\nsubroutine write_base',
+            'type :: wrapper\ntype(child) :: value\nend type\ncontains\nsubroutine write_base')
+        source=source.replace('type(base) :: a','type(base) :: a\ntype(wrapper) :: holders(2)')
+        source=source.replace('print *,a,b,c,d',
+            "holders(1)%value=b\nholders(2)%value=b\nprint *,holders(2)%value%base\n"
+            "write(*,'(dt)') holders(1)%value%base")
+        self.check(source,'base2\nbase2\nbase1 child2:20 base3 child4:40\n')
+
+    def test_parent_array_component_output(self):
+        source=(ROOT/'tests/programs/xdefined_formatted_inherited.f90').read_text()
+        source=source.replace('contains\nsubroutine write_base',
+            'type :: wrapper\ntype(child) :: values(2)\nend type\ncontains\nsubroutine write_base')
+        source=source.replace('type(base) :: a','type(base) :: a\ntype(wrapper) :: holder')
+        source=source.replace('print *,a,b,c,d',
+            "holder%values(1)=b\nholder%values(2)=b\nprint *,holder%values(2)%base\n"
+            "write(*,'(*(dt,:,1x))') holder%values(:)%base")
+        self.check(source,'base2\nbase2 base2\nbase1 child2:20 base3 child4:40\n')
+
+    def test_parent_subscript_evaluated_once(self):
+        self.check((ROOT/'tests/programs/xdefined_formatted_parent_views.f90').read_text(),
+            'base5\nbase5 base4\nbase5 base4 base5\n1\nbase1 child2:20 base3 child4:40\n')
+
+    def test_runtime_parent_section_output(self):
+        source=(ROOT/'tests/programs/xdefined_formatted_inherited.f90').read_text()
+        source=source.replace('type(grandchild) :: d','type(grandchild) :: d,values(2,2)')
+        source=source.replace('print *,a,b,c,d',
+            "values(1,1)=d\nvalues(2,1)=d\nvalues(1,2)=d\nvalues(2,2)=d\ncall show_parent(values,2)")
+        source=source.replace('end module',"""subroutine show_parent(values,column)
+type(grandchild),intent(in) :: values(:,:)
+integer,intent(in) :: column
+write(*,'(*(dt,:,1x))') values(:,column)%base
+end subroutine
+end module""")
+        self.check(source,'base4 base4\nbase1 child2:20 base3 child4:40\n')
+
     def test_child_writer_delegates_to_parent(self):
         source=(ROOT/'tests/programs/xdefined_formatted_inherited.f90').read_text()
         start=source.index('write(unit,',source.index('subroutine write_child'))
