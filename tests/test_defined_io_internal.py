@@ -1,4 +1,4 @@
-"""Defined formatted I/O with scalar CHARACTER internal files."""
+"""Defined formatted I/O with scalar and array CHARACTER internal files."""
 from pathlib import Path
 import unittest
 import test_deallocate
@@ -118,9 +118,55 @@ end function
 end module""")
         self.check(source,'1 7\n')
 
-    def test_character_array_file_boundary(self):
-        self.reject(self.source("write(records,'(dt)') a",declarations='character(40) :: records(3)'),
-            'defined internal I/O currently requires a scalar CHARACTER file')
+    def test_array_fixture(self):
+        self.check((Path(__file__).parent/'programs/xdefined_formatted_internal_array.f90').read_text(), '1 2\n3 4\n')
+
+    def test_array_output_slash(self):
+        self.check(self.source("write(records,'(dt,/,dt)') a,b\nprint '(a)',records", declarations='character(1) :: records(2)'), '7\n9\n')
+
+    def test_array_output_untouched(self):
+        self.check(self.source("records='unchanged'\nwrite(records,'(dt)') a\nprint '(a)',trim(records(1)),trim(records(2)),trim(records(3))", declarations='character(9) :: records(3)'), '7\nunchanged\nunchanged\n')
+
+    def test_array_output_reversion(self):
+        self.check(self.source("write(records,'(dt)') a,b\nprint '(a)',records", declarations='character(1) :: records(2)'), '7\n9\n')
+
+    def test_array_output_section(self):
+        self.check(self.source("records='x'\nwrite(records(4:2:-2),'(dt)') a,b\nprint '(a)',records", declarations='character(1) :: records(4)'), 'x\n9\nx\n7\n')
+
+    def test_array_output_multidimensional(self):
+        self.check(self.source("write(records,'(dt)') a,b,a,b\nprint '(a)',records", declarations='character(1) :: records(2,2)'), '7\n9\n7\n9\n')
+
+    def test_array_output_exhaustion(self):
+        self.check(self.source("write(records,'(dt)',iostat=status,iomsg=message) a,b,a\nprint *,status<0,len_trim(message)>0\nprint '(a)',records", declarations='character(1) :: records(2)'), 'T T\n7\n9\n')
+
+    def test_array_input_reversion(self):
+        self.check(self.input_source('type(point) :: p(2)\ncharacter(6) :: records(2)', "records=['  1  2','  3  4']\nread(records,'(dt)') p\nprint *,p(1)%x,p(1)%y,p(2)%x,p(2)%y"), '1 2 3 4\n')
+
+    def test_array_input_slash_section(self):
+        self.check(self.input_source('type(point) :: p(2)\ncharacter(6) :: records(3)', "records=['  1  2','unused','  3  4']\nread(records(3:1:-2),'(dt,/,dt)') p\nprint *,p(1)%x,p(1)%y,p(2)%x,p(2)%y"), '3 4 1 2\n')
+
+    def test_array_input_eof(self):
+        self.check(self.input_source('type(point) :: p(3)\ninteger :: status\ncharacter(100) :: message\ncharacter(6) :: records(2)', "records=['  1  2','  3  4']\nread(records,'(dt)',iostat=status,iomsg=message) p\nprint *,status<0,len_trim(message)>0"), 'T T\n', reference=False)
+
+    def test_array_runtime_format(self):
+        self.check(self.source("fmt='(dt,/,dt)'\nwrite(records,fmt) a,b\nprint '(a)',records", declarations='character(20) :: fmt\ncharacter(1) :: records(2)'), '7\n9\n')
+
+    def test_array_allocated_file(self):
+        self.check(self.source("allocate(records(2))\nwrite(records,'(dt)') a,b\nprint '(a)',records", declarations='character(1), allocatable :: records(:)'), '7\n9\n')
+
+    def test_array_assumed_shape_file(self):
+        source=self.source("call save(records,a,b)\nprint '(a)',records", declarations='character(1) :: records(2)')
+        source=source.replace('end program', "contains\nsubroutine save(records,a,b)\ncharacter(*), intent(out) :: records(:)\ntype(point), intent(in) :: a,b\nwrite(records,'(dt)') a,b\nend subroutine\nend program")
+        self.check(source, '7\n9\n')
+
+    def test_array_input_list_records(self):
+        source=self.input_source('type(point) :: p\ncharacter(1) :: records(3)', "records=['7','9',' ']\nread(records,*) p\nprint *,p%x,p%y")
+        source=source.replace("read(unit,'(2i3)',iostat=iostat,iomsg=iomsg)", "read(unit,*,iostat=iostat,iomsg=iomsg)")
+        # Local gfortran 17 reports EOF when this child crosses internal records.
+        self.check(source, '7 9\n', reference=False)
+
+    def test_empty_array_output(self):
+        self.check(self.source("write(records,'(dt)',iostat=status) a\nprint *,status<0", declarations='character(1) :: records(0)'), 'T\n')
 
 if __name__=='__main__':
     unittest.main()

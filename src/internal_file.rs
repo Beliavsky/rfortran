@@ -64,15 +64,24 @@ pub unsafe fn begin(unit: i64, source: &[u8], width: usize, records: usize, writ
     if mode(unit) != 0 || width.checked_mul(records) != Some(source.len()) {
         return 1;
     }
-    let bytes = malloc(source.len().max(1)).cast::<u8>();
+    let code = allocate(unit, width, records, writing);
+    if code == 0 && !writing {
+        ptr::copy_nonoverlapping(source.as_ptr(), (*find(unit)).bytes, source.len());
+    }
+    code
+}
+pub unsafe fn allocate(unit: i64, width: usize, records: usize, writing: bool) -> i64 {
+    if mode(unit) != 0 {
+        return 1;
+    }
+    let Some(length) = width.checked_mul(records) else {
+        return 1;
+    };
+    let bytes = malloc(length.max(1)).cast::<u8>();
     if bytes.is_null() {
         return 1;
     }
-    if writing {
-        ptr::write_bytes(bytes, b' ', source.len());
-    } else {
-        ptr::copy_nonoverlapping(source.as_ptr(), bytes, source.len());
-    }
+    ptr::write_bytes(bytes, b' ', length);
     let p = malloc(core::mem::size_of::<File>()).cast::<File>();
     if p.is_null() {
         free(bytes.cast());
@@ -84,7 +93,7 @@ pub unsafe fn begin(unit: i64, source: &[u8], width: usize, records: usize, writ
             unit,
             mode: if writing { 2 } else { 1 },
             bytes,
-            length: source.len(),
+            length,
             width,
             records,
             record: 0,
@@ -93,6 +102,29 @@ pub unsafe fn begin(unit: i64, source: &[u8], width: usize, records: usize, writ
         },
     );
     set_head(p);
+    0
+}
+/// Load an input record, or retrieve a reached output record. Unreached records
+/// return 2 so the caller leaves the corresponding array element untouched.
+pub unsafe fn record(unit: i64, index: i64, bytes: &mut [u8], loading: bool) -> i64 {
+    let p = find(unit);
+    if p.is_null() || index < 1 {
+        return 1;
+    }
+    let f = &mut *p;
+    let r = index as usize - 1;
+    if r >= f.records || bytes.len() != f.width {
+        return 1;
+    }
+    if !loading && r > f.record {
+        return 2;
+    }
+    let storage = slice::from_raw_parts_mut(f.bytes.add(r * f.width), f.width);
+    if loading {
+        storage.copy_from_slice(bytes);
+    } else {
+        bytes.copy_from_slice(storage);
+    }
     0
 }
 pub unsafe fn end(unit: i64, destination: &mut [u8], writing: bool) -> i64 {
@@ -198,6 +230,31 @@ pub unsafe fn clear() {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn array_record_loading_and_untouched_output() {
+        unsafe {
+            assert_eq!(super::allocate(-1001, 2, 3, false), 0);
+            let mut first = *b"12";
+            assert_eq!(super::record(-1001, 1, &mut first, true), 0);
+            let mut second = *b"34";
+            assert_eq!(super::record(-1001, 2, &mut second, true), 0);
+            for b in b"12\n34\n  \n" {
+                assert_eq!(super::byte(-1001), Ok(Some(*b)));
+            }
+            assert_eq!(super::end(-1001, &mut [], false), 0);
+            assert_eq!(super::allocate(-1001, 2, 3, true), 0);
+            assert_eq!(super::write(-1001, b'7'), 0);
+            let mut record = *b"xx";
+            assert_eq!(super::record(-1001, 1, &mut record, false), 0);
+            assert_eq!(&record, b"7 ");
+            assert_eq!(super::record(-1001, 2, &mut record, false), 2);
+            assert_eq!(super::end(-1001, &mut [], false), 0);
+            assert_eq!(super::allocate(-1001, 2, 0, true), 0);
+            assert_eq!(super::write(-1001, b'7'), -2);
+            assert_eq!(super::end(-1001, &mut [], false), 0);
+        }
+    }
+
     #[test]
     fn records_bounds_and_cleanup() {
         unsafe {

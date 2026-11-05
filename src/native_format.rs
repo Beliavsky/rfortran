@@ -757,11 +757,12 @@ pub unsafe extern "C" fn rfort_defined_input_field(handle:i64,stream:*mut core::
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rfort_defined_internal_begin(slots:*mut *mut core::ffi::c_void,actions:*mut i64,unit:*mut i64,source:*const u8,length:usize,writing:i64)->i64 {
+pub unsafe extern "C" fn rfort_defined_internal_begin(slots:*mut *mut core::ffi::c_void,actions:*mut i64,unit:*mut i64,source:*const u8,length:usize,writing:i64,records:i64)->i64 {
     *unit=0;
+    if records<0{return 1;}
     for i in 1024..2048 {if (*slots.add(i)).is_null() {
         let u=file_inquiry::unit(i);
-        let code=internal_file::begin(u,core::slice::from_raw_parts(source,length),length,1,writing!=0);
+        let code=if records==1 {internal_file::begin(u,core::slice::from_raw_parts(source,length),length,1,writing!=0)}else{internal_file::allocate(u,length,records as usize,writing!=0)};
         if code!=0{return code;}
         // Never passed to libc: active defined-I/O transfers intercept this marker.
         *slots.add(i)=(i+1) as *mut core::ffi::c_void;
@@ -773,4 +774,9 @@ pub unsafe extern "C" fn rfort_defined_internal_end(slots:*mut *mut core::ffi::c
     if unit==0{return 0;}
     let code=internal_file::end(unit,core::slice::from_raw_parts_mut(dest,length),writing!=0);
     if let Some(i)=file_inquiry::index(unit){*slots.add(i)=core::ptr::null_mut();*actions.add(i)=0;}code
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rfort_defined_internal_record(unit:i64,text:*mut u8,length:usize,loading:i64,index:i64)->i64 {
+    internal_file::record(unit,index,core::slice::from_raw_parts_mut(text,length),loading!=0)
 }

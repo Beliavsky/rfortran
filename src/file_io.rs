@@ -278,9 +278,9 @@ fn lower_inquiry(mut controls:HashMap<String,Expr>,symbols:&HashMap<String,(Type
 #[derive(Default)]
 pub(crate) struct Files(HashMap<i64, std::fs::File>, HashMap<i64,String>, HashMap<i64,i64>);
 impl Files {
-    pub(crate) fn internal_begin(&self,source:&[u8],writing:bool)->Result<i64> {
+    pub(crate) fn internal_begin(&self,source:&[u8],writing:bool,records:i64)->Result<i64> {
         let unit=(-1033..=-10).rev().find(|u|!self.0.contains_key(u) && unsafe{crate::internal_file::mode(*u)==0}).context("no free internal file units")?;
-        if unsafe{crate::internal_file::begin(unit,source,source.len(),1,writing)}!=0 {bail!("could not allocate internal file");}Ok(unit)
+        if records<0 || unsafe{if records==1 {crate::internal_file::begin(unit,source,source.len(),1,writing)}else{crate::internal_file::allocate(unit,source.len(),records as usize,writing)}}!=0 {bail!("could not allocate internal file");}Ok(unit)
     }
 
     pub(crate) fn inquire(&self,unit:Option<i64>,path:Option<&str>)->(i64,i64,i64,i64,i64,String,String) {

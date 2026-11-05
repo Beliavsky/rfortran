@@ -932,9 +932,8 @@ fn lower(
                         }
                     }
                     if let Some((crate::operators::ExpressionElement::Intrinsic(kind @ (TypeSpec::Character(_)|TypeSpec::CharacterLength(_)|TypeSpec::CharacterAssumed)),rank))=expression_types.type_rank(&unit,&declarations,&objects)? {
-                        if rank!=0 {bail!("defined internal I/O currently requires a scalar CHARACTER file");}
                         *serial+=1;
-                        let mut body=internal::wrap(unit,kind,format,items,true,status_target,message_target,&format!("@defined_internal_{serial}"))?;
+                        let mut body=internal::wrap(unit,kind,format,items,true,status_target,message_target,&format!("@defined_internal_{serial}"),rank,expression_types,&declarations,&objects)?;
                         lower(&mut body,&objects,&declarations,bindings,expression_types,child_routines,child,serial)?;
                         *s=Stmt::Block{body};return Ok(());
                     }

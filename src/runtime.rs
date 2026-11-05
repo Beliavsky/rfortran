@@ -2070,12 +2070,15 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         }else{1};
                         let fr=call_stack.last_mut().unwrap();fr.env_int.insert(status.clone(),code);fr.env_str.insert(text.clone(),String::from_utf8(buffer).unwrap());idx+=1;continue;
                     }
-                    if name=="@defined_internal_begin" || name=="@defined_internal_end" {
-                        let [Expr::Ident(unit),Expr::Ident(text),writing,Expr::Ident(status)]=args.as_slice() else{unreachable!()};
+                    if name=="@defined_internal_begin" || name=="@defined_internal_end" || name=="@defined_internal_record" {
+                        let [Expr::Ident(unit),Expr::Ident(text),writing,Expr::Ident(status)]=&args[..4] else{unreachable!()};
                         let fr=call_stack.last().unwrap().clone();let writing=eval_expr(writing,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap()!=0;
                         let mut bytes=fr.env_str[text].as_bytes().to_vec();
-                        let (u,code)=if name=="@defined_internal_begin" {
-                            match FILES.with(|files|files.borrow().internal_begin(&bytes,writing)){Ok(u)=>(u,0),Err(_)=>(0,1)}
+                        let extra=if args.len()>4 {eval_expr(&args[4],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap()}else{1};
+                        let (u,code)=if name=="@defined_internal_record" {
+                            let u=fr.env_int[unit];(u,unsafe{crate::internal_file::record(u,extra,&mut bytes,writing)})
+                        }else if name=="@defined_internal_begin" {
+                            match FILES.with(|files|files.borrow().internal_begin(&bytes,writing,extra)){Ok(u)=>(u,0),Err(_)=>(0,1)}
                         }else{let u=fr.env_int[unit];(u,if u==0 {0}else{unsafe{crate::internal_file::end(u,&mut bytes,writing)}})};
                         let fr=call_stack.last_mut().unwrap();fr.env_int.insert(unit.clone(),u);fr.env_int.insert(status.clone(),code);
                         fr.env_str.insert(text.clone(),String::from_utf8(bytes).unwrap());idx+=1;continue;

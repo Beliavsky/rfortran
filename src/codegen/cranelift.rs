@@ -3039,16 +3039,24 @@ fn gen_stmts(
                     let code=file_io::call(module,b,"rfort_defined_input_field",&[values[0],stream,values[1],values[2],values[3],view.address,view.length],types::I64)?;
                     let address=storage_addr(b,ptr_ty,ints[status]);b.ins().store(MemFlags::new(),code,address,0);continue;
                 }
-                if name=="@defined_internal_begin" || name=="@defined_internal_end" {
-                    let [IExpr::Ident(unit),text,writing,IExpr::Ident(status)]=args.as_slice() else {anyhow::bail!("invalid defined internal file");};
+                if name=="@defined_internal_begin" || name=="@defined_internal_end" || name=="@defined_internal_record" {
+                    let [IExpr::Ident(unit),text,writing,IExpr::Ident(status)]=&args[..4] else {anyhow::bail!("invalid defined internal file");};
                     let address=storage_addr(b,ptr_ty,ints[unit]);
                     let view=characters::view(module,b,ptr_ty,dc,chars,ints,text)?;
                     let writing=eval_expr(b,ex,ptr_ty,writing,ints,reals,bools,func_meta);let writing=to_i64(b,writing);
-                    let slots=file_io::table(b,module,ptr_ty,".rfort.file_units")?;
-                    let actions=file_io::table(b,module,ptr_ty,".rfort.file_actions")?;
-                    let (routine,u)=if name=="@defined_internal_begin" {("rfort_defined_internal_begin",address)}else{
-                        ("rfort_defined_internal_end",b.ins().load(types::I64,MemFlags::new(),address,0))};
-                    let code=file_io::call(module,b,routine,&[slots,actions,u,view.address,view.length,writing],types::I64)?;
+                    let extra=if args.len()>4 {let v=eval_expr(b,ex,ptr_ty,&args[4],ints,reals,bools,func_meta);Some(to_i64(b,v))}else{None};
+                    let code=if name=="@defined_internal_record" {
+                        let u=b.ins().load(types::I64,MemFlags::new(),address,0);
+                        file_io::call(module,b,"rfort_defined_internal_record",&[u,view.address,view.length,writing,extra.unwrap()],types::I64)?
+                    }else{
+                        let slots=file_io::table(b,module,ptr_ty,".rfort.file_units")?;
+                        let actions=file_io::table(b,module,ptr_ty,".rfort.file_actions")?;
+                        let (routine,u)=if name=="@defined_internal_begin" {("rfort_defined_internal_begin",address)}else{
+                            ("rfort_defined_internal_end",b.ins().load(types::I64,MemFlags::new(),address,0))};
+                        let mut values=vec![slots,actions,u,view.address,view.length,writing];
+                        if let Some(v)=extra {values.push(v);}
+                        file_io::call(module,b,routine,&values,types::I64)?
+                    };
                     let dest=storage_addr(b,ptr_ty,ints[status]);b.ins().store(MemFlags::new(),code,dest,0);continue;
                 }
                 if name=="@defined_format" {
