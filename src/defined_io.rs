@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Beliavsky
 //! Type-bound defined formatted output on external units.
 mod dynamic;
+mod internal;
 use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec};
 use anyhow::{bail, Context, Result};
 use std::collections::{HashMap, HashSet};
@@ -929,6 +930,13 @@ fn lower(
                                 "defined I/O parent WRITE currently supports IOSTAT and IOMSG only"
                             ),
                         }
+                    }
+                    if let Some((crate::operators::ExpressionElement::Intrinsic(kind @ (TypeSpec::Character(_)|TypeSpec::CharacterLength(_)|TypeSpec::CharacterAssumed)),rank))=expression_types.type_rank(&unit,&declarations,&objects)? {
+                        if rank!=0 {bail!("defined internal I/O currently requires a scalar CHARACTER file");}
+                        *serial+=1;
+                        let mut body=internal::wrap(unit,kind,format,items,true,status_target,message_target,&format!("@defined_internal_{serial}"))?;
+                        lower(&mut body,&objects,&declarations,bindings,expression_types,child_routines,child,serial)?;
+                        *s=Stmt::Block{body};return Ok(());
                     }
                     let list = format
                         .as_ref()

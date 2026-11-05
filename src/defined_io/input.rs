@@ -113,7 +113,12 @@ fn lower_one(
     {
         bail!("polymorphic defined input dispatch is not yet supported");
     }
-    if !matches!(
+    let internal=match types.type_rank(&unit,declarations,objects)? {
+        Some((crate::operators::ExpressionElement::Intrinsic(kind @ (TypeSpec::Character(_)|TypeSpec::CharacterLength(_)|TypeSpec::CharacterAssumed)),rank))=>{
+            if rank!=0 {bail!("defined internal I/O currently requires a scalar CHARACTER file");}Some(kind)
+        },_=>None,
+    };
+    if internal.is_none() && !matches!(
         types.type_rank(&unit, declarations, objects)?,
         Some((
             crate::operators::ExpressionElement::Intrinsic(TypeSpec::Integer(_)),
@@ -151,6 +156,14 @@ fn lower_one(
         {
             bail!("defined input IOMSG requires a scalar CHARACTER variable");
         }
+    }
+    if let Some(kind)=internal {
+        *serial+=1;
+        let mut body=super::internal::wrap(unit,kind,format,items,false,
+            if control.is_empty(){None}else{let Expr::Ident(n)=status else{unreachable!()};Some(n)},
+            message.and_then(|e|if let Expr::Ident(n)=e{Some(n.clone())}else{None}),&format!("@defined_internal_input_{serial}"))?;
+        lower(&mut body,objects,declarations,bindings,types,serial,polymorphic)?;
+        return Ok(Some(Stmt::Block{body}));
     }
     if let Some(format)=&format {
         if !matches!(format,Expr::Str(_)) {

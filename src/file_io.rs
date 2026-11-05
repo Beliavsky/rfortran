@@ -278,6 +278,11 @@ fn lower_inquiry(mut controls:HashMap<String,Expr>,symbols:&HashMap<String,(Type
 #[derive(Default)]
 pub(crate) struct Files(HashMap<i64, std::fs::File>, HashMap<i64,String>, HashMap<i64,i64>);
 impl Files {
+    pub(crate) fn internal_begin(&self,source:&[u8],writing:bool)->Result<i64> {
+        let unit=(-1033..=-10).rev().find(|u|!self.0.contains_key(u) && unsafe{crate::internal_file::mode(*u)==0}).context("no free internal file units")?;
+        if unsafe{crate::internal_file::begin(unit,source,source.len(),1,writing)}!=0 {bail!("could not allocate internal file");}Ok(unit)
+    }
+
     pub(crate) fn inquire(&self,unit:Option<i64>,path:Option<&str>)->(i64,i64,i64,i64,i64,String,String) {
         if let Some(path)=path {
             let (status,exists)=inquiry::exists(path.as_bytes());
@@ -310,6 +315,8 @@ impl Files {
     /// An error when the ACTION of `unit` forbids a data transfer in the
     /// given direction.
     pub(crate) fn require_action(&self, unit: i64, reading: bool) -> Result<()> {
+        let mode=unsafe{crate::internal_file::mode(unit)};
+        if mode!=0 && mode!=if reading {1}else{2} {bail!(inquiry::action_message(reading));}
         if self.0.contains_key(&unit) && self.2.get(&unit) == Some(&if reading { 2 } else { 1 }) {
             bail!(inquiry::action_message(reading));
         }
@@ -378,7 +385,7 @@ impl Files {
     }
     pub(crate) fn scratch(&mut self, requested: Option<i64>) -> Result<i64> {
         let unit=if let Some(unit)=requested {Self::valid(unit)?;unit} else {
-            (-1033..=-10).rev().find(|u|!self.0.contains_key(u)).context("no free NEWUNIT file slots")?
+            (-1033..=-10).rev().find(|u|!self.0.contains_key(u) && unsafe{crate::internal_file::mode(*u)==0}).context("no free NEWUNIT file slots")?
         };
         if self.0.contains_key(&unit) {bail!("OPEN on an already connected unit is not yet supported");}
         // Delete-on-close on Windows; on Unix unlink immediately after opening.
@@ -470,7 +477,7 @@ impl Files {
 
     pub(crate) fn open_dynamic(&mut self,requested:Option<i64>,path:&str,mode:i64,append:bool)->Result<i64> {
         let path=path.trim_end();if path.is_empty() || path.contains('\0') {bail!("invalid FILE name");}
-        let unit=match requested {Some(unit)=>unit,None=>(-1033..=-10).rev().find(|u|!self.0.contains_key(u)).context("no free NEWUNIT file slots")?};
+        let unit=match requested {Some(unit)=>unit,None=>(-1033..=-10).rev().find(|u|!self.0.contains_key(u) && unsafe{crate::internal_file::mode(*u)==0}).context("no free NEWUNIT file slots")?};
         Self::valid(unit)?;if self.0.contains_key(&unit) {bail!("OPEN on an already connected unit is not yet supported");}
         let mut options=std::fs::OpenOptions::new();
         options.read(matches!(mode,0|2|3|5)).write(mode!=0).create(matches!(mode,1|2|5|6)).truncate(matches!(mode,1|2));
@@ -498,6 +505,7 @@ impl Files {
         i64::from(file.seek(SeekFrom::Start((position-1) as u64)).is_err())
     }
     pub(crate) fn input_byte(&mut self,unit:i64)->Result<Option<u8>,()> {
+        if unsafe{crate::internal_file::mode(unit)!=0} {return unsafe{crate::internal_file::byte(unit)};}
         let mut byte=[0];
         let result=if unit==5 {std::io::stdin().read(&mut byte)} else {
             self.implicit(unit);self.require_action(unit,true).map_err(|_|())?;let file=self.0.get_mut(&unit).ok_or(())?;file.read(&mut byte)

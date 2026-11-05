@@ -37,6 +37,7 @@ mod calendar;
 mod environment;
 mod format_spec;
 mod defined_format;
+mod internal_file;
 mod record_input;
 mod list_input;
 mod namelist_input;
@@ -309,7 +310,12 @@ pub unsafe extern "C" fn rfort_list_read_begin_unit(stream:*mut core::ffi::c_voi
         }
         context=(*context).previous;
     }
-    let reader=rfort_list_read_begin(stream);
+    let reader=if internal_file::mode(unit)==1 {
+        let Some((source,length))=internal_file::input_copy(unit) else{return core::ptr::null_mut();};
+        let p=malloc(core::mem::size_of::<ListReader>()).cast::<ListReader>();
+        if p.is_null(){free(source.cast());return p.cast();}
+        p.write(ListReader{session:list_input::Session::new(),stream,source,length,offset:0});p.cast()
+    }else{rfort_list_read_begin(stream)};
     if !owner.is_null() {(*owner).reader=reader;}
     reader
 }
@@ -669,6 +675,7 @@ pub unsafe extern "C" fn rfort_format_end_checked(pointer:*mut core::ffi::c_void
     let list=&*pointer.cast::<OutputList>();
     let child=child_output(unit);
     let advancing=list.advance!=0 && !child;
+    let mut internal_status=0;
     let result=(||->Result<(), &'static str> {
         if status!=0 {return Err("file unit is not connected or not open for writing");}
         if child {format_spec::check_child_output(core::slice::from_raw_parts(list.format,list.length),list.count)?;}
@@ -676,6 +683,12 @@ pub unsafe extern "C" fn rfort_format_end_checked(pointer:*mut core::ffi::c_void
         let seekable=!stream.is_null() && stream!=rfort_stderr_stream();
         // Validate the complete format before repositioning or emitting anything.
         try_render_format(list.format,list.length,list.items,list.count,&mut |_|{},advancing)?;
+        if internal_file::mode(unit)!=0 {
+            try_render_format(list.format,list.length,list.items,list.count,&mut |byte| {
+                if internal_status==0 {internal_status=internal_file::write(unit,byte);}
+            },advancing)?;
+            return if internal_status==0 {Ok(())}else{Err("end of internal file record or invalid internal transfer")};
+        }
         if seekable && fseek(stream,0,1)!=0 {return Err("formatted file WRITE positioning failed");}
         let mut emit=|c:u8| {let code=if stream.is_null() {putchar(c as i32)}else{fputc(c as i32,stream)};if code<0 {failed=true;}};
         try_render_format(list.format,list.length,list.items,list.count,&mut emit,advancing)?;
@@ -690,7 +703,7 @@ pub unsafe extern "C" fn rfort_format_end_checked(pointer:*mut core::ffi::c_void
     free_output_list(pointer);
     if let Err(error)=result {
         core::ptr::write_bytes(message,b' ',message_length);
-        core::ptr::copy_nonoverlapping(error.as_ptr(),message,error.len().min(message_length));1
+        core::ptr::copy_nonoverlapping(error.as_ptr(),message,error.len().min(message_length));if internal_status!=0 {internal_status}else{1}
     }else{0}
 }
 #[no_mangle]
@@ -741,4 +754,23 @@ pub unsafe extern "C" fn rfort_defined_input_field(handle:i64,stream:*mut core::
     let r=&mut *reader.cast::<ListReader>();
     defined_format::input(handle,tag,length.max(0) as usize,core::slice::from_raw_parts_mut(text,capacity),|buffer,advance|
         r.session.fields(buffer,advance,||reader_byte(r.stream,r.source,r.length,&mut r.offset)))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rfort_defined_internal_begin(slots:*mut *mut core::ffi::c_void,actions:*mut i64,unit:*mut i64,source:*const u8,length:usize,writing:i64)->i64 {
+    *unit=0;
+    for i in 1024..2048 {if (*slots.add(i)).is_null() {
+        let u=file_inquiry::unit(i);
+        let code=internal_file::begin(u,core::slice::from_raw_parts(source,length),length,1,writing!=0);
+        if code!=0{return code;}
+        // Never passed to libc: active defined-I/O transfers intercept this marker.
+        *slots.add(i)=(i+1) as *mut core::ffi::c_void;
+        *actions.add(i)=if writing!=0 {2}else{1};*unit=u;return 0;
+    }}1
+}
+#[no_mangle]
+pub unsafe extern "C" fn rfort_defined_internal_end(slots:*mut *mut core::ffi::c_void,actions:*mut i64,unit:i64,dest:*mut u8,length:usize,writing:i64)->i64 {
+    if unit==0{return 0;}
+    let code=internal_file::end(unit,core::slice::from_raw_parts_mut(dest,length),writing!=0);
+    if let Some(i)=file_inquiry::index(unit){*slots.add(i)=core::ptr::null_mut();*actions.add(i)=0;}code
 }

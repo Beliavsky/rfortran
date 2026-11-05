@@ -154,9 +154,9 @@ close(21)
 read(unit,'(i3)',iostat=iostat,iomsg=iomsg) dtv%x""")
         self.check(self.main(source,'read(u,"(dt)") a\nprint *,a%x,a%y'),'20\n40\n7 9\n')
 
-    def test_internal_parent_diagnosed(self):
-        source=self.source().replace('read(u,*) a',"read('7 9',*) a")
-        self.reject(source,'external INTEGER unit')
+    def test_internal_parent(self):
+        source=self.source().replace('character(100) :: message','character(100) :: message,buffer')
+        self.check(self.main(source,"buffer='7 9'\nread(buffer,*) a\nprint *,a%x,a%y"),'7 9\n')
 
     def test_other_unit_keeps_its_own_record(self):
         source=self.source().replace('read(unit,*,iostat=iostat,iomsg=iomsg) dtv%x',"""integer :: other

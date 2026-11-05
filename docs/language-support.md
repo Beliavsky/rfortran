@@ -4199,7 +4199,7 @@ are evaluated once; sections retain array element order.
 See tests/programs/xdefined_formatted_inherited.f90 and
 tests/programs/xdefined_formatted_parent_views.f90.
 
-This is partial support. Internal parent units and unformatted
+This is partial support. CHARACTER-array internal files and unformatted
 transfers, namelist defined I/O, generic interface blocks, private generic
 bindings and array-valued expressions remain outside the supported subset. Child ADVANCE currently requires a constant YES/NO value.
 T/TL positioning in
@@ -4218,6 +4218,30 @@ rfort assertions rather than a gfortran output comparison.
 Run `python tests/test_defined_io.py` for interpreter/native O0/O2 checks,
 gfortran output comparisons, and interface/unsupported-form diagnostics.
 
+### Internal files for defined I/O
+
+Scalar CHARACTER variables can be internal files in defined formatted READ and
+WRITE, including array elements and assumed-length buffers. List-directed,
+literal-format, and runtime-format parents reuse the same mixed-item, array-item,
+DT metadata, and error handling as external files. The defined procedure receives
+an INTEGER unit connected to temporary character storage. Nested defined transfers
+and nested internal files retain separate positions; child transfers on the parent
+unit share its record. Other file units remain independent.
+
+Output pads unused buffer space with blanks. Buffer overflow, slash editing or
+format reversion beyond the scalar file returns a negative IOSTAT and a message;
+subsequent items are skipped. Input retains normal field padding and reports EOF
+when a transfer needs data beyond the file. Temporary units are released before
+parent errors are returned or reported. IOMSG is unchanged on successful parents.
+CHARACTER-array files representing multiple records are not yet supported.
+
+Run `python tests/test_defined_io_internal.py`; the standalone round-trip example
+is `tests/programs/xdefined_formatted_internal.f90`. Tests cover interpreter and
+native O0/O2 modes, gfortran comparisons, nested files, array-element buffers,
+single evaluation of subscripts, overflow, EOF and repeated-error cleanup.
+Input failure tests use explicit assertions where the local gfortran build does
+not propagate the expected parent status or stop later transfers.
+
 ### Runtime parent formats for defined I/O
 
 Parent READ and WRITE accept scalar CHARACTER format variables, including
@@ -4235,7 +4259,7 @@ Current runtime limits are 4096 bytes per expanded field/control format, 128
 integers per DT v-list, and 4096 characters per input field. Assumed/runtime-length
 format variables have a checked 4096-character capture limit; fixed-length format
 variables use their declared capacity. T/TL positioning, mixed explicitly formatted
-COMPLEX items, internal parent units, and runtime formats in child READs remain
+COMPLEX items, CHARACTER-array internal files, and runtime formats in child READs remain
 unsupported. Ordinary READ statements without defined-I/O items retain their
 existing runtime-format restrictions.
 
@@ -4277,7 +4301,7 @@ error terminates execution with the returned message. The message temporary has
 the same 256-character capacity as defined output.
 
 Polymorphic input dispatch,
-internal parent units and parent T/TL positioning remain unsupported. Runtime child
+CHARACTER-array internal files and parent T/TL positioning remain unsupported. Runtime child
 formats, T/TL positioning, empty list-directed and unformatted child reads are
 diagnosed in reader procedures
 and their directly called subroutines. These limits are separate from ordinary

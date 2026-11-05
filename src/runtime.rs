@@ -40,6 +40,7 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
     RANDOM_STATE.with(|state| state.set(session.as_ref().map_or(1, |(_, seed)| **seed)));
     thread_local! {static DEFINED_OUTPUT_UNITS:std::cell::RefCell<Vec<i64>>=const {std::cell::RefCell::new(Vec::new())};}
     DEFINED_OUTPUT_UNITS.with(|units|units.borrow_mut().clear());
+    unsafe {crate::internal_file::clear();}
     thread_local! { static FILES: std::cell::RefCell<crate::file_io::Files> = std::cell::RefCell::new(crate::file_io::Files::default()); }
     FILES.with(|files| *files.borrow_mut() = crate::file_io::Files::default());
     thread_local! { static POINTER_STORAGE: std::cell::RefCell<Vec<PointerStorage>> = std::cell::RefCell::new(vec![PointerStorage::Frame(usize::MAX,String::new())]); }
@@ -2069,6 +2070,16 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         }else{1};
                         let fr=call_stack.last_mut().unwrap();fr.env_int.insert(status.clone(),code);fr.env_str.insert(text.clone(),String::from_utf8(buffer).unwrap());idx+=1;continue;
                     }
+                    if name=="@defined_internal_begin" || name=="@defined_internal_end" {
+                        let [Expr::Ident(unit),Expr::Ident(text),writing,Expr::Ident(status)]=args.as_slice() else{unreachable!()};
+                        let fr=call_stack.last().unwrap().clone();let writing=eval_expr(writing,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap()!=0;
+                        let mut bytes=fr.env_str[text].as_bytes().to_vec();
+                        let (u,code)=if name=="@defined_internal_begin" {
+                            match FILES.with(|files|files.borrow().internal_begin(&bytes,writing)){Ok(u)=>(u,0),Err(_)=>(0,1)}
+                        }else{let u=fr.env_int[unit];(u,if u==0 {0}else{unsafe{crate::internal_file::end(u,&mut bytes,writing)}})};
+                        let fr=call_stack.last_mut().unwrap();fr.env_int.insert(unit.clone(),u);fr.env_int.insert(status.clone(),code);
+                        fr.env_str.insert(text.clone(),String::from_utf8(bytes).unwrap());idx+=1;continue;
+                    }
                     if name=="@defined_format" {
                         let [Expr::Ident(handle),op,Expr::Ident(value),Expr::Ident(text),Expr::Ident(status)]=args.as_slice() else {unreachable!()};
                         let fr=call_stack.last().unwrap().clone();
@@ -2124,6 +2135,7 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         let child=DEFINED_OUTPUT_UNITS.with(|units|units.borrow().contains(&unit));
                         let advance=advance && !child;
                         let values:Vec<_>=items.iter().map(|e|eval_expr(e,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack)).collect();
+                        let mut internal_status=0;
                         let result=(||->anyhow::Result<()> {
                             if child {crate::format_spec::check_child_output(format.as_bytes(),items.len()).map_err(anyhow::Error::msg)?;}
                             let mut bytes=Vec::new();
@@ -2135,7 +2147,9 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                                     else if let Some(x)=v.1 {Value::Real(x,if matches!(&items[i],Expr::Call(n,_) if n=="dble") {8}else{4})}
                                     else {let x=v.0.unwrap();Value::Integer(x,if x==x as i32 as i64 {4}else{8})});
                             },&mut |b|bytes.push(b),advance).map_err(anyhow::Error::msg)?;
-                            if unit==6 {
+                            if unsafe{crate::internal_file::mode(unit)!=0} {
+                                for byte in bytes {internal_status=unsafe{crate::internal_file::write(unit,byte)};if internal_status!=0{anyhow::bail!("end of internal file record or invalid internal transfer");}}
+                            }else if unit==6 {
                                 use std::io::Write;
                                 let mut stdout=std::io::stdout().lock();stdout.write_all(&bytes)?;
                                 if advance {stdout.write_all(b"\n")?;}stdout.flush()?;
@@ -2145,7 +2159,7 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                             Ok(())
                         })();
                         let Expr::Ident(status)=&args[2] else {unreachable!()};
-                        call_stack.last_mut().unwrap().env_int.insert(status.clone(),i64::from(result.is_err()));
+                        call_stack.last_mut().unwrap().env_int.insert(status.clone(),if internal_status!=0 {internal_status}else{i64::from(result.is_err())});
                         if let Err(error)=result {
                             let Expr::Ident(message)=&args[3] else {unreachable!()};
                             let length=fr.env_str.get(message).map(String::len).unwrap_or(256);
