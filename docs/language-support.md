@@ -4325,8 +4325,16 @@ lookahead. Literal and runtime formats share this positioning behavior; slash
 editing and reversion move to a new record. External and scalar/array internal
 files use the same record model.
 
-Polymorphic input dispatch, empty list-directed and unformatted child reads
-remain unsupported. These limits are separate from ordinary READ support.
+Scalar polymorphic input dispatch selects the defined reader for the object's
+current dynamic type, including inherited and overridden bindings. Supported
+CLASS dummies, allocatable objects and pointer aliases use the same dynamic views
+as defined output. List-directed and literal/runtime formatted parents support
+external/internal files and propagate IOSTAT/IOMSG from the selected reader.
+See `tests/test_defined_input_polymorphic.py` and
+`tests/programs/xdefined_input_polymorphic.f90`.
+
+Polymorphic array/section input dispatch, empty list-directed and unformatted
+child reads remain unsupported. These limits are separate from ordinary READ support.
 
 Mixed formatted COMPLEX input and output support scalar values, arrays and
 sections, literal/runtime formats, and external/internal files. Output expressions
