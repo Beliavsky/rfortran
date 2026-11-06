@@ -531,7 +531,8 @@ impl Lower {
             }
             Self::specialize_kind(&routine.kind,&types,&HashMap::new(),&HashMap::new()).ok()
         } else {Some(routine.kind.clone())};
-        if let Some(helper) = routine.descriptor_call.as_ref().filter(|_|descriptor_kind.is_some() && (!array_result||runtime_result||allocatable_result)) {
+        let parallel_workspace=routine.body.iter().any(|s|matches!(s,Stmt::DummyIntent{intent,..} if intent==crate::concurrent_reduce::parallel::WORKSPACE));
+        if let Some(helper) = routine.descriptor_call.as_ref().filter(|_|descriptor_kind.is_some() && (!array_result||runtime_result||allocatable_result||parallel_workspace)) {
             self.serial += 1;
             let result = format!("@array_function_result_{}", self.serial);
             let result_rank=routine.body.iter().find_map(|s|match s {
@@ -1775,7 +1776,10 @@ pub(crate) fn prepare(mut p: Program) -> Result<(Program, Lower)> {
                                 if !allocatable {
                                     helper_body.push(Stmt::DummyIntent{name:result.clone(),intent:"allocatable".into()});
                                     let position=helper_body.iter().position(|s|!matches!(s,Stmt::SourceLocation(_)|Stmt::VarDecl{..}|Stmt::ArrayDecl{..}|Stmt::InitializedDecl{..}|Stmt::DummyIntent{..}|Stmt::Implicit(_)|Stmt::Use{..})).unwrap_or(helper_body.len());
-                                    helper_body.insert(position,Stmt::CallSub{name:"@allocate".into(),args:vec![Expr::Call(result.clone(),dims)]});
+                                    let bounds=dims.into_iter().map(|d| match d {
+                                        Expr::Call(tag,a) if tag=="@declared_bounds"=>Expr::Call("@heap_bounds".into(),a),_=>d
+                                    }).collect();
+                                    helper_body.insert(position,Stmt::CallSub{name:"@allocate".into(),args:vec![Expr::Call(result.clone(),bounds)]});
                                 }
                             } else if !helper_body.iter().any(|s| matches!(s, Stmt::VarDecl {names,..} if names.contains(&result))) {
                                 helper_body.insert(0, Stmt::VarDecl {kind:kind.clone(),names:vec![result.clone()]});
@@ -1796,6 +1800,7 @@ pub(crate) fn prepare(mut p: Program) -> Result<(Program, Lower)> {
                             },
                         );
                         if body.iter().any(|s|matches!(s,Stmt::DummyIntent{intent,..} if intent==crate::concurrent_reduce::parallel::WORKSPACE))
+                            && !body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name:array,..} if array==&lower.routines[name].result))
                             && !body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,..} if params.contains(name))) {
                             // Scalar interfaces already have a native ABI.
                             // Retain that entry for separately compiled callers;

@@ -170,9 +170,9 @@ fn validate(
     let object = f
         .scope
         .get(result)
-        .context("scalar result requires an explicit declaration")?;
-    if !object.dims.is_empty() || object.derived || !scalar(&object.kind) {
-        bail!("requires a numeric or LOGICAL scalar result");
+        .context("result requires an explicit declaration")?;
+    if object.derived || !scalar(&object.kind) {
+        bail!("requires a numeric or LOGICAL result");
     }
     for (n, o) in f.scope.iter().filter(|(n, _)| f.locals.contains(*n)) {
         let array = !o.dims.is_empty() && (!f.params.contains(n) || o.attrs.contains("intent(in)"));
@@ -234,10 +234,10 @@ fn validate(
                 }
             }
             Expr::Call(n, args)
-                if matches!(n.as_str(), "@section_subscript" | "@vector_subscript")
+                if n == "@array_constructor" || matches!(n.as_str(), "@section_subscript" | "@vector_subscript")
                     && matches!(args.as_slice(), [Expr::Section { .. }]) =>
             {
-                expr(&args[0], f, approved)?
+                for arg in args { expr(arg, f, approved)?; }
             }
             Expr::Bin(_, a, b) => {
                 expr(a, f, approved)?;
@@ -249,7 +249,7 @@ fn validate(
                     signature.associate(n, args)?;
                 } else if !(parallel::intrinsic(n) || array_intrinsic(n)) || f.scope.contains_key(n)
                 {
-                    bail!("callee `{n}` is not a proven scalar PURE function");
+                    bail!("callee `{n}` is not a proven PURE function");
                 }
                 for a in args {
                     expr(
@@ -342,7 +342,7 @@ fn validate(
     }
     statements(&f.body, f, approved)
 }
-fn array_intrinsic(n: &str) -> bool {
+pub(super) fn array_intrinsic(n: &str) -> bool {
     parallel::unshadowed(n)
         && matches!(
             n,

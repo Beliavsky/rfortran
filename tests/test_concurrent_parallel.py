@@ -1397,7 +1397,7 @@ a(i)=f(i)
 end do
 print *,a(1),a(9000)
 end
-""",'5 9004',reason='not a proven scalar PURE function')
+""",'5 9004',reason='not a proven PURE function')
 
     def test_pure_call_recursion_fallback(self):
         self.build_run("""implicit none
@@ -1416,7 +1416,7 @@ r=f(n-1)+1
 end if
 end function
 end
-""",'1 4',reason='not a proven scalar PURE function')
+""",'1 4',reason='not a proven PURE function')
 
     def test_pure_call_optional_fallback(self):
         self.build_run("""implicit none
@@ -1457,6 +1457,267 @@ end
         self.build_run((ROOT/'tests/programs/xconcurrent_parallel_workspace.f90').read_text(),'16.0 16.0')
         self.build_run((ROOT/'tests/programs/xconcurrent_parallel_workspace.f90').read_text(),'16.0 16.0',parallel=False,threads=(1,))
         self.build_run((ROOT/'tests/programs/xconcurrent_parallel_workspace.f90').read_text(),'16.0 16.0',checks=False)
+
+    def test_pure_result_example(self):
+        source=(ROOT/'tests/programs/xconcurrent_parallel_array_results.f90').read_text()
+        self.build_run(source,'16.0 16.0')
+        self.build_run(source,'16.0 16.0',parallel=False,threads=(1,))
+        self.build_run(source,'16.0 16.0',checks=False)
+
+    def test_pure_result_fixed_and_nested_calls(self):
+        self.build_run('''implicit none
+integer::i,j,y(9000)
+do concurrent(i=1:9000)
+y(i)=total(i)
+end do
+do j=1,9000
+if(y(j)/=12*j) stop 1
+end do
+print *,y(1),y(9000)
+contains
+pure function pair(n) result(r)
+integer,intent(in)::n
+integer::r(2)
+r=[n,2*n]
+end function
+pure function twice(a) result(r)
+integer,intent(in)::a(:)
+integer::r(size(a))
+r=2*a
+end function
+pure integer function total(n)
+integer,intent(in)::n
+total=sum(twice(pair(n)))+sum(twice(pair(n)))
+end function
+end
+''','12 108000')
+
+    def test_pure_result_changing_size_and_empty(self):
+        self.build_run('''implicit none
+integer::i,y(9000)
+do concurrent(i=1:9000)
+y(i)=total(i-4*(i/4))
+end do
+print *,y(1:4),y(9000)
+contains
+simple function values(n) result(r)
+integer,intent(in)::n
+integer::r(n)
+r=3
+end function
+simple integer function total(n)
+integer,intent(in)::n
+total=sum(values(n))
+end function
+end
+''','3 6 9 0 0')
+
+    def test_pure_result_multidimensional_and_bounds(self):
+        self.build_run('''implicit none
+integer::i,y(9000)
+do concurrent(i=1:9000)
+y(i)=total(i)
+end do
+print *,y(1),y(9000)
+contains
+pure function matrix(n) result(r)
+integer,intent(in)::n
+integer::r(-1:0,2:4)
+r=n
+r(-1,2)=2*n
+end function
+pure integer function total(n)
+integer,intent(in)::n
+total=sum(matrix(n))
+end function
+end
+''','7 63000')
+
+    def test_pure_result_logical_and_early_return(self):
+        self.build_run('''implicit none
+integer::i,y(9000)
+do concurrent(i=1:9000)
+y(i)=total(i)
+end do
+print *,y(1),y(9000)
+contains
+pure function flags(n) result(r)
+integer,intent(in)::n
+logical::r(2)
+r=.false.
+if(n==1) return
+r(1)=.true.
+end function
+pure integer function total(n)
+integer,intent(in)::n
+total=count(flags(n))
+end function
+end
+''','0 1')
+
+    def test_pure_result_direct_section_assignment(self):
+        source='''implicit none
+integer::i,n,y(5,9000)
+n=2
+y=-1
+do concurrent(i=1:9000)
+y(2:4:2,i)=pair(i)
+end do
+if(any(y(1,:)/=-1).or.any(y(3,:)/=-1).or.any(y(5,:)/=-1)) stop 1
+print *,y(2,1),y(4,1),y(2,9000),y(4,9000)
+contains
+pure function pair(n) result(r)
+integer,intent(in)::n
+integer::r(2)
+r=[n,2*n]
+end function
+end
+'''
+        self.build_run(source,'1 2 9000 18000')
+        self.build_run(source,'1 2 9000 18000',parallel=False,threads=(1,))
+
+    def test_pure_result_direct_reduction(self):
+        self.build_run('''implicit none
+integer::i,y(9000)
+do concurrent(i=1:9000)
+y(i)=sum(pair(i))
+end do
+print *,y(1),y(9000)
+contains
+pure function pair(n) result(r)
+integer,intent(in)::n
+integer::r(2)
+r=n
+end function
+end
+''','2 18000')
+
+    def test_pure_result_runtime_destination_and_rank_three(self):
+        self.build_run('''implicit none
+integer::i,n
+integer,allocatable::y(:,:)
+n=3
+allocate(y(n,9000))
+do concurrent(i=1:9000)
+y(:,i)=values(n,i)
+end do
+print *,y(:,1),y(:,9000)
+contains
+pure function cube(n,k) result(r)
+integer,intent(in)::n,k
+integer::r(n,2,2)
+r=k
+end function
+pure function values(n,k) result(r)
+integer,intent(in)::n,k
+integer::r(n)
+r=sum(cube(n,k))
+end function
+end
+''','12 12 12 108000 108000 108000')
+
+    def test_pure_result_private_whole_array_assignment(self):
+        self.build_run('''implicit none
+integer::i,y(9000)
+do concurrent(i=1:9000)
+y(i)=total(i)
+end do
+print *,y(1),y(9000)
+contains
+pure integer function total(n)
+integer,intent(in)::n
+integer::work(2)
+work=pair(n)
+total=sum(work)
+end function
+pure function pair(n) result(r)
+integer,intent(in)::n
+integer::r(2)
+r=n
+end function
+end
+''','2 18000')
+
+    def test_pure_result_runtime_checks(self):
+        for layout,failure in ((layout,failure) for layout in ('2','n') for failure in ('uninitialized','bounds')):
+            source='''implicit none
+integer::i,y(9000)
+do concurrent(i=1:9000)
+y(i)=sum(pair(2,i==9000))
+end do
+print *,y(1)
+contains
+pure function pair(n,skip) result(r)
+integer,intent(in)::n
+logical,intent(in)::skip
+integer::r(EXTENT)
+if(.not.skip) r=2
+end function
+end
+'''.replace('EXTENT',layout)
+            if failure=='bounds': source=source.replace('if(.not.skip) r=2','r=2\nr(n+1)=3')
+            with self.subTest(layout=layout,failure=failure), tempfile.TemporaryDirectory(prefix='rfort-parallel-') as tmp:
+                path=Path(tmp)/'case.f90';path.write_text(source)
+                exe=Path(tmp)/'case.exe'
+                for optimization in ('0','2'):
+                    result=subprocess.run([str(COMPILER),'-O',optimization,'--parallel','--parallel-report',str(path),'-o',str(exe)],capture_output=True,text=True,timeout=90)
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    self.assertIn('native parallel worker emitted',result.stderr)
+                    self.assertNotIn('serial fallback',result.stderr)
+                    result=subprocess.run([str(exe)],env=dict(os.environ,RFORT_NUM_THREADS='4',RFORT_PARALLEL_TRACE='1'),capture_output=True,text=True,timeout=30)
+                    self.assertNotEqual(result.returncode,0,result.stdout)
+                    self.assertIn('uninitialized' if failure=='uninitialized' else 'outside',result.stderr.lower())
+
+    def test_pure_result_real_kinds_and_runtime_bounds(self):
+        self.build_run('''implicit none
+integer,parameter::dp=kind(1.0d0)
+integer::i
+real(kind=dp)::y(9000)
+do concurrent(i=1:9000)
+y(i)=sum(values(3,i))
+end do
+print *,y(1),y(9000)
+contains
+pure function values(n,k) result(r)
+integer,intent(in)::n,k
+real(kind=dp)::r(-n:-1)
+r=real(k,dp)
+end function
+end
+''','3.0 27000.0')
+
+    def test_pure_result_overlapping_section_fallback(self):
+        self.build_run('''implicit none
+integer::i,y(9001)
+do concurrent(i=1:9000)
+y(i:i+1)=pair(i)
+end do
+print *,y(1),y(9001)
+contains
+pure function pair(n) result(r)
+integer,intent(in)::n
+integer::r(2)
+r=n
+end function
+end
+''','1 9000',reason='independent array-element writes')
+
+    def test_pure_result_allocatable_fallback(self):
+        self.build_run('''implicit none
+integer::i,y(9000)
+do concurrent(i=1:9000)
+y(i)=sum(pair(i))
+end do
+print *,y(1),y(9000)
+contains
+pure function pair(n) result(r)
+integer,intent(in)::n
+integer,allocatable::r(:)
+allocate(r(2))
+r=n
+end function
+end
+''','2 18000',reason='unsupported or saved storage')
 
     def test_pure_workspace_fixed_scalar_input(self):
         self.build_run("""implicit none
@@ -1736,7 +1997,7 @@ if(n>1) r=r+f(n-1)
 end function
 end
 """
-        self.build_run(source,'2 12',reason='not a proven scalar PURE function')
+        self.build_run(source,'2 12',reason='not a proven PURE function')
         self.build_run(source,'2 12',parallel=False,threads=(1,))
 
     def test_pure_array_columns_no_checks(self):

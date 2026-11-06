@@ -222,6 +222,12 @@ fn check(
                 invariant(a, locals, scope) && invariant(b, locals, scope)
             }
             Expr::Un(crate::ast::UnOp::Neg, a) => invariant(a, locals, scope),
+            // A fixed section is disjoint across iterations when another
+            // destination axis carries each concurrent index exactly once.
+            Expr::Section { lower, upper, stride, .. } =>
+                [lower, upper, stride].into_iter().flatten().all(|e| invariant(e, locals, scope)),
+            Expr::Call(n, a) if n=="@section_subscript" && matches!(a.as_slice(),[Expr::Section{..}]) =>
+                invariant(&a[0], locals, scope),
             _ => false,
         }
     }
@@ -419,6 +425,15 @@ fn check(
                 Ok(())
             }
             Expr::Call(n, args)
+                if n == "@section_subscript" && matches!(args.as_slice(),[Expr::Section{..}]) =>
+            {
+                let Expr::Section {lower, upper, stride, ..}=&args[0] else {unreachable!()};
+                // The parent array expression already validates the storage
+                // and destination tuple; the section name is parser metadata.
+                for e in [lower, upper, stride].into_iter().flatten() {expr(e, scope, written)?;}
+                Ok(())
+            }
+            Expr::Call(n, args)
                 if n == "@array_constructor"
                     || matches!(n.as_str(), "@vector_subscript" | "@section_subscript")
                         && matches!(args.as_slice(), [Expr::Section { .. }]) =>
@@ -449,7 +464,7 @@ fn check(
             Expr::Call(n, args)
                 if !scope.contains_key(n)
                     && !SHADOWED.with(|s| s.borrow().contains(n))
-                    && matches!(
+                    && (calls::array_intrinsic(n) || matches!(
                         n.as_str(),
                         "sqrt"
                             | "abs"
@@ -462,7 +477,7 @@ fn check(
                             | "log"
                             | "min"
                             | "max"
-                    ) =>
+                    )) =>
             {
                 for a in args {
                     expr(a, scope, written)?;
