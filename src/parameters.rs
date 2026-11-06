@@ -1884,6 +1884,9 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
             }
             name if crate::bit_intrinsics::keys(name).is_some() && !constants.contains_key(&model_type_key(name))
                 && !constants.contains_key(&format!("@model_procedure:{name}")) => {
+                let mut canonical=crate::bit_intrinsics::normalize(name,args)?;
+                for arg in &mut canonical {rewrite_expr(arg,constants)?;}
+                let args=&canonical;
                 let arity=crate::bit_intrinsics::keys(name).unwrap().len();
                 if args.len()!=arity {bail!("{} expects {arity} arguments, got {}",name.to_ascii_uppercase(),args.len());}
                 let kinds=args.iter().map(|arg|crate::inquiries::model_type(arg,&|n|model_type_lookup(constants,n))).collect::<Result<Vec<_>>>()?;
@@ -1893,9 +1896,16 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
                     let bytes=bytes.unwrap_or(4);
                     let values=args.iter().map(|arg|integer_constant(arg).ok()).collect::<Vec<_>>();
                     crate::bit_intrinsics::validate_controls(name,bytes,&values)?;
-                    if let Some(values)=values.into_iter().collect::<Option<Vec<_>>>() {
+                    if let Some(mut values)=values.into_iter().collect::<Option<Vec<_>>>() {
+                        let bytes=if crate::bit_intrinsics::comparison(name) {
+                            for (v,k) in values.iter_mut().zip(&kinds) {
+                                let TypeSpec::Integer(b)=k else {unreachable!()};
+                                *v=crate::bit_intrinsics::zero_extend(*v,b.unwrap_or(4));
+                            }
+                            8
+                        } else {bytes};
                         let value=crate::bit_intrinsics::evaluate(name,bytes,&values)?;
-                        *expr=if name=="btest" {Expr::Logical(value!=0)} else {typed_integer(value,bytes)?};
+                        *expr=if crate::bit_intrinsics::logical(name) {Expr::Logical(value!=0)} else {typed_integer(value,if crate::bit_intrinsics::counts(name){4}else{bytes})?};
                     }
                 }
             }

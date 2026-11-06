@@ -47,9 +47,12 @@ jobs to stderr; unset it for timing runs.
   Positional and keyword arguments work.
   Integer bit intrinsics also work for kinds 1, 2, 4, and 8: BTEST, IAND,
   IOR, IEOR, NOT, IBSET, IBCLR, IBITS, ISHFT, SHIFTL/SHIFTR/SHIFTA,
-  DSHIFTL/DSHIFTR, MERGE_BITS, POPCNT/POPPAR, and LEADZ/TRAILZ.
+  DSHIFTL/DSHIFTR, MERGE_BITS, POPCNT/POPPAR, LEADZ/TRAILZ, ISHFTC,
+  MASKL/MASKR, and BGE/BGT/BLE/BLT.
   Dynamic positions, field lengths, and shifts retain their range checks,
-  including with `--nocheck`.
+  including with `--nocheck`. ISHFTC checks SIZE before rotating and accepts
+  shifts from -SIZE through SIZE. MASKL/MASKR support optional KIND, and
+  bit-sequence comparisons zero-extend the shorter operand when kinds differ.
   Procedures shadowing these names do not qualify as intrinsic calls.
 
 The source proof and native callee recheck share the scalar eligibility catalog.
@@ -70,6 +73,14 @@ runtime controls in direct loops and PURE/SIMPLE callees:
 ```cmd
 python tests\test_concurrent_parallel_bits.py
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_bits.f90 --run
+```
+
+Rotation, mask and unsigned-comparison tests also check optional arguments,
+constant initialization, mixed-kind comparisons and single evaluation of actuals:
+
+```cmd
+python tests\test_concurrent_parallel_bit_extensions.py
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_bit_extensions.f90 --run
 ```
 
 Real model operations use an audited runtime helper with invocation-local

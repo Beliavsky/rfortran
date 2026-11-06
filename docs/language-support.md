@@ -591,10 +591,19 @@ value's low-order bits, as gfortran does: assigning 130 to an INTEGER(1)
 variable stores -126.
 
 `ISHFTC(I, SHIFT[, SIZE])` rotates the rightmost SIZE bits of I (all of its bits
-by default) and is lowered to the operations above. It is not yet accepted in
-PARAMETER initializers. `LGE`, `LGT`, `LLE` and `LLT` compare CHARACTER values
+by default), preserving the remaining bits. SIZE must be between 1 and
+BIT_SIZE(I), and SHIFT between -SIZE and SIZE (inclusive); invalid constants are
+rejected at compilation and dynamic controls checked before rotation, including
+with `--nocheck`. PARAMETER initializers are supported. `MASKL(I[,KIND])` and
+`MASKR(I[,KIND])` produce left/right masks, with I between zero and the result's
+bit width. These rules follow [Fortran 2018, sections 16.3.2 and
+16.9.104](https://j3-fortran.org/doc/year/18/18-007r1.pdf). `LGE`, `LGT`, `LLE` and `LLT` compare CHARACTER values
 in ASCII order, the same as the relational operators for rfort's ASCII storage.
-`BGE`, `BGT`, `BLE` and `BLT` compare INTEGER values as unsigned bit patterns.
+`BGE`, `BGT`, `BLE` and `BLT` compare INTEGER values as unsigned bit patterns,
+zero-extending the shorter operand when the integer kinds differ. These
+operations also work in the scalar parallel subset, directly and through
+proved PURE/SIMPLE callees, for integer kinds 1/2/4/8. Run
+`python tests/test_concurrent_parallel_bit_extensions.py`.
 A user procedure with one of these names keeps its own definition. Run
 `python tests/test_intrinsic_rewrites.py`.
 

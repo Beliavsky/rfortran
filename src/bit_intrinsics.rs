@@ -3,14 +3,38 @@
 // See LICENSE-MIT in the repository root.
 
 //! Scalar integer bit operations, their kinds, and control argument bounds.
-use crate::ast::TypeSpec;
+use crate::ast::{Expr, TypeSpec};
 use anyhow::{bail, Result};
 
 pub const NAMES: &[&str] = &[
     "btest", "iand", "ior", "ieor", "not", "ibset", "ibclr", "ibits", "ishft",
     "popcnt", "poppar", "leadz", "trailz", "dshiftl", "dshiftr",
     "shiftl", "shiftr", "shifta", "merge_bits",
+    "ishftc", "maskl", "maskr", "bge", "bgt", "ble", "blt",
 ];
+
+/// Public calls have optional arguments; internal tags always use canonical
+/// arguments. Masks carry a typed zero mold followed by their bit count.
+pub fn normalize(name: &str, args: &[Expr]) -> Result<Vec<Expr>> {
+    let int = |n:i64| Expr::IntLit(n.to_string());
+    if name == "ishftc" {
+        if !(2..=3).contains(&args.len()) {bail!("ISHFTC expects I, SHIFT and optional SIZE");}
+        let size=args.get(2).filter(|a|!crate::named_arguments::omitted(a)).cloned()
+            .unwrap_or_else(||Expr::Call("bit_size".into(),vec![args[0].clone()]));
+        return Ok(vec![args[0].clone(),args[1].clone(),size]);
+    }
+    if matches!(name,"maskl"|"maskr") {
+        if !(1..=2).contains(&args.len()) {bail!("{} expects I and optional KIND",name.to_ascii_uppercase());}
+        let kind=args.get(1).filter(|a|!crate::named_arguments::omitted(a)).cloned().unwrap_or_else(||int(4));
+        return Ok(vec![Expr::Call("int".into(),vec![int(0),kind]),args[0].clone()]);
+    }
+    Ok(args.to_vec())
+}
+pub fn comparison(name: &str) -> bool {matches!(name,"bge"|"bgt"|"ble"|"blt")}
+pub fn logical(name: &str) -> bool {name=="btest" || comparison(name)}
+pub fn zero_extend(value:i64,bytes:u8)->i64 {
+    if bytes==8 {value} else {(value as u64 & ((1u64 << (bytes*8))-1)) as i64}
+}
 
 /// These return a default INTEGER count rather than a value of I's kind.
 pub fn counts(name: &str) -> bool {
@@ -19,13 +43,15 @@ pub fn counts(name: &str) -> bool {
 
 pub fn keys(name: &str) -> Option<&'static [&'static str]> {
     Some(match name {
-        "iand" | "ior" | "ieor" => &["i", "j"],
+        "iand" | "ior" | "ieor" | "bge" | "bgt" | "ble" | "blt" => &["i", "j"],
         "not" | "popcnt" | "poppar" | "leadz" | "trailz" => &["i"],
         "dshiftl" | "dshiftr" => &["i", "j", "shift"],
         "btest" | "ibset" | "ibclr" => &["i", "pos"],
         "ibits" => &["i", "pos", "len"],
         "ishft" | "shiftl" | "shiftr" | "shifta" => &["i", "shift"],
         "merge_bits" => &["i", "j", "mask"],
+        "ishftc" => &["i", "shift", "size"],
+        "maskl" | "maskr" => &["i", "kind"],
         _ => return None,
     })
 }
@@ -41,7 +67,8 @@ pub fn result_kind(name: &str, kinds: &[TypeSpec]) -> Result<TypeSpec> {
         );
     }
     let mut bytes = vec![];
-    for (key, kind) in keys.iter().zip(kinds) {
+    let canonical_keys: &[&str] = if matches!(name,"maskl"|"maskr") { &["kind", "i"] } else { keys };
+    for (key, kind) in canonical_keys.iter().zip(kinds) {
         let TypeSpec::Integer(k) = kind else {
             bail!(
                 "{} argument {} must be INTEGER",
@@ -65,7 +92,7 @@ pub fn result_kind(name: &str, kinds: &[TypeSpec]) -> Result<TypeSpec> {
             name.to_ascii_uppercase()
         );
     }
-    Ok(if name == "btest" {
+    Ok(if logical(name) {
         TypeSpec::Logical
     } else if counts(name) {
         TypeSpec::Integer(Some(4))
@@ -84,7 +111,7 @@ pub fn decode(tag: &str) -> Option<(&str, u8)> {
 }
 pub fn tag_kind(tag: &str) -> Option<TypeSpec> {
     let (name, bytes) = decode(tag)?;
-    Some(if name == "btest" {
+    Some(if logical(name) {
         TypeSpec::Logical
     } else if counts(name) {
         TypeSpec::Integer(Some(4))
@@ -94,6 +121,8 @@ pub fn tag_kind(tag: &str) -> Option<TypeSpec> {
 }
 pub fn range_message(name: &str, bits: i64) -> String {
     let limits = match name {
+        "ishftc" => format!("SIZE must be between 1 and {bits}; SHIFT must be between -SIZE and SIZE"),
+        "maskl" | "maskr" => format!("I must be between 0 and {bits}"),
         "ibits" => format!("POS and LEN must be nonnegative with POS + LEN <= {bits}"),
         "ishft" => format!("SHIFT must be between {} and {bits}", -bits),
         "dshiftl" | "dshiftr" | "shiftl" | "shiftr" | "shifta" => format!("SHIFT must be between 0 and {bits}"),
@@ -104,6 +133,9 @@ pub fn range_message(name: &str, bits: i64) -> String {
 pub fn validate_controls(name: &str, bytes: u8, values: &[Option<i64>]) -> Result<()> {
     let bits = i64::from(bytes) * 8;
     let bad = match name {
+        "ishftc" => values[2].is_some_and(|n| n<1 || n>bits)
+            || matches!((values[1],values[2]),(Some(s),Some(n)) if n>=1 && n<=bits && (s < -n || s > n)),
+        "maskl" | "maskr" => values[1].is_some_and(|n|n<0 || n>bits),
         "btest" | "ibset" | "ibclr" => values[1].is_some_and(|n| n < 0 || n >= bits),
         "ishft" => values[1].is_some_and(|n| n < -bits || n > bits),
         "dshiftl" | "dshiftr" => values[2].is_some_and(|n| n < 0 || n > bits),
@@ -135,6 +167,23 @@ pub fn evaluate(name: &str, bytes: u8, values: &[i64]) -> Result<i64> {
     };
     let i = values[0] as u64 & mask;
     let value = match name {
+        "bge" => u64::from((values[0] as u64)>=(values[1] as u64)),
+        "bgt" => u64::from((values[0] as u64)>(values[1] as u64)),
+        "ble" => u64::from((values[0] as u64)<=(values[1] as u64)),
+        "blt" => u64::from((values[0] as u64)<(values[1] as u64)),
+        "maskl" | "maskr" => {
+            let n=values[1] as u32;
+            let low=if n==64 {u64::MAX}else{(1u64<<n)-1};
+            if name=="maskl" {low.checked_shl(bits-n).unwrap_or(0)}else{low}
+        }
+        "ishftc" => {
+            let size=values[2] as u32;
+            let field_mask=if size==64 {u64::MAX}else{(1u64<<size)-1};
+            let shift=values[1].rem_euclid(i64::from(size)) as u32;
+            let field=i&field_mask;
+            let rotated=(field.checked_shl(shift).unwrap_or(0)|field.checked_shr(size-shift).unwrap_or(0))&field_mask;
+            (i & !field_mask)|rotated
+        }
         "btest" => (i >> values[1] as u32) & 1,
         "iand" => i & values[1] as u64,
         "ior" => i | values[1] as u64,
@@ -176,7 +225,7 @@ pub fn evaluate(name: &str, bytes: u8, values: &[i64]) -> Result<i64> {
         }
         _ => bail!("unknown bit intrinsic `{name}`"),
     } & mask;
-    Ok(if name == "btest" || counts(name) {
+    Ok(if logical(name) || counts(name) {
         value as i64
     } else {
         ((value << (64 - bits)) as i64) >> (64 - bits)
@@ -186,6 +235,35 @@ pub fn evaluate(name: &str, bytes: u8, values: &[i64]) -> Result<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn rotations_masks_and_unsigned_comparisons() {
+        for bytes in [1,2,4,8] {
+            let bits=i64::from(bytes)*8;
+            for shift in [-bits,0,bits] {
+                assert_eq!(evaluate("ishftc",bytes,&[-1,shift,bits]).unwrap(),-1);
+                assert_eq!(evaluate("ishftc",bytes,&[1,shift,bits]).unwrap(),1);
+            }
+            assert_eq!(evaluate("ishftc",bytes,&[29,1,4]).unwrap(),27);
+            assert_eq!(evaluate("ishftc",bytes,&[29,-1,4]).unwrap(),30);
+            assert_eq!(evaluate("maskl",bytes,&[0,0]).unwrap(),0);
+            assert_eq!(evaluate("maskr",bytes,&[0,0]).unwrap(),0);
+            assert_eq!(evaluate("maskl",bytes,&[0,bits]).unwrap(),-1);
+            assert_eq!(evaluate("maskr",bytes,&[0,bits]).unwrap(),-1);
+            assert_eq!(evaluate("maskr",bytes,&[0,3]).unwrap(),7);
+            assert_eq!(evaluate("maskl",bytes,&[0,1]).unwrap(),if bytes==8 {i64::MIN}else{-(1i64<<(bits-1))});
+            for bad in [i64::MIN,-1,bits+1,i64::MAX] {
+                assert!(evaluate("maskl",bytes,&[0,bad]).is_err());
+                assert!(evaluate("maskr",bytes,&[0,bad]).is_err());
+                assert!(evaluate("ishftc",bytes,&[1,0,bad]).is_err());
+            }
+            for bad in [i64::MIN,-bits-1,bits+1,i64::MAX] {
+                assert!(evaluate("ishftc",bytes,&[1,bad,bits]).is_err());
+            }
+            let short=zero_extend(-1,bytes);
+            assert_eq!(evaluate("bge",8,&[short,-1]).unwrap(),i64::from(bytes==8));
+            assert_eq!(evaluate("blt",8,&[short,-1]).unwrap(),i64::from(bytes<8));
+        }
+    }
     #[test]
     fn handles_sign_bits_zero_fields_and_full_width_shifts() {
         for bytes in [1, 2, 4, 8] {

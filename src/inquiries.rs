@@ -91,6 +91,7 @@ pub fn model_type(e: &Expr, lookup: &impl Fn(&str) -> Option<(TypeSpec,usize)>) 
         Expr::Call(name,_) if crate::equivalence::bits_kind(name).is_some() => crate::equivalence::bits_kind(name),
         Expr::Call(tag,_) if crate::bit_intrinsics::tag_kind(tag).is_some() => crate::bit_intrinsics::tag_kind(tag),
         Expr::Call(name,args) if crate::bit_intrinsics::keys(name).is_some() && lookup(name).is_none() => {
+            let args=crate::bit_intrinsics::normalize(name,args)?;
             let kinds=args.iter().map(|arg|model_type(arg,lookup)).collect::<Result<Vec<_>>>()?;
             if let Some(kinds)=kinds.into_iter().collect::<Option<Vec<_>>>() {
                 Some(crate::bit_intrinsics::result_kind(name,&kinds)?)

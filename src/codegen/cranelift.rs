@@ -854,6 +854,32 @@ fn eval_expr(
                 let mask=b.ins().iconst(ir::types::I64,if bits==64 {-1} else {(1i64<<bits)-1});
                 let i=b.ins().band(values[0],mask);
                 let result=match operation {
+                    "bge"|"bgt"|"ble"|"blt"=>{
+                        let cc=match operation {"bge"=>ir::condcodes::IntCC::UnsignedGreaterThanOrEqual,"bgt"=>ir::condcodes::IntCC::UnsignedGreaterThan,"ble"=>ir::condcodes::IntCC::UnsignedLessThanOrEqual,_=>ir::condcodes::IntCC::UnsignedLessThan};
+                        return CgVal::Bool(b.ins().icmp(cc,values[0],values[1]));
+                    },
+                    "maskl"|"maskr"=>{
+                        let top=b.ins().ishl(one,values[1]);let short=b.ins().isub(top,one);
+                        let full=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,values[1],64);
+                        let all=b.ins().iconst(ir::types::I64,-1);let low=b.ins().select(full,all,short);
+                        if operation=="maskl" {let width=b.ins().iconst(ir::types::I64,bits);let shift=b.ins().isub(width,values[1]);b.ins().ishl(low,shift)}else{low}
+                    },
+                    "ishftc"=>{
+                        let size=values[2];let top=b.ins().ishl(one,size);let short=b.ins().isub(top,one);
+                        let full=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,size,64);
+                        let all=b.ins().iconst(ir::types::I64,-1);let field_mask=b.ins().select(full,all,short);
+                        let field=b.ins().band(i,field_mask);
+                        let remainder=b.ins().srem(values[1],size);
+                        let negative=b.ins().icmp_imm(ir::condcodes::IntCC::SignedLessThan,remainder,0);
+                        let adjusted=b.ins().iadd(remainder,size);let shift=b.ins().select(negative,adjusted,remainder);
+                        let right_shift=b.ins().isub(size,shift);
+                        let left=b.ins().ishl(field,shift);let right=b.ins().ushr(field,right_shift);
+                        let right_full=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,right_shift,64);
+                        let right=b.ins().select(right_full,zero,right);
+                        let rotated=b.ins().bor(left,right);let rotated=b.ins().band(rotated,field_mask);
+                        let outside=b.ins().bnot(field_mask);let outside=b.ins().band(i,outside);
+                        b.ins().bor(outside,rotated)
+                    },
                     "btest"=>{let shifted=b.ins().ushr(i,values[1]);let bit=b.ins().band(shifted,one);return CgVal::Bool(b.ins().icmp_imm(ir::condcodes::IntCC::NotEqual,bit,0));},
                     "iand"=>b.ins().band(i,values[1]),
                     "ior"=>b.ins().bor(i,values[1]),

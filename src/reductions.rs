@@ -67,6 +67,7 @@ pub(crate) fn runtime_extent(e: &Expr) -> Option<Expr> {
         // Inquiry and reduction calls, such as SIZE and SUM, remain scalar.
         Expr::Call(n,args) if crate::intrinsics::math_arity(n).is_some()
             || crate::real_intrinsics::decode(n).is_some()
+            || crate::bit_intrinsics::keys(n).is_some() || crate::bit_intrinsics::decode(n).is_some()
             || matches!(n.as_str(), "abs" | "real" | "dble" | "int" | "nint" | "mod" | "modulo" | "sign" | "min" | "max"
                 | "len_trim" | "index" | "scan" | "verify" | "ichar" | "iachar") =>
             args.iter().find_map(runtime_extent),
@@ -123,14 +124,19 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
         }
         Expr::Call(name,args) if crate::bit_intrinsics::keys(name).is_some() && !symbols.contains_key(name) && !symbols.procedures.contains(name)
             || crate::bit_intrinsics::decode(name).is_some() => {
+            let canonical=if crate::bit_intrinsics::decode(name).is_none() {crate::bit_intrinsics::normalize(name,args)?}else{args.clone()};
             let mut values=vec![];let mut kinds=vec![];let mut shape=None;
-            for arg in args {
+            for arg in &canonical {
                 let (value,count,kind)=element(arg,index,symbols)?;
                 if let (Some(a),Some(b))=(shape,count) {if a!=b {bail!("bit intrinsic array shapes do not conform");}}
                 shape=shape.or(count);values.push(value);kinds.push(kind);
             }
             let public=crate::bit_intrinsics::decode(name).map_or(name.as_str(),|(n,_)|n);
             let kind=crate::bit_intrinsics::result_kind(public,&kinds)?;
+            // Preserve public optional-argument syntax until checked lowering.
+            if crate::bit_intrinsics::decode(name).is_none() && matches!(name.as_str(),"ishftc"|"maskl"|"maskr") {
+                values=args.iter().filter(|a|!crate::named_arguments::omitted(a)).map(|a|element(a,index,symbols).map(|v|v.0)).collect::<Result<_>>()?;
+            }
             Ok((Expr::Call(name.clone(),values),shape,kind))
         },
         Expr::Call(n,args) if n=="@fixed_packed_view" => {
@@ -578,11 +584,21 @@ fn out_of_range(e:&Expr,symbols:&Symbols)->Result<Expr> {
 // Keep bit captures/checks outside the recursive lowering frame on Windows.
 fn lower_bit(e:&mut Expr,symbols:&mut Symbols,prefix:&mut Vec<Stmt>,serial:&mut usize,expand_elementals:bool)->Result<()> {
     let Expr::Call(name,args)=e else {unreachable!()};
+    let default_size=name=="ishftc" && (args.len()==2 || args.get(2).is_some_and(crate::named_arguments::omitted));
+    *args=crate::bit_intrinsics::normalize(name,args)?;
+    if default_size {
+        // Resolve type inquiries and nested expressions before deriving SIZE;
+        // the resolved value remains the single captured I actual below.
+        lower_expr_impl(&mut args[0],symbols,prefix,serial,expand_elementals)?;
+        let kind=element(&args[0],&int(1),symbols)?.2;
+        let TypeSpec::Integer(bytes)=kind else {bail!("ISHFTC argument I must be INTEGER")};
+        args[2]=int(i64::from(bytes.unwrap_or(4))*8);
+    }
     let arity=crate::bit_intrinsics::keys(name).unwrap().len();
     if args.len()!=arity {bail!("{} expects {arity} arguments, got {}",name.to_ascii_uppercase(),args.len());}
     let mut kinds=vec![];let mut elemental=false;
     // Array control arguments that are constructors of constants, checked
-    // element by element, or the shift ISHFTC reduces modulo its size.
+    // element by element, or shifts already normalized by a modulo expression.
     let checked=args.iter().enumerate().map(|(i,arg)| i>0 && match arg {
         Expr::Call(n,items) if n=="@array_constructor" => items.iter().all(|e|crate::parameters::integer_constant(e).is_ok()),
         Expr::Call(n,_) if n=="modulo" && name=="ishft" && i==1 => true,
@@ -597,9 +613,21 @@ fn lower_bit(e:&mut Expr,symbols:&mut Symbols,prefix:&mut Vec<Stmt>,serial:&mut 
         kinds.push(kind);
     }
     crate::bit_intrinsics::result_kind(name,&kinds)?;
+    if crate::bit_intrinsics::comparison(name) {
+        // Zero extend each operand at its own width before the unsigned I64
+        // comparison. Capturing below evaluates each original argument once.
+        for (arg,kind) in args.iter_mut().zip(kinds.iter_mut()) {
+            let TypeSpec::Integer(bytes)=kind else {unreachable!()};
+            let width=i64::from(bytes.unwrap_or(4))*8;
+            *arg=Expr::Call(crate::bit_intrinsics::tag("ibits",8),vec![Expr::Call("int".into(),vec![arg.clone(),int(8)]),int(0),int(width)]);
+            *kind=TypeSpec::Integer(Some(8));
+        }
+    }
     let TypeSpec::Integer(bytes)=kinds[0] else {unreachable!()};
     let bytes=bytes.unwrap_or(4);let bits=i64::from(bytes)*8;
-    let values=args.iter().map(|arg|crate::parameters::integer_constant(arg).ok()).collect::<Vec<_>>();
+    // Typed constants may become temporaries while lowering; retain their
+    // values so constant array controls still qualify and are validated.
+    let values=constructed.iter().zip(args.iter()).map(|(original,arg)|crate::parameters::integer_constant(original).or_else(|_|crate::parameters::integer_constant(arg)).ok()).collect::<Vec<_>>();
     crate::bit_intrinsics::validate_controls(name,bytes,&values)?;
     if elemental {
         // Array arguments are evaluated element by element; only constant
@@ -614,7 +642,7 @@ fn lower_bit(e:&mut Expr,symbols:&mut Symbols,prefix:&mut Vec<Stmt>,serial:&mut 
                 }
             }
         }
-        if values.iter().enumerate().skip(1).any(|(i,v)|v.is_none() && !checked[i]) && !crate::bit_intrinsics::counts(name) && !matches!(name.as_str(),"iand"|"ior"|"ieor"|"not"|"merge_bits") {
+        if values.iter().enumerate().skip(1).any(|(i,v)|v.is_none() && !checked[i]) && !crate::bit_intrinsics::counts(name) && !matches!(name.as_str(),"iand"|"ior"|"ieor"|"not"|"merge_bits") && !crate::bit_intrinsics::comparison(name) {
             bail!("{} with array arguments currently requires constant control arguments",name.to_ascii_uppercase());
         }
         *name=crate::bit_intrinsics::tag(name,bytes);
@@ -627,6 +655,10 @@ fn lower_bit(e:&mut Expr,symbols:&mut Symbols,prefix:&mut Vec<Stmt>,serial:&mut 
         prefix.push(Stmt::Assign {name:temp.clone(),value:arg.clone()});
         symbols.insert(temp.clone(),(kind,vec![]));*arg=Expr::Ident(temp);
     }
+    if name=="ishftc" {
+        let bad=bin(BinOp::Or,bin(BinOp::Lt,args[2].clone(),int(1)),bin(BinOp::Gt,args[2].clone(),int(bits)));
+        prefix.push(Stmt::If{cond:bad,then_body:vec![Stmt::CallSub{name:"@error_stop".into(),args:vec![Expr::Str(crate::bit_intrinsics::range_message(name,bits))]}],else_body:None});
+    }
     if name=="ibits" {
         // Check each bound before subtracting POS, even for INTEGER(8) extremes.
         let cond=bin(BinOp::Or,
@@ -635,6 +667,8 @@ fn lower_bit(e:&mut Expr,symbols:&mut Symbols,prefix:&mut Vec<Stmt>,serial:&mut 
         prefix.push(Stmt::If {cond,then_body:vec![Stmt::CallSub {name:"@error_stop".into(),args:vec![Expr::Str(crate::bit_intrinsics::range_message(name,bits))]}],else_body:None});
     }
     let control=match name.as_str() {
+        "ishftc"=>Some(bin(BinOp::Or,bin(BinOp::Lt,args[1].clone(),bin(BinOp::Sub,int(0),args[2].clone())),bin(BinOp::Gt,args[1].clone(),args[2].clone()))),
+        "maskl"|"maskr"=>Some(bin(BinOp::Or,bin(BinOp::Lt,args[1].clone(),int(0)),bin(BinOp::Gt,args[1].clone(),int(bits)))),
         "btest"|"ibset"|"ibclr"=>Some(bin(BinOp::Or,bin(BinOp::Lt,args[1].clone(),int(0)),bin(BinOp::Ge,args[1].clone(),int(bits)))),
         "ishft"=>Some(bin(BinOp::Or,bin(BinOp::Lt,args[1].clone(),int(-bits)),bin(BinOp::Gt,args[1].clone(),int(bits)))),
         "ibits"=>Some(bin(BinOp::Gt,args[2].clone(),bin(BinOp::Sub,int(bits),args[1].clone()))),
@@ -1336,7 +1370,7 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             }
         }
         if name != "@packed_view" && args.iter().any(|arg| runtime_extent(arg).is_some()) {
-            if symbols.elementals.contains_key(name) || crate::intrinsics::math_arity(name).is_some() || crate::intrinsics::integer_rounding(name) || crate::intrinsics::real_predicate(name) || crate::real_intrinsics::decode(name).is_some()
+            if symbols.elementals.contains_key(name) || crate::intrinsics::math_arity(name).is_some() || crate::intrinsics::integer_rounding(name) || crate::intrinsics::real_predicate(name) || crate::real_intrinsics::decode(name).is_some() || crate::bit_intrinsics::decode(name).is_some()
                 || matches!(name.as_str(), "real" | "dble" | "int" | "abs" | "mod" | "modulo" | "sign") || numeric_minmax(name,symbols) {
                 let length=args.iter().find_map(runtime_extent).unwrap();
                 for arg in args.iter() {

@@ -75,7 +75,8 @@ pub(crate) fn parallel_scalar(name: &str) -> bool {
         // generated control guards only terminate on invalid arguments.
         | "btest" | "iand" | "ior" | "ieor" | "not" | "ibset" | "ibclr"
         | "ibits" | "ishft" | "popcnt" | "poppar" | "leadz" | "trailz"
-        | "dshiftl" | "dshiftr" | "shiftl" | "shiftr" | "shifta" | "merge_bits")
+        | "dshiftl" | "dshiftr" | "shiftl" | "shiftr" | "shifta" | "merge_bits"
+        | "ishftc" | "maskl" | "maskr" | "bge" | "bgt" | "ble" | "blt")
 }
 
 /// Language purity for public intrinsic interfaces known to the compiler. Keep compiler

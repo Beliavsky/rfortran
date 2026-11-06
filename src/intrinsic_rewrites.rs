@@ -6,24 +6,21 @@
 //!
 //! LGE, LGT, LLE and LLT compare in the ASCII collating sequence, which is the
 //! order of the intrinsic CHARACTER relational operators for rfort's ASCII
-//! storage. ISHFTC rotates the rightmost SIZE bits of I with IBITS, ISHFT and
-//! masks, using DIGITS(I)+1 as the default SIZE (the bit size of I's kind).
-//! BGE, BGT, BLE and BLT compare as unsigned integers: the signed comparison,
-//! reversed when exactly one argument is negative. IS_IOSTAT_END and
-//! IS_IOSTAT_EOR compare with the IOSTAT_END and IOSTAT_EOR values, -1 and -2.
+//! storage. IS_IOSTAT_END and IS_IOSTAT_EOR compare with the IOSTAT_END and
+//! IOSTAT_EOR values, -1 and -2. Checked integer bit operations are lowered
+//! separately by bit_intrinsics and reductions.
 //! SIND, ASIND, SINPI, ATAN2D and the rest of the degree and half-revolution
 //! functions scale the argument or result of SIN, ASIN or ATAN2 by PI in the
 //! argument's kind, and ATAN(Y, X) is ATAN2(Y, X). DIM(A, B) is MAX(A-B, 0) and
 //! DPROD(X, Y) is DBLE(X)*DBLE(Y). Specific names such as IABS, FLOAT and
 //! DSQRT become their generic intrinsic, BESSEL_JN(N, X) and BESSEL_YN(N, X)
 //! call runtime wrappers that take X first, and NORM2(X) is SQRT(SUM(X*X)).
-//! MASKL(I) and MASKR(I) shift the bits of NOT(0) of the result kind, and
 //! ERFC_SCALED(X) is EXP(X**2)*ERFC(X) or, past where that overflows, an
 //! asymptotic series. COMMAND_ARGUMENT_COUNT() calls the runtime.
 //! A user procedure or variable with one of these names keeps its own definition.
 use crate::ast::{BinOp, Expr, Program, Stmt};
 use crate::procedure_arguments::{children, expressions, visit_expr};
-use anyhow::{bail, Result};
+use anyhow::Result;
 use std::collections::HashSet;
 
 fn call(name: &str, args: Vec<Expr>) -> Expr {
@@ -85,23 +82,6 @@ fn specific(name: &str) -> Option<&'static str> {
         "min0" | "amin1" | "dmin1" => "min",
         _ => return None,
     })
-}
-
-fn ishftc(args: &[Expr]) -> Result<Expr> {
-    if !(2..=3).contains(&args.len()) {
-        bail!("ISHFTC expects I, SHIFT and optional SIZE");
-    }
-    let i = args[0].clone();
-    // DIGITS depends only on the type, which a constructor's first item has.
-    let mold = match &i { Expr::Call(n, items) if n == "@array_constructor" && !items.is_empty() => items[0].clone(), _ => i.clone() };
-    let size = args.get(2).cloned().unwrap_or_else(|| bin(BinOp::Add, call("digits", vec![mold]), int(1)));
-    let shift = call("modulo", vec![args[1].clone(), size.clone()]);
-    let field = call("ibits", vec![i.clone(), int(0), size.clone()]);
-    let zero = call("ieor", vec![i.clone(), i.clone()]);
-    let mask = call("ibits", vec![call("not", vec![zero]), int(0), size.clone()]);
-    let left = call("iand", vec![call("ishft", vec![field.clone(), shift.clone()]), mask.clone()]);
-    let right = call("ishft", vec![field, bin(BinOp::Sub, shift, size)]);
-    Ok(call("ior", vec![call("iand", vec![i, call("not", vec![mask])]), call("ior", vec![left, right])]))
 }
 
 // Pi in the kind of the REAL expression x, which may be an array.
@@ -181,19 +161,6 @@ fn rewrite(e: &mut Expr, user: &HashSet<String>, error: &mut Option<anyhow::Erro
         *e = call("sqrt", vec![call("sum", sum)]);
         return;
     }
-    if matches!(lname.as_str(), "maskl" | "maskr") {
-        if !(1..=2).contains(&args.len()) {
-            *error = Some(anyhow::anyhow!("{} expects I and optional KIND", lname.to_ascii_uppercase()));
-            return;
-        }
-        let zero = match args.get(1).filter(|kind| !crate::named_arguments::omitted(kind)) {
-            Some(kind) => call("int", vec![int(0), kind.clone()]),
-            None => int(0),
-        };
-        let shift = if lname == "maskl" { "shiftr" } else { "shiftl" };
-        *e = call("not", vec![call(shift, vec![call("not", vec![zero]), args[0].clone()])]);
-        return;
-    }
     if lname == "command_argument_count" {
         if !args.is_empty() {
             *error = Some(anyhow::anyhow!("COMMAND_ARGUMENT_COUNT takes no arguments"));
@@ -245,29 +212,11 @@ fn rewrite(e: &mut Expr, user: &HashSet<String>, error: &mut Option<anyhow::Erro
         *e = bin(BinOp::Eq, args[0].clone(), int(code));
         return;
     }
-    if let Some(op) = match lname.as_str() { "bge" => Some(BinOp::Ge), "bgt" => Some(BinOp::Gt), "ble" => Some(BinOp::Le), "blt" => Some(BinOp::Lt), _ => None } {
-        if args.len() != 2 {
-            *error = Some(anyhow::anyhow!("{} expects I and J", lname.to_ascii_uppercase()));
-            return;
-        }
-        // Unsigned order is the signed order, reversed when the signs differ.
-        let (i, j) = (args[0].clone(), args[1].clone());
-        let signs = bin(BinOp::Neqv, bin(BinOp::Lt, i.clone(), int(0)), bin(BinOp::Lt, j.clone(), int(0)));
-        *e = bin(BinOp::Neqv, bin(op, i, j), signs);
-        return;
-    }
     let op = match lname.as_str() {
         "lge" => BinOp::Ge,
         "lgt" => BinOp::Gt,
         "lle" => BinOp::Le,
         "llt" => BinOp::Lt,
-        "ishftc" => {
-            match ishftc(args) {
-                Ok(value) => *e = value,
-                Err(err) => *error = Some(err),
-            }
-            return;
-        }
         _ => return,
     };
     if args.len() != 2 {

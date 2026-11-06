@@ -70,11 +70,13 @@ y=nint(scale(real(increment(x)),1))/2
 end subroutine
 pure integer function increment(x)
 integer,intent(in)::x
-increment=identity(ibits(x,0,bit_size(x)))+1
+increment=identity(ishftc(ibits(x,0,bit_size(x)),bit_size(x)))+1
 end function
 simple integer function identity(x)
 integer,intent(in)::x
 identity=x
+if(.not.bge(x,0)) identity=0
+identity=iand(identity,maskr(bit_size(x)))
 end function
 pure integer function array_total(x)
 integer,intent(in)::x(:)
