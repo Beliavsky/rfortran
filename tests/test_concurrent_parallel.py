@@ -1889,7 +1889,7 @@ end function
 end
 ''','2 18000')
 
-    def test_pure_alloc_result_allocation_control_fallback(self):
+    def test_pure_alloc_result_allocation_status(self):
         self.build_run('''implicit none
 integer::i,y(9000)
 do concurrent(i=1:9000)
@@ -1906,7 +1906,7 @@ if(istat/=0) return
 r=n
 end function
 end
-''','2 18000',reason='allocation requires a private ALLOCATABLE array without control specifiers')
+''','2 18000')
 
     def test_pure_alloc_result_module_call_chain_and_kinds(self):
         source='''module factory
@@ -2093,6 +2093,172 @@ total=sum(work)
 end function
 end
 ''','2 18000',reason='unsupported or saved storage')
+
+    def test_pure_allocation_options_example(self):
+        source=(ROOT/'tests/programs/xconcurrent_parallel_allocation_options.f90').read_text()
+        self.build_run(source,'4 6 8 2 2')
+        self.build_run(source,'4 6 8 2 2',parallel=False,threads=(1,))
+        self.build_run(source,'4 6 8 2 2',checks=False)
+
+    def test_pure_allocation_options_source_bounds(self):
+        self.build_run('''implicit none
+integer::i,a(2,2),y(9000)
+a=3
+do concurrent(i=1:9000)
+y(i)=total(a,2)
+end do
+print *,y(1),y(9000)
+contains
+pure integer function total(a,n)
+integer,intent(in)::a(:,:),n
+integer,allocatable::work(:,:)
+integer::istat
+total=-1
+allocate(work(-1:n-2,2:3),source=a,stat=istat)
+if(istat/=0) return
+total=sum(work)+lbound(work,1)+lbound(work,2)
+end function
+end
+''','13 13')
+
+    def test_pure_allocation_options_mold_undefined_input(self):
+        source='''implicit none
+integer::i,a(2),y(9000)
+do concurrent(i=1:9000)
+y(i)=total(a)
+end do
+print *,y(1),y(9000)
+contains
+pure integer function total(a)
+integer,intent(in)::a(:)
+integer,allocatable::work(:)
+integer::istat
+total=-1
+allocate(work,mold=a,stat=istat)
+if(istat/=0) return
+work=3
+total=sum(work)
+end function
+end
+'''
+        self.build_run(source,'6 6')
+        self.build_run(source.replace('mold=a','mold=a+a'),'6 6')
+
+    def test_pure_allocation_options_source_expression_and_nested_result(self):
+        source='''implicit none
+integer::i,y(9000)
+do concurrent(i=1:9000)
+y(i)=sum(values(i))
+end do
+print *,y(1),y(9000)
+contains
+pure function values(n) result(r)
+integer,intent(in)::n
+integer,allocatable::r(:)
+integer::istat
+allocate(r,source=[n,2*n],stat=istat)
+end function
+end
+'''
+        self.build_run(source,'3 27000')
+        callback=source.replace('source=[n,2*n]','source=pair(n)').replace('end function\nend\n','''end function
+pure function pair(n) result(a)
+integer,intent(in)::n
+integer::a(2)
+a=[n,2*n]
+end function
+end
+''')
+        self.build_run(callback,'3 27000')
+
+    def test_pure_allocation_options_logical_and_real(self):
+        for kind,fill,read,expected in (
+            ('logical','.true.','count(work)','2 2'),
+            ('real','2.5','int(sum(work))','5 5')):
+            source='''implicit none
+integer::i,y(9000)
+do concurrent(i=1:9000)
+y(i)=total()
+end do
+print *,y(1),y(9000)
+contains
+pure integer function total()
+KIND,allocatable::work(:)
+integer::istat
+allocate(work(2),source=FILL,stat=istat)
+total=READ
+end function
+end
+'''.replace('KIND',kind).replace('FILL',fill).replace('READ',read)
+            with self.subTest(kind=kind): self.build_run(source,expected)
+
+    def test_pure_allocation_options_source_allocation_state(self):
+        self.build_run('''implicit none
+integer::i,y(9000)
+do concurrent(i=1:9000)
+y(i)=total()
+end do
+print *,y(1),y(9000)
+contains
+pure integer function total()
+logical,allocatable::work(:)
+integer::istat
+allocate(work(2),source=allocated(work),stat=istat)
+total=count(work)
+end function
+end
+''','0 0')
+
+    def test_pure_allocation_options_value_status_fallback(self):
+        self.build_run('''implicit none
+integer::i,y(9000)
+do concurrent(i=1:9000)
+y(i)=total(0)
+end do
+print *,y(1),y(9000)
+contains
+pure integer function total(istat)
+integer,value::istat
+integer,allocatable::work(:)
+allocate(work(2),stat=istat)
+work=3
+total=sum(work)
+end function
+end
+''','6 6',reason='STAT requires a local INTEGER variable')
+
+    def test_pure_allocation_options_runtime_checks(self):
+        for failure,allocation in (
+            ('uninitialized','allocate(work,mold=a,stat=istat)'),
+            ('shape','allocate(work(3),source=a,stat=istat)')):
+            source='''implicit none
+integer::i,a(2),y(9000)
+a=2
+do concurrent(i=1:9000)
+y(i)=total(a)
+end do
+print *,y(1)
+contains
+pure integer function total(a)
+integer,intent(in)::a(:)
+integer,allocatable::work(:)
+integer::istat
+ALLOCATION
+total=sum(work)
+end function
+end
+'''.replace('ALLOCATION',allocation)
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory(prefix='rfort-parallel-') as tmp:
+                path=Path(tmp)/'case.f90';path.write_text(source)
+                exe=Path(tmp)/'case.exe'
+                for optimization in ('0','2'):
+                    result=subprocess.run([str(COMPILER),'-O',optimization,'--parallel','--parallel-report',str(path),'-o',str(exe)],capture_output=True,text=True,timeout=90)
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    self.assertIn('native parallel worker emitted',result.stderr)
+                    self.assertNotIn('serial fallback',result.stderr)
+                    result=subprocess.run([str(exe)],env=dict(os.environ,RFORT_NUM_THREADS='4',RFORT_PARALLEL_TRACE='1'),capture_output=True,text=True,timeout=30)
+                    self.assertNotEqual(result.returncode,0,result.stdout)
+                    self.assertIn(failure,result.stderr.lower())
 
     def test_pure_workspace_fixed_scalar_input(self):
         self.build_run("""implicit none

@@ -72,8 +72,13 @@ end function
 pure integer function array_total(x)
 integer,intent(in)::x(:)
 integer,allocatable::work(:)
-work=array_copy(x)
+integer::istat
+array_total=-100
+allocate(work,source=array_copy(x),stat=istat)
+if(istat/=0) return
 array_total=sum(work)
+deallocate(work,stat=istat)
+if(istat/=0) array_total=-100
 end function
 pure function array_copy(x) result(work)
 integer,intent(in)::x(:)

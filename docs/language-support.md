@@ -1831,6 +1831,10 @@ and ALLOCATE and DEALLOCATE accept
 `stat=` and `errmsg=`, which report allocating an allocated array or
 deallocating an unallocated one instead of stopping. Run
 `python tests/test_allocation_options.py`.
+STAT does not yet recover from allocation-size overflow or allocator exhaustion;
+those errors still terminate execution. SOURCE array initialization preserves
+explicit allocation bounds and checks shape conformance rather than reallocating
+the target. Allocation-state inquiries in SOURCE are evaluated before allocation.
 
 ### ALLOCATABLE function results
 

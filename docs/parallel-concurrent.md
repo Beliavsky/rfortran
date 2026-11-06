@@ -223,8 +223,18 @@ including empty arrays; explicit lower bounds and multidimensional results are
 supported. Nested calls and self-referential assignment use the existing
 descriptor and assignment paths, with private storage and initialization masks.
 Unallocated results, undefined elements, and out-of-bounds accesses retain
-runtime checks. Explicit allocation currently requires a single owned local array or result target
-without control specifiers such as `STAT`, `ERRMSG`, `SOURCE`, or `MOLD`.
+runtime checks. Explicit allocation supports a single owned local array or result
+target with `STAT=`, `SOURCE=`, and `MOLD=`. STAT must name a local scalar INTEGER
+variable, rather than a dummy argument, named constant, or shared variable.
+Success sets it to zero; allocating an already allocated array or deallocating
+an unallocated array sets it nonzero and preserves the array's state. SOURCE
+initializes the requested allocation and preserves explicit bounds; a shape
+mismatch is diagnosed instead of resizing the target. MOLD supplies shape/type
+information without defining elements or reading the model's values.
+Allocation-state inquiries in SOURCE are captured before allocation.
+ERRMSG and allocation of multiple targets in one statement retain serial fallback.
+As in the serial compiler, STAT does not yet recover from allocation-size
+overflow or allocator exhaustion; those errors still terminate execution.
 
 Array-taking functions may use SUM, PRODUCT, MINVAL, MAXVAL, COUNT, ANY, ALL,
 DOT_PRODUCT, SIZE, LBOUND, and UBOUND, as well as the scalar intrinsics listed
@@ -247,6 +257,7 @@ rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_workspac
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_array_results.f90 --run
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_allocatable_results.f90 --run
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_allocatable_workspace.f90 --run
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_allocation_options.f90 --run
 ```
 
 ## Runtime-sized arrays

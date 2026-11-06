@@ -262,6 +262,14 @@ pub(crate) fn prepare(mut program: Program) -> Result<Program> {
             local_actuals.remove(result);
         }
         passed.extend(local_actuals);
+        // ALLOCATED (including guards generated for STAT) needs a descriptor
+        // even for a constant-sized rank-one local beside array dummies.
+        let mut queried=HashSet::new();
+        actuals(body,&HashMap::from([("allocated".into(),vec![0])]),&mut queried);
+        passed.extend(body.iter().filter_map(|s|match s {
+            Stmt::ArrayDecl{name,kind,..} if queried.contains(name) && numeric(kind)
+                && !matches!(kind,TypeSpec::Character(_))=>Some(name.clone()),_=>None
+        }));
         let declared: HashSet<String> = body.iter().filter_map(|s| match s {
             Stmt::ArrayDecl { name, .. } => Some(name.clone()),
             _ => None,

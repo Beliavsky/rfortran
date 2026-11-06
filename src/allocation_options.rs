@@ -9,12 +9,13 @@
 //! except for pointers associated with the moved array. STAT= reports the
 //! errors the language defines for an allocation status (allocating an
 //! allocated array, deallocating an unallocated one) instead of stopping.
-use crate::ast::{BinOp, Expr, Program, Stmt, UnOp};
+use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec, UnOp};
 use anyhow::{bail, Result};
 use std::collections::HashMap;
 
 /// Variable ranks. A POINTER `p` also has the key `@pointer:p`.
 type Ranks = HashMap<String, usize>;
+type Kinds = HashMap<String, TypeSpec>;
 
 fn pointer(ranks: &Ranks, n: &str) -> bool {
     ranks.contains_key(&format!("@pointer:{n}"))
@@ -75,9 +76,14 @@ fn status(stat: Option<&Expr>, errmsg: Option<&Expr>, code: i64, message: &str) 
 }
 
 pub(crate) fn allocate(args: &[Expr], ranks: &Ranks) -> Result<Option<Vec<Stmt>>> {
+    allocate_typed(args,ranks,None)
+}
+fn allocate_typed(args: &[Expr], ranks: &Ranks, kinds:Option<&Kinds>) -> Result<Option<Vec<Stmt>>> {
     let mut objects = vec![];
     let (mut stat, mut errmsg, mut source, mut mold) = (None, None, None, None);
+    let mut controls=std::collections::HashSet::new();
     for a in args {
+        if let Some((k,_))=keyword(a) {if !controls.insert(k) {bail!("duplicate ALLOCATE option `{k}=`");}}
         match keyword(a) {
             Some(("stat", v)) => stat = Some(v),
             Some(("errmsg", v)) => errmsg = Some(v),
@@ -87,11 +93,43 @@ pub(crate) fn allocate(args: &[Expr], ranks: &Ranks) -> Result<Option<Vec<Stmt>>
             None => objects.push(a.clone()),
         }
     }
+    if source.is_some() && mold.is_some() {bail!("SOURCE= and MOLD= are mutually exclusive");}
     if stat.is_none() && errmsg.is_none() && source.is_none() && mold.is_none() {
         return Ok(None);
     }
-    let shape = source.or(mold);
     let mut allocations = vec![];
+    // Allocation can change inquiries of a target used by SOURCE. Capture
+    // these scalar values before allocating, rather than in the later copy.
+    let mut source_value=source.map(|e| {
+        let mut value=e.clone();
+        crate::procedure_arguments::visit_expr(&mut value,&mut |e| {
+            if matches!(e,Expr::Call(n,_) if matches!(n.as_str(),"allocated"|"associated")
+                && !ranks.contains_key(n) && !ranks.contains_key(&format!("@procedure:{n}"))) {
+                static SERIAL:std::sync::atomic::AtomicUsize=std::sync::atomic::AtomicUsize::new(0);
+                let temp=format!("@allocation_source_state_{}",SERIAL.fetch_add(1,std::sync::atomic::Ordering::Relaxed));
+                allocations.push(Stmt::VarDecl{kind:TypeSpec::Logical,names:vec![temp.clone()]});
+                allocations.push(Stmt::Assign{name:temp.clone(),value:e.clone()});
+                *e=id(&temp);
+            }
+        });
+        value
+    });
+    // Materialize an array SOURCE expression before asking for its shape.
+    // In particular, SIZE(function(...)) may not yet have a bound interface.
+    // The ordinary array-assignment path binds the function result first.
+    if let (Some(value),Some(Expr::Ident(target)),Some(kinds))=(source_value.as_ref(),objects.first(),kinds) {
+        if !matches!(value,Expr::Ident(_)) && ranks.get(target).is_some_and(|r|*r>0) {
+            if let Some(kind)=kinds.get(target).filter(|k|matches!(k,TypeSpec::Integer(_)|TypeSpec::IntegerKind(_)|TypeSpec::Real|TypeSpec::RealKind(_)|TypeSpec::DoublePrecision|TypeSpec::Logical|TypeSpec::LogicalKind(_))) {
+                static SERIAL:std::sync::atomic::AtomicUsize=std::sync::atomic::AtomicUsize::new(0);
+                let temp=format!("@allocation_source_array_{}",SERIAL.fetch_add(1,std::sync::atomic::Ordering::Relaxed));
+                allocations.push(Stmt::ArrayDecl{kind:kind.clone(),name:temp.clone(),dims:vec![id("@deferred_extent");ranks[target]]});
+                allocations.push(Stmt::DummyIntent{name:temp.clone(),intent:"allocatable".into()});
+                allocations.push(Stmt::Assign{name:temp.clone(),value:value.clone()});
+                source_value=Some(id(&temp));
+            }
+        }
+    }
+    let shape = source_value.as_ref().or(mold);
     let mut names = vec![];
     for object in &objects {
         let name = match object {
@@ -113,8 +151,15 @@ pub(crate) fn allocate(args: &[Expr], ranks: &Ranks) -> Result<Option<Vec<Stmt>>
             }
             _ => allocations.push(call("@allocate", vec![object.clone()])),
         }
-        if let Some(value) = source {
-            allocations.push(Stmt::Assign { name: name.clone(), value: value.clone() });
+        if let Some(value) = source_value.as_ref() {
+            // SOURCE initializes the allocation; it must not reallocate the
+            // target or replace explicit bounds as intrinsic assignment could.
+            if let Some(&rank)=ranks.get(&name).filter(|r|**r>0) {
+                let indices=(0..rank).map(|_|Expr::Call("@section_subscript".into(),vec![Expr::Section{
+                    name:name.clone(),lower:None,upper:None,stride:None
+                }])).collect();
+                allocations.push(Stmt::AssignIndex{name:name.clone(),indices,value:value.clone()});
+            } else {allocations.push(Stmt::Assign { name: name.clone(), value: value.clone() });}
         }
         names.push(name);
     }
@@ -133,7 +178,9 @@ pub(crate) fn allocate(args: &[Expr], ranks: &Ranks) -> Result<Option<Vec<Stmt>>
 fn deallocate(args: &[Expr], ranks: &Ranks) -> Result<Option<Vec<Stmt>>> {
     let mut objects = vec![];
     let (mut stat, mut errmsg) = (None, None);
+    let mut controls=std::collections::HashSet::new();
     for a in args {
+        if let Some((k,_))=keyword(a) {if !controls.insert(k) {bail!("duplicate DEALLOCATE option `{k}=`");}}
         match keyword(a) {
             Some(("stat", v)) => stat = Some(v),
             Some(("errmsg", v)) => errmsg = Some(v),
@@ -206,16 +253,21 @@ pub(crate) fn move_alloc(args: &[Expr], ranks: &Ranks) -> Result<Vec<Stmt>> {
     ])
 }
 
-fn lower(body: &mut Vec<Stmt>, inherited: &Ranks) -> Result<()> {
+fn lower(body: &mut Vec<Stmt>, inherited: &Ranks, inherited_kinds:&Kinds) -> Result<()> {
     let mut ranks = inherited.clone();
+    let mut kinds=inherited_kinds.clone();
     for s in body.iter() {
         match s {
-            Stmt::ArrayDecl { name, dims, .. } => {
+            Stmt::Function{name,..} => {ranks.insert(format!("@procedure:{name}"),0);}
+            Stmt::DummyIntent{name,intent} if intent=="external" || intent.starts_with("procedure") => {ranks.insert(format!("@procedure:{name}"),0);}
+            Stmt::ArrayDecl { name, dims, kind } => {
                 ranks.insert(name.clone(), dims.len());
+                kinds.insert(name.clone(),kind.clone());
             }
-            Stmt::VarDecl { names, .. } => {
+            Stmt::VarDecl { names, kind } => {
                 for n in names {
                     ranks.insert(n.clone(), 0);
+                    kinds.insert(n.clone(),kind.clone());
                 }
             }
             _ => {}
@@ -245,7 +297,7 @@ fn lower(body: &mut Vec<Stmt>, inherited: &Ranks) -> Result<()> {
     let mut out = vec![];
     for mut s in std::mem::take(body) {
         let replacement = match &s {
-            Stmt::CallSub { name, args } if name == "@allocate" => allocate(args, &ranks)?,
+            Stmt::CallSub { name, args } if name == "@allocate" => allocate_typed(args, &ranks,Some(&kinds))?,
             Stmt::CallSub { name, args } if name == "@deallocate" => deallocate(args, &ranks)?,
             Stmt::CallSub { name, args } if name.eq_ignore_ascii_case("move_alloc") => Some(move_alloc(args, &ranks)?),
             _ => None,
@@ -255,20 +307,20 @@ fn lower(body: &mut Vec<Stmt>, inherited: &Ranks) -> Result<()> {
             continue;
         }
         match &mut s {
-            Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } | Stmt::Module { body, .. } => lower(body, &ranks)?,
-            Stmt::Block { body } | Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } => lower(body, &ranks)?,
+            Stmt::Function { body, .. } | Stmt::Subroutine { body, .. } | Stmt::Module { body, .. } => lower(body, &ranks,&kinds)?,
+            Stmt::Block { body } | Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } => lower(body, &ranks,&kinds)?,
             Stmt::If { then_body, else_body, .. } => {
-                lower(then_body, &ranks)?;
+                lower(then_body, &ranks,&kinds)?;
                 if let Some(b) = else_body {
-                    lower(b, &ranks)?;
+                    lower(b, &ranks,&kinds)?;
                 }
             }
             Stmt::SelectCase { cases, default, .. } => {
                 for c in cases {
-                    lower(&mut c.body, &ranks)?;
+                    lower(&mut c.body, &ranks,&kinds)?;
                 }
                 if let Some(b) = default {
-                    lower(b, &ranks)?;
+                    lower(b, &ranks,&kinds)?;
                 }
             }
             _ => {}
@@ -280,6 +332,6 @@ fn lower(body: &mut Vec<Stmt>, inherited: &Ranks) -> Result<()> {
 }
 
 pub(crate) fn resolve(mut program: Program) -> Result<Program> {
-    lower(&mut program.body, &Ranks::new())?;
+    lower(&mut program.body, &Ranks::new(),&Kinds::new())?;
     Ok(program)
 }

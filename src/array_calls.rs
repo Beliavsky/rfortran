@@ -1210,6 +1210,22 @@ pub(crate) fn check_allocated(s: &Stmt, pending: &HashSet<String>) -> Result<()>
 /// ALLOCATABLE dummy arguments receive descriptors, not reads of array data.
 pub(crate) fn check_allocated_with_interfaces(s:&Stmt,pending:&HashSet<String>,
     interfaces:&HashMap<String,Vec<usize>>)->Result<()> {
+    fn sequence(body:&[Stmt],pending:&HashSet<String>,interfaces:&HashMap<String,Vec<usize>>)->Result<()> {
+        let mut live=pending.clone();
+        for s in body {
+            check_allocated_with_interfaces(s,&live,interfaces)?;
+            if let Stmt::CallSub{name,args}=s {
+                if name=="@allocate" || name=="@deallocate" {
+                    for arg in args {
+                        let n=match arg {Expr::Ident(n)|Expr::Call(n,_)|Expr::Section{name:n,..}=>n,_=>continue};
+                        if name=="@allocate" {live.remove(n);}
+                        else if pending.contains(n) {live.insert(n.clone());}
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
     fn name(n: &str, pending: &HashSet<String>) -> Result<()> {
         if pending.contains(n) {
             bail!("array `{n}` is used before ALLOCATE");
@@ -1283,14 +1299,10 @@ pub(crate) fn check_allocated_with_interfaces(s:&Stmt,pending:&HashSet<String>,
         } => {
             expr(e, pending, interfaces)?;
             for c in cases {
-                for s in &c.body {
-                    check_allocated_with_interfaces(s, pending, interfaces)?;
-                }
+                sequence(&c.body,pending,interfaces)?;
             }
             if let Some(b) = default {
-                for s in b {
-                    check_allocated_with_interfaces(s, pending, interfaces)?;
-                }
+                sequence(b,pending,interfaces)?;
             }
         }
         Stmt::If {
@@ -1311,13 +1323,9 @@ pub(crate) fn check_allocated_with_interfaces(s:&Stmt,pending:&HashSet<String>,
                     if let [Expr::Ident(n)] = args.as_slice() { live.remove(n); }
                 }
             }
-            for s in then_body {
-                check_allocated_with_interfaces(s, if positive { &live } else { pending }, interfaces)?;
-            }
+            sequence(then_body,if positive { &live } else { pending },interfaces)?;
             if let Some(b) = else_body {
-                for s in b {
-                    check_allocated_with_interfaces(s, if positive { pending } else { &live }, interfaces)?;
-                }
+                sequence(b,if positive { pending } else { &live },interfaces)?;
             }
         }
         Stmt::Do {
@@ -1325,20 +1333,14 @@ pub(crate) fn check_allocated_with_interfaces(s:&Stmt,pending:&HashSet<String>,
         } => {
             expr(start, pending, interfaces)?;
             expr(end, pending, interfaces)?;
-            for s in body {
-                check_allocated_with_interfaces(s, pending, interfaces)?;
-            }
+            sequence(body,pending,interfaces)?;
         }
         Stmt::DoWhile { cond, body } => {
             expr(cond, pending, interfaces)?;
-            for s in body {
-                check_allocated_with_interfaces(s, pending, interfaces)?;
-            }
+            sequence(body,pending,interfaces)?;
         }
         Stmt::Block { body } => {
-            for s in body {
-                check_allocated_with_interfaces(s, pending, interfaces)?;
-            }
+            sequence(body,pending,interfaces)?;
         }
         _ => {}
     }

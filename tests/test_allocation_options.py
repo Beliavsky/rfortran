@@ -10,6 +10,31 @@ import test_deallocate
 
 class AllocationOptions(unittest.TestCase):
     check = test_deallocate.Deallocate.check
+    reject = test_deallocate.Deallocate.reject
+
+    def test_source_preserves_explicit_bounds(self):
+        self.check('''implicit none
+integer,allocatable::a(:)
+allocate(a(-1:1),source=[2,3,4])
+print *,lbound(a),a
+end
+''','-1 2 3 4')
+
+    def test_source_allocation_inquiry_is_evaluated_before_allocate(self):
+        self.check('''implicit none
+logical,allocatable::a(:)
+allocate(a(2),source=allocated(a))
+print *,a
+end
+''','F F')
+
+    def test_invalid_controls(self):
+        for statement,message in (
+            ('allocate(a(2),stat=s,stat=s)','duplicate ALLOCATE option'),
+            ('allocate(a,source=[1,2],mold=[1,2])','mutually exclusive'),
+            ('deallocate(a,stat=s,stat=s)','duplicate DEALLOCATE option')):
+            with self.subTest(statement=statement):
+                self.reject('implicit none\ninteger,allocatable::a(:)\ninteger::s\n'+statement+'\nend\n',message)
 
     def test_move_preserves_numeric_initialization_flags(self):
         for kind,value in [('integer','7'),('real','1.0'),('logical','.true.')]:

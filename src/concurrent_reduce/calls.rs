@@ -326,13 +326,35 @@ fn validate(
                 Stmt::InitializedDecl { attributes, .. }
                     if attributes.iter().any(|a| a == "parameter") => {}
                 Stmt::CallSub {name,args} if name == "@allocate" || name == "@deallocate" => {
-                    // Only local, nonaliased arrays are owned by this call.
-                    // Dummy/host storage and control specifiers need another proof.
-                    if args.len()!=1 || !match (&args[0],name.as_str()) {
+                    let mut objects=vec![];
+                    let mut controls=HashSet::new();
+                    for arg in args {
+                        if let Some((key,value))=crate::named_arguments::keyword(arg) {
+                            if !controls.insert(key) {bail!("duplicate allocation control `{key}`");}
+                            match key {
+                                "stat" => {
+                                    let Expr::Ident(n)=value else {bail!("STAT requires a local INTEGER variable");};
+                                    let local=f.locals.contains(n) && !f.params.contains(n)
+                                        && f.scope.get(n).is_some_and(|o|o.dims.is_empty()
+                                            && matches!(o.kind,TypeSpec::Integer(_)|TypeSpec::IntegerKind(_))
+                                            && o.attrs.is_empty());
+                                    if !local {bail!("STAT requires a local INTEGER variable");}
+                                }
+                                "source" | "mold" if name=="@allocate" => expr(value,f,approved)?,
+                                _ => bail!("unsupported parallel allocation control `{key}`"),
+                            }
+                        } else {objects.push(arg);}
+                    }
+                    if controls.contains("source") && controls.contains("mold") {bail!("SOURCE and MOLD are mutually exclusive");}
+                    // Bounds/data are read; STAT writes only call-local scalar storage.
+                    if objects.len()!=1 || !match (objects[0],name.as_str()) {
                         (Expr::Call(n,_),"@allocate") | (Expr::Ident(n),"@deallocate") => owned_array(f,n),
+                        (Expr::Ident(n),"@allocate") => owned_array(f,n) && (controls.contains("source") || controls.contains("mold")),
                         (Expr::Section{name:n,..},"@allocate") => owned_array(f,n) && f.scope[n].dims.len()==1,
                         _ => false,
-                    } {bail!("allocation requires a private ALLOCATABLE array without control specifiers");}
+                    } {bail!("allocation requires one private ALLOCATABLE array");}
+                    for target in objects {expr(target,f,approved)?;}
+                    continue;
                 }
                 Stmt::Assign { name, .. }
                 | Stmt::AssignIndex { name, .. }
