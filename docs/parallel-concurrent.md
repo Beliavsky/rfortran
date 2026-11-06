@@ -41,7 +41,10 @@ jobs to stderr; unset it for timing runs.
   SIN/COS/TAN, ASIN/ACOS/ATAN/ATAN2 (including two-argument ATAN),
   SINH/COSH/TANH and their inverses; EXP, LOG/LOG10, HYPOT;
   HUGE/TINY/EPSILON, DIGITS, RADIX, PRECISION, RANGE, MINEXPONENT,
-  MAXEXPONENT, BIT_SIZE, and KIND. Positional and keyword arguments work.
+  MAXEXPONENT, BIT_SIZE, and KIND. Real model functions SCALE, FRACTION,
+  EXPONENT, SET_EXPONENT, NEAREST, SPACING, and RRSPACING work for REAL kinds
+  4 and 8, including calls from proved PURE/SIMPLE procedures.
+  Positional and keyword arguments work.
   Integer bit intrinsics also work for kinds 1, 2, 4, and 8: BTEST, IAND,
   IOR, IEOR, NOT, IBSET, IBCLR, IBITS, ISHFT, SHIFTL/SHIFTR/SHIFTA,
   DSHIFTL/DSHIFTR, MERGE_BITS, POPCNT/POPPAR, and LEADZ/TRAILZ.
@@ -67,6 +70,19 @@ runtime controls in direct loops and PURE/SIMPLE callees:
 ```cmd
 python tests\test_concurrent_parallel_bits.py
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_bits.f90 --run
+```
+
+Real model operations use an audited runtime helper with invocation-local
+arithmetic and bit patterns. The native callee check accepts only the selected
+operation tags and REAL kinds 4/8, rather than every opcode sharing that helper.
+NEAREST retains its zero-direction error, including with `--nocheck`.
+Tests cover both kinds, mixed-kind direction arguments, integer exponent
+arguments, native real/integer results, subnormals, signed zero, and propagation
+of infinities/NaNs through SCALE and NEAREST:
+
+```cmd
+python tests\test_concurrent_parallel_real_model.py
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_real_model.f90 --run
 ```
 
 Loop bounds and strides are evaluated once before dispatch. Workers receive

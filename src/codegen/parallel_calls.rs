@@ -17,6 +17,10 @@ fn intrinsic(n: &str) -> bool {
         || n == "@round_real32"
         // Strict decoding admits only implemented bit operations and kinds.
         || crate::bit_intrinsics::decode(n).is_some()
+        // Do not inherit other/future model opcodes (such as IEEE_VALUE)
+        // merely because they share the runtime helper.
+        || crate::real_intrinsics::decode(n)
+            .is_some_and(|(operation, _)| crate::intrinsics::parallel_scalar(operation))
 }
 pub(super) fn prepare(module: &Module) {
     fn workers(body: &[IStmt]) -> bool {
@@ -425,7 +429,16 @@ mod tests {
         ];
         prepare(&module);
         assert!(check(&worker).is_ok());
+        module.funcs[2].body = vec![
+            declaration.clone(),
+            IStmt::Return(Some(IExpr::Call("@model:exponent:8".into(), vec![ident("x")]))),
+        ];
+        prepare(&module);
+        assert!(check(&worker).is_ok());
         for bad in [
+            IStmt::Return(Some(call("@model:unknown:4"))),
+            IStmt::Return(Some(call("@model:scale:16"))),
+            IStmt::Return(Some(call("@model:@ieee_value:4"))),
             // Internal bit tags must identify an implemented operation/kind.
             IStmt::Return(Some(call("@bit:unknown:4"))),
             IStmt::Return(Some(call("@bit:iand:16"))),

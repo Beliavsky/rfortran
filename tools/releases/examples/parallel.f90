@@ -65,7 +65,8 @@ end subroutine
 pure subroutine transform_value(x,y)
 integer,intent(in)::x
 integer,intent(out)::y
-y=increment(x)
+! These small integer inputs are represented exactly as REAL.
+y=nint(scale(real(increment(x)),1))/2
 end subroutine
 pure integer function increment(x)
 integer,intent(in)::x

@@ -710,7 +710,9 @@ read-only array inputs, and explicit-intent subroutine outputs confined to LOCAL
 scalars or disjoint array elements/sections. The [scalar intrinsic subset](parallel-concurrent.md#supported-subset)
 includes arithmetic, rounding, trigonometric/hyperbolic functions, HYPOT,
 and numeric model inquiries, plus kind-aware integer bit operations, with
-positional or keyword arguments. Bit-control range checks remain active in workers.
+positional or keyword arguments. SCALE, FRACTION, EXPONENT, SET_EXPONENT,
+NEAREST, SPACING, and RRSPACING also work for REAL kinds 4 and 8.
+Bit-control range checks and the NEAREST zero-direction check remain active in workers.
 
 Counted, unbounded, and DO WHILE loops accept construct names, for example
 `do_i: do i=1,ni` with `end do do_i` (or `enddo do_i`). `CYCLE do_i` and

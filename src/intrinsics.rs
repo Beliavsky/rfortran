@@ -67,6 +67,10 @@ pub(crate) fn parallel_scalar(name: &str) -> bool {
         | "exp" | "log" | "log10" | "hypot"
         | "huge" | "tiny" | "epsilon" | "digits" | "radix" | "precision"
         | "range" | "minexponent" | "maxexponent" | "bit_size" | "kind"
+        // The real model helper uses only invocation-local arithmetic and
+        // bit patterns; NEAREST's zero-direction check terminates on error.
+        | "scale" | "fraction" | "exponent" | "set_exponent"
+        | "nearest" | "spacing" | "rrspacing"
         // These bit operations lower to kind-aware inline arithmetic; their
         // generated control guards only terminate on invalid arguments.
         | "btest" | "iand" | "ior" | "ieor" | "not" | "ibset" | "ibclr"
