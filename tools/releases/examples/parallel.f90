@@ -3,7 +3,7 @@ integer :: i,j,a(10000),total,n,stride
 integer :: matrix(100,100),totals(2)
 integer,allocatable :: b(:),runtime_totals(:)
 do concurrent(i=1:10000) shared(a) default(none)
-   a(i)=i
+   a(i)=nint(anint(real(i)))
 end do
 total=7
 do concurrent(i=1:10000) shared(a) reduce(+:total) default(none)

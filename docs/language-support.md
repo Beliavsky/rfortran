@@ -707,7 +707,9 @@ Native compilation can opt into a restricted parallel subset using
 [`--parallel`](parallel-concurrent.md); unsupported constructs remain serial.
 The native subset includes checked PURE/SIMPLE function and subroutine call chains,
 read-only array inputs, and explicit-intent subroutine outputs confined to LOCAL
-scalars or disjoint array elements/sections.
+scalars or disjoint array elements/sections. The [scalar intrinsic subset](parallel-concurrent.md#supported-subset)
+includes arithmetic, rounding, trigonometric/hyperbolic functions, HYPOT,
+and numeric model inquiries, with positional or keyword arguments.
 
 Counted, unbounded, and DO WHILE loops accept construct names, for example
 `do_i: do i=1,ni` with `end do do_i` (or `enddo do_i`). `CYCLE do_i` and

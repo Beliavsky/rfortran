@@ -479,7 +479,14 @@ pub(super) fn emit(
         let wx = declare_externs(module, &mut w, ptr)?;
         let mut wm = HashMap::new();
         for (name, meta) in func_meta {
-            if let Some(cranelift_module::FuncOrDataId::Func(id)) = module.get_name(name) {
+            // Intrinsic names can differ from their imported C symbols
+            // (AINT -> trunc, ANINT -> round). Preserve their metadata in
+            // outlined workers as well as the ordinary native function.
+            let symbol = module.get_name(name).or_else(|| {
+                crate::intrinsics::math_arity(name)
+                    .and_then(|_| module.get_name(&crate::intrinsics::c_symbol(name)))
+            });
+            if let Some(cranelift_module::FuncOrDataId::Func(id)) = symbol {
                 wm.insert(
                     name.clone(),
                     FuncMeta {

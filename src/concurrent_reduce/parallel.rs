@@ -78,10 +78,7 @@ pub(crate) fn report(message: &str) {
     }
 }
 pub(super) fn intrinsic_name(n: &str) -> bool {
-    matches!(
-        n,
-        "sqrt" | "abs" | "int" | "real" | "dble" | "sin" | "cos" | "exp" | "log" | "min" | "max"
-    )
+    crate::intrinsics::parallel_scalar(n)
 }
 pub(super) fn intrinsic(n: &str) -> bool {
     intrinsic_name(n) && unshadowed(n)
@@ -485,23 +482,14 @@ fn check(
             Expr::Call(n, args)
                 if !scope.contains_key(n)
                     && !SHADOWED.with(|s| s.borrow().contains(n))
-                    && (calls::array_intrinsic(n) || matches!(
-                        n.as_str(),
-                        "sqrt"
-                            | "abs"
-                            | "int"
-                            | "real"
-                            | "dble"
-                            | "sin"
-                            | "cos"
-                            | "exp"
-                            | "log"
-                            | "min"
-                            | "max"
-                    )) =>
+                    && (calls::array_intrinsic(n) || intrinsic_name(n)) =>
             {
                 for a in args {
-                    expr(a, scope, written)?;
+                    expr(
+                        crate::named_arguments::keyword(a).map(|(_, v)| v).unwrap_or(a),
+                        scope,
+                        written,
+                    )?;
                 }
                 Ok(())
             }

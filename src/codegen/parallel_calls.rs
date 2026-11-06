@@ -12,10 +12,9 @@ fn scalar(kind: &TypeSpec) -> bool {
     )
 }
 fn intrinsic(n: &str) -> bool {
-    matches!(
-        n,
-        "sqrt" | "abs" | "int" | "real" | "dble" | "sin" | "cos" | "exp" | "log" | "min" | "max"
-    )
+    crate::intrinsics::parallel_scalar(n)
+        // REAL-kind normalization is an inline demote/promote operation.
+        || n == "@round_real32"
 }
 pub(super) fn prepare(module: &Module) {
     fn workers(body: &[IStmt]) -> bool {
@@ -270,9 +269,7 @@ pub(super) fn check(body: &[IStmt]) -> Result<()> {
                     result.as_ref().map_err(|reason| {
                         anyhow::anyhow!("native call `{n}` requires serial execution: {reason}")
                     })?;
-                // Flattening multidimensional array operations generates MOD
-                // after the source proof. It is an inline scalar operation.
-                } else if (!n.starts_with('@') && !intrinsic(n) && n != "mod")
+                } else if (!n.starts_with('@') && !intrinsic(n))
                     || n.starts_with("@internal_")
                     || n.starts_with("@module$")
                 {
@@ -430,6 +427,8 @@ mod tests {
             ),
             IStmt::Return(Some(ident("host_variable"))),
             IStmt::Return(Some(call("unknown_external"))),
+            // Language purity does not prove C runtime helpers thread-safe.
+            IStmt::Return(Some(call("log_gamma"))),
             IStmt::Print(vec![ident("x")]),
         ] {
             module.funcs[2].body = vec![declaration.clone(), bad, IStmt::Return(Some(ident("x")))];

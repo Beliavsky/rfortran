@@ -52,6 +52,23 @@ pub(crate) fn rounding_kind(name:&str,args:&[crate::ast::Expr])->anyhow::Result<
     Ok(crate::ast::TypeSpec::Integer(Some(kind as u8)))
 }
 
+/// Scalar intrinsics audited for native parallel execution. This is narrower
+/// than language purity: each entry must lower to inline arithmetic, a type
+/// inquiry, or a math-library call with no shared mutable working state.
+/// Keep this explicit rather than accepting future REAL_MATH entries by default
+/// (for example, some C lgamma implementations write the global signgam).
+pub(crate) fn parallel_scalar(name: &str) -> bool {
+    matches!(name,
+        "sqrt" | "abs" | "int" | "real" | "dble" | "min" | "max"
+        | "mod" | "modulo" | "sign" | "dim" | "dprod"
+        | "nint" | "floor" | "ceiling" | "aint" | "anint"
+        | "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "atan2"
+        | "sinh" | "cosh" | "tanh" | "asinh" | "acosh" | "atanh"
+        | "exp" | "log" | "log10" | "hypot"
+        | "huge" | "tiny" | "epsilon" | "digits" | "radix" | "precision"
+        | "range" | "minexponent" | "maxexponent" | "bit_size" | "kind")
+}
+
 /// Language purity for public intrinsic interfaces known to the compiler. Keep compiler
 /// internal expression markers in their owning lowering pass, not this catalog.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

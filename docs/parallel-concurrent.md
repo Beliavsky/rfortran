@@ -35,9 +35,25 @@ jobs to stderr; unset it for timing runs.
   `REDUCE(MIN:...)`, and `REDUCE(MAX:...)`; scalar and fixed-size or runtime-sized array LOGICAL `.AND.`, `.OR.`,
   `.EQV.`, and `.NEQV.` reductions. Multiple reductions and reduction-only
   loops are supported.
-- Arithmetic, comparisons, and a small set of scalar intrinsics: SQRT, ABS, INT,
-  REAL, DBLE, SIN, COS, EXP, LOG, MIN, and MAX. Procedures shadowing these names
-  do not qualify as intrinsic calls.
+- Arithmetic, comparisons, and audited scalar intrinsics, both directly and in
+  proved PURE/SIMPLE callees: SQRT, ABS, INT, REAL, DBLE, MIN/MAX;
+  MOD/MODULO, SIGN, DIM, DPROD; NINT, FLOOR/CEILING, AINT/ANINT;
+  SIN/COS/TAN, ASIN/ACOS/ATAN/ATAN2 (including two-argument ATAN),
+  SINH/COSH/TANH and their inverses; EXP, LOG/LOG10, HYPOT;
+  HUGE/TINY/EPSILON, DIGITS, RADIX, PRECISION, RANGE, MINEXPONENT,
+  MAXEXPONENT, BIT_SIZE, and KIND. Positional and keyword arguments work.
+  Procedures shadowing these names do not qualify as intrinsic calls.
+
+The source proof and native callee recheck share the scalar eligibility catalog.
+FLOOR/CEILING range errors still terminate the program with their normal diagnostic.
+Other pure intrinsics require a separate runtime audit; in particular LOG_GAMMA
+is excluded because some C library implementations use [shared sign state](https://man.openbsd.org/lgamma.3).
+Run `python tests/test_concurrent_parallel_intrinsics.py` for direct-loop,
+PURE-function, SIMPLE-subroutine, fallback, and rounding-error coverage. Try:
+
+```cmd
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_intrinsics.f90 --run
+```
 
 Loop bounds and strides are evaluated once before dispatch. Workers receive
 explicit captures; scalar captures are private copies and supported arrays share their existing
@@ -45,7 +61,7 @@ storage. Initialization and bounds checks remain enabled unless `--nocheck`
 is requested. A job completes before execution continues after the loop.
 
 Other constructs use the existing serial lowering. In particular this stage
-does not parallelize subroutine calls, unproved function calls, allocation,
+does not parallelize unproved procedure calls, allocation of shared storage,
 I/O, outer constructs containing loops, named constructs, derived
 types, CHARACTER, complex arrays, or pointer array storage. Arrays with
 TARGET and other unsupported attributes also fall back to serial execution.
