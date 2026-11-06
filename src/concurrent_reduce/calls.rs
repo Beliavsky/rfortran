@@ -25,6 +25,12 @@ struct Function {
     locals: HashSet<String>,
     pure: bool,
 }
+fn owned_array(f: &Function, name: &str) -> bool {
+    f.locals.contains(name) && !f.params.iter().any(|p| p==name)
+        && f.scope.get(name).is_some_and(|o| !o.dims.is_empty()
+            && !o.derived && scalar(&o.kind) && o.attrs.contains("allocatable")
+            && !o.attrs.iter().any(|a|matches!(a.as_str(),"pointer"|"target"|"save")))
+}
 pub(super) fn prepare(program: &Program) {
     fn collect(body: &[Stmt], parent: &Scope, out: &mut HashMap<String, Vec<Function>>) {
         let scope = declarations(body, parent);
@@ -177,7 +183,7 @@ fn validate(
         if o.attrs
             .iter()
             .any(|a| !matches!(a.as_str(), "parameter" | "in" | "intent(in)" | "value")
-                && !(n == result && !o.dims.is_empty() && a == "allocatable"))
+                && !(owned_array(f,n) && a == "allocatable"))
         {
             bail!("unsupported or saved storage `{n}`");
         }
@@ -247,7 +253,7 @@ fn validate(
                     || n == "allocated" && parallel::unshadowed(n)
                         && matches!(args.as_slice(), [arg] if matches!(
                             crate::named_arguments::keyword(arg).map(|(_,v)|v).unwrap_or(arg),
-                            Expr::Ident(r) if r==&f.result))) || f.scope.contains_key(n)
+                            Expr::Ident(r) if owned_array(f,r)))) || f.scope.contains_key(n)
                 {
                     bail!("callee `{n}` is not a proven PURE function");
                 }
@@ -312,7 +318,7 @@ fn validate(
                 Stmt::DummyIntent { name, intent }
                     if matches!(intent.as_str(), "@simple" | "@module_host")
                         || intent == parallel::WORKSPACE
-                        || name == &f.result && intent == "allocatable"
+                        || owned_array(f,name) && intent == "allocatable"
                         || matches!(
                             intent.as_str(),
                             "parameter" | "in" | "intent(in)" | "value"
@@ -320,15 +326,13 @@ fn validate(
                 Stmt::InitializedDecl { attributes, .. }
                     if attributes.iter().any(|a| a == "parameter") => {}
                 Stmt::CallSub {name,args} if name == "@allocate" || name == "@deallocate" => {
-                    // Only the result is owned by this call. Other allocation
-                    // targets and control specifiers need a separate proof.
-                    let owned=f.scope.get(&f.result).is_some_and(|o|
-                        !o.dims.is_empty() && o.attrs.contains("allocatable"));
-                    if !owned || args.len()!=1 || !match (&args[0],name.as_str()) {
-                        (Expr::Call(n,_),"@allocate") | (Expr::Ident(n),"@deallocate") => n==&f.result,
-                        (Expr::Section{name:n,..},"@allocate") => n==&f.result && f.scope[n].dims.len()==1,
+                    // Only local, nonaliased arrays are owned by this call.
+                    // Dummy/host storage and control specifiers need another proof.
+                    if args.len()!=1 || !match (&args[0],name.as_str()) {
+                        (Expr::Call(n,_),"@allocate") | (Expr::Ident(n),"@deallocate") => owned_array(f,n),
+                        (Expr::Section{name:n,..},"@allocate") => owned_array(f,n) && f.scope[n].dims.len()==1,
                         _ => false,
-                    } {bail!("allocation requires a private ALLOCATABLE function result");}
+                    } {bail!("allocation requires a private ALLOCATABLE array without control specifiers");}
                 }
                 Stmt::Assign { name, .. }
                 | Stmt::AssignIndex { name, .. }

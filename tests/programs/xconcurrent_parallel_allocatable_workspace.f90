@@ -1,0 +1,20 @@
+implicit none
+integer :: i,n
+real,allocatable :: x(:,:),y(:)
+n=4
+allocate(x(n,9000),y(9000))
+x=2.0
+do concurrent(i=1:9000)
+   y(i)=energy(x(:,i))
+end do
+if(any(y/=16.0)) stop 1
+print *,y(1),y(9000)
+contains
+pure function energy(a) result(s)
+real,intent(in)::a(:)
+real::s
+real,allocatable::work(:)
+work=a*a
+s=sum(work)
+end function
+end

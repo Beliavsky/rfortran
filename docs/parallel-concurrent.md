@@ -183,7 +183,7 @@ generated scalar temporaries, section buffers, descriptors, and initialization
 masks are private to workers. Array inputs must be read-only throughout the loop;
 passing an array that the loop also writes retains serial fallback.
 
-Functions may declare fixed-size or automatic numeric/LOGICAL local arrays,
+Functions may declare fixed-size, automatic, or allocatable numeric/LOGICAL local arrays,
 including multidimensional workspaces such as `real :: work(size(a),2)`.
 Assignments to local arrays and regular local sections are supported. The
 function and its supported callers are specialized at the call site; workspace
@@ -193,6 +193,13 @@ including early RETURN. Sizes may change between invocations, and empty
 workspaces are supported. Initialization masks are reset for each invocation;
 initializing a workspace in one call does not define it in the next.
 VALUE scalar arguments use private copies even when the function modifies them.
+Allocatable local workspaces support allocation through assignment, explicit
+ALLOCATE/DEALLOCATE, changing shapes, empty arrays, explicit lower bounds,
+and positional or keyword ALLOCATED inquiries. Their descriptors, data, and
+initialization masks are private to each invocation. Local allocations are
+released on normal completion and early RETURN; repeated calls do not inherit
+allocated state or initialization flags. Tests cover ranks one, two, three,
+and fifteen. Pointer, target, and saved workspace storage remains excluded.
 Functions with scalar-only arguments and results retain their native definitions as well
 as the call-site templates.
 The ordinary allocation-size, allocation-failure, initialization, and subscript
@@ -216,7 +223,7 @@ including empty arrays; explicit lower bounds and multidimensional results are
 supported. Nested calls and self-referential assignment use the existing
 descriptor and assignment paths, with private storage and initialization masks.
 Unallocated results, undefined elements, and out-of-bounds accesses retain
-runtime checks. Explicit allocation currently requires a single result target
+runtime checks. Explicit allocation currently requires a single owned local array or result target
 without control specifiers such as `STAT`, `ERRMSG`, `SOURCE`, or `MOLD`.
 
 Array-taking functions may use SUM, PRODUCT, MINVAL, MAXVAL, COUNT, ANY, ALL,
@@ -226,8 +233,8 @@ call. Lowered storage and runtime helpers still have to pass the native checks.
 
 Definitions must be available in the compilation group. Recursive call chains,
 POINTER results, OPTIONAL/POINTER/TARGET/ALLOCATABLE
-dummies, CHARACTER/COMPLEX storage, saved storage, I/O, allocation of other storage,
-subroutine calls, non-result ALLOCATABLE locals, POINTER/TARGET/SAVE storage, and unproved
+dummies, CHARACTER/COMPLEX storage, saved storage, I/O, allocation of shared or aliased storage,
+subroutine calls, POINTER/TARGET/SAVE storage, and unproved
 callees retain serial fallback. Recursive workspace functions keep their
 existing serial calling path.
 Purity alone does not bypass the storage and runtime-helper checks. Use
@@ -239,6 +246,7 @@ rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_array_fu
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_workspace.f90 --run
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_array_results.f90 --run
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_allocatable_results.f90 --run
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_allocatable_workspace.f90 --run
 ```
 
 ## Runtime-sized arrays

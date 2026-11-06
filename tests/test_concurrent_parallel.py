@@ -1871,7 +1871,7 @@ end
                     self.assertNotEqual(result.returncode,0,result.stdout)
                     self.assertIn(failure,result.stderr.lower())
 
-    def test_pure_alloc_result_other_local_allocation_fallback(self):
+    def test_pure_alloc_result_local_workspace(self):
         self.build_run('''implicit none
 integer::i,y(9000)
 do concurrent(i=1:9000)
@@ -1887,7 +1887,7 @@ work=n
 r=work
 end function
 end
-''','2 18000',reason='unsupported or saved storage')
+''','2 18000')
 
     def test_pure_alloc_result_allocation_control_fallback(self):
         self.build_run('''implicit none
@@ -1906,7 +1906,7 @@ if(istat/=0) return
 r=n
 end function
 end
-''','2 18000',reason='allocation requires a private ALLOCATABLE function result')
+''','2 18000',reason='allocation requires a private ALLOCATABLE array without control specifiers')
 
     def test_pure_alloc_result_module_call_chain_and_kinds(self):
         source='''module factory
@@ -1938,6 +1938,161 @@ end
         self.build_run(source,'2.0 18000.0')
         implicit_result=source.replace('function values(n) result(r)','function values(n)').replace('allocatable::r(:)','allocatable::values(:)').replace('allocate(r(2))','allocate(values(2))').replace('r=real(n,dp)','values=real(n,dp)')
         self.build_run(implicit_result,'2.0 18000.0')
+
+    def test_pure_alloc_workspace_example(self):
+        source=(ROOT/'tests/programs/xconcurrent_parallel_allocatable_workspace.f90').read_text()
+        self.build_run(source,'16.0 16.0')
+        self.build_run(source,'16.0 16.0',parallel=False,threads=(1,))
+        self.build_run(source,'16.0 16.0',checks=False)
+
+    def test_pure_alloc_workspace_changing_shape_and_early_return(self):
+        self.build_run('''implicit none
+integer::i,j,n,expected,y(9000)
+do concurrent(i=1:9000)
+y(i)=total(i-4*(i/4))
+end do
+do j=1,9000
+n=j-4*(j/4)
+expected=3*n
+if(n>1) expected=expected+6
+if(y(j)/=expected) stop 1
+end do
+print *,y(1:4),y(9000)
+contains
+simple integer function total(n)
+integer,intent(in)::n
+integer,allocatable::work(:)
+if(.not.allocated(work)) allocate(work(-1:n-2))
+work=3
+total=sum(work)
+if(n==0.or.n==1) return
+if(allocated(array=work)) deallocate(work)
+work=[1,2]
+work=[work,3]
+total=total+sum(work)
+end function
+end
+''','3 12 15 0 0')
+
+    def test_pure_alloc_workspace_nested_calls_and_sections(self):
+        self.build_run('''implicit none
+integer::i,n
+real,allocatable::x(:,:),y(:)
+n=5
+allocate(x(n,9000),y(9000))
+x=2.0
+do concurrent(i=1:9000)
+y(i)=outer(x(:,i))
+end do
+if(any(y/=24.0)) stop 1
+print *,y(1),y(9000)
+contains
+pure real function outer(a)
+real,intent(in)::a(:)
+real,allocatable::work(:)
+work=a*a
+outer=inner(work(5:1:-2))
+end function
+pure real function inner(a)
+real,intent(in)::a(:)
+real,allocatable::work(:)
+work=2*a
+inner=sum(work)
+end function
+end
+''','24.0 24.0')
+
+    def test_pure_alloc_workspace_logical(self):
+        self.build_run('''implicit none
+integer::i,y(9000)
+do concurrent(i=1:9000)
+y(i)=total(i)
+end do
+print *,y(1),y(9000)
+contains
+pure integer function total(n)
+integer,intent(in)::n
+logical,allocatable::work(:)
+work=[n==1,.true.,.false.]
+total=count(work)
+end function
+end
+''','2 1')
+
+    def test_pure_alloc_workspace_ranks_and_kinds(self):
+        for rank in (1,2,3,15):
+            source='''implicit none
+integer,parameter::dp=kind(1.0d0)
+integer::i
+real(kind=dp)::y(9000)
+do concurrent(i=1:9000)
+y(i)=total(2,i)
+end do
+print *,y(1),y(9000)
+contains
+pure real(kind=dp) function total(n,k)
+integer,intent(in)::n,k
+real(kind=dp),allocatable::work(DIMS)
+allocate(work(BOUNDS))
+work=real(k,dp)
+total=sum(work)
+end function
+end
+'''.replace('DIMS',','.join([':']*rank)).replace('BOUNDS',','.join(['-1:n-2']+['2:2']*(rank-1)))
+            with self.subTest(rank=rank): self.build_run(source,'2.0 18000.0')
+
+    def test_pure_alloc_workspace_runtime_checks(self):
+        for failure,body in (
+            ('unallocated','if(skip) return\nallocate(work(n))\nwork=2'),
+            ('uninitialized','allocate(work(n))\nif(.not.skip) work=2'),
+            ('outside','allocate(work(n))\nwork=2\nwork(n+1)=3')):
+            # The early-return case reads the unallocated local before leaving.
+            if failure=='unallocated': body=body.replace('if(skip) return','if(skip) then\ntotal=sum(work)\nreturn\nend if')
+            source='''implicit none
+integer::i,y(9000)
+do concurrent(i=1:9000)
+y(i)=total(2,i==9000)
+end do
+print *,y(1)
+contains
+pure integer function total(n,skip)
+integer,intent(in)::n
+logical,intent(in)::skip
+integer,allocatable::work(:)
+BODY
+total=sum(work)
+end function
+end
+'''.replace('BODY',body)
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory(prefix='rfort-parallel-') as tmp:
+                path=Path(tmp)/'case.f90';path.write_text(source)
+                exe=Path(tmp)/'case.exe'
+                for optimization in ('0','2'):
+                    result=subprocess.run([str(COMPILER),'-O',optimization,'--parallel','--parallel-report',str(path),'-o',str(exe)],capture_output=True,text=True,timeout=90)
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    self.assertIn('native parallel worker emitted',result.stderr)
+                    self.assertNotIn('serial fallback',result.stderr)
+                    result=subprocess.run([str(exe)],env=dict(os.environ,RFORT_NUM_THREADS='4',RFORT_PARALLEL_TRACE='1'),capture_output=True,text=True,timeout=30)
+                    self.assertNotEqual(result.returncode,0,result.stdout)
+                    self.assertIn(failure,result.stderr.lower())
+
+    def test_pure_alloc_workspace_target_fallback(self):
+        self.build_run('''implicit none
+integer::i,y(9000)
+do concurrent(i=1:9000)
+y(i)=total(i)
+end do
+print *,y(1),y(9000)
+contains
+pure integer function total(n)
+integer,intent(in)::n
+integer,allocatable,target::work(:)
+allocate(work(2))
+work=n
+total=sum(work)
+end function
+end
+''','2 18000',reason='unsupported or saved storage')
 
     def test_pure_workspace_fixed_scalar_input(self):
         self.build_run("""implicit none
@@ -2182,7 +2337,7 @@ end
                     self.assertNotEqual(result.returncode,0,result.stdout)
                     self.assertIn('uninitialized' if failure=='uninitialized' else 'outside',result.stderr.lower())
 
-    def test_pure_workspace_local_allocatable_fallback(self):
+    def test_pure_workspace_local_allocatable_explicit(self):
         self.build_run("""implicit none
 integer::i,y(9000)
 do concurrent(i=1:9000)
@@ -2198,7 +2353,7 @@ work=n
 f=sum(work)
 end function
 end
-""",'2 18000',reason='unsupported or saved storage')
+""",'2 18000')
 
     def test_pure_workspace_recursion_fallback(self):
         source="""implicit none

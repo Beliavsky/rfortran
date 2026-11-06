@@ -71,7 +71,7 @@ identity=x
 end function
 pure integer function array_total(x)
 integer,intent(in)::x(:)
-integer::work(size(x))
+integer,allocatable::work(:)
 work=array_copy(x)
 array_total=sum(work)
 end function
