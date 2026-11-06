@@ -58,8 +58,14 @@ integer,intent(in)::x(:)
 integer,intent(out)::y(:)
 integer::i
 do concurrent(i=1:size(x)) shared(x,y) default(none)
-   y(i)=increment(x(i))+array_total(x(1:2))-3
+   call transform_value(x(i),y(i))
+   y(i)=y(i)+array_total(x(1:2))-3
 end do
+end subroutine
+pure subroutine transform_value(x,y)
+integer,intent(in)::x
+integer,intent(out)::y
+y=increment(x)
 end subroutine
 pure integer function increment(x)
 integer,intent(in)::x

@@ -247,7 +247,7 @@ call. Lowered storage and runtime helpers still have to pass the native checks.
 Definitions must be available in the compilation group. Recursive call chains,
 POINTER results, OPTIONAL/POINTER/TARGET/ALLOCATABLE
 dummies, CHARACTER/COMPLEX storage, saved storage, I/O, allocation of shared or aliased storage,
-subroutine calls, POINTER/TARGET/SAVE storage, and unproved
+unproved subroutine calls, POINTER/TARGET/SAVE storage, and unproved
 callees retain serial fallback. Recursive workspace functions keep their
 existing serial calling path.
 Purity alone does not bypass the storage and runtime-helper checks. Use
@@ -261,6 +261,47 @@ rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_array_re
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_allocatable_results.f90 --run
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_allocatable_workspace.f90 --run
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_allocation_options.f90 --run
+```
+
+## PURE and SIMPLE subroutine calls
+
+Concurrent bodies may call available PURE/SIMPLE subroutines with explicit
+INTENT on INTEGER/REAL/LOGICAL dummies and matching actual/dummy ranks. Scalar expressions and read-only arrays
+are accepted as inputs. OUT/INOUT actuals must be scalar LOCAL/LOCAL_INIT
+variables or array elements/regular sections whose destination tuple contains
+each concurrent index exactly once. For example:
+
+```fortran
+do concurrent(i=1:n)
+   call transform(x(i),y(i))
+end do
+```
+
+A fixed column such as `a(:,i)` is disjoint across iterations and can be passed
+to an array output dummy. All writes to a given array must use the same tuple;
+reads of written storage must stay within the same proven destination tuple.
+Whole-array reads of a written array retain serial fallback. If a writable base
+variable occurs in another actual argument of the same call, the compiler
+conservatively uses serial execution, including for different views of one array.
+
+Sequence association from a scalar array element to an array dummy retains
+serial execution because the callee can access more than the named element.
+
+The source proof follows acyclic chains of supported subroutines and functions.
+Existing scoped call expansion binds actuals before the call, gives locals and
+workspaces private storage, undefines INTENT(OUT) actuals on entry, and preserves
+early RETURN and cleanup. Initialization checks cover INOUT reads and OUT paths
+that leave elements undefined. Fixed/automatic/allocatable workspaces use the
+same limits and allocation checks described for functions above.
+
+OPTIONAL, POINTER, TARGET, derived/CHARACTER/COMPLEX arguments, saved or mutable
+host/module storage, procedure dummies, and recursive or unavailable callees retain serial fallback.
+REDUCE variables retain the existing requirement that they occur in reduction
+assignments; passing them through a subroutine is not yet accepted.
+
+```cmd
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_subroutines.f90 --run
+python tests\test_concurrent_parallel_subroutines.py
 ```
 
 ## Runtime-sized arrays
@@ -295,7 +336,7 @@ local storage retain conservative serial fallbacks. These checks are not a
 complete validator of Fortran argument aliasing rules: callers must still obey
 those rules, particularly when one dummy argument is modified. Calls to supported
 scalar PURE/SIMPLE functions inside the concurrent body use the checks above;
-other procedure calls retain serial execution.
+supported PURE/SIMPLE subroutines use scoped call expansion as described above. Other procedure calls retain serial execution.
 
 ```cmd
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_dummy.f90 --run

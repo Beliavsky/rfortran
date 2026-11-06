@@ -705,6 +705,9 @@ A loop index type specification is not supported. See
 [`xconcurrent_locality.f90`](../tests/programs/xconcurrent_locality.f90).
 Native compilation can opt into a restricted parallel subset using
 [`--parallel`](parallel-concurrent.md); unsupported constructs remain serial.
+The native subset includes checked PURE/SIMPLE function and subroutine call chains,
+read-only array inputs, and explicit-intent subroutine outputs confined to LOCAL
+scalars or disjoint array elements/sections.
 
 Counted, unbounded, and DO WHILE loops accept construct names, for example
 `do_i: do i=1,ni` with `end do do_i` (or `enddo do_i`). `CYCLE do_i` and

@@ -158,6 +158,7 @@ is mostly OpenMP, then MPI, with coarrays a distant third.
   - **Implemented:** an opt-in pool and outlined workers for a conservative
     subset including scalar and memory-budgeted fixed/runtime-sized array reductions, multiple indices, signed strides, invariant subscript offsets, multidimensional arrays, and assumed-shape procedure arguments and proved PURE/SIMPLE scalar-result calls with scalar or read-only array inputs, with serial fallback.
     Called PURE/SIMPLE functions can use private fixed-size, automatic, and allocatable numeric/LOGICAL workspaces and fixed/automatic/allocatable array results, including nested calls and disjoint section output.
+    PURE/SIMPLE subroutine calls support explicit argument intents, read-only array inputs, disjoint scalar/section outputs, acyclic call chains, and private workspaces.
     Private array allocation supports STAT, SOURCE, and MOLD; status destinations are local scalar integers. STAT handles allocation-state errors, INTEGER/REAL/LOGICAL target size overflow, and allocator failures; partially allocated buffers are freed.
   - **Next:** broader capture analysis and recoverable allocation of other storage types,
     and additional thread-safe intrinsics.

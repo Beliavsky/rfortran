@@ -256,7 +256,7 @@ fn expand(body: &mut Vec<Stmt>, routines: &HashMap<String, Routine>, active: &mu
         if let Stmt::CallSub { name: callee, args } = stmt {
             if let Some(routine) = routines.get(callee) {
                 let intents: HashMap<_, _> = routine.body.iter().filter_map(|s| match s {
-                    Stmt::DummyIntent { name, intent } => Some((name.clone(), intent.clone())), _ => None,
+                    Stmt::DummyIntent { name, intent } if intent.starts_with("intent(") => Some((name.clone(), intent.clone())), _ => None,
                 }).collect();
                 let types: HashMap<String, TypeSpec> = routine.body.iter().flat_map(|s| match s {
                     Stmt::VarDecl { names, kind } => names.iter().map(|n| (n.clone(), kind.clone())).collect(),
@@ -266,7 +266,8 @@ fn expand(body: &mut Vec<Stmt>, routines: &HashMap<String, Routine>, active: &mu
                 let unspecified = routine.params.iter().all(|p| types.contains_key(p))
                     && routine.params.iter().any(|p| !intents.get(p).is_some_and(|i| i.starts_with("intent(")))
                     && !active.contains(callee);
-                if intents.values().any(|i| i == "intent(out)" || i == "intent(inout)") || unspecified {
+                if intents.values().any(|i| i == "intent(out)" || i == "intent(inout)") || unspecified
+                    || routine.body.iter().any(|s|matches!(s,Stmt::DummyIntent{intent,..} if intent==crate::concurrent_reduce::parallel::SUBROUTINE)) {
                     if active.contains(callee) { bail!("recursive output-argument subroutine `{callee}` is not yet supported"); }
                     if args.len() != routine.params.len() { bail!("wrong argument count for subroutine `{callee}`"); }
                     let mut prefix = Vec::new();

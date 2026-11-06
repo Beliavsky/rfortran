@@ -1,10 +1,16 @@
 // SPDX-License-Identifier: MIT
 //! Conservative source-level proof for the first native parallel subset.
 use super::*;
+pub(crate) const SUBROUTINE: &str = "@parallel_subroutine";
 pub(crate) const WORKSPACE: &str = "@parallel_function_workspace";
 pub(super) fn mark_workspaces(program: &mut Program) {
     fn mark(body: &mut [Stmt]) {
         for s in body {
+            if let Stmt::Subroutine{name,body,..}=s {
+                if calls::inline_subroutine(name) && !body.iter().any(|s|matches!(s,Stmt::DummyIntent{intent,..} if intent==SUBROUTINE)) {
+                    body.insert(0,Stmt::DummyIntent{name:"@procedure".into(),intent:SUBROUTINE.into()});
+                }
+            }
             if let Stmt::Function { name, body, .. } = s {
                 if calls::workspace(name)
                     && !body.iter().any(|s|matches!(s,Stmt::DummyIntent{intent,..} if intent==WORKSPACE))
@@ -275,6 +281,20 @@ fn check(
                     }
                     written.insert(name.clone(),indices.clone());
                 },
+                Stmt::CallSub{name,args} => {
+                    if scope.contains_key(&format!("@parallel_dummy:{name}")) {
+                        bail!("procedure dummy call requires serial execution");
+                    }
+                    for (actual,output) in calls::subroutine(name,args,scope)? {
+                        if !output {continue;}
+                        let assignment=match actual {
+                            Expr::Ident(name) if locals.contains(&name) && !indices_set.contains(&name)=>Stmt::Assign{name,value:Expr::IntLit("0".into())},
+                            Expr::Index(name,indices)|Expr::Call(name,indices) if scope.get(&name).is_some_and(|o|!o.dims.is_empty())=>Stmt::AssignIndex{name,indices,value:Expr::IntLit("0".into())},
+                            _=>bail!("parallel subroutine output requires LOCAL storage or a disjoint array element/section"),
+                        };
+                        writes(&[assignment],locals,written,indices_set,scope)?;
+                    }
+                },
                 Stmt::If{then_body,else_body,..}=>{writes(then_body,locals,written,indices_set,scope)?;if let Some(b)=else_body {writes(b,locals,written,indices_set,scope)?;}},
                 _=>bail!("body requires scalar local assignments, independent array-element writes, and IF statements"),
             }
@@ -448,7 +468,8 @@ fn check(
                 expr(b, scope, written)
             }
             Expr::Un(_, a) => expr(a, scope, written),
-            Expr::Call(n, args) if !scope.contains_key(n) && calls::check(n, args)? => {
+            Expr::Call(n, args) if !scope.contains_key(n)
+                && !scope.contains_key(&format!("@parallel_dummy:{n}")) && calls::check(n, args)? => {
                 for arg in args {
                     expr(
                         crate::named_arguments::keyword(arg)
@@ -493,6 +514,10 @@ fn check(
     expr(mask, scope, &written)?;
     fn visit(body: &[Stmt], scope: &Scope, written: &HashMap<String, Vec<Expr>>) -> Result<()> {
         for s in body {
+            if let Stmt::CallSub{name,args}=s {
+                for (actual,_) in calls::subroutine(name,args,scope)? {expr(&actual,scope,written)?;}
+                continue;
+            }
             let mut s = s.clone();
             for e in expressions(&mut s) {
                 expr(e, scope, written)?;
@@ -710,6 +735,34 @@ pub(super) fn flatten(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn parallel_procedure_dummy_cannot_inherit_a_same_named_definition() {
+        configure(true,false);
+        procedures(&Program{name:"p".into(),contains:vec![],body:vec![Stmt::Subroutine{
+            name:"step".into(),params:vec!["x".into(),"y".into()],pure:true,elemental:false,
+            body:vec![Stmt::VarDecl{kind:TypeSpec::Integer(None),names:vec!["x".into(),"y".into()]},
+                Stmt::DummyIntent{name:"x".into(),intent:"intent(in)".into()},
+                Stmt::DummyIntent{name:"y".into(),intent:"intent(out)".into()},set("y",id("x"))],
+        },Stmt::Function{name:"calc".into(),params:vec!["x".into()],pure:true,elemental:false,
+            return_type:Some(TypeSpec::Integer(None)),body:vec![
+                Stmt::VarDecl{kind:TypeSpec::Integer(None),names:vec!["x".into(),"calc".into()]},
+                Stmt::DummyIntent{name:"x".into(),intent:"intent(in)".into()},
+                set("calc",id("x")),Stmt::Return(Some(id("calc")))],
+        }]});
+        let scalar=Object{kind:TypeSpec::Integer(None),dims:vec![],attrs:HashSet::new(),derived:false,constant:None};
+        let mut array=scalar.clone();array.dims=vec![int(9000)];
+        let mut scope=Scope::from([("i".into(),scalar.clone()),("a".into(),array)]);
+        let body=vec![Stmt::CallSub{name:"step".into(),args:vec![id("i"),Expr::Call("a".into(),vec![id("i")])]}];
+        let controls=[id("i"),int(1),int(9000),int(1)];
+        assert!(check(&controls,&Expr::Logical(true),&body,&[],&scope,None).is_ok());
+        scope.insert("@parallel_dummy:step".into(),scalar);
+        assert!(check(&controls,&Expr::Logical(true),&body,&[],&scope,None).unwrap_err().to_string().contains("procedure dummy"));
+        let body=vec![Stmt::AssignIndex{name:"a".into(),indices:vec![id("i")],value:Expr::Call("calc".into(),vec![id("i")])}];
+        assert!(check(&controls,&Expr::Logical(true),&body,&[],&scope,None).is_ok());
+        scope.insert("@parallel_dummy:calc".into(),scope["i"].clone());
+        assert!(check(&controls,&Expr::Logical(true),&body,&[],&scope,None).is_err());
+        configure(false,false);
+    }
     #[test]
     fn procedure_declarations_are_not_thread_safe_intrinsics() {
         configure(true, false);
