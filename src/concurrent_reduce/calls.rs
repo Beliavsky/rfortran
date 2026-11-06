@@ -18,6 +18,7 @@ pub(super) fn scalar(kind: &TypeSpec) -> bool {
 }
 #[derive(Clone)]
 struct Function {
+    result: String,
     params: Vec<String>,
     body: Vec<Stmt>,
     scope: Scope,
@@ -42,6 +43,10 @@ pub(super) fn prepare(program: &Program) {
                         .map(|(n, o)| (n.clone(), o.clone()))
                         .collect();
                     out.entry(name.clone()).or_default().push(Function {
+                        result: match body.last() {
+                            Some(Stmt::Return(Some(Expr::Ident(n)))) => n.clone(),
+                            _ => name.clone(),
+                        },
                         params: params.clone(),
                         body: body.clone(),
                         scope: declarations(body, &constants),
@@ -156,17 +161,7 @@ fn validate(
     if parallel::intrinsic_name(name) {
         bail!("shadowed intrinsic requires serial execution");
     }
-    let result = f
-        .body
-        .last()
-        .and_then(|s| {
-            if let Stmt::Return(Some(Expr::Ident(n))) = s {
-                Some(n.as_str())
-            } else {
-                None
-            }
-        })
-        .unwrap_or(name);
+    let result = f.result.as_str();
     let object = f
         .scope
         .get(result)
@@ -181,7 +176,8 @@ fn validate(
         }
         if o.attrs
             .iter()
-            .any(|a| !matches!(a.as_str(), "parameter" | "in" | "intent(in)" | "value"))
+            .any(|a| !matches!(a.as_str(), "parameter" | "in" | "intent(in)" | "value")
+                && !(n == result && !o.dims.is_empty() && a == "allocatable"))
         {
             bail!("unsupported or saved storage `{n}`");
         }
@@ -247,9 +243,16 @@ fn validate(
             Expr::Call(n, args) => {
                 if let Some(signature) = approved.get(n) {
                     signature.associate(n, args)?;
-                } else if !(parallel::intrinsic(n) || array_intrinsic(n)) || f.scope.contains_key(n)
+                } else if !(parallel::intrinsic(n) || array_intrinsic(n)
+                    || n == "allocated" && parallel::unshadowed(n)
+                        && matches!(args.as_slice(), [arg] if matches!(
+                            crate::named_arguments::keyword(arg).map(|(_,v)|v).unwrap_or(arg),
+                            Expr::Ident(r) if r==&f.result))) || f.scope.contains_key(n)
                 {
                     bail!("callee `{n}` is not a proven PURE function");
+                }
+                if n == "allocated" && parallel::unshadowed(n) {
+                    crate::named_arguments::intrinsic(n).unwrap().associate(n,args)?;
                 }
                 for a in args {
                     expr(
@@ -306,15 +309,27 @@ fn validate(
                     }
                     continue;
                 }
-                Stmt::DummyIntent { intent, .. }
+                Stmt::DummyIntent { name, intent }
                     if matches!(intent.as_str(), "@simple" | "@module_host")
                         || intent == parallel::WORKSPACE
+                        || name == &f.result && intent == "allocatable"
                         || matches!(
                             intent.as_str(),
                             "parameter" | "in" | "intent(in)" | "value"
                         ) => {}
                 Stmt::InitializedDecl { attributes, .. }
                     if attributes.iter().any(|a| a == "parameter") => {}
+                Stmt::CallSub {name,args} if name == "@allocate" || name == "@deallocate" => {
+                    // Only the result is owned by this call. Other allocation
+                    // targets and control specifiers need a separate proof.
+                    let owned=f.scope.get(&f.result).is_some_and(|o|
+                        !o.dims.is_empty() && o.attrs.contains("allocatable"));
+                    if !owned || args.len()!=1 || !match (&args[0],name.as_str()) {
+                        (Expr::Call(n,_),"@allocate") | (Expr::Ident(n),"@deallocate") => n==&f.result,
+                        (Expr::Section{name:n,..},"@allocate") => n==&f.result && f.scope[n].dims.len()==1,
+                        _ => false,
+                    } {bail!("allocation requires a private ALLOCATABLE function result");}
+                }
                 Stmt::Assign { name, .. }
                 | Stmt::AssignIndex { name, .. }
                 | Stmt::Do { var: name, .. } => {

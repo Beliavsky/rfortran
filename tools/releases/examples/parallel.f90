@@ -77,7 +77,8 @@ array_total=sum(work)
 end function
 pure function array_copy(x) result(work)
 integer,intent(in)::x(:)
-integer::work(size(x))
+integer,allocatable::work(:)
+allocate(work(size(x)))
 work=x
 end function
 end

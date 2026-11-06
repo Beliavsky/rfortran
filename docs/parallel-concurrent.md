@@ -160,7 +160,7 @@ rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_sections
 ## PURE and SIMPLE functions
 
 Workers can use user-defined PURE and SIMPLE functions with explicitly declared
-numeric or LOGICAL scalar, fixed-size array, or automatic array results. Scalar dummy arguments
+numeric or LOGICAL scalar, fixed-size, automatic, or allocatable array results. Scalar dummy arguments
 require `INTENT(IN)` or `VALUE`; a VALUE dummy may be modified locally.
 Numeric and LOGICAL array dummy arguments require `INTENT(IN)`. Fixed-size and
 runtime-sized actual arrays and regular strided sections are supported, including
@@ -209,15 +209,25 @@ strides on the other axes must be invariant. Overlapping sections such as
 `y(i:i+1)=pair(i)` retain serial fallback. Result storage is released at its
 lexical exit, and initialization checks do not inherit definitions from earlier calls.
 
+An allocatable array result can be allocated by whole-array assignment or by
+`ALLOCATE` of the result itself. `DEALLOCATE` and `ALLOCATED` inquiries of that
+result are also supported, including `ALLOCATED(array=r)`. Result shapes may change within and between calls,
+including empty arrays; explicit lower bounds and multidimensional results are
+supported. Nested calls and self-referential assignment use the existing
+descriptor and assignment paths, with private storage and initialization masks.
+Unallocated results, undefined elements, and out-of-bounds accesses retain
+runtime checks. Explicit allocation currently requires a single result target
+without control specifiers such as `STAT`, `ERRMSG`, `SOURCE`, or `MOLD`.
+
 Array-taking functions may use SUM, PRODUCT, MINVAL, MAXVAL, COUNT, ANY, ALL,
 DOT_PRODUCT, SIZE, LBOUND, and UBOUND, as well as the scalar intrinsics listed
 above. A user procedure shadowing an intrinsic does not qualify as an intrinsic
 call. Lowered storage and runtime helpers still have to pass the native checks.
 
 Definitions must be available in the compilation group. Recursive call chains,
-ALLOCATABLE/POINTER results, OPTIONAL/POINTER/TARGET/ALLOCATABLE
-dummies, CHARACTER/COMPLEX storage, saved storage, I/O, explicit allocation,
-subroutine calls, local ALLOCATABLE/POINTER/TARGET/SAVE storage, and unproved
+POINTER results, OPTIONAL/POINTER/TARGET/ALLOCATABLE
+dummies, CHARACTER/COMPLEX storage, saved storage, I/O, allocation of other storage,
+subroutine calls, non-result ALLOCATABLE locals, POINTER/TARGET/SAVE storage, and unproved
 callees retain serial fallback. Recursive workspace functions keep their
 existing serial calling path.
 Purity alone does not bypass the storage and runtime-helper checks. Use
@@ -228,6 +238,7 @@ rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_function
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_array_functions.f90 --run
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_workspace.f90 --run
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_array_results.f90 --run
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_allocatable_results.f90 --run
 ```
 
 ## Runtime-sized arrays
