@@ -9,6 +9,7 @@
 //! except for pointers associated with the moved array. STAT= reports the
 //! errors the language defines for an allocation status (allocating an
 //! allocated array, deallocating an unallocated one) instead of stopping.
+//! Numeric/LOGICAL array targets also retain STAT through heap allocation.
 use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec, UnOp};
 use anyhow::{bail, Result};
 use std::collections::HashMap;
@@ -131,7 +132,23 @@ fn allocate_typed(args: &[Expr], ranks: &Ranks, kinds:Option<&Kinds>) -> Result<
     }
     let shape = source_value.as_ref().or(mold);
     let mut names = vec![];
+    // Retain a writable destination until descriptor lowering. Use identifier
+    // operands so procedure specialization and inlining can rename them.
+    let recoverable=stat.is_some() && kinds.is_some_and(|k|objects.iter().all(|o| {
+        let n=match o {Expr::Ident(n)|Expr::Call(n,_)|Expr::Section{name:n,..}=>n,_=>return false};
+        ranks.get(n).is_some_and(|r|*r>0) && k.get(n).is_some_and(|k|matches!(k,TypeSpec::Integer(_)|TypeSpec::IntegerKind(_)|TypeSpec::Real|TypeSpec::RealKind(_)|TypeSpec::DoublePrecision|TypeSpec::Logical|TypeSpec::LogicalKind(_)))
+    }));
+    // STAT may itself occur in SOURCE or a bound. Keep its old value until
+    // the statement completes, including across multiple allocation targets.
+    let internal_status=if recoverable {
+        static SERIAL:std::sync::atomic::AtomicUsize=std::sync::atomic::AtomicUsize::new(0);
+        let temp=format!("@allocation_status_{}",SERIAL.fetch_add(1,std::sync::atomic::Ordering::Relaxed));
+        allocations.insert(0,Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![temp.clone()]});
+        allocations.insert(1,Stmt::Assign{name:temp.clone(),value:Expr::IntLit("0".into())});
+        Some(id(&temp))
+    }else{None};
     for object in &objects {
+        let start=allocations.len();
         let name = match object {
             Expr::Ident(n) | Expr::Call(n, _) | Expr::Section { name: n, .. } => n.clone(),
             _ => bail!("ALLOCATE requires ALLOCATABLE variables"),
@@ -161,12 +178,27 @@ fn allocate_typed(args: &[Expr], ranks: &Ranks, kinds:Option<&Kinds>) -> Result<
                 allocations.push(Stmt::AssignIndex{name:name.clone(),indices,value:value.clone()});
             } else {allocations.push(Stmt::Assign { name: name.clone(), value: value.clone() });}
         }
+        if recoverable {
+            let stat=internal_status.as_ref().unwrap();
+            let work=allocations.drain(start..).flat_map(|s| {
+                if matches!(&s,Stmt::CallSub{name,..} if name=="@allocate") {
+                    vec![call("@allocation_status_begin",vec![stat.clone()]),s,call("@allocation_status_end",vec![])]
+                } else {vec![when(Expr::Bin(BinOp::Eq,Box::new(stat.clone()),Box::new(Expr::IntLit("0".into()))),vec![s],None)]}
+            }).collect();
+            allocations.push(when(Expr::Bin(BinOp::Eq,Box::new(stat.clone()),Box::new(Expr::IntLit("0".into()))),work,None));
+        }
         names.push(name);
     }
     if stat.is_none() {
         return Ok(Some(allocations));
     }
-    allocations.extend(status(stat, errmsg, 0, "")?);
+    if recoverable {
+        if errmsg.is_some() {
+            allocations.push(when(Expr::Bin(BinOp::Ne,Box::new(internal_status.as_ref().unwrap().clone()),Box::new(Expr::IntLit("0".into()))),status(None,errmsg,1,"array allocation failed")?,None));
+        }
+        let Expr::Ident(dest)=stat.unwrap() else {bail!("STAT= requires a scalar INTEGER variable")};
+        allocations.push(Stmt::Assign{name:dest.clone(),value:internal_status.unwrap()});
+    } else {allocations.extend(status(stat, errmsg, 0, "")?);}
     // Allocating an associated POINTER is not an error.
     let arrays: Vec<Expr> = names.iter().filter(|n| ranks.get(*n).is_some_and(|r| *r > 0) && !pointer(ranks, n)).map(|n| test("allocated", n)).collect();
     if arrays.is_empty() {

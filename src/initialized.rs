@@ -463,11 +463,11 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
             }
             Stmt::CallSub {name,..} if name=="@heap_character_bind" || name=="@heap_character_clear" => {},
             Stmt::CallSub {name,args} if name=="@heap_bounds" => {
-                for value in &args[2..]{read(value,env,&mut before,serial)?;}
+                for value in &args[2..4]{read(value,env,&mut before,serial)?;}
                 for target in &args[..2]{let Expr::Ident(n)=target else{unreachable!()};write(n,None,env,&mut after,serial);}
             }
             Stmt::CallSub {name,args} if name=="@heap_allocate" || name=="@heap_resize" => {
-                for arg in &args[2..] {read(arg,env,&mut before,serial)?;}
+                for arg in &args[2..] {if !matches!(arg,Expr::Call(n,_) if n=="@allocation_status"){read(arg,env,&mut before,serial)?;}}
                 let Expr::Ident(local)=&args[0] else{unreachable!()};
                 let flag=env[local].flag.clone();args.insert(2,Expr::Ident(flag));
                 let Expr::Ident(length)=&args[1] else{unreachable!()};write(length,None,env,&mut after,serial);

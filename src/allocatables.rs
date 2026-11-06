@@ -1370,6 +1370,9 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
         metadata(body, &mut local_metadata);
         if !local_metadata.is_empty() { shapes.extend(local_metadata); }
         let mut out = vec![];
+        // Scoped markers apply only to the following explicit ALLOCATE, never
+        // to later implicit reallocation or unrelated temporary storage.
+        let mut allocation_status:Option<String>=None;
         for mut s in std::mem::take(body) {
             if let Some(p) = crate::source_diagnostics::statement_offset(&s) { statement_location.set(Some(p)); }
             let mut guards = vec![];
@@ -1593,6 +1596,11 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                     for extent in args.iter_mut().skip(2){expression(extent, &mut shapes,&mut guards,checks,serial)?;}
                     out.extend(guards);out.push(s);continue;
                 }
+                Stmt::CallSub{name,args} if name=="@allocation_status_begin" => {
+                    let [Expr::Ident(n)]=args.as_slice() else {bail!("invalid allocation status destination")};
+                    allocation_status=Some(n.clone());continue;
+                }
+                Stmt::CallSub{name,..} if name=="@allocation_status_end" => {allocation_status=None;continue;}
                 Stmt::CallSub { name, args } if name == "@allocate" => {
                     let mut handled = true;
                     for arg in args.iter() {
@@ -1628,7 +1636,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                                 if let Expr::Call(tag,bounds)=&mut extent {if tag=="@heap_bounds" {
                                     let lower=lowers(n,&shapes).context("explicit allocation bounds require runtime storage")?[axis].clone();
                                     for value in bounds.iter_mut(){expression(value, &mut shapes,&mut out,checks,serial)?;}
-                                    out.push(Stmt::CallSub{name:"@heap_bounds".into(),args:vec![lower,id(state),bounds[0].clone(),bounds[1].clone()]});
+                                    out.push(Stmt::CallSub{name:"@heap_bounds".into(),args:{let mut a=vec![lower,id(state),bounds[0].clone(),bounds[1].clone()];if let Some(n)=&allocation_status {a.push(Expr::Call("@allocation_status".into(),vec![id(n)]));}a}});
                                 }else{expression(&mut extent, &mut shapes,&mut out,checks,serial)?;out.push(assign(state,Expr::Call("max".into(),vec![int(0),extent])));}}
                                 else{
                                     expression(&mut extent, &mut shapes, &mut out, checks, serial)?;
@@ -1638,7 +1646,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                                 if !shapes.contains_key(&format!("@heap:{n}")) {out.push(fail(bin(BinOp::Gt,id(state),limit.clone()),&format!("allocation of `{n}` dimension {} exceeds its bounded capacity",axis+1)));}
                             }
                             if shapes.contains_key(&format!("@heap:{n}")) {
-                                let mut args=vec![id(n),id(&len)];args.extend(axes);
+                                let mut args=vec![id(n),id(&len)];args.extend(axes);if let Some(n)=&allocation_status {args.push(Expr::Call("@allocation_status".into(),vec![id(n)]));}
                                 out.push(Stmt::CallSub{name:"@heap_allocate".into(),args});
                             } else {out.push(assign(
                                 &len,
@@ -1646,7 +1654,7 @@ pub(crate) fn finish(mut p: Program) -> Result<Program> {
                                     .reduce(|a, b| bin(BinOp::Mul, a, b))
                                     .unwrap(),
                             ));}
-                            out.push(assign(&flag, Expr::Logical(true)));
+                            out.push(assign(&flag, allocation_status.as_ref().map_or(Expr::Logical(true),|n|bin(BinOp::Eq,id(n),int(0)))));
                             out.push(Stmt::CallSub {
                                 name: "@undefine".into(),
                                 args: vec![id(n)],

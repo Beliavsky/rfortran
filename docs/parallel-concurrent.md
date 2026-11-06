@@ -233,8 +233,11 @@ mismatch is diagnosed instead of resizing the target. MOLD supplies shape/type
 information without defining elements or reading the model's values.
 Allocation-state inquiries in SOURCE are captured before allocation.
 ERRMSG and allocation of multiple targets in one statement retain serial fallback.
-As in the serial compiler, STAT does not yet recover from allocation-size
-overflow or allocator exhaustion; those errors still terminate execution.
+STAT also reports extent/product overflow and failure to allocate the INTEGER/REAL/LOGICAL
+target or its initialization mask. A failed target remains unallocated;
+partial storage is freed, and SOURCE copying is skipped. Compiler-generated
+expression temporaries and CHARACTER/derived-type allocations retain their
+existing allocation-failure behavior.
 
 Array-taking functions may use SUM, PRODUCT, MINVAL, MAXVAL, COUNT, ANY, ALL,
 DOT_PRODUCT, SIZE, LBOUND, and UBOUND, as well as the scalar intrinsics listed

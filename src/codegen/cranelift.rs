@@ -3190,8 +3190,8 @@ fn gen_stmts(
                     let lower=eval_expr(b,ex,ptr_ty,&args[2],ints,reals,bools,func_meta);let lower=to_i64(b,lower);
                     let upper=eval_expr(b,ex,ptr_ty,&args[3],ints,reals,bools,func_meta);let upper=to_i64(b,upper);
                     let empty=b.ins().icmp(ir::condcodes::IntCC::SignedLessThan,upper,lower);let upper=b.ins().select(empty,lower,upper);
-                    let (difference,overflow)=b.ins().ssub_overflow(upper,lower);let okay=b.ins().bnot(overflow);file_io::require(module,b,ptr_ty,dc,okay,"allocation extent overflow")?;
-                    let one=b.ins().iconst(types::I64,1);let (extent,overflow)=b.ins().sadd_overflow(difference,one);let okay=b.ins().bnot(overflow);file_io::require(module,b,ptr_ty,dc,okay,"allocation extent overflow")?;
+                    let (difference,overflow)=b.ins().ssub_overflow(upper,lower);let okay=b.ins().bnot(overflow);if let Some(IExpr::Call(_,dest))=args.get(4).filter(|e|matches!(e,IExpr::Call(tag,_) if tag=="@allocation_status")){let IExpr::Ident(n)=&dest[0] else{bail!("invalid allocation status")};let a=storage_addr(b,ptr_ty,ints[n]);let old=b.ins().load(types::I64,MemFlags::new(),a,0);let code=b.ins().iconst(types::I64,1);let code=b.ins().select(okay,old,code);b.ins().store(MemFlags::new(),code,a,0);}else{file_io::require(module,b,ptr_ty,dc,okay,"allocation extent overflow")?;}
+                    let one=b.ins().iconst(types::I64,1);let (extent,overflow)=b.ins().sadd_overflow(difference,one);let okay=b.ins().bnot(overflow);if let Some(IExpr::Call(_,dest))=args.get(4).filter(|e|matches!(e,IExpr::Call(tag,_) if tag=="@allocation_status")){let IExpr::Ident(n)=&dest[0] else{bail!("invalid allocation status")};let a=storage_addr(b,ptr_ty,ints[n]);let old=b.ins().load(types::I64,MemFlags::new(),a,0);let code=b.ins().iconst(types::I64,1);let code=b.ins().select(okay,old,code);b.ins().store(MemFlags::new(),code,a,0);}else{file_io::require(module,b,ptr_ty,dc,okay,"allocation extent overflow")?;}
                     let zero=b.ins().iconst(types::I64,0);let extent=b.ins().select(empty,zero,extent);
                     for (target,value) in args[..2].iter().zip([lower,extent]) {let IExpr::Ident(n)=target else{bail!("allocation bounds require descriptor fields")};let address=storage_addr(b,ptr_ty,ints[n]);b.ins().store(MemFlags::new(),value,address,0);}
                     continue;
@@ -3289,15 +3289,21 @@ fn gen_stmts(
                         let id=module.declare_function("free",Linkage::Import,&signature)?;let f=module.declare_func_in_func(id,b.func);
                         for cell in [cell,mask_cell] {let pointer=b.ins().load(ptr_ty,MemFlags::new(),cell,0);b.ins().call(f,&[pointer]);let zero=b.ins().iconst(ptr_ty,0);b.ins().store(MemFlags::new(),zero,cell,0);}
                     }else{
+                        // A trailing marker names a STAT destination; publish no buffers
+                        // until both allocations succeed.
+                        let status=if !resize {match args.last(){Some(IExpr::Call(tag,a)) if tag=="@allocation_status"=>match &a[0]{IExpr::Ident(n)=>Some(n.as_str()),_=>None},_=>None}}else{None};
+                        let failure=status.map(|_|b.create_block());let done=status.map(|_|b.create_block());
+                        let mut valid=b.ins().iconst(types::I8,1);
+                        if let Some(n)=status {let a=storage_addr(b,ptr_ty,ints[n]);let v=b.ins().load(types::I64,MemFlags::new(),a,0);valid=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,v,0);}
                         let mut count=b.ins().iconst(types::I64,1);
                         // First collect all extents so a zero-sized shape never overflows.
                         let mut extents=vec![];let mut empty=b.ins().iconst(types::I8,0);
-                        for arg in &args[3..] {let value=eval_expr(b,ex,ptr_ty,arg,ints,reals,bools,func_meta);let extent=to_i64(b,value);let zero=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,extent,0);empty=b.ins().bor(empty,zero);extents.push(extent);}
-                        for extent in extents {let zero=b.ins().iconst(types::I64,0);let extent=b.ins().select(empty,zero,extent);let (product,overflow)=b.ins().umul_overflow(count,extent);let okay=b.ins().bnot(overflow);file_io::require(module,b,ptr_ty,dc,okay,"allocation size overflow")?;count=product;}
-                        let maximum=b.ins().iconst(types::I64,i64::MAX/8);let okay=b.ins().icmp(ir::condcodes::IntCC::UnsignedLessThanOrEqual,count,maximum);file_io::require(module,b,ptr_ty,dc,okay,"allocation size overflow")?;
+                        for arg in &args[3..args.len()-usize::from(status.is_some())] {let value=eval_expr(b,ex,ptr_ty,arg,ints,reals,bools,func_meta);let extent=to_i64(b,value);let zero=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,extent,0);empty=b.ins().bor(empty,zero);extents.push(extent);}
+                        for extent in extents {let zero=b.ins().iconst(types::I64,0);let extent=b.ins().select(empty,zero,extent);let (product,overflow)=b.ins().umul_overflow(count,extent);let okay=b.ins().bnot(overflow);if status.is_some(){valid=b.ins().band(valid,okay);}else{file_io::require(module,b,ptr_ty,dc,okay,"allocation size overflow")?;}count=product;}
+                        let maximum=b.ins().iconst(types::I64,i64::MAX/8);let okay=b.ins().icmp(ir::condcodes::IntCC::UnsignedLessThanOrEqual,count,maximum);if status.is_some(){valid=b.ins().band(valid,okay);}else{file_io::require(module,b,ptr_ty,dc,okay,"allocation size overflow")?;}
                         let IExpr::Ident(length)=&args[1] else{bail!("invalid allocation length")};let length_address=storage_addr(b,ptr_ty,ints[length]);
                         let old_count=if resize {b.ins().load(types::I64,MemFlags::new(),length_address,0)} else {b.ins().iconst(types::I64,0)};
-                        b.ins().store(MemFlags::new(),count,length_address,0);
+                        if status.is_none(){b.ins().store(MemFlags::new(),count,length_address,0);}
                         if resize {
                             let okay=b.ins().icmp(ir::condcodes::IntCC::UnsignedGreaterThanOrEqual,count,old_count);
                             file_io::require(module,b,ptr_ty,dc,okay,"constructor storage size overflow")?;
@@ -3321,6 +3327,28 @@ fn gen_stmts(
                                 file_io::call(module,b,"memset",&[tail,zero,added],ptr_ty)?;
                             }
                             continue;
+                        }
+                        if let Some(n)=status {
+                            if ptr_ty!=types::I64 {let limit=b.ins().iconst(types::I64,(u32::MAX/8) as i64);let fits=b.ins().icmp(ir::condcodes::IntCC::UnsignedLessThanOrEqual,count,limit);valid=b.ins().band(valid,fits);}
+                            let allocate=b.create_block();let failure=failure.unwrap();let done=done.unwrap();
+                            b.ins().brif(valid,allocate,&[],failure,&[]);b.switch_to_block(allocate);b.seal_block(allocate);
+                            let one=b.ins().iconst(types::I64,1);let empty=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,count,0);let cells=b.ins().select(empty,one,count);
+                            let cells=if ptr_ty==types::I64{cells}else{b.ins().ireduce(ptr_ty,cells)};let width=b.ins().iconst(ptr_ty,8);
+                            let data=file_io::call(module,b,"calloc",&[cells,width],ptr_ty)?;
+                            let mask_block=b.create_block();let okay=b.ins().icmp_imm(ir::condcodes::IntCC::NotEqual,data,0);
+                            b.ins().brif(okay,mask_block,&[],failure,&[]);b.switch_to_block(mask_block);b.seal_block(mask_block);
+                            let mask=file_io::call(module,b,"calloc",&[cells,width],ptr_ty)?;
+                            let success=b.create_block();let cleanup=b.create_block();let okay=b.ins().icmp_imm(ir::condcodes::IntCC::NotEqual,mask,0);
+                            b.ins().brif(okay,success,&[],cleanup,&[]);b.switch_to_block(cleanup);b.seal_block(cleanup);
+                            let mut signature=module.make_signature();signature.params.push(ir::AbiParam::new(ptr_ty));
+                            let id=module.declare_function("free",Linkage::Import,&signature)?;let free=module.declare_func_in_func(id,b.func);b.ins().call(free,&[data]);
+                            b.ins().jump(failure,&[]);
+                            b.switch_to_block(success);b.seal_block(success);
+                            b.ins().store(MemFlags::new(),data,cell,0);b.ins().store(MemFlags::new(),mask,mask_cell,0);b.ins().store(MemFlags::new(),count,length_address,0);b.ins().jump(done,&[]);
+                            b.switch_to_block(failure);b.seal_block(failure);
+                            let address=storage_addr(b,ptr_ty,ints[n]);let code=b.ins().iconst(types::I64,1);b.ins().store(MemFlags::new(),code,address,0);
+                            let zero=b.ins().iconst(types::I64,0);b.ins().store(MemFlags::new(),zero,length_address,0);
+                            b.ins().jump(done,&[]);b.switch_to_block(done);b.seal_block(done);continue;
                         }
                         let one=b.ins().iconst(types::I64,1);let empty=b.ins().icmp_imm(ir::condcodes::IntCC::Equal,count,0);let count=b.ins().select(empty,one,count);
                         let count=if ptr_ty==types::I64 {count}else{let limit=b.ins().iconst(types::I64,(u32::MAX/8) as i64);let okay=b.ins().icmp(ir::condcodes::IntCC::UnsignedLessThanOrEqual,count,limit);file_io::require(module,b,ptr_ty,dc,okay,"allocation size overflow")?;b.ins().ireduce(ptr_ty,count)};

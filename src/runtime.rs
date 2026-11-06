@@ -1504,7 +1504,9 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         let fr=call_stack.last().unwrap().clone();
                         let lower=eval_expr(&args[2],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
                         let upper=eval_expr(&args[3],&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap();
-                        let extent=i64::try_from((i128::from(upper)-i128::from(lower)+1).max(0)).unwrap_or_else(|_|{eprintln!("Runtime error: allocation extent overflow");std::process::exit(1)});
+                        let extent=match i64::try_from((i128::from(upper)-i128::from(lower)+1).max(0)) {
+                            Ok(n)=>n,Err(_)=>{if let Some(Expr::Call(_,a))=args.get(4){let Expr::Ident(n)=&a[0] else{unreachable!()};call_stack.last_mut().unwrap().env_int.insert(n.clone(),1);0}else{eprintln!("Runtime error: allocation extent overflow");std::process::exit(1)}}
+                        };
                         let fr=call_stack.last_mut().unwrap();for (arg,value) in args[..2].iter().zip([lower,extent]){let Expr::Ident(n)=arg else{unreachable!()};fr.env_int.insert(n.clone(),value);}idx+=1;continue;
                     }
                     if name=="@c_invoke" {
@@ -1663,6 +1665,21 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                         let resize=name=="@heap_resize";
                         let Expr::Ident(local)=&args[0] else{unreachable!()};
                         let Expr::Ident(mask)=&args[if name=="@heap_allocate" || resize {2}else{1}] else{unreachable!()};
+                        let status=if name=="@heap_allocate"{match args.last(){Some(Expr::Call(tag,a)) if tag=="@allocation_status"=>match &a[0]{Expr::Ident(n)=>Some(n.clone()),_=>None},_=>None}}else{None};
+                        if let Some(status)=status {
+                            let fr=call_stack.last().unwrap().clone();
+                            let dimensions=args[3..args.len()-1].iter().map(|e|eval_expr(e,&fr.env_str,&fr.env_int,&fr.env_real32,&fr.env_real64,&fr.env_log,funcs,call_stack).0.unwrap()).collect::<Vec<_>>();
+                            let count=if dimensions.contains(&0){Some(0)}else{dimensions.iter().try_fold(1usize,|a,&v|a.checked_mul(usize::try_from(v).ok()?)).filter(|n|*n<=isize::MAX as usize/8)};
+                            let mut integers=Vec::<i64>::new();let mut reals=Vec::<f64>::new();let mut flags=Vec::<i64>::new();
+                            let real=fr.env_real_arrays.contains_key(local);
+                            let okay=fr.env_int[&status]==0 && count.is_some_and(|n| {
+                                (if real{reals.try_reserve_exact(n)}else{integers.try_reserve_exact(n)}).is_ok() && flags.try_reserve_exact(n).is_ok()
+                            });
+                            let fr=call_stack.last_mut().unwrap();let Expr::Ident(length)=&args[1] else{unreachable!()};
+                            if okay {let n=count.unwrap();if real{reals.resize(n,0.0);fr.env_real_arrays.insert(local.clone(),reals);}else{integers.resize(n,0);fr.env_int_arrays.insert(local.clone(),integers);}flags.resize(n,0);fr.env_int_arrays.insert(mask.clone(),flags);fr.env_int.insert(length.clone(),n as i64);}
+                            else{fr.env_int.insert(status,1);fr.env_int.insert(length.clone(),0);}
+                            fr.commit_saved();idx+=1;continue;
+                        }
                         let mut length=0usize;
                         if name=="@heap_allocate" || resize {
                             let fr=call_stack.last().unwrap().clone();

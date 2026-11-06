@@ -115,6 +115,10 @@ pub fn validate(program: &Program) -> Result<()> {
                 status_result?;
             }
             match stmt {
+                Stmt::CallSub{name,args} if name=="@allocation_status_begin" => {
+                    let [Expr::Ident(n)]=args.as_slice() else {bail!("invalid allocation status")};writable(n)?;
+                },
+                Stmt::CallSub{name,..} if name=="@allocation_status_end" => {},
                 Stmt::CallSub {name,..} if name == crate::initialized::UNCHECKED_BEGIN || name == crate::initialized::UNCHECKED_END => {},
                 Stmt::CallSub {name,args} if name==crate::initialized::TRANSPORT => {
                     let [target,source]=args.as_slice() else {bail!("invalid storage transport");};

@@ -73,7 +73,11 @@ pure integer function array_total(x)
 integer,intent(in)::x(:)
 integer,allocatable::work(:)
 integer::istat
+integer(kind=8)::too_large
 array_total=-100
+too_large=4611686018427387903_8
+allocate(work(too_large),stat=istat)
+if(istat==0.or.allocated(work)) return
 allocate(work,source=array_copy(x),stat=istat)
 if(istat/=0) return
 array_total=sum(work)

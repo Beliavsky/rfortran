@@ -30,6 +30,38 @@ class ParallelConcurrent(unittest.TestCase):
                         self.assertIn(f'rfort parallel: {n} threads',result.stderr)
                     else: self.assertNotIn('rfort parallel:',result.stderr)
 
+    def test_pure_allocation_status_recovers_from_overflow(self):
+        source="""implicit none
+integer :: i,a(9000)
+do concurrent(i=1:9000)
+ a(i)=probe(i)
+end do
+if(any(a/=7)) stop 1
+print *,a(1),a(9000)
+contains
+pure integer function probe(i) result(r)
+integer,intent(in)::i
+integer,allocatable::work(:,:)
+integer(kind=8)::n
+integer::s
+n=4611686018427387903_8
+allocate(work(n,n),stat=s)
+r=-1
+if(s==0.or.allocated(work)) return
+allocate(work(-2*n:2*n,1:1),stat=s)
+if(s==0.or.allocated(work)) return
+s=i
+allocate(work(2,2),source=s,stat=s)
+if(s/=0) return
+r=sum(work)-4*i+7
+deallocate(work,stat=s)
+end function
+end
+"""
+        self.build_run(source,'7 7')
+        self.build_run(source,'7 7',parallel=False,threads=(1,))
+        self.build_run(source,'7 7',checks=False)
+
     def test_runtime_array_reduction_example(self):
         self.build_run((ROOT/'tests/programs/xconcurrent_parallel_runtime_reduce.f90').read_text(), '10007.0 10007.0 10007.0 10007.0')
 
