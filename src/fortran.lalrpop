@@ -1183,7 +1183,7 @@ Subscript: Expr = {
     <lower: RhsExpr?> DCOLON <stride: RhsExpr> => Expr::Section { name: String::new(), lower: lower.map(Box::new), upper: None, stride: Some(Box::new(stride)) },
 };
 
-KeywordName: String = { <name:Ident> => name, KW_KIND => "kind".into() };
+KeywordName: String = { <name:Ident> => name, KW_KIND => "kind".into(), KW_LEN => "len".into() };
 
 // Two or more values; one value parses as a substring (see crate::pdt).
 ConstructorValues: Vec<Expr> = {

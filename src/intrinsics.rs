@@ -66,7 +66,12 @@ pub(crate) fn parallel_scalar(name: &str) -> bool {
         | "sinh" | "cosh" | "tanh" | "asinh" | "acosh" | "atanh"
         | "exp" | "log" | "log10" | "hypot"
         | "huge" | "tiny" | "epsilon" | "digits" | "radix" | "precision"
-        | "range" | "minexponent" | "maxexponent" | "bit_size" | "kind")
+        | "range" | "minexponent" | "maxexponent" | "bit_size" | "kind"
+        // These bit operations lower to kind-aware inline arithmetic; their
+        // generated control guards only terminate on invalid arguments.
+        | "btest" | "iand" | "ior" | "ieor" | "not" | "ibset" | "ibclr"
+        | "ibits" | "ishft" | "popcnt" | "poppar" | "leadz" | "trailz"
+        | "dshiftl" | "dshiftr" | "shiftl" | "shiftr" | "shifta" | "merge_bits")
 }
 
 /// Language purity for public intrinsic interfaces known to the compiler. Keep compiler

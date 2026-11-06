@@ -639,6 +639,10 @@ pub(super) fn emit(
             end: IExpr::Ident("@parallel_end".into()),
             body,
         };
+        // Generated ERROR STOP diagnostics can allocate CHARACTER scratch
+        // buffers even though user CHARACTER operations are outside this subset.
+        // Keep their state until invocation initialization/cleanup is emitted.
+        let mut worker_chars = characters::Characters::new();
         gen_stmts(
             &mut w,
             &wx,
@@ -649,7 +653,7 @@ pub(super) fn emit(
             &mut wi,
             &mut wr,
             &mut wb,
-            &mut characters::Characters::new(),
+            &mut worker_chars,
             &mut real_kind.clone(),
             &mut HashSet::new(),
             &mut HashMap::new(),
@@ -713,6 +717,7 @@ pub(super) fn emit(
         w.ins().return_(&[]);
         w.seal_all_blocks();
         w.finalize();
+        worker_chars.finish(module, &mut context.func, ptr)?;
         Ok(())
     })();
     LOOP_COUNTERS.with(|c| *c.borrow_mut() = counters);

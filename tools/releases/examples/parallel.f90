@@ -69,7 +69,7 @@ y=increment(x)
 end subroutine
 pure integer function increment(x)
 integer,intent(in)::x
-increment=identity(x)+1
+increment=identity(ibits(x,0,bit_size(x)))+1
 end function
 simple integer function identity(x)
 integer,intent(in)::x

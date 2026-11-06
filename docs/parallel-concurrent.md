@@ -42,6 +42,11 @@ jobs to stderr; unset it for timing runs.
   SINH/COSH/TANH and their inverses; EXP, LOG/LOG10, HYPOT;
   HUGE/TINY/EPSILON, DIGITS, RADIX, PRECISION, RANGE, MINEXPONENT,
   MAXEXPONENT, BIT_SIZE, and KIND. Positional and keyword arguments work.
+  Integer bit intrinsics also work for kinds 1, 2, 4, and 8: BTEST, IAND,
+  IOR, IEOR, NOT, IBSET, IBCLR, IBITS, ISHFT, SHIFTL/SHIFTR/SHIFTA,
+  DSHIFTL/DSHIFTR, MERGE_BITS, POPCNT/POPPAR, and LEADZ/TRAILZ.
+  Dynamic positions, field lengths, and shifts retain their range checks,
+  including with `--nocheck`.
   Procedures shadowing these names do not qualify as intrinsic calls.
 
 The source proof and native callee recheck share the scalar eligibility catalog.
@@ -53,6 +58,15 @@ PURE-function, SIMPLE-subroutine, fallback, and rounding-error coverage. Try:
 
 ```cmd
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_intrinsics.f90 --run
+```
+
+The bit-operation tests cover all supported integer kinds, sign bits, empty and
+full-width fields, zero/full-width shifts, reordered keywords, and invalid
+runtime controls in direct loops and PURE/SIMPLE callees:
+
+```cmd
+python tests\test_concurrent_parallel_bits.py
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_bits.f90 --run
 ```
 
 Loop bounds and strides are evaluated once before dispatch. Workers receive

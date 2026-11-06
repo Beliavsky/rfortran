@@ -15,6 +15,8 @@ fn intrinsic(n: &str) -> bool {
     crate::intrinsics::parallel_scalar(n)
         // REAL-kind normalization is an inline demote/promote operation.
         || n == "@round_real32"
+        // Strict decoding admits only implemented bit operations and kinds.
+        || crate::bit_intrinsics::decode(n).is_some()
 }
 pub(super) fn prepare(module: &Module) {
     fn workers(body: &[IStmt]) -> bool {
@@ -417,7 +419,16 @@ mod tests {
         }];
         prepare(&module);
         assert!(check(&worker).is_ok());
+        module.funcs[2].body = vec![
+            declaration.clone(),
+            IStmt::Return(Some(IExpr::Call("@bit:iand:4".into(), vec![ident("x"), IExpr::IntLit("1".into())]))),
+        ];
+        prepare(&module);
+        assert!(check(&worker).is_ok());
         for bad in [
+            // Internal bit tags must identify an implemented operation/kind.
+            IStmt::Return(Some(call("@bit:unknown:4"))),
+            IStmt::Return(Some(call("@bit:iand:16"))),
             IStmt::Call("@module_bind".into(), vec![]),
             IStmt::Call("@saved_bind".into(), vec![]),
             IStmt::DeclVar(
