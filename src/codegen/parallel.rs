@@ -12,7 +12,7 @@ pub(super) fn marker(body: &[IStmt]) -> Option<&[IExpr]> {
     })
 }
 
-fn references(body: &[IStmt], out: &mut HashSet<String>) {
+fn references(body: &[IStmt], out: &mut HashSet<String>, ints: &HashMap<String, Storage>) {
     fn expr(e: &IExpr, out: &mut HashSet<String>) {
         match e {
             IExpr::Ident(n) => {
@@ -45,6 +45,10 @@ fn references(body: &[IStmt], out: &mut HashSet<String>) {
                     expr(e, out);
                 }
             }
+            // DCE/unrolling can leave literal stores to removed integer slots.
+            // Ordinary codegen ignores them. A read is still collected below
+            // and will fail the capture proof if its storage is unavailable.
+            IStmt::AssignIntLit(n, _) if !ints.contains_key(n) => {}
             IStmt::AssignStr(n, _)
             | IStmt::AssignIntLit(n, _)
             | IStmt::AssignRealLit(n, _)
@@ -72,9 +76,9 @@ fn references(body: &[IStmt], out: &mut HashSet<String>) {
                 else_body,
             } => {
                 expr(cond, out);
-                references(then_body, out);
+                references(then_body, out, ints);
                 if let Some(b) = else_body {
-                    references(b, out);
+                    references(b, out, ints);
                 }
             }
             IStmt::Do {
@@ -86,13 +90,40 @@ fn references(body: &[IStmt], out: &mut HashSet<String>) {
                 out.insert(var.clone());
                 expr(start, out);
                 expr(end, out);
-                references(body, out);
+                references(body, out, ints);
             }
             IStmt::DoWhile { cond, body } => {
                 expr(cond, out);
-                references(body, out);
+                references(body, out, ints);
             }
-            IStmt::Block { body } => references(body, out),
+            IStmt::Block { body } => references(body, out, ints),
+            IStmt::SelectCase {
+                selector,
+                cases,
+                default,
+            } => {
+                expr(selector, out);
+                for case in cases {
+                    for item in &case.items {
+                        match item {
+                            crate::ir::IcCaseItem::Single(e) => expr(e, out),
+                            crate::ir::IcCaseItem::Range(a, b) => {
+                                expr(a, out);
+                                expr(b, out);
+                            }
+                            crate::ir::IcCaseItem::Multi(items) => {
+                                for e in items {
+                                    expr(e, out);
+                                }
+                            }
+                        }
+                    }
+                    references(&case.body, out, ints);
+                }
+                if let Some(body) = default {
+                    references(body, out, ints);
+                }
+            }
             IStmt::Call(n, _) if n == "@parallel_iteration" => {}
             IStmt::Call(_, args) | IStmt::Print(args) | IStmt::Read(args) => {
                 for a in args {
@@ -176,7 +207,7 @@ pub(super) fn emit(
         used.insert(value.clone());
         used.insert(array.clone());
     }
-    references(body, &mut used);
+    references(body, &mut used, ints);
     // Later lowering can introduce per-iteration temporaries (for example
     // kind-qualified integer literals). Their declarations belong to the
     // callback, not to the caller's capture record.
@@ -203,6 +234,14 @@ pub(super) fn emit(
                 }
                 IStmt::Do { body, .. } | IStmt::DoWhile { body, .. } | IStmt::Block { body } => {
                     private_declarations(body, used, private)
+                }
+                IStmt::SelectCase { cases, default, .. } => {
+                    for case in cases {
+                        private_declarations(&case.body, used, private);
+                    }
+                    if let Some(body) = default {
+                        private_declarations(body, used, private);
+                    }
                 }
                 _ => {}
             }
@@ -255,6 +294,14 @@ pub(super) fn emit(
                 } => {
                     heap_bindings(then_body, bound);
                     if let Some(body) = else_body {
+                        heap_bindings(body, bound);
+                    }
+                }
+                IStmt::SelectCase { cases, default, .. } => {
+                    for case in cases {
+                        heap_bindings(&case.body, bound);
+                    }
+                    if let Some(body) = default {
                         heap_bindings(body, bound);
                     }
                 }
@@ -373,6 +420,14 @@ pub(super) fn emit(
                         assigned_scalars(body, assigned);
                     }
                 }
+                IStmt::SelectCase { cases, default, .. } => {
+                    for case in cases {
+                        assigned_scalars(&case.body, assigned);
+                    }
+                    if let Some(body) = default {
+                        assigned_scalars(body, assigned);
+                    }
+                }
                 _ => {}
             }
         }
@@ -384,6 +439,7 @@ pub(super) fn emit(
         references(
             &[IStmt::AssignExpr(String::new(), length.clone())],
             &mut inputs,
+            ints,
         );
         inputs.remove("");
         if inputs.iter().any(|n| {
@@ -697,6 +753,31 @@ pub(super) fn emit(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn parallel_capture_reads_survive_dead_integer_store_filter() {
+        let ints = HashMap::new();
+        let mut used = HashSet::new();
+        references(
+            &[IStmt::AssignIntLit("@reduction_index_1".into(), "5".into())],
+            &mut used,
+            &ints,
+        );
+        assert!(used.is_empty());
+        references(
+            &[IStmt::SelectCase {
+                selector: IExpr::IntLit("1".into()),
+                cases: vec![],
+                default: Some(vec![IStmt::AssignExpr(
+                    "result".into(),
+                    IExpr::Ident("@reduction_index_1".into()),
+                )]),
+            }],
+            &mut used,
+            &ints,
+        );
+        assert!(used.contains("@reduction_index_1"));
+        assert!(used.contains("result"));
+    }
     use super::*;
     #[test]
     fn outlined_worker_objects_on_release_targets() {

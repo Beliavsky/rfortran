@@ -1434,7 +1434,7 @@ end function
 end
 """,'2 9001',reason='unsupported or saved storage')
 
-    def test_pure_call_array_argument_fallback(self):
+    def test_pure_call_fixed_array_argument(self):
         self.build_run("""implicit none
 integer::i,a(9000),x(2)
 x=[2,3]
@@ -1448,7 +1448,308 @@ integer,intent(in)::x(2)
 f=x(1)+x(2)
 end function
 end
-""",'5 5',reason='non-scalar or unsupported storage')
+""",'5 5')
+
+    def test_pure_array_columns(self):
+        self.build_run((ROOT/'tests/programs/xconcurrent_parallel_array_functions.f90').read_text(), '20.0 20.0 8.0 8.0')
+
+    def test_pure_array_columns_no_checks(self):
+        self.build_run((ROOT/'tests/programs/xconcurrent_parallel_array_functions.f90').read_text(), '20.0 20.0 8.0 8.0',checks=False)
+
+    def test_pure_array_rank_fifteen(self):
+        dims=','.join(['1']*15)
+        assumed=','.join([':']*15)
+        self.build_run(f"""implicit none
+integer::i,x({dims}),y(9000)
+x=3
+do concurrent(i=1:9000)
+y(i)=total(x)
+end do
+print *,y(1),y(9000)
+contains
+pure integer function total(a)
+integer,intent(in)::a({assumed})
+total=sum(a)
+end function
+end
+""",'3 3')
+
+    def test_pure_array_runtime_sections(self):
+        self.build_run("""implicit none
+integer::i,n
+real,allocatable::x(:,:),y(:)
+n=5
+allocate(x(-2:n,9000),y(9000))
+x=2.0
+do concurrent(i=1:9000)
+y(i)=energy(x(n:-2:-2,i))
+end do
+print *,y(1),y(9000)
+contains
+pure real function energy(x) result(r)
+real,intent(in)::x(:)
+r=sum(x*x)+dot_product(x,x)
+end function
+end
+""", '32.0 32.0')
+
+    def test_pure_array_loop_and_chain(self):
+        self.build_run("""implicit none
+integer::i,n
+integer,allocatable::x(:,:),y(:)
+n=4
+allocate(x(n,9000),y(9000))
+x=3
+do concurrent(i=1:9000)
+y(i)=outer(x(:,i))
+end do
+print *,y(1),y(9000)
+contains
+pure integer function outer(a)
+integer,intent(in)::a(:)
+outer=total(a)+size(a)
+end function
+simple integer function total(a) result(r)
+integer,intent(in)::a(:)
+integer::j
+r=0
+do j=lbound(a,1),ubound(a,1)
+r=r+a(j)
+end do
+end function
+end
+""", '16 16')
+
+    def test_pure_array_logical(self):
+        self.build_run("""implicit none
+integer::i,n,y(9000)
+logical,allocatable::x(:,:)
+n=3
+allocate(x(n,9000))
+x=.true.
+do concurrent(i=1:9000)
+y(i)=score(a=x(:,i))
+end do
+print *,y(1),y(9000)
+contains
+pure integer function score(a)
+logical,intent(in)::a(:)
+score=count(a)
+if(all(a)) score=score+1
+if(any(.not.a)) score=-1
+end function
+end
+""", '4 4')
+
+    def test_pure_array_function_in_mask(self):
+        self.build_run("""implicit none
+integer::i,y(9000),total
+logical::x(2,9000)
+x=.true.
+x(2,1)=.false.
+y=0
+total=0
+do concurrent(i=1:9000,accept(x(:,i))) reduce(+:total)
+y(i)=i
+total=total+1
+end do
+print *,y(1),y(9000),total
+contains
+pure logical function accept(a)
+logical,intent(in)::a(:)
+accept=all(a)
+end function
+end
+""", '0 9000 8999')
+
+    def test_pure_array_rank_two_and_kinds(self):
+        self.build_run("""use iso_fortran_env,only:real64,int64
+implicit none
+integer::i,n
+real(real64),allocatable::x(:,:,:),y(:)
+n=2
+allocate(x(n,3,9000),y(9000))
+x=2.0_real64
+do concurrent(i=1:9000)
+y(i)=total(x(:,:,i))
+end do
+print *,y(1),y(9000)
+contains
+pure real(real64) function total(a) result(r)
+real(real64),intent(in)::a(:,:)
+integer(int64)::j,k
+r=0.0_real64
+do k=1,size(a,2)
+do j=1,size(a,1)
+r=r+a(j,k)
+end do
+end do
+end function
+end
+""", '12.0 12.0')
+
+    def test_pure_array_runtime_reallocate(self):
+        self.build_run("""implicit none
+integer::i,n,pass
+integer,allocatable::x(:,:),y(:)
+allocate(y(9000))
+do pass=1,2
+n=2*pass
+allocate(x(n,9000))
+x=3
+do concurrent(i=1:9000)
+y(i)=total(x(:,i))
+end do
+if(any(y/=3*n)) stop 1
+deallocate(x)
+end do
+print *,y(1),y(9000)
+contains
+pure integer function total(a)
+integer,intent(in)::a(:)
+total=sum(a)
+end function
+end
+""", '12 12')
+
+    def test_pure_array_empty_and_minmax_product(self):
+        self.build_run("""implicit none
+integer::i,n,y(9000)
+integer,allocatable::x(:,:)
+n=0
+allocate(x(n,9000))
+do concurrent(i=1:9000)
+y(i)=total(x(:,i))
+end do
+if(any(y/=1)) stop 1
+deallocate(x)
+n=3
+allocate(x(n,9000))
+x=2
+do concurrent(i=1:9000)
+y(i)=total(x(:,i))
+end do
+print *,y(1),y(9000)
+contains
+pure integer function total(a)
+integer,intent(in)::a(:)
+total=sum(a)+product(a)
+if(size(a)>0) total=total+minval(a)+maxval(a)
+end function
+end
+""", '18 18')
+
+    def test_pure_array_target_dummy_fallback(self):
+        self.build_run("""implicit none
+integer::i,y(9000),x(2)
+x=3
+do concurrent(i=1:9000)
+y(i)=total(x)
+end do
+print *,y(1),y(9000)
+contains
+pure integer function total(a)
+integer,intent(in),target::a(:)
+total=sum(a)
+end function
+end
+""", '6 6',reason='unsupported or saved storage')
+
+    def test_pure_array_select_case(self):
+        self.build_run("""implicit none
+integer::i,x(3,9000),y(9000)
+x=2
+x(1,1)=0
+do concurrent(i=1:9000)
+y(i)=f(x(:,i))
+end do
+print *,y(1),y(9000)
+contains
+pure integer function f(a) result(r)
+integer,intent(in)::a(:)
+select case(a(1))
+case(0)
+r=0
+case(2)
+r=sum(a*a)+a(1)
+case default
+r=-1
+end select
+end function
+end
+""",'0 14')
+
+    def test_pure_array_changing_section_extent(self):
+        self.build_run("""implicit none
+integer::i,n
+real,allocatable::x(:,:),y(:)
+n=3
+allocate(x(n,9000),y(9000))
+x=2.0
+do concurrent(i=1:9000)
+y(i)=f(x(1:i/3000,i))
+end do
+print *,y(1),y(9000)
+contains
+pure real function f(a)
+real,intent(in)::a(:)
+f=sum(a)
+end function
+end
+""",'0.0 6.0')
+
+    def test_pure_array_runtime_checks(self):
+        for failure in ('uninitialized','bounds'):
+            source="""implicit none
+integer::i,j,n
+real,allocatable::x(:,:),y(:)
+n=3
+allocate(x(n,9000),y(9000))
+do j=1,9000
+do i=1,n
+if(INITIALIZE) x(i,j)=2.0
+end do
+end do
+do concurrent(j=1:9000)
+y(j)=f(x(:,j))
+end do
+print *,y(1)
+contains
+pure real function f(a)
+real,intent(in)::a(:)
+f=RESULT
+end function
+end
+""".replace('INITIALIZE','i/=2' if failure=='uninitialized' else '.true.').replace('RESULT','sum(a)' if failure=='uninitialized' else 'a(size(a)+1)')
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory(prefix='rfort-parallel-') as tmp:
+                path=Path(tmp)/'case.f90';path.write_text(source)
+                exe=Path(tmp)/'case.exe'
+                for optimization in ('0','2'):
+                    result=subprocess.run([str(COMPILER),'-O',optimization,'--parallel','--parallel-report',str(path),'-o',str(exe)],capture_output=True,text=True,timeout=90)
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    self.assertIn('native parallel worker emitted',result.stderr)
+                    self.assertNotIn('serial fallback',result.stderr)
+                    env=dict(os.environ,RFORT_NUM_THREADS='4',RFORT_PARALLEL_TRACE='1')
+                    result=subprocess.run([str(exe)],env=env,capture_output=True,text=True,timeout=30)
+                    self.assertNotEqual(result.returncode,0,result.stdout)
+                    self.assertIn('uninitialized' if failure=='uninitialized' else 'bound',result.stderr.lower())
+                    if failure=='uninitialized': self.assertIn('case.f90:',result.stderr)
+
+    def test_pure_array_read_of_written_storage_fallback(self):
+        self.build_run("""implicit none
+integer::i,x(9000)
+x=1
+do concurrent(i=1:9000)
+x(i)=f(x)
+end do
+print *,x(1),x(9000)
+contains
+pure integer function f(a)
+integer,intent(in)::a(:)
+f=a(1)
+end function
+end
+""", '1 1',reason='whole-array expressions require serial execution')
 
     def test_pure_call_impure_fallback(self):
         self.build_run("""implicit none

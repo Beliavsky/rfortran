@@ -157,11 +157,16 @@ A runtime-sized input section and reduction section:
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_sections.f90 --run
 ```
 
-## PURE and SIMPLE scalar functions
+## PURE and SIMPLE functions
 
-Workers can call user-defined PURE and SIMPLE functions with explicitly declared
-numeric or LOGICAL scalar arguments, results, and local variables. Dummy arguments
+Workers can use user-defined PURE and SIMPLE functions with explicitly declared
+numeric or LOGICAL scalar results and local variables. Scalar dummy arguments
 require `INTENT(IN)` or `VALUE`; a VALUE dummy may be modified locally.
+Numeric and LOGICAL array dummy arguments require `INTENT(IN)`. Fixed-size and
+runtime-sized actual arrays and regular strided sections are supported, including
+multidimensional inputs, empty sections, and section lengths that change between
+iterations. Tests cover ranks one, two, and fifteen. Assumed-shape dummies currently
+require default lower bounds; actual arrays may have nondefault lower bounds.
 Scalar expressions, keyword arguments, local loops,
 branches, early returns, and acyclic chains of supported functions are accepted.
 Named constants, including module constants and named numeric kinds, can be used;
@@ -172,17 +177,27 @@ native functions after specialization and lowering: scalar storage must be local
 to the call, and generated helpers must also be proved thread-safe. The existing
 native scalar calling convention supplies per-call stack storage for arguments,
 results, and local initialization flags. Runtime initialization checks remain
-active. This path calls the compiled functions directly.
+active. Scalar-only functions use native calls. Array-taking functions reuse the
+compiler's existing call-site specialization before the loop is outlined. Their
+generated scalar temporaries, section buffers, descriptors, and initialization
+masks are private to workers. Array inputs must be read-only throughout the loop;
+passing an array that the loop also writes retains serial fallback.
+
+Array-taking functions may use SUM, PRODUCT, MINVAL, MAXVAL, COUNT, ANY, ALL,
+DOT_PRODUCT, SIZE, LBOUND, and UBOUND, as well as the scalar intrinsics listed
+above. A user procedure shadowing an intrinsic does not qualify as an intrinsic
+call. Lowered storage and runtime helpers still have to pass the native checks.
 
 Definitions must be available in the compilation group. Recursive call chains,
-array or optional dummies, CHARACTER/COMPLEX results, saved storage, I/O, allocation,
-subroutine calls, and unproved callees retain serial fallback. The permitted
-intrinsics inside a callee are currently the same small scalar set listed above.
+array-valued results, source-declared local arrays, OPTIONAL/POINTER/TARGET/ALLOCATABLE
+dummies, CHARACTER/COMPLEX storage, saved storage, I/O, explicit allocation,
+subroutine calls, and unproved callees retain serial fallback.
 Purity alone does not bypass the storage and runtime-helper checks. Use
 `--parallel-report` to see the reason for a fallback.
 
 ```cmd
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_functions.f90 --run
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_array_functions.f90 --run
 ```
 
 ## Runtime-sized arrays

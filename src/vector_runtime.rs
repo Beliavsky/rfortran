@@ -1749,6 +1749,10 @@ impl Lower {
                 match stmt {
                     Stmt::Do{body,..}|Stmt::DoWhile{body,..}|Stmt::Block{body}=>private_arrays(body,out),
                     Stmt::If{then_body,else_body,..}=>{private_arrays(then_body,out);if let Some(body)=else_body {private_arrays(body,out);}},
+                    Stmt::SelectCase{cases,default,..}=>{
+                        for case in cases {private_arrays(&case.body,out);}
+                        if let Some(body)=default {private_arrays(body,out);}
+                    },
                     _=>{}
                 }
             }

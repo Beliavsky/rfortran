@@ -58,7 +58,10 @@ pub(super) fn intrinsic_name(n: &str) -> bool {
     )
 }
 pub(super) fn intrinsic(n: &str) -> bool {
-    intrinsic_name(n) && !SHADOWED.with(|s| s.borrow().contains(n))
+    intrinsic_name(n) && unshadowed(n)
+}
+pub(super) fn unshadowed(n: &str) -> bool {
+    !SHADOWED.with(|s| s.borrow().contains(n))
 }
 pub(super) fn eligible(
     controls: &[Expr],
@@ -410,7 +413,7 @@ fn check(
                 expr(b, scope, written)
             }
             Expr::Un(_, a) => expr(a, scope, written),
-            Expr::Call(n, args) if !scope.contains_key(n) && calls::check(n, args, scope)? => {
+            Expr::Call(n, args) if !scope.contains_key(n) && calls::check(n, args)? => {
                 for arg in args {
                     expr(
                         crate::named_arguments::keyword(arg)

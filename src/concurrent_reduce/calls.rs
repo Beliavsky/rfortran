@@ -126,7 +126,9 @@ fn validate(
         bail!("requires a numeric or LOGICAL scalar result");
     }
     for (n, o) in f.scope.iter().filter(|(n, _)| f.locals.contains(*n)) {
-        if o.derived || !o.dims.is_empty() || !scalar(&o.kind) {
+        let input_array =
+            !o.dims.is_empty() && f.params.contains(n) && o.attrs.contains("intent(in)");
+        if o.derived || (!o.dims.is_empty() && !input_array) || !scalar(&o.kind) {
             bail!("non-scalar or unsupported storage `{n}`");
         }
         if o.attrs
@@ -159,7 +161,36 @@ fn validate(
             Expr::Ident(n)
                 if f.scope
                     .get(n)
-                    .is_some_and(|o| !o.derived && o.dims.is_empty() && scalar(&o.kind)) => {}
+                    .is_some_and(|o| !o.derived && scalar(&o.kind)) => {}
+            Expr::Index(n, args) | Expr::Call(n, args)
+                if f.scope.get(n).is_some_and(|o| !o.dims.is_empty()) =>
+            {
+                if args.len() != f.scope[n].dims.len() {
+                    bail!("array subscripts must match the dummy rank");
+                }
+                for a in args {
+                    expr(a, f, approved)?;
+                }
+            }
+            Expr::Section {
+                name,
+                lower,
+                upper,
+                stride,
+            } => {
+                if !name.is_empty() {
+                    expr(&Expr::Ident(name.clone()), f, approved)?;
+                }
+                for e in [lower, upper, stride].into_iter().flatten() {
+                    expr(e, f, approved)?;
+                }
+            }
+            Expr::Call(n, args)
+                if matches!(n.as_str(), "@section_subscript" | "@vector_subscript")
+                    && matches!(args.as_slice(), [Expr::Section { .. }]) =>
+            {
+                expr(&args[0], f, approved)?
+            }
             Expr::Bin(_, a, b) => {
                 expr(a, f, approved)?;
                 expr(b, f, approved)?;
@@ -168,7 +199,8 @@ fn validate(
             Expr::Call(n, args) => {
                 if let Some(signature) = approved.get(n) {
                     signature.associate(n, args)?;
-                } else if !parallel::intrinsic(n) || f.scope.contains_key(n) {
+                } else if !(parallel::intrinsic(n) || array_intrinsic(n)) || f.scope.contains_key(n)
+                {
                     bail!("callee `{n}` is not a proven scalar PURE function");
                 }
                 for a in args {
@@ -204,6 +236,28 @@ fn validate(
                 | Stmt::Block { .. }
                 | Stmt::Exit
                 | Stmt::Cycle => {}
+                Stmt::ArrayDecl { name, dims, .. } if f.params.contains(name) => {
+                    fn dimension(
+                        e: &Expr,
+                        f: &Function,
+                        approved: &HashMap<String, crate::named_arguments::Signature>,
+                    ) -> Result<()> {
+                        match e {
+                            Expr::Ident(n) if n == "@deferred_extent" => Ok(()),
+                            Expr::Call(n, a) if n == "@declared_bounds" => {
+                                for e in a {
+                                    dimension(e, f, approved)?;
+                                }
+                                Ok(())
+                            }
+                            _ => expr(e, f, approved),
+                        }
+                    }
+                    for d in dims {
+                        dimension(d, f, approved)?;
+                    }
+                    continue;
+                }
                 Stmt::DummyIntent { intent, .. }
                     if matches!(intent.as_str(), "@simple" | "@module_host")
                         || matches!(
@@ -237,20 +291,33 @@ fn validate(
     }
     statements(&f.body, f, approved)
 }
-pub(super) fn check(name: &str, args: &[Expr], scope: &Scope) -> Result<bool> {
-    FUNCTIONS.with(|f|{
-        let functions=f.borrow();
-        let Some(result)=functions.get(name) else {return Ok(false);};
-        let signature=result.as_ref().map_err(|e|anyhow::anyhow!("PURE call `{name}` uses serial execution: {e}"))?;
-        signature.associate(name,args)?;
-        for a in args {
-            let mut a=crate::named_arguments::keyword(a).map(|(_,v)|v).unwrap_or(a).clone();
-            let mut array=false;
-            visit_expr(&mut a,&mut |e|{
-                array|=matches!(e,Expr::Section{..}) || matches!(e,Expr::Ident(n) if scope.get(n).is_some_and(|o|!o.dims.is_empty()));
-            });
-            if array {bail!("PURE call `{name}` currently requires scalar actual arguments");}
-        }
+fn array_intrinsic(n: &str) -> bool {
+    parallel::unshadowed(n)
+        && matches!(
+            n,
+            "sum"
+                | "product"
+                | "minval"
+                | "maxval"
+                | "count"
+                | "any"
+                | "all"
+                | "dot_product"
+                | "size"
+                | "lbound"
+                | "ubound"
+        )
+}
+pub(super) fn check(name: &str, args: &[Expr]) -> Result<bool> {
+    FUNCTIONS.with(|f| {
+        let functions = f.borrow();
+        let Some(result) = functions.get(name) else {
+            return Ok(false);
+        };
+        let signature = result
+            .as_ref()
+            .map_err(|e| anyhow::anyhow!("PURE call `{name}` uses serial execution: {e}"))?;
+        signature.associate(name, args)?;
         Ok(true)
     })
 }

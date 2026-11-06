@@ -156,8 +156,8 @@ is mostly OpenMP, then MPI, with coarrays a distant third.
   - **Benefit:** existing code speeds up without being rewritten, and rfort
     already analyzes these loops.
   - **Implemented:** an opt-in pool and outlined workers for a conservative
-    subset including scalar and memory-budgeted fixed/runtime-sized array reductions, multiple indices, signed strides, invariant subscript offsets, multidimensional arrays, and assumed-shape procedure arguments and proved scalar PURE/SIMPLE calls, with serial fallback.
-  - **Next:** broader capture analysis, array interfaces for called PURE functions,
+    subset including scalar and memory-budgeted fixed/runtime-sized array reductions, multiple indices, signed strides, invariant subscript offsets, multidimensional arrays, and assumed-shape procedure arguments and proved PURE/SIMPLE scalar-result calls with scalar or read-only array inputs, with serial fallback.
+  - **Next:** broader capture analysis, local arrays and array-valued results in called PURE functions,
     and additional thread-safe intrinsics.
     SAVE and module variables retain their Fortran sharing semantics; making
     them all thread-local would change program behavior. Unsupported captures
