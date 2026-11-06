@@ -160,7 +160,7 @@ rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_sections
 ## PURE and SIMPLE functions
 
 Workers can use user-defined PURE and SIMPLE functions with explicitly declared
-numeric or LOGICAL scalar results and local variables. Scalar dummy arguments
+numeric or LOGICAL scalar results. Scalar dummy arguments
 require `INTENT(IN)` or `VALUE`; a VALUE dummy may be modified locally.
 Numeric and LOGICAL array dummy arguments require `INTENT(IN)`. Fixed-size and
 runtime-sized actual arrays and regular strided sections are supported, including
@@ -183,21 +183,39 @@ generated scalar temporaries, section buffers, descriptors, and initialization
 masks are private to workers. Array inputs must be read-only throughout the loop;
 passing an array that the loop also writes retains serial fallback.
 
+Functions may declare fixed-size or automatic numeric/LOGICAL local arrays,
+including multidimensional workspaces such as `real :: work(size(a),2)`.
+Assignments to local arrays and regular local sections are supported. The
+function and its supported callers are specialized at the call site; workspace
+buffers, descriptors, and initialization masks stay private to the worker.
+Automatic storage is allocated on entry and released at the lexical exit,
+including early RETURN. Sizes may change between invocations, and empty
+workspaces are supported. Initialization masks are reset for each invocation;
+initializing a workspace in one call does not define it in the next.
+VALUE scalar arguments use private copies even when the function modifies them.
+Functions with scalar-only interfaces retain their native definitions as well
+as the call-site templates.
+The ordinary allocation-size, allocation-failure, initialization, and subscript
+checks remain active unless `--nocheck` is requested.
+
 Array-taking functions may use SUM, PRODUCT, MINVAL, MAXVAL, COUNT, ANY, ALL,
 DOT_PRODUCT, SIZE, LBOUND, and UBOUND, as well as the scalar intrinsics listed
 above. A user procedure shadowing an intrinsic does not qualify as an intrinsic
 call. Lowered storage and runtime helpers still have to pass the native checks.
 
 Definitions must be available in the compilation group. Recursive call chains,
-array-valued results, source-declared local arrays, OPTIONAL/POINTER/TARGET/ALLOCATABLE
+array-valued results, OPTIONAL/POINTER/TARGET/ALLOCATABLE
 dummies, CHARACTER/COMPLEX storage, saved storage, I/O, explicit allocation,
-subroutine calls, and unproved callees retain serial fallback.
+subroutine calls, local ALLOCATABLE/POINTER/TARGET/SAVE storage, and unproved
+callees retain serial fallback. Recursive workspace functions keep their
+existing serial calling path.
 Purity alone does not bypass the storage and runtime-helper checks. Use
 `--parallel-report` to see the reason for a fallback.
 
 ```cmd
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_functions.f90 --run
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_array_functions.f90 --run
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_workspace.f90 --run
 ```
 
 ## Runtime-sized arrays

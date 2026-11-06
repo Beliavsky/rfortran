@@ -279,14 +279,16 @@ struct Lowerer {
     module_arrays: std::collections::HashSet<String>,
     // Arrays whose storage is on the heap: their declared extent is a
     // placeholder, and their subscripts are checked when they are lowered.
-    // Compiler-generated arrays, named with `@`, are treated the same way.
+    // Compiler-generated arrays, named with `@`, are treated the same way;
+    // renamed source arrays retain their origin separately.
     heap: std::collections::HashSet<String>,
+    source_arrays: std::collections::HashSet<String>,
 }
 impl Lowerer {
     /// The declared shape of an array whose subscripts are checked and, for
     /// rank two or more, flattened.
     fn checked<'a>(&self, name: &str, shapes: &'a Shapes) -> Option<&'a Vec<i64>> {
-        shapes.get(name).filter(|d| d.len() > 1 || d.len() == 1 && !name.starts_with('@') && !self.heap.contains(name))
+        shapes.get(name).filter(|d| d.len() > 1 || d.len() == 1 && (!name.starts_with('@') || self.source_arrays.contains(name)) && !self.heap.contains(name))
     }
     /// A scalar subscript of a rank-one array that no earlier pass checked.
     fn unchecked(&self, e: &Expr, shapes: &Shapes) -> bool {
@@ -1516,8 +1518,11 @@ pub fn resolve(mut p: Program) -> Result<Program> {
         }
     }
     collect_pure(&p.body, &mut lower.pure_functions);
-    fn heap(body: &mut [Stmt], out: &mut std::collections::HashSet<String>) {
+    fn heap(body: &mut [Stmt], out: &mut std::collections::HashSet<String>, source: &mut std::collections::HashSet<String>) {
         for s in body.iter_mut() {
+            if let Stmt::DummyIntent{name,intent}=s {
+                if intent=="@source_array" {source.insert(name.clone());}
+            }
             if let Stmt::CallSub { name, args } = s {
                 if name.starts_with("@heap") { for a in args.iter() { if let Expr::Ident(n) = a { out.insert(n.clone()); } } }
             }
@@ -1526,10 +1531,10 @@ pub fn resolve(mut p: Program) -> Result<Program> {
                     if n.starts_with("@heap") { for a in args.iter() { if let Expr::Ident(n) = a { out.insert(n.clone()); } } }
                 });
             }
-            for b in crate::procedure_arguments::children(s) { heap(b, out); }
+            for b in crate::procedure_arguments::children(s) { heap(b, out, source); }
         }
     }
-    heap(&mut p.body, &mut lower.heap);
+    heap(&mut p.body, &mut lower.heap, &mut lower.source_arrays);
     for s in &p.body {
         if let Stmt::Module { body, .. } = s {
             for s in body {
@@ -1596,6 +1601,17 @@ pub(crate) fn prepare_character_storage(p:Program)->Result<Program> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn renamed_source_rank_one_arrays_keep_bounds_checks() {
+        let source="implicit none\ninteger::i,x(3),v\ni=4\nx=1\nv=x(i)\nprint *,v\nend\n";
+        let mut p=crate::parser::parse_with_src(source,&crate::lexer::lex(source),"bounds.f90").unwrap();
+        let mut serial=0;
+        // Multiple association/closure steps must preserve the marker too.
+        crate::subroutines::rename(&mut p.body,&HashMap::new(),&[],&mut serial).unwrap();
+        crate::subroutines::rename(&mut p.body,&HashMap::new(),&[],&mut serial).unwrap();
+        let p=super::resolve(p).unwrap();
+        assert!(p.body.iter().any(|s|matches!(s,Stmt::Function{name,..} if name.starts_with("@matrix_bound_"))));
+    }
     fn lower(source: &str) -> Result<Program> {
         let p = crate::parser::parse_with_src(source, &crate::lexer::lex(source), "matrix.f90")
             .unwrap();

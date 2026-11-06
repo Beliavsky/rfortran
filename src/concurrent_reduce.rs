@@ -742,5 +742,6 @@ pub fn resolve(mut program: Program) -> Result<Program> {
     parallel::procedures(&program);
     let constants=if parallel::enabled(){module_constants(&program)}else{Scope::new()};
     walk(&mut program.body, &constants, &mut 0, None, None, false)?;
+    parallel::mark_workspaces(&mut program);
     Ok(program)
 }

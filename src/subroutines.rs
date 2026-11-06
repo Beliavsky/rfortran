@@ -45,6 +45,12 @@ pub(crate) fn rename_with_prefix(
     serial: &mut usize,
     prefix: &str,
 ) -> Result<()> {
+    // Keep fixed rank-one source arrays distinct from generated flat storage.
+    // Otherwise a generated name makes multidim skip their bounds checks.
+    let source_arrays=body.iter().filter_map(|s|match s {
+        Stmt::ArrayDecl{name,dims,..} if dims.len()==1 && !name.starts_with('@') && !params.contains(name)=>Some(name.clone()),
+        _=>None,
+    }).collect::<Vec<_>>();
     let deferred:std::collections::HashSet<String>=body.iter().filter_map(|s|match s {
         Stmt::VarDecl{kind,names} if crate::substrings::deferred(kind)=>Some(names.clone()),_=>None,
     }).flatten().collect();
@@ -94,7 +100,7 @@ pub(crate) fn rename_with_prefix(
                     *intent = format!("@bounded:{length}:{flag}");
                 }
             }
-            Stmt::DummyIntent { name: n, intent } if prefix == "@alloc_block" || intent=="@module_host" || intent=="@heap" || intent=="@heap_readonly" || (matches!(intent.as_str(),"pointer"|"target"|"@pointer_readonly_target") || intent.starts_with("@pointer_bounds:")) => name(n, &names),
+            Stmt::DummyIntent { name: n, intent } if prefix == "@alloc_block" || intent=="@source_array" || intent=="@module_host" || intent=="@heap" || intent=="@heap_readonly" || (matches!(intent.as_str(),"pointer"|"target"|"@pointer_readonly_target") || intent.starts_with("@pointer_bounds:")) => name(n, &names),
             Stmt::VarDecl {
                 names: declared, ..
             } => {
@@ -177,7 +183,11 @@ pub(crate) fn rename_with_prefix(
             _ => {}
         }
     }
-    body.retain(|s| !matches!(s, Stmt::ArrayDecl { name, .. } if params.contains(name)) && !matches!(s, Stmt::DummyIntent { name,intent,.. } if prefix!="@alloc_block" && !(intent=="allocatable" && kept_deferred.contains(name)) && !(matches!(intent.as_str(),"pointer"|"target"|"@pointer_readonly_target") || intent.starts_with("@pointer_bounds:")) && intent!="@heap" && intent!="@heap_readonly" && !intent.starts_with("@bounded:") && !intent.starts_with("@bounded_shape:") && !intent.starts_with("@bounded_lower:") && !intent.starts_with("@bounded_limits:") && !intent.starts_with("@character_element_width:") && !intent.starts_with("@character_spec_length:")) && !matches!(s, Stmt::VarDecl { names, .. } if names.is_empty()));
+    body.retain(|s| !matches!(s, Stmt::ArrayDecl { name, .. } if params.contains(name)) && !matches!(s, Stmt::DummyIntent { name,intent,.. } if prefix!="@alloc_block" && !(intent=="allocatable" && kept_deferred.contains(name)) && !(matches!(intent.as_str(),"pointer"|"target"|"@pointer_readonly_target") || intent.starts_with("@pointer_bounds:")) && intent!="@source_array" && intent!="@heap" && intent!="@heap_readonly" && !intent.starts_with("@bounded:") && !intent.starts_with("@bounded_shape:") && !intent.starts_with("@bounded_lower:") && !intent.starts_with("@bounded_limits:") && !intent.starts_with("@character_element_width:") && !intent.starts_with("@character_spec_length:")) && !matches!(s, Stmt::VarDecl { names, .. } if names.is_empty()));
+    for mut n in source_arrays {
+        name(&mut n,&names);
+        body.push(Stmt::DummyIntent{name:n,intent:"@source_array".into()});
+    }
     Ok(())
 }
 /// Preserve procedure RETURN when its body is expanded into the caller.

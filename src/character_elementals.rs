@@ -546,6 +546,17 @@ impl Lower {
             }
             let mut actuals = args.clone();
             for (param,actual) in routine.params.iter().zip(&mut actuals) {
+                if routine.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==param && intent=="value")) {
+                    // The helper may modify a VALUE dummy. Associate it with
+                    // a call-local copy, never with the caller's variable.
+                    self.serial+=1;
+                    let temp=format!("@function_value_{}",self.serial);
+                    let kind=self.view(actual,symbols)?.kind;
+                    prefix.push(Stmt::VarDecl{kind:kind.clone(),names:vec![temp.clone()]});
+                    prefix.push(Stmt::Assign{name:temp.clone(),value:actual.clone()});
+                    symbols.insert(temp.clone(),(kind,vec![]));
+                    *actual=Expr::Ident(temp);
+                }
                 let c_descriptor=crate::c_interop::descriptor_parameter(&routine.body,param);
                 if c_descriptor {
                     // Keep C descriptor actuals as views. The call adapter
@@ -1619,7 +1630,8 @@ fn validate_locals(
 
 pub(crate) fn inline_array(_pure: bool, params: &[String], result: &str, body: &[Stmt]) -> bool {
     let array_result=body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,..} if name==result));
-    array_result || body.iter().any(|s|matches!(s,Stmt::ArrayDecl{kind,name,dims}
+    let workspace=body.iter().any(|s|matches!(s,Stmt::DummyIntent{intent,..} if intent==crate::concurrent_reduce::parallel::WORKSPACE));
+    array_result || workspace || body.iter().any(|s|matches!(s,Stmt::ArrayDecl{kind,name,dims}
         if params.contains(name) && !dims.is_empty()
             && matches!(kind,TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision|TypeSpec::Logical)
             ))
@@ -1708,7 +1720,7 @@ pub(crate) fn prepare(mut p: Program) -> Result<(Program, Lower)> {
                             && params.iter().all(|param| {
                                 body.iter().any(|s| matches!(s, Stmt::VarDecl {kind,names} if names.contains(param) && input(kind))
                                     || matches!(s, Stmt::ArrayDecl {kind,name,..} if name == param && input(kind)))
-                                && body.iter().any(|s| matches!(s, Stmt::DummyIntent {name,intent} if name == param && matches!(intent.as_str(),"intent(in)"|"intent(out)"|"intent(inout)")))
+                                && body.iter().any(|s| matches!(s, Stmt::DummyIntent {name,intent} if name == param && matches!(intent.as_str(),"intent(in)"|"intent(out)"|"intent(inout)"|"value")))
                                 && !body.iter().any(|s| matches!(s, Stmt::DummyIntent {name,intent} if name == param && matches!(intent.as_str(), "optional" | "pointer")))
                                 // Numeric ALLOCATABLE dummies use the same
                                 // descriptor association as subroutine calls,
@@ -1720,6 +1732,12 @@ pub(crate) fn prepare(mut p: Program) -> Result<(Program, Lower)> {
                         if let Some(helper) = &descriptor_call {
                             let mut helper_body = body.clone();
                             if matches!(helper_body.last(), Some(Stmt::Return(Some(Expr::Ident(n)))) if n == &result) { helper_body.pop(); }
+                            for p in params {
+                                if body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==p && intent=="value"))
+                                    && !body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==p && intent.starts_with("intent("))) {
+                                    helper_body.push(Stmt::DummyIntent{name:p.clone(),intent:"intent(inout)".into()});
+                                }
+                            }
                             fn returns(body: &mut [Stmt]) {
                                 for s in body { match s {
                                     Stmt::Return(value) => *value = None,
@@ -1777,6 +1795,17 @@ pub(crate) fn prepare(mut p: Program) -> Result<(Program, Lower)> {
                                 descriptor_call,
                             },
                         );
+                        if body.iter().any(|s|matches!(s,Stmt::DummyIntent{intent,..} if intent==crate::concurrent_reduce::parallel::WORKSPACE))
+                            && !body.iter().any(|s|matches!(s,Stmt::ArrayDecl{name,..} if params.contains(name))) {
+                            // Scalar interfaces already have a native ABI.
+                            // Retain that entry for separately compiled callers;
+                            // calls in this source group can still specialize.
+                            let mut native=stmt.clone();
+                            if let Stmt::Function{body,..}=&mut native {
+                                body.retain(|s|!matches!(s,Stmt::DummyIntent{intent,..} if intent==crate::concurrent_reduce::parallel::WORKSPACE));
+                            }
+                            out.push(native);
+                        }
                         if name.starts_with("@enumeration_step_") && params.len()==1 {
                             out.push(stmt.clone());
                         }
@@ -1795,4 +1824,20 @@ pub(crate) fn prepare(mut p: Program) -> Result<(Program, Lower)> {
     collect(&mut p.body, &mut lower)?;
     lower.body(&mut p.body, &Symbols::new())?;
     Ok((p,lower))
+}
+
+#[cfg(test)]
+mod workspace_tests {
+    use super::*;
+    #[test]
+    fn parallel_workspace_specialization_preserves_native_entry() {
+        let source="pure integer function f(n)\ninteger,intent(in)::n\ninteger::work(3)\nwork=n\nf=sum(work)\nend function\n";
+        let mut p=crate::parser::parse_with_src(source,&crate::lexer::lex(source),"workspace.f90").unwrap();
+        let Stmt::Function{body,..}=p.body.iter_mut().find(|s|matches!(s,Stmt::Function{..})).unwrap() else {unreachable!()};
+        body.insert(0,Stmt::DummyIntent{name:"@procedure".into(),intent:crate::concurrent_reduce::parallel::WORKSPACE.into()});
+        let (p,_)=prepare(p).unwrap();
+        assert!(p.body.iter().any(|s|matches!(s,Stmt::Function{name,body,..} if name=="f"
+            && !body.iter().any(|s|matches!(s,Stmt::DummyIntent{intent,..} if intent==crate::concurrent_reduce::parallel::WORKSPACE)))));
+        assert!(p.body.iter().any(|s|matches!(s,Stmt::Subroutine{name,..} if name=="@array_function$f")));
+    }
 }

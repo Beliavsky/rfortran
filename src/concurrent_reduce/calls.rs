@@ -2,6 +2,7 @@
 //! Source-side contract for calls outlined into native concurrent workers.
 use super::*;
 thread_local! {static FUNCTIONS: std::cell::RefCell<HashMap<String, std::result::Result<crate::named_arguments::Signature,String>>> = std::cell::RefCell::new(HashMap::new());}
+thread_local! {static WORKSPACES: std::cell::RefCell<HashSet<String>> = std::cell::RefCell::new(HashSet::new());}
 
 pub(super) fn scalar(kind: &TypeSpec) -> bool {
     matches!(
@@ -79,6 +80,54 @@ pub(super) fn prepare(program: &Program) {
             break;
         }
     }
+    // A scalar wrapper around a workspace function needs specialization too:
+    // otherwise its native body would acquire arrays after the early proof.
+    let mut workspaces = functions
+        .iter()
+        .filter(|(n, defs)| {
+            approved.contains_key(*n)
+                && defs[0]
+                    .body
+                    .iter()
+                    .any(|s| matches!(s, Stmt::ArrayDecl { .. }))
+        })
+        .map(|(n, _)| n.clone())
+        .collect::<HashSet<_>>();
+    if !workspaces.is_empty() {
+        let mut callers: HashMap<String, Vec<String>> = HashMap::new();
+        for (n, defs) in functions.iter().filter(|(n, _)| approved.contains_key(*n)) {
+            fn callees(body: &[Stmt], targets: &mut HashSet<String>) {
+                for mut s in body.to_vec() {
+                    for e in expressions(&mut s) {
+                        visit_expr(e, &mut |e| {
+                            if let Expr::Call(n, _) = e {
+                                targets.insert(n.clone());
+                            }
+                        });
+                    }
+                    for body in children(&mut s) {
+                        callees(body, targets);
+                    }
+                }
+            }
+            let mut targets = HashSet::new();
+            callees(&defs[0].body, &mut targets);
+            for target in targets {
+                if approved.contains_key(&target) {
+                    callers.entry(target).or_default().push(n.clone());
+                }
+            }
+        }
+        let mut pending = workspaces.iter().cloned().collect::<Vec<_>>();
+        while let Some(callee) = pending.pop() {
+            for caller in callers.get(&callee).into_iter().flatten() {
+                if workspaces.insert(caller.clone()) {
+                    pending.push(caller.clone());
+                }
+            }
+        }
+    }
+    WORKSPACES.with(|w| *w.borrow_mut() = workspaces);
     let results = functions
         .into_iter()
         .map(|(name, defs)| {
@@ -126,9 +175,8 @@ fn validate(
         bail!("requires a numeric or LOGICAL scalar result");
     }
     for (n, o) in f.scope.iter().filter(|(n, _)| f.locals.contains(*n)) {
-        let input_array =
-            !o.dims.is_empty() && f.params.contains(n) && o.attrs.contains("intent(in)");
-        if o.derived || (!o.dims.is_empty() && !input_array) || !scalar(&o.kind) {
+        let array = !o.dims.is_empty() && (!f.params.contains(n) || o.attrs.contains("intent(in)"));
+        if o.derived || (!o.dims.is_empty() && !array) || !scalar(&o.kind) {
             bail!("non-scalar or unsupported storage `{n}`");
         }
         if o.attrs
@@ -236,7 +284,7 @@ fn validate(
                 | Stmt::Block { .. }
                 | Stmt::Exit
                 | Stmt::Cycle => {}
-                Stmt::ArrayDecl { name, dims, .. } if f.params.contains(name) => {
+                Stmt::ArrayDecl { dims, .. } => {
                     fn dimension(
                         e: &Expr,
                         f: &Function,
@@ -260,13 +308,16 @@ fn validate(
                 }
                 Stmt::DummyIntent { intent, .. }
                     if matches!(intent.as_str(), "@simple" | "@module_host")
+                        || intent == parallel::WORKSPACE
                         || matches!(
                             intent.as_str(),
                             "parameter" | "in" | "intent(in)" | "value"
                         ) => {}
                 Stmt::InitializedDecl { attributes, .. }
                     if attributes.iter().any(|a| a == "parameter") => {}
-                Stmt::Assign { name, .. } | Stmt::Do { var: name, .. } => {
+                Stmt::Assign { name, .. }
+                | Stmt::AssignIndex { name, .. }
+                | Stmt::Do { var: name, .. } => {
                     let o = f
                         .scope
                         .get(name)
@@ -320,4 +371,7 @@ pub(super) fn check(name: &str, args: &[Expr]) -> Result<bool> {
         signature.associate(name, args)?;
         Ok(true)
     })
+}
+pub(super) fn workspace(name: &str) -> bool {
+    WORKSPACES.with(|w| w.borrow().contains(name))
 }

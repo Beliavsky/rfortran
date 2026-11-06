@@ -1453,6 +1453,292 @@ end
     def test_pure_array_columns(self):
         self.build_run((ROOT/'tests/programs/xconcurrent_parallel_array_functions.f90').read_text(), '20.0 20.0 8.0 8.0')
 
+    def test_pure_workspace_example(self):
+        self.build_run((ROOT/'tests/programs/xconcurrent_parallel_workspace.f90').read_text(),'16.0 16.0')
+        self.build_run((ROOT/'tests/programs/xconcurrent_parallel_workspace.f90').read_text(),'16.0 16.0',parallel=False,threads=(1,))
+        self.build_run((ROOT/'tests/programs/xconcurrent_parallel_workspace.f90').read_text(),'16.0 16.0',checks=False)
+
+    def test_pure_workspace_fixed_scalar_input(self):
+        self.build_run("""implicit none
+integer::i,y(9000)
+do concurrent(i=1:9000)
+y(i)=f(i)
+end do
+print *,y(1),y(9000)
+contains
+pure integer function f(n)
+integer,intent(in)::n
+integer::work(3),j
+do j=1,3
+work(j)=n
+end do
+f=sum(work)
+end function
+end
+""",'3 27000')
+
+    def test_pure_workspace_automatic_scalar_input(self):
+        self.build_run("""implicit none
+integer::i,y(9000)
+do concurrent(i=1:9000)
+y(i)=f(i/3000)
+end do
+print *,y(1),y(9000)
+contains
+simple integer function f(n)
+integer,intent(in)::n
+integer::work(n)
+work=2
+f=sum(work)
+end function
+end
+""",'0 6')
+
+    def test_pure_workspace_early_return_and_reallocation(self):
+        self.build_run("""implicit none
+integer::i,n,pass
+real,allocatable::x(:,:),y(:)
+allocate(y(9000))
+do pass=1,3
+n=pass+1
+allocate(x(n,9000))
+x=2.0
+x(1,1)=-2.0
+do concurrent(i=1:9000)
+y(i)=f(x(:,i))
+end do
+if(y(1)/=-4*n .or. any(y(2:)/=4*n)) stop 1
+deallocate(x)
+end do
+print *,y(1),y(9000)
+contains
+pure real function f(a)
+real,intent(in)::a(:)
+real::work(size(a))
+work=a*a
+if(a(1)<0.0) then
+f=-sum(work)
+return
+end if
+f=sum(work)
+end function
+end
+""",'-16.0 16.0')
+
+    def test_pure_workspace_return_before_assignment(self):
+        self.build_run("""implicit none
+integer::i,n,y(9000)
+n=4
+do concurrent(i=1:9000)
+y(i)=f(n,i==1)
+end do
+print *,y(1),y(9000)
+contains
+pure integer function f(n,skip)
+integer,intent(in)::n
+logical,intent(in)::skip
+integer::work(n)
+f=0
+if(skip) return
+work=2
+f=sum(work)
+end function
+end
+""",'0 8')
+
+    def test_pure_workspace_logical_and_sections(self):
+        self.build_run("""implicit none
+integer::i,n,y(9000)
+n=6
+do concurrent(i=1:9000)
+y(i)=f(n)
+end do
+print *,y(1),y(9000)
+contains
+simple integer function f(n)
+integer,intent(in)::n
+logical::work(n)
+work=.false.
+work(1:n:2)=.true.
+f=count(work)
+end function
+end
+""",'3 3')
+
+    def test_pure_workspace_multidimensional(self):
+        self.build_run("""use iso_fortran_env,only:real64
+implicit none
+integer::i,n
+real(real64)::y(9000)
+n=3
+do concurrent(i=1:9000)
+y(i)=f(n)
+end do
+print *,y(1),y(9000)
+contains
+pure real(real64) function f(n)
+integer,intent(in)::n
+real(real64)::work(n,2)
+work=2.0_real64
+f=sum(work)
+end function
+end
+""",'12.0 12.0')
+
+    def test_pure_workspace_nondefault_bounds(self):
+        self.build_run("""implicit none
+integer::i,y(9000)
+do concurrent(i=1:9000)
+y(i)=f(i/3000)
+end do
+print *,y(1),y(9000)
+contains
+pure integer function f(n)
+integer,intent(in)::n
+integer::work(-2:n),fixed(-2:2)
+work=2
+fixed=-1
+f=sum(work)+sum(fixed)
+end function
+end
+""",'1 7')
+
+    def test_pure_workspace_value_argument(self):
+        source="""implicit none
+integer::i,n,y(9000)
+n=3
+do concurrent(i=1:9000)
+y(i)=f(n)
+end do
+print *,n,y(1),y(9000)
+contains
+pure integer function f(n)
+integer,value::n
+integer::work(n)
+work=n
+n=n+1
+f=sum(work)+n
+end function
+end
+"""
+        self.build_run(source,'3 13 13')
+        self.build_run(source,'3 13 13',parallel=False,threads=(1,))
+
+    def test_pure_workspace_scalar_call_chain(self):
+        self.build_run("""implicit none
+integer::i,n,y(9000)
+n=3
+do concurrent(i=1:9000)
+y(i)=outer(n)
+end do
+print *,y(1),y(9000)
+contains
+pure integer function outer(n)
+integer,intent(in)::n
+outer=middle(n)+1
+end function
+simple integer function middle(n)
+integer,intent(in)::n
+middle=inner(n)+1
+end function
+simple integer function inner(n)
+integer,intent(in)::n
+integer::work(n)
+work=2
+inner=sum(work)
+end function
+end
+""",'8 8')
+
+    def test_pure_workspace_separate_compilation(self):
+        with tempfile.TemporaryDirectory(prefix='rfort-parallel-objects-') as tmp:
+            directory=Path(tmp)
+            source=directory/'workspace.f90'
+            source.write_text('module workspace_mod\nimplicit none\ncontains\npure integer function f(n)\ninteger,intent(in)::n\ninteger::work(3)\nwork=n\nf=sum(work)\nend function\nend module\n')
+            main=directory/'main.f90'
+            main.write_text('use workspace_mod\nimplicit none\nprint *,f(3)\nend\n')
+            obj=directory/'workspace.obj';exe=directory/'case.exe'
+            for optimization in ('0','2'):
+                for command in ([str(COMPILER),'-O',optimization,'--parallel','-J',str(directory),'-c',str(source),'-o',str(obj)],
+                                [str(COMPILER),'-O',optimization,'-I',str(directory),str(main),str(obj),'-o',str(exe)]):
+                    result=subprocess.run(command,cwd=directory,capture_output=True,text=True,timeout=90)
+                    self.assertEqual(result.returncode,0,result.stderr)
+                result=subprocess.run([str(exe)],capture_output=True,text=True,timeout=30)
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertEqual(result.stdout.split(),['9'])
+
+    def test_pure_workspace_runtime_checks(self):
+        for layout,failure in ((layout,failure) for layout in ('fixed','automatic') for failure in ('uninitialized','bounds')):
+            source="""implicit none
+integer::i,n,y(9000)
+n=3
+do concurrent(i=1:9000)
+y(i)=f(n,i==9000)
+end do
+print *,y(1)
+contains
+pure integer function f(n,skip)
+integer,intent(in)::n
+logical,intent(in)::skip
+integer::work(n)
+if(.not.skip) work=2
+f=RESULT
+end function
+end
+""".replace('RESULT','sum(work)' if failure=='uninitialized' else 'work(n+1)')
+            if layout=='fixed': source=source.replace('work(n)','work(3)')
+            if failure=='bounds': source=source.replace('if(.not.skip) work=2','work=2')
+            with self.subTest(layout=layout,failure=failure), tempfile.TemporaryDirectory(prefix='rfort-parallel-') as tmp:
+                path=Path(tmp)/'case.f90';path.write_text(source)
+                exe=Path(tmp)/'case.exe'
+                for optimization in ('0','2'):
+                    result=subprocess.run([str(COMPILER),'-O',optimization,'--parallel','--parallel-report',str(path),'-o',str(exe)],capture_output=True,text=True,timeout=90)
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    self.assertIn('native parallel worker emitted',result.stderr)
+                    self.assertNotIn('serial fallback',result.stderr)
+                    env=dict(os.environ,RFORT_NUM_THREADS='4',RFORT_PARALLEL_TRACE='1')
+                    result=subprocess.run([str(exe)],env=env,capture_output=True,text=True,timeout=30)
+                    self.assertNotEqual(result.returncode,0,result.stdout)
+                    self.assertIn('uninitialized' if failure=='uninitialized' else 'outside',result.stderr.lower())
+
+    def test_pure_workspace_local_allocatable_fallback(self):
+        self.build_run("""implicit none
+integer::i,y(9000)
+do concurrent(i=1:9000)
+y(i)=f(i)
+end do
+print *,y(1),y(9000)
+contains
+pure integer function f(n)
+integer,intent(in)::n
+integer,allocatable::work(:)
+allocate(work(2))
+work=n
+f=sum(work)
+end function
+end
+""",'2 18000',reason='unsupported or saved storage')
+
+    def test_pure_workspace_recursion_fallback(self):
+        source="""implicit none
+integer::i,y(9000)
+do concurrent(i=1:9000)
+y(i)=f(min(i,3))
+end do
+print *,y(1),y(9000)
+contains
+recursive pure integer function f(n) result(r)
+integer,intent(in)::n
+integer::work(2)
+work=n
+r=sum(work)
+if(n>1) r=r+f(n-1)
+end function
+end
+"""
+        self.build_run(source,'2 12',reason='not a proven scalar PURE function')
+        self.build_run(source,'2 12',parallel=False,threads=(1,))
+
     def test_pure_array_columns_no_checks(self):
         self.build_run((ROOT/'tests/programs/xconcurrent_parallel_array_functions.f90').read_text(), '20.0 20.0 8.0 8.0',checks=False)
 

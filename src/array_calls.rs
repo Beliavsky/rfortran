@@ -2352,7 +2352,7 @@ pub fn resolve(mut p: Program) -> Result<Program> {
         body.retain_mut(|s| match s {
             Stmt::Subroutine {
                 name, params, body, elemental, ..
-            } if *elemental || body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if intent=="pointer" && params.contains(name))) || body
+            } if *elemental || name.starts_with("@array_function$") || body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if intent=="pointer" && params.contains(name))) || body
                 .iter()
                 .any(|s| matches!(s,Stmt::ArrayDecl{name,..} if params.contains(name))
                     || matches!(s,Stmt::VarDecl {kind:TypeSpec::Character(_) | TypeSpec::CharacterAssumed,names} if names.iter().any(|n| params.contains(n)))) =>

@@ -1,6 +1,26 @@
 // SPDX-License-Identifier: MIT
 //! Conservative source-level proof for the first native parallel subset.
 use super::*;
+pub(crate) const WORKSPACE: &str = "@parallel_function_workspace";
+pub(super) fn mark_workspaces(program: &mut Program) {
+    fn mark(body: &mut [Stmt]) {
+        for s in body {
+            if let Stmt::Function { name, body, .. } = s {
+                if calls::workspace(name)
+                    && !body.iter().any(|s|matches!(s,Stmt::DummyIntent{intent,..} if intent==WORKSPACE))
+                {
+                    // Carry the proof through internal-procedure renaming.
+                    // Unproved/recursive functions keep their ordinary lowering.
+                    body.insert(0, Stmt::DummyIntent {
+                        name: "@procedure".into(), intent: WORKSPACE.into()
+                    });
+                }
+            }
+            for body in children(s) { mark(body); }
+        }
+    }
+    if enabled() { mark(&mut program.body); }
+}
 thread_local! {static SHADOWED: std::cell::RefCell<HashSet<String>> = std::cell::RefCell::new(HashSet::new());}
 pub(super) fn procedures(program: &Program) {
     if !OPTIONS.with(|o| o.get().0) {
