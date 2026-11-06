@@ -1149,6 +1149,21 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
                 s => bare_names(std::slice::from_ref(s), &mut actuals),
             }
         }
+        // A retained procedure can call another contained procedure. Keep
+        // the whole reachable chain together: lifting just the leaf renames
+        // it without rewriting calls in the retained caller.
+        loop {
+            let previous=referenced.len();
+            for stmt in &p.body {
+                if let Stmt::Function{name,body,..}|Stmt::Subroutine{name,body,..}=stmt {
+                    if p.contains.contains(&name.to_ascii_lowercase())
+                        && (referenced.contains(&name.to_ascii_lowercase()) || actuals.contains(&name.to_ascii_lowercase())) {
+                        names_in(body,&mut referenced);
+                    }
+                }
+            }
+            if referenced.len()==previous {break;}
+        }
         lifted_names.retain(|n| !referenced.contains(n) && !actuals.contains(n));
         if lifted_names.is_empty() { p.contains.clear(); }
         let internal = |s: &Stmt| matches!(s, Stmt::Function { name, .. } | Stmt::Subroutine { name, .. }

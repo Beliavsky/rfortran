@@ -129,6 +129,10 @@ pub(super) fn emit(
             _ => None,
         }
     }
+    if let Err(error) = super::parallel_calls::check(body) {
+        crate::concurrent_reduce::parallel::report(&format!("serial fallback: {error}"));
+        return Ok(false);
+    }
     let metadata = marker(body).unwrap_or_default();
     let mut outputs = Vec::new();
     let mut lengths = HashMap::new();
@@ -736,13 +740,29 @@ mod tests {
                             IStmt::AssignIndex(
                                 "a".into(),
                                 vec![IExpr::Ident("i".into())],
-                                IExpr::RealLit("2.0".into()),
+                                IExpr::Call(
+                                    "scalar_worker_helper".into(),
+                                    vec![IExpr::Ident("i".into())],
+                                ),
                             ),
                         ],
                     },
                 ],
             }],
         };
+        let mut module = module;
+        module.funcs.push(crate::ir::Function {
+            name: "scalar_worker_helper".into(),
+            params: vec!["x".into()],
+            return_type: Some(TypeSpec::Real),
+            body: vec![
+                IStmt::DeclVar(TypeSpec::Integer(None), "x".into(), vec![]),
+                IStmt::Return(Some(IExpr::Call(
+                    "real".into(),
+                    vec![IExpr::Ident("x".into())],
+                ))),
+            ],
+        });
         for target in [
             "x86_64-pc-windows-msvc",
             "x86_64-unknown-linux-gnu",

@@ -1157,7 +1157,7 @@ end subroutine
 end program
 ''','1 9000',reason='procedure captures',opts=('2',))
 
-    def test_unknown_call_fallback(self):
+    def test_pure_scalar_call(self):
         self.build_run('''program p
 integer :: a(9000),i
 do concurrent(i=1:9000)
@@ -1170,7 +1170,300 @@ integer,intent(in)::i
 f=i+1
 end function
 end program
-''','2 9001',reason='outside the parallel subset',opts=('2',))
+''','2 9001')
+
+    def test_pure_call_chain(self):
+        self.build_run((ROOT/'tests/programs/xconcurrent_parallel_functions.f90').read_text(),'10.0 10.0')
+
+    def test_pure_call_chain_from_array_procedure(self):
+        source="""implicit none
+integer::a(9000)
+call fill(a)
+print *,a(1),a(9000)
+contains
+subroutine fill(x)
+integer,intent(out)::x(:)
+integer::i
+do concurrent(i=1:size(x))
+x(i)=increment(i)
+end do
+end subroutine
+pure integer function increment(x)
+integer,intent(in)::x
+increment=identity(x)+1
+end function
+simple integer function identity(x)
+integer,intent(in)::x
+identity=x
+end function
+end
+"""
+        self.build_run(source,'2 9001')
+        self.build_run(source,'2 9001',parallel=False,threads=(1,))
+
+    def test_pure_call_keywords(self):
+        self.build_run("""implicit none
+integer::i,a(9000)
+do concurrent(i=1:9000)
+a(i)=f(b=2,a=i)
+end do
+print *,a(1),a(9000)
+contains
+pure integer function f(a,b)
+integer,intent(in)::a,b
+f=a+b
+end function
+end
+""",'3 9002')
+
+    def test_pure_call_logical_mask_and_reduction(self):
+        self.build_run("""implicit none
+integer::i,s=7,a(9000)
+a=0
+do concurrent(i=1:9000,accept(i)) reduce(+:s)
+a(i)=twice(i)
+s=s+1
+end do
+print *,a(1),a(4501),a(9000),s
+contains
+pure logical function accept(i)
+integer,intent(in)::i
+accept=i>4500
+end function
+pure integer function twice(i)
+integer,value::i
+twice=2*i
+end function
+end
+""",'0 9002 18000 4507')
+
+    def test_pure_call_value_dummy_mutation(self):
+        self.build_run("""implicit none
+integer::i,x(9000),y(9000)
+do i=1,9000
+x(i)=i
+end do
+do concurrent(i=1:9000)
+y(i)=f(x(i))
+end do
+print *,x(1),x(9000),y(1),y(9000)
+contains
+pure integer function f(x)
+integer,value::x
+x=x+1
+f=x
+end function
+end
+""",'1 9000 2 9001')
+
+    def test_pure_call_local_loop_and_early_return(self):
+        self.build_run("""implicit none
+integer::i,a(9000)
+do concurrent(i=1:9000)
+a(i)=f(i)
+end do
+print *,a(1),a(9000)
+contains
+pure integer function f(n) result(r)
+integer,intent(in)::n
+integer::j,t
+t=0
+if (n==1) then
+r=17
+return
+end if
+do j=1,3
+t=t+j
+end do
+r=t+n
+end function
+end
+""",'17 9006')
+
+    def test_pure_call_real_kinds_and_unrelated_constant(self):
+        self.build_run("""use iso_fortran_env, only:real64,int64
+implicit none
+character(*),parameter::unrelated='unused'
+integer::i
+double precision::a(9000)
+integer(int64)::b(9000)
+do concurrent(i=1:9000)
+a(i)=f(real(i,real64))
+b(i)=g(int(i,int64))
+end do
+print *,a(1),a(9000),b(1),b(9000)
+contains
+pure real(real64) function f(x)
+real(real64),intent(in)::x
+f=sqrt(x*x)+1.0_real64
+end function
+simple integer(int64) function g(x)
+integer(int64),intent(in)::x
+g=x+2_int64
+end function
+end
+""",'2.0 9001.0 3 9002')
+
+    def test_pure_call_uninitialized_local(self):
+        source="""implicit none
+integer::i,a(9001)
+do concurrent(i=0:9000)
+a(i+1)=f(i)
+end do
+print *,a(1)
+contains
+pure integer function f(n) result(r)
+integer,intent(in)::n
+integer::t
+if(n>0) t=7
+r=t+n
+end function
+end
+"""
+        with tempfile.TemporaryDirectory(prefix='rfort-parallel-') as tmp:
+            path=Path(tmp)/'case.f90';path.write_text(source)
+            exe=Path(tmp)/'case.exe'
+            for opt in ('0','2'):
+                result=subprocess.run([str(COMPILER),'-O',opt,'--parallel','--parallel-report',str(path),'-o',str(exe)],capture_output=True,text=True,timeout=90)
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertIn('native parallel worker emitted',result.stderr)
+                env=os.environ.copy();env['RFORT_NUM_THREADS']='4'
+                result=subprocess.run([str(exe)],env=env,capture_output=True,text=True,timeout=30)
+                self.assertNotEqual(result.returncode,0)
+                self.assertIn('uninitialized variable `t`',result.stderr)
+
+    def test_pure_call_module_constant(self):
+        self.build_run("""module m
+implicit none
+integer,parameter::offset=4
+contains
+pure integer function f(i)
+integer,intent(in)::i
+f=i+offset
+end function
+end module
+program main
+use m, only:f
+implicit none
+integer::i,a(9000)
+do concurrent(i=1:9000)
+a(i)=f(i)
+end do
+print *,a(1),a(9000)
+end
+""",'5 9004')
+
+    def test_pure_call_module_variable_fallback(self):
+        self.build_run("""module m
+implicit none
+integer::offset=4
+contains
+pure integer function f(i)
+integer,intent(in)::i
+f=i+offset
+end function
+end module
+program main
+use m, only:f
+implicit none
+integer::i,a(9000)
+do concurrent(i=1:9000)
+a(i)=f(i)
+end do
+print *,a(1),a(9000)
+end
+""",'5 9004',reason='nonlocal reference')
+
+    def test_pure_call_transitive_state_fallback(self):
+        self.build_run("""module m
+implicit none
+integer::offset=4
+contains
+pure integer function f(i)
+integer,intent(in)::i
+f=g(i)
+end function
+pure integer function g(i)
+integer,intent(in)::i
+g=i+offset
+end function
+end module
+program main
+use m, only:f
+implicit none
+integer::i,a(9000)
+do concurrent(i=1:9000)
+a(i)=f(i)
+end do
+print *,a(1),a(9000)
+end
+""",'5 9004',reason='not a proven scalar PURE function')
+
+    def test_pure_call_recursion_fallback(self):
+        self.build_run("""implicit none
+integer::i,a(9000)
+do concurrent(i=1:9000)
+a(i)=f(min(i,4))
+end do
+print *,a(1),a(9000)
+contains
+recursive pure integer function f(n) result(r)
+integer,intent(in)::n
+if (n==0) then
+r=0
+else
+r=f(n-1)+1
+end if
+end function
+end
+""",'1 4',reason='not a proven scalar PURE function')
+
+    def test_pure_call_optional_fallback(self):
+        self.build_run("""implicit none
+integer::i,a(9000)
+do concurrent(i=1:9000)
+a(i)=f(i)
+end do
+print *,a(1),a(9000)
+contains
+pure integer function f(n)
+integer,intent(in),optional::n
+f=0
+if(present(n)) f=n+1
+end function
+end
+""",'2 9001',reason='unsupported or saved storage')
+
+    def test_pure_call_array_argument_fallback(self):
+        self.build_run("""implicit none
+integer::i,a(9000),x(2)
+x=[2,3]
+do concurrent(i=1:9000)
+a(i)=f(x)
+end do
+print *,a(1),a(9000)
+contains
+pure integer function f(x)
+integer,intent(in)::x(2)
+f=x(1)+x(2)
+end function
+end
+""",'5 5',reason='non-scalar or unsupported storage')
+
+    def test_pure_call_impure_fallback(self):
+        self.build_run("""implicit none
+integer::i,a(9000)
+do concurrent(i=1:9000)
+a(i)=f(i)
+end do
+print *,a(1),a(9000)
+contains
+integer function f(i)
+integer,intent(in)::i
+f=i+1
+end function
+end
+""",'2 9001',reason='not PURE or SIMPLE')
 
     def test_parameter_extent(self):
         self.build_run("""implicit none

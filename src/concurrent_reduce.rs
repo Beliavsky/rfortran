@@ -10,6 +10,7 @@ use crate::procedure_arguments::{children, expressions, visit_expr};
 use anyhow::{bail, Context, Result};
 use std::collections::{HashMap, HashSet};
 mod locality;
+mod calls;
 pub(crate) mod parallel;
 
 #[derive(Clone)]
@@ -123,6 +124,21 @@ fn declarations(body: &[Stmt], parent: &Scope) -> Scope {
         }
     }
     scope
+}
+// Module association gives constants qualified identities. Make those values
+// available to the early parallel proof without exposing mutable module data.
+fn module_constants(program:&Program)->Scope {
+    fn collect(body:&[Stmt],out:&mut Scope) {
+        for stmt in body {
+            if let Stmt::Module{body,..}=stmt {
+                out.extend(declarations(body,&Scope::new()).into_iter().filter(|(n,o)|n.starts_with("@module$") && o.attrs.contains("parameter")));
+                collect(body,out);
+            }
+        }
+    }
+    let mut out=Scope::new();
+    collect(&program.body,&mut out);
+    out
 }
 fn id(n: &str) -> Expr {
     Expr::Ident(n.into())
@@ -724,6 +740,7 @@ fn name_iteration(mut stmt: Stmt, marker: Stmt) -> Stmt {
 }
 pub fn resolve(mut program: Program) -> Result<Program> {
     parallel::procedures(&program);
-    walk(&mut program.body, &Scope::new(), &mut 0, None, None, false)?;
+    let constants=if parallel::enabled(){module_constants(&program)}else{Scope::new()};
+    walk(&mut program.body, &constants, &mut 0, None, None, false)?;
     Ok(program)
 }

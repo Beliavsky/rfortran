@@ -37,8 +37,12 @@ pub(super) fn procedures(program: &Program) {
     let mut names = HashSet::new();
     collect(&program.body, &mut names);
     SHADOWED.with(|s| *s.borrow_mut() = names);
+    calls::prepare(program);
 }
 thread_local! {static OPTIONS: std::cell::Cell<(bool,bool)> = const {std::cell::Cell::new((false,false))};}
+pub(super) fn enabled() -> bool {
+    OPTIONS.with(|o| o.get().0)
+}
 pub(crate) fn configure(enabled: bool, report: bool) {
     OPTIONS.with(|o| o.set((enabled, report)));
 }
@@ -46,6 +50,15 @@ pub(crate) fn report(message: &str) {
     if OPTIONS.with(|o| o.get().1) {
         eprintln!("DO CONCURRENT: {message}");
     }
+}
+pub(super) fn intrinsic_name(n: &str) -> bool {
+    matches!(
+        n,
+        "sqrt" | "abs" | "int" | "real" | "dble" | "sin" | "cos" | "exp" | "log" | "min" | "max"
+    )
+}
+pub(super) fn intrinsic(n: &str) -> bool {
+    intrinsic_name(n) && !SHADOWED.with(|s| s.borrow().contains(n))
 }
 pub(super) fn eligible(
     controls: &[Expr],
@@ -270,22 +283,34 @@ fn check(
             if procedure && o.attrs.contains("save") && !o.attrs.contains("parameter") {
                 bail!("procedure captures of SAVE storage are not yet supported");
             }
+            let constants = scope
+                .iter()
+                .filter_map(|(n, o)| {
+                    o.constant
+                        .as_ref()
+                        .filter(|_| o.attrs.contains("parameter"))
+                        .map(|e| (n.clone(), e.clone()))
+                })
+                .collect();
+            let mut kind = o.kind.clone();
             if o.derived
                 || !matches!(
-                    o.kind,
+                    kind,
                     TypeSpec::Integer(_)
                         | TypeSpec::IntegerKind(_)
                         | TypeSpec::Real
                         | TypeSpec::RealKind(_)
                         | TypeSpec::DoublePrecision
                         | TypeSpec::Logical
+                        | TypeSpec::LogicalKind(_)
                 )
             {
                 bail!("capture `{n}` requires an ordinary numeric or LOGICAL type");
             }
-            if matches!(&o.kind, TypeSpec::Integer(Some(k)) if *k > 8)
-                || matches!(&o.kind, TypeSpec::IntegerKind(k) if !matches!(k.as_str(), "1" | "2" | "4" | "8"))
-            {
+            crate::parameters::resolve_kind(&mut kind, &constants).with_context(|| {
+                format!("capture `{n}` requires a supported native scalar kind")
+            })?;
+            if matches!(kind,TypeSpec::Integer(Some(k)) if k>8) {
                 bail!("capture `{n}` requires a supported native scalar kind");
             }
             if o.attrs.iter().any(|a| {
@@ -385,6 +410,18 @@ fn check(
                 expr(b, scope, written)
             }
             Expr::Un(_, a) => expr(a, scope, written),
+            Expr::Call(n, args) if !scope.contains_key(n) && calls::check(n, args, scope)? => {
+                for arg in args {
+                    expr(
+                        crate::named_arguments::keyword(arg)
+                            .map(|(_, v)| v)
+                            .unwrap_or(arg),
+                        scope,
+                        written,
+                    )?;
+                }
+                Ok(())
+            }
             // Functions with no mutable runtime state, implemented directly by codegen.
             Expr::Call(n, args)
                 if !scope.contains_key(n)

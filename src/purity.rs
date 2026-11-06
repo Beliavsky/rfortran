@@ -281,7 +281,12 @@ pub fn validate(program: &Program) -> Result<()> {
                     if *elemental { crate::elemental::validate(name,params,return_type,body)?; }
                     let mut locals: HashSet<String> = params.iter().cloned().collect();
                     locals.insert(name.clone());
-                    let readonly=params.iter().filter(|p|!(name.starts_with("@enumeration_step_") && p.as_str()=="stat")).cloned().collect();
+                    let declared = intents(params, body);
+                    let readonly=params.iter().zip(&declared).filter(|(p,intent)| {
+                        let value=body.iter().any(|s| matches!(s,Stmt::DummyIntent {name,intent} if name==*p && intent=="value"));
+                        !(name.starts_with("@enumeration_step_") && p.as_str()=="stat")
+                            && (!value || intent.as_str()=="intent(in)")
+                    }).map(|(p,_)|p.clone()).collect();
                     check(body, &locals, &readonly, known, &characters, &objects)?;
                 }
                 Stmt::Subroutine { name, pure: true, elemental, params, body, .. } => {
@@ -315,6 +320,15 @@ pub fn validate(program: &Program) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn pure_value_dummy_is_private_but_intent_in_remains_readonly() {
+        for (attributes,allowed) in [("value",true),("value,intent(in)",false),("intent(in)",false)] {
+            let source=format!("pure integer function f(x)\ninteger,{attributes}::x\nx=x+1\nf=x\nend function\n");
+            let program=crate::parser::parse_with_src(&source,&crate::lexer::lex(&source),"pure.f90").unwrap();
+            assert_eq!(super::validate(&program).is_ok(),allowed,"{attributes}");
+        }
+    }
+
     #[test]
     fn accepts_intrinsic_functions_missing_from_the_old_allowlist() {
         for (kind,expression,declaration) in [

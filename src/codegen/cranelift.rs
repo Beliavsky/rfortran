@@ -1,5 +1,7 @@
 #[path = "parallel.rs"]
 mod parallel;
+#[path = "parallel_calls.rs"]
+mod parallel_calls;
 #[path = "file_io.rs"]
 mod file_io;
 #[path = "characters.rs"]
@@ -4040,6 +4042,7 @@ impl Backend for CraneliftBackend {
 impl CraneliftBackend {
     fn compile_module(&self, module: &Module, tokens: Option<&[crate::lexer::Token]>) -> Result<Vec<u8>> {
         let _codegen = crate::compile_profile::Pass::new("codegen");
+        parallel_calls::prepare(module);
         use crate::ast::TypeSpec;
         use cranelift_module::FuncId;
         use ir::{types, AbiParam};

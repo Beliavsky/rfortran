@@ -58,7 +58,15 @@ integer,intent(in)::x(:)
 integer,intent(out)::y(:)
 integer::i
 do concurrent(i=1:size(x)) shared(x,y) default(none)
-   y(i)=x(i)+1
+   y(i)=increment(x(i))
 end do
 end subroutine
+pure integer function increment(x)
+integer,intent(in)::x
+increment=identity(x)+1
+end function
+simple integer function identity(x)
+integer,intent(in)::x
+identity=x
+end function
 end

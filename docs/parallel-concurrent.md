@@ -45,7 +45,7 @@ storage. Initialization and bounds checks remain enabled unless `--nocheck`
 is requested. A job completes before execution continues after the loop.
 
 Other constructs use the existing serial lowering. In particular this stage
-does not parallelize user procedure calls inside loops, allocation,
+does not parallelize subroutine calls, unproved function calls, allocation,
 I/O, outer constructs containing loops, named constructs, derived
 types, CHARACTER, complex arrays, or pointer array storage. Arrays with
 TARGET and other unsupported attributes also fall back to serial execution.
@@ -143,7 +143,7 @@ reported by `--parallel-report`.
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_array_reduce.f90 --run
 ```
 
-Unsupported captures and procedure calls inside loops retain serial fallback.
+Unsupported captures and unproved procedure calls inside loops retain serial fallback.
 
 A runtime-sized rank-two reduction with nondefault bounds:
 
@@ -155,6 +155,34 @@ A runtime-sized input section and reduction section:
 
 ```cmd
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_sections.f90 --run
+```
+
+## PURE and SIMPLE scalar functions
+
+Workers can call user-defined PURE and SIMPLE functions with explicitly declared
+numeric or LOGICAL scalar arguments, results, and local variables. Dummy arguments
+require `INTENT(IN)` or `VALUE`; a VALUE dummy may be modified locally.
+Scalar expressions, keyword arguments, local loops,
+branches, early returns, and acyclic chains of supported functions are accepted.
+Named constants, including module constants and named numeric kinds, can be used;
+mutable module/host storage is excluded from this initial subset.
+
+The source analysis checks the whole call chain. A second check examines the
+native functions after specialization and lowering: scalar storage must be local
+to the call, and generated helpers must also be proved thread-safe. The existing
+native scalar calling convention supplies per-call stack storage for arguments,
+results, and local initialization flags. Runtime initialization checks remain
+active. This path calls the compiled functions directly.
+
+Definitions must be available in the compilation group. Recursive call chains,
+array or optional dummies, CHARACTER/COMPLEX results, saved storage, I/O, allocation,
+subroutine calls, and unproved callees retain serial fallback. The permitted
+intrinsics inside a callee are currently the same small scalar set listed above.
+Purity alone does not bypass the storage and runtime-helper checks. Use
+`--parallel-report` to see the reason for a fallback.
+
+```cmd
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_functions.f90 --run
 ```
 
 ## Runtime-sized arrays
@@ -187,8 +215,9 @@ REDUCE may be combined with these array arguments.
 POINTER, TARGET, OPTIONAL, missing INTENT, captured host/module state, and saved
 local storage retain conservative serial fallbacks. These checks are not a
 complete validator of Fortran argument aliasing rules: callers must still obey
-those rules, particularly when one dummy argument is modified. Calls to user
-procedures inside the concurrent body remain outside the parallel subset.
+those rules, particularly when one dummy argument is modified. Calls to supported
+scalar PURE/SIMPLE functions inside the concurrent body use the checks above;
+other procedure calls retain serial execution.
 
 ```cmd
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_dummy.f90 --run
