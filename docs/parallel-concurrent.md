@@ -321,8 +321,8 @@ Read-only optional whole scalar variables are borrowed during scoped expansion, 
 testing presence or bypassing a guarded read does not fetch an undefined value.
 Array bounds and initialization checks remain active. Allocatable actual arrays
 must be allocated; runtime absence inferred from unallocated actuals is not
-implemented by this presence specialization. Optional POINTER/ALLOCATABLE dummies,
-optional outputs, and possible writable aliasing retain serial fallback.
+implemented by this presence specialization. Optional POINTER/ALLOCATABLE dummies
+and possible writable aliasing retain serial fallback.
 
 ```cmd
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_optional.f90 --run
@@ -472,8 +472,21 @@ early RETURN and cleanup. Initialization checks cover INOUT reads and OUT paths
 that leave elements undefined. Fixed/automatic/allocatable workspaces use the
 same limits and allocation checks described for functions above.
 
-OPTIONAL inputs follow the presence-specialization rules above. Optional outputs,
-POINTER, TARGET, derived/CHARACTER arguments, saved local storage,
+OPTIONAL numeric and LOGICAL `INTENT(OUT)` and `INTENT(INOUT)` arguments also
+use presence specialization. Supplied outputs must satisfy the same disjoint
+scalar-element or array-section proof as required outputs. Omitted outputs are
+removed before scoped expansion, including when forwarded through PURE/SIMPLE
+call chains. Keyword arguments and runtime-sized multidimensional sections work.
+`INTENT(OUT)` undefines the actual on entry even when the callee leaves it
+unwritten; `INTENT(INOUT)` retains initialization checks on reads. Bounds checks
+and conservative aliasing fallbacks remain active.
+
+```cmd
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_optional_outputs.f90 --run
+python tests\test_concurrent_parallel_optional_outputs.py
+```
+
+POINTER, TARGET, ALLOCATABLE dummies, derived/CHARACTER arguments, saved local storage,
 writes to host/module storage, procedure dummies, and recursive or unavailable
 callees retain serial fallback. Read-only host/module inputs follow the rules above.
 REDUCE variables retain the existing requirement that they occur in reduction

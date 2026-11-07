@@ -197,7 +197,8 @@ fn validate(
             .any(|a| !matches!(a.as_str(), "parameter" | "in" | "intent(in)" | "value" | "@parallel_readonly_capture")
                 && !(owned_array(f,n) && a == "allocatable")
                 && !(captured_array(f,n) && a == "allocatable")
-                && !(a == "optional" && f.params.contains(n) && o.attrs.contains("intent(in)"))
+                && !(a == "optional" && f.params.contains(n)
+                    && (o.attrs.contains("intent(in)") || f.subroutine && writable(o)))
                 && !(f.subroutine && f.params.contains(n) && matches!(a.as_str(),"intent(out)"|"intent(inout)")))
         {
             bail!("unsupported or saved storage `{n}`");
@@ -353,7 +354,7 @@ fn validate(
                         || owned_array(f,name) && intent == "allocatable"
                         || captured_array(f,name) && intent == "allocatable"
                         || intent == "optional" && f.params.contains(name)
-                            && f.scope.get(name).is_some_and(|o|o.attrs.contains("intent(in)"))
+                            && f.scope.get(name).is_some_and(|o|o.attrs.contains("intent(in)") || f.subroutine && writable(o))
                         || f.subroutine && f.params.contains(name) && matches!(intent.as_str(),"intent(out)"|"intent(inout)")
                         || matches!(
                             intent.as_str(),

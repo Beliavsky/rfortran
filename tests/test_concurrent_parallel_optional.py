@@ -156,7 +156,7 @@ end function
 end program
 ''')
 
-    def test_optional_output_keeps_serial_fallback(self):
+    def test_optional_output(self):
         self.check_source('''program p
 implicit none
 integer::i,a(9001)
@@ -174,7 +174,7 @@ integer,intent(out),optional::x
 if(present(x)) x=i
 end subroutine
 end program
-''',reason='serial fallback')
+''')
 
     def test_optional_numeric_kinds_and_logical(self):
         self.check_source('''program p
