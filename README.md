@@ -333,6 +333,9 @@ plus any `.rmod` module interfaces they use) in these stages:
    object files with the system linker (`src/linker.rs`) and a runtime for
    formatting and I/O written in Rust and embedded in `rfort`.
 
+See [why rfortran uses Cranelift](docs/cranelift-backend.md) for its advantages
+and tradeoffs compared with LLVM, GCC, and generating C.
+
 `rfort run` performs stages 1–6 and then interprets the lowered program
 (`src/runtime.rs`) instead of generating and linking code.
 
