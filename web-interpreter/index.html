@@ -22,13 +22,21 @@
       <button id="focus" aria-pressed="false">Focus mode</button>
       <button id="report">Report a bug</button>
     </div>
+    <details class="execution-limits">
+      <summary>Execution limits</summary>
+      <div class="limit-controls">
+        <label>Source limit (characters) <input id="source-limit" type="number" min="0" max="9007199254740991" step="1" value="200000"></label>
+        <label>Time limit (seconds) <input id="time-limit" type="number" min="0" max="2147483" step="1" value="30"></label>
+        <span>0 means no limit. Applies to the next run or REPL command; saved in this browser. Memory and output limits still apply.</span>
+      </div>
+    </details>
     <div class="workspace">
       <section class="panel editor-panel"><div class="panel-heading"><label id="source-heading" for="source">01 / SOURCE</label><button id="clear-code" type="button">Clear code</button><span id="source-description">Free-form Fortran</span></div><div id="source-edits" hidden><span role="status">Modified source; current state unchanged. Restart and run source to apply edits.</span><button id="discard-edits" type="button">Discard edits</button></div><textarea id="source" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Fortran source"></textarea><div id="end-preview" hidden><p>Suggested END lines (not submitted)</p><pre id="suggested-ends"></pre></div><div id="repl-entry" hidden><div class="repl-input-heading"><label for="repl-command">Enter Fortran or a REPL command</label><label><input id="auto-declare" type="checkbox" disabled> Auto-declare</label><label><input id="auto-end" type="checkbox" disabled title="Enter explicit END statements to complete blocks"> Auto-end</label></div><textarea id="repl-command" rows="2" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea><div class="repl-entry-actions"><button id="repl-submit" class="primary">Enter line</button><button id="finish-block" hidden>Finish block</button><span id="repl-hint">Enter submits; Shift+Enter adds a line.</span></div><p class="repl-help">Expressions show their value. Complete blocks with explicit END DO, END IF, or END SELECT statements. Auto-declare infers supported scalars and rank-one numeric/logical arrays on assignment. Try .help, .vars, .shapes, .list, or .cancel. READ, modules, procedures and files require Program mode.</p></div></section>
       <section class="panel results"><div class="panel-heading"><span>02 / RESULTS</span><span id="status" role="status">Ready</span></div><h2>Output</h2><pre id="output" tabindex="0"></pre><h2>Warnings &amp; errors</h2><pre id="errors" tabindex="0"></pre></section>
       <section id="variables-panel" class="panel" hidden><div class="panel-heading"><span>03 / VARIABLES</span><span>Current state</span></div><p class="variables-note">Types, shapes and bounded value previews. Unset variables must be assigned before use.</p><pre id="variables" tabindex="0">(no variables)</pre></section>
     </div>
     <section class="panel input-panel"><div class="panel-heading"><label for="stdin">03 / STANDARD INPUT</label><span>Supply input before running</span></div><textarea id="stdin" rows="3" spellcheck="false" placeholder="Values for READ(*, ...) go here"></textarea></section>
-    <footer>Experimental rfortran interpreter, adapted from the ofort playground. Fortran runs locally in a WebAssembly worker, with a 30-second limit and 256 MiB memory ceiling. Program input is supplied before running; virtual files last only for that run. Stop, Clear session, switching modes, or reloading discards REPL state. Program drafts and standard input are saved locally when browser storage is available. <a href="THIRD-PARTY-NOTICES.txt">Licenses</a> | <a href="runtime/build.json">Build details and source revision</a>.</footer>
+    <footer>Experimental rfortran interpreter, adapted from the ofort playground. Fortran runs locally in a WebAssembly worker, with configurable source and time limits and a 256 MiB memory ceiling. Program input is supplied before running; virtual files last only for that run. Stop, Clear session, switching modes, or reloading discards REPL state. Program drafts and standard input are saved locally when browser storage is available. <a href="THIRD-PARTY-NOTICES.txt">Licenses</a> | <a href="runtime/build.json">Build details and source revision</a>.</footer>
   </main>
   <dialog id="report-dialog" aria-labelledby="report-heading">
     <h2 id="report-heading">Report a playground bug</h2>

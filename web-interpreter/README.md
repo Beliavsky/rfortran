@@ -84,8 +84,14 @@ page. A successful REPL response commits its snapshot. Program virtual files
 are discarded after execution; they cannot access the user's disk. File upload
 and file download are not exposed. Rust memory is capped at 256 MiB, with an
 8 MiB stack; each output channel is limited to 1 MB, cumulative virtual file
-writes to 2 MB, and descriptors per operation to 128. Source/input requests are limited
-to 200,000 characters each. A worker is terminated after 30 seconds or Stop.
+writes to 2 MB, and descriptors per operation to 128. Source and REPL command requests default to 200,000 characters; standard input
+remains limited to 200,000 characters. Execution defaults to 30 seconds per run
+or REPL operation, including runtime loading. Expand **Execution limits** to set
+source characters and execution seconds; 0 disables either limit. Settings are
+saved locally when browser storage is available and apply to the next operation.
+Time accepts whole seconds up to 2,147,483 (the browser timer range); source
+accepts nonnegative safe integers. Stop always terminates the worker. Memory,
+output and virtual-file limits still apply even when these limits are disabled.
 
 Browser support is the interpreter's supported subset, not the native backend's
 full feature set. There is no native code generation, OS process launching,

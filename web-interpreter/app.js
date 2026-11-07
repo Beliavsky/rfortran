@@ -47,6 +47,7 @@ function finish(status, keepWorker = false) {
   busy = false;
   byId("run").disabled = false;
   byId("stop").disabled = true;
+  for (const [id] of limitSettings) byId(id).disabled = false;
   byId("repl-submit").disabled = false;
   byId("mode").disabled = false;
   byId("clear-session").disabled = false;
@@ -58,6 +59,17 @@ function readDraft(key, fallback) {
 }
 function saveDraft(key, text) {
   try { localStorage.setItem(key, text); } catch { /* Private/full storage is optional. */ }
+}
+const limitSettings = [["source-limit", 200000, Number.MAX_SAFE_INTEGER], ["time-limit", 30, 2147483]];
+function validLimit(value, max) {
+  return String(value).trim() !== "" && Number.isSafeInteger(Number(value)) && Number(value) >= 0 && Number(value) <= max;
+}
+for (const [id, fallback, max] of limitSettings) {
+  const saved = readDraft(`rfortran.web.${id}`, String(fallback));
+  byId(id).value = validLimit(saved, max) ? saved : String(fallback);
+  byId(id).addEventListener("change", () => {
+    if (validLimit(byId(id).value, max)) saveDraft(`rfortran.web.${id}`, byId(id).value);
+  });
 }
 byId("source").value = readDraft("rfortran.web.source", examples.hello);
 byId("stdin").value = readDraft("rfortran.web.stdin", "");
@@ -231,6 +243,17 @@ byId("download").addEventListener("click", () => {
 
 function send(payload) {
   if (busy) return;
+  for (const [id, , max] of limitSettings) {
+    if (!validLimit(byId(id).value, max)) {
+      appendText("errors", `${id === "source-limit" ? "Source" : "Time"} limit must be a whole number from 0 to ${max}.`);
+      byId(id).focus();
+      return;
+    }
+    saveDraft(`rfortran.web.${id}`, byId(id).value);
+  }
+  const sourceLimit = Number(byId("source-limit").value);
+  const timeLimit = Number(byId("time-limit").value);
+  for (const [id] of limitSettings) byId(id).disabled = true;
   replayDraft = payload.type === "repl-replay" ? payload.source : null;
   busy = true;
   byId("status").textContent = worker ? "Running..." : "Loading interpreter...";
@@ -290,17 +313,17 @@ function send(payload) {
       finish("Unable to run");
     };
   }
-  worker.postMessage({...payload, input:byId("stdin").value,
+  worker.postMessage({...payload, sourceLimit, input:byId("stdin").value,
     autoDeclare:isRepl() && capabilities.autoDeclare && byId("auto-declare").checked});
-  timer = setTimeout(() => {
+  timer = timeLimit === 0 ? null : setTimeout(() => {
     lastRun.status = "Time limit reached";
-    appendText("errors", "Stopped after 30 seconds. Partial output is unavailable; any REPL state and temporary files were discarded.");
+    appendText("errors", `Stopped after ${timeLimit} seconds. Partial output is unavailable; any REPL state and temporary files were discarded.`);
     finish("Time limit reached");
     if (isRepl()) {
       setSource("");
       byId("variables").textContent = "(no variables)";
     }
-  }, 30000);
+  }, timeLimit * 1000);
 }
 
 byId("mode").addEventListener("change", () => {

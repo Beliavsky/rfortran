@@ -6,9 +6,9 @@ const operations = new Map([
   ["program", "runProgram"], ["repl-init", "startSession"],
   ["repl-submit", "submit"], ["repl-replay", "replay"],
 ]);
-function text(value, label) {
-  if (typeof value !== "string" || value.length > LIMIT)
-    throw new Error(`${label} must be text of at most ${LIMIT} characters.`);
+function text(value, label, limit = LIMIT) {
+  if (typeof value !== "string" || (limit !== 0 && value.length > limit))
+    throw new Error(`${label} must be text of at most ${limit} characters.`);
   return value;
 }
 function output(value) {
@@ -31,9 +31,12 @@ export function createDriver({loadRuntime, emit, now = () => performance.now()})
       const method = operations.get(type);
       if (!method) throw new Error("Unknown interpreter operation.");
       const repl = type !== "program";
+      const sourceLimit = request.sourceLimit ?? LIMIT;
+      if (!Number.isSafeInteger(sourceLimit) || sourceLimit < 0)
+        throw new Error("Source limit must be a nonnegative safe integer (0 means no limit).");
       const input = text(request.input ?? "", "Standard input");
-      const source = text(request.source ?? "", "Source");
-      const command = text(request.command ?? "", "REPL command");
+      const source = text(request.source ?? "", "Source", sourceLimit);
+      const command = text(request.command ?? "", "REPL command", sourceLimit);
       if (type === "program" || type === "repl-init" || type === "repl-replay") await dispose();
       if (type === "repl-submit" && !session) throw new Error("Start a REPL session before submitting a command.");
       if (!runtime) {

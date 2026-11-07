@@ -76,3 +76,23 @@ test("runtime exceptions clear state and allow a fresh run",async () => {
   assert.equal(loads,2);
   assert.equal(events.at(-1).text,"test failure");
 });
+
+
+test("configured source limits accept larger programs and apply to replay and commands",async()=>{
+  const f=fixture(), source="x".repeat(200001);
+  await f.driver.handle({source,sourceLimit:300000});
+  assert.equal(f.calls[0].source,source);
+  await f.driver.handle({source,sourceLimit:0});
+  assert.equal(f.events.at(-1).type,"done");
+  await f.driver.handle({type:"repl-replay",source:"12345",sourceLimit:4});
+  assert.match(f.events.at(-1).text,/at most 4/);
+  await f.driver.handle({type:"repl-init"});
+  await f.driver.handle({type:"repl-submit",command:"12345",sourceLimit:4});
+  assert.match(f.events.at(-1).text,/at most 4/);
+  for(const sourceLimit of [-1,1.5,"200000",Infinity,Number.MAX_SAFE_INTEGER+1]) {
+    await f.driver.handle({source:"",sourceLimit});
+    assert.match(f.events.at(-1).text,/Source limit must/);
+  }
+  await f.driver.handle({sourceLimit:0,input:source});
+  assert.match(f.events.at(-1).text,/Standard input.*200000/);
+});

@@ -209,3 +209,41 @@ test("focus mode toggles and Ctrl+Enter starts the current program",()=>{
   p.get("source").emit("keydown",{key:"Enter",ctrlKey:true});
   assert.equal(p.workers.length,1);
 });
+
+
+test("execution limits default, persist, validate and control the worker timer",()=>{
+  const p=page();
+  assert.equal(p.get("source-limit").value,"200000");
+  assert.equal(p.get("time-limit").value,"30");
+  p.get("source-limit").value="500000";
+  p.get("time-limit").value="120";
+  p.get("run").click();
+  assert.equal(p.workers[0].sent[0].sourceLimit,500000);
+  assert.ok(p.get("time-limit").disabled);
+  const timeout=[...p.timers.values()].find(t=>t.delay===120000);
+  assert.ok(timeout);
+  timeout.callback();
+  assert.match(p.get("errors").textContent,/120 seconds/);
+  assert.equal(p.get("time-limit").disabled,false);
+  assert.equal(p.storage.get("rfortran.web.source-limit"),"500000");
+  const restored=page({drafts:Object.fromEntries(p.storage)});
+  assert.equal(restored.get("time-limit").value,"120");
+  for(const invalid of ["", "-1", "1.5", "Infinity", "2147484"]) {
+    restored.get("time-limit").value=invalid;
+    restored.get("run").click();
+    assert.equal(restored.workers.length,0);
+  }
+});
+
+test("zero limits disable the timeout and preserve Stop; bad saved values use defaults",()=>{
+  const p=page({drafts:{"rfortran.web.source-limit":"bad","rfortran.web.time-limit":"-1"}});
+  assert.equal(p.get("source-limit").value,"200000");
+  assert.equal(p.get("time-limit").value,"30");
+  p.get("source-limit").value="0";p.get("time-limit").value="0";
+  p.get("run").click();
+  assert.equal(p.workers[0].sent[0].sourceLimit,0);
+  assert.equal(p.timers.size,0);
+  assert.equal(p.get("stop").disabled,false);
+  p.get("stop").click();
+  assert.ok(p.workers[0].terminated);
+});
