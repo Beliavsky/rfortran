@@ -11,6 +11,9 @@ let worker = null;
 let timer = null;
 let lastRun = null;
 let busy = false;
+let loadingFile = false;
+let programBaseline = examples.hello;
+let programFilename = readDraft("rfortran.web.filename", "program.f90");
 let programSource = examples.hello;
 let commandHistory = [];
 let historyIndex = 0;
@@ -22,20 +25,29 @@ let replayNeedsCorrection = false;
 let blockEnds = [];
 const isRepl = () => byId("mode").value === "repl";
 function updateSourceControls() {
-  byId("clear-code").disabled = busy;
+  const locked = busy || loadingFile;
+  byId("open-file").hidden = isRepl();
+  byId("open-file").disabled = locked;
+  byId("source-file").disabled = locked || isRepl();
+  byId("run").disabled = locked;
+  byId("mode").disabled = locked;
+  byId("example").disabled = locked;
+  byId("source-description").textContent = isRepl() ? "Persistent interpreter" : programFilename;
+  byId("source-description").title = isRepl() ? "Persistent interpreter" : programFilename;
+  byId("clear-code").disabled = locked;
   sourceDirty = isRepl() && (replayNeedsCorrection || sourceText() !== sessionBaseline);
   byId("source-edits").hidden = !sourceDirty;
-  byId("discard-edits").disabled = busy;
-  byId("repl-submit").disabled = busy || sourceDirty;
-  byId("repl-command").disabled = busy || sourceDirty;
-  byId("auto-declare").disabled = busy || !capabilities.autoDeclare;
-  byId("auto-end").disabled = busy || !capabilities.autoEnd;
-  byId("finish-block").disabled = busy || sourceDirty || !blockEnds.length;
+  byId("discard-edits").disabled = locked;
+  byId("repl-submit").disabled = locked || sourceDirty;
+  byId("repl-command").disabled = locked || sourceDirty;
+  byId("auto-declare").disabled = locked || !capabilities.autoDeclare;
+  byId("auto-end").disabled = locked || !capabilities.autoEnd;
+  byId("finish-block").disabled = locked || sourceDirty || !blockEnds.length;
   byId("finish-block").hidden = !isRepl() || !byId("auto-end").checked || !blockEnds.length;
   byId("end-preview").hidden = !isRepl() || !byId("auto-end").checked || !blockEnds.length;
   byId("suggested-ends").textContent = blockEnds.join("\n");
-  if (editor) editor.setOption("readOnly", busy);
-  else byId("source").readOnly = busy;
+  if (editor) editor.setOption("readOnly", locked);
+  else byId("source").readOnly = locked;
 }
 function finish(status, keepWorker = false) {
   if (!keepWorker) {
@@ -109,7 +121,10 @@ function setSource(text) {
 function sourceChanged() {
   if (!settingSource) {
     updateSourceControls();
-    if (!isRepl()) saveDraft("rfortran.web.source", sourceText());
+    if (!isRepl()) {
+      saveDraft("rfortran.web.source", sourceText());
+      saveDraft("rfortran.web.filename", programFilename);
+    }
   }
 }
 if (editor) {
@@ -121,6 +136,68 @@ if (editor) {
     });
   });
 } else byId("source").addEventListener("input", sourceChanged);
+// Stream UTF-8 text so an oversized file is rejected before it is fully read.
+async function readSourceFile(file, limit) {
+  const reader = file.stream().getReader();
+  const decoder = new TextDecoder("utf-8", {fatal:true});
+  const chunks = [];
+  let length = 0;
+  try {
+    while (true) {
+      const {value, done} = await reader.read();
+      const chunk = decoder.decode(value, {stream:!done});
+      length += chunk.length;
+      if (limit && length > limit)
+        throw new Error(`Source exceeds the ${limit}-character limit. Increase Source limit under Execution limits, or set it to 0.`);
+      chunks.push(chunk);
+      if (done) return chunks.join("");
+    }
+  } finally {
+    try { await reader.cancel(); } catch { /* Preserve any read error. */ }
+    reader.releaseLock();
+  }
+}
+byId("open-file").addEventListener("click", () => {
+  if (!busy && !loadingFile && !isRepl()) byId("source-file").click();
+});
+byId("source-file").addEventListener("change", async () => {
+  const input = byId("source-file");
+  const file = input.files?.[0];
+  input.value = ""; // Selecting the same file again must fire change.
+  if (!file || busy || loadingFile || isRepl()) return;
+  if (!validLimit(byId("source-limit").value, Number.MAX_SAFE_INTEGER)) {
+    appendText("errors", "Source limit must be a nonnegative whole number (0 means no limit).");
+    byId("source-limit").focus();
+    return;
+  }
+  const limit = Number(byId("source-limit").value);
+  loadingFile = true;
+  updateSourceControls();
+  const previousStatus = byId("status").textContent;
+  byId("status").textContent = "Reading local file...";
+  try {
+    const text = await readSourceFile(file, limit);
+    if (sourceText().trim() && sourceText() !== programBaseline &&
+        !confirm("Replace the edited source with the selected file? Download source first if you want to keep these edits.")) {
+      byId("status").textContent = previousStatus;
+      return;
+    }
+    programFilename = file.name;
+    setSource(text);
+    programBaseline = sourceText();
+    sourceChanged();
+    lastRun = null;
+    byId("output").textContent = "";
+    byId("errors").textContent = "";
+    byId("status").textContent = `Loaded ${programFilename}`;
+  } catch (error) {
+    appendText("errors", `Unable to open ${file.name}: ${error instanceof Error ? error.message : String(error)}`);
+    byId("status").textContent = "Unable to open file";
+  } finally {
+    loadingFile = false;
+    updateSourceControls();
+  }
+});
 byId("discard-edits").addEventListener("click", () => {
   if (!busy) setSource(sessionBaseline);
 });
@@ -157,6 +234,8 @@ byId("focus").addEventListener("click", () => {
   if (editor) editor.refresh();
 });
 byId("example").addEventListener("change", event => {
+  programFilename = "program.f90";
+  programBaseline = examples[event.target.value];
   if (editor) editor.setValue(examples[event.target.value]);
   else byId("source").value = examples[event.target.value];
   if (event.target.value === "input") byId("stdin").value = "7\n";
@@ -164,7 +243,7 @@ byId("example").addEventListener("change", event => {
   saveDraft("rfortran.web.stdin", byId("stdin").value);
 });
 byId("run").addEventListener("click", () => {
-  if (busy) return;
+  if (busy || loadingFile) return;
   if (isRepl()) {
     if (!confirm("Restart the interpreter and run the source from the beginning? Current values will be discarded. Random-number calls and file writes will run again.")) return;
     byId("output").textContent = "";
@@ -236,13 +315,13 @@ byId("download").addEventListener("click", () => {
   const url = URL.createObjectURL(new Blob([source], {type:"text/plain"}));
   const link = document.createElement("a");
   link.href = url;
-  link.download = isRepl() ? "session.f90" : "program.f90";
+  link.download = isRepl() ? "session.f90" : programFilename;
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
 
 function send(payload) {
-  if (busy) return;
+  if (busy || loadingFile) return;
   for (const [id, , max] of limitSettings) {
     if (!validLimit(byId(id).value, max)) {
       appendText("errors", `${id === "source-limit" ? "Source" : "Time"} limit must be a whole number from 0 to ${max}.`);
@@ -339,7 +418,6 @@ byId("mode").addEventListener("change", () => {
   byId("clear-code").hidden = repl;
   byId("example").hidden = repl;
   byId("source-heading").textContent = repl ? "01 / SESSION SOURCE" : "01 / SOURCE";
-  byId("source-description").textContent = repl ? "Persistent interpreter" : "Free-form Fortran";
   byId("run").innerHTML = repl ? 'Restart and run source <span>Ctrl + Enter</span>' : 'Run program <span>Ctrl + Enter</span>';
   setSource(repl ? "" : programSource);
   byId("output").textContent = "";

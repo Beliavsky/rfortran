@@ -14,7 +14,7 @@
 //! argument's kind, and ATAN(Y, X) is ATAN2(Y, X). DIM(A, B) is MAX(A-B, 0) and
 //! DPROD(X, Y) is DBLE(X)*DBLE(Y). Specific names such as IABS, FLOAT and
 //! DSQRT become their generic intrinsic, BESSEL_JN(N, X) and BESSEL_YN(N, X)
-//! call runtime wrappers that take X first, and NORM2(X) is SQRT(SUM(X*X)).
+//! call runtime wrappers that take X first, and NORM2(X) retains a scaled norm reduction.
 //! ERFC_SCALED(X) uses a shared scalar helper that evaluates X once and switches
 //! to an asymptotic series before the exponential can overflow. COMMAND_ARGUMENT_COUNT() calls the runtime.
 //! A user procedure or variable with one of these names keeps its own definition.
@@ -134,9 +134,9 @@ fn rewrite(e: &mut Expr, user: &HashSet<String>, error: &mut Option<anyhow::Erro
         return;
     }
     if lname == "norm2" && (1..=2).contains(&args.len()) {
-        let mut sum = vec![bin(BinOp::Mul, args[0].clone(), args[0].clone())];
-        sum.extend(args.get(1).filter(|dim| !crate::named_arguments::omitted(dim)).cloned());
-        *e = call("sqrt", vec![call("sum", sum)]);
+        let dim = args.get(1).filter(|dim| !crate::named_arguments::omitted(dim))
+            .cloned().unwrap_or_else(||call("@no_dim",vec![]));
+        *e = call("@norm2", vec![args[0].clone(),dim,Expr::Logical(true)]);
         return;
     }
     if lname == "command_argument_count" {

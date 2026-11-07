@@ -129,6 +129,14 @@ pub fn model_type(e: &Expr, lookup: &impl Fn(&str) -> Option<(TypeSpec,usize)>) 
             for arg in a {subscript(arg)?;}
             Some(kind)
         },
+        Expr::Call(n,a) if n == "@norm2" || n == "norm2" && lookup(n).is_none()
+            && lookup("@model_procedure:norm2").is_none() && lookup("@function:norm2").is_none() => {
+            let input=model_type(a.first().context("NORM2 requires X")?,lookup)?;
+            if input.as_ref().is_some_and(|k|!matches!(k,TypeSpec::Real|TypeSpec::DoublePrecision)) {
+                bail!("NORM2: X must be a REAL array");
+            }
+            input
+        },
         Expr::Call(n,a) if n=="cmplx" || n=="@complex_literal" => {
             let k=if n=="cmplx" {a.get(2).filter(|e|!crate::named_arguments::omitted(e)).map(crate::parameters::integer_constant).transpose()?.unwrap_or(4)} else {
                 let mut k=4;for e in a {if model_type(e,lookup)?==Some(TypeSpec::DoublePrecision){k=8;}}k

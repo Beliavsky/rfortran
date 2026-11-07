@@ -42,7 +42,7 @@ impl std::ops::DerefMut for Symbols {
 }
 fn int(n: i64) -> Expr { Expr::IntLit(n.to_string()) }
 fn bin(op: BinOp, a: Expr, b: Expr) -> Expr { Expr::Bin(op, Box::new(a), Box::new(b)) }
-pub(crate) fn reduction(name: &str) -> bool { matches!(name.to_ascii_lowercase().as_str(), "sum" | "product" | "minval" | "maxval" | "iany" | "iall" | "iparity" | "parity" | "any" | "all" | "count" | "@count_i8" | "@count_default" | "@any_reduction" | "@all_reduction") }
+pub(crate) fn reduction(name: &str) -> bool { matches!(name.to_ascii_lowercase().as_str(), "sum" | "@norm2" | "product" | "minval" | "maxval" | "iany" | "iall" | "iparity" | "parity" | "any" | "all" | "count" | "@count_i8" | "@count_default" | "@any_reduction" | "@all_reduction") }
 fn array_element_kind(kind: &TypeSpec) -> bool { matches!(kind, TypeSpec::Integer(_) | TypeSpec::Real | TypeSpec::DoublePrecision | TypeSpec::Logical) }
 fn selectable_element_kind(kind: &TypeSpec) -> bool { array_element_kind(kind) || matches!(kind,TypeSpec::Character(_)) }
 fn numeric_minmax(name:&str,symbols:&Symbols)->bool {
@@ -1188,6 +1188,7 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
             }.to_ascii_lowercase();
             if matches!(name.as_str(), "any" | "all" | "count" | "@count_i8" | "parity") != matches!(kind, TypeSpec::Logical) { bail!("reduction argument has incorrect numeric/logical type"); }
             if matches!(name.as_str(), "iany" | "iall" | "iparity") && !matches!(kind, TypeSpec::Integer(_)) { bail!("{}: ARRAY must be INTEGER", name.to_ascii_uppercase()); }
+            if name == "@norm2" && !matches!(kind,TypeSpec::Real|TypeSpec::DoublePrecision) { bail!("NORM2: X must be a REAL array"); }
             let result_kind = match name.as_str() { "count" => TypeSpec::Integer(None), "@count_i8" => TypeSpec::Integer(Some(8)), _ => kind.clone() };
             let integer = matches!(kind, TypeSpec::Integer(_));
             let integer_max = match kind { TypeSpec::Integer(Some(1)) => i8::MAX as i64, TypeSpec::Integer(Some(2)) => i16::MAX as i64, TypeSpec::Integer(Some(8)) => i64::MAX, _ => i32::MAX as i64 };
@@ -1199,6 +1200,7 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
                 "iany" | "iparity" => int(0),
                 "iall" => int(-1),
                 "all" => Expr::Logical(true),
+                "@norm2" => Expr::RealLit("0.0".into()),
                 "sum" => if integer { int(0) } else { Expr::RealLit("0.0".into()) },
                 "product" => if integer { int(1) } else { Expr::RealLit("1.0".into()) },
                 "minval" => if integer { int(integer_max) } else { Expr::RealLit(huge.to_string()) },
@@ -1226,6 +1228,9 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
                     let tag = crate::bit_intrinsics::tag(operation, bytes.unwrap_or(4));
                     Stmt::Assign { name: acc_name.clone(), value: Expr::Call(tag, vec![acc.clone(), item.clone()]) }
                 },
+                // HYPOT scales internally: unlike SUM(X*X), finite large or
+                // tiny components do not overflow or underflow when squared.
+                "@norm2" => Stmt::Assign { name: acc_name.clone(), value: Expr::Call("hypot".into(), vec![acc.clone(),item.clone()]) },
                 "sum" | "product" => Stmt::Assign { name: acc_name.clone(), value: bin(if name == "sum" { BinOp::Add } else { BinOp::Mul }, acc.clone(), item.clone()) },
                 _ => Stmt::If {
                     cond: bin(if name == "minval" { BinOp::Lt } else { BinOp::Gt }, item.clone(), acc.clone()),

@@ -83,3 +83,5 @@ body.focus-mode.repl-mode .editor-panel .CodeMirror { height:max(300px,calc(100d
 .limit-controls label { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
 .limit-controls input { width:150px; padding:6px; }
 .limit-controls span { color:var(--muted); }
+
+#source-description { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

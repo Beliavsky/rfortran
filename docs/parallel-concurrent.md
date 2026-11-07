@@ -314,8 +314,20 @@ expression temporaries and CHARACTER/derived-type allocations retain their
 existing allocation-failure behavior.
 
 Array-taking functions may use SUM, PRODUCT, MINVAL, MAXVAL, COUNT, ANY, ALL,
+IALL, IANY, IPARITY, PARITY, NORM2, MINLOC, MAXLOC, FINDLOC,
 DOT_PRODUCT, SIZE, LBOUND, and UBOUND, as well as the scalar intrinsics listed
-above. A user procedure shadowing an intrinsic does not qualify as an intrinsic
+above. This includes direct loop expressions and proved PURE/SIMPLE callees,
+read-only runtime-sized and strided inputs, and supported constant/runtime DIM
+results. Bit reductions support INTEGER kinds 1/2/4/8; PARITY uses LOGICAL.
+NORM2 supports REAL kinds 4/8 and accumulates with scaled HYPOT calls rather than
+squaring the inputs, avoiding unnecessary overflow and underflow. Empty norms
+are zero. Location searches retain MASK, BACK, KIND, first/last tie-breaking,
+one-based result positions and zero for no match. Numeric searches and LOGICAL
+FINDLOC are covered; CHARACTER/COMPLEX storage retains the restrictions below.
+All generated reduction/search temporaries belong to the worker invocation.
+Run `python tests/test_concurrent_parallel_array_intrinsics.py` or try
+`rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_array_intrinsics.f90 --run`.
+ A user procedure shadowing an intrinsic does not qualify as an intrinsic
 call. Lowered storage and runtime helpers still have to pass the native checks.
 
 Definitions must be available in the compilation group. Recursive call chains,

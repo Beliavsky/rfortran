@@ -1400,11 +1400,14 @@ use the argument kind's largest/smallest representable values.
 Run `python tests/test_masked_reductions.py` for interpreter/native O0/O2 checks
 and comparison with gfortran when installed.
 
-`IANY`, `IALL` and `IPARITY` reduce INTEGER arrays with IOR, IAND and IEOR, and
-`PARITY` reduces a LOGICAL array with .NEQV.; they take DIM and MASK as the
-numeric reductions do. `NORM2(X [, DIM])` is `SQRT(SUM(X*X [, DIM]))`, without
-the scaling that avoids overflow for very large elements. The shared runtime
-DIM path also supports these reductions and NORM2. Run
+`IANY`, `IALL` and `IPARITY` reduce INTEGER arrays with IOR, IAND and IEOR;
+they accept DIM and MASK. `PARITY` reduces a LOGICAL array with .NEQV. and
+accepts DIM. `NORM2(X [, DIM])` uses scaled HYPOT accumulation for REAL kinds
+4/8, avoiding unnecessary overflow and underflow from squaring large or tiny
+inputs. Its empty-array result is zero. The shared runtime DIM path supports
+these reductions and NORM2. They also work in the audited native parallel
+subset, along with numeric MINLOC/MAXLOC/FINDLOC and LOGICAL FINDLOC; see
+[parallel array intrinsics](parallel-concurrent.md). Run
 `python tests/test_more_intrinsics.py`, `python tests/test_runtime_dim_reductions.py`,
 and `python tests/test_variable_dim_reductions.py`.
 The latter compares interpreter/native O0/O2 results with gfortran and covers

@@ -6,15 +6,16 @@ import {readFileSync} from "node:fs";
 const html=readFileSync(new URL("../index.html",import.meta.url),"utf8");
 const script=readFileSync(new URL("../app.js",import.meta.url),"utf8");
 const indentScript=readFileSync(new URL("../indent.js",import.meta.url),"utf8");
-function page({drafts={},brokenStorage=false,withEditor=false}={}) {
+function page({drafts={},brokenStorage=false,withEditor=false,confirmResult=true}={}) {
   const nodes=new Map(),workers=[],downloads=[],opened=[],timers=new Map(),blobs=[];
   const storage=new Map(Object.entries(drafts));
+  const confirmations=[];
   let focus=null, serial=0;
   class Element {
     value=""; textContent=""; innerHTML=""; disabled=false; checked=false;
     hidden=false; selectionStart=0; selectionEnd=0; listeners=new Map();
     addEventListener(type,handler) {this.listeners.set(type,handler);}
-    emit(type,props={}) {this.listeners.get(type)?.({target:this,preventDefault(){},...props});}
+    emit(type,props={}) {return this.listeners.get(type)?.({target:this,preventDefault(){},...props});}
     click() {if (!this.disabled) this.emit("click");}
     focus() {focus=this;}
     select() {this.selectionStart=0;this.selectionEnd=this.value.length;}
@@ -78,18 +79,18 @@ function page({drafts={},brokenStorage=false,withEditor=false}={}) {
     };
     return codeEditor;
   };
-  const context=vm.createContext({document,Worker,URL:TestURL,URLSearchParams,Blob,
+  const context=vm.createContext({document,Worker,URL:TestURL,URLSearchParams,Blob,TextDecoder,
     CodeMirror:withEditor ? CodeMirror : undefined,
     navigator:{userAgent:"test browser"},window:{open:(...args)=>opened.push(args)},
     localStorage:{getItem:key=>{if(brokenStorage)throw Error();return storage.get(key)??null;},
       setItem:(key,value)=>{if(brokenStorage)throw Error();storage.set(key,value);}},
-    confirm:()=>true,alert:()=>{},
+    confirm:message=>{confirmations.push(message);return confirmResult;},alert:()=>{},
     setTimeout:(callback,delay)=>{const id=++serial;timers.set(id,{callback,delay});return id;},
     clearTimeout:id=>timers.delete(id),
   });
   vm.runInContext(indentScript,context);
   vm.runInContext(script,context);
-  return {get:id=>nodes.get(id),workers,downloads,opened,blobs,storage,classes,timers,editor:codeEditor,editorOptions};
+  return {get:id=>nodes.get(id),confirmations,workers,downloads,opened,blobs,storage,classes,timers,editor:codeEditor,editorOptions};
 }
 function done(worker,props={}) {
   worker.reply({type:"done",ok:true,output:"",errors:"",seconds:0.01,...props});
@@ -246,4 +247,104 @@ test("zero limits disable the timeout and preserve Stop; bad saved values use de
   assert.equal(p.get("stop").disabled,false);
   p.get("stop").click();
   assert.ok(p.workers[0].terminated);
+});
+
+
+function localFile(name, text) {return Object.assign(new Blob([text]),{name});}
+async function selectFile(p,file) {
+  p.get("source-file").files=file ? [file] : [];
+  p.get("source-file").value="fake-path";
+  await p.get("source-file").emit("change");
+}
+
+test("Open file reads local text without running it and preserves filename and drafts",async()=>{
+  for (const withEditor of [false,true]) {
+    const p=page({withEditor});
+    let pickerClicks=0;p.get("source-file").listeners.set("click",()=>pickerClicks++);
+    p.get("open-file").click();assert.equal(pickerClicks,1);
+    const source="program test\n   print *, 'local file'\nend\n";
+    const file=localFile("my test.f90",source);
+    await selectFile(p,file);
+    assert.equal(p.get("source").value,source);
+    assert.equal(p.get("source-description").textContent,"my test.f90");
+    assert.equal(p.get("status").textContent,"Loaded my test.f90");
+    assert.equal(p.get("source-file").value,"");
+    assert.equal(p.workers.length,0);
+    assert.equal(p.confirmations.length,0);
+    p.get("download").click();
+    assert.equal(p.downloads[0].download,"my test.f90");
+    assert.equal(await p.blobs[0].text(),source);
+    const restored=page({drafts:Object.fromEntries(p.storage)});
+    assert.equal(restored.get("source").value,source);
+    restored.get("download").click();assert.equal(restored.downloads[0].download,"my test.f90");
+    await selectFile(p,file); // Same file can be selected again.
+    assert.equal(p.get("source").value,source);
+    p.get("mode").value="repl";p.get("mode").emit("change");
+    assert.ok(p.get("open-file").hidden);
+    done(p.workers[0],{repl:true,source:""});
+    p.get("mode").value="program";p.get("mode").emit("change");
+    assert.equal(p.get("source-description").textContent,"my test.f90");
+    assert.equal(p.get("source").value,source);
+    p.get("example").value="arrays";p.get("example").emit("change");
+    p.get("download").click();assert.equal(p.downloads.at(-1).download,"program.f90");
+  }
+});
+
+test("edited code requires confirmation and cancellation preserves the editor",async()=>{
+  const p=page({drafts:{"rfortran.web.source":"print *, 'draft'"},confirmResult:false});
+  await selectFile(p,localFile("other.f90","end\n"));
+  assert.equal(p.confirmations.length,1);
+  assert.match(p.confirmations[0],/Replace the edited source/);
+  assert.equal(p.get("source").value,"print *, 'draft'");
+  p.get("download").click();assert.equal(p.downloads[0].download,"program.f90");
+  await selectFile(p,null);
+  assert.equal(p.confirmations.length,1);
+  const approved=page({drafts:{"rfortran.web.source":"edited"}});
+  await selectFile(approved,localFile("new.f90","end\n"));
+  assert.equal(approved.confirmations.length,1);
+  assert.equal(approved.get("source").value,"end\n");
+});
+
+test("file loading enforces character limits, permits zero, and handles empty or invalid files",async()=>{
+  const p=page(), original=p.get("source").value;
+  p.get("source-limit").value="3";
+  await selectFile(p,localFile("large.f90","1234"));
+  assert.equal(p.get("source").value,original);
+  assert.match(p.get("errors").textContent,/3-character limit/);
+  assert.equal(p.get("open-file").disabled,false);
+  // UTF-8 byte length exceeds three, but the decoded source has three characters.
+  await selectFile(p,localFile("unicode.f90","\u03b1\u03b2\u03b3"));
+  assert.equal(p.get("source").value,"\u03b1\u03b2\u03b3");
+  p.get("source-limit").value="0";
+  await selectFile(p,localFile("large.f90","x".repeat(200001)));
+  assert.equal(p.get("source").value.length,200001);
+  await selectFile(p,localFile("empty.f90",""));
+  assert.equal(p.get("source").value,"");
+  await selectFile(p,localFile("bad.f90",new Uint8Array([255])));
+  assert.equal(p.get("source").value,"");
+  assert.match(p.get("errors").textContent,/Unable to open bad.f90/);
+  await selectFile(p,{name:"unreadable.f90",stream(){throw Error("file is unavailable");}});
+  assert.match(p.get("errors").textContent,/file is unavailable/);
+  p.get("source-limit").value="-1";
+  await selectFile(p,localFile("end.f90","end"));
+  assert.match(p.get("errors").textContent,/Source limit must/);
+  assert.equal(p.get("source").value,"");
+});
+
+test("file reading stops at the limit and locks execution until reading finishes",async()=>{
+  const p=page();p.get("source-limit").value="3";
+  let resolveRead, reads=0, cancelled=false, released=false;
+  const reader={read(){reads++;return new Promise(resolve=>{resolveRead=resolve;});},
+    async cancel(){cancelled=true;},releaseLock(){released=true;}};
+  const pending=selectFile(p,{name:"huge.f90",stream(){return {getReader:()=>reader};}});
+  assert.ok(p.get("run").disabled);assert.ok(p.get("mode").disabled);
+  assert.ok(p.get("open-file").disabled);
+  p.get("run").click();assert.equal(p.workers.length,0);
+  resolveRead({done:false,value:new Uint8Array([49,50,51,52])});
+  await pending;
+  assert.equal(reads,1);assert.ok(cancelled);assert.ok(released);
+  assert.equal(p.get("run").disabled,false);assert.equal(p.get("mode").disabled,false);
+  p.get("run").click();
+  await selectFile(p,localFile("blocked.f90","end"));
+  assert.notEqual(p.get("source").value,"end");
 });

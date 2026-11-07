@@ -419,6 +419,8 @@ pub(super) fn array_intrinsic(n: &str) -> bool {
                 | "any"
                 | "all"
                 | "dot_product"
+                | "iall" | "iany" | "iparity" | "parity"
+                | "norm2" | "minloc" | "maxloc" | "findloc"
                 | "size"
                 | "lbound"
                 | "ubound"

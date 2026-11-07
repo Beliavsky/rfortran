@@ -92,6 +92,13 @@ allocate(work(too_large),stat=istat)
 if(istat==0.or.allocated(work)) return
 allocate(work,source=array_copy(x),stat=istat)
 if(istat/=0) return
+! Each call reads private storage; search results and reduction temporaries
+! must remain private to this invocation of the parallel worker.
+if(iall(work)/=0.or.iany(work)/=3.or.iparity(work)/=3) return
+if(parity(work>0)) return
+if(abs(norm2(real(work))-sqrt(5.0))>1e-5) return
+if(minloc(work,dim=1)/=1.or.maxloc(work,dim=1)/=2) return
+if(findloc(work,1,dim=1)/=1) return
 array_total=sum(work)
 deallocate(work,stat=istat)
 if(istat/=0) array_total=-100

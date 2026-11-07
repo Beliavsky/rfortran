@@ -605,7 +605,7 @@ impl Lowerer {
                     self.expression(&mut args[2], shapes)?;
                 }
             }
-            Expr::Call(n, args) if matches!(n.as_str(), "sum" | "product" | "minval" | "maxval" | "iany" | "iall" | "iparity" | "parity" | "@count_default" | "@count_i8" | "@any_reduction" | "@all_reduction") && args.len() == 3 => {
+            Expr::Call(n, args) if matches!(n.as_str(), "sum" | "@norm2" | "product" | "minval" | "maxval" | "iany" | "iall" | "iparity" | "parity" | "@count_default" | "@count_i8" | "@any_reduction" | "@all_reduction") && args.len() == 3 => {
                 let intrinsic = match n.as_str() { "@count_default" | "@count_i8" => "count", "@any_reduction" => "any", "@all_reduction" => "all", _ => n.as_str() };
                 let dims = self.shape(&args[0], shapes)?.context("reduction argument must be an array")?;
                 total(&dims)?;
@@ -834,7 +834,7 @@ impl Lowerer {
                 for arg in args { count = count.checked_add(match self.shape(arg, shapes)? { Some(dims) => total(&dims)?, None => 1 }).context("array constructor extent overflow")?; }
                 Ok(Some(vec![count]))
             }
-            Expr::Call(n, args) if matches!(n.as_str(), "sum" | "product" | "minval" | "maxval" | "iany" | "iall" | "iparity" | "parity" | "@count_default" | "@count_i8" | "@any_reduction" | "@all_reduction") => {
+            Expr::Call(n, args) if matches!(n.as_str(), "sum" | "@norm2" | "product" | "minval" | "maxval" | "iany" | "iall" | "iparity" | "parity" | "@count_default" | "@count_i8" | "@any_reduction" | "@all_reduction") => {
                 if args.len() == 5 {
                     let Expr::Call(_, dims) = &args[4] else { unreachable!() };
                     return Ok(Some(dims.iter().map(crate::parameters::integer_constant).collect::<Result<Vec<_>>>()?));
@@ -1027,7 +1027,7 @@ impl Lowerer {
                                 | "size"
                                 | "lbound"
                                 | "ubound"
-                                | "sum"
+                                | "sum" | "@norm2"
                                 | "product" | "iany" | "iall" | "iparity" | "parity"
                                 | "minval"
                                 | "maxval" | "trim" | "len" | "len_trim" | "adjustl" | "adjustr" | "repeat" | "char" | "achar"

@@ -161,6 +161,9 @@ is mostly OpenMP, then MPI, with coarrays a distant third.
     PURE/SIMPLE subroutine calls support explicit argument intents, read-only array inputs, disjoint scalar/section outputs, acyclic call chains, and private workspaces.
     Private array allocation supports STAT, SOURCE, and MOLD; status destinations are local scalar integers. STAT handles allocation-state errors, INTEGER/REAL/LOGICAL target size overflow, and allocator failures; partially allocated buffers are freed.
     The audited scalar intrinsic subset includes arithmetic, rounding, trigonometric/hyperbolic functions, HYPOT, error/scaled-error/gamma and scalar Bessel functions, scalar numeric/logical MERGE, numeric inquiries, REAL(4/8) model functions, and kind-aware integer bit operations (including ISHFTC, MASKL/MASKR and mixed-kind BGE/BGT/BLE/BLT comparisons) with runtime control checks, using shared source/native eligibility checks.
+    The array subset also includes IALL/IANY/IPARITY/PARITY, scaled NORM2 and
+    MINLOC/MAXLOC/FINDLOC on supported read-only numeric/logical arrays,
+    including runtime DIM results.
   - **Next:** broader capture analysis, recoverable allocation of other storage types,
     and audits of remaining intrinsic runtime helpers.
     SAVE and module variables retain their Fortran sharing semantics; making

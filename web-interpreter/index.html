@@ -17,6 +17,8 @@
       <button id="run" class="primary">Run program <span>Ctrl + Enter</span></button>
       <button id="stop" disabled>Stop</button>
       <select id="example" aria-label="Example program"><option value="hello">Hello, Fortran</option><option value="arrays">Array calculations</option><option value="input">Reading input</option></select>
+      <button id="open-file" type="button" title="Read a local file into the editor; nothing is uploaded">Open Fortran file…</button>
+      <input id="source-file" type="file" accept=".f90,.f95,.f03,.f08,.f18,.f23,.f,.for,.ftn,.txt" aria-label="Open a local Fortran source file" hidden>
       <button id="download">Download source</button>
       <button id="clear-session" hidden>Clear session</button>
       <button id="focus" aria-pressed="false">Focus mode</button>

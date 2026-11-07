@@ -81,8 +81,14 @@ Session; JavaScript stores snapshots but does not parse Fortran or evaluate it.
 filesystem using the MIT-licensed browser_wasi_shim. Each operation starts a
 fresh WASI instance, allowing real Rust STOP/error exits without closing the
 page. A successful REPL response commits its snapshot. Program virtual files
-are discarded after execution; they cannot access the user's disk. File upload
-and file download are not exposed. Rust memory is capped at 256 MiB, with an
+are discarded after execution; they cannot access the user's disk. Runtime
+virtual-file import/export is not exposed. **Open Fortran file…** in Program
+mode reads one user-selected UTF-8 source file locally into the editor, without
+uploading it. It checks the configured source-character limit while reading,
+asks before replacing edited source, and preserves the filename for Download
+source and restored drafts. Loading does not run the program. The picker also
+accepts an empty file; decoding/read failures and oversized files leave the
+existing source intact. Rust memory is capped at 256 MiB, with an
 8 MiB stack; each output channel is limited to 1 MB, cumulative virtual file
 writes to 2 MB, and descriptors per operation to 128. Source and REPL command requests default to 200,000 characters; standard input
 remains limited to 200,000 characters. Execution defaults to 30 seconds per run

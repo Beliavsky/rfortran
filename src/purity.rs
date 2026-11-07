@@ -33,7 +33,7 @@ pub fn validate(program: &Program) -> Result<()> {
                 let intrinsic = crate::intrinsics::purity(name)==Some(crate::intrinsics::Purity::Pure)
                     || crate::real_intrinsics::decode(name).is_some()
                     || name.starts_with("@keyword:")
-                    || matches!(name.as_str(), "@integer_literal" | "@minloc" | "@maxloc" | "@findloc" | "@count_i8" | "@count_default" | "@any_reduction" | "@all_reduction" | "@array_constructor" | "@literal_substring" | "@output_implied_do" | "@section_subscript" | "@no_value" | "@no_dim" | "@no_vector" | "@no_boundary" | "@no_pad" | "@no_order");
+                    || matches!(name.as_str(), "@integer_literal" | "@norm2" | "@minloc" | "@maxloc" | "@findloc" | "@count_i8" | "@count_default" | "@any_reduction" | "@all_reduction" | "@array_constructor" | "@literal_substring" | "@output_implied_do" | "@section_subscript" | "@no_value" | "@no_dim" | "@no_vector" | "@no_boundary" | "@no_pad" | "@no_order");
                 if !locals.contains(name) && !known.get(name).map(|p| p.pure).unwrap_or(intrinsic) {
                     bail!("PURE procedure cannot call impure or unknown procedure `{name}`");
                 }
