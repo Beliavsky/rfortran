@@ -17,7 +17,13 @@
       <button id="run" class="primary">Run program <span>Ctrl + Enter</span></button>
       <button id="stop" disabled>Stop</button>
       <select id="example" aria-label="Example program"><option value="hello">Hello, Fortran</option><option value="arrays">Array calculations</option><option value="input">Reading input</option></select>
-      <button id="open-file" type="button" title="Read a local file into the editor; nothing is uploaded">Open Fortran file…</button>
+      <details id="open-source" class="source-menu">
+        <summary>Open source</summary>
+        <div class="source-menu-options">
+          <button id="open-file" type="button" title="Read a local file into the editor; nothing is uploaded">Open file...</button>
+          <button id="open-url" type="button">Load from URL...</button>
+        </div>
+      </details>
       <input id="source-file" type="file" accept=".f90,.f95,.f03,.f08,.f18,.f23,.f,.for,.ftn,.txt" aria-label="Open a local Fortran source file" hidden>
       <button id="download">Download source</button>
       <button id="clear-session" hidden>Clear session</button>
@@ -40,6 +46,17 @@
     <section class="panel input-panel"><div class="panel-heading"><label for="stdin">03 / STANDARD INPUT</label><span>Supply input before running</span></div><textarea id="stdin" rows="3" spellcheck="false" placeholder="Values for READ(*, ...) go here"></textarea></section>
     <footer>Experimental rfortran interpreter, adapted from the ofort playground. Fortran runs locally in a WebAssembly worker, with configurable source and time limits and a 256 MiB memory ceiling. Program input is supplied before running; virtual files last only for that run. Stop, Clear session, switching modes, or reloading discards REPL state. Program drafts and standard input are saved locally when browser storage is available. <a href="THIRD-PARTY-NOTICES.txt">Licenses</a> | <a href="runtime/build.json">Build details and source revision</a>.</footer>
   </main>
+  <dialog id="url-dialog" aria-labelledby="url-heading">
+    <form id="url-form">
+      <h2 id="url-heading">Load source from URL</h2>
+      <p>Enter a raw/plain-text Fortran source URL. Loading fills the editor without running the code. The source host must allow browser requests (CORS).</p>
+      <label for="source-url">Source URL</label>
+      <input id="source-url" type="url" required placeholder="https://example.com/example.f90" autocomplete="off" spellcheck="false">
+      <p>You can also share a playground link with <code>?source=</code> followed by the URL-encoded source URL.</p>
+      <p id="url-error" role="alert"></p>
+      <div class="report-actions"><button id="url-load" class="primary" type="submit">Load source</button><button id="url-cancel" type="button">Cancel</button></div>
+    </form>
+  </dialog>
   <dialog id="report-dialog" aria-labelledby="report-heading">
     <h2 id="report-heading">Report a playground bug</h2>
     <p class="privacy-warning">GitHub issues are public. Remove private code, data, and credentials, including anything printed in the output.</p>

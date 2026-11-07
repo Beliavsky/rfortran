@@ -6,10 +6,11 @@ import {readFileSync} from "node:fs";
 const html=readFileSync(new URL("../index.html",import.meta.url),"utf8");
 const script=readFileSync(new URL("../app.js",import.meta.url),"utf8");
 const indentScript=readFileSync(new URL("../indent.js",import.meta.url),"utf8");
-function page({drafts={},brokenStorage=false,withEditor=false,confirmResult=true}={}) {
+function page({drafts={},brokenStorage=false,withEditor=false,confirmResult=true,search="",fetchImpl=async()=>{throw new TypeError("Network error");}}={}) {
   const nodes=new Map(),workers=[],downloads=[],opened=[],timers=new Map(),blobs=[];
   const storage=new Map(Object.entries(drafts));
   const confirmations=[];
+  const requests=[];
   let focus=null, serial=0;
   class Element {
     value=""; textContent=""; innerHTML=""; disabled=false; checked=false;
@@ -79,9 +80,10 @@ function page({drafts={},brokenStorage=false,withEditor=false,confirmResult=true
     };
     return codeEditor;
   };
-  const context=vm.createContext({document,Worker,URL:TestURL,URLSearchParams,Blob,TextDecoder,
+  const context=vm.createContext({document,Worker,URL:TestURL,URLSearchParams,Blob,TextDecoder,AbortController,
+    fetch:(...args)=>{requests.push(args);return fetchImpl(...args);},
     CodeMirror:withEditor ? CodeMirror : undefined,
-    navigator:{userAgent:"test browser"},window:{open:(...args)=>opened.push(args)},
+    navigator:{userAgent:"test browser"},window:{location:{search},open:(...args)=>opened.push(args)},
     localStorage:{getItem:key=>{if(brokenStorage)throw Error();return storage.get(key)??null;},
       setItem:(key,value)=>{if(brokenStorage)throw Error();storage.set(key,value);}},
     confirm:message=>{confirmations.push(message);return confirmResult;},alert:()=>{},
@@ -90,7 +92,7 @@ function page({drafts={},brokenStorage=false,withEditor=false,confirmResult=true
   });
   vm.runInContext(indentScript,context);
   vm.runInContext(script,context);
-  return {get:id=>nodes.get(id),confirmations,workers,downloads,opened,blobs,storage,classes,timers,editor:codeEditor,editorOptions};
+  return {get:id=>nodes.get(id),requests,confirmations,workers,downloads,opened,blobs,storage,classes,timers,editor:codeEditor,editorOptions};
 }
 function done(worker,props={}) {
   worker.reply({type:"done",ok:true,output:"",errors:"",seconds:0.01,...props});
@@ -251,6 +253,137 @@ test("zero limits disable the timeout and preserve Stop; bad saved values use de
 
 
 function localFile(name, text) {return Object.assign(new Blob([text]),{name});}
+async function loadUrl(p,url="https://example.org/my%20example.f90") {
+  p.get("open-url").click();
+  p.get("source-url").value=url;
+  await p.get("url-form").emit("submit");
+}
+
+test("URL source fills both editors without execution and keeps its filename",async()=>{
+  for(const withEditor of [false,true]) {
+    const source="print *, 'from URL'\nend\n";
+    const p=page({withEditor,fetchImpl:async()=>new Response(source,{headers:{"Content-Type":"text/plain"}})});
+    await loadUrl(p);
+    assert.equal(p.get("source").value,source);
+    assert.equal(p.get("source-description").textContent,"my example.f90");
+    assert.equal(p.get("url-dialog").open,false);
+    assert.equal(p.workers.length,0);
+    assert.equal(p.requests.length,1);
+    assert.equal(p.requests[0][1].mode,"cors");
+    assert.equal(p.requests[0][1].credentials,"omit");
+    assert.equal(p.requests[0][1].referrerPolicy,"no-referrer");
+    assert.equal(p.get("run").disabled,false);
+    p.get("download").click();assert.equal(p.downloads[0].download,"my example.f90");
+    assert.equal(p.storage.get("rfortran.web.source"),source);
+  }
+});
+
+test("invalid source URLs and limits never issue a request",async()=>{
+  const p=page();
+  for(const url of ["not a URL","/relative.f90","file:///tmp/test.f90","data:text/plain,end","javascript:alert(1)","https://user:password@example.org/test.f90"]) {
+    await loadUrl(p,url);
+    assert.match(p.get("url-error").textContent,/HTTP or HTTPS/);
+    assert.equal(p.requests.length,0);
+  }
+  p.get("source-limit").value="-1";
+  await loadUrl(p);
+  assert.match(p.get("url-error").textContent,/Source limit/);
+  assert.equal(p.requests.length,0);
+});
+
+test("HTTP, HTML and CORS failures preserve source and explain alternatives",async()=>{
+  const cases=[
+    [async()=>new Response("missing",{status:404}),/HTTP 404/],
+    [async()=>new Response("<html>file page</html>",{headers:{"Content-Type":"text/html; charset=UTF-8"}}),/raw\/plain-text.*Raw/],
+    [async()=>{throw new TypeError("Failed to fetch");},/CORS.*Open source > Open file/],
+    [async()=>new Response(new Uint8Array([255])),/Unable to load source/],
+  ];
+  for(const [fetchImpl,expected] of cases) {
+    const p=page({fetchImpl}),source=p.get("source").value;
+    await loadUrl(p);
+    assert.match(p.get("url-error").textContent,expected);
+    assert.equal(p.get("source").value,source);
+    assert.equal(p.get("url-dialog").open,true);
+    assert.equal(p.get("run").disabled,false);
+    assert.equal(p.workers.length,0);
+  }
+});
+
+test("URL loading enforces the character limit while streaming and accepts unlimited sources",async()=>{
+  let reads=0,cancelled=false;
+  const p=page({fetchImpl:async()=>({ok:true,headers:new Headers(),body:{getReader:()=>({
+    async read(){reads++;return {done:false,value:new Uint8Array([49,50,51,52])};},
+    async cancel(){cancelled=true;},releaseLock(){},
+  })}})});
+  const original=p.get("source").value;
+  p.get("source-limit").value="3";
+  await loadUrl(p);
+  assert.equal(p.get("source").value,original);
+  assert.match(p.get("url-error").textContent,/3-character limit/);
+  assert.equal(reads,1);assert.equal(cancelled,true);
+  const unlimited=page({fetchImpl:async()=>new Response("x".repeat(200001))});
+  unlimited.get("source-limit").value="0";
+  await loadUrl(unlimited);
+  assert.equal(unlimited.get("source").value.length,200001);
+});
+
+test("URL loading protects edited drafts and supports cancellation before and during streaming",async()=>{
+  const draft="print *, 'keep this'";
+  const p=page({drafts:{"rfortran.web.source":draft},confirmResult:false,fetchImpl:async()=>new Response("end")});
+  await loadUrl(p);
+  assert.equal(p.confirmations.length,1);
+  assert.equal(p.get("source").value,draft);
+  assert.match(p.get("url-error").textContent,/edited source was kept/);
+  for(const cancel of ["url-cancel","escape"]) {
+    const pending=page({fetchImpl:(_url,{signal})=>new Promise((_resolve,reject)=>{
+      signal.addEventListener("abort",()=>reject(Error("aborted")),{once:true});
+    })});
+    const original=pending.get("source").value;
+    const task=loadUrl(pending);
+    assert.ok(pending.get("run").disabled);assert.ok(pending.get("open-file").disabled);
+    if(cancel==="escape") pending.get("url-dialog").emit("cancel");
+    else pending.get("url-cancel").click();
+    await task;
+    assert.ok(pending.requests[0][1].signal.aborted);
+    assert.equal(pending.get("source").value,original);
+    assert.equal(pending.get("run").disabled,false);
+    assert.equal(pending.get("url-error").textContent,"");
+  }
+  let started,signal;
+  const reading=new Promise(resolve=>{started=resolve;});
+  const streaming=page({fetchImpl:async(_url,options)=>{
+    signal=options.signal;
+    return new Response(new ReadableStream({start(controller){
+      signal.addEventListener("abort",()=>controller.error(Error("aborted")),{once:true});
+      started();
+    }}));
+  }});
+  const task=loadUrl(streaming);
+  await reading;
+  streaming.get("url-cancel").click();
+  await task;
+  assert.ok(signal.aborted);
+  assert.equal(streaming.get("run").disabled,false);
+  assert.equal(streaming.get("url-error").textContent,"");
+});
+
+test("shareable source links load without running and preserve edited drafts",async()=>{
+  const url="https://example.org/shared.f90?a=1&b=2";
+  const search="?source="+encodeURIComponent(url)+"&run=1";
+  const p=page({search,fetchImpl:async()=>new Response("print *, 42\nend\n")});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(p.requests[0][0],url);
+  assert.equal(p.get("source").value,"print *, 42\nend\n");
+  assert.equal(p.workers.length,0);
+  const saved=page({search,drafts:{"rfortran.web.source":"edited draft"},confirmResult:false,fetchImpl:async()=>new Response("end")});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(saved.get("source").value,"edited draft");
+  assert.equal(saved.confirmations.length,1);
+  const invalid=page({search:"?source="+encodeURIComponent("javascript:alert(1)")});
+  assert.equal(invalid.requests.length,0);
+  assert.match(invalid.get("url-error").textContent,/HTTP or HTTPS/);
+});
+
 async function selectFile(p,file) {
   p.get("source-file").files=file ? [file] : [];
   p.get("source-file").value="fake-path";

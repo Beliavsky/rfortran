@@ -11,7 +11,8 @@ let worker = null;
 let timer = null;
 let lastRun = null;
 let busy = false;
-let loadingFile = false;
+let loadingSource = false;
+let urlAbort = null;
 let programBaseline = examples.hello;
 let programFilename = readDraft("rfortran.web.filename", "program.f90");
 let programSource = examples.hello;
@@ -25,7 +26,11 @@ let replayNeedsCorrection = false;
 let blockEnds = [];
 const isRepl = () => byId("mode").value === "repl";
 function updateSourceControls() {
-  const locked = busy || loadingFile;
+  const locked = busy || loadingSource;
+  byId("open-source").hidden = isRepl();
+  byId("open-url").disabled = locked;
+  byId("url-load").disabled = locked;
+  byId("source-url").readOnly = locked;
   byId("open-file").hidden = isRepl();
   byId("open-file").disabled = locked;
   byId("source-file").disabled = locked || isRepl();
@@ -137,8 +142,8 @@ if (editor) {
   });
 } else byId("source").addEventListener("input", sourceChanged);
 // Stream UTF-8 text so an oversized file is rejected before it is fully read.
-async function readSourceFile(file, limit) {
-  const reader = file.stream().getReader();
+async function readSourceStream(stream, limit) {
+  const reader = stream.getReader();
   const decoder = new TextDecoder("utf-8", {fatal:true});
   const chunks = [];
   let length = 0;
@@ -157,44 +162,133 @@ async function readSourceFile(file, limit) {
     reader.releaseLock();
   }
 }
+function acceptSource(text, filename, previousStatus) {
+  if (sourceText().trim() && sourceText() !== programBaseline &&
+      !confirm("Replace the edited source with the selected source? Download source first if you want to keep these edits.")) {
+    byId("status").textContent = previousStatus;
+    return false;
+  }
+  programFilename = filename;
+  setSource(text);
+  programBaseline = sourceText();
+  sourceChanged();
+  lastRun = null;
+  byId("output").textContent = "";
+  byId("errors").textContent = "";
+  byId("status").textContent = `Loaded ${programFilename}`;
+  return true;
+}
+function sourceUrl(value) {
+  let url;
+  try { url = new URL(value); } catch { throw new Error("Enter a complete HTTP or HTTPS source URL."); }
+  if (!["https:", "http:"].includes(url.protocol) || url.username || url.password)
+    throw new Error("Use an HTTP or HTTPS source URL without embedded credentials.");
+  return url;
+}
+function urlFilename(url) {
+  try { return decodeURIComponent(url.pathname.split("/").pop()) || "program.f90"; }
+  catch { return "program.f90"; }
+}
+async function loadSourceUrl() {
+  if (busy || loadingSource || isRepl()) return;
+  byId("url-error").textContent = "";
+  let url;
+  try {
+    url = sourceUrl(byId("source-url").value.trim());
+    if (!validLimit(byId("source-limit").value, Number.MAX_SAFE_INTEGER))
+      throw new Error("Source limit must be a nonnegative whole number (0 means no limit).");
+  } catch (error) {
+    byId("url-error").textContent = error.message;
+    return;
+  }
+  const limit = Number(byId("source-limit").value);
+  const controller = urlAbort = new AbortController();
+  const previousStatus = byId("status").textContent;
+  loadingSource = true;
+  updateSourceControls();
+  byId("status").textContent = "Loading source URL...";
+  byId("url-load").textContent = "Loading...";
+  try {
+    let response;
+    try {
+      response = await fetch(url.href, {signal:controller.signal, mode:"cors", credentials:"omit", referrerPolicy:"no-referrer"});
+    } catch (error) {
+      if (controller.signal.aborted) throw error;
+      throw new Error("Could not fetch the source URL. The host may block browser requests (CORS), or the network/URL may be unavailable. Download the file and use Open source > Open file instead.");
+    }
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error(`Source request failed: HTTP ${response.status}.`);
+    }
+    if (/^(text\/html|application\/xhtml\+xml)\b/i.test(response.headers.get("content-type") || "")) {
+      await response.body?.cancel();
+      throw new Error("The URL returned HTML. Use a raw/plain-text source URL; for a GitHub file, choose Raw.");
+    }
+    const text = response.body ? await readSourceStream(response.body, limit) : "";
+    if (controller.signal.aborted) {
+      byId("status").textContent = previousStatus;
+      return;
+    }
+    if (acceptSource(text, urlFilename(url), previousStatus)) byId("url-dialog").close();
+    else byId("url-error").textContent = "Loading cancelled; the edited source was kept.";
+  } catch (error) {
+    if (controller.signal.aborted) byId("status").textContent = previousStatus;
+    else {
+      byId("url-error").textContent = `Unable to load source: ${error.message || String(error)}`;
+      byId("status").textContent = "Unable to load URL";
+    }
+  } finally {
+    urlAbort = null;
+    loadingSource = false;
+    byId("url-load").textContent = "Load source";
+    updateSourceControls();
+  }
+}
+byId("open-url").addEventListener("click", () => {
+  if (busy || loadingSource || isRepl()) return;
+  byId("open-source").open = false;
+  byId("url-error").textContent = "";
+  byId("url-dialog").showModal();
+  byId("source-url").focus();
+});
+byId("url-form").addEventListener("submit", event => {
+  event.preventDefault();
+  return loadSourceUrl();
+});
+byId("url-cancel").addEventListener("click", () => {
+  urlAbort?.abort();
+  byId("url-dialog").close();
+});
+byId("url-dialog").addEventListener("cancel", () => urlAbort?.abort());
 byId("open-file").addEventListener("click", () => {
-  if (!busy && !loadingFile && !isRepl()) byId("source-file").click();
+  if (!busy && !loadingSource && !isRepl()) {
+    byId("open-source").open = false;
+    byId("source-file").click();
+  }
 });
 byId("source-file").addEventListener("change", async () => {
   const input = byId("source-file");
   const file = input.files?.[0];
   input.value = ""; // Selecting the same file again must fire change.
-  if (!file || busy || loadingFile || isRepl()) return;
+  if (!file || busy || loadingSource || isRepl()) return;
   if (!validLimit(byId("source-limit").value, Number.MAX_SAFE_INTEGER)) {
     appendText("errors", "Source limit must be a nonnegative whole number (0 means no limit).");
     byId("source-limit").focus();
     return;
   }
   const limit = Number(byId("source-limit").value);
-  loadingFile = true;
+  loadingSource = true;
   updateSourceControls();
   const previousStatus = byId("status").textContent;
   byId("status").textContent = "Reading local file...";
   try {
-    const text = await readSourceFile(file, limit);
-    if (sourceText().trim() && sourceText() !== programBaseline &&
-        !confirm("Replace the edited source with the selected file? Download source first if you want to keep these edits.")) {
-      byId("status").textContent = previousStatus;
-      return;
-    }
-    programFilename = file.name;
-    setSource(text);
-    programBaseline = sourceText();
-    sourceChanged();
-    lastRun = null;
-    byId("output").textContent = "";
-    byId("errors").textContent = "";
-    byId("status").textContent = `Loaded ${programFilename}`;
+    const text = await readSourceStream(file.stream(), limit);
+    acceptSource(text, file.name, previousStatus);
   } catch (error) {
     appendText("errors", `Unable to open ${file.name}: ${error instanceof Error ? error.message : String(error)}`);
     byId("status").textContent = "Unable to open file";
   } finally {
-    loadingFile = false;
+    loadingSource = false;
     updateSourceControls();
   }
 });
@@ -243,7 +337,7 @@ byId("example").addEventListener("change", event => {
   saveDraft("rfortran.web.stdin", byId("stdin").value);
 });
 byId("run").addEventListener("click", () => {
-  if (busy || loadingFile) return;
+  if (busy || loadingSource) return;
   if (isRepl()) {
     if (!confirm("Restart the interpreter and run the source from the beginning? Current values will be discarded. Random-number calls and file writes will run again.")) return;
     byId("output").textContent = "";
@@ -321,7 +415,7 @@ byId("download").addEventListener("click", () => {
 });
 
 function send(payload) {
-  if (busy || loadingFile) return;
+  if (busy || loadingSource) return;
   for (const [id, , max] of limitSettings) {
     if (!validLimit(byId(id).value, max)) {
       appendText("errors", `${id === "source-limit" ? "Source" : "Time"} limit must be a whole number from 0 to ${max}.`);
@@ -551,3 +645,11 @@ byId("report-download").addEventListener("click", () => {
 byId("report-close").addEventListener("click", () => byId("report-dialog").close());
 
 updateSourceControls();
+
+// Shared links load source only; they never start the interpreter.
+const linkedSource = new URLSearchParams(window.location?.search || "").get("source");
+if (linkedSource) {
+  byId("source-url").value = linkedSource;
+  byId("open-url").click();
+  void loadSourceUrl();
+}

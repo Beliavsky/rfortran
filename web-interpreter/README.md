@@ -15,6 +15,30 @@ the REPL adds an indented line; pasted source is indented in the main editor.
 Enter still submits the REPL command. There is no
 indentation setting to configure.
 
+## Open source and share examples
+
+In Program mode, **Open source** offers **Open file...** and **Load from URL...**.
+The latter fetches a complete HTTP/HTTPS raw/plain-text source URL directly from
+the browser; it uses no proxy or execution server. The host must permit CORS.
+For GitHub files, copy the **Raw** URL rather than the HTML file-view page.
+HTTP failures, HTML pages, decoding errors and network/CORS failures leave the
+current editor intact. Cancel (or Escape) aborts an outstanding URL request.
+
+Both loaders enforce the configured source-character limit while streaming,
+ask before replacing edited code, retain the filename for downloads, and fill
+the editor without running the program. A source limit of 0 permits unlimited
+source length, subject to browser resources. Source files are decoded as UTF-8.
+
+A shareable link uses `?source=` followed by a URL-encoded source URL, for example:
+
+```text
+https://beliavsky.github.io/rfortran/?source=https%3A%2F%2Fraw.githubusercontent.com%2FBeliavsky%2Frfortran%2Fmain%2Ftools%2Freleases%2Fexamples%2Fhello.f90
+```
+
+Opening such a link loads the source into Program mode without executing it.
+Existing edited drafts still require replacement confirmation. Downloads from
+external hosts omit credentials and the playground's referrer.
+
 ## Build and run locally
 
 From the repository root, with Rust, Python and Node.js 22 or later installed:
@@ -82,7 +106,7 @@ filesystem using the MIT-licensed browser_wasi_shim. Each operation starts a
 fresh WASI instance, allowing real Rust STOP/error exits without closing the
 page. A successful REPL response commits its snapshot. Program virtual files
 are discarded after execution; they cannot access the user's disk. Runtime
-virtual-file import/export is not exposed. **Open Fortran file…** in Program
+virtual-file import/export is not exposed. **Open source > Open file...** in Program
 mode reads one user-selected UTF-8 source file locally into the editor, without
 uploading it. It checks the configured source-character limit while reading,
 asks before replacing edited source, and preserves the filename for Download

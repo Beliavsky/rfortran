@@ -44,8 +44,8 @@ dialog h2 { margin:0 0 16px; font-size:18px; color:var(--ink); text-transform:no
 dialog p { font-size:13px; line-height:1.7; }
 dialog .privacy-warning { padding:12px; background:#fff0dc; color:#8a411f; border-radius:6px; }
 dialog label { display:block; font-size:13px; margin:15px 0 8px; }
-dialog input[type=text], dialog textarea { width:100%; border:1px solid var(--line); border-radius:6px; background:white; padding:12px; color:var(--ink); }
-dialog input[type=text] { font:inherit; }
+dialog input[type=text], dialog input[type=url], dialog textarea { width:100%; border:1px solid var(--line); border-radius:6px; background:white; padding:12px; color:var(--ink); }
+dialog input[type=text], dialog input[type=url] { font:inherit; }
 dialog textarea { font-size:12px; line-height:1.6; }
 .report-actions { display:flex; flex-wrap:wrap; gap:10px; }
 @media(max-width:760px) { .editor-panel .CodeMirror { height:330px; } }
@@ -85,3 +85,8 @@ body.focus-mode.repl-mode .editor-panel .CodeMirror { height:max(300px,calc(100d
 .limit-controls span { color:var(--muted); }
 
 #source-description { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.source-menu { position:relative; }
+.source-menu summary { cursor:pointer; border:1px solid var(--line); border-radius:6px; padding:12px 16px; font:inherit; font-size:13px; background:#ffffff99; }
+.source-menu-options { position:absolute; z-index:10; top:calc(100% + 6px); left:0; min-width:175px; padding:6px; background:var(--paper); border:1px solid var(--line); border-radius:6px; box-shadow:0 4px 12px #19342d22; }
+.source-menu-options button { display:block; width:100%; text-align:left; margin:0; }
+#url-error { color:#a44331; }
