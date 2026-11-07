@@ -501,6 +501,7 @@ fn check(
             Expr::Call(n, args) if !scope.contains_key(n)
                 && !scope.contains_key(&format!("@parallel_dummy:{n}")) && calls::check(n, args)? => {
                 for arg in args {
+                    if crate::named_arguments::omitted(arg) {continue;}
                     expr(
                         crate::named_arguments::keyword(arg)
                             .map(|(_, v)| v)

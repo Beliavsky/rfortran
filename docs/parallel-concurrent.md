@@ -312,6 +312,23 @@ array allocation between loops are observed by the next dispatch. Recursive,
 unavailable, ELEMENTAL-with-captures, COMPLEX-valued captures in callees, BIND(C),
 and unproved call chains retain their original calls and conservative serial fallback.
 
+Numeric (including COMPLEX) and LOGICAL `OPTIONAL, INTENT(IN)` arguments are
+supported in proved PURE/SIMPLE callees. Scalars and arrays may be supplied,
+omitted, passed by keyword, or forwarded through an acyclic optional call chain.
+Existing presence specialization selects a present/absent procedure variant
+before worker generation; absent dummies are removed and `PRESENT` is folded.
+Read-only optional whole scalar variables are borrowed during scoped expansion, so
+testing presence or bypassing a guarded read does not fetch an undefined value.
+Array bounds and initialization checks remain active. Allocatable actual arrays
+must be allocated; runtime absence inferred from unallocated actuals is not
+implemented by this presence specialization. Optional POINTER/ALLOCATABLE dummies,
+optional outputs, and possible writable aliasing retain serial fallback.
+
+```cmd
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_optional.f90 --run
+python tests\test_concurrent_parallel_optional.py
+```
+
 Writes to host/module storage still use serial execution. A loop with a writable
 dummy and read-only host/module inputs also falls back, since the actual dummy
 could alias that shared storage. POINTER and TARGET inputs remain excluded.
@@ -455,7 +472,8 @@ early RETURN and cleanup. Initialization checks cover INOUT reads and OUT paths
 that leave elements undefined. Fixed/automatic/allocatable workspaces use the
 same limits and allocation checks described for functions above.
 
-OPTIONAL, POINTER, TARGET, derived/CHARACTER arguments, saved local storage,
+OPTIONAL inputs follow the presence-specialization rules above. Optional outputs,
+POINTER, TARGET, derived/CHARACTER arguments, saved local storage,
 writes to host/module storage, procedure dummies, and recursive or unavailable
 callees retain serial fallback. Read-only host/module inputs follow the rules above.
 REDUCE variables retain the existing requirement that they occur in reduction

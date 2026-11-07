@@ -281,6 +281,12 @@ fn expand(body: &mut Vec<Stmt>, routines: &HashMap<String, Routine>, active: &mu
                         let element=matches!(actual,Expr::Index(n,_)|Expr::Call(n,_) if arrays.contains(n));
                         let input = intent == "intent(in)" || !intent.starts_with("intent(") && !matches!(actual, Expr::Ident(_)) && !element;
                         if input {
+                            if let Expr::Ident(actual)=actual {
+                                if routine.body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==param && intent==crate::optional::BORROW_INPUT)) {
+                                    names.insert(param.clone(),actual.clone());
+                                    continue;
+                                }
+                            }
                             *serial += 1;
                             let temp = format!("@sub_input_{serial}");
                             prefix.push(Stmt::VarDecl { kind: kind.clone(), names: vec![temp.clone()] });

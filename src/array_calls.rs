@@ -2099,10 +2099,11 @@ fn expand(
                         if shapes.get(a).is_none_or(|(k,d)| *k!=kind || !d.is_empty()) {bail!("type or rank mismatch for TARGET dummy `{p}`");}
                         names.insert(p.clone(),a.clone());
                     } else if intent == "intent(in)" && r.body.iter().any(|s|matches!(s,
-                        Stmt::DummyIntent{name,intent} if name==p && intent==crate::concurrent_reduce::parallel::READONLY_CAPTURE)) {
-                        // Proven read-only module/host inputs are borrowed by
-                        // compiler-generated parallel helpers. Preserve lazy
-                        // reads inside branches and their original init flags.
+                        Stmt::DummyIntent{name,intent} if name==p && (intent==crate::concurrent_reduce::parallel::READONLY_CAPTURE
+                            || intent==crate::optional::BORROW_INPUT && matches!(actual,Expr::Ident(_))))) {
+                        // Borrow proven read-only captures and optional scalar
+                        // variables without an eager value copy. Guarded reads
+                        // retain their original initialization flags.
                         let Expr::Ident(actual)=actual else {bail!("parallel read-only capture requires storage");};
                         names.insert(p.clone(),actual.clone());
                     } else if intent == "intent(in)" {

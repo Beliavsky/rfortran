@@ -108,7 +108,8 @@ pub(super) fn prepare(program: &Program) {
                 && (n.starts_with("@parallel_capture_") || defs[0]
                     .body
                     .iter()
-                    .any(|s| matches!(s, Stmt::ArrayDecl { .. })))
+                    .any(|s| matches!(s, Stmt::ArrayDecl { .. })
+                        || matches!(s,Stmt::DummyIntent{intent,..} if intent=="optional")))
         })
         .map(|(n, _)| n.clone())
         .collect::<HashSet<_>>();
@@ -196,6 +197,7 @@ fn validate(
             .any(|a| !matches!(a.as_str(), "parameter" | "in" | "intent(in)" | "value" | "@parallel_readonly_capture")
                 && !(owned_array(f,n) && a == "allocatable")
                 && !(captured_array(f,n) && a == "allocatable")
+                && !(a == "optional" && f.params.contains(n) && o.attrs.contains("intent(in)"))
                 && !(f.subroutine && f.params.contains(n) && matches!(a.as_str(),"intent(out)"|"intent(inout)")))
         {
             bail!("unsupported or saved storage `{n}`");
@@ -263,6 +265,18 @@ fn validate(
             }
             Expr::Un(_, a) => expr(a, f, approved)?,
             Expr::Call(n, args) => {
+                if n == "present" && parallel::unshadowed(n) {
+                    let slots=crate::named_arguments::intrinsic(n).unwrap().associate(n,args)?;
+                    let arg=&args[slots[0].unwrap()];
+                    let arg=crate::named_arguments::keyword(arg).map(|(_,v)|v).unwrap_or(arg);
+                    if !matches!(arg,Expr::Ident(p) if f.params.contains(p)
+                        && f.scope.get(p).is_some_and(|o|o.attrs.contains("optional"))) {
+                        bail!("PRESENT requires an OPTIONAL dummy argument");
+                    }
+                    // Presence is specialized before worker outlining. It
+                    // queries association, without reading the argument value.
+                    return Ok(());
+                }
                 if let Some(signature) = approved.get(n).filter(|_|!is_subroutine(n)) {
                     signature.associate(n, args)?;
                 } else if !(parallel::intrinsic(n) || array_intrinsic(n)
@@ -277,6 +291,7 @@ fn validate(
                     crate::named_arguments::intrinsic(n).unwrap().associate(n,args)?;
                 }
                 for a in args {
+                    if crate::named_arguments::omitted(a) {continue;}
                     expr(
                         crate::named_arguments::keyword(a)
                             .map(|(_, v)| v)
@@ -337,6 +352,8 @@ fn validate(
                         || intent == parallel::WORKSPACE
                         || owned_array(f,name) && intent == "allocatable"
                         || captured_array(f,name) && intent == "allocatable"
+                        || intent == "optional" && f.params.contains(name)
+                            && f.scope.get(name).is_some_and(|o|o.attrs.contains("intent(in)"))
                         || f.subroutine && f.params.contains(name) && matches!(intent.as_str(),"intent(out)"|"intent(inout)")
                         || matches!(
                             intent.as_str(),
@@ -476,12 +493,10 @@ fn argument_rank(e:&Expr,scope:&Scope)->Option<usize> {
     }
 }
 fn associate_subroutine(name:&str,args:&[Expr],signature:&crate::named_arguments::Signature,scope:&Scope)->Result<Vec<(Expr,bool)>> {
-    let actuals=signature.associate(name,args)?.into_iter().map(|i| {
-        let i=i.context("parallel subroutines require every argument")?;
-        Ok(crate::named_arguments::keyword(&args[i]).map(|(_,e)|e).unwrap_or(&args[i]).clone())
-    }).collect::<Result<Vec<_>>>()?;
     let outputs=SUBROUTINES.with(|s|s.borrow()[name].clone());
-    let associated=actuals.into_iter().zip(outputs).map(|(actual,(output,formal_rank))| {
+    let associated=signature.associate(name,args)?.into_iter().zip(outputs).filter_map(|(i,output)| {
+        i.map(|i|(crate::named_arguments::keyword(&args[i]).map(|(_,e)|e).unwrap_or(&args[i]).clone(),output))
+    }).map(|(actual,(output,formal_rank))| {
         // Sequence association can expose more than the scalar element named
         // at the call site. It needs a region proof beyond the tuple check.
         if argument_rank(&actual,scope).is_some_and(|rank|rank!=formal_rank) {

@@ -271,7 +271,7 @@ end subroutine
 end
 """,'3 9002',reason='procedure dummy',opts=('2',))
 
-    def test_optional_argument_fallback(self):
+    def test_optional_input_argument(self):
         source="""implicit none
 integer::i,a(9000)
 do concurrent(i=1:9000)
@@ -286,7 +286,7 @@ r=i+1
 end subroutine
 end
 """
-        self.build_run(source.replace('ATTR',',optional '),'2 9001',reason='unsupported or saved storage',opts=('2',))
+        self.build_run(source.replace('ATTR',',optional '),'2 9001',opts=('2',))
 
     def test_inout_initialization_and_out_undefined_elements(self):
         source="""implicit none

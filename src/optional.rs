@@ -4,11 +4,14 @@
 
 //! Specialize local OPTIONAL procedures by associated argument presence.
 //! Values remain runtime arguments; no optional-argument descriptor ABI is used.
-use crate::ast::{BinOp, Expr, Program, Stmt, UnOp};
+use crate::ast::{BinOp, Expr, Program, Stmt, TypeSpec, UnOp};
 use anyhow::{bail, Result};
 use std::collections::{HashMap, HashSet};
 
 type Names = HashSet<String>;
+// Association of a read-only optional variable must not fetch its value just
+// to determine presence. Scoped call expansion borrows that storage lazily.
+pub(crate) const BORROW_INPUT: &str = "@optional_input";
 fn optionals(body: &[Stmt]) -> Names {
     body.iter()
         .filter_map(|s| match s {
@@ -141,6 +144,15 @@ impl Specializer {
         body.retain(|s| !matches!(s,Stmt::VarDecl {names,..} if names.is_empty())
             && !matches!(s,Stmt::ArrayDecl {name,..} if missing.contains(name))
             && !matches!(s,Stmt::DummyIntent {name,intent} if missing.contains(name) || intent == "optional"));
+        for param in params.iter().filter(|p|callee_optional.contains(*p)) {
+            let scalar=body.iter().any(|s|matches!(s,Stmt::VarDecl{kind,names} if names.contains(param)
+                && matches!(kind,TypeSpec::Integer(_)|TypeSpec::IntegerKind(_)|TypeSpec::Real|TypeSpec::RealKind(_)
+                    |TypeSpec::DoublePrecision|TypeSpec::Logical|TypeSpec::LogicalKind(_)|TypeSpec::Complex(_))));
+            if scalar && body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==param && intent=="intent(in)"))
+                && !body.iter().any(|s|matches!(s,Stmt::DummyIntent{name,intent} if name==param && intent=="value")) {
+                body.insert(0,Stmt::DummyIntent{name:param.clone(),intent:BORROW_INPUT.into()});
+            }
+        }
         if function {for param in original_reads {body.insert(0,Stmt::DummyIntent{name:param,intent:"@optional_source_read".into()});}}
         let result = match &template {
             Stmt::Function { body, .. } => Some(match body.last() {
