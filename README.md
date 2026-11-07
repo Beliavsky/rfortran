@@ -22,6 +22,7 @@ native compilation, interpretation (`rfort run file.f90`) and the REPL (`rfort r
 Performance varies by workload, and some larger programs compile slowly. See
 [performance results versus gfortran](benchmarks/RESULTS.md) for execution and
 compilation measurements, known slow cases, and reproduction commands.
+For multicore scaling, see the [parallel DO CONCURRENT benchmark suite](benchmarks/parallel/README.md).
 
 Development is focused on compiling small programs correctly and extending
 coverage through local regressions and cases from the external ofort test suite.

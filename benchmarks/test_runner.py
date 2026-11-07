@@ -85,10 +85,12 @@ class RunnerTests(unittest.TestCase):
 
     def test_subprocess_errors_and_timeouts_are_distinct(self):
         with tempfile.TemporaryDirectory() as tmp:
-            result = runner.invoke([sys.executable,'-c','raise SystemExit(2)'],Path(tmp),5,{})
+            # Test process handling independently of installed site/.pth hooks
+            # (which can load certificate/network packages on Python startup).
+            result = runner.invoke([sys.executable,'-S','-c','raise SystemExit(2)'],Path(tmp),5,{})
             self.assertEqual(result['returncode'],2)
             self.assertFalse(result['timeout'])
-            result = runner.invoke([sys.executable,'-c','import time; time.sleep(2)'],Path(tmp),.1,{})
+            result = runner.invoke([sys.executable,'-S','-c','import time; time.sleep(2)'],Path(tmp),.1,{})
             self.assertTrue(result['timeout'])
             result = runner.invoke([str(Path(tmp)/'missing.exe')],Path(tmp),5,{})
             self.assertIsNone(result['returncode'])

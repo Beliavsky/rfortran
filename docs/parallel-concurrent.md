@@ -490,6 +490,11 @@ execution is left to those CI runners.
 
 ## Initial Windows timing
 
+The [parallel benchmark suite](../benchmarks/parallel/README.md) compares serial
+builds with one-, two-, and four-thread parallel execution across seven kernels
+and several sizes, with correctness checks and separate worker-dispatch probes.
+Use it for repeatable measurements beyond the illustrative timing below.
+
 On an Intel Core i7-1185G7 (four cores, eight logical processors),
 [`xconcurrent_parallel_math.f90`](../tests/programs/xconcurrent_parallel_math.f90)
 produced the following whole-program wall times. The native code used `-O2`

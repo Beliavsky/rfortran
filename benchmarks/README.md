@@ -2,6 +2,13 @@
 
 See [published performance results](RESULTS.md) for dated comparisons with gfortran.
 
+For serial versus native `DO CONCURRENT` thread scaling, use the separate
+[parallel benchmark suite](parallel/README.md):
+
+```cmd
+python benchmarks\run_parallel.py --size small medium --runs 3 --warmups 1
+```
+
 This independent suite measures correctness, kernel execution time, process wall
 time, and compilation time. It uses existing compiler executables and never runs
 Cargo or modifies compiler source files. The twelve Fortran kernels are original
