@@ -99,6 +99,17 @@ fn check(name: &str, index: Option<&Expr>, env: &Env, out: &mut Vec<Stmt>, seria
         }
         State::Yes => {}
         State::Maybe => {
+            // A generated initialization mask may be accessed through a raw
+            // module/borrowed view. Validate the physical index before loading
+            // that flag, rather than diagnosing arbitrary memory as undefined
+            // before the actual data access gets its ordinary bounds check.
+            if let (Some(n), Some(index)) = (v.extent, index) {
+                let outside=Expr::Bin(crate::ast::BinOp::Or,
+                    Box::new(Expr::Bin(crate::ast::BinOp::Lt,Box::new(index.clone()),Box::new(int(1)))),
+                    Box::new(Expr::Bin(crate::ast::BinOp::Gt,Box::new(index.clone()),Box::new(v.heap_length.clone().unwrap_or_else(||int(n))))));
+                out.push(Stmt::If{cond:outside,then_body:vec![Stmt::CallSub{name:"@error_stop".into(),
+                    args:vec![Expr::Str("array subscript outside bounds".into())]}],else_body:None});
+            }
             if let (Some(n), None) = (v.extent, index) {
                 *serial += 1;
                 let idx = format!("@init_scan_{serial}");

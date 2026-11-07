@@ -34,6 +34,11 @@ fn owned_array(f: &Procedure, name: &str) -> bool {
             && !o.derived && scalar(&o.kind) && o.attrs.contains("allocatable")
             && !o.attrs.iter().any(|a|matches!(a.as_str(),"pointer"|"target"|"save")))
 }
+fn captured_array(f: &Procedure, name: &str) -> bool {
+    f.params.iter().any(|p|p==name) && f.scope.get(name).is_some_and(|o|
+        !o.dims.is_empty() && o.attrs.contains(parallel::READONLY_CAPTURE)
+        && o.attrs.contains("intent(in)") && o.attrs.contains("allocatable"))
+}
 pub(super) fn prepare(program: &Program) {
     fn collect(body: &[Stmt], parent: &Scope, out: &mut HashMap<String, Vec<Procedure>>) {
         let scope = declarations(body, parent);
@@ -69,7 +74,7 @@ pub(super) fn prepare(program: &Program) {
         }
     }
     let mut functions = HashMap::new();
-    collect(&program.body, &module_constants(program), &mut functions);
+    collect(&program.body, &module_objects(program), &mut functions);
     SUBROUTINES.with(|s| *s.borrow_mut()=functions.iter().filter_map(|(n,defs)| {
         let f=&defs[0];f.subroutine.then(||(n.clone(),f.params.iter().map(|p|f.scope.get(p).map_or((false,0),|o|(writable(o),o.dims.len()))).collect()))
     }).collect());
@@ -100,10 +105,10 @@ pub(super) fn prepare(program: &Program) {
         .iter()
         .filter(|(n, defs)| {
             approved.contains_key(*n)
-                && defs[0]
+                && (n.starts_with("@parallel_capture_") || defs[0]
                     .body
                     .iter()
-                    .any(|s| matches!(s, Stmt::ArrayDecl { .. }))
+                    .any(|s| matches!(s, Stmt::ArrayDecl { .. })))
         })
         .map(|(n, _)| n.clone())
         .collect::<HashSet<_>>();
@@ -188,8 +193,9 @@ fn validate(
         }
         if o.attrs
             .iter()
-            .any(|a| !matches!(a.as_str(), "parameter" | "in" | "intent(in)" | "value")
+            .any(|a| !matches!(a.as_str(), "parameter" | "in" | "intent(in)" | "value" | "@parallel_readonly_capture")
                 && !(owned_array(f,n) && a == "allocatable")
+                && !(captured_array(f,n) && a == "allocatable")
                 && !(f.subroutine && f.params.contains(n) && matches!(a.as_str(),"intent(out)"|"intent(inout)")))
         {
             bail!("unsupported or saved storage `{n}`");
@@ -263,7 +269,7 @@ fn validate(
                     || n == "allocated" && parallel::unshadowed(n)
                         && matches!(args.as_slice(), [arg] if matches!(
                             crate::named_arguments::keyword(arg).map(|(_,v)|v).unwrap_or(arg),
-                            Expr::Ident(r) if owned_array(f,r)))) || f.scope.contains_key(n)
+                            Expr::Ident(r) if owned_array(f,r) || captured_array(f,r)))) || f.scope.contains_key(n)
                 {
                     bail!("callee `{n}` is not a proven PURE function");
                 }
@@ -327,8 +333,10 @@ fn validate(
                 }
                 Stmt::DummyIntent { name, intent }
                     if matches!(intent.as_str(), "@simple" | "@module_host")
+                        || intent == parallel::READONLY_CAPTURE
                         || intent == parallel::WORKSPACE
                         || owned_array(f,name) && intent == "allocatable"
+                        || captured_array(f,name) && intent == "allocatable"
                         || f.subroutine && f.params.contains(name) && matches!(intent.as_str(),"intent(out)"|"intent(inout)")
                         || matches!(
                             intent.as_str(),

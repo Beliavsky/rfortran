@@ -297,15 +297,36 @@ iterations. Tests cover ranks one, two, and fifteen. Assumed-shape dummies curre
 require default lower bounds; actual arrays may have nondefault lower bounds.
 Scalar expressions, keyword arguments, local loops,
 branches, early returns, and acyclic chains of supported functions are accepted.
-Named constants, including module constants and named numeric kinds, can be used;
-mutable module/host storage is excluded from this initial subset.
+Named constants, including module constants and named numeric kinds, can be used.
+INTEGER, REAL and LOGICAL host/module variables can also be read when the loop and
+its proven call chain leave them unchanged. Scalar captures are copied into
+worker storage at dispatch; array data is shared read-only. This includes
+fixed-size and allocatable module arrays, with bounds and allocation status
+preserved, and host variables promoted to module storage by the compiler.
+
+Supported PURE callees receive these inputs through private helper copies with
+explicit read-only arguments; the original procedure interfaces stay unchanged.
+Helpers are inlined before worker generation so a guarded read retains its
+original initialization checks inside the branch. Changes to shared values and
+array allocation between loops are observed by the next dispatch. Recursive,
+unavailable, ELEMENTAL-with-captures, COMPLEX-valued captures in callees, BIND(C),
+and unproved call chains retain their original calls and conservative serial fallback.
+
+Writes to host/module storage still use serial execution. A loop with a writable
+dummy and read-only host/module inputs also falls back, since the actual dummy
+could alias that shared storage. POINTER and TARGET inputs remain excluded.
+Run `python tests/test_concurrent_parallel_captures.py` for these cases.
+
+```cmd
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_captures.f90 --run
+```
 
 The source analysis checks the whole call chain. A second check examines the
 native functions after specialization and lowering: scalar storage must be local
 to the call, and generated helpers must also be proved thread-safe. The existing
 native scalar calling convention supplies per-call stack storage for arguments,
 results, and local initialization flags. Runtime initialization checks remain
-active. Scalar-only functions use native calls. Array-taking functions reuse the
+active. Scalar-only functions without captures use native calls. Array-taking functions reuse the
 compiler's existing call-site specialization before the loop is outlined. Their
 generated scalar temporaries, section buffers, descriptors, and initialization
 masks are private to workers. Array inputs must be read-only throughout the loop;
@@ -434,8 +455,9 @@ early RETURN and cleanup. Initialization checks cover INOUT reads and OUT paths
 that leave elements undefined. Fixed/automatic/allocatable workspaces use the
 same limits and allocation checks described for functions above.
 
-OPTIONAL, POINTER, TARGET, derived/CHARACTER arguments, saved or mutable
-host/module storage, procedure dummies, and recursive or unavailable callees retain serial fallback.
+OPTIONAL, POINTER, TARGET, derived/CHARACTER arguments, saved local storage,
+writes to host/module storage, procedure dummies, and recursive or unavailable
+callees retain serial fallback. Read-only host/module inputs follow the rules above.
 REDUCE variables retain the existing requirement that they occur in reduction
 assignments; passing them through a subroutine is not yet accepted.
 
@@ -471,8 +493,9 @@ existing argument specialization. The workers use that established argument
 mapping and its bounds and initialization checks. Scalar LOCAL/LOCAL_INIT and
 REDUCE may be combined with these array arguments.
 
-POINTER, TARGET, OPTIONAL, missing INTENT, captured host/module state, and saved
-local storage retain conservative serial fallbacks. These checks are not a
+POINTER, TARGET, OPTIONAL, missing INTENT, writes to captured host/module state,
+possible aliasing of writable dummies with that state, and saved local storage
+retain conservative serial fallbacks. These checks are not a
 complete validator of Fortran argument aliasing rules: callers must still obey
 those rules, particularly when one dummy argument is modified. Calls to supported
 scalar PURE/SIMPLE functions inside the concurrent body use the checks above;

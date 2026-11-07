@@ -3,6 +3,7 @@
 use super::*;
 pub(crate) const SUBROUTINE: &str = "@parallel_subroutine";
 pub(crate) const WORKSPACE: &str = "@parallel_function_workspace";
+pub(crate) const READONLY_CAPTURE: &str = "@parallel_readonly_capture";
 pub(super) fn mark_workspaces(program: &mut Program) {
     fn mark(body: &mut [Stmt]) {
         for s in body {
@@ -307,22 +308,41 @@ fn check(
     }
     let mut written = HashMap::new();
     writes(body, &locals, &mut written, &indices, scope)?;
+    // Shared storage keeps its ordinary Fortran identity. Only read-only
+    // captures are admitted, including hidden inputs made explicit by captures.
+    let nonlocal = |n: &str| scope.get(n).is_some_and(|o|
+        !o.attrs.contains("parameter") && (n.starts_with("@module$") || o.attrs.contains("@parallel_host")));
+    if written.keys().chain(locals.iter()).any(|n| nonlocal(n)) {
+        bail!("writes to host or module storage require serial execution");
+    }
+    let writable_dummy = written.keys().chain(locals.iter()).any(|n| scope.contains_key(&format!("@parallel_dummy:{n}")));
+    if writable_dummy {
+        fn reads_host(body: &[Stmt], nonlocal: &impl Fn(&str)->bool) -> bool {
+            body.iter().any(|s| {
+                let mut s=s.clone(); let mut found=false;
+                for e in expressions(&mut s) { visit_expr(e,&mut |e| {
+                    if let Expr::Ident(n)|Expr::Index(n,_)|Expr::Call(n,_)|Expr::Section{name:n,..}=e {
+                        found |= nonlocal(n);
+                    }
+                }); }
+                found || children(&mut s).into_iter().any(|b| reads_host(b,nonlocal))
+            })
+        }
+        let headers=vec![Stmt::Print{items:std::iter::once(mask.clone()).chain(controls.iter().cloned()).chain(clauses.iter().cloned()).collect()}];
+        if reads_host(body,&nonlocal) || reads_host(&headers,&nonlocal) {
+            bail!("writable dummy may alias read-only host or module storage");
+        }
+    }
     if written.is_empty() && !reductions {
         bail!("no independent array output");
     }
     fn expr(e: &Expr, scope: &Scope, written: &HashMap<String, Vec<Expr>>) -> Result<()> {
         fn object(n: &str, scope: &Scope) -> Result<()> {
-            if scope.contains_key("@parallel_procedure") && n.starts_with("@module$") {
-                bail!("procedure captures of host or module state require further alias analysis");
-            }
             let o = scope
                 .get(n)
                 .with_context(|| format!("capture `{n}` requires an explicit declaration"))?;
             let procedure = scope.contains_key("@parallel_procedure");
             let dummy = scope.contains_key(&format!("@parallel_dummy:{n}"));
-            if procedure && o.attrs.contains("@parallel_host") && !o.attrs.contains("parameter") {
-                bail!("procedure captures of host or module state require further alias analysis");
-            }
             if dummy
                 && !o.attrs.iter().any(|a| {
                     matches!(
@@ -333,7 +353,7 @@ fn check(
             {
                 bail!("procedure captures require explicit INTENT on dummy `{n}`");
             }
-            if procedure && o.attrs.contains("save") && !o.attrs.contains("parameter") {
+            if procedure && o.attrs.contains("save") && !o.attrs.contains("parameter") && !n.starts_with("@module$") {
                 bail!("procedure captures of SAVE storage are not yet supported");
             }
             let constants = scope
@@ -372,8 +392,9 @@ fn check(
             }
             if o.attrs.iter().any(|a| {
                 !matches!(a.as_str(), "parameter" | "save")
+                    && !(n.starts_with("@module$") && matches!(a.as_str(),"@module_initializer"|"@module_host"|"@procedure_reference"|"public"|"private"))
                     && !(a == "allocatable" && !o.dims.is_empty())
-                    && !(a == "@parallel_host" && o.attrs.contains("parameter"))
+                    && a != "@parallel_host"
                     && !(dummy
                         && matches!(
                             a.as_str(),
@@ -383,6 +404,7 @@ fn check(
                                 | "intent(out)"
                                 | "intent(inout)"
                                 | "contiguous"
+                                | "@parallel_readonly_capture"
                         ))
             }) {
                 bail!("capture `{n}` has unsupported attributes");

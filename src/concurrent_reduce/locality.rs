@@ -108,6 +108,14 @@ fn default_none(body: &[Stmt], scope: &Scope, allowed: &HashSet<String>) -> Resu
         }
         let mut error = None;
         for e in expressions(&mut s) {
+            // Hidden inputs preserve reads inside an accessible PURE callee;
+            // they are not source references subject to this loop's locality
+            // list. Do not require users to name private/USE-excluded data.
+            visit_expr(e, &mut |e| {
+                if matches!(e,Expr::Call(tag,_) if tag.starts_with("@keyword:@parallel_read_")) {
+                    *e=int(0);
+                }
+            });
             visit_expr(e, &mut |e| {
                 if let Expr::Ident(n) = &*e {
                     let root = n.split('%').next().unwrap_or(n);

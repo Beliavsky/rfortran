@@ -1385,7 +1385,7 @@ print *,a(1),a(9000)
 end
 """,'5 9004')
 
-    def test_pure_call_module_variable_fallback(self):
+    def test_pure_call_module_variable(self):
         self.build_run("""module m
 implicit none
 integer::offset=4
@@ -1404,9 +1404,9 @@ a(i)=f(i)
 end do
 print *,a(1),a(9000)
 end
-""",'5 9004',reason='nonlocal reference')
+""",'5 9004')
 
-    def test_pure_call_transitive_state_fallback(self):
+    def test_pure_call_transitive_readonly_state(self):
         self.build_run("""module m
 implicit none
 integer::offset=4
@@ -1429,7 +1429,7 @@ a(i)=f(i)
 end do
 print *,a(1),a(9000)
 end
-""",'5 9004',reason='not a proven PURE function')
+""",'5 9004')
 
     def test_pure_call_recursion_fallback(self):
         self.build_run("""implicit none
@@ -3052,7 +3052,7 @@ end
         source=source.replace('integer :: n','integer :: n\nreal :: factor')
         source=source.replace('x=4.0','x=4.0\nfactor=2.0')
         source=source.replace('sqrt(x(i))','factor*sqrt(x(i))').replace(' default(none)','')
-        self.build_run(source,'4.0 4.0',reason='host or module state',opts=('2',))
+        self.build_run(source,'4.0 4.0',reason='writable dummy may alias',opts=('2',))
 
     def test_procedure_fixed_actual_and_locality(self):
         source=(ROOT/'tests/programs/xconcurrent_parallel_dummy.f90').read_text()
