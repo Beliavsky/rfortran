@@ -80,6 +80,19 @@ Both builds use `-O2` and the same runtime-check settings by default.
 `--checks none` disables rfort's initialization and bounds checks for both.
 These configurations are saved separately; do not combine their ratios.
 
+For performance-sensitive deployed code, first validate it with checks enabled,
+then measure whether disabling them is useful:
+
+```cmd
+rfort -O2 --parallel --nocheck program.f90
+python benchmarks\run_parallel.py --size medium --checks none
+```
+
+`--nocheck` disables initialization and bounds checks; `-O2` keeps them enabled.
+Disabling checks is an explicit choice. Parallel reductions do not require it:
+the compiler avoids checking address-only worker metadata while keeping checks
+on actual data accesses and evaluated view extents.
+
 The parallel build must report a native worker and no serial fallback. Each
 execution configuration gets a separate untimed probe with
 `RFORT_PARALLEL_TRACE=1`. For ranges of at least 4096 iterations, the probe must

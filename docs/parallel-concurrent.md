@@ -118,6 +118,21 @@ explicit captures; scalar captures are private copies and supported arrays share
 storage. Initialization and bounds checks remain enabled unless `--nocheck`
 is requested. A job completes before execution continues after the loop.
 
+Reduction metadata transports storage addresses rather than reading Fortran
+values. Initialization checking therefore does not scan the worker-result
+buffers on every iteration. For example, eight reduction elements reserve
+512 result slots (space for up to 64 workers), so scanning the full result mask once per
+iteration was substantially more work than the reduction itself.
+Actual value reads and evaluated view extents
+retain their checks. In particular, uninitialized reduction inputs and invalid
+subscripts are still diagnosed. Regression coverage is in
+`tests/test_concurrent_parallel_reduction_checks.py`.
+
+For validated performance-sensitive code, `--nocheck` explicitly disables
+initialization and bounds checks. Compare both configurations with the
+[parallel benchmark harness](../benchmarks/parallel/README.md); `-O2` by itself
+preserves checking.
+
 Other constructs use the existing serial lowering. In particular this stage
 does not parallelize unproved procedure calls, allocation of shared storage,
 I/O, outer constructs containing loops, named constructs, derived

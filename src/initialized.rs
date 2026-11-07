@@ -598,8 +598,19 @@ fn flow(body: &mut Vec<Stmt>, env: &mut Env, result: Option<&str>, serial: &mut 
                 terminated=true;
             }
             Stmt::CallSub { name,args } if name=="@parallel_iteration" => {
+                // This marker transports storage addresses, not Fortran values.
+                // Reading the worker result buffer here can otherwise scan all
+                // 64 result slots on every iteration. Real data reads retain
+                // their ordinary checks; taking an address does not define it.
+                // Packed-view extents, however, are evaluated by the outliner.
                 for arg in args.iter() {
-                    if !matches!(arg,Expr::Call(tag,_) if tag=="@parallel_scratch") {read(arg,env,&mut before,serial)?;}
+                    if let Expr::Call(tag, values) = arg {
+                        if tag == "@packed_view" {
+                            for extent in values.iter().skip(1) {
+                                read(extent,env,&mut before,serial)?;
+                            }
+                        }
+                    }
                 }
                 // The native outliner must privatize masks of reduction arrays
                 // and generated arrays declared inside the worker. Metadata is
@@ -946,6 +957,36 @@ mod tests {
         assert!(dump.contains("@parallel_init"),"{dump}");
         assert!(dump.contains("scratch"));
         assert!(!dump.contains("@check_initialized"),"{dump}");
+    }
+    #[test]
+    fn parallel_result_metadata_only_reads_view_extents() {
+        let marker = || super::Stmt::CallSub { name:"@parallel_iteration".into(), args:vec![
+            super::Expr::Ident("active".into()),super::Expr::Ident("flags".into()),
+            super::Expr::Ident("partial".into()),super::Expr::Call("@packed_view".into(),vec![
+                super::Expr::Ident("slots".into()),super::Expr::Ident("n".into())])
+        ]};
+        let source="integer :: active,flags(64),partial(8),slots(512),n\nn=512\nend";
+        let mut p=parse(source);p.body.push(marker());
+        let lowered=super::instrument(p).unwrap();
+        assert!(!format!("{lowered:?}").contains("@check_initialized"));
+        // Address transport must not mark an undefined accumulator as defined.
+        p=parse(source);p.body.push(marker());
+        p.body.push(super::Stmt::Print{items:vec![super::Expr::Index("partial".into(),vec![super::int(1)])]});
+        assert!(super::instrument(p).unwrap_err().to_string().contains("partial"));
+        // The packed length is a genuine value read even though slots is not.
+        p=parse("integer :: active,flags(64),partial(8),slots(512),n\nend");p.body.push(marker());
+        assert!(super::instrument(p).unwrap_err().to_string().contains("`n`"));
+    }
+    #[test]
+    fn parallel_result_metadata_does_not_scan_maybe_defined_buffers() {
+        let mut p=parse("integer :: active,flags(64),partial(8),slots(512),n\nlogical :: condition\nactive=0\nflags=0\npartial=0\nn=512\nread *,condition\nif(condition) slots=0\nend");
+        p.body.push(super::Stmt::CallSub{name:"@parallel_iteration".into(),args:vec![
+            super::Expr::Ident("active".into()),super::Expr::Ident("flags".into()),
+            super::Expr::Ident("partial".into()),super::Expr::Call("@packed_view".into(),vec![
+                super::Expr::Ident("slots".into()),super::Expr::Ident("n".into())])
+        ]});
+        let lowered=super::instrument(p).unwrap();
+        assert!(!format!("{lowered:?}").contains("@init_scan_"));
     }
     #[test]
     fn rejects_definite_unassigned_reads() {
