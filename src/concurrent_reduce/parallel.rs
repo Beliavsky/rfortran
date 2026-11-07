@@ -139,6 +139,10 @@ fn check(
                         let o = scope
                             .get(n)
                             .context("reduction requires an explicit declaration")?;
+                        if matches!(o.kind,TypeSpec::Complex(_))
+                            && !matches!(tag.as_str(), "@reduce:+" | "@reduce:*") {
+                            bail!("COMPLEX REDUCE supports only addition and multiplication");
+                        }
                         if !o.dims.is_empty() {
                             let constants = scope
                                 .iter()
@@ -180,7 +184,10 @@ fn check(
                                 bail!("zero-sized parallel array REDUCE uses serial execution");
                             }
                             reduction_elements = reduction_elements
-                                .checked_add(if dynamic { 0 } else { length })
+                                .checked_add(if dynamic { 0 } else {
+                                    length.checked_mul(if matches!(o.kind, TypeSpec::Complex(_)) { 2 } else { 1 })
+                                        .context("parallel array REDUCE size overflow")?
+                                })
                                 .context("parallel array REDUCE size overflow")?;
                             if reduction_elements > 4096 {
                                 bail!("parallel array REDUCE exceeds private-storage budget (4096 elements across arrays)");
@@ -349,6 +356,7 @@ fn check(
                         | TypeSpec::DoublePrecision
                         | TypeSpec::Logical
                         | TypeSpec::LogicalKind(_)
+                        | TypeSpec::Complex(_)
                 )
             {
                 bail!("capture `{n}` requires an ordinary numeric or LOGICAL type");
@@ -358,6 +366,9 @@ fn check(
             })?;
             if matches!(kind,TypeSpec::Integer(Some(k)) if k>8) {
                 bail!("capture `{n}` requires a supported native scalar kind");
+            }
+            if matches!(&kind,TypeSpec::Complex(k) if !matches!(k.as_str(),"4"|"8")) {
+                bail!("capture `{n}` requires COMPLEX kind 4 or 8");
             }
             if o.attrs.iter().any(|a| {
                 !matches!(a.as_str(), "parameter" | "save")

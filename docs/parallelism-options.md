@@ -164,6 +164,12 @@ is mostly OpenMP, then MPI, with coarrays a distant third.
     The array subset also includes IALL/IANY/IPARITY/PARITY, scaled NORM2 and
     MINLOC/MAXLOC/FINDLOC on supported read-only numeric/logical arrays,
     including runtime DIM results.
+    COMPLEX kinds 4/8 support scalar and fixed/runtime-sized array expressions,
+    scalar LOCAL/LOCAL_INIT, conversions, CONJG/ABS and proved PURE/SIMPLE calls
+    with complex arguments/results and private workspaces. Complex scalar and
+    fixed/runtime-sized array REDUCE supports addition and multiplication,
+    folding paired worker components with complex arithmetic; native checks
+    still operate on lowered real components.
   - **Next:** broader capture analysis, recoverable allocation of other storage types,
     and audits of remaining intrinsic runtime helpers.
     SAVE and module variables retain their Fortran sharing semantics; making

@@ -15,6 +15,7 @@ pub(super) fn scalar(kind: &TypeSpec) -> bool {
             | TypeSpec::DoublePrecision
             | TypeSpec::Logical
             | TypeSpec::LogicalKind(_)
+            | TypeSpec::Complex(_)
     )
 }
 #[derive(Clone)]

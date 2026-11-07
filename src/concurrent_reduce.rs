@@ -477,7 +477,13 @@ fn lower(
                 prefix.push(Stmt::CallSub{name:"@allocate".into(),args:vec![Expr::Call(temporary.clone(),bounds)]});
                 dynamic_arrays.push(temporary.clone());
             }
-            if !object.dims.is_empty() { reduction_counts.push(Expr::Call("size".into(),vec![id(&temporary)])); }
+            if !object.dims.is_empty() {
+                let count = Expr::Call("size".into(),vec![id(&temporary)]);
+                // The native storage budget counts real component cells.
+                reduction_counts.push(if matches!(object.kind, TypeSpec::Complex(_)) {
+                    Expr::mul(Expr::Call("min".into(),vec![count,int(4097)]),int(2))
+                } else { count });
+            }
             prefix.push(set(&temporary, initial));
             suffix.push(set(&n, combine(op, id(&n), id(&temporary))));
             if parallel {

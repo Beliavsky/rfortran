@@ -61,6 +61,8 @@ pub(crate) fn rounding_kind(name:&str,args:&[crate::ast::Expr])->anyhow::Result<
 pub(crate) fn parallel_scalar(name: &str) -> bool {
     matches!(name,
         "sqrt" | "abs" | "int" | "real" | "dble" | "min" | "max"
+        // Complex values become pairs of real components before native outlining.
+        | "cmplx" | "aimag" | "conjg" | "@complex_literal"
         | "mod" | "modulo" | "sign" | "dim" | "dprod"
         | "nint" | "floor" | "ceiling" | "aint" | "anint"
         | "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "atan2"

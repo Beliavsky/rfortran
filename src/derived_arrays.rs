@@ -870,7 +870,9 @@ impl Lower {
                         self.capture_indices(std::slice::from_mut(e.as_mut()), prefix);
                     }
                 }
-                Expr::Call(tag, a) if tag == "@section_subscript" => {
+                // Allocation bounds are a structural pair, not an expression
+                // whose value can be captured in a scalar index temporary.
+                Expr::Call(tag, a) if matches!(tag.as_str(), "@section_subscript" | "@heap_bounds") => {
                     self.capture_indices(a, prefix)
                 }
                 _ => {

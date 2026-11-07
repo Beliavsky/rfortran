@@ -2,6 +2,8 @@ implicit none
 integer :: i,j,a(10000),total,n,stride
 integer :: matrix(100,100),totals(2)
 integer,allocatable :: b(:),runtime_totals(:)
+integer,parameter :: dp=kind(0d0)
+complex(dp) :: complex_total,complex_product
 do concurrent(i=1:10000) shared(a) default(none)
    a(i)=nint(anint(real(i)))
 end do
@@ -51,6 +53,14 @@ end do
 if(any(runtime_totals/=[20007,30007])) stop 9
 deallocate(runtime_totals)
 deallocate(b)
+complex_total=(3d0,4d0)
+complex_product=(2d0,3d0)
+do concurrent(i=1:9001) reduce(+:complex_total) reduce(*:complex_product)
+   complex_total=complex_total+(1d0,-2d0)
+   complex_product=complex_product*(0d0,1d0)
+end do
+if(abs(complex_total-(9004d0,-17998d0))>1d-8) stop 10
+if(abs(complex_product-(-3d0,2d0))>1d-8) stop 11
 print *,sum(a)
 contains
 subroutine fill(x,y)
@@ -65,8 +75,12 @@ end subroutine
 pure subroutine transform_value(x,y)
 integer,intent(in)::x
 integer,intent(out)::y
+integer,parameter::dp=kind(0d0)
+complex(dp)::z
 ! These small integer inputs are represented exactly as REAL.
 y=nint(scale(real(increment(x)),1))/2
+z=conjg(cmplx(dble(x),2d0,kind=kind(0d0)))*(1d0,0d0)
+if(abs(aimag(z)+2d0)>1d-12) y=-100
 end subroutine
 pure integer function increment(x)
 integer,intent(in)::x

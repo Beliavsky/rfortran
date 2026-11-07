@@ -53,6 +53,14 @@ fn complex_kind(t: &TypeSpec) -> Option<u8> {
         None
     }
 }
+
+fn parallel_worker(body: &[Stmt]) -> bool {
+    body.iter().any(|s| match s {
+        Stmt::CallSub { name, .. } => name == "@parallel_iteration",
+        Stmt::Block { body } => parallel_worker(body),
+        _ => false,
+    })
+}
 fn component_type(k: u8) -> TypeSpec {
     if k == 8 {
         TypeSpec::DoublePrecision
@@ -422,6 +430,20 @@ impl Lower {
                 }))
             }
             Expr::IntLit(_) => scalar(TypeSpec::Integer(None)),
+            Expr::Call(n, a)
+                if matches!(n.as_str(), "size" | "lbound" | "ubound")
+                    && !s.contains_key(n) && !self.functions.contains_key(n) =>
+            {
+                let dims = if n != "size" && a.get(1).is_none_or(crate::named_arguments::omitted) {
+                    let Some(info) = a.first().map(|e| self.info(e, s)).transpose()?.flatten() else {
+                        return Ok(None);
+                    };
+                    vec![int(info.dims.len() as i64)]
+                } else { vec![] };
+                let kind = a.get(2).filter(|e| !crate::named_arguments::omitted(e))
+                    .map(crate::parameters::integer_constant).transpose()?.map(|k| k as u8);
+                Ok(Some(Info { kind: TypeSpec::Integer(kind), dims }))
+            }
             Expr::RealLit(n) => scalar(if n.to_ascii_lowercase().contains('d') {
                 TypeSpec::DoublePrecision
             } else {
@@ -1956,7 +1978,8 @@ impl Lower {
             }
             // A procedure's temporaries are declared in it, so they are
             // not reused in another.
-            let unit = matches!(stmt, Stmt::Function { .. } | Stmt::Subroutine { .. } | Stmt::Module { .. });
+            let unit = matches!(stmt, Stmt::Function { .. } | Stmt::Subroutine { .. } | Stmt::Module { .. })
+                || matches!(&stmt, Stmt::Do { body, .. } if parallel_worker(body));
             let outer = if unit { Some((std::mem::take(&mut self.free), std::mem::take(&mut self.live))) } else { None };
             if let Stmt::SourceLocation(offset) = stmt {
                 location = Some(offset);
@@ -2015,6 +2038,32 @@ impl Lower {
                 },
                 Stmt::CallSub{name,args} if matches!(name.as_str(),"@write"|"@formatted_print")=>{
                     let offset=if name=="@write"{2}else{1};let list=name=="@write"&&matches!(args.get(1),Some(Expr::Call(n,_)) if n=="@list_directed");let mut items=args.split_off(offset);self.output(&mut items,list,&mut scope,&mut prefix)?;args.extend(items);
+                },
+                // Worker results are transported as component storage pairs.
+                // Keep the complex fold itself above intact: multiplication
+                // must combine both components together, not as real products.
+                Stmt::CallSub{name,args} if name=="@parallel_iteration"=>{
+                    let mut metadata=vec![];
+                    for pair in args.chunks_exact(2) {
+                        if let [Expr::Ident(value),Expr::Ident(array)]=pair {
+                            if scope.get(value).is_some_and(|i|complex_kind(&i.kind).is_some()) {
+                                for part in ["re","im"] {
+                                    metadata.extend([id(&format!("{value}%{part}")),id(&format!("{array}%{part}"))]);
+                                }
+                                continue;
+                            }
+                        }
+                        metadata.extend_from_slice(pair);
+                    }
+                    anyhow::ensure!(args.len()%2==0,"invalid parallel reduction metadata");
+                    *args=metadata;
+                },
+                // LOCAL starts undefined on every iteration. Clear both component
+                // initialization states without evaluating the complex value.
+                Stmt::CallSub{name,args} if name=="@undefine" && matches!(args.as_slice(),[Expr::Ident(n)] if scope.get(n).is_some_and(|i|complex_kind(&i.kind).is_some()))=>{
+                    let Expr::Ident(n)=&args[0] else {unreachable!()};
+                    for part in ["re","im"] {prefix.push(Stmt::CallSub{name:"@undefine".into(),args:vec![id(&format!("{n}%{part}"))]});}
+                    return Ok(());
                 },
                 Stmt::CallSub{name,args} if matches!(name.as_str(),"@allocate"|"@deallocate"|"@nullify")=>{},
                 Stmt::CallSub{name,args}=>self.arguments(name,args,&mut scope,&mut prefix)?,
@@ -2297,6 +2346,10 @@ pub(crate) fn hoist(body: &mut Vec<Stmt>) {
                 Stmt::Function { body, .. }
                 | Stmt::Subroutine { body, .. }
                 | Stmt::Module { body, .. } => hoist(body),
+                // Array-expression snapshots belong to the worker invocation.
+                // Hoisting them into the caller would share scratch buffers
+                // between threads and lose the later scratch ownership proof.
+                Stmt::Do { body, .. } if parallel_worker(body) => hoist(body),
                 Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } | Stmt::Block { body } => {
                     walk(body, decls)
                 }

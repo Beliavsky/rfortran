@@ -121,7 +121,7 @@ is requested. A job completes before execution continues after the loop.
 Other constructs use the existing serial lowering. In particular this stage
 does not parallelize unproved procedure calls, allocation of shared storage,
 I/O, outer constructs containing loops, named constructs, derived
-types, CHARACTER, complex arrays, or pointer array storage. Arrays with
+types, CHARACTER, or pointer array storage. Arrays with
 TARGET and other unsupported attributes also fall back to serial execution.
 This conservative selection is not a complete checker of all Fortran
 DO CONCURRENT restrictions. Serial fallback does not establish that an otherwise
@@ -191,8 +191,9 @@ worker order, then incorporates the original array once. Worker copies and
 result buffers are freed after use. Empty ranges and fully masked loops leave
 the original array unchanged.
 
-The conservative budget is 4096 elements summed across all reduction arrays
-in a loop. Result buffers reserve 64 slots, matching the pool's maximum size;
+The conservative budget is 4096 storage components summed across all reduction
+arrays in a loop; each COMPLEX element counts as two real components.
+Result buffers reserve 64 slots, matching the pool's maximum size;
 worker copies and result data/initialization masks use at most 6 MiB of payload.
 Ordinary caller storage, expression temporaries, and allocator overhead are
 additional. Larger reductions and zero-sized reduction arrays use the serial
@@ -231,10 +232,48 @@ A runtime-sized input section and reduction section:
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_sections.f90 --run
 ```
 
+## COMPLEX values
+
+COMPLEX kinds 4 and 8 are supported for scalar captures, independent writes to
+fixed-size and runtime-sized arrays, LOCAL/LOCAL_INIT scalars, and checked
+PURE/SIMPLE functions and subroutines. Supported expressions include complex
+literals, assignment, addition, subtraction, multiplication, division, CMPLX,
+REAL, AIMAG, CONJG and ABS. Named kind parameters, multidimensional arrays,
+strided read-only arguments, complex scalar/array results and private fixed or
+allocatable workspaces use the existing specialization and storage checks.
+
+The compiler lowers each complex value to real and imaginary components before
+native outlining; the backend still proves ordinary real storage and helper
+calls. Each component retains its own initialization state. LOCAL clears both
+states on every iteration without reading the old value; LOCAL_INIT copies both
+components and leaves the outside variable unchanged. Numeric initialization
+and bounds checks apply unless disabled with --nocheck.
+
+The existing independence rules apply to the whole source complex element,
+before component lowering. Reading another element of a written array,
+unsupported aliasing, POINTER/TARGET storage and unproved procedure calls keep
+serial fallback.
+
+COMPLEX scalar and fixed-size/runtime-sized array reductions support
+`REDUCE(+:...)` and `REDUCE(*:...)`. Workers start with complex zero or one,
+publish both components of each partial, and the caller folds active partials
+in worker order using complex arithmetic. Multiplication combines each real
+and imaginary pair together. The original accumulator is included once;
+empty loops and masks selecting no iterations preserve it. Array reductions
+use the storage budget above, with serial fallback for empty or over-budget
+arrays. Floating-point rounding can depend on the thread count.
+
+```cmd
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_complex.f90 --run
+python tests\test_concurrent_parallel_complex.py
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_complex_reduce.f90 --run
+python tests\test_concurrent_parallel_complex_reduce.py
+```
+
 ## PURE and SIMPLE functions
 
 Workers can use user-defined PURE and SIMPLE functions with explicitly declared
-numeric or LOGICAL scalar, fixed-size, automatic, or allocatable array results. Scalar dummy arguments
+numeric (including COMPLEX) or LOGICAL scalar, fixed-size, automatic, or allocatable array results. Scalar dummy arguments
 require `INTENT(IN)` or `VALUE`; a VALUE dummy may be modified locally.
 Numeric and LOGICAL array dummy arguments require `INTENT(IN)`. Fixed-size and
 runtime-sized actual arrays and regular strided sections are supported, including
@@ -323,7 +362,7 @@ NORM2 supports REAL kinds 4/8 and accumulates with scaled HYPOT calls rather tha
 squaring the inputs, avoiding unnecessary overflow and underflow. Empty norms
 are zero. Location searches retain MASK, BACK, KIND, first/last tie-breaking,
 one-based result positions and zero for no match. Numeric searches and LOGICAL
-FINDLOC are covered; CHARACTER/COMPLEX storage retains the restrictions below.
+FINDLOC are covered; CHARACTER storage retains the restrictions below.
 All generated reduction/search temporaries belong to the worker invocation.
 Run `python tests/test_concurrent_parallel_array_intrinsics.py` or try
 `rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_array_intrinsics.f90 --run`.
@@ -332,7 +371,7 @@ call. Lowered storage and runtime helpers still have to pass the native checks.
 
 Definitions must be available in the compilation group. Recursive call chains,
 POINTER results, OPTIONAL/POINTER/TARGET/ALLOCATABLE
-dummies, CHARACTER/COMPLEX storage, saved storage, I/O, allocation of shared or aliased storage,
+dummies, CHARACTER storage, saved storage, I/O, allocation of shared or aliased storage,
 unproved subroutine calls, POINTER/TARGET/SAVE storage, and unproved
 callees retain serial fallback. Recursive workspace functions keep their
 existing serial calling path.
@@ -380,7 +419,7 @@ early RETURN and cleanup. Initialization checks cover INOUT reads and OUT paths
 that leave elements undefined. Fixed/automatic/allocatable workspaces use the
 same limits and allocation checks described for functions above.
 
-OPTIONAL, POINTER, TARGET, derived/CHARACTER/COMPLEX arguments, saved or mutable
+OPTIONAL, POINTER, TARGET, derived/CHARACTER arguments, saved or mutable
 host/module storage, procedure dummies, and recursive or unavailable callees retain serial fallback.
 REDUCE variables retain the existing requirement that they occur in reduction
 assignments; passing them through a subroutine is not yet accepted.
