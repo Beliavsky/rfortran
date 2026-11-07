@@ -554,6 +554,11 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
                 let value = unsafe { match n.as_str() { "erf" => erf(x), "erfc" => erfc(x), "gamma" => tgamma(x), _ => lgamma(x) } };
                 Some(ValueTuple::from_real(value))
             }
+            "rfort_erfc_scaled" => {
+                extern "C" {fn exp(x:f64)->f64;fn erfc(x:f64)->f64;}
+                let x=to_real(args.first()?)?;
+                Some(ValueTuple::from_real(crate::special_functions::erfc_scaled(x,|v|unsafe{exp(v)},|v|unsafe{erfc(v)})))
+            }
             "bessel_j0" | "bessel_j1" | "bessel_y0" | "bessel_y1" | "rfort_bessel_jn" | "rfort_bessel_yn" => {
                 extern "C" {
                     #[cfg_attr(windows, link_name = "_jn")] fn jn(n: i32, x: f64) -> f64;

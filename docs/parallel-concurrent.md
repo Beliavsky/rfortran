@@ -40,6 +40,9 @@ jobs to stderr; unset it for timing runs.
   MOD/MODULO, SIGN, DIM, DPROD; NINT, FLOOR/CEILING, AINT/ANINT;
   SIN/COS/TAN, ASIN/ACOS/ATAN/ATAN2 (including two-argument ATAN),
   SINH/COSH/TANH and their inverses; EXP, LOG/LOG10, HYPOT;
+  ERF/ERFC, ERFC_SCALED, GAMMA, and scalar BESSEL_J0/J1/JN and
+  BESSEL_Y0/Y1/YN for REAL kinds 4/8; scalar MERGE for supported INTEGER,
+  REAL and LOGICAL values;
   HUGE/TINY/EPSILON, DIGITS, RADIX, PRECISION, RANGE, MINEXPONENT,
   MAXEXPONENT, BIT_SIZE, and KIND. Real model functions SCALE, FRACTION,
   EXPONENT, SET_EXPONENT, NEAREST, SPACING, and RRSPACING work for REAL kinds
@@ -54,6 +57,20 @@ jobs to stderr; unset it for timing runs.
   shifts from -SIZE through SIZE. MASKL/MASKR support optional KIND, and
   bit-sequence comparisons zero-extend the shorter operand when kinds differ.
   Procedures shadowing these names do not qualify as intrinsic calls.
+
+Special-function calls use the platform C math library, whose
+[GNU implementation documents these operations as MT-Safe](https://sourceware.org/glibc/manual/2.41/html_node/Special-Functions.html).
+The Bessel wrappers and scaled-error-function helper keep all working values
+local to each invocation. ERFC_SCALED evaluates X once and switches to a scaled
+asymptotic tail before EXP(X*X) can overflow. Bessel JN/YN orders are passed in
+double precision so conversion does not round valid C-int orders through REAL(4);
+the result retains X's kind. The three-argument transformational Bessel forms
+remain unsupported.
+
+```cmd
+python tests\test_concurrent_parallel_special.py
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_special.f90 --run
+```
 
 The source proof and native callee recheck share the scalar eligibility catalog.
 FLOOR/CEILING range errors still terminate the program with their normal diagnostic.

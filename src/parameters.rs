@@ -269,6 +269,7 @@ fn record_model_type(constants: &mut Constants, name: &str, kind: &TypeSpec, ran
     constants.insert(model_type_key(name),Expr::Call("@model_type".into(),vec![Expr::IntLit(code.to_string()),Expr::IntLit(rank.to_string())]));
 }
 fn model_type_lookup(constants: &Constants, name: &str) -> Option<(TypeSpec,usize)> {
+    if name.starts_with("@model_procedure:") && constants.contains_key(name) {return Some((TypeSpec::Logical,0));}
     let Expr::Call(_,args)=constants.get(&model_type_key(name))? else {return None};
     let [Expr::IntLit(code),Expr::IntLit(rank)]=args.as_slice() else {return None};
     Some((match code.parse::<i64>().ok()? {

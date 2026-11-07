@@ -77,6 +77,9 @@ integer,intent(in)::x
 identity=x
 if(.not.bge(x,0)) identity=0
 identity=iand(identity,maskr(bit_size(x)))
+identity=identity+nint(erf(0.0)+erfc(0.0)+erfc_scaled(0.0)+gamma(1.0))-3
+identity=merge(identity,identity+1,bessel_jn(0,0.0)==bessel_j0(0.0))
+identity=identity+nint(bessel_yn(1,1.0)-bessel_y1(1.0))
 end function
 pure integer function array_total(x)
 integer,intent(in)::x(:)

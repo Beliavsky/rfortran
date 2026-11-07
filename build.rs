@@ -1,6 +1,7 @@
 fn main() {
     println!("cargo:rerun-if-changed=src/allocation_identity.rs");
     println!("cargo:rerun-if-changed=src/float_model.rs");
+    println!("cargo:rerun-if-changed=src/special_functions.rs");
     println!("cargo:rerun-if-changed=src/fortran.lalrpop");
     println!("cargo:rerun-if-changed=build.rs");
     // native_runtime marks code compiled only into the native runtime library.

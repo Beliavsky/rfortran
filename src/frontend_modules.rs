@@ -13,6 +13,7 @@ mod submodules;
 mod standards;
 mod intrinsics;
 mod float_model;
+mod special_functions;
 mod real_intrinsics;
 mod modules;
 mod module_files;

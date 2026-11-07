@@ -555,6 +555,14 @@ scaling across the representable range without an intermediate power overflow.
 Run `python tests/test_float_model.py` for interpreter/native O0/O2 and gfortran
 comparison checks.
 
+ERF, ERFC, GAMMA, ERFC_SCALED and the scalar Bessel forms also work in
+native parallel loops and proved PURE/SIMPLE callees for REAL kinds 4/8.
+ERFC_SCALED evaluates its argument once and avoids exponential overflow for
+large positive inputs. Scalar MERGE supports the parallel subset's INTEGER,
+REAL and LOGICAL types. KIND(MERGE(...)) preserves numeric/logical source kinds without
+reading their values. LOG_GAMMA remains excluded from parallel workers.
+Run `python tests/test_concurrent_parallel_special.py`.
+
 ### Integer bit intrinsics
 
 Scalar `BTEST`, `IAND`, `IOR`, `IEOR`, `NOT`, `IBSET`, `IBCLR`, `IBITS`, and

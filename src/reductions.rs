@@ -17,6 +17,13 @@ struct Symbols {
 }
 impl Symbols {
     fn new() -> Self { Self::default() }
+    fn inquiry_type(&self,name:&str)->Option<(TypeSpec,usize)> {
+        if let Some(procedure)=name.strip_prefix("@model_procedure:") {
+            return self.procedures.contains(procedure).then_some((TypeSpec::Logical,0));
+        }
+        self.get(name).map(|(kind,dims)|(kind.clone(),dims.len()))
+    }
+
     fn from_shapes(shapes: &HashMap<String,(TypeSpec,Vec<Expr>)>) -> Self {
         Self {
             variables: shapes.clone().into(),
@@ -252,6 +259,9 @@ fn element(e: &Expr, index: &Expr, symbols: &Symbols) -> Result<(Expr, Option<i6
         Expr::Call(name, args) if crate::intrinsics::math_arity(name).is_some() || matches!(name.as_str(), "dble" | "real" | "abs") => {
             let mut shape=None; let mut kind=TypeSpec::Real; let mut values=vec![];
             for arg in args { let (value,n,k)=element(arg,index,symbols)?; if let (Some(a),Some(b))=(shape,n) { if a!=b {bail!("array shapes do not conform");} } shape=shape.or(n);kind=merge_kind(kind,k); values.push(value); }
+            // Bessel wrappers carry the integer order as DOUBLE PRECISION to
+            // preserve all C-int orders; the result still has X's kind.
+            if matches!(name.as_str(),"rfort_bessel_jn"|"rfort_bessel_yn") {kind=element(&args[0],index,symbols)?.2;}
             if name=="dble" {kind=TypeSpec::DoublePrecision;} else if name=="real" {kind=TypeSpec::Real;}
             Ok((Expr::Call(name.clone(),values),shape,kind))
         }
@@ -877,8 +887,11 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
                 Expr::Call(n,inner) if matches!(n.as_str(),"sum" | "product" | "minval" | "maxval") && !inner.is_empty() => &inner[0],
                 other => other,
             };
-            let kind=if let Some(kind)=crate::inquiries::model_type(argument,&|n|symbols.get(n).map(|(k,d)|(k.clone(),d.len())))? {kind} else {element(argument,&int(1),symbols)?.2};
-            *e = int(match kind { TypeSpec::Integer(k) => k.unwrap_or(4) as i64, TypeSpec::DoublePrecision => 8, _ => 4 });
+            let kind=if let Some(kind)=crate::inquiries::model_type(argument,&|n|symbols.inquiry_type(n))? {kind} else {element(argument,&int(1),symbols)?.2};
+            *e = int(match kind { TypeSpec::Integer(k) => k.unwrap_or(4) as i64, TypeSpec::DoublePrecision => 8,
+                TypeSpec::Complex(k) => k.parse::<i64>()?,
+                TypeSpec::Character(_) | TypeSpec::CharacterLength(_) | TypeSpec::CharacterAssumed => 1,
+                _ => 4 });
         }
         Expr::Call(name, args) if name == "@array_constructor" => {
             // Constant empty implied-DO constructors lose their element type
@@ -1268,7 +1281,7 @@ fn lower_expr_impl(e: &mut Expr, symbols: &mut Symbols, prefix: &mut Vec<Stmt>, 
         }
         Expr::Call(name, args) if (crate::inquiries::numeric_model(name) || matches!(name.as_str(),"huge"|"tiny")) && !symbols.contains_key(name) && !symbols.procedures.contains(name) => {
             let [arg] = args.as_slice() else { bail!("{name} expects one argument"); };
-            let kind=crate::inquiries::model_type(arg,&|n|symbols.get(n).map(|(k,d)|(k.clone(),d.len())))?
+            let kind=crate::inquiries::model_type(arg,&|n|symbols.inquiry_type(n))?
                 .with_context(||format!("{name}: unsupported or undefined inquiry argument type"))?;
             *e=crate::inquiries::model_value(name,&kind)?;
             return lower_expr_impl(e,symbols,prefix,serial,expand_elementals);

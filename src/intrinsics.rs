@@ -14,6 +14,7 @@ pub const REAL_MATH: &[(&str, usize)] = &[
     ("bessel_j0", 1), ("bessel_j1", 1), ("bessel_y0", 1), ("bessel_y1", 1),
     // BESSEL_JN(N, X) and BESSEL_YN(N, X) are rewritten to these, with X first.
     ("rfort_bessel_jn", 2), ("rfort_bessel_yn", 2),
+    ("rfort_erfc_scaled", 1),
 ];
 
 pub fn math_arity(name: &str) -> Option<usize> {
@@ -65,6 +66,10 @@ pub(crate) fn parallel_scalar(name: &str) -> bool {
         | "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "atan2"
         | "sinh" | "cosh" | "tanh" | "asinh" | "acosh" | "atanh"
         | "exp" | "log" | "log10" | "hypot"
+        | "erf" | "erfc" | "gamma" | "erfc_scaled" | "rfort_erfc_scaled" | "merge"
+        | "bessel_j0" | "bessel_j1" | "bessel_jn"
+        | "bessel_y0" | "bessel_y1" | "bessel_yn"
+        | "rfort_bessel_jn" | "rfort_bessel_yn"
         | "huge" | "tiny" | "epsilon" | "digits" | "radix" | "precision"
         | "range" | "minexponent" | "maxexponent" | "bit_size" | "kind"
         // The real model helper uses only invocation-local arithmetic and
@@ -85,7 +90,7 @@ pub(crate) fn parallel_scalar(name: &str) -> bool {
 pub enum Purity { Pure, Impure }
 
 pub const PURE_FUNCTIONS: &[&str] = &[
-    "cmplx", "aimag", "conjg", "abs", "achar", "adjustl", "adjustr", "aint", "all", "allocated",
+    "erfc_scaled", "cmplx", "aimag", "conjg", "abs", "achar", "adjustl", "adjustr", "aint", "all", "allocated",
     "anint", "any", "associated", "bessel_jn", "bessel_yn", "bit_size", "ceiling", "char", "count", "cshift",
     "dble", "dim", "dot_product", "dprod", "eoshift", "findloc", "floor",
     "huge", "iachar", "iall", "iany", "ichar", "index", "int", "iparity", "ishftc", "kind",

@@ -9,6 +9,7 @@ mod parallel_runtime;
 mod allocation_identity;
 mod c_descriptor;
 mod float_model;
+mod special_functions;
 
 #[no_mangle]
 pub extern "C" fn rfort_float_model(op:i64,kind:i64,x:f64,i:i64,s:f64)->f64 {
@@ -21,6 +22,11 @@ pub extern "C" fn rfort_float_model(op:i64,kind:i64,x:f64,i:i64,s:f64)->f64 {
         }
     }
     float_model::evaluate(op,kind as u8,x,i,s)
+}
+#[no_mangle]
+pub extern "C" fn rfort_erfc_scaled(x:f64)->f64 {
+    extern "C" {fn exp(x:f64)->f64;fn erfc(x:f64)->f64;}
+    special_functions::erfc_scaled(x,|v|unsafe{exp(v)},|v|unsafe{erfc(v)})
 }
 /// BESSEL_JN(N, X) and BESSEL_YN(N, X): imported math routines take REAL
 /// arguments, so X comes first and the order N arrives as a whole REAL.

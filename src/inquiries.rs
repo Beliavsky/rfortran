@@ -97,6 +97,19 @@ pub fn model_type(e: &Expr, lookup: &impl Fn(&str) -> Option<(TypeSpec,usize)>) 
                 Some(crate::bit_intrinsics::result_kind(name,&kinds)?)
             } else {None}
         },
+        Expr::Call(n,a) if n=="merge" && lookup(n).is_none() && lookup("@model_procedure:merge").is_none() && lookup("@function:merge").is_none() => {
+            if a.len()!=3 {bail!("MERGE expects TSOURCE, FSOURCE and MASK");}
+            let first=model_type(&a[0],lookup)?;
+            let second=model_type(&a[1],lookup)?;
+            if model_type(&a[2],lookup)?.is_some_and(|k|k!=TypeSpec::Logical) {bail!("MERGE MASK must be LOGICAL");}
+            match (first,second) {
+                (Some(first),Some(second)) => {
+                    if !crate::pointers::same_kind(&first,&second) {bail!("MERGE sources must have the same type, kind and CHARACTER length");}
+                    Some(first)
+                },
+                _=>None,
+            }
+        },
         Expr::Call(n,a) if matches!(n.as_str(),"@packed_view"|"@matrix_view"|"@fixed_packed_view"|"@allocated_linear_element") && !a.is_empty() => model_type(&a[0],lookup)?,
         Expr::Call(n,a) if matches!(n.as_str(),"huge"|"tiny") && lookup(n).is_none() && a.len()==1 => {
             let kind=model_type(&a[0],lookup)?;
