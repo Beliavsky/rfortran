@@ -202,15 +202,26 @@ end
     def test_local_does_not_copy_outer_value(self):
         self.reject(SOURCE.replace('scratch=i*i','offset=offset+scratch'), 'uninitialized variable')
 
-    def test_runtime_local_array_diagnosed(self):
-        self.reject('''subroutine f(n)
-integer :: n,i,a(n)
-do concurrent(i=1:n) local(a)
-a=1
+    def test_runtime_local_array(self):
+        # The installed gfortran miscompiles/hangs on this runtime LOCAL case.
+        # Check interpreter and native results against the known answer.
+        self.check('''program p
+implicit none
+integer::a(3)
+call f(2,a)
+print *,a
+contains
+subroutine f(n,a)
+integer,intent(in)::n
+integer,intent(out)::a(:)
+integer::i,work(n)
+do concurrent(i=1:size(a)) local(work)
+work=i
+a(i)=sum(work)
 end do
 end subroutine
-end
-''','requires constant explicit bounds')
+end program
+''','2 4 6',reference=False)
 
 if __name__=='__main__':
     unittest.main()

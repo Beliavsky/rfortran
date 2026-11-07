@@ -2050,7 +2050,12 @@ impl Lower {
                                 if let [Expr::Ident(value)]=values.as_slice() {
                                     if scope.get(value).is_some_and(|i|complex_kind(&i.kind).is_some()) {
                                         for part in ["re","im"] {
-                                            metadata.extend([call(tag,vec![id(&format!("{value}%{part}"))]),pair[1].clone()]);
+                                            let component=format!("{value}%{part}");
+                                            let mut extent=pair[1].clone();
+                                            crate::procedure_arguments::visit_expr(&mut extent,&mut |e| {
+                                                if matches!(e,Expr::Ident(n) if n==value) {*e=id(&component);}
+                                            });
+                                            metadata.extend([call(tag,vec![id(&component)]),extent]);
                                         }
                                         continue;
                                     }

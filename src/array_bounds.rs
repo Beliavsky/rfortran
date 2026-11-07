@@ -34,21 +34,15 @@ fn fixed(dims: &[Expr]) -> Result<Option<Array>> {
     for d in dims {
         let pair = match d {
             Expr::Call(n, args) if n == "@declared_bounds" => Some((
-                crate::parameters::integer_constant(&args[0]).context(
-                    "explicit array bounds must currently be constant INTEGER expressions",
-                )?,
-                crate::parameters::integer_constant(&args[1]).context(
-                    "explicit array bounds must currently be constant INTEGER expressions",
-                )?,
+                crate::parameters::integer_constant(&args[0]).context("explicit array bounds must currently be constant INTEGER expressions")?,
+                crate::parameters::integer_constant(&args[1]).context("explicit array bounds must currently be constant INTEGER expressions")?,
             )),
             _ => crate::parameters::integer_constant(d)
                 .ok()
                 .map(|upper| (1, upper)),
         };
         let Some((lower, upper)) = pair else {
-            if explicit {
-                bail!("explicit array bounds must currently be constant INTEGER expressions");
-            }
+            if explicit {bail!("explicit array bounds must currently be constant INTEGER expressions");}
             return Ok(None);
         };
         let extent = i64::try_from((i128::from(upper) - i128::from(lower) + 1).max(0))
@@ -330,6 +324,7 @@ impl Lowerer {
         inherited: &Arrays,
         inherited_symbols: &Symbols,
         params: &[String],
+        procedure: bool,
     ) -> Result<()> {
         let mut arrays = inherited.clone();
         let mut symbols = inherited_symbols.clone();
@@ -364,9 +359,17 @@ impl Lowerer {
                 }
                 Stmt::ArrayDecl { name, kind, dims } => {
                     arrays.remove(name);
-                    if let Some(a) =
-                        fixed(dims).with_context(|| format!("invalid bounds for array `{name}`"))?
-                    {
+                    let mut runtime=false;
+                    for d in dims.iter() {crate::procedure_arguments::visit_expr(&mut d.clone(),&mut |e| {
+                        if matches!(e,Expr::Ident(_)) {runtime=true;}
+                    });}
+                    // Automatic arrays are normalized by descriptor lowering.
+                    // Main/module bounds and invalid constant extents retain
+                    // their compile-time diagnostics here.
+                    let normalized=if procedure && runtime {None}else{
+                        fixed(dims).with_context(||format!("invalid bounds for array `{name}`"))?
+                    };
+                    if let Some(a) = normalized {
                         if a.explicit {
                             *dims = a.axes.iter().map(|b| int(b.extent)).collect();
                         }
@@ -420,9 +423,9 @@ impl Lowerer {
                     else_body,
                 } => {
                     self.expr(cond, &arrays, &symbols)?;
-                    self.body(then_body, &arrays, &symbols, &[])?;
+                    self.body(then_body, &arrays, &symbols, &[], procedure)?;
                     if let Some(b) = else_body {
-                        self.body(b, &arrays, &symbols, &[])?;
+                        self.body(b, &arrays, &symbols, &[], procedure)?;
                     }
                 }
                 Stmt::Do {
@@ -430,18 +433,18 @@ impl Lowerer {
                 } => {
                     self.expr(start, &arrays, &symbols)?;
                     self.expr(end, &arrays, &symbols)?;
-                    self.body(body, &arrays, &symbols, &[])?;
+                    self.body(body, &arrays, &symbols, &[], procedure)?;
                 }
                 Stmt::DoWhile { cond, body } => {
                     self.expr(cond, &arrays, &symbols)?;
-                    self.body(body, &arrays, &symbols, &[])?;
+                    self.body(body, &arrays, &symbols, &[], procedure)?;
                 }
-                Stmt::Block { body } => self.body(body, &arrays, &symbols, &[])?,
+                Stmt::Block { body } => self.body(body, &arrays, &symbols, &[], procedure)?,
                 Stmt::Module { body, .. } => {
-                    self.body(body, &Arrays::new(), &Symbols::new(), &[])?
+                    self.body(body, &Arrays::new(), &Symbols::new(), &[], false)?
                 }
                 Stmt::Function { body, params, .. } | Stmt::Subroutine { body, params, .. } => {
-                    self.body(body, &arrays, &symbols, params)?
+                    self.body(body, &arrays, &symbols, params, true)?
                 }
                 Stmt::SelectCase {
                     expr,
@@ -459,10 +462,10 @@ impl Lowerer {
                                 }
                             }
                         }
-                        self.body(&mut c.body, &arrays, &symbols, &[])?;
+                        self.body(&mut c.body, &arrays, &symbols, &[], procedure)?;
                     }
                     if let Some(b) = default {
-                        self.body(b, &arrays, &symbols, &[])?;
+                        self.body(b, &arrays, &symbols, &[], procedure)?;
                     }
                 }
                 _ => {}
@@ -489,7 +492,7 @@ pub fn resolve(mut program: Program) -> Result<Program> {
             lower.modules.insert(name.clone(), (arrays, symbols));
         }
     }
-    lower.body(&mut program.body, &Arrays::new(), &Symbols::new(), &[])?;
+    lower.body(&mut program.body, &Arrays::new(), &Symbols::new(), &[], false)?;
     program.body.extend(lower.guards);
     Ok(program)
 }

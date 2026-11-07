@@ -176,6 +176,7 @@ pub(super) fn emit(
         if let IExpr::Call(tag, args) = &pair[0] {
             if tag == "@parallel_scratch" {
                 if let Some(name) = args.first().and_then(storage_name) {
+                    if !matches!(&pair[1],IExpr::IntLit(n) if n=="0") {lengths.insert(name.clone(),pair[1].clone());}
                     scratch.insert(name);
                     continue;
                 }
@@ -352,6 +353,7 @@ pub(super) fn emit(
             return Ok(false);
         }
         if scratch.contains(&n) && matches!(storage, Storage::HeapStack(_) | Storage::HeapStatic(_))
+            && !lengths.contains_key(&n)
         {
             crate::concurrent_reduce::parallel::report(
                 "serial fallback: runtime-sized section scratch storage",

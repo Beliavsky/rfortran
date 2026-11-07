@@ -2,6 +2,16 @@
 // Copyright (c) 2026 Beliavsky
 //! Locality semantics shared by the serial fallback and future parallel lowering.
 use super::*;
+pub(super) struct PrivateArray {
+    pub name: String,
+    pub runtime: bool,
+    pub components: i64,
+}
+pub(super) struct Prepared {
+    pub prefix: Vec<Stmt>,
+    pub arrays: Vec<PrivateArray>,
+    pub cleanup: Vec<Stmt>,
+}
 
 fn implicit_object(name: &str, scope: &Scope) -> Object {
     let letter = name.chars().next().unwrap_or('a');
@@ -159,7 +169,7 @@ pub(super) fn prepare(
     scope: &mut Scope,
     serial: &mut usize,
     implicit_none: bool,
-) -> Result<(Vec<Stmt>, Vec<String>)> {
+) -> Result<Prepared> {
     let mut indices = HashSet::new();
     for c in controls.chunks(4) {
         let Expr::Ident(n) = &c[0] else {
@@ -238,6 +248,9 @@ pub(super) fn prepare(
     let mut prefix = vec![];
     let mut each = vec![];
     let mut private_arrays = vec![];
+    let mut cleanup = vec![];
+    let constants=scope.iter().filter_map(|(n,o)|o.constant.as_ref()
+        .filter(|_|o.attrs.contains("parameter")).map(|e|(n.clone(),e.clone()))).collect();
     // Preserve source clause order for reproducible generated code.
     for clause in clauses.iter() {
         let Expr::Call(tag, variables) = clause else {
@@ -268,20 +281,11 @@ pub(super) fn prepare(
                     bail!("LOCAL/LOCAL_INIT variable `{n}` with {attr} is not supported");
                 }
             }
-            for dim in &object.dims {
-                let mut runtime = false;
-                visit_expr(&mut dim.clone(), &mut |e| {
-                    if let Expr::Ident(v) = e {
-                        runtime |= v.starts_with('@')
-                            || scope.get(v).is_some_and(|o| !o.attrs.contains("parameter"));
-                    }
-                });
-                if runtime {
-                    bail!(
-                        "LOCAL/LOCAL_INIT array `{n}` currently requires constant explicit bounds"
-                    );
-                }
-            }
+            let runtime=object.dims.iter().any(|dim|match dim {
+                Expr::Call(tag,a) if tag=="@declared_bounds" =>
+                    a.iter().any(|e|crate::parameters::evaluate(e,&constants).is_err()),
+                _=>crate::parameters::evaluate(dim,&constants).is_err(),
+            });
             if tag == "@locality:local" {
                 let names = HashSet::from([n.clone()]);
                 if mentions(mask, &names)
@@ -294,18 +298,46 @@ pub(super) fn prepare(
             }
             *serial += 1;
             let temporary = format!("{n}$block_concurrent{serial}");
-            prefix.push(declaration(&temporary, object));
-            if !object.dims.is_empty() {private_arrays.push(temporary.clone());}
+            let mut declare=|name:&str| {
+                if runtime {
+                    prefix.push(Stmt::ArrayDecl{kind:object.kind.clone(),name:name.into(),dims:vec![id("@deferred_extent");object.dims.len()]});
+                    prefix.push(Stmt::DummyIntent{name:name.into(),intent:"allocatable".into()});
+                    // Inherit the established shape, not a reevaluation of
+                    // specification expressions that may since have changed.
+                    let bounds=(1..=object.dims.len()).map(|axis|Expr::Call("@heap_bounds".into(),vec![
+                        Expr::Call("lbound".into(),vec![id(n),int(axis as i64)]),
+                        Expr::Call("ubound".into(),vec![id(n),int(axis as i64)])])).collect();
+                    prefix.push(Stmt::CallSub{name:"@allocate".into(),args:vec![Expr::Call(name.into(),bounds)]});
+                    cleanup.push(Stmt::CallSub{name:"@deallocate".into(),args:vec![id(name)]});
+                } else {prefix.push(declaration(name,object));}
+            };
+            declare(&temporary);
+            if !object.dims.is_empty() {private_arrays.push(PrivateArray{
+                name:temporary.clone(),runtime,components:if matches!(object.kind,TypeSpec::Complex(_)) {2}else{1}
+            });}
             if tag == "@locality:local_init" {
                 let saved = format!("@concurrent_initial_{serial}");
-                prefix.push(declaration(&saved, object));
-                prefix.push(set(&saved, id(n)));
-                each.push(set(&temporary, id(&saved)));
+                declare(&saved);
+                prefix.push(if runtime {section_assignment(&saved,object.dims.len(),Expr::Index(n.clone(),whole_sections(n,object.dims.len())))}
+                    else {set(&saved,id(n))});
+                each.push(if runtime {section_assignment(&temporary,object.dims.len(),id(&saved))}
+                    else {set(&temporary,id(&saved))});
             } else {
                 each.push(Stmt::CallSub {
                     name: "@undefine".into(),
                     args: vec![id(&temporary)],
                 });
+            }
+            if runtime {
+                fn fixed_shape(body:&mut [Stmt],name:&str,rank:usize) {
+                    for s in body {
+                        if let Stmt::Assign{name:n,value}=s {
+                            if n==name {*s=section_assignment(name,rank,value.clone());}
+                        }
+                        for b in children(s) {fixed_shape(b,name,rank);}
+                    }
+                }
+                fixed_shape(body,n,object.dims.len());
             }
             crate::block_scopes::rename(body, n, &temporary);
         }
@@ -338,5 +370,14 @@ pub(super) fn prepare(
     each.append(body);
     *body = each;
     clauses.retain(|e| !matches!(e, Expr::Call(n, _) if n.starts_with("@locality:")));
-    Ok((prefix, private_arrays))
+    Ok(Prepared{prefix,arrays:private_arrays,cleanup})
+}
+
+fn section_assignment(name:&str,rank:usize,value:Expr)->Stmt {
+    Stmt::AssignIndex{name:name.into(),indices:whole_sections(name,rank),value}
+}
+fn whole_sections(name:&str,rank:usize)->Vec<Expr> {
+    (0..rank).map(|_|Expr::Call("@section_subscript".into(),vec![Expr::Section{
+        name:name.into(),lower:None,upper:None,stride:None
+    }])).collect()
 }

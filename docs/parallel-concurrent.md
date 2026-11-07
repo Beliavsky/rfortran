@@ -30,7 +30,7 @@ jobs to stderr; unset it for timing runs.
   additional subscripts and additive offsets must be loop-invariant integer
   expressions. Every access to a written array must use the same subscript
   expressions. Read-only arrays may use other scalar subscripts.
-- Scalar and budgeted fixed-size array `LOCAL` and `LOCAL_INIT`, shared scalar
+- Scalar and budgeted fixed/runtime-sized array `LOCAL` and `LOCAL_INIT`, shared scalar
   inputs, masks, and IF statements.
 - Scalar and fixed-size or runtime-sized array INTEGER/REAL/DOUBLE PRECISION `REDUCE(+:...)`, `REDUCE(*:...)`,
   `REDUCE(MIN:...)`, and `REDUCE(MAX:...)`; scalar and fixed-size or runtime-sized array LOGICAL `.AND.`, `.OR.`,
@@ -182,7 +182,7 @@ rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_stride.f
 
 ## Private LOCAL and LOCAL_INIT arrays
 
-Numeric (including COMPLEX kinds 4/8) and LOGICAL arrays with constant explicit
+Numeric (including COMPLEX kinds 4/8) and LOGICAL arrays with fixed or runtime
 bounds can appear in `LOCAL` and `LOCAL_INIT`. Each worker owns its data and
 initialization masks. `LOCAL` starts undefined on every iteration; a definition
 in an earlier iteration does not make a later read valid. `LOCAL_INIT` restores
@@ -196,15 +196,26 @@ can be combined with these private workspaces. Bounds and initialization checks
 remain active unless disabled with `--nocheck`; the storage remains private in
 either mode.
 
+Runtime-sized workspaces inherit the original array's established bounds and
+extents, even when a specification-bound variable changes after procedure entry.
+Descriptor lengths and the aggregate budget are evaluated before dispatch.
+Private arrays retain their shape within the loop; array assignments use section
+semantics rather than reallocating worker storage. Caller-owned temporary
+descriptors are released after the construct, and workers release their copies
+after completing their chunks. Allocation failures retain runtime diagnostics.
+
 The budget is 4096 components summed across all `LOCAL`/`LOCAL_INIT` arrays in
 one construct; each COMPLEX element counts as two components. This budget is
 separate from the array-reduction budget. Larger and zero-sized private arrays
-use serial execution. Runtime-sized, ALLOCATABLE, POINTER, derived-type and
+use serial execution; runtime extents select that path before worker dispatch.
+ALLOCATABLE, POINTER, derived-type and
 CHARACTER locality objects retain their existing restrictions.
 
 ```cmd
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_local_arrays.f90 --run
 python tests\test_concurrent_parallel_local_arrays.py
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_runtime_local.f90 --run
+python tests\test_concurrent_parallel_runtime_local.py
 ```
 
 ## Scalar reductions
@@ -278,7 +289,7 @@ rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_sections
 ## COMPLEX values
 
 COMPLEX kinds 4 and 8 are supported for scalar captures, independent writes to
-fixed-size and runtime-sized arrays, scalar and budgeted fixed-array LOCAL/LOCAL_INIT, and checked
+fixed-size and runtime-sized arrays, scalar and budgeted array LOCAL/LOCAL_INIT, and checked
 PURE/SIMPLE functions and subroutines. Supported expressions include complex
 literals, assignment, addition, subtraction, multiplication, division, CMPLX,
 REAL, AIMAG, CONJG and ABS. Named kind parameters, multidimensional arrays,

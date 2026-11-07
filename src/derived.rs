@@ -1631,6 +1631,9 @@ fn resolve_types(mut program: Program) -> Result<Program> {
     program = crate::matmul_runtime::resolve(program)?;
     program = crate::allocatable_scalars::resolve(program)?;
     program = crate::complex::resolve(program)?;
+    // COMPLEX lowering introduces record-backed automatic arrays after the
+    // earlier automatic-derived pass. Give these the same runtime descriptors.
+    program = crate::heap::automatic_derived(program)?;
     program = crate::derived_arrays::resolve(program)?;
     let mut lower = Lowerer {
         types: HashMap::new(),

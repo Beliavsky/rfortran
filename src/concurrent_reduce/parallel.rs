@@ -222,7 +222,7 @@ fn check(
                         else {bail!("parallel LOCAL arrays require constant explicit bounds");}
                     } else {(&Expr::IntLit("1".into()),d)};
                     let (Ok(lo),Ok(hi))=(crate::parameters::evaluate(lo,&constants),crate::parameters::evaluate(hi,&constants))
-                        else {bail!("parallel LOCAL arrays require constant explicit bounds");};
+                        else {count=0;break;}; // Runtime extents are budgeted before dispatch.
                     let extent=usize::try_from((hi as i128-lo as i128+1).max(0))
                         .context("parallel LOCAL array size overflow")?;
                     if extent==0 {bail!("zero-sized parallel LOCAL arrays use serial execution");}
@@ -355,6 +355,15 @@ fn check(
     if written.is_empty() && !reductions {
         bail!("no independent array output");
     }
+    let mut local_scope=scope.clone();
+    for n in &locals {
+        if !reduction_arrays.contains(n) {
+            if let Some(o)=local_scope.get_mut(n).filter(|o|!o.dims.is_empty()) {
+                o.attrs.insert("@parallel_local_array".into());
+            }
+        }
+    }
+    let scope=&local_scope;
     fn expr(e: &Expr, scope: &Scope, written: &HashMap<String, Vec<Expr>>) -> Result<()> {
         fn object(n: &str, scope: &Scope) -> Result<()> {
             let o = scope
@@ -414,6 +423,7 @@ fn check(
                     && !(n.starts_with("@module$") && matches!(a.as_str(),"@module_initializer"|"@module_host"|"@procedure_reference"|"public"|"private"))
                     && !(a == "allocatable" && !o.dims.is_empty())
                     && a != "@parallel_host"
+                    && a != "@parallel_local_array"
                     && !(dummy
                         && matches!(
                             a.as_str(),
@@ -441,6 +451,7 @@ fn check(
                 }
             }
             for d in &o.dims {
+                if o.attrs.contains("@parallel_local_array") {continue;}
                 if (o.attrs.contains("allocatable") || dummy)
                     && matches!(d, Expr::Ident(n) if matches!(n.as_str(), "@deferred_extent" | "@assumed_extent"))
                 {

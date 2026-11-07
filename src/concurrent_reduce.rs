@@ -384,7 +384,7 @@ fn lower(
     let mut args: Vec<_> = args.collect();
     let mut scope = scope.clone();
     let parallel = parallel::eligible(&controls, &mask, &body, &args, &scope, loop_name);
-    let (mut prefix, local_arrays) = locality::prepare(
+    let locality = locality::prepare(
         &mut controls,
         &mut mask,
         &mut body,
@@ -393,6 +393,11 @@ fn lower(
         serial,
         implicit_none,
     )?;
+    let mut prefix=locality.prefix;
+    let runtime_locals=locality.arrays.iter().any(|a|a.runtime);
+    let local_counts=locality.arrays.iter().map(|a|Expr::mul(
+        Expr::Call("min".into(),vec![Expr::Call("size".into(),vec![id(&a.name)]),int(4097)]),int(a.components)
+    )).collect::<Vec<_>>();
     let mut ops = HashMap::new();
     let mut suffix = vec![];
     let mut partials = vec![];
@@ -545,8 +550,9 @@ fn lower(
     let mut fold = vec![];
     let mut cleanup = vec![];
     if parallel {
-        let mut metadata = local_arrays.into_iter().flat_map(|n|[
-            Expr::Call("@parallel_scratch".into(),vec![id(&n)]),int(0)
+        let mut metadata = locality.arrays.into_iter().flat_map(|a|[
+            Expr::Call("@parallel_scratch".into(),vec![id(&a.name)]),
+            if a.runtime {Expr::Call("size".into(),vec![id(&a.name)])}else{int(0)}
         ]).collect::<Vec<_>>();
         if !partials.is_empty() {
             // The runtime caps the pool at 64. Initialize every slot so empty
@@ -609,7 +615,7 @@ fn lower(
             body.insert(0, Stmt::CallSub { name: "@parallel_iteration".into(), args: metadata });
         }
     }
-    if parallel && !dynamic_arrays.is_empty() {
+    if parallel && (!dynamic_arrays.is_empty() || runtime_locals) {
         // Clamp individual contributions before summing: a large array must
         // select serial execution without overflowing the budget calculation.
         let mut total=int(0);
@@ -619,6 +625,14 @@ fn lower(
             total=Expr::add(total,Expr::Call("min".into(),vec![count,int(4097)]));
         }
         condition=Expr::Bin(BinOp::And,Box::new(condition),Box::new(Expr::Bin(BinOp::Le,Box::new(total),Box::new(int(4096)))));
+        if runtime_locals {
+            let mut total=int(0);
+            for count in local_counts {
+                condition=Expr::Bin(BinOp::And,Box::new(condition),Box::new(Expr::Bin(BinOp::Gt,Box::new(count.clone()),Box::new(int(0)))));
+                total=Expr::add(total,Expr::Call("min".into(),vec![count,int(4097)]));
+            }
+            condition=Expr::Bin(BinOp::And,Box::new(condition),Box::new(Expr::Bin(BinOp::Le,Box::new(total),Box::new(int(4096)))));
+        }
         let mut setup=prefix.split_off(parallel_prefix_start);
         setup.push(loop_stmt);
         setup.extend(fold);
@@ -635,6 +649,7 @@ fn lower(
         else_body: None,
     });
     for array in dynamic_arrays { prefix.push(Stmt::CallSub{name:"@deallocate".into(),args:vec![id(&array)]}); }
+    prefix.extend(locality.cleanup);
     Ok(prefix)
 }
 fn walk(

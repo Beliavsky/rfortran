@@ -36,7 +36,7 @@ class ExplicitBounds(unittest.TestCase):
             ("integer::a(-2:2)\na=1\nprint *,a(::0)","stride must not be zero"),
             ("integer::a(-2:2)\na=1\nprint *,a(1.5)","scalar INTEGER"),
             ("integer::n,a(-2:n)","constant INTEGER"),
-            ("integer::a(-9223372036854775807:9223372036854775807)","extent overflows"),
+            ("integer::a(-9223372036854775807_8:9223372036854775807_8)","extent overflows"),
             ("integer::a(-2:2)\nprint *,lbound(a,2)","DIM must be between 1 and 1"),
         ]
         with tempfile.TemporaryDirectory(prefix="bad-bounds-") as tmp:
@@ -51,13 +51,13 @@ class ExplicitBounds(unittest.TestCase):
     def test_runtime_checks_original_bounds(self):
         cases=[
             ("a(0:1,-1:1)","i=2", "a(i,-1)","dimension 1: subscript outside 0:1"),
-            ("a(-2:2)","i=-9223372036854775807", "a(i)","subscript outside -2:2"),
+            ("a(-2:2)","i=-9223372036854775807_8", "a(i)","subscript outside -2:2"),
         ]
         with tempfile.TemporaryDirectory(prefix="bounds-error-") as tmp:
             directory=Path(tmp)
             source=directory/"main.f90"
             for decl,assignment,access,message in cases:
-                source.write_text("integer::"+decl+",i\na=1\n"+assignment+"\nprint *,"+access+"\nend\n")
+                source.write_text("integer::"+decl+"\ninteger(kind=8)::i\na=1\n"+assignment+"\nprint *,"+access+"\nend\n")
                 for command in build_commands(source,directory):
                     with self.subTest(access=access,command=command):
                         result=subprocess.run(command,capture_output=True,text=True,timeout=15)
