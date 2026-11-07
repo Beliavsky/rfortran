@@ -741,6 +741,20 @@ pub unsafe extern "C" fn rfort_formatted_output(
     rfort_formatted_write(format, length, items, count, 1);
 }
 
+/// Report a failed inline integer check without a call on successful arithmetic.
+#[no_mangle]
+pub unsafe extern "C" fn rfort_integer_error(kind:i64,line:i64,reason:i64) {
+    extern "C" {fn snprintf(out:*mut u8,size:usize,format:*const u8,...)->i32;}
+    let mut buffer=[0u8;192];
+    let format=if reason==0 {b"Runtime error: INTEGER(kind=%lld) overflow at line %lld\n\0" as &[u8]}
+        else {b"Runtime error: integer division by zero (kind=%lld) at line %lld\n\0"};
+    let n=snprintf(buffer.as_mut_ptr(),buffer.len(),format.as_ptr(),kind,line).max(0) as usize;
+    let n=n.min(buffer.len()-1);
+    #[cfg(windows)] _write(2,buffer.as_ptr(),n as u32);
+    #[cfg(not(windows))] write(2,buffer.as_ptr(),n);
+    exit(1);
+}
+
 /// Convert an already rounded real value only when representable in its result kind.
 #[no_mangle]
 pub unsafe extern "C" fn rfort_checked_integer(value:f64,kind:i64,ceiling:i64)->i64 {

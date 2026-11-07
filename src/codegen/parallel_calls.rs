@@ -13,6 +13,8 @@ fn scalar(kind: &TypeSpec) -> bool {
 }
 fn intrinsic(n: &str) -> bool {
     crate::intrinsics::parallel_scalar(n)
+        || crate::integer_arithmetic::decode(n).is_some()
+        || n=="@integer_literal"
         // REAL-kind normalization is an inline demote/promote operation.
         || n == "@round_real32"
         // Strict decoding admits only implemented bit operations and kinds.

@@ -60,7 +60,8 @@ Three more bugs found on 2026-10-17 are also fixed:
   or a MATMUL result wrote only the first element.
 - Assigning a value to a variable of a narrower INTEGER kind kept the whole
   value, so an INTEGER(1) variable could hold 130 and a default INTEGER could
-  hold 5000000000. The value now wraps to the variable's kind, as in gfortran.
+  hold 5000000000. Out-of-range arithmetic and narrowing now report overflow
+  by default; `--nocheck` wraps runtime results to their integer kind.
 - G0 output of `FRACTION`, `SPACING`, `RRSPACING` and the other floating-point
   model functions of a REAL(4) variable printed DOUBLE PRECISION digits.
 - An internal procedure of the main program that assigned a main-program
@@ -154,7 +155,7 @@ Found on 2026-10-21, fixed:
 
 | Feature | Introduced | Status | Notes | Tests |
 |---|---|---|---|---|
-| [INTEGER kinds 1, 2, 4, 8](language-support.md#numeric-kinds-and-expression-semantics) | F90 | ✅ | F90 kind syntax; the numeric kind values are processor-dependent. | test_integer_literals.py |
+| [INTEGER kinds 1, 2, 4, 8](language-support.md#numeric-kinds-and-expression-semantics) | F90 | ✅ | F90 kind syntax; the numeric kind values are processor-dependent. Arithmetic follows expression kinds, with overflow checks enabled by default. | test_integer_literals.py, test_integer_overflow.py |
 | INTEGER kind 16 | F90 | 🟡 | F90 kind syntax; 128-bit integer availability is processor-dependent. Declarations and arithmetic compile; kind-16 literals, HUGE and pointers are not supported |  |
 | REAL kinds 4 and 8, DOUBLE PRECISION | Mixed | ✅ | DOUBLE PRECISION: F77 or earlier; kind selection: F90. | test_numeric_model.py |
 | REAL kind 16 (quad precision) | F90 | ❌ | F90 kind syntax; quad precision is optional. The REAL128 named constant is F2008. `REAL128` is -1 |  |

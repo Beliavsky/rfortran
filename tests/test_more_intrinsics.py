@@ -1,6 +1,6 @@
 """POPCNT, POPPAR, LEADZ, TRAILZ, DSHIFTL, DSHIFTR, BIT_SIZE, IANY, IALL,
 IPARITY, PARITY, Bessel functions, NORM2, OUT_OF_RANGE, specific intrinsic
-names, and wrapping on assignment to a narrower INTEGER kind.
+names, and checked assignment to a narrower INTEGER kind.
 
 Each case is checked in the interpreter, at -O0 and -O2, and against gfortran.
 Run after cargo build --bin rfort: python tests/test_more_intrinsics.py
@@ -74,7 +74,7 @@ end program
             "9.53939152 2.23606801 5.00000000 7.81024933 5.00000000\n"
             "T F F\nF T T\nT F F\n7 -7.00000000 -3 1.50000000 5 1.5811388300841898\n")
 
-    def test_narrowing_assignment_wraps(self):
+    def test_narrowing_assignment_checks_range(self):
         self.check("""program p
 implicit none
 integer :: i, big8
@@ -90,7 +90,7 @@ a1(1) = n1 + 1
 a1(2) = 200 + i - 130
 print *, n1, n2, big8, a1
 end program
-""", "-126 -25536 705032704 -125 -56\n")
+""", error="INTEGER(kind=1) overflow", reference=False)
 
     def test_shift_out_of_range_is_rejected(self):
         self.check("""program p

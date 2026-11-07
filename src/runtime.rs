@@ -366,6 +366,22 @@ fn interpret_inner(program: &Program, session: Option<(&std::collections::BTreeM
             }
             Expr::Call(name, args) => {
 
+                if name=="@integer_literal" {return eval_expr(&args[0],env_str,env_int,env_real32,env_real64,env_log,funcs,call_stack);}
+                if let Some((op,k))=crate::integer_arithmetic::decode(name) {
+                    let a=eval_expr(&args[0],env_str,env_int,env_real32,env_real64,env_log,funcs,call_stack);
+                    let b=eval_expr(&args[1],env_str,env_int,env_real32,env_real64,env_log,funcs,call_stack).0.unwrap_or(0);
+                    let checks=matches!(args[2],Expr::Logical(true));
+                    let result=if let Some(real)=a.1 {
+                        let real=real.trunc();let limit=2.0f64.powi(k as i32*8-1);
+                        if checks && (!real.is_finite() || real < -limit || real>=limit) {Err(anyhow::anyhow!("INTEGER(kind={k}) overflow"))}
+                        else {crate::integer_arithmetic::evaluate("cast",k,real as i64,0,checks)}
+                    } else {crate::integer_arithmetic::evaluate(op,k,a.0.unwrap_or(0),b,checks)};
+                    return match result {Ok(v)=>ValueTuple::from_int(v),Err(error)=>{
+                        let line=match &args[3] {Expr::IntLit(s)=>s.as_str(),_=>"0"};
+                        eprintln!("Runtime error: {error} at line {line}");std::process::exit(1);
+                    }};
+                }
+
                 if name == "@cpu_seconds" {
                     return ValueTuple::from_real(crate::timing::rfort_cpu_seconds());
                 }

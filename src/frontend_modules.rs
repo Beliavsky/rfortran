@@ -38,6 +38,7 @@ mod empty_constructors;
 mod sections;
 mod reductions;
 mod initialized;
+mod integer_arithmetic;
 mod nocheck;
 mod input;
 mod namelists;

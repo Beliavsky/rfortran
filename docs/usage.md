@@ -46,8 +46,9 @@ conformance. Regression checks: `python tests/test_standards.py`.
 
 ## Run-time checks
 
-Compiled programs stop with a message when they read an uninitialized variable
-or use a subscript outside an array's bounds, at every optimization level.
+Compiled programs stop with a message when they read an uninitialized variable,
+use a subscript outside an array's bounds, or overflow checked INTEGER arithmetic,
+at every optimization level.
 `-nocheck` compiles without these checks; `-fast` is `-O3 -nocheck`. Without
 the checks, such a read gives whatever the memory holds and such a subscript
 can read or overwrite other storage, as in gfortran without `-fcheck`. Use
@@ -62,11 +63,41 @@ The options affect compiled programs only: the `run` subcommand keeps its
 checks. Compile-time errors for variables read before any assignment remain.
 Allocation-status checks (for example, assignment to an unallocated array)
 are kept. An explicit `-O` level cannot be combined with `-fast`. On the
-medium benchmark profile, `-nocheck` made rfort about 5% faster overall
+medium benchmark profile measured before integer-overflow checks were added,
+`-nocheck` made rfort about 5% faster overall
 (geometric mean) and at most about 1.4 times faster, because rfort already
 removes checks it can prove unnecessary (see
 [compiler-performance.md](compiler-performance.md)).
 Regression checks: `python tests/test_nocheck.py`.
+
+### INTEGER arithmetic and overflow
+
+Default INTEGER has a 32-bit signed range. Integer expression results follow
+their operand kinds, including kinds 1, 2, 4 and 8, even though the native
+implementation uses 64-bit storage cells. Checked addition, subtraction,
+multiplication, division, exponentiation, negation, ABS, numeric INT conversions
+and narrowing assignments report overflow. Diagnostics include the source line;
+constant arithmetic overflow is a compilation error.
+
+An exponent does not widen an integer base. A wider destination does not widen
+the expression assigned to it either. To calculate large powers, write both the
+destination and the base with the intended kind:
+
+```fortran
+use iso_fortran_env, only: int64
+integer :: i
+integer(int64) :: j
+i = 12
+j = 10_int64**i
+```
+
+With `--nocheck`, runtime integer arithmetic and narrowing assignments keep the
+low-order bits of the result kind. Constant overflow is still rejected; integer
+division by zero still terminates. BOZ arguments to INT retain bit-pattern
+interpretation. The Fortran standard does not specify a wrapped result for
+integer overflow, so programs requiring that behavior are not portable.
+
+Regression checks: `python tests/test_integer_overflow.py`.
 
 ## Warnings
 

@@ -594,9 +594,12 @@ its alignment (its size, or 1 for CHARACTER), and the whole padded to the larges
 alignment, so `type :: t; character(3) :: c; integer :: i; end type` has 64 bits.
 Types with ALLOCATABLE or POINTER components are not yet supported.
 
-Assigning an INTEGER value of a wider kind to a narrower variable keeps the
-value's low-order bits, as gfortran does: assigning 130 to an INTEGER(1)
-variable stores -126.
+INTEGER arithmetic and narrowing assignments respect kinds 1, 2, 4 and 8.
+By default an unrepresentable result reports integer overflow, including
+assigning 130 to an INTEGER(1) variable. Native `--nocheck` builds keep the
+low-order bits instead. Constant arithmetic overflow is rejected, and BOZ
+arguments to INT retain bit-pattern interpretation. See
+[INTEGER arithmetic and overflow](usage.md#integer-arithmetic-and-overflow).
 
 `ISHFTC(I, SHIFT[, SIZE])` rotates the rightmost SIZE bits of I (all of its bits
 by default), preserving the remaining bits. SIZE must be between 1 and

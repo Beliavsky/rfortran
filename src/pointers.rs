@@ -270,6 +270,12 @@ struct ArrayValue {
     value: Expr,
     reads: Vec<Stmt>,
 }
+fn value_suffix(k:&TypeSpec)->&'static str {
+    match k {
+        TypeSpec::Integer(Some(1))=>"i1",TypeSpec::Integer(Some(2))=>"i2",
+        TypeSpec::Integer(Some(8))=>"i8",TypeSpec::Integer(_)=>"i4",_=>suffix(k),
+    }
+}
 // Keep declared result types and ELEMENTAL identity when scalar functions
 // remain as native calls through pointer-array expression lowering.
 type Functions = HashMap<String, (bool, Option<TypeSpec>)>;
@@ -850,7 +856,7 @@ impl Lower {
         self.temp(
             v.kind.clone(),
             call(
-                &format!("@ptr_load_{}", if v.c_storage {c_suffix(&v.kind)}else{suffix(&v.kind)}),
+                &format!("@ptr_load_{}", if v.c_storage {c_suffix(&v.kind)}else{value_suffix(&v.kind)}),
                 vec![v.data.clone(), offset],
             ),
             out,
@@ -859,7 +865,7 @@ impl Lower {
     fn store(&self, v: &View, offset: Expr, value: Expr, out: &mut Vec<Stmt>) {
         Self::check_limit(v, &offset, out);
         out.push(Stmt::CallSub {
-            name: format!("@ptr_store_{}", if v.c_storage {c_suffix(&v.kind)}else{suffix(&v.kind)}),
+            name: format!("@ptr_store_{}", if v.c_storage {c_suffix(&v.kind)}else{value_suffix(&v.kind)}),
             args: vec![v.data.clone(), v.flags.clone(), offset, value],
         });
     }

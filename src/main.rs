@@ -243,6 +243,7 @@ fn compiler_main(started: std::time::Instant) -> Result<()> {
             if sema_errs.iter().any(|e| matches!(e.kind, crate::errors::CompileErrorKind::Semantic)) {
                 anyhow::bail!("semantic checks failed");
             }
+            let program=integer_arithmetic::resolve(program,true,&src,&prepared.origins)?;
             let program = initialized::instrument_with_origins(program, &src, input.file_name().and_then(|name| name.to_str()).unwrap_or("<unknown>"), &prepared.origins)?;
             let command=std::iter::once(input.as_os_str()).chain(args.run_args.iter().map(|a|a.as_os_str()))
                 .map(|a|std::ffi::CString::new(a.to_string_lossy().as_bytes())).collect::<std::result::Result<Vec<_>,_>>()?;
@@ -344,6 +345,8 @@ fn compile_to_object(
             return Err(anyhow::anyhow!("compile failed"));
         }
     }
+    let program = integer_arithmetic::resolve(program,!args.nocheck,&src,&prepared.origins)
+        .map_err(|e|source_diagnostics::report(e,&src,&tokens,input.to_str().unwrap_or("<unknown>"),Some(&prepared.origins)))?;
     let program = compile_profile::run("initialized", || initialized::instrument_with_origins(program, &src, input.file_name().and_then(|name| name.to_str()).unwrap_or("<unknown>"), &prepared.origins))?;
     let program = if args.nocheck { nocheck::strip(program) } else { program };
     let lowered = compile_profile::run("ir", || ir::lower_to_ir_with_debug(&program, args.debug_ir))?;

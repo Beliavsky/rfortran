@@ -732,6 +732,7 @@ pub fn analyze_with_origins(
     known_intrinsics.insert("real".to_string(), TypeSpec::Real);
     known_intrinsics.insert("dble".to_string(), TypeSpec::DoublePrecision);
     known_intrinsics.insert("@ptr_load_i".into(), TypeSpec::Integer(Some(8)));
+    for k in [1,2,4,8] {known_intrinsics.insert(format!("@ptr_load_i{k}"),TypeSpec::Integer(Some(k)));}
     known_intrinsics.insert("@ptr_load_r4".into(), TypeSpec::Real);
     known_intrinsics.insert("@ptr_load_r8".into(), TypeSpec::DoublePrecision);
     known_intrinsics.insert("@ptr_load_l".into(), TypeSpec::Logical);

@@ -167,7 +167,7 @@ pub fn print_help() {
     println!("  -fd-lines-as-code    Compile fixed-form D lines instead of ignoring them");
     println!("  --lto                Enable link-time optimization");
     println!("  --opt-level <level>  Set optimization level (0, 1, 2, 3, s, z, S, Z)");
-    println!("  -nocheck             Compile without run-time checks of uninitialized reads and subscripts");
+    println!("  -nocheck             Compile without run-time checks of uninitialized reads, subscripts and integer overflow");
     println!("  -fast                Same as -O3 -nocheck");
     println!("  --quiet              Suppress build progress (warnings remain visible)");
     println!("  --help               Show this help message");

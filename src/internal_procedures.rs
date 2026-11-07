@@ -63,7 +63,8 @@ impl Capture {
     }
     fn suffix(&self) -> &'static str {
         match self.variable.kind {
-            TypeSpec::Integer(_) => "i",
+            TypeSpec::Integer(Some(8)) => "i8",
+            TypeSpec::Integer(_) => "i4",
             TypeSpec::Real => "r4",
             TypeSpec::DoublePrecision => "r8",
             TypeSpec::Logical => "l",

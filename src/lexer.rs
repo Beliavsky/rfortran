@@ -910,7 +910,9 @@ pub fn lex(input: &str) -> Vec<Token> {
                         if negative {
                             tokens.push(Token { kind: TokenKind::Minus, span: span.start..span.start });
                         }
-                        tokens.push(Token { kind: TokenKind::Integer(value), span });
+                        // Retain BOZ provenance until INT interprets the bits;
+                        // ordinary numeric conversions must not wrap constants.
+                        tokens.push(Token { kind: TokenKind::Integer(format!("{value}__rfort_boz")), span });
                         continue;
                     }
                     tokens.push(Token { kind, span });

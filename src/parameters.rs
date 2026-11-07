@@ -152,7 +152,7 @@ pub(crate) fn integer_literal_kind(expr: &Expr) -> Option<u8> {
         Expr::Un(UnOp::Neg, a) => integer_literal_kind(a),
         Expr::Bin(op, a, b) if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow) => {
             let (a,b) = (integer_literal_kind(a)?, integer_literal_kind(b)?);
-            Some(a.max(b))
+            Some(if matches!(op,BinOp::Pow) {a}else{a.max(b)})
         }
         _ => None,
     }
@@ -617,7 +617,14 @@ pub(crate) fn evaluate(expr: &Expr, constants: &Constants) -> Result<i64> {
         }
         _ => bail!("PARAMETER initializer must be a supported integer constant expression"),
     };
-    value.context("integer overflow in PARAMETER initializer")
+    let value=value.context("integer overflow in PARAMETER initializer")?;
+    if matches!(expr,Expr::Bin(..)|Expr::Un(..)) {
+        if let Some(k)=integer_literal_kind(expr).filter(|k|matches!(k,1|2|4|8)) {
+            crate::integer_arithmetic::evaluate("cast",k,value,0,true)
+                .context("integer overflow in constant expression")?;
+        }
+    }
+    Ok(value)
 }
 
 pub(crate) fn integer_constant(expr: &Expr) -> Result<i64> {
@@ -1419,7 +1426,16 @@ fn typed_constructor(kind:&TypeSpec,items:Vec<Expr>)->Result<Expr> {
 /// Marks a local array, by name, in the scoped constants.
 const LOCAL_ARRAY: &str = "@local_array:";
 
+fn boz_integer(expr:&Expr)->Option<(i64,u8)> {
+    let (negative,expr)=match expr {Expr::Un(UnOp::Neg,e)=>(true,e.as_ref()),_=>(false,expr)};
+    let Expr::IntLit(text)=expr else {return None;};
+    let text=text.strip_suffix("__rfort_boz")?;
+    let (value,kind)=text.split_once('_').map_or((text,4),|(v,k)|(v,k.parse().unwrap_or(8)));
+    let value=value.parse::<i128>().ok()?;
+    Some((i64::try_from(if negative {-value}else{value}).ok()?,kind))
+}
 fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
+    if let Some((value,kind))=boz_integer(expr) {*expr=typed_integer(value,kind)?;return Ok(());}
     if let Expr::Call(name,args)=expr {
         if constants.contains_key(&format!("@model_procedure:{name}")) {
             // A visible user procedure/generic can extend an intrinsic name.
@@ -1468,15 +1484,16 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
                 else {Expr::Call("int".into(),vec![value,Expr::IntLit(bytes.to_string())])};
             return Ok(());
         }
-        // INT of a constant INTEGER, such as a BOZ literal, with a constant
-        // KIND keeps the low-order bits of that kind, as the bit intrinsics do.
-        if name=="int" && args.len()==2 && !constants.contains_key("@model_procedure:int") {
-            let mut kind=args[1].clone();rewrite_expr(&mut kind,constants)?;
+        // BOZ denotes bits; conversion of an ordinary INTEGER denotes a value.
+        if name=="int" && (1..=2).contains(&args.len()) && !constants.contains_key("@model_procedure:int") {
+            let boz=boz_integer(&args[0]).map(|(v,_)|v);
+            let mut kind=args.get(1).cloned().unwrap_or(Expr::IntLit("4".into()));rewrite_expr(&mut kind,constants)?;
             let mut value=args[0].clone();rewrite_expr(&mut value,constants)?;
             if let (Ok(bytes),Ok(n))=(evaluate(&kind,constants),evaluate(&value,constants)) {
                 if !matches!(&value,Expr::RealLit(_)) {
-                    let n=match bytes {1=>n as i8 as i64,2=>n as i16 as i64,4=>n as i32 as i64,8=>n,
-                        _=>bail!("INT: INTEGER KIND must be 1, 2, 4 or 8")};
+                    if !matches!(bytes,1|2|4|8) {bail!("INT: INTEGER KIND must be 1, 2, 4 or 8");}
+                    let n=if boz.is_some() {match bytes {1=>n as i8 as i64,2=>n as i16 as i64,4=>n as i32 as i64,_=>n}}
+                        else {crate::integer_arithmetic::evaluate("cast",bytes as u8,n,0,true)?};
                     *expr=typed_integer(n,bytes as u8)?;
                     return Ok(());
                 }

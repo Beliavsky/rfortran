@@ -8,6 +8,8 @@ mod file_io;
 mod characters;
 #[path = "module_data.rs"]
 mod module_data;
+#[path = "integer_arithmetic.rs"]
+mod integer_arithmetic;
 #[path = "record_heap.rs"]
 mod record_heap;
 #[path = "c_interop.rs"]
@@ -250,6 +252,7 @@ fn read_record(
 }
 
 struct Externs {
+    integer_error: ir::FuncRef,
     float_model: ir::FuncRef,
     checked_integer: ir::FuncRef,
     cpu_seconds: ir::FuncRef,
@@ -385,6 +388,11 @@ fn declare_externs(
     let id=module.declare_function("rfort_float_model",Linkage::Import,&sig)?;
     let float_model=module.declare_func_in_func(id,b.func);
     Ok(Externs {
+        integer_error: {
+            let mut sig=module.make_signature();sig.params.extend([AbiParam::new(types::I64);3]);
+            let id=module.declare_function("rfort_integer_error",Linkage::Import,&sig)?;
+            module.declare_func_in_func(id,b.func)
+        },
         float_model,
         checked_integer,
         cpu_seconds,
@@ -595,6 +603,16 @@ fn eval_expr(
     func_meta: &HashMap<String, FuncMeta>,
 ) -> CgVal {
     use ir::{types, MemFlags};
+    if let IExpr::Call(n,args)=e {
+        if n=="@integer_literal" {return eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);}
+        if let Some((op,k))=crate::integer_arithmetic::decode(n) {
+            let a=eval_expr(b,ex,ptr_ty,&args[0],ints,reals,bools,func_meta);
+            let v=eval_expr(b,ex,ptr_ty,&args[1],ints,reals,bools,func_meta);let v=to_i64(b,v);
+            let checks=matches!(args.get(2),Some(IExpr::Logical(true)));
+            let line=match args.get(3) {Some(IExpr::IntLit(s))=>s.parse().unwrap_or(0),_=>0};
+            return CgVal::I64(integer_arithmetic::emit(b,ex,op,k,a,v,checks,line));
+        }
+    }
     match e {
         IExpr::IntLit(s) => {
             let v = i128::from_str_radix(s, 10)
@@ -1599,6 +1617,7 @@ fn print_expr(
         IExpr::Call(name, args) => {
             let lname = name.to_ascii_lowercase();
             if crate::intrinsics::math_arity(name).is_some() || crate::intrinsics::integer_rounding(name) || crate::intrinsics::real_predicate(name)
+                || crate::integer_arithmetic::decode(name).is_some() || name=="@integer_literal"
                 || crate::bit_intrinsics::decode(name).is_some() || crate::real_intrinsics::decode(name).is_some()
                 || matches!(lname.as_str(), "abs" | "int" | "nint" | "real" | "dble" | "max" | "min" | "mod" | "modulo" | "sign")
                 || crate::equivalence::bits_kind(name).is_some()
@@ -4067,6 +4086,7 @@ thread_local! {
 // The kind of an INTEGER output item, 0 when it is the default or unknown.
 fn integer_kind(e: &IExpr) -> i64 {
     match e {
+        IExpr::Call(n,_) if crate::integer_arithmetic::decode(n).is_some()=>crate::integer_arithmetic::decode(n).unwrap().1 as i64,
         IExpr::Ident(n) | IExpr::Index(n, _) => INTEGER_KINDS.with(|k| k.borrow().get(n).copied()).map_or(0, i64::from),
         IExpr::Call(n, args) if n == "@integer_literal" || n == "int" && args.len() == 2 => match args.get(1) {
             Some(IExpr::IntLit(k)) => k.parse().unwrap_or(0),

@@ -68,7 +68,7 @@ pub struct Cli {
     #[structopt(long, global = true, help = "Explain DO CONCURRENT parallelization and serial fallback")]
     pub parallel_report: bool,
 
-    #[structopt(long = "nocheck", help = "Compile without run-time checks of uninitialized reads and array subscripts")]
+    #[structopt(long = "nocheck", help = "Compile without run-time checks of uninitialized reads, array subscripts and integer overflow")]
     pub nocheck: bool,
 
     #[structopt(
