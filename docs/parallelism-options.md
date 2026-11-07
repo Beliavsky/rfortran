@@ -159,6 +159,9 @@ is mostly OpenMP, then MPI, with coarrays a distant third.
     subset including scalar and memory-budgeted fixed/runtime-sized array reductions, multiple indices, signed strides, invariant subscript offsets, multidimensional arrays, and assumed-shape procedure arguments and proved PURE/SIMPLE scalar-result calls with scalar or read-only array inputs, with serial fallback.
     Called PURE/SIMPLE functions can use private fixed-size, automatic, and allocatable numeric/LOGICAL workspaces and fixed/automatic/allocatable array results, including nested calls and disjoint section output.
     PURE/SIMPLE subroutine calls support explicit argument intents, read-only array inputs, disjoint scalar/section outputs, acyclic call chains, and private workspaces.
+    LOCAL/LOCAL_INIT support numeric/LOGICAL fixed-size arrays with private data
+    and initialization masks reset/restored per iteration, under a 4096-component
+    aggregate workspace budget (COMPLEX elements count twice); larger/empty arrays stay serial.
     Proved callees also accept numeric/LOGICAL OPTIONAL INTENT(IN) scalar and array
     arguments through present/absent specialization, including keywords and forwarding.
     Optional OUT/INOUT subroutine arguments use the same disjoint-output proof,
@@ -170,7 +173,7 @@ is mostly OpenMP, then MPI, with coarrays a distant third.
     MINLOC/MAXLOC/FINDLOC on supported read-only numeric/logical arrays,
     including runtime DIM results.
     COMPLEX kinds 4/8 support scalar and fixed/runtime-sized array expressions,
-    scalar LOCAL/LOCAL_INIT, conversions, CONJG/ABS and proved PURE/SIMPLE calls
+    scalar and budgeted fixed-array LOCAL/LOCAL_INIT, conversions, CONJG/ABS and proved PURE/SIMPLE calls
     with complex arguments/results and private workspaces. Complex scalar and
     fixed/runtime-sized array REDUCE supports addition and multiplication,
     folding paired worker components with complex arithmetic; native checks

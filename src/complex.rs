@@ -2045,6 +2045,18 @@ impl Lower {
                 Stmt::CallSub{name,args} if name=="@parallel_iteration"=>{
                     let mut metadata=vec![];
                     for pair in args.chunks_exact(2) {
+                        if let Expr::Call(tag,values)=&pair[0] {
+                            if tag=="@parallel_scratch" {
+                                if let [Expr::Ident(value)]=values.as_slice() {
+                                    if scope.get(value).is_some_and(|i|complex_kind(&i.kind).is_some()) {
+                                        for part in ["re","im"] {
+                                            metadata.extend([call(tag,vec![id(&format!("{value}%{part}"))]),pair[1].clone()]);
+                                        }
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
                         if let [Expr::Ident(value),Expr::Ident(array)]=pair {
                             if scope.get(value).is_some_and(|i|complex_kind(&i.kind).is_some()) {
                                 for part in ["re","im"] {

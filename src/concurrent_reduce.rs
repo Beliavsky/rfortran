@@ -384,7 +384,7 @@ fn lower(
     let mut args: Vec<_> = args.collect();
     let mut scope = scope.clone();
     let parallel = parallel::eligible(&controls, &mask, &body, &args, &scope, loop_name);
-    let mut prefix = locality::prepare(
+    let (mut prefix, local_arrays) = locality::prepare(
         &mut controls,
         &mut mask,
         &mut body,
@@ -545,7 +545,9 @@ fn lower(
     let mut fold = vec![];
     let mut cleanup = vec![];
     if parallel {
-        let mut metadata = vec![];
+        let mut metadata = local_arrays.into_iter().flat_map(|n|[
+            Expr::Call("@parallel_scratch".into(),vec![id(&n)]),int(0)
+        ]).collect::<Vec<_>>();
         if !partials.is_empty() {
             // The runtime caps the pool at 64. Initialize every slot so empty
             // chunks need no callback, and a backend serial fallback leaves

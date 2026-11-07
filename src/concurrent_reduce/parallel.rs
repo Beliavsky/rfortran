@@ -209,10 +209,29 @@ fn check(
             }
         }
     }
+    let constants=scope.iter().filter_map(|(n,o)|o.constant.as_ref()
+        .filter(|_|o.attrs.contains("parameter")).map(|e|(n.clone(),e.clone()))).collect();
+    let mut local_elements=0usize;
     for n in &locals {
         if let Some(o) = scope.get(n) {
             if !o.dims.is_empty() && !reduction_arrays.contains(n) {
-                bail!("parallel local arrays are not yet supported");
+                let mut count=if matches!(o.kind,TypeSpec::Complex(_)) {2usize}else{1};
+                for d in &o.dims {
+                    let (lo,hi)=if let Expr::Call(tag,a)=d {
+                        if tag=="@declared_bounds" && a.len()==2 {(&a[0],&a[1])}
+                        else {bail!("parallel LOCAL arrays require constant explicit bounds");}
+                    } else {(&Expr::IntLit("1".into()),d)};
+                    let (Ok(lo),Ok(hi))=(crate::parameters::evaluate(lo,&constants),crate::parameters::evaluate(hi,&constants))
+                        else {bail!("parallel LOCAL arrays require constant explicit bounds");};
+                    let extent=usize::try_from((hi as i128-lo as i128+1).max(0))
+                        .context("parallel LOCAL array size overflow")?;
+                    if extent==0 {bail!("zero-sized parallel LOCAL arrays use serial execution");}
+                    count=count.checked_mul(extent).context("parallel LOCAL array size overflow")?;
+                }
+                local_elements=local_elements.checked_add(count).context("parallel LOCAL array size overflow")?;
+                if local_elements>4096 {
+                    bail!("parallel LOCAL arrays exceed private-storage budget (4096 components across arrays)");
+                }
             }
         }
     }

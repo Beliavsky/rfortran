@@ -30,7 +30,8 @@ jobs to stderr; unset it for timing runs.
   additional subscripts and additive offsets must be loop-invariant integer
   expressions. Every access to a written array must use the same subscript
   expressions. Read-only arrays may use other scalar subscripts.
-- Scalar `LOCAL` and `LOCAL_INIT`, shared scalar inputs, masks, and IF statements.
+- Scalar and budgeted fixed-size array `LOCAL` and `LOCAL_INIT`, shared scalar
+  inputs, masks, and IF statements.
 - Scalar and fixed-size or runtime-sized array INTEGER/REAL/DOUBLE PRECISION `REDUCE(+:...)`, `REDUCE(*:...)`,
   `REDUCE(MIN:...)`, and `REDUCE(MAX:...)`; scalar and fixed-size or runtime-sized array LOGICAL `.AND.`, `.OR.`,
   `.EQV.`, and `.NEQV.` reductions. Multiple reductions and reduction-only
@@ -179,6 +180,33 @@ A strided example with a fixed column, an offset, and a scalar reduction:
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_stride.f90 --run
 ```
 
+## Private LOCAL and LOCAL_INIT arrays
+
+Numeric (including COMPLEX kinds 4/8) and LOGICAL arrays with constant explicit
+bounds can appear in `LOCAL` and `LOCAL_INIT`. Each worker owns its data and
+initialization masks. `LOCAL` starts undefined on every iteration; a definition
+in an earlier iteration does not make a later read valid. `LOCAL_INIT` restores
+the loop-entry snapshot on every iteration, and leaves the outside array unchanged.
+The snapshot is taken again for each execution of the construct.
+
+Whole-array assignments, element/section accesses, audited array intrinsics,
+and supported PURE/SIMPLE calls use the existing worker lowering. Multidimensional
+arrays, nondefault bounds, masks, multiple concurrent indices, and reductions
+can be combined with these private workspaces. Bounds and initialization checks
+remain active unless disabled with `--nocheck`; the storage remains private in
+either mode.
+
+The budget is 4096 components summed across all `LOCAL`/`LOCAL_INIT` arrays in
+one construct; each COMPLEX element counts as two components. This budget is
+separate from the array-reduction budget. Larger and zero-sized private arrays
+use serial execution. Runtime-sized, ALLOCATABLE, POINTER, derived-type and
+CHARACTER locality objects retain their existing restrictions.
+
+```cmd
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_local_arrays.f90 --run
+python tests\test_concurrent_parallel_local_arrays.py
+```
+
 ## Scalar reductions
 
 Each worker starts with the operation's identity and writes its partial result
@@ -250,7 +278,7 @@ rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_sections
 ## COMPLEX values
 
 COMPLEX kinds 4 and 8 are supported for scalar captures, independent writes to
-fixed-size and runtime-sized arrays, LOCAL/LOCAL_INIT scalars, and checked
+fixed-size and runtime-sized arrays, scalar and budgeted fixed-array LOCAL/LOCAL_INIT, and checked
 PURE/SIMPLE functions and subroutines. Supported expressions include complex
 literals, assignment, addition, subtraction, multiplication, division, CMPLX,
 REAL, AIMAG, CONJG and ABS. Named kind parameters, multidimensional arrays,
@@ -445,7 +473,7 @@ rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_allocati
 
 Concurrent bodies may call available PURE/SIMPLE subroutines with explicit
 INTENT on INTEGER/REAL/LOGICAL dummies and matching actual/dummy ranks. Scalar expressions and read-only arrays
-are accepted as inputs. OUT/INOUT actuals must be scalar LOCAL/LOCAL_INIT
+are accepted as inputs. OUT/INOUT actuals must be supported LOCAL/LOCAL_INIT
 variables or array elements/regular sections whose destination tuple contains
 each concurrent index exactly once. For example:
 
@@ -521,7 +549,7 @@ Loops inside procedures can use assumed-shape arrays with explicit
 `INTENT(IN)`, `INTENT(OUT)`, or `INTENT(INOUT)`. Fixed-size and allocatable actual
 arrays are supported, together with regular strided sections handled by the
 existing argument specialization. The workers use that established argument
-mapping and its bounds and initialization checks. Scalar LOCAL/LOCAL_INIT and
+mapping and its bounds and initialization checks. Supported LOCAL/LOCAL_INIT and
 REDUCE may be combined with these array arguments.
 
 POINTER, TARGET, OPTIONAL, missing INTENT, writes to captured host/module state,

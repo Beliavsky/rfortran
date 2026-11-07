@@ -159,7 +159,7 @@ pub(super) fn prepare(
     scope: &mut Scope,
     serial: &mut usize,
     implicit_none: bool,
-) -> Result<Vec<Stmt>> {
+) -> Result<(Vec<Stmt>, Vec<String>)> {
     let mut indices = HashSet::new();
     for c in controls.chunks(4) {
         let Expr::Ident(n) = &c[0] else {
@@ -237,6 +237,7 @@ pub(super) fn prepare(
     }
     let mut prefix = vec![];
     let mut each = vec![];
+    let mut private_arrays = vec![];
     // Preserve source clause order for reproducible generated code.
     for clause in clauses.iter() {
         let Expr::Call(tag, variables) = clause else {
@@ -294,6 +295,7 @@ pub(super) fn prepare(
             *serial += 1;
             let temporary = format!("{n}$block_concurrent{serial}");
             prefix.push(declaration(&temporary, object));
+            if !object.dims.is_empty() {private_arrays.push(temporary.clone());}
             if tag == "@locality:local_init" {
                 let saved = format!("@concurrent_initial_{serial}");
                 prefix.push(declaration(&saved, object));
@@ -336,5 +338,5 @@ pub(super) fn prepare(
     each.append(body);
     *body = each;
     clauses.retain(|e| !matches!(e, Expr::Call(n, _) if n.starts_with("@locality:")));
-    Ok(prefix)
+    Ok((prefix, private_arrays))
 }
