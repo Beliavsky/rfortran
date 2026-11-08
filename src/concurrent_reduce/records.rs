@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: MIT
-//! A proof-only view of simple records as their ordinary component arrays.
-//! Actual storage and initialization masks remain owned by derived_arrays.
+//! Primitive-field metadata for record ownership proofs and scalar locality.
+//! Shared storage stays in derived_arrays; private fields use intrinsic locality.
 use super::*;
 
 #[derive(Clone, PartialEq)]
-struct Field { name: String, kind: TypeSpec, dims: Vec<Expr> }
+struct Field { name: String, kind: TypeSpec, dims: Vec<Expr>, default: Option<Expr> }
 type Fields = Vec<Field>;
+const DEFAULT: &str = "@parallel_default:";
 const COMPONENT: &str = "@parallel_component:";
 pub(super) fn module_metadata(name: &str) -> bool {
-    name.strip_prefix(COMPONENT).is_some_and(|n|n.starts_with("@module$"))
+    name.strip_prefix(COMPONENT).or_else(||name.strip_prefix(DEFAULT)).is_some_and(|n|n.starts_with("@module$"))
 }
 thread_local! {
     static TYPES: std::cell::RefCell<HashMap<String, Option<Fields>>> = Default::default();
@@ -23,14 +24,14 @@ fn fields(components: &[Stmt], bindings: &[(String, String)], definitions: &Defi
     for s in components {
         match s {
             Stmt::VarDecl { kind, names } => {
-                for n in names { out.push(Field { name:n.clone(), kind:kind.clone(), dims:vec![] }); }
+                for n in names { out.push(Field { name:n.clone(), kind:kind.clone(), dims:vec![], default:None }); }
             }
             Stmt::InitializedDecl { kind, entities, attributes } if attributes.is_empty() => {
-                for (n, _) in entities { out.push(Field { name:n.clone(), kind:kind.clone(), dims:vec![] }); }
+                for (n, value) in entities { out.push(Field { name:n.clone(), kind:kind.clone(), dims:vec![], default:value.clone() }); }
             }
             Stmt::ArrayDecl { kind, name, dims } => {
                 if let Some(field) = out.iter_mut().find(|f| &f.name == name) { field.dims = dims.clone(); }
-                else { out.push(Field { name:name.clone(), kind:kind.clone(), dims:dims.clone() }); }
+                else { out.push(Field { name:name.clone(), kind:kind.clone(), dims:dims.clone(), default:None }); }
             }
             Stmt::DerivedDecl { type_name, names, dims, attributes, polymorphic: false }
                 if dims.is_empty() && attributes.is_empty() => {
@@ -71,7 +72,22 @@ fn resolve(name: &str, definitions: &Definitions, resolved: &mut HashMap<String,
     result
 }
 
+pub(super) fn active() -> bool { TYPES.with(|t|!t.borrow().is_empty()) }
+
 pub(super) fn prepare(program: &Program) {
+    fn has_locality(body: &[Stmt]) -> bool {
+        body.iter().any(|s| match s {
+            Stmt::CallSub {name,args} if matches!(name.as_str(),"@do_concurrent"|"@concurrent_reduce") =>
+                args.iter().any(|e|matches!(e,Expr::Call(tag,_) if matches!(tag.as_str(),"@locality:local"|"@locality:local_init"))),
+            Stmt::Module {body,..}|Stmt::Function {body,..}|Stmt::Subroutine {body,..}|Stmt::Block {body}|Stmt::Do {body,..}|Stmt::DoWhile {body,..} => has_locality(body),
+            Stmt::If {then_body,else_body,..} => has_locality(then_body)||else_body.as_ref().is_some_and(|b|has_locality(b)),
+            Stmt::SelectCase {cases,default,..} => cases.iter().any(|c|has_locality(&c.body))||default.as_ref().is_some_and(|b|has_locality(b)),
+            _=>false,
+        })
+    }
+    if !parallel::enabled() && !has_locality(&program.body) {
+        TYPES.with(|t|t.borrow_mut().clear()); return;
+    }
     fn collect(body: &[Stmt], types: &mut Definitions) {
         for s in body {
             if let Stmt::DerivedType { name, components, bindings } = s {
@@ -92,7 +108,7 @@ pub(super) fn prepare(program: &Program) {
 }
 
 pub(super) fn declarations(body: &[Stmt], scope: &mut Scope) {
-    if !parallel::enabled() { return; }
+    if !active() { return; }
     // A local declaration shadows both the owner and its inherited field view.
     let shadowed: HashSet<&str> = body.iter().flat_map(|s| {
         match s {
@@ -102,13 +118,12 @@ pub(super) fn declarations(body: &[Stmt], scope: &mut Scope) {
             _ => Vec::<&str>::new(),
         }
     }).collect();
-    scope.retain(|key, _| key.strip_prefix("@parallel_dummy:").or_else(||key.strip_prefix(COMPONENT)).unwrap_or(key)
+    scope.retain(|key, _| key.strip_prefix("@parallel_dummy:").or_else(||key.strip_prefix(COMPONENT)).or_else(||key.strip_prefix(DEFAULT)).unwrap_or(key)
         .split_once('%').is_none_or(|(owner, _)| !shadowed.contains(owner)));
     TYPES.with(|t| {
         let types = t.borrow();
         for s in body {
-            let Stmt::DerivedDecl { type_name, names, dims, polymorphic: false, .. } = s else { continue };
-            if dims.is_empty() { continue; }
+            let Stmt::DerivedDecl { type_name, names, polymorphic: false, .. } = s else { continue };
             let Some(Some(fields)) = types.get(type_name) else { continue };
             for n in names {
                 let Some(owner) = scope.get(n).cloned() else { continue };
@@ -122,13 +137,20 @@ pub(super) fn declarations(body: &[Stmt], scope: &mut Scope) {
                             _ => integer(d),
                         }
                     }).collect::<Option<Vec<_>>>()?;
-                    Some((f,dims))
+                    let mut kind=f.kind.clone();
+                    crate::parameters::resolve_kind(&mut kind,&constants).ok()?;
+                    let default=f.default.as_ref().map(|e|
+                        crate::parameters::constant_expression_with(e,&constants)).transpose().ok()?;
+                    Some((f,dims,kind,default))
                 }).collect::<Option<Vec<_>>>();
                 let Some(fixed) = fixed else { continue };
-                for (field, component_dims) in fixed {
+                for (field, component_dims, kind, default) in fixed {
                     let key = format!("{n}%{}",field.name);
                     let dims = component_dims.iter().chain(&owner.dims).cloned().collect();
-                    scope.insert(key.clone(), Object { kind: field.kind.clone(), dims, derived: false, ..owner.clone() });
+                    if let Some(value)=default {
+                        scope.insert(format!("{DEFAULT}{key}"),Object {constant:Some(value),..owner.clone()});
+                    }
+                    scope.insert(key.clone(), Object { kind, dims, derived: false, ..owner.clone() });
                     scope.insert(format!("{COMPONENT}{key}"),Object { dims:component_dims, ..owner.clone() });
                     if let Some(marker) = scope.get(&format!("@parallel_dummy:{n}")).cloned() {
                         scope.insert(format!("@parallel_dummy:{key}"), marker);
@@ -137,6 +159,20 @@ pub(super) fn declarations(body: &[Stmt], scope: &mut Scope) {
             }
         }
     });
+}
+
+// Only complete, bounded layouts populated above can be privatized.
+pub(super) fn private_fields(name: &str, scope: &Scope) -> Option<Vec<(String,Object,Option<Expr>)>> {
+    let prefix=format!("{COMPONENT}{name}%");
+    let mut fields=scope.keys().filter_map(|key| {
+        let field=key.strip_prefix(&prefix)?;
+        let key=format!("{name}%{field}");
+        let object=scope.get(&key)?.clone();
+        let default=scope.get(&format!("{DEFAULT}{key}")).and_then(|o|o.constant.clone());
+        Some((key,object,default))
+    }).collect::<Vec<_>>();
+    fields.sort_by(|a,b|a.0.cmp(&b.0));
+    (!fields.is_empty()).then_some(fields)
 }
 
 fn expression(e: &mut Expr, scope: &Scope) {

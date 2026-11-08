@@ -42,6 +42,9 @@ jobs to stderr; unset it for timing runs.
   inputs, masks, IF statements and SELECT CASE with INTEGER or LOGICAL
   selectors. CASE lists, closed/open ranges and CASE DEFAULT are supported;
   CHARACTER selectors retain serial fallback.
+- Scalar derived `LOCAL` and `LOCAL_INIT` objects with bounded numeric/LOGICAL
+  fields, including nested scalar records, COMPLEX and fixed-array fields;
+  see [private derived records](#private-derived-records).
 - Ordinary counted `DO` loops inside each parallel iteration, including nested
   loops and positive, negative, or runtime strides. Each inner index must be a
   distinct scalar INTEGER declared `LOCAL` or `LOCAL_INIT`. Inner loops execute
@@ -210,8 +213,8 @@ section updates; default initialization of COMPLEX components is still unsupport
 Use REAL/AIMAG for component-part inquiries: `%RE`/`%IM` after a subscripted
 component (for example, `a(i)%v(j)%re`) is not yet parsed.
 CHARACTER, POINTER and ALLOCATABLE components, polymorphic owners,
-whole-record operations and derived LOCAL/LOCAL_INIT storage retain serial
-fallback. Owner TARGET/POINTER attributes retain their existing restrictions.
+whole-record shared operations retain serial fallback. Supported scalar
+record locality is described [below](#private-derived-records). Owner TARGET/POINTER attributes retain their existing restrictions.
 
 ```cmd
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_records.f90 --run
@@ -372,18 +375,52 @@ semantics rather than reallocating worker storage. Caller-owned temporary
 descriptors are released after the construct, and workers release their copies
 after completing their chunks. Allocation failures retain runtime diagnostics.
 
-The budget is 4096 components summed across all `LOCAL`/`LOCAL_INIT` arrays in
-one construct; each COMPLEX element counts as two components. This budget is
+The budget is 4096 components summed across all `LOCAL`/`LOCAL_INIT` arrays
+and all private derived-record fields in one construct; each COMPLEX element counts as two components. This budget is
 separate from the array-reduction budget. Larger and zero-sized private arrays
 use serial execution; runtime extents select that path before worker dispatch.
-ALLOCATABLE, POINTER, derived-type and
-CHARACTER locality objects retain their existing restrictions.
+ALLOCATABLE, POINTER and CHARACTER locality objects retain their existing restrictions.
 
 ```cmd
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_local_arrays.f90 --run
 python tests\test_concurrent_parallel_local_arrays.py
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_runtime_local.f90 --run
 python tests\test_concurrent_parallel_runtime_local.py
+```
+
+## Private derived records
+
+A scalar nonpolymorphic record may appear in `LOCAL` or `LOCAL_INIT` when its
+entire layout contains INTEGER, REAL, DOUBLE PRECISION, LOGICAL or COMPLEX(4/8)
+scalar or fixed-array leaves, including scalar nested records. Component bounds
+must be constant, including supported named constants and nonunit bounds.
+
+The compiler splits the record into primitive private fields. On every iteration,
+`LOCAL` applies component default initializers and leaves other fields undefined;
+`LOCAL_INIT` restores the values captured from the outside record at construct
+entry. Mutations affect only private fields and leave the outside record unchanged.
+This works in serial native compilation and the interpreter as well as `--parallel`.
+PURE callees keep their own host associations: a callee reading a module record
+still sees that module record when the loop has a private entity of the same name.
+Defaults for COMPLEX components retain the existing compiler restriction.
+
+Component assignments, sections, intrinsics and supported PURE/SIMPLE calls on
+individual fields reuse intrinsic locality. Initialization and bounds checks stay
+active. Masks, DEFAULT(NONE), reductions and CYCLE may be combined with this support.
+The budget above includes scalar record leaves (one component each, two for
+COMPLEX), including when a runtime-sized intrinsic workspace shares the construct.
+An oversized private workspace selects serial execution.
+
+This stage rejects arrays of private records, TARGET/POINTER/ALLOCATABLE owners,
+owned/pointer/polymorphic layouts,
+inheritance, type-bound bindings, whole-record operations or passing the whole record to a
+procedure, and nested DO CONCURRENT constructs involving these private records.
+Use individual fields or ordinary inner DO loops. These cases receive a source
+location diagnostic rather than silently referring to the outside object.
+
+```cmd
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_local_records.f90 --run
+python tests\test_concurrent_parallel_local_records.py
 ```
 
 ## Scalar reductions

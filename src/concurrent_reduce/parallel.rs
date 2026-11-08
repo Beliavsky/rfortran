@@ -220,6 +220,11 @@ fn check(
     let mut local_elements=0usize;
     for n in &locals {
         if let Some(o) = scope.get(n) {
+            if o.dims.is_empty() && scope.contains_key(&format!("@parallel_record_leaf:{n}")) {
+                local_elements=local_elements.checked_add(if matches!(o.kind,TypeSpec::Complex(_)) {2}else{1})
+                    .context("parallel LOCAL record size overflow")?;
+                if local_elements>4096 {bail!("parallel LOCAL records exceed private-storage budget (4096 components)");}
+            }
             if !o.dims.is_empty() && !reduction_arrays.contains(n) {
                 let mut count=if matches!(o.kind,TypeSpec::Complex(_)) {2usize}else{1};
                 for d in &o.dims {

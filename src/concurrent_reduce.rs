@@ -13,6 +13,7 @@ mod locality;
 mod calls;
 mod captures;
 mod records;
+mod record_locality;
 pub(crate) mod parallel;
 
 #[derive(Clone)]
@@ -385,7 +386,16 @@ fn lower(
     let mut mask = args.next().context("missing concurrent mask")?;
     let mut args: Vec<_> = args.collect();
     let mut scope = scope.clone();
+    locality::validate(&controls,&body,&args,&scope,implicit_none)?;
+    let record_prefix=record_locality::expand(&controls,&mut mask,&mut body,&mut args,&mut scope,serial)?;
     let parallel = parallel::eligible(&controls, &mask, &body, &args, &scope, loop_name);
+    // Preserve scalar record storage in the runtime workspace budget before
+    // locality lowering erases the source clauses.
+    let record_scalar_components=args.iter().filter_map(|e|match e {
+        Expr::Call(tag,names) if matches!(tag.as_str(),"@locality:local"|"@locality:local_init")=>Some(names),_=>None,
+    }).flatten().filter_map(|e|match e {
+        Expr::Ident(n) if scope.contains_key(&format!("@parallel_record_leaf:{n}"))=>scope.get(n),_=>None,
+    }).filter(|o|o.dims.is_empty()).map(|o|if matches!(o.kind,TypeSpec::Complex(_)) {2i64}else{1}).sum::<i64>();
     let locality = locality::prepare(
         &mut controls,
         &mut mask,
@@ -393,13 +403,14 @@ fn lower(
         &mut args,
         &mut scope,
         serial,
-        implicit_none,
     )?;
-    let mut prefix=locality.prefix;
+    let mut prefix=record_prefix;
+    prefix.extend(locality.prefix);
     let runtime_locals=locality.arrays.iter().any(|a|a.runtime);
-    let local_counts=locality.arrays.iter().map(|a|Expr::mul(
+    let mut local_counts=locality.arrays.iter().map(|a|Expr::mul(
         Expr::Call("min".into(),vec![Expr::Call("size".into(),vec![id(&a.name)]),int(4097)]),int(a.components)
     )).collect::<Vec<_>>();
+    if record_scalar_components>0 {local_counts.push(int(record_scalar_components));}
     let mut ops = HashMap::new();
     let mut suffix = vec![];
     let mut partials = vec![];
@@ -766,10 +777,10 @@ fn name_iteration(mut stmt: Stmt, marker: Stmt) -> Stmt {
     }
 }
 pub fn resolve(mut program: Program) -> Result<Program> {
-    if parallel::enabled() { records::prepare(&program); }
+    records::prepare(&program);
     if parallel::enabled() { captures::prepare(&mut program); }
     parallel::procedures(&program);
-    let objects=if parallel::enabled(){module_objects(&program)}else{Scope::new()};
+    let objects=if parallel::enabled() || records::active(){module_objects(&program)}else{Scope::new()};
     walk(&mut program.body, &objects, &mut 0, None, None, false)?;
     parallel::mark_workspaces(&mut program);
     Ok(program)

@@ -187,7 +187,9 @@ is mostly OpenMP, then MPI, with coarrays a distant third.
     components also support disjoint field updates, masks and checked component
     reads through their existing primitive storage arrays, including element and
     triplet-section updates within an owned record and recursively nested scalar
-    derived components. Owned components and type-bound bindings retain serial fallback.
+    derived components. Supported scalar records also work in LOCAL/LOCAL_INIT,
+    using private primitive fields with per-iteration defaults or entry-value copies.
+    Owned components and type-bound bindings retain their restrictions.
   - **Next:** broader capture analysis, recoverable allocation of other storage types,
     and audits of remaining intrinsic runtime helpers.
     SAVE and module variables retain their Fortran sharing semantics; making

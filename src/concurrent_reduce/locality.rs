@@ -161,15 +161,8 @@ fn default_none(body: &[Stmt], scope: &Scope, allowed: &HashSet<String>) -> Resu
     Ok(())
 }
 
-pub(super) fn prepare(
-    controls: &mut [Expr],
-    mask: &mut Expr,
-    body: &mut Vec<Stmt>,
-    clauses: &mut Vec<Expr>,
-    scope: &mut Scope,
-    serial: &mut usize,
-    implicit_none: bool,
-) -> Result<Prepared> {
+pub(super) fn validate(controls: &[Expr], body: &[Stmt], clauses: &[Expr],
+                       scope: &Scope, implicit_none: bool) -> Result<()> {
     let mut indices = HashSet::new();
     for c in controls.chunks(4) {
         let Expr::Ident(n) = &c[0] else {
@@ -245,6 +238,17 @@ pub(super) fn prepare(
         allowed.extend(locality.keys().cloned());
         default_none(body, scope, &allowed)?;
     }
+    Ok(())
+}
+
+pub(super) fn prepare(
+    controls: &mut [Expr],
+    mask: &mut Expr,
+    body: &mut Vec<Stmt>,
+    clauses: &mut Vec<Expr>,
+    scope: &mut Scope,
+    serial: &mut usize,
+) -> Result<Prepared> {
     let mut prefix = vec![];
     let mut each = vec![];
     let mut private_arrays = vec![];
