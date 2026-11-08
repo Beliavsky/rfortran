@@ -288,6 +288,7 @@ fn check(
         scope: &Scope,
         loop_locals: &HashSet<String>,
         active: &HashSet<String>,
+        inside_loop: bool,
     ) -> Result<()> {
         for s in body {
             match s {
@@ -295,7 +296,7 @@ fn check(
                 // CYCLE advances the innermost loop, including the worker's
                 // concurrent iteration. EXIT must stay within an ordinary DO.
                 Stmt::Cycle=>{},
-                Stmt::Exit if !active.is_empty()=>{},
+                Stmt::Exit if inside_loop=>{},
                 Stmt::Assign{name,..} | Stmt::AssignIndex{name,..} if active.contains(name)=>{
                     bail!("inner DO control variable cannot be modified in its body");
                 },
@@ -327,10 +328,15 @@ fn check(
                             Expr::Index(name,indices)|Expr::Call(name,indices) if scope.get(&name).is_some_and(|o|!o.dims.is_empty())=>Stmt::AssignIndex{name,indices,value:Expr::IntLit("0".into())},
                             _=>bail!("parallel subroutine output requires LOCAL storage or a disjoint array element/section"),
                         };
-                        writes(&[assignment],locals,written,indices_set,scope,loop_locals,active)?;
+                        writes(&[assignment],locals,written,indices_set,scope,loop_locals,active,inside_loop)?;
                     }
                 },
-                Stmt::If{then_body,else_body,..}=>{writes(then_body,locals,written,indices_set,scope,loop_locals,active)?;if let Some(b)=else_body {writes(b,locals,written,indices_set,scope,loop_locals,active)?;}},
+                Stmt::If{then_body,else_body,..}=>{writes(then_body,locals,written,indices_set,scope,loop_locals,active,inside_loop)?;if let Some(b)=else_body {writes(b,locals,written,indices_set,scope,loop_locals,active,inside_loop)?;}},
+                Stmt::DoWhile{body,..}=>{
+                    // WHILE has no protected counted index. Keep enclosing
+                    // counted indices protected, but allow EXIT of this loop.
+                    writes(body,locals,written,indices_set,scope,loop_locals,active,true)?;
+                },
                 Stmt::Do{var,body,..}=>{
                     inner_loop(var,body,locals,written,indices_set,scope,loop_locals,active)?;
                 },
@@ -339,7 +345,7 @@ fn check(
                     let [Expr::Ident(var),_,_,_]=args.as_slice() else {bail!("invalid inner DO controls");};
                     inner_loop(var,&body[1..],locals,written,indices_set,scope,loop_locals,active)?;
                 },
-                _=>bail!("body requires local assignments, independent array writes, IF statements, or private-index DO loops"),
+                _=>bail!("body requires local assignments, independent array writes, IF statements, DO WHILE, or private-index DO loops"),
             }
         }
         Ok(())
@@ -356,10 +362,10 @@ fn check(
         }
         let mut active=active.clone();
         active.insert(var.into());
-        writes(body,locals,written,indices,scope,loop_locals,&active)
+        writes(body,locals,written,indices,scope,loop_locals,&active,true)
     }
     let mut written = HashMap::new();
-    writes(body, &locals, &mut written, &indices, scope, &loop_locals, &HashSet::new())?;
+    writes(body, &locals, &mut written, &indices, scope, &loop_locals, &HashSet::new(), false)?;
     // Shared storage keeps its ordinary Fortran identity. Only read-only
     // captures are admitted, including hidden inputs made explicit by captures.
     let nonlocal = |n: &str| scope.get(n).is_some_and(|o|

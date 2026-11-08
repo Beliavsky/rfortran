@@ -38,7 +38,10 @@ jobs to stderr; unset it for timing runs.
   serially within their worker; accumulators and work arrays must also have
   appropriate locality. Unnamed `CYCLE` advances the innermost loop, including
   the concurrent iteration itself; `EXIT` may only leave an inner ordinary
-  loop. Existing shared-array independence checks still apply.
+  loop. Inner `DO WHILE` loops are also supported: their conditions are
+  re-evaluated normally, mutable working state must be private, and their
+  `CYCLE` and `EXIT` target that inner loop. Existing shared-array independence
+  checks still apply.
 - Scalar and fixed-size or runtime-sized array INTEGER/REAL/DOUBLE PRECISION `REDUCE(+:...)`, `REDUCE(*:...)`,
   `REDUCE(MIN:...)`, and `REDUCE(MAX:...)`; scalar and fixed-size or runtime-sized array LOGICAL `.AND.`, `.OR.`,
   `.EQV.`, and `.NEQV.` reductions. Multiple reductions and reduction-only
@@ -187,7 +190,7 @@ A strided example with a fixed column, an offset, and a scalar reduction:
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_stride.f90 --run
 ```
 
-## Serial inner DO loops
+## Serial inner loops
 
 For example, each worker can accumulate one column without calling a separate
 PURE procedure:
@@ -217,7 +220,13 @@ to the next concurrent iteration, including with masks, multiple indices,
 and signed or runtime strides. Reduction updates before it are retained;
 updates after it are skipped. Each new iteration still initializes its LOCAL
 and LOCAL_INIT state, and loop-local temporary storage is cleaned on transfer.
-DO WHILE and named inner loops/transfers retain serial fallback.
+Inner `DO WHILE` loops may be nested with each other or counted DO loops.
+Their conditions accept the same audited expressions and proved PURE/SIMPLE
+calls as the rest of the parallel body, including runtime-sized array results.
+An inner EXIT preserves work and reduction updates preceding it, then resumes
+the enclosing iteration. A zero-trip WHILE does not initialize body-only values;
+ordinary initialization checks remain active. Named inner loops/transfers
+retain serial fallback.
 
 Shared writes such as `a(j,i)` also retain serial fallback when their varying
 inner subscript does not meet the existing invariant-subscript proof. Reads such as `a(j,i)` are supported
@@ -231,6 +240,9 @@ Inner-loop transfers are covered by
 Concurrent-iteration transfers are covered by
 `tests/programs/xconcurrent_parallel_cycle.f90` and
 `tests/test_concurrent_parallel_cycle.py`.
+WHILE loops are covered by `tests/programs/xconcurrent_parallel_while.f90` and
+`tests/test_concurrent_parallel_while.py`, including nesting, transfers,
+conditions, runtime workspaces, reductions and conservative fallbacks.
 
 ## Private LOCAL and LOCAL_INIT arrays
 
