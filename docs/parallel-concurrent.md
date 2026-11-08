@@ -36,7 +36,8 @@ jobs to stderr; unset it for timing runs.
   loops and positive, negative, or runtime strides. Each inner index must be a
   distinct scalar INTEGER declared `LOCAL` or `LOCAL_INIT`. Inner loops execute
   serially within their worker; accumulators and work arrays must also have
-  appropriate locality. Unnamed `CYCLE` and `EXIT` target the innermost ordinary
+  appropriate locality. Unnamed `CYCLE` advances the innermost loop, including
+  the concurrent iteration itself; `EXIT` may only leave an inner ordinary
   loop. Existing shared-array independence checks still apply.
 - Scalar and fixed-size or runtime-sized array INTEGER/REAL/DOUBLE PRECISION `REDUCE(+:...)`, `REDUCE(*:...)`,
   `REDUCE(MIN:...)`, and `REDUCE(MAX:...)`; scalar and fixed-size or runtime-sized array LOGICAL `.AND.`, `.OR.`,
@@ -211,8 +212,12 @@ Unnamed `CYCLE` and `EXIT` within an inner DO target that loop, including with
 signed or runtime strides. `CYCLE` advances its control variable normally;
 `EXIT` leaves that inner loop without skipping subsequent outer-iteration work
 or the reduction combination. An EXIT that leaves the concurrent construct
-remains prohibited. CYCLE directly in the concurrent body retains serial
-fallback, as do DO WHILE and named inner loops/transfers.
+remains prohibited. Unnamed `CYCLE` directly in the concurrent body advances
+to the next concurrent iteration, including with masks, multiple indices,
+and signed or runtime strides. Reduction updates before it are retained;
+updates after it are skipped. Each new iteration still initializes its LOCAL
+and LOCAL_INIT state, and loop-local temporary storage is cleaned on transfer.
+DO WHILE and named inner loops/transfers retain serial fallback.
 
 Shared writes such as `a(j,i)` also retain serial fallback when their varying
 inner subscript does not meet the existing invariant-subscript proof. Reads such as `a(j,i)` are supported
@@ -223,6 +228,9 @@ See `tests/programs/xconcurrent_parallel_inner_do.f90` and
 Inner-loop transfers are covered by
 `tests/programs/xconcurrent_parallel_inner_transfers.f90` and
 `tests/test_concurrent_parallel_inner_transfers.py`.
+Concurrent-iteration transfers are covered by
+`tests/programs/xconcurrent_parallel_cycle.f90` and
+`tests/test_concurrent_parallel_cycle.py`.
 
 ## Private LOCAL and LOCAL_INIT arrays
 

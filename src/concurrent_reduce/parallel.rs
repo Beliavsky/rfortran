@@ -292,9 +292,10 @@ fn check(
         for s in body {
             match s {
                 Stmt::SourceLocation(_)=>{},
-                // Unnamed transfers target the innermost ordinary DO. Never
-                // admit a transfer at concurrent-body depth through this rule.
-                Stmt::Exit | Stmt::Cycle if !active.is_empty()=>{},
+                // CYCLE advances the innermost loop, including the worker's
+                // concurrent iteration. EXIT must stay within an ordinary DO.
+                Stmt::Cycle=>{},
+                Stmt::Exit if !active.is_empty()=>{},
                 Stmt::Assign{name,..} | Stmt::AssignIndex{name,..} if active.contains(name)=>{
                     bail!("inner DO control variable cannot be modified in its body");
                 },

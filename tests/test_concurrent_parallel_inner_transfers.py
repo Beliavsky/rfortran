@@ -1,4 +1,4 @@
-"""Unnamed EXIT/CYCLE must stay within the worker's innermost serial DO."""
+"""Unnamed transfers target the appropriate inner or concurrent iteration."""
 import subprocess
 import tempfile
 from pathlib import Path
@@ -112,10 +112,10 @@ a(i)=sum(work)''', 'local(j,work)', '2*i')
         source=source.replace('stride\n', 'stride,work(2)\n')
         self.check_source(source, runtime_error='uninitialized')
 
-    def test_concurrent_body_cycle_still_falls_back(self):
+    def test_concurrent_body_cycle(self):
         self.check_source(self.source('''a(i)=i
 cycle
-a(i)=0''', 'local(j)', 'i'), reason='body requires')
+a(i)=0''', 'local(j)', 'i'))
 
     def test_exit_cannot_leave_concurrent_construct(self):
         source=self.source('''do j=1,2
