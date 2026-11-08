@@ -26,7 +26,7 @@ jobs to stderr; unset it for timing runs.
   and arbitrary lower bounds. Supported assumed-shape dummy arrays are also
   accepted. Constant extents may use named constants.
 - Arrays of simple nonpolymorphic derived types with scalar or fixed-size array INTEGER, REAL,
-  DOUBLE PRECISION and LOGICAL components, including fixed-size arrays,
+  DOUBLE PRECISION, COMPLEX(4/8) and LOGICAL components, including fixed-size arrays,
   runtime-sized ALLOCATABLE arrays and supported assumed-shape dummies.
   Component updates use the same ownership checks as intrinsic arrays; see
   [derived-array components](#derived-array-components).
@@ -203,9 +203,13 @@ The existing component storage representation limits the sum of component
 rank and record-array rank to 15, in both serial and parallel compilation.
 
 This stage requires the entire element type to have scalar or fixed-size array
-INTEGER, REAL or LOGICAL leaves and no type-bound bindings. Scalar nested derived
+INTEGER, REAL, COMPLEX(4/8) or LOGICAL leaves and no type-bound bindings. Scalar nested derived
 components are supported recursively, using the same leaf storage and ownership
-checks. CHARACTER, COMPLEX, POINTER and ALLOCATABLE components, polymorphic owners,
+checks. COMPLEX fields use paired real storage, with whole-field, element and
+section updates; default initialization of COMPLEX components is still unsupported.
+Use REAL/AIMAG for component-part inquiries: `%RE`/`%IM` after a subscripted
+component (for example, `a(i)%v(j)%re`) is not yet parsed.
+CHARACTER, POINTER and ALLOCATABLE components, polymorphic owners,
 whole-record operations and derived LOCAL/LOCAL_INIT storage retain serial
 fallback. Owner TARGET/POINTER attributes retain their existing restrictions.
 
@@ -216,6 +220,8 @@ rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_record_a
 python tests\test_concurrent_parallel_record_arrays.py
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_nested_records.f90 --run
 python tests\test_concurrent_parallel_nested_records.py
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_complex_records.f90 --run
+python tests\test_concurrent_parallel_complex_records.py
 ```
 
 ## Multiple indices and multidimensional arrays

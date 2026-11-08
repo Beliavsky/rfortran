@@ -47,8 +47,7 @@ fn fields(components: &[Stmt], bindings: &[(String, String)], definitions: &Defi
             _ => return None,
         }
     }
-    (!out.is_empty() && out.iter().all(|f| calls::scalar(&f.kind)
-        && !matches!(f.kind, TypeSpec::Complex(_)))).then_some(out)
+    (!out.is_empty() && out.iter().all(|f| calls::scalar(&f.kind))).then_some(out)
 }
 
 // Resolve the whole graph before admitting an owner. Unsafe or recursive

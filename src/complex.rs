@@ -223,8 +223,10 @@ fn declarations(body: &[Stmt], scope: &mut Scope) {
                         for (path, info) in fields {
                             if dims.is_empty() {
                                 scope.insert(format!("{n}%{path}"), Info { kind: info.kind.clone(), dims: info.dims.clone() });
-                            } else if info.dims.is_empty() {
-                                scope.insert(format!("{n}%{path}"), Info { kind: info.kind.clone(), dims: dims.clone() });
+                            } else {
+                                // Component axes precede owner axes, as in derived_arrays.
+                                scope.insert(format!("{n}%{path}"), Info { kind: info.kind.clone(),
+                                    dims: info.dims.iter().chain(dims).cloned().collect() });
                             }
                         }
                     }
@@ -257,13 +259,31 @@ fn declarations(body: &[Stmt], scope: &mut Scope) {
 }
 /// A COMPLEX component of an element of an array of records,
 /// `@record_component:z(a(i))`: the scope key `a%z` and the subscripts.
-fn record_component<'e>(e: &'e Expr, s: &Scope) -> Option<(String, &'e [Expr])> {
+fn record_component(e: &Expr, s: &Scope) -> Option<(String, Vec<Expr>)> {
     let Expr::Call(tag, args) = e else { return None };
     let path = tag.strip_prefix("@record_component:")?;
-    let [Expr::Call(object, indices) | Expr::Index(object, indices)] = args.as_slice() else { return None };
+    let (Expr::Call(object, indices) | Expr::Index(object, indices)) = args.first()? else { return None };
     let key = format!("{object}%{path}");
-    s.get(&key).filter(|v| complex_kind(&v.kind).is_some() && !v.dims.is_empty()).map(|_| (key, indices.as_slice()))
+    let value = s.get(&key).filter(|v| complex_kind(&v.kind).is_some() && !v.dims.is_empty())?;
+    let owner = s.get(&format!("@object_type:{object}"))?;
+    let rank = value.dims.len().checked_sub(owner.dims.len())?;
+    let mut selection = match args.as_slice() {
+        [_] => (0..rank).map(|_| Expr::Section {name:String::new(),lower:None,upper:None,stride:None}).collect::<Vec<_>>(),
+        [_, Expr::Call(tag, component)] if tag=="@component_subscripts" && component.len()==rank => component.clone(),
+        _ => return None,
+    };
+    selection.extend(indices.iter().cloned());
+    Some((key, selection))
 }
+
+// Fixed arrays of the synthetic COMPLEX record are expanded with `$` field
+// separators. Scalar COMPLEX components retain their ordinary nested path.
+fn record_part_separator(key: &str, scope: &Scope) -> &'static str {
+    let Some((owner,_))=key.split_once('%') else {return "%"};
+    let Some(object)=scope.get(&format!("@object_type:{owner}")) else {return "%"};
+    if !object.dims.is_empty() && scope.get(key).is_some_and(|v|v.dims.len()>object.dims.len()) {"$"} else {"%"}
+}
+
 fn dims(n: &str, v: &Info) -> Vec<Expr> {
     v.dims
         .iter()
@@ -408,7 +428,36 @@ impl Lower {
         let scalar = |kind| Ok(Some(Info::scalar(kind)));
         if let Some((key, indices)) = record_component(e, s) {
             let v = &s[&key];
-            return Ok(Some(Info { kind: v.kind.clone(), dims: selection_dims(&key, indices, v, s, self)? }));
+            anyhow::ensure!(indices.len()==v.dims.len(), "array `{key}` requires {} subscripts", v.dims.len());
+            let Expr::Call(tag, args) = e else { unreachable!() };
+            let mut dimensions = vec![];
+            for (axis,index) in indices.iter().enumerate() {
+                let section = match index {
+                    Expr::Call(tag,a) if tag=="@section_subscript" => a.first().unwrap_or(index),
+                    _ => index,
+                };
+                if let Expr::Section {lower,upper,stride,..} = section {
+                    let bounds = match &v.dims[axis] {
+                        Expr::Call(tag,a) if tag=="@declared_bounds" && a.len()==2 =>
+                            crate::parameters::integer_constant(&a[0]).ok().zip(crate::parameters::integer_constant(&a[1]).ok()),
+                        d => crate::parameters::integer_constant(d).ok().map(|n|(1,n)),
+                    };
+                    let fixed = (|| {
+                        let (lo,hi)=bounds?;
+                        let step=stride.as_deref().map(crate::parameters::integer_constant).transpose().ok()?.unwrap_or(1);
+                        if step==0 {return None;}
+                        let start=lower.as_deref().map(crate::parameters::integer_constant).transpose().ok()?.unwrap_or(if step>0 {lo}else{hi});
+                        let end=upper.as_deref().map(crate::parameters::integer_constant).transpose().ok()?.unwrap_or(if step>0 {hi}else{lo});
+                        let length=if (step>0 && end>=start)||(step<0 && end<=start) {
+                            (i128::from(end)-i128::from(start))/i128::from(step)+1
+                        } else {0};
+                        i64::try_from(length).ok().map(int)
+                    })();
+                    dimensions.push(fixed.unwrap_or_else(||call("size", vec![
+                        call(&format!("{tag}{}re",record_part_separator(&key,s)),args.clone()), int(dimensions.len() as i64+1)])));
+                } else if let Some(index) = self.info(index,s)? { dimensions.extend(index.dims); }
+            }
+            return Ok(Some(Info { kind:v.kind.clone(), dims:dimensions }));
         }
         match e {
             Expr::Ident(n) => {
@@ -833,7 +882,7 @@ impl Lower {
     fn indices(&mut self, a: &mut [Expr], s: &mut Scope, out: &mut Vec<Stmt>) -> Result<()> {
         for e in a {
             if let Expr::Call(tag, args) = e {
-                if tag == "@section_subscript" || tag == "@vector_subscript" {
+                if tag == "@section_subscript" || tag == "@vector_subscript" || tag == "@component_subscripts" {
                     self.indices(args, s, out)?;
                     continue;
                 }
@@ -886,16 +935,17 @@ impl Lower {
                 dims: dimensions,
             });
         }
-        if let Some((_, indices)) = record_component(&e, s) {
-            let Expr::Call(tag, _) = &e else { unreachable!() };
-            let mut indices = indices.to_vec();
-            self.indices(&mut indices, s, out)?;
-            let Expr::Call(_, element) = &e else { unreachable!() };
-            let (Expr::Call(object, _) | Expr::Index(object, _)) = &element[0] else { unreachable!() };
-            let element = Expr::Call(object.clone(), indices);
+        if let Some((key,_)) = record_component(&e, s) {
+            let separator=record_part_separator(&key,s);
+            let Expr::Call(tag, mut args) = e else { unreachable!() };
+            let (Expr::Call(_, indices) | Expr::Index(_, indices)) = &mut args[0] else { unreachable!() };
+            self.indices(indices, s, out)?;
+            if let Some(Expr::Call(_, component)) = args.get_mut(1) {
+                self.indices(component, s, out)?;
+            }
             return Ok(Pair {
-                re: call(&format!("{tag}%re"), vec![element.clone()]),
-                im: call(&format!("{tag}%im"), vec![element]),
+                re: call(&format!("{tag}{separator}re"), args.clone()),
+                im: call(&format!("{tag}{separator}im"), args),
                 kind: k,
                 dims: dimensions,
             });
@@ -2021,7 +2071,7 @@ impl Lower {
                     if name.contains('%') && !scope[name.as_str()].dims.is_empty() {
                         let name=name.clone();
                         for (part,value) in [("re",p.re),("im",p.im)] {
-                            let target=format!("{name}%{part}");
+                            let target=format!("{name}{}{part}",record_part_separator(&name,&scope));
                             prefix.push(match &indices {Some(indices)=>Stmt::AssignIndex{name:target,indices:indices.clone(),value},None=>Stmt::Assign{name:target,value}});
                         }
                         return Ok(());
@@ -2321,9 +2371,23 @@ pub(crate) fn resolve(mut p: Program) -> Result<Program> {
         return Ok(p);
     }
     complex_fields(&p.body);
+    // USE-associated module storage has qualified names and is visible from
+    // other scopes, including outlined workers. Retain its original type/rank
+    // information before declaration lowering splits COMPLEX storage.
+    fn module_scope(body: &[Stmt], globals: &mut Scope) {
+        for stmt in body {
+            if let Stmt::Module {body,..} = stmt {
+                declarations(body, globals);
+                module_scope(body, globals);
+            }
+        }
+    }
+    let mut globals=Scope::new();
+    module_scope(&p.body, &mut globals);
+    globals.retain(|n,_| n.starts_with("@module$") || n.starts_with("@object_type:@module$"));
     let mut lower = Lower::default();
-    lower.collect(&p.body, &Scope::new())?;
-    lower.body(&mut p.body, &Scope::new(), &[])?;
+    lower.collect(&p.body, &globals)?;
+    lower.body(&mut p.body, &globals, &[])?;
     for k in [4, 8].into_iter().filter(|_| complex) {
         p.body.insert(
             0,

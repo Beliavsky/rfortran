@@ -1208,6 +1208,19 @@ impl Lower {
     /// The alias has no storage and must never acquire ownership of it.
     fn scalar_component_view(&mut self, e: &mut Expr, objects: &mut Objects,
         prefix: &mut Vec<Stmt>) -> Result<bool> {
+        // A fully flattened primitive field is not a scalar record view.
+        // Its intermediate path may have no object of its own (for example,
+        // the paired storage of a fixed COMPLEX component array).
+        if let Expr::Ident(n) = e {
+            for (end,_) in n.match_indices('%') {
+                if let Some(owner) = objects.get(&n[..end]).filter(|o|!o.dims.is_empty()) {
+                    if self.types.get(&owner.ty).is_some_and(|fields|fields.iter().any(|f|f.name==n[end+1..])) {
+                        return Ok(false);
+                    }
+                    break;
+                }
+            }
+        }
         let (mut parent, field) = match e {
             Expr::Ident(n) => match n.rsplit_once('%') {
                 Some((parent, field)) => (Expr::Ident(parent.into()), field.to_owned()),

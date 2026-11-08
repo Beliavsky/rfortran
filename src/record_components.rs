@@ -37,6 +37,10 @@ impl Lower {
     }
     fn fixed_record_component_name(&self,owner:&str,field:&str,objects:&Objects)->Option<String> {
         let fields=self.types.get(&objects.get(owner).filter(|o|!o.dims.is_empty())?.ty)?;
+        // Exact primitive leaves have direct storage selections. Borrowing a
+        // lowered COMPLEX array part through a whole record temporary would
+        // recursively borrow that same storage again, on reads or writes.
+        if fields.iter().any(|f|f.name==field && f.heap.is_none()) {return None;}
         let folded=field.replace('%',"$");
         if fields.iter().any(|f|!f.dims.is_empty() && f.name.contains('$') && f.name==folded) {return Some(folded);}
         fields.iter().any(|f|!f.dims.is_empty() && f.name.starts_with(&format!("{field}$"))).then(||field.into())
