@@ -15,6 +15,10 @@ pub struct Cli {
                 help = "Check implemented features against a Fortran revision (default: permissive)")]
     pub standard: Option<crate::standards::Standard>,
 
+    #[structopt(long = "default-private", global = true,
+                help = "Default user module entities to PRIVATE unless the source specifies default accessibility")]
+    pub default_private: bool,
+
     #[structopt(
         short = "o",
         long,

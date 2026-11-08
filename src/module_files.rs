@@ -245,12 +245,25 @@ impl Loader {
 }
 
 pub(crate) fn prepare(
-    program: Program,
+    mut program: Program,
     source: &str,
     filename: &Path,
     origins: Option<&[SourceOrigin]>,
     args: &Cli,
 ) -> Result<Prepared> {
+    if args.default_private {
+        // Materialize the policy in owned definitions before fingerprinting and
+        // saving .rmod files. Imported definitions keep their producer's policy;
+        // intrinsic modules are synthesized later and are unaffected.
+        for statement in &mut program.body {
+            if let Stmt::Module { body, .. } = statement {
+                if !body.iter().any(|s| matches!(s,
+                    Stmt::Accessibility { names, .. } if names.is_empty())) {
+                    body.insert(0, Stmt::Accessibility { public: false, names: vec![] });
+                }
+            }
+        }
+    }
     let output = args
         .module_dir
         .clone()

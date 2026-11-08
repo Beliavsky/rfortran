@@ -48,10 +48,11 @@ const CATEGORIES: &[&str] = &[
     "memory-leak",
     "allocation-state",
     "action-mismatch",
+    "module-default-public",
 ];
 /// The opt-in categories that -Wextra enables, as gfortran's -Wextra adds to
-/// -Wall. implicit-interface and conversion stay opt-in: they fire throughout
-/// legacy and mixed-kind code.
+/// -Wall. implicit-interface, conversion, and module-default-public remain
+/// individually selectable rather than members of this group.
 const EXTRA: &[&str] = &[
     "missing-intent",
     "shadow",

@@ -160,7 +160,22 @@ fn analyze(body: &[Stmt], procedure: Option<(&str, &[String])>, tokens: &[Token]
     for statement in body {
         match statement {
             Stmt::Function { name, params, body, .. } | Stmt::Subroutine { name, params, body, .. } => analyze(body, Some((name, params)), tokens, src, out),
-            Stmt::Module { body, .. } => analyze(body, None, tokens, src, out),
+            Stmt::Module { name, body } => {
+                if !body.iter().any(|s| matches!(s,
+                    Stmt::Accessibility { names, .. } if names.is_empty())) {
+                    if let Some(header)=tokens.windows(2).find(|ts|
+                        matches!(ts[0].kind,TokenKind::KwModule)
+                            && matches!(&ts[1].kind,TokenKind::Ident(n) if n==name)) {
+                        out.push(Warning {
+                            category: "module-default-public",
+                            message: format!("module `{name}` has no explicit default PRIVATE or PUBLIC statement"),
+                            span: header[1].span.clone(),
+                            note: "add PRIVATE and explicitly export the public interface, or add a standalone PUBLIC statement to document the default",
+                        });
+                    }
+                }
+                analyze(body, None, tokens, src, out);
+            }
             Stmt::Block { body } | Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } => analyze(body, procedure.map(|(n, _)| (n, &[][..])), tokens, src, out),
             Stmt::If { then_body, else_body, .. } => {
                 analyze(then_body, procedure.map(|(n, _)| (n, &[][..])), tokens, src, out);
@@ -183,6 +198,7 @@ pub fn check(program: &Program, src: &str, tokens: &[Token], filename: &str,
     let controls = HashMap::from([
         ("implicit-save", crate::unused::selected("implicit-save", false, settings, options)),
         ("missing-intent", crate::unused::selected("missing-intent", false, &intent_settings, options)),
+        ("module-default-public", crate::unused::selected("module-default-public", false, &intent_settings, options)),
     ]);
     if !controls.values().any(|(enabled, _)| *enabled) { return Ok(()); }
     let mut warnings = vec![];

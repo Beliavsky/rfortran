@@ -313,7 +313,7 @@ current limits.
 
 | Feature | Introduced | Status | Notes | Tests |
 |---|---|---|---|---|
-| [USE, ONLY, renaming, PUBLIC and PRIVATE](language-support.md#module-data-and-procedure-association) | F90 | ✅ |  | test_module_scope.py |
+| [USE, ONLY, renaming, PUBLIC and PRIVATE](language-support.md#module-data-and-procedure-association) | F90 | ✅ | Standard PUBLIC default; opt-in `--default-private` and `-Wmodule-default-public` source advice. Effective access is preserved in .rmod files. | test_module_scope.py, test_module_default_private.py |
 | [Separate compilation with `.rmod` interfaces](usage.md#multiple-source-files-and-modules) | F90 | ✅ | Modules and their interfaces: F90; .rmod is rfort-specific. Procedures with dummy procedures must be compiled with their callers | test_module_compilation.py |
 | [Submodules](usage.md#submodules) | F2008 | 🟡 | Compiled together with their ancestor module, in one file or one source group: separate module procedures in both body forms, in generic interfaces and in the module itself, and nested submodules. A submodule compiled apart from its module, and submodule names that repeat a module name, are not yet supported | test_submodules.py |
 

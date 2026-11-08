@@ -122,6 +122,10 @@ rfort --verbose main.f90
 On Linux/macOS, choose names such as `myprogram` and `main.o` instead.
 Successful builds are silent by default; warnings and errors remain visible.
 
+`--default-private` makes user module entities private unless explicitly exported
+or the module specifies a public default. See [module accessibility options](docs/usage.md#module-accessibility-defaults),
+including the opt-in `-Wmodule-default-public` warning.
+
 Experimental native DO CONCURRENT parallelism is available with `--parallel`.
 Use `--parallel-report` to explain worker generation and serial fallback; see
 [the supported subset and thread controls](docs/parallel-concurrent.md).

@@ -117,7 +117,7 @@ pub fn print_help() {
     println!("  -I <directory>       Search for INCLUDE files and .rmod module interfaces (repeatable)");
     println!("  -J <directory>       Write module interfaces here and search this directory");
     println!("  -Wall, --Wall        Enable common warnings (some advice remains opt-in)");
-    println!("  -Wextra, --Wextra    Enable the opt-in advice except implicit-interface and conversion:");
+    println!("  -Wextra, --Wextra    Enable additional opt-in advice:");
     println!("                      missing-intent, shadow, shadow-dummy-argument, dead-store,");
     println!("                      unchecked-status, intrinsic-shadow, keyword-name, fixed-unit");
     println!("                      As in gfortran, it does not imply -Wall; use -Wall -Wextra");
@@ -129,6 +129,8 @@ pub fn print_help() {
     println!("  -Wshort-circuit     Warn about unsafe ALLOCATED/ASSOCIATED logical guards");
     println!("  -Wimplicit-typing   Warn about variables typed by implicit typing rules");
     println!("  -Wimplicit-save     Warn about implicit SAVE from local declaration initialization");
+    println!("  --default-private   Default user module entities to PRIVATE; explicit accessibility wins");
+    println!("  -Wmodule-default-public  Warn about modules without an explicit default PRIVATE or PUBLIC (opt-in)");
     println!("  -Wmissing-intent    Warn about data dummy arguments without INTENT (opt-in)");
     println!("  -Wshadow            Warn about locals shadowing enclosing data declarations (opt-in)");
     println!("  -Wshadow-dummy-argument  Include dummy-argument shadowing (opt-in)");

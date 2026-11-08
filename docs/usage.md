@@ -106,10 +106,10 @@ The following source advice shares the existing `-Wno-<category>`,
 Diagnostics identify original source locations; shadowing, dead-store, aliasing,
 and lifetime diagnostics also identify the related declaration or assignment.
 
-`-Wextra` enables the opt-in advice that `-Wall` leaves out (including
-`-Wmissing-intent` and `-Wfixed-unit`), except
-`-Wconversion` and `-Wimplicit-interface`, which fire throughout mixed-kind and
-legacy code. As in gfortran, `-Wextra` does not imply `-Wall`; use
+`-Wextra` enables selected opt-in advice that `-Wall` leaves out (including
+`-Wmissing-intent` and `-Wfixed-unit`). `-Wconversion`, `-Wimplicit-interface`,
+and `-Wmodule-default-public` remain individually selectable. As in gfortran,
+`-Wextra` does not imply `-Wall`; use
 `-Wall -Wextra` for both. An option naming a category overrides the group in
 either order, so `-Wall -Wextra -Wno-shadow` drops only shadowing advice;
 `-Wno-extra` turns the group off again.
@@ -117,6 +117,7 @@ either order, so `-Wall -Wextra -Wno-shadow` drops only shadowing advice;
 | Option | In `-Wall` | In `-Wextra` | Initial scope |
 | --- | --- | --- | --- |
 | `-Wshadow` | No | Yes | Local data declarations hiding enclosing variables or named constants, including USE-associated names |
+| `-Wmodule-default-public` | No | No | User modules without a standalone default PRIVATE or PUBLIC statement; entity accessibility attributes and lists do not set a default |
 | `-Wshadow-dummy-argument` | No | Yes | The corresponding check for dummy arguments, separately selectable |
 | `-Wdead-store` | No | Yes | Straight-line assignments to local scalars overwritten before a read |
 | `-Winteger-division` | Yes | No | Constant integer divisions with a nonzero discarded remainder, including named constants |
@@ -444,6 +445,40 @@ The warning is off by default and enabled by `-Wall`; disable it with
 `-Wno-unused` controls only unused-declaration warnings. Source directives
 `!#allow(optional-argument)` and `!#deny(optional-argument)` also work.
 Run `python tests/test_optional_warnings.py` for regression checks.
+
+## Module accessibility defaults
+
+Fortran's standard default is PUBLIC. Opt in to private module interfaces with
+`--default-private`:
+
+```cmd
+rfort --default-private main.f90 --run
+rfort --default-private -c utilities.f90
+rfort -Wmodule-default-public check utilities.f90
+```
+
+For each module defined in the current source group, entities default to PRIVATE
+unless the module contains a standalone `public` or `private` statement.
+Explicit exports such as `public :: solve` and `integer, public :: count` still
+work. A standalone `public` restores the public default; explicit per-entity
+PRIVATE declarations remain private. The option does not change derived-type
+component or binding defaults, or intrinsic modules.
+
+The effective accessibility is saved in `.rmod` interfaces. A module compiled
+with this option keeps that policy when a caller is compiled without it.
+Conversely, enabling the option for a caller does not change imported modules
+previously compiled with a public default. Recompile a module to change its
+default policy.
+
+For portable source, prefer writing `private` in each module and listing its
+public interface explicitly. `-Wmodule-default-public` helps enforce an explicit
+source policy without changing accessibility: it warns once per user module
+lacking a standalone PRIVATE or PUBLIC statement, even with `--default-private`.
+Entity lists or access attributes do not suppress it. The warning is opt-in,
+outside both `-Wall` and `-Wextra`, and accepts the usual `-Wno-...`,
+`-Werror=...`, and source-directive controls. Neither option edits source files.
+
+Regression checks: `python tests/test_module_default_private.py`.
 
 ## Multiple source files and modules
 
