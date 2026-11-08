@@ -292,6 +292,9 @@ fn check(
         for s in body {
             match s {
                 Stmt::SourceLocation(_)=>{},
+                // Unnamed transfers target the innermost ordinary DO. Never
+                // admit a transfer at concurrent-body depth through this rule.
+                Stmt::Exit | Stmt::Cycle if !active.is_empty()=>{},
                 Stmt::Assign{name,..} | Stmt::AssignIndex{name,..} if active.contains(name)=>{
                     bail!("inner DO control variable cannot be modified in its body");
                 },

@@ -101,13 +101,13 @@ a(i)=total''', 'local(total)', '3*i'), reason='inner DO index requires')
  a(i+j-1)=i
 end do''', 'local(j)', 'i'), reason='independent array-element writes require')
 
-    def test_exit_retains_serial_fallback(self):
+    def test_inner_exit(self):
         self.check_source(self.source('''total=0
 do j=1,4
  if(j==3) exit
  total=total+i
 end do
-a(i)=total''', 'local(j,total)', '2*i'), reason='body requires')
+a(i)=total''', 'local(j,total)', '2*i'))
 
     @staticmethod
     def source(body, clause, expected):

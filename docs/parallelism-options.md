@@ -161,7 +161,8 @@ is mostly OpenMP, then MPI, with coarrays a distant third.
     PURE/SIMPLE subroutine calls support explicit argument intents, read-only array inputs, disjoint scalar/section outputs, acyclic call chains, and private workspaces.
     Ordinary inner DO loops execute serially within each worker, with distinct
     LOCAL/LOCAL_INIT INTEGER indices and the same shared-array write proof;
-    nested loops and signed runtime strides are supported.
+    nested loops, signed runtime strides, and unnamed inner-loop CYCLE/EXIT
+    are supported.
     LOCAL/LOCAL_INIT support numeric/LOGICAL fixed/runtime-sized arrays with private data
     and initialization masks reset/restored per iteration, under a 4096-component
     aggregate workspace budget (COMPLEX elements count twice); runtime extents are
