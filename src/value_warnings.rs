@@ -7,6 +7,8 @@ use super::*;
 use crate::ast::{CaseItem, UnOp};
 #[path = "numeric_syntax_warnings.rs"]
 mod syntax;
+#[path = "real_literal_warnings.rs"]
+mod literals;
 
 pub(super) struct TypeInfo<'a> {
     pub scope: usize,
@@ -52,6 +54,9 @@ impl Number {
 type Intervals = HashMap<usize, (i64, i64)>;
 
 impl<'a> Analysis<'a> {
+    pub(super) fn real_literal_checks(&mut self,body: &'a [Stmt],scope: usize,style: bool,digits: bool) {
+        literals::check(self,body,scope,style,digits);
+    }
     pub(super) fn syntax_value_checks(&mut self, body: &'a [Stmt], scope: usize, offset: usize) {
         self.syntax_checks(body, scope, offset);
     }
@@ -643,6 +648,43 @@ impl<'a> Analysis<'a> {
             }
         }
         None
+    }
+    /// CMPLX defaults to default-real precision for real arguments, even when
+    /// its result is subsequently assigned to a wider complex destination.
+    fn cmplx_conversions(
+        &mut self,
+        e: &Expr,
+        scope: usize,
+        offset: usize,
+        spans: &mut impl Iterator<Item = Range<usize>>,
+    ) {
+        if let Expr::Call(name, actuals) = e {
+            if name == "cmplx" {
+                let span = spans.next().unwrap_or_else(|| self.span(offset, name));
+                let args = self.call_args(name, actuals);
+                let explicit_kind = args.get(2).is_some_and(|e| !crate::named_arguments::omitted(e));
+                if self.resolve(scope, name).is_none() && !explicit_kind {
+                    let to = Number { class: 1, bytes: 4 };
+                    let narrowing = args.iter().take(2).filter_map(|arg| {
+                        let from = self.numeric_type(arg, scope)?;
+                        (from.class == 1 && from.bytes > to.bytes
+                            && !self.safe_conversion(arg, scope, from, to)).then_some(from)
+                    }).max_by_key(|n| n.bytes);
+                    if let Some(from) = narrowing {
+                        self.warnings.push(Advice {
+                            category: "cmplx-kind",
+                            span,
+                            message: format!("CMPLX without KIND converts {} arguments to default-kind COMPLEX(4), which may lose precision", from.label()),
+                            related: None,
+                            note: "supply the KIND argument to CMPLX to choose the intended precision; assigning its result to a wider complex variable cannot restore lost precision",
+                        });
+                    }
+                }
+            }
+        }
+        for child in expressions(e) {
+            self.cmplx_conversions(child, scope, offset, spans);
+        }
     }
     fn numeric_assignment(
         &mut self,
@@ -1331,7 +1373,13 @@ impl<'a> Analysis<'a> {
                 self.check_indices(name, indices, scope, offset, &env);
             }
             let mut copy = s.clone();
+            let call_spans: Vec<_> = self.statement_tokens(offset).iter().filter_map(|t| {
+                matches!(&t.kind, TokenKind::Ident(n) if n.eq_ignore_ascii_case("cmplx"))
+                    .then(|| t.span.clone())
+            }).collect();
+            let mut call_spans = call_spans.into_iter();
             for e in crate::procedure_arguments::expressions(&mut copy) {
+                self.cmplx_conversions(e, scope, offset, &mut call_spans);
                 self.index_expressions(e, scope, offset, &env);
             }
             match s {

@@ -32,7 +32,10 @@ const CATEGORIES: &[&str] = &[
     "target-lifetime",
     "aliasing",
     "conversion",
+    "cmplx-kind",
     "precision-loss",
+    "real-literal-kind",
+    "excess-real-digits",
     "pointer-init",
     "do-subscript",
     "enum-exhaustive",
@@ -111,6 +114,20 @@ pub(crate) fn selected(
         || settings.error.contains(old)
         || settings.deny.contains(category)
         || settings.error.contains(category);
+    // Conversion is also a group. A specific CMPLX option takes precedence
+    // over the group in either command-line order, just as for -Wextra.
+    if category == "cmplx-kind" {
+        enabled |= settings.deny.contains("conversion") || settings.error.contains("conversion");
+        error |= settings.deny.contains("conversion") || settings.error.contains("conversion");
+        for option in options {
+            match option.as_str() {
+                "conversion" => enabled = true,
+                "no-conversion" => enabled = false,
+                "error=conversion" => { enabled = true; error = true; }
+                _ => {}
+            }
+        }
+    }
     // -Wextra is a group: an option naming the category wins in either order.
     if EXTRA.contains(&category) {
         for option in options {
@@ -141,6 +158,7 @@ pub(crate) fn selected(
     }
     if settings.allow.contains(old)
         || settings.allow.contains(category)
+        || category == "cmplx-kind" && settings.allow.contains("conversion")
         || program_variable && settings.allow.contains("unused_program_var")
     {
         enabled = false;

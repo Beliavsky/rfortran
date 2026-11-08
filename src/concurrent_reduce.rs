@@ -12,6 +12,7 @@ use std::collections::{HashMap, HashSet};
 mod locality;
 mod calls;
 mod captures;
+mod records;
 pub(crate) mod parallel;
 
 #[derive(Clone)]
@@ -124,6 +125,7 @@ fn declarations(body: &[Stmt], parent: &Scope) -> Scope {
             }
         }
     }
+    records::declarations(body, &mut scope);
     scope
 }
 // Module association gives constants qualified identities. Make those values
@@ -133,7 +135,7 @@ fn module_objects(program:&Program)->Scope {
     fn collect(body:&[Stmt],out:&mut Scope) {
         for stmt in body {
             if let Stmt::Module{body,..}=stmt {
-                out.extend(declarations(body,&Scope::new()).into_iter().filter(|(n,_)|n.starts_with("@module$")));
+                out.extend(declarations(body,&Scope::new()).into_iter().filter(|(n,_)|n.starts_with("@module$") || records::module_metadata(n)));
                 collect(body,out);
             }
         }
@@ -764,6 +766,7 @@ fn name_iteration(mut stmt: Stmt, marker: Stmt) -> Stmt {
     }
 }
 pub fn resolve(mut program: Program) -> Result<Program> {
+    if parallel::enabled() { records::prepare(&program); }
     if parallel::enabled() { captures::prepare(&mut program); }
     parallel::procedures(&program);
     let objects=if parallel::enabled(){module_objects(&program)}else{Scope::new()};

@@ -2027,6 +2027,70 @@ pub(crate) fn concrete_kind(mut kind: TypeSpec) -> Result<TypeSpec> {
     Ok(kind)
 }
 
+/// Record storage is split before the general PARAMETER pass. Resolve integer
+/// bounds in the defining scope without removing declarations or specializing
+/// executable expressions. Unresolved bounds keep their normal diagnostics.
+pub(crate) fn fold_record_bounds(program: &mut Program) {
+    fn parameters(body: &[Stmt]) -> Vec<(String,Expr)> {
+        body.iter().filter_map(|s| match s {
+            Stmt::InitializedDecl{kind:TypeSpec::Integer(_)|TypeSpec::IntegerKind(_),attributes,entities}
+                if attributes.iter().any(|a|a=="parameter") => Some(entities),
+            _ => None,
+        }).flatten().filter_map(|(n,v)|v.clone().map(|v|(n.clone(),v))).collect()
+    }
+    fn extend(constants:&mut Constants, pending:Vec<(String,Expr)>) {
+        // Only insert concrete values: invalid cyclic definitions cannot make
+        // this early, best-effort pass recurse through a cyclic environment.
+        let mut pending=pending;
+        loop {
+            let before=pending.len();
+            pending.retain(|(n,v)| match constant_integer_with(v,constants) {
+                Ok(v)=>{constants.insert(n.clone(),Expr::IntLit(v.to_string()));false},
+                Err(_)=>true,
+            });
+            if pending.len()==before {break;}
+        }
+    }
+    fn scope(body:&mut [Stmt], inherited:&Constants, globals:&Constants) {
+        let mut constants=inherited.clone();
+        for s in body.iter() {
+            let names:Vec<&String>=match s {
+                Stmt::VarDecl{names,..}|Stmt::DerivedDecl{names,..}=>names.iter().collect(),
+                Stmt::ArrayDecl{name,..}=>vec![name],
+                Stmt::InitializedDecl{entities,..}=>entities.iter().map(|(n,_)|n).collect(),
+                _=>vec![],
+            };
+            for n in names {constants.remove(n);}
+        }
+        extend(&mut constants,parameters(body));
+        statements(body,&constants,globals);
+    }
+    fn statements(body:&mut [Stmt], constants:&Constants, globals:&Constants) {
+        for s in body {
+            if let Stmt::DerivedType{components,..}=s {
+                for c in components {
+                    if let Stmt::ArrayDecl{dims,..}|Stmt::DerivedDecl{dims,..}=c {
+                        for d in dims {
+                            if let Ok(folded)=constant_expression_with(d,constants) {*d=folded;}
+                        }
+                    }
+                }
+            } else if let Stmt::Module{body,..}=s {
+                scope(body,globals,globals);
+            } else if let Stmt::Function{body,..}|Stmt::Subroutine{body,..}|Stmt::Block{body}=s {
+                scope(body,constants,globals);
+            } else {
+                for b in crate::procedure_arguments::children(s) {statements(b,constants,globals);}
+            }
+        }
+    }
+    let mut globals=Constants::new();
+    let pending=program.body.iter().filter_map(|s|if let Stmt::Module{body,..}=s {Some(parameters(body))}else{None})
+        .flatten().filter(|(n,_)|n.starts_with("@module$")).collect();
+    extend(&mut globals,pending);
+    scope(&mut program.body,&globals,&globals);
+}
+
 fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules, assumed: &[String], template: bool) -> Result<()> {
     // Derived and COMPLEX constructors have separate earlier lowering paths
     // which still require expansion. Only opt in when the destination's
@@ -2109,6 +2173,11 @@ fn rewrite_body(body: &mut [Stmt], constants: &Constants, modules: &Modules, ass
                 if let TypeSpec::Character(length) = kind {
                     for name in names { scoped.insert(format!("@character_length:{name}"),Expr::IntLit(length.unwrap_or(1).to_string())); }
                 }
+            }
+            Stmt::DerivedDecl { dims, .. } => {
+                // Record-array lowering happens after early constant snapshots.
+                // Preserve named extents before PARAMETER declarations disappear.
+                for e in dims { rewrite_expr(e, constants)?; }
             }
             Stmt::DerivedType { components, .. } => {
                 // Component initializers are defaults, not PARAMETER declarations.

@@ -25,7 +25,7 @@ jobs to stderr; unset it for timing runs.
   arrays with constant bounds, and ALLOCATABLE arrays with runtime extents
   and arbitrary lower bounds. Supported assumed-shape dummy arrays are also
   accepted. Constant extents may use named constants.
-- Arrays of simple nonpolymorphic derived types with scalar INTEGER, REAL,
+- Arrays of simple nonpolymorphic derived types with scalar or fixed-size array INTEGER, REAL,
   DOUBLE PRECISION and LOGICAL components, including fixed-size arrays,
   runtime-sized ALLOCATABLE arrays and supported assumed-shape dummies.
   Component updates use the same ownership checks as intrinsic arrays; see
@@ -184,8 +184,26 @@ arrays and initialization masks, which the workers share directly. Bounds and
 initialization checks remain active. Named constant bounds are substituted
 before record-array storage is lowered, in serial and parallel compilation.
 
-This stage requires the entire element type to have scalar INTEGER, REAL or
-LOGICAL components and no type-bound bindings. Array, nested derived,
+Fixed-size array fields put their component axes ahead of the record axes in
+the primitive storage. Independence is established by the record axes; element
+and triplet-section subscripts may vary within that record, including subscripts
+computed from the concurrent index. For example:
+
+```fortran
+do concurrent (i=1:n)
+   particles(i)%position = particles(i)%position + dt*particles(i)%velocity
+end do
+```
+
+Here `position` and `velocity` can be fixed-size vectors or matrices. Whole-field
+assignments, scalar subscripts, and triplet sections use the existing array
+lowering. Integer PARAMETER component bounds are resolved in their defining
+scope before storage is split, including named and nonunit bounds.
+The existing component storage representation limits the sum of component
+rank and record-array rank to 15, in both serial and parallel compilation.
+
+This stage requires the entire element type to have scalar or fixed-size array
+INTEGER, REAL or LOGICAL components and no type-bound bindings. Nested derived,
 CHARACTER, COMPLEX, POINTER and ALLOCATABLE components, polymorphic owners,
 whole-record operations and derived LOCAL/LOCAL_INIT storage retain serial
 fallback. Owner TARGET/POINTER attributes retain their existing restrictions.
@@ -193,6 +211,8 @@ fallback. Owner TARGET/POINTER attributes retain their existing restrictions.
 ```cmd
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_records.f90 --run
 python tests\test_concurrent_parallel_records.py
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_record_arrays.f90 --run
+python tests\test_concurrent_parallel_record_arrays.py
 ```
 
 ## Multiple indices and multidimensional arrays

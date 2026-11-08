@@ -1279,7 +1279,10 @@ pub fn check(
         "target-lifetime",
         "aliasing",
         "conversion",
+        "cmplx-kind",
         "precision-loss",
+        "real-literal-kind",
+        "excess-real-digits",
         "pointer-init",
         "do-subscript",
         "enum-exhaustive",
@@ -1300,6 +1303,7 @@ pub fn check(
                 | "dead-store"
                 | "unchecked-status"
                 | "conversion"
+                | "real-literal-kind"
                 | "implicit-interface"
                 | "intrinsic-shadow"
                 | "keyword-name"
@@ -1361,6 +1365,11 @@ pub fn check(
         a.pointer_initializers();
         a.value_walk(&program.body, scope, 0, &HashMap::new());
         a.syntax_value_checks(&program.body, scope, 0);
+        let literal_style=controls["real-literal-kind"].0;
+        let literal_digits=controls["excess-real-digits"].0;
+        if literal_style || literal_digits {
+            a.real_literal_checks(&program.body,scope,literal_style,literal_digits);
+        }
         a.unused_labels(&program.body, 0);
         a.intrinsic_shadows();
         if controls.get("keyword-name").is_some_and(|c| c.0) {

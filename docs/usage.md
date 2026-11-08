@@ -124,8 +124,11 @@ either order, so `-Wall -Wextra -Wno-shadow` drops only shadowing advice;
 | `-Wunchecked-status` | No | Yes | Local scalar IOSTAT, allocation STAT, and intrinsic status results not inspected or forwarded |
 | `-Wtarget-lifetime` | Yes | No | Pointer associations escaping a known automatic local target |
 | `-Waliasing` | Yes | No | Known overlapping actuals when a defined procedure's OUT dummy, or modified INOUT dummy, conflicts with another dummy's reads |
-| `-Wconversion` | No | No | Potential information loss in implicit numeric assignment/initialization conversions |
+| `-Wconversion` | No | No | Potential information loss in implicit numeric conversions and CMPLX calls without KIND |
+| `-Wcmplx-kind` | Yes | No | Wider REAL arguments to CMPLX without KIND; also enabled by `-Wconversion` |
 | `-Wprecision-loss` | Yes | No | Lower-precision literals or calculations subsequently widened to a higher real/complex kind |
+| `-Wreal-literal-kind` | No | No | Real literals without an explicit kind suffix or D exponent, including exactly representable literals such as `1.0` |
+| `-Wexcess-real-digits` | Yes | No | More significant decimal digits than the literal's own REAL kind guarantees (6 for REAL(4), 15 for REAL(8)); exactly representable values are exempt |
 | `-Wpointer-init` | Yes | No | Derived-type pointer components lacking default initialization |
 | `-Wdo-subscript` | Yes | No | Loop-derived scalar subscript ranges extending beyond known fixed array bounds |
 | `-Wenum-exhaustive` | Yes | No | SELECT CASE without CASE DEFAULT missing declared values of an enumeration type or named interoperable enum type |
@@ -169,6 +172,17 @@ resolved components/function results; unknown types and kinds are skipped.
 Procedure argument type mismatches remain subject to existing interface checks,
 rather than being treated as implicit assignment conversions.
 
+`-Wcmplx-kind`, enabled by `-Wall` and `-Wconversion`, diagnoses `CMPLX` calls
+with wider REAL arguments and no `KIND` argument, including calls inside output
+statements and array expressions.
+For example, `cmplx(1.1_dp, 2.2_dp)` produces default-kind complex components even
+when assigned to `complex(dp)`. Use `cmplx(1.1_dp, 2.2_dp, kind=dp)` to preserve
+their precision. Explicit `KIND` arguments and provably exact constants are exempt.
+Use `-Wno-cmplx-kind` to suppress this advice while retaining other conversion
+warnings. An explicit `-Wcmplx-kind` or `-Wno-cmplx-kind` takes precedence over
+the `-Wconversion` group in either command-line order; `-Wno-conversion` disables
+the group, including this warning unless explicitly enabled separately.
+
 Precision advice explains why `real(real64) :: x; x=sqrt(2.0)` still performs a
 default-real calculation. It also recognizes inexact default-real literals in
 wider expressions and work hidden inside a subsequent widening conversion.
@@ -177,6 +191,27 @@ suppressed, as are deliberate explicit narrowing conversions. Merely widening
 a stored lower-kind variable is not diagnosed as a new calculation. This replaces
 the former six-decimal-place literal heuristic; binary kind precision is used
 instead. Constant proofs use the implemented integer and REAL(4)/REAL(8) models.
+
+Literal advice is separate from precision-loss advice: it applies even without
+a wider destination. `-Wreal-literal-kind` is an opt-in style rule; `3.14`
+and `1.0` warn, while `3.14_wp`, `3.14_8` and `3.14d0` explicitly select a kind.
+The suffix's named kind is resolved in its scope, including supported USE
+association. No particular kind-parameter name is required.
+
+`-Wexcess-real-digits`, included in `-Wall`, warns for
+`3.141592653589793` because this default REAL(4) literal supplies 16 significant
+digits. It also checks explicitly kinded literals against their own precision.
+This is advice about decimal digits beyond the kind's guarantee, not a claim
+that every extra digit is useless. Leading and trailing zeros are excluded
+from the digit count. Exact binary values, including `16777216.0`, `1.234375`
+and long exact dyadic decimals, are exempt; the proof compares decimal text
+with the exact stored binary value rather than rounding both texts to host
+double precision first. Unsupported or unresolved kinds are skipped.
+Both warnings highlight the literal itself, ignore comments/strings/FORMAT
+descriptors, and support the usual `-Wno-...`, `-Werror=...` and source controls.
+An explicitly selected style warning and the existing precision-loss warning
+may accompany an excess-digit warning, since they describe separate properties.
+Regression checks: `python tests/test_real_literal_warnings.py`.
 
 Pointer initialization advice checks each component individually, including
 pointer arrays and pointers to derived types. `=> NULL()` and other explicit

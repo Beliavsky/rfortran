@@ -183,6 +183,11 @@ is mostly OpenMP, then MPI, with coarrays a distant third.
     fixed/runtime-sized array REDUCE supports addition and multiplication,
     folding paired worker components with complex arithmetic; native checks
     still operate on lowered real components.
+    Arrays of simple nonpolymorphic derived types with scalar or fixed-size array INTEGER/REAL/LOGICAL
+    components also support disjoint field updates, masks and checked component
+    reads through their existing primitive storage arrays, including element and
+    triplet-section updates within an owned record; owned/nested
+    components and type-bound bindings retain serial fallback.
   - **Next:** broader capture analysis, recoverable allocation of other storage types,
     and audits of remaining intrinsic runtime helpers.
     SAVE and module variables retain their Fortran sharing semantics; making

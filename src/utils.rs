@@ -140,7 +140,10 @@ pub fn print_help() {
     println!("  -Wtarget-lifetime   Warn about pointers escaping automatic targets");
     println!("  -Waliasing          Warn about conflicting overlapping actual arguments");
     println!("  -Wconversion        Warn about information-losing implicit numeric conversions (opt-in)");
+    println!("  -Wcmplx-kind        Warn about wider REAL arguments to CMPLX without KIND (included in -Wall and -Wconversion)");
     println!("  -Wprecision-loss    Warn about lower-precision work before widening");
+    println!("  -Wreal-literal-kind Warn about real literals without an explicit kind (opt-in)");
+    println!("  -Wexcess-real-digits Warn about more decimal digits than a real kind guarantees");
     println!("  -Wpointer-init      Warn about pointer components without default initialization");
     println!("  -Wdo-subscript      Warn about loop-derived subscript ranges outside fixed bounds");
     println!("  -Wenum-exhaustive   Warn about SELECT CASE missing declared enumeration values");

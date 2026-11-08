@@ -28,10 +28,24 @@ below; unmarked recommendations remain proposals.
   assignments/initializations, with scoped kinds and exact-constant suppression.
   Includes narrowing kinds, real-to-integer, complex-component loss and integer
   values that may exceed the destination real kind's exact-integer precision.
+  Also enables `-Wcmplx-kind`.
+- **Implemented: `-Wcmplx-kind`.** Enabled by `-Wall` and `-Wconversion`;
+  diagnoses wider REAL arguments to `CMPLX` without `KIND`, including array
+  expressions and output statements. Explicit kinds and exact constants are
+  exempt; `-Wno-cmplx-kind` suppresses this warning independently.
 - **Implemented: `-Wprecision-loss`.** Enabled by `-Wall`; lower-precision
   literals/calculations widened later, including work inside widening
   conversions. Exact constants and deliberate explicit narrowing are exempt.
   Replaces the former six-decimal-place heuristic with typed expression checks.
+- **Implemented: `-Wreal-literal-kind`.** Individually opt-in style advice for
+  unsuffixed default-real literals, including exact values such as `1.0`.
+  Named/numeric suffixes and D exponents specify a kind and are exempt.
+- **Implemented: `-Wexcess-real-digits`.** Included in `-Wall`; significant
+  decimal digits exceeding the literal's own REAL(4)/REAL(8) precision guarantee,
+  regardless of its destination. Leading/trailing zeros are excluded and
+  exactly representable binary values are suppressed using exact decimal text.
+  Covers explicit kinds and scoped named kinds. Both literal categories are
+  covered by [test_real_literal_warnings.py](tests/test_real_literal_warnings.py).
 - **Implemented: `-Wpointer-init`.** Enabled by `-Wall`; derived-type pointer
   components without default initialization, checked individually, including
   arrays and pointers to derived types. Explicit initializers are recognized

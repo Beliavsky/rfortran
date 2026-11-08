@@ -1770,6 +1770,13 @@ impl Lower {
                                     name: field.clone(),
                                     dims: storage_dims(&f, dims),
                                 });
+                                // A generated field name still represents a
+                                // source array. Preserve rank-one bounds checks
+                                // when multidim distinguishes source arrays
+                                // from unchecked internal flat temporaries.
+                                if dims.len() == 1 && f.dims.is_empty() && f.heap.is_none() && !allocatable {
+                                    prefix.push(Stmt::DummyIntent {name:field.clone(),intent:"@source_array".into()});
+                                }
                                 if allocatable && !dummies.contains(n) {
                                     prefix.push(Stmt::DummyIntent {name:field.clone(),intent:"@record_heap_local".into()});
                                 }
@@ -2262,6 +2269,7 @@ impl Lower {
     }
 }
 pub(crate) fn resolve(mut p: Program) -> Result<Program> {
+    crate::parameters::fold_record_bounds(&mut p);
     let mut lower = Lower {
         component_definitions: HashMap::new(),
         constructor_components: HashMap::new(),

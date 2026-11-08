@@ -323,8 +323,13 @@ fn check(
                 Stmt::AssignIndex{name,indices,..} => {
                     let mut seen=HashSet::new();
                     let mut owners=vec![];
-                    for e in indices {
-                        if let Some(n)=axis(e,indices_set,locals,scope) {
+                    for (position,e) in indices.iter().enumerate() {
+                        if position < super::records::component_rank(name,scope) {
+                            // Only record-owner axes establish independence.
+                            // A component index can vary arbitrarily within
+                            // the particle already owned by this iteration.
+                            owners.push(None);
+                        } else if let Some(n)=axis(e,indices_set,locals,scope) {
                             if !seen.insert(n) {bail!("array writes must use every concurrent index exactly once");}
                             owners.push(Some(e.clone()));
                         } else if free_axis(e,indices_set) {
