@@ -1731,6 +1731,8 @@ fn expand(
                 let mut undefine = vec![];
                 let mut copy_back = vec![];
                 let mut shape_checks = Vec::new();
+                let mut dummy_lowers: HashMap<String,Vec<Expr>> = HashMap::new();
+                let mut dummy_shape_setup = vec![];
                 for (i, p) in r.params.iter().enumerate() {
                     local.remove(&format!("@extent:{p}"));
                     local.remove(&format!("@allocated:{p}"));
@@ -1774,6 +1776,13 @@ fn expand(
                         .get(p)
                         .context("dummy argument must be declared")?
                         .clone();
+                    let assumed_shape=crate::c_interop::assumed_shape(&dims);
+                    let explicit_lower=assumed_shape && dims.iter().any(|d|matches!(d,Expr::Call(n,_) if n=="@declared_bounds"));
+                    if explicit_lower {
+                        dummy_lowers.insert(p.clone(),dims.iter().map(|d|match d {
+                            Expr::Call(_,a)=>a[0].clone(),_=>Expr::IntLit("1".into()),
+                        }).collect());
+                    }
                     let assumed_character=dims.is_empty() && matches!(kind,TypeSpec::CharacterAssumed);
                     if r.elemental || (dims.is_empty() && matches!(kind,TypeSpec::Character(_) | TypeSpec::CharacterAssumed)) {
                         let actual_kind = scalar_actual_kind(actual, &shapes)?;
@@ -1876,7 +1885,7 @@ fn expand(
                             Expr::Ident(n) if shapes.get(n).is_some_and(|(_,d)|d.len()>1) => Some((n.clone(),vec![])),
                             _ => None,
                         };
-                        if let (Some((array,subscripts)),false,false,1)=(element,allocatable,pointer,dims.len()) {
+                        if let (Some((array,subscripts)),false,false,1,false)=(element,allocatable,pointer,dims.len(),assumed_shape) {
                             if let Some((lowers,extents))=sequence_axes(&array,&shapes).filter(|_|crate::pointers::same_kind(&shapes[&array].0,&kind)) {
                                 let capture=|value:Expr,stem:&str,prefix:&mut Vec<Stmt>,serial:&mut usize|->Expr {
                                     if crate::parameters::integer_constant(&value).is_ok() {return value;}
@@ -2041,9 +2050,7 @@ fn expand(
                         if !crate::pointers::same_kind(&actual_kind,&kind) || runtime_axes.as_ref().map_or(actual_dims.len(),Vec::len) != dims.len() {
                             bail!("type or rank mismatch for `{p}`");
                         }
-                        if !dims
-                            .iter()
-                            .all(|d| matches!(d, Expr::Ident(n) if n == "@deferred_extent"))
+                        if !assumed_shape
                         {
                             if runtime_axes.is_none() && dims.iter().zip(&actual_dims).any(|(a, b)| {
                                 crate::parameters::integer_constant(a)
@@ -2058,6 +2065,18 @@ fn expand(
                                 if crate::c_interop::assumed_extent(formal) {continue;}
                                 shape_checks.push((p.clone(),formal.clone(),actual.clone()));
                             }
+                        }
+                        if explicit_lower && runtime_axes.is_none() {
+                            // Even fixed actuals need a dummy-local descriptor
+                            // when their logical lower bounds are rebased.
+                            let mut axes=vec![];
+                            for extent in &actual_dims {
+                                *serial+=1;let axis=format!("@dummy_extent_{serial}");
+                                dummy_shape_setup.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![axis.clone()]});
+                                dummy_shape_setup.push(Stmt::Assign{name:axis.clone(),value:extent.clone()});
+                                axes.push(Expr::Ident(axis));
+                            }
+                            runtime_axes=Some(axes);
                         }
                         if let Some(axes)=runtime_axes {
                             if !allocatable {if let Some(flag)=crate::allocatables::allocated(&a,&shapes) {prefix.push(Stmt::If{cond:Expr::Un(crate::ast::UnOp::Not,Box::new(flag)),then_body:vec![Stmt::CallSub{name:"@error_stop".into(),args:vec![Expr::Str(format!("unallocated actual for `{p}`"))]}],else_body:None});}}
@@ -2187,6 +2206,8 @@ fn expand(
                 }
                 prefix.extend(undefine);
                 let mut cloned = r.body.clone();
+                cloned.splice(0..0,dummy_shape_setup);
+                let mut dummy_lower_setup: HashMap<String,Vec<Stmt>> = HashMap::new();
                 for p in &r.params {
                     if let Some((_,values))=local.get(&format!("@character_spec_length:{p}")) {
                         if let Some(Expr::Ident(length))=values.first() {cloned.push(Stmt::DummyIntent{name:p.clone(),intent:format!("@character_spec_length:{length}")});}
@@ -2212,7 +2233,18 @@ fn expand(
                     }else if let Some(axes)=crate::allocatables::axes(p,&local) {
                         let axes=axes.iter().map(|e|if let Expr::Ident(n)=e {Ok(n.clone())}else{bail!("runtime dummy axes require descriptor fields")}).collect::<Result<Vec<_>>>()?;
                         cloned.push(Stmt::DummyIntent{name:p.clone(),intent:format!("@bounded_shape:{}",axes.join(":"))});
-                        let mut lowers=vec![];for _ in &axes {*serial+=1;let n=format!("@dummy_lower_{serial}");cloned.splice(0..0,vec![Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![n.clone()]},Stmt::Assign{name:n.clone(),value:Expr::IntLit("1".into())}]);lowers.push(n);}
+                        let mut lowers=vec![];
+                        let mut setup=vec![];
+                        for (axis,_) in axes.iter().enumerate() {
+                            *serial+=1;let n=format!("@dummy_lower_{serial}");
+                            let value=dummy_lowers.get(p).map(|v|v[axis].clone())
+                                .unwrap_or_else(||Expr::IntLit("1".into()));
+                            setup.push(Stmt::VarDecl{kind:TypeSpec::Integer(Some(8)),names:vec![n.clone()]});
+                            setup.push(Stmt::Assign{name:n.clone(),value});
+                            lowers.push(n);
+                        }
+                        dummy_lower_setup.insert(p.clone(),setup);
+                        local.insert(format!("@lowers:{p}"),(TypeSpec::Integer(Some(8)),lowers.iter().map(|n|Expr::Ident(n.clone())).collect()));
                         cloned.push(Stmt::DummyIntent{name:p.clone(),intent:format!("@bounded_lower:{}",lowers.join(":"))});
                         if matches!(local.get(p),Some((TypeSpec::Integer(_)|TypeSpec::Real|TypeSpec::DoublePrecision|TypeSpec::Logical,_))) {
                         if let (Some(Expr::Ident(length)),Some(actual))=(crate::allocatables::length(p,&local),names.get(p)) {
@@ -2232,8 +2264,20 @@ fn expand(
                 for declaration in &mut cloned {
                     if let Stmt::VarDecl {names,..} = declaration { names.retain(|n| !r.params.contains(n) && !borrowed_widths.contains(n)); }
                 }
-                cloned.retain(|s| !matches!(s,Stmt::ArrayDecl{name,..} if r.params.contains(name))
-                    && !matches!(s,Stmt::VarDecl {names,..} if names.is_empty()));
+                // Specification expressions follow declaration order, which
+                // need not match the dummy argument list. Capture each lower
+                // bound at its declaration, after all actuals are associated.
+                let mut declarations=vec![];
+                for statement in std::mem::take(&mut cloned) {
+                    if let Stmt::ArrayDecl{name,..}=&statement {
+                        if r.params.contains(name) {
+                            declarations.extend(dummy_lower_setup.remove(name).unwrap_or_default());
+                            continue;
+                        }
+                    }
+                    if !matches!(&statement,Stmt::VarDecl{names,..} if names.is_empty()) {declarations.push(statement);}
+                }
+                cloned=declarations;
                 // Preserve dependent local lengths before constant-length
                 // specialization folds LEN to the physical storage width.
                 let lengths: HashMap<_,_> = r.params.iter().filter_map(|p|

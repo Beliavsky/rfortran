@@ -1,6 +1,5 @@
-! Known separate call-binding limitation: an assumed-shape dummy with an
-! explicit lower bound is mistaken for an explicit-shape dummy. This valid
-! program should print PASS; currently @deferred_extent leaks into a shape check.
+! Regression: dummy lower bounds are local; extents come from the actual section.
+! This previously leaked @deferred_extent into an explicit-shape check.
 implicit none
 integer :: x(-3:3)
 x=10

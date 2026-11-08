@@ -56,9 +56,19 @@ pub fn shape_arguments(mut program: Program) -> Program {
         let mut arrays = host.clone();
         for s in body.iter() {
             match s {
-                Stmt::ArrayDecl { name, dims, .. } => match extents(dims) {
-                    Some(e) if !dims.iter().any(|d| matches!(d, Expr::Ident(n) if n.starts_with('@'))) => { arrays.insert(name.clone(), e); }
-                    _ => { arrays.remove(name); }
+                Stmt::ArrayDecl { name, dims, .. } => {
+                    if crate::c_interop::assumed_shape(dims) {
+                        // The rank is known even when extents come from the
+                        // actual argument. RESHAPE needs an explicit shape list,
+                        // whose SIZE inquiries can be bound at the call site.
+                        arrays.insert(name.clone(),(1..=dims.len()).map(|axis|
+                            Expr::Call("size".into(),vec![Expr::Ident(name.clone()),int(axis as i64)])).collect());
+                    } else {
+                        match extents(dims) {
+                            Some(e) if !dims.iter().any(|d| matches!(d, Expr::Ident(n) if n.starts_with('@'))) => { arrays.insert(name.clone(), e); }
+                            _ => { arrays.remove(name); }
+                        }
+                    }
                 },
                 Stmt::VarDecl { names, .. } => for n in names { arrays.remove(n); },
                 _ => {}
@@ -1241,11 +1251,21 @@ impl Lowerer {
                 _ => {}
             }
         }
+        // Descriptor-backed accesses have already been converted to physical
+        // indices by allocatables::finish. A rebased dummy may still refer to a
+        // fixed matrix declared in the caller; do not flatten that access twice.
+        // Keep the original storage shapes for declarations themselves.
+        let storage_shapes=shapes.clone();
+        for s in body.iter() {
+            if let Stmt::DummyIntent{name,intent}=s {
+                if intent.starts_with("@bounded_shape:") {shapes.remove(name);}
+            }
+        }
         for s in body {
             if let Some(p) = crate::source_diagnostics::statement_offset(&s) { statement_location.set(Some(p)); }
             match s {
                 Stmt::ArrayDecl { name, dims, .. } => {
-                    if let Some(shape) = shapes.get(name).filter(|d| d.len() > 1) {
+                    if let Some(shape) = storage_shapes.get(name).filter(|d| d.len() > 1) {
                         *dims = vec![int(total(shape)?)];
                     }
                 }

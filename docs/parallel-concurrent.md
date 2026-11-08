@@ -310,10 +310,16 @@ diagnostics in serial, interpreter, and parallel modes. See
 `tests/test_concurrent_reduce_assumed_shape.py` and
 `tests/programs/xconcurrent_reduce_assumed_shape.f90`.
 
-Explicit lower bounds on assumed-shape dummies, such as `a(-2:)`, currently
-encounter a separate call-binding limitation even without REDUCE. The valid
-`tests/programs/xassumed_shape_explicit_lower_bound_repro.f90` demonstrates it.
-Nondefault bounds on actual arrays and sections passed to `a(:)` are supported.
+Explicit lower bounds on assumed-shape dummies, such as `a(-2:)` and
+`a(-2:,4:)`, are supported in ordinary calls, proved PURE worker calls, and
+reductions. Extents come from the actual array or section; lower bounds come
+from the dummy declaration and are evaluated once at entry, in declaration
+order. Forwarding establishes the receiving dummy's own bounds without changing
+the caller's descriptor. Empty dimensions retain the Fortran LBOUND/UBOUND
+results of 1 and 0. Scalar indexing, sections, and bound/shape inquiries share
+the same descriptor, including for rank 15 and derived-type elements.
+See `tests/test_assumed_shape_lower_bounds.py` and the regression program
+`tests/programs/xassumed_shape_explicit_lower_bound_repro.f90`.
 
 Fixed-size and runtime-sized section temporaries are worker-private, including
 their heap descriptors and initialization masks. Runtime storage is allocated
