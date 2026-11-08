@@ -25,6 +25,11 @@ jobs to stderr; unset it for timing runs.
   arrays with constant bounds, and ALLOCATABLE arrays with runtime extents
   and arbitrary lower bounds. Supported assumed-shape dummy arrays are also
   accepted. Constant extents may use named constants.
+- Arrays of simple nonpolymorphic derived types with scalar INTEGER, REAL,
+  DOUBLE PRECISION and LOGICAL components, including fixed-size arrays,
+  runtime-sized ALLOCATABLE arrays and supported assumed-shape dummies.
+  Component updates use the same ownership checks as intrinsic arrays; see
+  [derived-array components](#derived-array-components).
 - Writes such as `a(i)`, `a(i+1)`, `a(i,1)`, and `a(i+offset,j,slot)`.
   Every concurrent index must identify one destination axis, optionally shifted
   by a loop-invariant scalar integer offset. These ownership axes and expressions must
@@ -151,12 +156,44 @@ preserves checking.
 
 Other constructs use the existing serial lowering. In particular this stage
 does not parallelize unproved procedure calls, allocation of shared storage,
-I/O, outer constructs containing loops, named constructs, derived
+I/O, outer constructs containing loops, named constructs, general derived
 types, CHARACTER, or pointer array storage. Arrays with
 TARGET and other unsupported attributes also fall back to serial execution.
 This conservative selection is not a complete checker of all Fortran
 DO CONCURRENT restrictions. Serial fallback does not establish that an otherwise
 invalid DO CONCURRENT program is conforming.
+
+## Derived-array components
+
+For example, independent particle updates can run in native workers:
+
+```fortran
+do concurrent (i=1:n)
+   particles(i)%x = particles(i)%x + dt*particles(i)%velocity
+end do
+```
+
+The proof checks accesses to each component separately. A field written by the
+loop must retain the same ownership subscripts on every access, including
+reads; reading `particles(i+1)%x` while writing `particles(i)%x` selects serial
+fallback. Fields that are only read may use other supported subscripts.
+Component expressions also work in masks and supported intrinsic calls.
+
+The existing derived-array lowering supplies separate primitive component
+arrays and initialization masks, which the workers share directly. Bounds and
+initialization checks remain active. Named constant bounds are substituted
+before record-array storage is lowered, in serial and parallel compilation.
+
+This stage requires the entire element type to have scalar INTEGER, REAL or
+LOGICAL components and no type-bound bindings. Array, nested derived,
+CHARACTER, COMPLEX, POINTER and ALLOCATABLE components, polymorphic owners,
+whole-record operations and derived LOCAL/LOCAL_INIT storage retain serial
+fallback. Owner TARGET/POINTER attributes retain their existing restrictions.
+
+```cmd
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_records.f90 --run
+python tests\test_concurrent_parallel_records.py
+```
 
 ## Multiple indices and multidimensional arrays
 

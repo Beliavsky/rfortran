@@ -98,7 +98,11 @@ pub(super) fn eligible(
     if !OPTIONS.with(|o| o.get().0) {
         return false;
     }
-    let result = check(controls, mask, body, clauses, scope, name);
+    let mut body = body.to_vec();
+    let mut mask = mask.clone();
+    super::records::proof(&mut body, scope);
+    super::records::mask(&mut mask, scope);
+    let result = check(controls, &mask, &body, clauses, scope, name);
     match result {
         Ok(()) => true,
         Err(e) => {
