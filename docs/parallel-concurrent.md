@@ -302,6 +302,19 @@ assumed-shape and explicit-shape dummy arguments also work. Reallocation or
 changing shapes between calls is supported. POINTER reduction objects remain
 unsupported.
 
+Assumed-shape whole-array reductions use the runtime descriptor when checking
+generated expression temporaries. Tests cover strided actual sections with
+nondefault bounds, ranks one through three, INTEGER/REAL/LOGICAL operators,
+repeated calls, empty arrays/ranges, and preservation of uninitialized-read
+diagnostics in serial, interpreter, and parallel modes. See
+`tests/test_concurrent_reduce_assumed_shape.py` and
+`tests/programs/xconcurrent_reduce_assumed_shape.f90`.
+
+Explicit lower bounds on assumed-shape dummies, such as `a(-2:)`, currently
+encounter a separate call-binding limitation even without REDUCE. The valid
+`tests/programs/xassumed_shape_explicit_lower_bound_repro.f90` demonstrates it.
+Nondefault bounds on actual arrays and sections passed to `a(:)` are supported.
+
 Fixed-size and runtime-sized section temporaries are worker-private, including
 their heap descriptors and initialization masks. Runtime storage is allocated
 inside the iteration after its section bounds are known and freed by the normal

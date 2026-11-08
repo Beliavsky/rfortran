@@ -760,6 +760,27 @@ fn collect(body: &[Stmt], variables: &mut BTreeMap<String, Option<i64>>) {
         }
     }
 }
+/// Generated temporaries in control-flow bodies belong to this scope, just as
+/// their declarations do in `collect`. Their placeholder extent (usually one)
+/// must not replace the heap descriptor's runtime length in bounds checks.
+/// BLOCK and procedure bodies have separate scopes and collect their own data.
+fn scope_metadata(body: &[Stmt], shapes: &mut crate::allocatables::Shapes) {
+    crate::allocatables::metadata(body, shapes);
+    for stmt in body {
+        match stmt {
+            Stmt::If { then_body, else_body, .. } => {
+                scope_metadata(then_body, shapes);
+                if let Some(body)=else_body { scope_metadata(body, shapes); }
+            }
+            Stmt::Do { body, .. } | Stmt::DoWhile { body, .. } => scope_metadata(body, shapes),
+            Stmt::SelectCase { cases, default, .. } => {
+                for case in cases { scope_metadata(&case.body, shapes); }
+                if let Some(body)=default { scope_metadata(body, shapes); }
+            }
+            _ => {}
+        }
+    }
+}
 /// Variables named by statements that can make defined values undefined or
 /// replace their flags.
 fn undefining(body: &[Stmt], names: &mut std::collections::BTreeSet<String>) {
@@ -827,7 +848,7 @@ fn scope(body: &mut Vec<Stmt>, inherited: &mut Env, params: &[String], result: O
         }
     }
     if let Some(name) = result { names.entry(name.into()).or_insert(None); }
-    let mut heap_shapes=crate::allocatables::Shapes::new();crate::allocatables::metadata(body,&mut heap_shapes);
+    let mut heap_shapes=crate::allocatables::Shapes::new();scope_metadata(body,&mut heap_shapes);
     let mut env = inherited.clone();
     let mut prefix = Vec::new();
     let mut unstable = std::collections::BTreeSet::new();
@@ -837,7 +858,8 @@ fn scope(body: &mut Vec<Stmt>, inherited: &mut Env, params: &[String], result: O
         *serial += 1;
         let flag = format!("@initialized_{serial}");
         let assigned = params.contains(&name) && !outputs.contains(&name);
-        let runtime_sized = name.starts_with("@pointer_") || bounded.contains(&name);
+        let runtime_sized = name.starts_with("@pointer_") || bounded.contains(&name)
+            || heap_shapes.contains_key(&format!("@extent:{name}"));
         let element_width = widths.get(&name).copied().unwrap_or(1);
         let zero_sized = zero_characters.contains(&name) && !heap_characters.contains(&name);
         let character_length=character_lengths.get(&name).copied();
