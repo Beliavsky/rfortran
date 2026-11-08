@@ -203,8 +203,9 @@ The existing component storage representation limits the sum of component
 rank and record-array rank to 15, in both serial and parallel compilation.
 
 This stage requires the entire element type to have scalar or fixed-size array
-INTEGER, REAL or LOGICAL components and no type-bound bindings. Nested derived,
-CHARACTER, COMPLEX, POINTER and ALLOCATABLE components, polymorphic owners,
+INTEGER, REAL or LOGICAL leaves and no type-bound bindings. Scalar nested derived
+components are supported recursively, using the same leaf storage and ownership
+checks. CHARACTER, COMPLEX, POINTER and ALLOCATABLE components, polymorphic owners,
 whole-record operations and derived LOCAL/LOCAL_INIT storage retain serial
 fallback. Owner TARGET/POINTER attributes retain their existing restrictions.
 
@@ -213,6 +214,8 @@ rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_records.
 python tests\test_concurrent_parallel_records.py
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_record_arrays.f90 --run
 python tests\test_concurrent_parallel_record_arrays.py
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_nested_records.f90 --run
+python tests\test_concurrent_parallel_nested_records.py
 ```
 
 ## Multiple indices and multidimensional arrays

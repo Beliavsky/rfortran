@@ -14,7 +14,10 @@ thread_local! {
     static TYPES: std::cell::RefCell<HashMap<String, Option<Fields>>> = Default::default();
 }
 
-fn fields(components: &[Stmt], bindings: &[(String, String)]) -> Option<Fields> {
+type Definitions = HashMap<String, Vec<(Vec<Stmt>, Vec<(String, String)>)>>;
+
+fn fields(components: &[Stmt], bindings: &[(String, String)], definitions: &Definitions,
+          resolved: &mut HashMap<String, Option<Fields>>, active: &mut HashSet<String>) -> Option<Fields> {
     if !bindings.is_empty() { return None; }
     let mut out: Fields = vec![];
     for s in components {
@@ -29,6 +32,15 @@ fn fields(components: &[Stmt], bindings: &[(String, String)]) -> Option<Fields> 
                 if let Some(field) = out.iter_mut().find(|f| &f.name == name) { field.dims = dims.clone(); }
                 else { out.push(Field { name:name.clone(), kind:kind.clone(), dims:dims.clone() }); }
             }
+            Stmt::DerivedDecl { type_name, names, dims, attributes, polymorphic: false }
+                if dims.is_empty() && attributes.is_empty() => {
+                let nested = resolve(type_name, definitions, resolved, active)?;
+                for name in names {
+                    for field in &nested {
+                        out.push(Field { name:format!("{name}%{}",field.name), ..field.clone() });
+                    }
+                }
+            }
             Stmt::SourceLocation(_) | Stmt::Accessibility { .. } => {}
             // Includes owned/pointer components, inheritance and type
             // parameters. Do not approve a safe-looking field of an unsafe type.
@@ -39,24 +51,44 @@ fn fields(components: &[Stmt], bindings: &[(String, String)]) -> Option<Fields> 
         && !matches!(f.kind, TypeSpec::Complex(_)))).then_some(out)
 }
 
+// Resolve the whole graph before admitting an owner. Unsafe or recursive
+// descendants invalidate every ancestor, including otherwise safe siblings.
+fn resolve(name: &str, definitions: &Definitions, resolved: &mut HashMap<String, Option<Fields>>,
+           active: &mut HashSet<String>) -> Option<Fields> {
+    if let Some(result) = resolved.get(name) { return result.clone(); }
+    if !active.insert(name.to_owned()) { return None; }
+    let result = (|| {
+        let candidates = definitions.get(name)?;
+        let mut result = None;
+        for (components, bindings) in candidates {
+            let candidate = fields(components, bindings, definitions, resolved, active)?;
+            if result.as_ref().is_some_and(|old|old != &candidate) { return None; }
+            result = Some(candidate);
+        }
+        result
+    })();
+    active.remove(name);
+    resolved.insert(name.to_owned(), result.clone());
+    result
+}
+
 pub(super) fn prepare(program: &Program) {
-    fn collect(body: &[Stmt], types: &mut HashMap<String, Option<Fields>>) {
+    fn collect(body: &[Stmt], types: &mut Definitions) {
         for s in body {
             if let Stmt::DerivedType { name, components, bindings } = s {
-                let fields = fields(components, bindings);
                 // Module association supplies qualified identities. Ambiguous
-                // local type spellings conservatively keep serial execution.
-                if let Some(old) = types.get_mut(name) {
-                    if *old != fields { *old = None; }
-                } else { types.insert(name.clone(), fields); }
+                // local spellings must resolve to the same complete layout.
+                types.entry(name.clone()).or_default().push((components.clone(),bindings.clone()));
             } else {
                 let mut copy = s.clone();
                 for b in children(&mut copy) { collect(b, types); }
             }
         }
     }
+    let mut definitions = HashMap::new();
+    collect(&program.body, &mut definitions);
     let mut types = HashMap::new();
-    collect(&program.body, &mut types);
+    for name in definitions.keys() { resolve(name, &definitions, &mut types, &mut HashSet::new()); }
     TYPES.with(|t| *t.borrow_mut() = types);
 }
 
