@@ -14,6 +14,7 @@ mod calls;
 mod captures;
 mod records;
 mod record_locality;
+mod record_assignment;
 pub(crate) mod parallel;
 
 #[derive(Clone)]

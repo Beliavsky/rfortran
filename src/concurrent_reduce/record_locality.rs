@@ -62,6 +62,12 @@ pub(super) fn expand(controls: &[Expr], mask: &mut Expr, body: &mut Vec<Stmt>, c
     host_inputs(&mut header,&mut hidden,false);
     let Stmt::Print {items}=header.remove(0) else {unreachable!()};
     *mask=items.into_iter().next().unwrap();
+    let private=clauses.iter().filter_map(|e|match e {
+        Expr::Call(tag,names) if matches!(tag.as_str(),"@locality:local"|"@locality:local_init")=>Some(names),_=>None,
+    }).flatten().filter_map(|e|match e {
+        Expr::Ident(n) if scope.get(n).is_some_and(|o|o.derived)=>Some(n.clone()),_=>None,
+    }).collect();
+    record_assignment::expand(body,&private,scope)?;
     let mut prefix=vec![];
     let mut defaults=vec![];
     for clause in clauses {

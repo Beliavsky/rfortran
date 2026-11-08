@@ -8,12 +8,15 @@ struct Field { name: String, kind: TypeSpec, dims: Vec<Expr>, default: Option<Ex
 type Fields = Vec<Field>;
 const DEFAULT: &str = "@parallel_default:";
 const COMPONENT: &str = "@parallel_component:";
+const IDENTITY: &str = "@parallel_record_type:";
 pub(super) fn module_metadata(name: &str) -> bool {
-    name.strip_prefix(COMPONENT).or_else(||name.strip_prefix(DEFAULT)).is_some_and(|n|n.starts_with("@module$"))
+    name.strip_prefix(COMPONENT).or_else(||name.strip_prefix(DEFAULT)).or_else(||name.strip_prefix(IDENTITY)).is_some_and(|n|n.starts_with("@module$"))
 }
 thread_local! {
     static TYPES: std::cell::RefCell<HashMap<String, Option<Fields>>> = Default::default();
+    static DEFINED_ASSIGNMENT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
+pub(super) fn defined_assignment() -> bool { DEFINED_ASSIGNMENT.with(|v|v.get()) }
 
 type Definitions = HashMap<String, Vec<(Vec<Stmt>, Vec<(String, String)>)>>;
 
@@ -75,6 +78,13 @@ fn resolve(name: &str, definitions: &Definitions, resolved: &mut HashMap<String,
 pub(super) fn active() -> bool { TYPES.with(|t|!t.borrow().is_empty()) }
 
 pub(super) fn prepare(program: &Program) {
+    fn assignment(body: &[Stmt]) -> bool {
+        body.iter().any(|s| {
+            if matches!(s,Stmt::OperatorInterface {operator,..} if operator=="=") {return true;}
+            let mut s=s.clone();children(&mut s).into_iter().any(|b|assignment(b))
+        })
+    }
+    DEFINED_ASSIGNMENT.with(|v|v.set(false));
     fn has_locality(body: &[Stmt]) -> bool {
         body.iter().any(|s| match s {
             Stmt::CallSub {name,args} if matches!(name.as_str(),"@do_concurrent"|"@concurrent_reduce") =>
@@ -88,6 +98,7 @@ pub(super) fn prepare(program: &Program) {
     if !parallel::enabled() && !has_locality(&program.body) {
         TYPES.with(|t|t.borrow_mut().clear()); return;
     }
+    DEFINED_ASSIGNMENT.with(|v|v.set(assignment(&program.body)));
     fn collect(body: &[Stmt], types: &mut Definitions) {
         for s in body {
             if let Stmt::DerivedType { name, components, bindings } = s {
@@ -118,7 +129,7 @@ pub(super) fn declarations(body: &[Stmt], scope: &mut Scope) {
             _ => Vec::<&str>::new(),
         }
     }).collect();
-    scope.retain(|key, _| key.strip_prefix("@parallel_dummy:").or_else(||key.strip_prefix(COMPONENT)).or_else(||key.strip_prefix(DEFAULT)).unwrap_or(key)
+    scope.retain(|key, _| !key.strip_prefix(IDENTITY).is_some_and(|n|shadowed.contains(n)) && key.strip_prefix("@parallel_dummy:").or_else(||key.strip_prefix(COMPONENT)).or_else(||key.strip_prefix(DEFAULT)).unwrap_or(key)
         .split_once('%').is_none_or(|(owner, _)| !shadowed.contains(owner)));
     TYPES.with(|t| {
         let types = t.borrow();
@@ -144,6 +155,7 @@ pub(super) fn declarations(body: &[Stmt], scope: &mut Scope) {
                     Some((f,dims,kind,default))
                 }).collect::<Option<Vec<_>>>();
                 let Some(fixed) = fixed else { continue };
+                scope.insert(format!("{IDENTITY}{n}"),Object {constant:Some(id(type_name)),..owner.clone()});
                 for (field, component_dims, kind, default) in fixed {
                     let key = format!("{n}%{}",field.name);
                     let dims = component_dims.iter().chain(&owner.dims).cloned().collect();
@@ -159,6 +171,10 @@ pub(super) fn declarations(body: &[Stmt], scope: &mut Scope) {
             }
         }
     });
+}
+
+pub(super) fn identity<'a>(name: &str, scope: &'a Scope) -> Option<&'a Expr> {
+    scope.get(&format!("{IDENTITY}{name}"))?.constant.as_ref()
 }
 
 // Only complete, bounded layouts populated above can be privatized.
@@ -195,6 +211,24 @@ fn expression(e: &mut Expr, scope: &Scope) {
 
 pub(super) fn proof(body: &mut [Stmt], scope: &Scope) {
     for s in body {
+        // The proof audits exactly the same reads and writes as an assignment;
+        // native initialization lowering additionally transports definition bits.
+        if let Stmt::CallSub {name,args}=s {
+            if name==crate::initialized::TRANSPORT && args.len()==2 {
+                let value=args[1].clone();
+                *s=match &args[0] {
+                    Expr::Ident(name)=>Stmt::Assign{name:name.clone(),value},
+                    Expr::Call(tag,a) if tag.starts_with("@record_component:")=>{
+                        let Some(Expr::Call(owner,indices))=a.first() else {continue};
+                        let mut indices=indices.clone();
+                        indices.extend(a.iter().skip(1).cloned());
+                        Stmt::AssignIndex{name:format!("{owner}%{}",tag.strip_prefix("@record_component:").unwrap()),indices,value}
+                    },
+                    Expr::Call(name,indices)|Expr::Index(name,indices)=>Stmt::AssignIndex{name:name.clone(),indices:indices.clone(),value},
+                    _=>continue,
+                };
+            }
+        }
         if let Stmt::AssignIndex { name, indices, .. } = s {
             if let Some(selected) = selection(name, indices, scope) { *indices = selected; }
         }

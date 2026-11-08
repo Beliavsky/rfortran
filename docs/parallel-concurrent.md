@@ -411,9 +411,32 @@ The budget above includes scalar record leaves (one component each, two for
 COMPLEX), including when a runtime-sized intrinsic workspace shares the construct.
 An oversized private workspace selects serial execution.
 
+Intrinsic whole-record assignment is supported between one of these private
+records and another scalar record or a scalar element of a shared record array
+of the same declared type. For example:
+
+```fortran
+do concurrent (i=1:n) local(work)
+   work = particles(i)
+   work%position = work%position + dt*work%velocity
+   particles(i) = work
+end do
+```
+
+The copy expands into primitive component transfers, preserving initialization
+state, including undefined fields. Self-assignment is supported; reading a copied
+undefined field still raises an error with runtime checks enabled. Shared reads
+and writes retain the ordinary iteration-ownership proof, so a copy from another
+iteration selects serial execution. Fixed component arrays use their declared
+bounds. Copy expansion is limited to 4096 primitive elements per assignment.
+Record sections, constructors, calls in owner subscripts, and source subscripts
+depending on the destination record are outside this stage. Source groups
+containing a defined-assignment interface are conservatively rejected for these
+copies, so the expansion cannot bypass a user-defined assignment procedure.
+
 This stage rejects arrays of private records, TARGET/POINTER/ALLOCATABLE owners,
 owned/pointer/polymorphic layouts,
-inheritance, type-bound bindings, whole-record operations or passing the whole record to a
+inheritance, type-bound bindings, other whole-record operations or passing the whole record to a
 procedure, and nested DO CONCURRENT constructs involving these private records.
 Use individual fields or ordinary inner DO loops. These cases receive a source
 location diagnostic rather than silently referring to the outside object.
@@ -421,6 +444,8 @@ location diagnostic rather than silently referring to the outside object.
 ```cmd
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_local_records.f90 --run
 python tests\test_concurrent_parallel_local_records.py
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_record_assignment.f90 --run
+python tests\test_concurrent_parallel_record_assignment.py
 ```
 
 ## Scalar reductions

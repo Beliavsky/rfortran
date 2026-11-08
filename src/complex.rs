@@ -2125,6 +2125,15 @@ impl Lower {
                     anyhow::ensure!(args.len()%2==0,"invalid parallel reduction metadata");
                     *args=metadata;
                 },
+                Stmt::CallSub{name,args} if name==crate::initialized::TRANSPORT && args.len()==2
+                    && self.info(&args[0],&scope)?.is_some_and(|i|complex_kind(&i.kind).is_some())=>{
+                    let target=self.pair(args[0].clone(),&mut scope,&mut prefix)?;
+                    let source=self.pair(args[1].clone(),&mut scope,&mut prefix)?;
+                    for (target,source) in [(target.re,source.re),(target.im,source.im)] {
+                        prefix.push(Stmt::CallSub{name:crate::initialized::TRANSPORT.into(),args:vec![target,source]});
+                    }
+                    return Ok(());
+                },
                 // LOCAL starts undefined on every iteration. Clear both component
                 // initialization states without evaluating the complex value.
                 Stmt::CallSub{name,args} if name=="@undefine" && matches!(args.as_slice(),[Expr::Ident(n)] if scope.get(n).is_some_and(|i|complex_kind(&i.kind).is_some()))=>{
