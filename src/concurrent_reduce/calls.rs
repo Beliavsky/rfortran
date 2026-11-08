@@ -52,6 +52,9 @@ pub(super) fn prepare(program: &Program) {
                         .filter(|(_, o)| o.attrs.contains("parameter"))
                         .map(|(n, o)| (n.clone(), o.clone()))
                         .collect();
+                    let procedure_scope=declarations(body, &constants);
+                    let mut proof=body.clone();
+                    records::proof(&mut proof,&procedure_scope);
                     out.entry(name.clone()).or_default().push(Procedure {
                         subroutine,
                         result: match body.last() {
@@ -59,8 +62,8 @@ pub(super) fn prepare(program: &Program) {
                             _ => name.clone(),
                         },
                         params: params.clone(),
-                        body: body.clone(),
-                        scope: declarations(body, &constants),
+                        body: proof,
+                        scope: procedure_scope,
                         locals: declarations(body, &Scope::new()).into_keys().collect(),
                         pure: *pure,
                     });
@@ -105,7 +108,7 @@ pub(super) fn prepare(program: &Program) {
         .iter()
         .filter(|(n, defs)| {
             approved.contains_key(*n)
-                && (n.starts_with("@parallel_capture_") || defs[0]
+                && (n.starts_with("@parallel_capture_") || n.starts_with("@parallel_record_call_") || defs[0]
                     .body
                     .iter()
                     .any(|s| matches!(s, Stmt::ArrayDecl { .. })
@@ -197,6 +200,7 @@ fn validate(
             .any(|a| !matches!(a.as_str(), "parameter" | "in" | "intent(in)" | "value" | "@parallel_readonly_capture")
                 && !(owned_array(f,n) && a == "allocatable")
                 && !(captured_array(f,n) && a == "allocatable")
+                && !(a==crate::optional::BORROW_INPUT && f.params.contains(n) && o.attrs.contains("intent(in)"))
                 && !(a == "optional" && f.params.contains(n)
                     && (o.attrs.contains("intent(in)") || f.subroutine && writable(o)))
                 && !(f.subroutine && f.params.contains(n) && matches!(a.as_str(),"intent(out)"|"intent(inout)")))
@@ -351,6 +355,8 @@ fn validate(
                     if matches!(intent.as_str(), "@simple" | "@module_host")
                         || intent == parallel::READONLY_CAPTURE
                         || intent == parallel::WORKSPACE
+                        || intent == parallel::SUBROUTINE
+                        || intent == crate::optional::BORROW_INPUT && f.params.contains(name) && f.scope.get(name).is_some_and(|o|o.attrs.contains("intent(in)"))
                         || owned_array(f,name) && intent == "allocatable"
                         || captured_array(f,name) && intent == "allocatable"
                         || intent == "optional" && f.params.contains(name)

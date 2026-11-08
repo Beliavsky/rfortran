@@ -434,10 +434,38 @@ depending on the destination record are outside this stage. Source groups
 containing a defined-assignment interface are conservatively rejected for these
 copies, so the expansion cannot bypass a user-defined assignment procedure.
 
+These private records may also be passed to source-defined PURE/SIMPLE
+subroutines with explicit `INTENT(IN)`, `INTENT(OUT)` or `INTENT(INOUT)`, and to
+PURE/SIMPLE functions with supported numeric/LOGICAL/COMPLEX scalar results:
+
+```fortran
+do concurrent (i=1:n) local(work)
+   work = particles(i)
+   call advance(work, dt)
+   particles(i) = work
+end do
+```
+
+Compiler-generated helpers use the same primitive fields and existing procedure
+audits; original procedures and their ordinary call interfaces remain unchanged.
+Read-only fields borrow caller storage, so unused or conditionally read fields
+keep their initialization checks at the actual read. `INTENT(OUT)` clears old
+definition state and applies component defaults before the procedure body.
+Keyword arguments, proved call chains and read-only host/module captures are
+supported. Writable actuals that overlap another actual are rejected, including
+a record passed alongside one of its own components. A helper which cannot pass
+the existing worker audits selects serial execution.
+
+All record actuals in one of these calls must be supported scalar LOCAL or
+LOCAL_INIT entities of the corresponding declared type. Derived array dummies,
+constructors, omitted optional arguments and helpers containing internal
+procedures are outside this stage; existing recursion and function-result limits
+remain in effect.
+
 This stage rejects arrays of private records, TARGET/POINTER/ALLOCATABLE owners,
 owned/pointer/polymorphic layouts,
-inheritance, type-bound bindings, other whole-record operations or passing the whole record to a
-procedure, and nested DO CONCURRENT constructs involving these private records.
+inheritance, type-bound bindings, other whole-record operations or unsupported
+whole-record calls, and nested DO CONCURRENT constructs involving these private records.
 Use individual fields or ordinary inner DO loops. These cases receive a source
 location diagnostic rather than silently referring to the outside object.
 
@@ -446,6 +474,8 @@ rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_local_re
 python tests\test_concurrent_parallel_local_records.py
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_record_assignment.f90 --run
 python tests\test_concurrent_parallel_record_assignment.py
+rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_record_calls.f90 --run
+python tests\test_concurrent_parallel_record_calls.py
 ```
 
 ## Scalar reductions

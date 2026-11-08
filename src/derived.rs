@@ -379,7 +379,9 @@ impl Lowerer {
                         objects.polymorphic.remove(n);
                     }
                 }
-                if attributes.iter().any(|a| !a.starts_with("intent(") && a!=crate::finalization::OUTPUT && !matches!(a.as_str(), "parameter" | "save" | "public" | "private" | "optional" | "target")) {
+                if attributes.iter().any(|a| !a.starts_with("intent(") && a!=crate::finalization::OUTPUT
+                    && !(a==crate::optional::BORROW_INPUT && attributes.iter().any(|a|a=="intent(in)"))
+                    && !matches!(a.as_str(), "parameter" | "save" | "public" | "private" | "optional" | "target")) {
                     bail!("derived objects currently support INTENT, OPTIONAL, PARAMETER, SAVE and TARGET attributes only");
                 }
                 for n in names {
@@ -780,6 +782,9 @@ impl Lowerer {
                     name: field.clone(),
                     intent: if final_output {"intent(inout)".into()} else {i.clone()},
                 });
+            }
+            if dummy && intent.is_some_and(|i|i=="intent(in)") && attrs.iter().any(|a|a==crate::optional::BORROW_INPUT) {
+                out.push(Stmt::DummyIntent{name:field.clone(),intent:crate::optional::BORROW_INPUT.into()});
             }
             let mut initialization = vec![];
             if final_output {

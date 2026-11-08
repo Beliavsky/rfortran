@@ -77,6 +77,17 @@ fn resolve(name: &str, definitions: &Definitions, resolved: &mut HashMap<String,
 
 pub(super) fn active() -> bool { TYPES.with(|t|!t.borrow().is_empty()) }
 
+pub(super) fn has_locality(body: &[Stmt]) -> bool {
+    body.iter().any(|s| match s {
+        Stmt::CallSub {name,args} if matches!(name.as_str(),"@do_concurrent"|"@concurrent_reduce") =>
+            args.iter().any(|e|matches!(e,Expr::Call(tag,_) if matches!(tag.as_str(),"@locality:local"|"@locality:local_init"))),
+        Stmt::Module {body,..}|Stmt::Function {body,..}|Stmt::Subroutine {body,..}|Stmt::Block {body}|Stmt::Do {body,..}|Stmt::DoWhile {body,..} => has_locality(body),
+        Stmt::If {then_body,else_body,..} => has_locality(then_body)||else_body.as_ref().is_some_and(|b|has_locality(b)),
+        Stmt::SelectCase {cases,default,..} => cases.iter().any(|c|has_locality(&c.body))||default.as_ref().is_some_and(|b|has_locality(b)),
+        _=>false,
+    })
+}
+
 pub(super) fn prepare(program: &Program) {
     fn assignment(body: &[Stmt]) -> bool {
         body.iter().any(|s| {
@@ -85,16 +96,6 @@ pub(super) fn prepare(program: &Program) {
         })
     }
     DEFINED_ASSIGNMENT.with(|v|v.set(false));
-    fn has_locality(body: &[Stmt]) -> bool {
-        body.iter().any(|s| match s {
-            Stmt::CallSub {name,args} if matches!(name.as_str(),"@do_concurrent"|"@concurrent_reduce") =>
-                args.iter().any(|e|matches!(e,Expr::Call(tag,_) if matches!(tag.as_str(),"@locality:local"|"@locality:local_init"))),
-            Stmt::Module {body,..}|Stmt::Function {body,..}|Stmt::Subroutine {body,..}|Stmt::Block {body}|Stmt::Do {body,..}|Stmt::DoWhile {body,..} => has_locality(body),
-            Stmt::If {then_body,else_body,..} => has_locality(then_body)||else_body.as_ref().is_some_and(|b|has_locality(b)),
-            Stmt::SelectCase {cases,default,..} => cases.iter().any(|c|has_locality(&c.body))||default.as_ref().is_some_and(|b|has_locality(b)),
-            _=>false,
-        })
-    }
     if !parallel::enabled() && !has_locality(&program.body) {
         TYPES.with(|t|t.borrow_mut().clear()); return;
     }

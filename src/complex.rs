@@ -141,16 +141,20 @@ struct Lower {
     live: Vec<(String, String)>,
 }
 thread_local! {
-    /// The COMPLEX components of each derived type, by component path, such
-    /// as `z` or `inner%z`, with their types and extents.
+    /// Primitive numeric/LOGICAL components, by path, including noncomplex
+    /// operands needed when converting a record expression to COMPLEX.
     static FIELDS: std::cell::RefCell<HashMap<String, Vec<(String, Info)>>> = std::cell::RefCell::new(HashMap::new());
     /// All components of each type with COMPLEX components, in order, by
     /// path, for list-directed output of whole objects.
     static ORDER: std::cell::RefCell<HashMap<String, Vec<String>>> = std::cell::RefCell::new(HashMap::new());
 }
-/// Record the COMPLEX components of every derived type, including those of
-/// derived components.
+/// Record primitive component types, including nested scalar records. Only
+/// types containing COMPLEX fields require special whole-object output.
 fn complex_fields(body: &[Stmt]) {
+    fn primitive(k:&TypeSpec)->bool {
+        matches!(k,TypeSpec::Integer(_)|TypeSpec::IntegerKind(_)|TypeSpec::Real|TypeSpec::RealKind(_)
+            |TypeSpec::DoublePrecision|TypeSpec::Logical|TypeSpec::LogicalKind(_)|TypeSpec::Complex(_))
+    }
     fn definitions(body: &[Stmt], types: &mut HashMap<String, Vec<Stmt>>) {
         for s in body {
             match s {
@@ -165,10 +169,13 @@ fn complex_fields(body: &[Stmt]) {
         let mut out = vec![];
         for c in components {
             match c {
-                Stmt::VarDecl { kind, names } if complex_kind(kind).is_some() => {
+                Stmt::VarDecl { kind, names } if primitive(kind) => {
                     out.extend(names.iter().map(|n| (n.clone(), Info::scalar(kind.clone()))));
                 }
-                Stmt::ArrayDecl { kind, name, dims } if complex_kind(kind).is_some() => {
+                Stmt::InitializedDecl {kind,entities,..} if primitive(kind)=>{
+                    out.extend(entities.iter().map(|(n,_)|(n.clone(),Info::scalar(kind.clone()))));
+                }
+                Stmt::ArrayDecl { kind, name, dims } if primitive(kind) => {
                     out.push((name.clone(), Info { kind: kind.clone(), dims: dims.clone() }));
                 }
                 // Components of a scalar derived component, as `inner%z`.
@@ -205,7 +212,8 @@ fn complex_fields(body: &[Stmt]) {
     let mut types = HashMap::new();
     definitions(body, &mut types);
     let all: HashMap<String, Vec<(String, Info)>> = types.keys().map(|t| (t.clone(), fields(t, &types, 0))).filter(|(_, f)| !f.is_empty()).collect();
-    let orders = all.keys().filter_map(|t| order(t, &types, 0).map(|o| (t.clone(), o))).collect();
+    let orders = all.iter().filter(|(_,fields)|fields.iter().any(|(_,i)|complex_kind(&i.kind).is_some()))
+        .filter_map(|(t,_)| order(t, &types, 0).map(|o| (t.clone(), o))).collect();
     FIELDS.with(|f| *f.borrow_mut() = all);
     ORDER.with(|o| *o.borrow_mut() = orders);
 }

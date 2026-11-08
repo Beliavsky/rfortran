@@ -10,7 +10,7 @@ struct Copy {
     inputs: Vec<String>,
 }
 
-fn constant_inputs(body: &[Stmt], objects: &Scope) -> BTreeSet<String> {
+pub(super) fn constant_inputs(body: &[Stmt], objects: &Scope) -> BTreeSet<String> {
     fn kind(kind: &TypeSpec, names: &mut BTreeSet<String>) {
         if let TypeSpec::IntegerKind(n)
         | TypeSpec::RealKind(n)

@@ -1812,7 +1812,7 @@ impl Lower {
                                     matches!(
                                         a.as_str(),
                                         "allocatable" | "optional" | "pointer" | "target" | "@scalar_heap"
-                                    ) || a.starts_with("intent(")
+                                    ) || a.starts_with("intent(") || a.as_str()==crate::optional::BORROW_INPUT
                                 }) {
                                     prefix.push(Stmt::DummyIntent {
                                         name: field.clone(),

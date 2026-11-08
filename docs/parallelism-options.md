@@ -191,6 +191,8 @@ is mostly OpenMP, then MPI, with coarrays a distant third.
     using private primitive fields with per-iteration defaults or entry-value copies.
     Intrinsic whole-record assignment between these private records and scalar
     records or shared record-array elements preserves component initialization state.
+    These private records also support audited PURE/SIMPLE procedure calls with
+    explicit intents, borrowed read-only fields and component defaults on output.
     Owned components and type-bound bindings retain their restrictions.
   - **Next:** broader capture analysis, recoverable allocation of other storage types,
     and audits of remaining intrinsic runtime helpers.

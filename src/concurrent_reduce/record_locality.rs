@@ -2,7 +2,7 @@
 //! Scalar record locality delegates storage and checks to primitive locality.
 use super::*;
 
-fn references(body: &[Stmt], name: &str) -> bool {
+pub(super) fn references(body: &[Stmt], name: &str) -> bool {
     let mut found=false;
     for s in body {
         let mut s=s.clone();

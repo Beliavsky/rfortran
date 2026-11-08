@@ -15,6 +15,7 @@ mod captures;
 mod records;
 mod record_locality;
 mod record_assignment;
+mod record_calls;
 pub(crate) mod parallel;
 
 #[derive(Clone)]
@@ -779,6 +780,7 @@ fn name_iteration(mut stmt: Stmt, marker: Stmt) -> Stmt {
 }
 pub fn resolve(mut program: Program) -> Result<Program> {
     records::prepare(&program);
+    record_calls::prepare(&mut program)?;
     if parallel::enabled() { captures::prepare(&mut program); }
     parallel::procedures(&program);
     let objects=if parallel::enabled() || records::active(){module_objects(&program)}else{Scope::new()};
