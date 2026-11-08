@@ -2134,6 +2134,28 @@ fn lower_body(body: &mut Vec<Stmt>, inherited: &Symbols, serial: &mut usize) -> 
                         prefix.push(Stmt::Assign { name:temp.clone(),value:expr.clone() });
                         *expr = Expr::Ident(temp);
                     }
+                } else if matches!(element(expr,&int(1),&symbols),Ok((_,None,TypeSpec::Logical | TypeSpec::LogicalKind(_)))) {
+                    // Native SELECT dispatch uses integer storage. Capture a
+                    // logical selector once as 0/1, including expressions and
+                    // calls, and normalize its constant case values likewise.
+                    let mut seen=HashSet::new();
+                    for case in cases.iter_mut() {
+                        for item in &mut case.items {
+                            let crate::ast::CaseItem::Single(value)=item else {
+                                bail!("LOGICAL CASE selectors cannot be ranges");
+                            };
+                            let logical=crate::parameters::logical_constant(value,&HashMap::new())
+                                .context("LOGICAL CASE values must be constant LOGICAL expressions")?;
+                            if !seen.insert(logical) {bail!("overlapping LOGICAL CASE selectors");}
+                            *value=int(i64::from(logical));
+                        }
+                    }
+                    *serial+=1;
+                    let temp=format!("@case_selector_{serial}");
+                    prefix.push(Stmt::VarDecl{kind:TypeSpec::Integer(None),names:vec![temp.clone()]});
+                    prefix.push(Stmt::Assign{name:temp.clone(),value:int(0)});
+                    prefix.push(Stmt::If{cond:expr.clone(),then_body:vec![Stmt::Assign{name:temp.clone(),value:int(1)}],else_body:None});
+                    *expr=Expr::Ident(temp);
                 } else if cases.iter().any(|case| case.items.iter().any(|item| matches!(item,crate::ast::CaseItem::Range(..)))) {
                     bail!("CASE ranges currently require a supported scalar INTEGER selector");
                 }

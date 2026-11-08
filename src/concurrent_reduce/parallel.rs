@@ -332,6 +332,16 @@ fn check(
                     }
                 },
                 Stmt::If{then_body,else_body,..}=>{writes(then_body,locals,written,indices_set,scope,loop_locals,active,inside_loop)?;if let Some(b)=else_body {writes(b,locals,written,indices_set,scope,loop_locals,active,inside_loop)?;}},
+                Stmt::SelectCase{cases,default,..}=>{
+                    // Validate every branch against the same shared-output
+                    // tuples; selection does not introduce a loop target.
+                    for case in cases {
+                        writes(&case.body,locals,written,indices_set,scope,loop_locals,active,inside_loop)?;
+                    }
+                    if let Some(body)=default {
+                        writes(body,locals,written,indices_set,scope,loop_locals,active,inside_loop)?;
+                    }
+                },
                 Stmt::DoWhile{body,..}=>{
                     // WHILE has no protected counted index. Keep enclosing
                     // counted indices protected, but allow EXIT of this loop.
@@ -345,7 +355,7 @@ fn check(
                     let [Expr::Ident(var),_,_,_]=args.as_slice() else {bail!("invalid inner DO controls");};
                     inner_loop(var,&body[1..],locals,written,indices_set,scope,loop_locals,active)?;
                 },
-                _=>bail!("body requires local assignments, independent array writes, IF statements, DO WHILE, or private-index DO loops"),
+                _=>bail!("body requires local assignments, independent array writes, IF or SELECT CASE statements, DO WHILE, or private-index DO loops"),
             }
         }
         Ok(())
@@ -504,6 +514,8 @@ fn check(
         }
         match e {
             Expr::IntLit(_) | Expr::RealLit(_) | Expr::Logical(_) => Ok(()),
+            // Open CASE range endpoints are syntax metadata, not calls.
+            Expr::Call(n, args) if n=="@case_unbounded" && args.is_empty()=>Ok(()),
             Expr::Ident(n) => {
                 object(n, scope)?;
                 if !scope[n].dims.is_empty() && written.contains_key(n) {

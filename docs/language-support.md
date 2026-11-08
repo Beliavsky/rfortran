@@ -828,6 +828,11 @@ continued statements. Complex literals retain their expression syntax in case
 bodies and procedure arguments. Run `python tests/test_select_case_lists.py`;
 `tests/programs/xselect_case_list.f90` is a standalone example.
 
+LOGICAL selectors may be variables, literals, expressions or supported function
+calls and are evaluated once. CASE values and lists must be constant LOGICAL
+expressions; duplicate values and LOGICAL ranges are rejected. See
+`tests/test_select_case_logical.py` for interpreter and native O0/O2 tests.
+
 CHARACTER selectors may be fixed or deferred-length variables, literals,
 substrings, concatenations, and supported CHARACTER-valued expressions. The
 selector is evaluated once; comparisons use its active length and Fortran blank

@@ -31,7 +31,9 @@ jobs to stderr; unset it for timing runs.
   expressions. Every access to a written array must use the same subscript
   expressions. Read-only arrays may use other scalar subscripts.
 - Scalar and budgeted fixed/runtime-sized array `LOCAL` and `LOCAL_INIT`, shared scalar
-  inputs, masks, and IF statements.
+  inputs, masks, IF statements and SELECT CASE with INTEGER or LOGICAL
+  selectors. CASE lists, closed/open ranges and CASE DEFAULT are supported;
+  CHARACTER selectors retain serial fallback.
 - Ordinary counted `DO` loops inside each parallel iteration, including nested
   loops and positive, negative, or runtime strides. Each inner index must be a
   distinct scalar INTEGER declared `LOCAL` or `LOCAL_INIT`. Inner loops execute
@@ -189,6 +191,25 @@ A strided example with a fixed column, an offset, and a scalar reduction:
 ```cmd
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_stride.f90 --run
 ```
+
+## SELECT CASE branches
+
+Each CASE and the default branch must satisfy the same independence checks as
+an IF body. All branches writing a shared array must use the same index tuple.
+Selectors use the audited parallel expressions and proved PURE/SIMPLE calls,
+including scalar array intrinsics applied to runtime-sized function results. A selector reading
+an array written by the loop must stay within the current iteration's element.
+
+SELECT CASE does not introduce a loop target: an unnamed CYCLE or EXIT in a
+branch still targets its enclosing loop. EXIT may leave an inner ordinary loop,
+but cannot leave the concurrent construct. Reduction updates preceding a
+transfer are retained, and initialization checks apply when a branch leaves a
+private value undefined. CASE values and range endpoints retain the compiler's
+usual constant-expression rules.
+
+See `tests/programs/xconcurrent_parallel_select_case.f90` and
+`tests/test_concurrent_parallel_select_case.py` for branch, transfer, reduction,
+locality and fallback tests.
 
 ## Serial inner loops
 
