@@ -159,6 +159,9 @@ is mostly OpenMP, then MPI, with coarrays a distant third.
     subset including scalar and memory-budgeted fixed/runtime-sized array reductions, multiple indices, signed strides, invariant subscript offsets, multidimensional arrays, and assumed-shape procedure arguments and proved PURE/SIMPLE scalar-result calls with scalar or read-only array inputs, with serial fallback.
     Called PURE/SIMPLE functions can use private fixed-size, automatic, and allocatable numeric/LOGICAL workspaces and fixed/automatic/allocatable array results, including nested calls and disjoint section output.
     PURE/SIMPLE subroutine calls support explicit argument intents, read-only array inputs, disjoint scalar/section outputs, acyclic call chains, and private workspaces.
+    Ordinary inner DO loops execute serially within each worker, with distinct
+    LOCAL/LOCAL_INIT INTEGER indices and the same shared-array write proof;
+    nested loops and signed runtime strides are supported.
     LOCAL/LOCAL_INIT support numeric/LOGICAL fixed/runtime-sized arrays with private data
     and initialization masks reset/restored per iteration, under a 4096-component
     aggregate workspace budget (COMPLEX elements count twice); runtime extents are

@@ -32,6 +32,11 @@ jobs to stderr; unset it for timing runs.
   expressions. Read-only arrays may use other scalar subscripts.
 - Scalar and budgeted fixed/runtime-sized array `LOCAL` and `LOCAL_INIT`, shared scalar
   inputs, masks, and IF statements.
+- Ordinary counted `DO` loops inside each parallel iteration, including nested
+  loops and positive, negative, or runtime strides. Each inner index must be a
+  distinct scalar INTEGER declared `LOCAL` or `LOCAL_INIT`. Inner loops execute
+  serially within their worker; accumulators and work arrays must also have
+  appropriate locality. Existing shared-array independence checks still apply.
 - Scalar and fixed-size or runtime-sized array INTEGER/REAL/DOUBLE PRECISION `REDUCE(+:...)`, `REDUCE(*:...)`,
   `REDUCE(MIN:...)`, and `REDUCE(MAX:...)`; scalar and fixed-size or runtime-sized array LOGICAL `.AND.`, `.OR.`,
   `.EQV.`, and `.NEQV.` reductions. Multiple reductions and reduction-only
@@ -179,6 +184,35 @@ A strided example with a fixed column, an offset, and a scalar reduction:
 ```cmd
 rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_stride.f90 --run
 ```
+
+## Serial inner DO loops
+
+For example, each worker can accumulate one column without calling a separate
+PURE procedure:
+
+```fortran
+do concurrent(i=1:n) local(j,total)
+   total = 0.0
+   do j=1,m
+      total = total + a(j,i)
+   end do
+   result(i) = total
+end do
+```
+
+Inner bounds and strides are evaluated using normal DO semantics. Empty inner
+loops leave their body unexecuted, and initialization checks still apply to
+private values. Reduction variables may be updated within the inner body, but
+cannot serve as inner control variables. Reusing an active loop index or writing
+it within its body is not admitted by the parallel proof.
+
+DO WHILE, named inner loops, EXIT, and CYCLE currently retain serial fallback.
+So do shared writes such as `a(j,i)` whose varying inner subscript does not meet
+the existing invariant-subscript proof. Reads such as `a(j,i)` are supported
+when that array is read-only in the concurrent body.
+
+See `tests/programs/xconcurrent_parallel_inner_do.f90` and
+`tests/test_concurrent_parallel_inner_do.py` for executable examples and tests.
 
 ## Private LOCAL and LOCAL_INIT arrays
 

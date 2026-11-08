@@ -129,6 +129,7 @@ fn check(
         })
         .collect::<Result<_>>()?;
     let mut locals = indices.clone();
+    let mut loop_locals = HashSet::new();
     let mut reductions = false;
     let mut reduction_arrays = HashSet::new();
     let mut reduction_elements = 0usize;
@@ -204,6 +205,7 @@ fn check(
                 for a in args {
                     if let Expr::Ident(n) = a {
                         locals.insert(n.clone());
+                        loop_locals.insert(n.clone());
                     }
                 }
             }
@@ -284,10 +286,15 @@ fn check(
         written: &mut HashMap<String, Vec<Expr>>,
         indices_set: &HashSet<String>,
         scope: &Scope,
+        loop_locals: &HashSet<String>,
+        active: &HashSet<String>,
     ) -> Result<()> {
         for s in body {
             match s {
                 Stmt::SourceLocation(_)=>{},
+                Stmt::Assign{name,..} | Stmt::AssignIndex{name,..} if active.contains(name)=>{
+                    bail!("inner DO control variable cannot be modified in its body");
+                },
                 Stmt::Assign{name,..} if locals.contains(name)=>{},
                 Stmt::AssignIndex{name,..} if locals.contains(name)=>{},
                 Stmt::AssignIndex{name,indices,..} => {
@@ -316,17 +323,39 @@ fn check(
                             Expr::Index(name,indices)|Expr::Call(name,indices) if scope.get(&name).is_some_and(|o|!o.dims.is_empty())=>Stmt::AssignIndex{name,indices,value:Expr::IntLit("0".into())},
                             _=>bail!("parallel subroutine output requires LOCAL storage or a disjoint array element/section"),
                         };
-                        writes(&[assignment],locals,written,indices_set,scope)?;
+                        writes(&[assignment],locals,written,indices_set,scope,loop_locals,active)?;
                     }
                 },
-                Stmt::If{then_body,else_body,..}=>{writes(then_body,locals,written,indices_set,scope)?;if let Some(b)=else_body {writes(b,locals,written,indices_set,scope)?;}},
-                _=>bail!("body requires scalar local assignments, independent array-element writes, and IF statements"),
+                Stmt::If{then_body,else_body,..}=>{writes(then_body,locals,written,indices_set,scope,loop_locals,active)?;if let Some(b)=else_body {writes(b,locals,written,indices_set,scope,loop_locals,active)?;}},
+                Stmt::Do{var,body,..}=>{
+                    inner_loop(var,body,locals,written,indices_set,scope,loop_locals,active)?;
+                },
+                Stmt::Block{body} if matches!(body.first(),Some(Stmt::CallSub{name,..}) if name=="@do_step")=>{
+                    let Stmt::CallSub{args,..}=&body[0] else {unreachable!()};
+                    let [Expr::Ident(var),_,_,_]=args.as_slice() else {bail!("invalid inner DO controls");};
+                    inner_loop(var,&body[1..],locals,written,indices_set,scope,loop_locals,active)?;
+                },
+                _=>bail!("body requires local assignments, independent array writes, IF statements, or private-index DO loops"),
             }
         }
         Ok(())
     }
+    fn inner_loop(
+        var: &str, body: &[Stmt], locals: &HashSet<String>,
+        written: &mut HashMap<String,Vec<Expr>>, indices: &HashSet<String>, scope: &Scope,
+        loop_locals: &HashSet<String>, active: &HashSet<String>,
+    ) -> Result<()> {
+        if !loop_locals.contains(var) || indices.contains(var) || active.contains(var)
+            || !scope.get(var).is_some_and(|o| o.dims.is_empty()
+                && matches!(o.kind,TypeSpec::Integer(_)|TypeSpec::IntegerKind(_))) {
+            bail!("inner DO index requires a distinct scalar INTEGER LOCAL or LOCAL_INIT variable");
+        }
+        let mut active=active.clone();
+        active.insert(var.into());
+        writes(body,locals,written,indices,scope,loop_locals,&active)
+    }
     let mut written = HashMap::new();
-    writes(body, &locals, &mut written, &indices, scope)?;
+    writes(body, &locals, &mut written, &indices, scope, &loop_locals, &HashSet::new())?;
     // Shared storage keeps its ordinary Fortran identity. Only read-only
     // captures are admitted, including hidden inputs made explicit by captures.
     let nonlocal = |n: &str| scope.get(n).is_some_and(|o|
@@ -567,6 +596,10 @@ fn check(
     fn visit(body: &[Stmt], scope: &Scope, written: &HashMap<String, Vec<Expr>>) -> Result<()> {
         for s in body {
             if let Stmt::CallSub{name,args}=s {
+                if name=="@do_step" {
+                    for e in &args[1..] {expr(e,scope,written)?;}
+                    continue;
+                }
                 for (actual,_) in calls::subroutine(name,args,scope)? {expr(&actual,scope,written)?;}
                 continue;
             }
