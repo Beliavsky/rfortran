@@ -745,7 +745,7 @@ print *,a(1,1),a(2,1),a(9001,1),a(1,2)
 end
 """,'-1 1 9000 -1')
 
-    def test_stride_mutable_offset_fallback(self):
+    def test_stride_private_nonowner_subscript(self):
         self.build_run("""implicit none
 integer :: i,k=1,a(3,2)
 a=0
@@ -755,7 +755,7 @@ a(i,k)=i
 end do
 print *,a(:,2)
 end
-""",'1 2 3',reason='invariant subscripts or index offsets',threads=(1,))
+""",'1 2 3',dispatch=False)
 
     def test_stride_different_offset_fallback(self):
         self.build_run("""implicit none

@@ -26,10 +26,13 @@ jobs to stderr; unset it for timing runs.
   and arbitrary lower bounds. Supported assumed-shape dummy arrays are also
   accepted. Constant extents may use named constants.
 - Writes such as `a(i)`, `a(i+1)`, `a(i,1)`, and `a(i+offset,j,slot)`.
-  Every concurrent index must occur exactly once in the destination tuple;
-  additional subscripts and additive offsets must be loop-invariant integer
-  expressions. Every access to a written array must use the same subscript
-  expressions. Read-only arrays may use other scalar subscripts.
+  Every concurrent index must identify one destination axis, optionally shifted
+  by a loop-invariant scalar integer offset. These ownership axes and expressions must
+  be identical across writes and reads of that array. Other subscripts may vary
+  within the owned row, column or slab, including private inner-loop indices,
+  arithmetic expressions and supported sections. Writes on those other axes
+  must not directly reference concurrent indices. Read-only arrays may use
+  other scalar subscripts.
 - Scalar and budgeted fixed/runtime-sized array `LOCAL` and `LOCAL_INIT`, shared scalar
   inputs, masks, IF statements and SELECT CASE with INTEGER or LOGICAL
   selectors. CASE lists, closed/open ranges and CASE DEFAULT are supported;
@@ -195,10 +198,12 @@ rf.bat --parallel --parallel-report tests\programs\xconcurrent_parallel_stride.f
 ## SELECT CASE branches
 
 Each CASE and the default branch must satisfy the same independence checks as
-an IF body. All branches writing a shared array must use the same index tuple.
+an IF body. All branches writing a shared array must retain the same ownership
+axes and subscript expressions on those axes.
 Selectors use the audited parallel expressions and proved PURE/SIMPLE calls,
-including scalar array intrinsics applied to runtime-sized function results. A selector reading
-an array written by the loop must stay within the current iteration's element.
+including scalar array intrinsics applied to runtime-sized function results.
+A selector reading an array written by the loop must stay within the current
+iteration's owned elements.
 
 SELECT CASE does not introduce a loop target: an unnamed CYCLE or EXIT in a
 branch still targets its enclosing loop. EXIT may leave an inner ordinary loop,
@@ -249,9 +254,21 @@ the enclosing iteration. A zero-trip WHILE does not initialize body-only values;
 ordinary initialization checks remain active. Named inner loops/transfers
 retain serial fallback.
 
-Shared writes such as `a(j,i)` also retain serial fallback when their varying
-inner subscript does not meet the existing invariant-subscript proof. Reads such as `a(j,i)` are supported
-when that array is read-only in the concurrent body.
+Shared writes such as `a(j,i)` are supported when each concurrent iteration
+owns a separate column selected by `i`; private inner-loop index `j` may vary.
+Multiple concurrent indices can identify separate axes of a higher-rank slab.
+Reads such as `a(k,i)` and `sum(a(:,i))`, and supported PURE output calls on
+elements or sections of that column, stay within the same owner. Writes and
+reads that shift an ownership subscript or swap its axis retain serial fallback.
+Vector offsets on an ownership axis, such as `i+offsets(:)`, also retain serial
+fallback because their destinations can overlap across iterations.
+SIZE, LBOUND and UBOUND of the whole written array are permitted as shape
+inquiries; whole-array value reads still retain serial fallback. Bounds and
+initialization checks remain active unless disabled with `--nocheck`.
+
+See `tests/programs/xconcurrent_parallel_slabs.f90` and
+`tests/test_concurrent_parallel_slabs.py` for rows, columns, runtime arrays,
+sections, multiple controls and rank-15 coverage.
 
 See `tests/programs/xconcurrent_parallel_inner_do.f90` and
 `tests/test_concurrent_parallel_inner_do.py` for executable examples and tests.
@@ -599,8 +616,9 @@ end do
 ```
 
 A fixed column such as `a(:,i)` is disjoint across iterations and can be passed
-to an array output dummy. All writes to a given array must use the same tuple;
-reads of written storage must stay within the same proven destination tuple.
+to an array output dummy. All writes to a given array must retain the same
+ownership axes and expressions; reads of written storage must stay within
+that owned row, column or slab.
 Whole-array reads of a written array retain serial fallback. If a writable base
 variable occurs in another actual argument of the same call, the compiler
 conservatively uses serial execution, including for different views of one array.

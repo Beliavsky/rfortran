@@ -237,9 +237,9 @@ fn check(
             }
         }
     }
-    // A subscript is either invariant, or one index plus/minus an invariant
-    // offset. Every index must occur exactly once across the destination tuple.
-    // Exclude LOCAL, LOCAL_INIT and REDUCE objects from invariant expressions.
+    // Every concurrent index owns one destination axis, possibly shifted by
+    // an invariant offset. Other axes may vary within that iteration's slab.
+    // Exclude LOCAL, LOCAL_INIT and REDUCE objects from ownership offsets.
     fn invariant(e: &Expr, locals: &HashSet<String>, scope: &Scope) -> bool {
         match e {
             Expr::IntLit(_) => true,
@@ -254,12 +254,8 @@ fn check(
                 invariant(a, locals, scope) && invariant(b, locals, scope)
             }
             Expr::Un(crate::ast::UnOp::Neg, a) => invariant(a, locals, scope),
-            // A fixed section is disjoint across iterations when another
-            // destination axis carries each concurrent index exactly once.
-            Expr::Section { lower, upper, stride, .. } =>
-                [lower, upper, stride].into_iter().flatten().all(|e| invariant(e, locals, scope)),
-            Expr::Call(n, a) if n=="@section_subscript" && matches!(a.as_slice(),[Expr::Section{..}]) =>
-                invariant(&a[0], locals, scope),
+            // An ownership offset must be scalar. A vector offset can make
+            // different iterations overlap even when it is loop-invariant.
             _ => false,
         }
     }
@@ -280,10 +276,28 @@ fn check(
             _ => None,
         }
     }
+    struct Written {
+        sample: Vec<Expr>,
+        owners: Vec<Option<Expr>>,
+    }
+    fn free_axis(e: &Expr, indices: &HashSet<String>) -> bool {
+        let mut e=e.clone();
+        let mut independent=true;
+        visit_expr(&mut e,&mut |e| {
+            if let Expr::Ident(n)|Expr::Call(n,_)|Expr::Index(n,_)|Expr::Section{name:n,..}=e {
+                independent &= !indices.contains(n);
+            }
+        });
+        independent
+    }
+    fn owns(access: &Written, args: &[Expr]) -> bool {
+        access.owners.len()==args.len() && access.owners.iter().zip(args)
+            .all(|(owner,arg)|owner.as_ref().is_none_or(|owner|owner==arg))
+    }
     fn writes(
         body: &[Stmt],
         locals: &HashSet<String>,
-        written: &mut HashMap<String, Vec<Expr>>,
+        written: &mut HashMap<String, Written>,
         indices_set: &HashSet<String>,
         scope: &Scope,
         loop_locals: &HashSet<String>,
@@ -304,18 +318,24 @@ fn check(
                 Stmt::AssignIndex{name,..} if locals.contains(name)=>{},
                 Stmt::AssignIndex{name,indices,..} => {
                     let mut seen=HashSet::new();
+                    let mut owners=vec![];
                     for e in indices {
-                        if invariant(e,locals,scope) {continue;}
-                        let Some(n)=axis(e,indices_set,locals,scope) else {
+                        if let Some(n)=axis(e,indices_set,locals,scope) {
+                            if !seen.insert(n) {bail!("array writes must use every concurrent index exactly once");}
+                            owners.push(Some(e.clone()));
+                        } else if free_axis(e,indices_set) {
+                            // Its expression is audited below; only ownership
+                            // must be independent of the concurrent controls.
+                            owners.push(None);
+                        } else {
                             bail!("independent array-element writes require invariant subscripts or index offsets");
-                        };
-                        if !seen.insert(n) {bail!("array writes must use every concurrent index exactly once");}
+                        }
                     }
                     if seen!=*indices_set {bail!("array writes must use every concurrent index exactly once");}
-                    if written.get(name).is_some_and(|old| old!=indices) {
+                    if written.get(name).is_some_and(|old| old.owners!=owners) {
                         bail!("array writes must use the same index tuple");
                     }
-                    written.insert(name.clone(),indices.clone());
+                    written.insert(name.clone(),Written{sample:indices.clone(),owners});
                 },
                 Stmt::CallSub{name,args} => {
                     if scope.contains_key(&format!("@parallel_dummy:{name}")) {
@@ -362,7 +382,7 @@ fn check(
     }
     fn inner_loop(
         var: &str, body: &[Stmt], locals: &HashSet<String>,
-        written: &mut HashMap<String,Vec<Expr>>, indices: &HashSet<String>, scope: &Scope,
+        written: &mut HashMap<String,Written>, indices: &HashSet<String>, scope: &Scope,
         loop_locals: &HashSet<String>, active: &HashSet<String>,
     ) -> Result<()> {
         if !loop_locals.contains(var) || indices.contains(var) || active.contains(var)
@@ -413,7 +433,7 @@ fn check(
         }
     }
     let scope=&local_scope;
-    fn expr(e: &Expr, scope: &Scope, written: &HashMap<String, Vec<Expr>>) -> Result<()> {
+    fn expr(e: &Expr, scope: &Scope, written: &HashMap<String, Written>) -> Result<()> {
         fn object(n: &str, scope: &Scope) -> Result<()> {
             let o = scope
                 .get(n)
@@ -530,7 +550,7 @@ fn check(
                 if args.len() != scope[n].dims.len() {
                     bail!("requires scalar subscripts matching the array rank");
                 }
-                if written.get(n).is_some_and(|tuple| tuple != args) {
+                if written.get(n).is_some_and(|access| !owns(access,args)) {
                     bail!("read of written array `{n}` is not confined to the current iteration");
                 }
                 for a in args {
@@ -579,6 +599,28 @@ fn check(
                 expr(b, scope, written)
             }
             Expr::Un(_, a) => expr(a, scope, written),
+            Expr::Call(n,args) if matches!(n.as_str(),"size"|"lbound"|"ubound")
+                && !scope.contains_key(n) && calls::array_intrinsic(n)
+                && !scope.contains_key(&format!("@parallel_dummy:{n}")) => {
+                // Shape inquiries do not read the elements of a written array.
+                // Still audit DIM/KIND and any nontrivial array expression.
+                for (position,arg) in args.iter().enumerate() {
+                    if crate::named_arguments::omitted(arg) {continue;}
+                    let keyword=crate::named_arguments::keyword(arg);
+                    let value=keyword.map(|(_,v)|v).unwrap_or(arg);
+                    let array=keyword.map_or(position==0,|(key,_)|key=="array");
+                    if array {
+                        if let Expr::Ident(name)=value {
+                            if scope.get(name).is_some_and(|o|!o.dims.is_empty()) {
+                                object(name,scope)?;
+                                continue;
+                            }
+                        }
+                    }
+                    expr(value,scope,written)?;
+                }
+                Ok(())
+            }
             Expr::Call(n, args) if !scope.contains_key(n)
                 && !scope.contains_key(&format!("@parallel_dummy:{n}")) && calls::check(n, args)? => {
                 for arg in args {
@@ -611,11 +653,11 @@ fn check(
             _ => bail!("expression or procedure call is outside the parallel subset"),
         }
     }
-    for (n, tuple) in &written {
-        expr(&Expr::Index(n.clone(), tuple.clone()), scope, &written)?;
+    for (n, access) in &written {
+        expr(&Expr::Index(n.clone(), access.sample.clone()), scope, &written)?;
     }
     expr(mask, scope, &written)?;
-    fn visit(body: &[Stmt], scope: &Scope, written: &HashMap<String, Vec<Expr>>) -> Result<()> {
+    fn visit(body: &[Stmt], scope: &Scope, written: &HashMap<String, Written>) -> Result<()> {
         for s in body {
             if let Stmt::CallSub{name,args}=s {
                 if name=="@do_step" {
