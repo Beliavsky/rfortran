@@ -27,7 +27,7 @@ The two should stay separate projects that share at most rfort's front end.
 
 - **Output:** C that behaves exactly like the other rfort backends.
 - **Starting point:** the lowered IR, which is already full of temporaries,
-  mangled names, descriptor bookkeeping and about 470 `@` helper calls.
+  mangled names, descriptor bookkeeping and calls to `@` helpers.
   Readability is gone by then, and that is fine for a backend.
 - **Runtime:** full semantics, shared with Cranelift.
 - **Success:** speed, and output that matches byte for byte.
@@ -72,11 +72,18 @@ correct throughout. It would also need:
   SELECT CASE, BLOCK, EXIT and CYCLE (`src/ir.rs`), which map almost one to one
   onto C. A C emitter would not need a structurer (the step that rebuilds loops
   and ifs from raw jumps).
-- **The runtime helpers are most of the work.** The lowered IR uses about 470
-  `@...` helper calls, for formatted I/O, allocation, characters, file handling
-  and so on. `src/codegen/cranelift.rs` (about 4,700 lines) expands them inline.
-  - A C backend needs each one as a C function, which amounts to a runtime
-    library.
+- **The runtime helpers are most of the work.** The lowering passes
+  (`reductions.rs`, `allocatables.rs`, `multidim.rs`, `array_calls.rs` and many
+  others) create internal calls whose names start with `@`, for formatted I/O,
+  allocation, characters, file handling and so on.
+  - About 470 distinct `@` names appear across `src/`, but many are rewritten
+    again before code generation.
+  - About 110 reach the native backend, which handles them in
+    `src/codegen/cranelift.rs` (106 names) and a few in `file_io.rs`,
+    `characters.rs`, `c_interop.rs`, `module_data.rs` and `record_heap.rs`.
+  - The interpreter handles about 100 in `src/runtime.rs`.
+  - A C backend needs each name the native backend handles as a C function,
+    which amounts to a runtime library.
   - Alternatively, the Rust runtime logic could be built as a static library
     with a C API.
   - This is likely more work than the emitter itself.
@@ -178,8 +185,8 @@ reference:
 
 ### What rfort's C runtime should be
 
-It must reproduce exactly what the roughly 470 `@` helpers do in the Cranelift
-backend.
+It must reproduce exactly what the roughly 110 `@` helpers handled in
+`src/codegen/` do in the Cranelift backend.
 
 - **Share the runtime between the native backends.** Move that logic into one
   runtime used by both, written in C or as Rust built as a static library with
