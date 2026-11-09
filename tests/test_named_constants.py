@@ -77,6 +77,43 @@ end program main
         self.reject('program main\ninteger, parameter :: a(2) = [1,2], b(3) = [1,2,3], c(2) = a + b\nprint *, c\nend program main\n',
                     'shapes of array operands do not conform')
 
+    def test_multidimensional_array_constants(self):
+        # RESHAPE with PAD= and ORDER=, scalar fills, lower bounds, expressions
+        # of other constants, constant elements, and run-time subscripts.
+        self.check("""program main
+implicit none
+integer :: i, j
+integer, parameter :: nb = 3
+real(8), parameter :: p(2,nb) = reshape([1d0,2d0,3d0,4d0,5d0,6d0],[2,nb])
+integer, parameter :: m(2,2) = 7, t(0:1,3) = reshape([(i, i=1,6)], [2,3])
+integer, parameter :: c(3,2) = reshape([1,2,3,4], [3,2], pad=[0])
+integer, parameter :: o(2,3) = reshape([1,2,3,4,5,6], [2,3], order=[2,1])
+integer, parameter :: dbl(2,3) = 2*t
+integer, parameter :: e12 = t(0,2), e13 = o(1,3)
+integer, parameter :: v(3) = [10, 20, 30]
+integer, parameter :: w(3,1) = reshape(v + 1, [3,1])
+integer :: a(e13)
+print *, p(:,2), p(2,nb)
+print *, m
+print *, t, lbound(t), ubound(t)
+print *, c
+print *, o
+print *, dbl, e12, e13, size(a)
+print *, w, shape(w)
+do j = 1, 3
+  print *, t(0,j), t(1,j), sum(p(:,j))
+end do
+end program main
+""", '3.0 4.0 6.0\n7 7 7 7\n1 2 3 4 5 6 0 1 1 3\n1 2 3 4 0 0\n1 4 2 5 3 6\n'
+            '2 4 6 8 10 12 3 3 3\n11 21 31 3 1\n1 2 3.0\n3 4 7.0\n5 6 11.0\n')
+        for source, message in [
+            ('integer, parameter :: a(2,2) = [1,2,3]', 'shape mismatch'),
+            ('integer, parameter :: a(2,3) = reshape([1,2,3,4], [2,3])', 'RESHAPE'),
+            ('integer, parameter :: a(2,2) = 1, b = a(3,1)', 'out of bounds'),
+        ]:
+            with self.subTest(source=source):
+                self.reject('program main\n'+source+'\nprint *, a\nend program main\n', message)
+
     def test_invalid_initializers_ranges_and_writes(self):
         for source,message in [
             ('logical,parameter::a=1','logical constant expression'),

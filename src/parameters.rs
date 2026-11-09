@@ -258,7 +258,7 @@ fn real_literal(value: f64, double: bool) -> Expr {
 
 fn model_type_key(name: &str) -> String { format!("@model_type:{name}") }
 fn model_metadata_name(name: &str) -> &str {
-    name.strip_prefix("@model_type:").or_else(||name.strip_prefix("@model_procedure:")).or_else(||name.strip_prefix("@parameter_lower:")).or_else(||name.strip_prefix("@character_length:")).unwrap_or(name)
+    name.strip_prefix("@model_type:").or_else(||name.strip_prefix("@model_procedure:")).or_else(||name.strip_prefix("@parameter_lower:")).or_else(||name.strip_prefix("@parameter_bounds:")).or_else(||name.strip_prefix("@character_length:")).unwrap_or(name)
 }
 fn record_model_type(constants: &mut Constants, name: &str, kind: &TypeSpec, rank: usize) {
     let code = match kind {
@@ -326,6 +326,9 @@ pub(crate) fn logical_constant(e: &Expr, constants: &Constants) -> Result<bool> 
         }
         Expr::Call(name, args) if matches!(name.as_str(), "all" | "any" | "@all_reduction" | "@any_reduction") && matches!(args.len(),1 | 3) => {
             if args.len()==3 && integer_constant(&args[1])?!=1 { bail!("constant logical reduction DIM must be 1 for a rank-one array"); }
+            if args.len()==3 && matches!(&args[0],Expr::Ident(n) if constants.contains_key(&format!("@parameter_bounds:{n}"))) {
+                bail!("constant logical reductions with DIM of PARAMETER arrays of rank two or more are not yet supported");
+            }
             let actual = if let Expr::Ident(n)=&args[0] { constants.get(n).unwrap_or(&args[0]) } else { &args[0] };
             let values = if crate::empty_constructors::kind(actual)?==Some(TypeSpec::Logical) { vec![] }
                 else if let Expr::Call(tag, items)=actual {
@@ -1179,22 +1182,52 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
                 let mut initializer = initializer.clone();
                 rewrite_expr(&mut initializer, &constants)?;
                 if arrays.contains(&key) {
+                    let mut dims=array_dimensions[&key].clone();
+                    for d in &mut dims { rewrite_expr(d,&constants)?; }
+                    // Each dimension's lower bound and extent; None for an implied extent (*).
+                    let bounds=dims.iter().map(|d|-> Result<(i64,Option<i64>)> {Ok(match d {
+                        Expr::Call(tag,b) if tag=="@declared_bounds"=>{
+                            let (lower,upper)=(integer_constant(&b[0])?,integer_constant(&b[1])?);
+                            (lower,Some((upper-lower+1).max(0)))
+                        }
+                        Expr::Ident(tag) if tag=="@assumed_extent"=>(1,None),
+                        d=>(1,Some(integer_constant(d)?.max(0))),
+                    })}).collect::<Result<Vec<_>>>()?;
+                    let size=bounds.iter().map(|(_,e)|*e).product::<Option<i64>>();
+                    // RESHAPE, with operands that may be expressions of other array constants.
+                    if let Expr::Call(f,args)=&mut initializer {
+                        if f=="reshape" {
+                            for arg in args.iter_mut() {
+                                let target=match arg {Expr::Call(k,v) if k.starts_with("@keyword:") && v.len()==1=>&mut v[0], a=>a};
+                                if let Some(mut items)=elementwise(target,&constants)? {
+                                    for item in &mut items { rewrite_expr(item,&constants)?; }
+                                    *target=Expr::Call("@array_constructor".into(),items);
+                                }
+                            }
+                            let shapes=array_dimensions.iter().filter_map(|(n,d)|Some((n.clone(),declared_extents(d,&constants).ok()?))).collect();
+                            initializer=fold_array_initializer(&initializer,&shapes)?;
+                        }
+                    }
                     if let Some(items) = elementwise(&initializer, &constants)? {
                         let mut items = items;
                         for item in &mut items { rewrite_expr(item, &constants)?; }
                         initializer = Expr::Call("@array_constructor".into(), items);
                     }
-                    let initializer=if crate::empty_constructors::kind(&initializer)?.is_some() {initial_value(kind,&initializer)?} else {initializer};
+                    // A scalar initializer gives every element its value.
+                    let empty=crate::empty_constructors::kind(&initializer)?.is_some();
+                    if !empty && !matches!(&initializer,Expr::Call(tag,_) if tag=="@array_constructor") {
+                        let size=size.with_context(||format!("implied-shape PARAMETER `{name}` requires an array initializer"))?;
+                        initializer=Expr::Call("@array_constructor".into(),vec![initializer;usize::try_from(size)?]);
+                    }
+                    let initializer=if empty {initial_value(kind,&initializer)?} else {initializer};
                     let Expr::Call(tag, items) = initializer else { bail!("array PARAMETER requires an array constructor"); };
                     if tag != "@array_constructor" { bail!("array PARAMETER requires an array constructor"); }
-                    let mut dims=array_dimensions[&key].clone();
-                    if dims.len()!=1 {bail!("array PARAMETER `{name}` currently requires rank one");}
-                    rewrite_expr(&mut dims[0],&constants)?;
-                    let lower=match &dims[0] {
-                        Expr::Call(tag,bounds) if tag=="@declared_bounds"=>integer_constant(&bounds[0])?,
-                        _=>1,
-                    };
-                    constants.insert(format!("@parameter_lower:{name}"),Expr::IntLit(lower.to_string()));
+                    if bounds.len()>1 {
+                        if size!=Some(items.len() as i64) { bail!("array PARAMETER `{name}` initializer shape mismatch"); }
+                        constants.insert(format!("@parameter_bounds:{name}"),Expr::Call("@array_constructor".into(),
+                            bounds.iter().flat_map(|(l,e)|[Expr::IntLit(l.to_string()),Expr::IntLit(e.unwrap_or(0).to_string())]).collect()));
+                    }
+                    constants.insert(format!("@parameter_lower:{name}"),Expr::IntLit(bounds[0].0.to_string()));
                     if matches!(kind,TypeSpec::Character(_)|TypeSpec::CharacterAssumed) {
                         let lengths=items.iter().map(|e|character_constant(e).map(|s|s.len())).collect::<Result<Vec<_>>>()?;
                         if lengths.windows(2).any(|pair|pair[0]!=pair[1]) {bail!("untyped CHARACTER array constructor elements must have equal lengths");}
@@ -1253,16 +1286,24 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
     for stmt in std::mem::take(body) {
         let init = if let Stmt::ArrayDecl { name, dims, .. } = &stmt {
             if let Some(values) = array_values.get(name) {
-                let (lower,extent)=match dims.as_slice() {
-                    [Expr::Call(tag,bounds)] if tag=="@declared_bounds"=>{
+                let bounds=dims.iter().map(|d|->Result<(i64,i128)> {Ok(match d {
+                    Expr::Call(tag,bounds) if tag=="@declared_bounds"=>{
                         let lower=integer_constant(&bounds[0])?;let upper=integer_constant(&bounds[1])?;
                         (lower,(i128::from(upper)-i128::from(lower)+1).max(0))
                     },
-                    [dim]=>(1,i128::from(integer_constant(dim)?).max(0)),
-                    _=>bail!("array PARAMETER `{name}` currently requires rank one"),
-                };
-                if extent != values.len() as i128 { bail!("array PARAMETER `{name}` initializer shape mismatch"); }
-                values.iter().enumerate().map(|(i,v)| Stmt::AssignIndex { name: name.clone(), indices: vec![Expr::IntLit((lower+i as i64).to_string())], value: v.clone() }).collect()
+                    dim=>(1,i128::from(integer_constant(dim)?).max(0)),
+                })}).collect::<Result<Vec<_>>>()?;
+                if bounds.iter().map(|(_,e)|*e).product::<i128>() != values.len() as i128 { bail!("array PARAMETER `{name}` initializer shape mismatch"); }
+                // Elements in array element order: the first subscript varies fastest.
+                values.iter().enumerate().map(|(i,v)| {
+                    let mut rest=i as i128;
+                    let indices=bounds.iter().map(|(lower,extent)|{
+                        let index=i128::from(*lower)+rest%extent.max(&1);
+                        rest/=extent.max(&1);
+                        Expr::IntLit(index.to_string())
+                    }).collect();
+                    Stmt::AssignIndex { name: name.clone(), indices, value: v.clone() }
+                }).collect()
             } else { vec![] }
         } else { vec![] };
         let variable_init: Vec<Stmt> = match &stmt {
@@ -1826,6 +1867,24 @@ fn rewrite_expr(expr: &mut Expr, constants: &Constants) -> Result<()> {
         Expr::Un(_, inner) => rewrite_expr(inner, constants)?,
         Expr::Call(name, args) | Expr::Index(name, args) => {
             if let Some(Expr::Call(tag,values))=constants.get(name) {
+                // An element of a multidimensional constant with constant subscripts.
+                if let (true, Some(Expr::Call(_,bounds)))=(tag=="@array_constant" && args.len()>1, constants.get(&format!("@parameter_bounds:{name}"))) {
+                    let mut subscripts=args.clone();
+                    for s in &mut subscripts { rewrite_expr(s,constants)?; }
+                    if let Ok(subscripts)=subscripts.iter().map(integer_constant).collect::<Result<Vec<_>>>() {
+                        if subscripts.len()*2!=bounds.len() { bail!("PARAMETER `{name}` has rank {}", bounds.len()/2); }
+                        let (mut offset,mut stride)=(0i128,1i128);
+                        for (s,pair) in subscripts.iter().zip(bounds.chunks(2)) {
+                            let (lower,extent)=(i128::from(integer_constant(&pair[0])?),i128::from(integer_constant(&pair[1])?));
+                            let position=i128::from(*s)-lower;
+                            if position<0 || position>=extent { bail!("PARAMETER array subscript is out of bounds"); }
+                            offset+=position*stride;
+                            stride*=extent;
+                        }
+                        *expr=values[usize::try_from(offset)?].clone();
+                        return Ok(());
+                    }
+                }
                 if tag=="@array_constant" && args.len()==1 {
                     let mut index=args[0].clone();rewrite_expr(&mut index,constants)?;
                     if let Ok(index)=integer_constant(&index) {

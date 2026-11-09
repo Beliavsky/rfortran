@@ -262,6 +262,24 @@ Module exports, host association, PURE procedures and assignment protection
 are preserved. Implicitly typed constants and array names in separate PARAMETER
 statements remain unsupported. Run `python tests/test_parameter_statements.py`.
 
+### Array named constants
+
+Array PARAMETERs of any rank are supported, with explicit bounds such as
+`p(0:1,3)`, or an implied extent `(*)` for rank one. The value can be:
+
+- an array constructor of the array's size;
+- a scalar, which every element receives, as in `m(2,2) = 7`;
+- RESHAPE of a constant array, with PAD= and ORDER=, as in
+  `p(4,nb) = reshape([...], [4, nb])`;
+- an expression of other array constants with operators and elemental
+  intrinsics, such as `2*idx + 1` or `sqrt(real(idx))`.
+
+Elements with constant subscripts, such as `p(2,3)`, are constants and can
+define other constants. Other references, including sections and subscripts
+computed at run time, use the array's values. `ALL` and `ANY` with DIM of a
+constant of rank two or more are not yet folded. Run
+`python tests/test_named_constants.py`.
+
 ### Declaration initialization
 
 Main-program variables support declaration initialization from supported constant
