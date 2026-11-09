@@ -101,7 +101,8 @@ pub fn validate_subroutine(name: &str, params: &[String], body: &[Stmt]) -> Resu
         if attributes.iter().filter(|a| a.starts_with("intent(")).count() != 1 {
             return Err(crate::source_diagnostics::declaration(body,param,None,format!("ELEMENTAL dummy `{param}` requires one explicit INTENT")));
         }
-        if attributes.iter().any(|a| !matches!(*a, "intent(in)" | "intent(out)" | "intent(inout)" | "optional")) {
+        // BORROW_INPUT marks an OPTIONAL INTENT(IN) dummy for parallel calls.
+        if attributes.iter().any(|a| !matches!(*a, "intent(in)" | "intent(out)" | "intent(inout)" | "optional") && *a != crate::optional::BORROW_INPUT) {
             return Err(crate::source_diagnostics::declaration(body,param,None,format!("unsupported attribute on ELEMENTAL dummy `{param}`")));
         }
     }

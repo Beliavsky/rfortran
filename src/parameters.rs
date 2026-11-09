@@ -857,6 +857,54 @@ fn declared_extents(dims: &[Expr], constants: &Constants) -> Result<Vec<i64>> {
 /// RESHAPE into one flat constructor in array element order. `shapes` gives
 /// the extents of declared arrays for SHAPE(array). Other forms are returned
 /// unchanged.
+/// The elements of a constant array expression built from array constants,
+/// array constructors, operators and elemental intrinsics, such as
+/// `2*idx + 1` or `sqrt(real(idx))`, as scalar expressions; None for a
+/// scalar expression. Constant evaluation then folds each element.
+fn elementwise(e: &Expr, constants: &Constants) -> Result<Option<Vec<Expr>>> {
+    fn conform(name: &str, operands: Vec<Option<Vec<Expr>>>, scalars: &[Expr]) -> Result<Option<Vec<Vec<Expr>>>> {
+        let Some(n) = operands.iter().flatten().map(Vec::len).next() else { return Ok(None) };
+        if operands.iter().flatten().any(|v| v.len() != n) { bail!("{name}: shapes of array operands do not conform"); }
+        Ok(Some((0..n).map(|i| operands.iter().zip(scalars)
+            .map(|(v, s)| v.as_ref().map_or_else(|| s.clone(), |v| v[i].clone())).collect()).collect()))
+    }
+    Ok(match e {
+        Expr::Ident(n) => match constants.get(n) {
+            Some(Expr::Call(tag, items)) if tag == "@array_constant" => Some(items.clone()),
+            _ => None,
+        },
+        Expr::Call(tag, items) if tag == "@array_constant" => Some(items.clone()),
+        // Implied-DO constructors are expanded by constructor folding.
+        Expr::Call(tag, items) if tag == "@array_constructor"
+            && !items.iter().any(|i| matches!(i, Expr::Call(t, _) if t.contains("implied_do"))) => {
+            let mut out = vec![];
+            for item in items {
+                match elementwise(item, constants)? {
+                    Some(values) => out.extend(values),
+                    None => out.push(item.clone()),
+                }
+            }
+            Some(out)
+        }
+        Expr::Bin(op, a, b) => {
+            let operands = vec![elementwise(a, constants)?, elementwise(b, constants)?];
+            conform("operator", operands, &[(**a).clone(), (**b).clone()])?
+                .map(|rows| rows.into_iter().map(|mut v| { let b = v.pop().unwrap(); Expr::Bin(op.clone(), Box::new(v.pop().unwrap()), Box::new(b)) }).collect())
+        }
+        Expr::Un(op, a) => elementwise(a, constants)?
+            .map(|values| values.into_iter().map(|v| Expr::Un(op.clone(), Box::new(v))).collect()),
+        Expr::Call(name, args) if matches!(name.as_str(), "real" | "dble" | "int" | "nint" | "aint" | "anint"
+            | "abs" | "iabs" | "sqrt" | "exp" | "log" | "sin" | "cos" | "tan" | "asin" | "acos" | "atan"
+            | "ceiling" | "floor" | "mod" | "modulo" | "sign" | "dim" | "min" | "max")
+            && !constants.contains_key(&format!("@model_procedure:{name}")) => {
+            let operands = args.iter().map(|a| elementwise(a, constants)).collect::<Result<Vec<_>>>()?;
+            conform(name, operands, args)?
+                .map(|rows| rows.into_iter().map(|args| Expr::Call(name.clone(), args)).collect())
+        }
+        _ => None,
+    })
+}
+
 fn fold_array_initializer(e: &Expr, shapes: &HashMap<String, Vec<i64>>) -> Result<Expr> {
     let flat = |items: Vec<Expr>| Expr::Call("@array_constructor".into(), items);
     match e {
@@ -1081,6 +1129,10 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
                     };
                     rewrite_expr(&mut value,&constants)?;
                     if arrays.contains(&key) {
+                        if let Some(mut items)=elementwise(&value,&constants)? {
+                            for item in &mut items { rewrite_expr(item,&constants)?; }
+                            value=Expr::Call("@array_constructor".into(),items);
+                        }
                         let shapes=array_dimensions.iter().filter_map(|(n,d)|Some((n.clone(),declared_extents(d,&constants).ok()?))).collect();
                         value=fold_array_initializer(&value,&shapes)?;
                         rewrite_expr(&mut value,&constants)?;
@@ -1125,10 +1177,10 @@ fn resolve_scope(body: &mut Vec<Stmt>, inherited: &Constants, arguments: &[Strin
                 let mut initializer = initializer.clone();
                 rewrite_expr(&mut initializer, &constants)?;
                 if arrays.contains(&key) {
-                    if let Expr::Ident(source) = &initializer {
-                        if let Some(Expr::Call(tag,items)) = constants.get(source) {
-                            if tag == "@array_constant" { initializer=Expr::Call("@array_constructor".into(),items.clone()); }
-                        }
+                    if let Some(items) = elementwise(&initializer, &constants)? {
+                        let mut items = items;
+                        for item in &mut items { rewrite_expr(item, &constants)?; }
+                        initializer = Expr::Call("@array_constructor".into(), items);
                     }
                     let initializer=if crate::empty_constructors::kind(&initializer)?.is_some() {initial_value(kind,&initializer)?} else {initializer};
                     let Expr::Call(tag, items) = initializer else { bail!("array PARAMETER requires an array constructor"); };

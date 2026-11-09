@@ -51,6 +51,32 @@ end subroutine check_host
 end program main
 """,'F T F 10000000000 8\nT\n')
 
+    def test_array_constant_expressions(self):
+        # Array PARAMETERs and initializers defined by operators and
+        # elemental intrinsics of other array constants.
+        self.check("""program main
+implicit none
+integer, parameter :: n = 3
+integer, parameter :: idx(n) = [3,1,2], twice(n) = 2*idx, shifted(n) = twice - idx + 10
+integer, parameter :: joined(5) = [idx, 7, -idx(1)]
+real, parameter :: roots(n) = sqrt(real(idx))
+integer, parameter :: clipped(n) = max(idx, 2), rem(n) = mod(idx, 2)
+logical, parameter :: big(n) = idx > 1
+integer :: v(n) = 2*idx + 1
+real :: w(n) = -real(idx)/2
+print *, twice
+print *, shifted
+print *, joined
+print '(3f8.4)', roots
+print *, clipped, rem
+print *, big
+print *, v
+print *, w
+end program main
+""", '6 2 4\n13 11 12\n3 1 2 7 -3\n  1.7321  1.0000  1.4142\n3 2 2 1 1 0\nT F T\n7 3 5\n-1.5 -0.5 -1.0\n')
+        self.reject('program main\ninteger, parameter :: a(2) = [1,2], b(3) = [1,2,3], c(2) = a + b\nprint *, c\nend program main\n',
+                    'shapes of array operands do not conform')
+
     def test_invalid_initializers_ranges_and_writes(self):
         for source,message in [
             ('logical,parameter::a=1','logical constant expression'),
