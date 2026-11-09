@@ -390,8 +390,26 @@ fn emit(
             .filter(|(_, (_, dims))| !dims.is_empty())
             .map(|(n, (_, dims))| (n.clone(), dims.clone()))
             .collect();
+        // An elemental expression of rank-one sections, such as a(:,j) or
+        // 2*sqrt(a(1,:)), is output element by element.
+        if contains_section(item) {
+            *serial += 1;
+            let index = format!("@section_output_{serial}");
+            if let Some((value, Some(length))) = scalarize(item, &id(&index), symbols) {
+                let mut scoped = symbols.clone();
+                let kind = TypeSpec::Integer(Some(8));
+                scoped.insert(index.clone(), (kind.clone(), vec![]));
+                body.push(Stmt::VarDecl { kind, names: vec![index.clone()] });
+                let loop_item = Expr::Call("@output_implied_do".into(), vec![id(&index), int(1), length, int(1), value]);
+                emit(&[loop_item], &scoped, serial, previous, active, body, session)?;
+                continue;
+            }
+        }
         let mut expanded = Vec::new();
-        if matches!(item,Expr::Section {name,..} if matches!(symbols.get(name),Some((TypeSpec::Character(_),dims)) if dims.is_empty()))
+        // A reduction to a scalar, such as SUM(a(:,j)), gives one value;
+        // reduction lowering later handles the sections among its arguments.
+        let scalar_call = scalar_reduction(item, symbols) && crate::multidim::view_element(item, &int(1)).is_none();
+        if scalar_call || matches!(item,Expr::Section {name,..} if matches!(symbols.get(name),Some((TypeSpec::Character(_),dims)) if dims.is_empty()))
         {
             expanded.push(item.clone());
         } else {
@@ -438,6 +456,108 @@ fn emit(
         }
     }
     Ok(())
+}
+
+fn contains_section(e: &Expr) -> bool {
+    match e {
+        Expr::Section { .. } => true,
+        Expr::Call(_, args) | Expr::Index(_, args) => args.iter().any(contains_section),
+        Expr::Bin(_, a, b) => contains_section(a) || contains_section(b),
+        Expr::Un(_, a) => contains_section(a),
+        _ => false,
+    }
+}
+
+/// A call of a reduction or inquiry whose result is a scalar: without DIM,
+/// or DOT_PRODUCT.
+fn scalar_reduction(e: &Expr, symbols: &Symbols) -> bool {
+    let Expr::Call(f, args) = e else { return false };
+    if symbols.contains_key(f) { return false; }
+    // An omitted DIM is @no_dim when MASK is supplied (as array_calls expects).
+    let dim = args.iter().skip(1).any(|a| !matches!(a, Expr::Call(k, _) if k == "@keyword:mask" || k == "@no_dim")
+        && !(args.len() == 3 && matches!(&args[1], Expr::Call(n, _) if n == "@no_dim")))
+        || args.iter().any(|a| matches!(a, Expr::Call(k, _) if k == "@keyword:dim"));
+    match f.as_str() {
+        "sum" | "product" | "maxval" | "minval" | "count" | "any" | "all" | "norm2" | "iall" | "iany" | "iparity" | "parity"
+            | "@count_default" | "@count_i8" | "@any_reduction" | "@all_reduction" => !dim,
+        "dot_product" | "size" => true,
+        _ => false,
+    }
+}
+
+/// The element `index` (from 1) of an elemental expression whose arrays are
+/// rank-one sections or one-dimensional arrays, and its length; None when
+/// another kind of array appears.
+fn scalarize(e: &Expr, index: &Expr, symbols: &Symbols) -> Option<(Expr, Option<Expr>)> {
+    // The declared lower and upper bounds of dimension `d` of an array.
+    let declared = |name: &str, d: usize| -> Option<(Expr, Expr)> {
+        let (_, dims) = symbols.get(name)?;
+        match dims.get(d)? {
+            Expr::Call(tag, b) if tag == "@declared_bounds" && b.len() == 2 => Some((b[0].clone(), b[1].clone())),
+            Expr::Ident(n) if n.starts_with('@') => None,
+            extent => Some((int(1), extent.clone())),
+        }
+    };
+    // lower + (index-1)*stride, and the number of elements.
+    let subscript = |name: &str, d: usize, lower: &Option<Box<Expr>>, upper: &Option<Box<Expr>>, stride: &Option<Box<Expr>>| -> Option<(Expr, Expr)> {
+        let (first_declared, last_declared) = declared(name, d)?;
+        let first = lower.as_deref().cloned().unwrap_or(first_declared);
+        let last = upper.as_deref().cloned().unwrap_or(last_declared);
+        let step = stride.as_deref().cloned().unwrap_or(int(1));
+        let element = bin(BinOp::Add, first.clone(), bin(BinOp::Mul, bin(BinOp::Sub, index.clone(), int(1)), step.clone()));
+        let count = Expr::Call("max".into(), vec![int(0), bin(BinOp::Add, bin(BinOp::Div, bin(BinOp::Sub, last, first), step), int(1))]);
+        Some((element, count))
+    };
+    match e {
+        // A section of a one-dimensional array.
+        Expr::Section { name, lower, upper, stride } if symbols.get(name).is_some_and(|(_, d)| d.len() == 1) => {
+            let (element, count) = subscript(name, 0, lower, upper, stride)?;
+            Some((Expr::Index(name.clone(), vec![element]), Some(count)))
+        }
+        Expr::Section { .. } => None,
+        // One section subscript among scalar subscripts.
+        Expr::Index(name, args) | Expr::Call(name, args) if symbols.get(name).is_some_and(|(_, d)| !d.is_empty()) => {
+            let mut subscripts = vec![];
+            let mut count = None;
+            for (d, a) in args.iter().enumerate() {
+                match a {
+                    Expr::Call(tag, s) if tag == "@section_subscript" && s.len() == 1 => {
+                        let Expr::Section { lower, upper, stride, .. } = &s[0] else { return None };
+                        if count.is_some() { return None; }
+                        let (element, n) = subscript(name, d, lower, upper, stride)?;
+                        subscripts.push(element);
+                        count = Some(n);
+                    }
+                    a if !contains_section(a) => subscripts.push(a.clone()),
+                    _ => return None,
+                }
+            }
+            if count.is_none() { return Some((e.clone(), None)); }
+            Some((Expr::Index(name.clone(), subscripts), count))
+        }
+        Expr::Bin(op, a, b) => {
+            let (a, n) = scalarize(a, index, symbols)?;
+            let (b, m) = scalarize(b, index, symbols)?;
+            Some((bin(op.clone(), a, b), n.or(m)))
+        }
+        Expr::Un(op, a) => {
+            let (a, n) = scalarize(a, index, symbols)?;
+            Some((Expr::Un(op.clone(), Box::new(a)), n))
+        }
+        // Elemental intrinsics apply to each element.
+        Expr::Call(f, args) if !symbols.contains_key(f) && crate::reductions::runtime_extent(&Expr::Call(f.clone(), vec![Expr::Call("@packed_view".into(), vec![int(0), int(1)])])).is_some() => {
+            let mut count = None;
+            let mut out = vec![];
+            for a in args {
+                let (a, n) = scalarize(a, index, symbols)?;
+                count = count.or(n);
+                out.push(a);
+            }
+            Some((Expr::Call(f.clone(), out), count))
+        }
+        e if !contains_section(e) && !matches!(e, Expr::Ident(n) if symbols.get(n).is_some_and(|(_, d)| !d.is_empty())) => Some((e.clone(), None)),
+        _ => None,
+    }
 }
 
 /// Expand output implied-DOs before expressions acquire CHARACTER temporaries.

@@ -37,6 +37,33 @@ class OutputImpliedDo(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual([s.split() for s in expected.splitlines()], [s.split() for s in result.stdout.splitlines()])
 
+    def test_sections_beside_implied_do(self):
+        # Reductions of sections, rank-one sections of a matrix, and elemental
+        # expressions of them, in the same list as an implied-DO.
+        source = self.source("""implicit none
+integer :: i, j
+real :: a(2,3), v(4)
+a = reshape([1.,2.,3.,4.,5.,6.], [2,3])
+v = [10., 20., 30., 40.]
+j = 2
+print *, (a(i,j), i=1,2), sum(a(:,j))
+write (*,*) (i, i=1,2), maxval(a(1,:)), dot_product(a(:,1), a(:,3))
+print *, (i, i=1,1), a(:,j), a(2,:)
+print *, (i, i=1,1), 2*a(:,j) + 1, sqrt(a(1,2:3)), v(2:4:2)
+print *, (i, i=1,1), size(a), product(a(2,:)), count(a(:,j) > 3.5)
+end
+""")
+        expected = ("3.0 4.0 7.0\n1 2 5.0 17.0\n1 3.0 4.0 2.0 4.0 6.0\n"
+                    "1 7.0 9.0 1.7320508 2.236068 20.0 40.0\n1 6 48.0 1\n")
+        for cmd in build_commands(source, self.directory):
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            actual = [[float(x) for x in s.split()] for s in result.stdout.splitlines()]
+            wanted = [[float(x) for x in s.split()] for s in expected.splitlines()]
+            self.assertEqual([len(s) for s in actual], [len(s) for s in wanted], (cmd, result.stdout))
+            for a, w in zip(sum(actual, []), sum(wanted, [])):
+                self.assertAlmostEqual(a, w, places=5, msg=(cmd, result.stdout))
+
     def test_runtime_controls(self):
         source = self.source("integer :: i,n,step\nread(*,*) n\nread(*,*) step\nwrite(*,*) (i,i=1,n,step),i\nend\n")
         for cmd in build_commands(source, self.directory):
